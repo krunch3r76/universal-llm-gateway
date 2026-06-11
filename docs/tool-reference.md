@@ -533,7 +533,7 @@ Query system telemetry, traces, and request snapshots from the Event Service.
 | `compare-runs` | run_a, run_b | Side-by-side metrics |
 | `federation-health` | — | Latest relay telemetry |
 | `capacity-snapshot` | — | Current slot usage |
-| `signal-events` | signal? | Recent events for a signal pattern |
+| `signal-events` | signal? | Recent events for a signal pattern (`signal` supports `*` glob with literal `_`, `%`/`_` raw SQL LIKE, or exact match) |
 | `stack-last-started` | — | Per-service last startup timestamp |
 | `realtime-snapshot` | — | Last N from in-memory ring buffer |
 | `operations` | — | List all available operations |

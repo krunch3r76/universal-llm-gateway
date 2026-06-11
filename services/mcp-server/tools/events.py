@@ -157,7 +157,10 @@ def register_event_tools(mcp: FastMCP) -> None:
           federation-health    ()                    — latest relay telemetry
           provider-health      (provider?)           — frontier generate health per provider
           capacity-snapshot    ()                    — current slot usage
-          signal-events        (signal?)             — recent events for a signal pattern
+          signal-events        (signal?)             — recent events for a signal pattern;
+                                                       signal supports `*` glob (literal `_`
+                                                       matched verbatim), `%`/`_` raw SQL LIKE,
+                                                       or exact match when no wildcard present
           stack-last-started   ()                    — per-service last startup timestamp
           realtime-snapshot    ()                    — last N from in-memory ring buffer
           operations           ()                    — list all available operations

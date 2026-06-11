@@ -20,6 +20,7 @@ from implement_admission.closeout_runtime import (
 )
 from implement_admission.drift_gates import (
     DriftGateState,
+    ReviewAttestationCode,
     apply_closeout_gate_b,
     apply_closeout_gate_c,
     check_bound_source_ref,
@@ -27,9 +28,11 @@ from implement_admission.drift_gates import (
     check_closeout_hash_drift,
     check_frontmatter_source_ref,
     check_packet_hash_drift,
+    check_review_attestation,
     clear_gate_state_cache,
     evaluate_drift_gate,
     gate_state,
+    review_attestation_findings,
     review_attestation_warnings,
 )
 from implement_admission.spec import (
@@ -65,6 +68,7 @@ def _reset_gate_cache() -> None:
         "UA_DRIFT_GATE_A2",
         "UA_DRIFT_GATE_B",
         "UA_DRIFT_GATE_C",
+        "UA_DRIFT_GATE_RA",
     ):
         os.environ.pop(key, None)
 
@@ -116,6 +120,7 @@ def test_gate_state_defaults_warn_when_config_absent() -> None:
     assert gate_state("a") == DriftGateState.WARN
     assert gate_state("b") == DriftGateState.WARN
     assert gate_state("c") == DriftGateState.WARN
+    assert gate_state("ra") == DriftGateState.WARN
 
 
 def test_config_absent_env_fallback() -> None:
@@ -521,3 +526,236 @@ def test_drift_gate_b_still_rejects_genuine_mismatch() -> None:
             on_disk_sha256="sha256:0000000000000000000000000000000000000000000000000000000000000000",
         )
     assert result.action == "reject"
+
+
+# --- Gate ra (review attestation) ---
+
+
+def test_review_attestation_findings_per_code() -> None:
+    spec = _material_claude_spec(required=True, disposition="missing")
+    codes = {f.code for f in review_attestation_findings(spec)}
+    assert ReviewAttestationCode.NO_PASSING_REVIEW in codes
+
+    under = _material_claude_spec(required=False, disposition="missing")
+    codes = {f.code for f in review_attestation_findings(under)}
+    assert ReviewAttestationCode.RISK_UNDERCLASSIFIED in codes
+    assert ReviewAttestationCode.NO_PASSING_REVIEW in codes
+
+    unbound = _material_claude_spec(required=True, disposition="pass", spec_hash=None)
+    assert ReviewAttestationCode.UNBOUND_REVIEW in {
+        f.code for f in review_attestation_findings(unbound)
+    }
+
+    stale = _material_claude_spec(
+        required=True, disposition="pass", spec_hash="sha256:old"
+    )
+    assert ReviewAttestationCode.STALE_REVIEW in {
+        f.code for f in review_attestation_findings(stale)
+    }
+
+    blockers = _material_claude_spec(
+        required=True,
+        disposition="pass_with_conditions",
+        spec_hash=implement_spec_hash(_material_claude_spec()),
+        unresolved_blocker_ids=["b1"],
+    )
+    assert ReviewAttestationCode.UNRESOLVED_BLOCKERS in {
+        f.code for f in review_attestation_findings(blockers)
+    }
+
+    none_att = _material_claude_spec().model_copy(
+        update={"provenance": Provenance(review_attestation=None)}
+    )
+    none_findings = review_attestation_findings(none_att)
+    assert len(none_findings) == 1
+    assert none_findings[0].code == ReviewAttestationCode.MISSING_ATTESTATION
+
+
+def test_review_attestation_warnings_is_message_projection() -> None:
+    spec = _material_claude_spec(required=True, disposition="missing")
+    findings = review_attestation_findings(spec)
+    assert review_attestation_warnings(spec) == [f.message for f in findings]
+
+
+def test_gate_ra_config_absent_defaults_warn() -> None:
+    set_runtime(CloseoutRuntime(dispatch=lambda _tool, _args: {"error": "missing"}))
+    clear_gate_state_cache()
+    assert gate_state("ra") == DriftGateState.WARN
+
+
+def test_gate_ra_env_fallback() -> None:
+    os.environ["UA_DRIFT_GATE_RA"] = "enforce"
+    clear_gate_state_cache()
+    set_runtime(CloseoutRuntime(dispatch=lambda _tool, _args: {"error": "missing"}))
+    assert gate_state("ra") == DriftGateState.ENFORCE
+
+
+@pytest.mark.parametrize(
+    ("att_kwargs", "expected_reject"),
+    [
+        ({"required": True, "disposition": "missing"}, True),
+        ({"required": True, "disposition": "pass", "spec_hash": None}, True),
+        ({"required": True, "disposition": "pass", "spec_hash": "sha256:old"}, True),
+    ],
+)
+def test_gate_ra_enforce_rejects_rejectable_codes(
+    att_kwargs: dict, expected_reject: bool
+) -> None:
+    spec = _material_claude_spec(**att_kwargs)
+    with patch(
+        "implement_admission.drift_gates.gate_state",
+        return_value=DriftGateState.ENFORCE,
+    ):
+        result = check_review_attestation(spec)
+    if expected_reject:
+        assert result.action == "reject"
+    else:
+        assert result.action == "warn"
+
+
+def test_gate_ra_enforce_rejects_missing_attestation() -> None:
+    spec = _material_claude_spec().model_copy(
+        update={"provenance": Provenance(review_attestation=None)}
+    )
+    with patch(
+        "implement_admission.drift_gates.gate_state",
+        return_value=DriftGateState.ENFORCE,
+    ):
+        result = check_review_attestation(spec)
+    assert result.action == "reject"
+    assert result.reason == ReviewAttestationCode.MISSING_ATTESTATION.value
+
+
+def test_gate_ra_enforce_admits_with_warn_on_underclassified() -> None:
+    base = _material_claude_spec()
+    bound = implement_spec_hash(base)
+    spec = _material_claude_spec(
+        required=False,
+        disposition="pass",
+        spec_hash=bound,
+    )
+    with patch(
+        "implement_admission.drift_gates.gate_state",
+        return_value=DriftGateState.ENFORCE,
+    ):
+        result = check_review_attestation(spec)
+    assert result.action == "noop"
+    assert result.tripped is False
+    assert any(
+        f.code == ReviewAttestationCode.RISK_UNDERCLASSIFIED
+        for f in review_attestation_findings(spec)
+    )
+    from systems.frontier_consult.implement_admission_bridge import (
+        _enforce_gate_ra_or_warn,
+    )
+
+    warnings = _enforce_gate_ra_or_warn(
+        request_id="req-under",
+        spec=spec,
+        headless_vs_human="human",
+    )
+    assert warnings
+
+
+def test_gate_ra_enforce_admits_with_warn_on_unresolved_blockers() -> None:
+    base = _material_claude_spec()
+    bound = implement_spec_hash(base)
+    spec = _material_claude_spec(
+        required=True,
+        disposition="pass_with_conditions",
+        spec_hash=bound,
+        unresolved_blocker_ids=["blocker-1"],
+    )
+    with patch(
+        "implement_admission.drift_gates.gate_state",
+        return_value=DriftGateState.ENFORCE,
+    ):
+        result = check_review_attestation(spec)
+    assert result.action == "noop"
+    assert result.tripped is False
+    assert any(
+        f.code == ReviewAttestationCode.UNRESOLVED_BLOCKERS
+        for f in review_attestation_findings(spec)
+    )
+    from systems.frontier_consult.implement_admission_bridge import (
+        _enforce_gate_ra_or_warn,
+    )
+
+    warnings = _enforce_gate_ra_or_warn(
+        request_id="req-blockers",
+        spec=spec,
+        headless_vs_human="human",
+    )
+    assert any("unresolved blocker" in w for w in warnings)
+
+
+def test_gate_ra_off_emits_no_warnings() -> None:
+    spec = _material_claude_spec(required=True, disposition="missing")
+    with patch(
+        "implement_admission.drift_gates.gate_state",
+        return_value=DriftGateState.OFF,
+    ):
+        result = check_review_attestation(spec)
+    assert result.action == "noop"
+
+
+def test_gate_ra_enforce_to_warn_rollback_within_ttl() -> None:
+    spec = _material_claude_spec(required=True, disposition="missing")
+
+    def enforce_ra(_gate_id: str) -> DriftGateState:
+        return DriftGateState.ENFORCE
+
+    with patch("implement_admission.drift_gates.gate_state", side_effect=enforce_ra):
+        assert check_review_attestation(spec).action == "reject"
+
+    clear_gate_state_cache()
+    with patch(
+        "implement_admission.drift_gates.gate_state",
+        return_value=DriftGateState.WARN,
+    ):
+        assert check_review_attestation(spec).action == "warn"
+
+
+def test_bridge_enforce_gate_ra_reject_reason_format() -> None:
+    from systems.frontier_consult.admission import FrontierEndpointError
+    from systems.frontier_consult.implement_admission_bridge import (
+        _enforce_gate_ra_or_warn,
+    )
+
+    spec = _material_claude_spec(required=True, disposition="missing")
+    with patch(
+        "implement_admission.drift_gates.gate_state",
+        return_value=DriftGateState.ENFORCE,
+    ):
+        with pytest.raises(FrontierEndpointError) as exc:
+            _enforce_gate_ra_or_warn(
+                request_id="req-1",
+                spec=spec,
+                headless_vs_human="human",
+            )
+    err = exc.value
+    assert err.code == "handoff_review_attestation_blocked"
+    assert err.field == "source_ref"
+    assert "NO_PASSING_REVIEW" in err.reason
+    assert "attach a non-claude pass/pass_with_conditions review" in err.reason
+    assert "implement_spec_hash" in err.reason
+
+
+def test_bridge_gate_ra_applies_to_packet_lane() -> None:
+    from systems.frontier_consult.admission import FrontierEndpointError
+    from systems.frontier_consult.implement_admission_bridge import (
+        _enforce_gate_ra_or_warn,
+    )
+
+    spec = _material_claude_spec(required=True, disposition="missing")
+    with patch(
+        "implement_admission.drift_gates.gate_state",
+        return_value=DriftGateState.ENFORCE,
+    ):
+        with pytest.raises(FrontierEndpointError) as exc:
+            _enforce_gate_ra_or_warn(
+                request_id="req-packet",
+                spec=spec,
+                headless_vs_human="headless",
+            )
+    assert exc.value.code == "handoff_review_attestation_blocked"

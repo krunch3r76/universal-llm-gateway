@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 import json
+import time
 from typing import Any
 
 from universal_logging import get_logger
 
 from .operation_parameters import (
     _coerce_limit,
+    _coerce_minutes,
     _coerce_since_ts,
     _get_session_start_ts,
     _resolve_window_minutes_and_cutoff,
+    _signal_match_sql,
 )
 from .store import EventStore
 
@@ -134,7 +137,7 @@ async def _request_summary(params: dict[str, Any], store: EventStore) -> dict[st
 
 
 async def _signal_events(params: dict[str, Any], store: EventStore) -> dict[str, Any]:
-    """Fetch recent events by exact signal or '*' glob, including parsed payload."""
+    """Fetch recent events by exact signal or glob (* or % wildcards)."""
     signal = params.get("signal") or ""
     if not signal:
         return {"error": "signal is required"}
@@ -143,14 +146,17 @@ async def _signal_events(params: dict[str, Any], store: EventStore) -> dict[str,
     execution_id = params.get("execution_id")
     since_ts = _coerce_since_ts(params.get("since_ts"))
     if since_ts is None:
-        since_ts = await _get_session_start_ts(store)
+        minutes = _coerce_minutes(params.get("minutes"))
+        if minutes is not None:
+            since_ts = int(time.time() * 1000) - (minutes * 60 * 1000)
+        else:
+            since_ts = await _get_session_start_ts(store)
 
-    signal_clause = "signal LIKE ?" if "*" in signal else "signal = ?"
-    signal_value = signal.replace("*", "%") if "*" in signal else signal
+    signal_predicate, signal_value = _signal_match_sql(signal)
 
     sql = (
         "SELECT seq, signal, source, timestamp, execution_id, model_id, payload "
-        f"FROM events WHERE {signal_clause}"
+        f"FROM events WHERE signal {signal_predicate}"
     )
     query_params: list[Any] = [signal_value]
     if execution_id:

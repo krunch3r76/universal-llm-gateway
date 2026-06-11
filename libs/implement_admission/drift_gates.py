@@ -29,12 +29,19 @@ from implement_admission.spec import (
 logger = get_logger(__name__)
 
 _CONFIG_ENTITY = "config:unified-admission-drift-gates"
-_GATE_ATTR = {"a": "gate_a", "a2": "gate_a2", "b": "gate_b", "c": "gate_c"}
+_GATE_ATTR = {
+    "a": "gate_a",
+    "a2": "gate_a2",
+    "b": "gate_b",
+    "c": "gate_c",
+    "ra": "gate_ra",
+}
 _ENV_KEYS = {
     "a": "UA_DRIFT_GATE_A",
     "a2": "UA_DRIFT_GATE_A2",
     "b": "UA_DRIFT_GATE_B",
     "c": "UA_DRIFT_GATE_C",
+    "ra": "UA_DRIFT_GATE_RA",
 }
 _CACHE_TTL_S = 30.0
 
@@ -107,7 +114,7 @@ def _load_config_values() -> dict[str, str]:
 
 
 def gate_state(gate_id: str) -> DriftGateState:
-    """Read tri-state for gate ``a``/``b``/``c`` (deploy-free config + env fallback)."""
+    """Read tri-state for gate ``a``/``a2``/``b``/``c``/``ra`` (config + env fallback)."""
     key = gate_id.removeprefix("gate_").lower()
     values = _load_config_values()
     return _parse_state(values.get(key))
@@ -377,8 +384,24 @@ def apply_closeout_gate_b(
     )
 
 
-def review_attestation_warnings(spec: ImplementSpec) -> list[str]:
-    """Phase-1 warn-only gate — recompute floor from spec; never raises."""
+class ReviewAttestationCode(StrEnum):
+    MISSING_ATTESTATION = "MISSING_ATTESTATION"
+    RISK_UNDERCLASSIFIED = "RISK_UNDERCLASSIFIED"
+    NO_PASSING_REVIEW = "NO_PASSING_REVIEW"
+    UNBOUND_REVIEW = "UNBOUND_REVIEW"
+    STALE_REVIEW = "STALE_REVIEW"
+    UNRESOLVED_BLOCKERS = "UNRESOLVED_BLOCKERS"
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewAttestationFinding:
+    code: ReviewAttestationCode
+    message: str
+    rejectable_under_enforce: bool
+
+
+def review_attestation_findings(spec: ImplementSpec) -> list[ReviewAttestationFinding]:
+    """Typed review-attestation findings — recompute floor from spec; never raises."""
     if spec.readiness.state != ReadinessState.READY:
         return []
 
@@ -389,36 +412,115 @@ def review_attestation_warnings(spec: ImplementSpec) -> list[str]:
     if not floor_required:
         return []
 
-    warnings: list[str] = []
+    findings: list[ReviewAttestationFinding] = []
     if att is None:
-        warnings.append(
-            f"review required (tier={req_tier}) but no review_attestation present."
+        findings.append(
+            ReviewAttestationFinding(
+                code=ReviewAttestationCode.MISSING_ATTESTATION,
+                message=(
+                    f"review required (tier={req_tier}) but no review_attestation present."
+                ),
+                rejectable_under_enforce=True,
+            )
         )
-        return warnings
+        return findings
 
     if not att.required or risk_tier_rank(att.risk_tier) < risk_tier_rank(req_tier):
-        warnings.append(
-            "review_attestation under-classifies risk "
-            f"(stored={att.risk_tier}, recomputed={req_tier})."
+        findings.append(
+            ReviewAttestationFinding(
+                code=ReviewAttestationCode.RISK_UNDERCLASSIFIED,
+                message=(
+                    "review_attestation under-classifies risk "
+                    f"(stored={att.risk_tier}, recomputed={req_tier})."
+                ),
+                rejectable_under_enforce=False,
+            )
         )
 
     if att.disposition in {"missing", "pending", "blocked"}:
-        warnings.append(
-            f"no passing cross-family review (disposition={att.disposition})."
+        findings.append(
+            ReviewAttestationFinding(
+                code=ReviewAttestationCode.NO_PASSING_REVIEW,
+                message=(
+                    f"no passing cross-family review (disposition={att.disposition})."
+                ),
+                rejectable_under_enforce=True,
+            )
         )
 
     if att.disposition in {"pass", "pass_with_conditions"} and att.spec_hash is None:
-        warnings.append("UNBOUND pass — review not bound to any spec_hash.")
+        findings.append(
+            ReviewAttestationFinding(
+                code=ReviewAttestationCode.UNBOUND_REVIEW,
+                message="UNBOUND pass — review not bound to any spec_hash.",
+                rejectable_under_enforce=True,
+            )
+        )
 
     current = implement_spec_hash(spec)
     if att.spec_hash is not None and att.spec_hash != current:
-        warnings.append(
-            f"STALE — review bound to {att.spec_hash}, packet now {current}."
+        findings.append(
+            ReviewAttestationFinding(
+                code=ReviewAttestationCode.STALE_REVIEW,
+                message=f"STALE — review bound to {att.spec_hash}, packet now {current}.",
+                rejectable_under_enforce=True,
+            )
         )
 
     if att.unresolved_blocker_ids:
         n = len(att.unresolved_blocker_ids)
         ids = ", ".join(att.unresolved_blocker_ids)
-        warnings.append(f"{n} unresolved blocker(s): {ids}.")
+        findings.append(
+            ReviewAttestationFinding(
+                code=ReviewAttestationCode.UNRESOLVED_BLOCKERS,
+                message=f"{n} unresolved blocker(s): {ids}.",
+                rejectable_under_enforce=False,
+            )
+        )
 
-    return warnings
+    return findings
+
+
+def review_attestation_warnings(spec: ImplementSpec) -> list[str]:
+    """Backward-compat string projection over typed findings."""
+    return [f.message for f in review_attestation_findings(spec)]
+
+
+def check_review_attestation(
+    spec: ImplementSpec,
+    *,
+    headless_vs_human: Literal["headless", "human"] = "human",
+) -> DriftGateResult:
+    """Gate ``ra`` — tripped when any rejectable finding is present."""
+    findings = review_attestation_findings(spec)
+    rejectable = [f for f in findings if f.rejectable_under_enforce]
+    tripped = bool(rejectable)
+    state = gate_state("ra")
+    would_reject = tripped and state == DriftGateState.ENFORCE
+
+    att = spec.provenance.review_attestation
+    req_tier = classify_risk_tier(spec)
+    spec_hash = implement_spec_hash(spec)
+    att_spec_hash = att.spec_hash if att else None
+    codes = [f.code.value for f in findings]
+
+    logger.warning(
+        "review_attestation.eval codes=%s risk_tier=%s spec_hash=%s "
+        "attestation_spec_hash=%s would_reject=%s gate_state=%s headless_vs_human=%s",
+        codes,
+        req_tier,
+        spec_hash,
+        att_spec_hash,
+        would_reject,
+        state.value,
+        headless_vs_human,
+    )
+
+    reason = rejectable[0].code.value if rejectable else None
+    return evaluate_drift_gate(
+        "ra",
+        state,
+        tripped=tripped,
+        reason=reason,
+        detail=f"review attestation gate: {reason}" if reason else None,
+    )

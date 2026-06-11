@@ -7,12 +7,15 @@ import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from admission_common.tree_probe import probe_working_tree
 from implement_admission.drift_gates import (
+    DriftGateState,
     check_packet_hash_drift,
-    review_attestation_warnings,
+    check_review_attestation,
+    gate_state,
+    review_attestation_findings,
 )
 from implement_admission.materialize import materialize
 from implement_admission.normalize import normalize
@@ -138,6 +141,57 @@ def _is_packet_lane(source_ref: str) -> bool:
     return parse_source_ref(source_ref).source_kind == SourceKind.PACKET.value
 
 
+def _headless_vs_human(author_family: str | None) -> Literal["headless", "human"]:
+    """Automated dispatch (no seat) vs operator/agent-mediated admission."""
+    if author_family is None or author_family.strip() in {"", "dispatch"}:
+        return "headless"
+    return "human"
+
+
+def _enforce_gate_ra_or_warn(
+    *,
+    request_id: str,
+    spec: Any,
+    headless_vs_human: Literal["headless", "human"],
+) -> list[str]:
+    gate_ra = check_review_attestation(spec, headless_vs_human=headless_vs_human)
+    if gate_ra.action == "reject":
+        findings = review_attestation_findings(spec)
+        failing_codes = [f.code.value for f in findings if f.rejectable_under_enforce]
+        remediation = (
+            "attach a non-claude pass/pass_with_conditions review "
+            "bound to current implement_spec_hash"
+        )
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="source_ref",
+            reason=f"{', '.join(failing_codes)}: {remediation}",
+            status_code=422,
+            code="handoff_review_attestation_blocked",
+        )
+    if gate_state("ra") == DriftGateState.OFF:
+        return []
+    return [f.message for f in review_attestation_findings(spec)]
+
+
+def _attestation_warnings_for_spec(
+    spec: Any,
+    *,
+    request_id: str | None,
+    headless_vs_human: Literal["headless", "human"],
+) -> list[str]:
+    if request_id is not None:
+        return _enforce_gate_ra_or_warn(
+            request_id=request_id,
+            spec=spec,
+            headless_vs_human=headless_vs_human,
+        )
+    check_review_attestation(spec, headless_vs_human=headless_vs_human)
+    if gate_state("ra") == DriftGateState.OFF:
+        return []
+    return [f.message for f in review_attestation_findings(spec)]
+
+
 def _enforce_gate_b_or_warn(
     *,
     request_id: str,
@@ -206,7 +260,12 @@ def verify_both_present_hash(
         author_family=author_family,
     )
     expected = spec.provenance.implement_spec_hash or implement_spec_hash(spec)
-    attestation_warnings = review_attestation_warnings(spec)
+    hvh = _headless_vs_human(author_family)
+    attestation_warnings = _attestation_warnings_for_spec(
+        spec,
+        request_id=request_id,
+        headless_vs_human=hvh,
+    )
 
     if frontmatter_hash is not None and frontmatter_hash != expected:
         raise FrontierEndpointError(
@@ -264,7 +323,12 @@ def resolve_source_ref_to_packet(
         )
 
     spec_hash = spec.provenance.implement_spec_hash or implement_spec_hash(spec)
-    attestation_warnings = review_attestation_warnings(spec)
+    hvh = _headless_vs_human(author_family)
+    attestation_warnings = _attestation_warnings_for_spec(
+        spec,
+        request_id=request_id,
+        headless_vs_human=hvh,
+    )
 
     if _is_packet_lane(source_ref):
         packet_path_part = source_ref.split(":", 1)[1]

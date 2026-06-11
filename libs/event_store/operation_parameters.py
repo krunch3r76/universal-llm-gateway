@@ -47,6 +47,31 @@ def _coerce_minutes(value: Any) -> int | None:
     return max(1, min(minutes, 24 * 60))
 
 
+def _signal_match_sql(signal: str) -> tuple[str, str]:
+    """Map a user signal pattern to a SQL predicate fragment and bind value.
+
+    Pattern syntax (matched against the ``signal`` column):
+
+    - ``*`` — glob wildcard; mapped to LIKE ``%``. Literal ``%``/``_`` in the
+      input are escaped (via ``ESCAPE '\\'``) so they match themselves, since a
+      glob author does not expect ``_`` to act as a single-char wildcard
+      (e.g. ``team_dispatch.*`` matches only the literal ``team_dispatch``).
+    - ``%`` — raw SQL LIKE; the caller opted into LIKE semantics, so ``%`` and
+      ``_`` keep their LIKE meaning and nothing is escaped.
+    - otherwise — exact equality (``=``).
+
+    Returns ``(predicate_fragment, bind_value)`` where ``predicate_fragment``
+    is everything after ``signal `` in the WHERE clause and contains a single
+    ``?`` placeholder bound to ``bind_value``.
+    """
+    if "*" in signal:
+        escaped = signal.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        return "LIKE ? ESCAPE '\\'", escaped.replace("*", "%")
+    if "%" in signal:
+        return "LIKE ?", signal
+    return "= ?", signal
+
+
 def _coerce_since_ts(value: Any) -> int | None:
     """Coerce an optional ``since_ts`` value to Unix milliseconds.
 
