@@ -180,6 +180,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         transcript_id: str | None = None,
         caller_agent: str | None = None,
         timeout_seconds: int | None = None,
+        bus_lifecycle: Literal["persistent", "ephemeral"] | None = None,
         thread: str | None = None,
         subject: str | None = None,
         packet_path: str | None = None,
@@ -440,6 +441,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             ("transcript_id", transcript_id),
             ("caller_agent", caller_agent),
             ("timeout_seconds", timeout_seconds),
+            ("bus_lifecycle", bus_lifecycle),
         ):
             if val is not None:
                 body[key] = val

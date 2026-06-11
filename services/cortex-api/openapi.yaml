@@ -1,0 +1,70 @@
+openapi: 3.1.0
+info:
+  title: Cortex API
+  version: 1.0.0
+  description: Contract snapshot for cortex-api HTTP surface (authoritative impl in libs/cortex_store).
+paths:
+  /assertions:
+    get:
+      summary: List assertions
+      operationId: listAssertions
+      parameters:
+        - name: entity_id
+          in: query
+          schema:
+            type: string
+        - name: entity_id_prefix
+          in: query
+          schema:
+            type: string
+        - name: filter
+          in: query
+          schema:
+            type: string
+          description: Case-insensitive substring filter on claim text (LIKE)
+        - name: seeded_by
+          in: query
+          schema:
+            type: string
+        - name: confidence
+          in: query
+          schema:
+            type: string
+        - name: review_status
+          in: query
+          schema:
+            type: string
+        - name: superseded
+          in: query
+          schema:
+            type: boolean
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 50
+        - name: include_compaction_pointers
+          in: query
+          schema:
+            type: boolean
+            default: false
+        - name: intent
+          in: query
+          schema:
+            type: string
+            enum: [summary, full]
+            default: summary
+          description: >-
+            Response projection. summary (default): sparse hooks with truncated
+            claim; full: enrichment rows with §6.10 compaction pipeline.
+        - name: compact
+          in: query
+          schema:
+            type: boolean
+            default: false
+          description: Boot-internal compact projection; bypasses intent.
+      responses:
+        "200":
+          description: Assertion list (summary or full projection)

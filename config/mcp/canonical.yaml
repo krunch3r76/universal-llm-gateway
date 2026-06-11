@@ -149,6 +149,32 @@ tools:
   cache_priority: on_demand
   introduced: 2026-06-11
 
+- canonical_name: cortex_assertion_get
+  domain: cortex
+  operation: assertion_get
+  dispatcher_call_shape:
+    tool: cortex
+    dispatch_key: op
+    dispatch_value: assertion_get
+  flat_call_shape:
+    tool: cortex_assertion_get
+    substrate_qualified: user-vortex__cortex_assertion_get
+  fol_descriptor: |
+    ∀ assertion_id ∈ int: assertion_get(assertion_id) ⟹
+      (row ∈ assertions ∧ result = full AssertionItem incl. predicate_form)
+      ∨ error("Assertion not found").
+    Read-only. Deepen target for assertions(intent=summary). See agent_skill:cortex.
+  json_schema:
+    type: object
+    properties:
+      assertion_id: {type: integer, description: "Required. Assertion id from a summary list row."}
+    required: [assertion_id]
+  skill_uri: agent_skill:cortex
+  seat_visibility: [mcp, mcp_claude]
+  mandate_safety: read_only
+  cache_priority: on_demand
+  introduced: 2026-06-11
+
 - canonical_name: cortex_entity_get
   domain: cortex
   operation: entity_get
@@ -320,6 +346,7 @@ tools:
       review_status: {type: string}
       superseded: {type: boolean}
       limit: {type: integer}
+      intent: {type: string, enum: [summary, full], description: "summary (default): sparse hooks; full: enrichment rows."}
   skill_uri: agent_skill:cortex
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only

@@ -63,6 +63,7 @@ def test_op_frictions_defaults(monkeypatch) -> None:
     assert captured["claim_filter"] == "[tool_error]"
     assert captured["seeded_by"] == "claude-web"
     assert captured["superseded"] is False
+    assert captured["intent"] == "full"
     assert "_next" in result
 
 

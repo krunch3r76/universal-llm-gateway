@@ -116,7 +116,7 @@ async def run_admission_gate(
         mcp_enabled=mcp_enabled,
         publish=publish,
     )
-    raw_turns = opts.get("max_tool_turns", step.get_domain_field("max_tool_turns", 10))
+    raw_turns = opts.get("max_tool_turns", step.get_domain_field("max_tool_turns", 100))
     max_turns = int(raw_turns)
     if max_turns < 1:
         raise ValueError(f"max_tool_turns must be >= 1, got {max_turns}")

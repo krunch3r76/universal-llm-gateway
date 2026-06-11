@@ -37,6 +37,7 @@ from .assertions import (
     AssertionCreateResponse,
     AssertionItem,
     AssertionList,
+    AssertionListSummaryItem,
     AssertionUpdate,
     AssertionUpdateResponse,
     CompactionProjection,
@@ -92,11 +93,6 @@ from .journals import (
     SessionJournalItem,
     SessionJournalList,
 )
-from .search import (
-    AssertionSearchItem,
-    AssertionSearchResult,
-    AssertionSearchSummaryItem,
-)
 from .reflective import (
     ConsolidationData,
     JournalLinkCreate,
@@ -114,6 +110,11 @@ from .relationships import (
     RelationshipItem,
     RelationshipList,
     RelationshipUpdate,
+)
+from .search import (
+    AssertionSearchItem,
+    AssertionSearchResult,
+    AssertionSearchSummaryItem,
 )
 from .surface_forms import (
     SurfaceFormCacheResult,
@@ -140,6 +141,7 @@ __all__ = [
     "AssertionCreateResponse",
     "AssertionItem",
     "AssertionList",
+    "AssertionListSummaryItem",
     "AssertionUpdate",
     "AssertionUpdateResponse",
     "CompactionProjection",

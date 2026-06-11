@@ -78,6 +78,7 @@ class PipelineExecutionTracker:
         op: Literal["generate", "to_thread"] | None = None,
         from_agent: str | None = None,
         reply_subject: str | None = None,
+        bus_lifecycle: Literal["persistent", "ephemeral"] = "persistent",
     ) -> PipelineExecutionRecord:
         """Admit a new execution and emit ``pipeline.dispatch.async``.
 
@@ -96,6 +97,7 @@ class PipelineExecutionTracker:
             op=op,
             from_agent=from_agent,
             reply_subject=reply_subject,
+            bus_lifecycle=bus_lifecycle,
         )
 
     def get(self, execution_id: str) -> PipelineExecutionRecord | None:

@@ -378,8 +378,21 @@ async def test_max_tool_turns_propagates_to_top_level_pipeline_options() -> None
 
 
 @pytest.mark.asyncio
-async def test_max_tool_turns_omitted_does_not_set_key() -> None:
-    """Handler default of 10 fires when caller omits max_tool_turns."""
+async def test_max_tool_turns_omitted_role_defaults_to_100() -> None:
+    """Team-dispatch role consults default to 100 tool turns when omitted."""
+    req = FrontierGenerateRequest(
+        messages=[{"role": "user", "content": "x"}],
+        role="reviewer",
+        dispatch_thread_id="dispatch-1",
+        model="openai/gpt-5.4-mini",
+    )
+    body = await build_dispatch_body(req)
+    assert body["pipeline_options"]["max_tool_turns"] == 100
+
+
+@pytest.mark.asyncio
+async def test_max_tool_turns_omitted_persona_free_defers_to_handler() -> None:
+    """Persona-free frontier omits max_tool_turns; handler default is 100."""
     req = FrontierGenerateRequest(
         messages=[{"role": "user", "content": "x"}],
         model="openai/gpt-5.4-mini",

@@ -93,6 +93,10 @@ class PipelineExecutionRecord:
     from_agent: str | None = None
     # Caller-supplied subject for the on-behalf reply turn. None ⇒ auto-derive.
     reply_subject: str | None = None
+    # Post-delivery thread disposition for ``op="to_thread"``. ``ephemeral``
+    # closes the bus thread after a successful on-behalf POST (team-dispatch
+    # one-shots default ephemeral at admission).
+    bus_lifecycle: Literal["persistent", "ephemeral"] = "persistent"
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to the shape returned by ``GET /api/v1/pipelines/executions/{id}``."""  # noqa: E501

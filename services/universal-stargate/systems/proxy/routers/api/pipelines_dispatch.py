@@ -154,6 +154,20 @@ class DispatchRequest(BaseModel):
     # On-behalf delivery identity (2026-05-22 architectural fix).
     from_agent: str | None = None
     reply_subject: str | None = None
+    # Post-delivery thread disposition for ``op="to_thread"``. Omitted ⇒
+    # team-dispatch one-shots default ``ephemeral``; other pipelines stay persistent.
+    bus_lifecycle: Literal["persistent", "ephemeral"] | None = None
+
+
+def _resolve_bus_lifecycle(
+    dispatch: DispatchRequest,
+) -> Literal["persistent", "ephemeral"]:
+    """Apply pipeline-specific default when the caller omits ``bus_lifecycle``."""
+    if dispatch.bus_lifecycle is not None:
+        return dispatch.bus_lifecycle
+    if dispatch.op == "to_thread" and dispatch.model == "team-dispatch":
+        return "ephemeral"
+    return "persistent"
 
 
 def _error_response(status_code: int, code: str, message: str) -> JSONResponse:
@@ -181,6 +195,7 @@ def _build_chat_completion_request(dispatch: DispatchRequest) -> ChatCompletionR
         "op",
         "from_agent",
         "reply_subject",
+        "bus_lifecycle",
     }
     payload = dispatch.model_dump(exclude_none=True, exclude=tracker_only)
     return ChatCompletionRequest(**payload)
@@ -281,6 +296,7 @@ async def dispatch_pipeline(
             op=dispatch.op,
             from_agent=dispatch.from_agent,
             reply_subject=dispatch.reply_subject,
+            bus_lifecycle=_resolve_bus_lifecycle(dispatch),
         )
     except TrackerCapacityError as exc:
         logger.warning("Dispatch rejected (capacity): %s", exc)

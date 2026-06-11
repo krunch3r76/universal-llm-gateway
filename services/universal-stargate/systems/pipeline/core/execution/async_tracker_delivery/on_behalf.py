@@ -31,15 +31,17 @@ from typing import TYPE_CHECKING
 
 from universal_logging import get_logger
 
-from .agent_bus_http import _fetch_thread_last_turn_from, _post_turn
+from .agent_bus_http import _close_thread, _fetch_thread_last_turn_from, _post_turn
 from .constants import _BUS_BRIEFING_RULE_CHARS, _BUS_MAX_BODY_CHARS
 from .delivery_events import (
+    _build_close_failed_event,
     _build_failed_event,
     _build_sent_event,
     _build_skipped_event,
+    _build_thread_closed_event,
     _emit,
 )
-from .envelope import _build_on_behalf_subject
+from .envelope import _build_close_summary, _build_on_behalf_subject
 from .outcome import DeliveryOutcome
 from .protocol import _EventBusProtocol
 from .resolution import _resolve_to_agent, _utc_now_iso
@@ -178,6 +180,35 @@ async def _post_content_on_behalf(
                 from_agent=from_agent,
             ),
         )
+        if record.bus_lifecycle == "ephemeral":
+            summary = _build_close_summary(record)
+            close_code, close_text = await _close_thread(
+                url=url,
+                auth_token=auth_token,
+                thread=thread,
+                summary=summary,
+            )
+            if 200 <= close_code < 300:
+                _emit(event_bus, _build_thread_closed_event(thread=thread))
+            else:
+                logger.error(
+                    "Ephemeral thread close failed: execution_id=%s thread=%s "
+                    "status=%d body=%s",
+                    record.execution_id,
+                    thread,
+                    close_code,
+                    close_text[:300],
+                )
+                _emit(
+                    event_bus,
+                    _build_close_failed_event(
+                        pipeline_id=record.pipeline,
+                        execution_id=record.execution_id,
+                        thread=thread,
+                        status_code=close_code,
+                        error_preview=close_text[:300],
+                    ),
+                )
         return DeliveryOutcome(status="delivered")
 
     logger.error(

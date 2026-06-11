@@ -25,7 +25,12 @@ from universal_logging import get_logger
 from ... import embeddings as cortex_embeddings
 from ... import vector_store
 from ...db import WRITE_LOCK, cortex_conn
-from ...models import AssertionItem, AssertionSearchSummaryItem, PredicateFormNormalize
+from ...models import (
+    AssertionItem,
+    AssertionListSummaryItem,
+    AssertionSearchSummaryItem,
+    PredicateFormNormalize,
+)
 from ...projection_guard import assert_projection_covers_required
 
 logger = get_logger("cortex-api.assertions")
@@ -154,6 +159,28 @@ assert_projection_covers_required(
     const_name="_SEARCH_SUMMARY_COLS",
     source_file=__file__,
 )
+
+# §list-summary: narrow column set for assertions list intent=summary. Heavy
+# enrichment fields are omitted at the SQL layer; agents deepen via assertion_get.
+_ASSERTION_SUMMARY_COLS = (
+    "id, entity_id, claim, confidence, review_status, derivation_type, "
+    "observed_at, superseded_by, evidence_uris, "
+    "prospective_summary, events_json, reasoning_summary, attributes"
+)
+
+assert_projection_covers_required(
+    cols=_ASSERTION_SUMMARY_COLS,
+    model=AssertionListSummaryItem,
+    const_name="_ASSERTION_SUMMARY_COLS",
+    source_file=__file__,
+)
+
+_CLAIM_TRUNC = 200
+
+
+def _truncate_claim(claim: str) -> str:
+    return claim if len(claim) <= _CLAIM_TRUNC else claim[: _CLAIM_TRUNC - 1] + "…"
+
 
 _VALID_CONFIDENCE = {"confirmed", "believed", "suspected", "hypothesized"}
 
@@ -294,6 +321,9 @@ def _payload_validation_exception(exc: ValidationError) -> HTTPException:
 __all__ = [
     "_ASSERTION_COLS",
     "_ASSERTION_COMPACT_COLS",
+    "_ASSERTION_SUMMARY_COLS",
+    "_CLAIM_TRUNC",
+    "_truncate_claim",
     "_SEARCH_COLS",
     "_SEARCH_COLS_WITH_ENTITY",
     "_SEARCH_SUMMARY_COLS",

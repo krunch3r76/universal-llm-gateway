@@ -10,10 +10,12 @@ Sole agent-facing dispatch MCP tool. `frontier_generate`, `team_generate`,
 `frontier_dispatch`, `dispatch_frontier`, and `dispatch_team` are **retired**
 (Phase 4/5) — use `team_dispatch` only.
 
-For `op="generate"` and `op="to_thread"`, admission is async: returns
-`{execution_id, pipeline, status, started_at, knob_resolution}`; poll with
-`pipeline(op="result")`. Reasoning transparency is returned as `knob_resolution`;
-inspect `status`, `parity`, and `notes`.
+For `op="generate"` (API functional roles) and `op="to_thread"`, admission is
+async: returns `{execution_id, thread_id, poll_hint, output_contract=thread, …}`.
+**Default:** `op="generate"` auto-provisions an agent-bus thread; poll
+`agent_bus(tool="wait", …)` from `poll_hint` (primary). `pipeline(op="result")`
+remains available for execution metadata/content. Reasoning transparency is
+returned as `knob_resolution`; inspect `status`, `parity`, and `notes`.
 For `team_dispatch(op="handoff")` only: returns synchronously with
 `{thread_id, to_agent, push_reminder, result_handle, poll_hint}` — **no**
 `execution_id`; poll with `agent_bus(tool="wait", …)` from `poll_hint`.
@@ -23,8 +25,11 @@ For `team_dispatch(op="handoff")` only: returns synchronously with
 | `team_dispatch` | **API consult** (`op=generate\|to_thread`): `reviewer`, `gatherer`, `synthesizer`, `artisan`, `skeptic` (+ optional `model=` within `allowed_models`). **Manual-seat handoff** (`op=handoff` only): `web-consult`, `web-implement`, `cursor-consult`, `cursor-implement` | `op`, `role`; + `messages`, `dispatch_thread_id` for generate/to_thread; + `subject` and **at least one of** `source_ref` \| `packet_path` for handoff | yes (generate/to_thread); handoff resolves seat only — no model dispatch |
 
 `op` values (`team_dispatch`):
-- `"generate"` — direct mode; result content returned via `pipeline(op="result")`.
-- `"to_thread"` — bus mode; Stargate posts the model's reply to `thread` on its behalf after dispatch completes.
+- `"generate"` — **default bus mode** for API roles: auto-provisions thread +
+  `output_contract=thread`; poll `poll_hint` (agent-bus wait). `cursor-sdk` uses
+  the dedicated SDK orchestrator (same bus default).
+- `"to_thread"` — bus mode when caller already owns `thread`; Stargate posts the
+  role's reply on its behalf after dispatch completes.
 - `"handoff"` (**team_dispatch only**) — manual-seat handoff (`web-consult` → `claude-web`, `web-implement` → `claude-web` (bound implement), `cursor-consult` / `cursor-implement` → `claude-cursor`). Creates an agent-bus thread with a packet pointer synchronously. Returns `{thread_id, subject, to_agent, resolved_handoff_seat, handoff_contract, handoff_contract_source, push_reminder, result_handle, handoff_status, poll_hint}`. No model dispatch; web seats need operator push; Cursor seats need opening the thread in the IDE.
 
 See `agent-skills/frontier-dispatch.md` § "Choosing direct vs bus mode" for decision rules.
@@ -65,6 +70,14 @@ Valid generate roles: API-default roster slots (`reviewer`, `gatherer`,
 web-default roles (`web-consult`, `web-implement`), and Cursor handoff-only roles
 (`cursor-consult`, `cursor-implement`). Web Claude doing local file work should
 use `fs` directly; peer consult → `team_dispatch(op=generate, role=…)` with optional `model=`.
+
+**Future (`claude/web-auto`, Track 1 proposal — P0 gate green):** an unattended
+`op=generate` path for `web-consult` / `web-implement` via a dedicated MCP worker + service
+token is proposed (deck `tmp/prompts/web-generate-substrate/`). The P0 gate is proved —
+`scripts/web-automation-substrate-smoke.py` validates headless vortex MCP auth + bus closeout
+(env: `WEB_AUTOMATION_MCP_TOKEN`, `VORTEX_MCP_URL`; exit 0 → P1 densify unblocked, thread 1600).
+P1+ is **not landed**: continue using the manual `claude/web` handoff (`web-consult` /
+`web-implement` + operator push) until the `claude/web-auto` profile ships.
 
 **`op="handoff"` — manual-seat handoff primitive** (dispatching agent → web or Cursor IDE):
 

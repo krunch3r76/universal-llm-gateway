@@ -4,9 +4,15 @@ Builds the typed result_handle + handoff_status + poll_hint fragment appended
 to the handoff response. Kept separate from route.py (thin) and handoff.py
 (thread creation) per SRP.
 
-The handle's ``kind`` is authoritative for source-of-truth routing: callers
-dispatch retrieval on ``kind == "agent_bus_thread"`` to the bus, never to the
-pipeline tracker. No pseudo execution_id is minted for handoff.
+The handle's ``kind`` is authoritative for source-of-truth routing.
+
+- ``kind == "agent_bus_thread"`` (handoff): poll the bus only; never the
+  pipeline tracker. No pseudo ``execution_id`` is minted.
+- ``kind == "dual"`` (generate with default bus delivery): bus-first precedence —
+  ``thread_id`` is authoritative (poll via ``poll_hint`` / agent-bus wait);
+  ``execution_id`` is the inline fallback only when bus polling is unavailable.
+  ``durable: false`` marks the inline handle as non-durable; the bus thread is
+  the durable surface.
 """
 
 from __future__ import annotations
@@ -165,6 +171,48 @@ def build_handoff_result(*, thread_id: str, to_agent: str) -> dict[str, Any]:
     }
 
 
+def build_api_generate_result(
+    *,
+    role: str,
+    profile: CapabilityProfile,
+    handoff_fields: dict[str, Any],
+    dispatch_result: dict[str, Any],
+    thread_id: str,
+    resolved_model: str,
+) -> dict[str, Any]:
+    """Generate-shaped 202 for API roles with default bus thread delivery."""
+    execution_id = dispatch_result.get("execution_id")
+    result: dict[str, Any] = {
+        **dispatch_result,
+        **handoff_fields,
+        "op": "generate",
+        "output_contract": "thread",
+        "thread_id": thread_id,
+        "thread": thread_id,
+        "to_agent": role,
+        "resolved_model": resolved_model or dispatch_result.get("resolved_model"),
+        "substrate": "api",
+        "poll_hint": handoff_fields["poll_hint"],
+        "result_handle": {
+            # dual: bus-first — thread_id via poll_hint; execution_id inline fallback
+            "kind": "dual",
+            "execution_id": execution_id,
+            "thread_id": thread_id,
+            "substrate": "api",
+            # durable=False: inline execution_id handle; bus thread is durable
+            "durable": False,
+        },
+    }
+    if "capabilities" not in result and profile is not None:
+        result["capabilities"] = {
+            "role": role,
+            "resolved_model": resolved_model,
+            "tool_surface": profile.tool_surface,
+            "substrate": "api",
+        }
+    return result
+
+
 def build_sdk_generate_result(
     *,
     role: str,
@@ -195,10 +243,12 @@ def build_sdk_generate_result(
         },
         "poll_hint": handoff_fields["poll_hint"],
         "result_handle": {
+            # dual: bus-first — thread_id via poll_hint; execution_id inline fallback
             "kind": "dual",
             "execution_id": execution_id,
             "thread_id": thread_id,
             "substrate": "sdk",
+            # durable=False: inline execution_id handle; bus thread is durable
             "durable": False,
         },
     }

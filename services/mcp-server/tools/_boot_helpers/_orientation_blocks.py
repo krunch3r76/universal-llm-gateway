@@ -58,7 +58,7 @@ _DISPATCH_CONSULT_BLOCK_CLAUDE = """\
 ## Dispatch & Consult — pick by CAPABILITY, not model family
 To consult a MODEL (any provider, incl. grok) you do NOT use a build harness.
 When connector-bound: team_dispatch + panel_dispatch are server-primary — call directly (if unbound, see MCP binding block above). Model strings = provider/model on optional model= override (bare name = 404).
-- API consult (any provider)        → team_dispatch (op=generate, role=reviewer|artisan|skeptic|…, dispatch_thread_id=…, model="provider/model"?) → execution_id + capabilities; poll pipeline(op="result", execution_id=…)
+- API consult (any provider)        → team_dispatch (op=generate, role=reviewer|artisan|skeptic|…, dispatch_thread_id=…, model="provider/model"?) → execution_id + thread_id + poll_hint; poll agent_bus(wait) from poll_hint (pipeline result = metadata fallback)
 - role=skeptic                      → default xai/grok-4.20-multi-agent-0309 is inline-only/no-MCP; pre-stage corpus in messages (¬ expect Cortex/fs writes from skeptic)
 - by API role (reviewer/artisan/…) → team_dispatch (op=generate, role=…) — ¬ synthetic seat models on generate (422)
 **Delivering an authored packet to a seat IS `team_dispatch(op=handoff)` — the default, not an option.** It posts the pointer + returns `push_reminder`/`poll_hint`.

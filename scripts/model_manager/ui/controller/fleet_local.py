@@ -45,6 +45,11 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+# git-integration-worker is excluded from fleet Sync+Restart / Rebuild+Deploy
+# cycles — operator restarts it manually to avoid killing in-flight cursor-sdk
+# dispatches mid-run.
+_FLEET_SKIP_GIT_WORKER = True
+
 
 async def wait_event_service_healthy(
     ctl: ServiceController, *, timeout: float = 30.0
@@ -210,8 +215,8 @@ async def stop_local_services(
         stop_ops.append(("agent_bus", ctl.stop_agent_bus))
     if is_email_bridge_configured():
         stop_ops.append(("email_bridge", ctl.stop_email_bridge))
-    # git-integration-worker: always-on master host TCP (no config gate, D1).
-    stop_ops.append(("git_integration_worker", ctl.stop_git_integration_worker))
+    if not _FLEET_SKIP_GIT_WORKER:
+        stop_ops.append(("git_integration_worker", ctl.stop_git_integration_worker))
 
     stop_results = await run_ops_parallel(stop_ops)
     stop_dict: dict[str, bool] = {}
@@ -249,15 +254,13 @@ def _build_start_ops(
             else ctl.start_agent_bus
         )
         start_ops.append(("agent_bus", agent_bus_op))
-    # git-integration-worker: always-on master host TCP (no config gate, D1).
-    # Host process ⇒ rebuild == restart == stop+start; conditional mirrors
-    # agent_bus for uniformity (both branches equivalent here).
-    giw_op = (
-        ctl.rebuild_git_integration_worker
-        if rebuild_supporting_services
-        else ctl.start_git_integration_worker
-    )
-    start_ops.append(("git_integration_worker", giw_op))
+    if not _FLEET_SKIP_GIT_WORKER:
+        giw_op = (
+            ctl.rebuild_git_integration_worker
+            if rebuild_supporting_services
+            else ctl.start_git_integration_worker
+        )
+        start_ops.append(("git_integration_worker", giw_op))
     if is_cloud_proxy_configured():
         start_ops.append(("cloud_proxy", ctl.start_cloud_proxy))
     if is_mcp_configured(ws_root):
@@ -310,6 +313,11 @@ async def restart_local_services(
     sink.focus(mk)
     sink.status(mk, "⟳ restarting...")
     sink.line(mk, "Restarting services...")
+    if _FLEET_SKIP_GIT_WORKER:
+        sink.line(
+            mk,
+            "  ○ git_integration_worker skipped (manual restart per operator policy)",
+        )
 
     # Phase 1: Stop all (best-effort, parallel)
     if not already_stopped:

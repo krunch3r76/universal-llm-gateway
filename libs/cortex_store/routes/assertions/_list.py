@@ -7,7 +7,7 @@ action-hint detection.
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import Query
 from fastapi.responses import JSONResponse
@@ -22,14 +22,17 @@ from ...db import cortex_conn, decode_row, query
 from ...models import (
     AssertionItem,
     AssertionList,
+    AssertionListSummaryItem,
     CompactionProjection,
 )
 from ._list_filters import append_assertion_list_filters
 from ._shared import (
     _ASSERTION_COLS,
     _ASSERTION_COMPACT_COLS,
+    _ASSERTION_SUMMARY_COLS,
     _JSON_FIELDS,
     _SESSION_TAG_RE,
+    _truncate_claim,
     logger,
     router,
 )
@@ -109,6 +112,94 @@ def _list_assertions_compact(
     return JSONResponse(content={"items": items})
 
 
+def _list_assertions_summary(
+    *,
+    entity_id: str | None,
+    entity_id_prefix: str | None,
+    claim_filter: str | None,
+    seeded_by: str | None,
+    confidence: str | None,
+    review_status: str | None,
+    superseded: bool | None,
+    entity_type: str | None,
+    entity_type_exclude: str | None,
+    valid_at: str | None,
+    known_at: str | None,
+    limit: int,
+    include_compaction_pointers: bool,
+) -> AssertionList:
+    """Sparse projection for agent browse — skips §6.10 compaction pipeline."""
+    clauses: list[str] = []
+    params: list[str | int] = []
+    needs_join = append_assertion_list_filters(
+        clauses,
+        params,
+        entity_id=entity_id,
+        entity_id_prefix=entity_id_prefix,
+        claim_filter=claim_filter,
+        seeded_by=seeded_by,
+        confidence=confidence,
+        review_status=review_status,
+        superseded=superseded,
+        entity_type=entity_type,
+        entity_type_exclude=entity_type_exclude,
+        valid_at=valid_at,
+        known_at=known_at,
+    )
+
+    where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+    if needs_join:
+        cols = ", ".join(f"a.{c.strip()}" for c in _ASSERTION_SUMMARY_COLS.split(","))
+        sql = (
+            f"SELECT {cols} FROM assertions a "
+            f"JOIN entities e ON a.entity_id = e.id{where} "
+            f"ORDER BY a.created_at DESC LIMIT ?"
+        )
+    else:
+        sql = (
+            f"SELECT {_ASSERTION_SUMMARY_COLS} FROM assertions a{where} "
+            f"ORDER BY a.created_at DESC LIMIT ?"
+        )
+    params.append(limit)
+
+    with cortex_conn() as conn:
+        rows = query(conn, sql, tuple(params))
+
+    if not include_compaction_pointers:
+        rows, _ = filter_compaction_pointers(rows)
+
+    items: list[AssertionListSummaryItem] = []
+    for row in rows:
+        d = decode_row(row, _JSON_FIELDS)
+        items.append(
+            AssertionListSummaryItem(
+                id=d["id"],
+                entity_id=d.get("entity_id"),
+                claim=_truncate_claim(d.get("claim") or ""),
+                confidence=d["confidence"],
+                review_status=d.get("review_status"),
+                derivation_type=d.get("derivation_type"),
+                observed_at=d.get("observed_at"),
+                superseded_by=d.get("superseded_by"),
+                has_evidence_uris=bool(d.get("evidence_uris")),
+                has_enrichment=bool(
+                    d.get("prospective_summary")
+                    or d.get("events_json")
+                    or d.get("reasoning_summary")
+                    or d.get("attributes")
+                ),
+                _deepen=f"cortex(tool=assertion_get, assertion_id={d['id']})",
+            )
+        )
+
+    return AssertionList(
+        items=items,
+        intent="summary",
+        action_hints=None,
+        compaction_projection=None,
+    )
+
+
 @router.get("", response_model=AssertionList)
 def list_assertions(
     entity_id: str | None = None,
@@ -163,6 +254,16 @@ def list_assertions(
             )
         ),
     ] = False,
+    intent: Annotated[
+        Literal["summary", "full"],
+        Query(
+            description=(
+                "Response projection. summary (default): sparse hooks with "
+                "truncated claim; full: enrichment rows with §6.10 compaction "
+                "pipeline and action_hints."
+            )
+        ),
+    ] = "summary",
     compact: Annotated[
         bool,
         Query(
@@ -173,7 +274,8 @@ def list_assertions(
                 "`reasoning_summary`, `prospective_summary`, enrichment "
                 "metadata, supersession chain, quality/entrenchment scores, "
                 "and action hints. Also bypasses the §6.10 compaction "
-                "projection (not relevant to the self-reflection boot path)."
+                "projection (not relevant to the self-reflection boot path). "
+                "Boot-internal — agents use intent=summary."
             )
         ),
     ] = False,
@@ -200,6 +302,22 @@ def list_assertions(
             valid_at=valid_at,
             known_at=known_at,
             limit=limit,
+        )
+    if intent == "summary":
+        return _list_assertions_summary(
+            entity_id=entity_id,
+            entity_id_prefix=entity_id_prefix,
+            claim_filter=claim_filter,
+            seeded_by=seeded_by,
+            confidence=confidence,
+            review_status=review_status,
+            superseded=superseded,
+            entity_type=entity_type,
+            entity_type_exclude=entity_type_exclude,
+            valid_at=valid_at,
+            known_at=known_at,
+            limit=limit,
+            include_compaction_pointers=include_compaction_pointers,
         )
     clauses: list[str] = []
     params: list[str | int] = []
@@ -311,6 +429,7 @@ def list_assertions(
         compaction_projection = None
     return AssertionList(
         items=items,
+        intent="full",
         action_hints=hints or None,
         compaction_projection=compaction_projection,
     )

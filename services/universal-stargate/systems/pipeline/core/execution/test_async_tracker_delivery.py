@@ -406,8 +406,9 @@ def _make_thread_aware_transport(
     *,
     last_turn_from: str = "claude-web",
     post_status: int = 201,
+    close_status: int = 200,
 ) -> httpx.MockTransport:
-    """Mock /threads/{id} GET (last_turn_from) and /turns POST."""
+    """Mock /threads/{id} GET (last_turn_from), /turns POST, and /close PATCH."""
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.method == "GET" and "/threads/" in request.url.path:
@@ -424,6 +425,11 @@ def _make_thread_aware_transport(
             captured["post_path"] = request.url.path
             captured["post_body"] = json.loads(request.content)
             return httpx.Response(post_status, json={"id": 6, "turn_number": 6})
+        if request.method == "PATCH" and "/close" in request.url.path:
+            captured["close_called"] = True
+            captured["close_path"] = request.url.path
+            captured["close_body"] = json.loads(request.content)
+            return httpx.Response(close_status, json={})
         return httpx.Response(404, json={})
 
     return httpx.MockTransport(handler)
@@ -602,3 +608,41 @@ async def test_on_behalf_post_uses_caller_subject_when_supplied(
     await asyncio.sleep(0)
 
     assert captured["post_body"]["subject"] == "Re: plan-promotion review"
+
+
+@pytest.mark.asyncio
+async def test_on_behalf_ephemeral_closes_thread_on_2xx(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """team-dispatch one-shots: ephemeral bus_lifecycle closes after on-behalf POST."""
+    bus = _FakeBus()
+    captured: dict[str, Any] = {}
+    record = _make_to_thread_record()
+    record.bus_lifecycle = "ephemeral"
+
+    _patch_client(monkeypatch, _make_thread_aware_transport(captured))
+
+    outcome = await deliver_result(record, event_bus=bus, auth_token="secret")
+    await asyncio.sleep(0)
+
+    assert outcome.status == "delivered"
+    assert captured.get("close_called") is True
+    assert captured["close_path"] == "/threads/1051/close"
+    signals = [getattr(e, "signal", None) for e in bus.events]
+    assert "mcp.agentbus.thread.closed" in signals
+
+
+@pytest.mark.asyncio
+async def test_on_behalf_persistent_skips_close(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Default persistent lifecycle leaves the thread open after delivery."""
+    captured: dict[str, Any] = {}
+    record = _make_to_thread_record()
+
+    _patch_client(monkeypatch, _make_thread_aware_transport(captured))
+
+    await deliver_result(record, event_bus=_FakeBus(), auth_token="secret")
+    await asyncio.sleep(0)
+
+    assert captured.get("close_called") is None

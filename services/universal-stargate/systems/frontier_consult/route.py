@@ -93,13 +93,15 @@ class _DispatchCommon(BaseModel):
     remote_mcp: bool | None = None
     caller_agent: str | None = None
     timeout_seconds: int | None = Field(default=None, gt=0, le=86_400)
+    bus_lifecycle: Literal["persistent", "ephemeral"] | None = None
 
 
 class TeamDispatchGenerateBody(_DispatchCommon):
-    """``team_dispatch`` with ``op="generate"`` — result returned inline via poll.
+    """``team_dispatch`` with ``op="generate"`` — default bus thread delivery.
 
-    ``role`` selects a ``role:{slug}`` execution contract (Phase 5 of the
-    agent-naming cleanup arc). Replaces the legacy ``agent`` field.
+    API functional roles auto-provision an agent-bus thread and admit
+    ``output_contract=thread`` (poll ``poll_hint``, not inline-only
+    ``pipeline(op=result)``). ``cursor-sdk`` uses the dedicated SDK orchestrator.
 
     ``dispatch_thread_id`` binds server-owned thread persistence on the
     team-dispatch pipeline (distinct from ``transcript_id`` provenance-only).
@@ -189,6 +191,7 @@ def _normalize_op_body(
         "remote_mcp": body.remote_mcp,
         "caller_agent": body.caller_agent,
         "timeout_seconds": body.timeout_seconds,
+        "bus_lifecycle": body.bus_lifecycle,
     }
 
     # Carry role / model / mcp depending on variant. ``mcp`` is exposed only
@@ -285,10 +288,10 @@ async def team_dispatch(
     """Persona-required dispatch with explicit op discrimination.
 
     Two ops:
-    - ``op="generate"``: returns admission record; poll
-      ``pipeline(op="result", execution_id=…)`` for content.
-    - ``op="to_thread"``: admits dispatch; the agent's reply lands on
-      ``thread``; tracker terminal status reflects observed reply (Phase 2).
+    - ``op="generate"``: API roles auto-provision bus thread + admit
+      ``output_contract=thread``; poll ``poll_hint`` (agent-bus wait).
+    - ``op="to_thread"``: caller-owned ``thread``; reply lands on bus after
+      dispatch completes.
 
     Agents use MCP ``team_dispatch`` for all consult surfaces. This HTTP route
     is for Stargate-internal and pipeline-composition callers.
@@ -314,6 +317,21 @@ async def team_dispatch(
         except FrontierEndpointError as exc:
             return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
         response.status_code = 202
+        return result
+
+    if body.op == "generate" and role is not None:
+        from .api_role_generate import dispatch_api_role_generate
+
+        try:
+            result = await dispatch_api_role_generate(
+                request_id=request_id,
+                body=body,
+                response=response,
+            )
+        except FrontierEndpointError as exc:
+            return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
+        if isinstance(result, dict):
+            response.status_code = 202
         return result
 
     req = FrontierGenerateRequest(**_normalize_op_body(body))

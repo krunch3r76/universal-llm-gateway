@@ -115,11 +115,13 @@ def _op_assertions(
     review_status: str | None = None,
     superseded: bool | None = None,
     limit: int | None = None,
+    intent: str | None = None,
     include_compaction_pointers: bool = False,
     resolve_aliases: bool = True,
     raw_id: bool = False,
     **_: object,
 ) -> dict[str, Any]:
+    resolved_intent = intent if intent in ("summary", "full") else "summary"
     if entity_id:
         with cortex_conn() as conn:
             try:
@@ -132,7 +134,7 @@ def _op_assertions(
             except HTTPException as exc:
                 return {"error": exc.detail, "status_code": exc.status_code}
         entity_id = resolved.entity_id if not raw_id else entity_id
-    return _list_assertions_impl(
+    result = _list_assertions_impl(
         entity_id=entity_id,
         entity_id_prefix=entity_id_prefix,
         claim_filter=filter,
@@ -141,8 +143,16 @@ def _op_assertions(
         review_status=review_status,
         superseded=superseded,
         limit=limit or 50,
+        intent=resolved_intent,
         include_compaction_pointers=include_compaction_pointers,
     )
+    if not result.get("error") and resolved_intent == "summary":
+        result["_next"] = (
+            "Deepen one row: cortex(tool=assertion_get, assertion_id=<id>). "
+            "Entity context: cortex(tool=entity_get, intent=card). "
+            "Full rows: re-call with intent=full."
+        )
+    return result
 
 
 def _op_frictions(
@@ -164,6 +174,7 @@ def _op_frictions(
         seeded_by=seeded_by,
         superseded=False if superseded is None else superseded,
         limit=limit or 30,
+        intent="full",
         include_compaction_pointers=include_compaction_pointers,
     )
     if not result.get("error"):
@@ -269,17 +280,20 @@ def _op_review_queue(
         review_status="flagged",
         superseded=False,
         limit=lim,
+        intent="full",
         include_compaction_pointers=include_compaction_pointers,
     )
     staged_resp = _list_assertions_impl(
         review_status="staged",
         superseded=False,
         limit=lim,
+        intent="full",
         include_compaction_pointers=include_compaction_pointers,
     )
     low_conf_resp = _list_assertions_impl(
         superseded=False,
         limit=lim,
+        intent="full",
         include_compaction_pointers=include_compaction_pointers,
     )
     entities = _op_entities(limit=lim)

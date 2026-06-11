@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from ._shared import (
     AssertionConfidence,
@@ -337,8 +337,27 @@ class CompactionProjection(BaseModel):
     navigation_hint: str | None = None
 
 
+class AssertionListSummaryItem(BaseModel):
+    """Sparse list hook — invites deepen via assertion_get."""
+
+    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
+
+    id: int
+    entity_id: str | None = None
+    claim: str
+    confidence: AssertionConfidence
+    review_status: str | None = None
+    derivation_type: DerivationType | None = None
+    observed_at: str | None = None
+    superseded_by: int | None = None
+    has_evidence_uris: bool = False
+    has_enrichment: bool = False
+    deepen: str | None = Field(default=None, alias="_deepen")
+
+
 class AssertionList(BaseModel):
-    items: list[AssertionItem]
+    intent: Literal["summary", "full"] = "summary"
+    items: list[AssertionListSummaryItem | AssertionItem]
     action_hints: list[ActionHint] | None = None
     compaction_projection: CompactionProjection | None = None
 

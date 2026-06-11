@@ -681,6 +681,7 @@ def _cortex_manifest(
         manifest["entity_ids"] = unique_entity_ids[:8]
         manifest["assertion_samples"] = [
             {
+                "id": item.get("id"),
                 "entity_id": str(item.get("entity_id", "") or ""),
                 "confidence": str(item.get("confidence", "") or ""),
                 "claim": _truncate_text(str(item.get("claim", "") or ""), 100),
@@ -688,24 +689,21 @@ def _cortex_manifest(
             for item in items[:6]
         ]
         selective_options = []
-        if len(unique_entity_ids) == 1 and adaptive_limit is not None:
-            selective_options.append(
-                f'cortex(tool="assertions", arguments=\'{{"entity_id":"{unique_entity_ids[0]}","limit":{adaptive_limit}}}\')'
-            )
         if len(unique_entity_ids) == 1:
+            eid = unique_entity_ids[0]
             selective_options.append(
-                f'cortex(tool="assertions", arguments=\'{{"entity_id":"{unique_entity_ids[0]}","limit":10}}\')'
+                f'cortex(tool="assertions", arguments=\'{{"entity_id":"{eid}","intent":"summary","limit":{adaptive_limit or 12}}}\')'
             )
-            selective_options.append(
-                f'cortex(tool="entity_get", arguments=\'{{"entity_id":"{unique_entity_ids[0]}"}}\')'
-            )
-        else:
-            if adaptive_limit is not None:
+            if manifest["assertion_samples"]:
                 selective_options.append(
-                    f'cortex(tool="assertions", arguments=\'{{"limit":{adaptive_limit}}}\')'
+                    f'cortex(tool="assertion_get", arguments=\'{{"assertion_id":{manifest["assertion_samples"][0]["id"]}}}\')'
                 )
             selective_options.append(
-                'cortex(tool="assertions", arguments=\'{"limit":10}\')'
+                f'cortex(tool="entity_get", arguments=\'{{"entity_id":"{eid}","intent":"card"}}\')'
+            )
+        else:
+            selective_options.append(
+                f'cortex(tool="assertions", arguments=\'{{"intent":"summary","limit":{adaptive_limit or 20}}}\')'
             )
         manifest["selective_options"] = selective_options
         return manifest

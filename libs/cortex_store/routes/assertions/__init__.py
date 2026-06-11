@@ -17,6 +17,10 @@ used by sibling routes (``_ASSERTION_COLS``, ``_JSON_FIELDS``,
 
 from __future__ import annotations
 
+import json
+
+from fastapi.responses import JSONResponse
+
 # Side-effect imports — registering route handlers on `router`.
 from . import _create, _enrich, _entrenchment, _list, _search, _supersede, _update
 from ._create import _create_assertion_impl, create_assertion
@@ -43,6 +47,8 @@ from ._update import _update_assertion_impl, update_assertion
 def _list_assertions_impl(**kwargs: object) -> dict[str, object]:
     """Dispatch-layer wrapper around the ``list_assertions`` route."""
     data = list_assertions(**kwargs)  # type: ignore[arg-type]
+    if isinstance(data, JSONResponse):
+        return json.loads(data.body)
     return data.model_dump(mode="json")
 
 

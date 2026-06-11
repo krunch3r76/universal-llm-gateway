@@ -28,11 +28,10 @@ from ._shared import (
     _SEARCH_COLS_WITH_ENTITY,
     _SEARCH_SUMMARY_COLS_WITH_ENTITY,
     _log_search_access,
+    _truncate_claim,
     logger,
     router,
 )
-
-_CLAIM_TRUNC = 200
 
 
 def _sanitize_fts_query(raw: str) -> str:
@@ -41,10 +40,6 @@ def _sanitize_fts_query(raw: str) -> str:
     if not tokens:
         return ""
     return " ".join(f'"{t.replace(chr(34), chr(34) * 2)}"' for t in tokens)
-
-
-def _truncate_claim(claim: str) -> str:
-    return claim if len(claim) <= _CLAIM_TRUNC else claim[: _CLAIM_TRUNC - 1] + "…"
 
 
 def _search_cols(*, intent: Literal["summary", "full"]) -> str:

@@ -60,6 +60,9 @@ class FrontierGenerateRequest:
     # On-behalf delivery (2026-05-22) — caller-supplied subject for the
     # reply turn posted by Stargate. None ⇒ delivery handler auto-derives.
     reply_subject: str | None = None
+    # Override post-delivery thread close for ``op="to_thread"``. None ⇒
+    # pipelines/dispatch applies pipeline-specific default (team-dispatch → ephemeral).
+    bus_lifecycle: Literal["persistent", "ephemeral"] | None = None
 
 
 async def build_dispatch_body(
@@ -217,6 +220,8 @@ async def build_dispatch_body(
         pipeline_options["role"] = req.role
     if req.max_tool_turns is not None:
         pipeline_options["max_tool_turns"] = req.max_tool_turns
+    elif req.role is not None:
+        pipeline_options["max_tool_turns"] = 100
     if req.remote_mcp is not None:
         pipeline_options["remote_mcp"] = req.remote_mcp
 
@@ -300,4 +305,6 @@ async def build_dispatch_body(
             body["from_agent"] = f"frontier:{model_short}"
     if req.reply_subject is not None:
         body["reply_subject"] = req.reply_subject
+    if req.bus_lifecycle is not None:
+        body["bus_lifecycle"] = req.bus_lifecycle
     return body
