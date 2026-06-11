@@ -26,7 +26,7 @@ from ..routes.assertions import (
 from ..routes.graph import activate, analyze_impact_semantic
 from ..routes.triage import AgeStagedRequest, age_staged
 from ..status_trait_read import effective_confidence_band
-from ._shared import _VALID_CONFIDENCE
+from ._shared import _VALID_CONFIDENCE, service_entity_id
 from .ops_assertions_update import (
     _op_assertion_get,
     _op_assertion_update,
@@ -155,7 +155,7 @@ def _op_frictions(
     **_: object,
 ) -> dict[str, Any]:
     """List open friction assertions (service:* entities, bracketed category claims)."""
-    entity_id = f"service:{service}" if service else None
+    entity_id = service_entity_id(service) if service else None
     claim_filter = f"[{category}]" if category else None
     result = _list_assertions_impl(
         entity_id=entity_id,

@@ -25,7 +25,9 @@ from ._shared import (
     _DEFAULT_USER_ENTITY,
     _FRICTION_CATEGORIES,
     _VALID_CONFIDENCE,
+    normalize_service_slug,
     record,
+    service_entity_id,
 )
 
 logger = get_logger("cortex-api.dispatch_ops.assertions")
@@ -262,7 +264,9 @@ def _op_friction(
     **_: object,
 ) -> dict[str, Any]:
     if not service:
-        return {"error": "service is required (e.g. 'mcp-server', 'cortex-api')"}
+        return {
+            "error": "service is required (bare slug or service: entity ID, e.g. mcp-server)"
+        }
     if not note:
         return {"error": "note is required — describe what went wrong"}
     if category and category not in _FRICTION_CATEGORIES:
@@ -272,8 +276,9 @@ def _op_friction(
     claim = f"[{category or 'unclassified'}] {note}"
     if suggestion:
         claim += f" — Suggestion: {suggestion}"
+    normalized_service = normalize_service_slug(service)
     body: dict[str, Any] = {
-        "entity_id": f"service:{service}",
+        "entity_id": service_entity_id(service),
         "claim": claim,
         "confidence": "hypothesized",
         "evidence": f"Friction observed by {agent or 'unknown'} during session",
@@ -285,10 +290,12 @@ def _op_friction(
         body["seeded_by"] = agent
     result = _create_assertion_impl(body)
     if "error" not in result:
-        logger.info("cortex friction: %s/%s — %s", service, category, note[:60])
+        logger.info(
+            "cortex friction: %s/%s — %s", normalized_service, category, note[:60]
+        )
         record(
             "mcp.cortex.friction.logged",
-            service=service,
+            service=normalized_service,
             category=category or "unclassified",
             agent=agent,
         )

@@ -64,10 +64,11 @@ def test_unread_toc_one_row_per_thread_recipient_scoped(tmp_path) -> None:
         assert data["total_unread_threads"] == 2
         assert data["total_unread_turns"] == 3
         assert data["marked_read"] == 0
-        # The digest carries no turn bodies — the overflow root cause.
-        assert "body" not in rows[t1]
-        # Latest metadata comes from the most recent unread turn in the thread.
-        assert rows[t1]["latest_subject"] == "a2"
+        # Sparse digest: only routing keys, no descriptive/heavy fields (the
+        # per-row strings were what bloated the recipient fan-out).
+        assert set(rows[t1]) == {"thread", "unread_count", "latest_turn_number"}
+        for absent in ("body", "slug", "latest_subject", "latest_from", "latest_to"):
+            assert absent not in rows[t1]
         assert rows[t1]["latest_turn_number"] == 2
 
 

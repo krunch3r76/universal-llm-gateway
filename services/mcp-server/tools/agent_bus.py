@@ -690,13 +690,14 @@ def _fetch_unread_dispatch(
 ) -> dict[str, Any]:
     """Fetch unread turns.
 
-    Recipient scope (``to`` set, ``thread`` unset) returns a bounded per-thread
-    inbox digest (UnreadThreadToc) — one row per thread with unread turns
-    addressed to the seat — so the catch-up read stays under the MCP inline
-    response guard regardless of unread volume (friction 16835). ``compact`` is
-    moot at recipient scope; the digest never carries turn bodies. Thread scope
-    (``thread`` set) returns that thread's full unread turn list (List[Turn], no
-    count cap; ``compact`` controls body projection).
+    Recipient scope (``to`` set, ``thread`` unset) returns a sparse per-thread
+    inbox digest (UnreadThreadToc) — one row per thread (thread id +
+    recipient-scoped unread_count + head turn_number) — so the catch-up read
+    stays bounded regardless of unread volume or thread count (friction 16835).
+    Descriptive fields are omitted; expand a thread on demand with ``thread``
+    set. ``compact`` is moot at recipient scope; the digest never carries turn
+    bodies. Thread scope (``thread`` set) returns that thread's full unread turn
+    list (List[Turn], no count cap; ``compact`` controls body projection).
     """
     if isinstance(thread, int):
         thread = str(thread)
@@ -1104,7 +1105,7 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
         Operations:
           threads       (status?, tags?, lifecycle_state?)              — list threads; status: active|blocked|waiting|closed|all (default active); tags: AND-filter; lifecycle_state: pending|admitted|delivered|failed (exact match)
           create_thread (slug, summary?, tags?, lifecycle_state?, thread_id?) — create a thread without a turn; use lifecycle_state="pending" for lifecycle-managed threads that will be dispatched later
-          fetch_unread  (to?, thread?, mark_read?, compact?)                        — recipient scope (to set, thread unset): bounded per-thread unread digest (one row per thread). thread scope: that thread's full unread turn list (no count cap; compact controls bodies). At least one of to/thread required.
+          fetch_unread  (to?, thread?, mark_read?, compact?)                        — recipient scope (to set, thread unset): sparse per-thread unread digest (thread id + unread_count + head turn_number; expand a thread with fetch_unread(thread=N) / get / threads). thread scope: that thread's full unread turn list (no count cap; compact controls bodies). At least one of to/thread required.
           fetch         (to?, thread?, last?, unread?, compact?, mark_read?, all?)  — get turns; at least one of to/thread required; all=true fetches every turn (no limit); unread=true fetches all unread (last ignored; prefer fetch_unread); last caps windowed fetches (default 10, unread default false); compact default false (bodies projected) — pass compact=true for metadata-only
           get           (thread, turn_number)                           — get one specific turn
           post          (slug, to, subject, body, from_agent, summary?, attachments?, tags?, allow_long_body?) — start a new thread (atomic: creates thread + first turn). from_agent is REQUIRED — name the seat authoring the turn (e.g. "cursor", "claude-web", "gpt-cursor", "claude-api"); there is no default.

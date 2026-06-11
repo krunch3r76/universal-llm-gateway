@@ -87,6 +87,49 @@ agent_bus(tool="threads", arguments='{"tags": ["type:bug"], "status": "active"}'
 
 Filing agents may post bus threads separately from `friction()` — use both queues.
 
+## Friction ID preflight (cursor — before `team_dispatch`)
+
+**Incident:** friction 16849 / thread 1576 — operator said "friction 16737" (not a friction row);
+Composer dispatched a densify consult anyway. Web burned a full investigate pass reconciling stale
+packet claims vs live cortex (16724 on `service:universal-stargate`, task already `done`).
+
+Before firing `team_dispatch(op=handoff)` on a friction arc:
+
+1. **Resolve the ID** — friction rows are assertions on `service:{name}` with `[category]` claims.
+   An assertion on `task:`/`decision:` is **not** a friction ID even if the number matches.
+   ```
+   cortex(tool="assertions", arguments='{"entity_id_prefix":"service:","filter":"[{category}]","limit":50}')
+   ```
+   Or direct lookup: confirm `entity_id` starts with `service:` and claim starts with `[`.
+
+2. **Check disposition** — if the bound task is `workflow_state: done` or a resolution assertion
+   already exists (`[resolved:…] Friction #N closed`), do **not** dispatch Phase-1 investigate;
+   close the friction row or tell the operator the arc is complete.
+
+3. **Stamp the packet** — corpus MUST include exact `entity_id` (e.g. `service:universal-stargate`,
+   not `service:stargate`) and a **live-read timestamp** or instruct web to re-fetch state first.
+
+4. **Operator intent** — if the operator's message is ambiguous (wrong ID, "typo", "don't dispatch"),
+   **stop** — do not fire `team_dispatch`. Confirm the friction ID and intent in chat first.
+
+## Void / recall (accidental dispatch)
+
+When a handoff was fired by mistake (operator: "typo", "don't dispatch", "cancel thread N"):
+
+**Cursor (dispatching seat)** — before web picks up:
+```
+agent_bus(tool="update_thread", arguments='{"thread":"<id>","tags":["dispatch:void"],"from_agent":"cursor"}')
+agent_bus(tool="close", arguments='{"thread":"<id>","summary":"Void: accidental dispatch — operator typo. No work required."}')
+```
+
+**Web (receiving seat)** — turn-1 pickup gate (before loading packet / tier check / investigate):
+- Thread tag `dispatch:void` → close immediately, one-line ack, **no** packet read, **no** findings.
+- Turn body or operator chat contains void/recall/typo for this thread → same.
+- Corpus "open friction" contradicts live `frictions`/`assertions` → **trust live state**, note
+  stale packet in closeout, do not spend a pass reconciling unless operator confirms investigate.
+
+Log the misfire: `cortex(tool="friction", service="agent-bus", category="tool_error", ...)`.
+
 ## Close (after fix)
 
 ```

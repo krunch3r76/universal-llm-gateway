@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 
 from fastapi import HTTPException, status
 
-from ..db import cortex_conn
+from ..db import cortex_conn, json_encode
 from ..dispatch_ops._shared import (
     _AGENT_SLUG_EXAMPLES,
     _AGENT_SLUG_RE,

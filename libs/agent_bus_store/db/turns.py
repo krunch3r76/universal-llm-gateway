@@ -279,11 +279,12 @@ def get_unread_thread_toc(
     row's unread_count reflects turns THIS seat must read — not the
     thread-global unread_count carried on ThreadDetail.
 
-    The result is bounded by thread count (O(threads)), so a recipient-scoped
-    catch-up read stays under the MCP inline response guard regardless of total
-    unread turn volume (friction 16835: the flat List[Turn] form overflowed at
-    routine fan-out). Per-thread latest-turn metadata is taken from the most
-    recent unread turn addressed to the seat (the actionable head).
+    The result is bounded by thread count (O(threads)) and each row is sparse
+    (thread id, recipient-scoped unread_count, head turn_number) — descriptive
+    fields are omitted so the digest stays small even across hundreds of
+    threads (friction 16835: the flat List[Turn] form overflowed at routine
+    fan-out). Agents expand a thread on demand via fetch_unread(thread=N),
+    get(thread, turn_number), or threads(has_unread=true).
 
     When ``mark_read`` is True, every matching unread turn is marked read in the
     same transaction (preserves the fetch_unread(to=…, mark_read=true)
@@ -295,24 +296,20 @@ def get_unread_thread_toc(
     inbox_clause, inbox_params = recipient_in_clause(to, include_team=to != "kaywan")
     where = f"{inbox_clause} AND turns.read_at IS NULL AND turns.status != 'superseded'"
     limit_clause = f"LIMIT {int(limit)}" if limit is not None else ""
-    # SQLite bare-column rule: with a single MAX() aggregate the non-aggregated
-    # columns resolve to the row holding the max — so latest_* come from the
-    # highest-turn_number unread turn in each thread.
+    # Sparse rows: thread id + recipient-scoped unread_count + head turn number.
+    # Descriptive fields (slug, subject, participants) are intentionally omitted
+    # so the digest stays bounded across hundreds of threads — agents expand a
+    # thread on demand (fetch_unread(thread=N) / get / threads). Ordered by most
+    # recent unread turn.
     select_sql = f"""
         SELECT
             turns.thread AS thread,
-            threads.slug AS slug,
             COUNT(*) AS unread_count,
-            MAX(turns.turn_number) AS latest_turn_number,
-            turns.subject AS latest_subject,
-            turns.from_agent AS latest_from,
-            turns.to_agent AS latest_to,
-            turns.created_at AS latest_created_at
+            MAX(turns.turn_number) AS latest_turn_number
         FROM turns
-        LEFT JOIN threads ON threads.id = turns.thread
         WHERE {where}
         GROUP BY turns.thread
-        ORDER BY latest_created_at DESC
+        ORDER BY MAX(turns.created_at) DESC
         {limit_clause}
     """
     with connect() as conn:

@@ -179,16 +179,15 @@ class TurnList(BaseModel):
 
 
 class UnreadThreadTocRow(BaseModel):
-    """One thread's unread digest for a recipient-scoped fetch_unread."""
+    """One thread's sparse unread-digest entry for a recipient-scoped
+    fetch_unread. Descriptive fields are intentionally omitted so the digest
+    stays bounded across many threads — expand a thread on demand via
+    fetch_unread(thread=N), get(thread, turn_number), or threads(has_unread=true).
+    """
 
     thread: str
-    slug: str | None = None
     unread_count: int
     latest_turn_number: int
-    latest_subject: str | None = None
-    latest_from: str | None = None
-    latest_to: str | None = None
-    latest_created_at: datetime
 
 
 class UnreadThreadToc(BaseModel):

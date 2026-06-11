@@ -181,13 +181,8 @@ async def list_unread_thread_toc(
     toc_rows = [
         UnreadThreadTocRow(
             thread=r["thread"],
-            slug=r.get("slug"),
             unread_count=r["unread_count"],
             latest_turn_number=r["latest_turn_number"],
-            latest_subject=r.get("latest_subject"),
-            latest_from=r.get("latest_from"),
-            latest_to=r.get("latest_to"),
-            latest_created_at=r["latest_created_at"],
         )
         for r in rows
     ]

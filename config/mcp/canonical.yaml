@@ -1135,7 +1135,7 @@ tools:
     tool: agent_bus_read_fetch_unread
     substrate_qualified: user-vortex__agent_bus_read_fetch_unread
   fol_descriptor: |
-    fetch_unread(to) ∧ ¬thread ⟹ result ∈ UnreadThreadToc (one row per thread; bounded by thread count).
+    fetch_unread(to) ∧ ¬thread ⟹ result ∈ UnreadThreadToc (sparse rows: thread id + unread_count + head turn_number; bounded; expand via thread=N).
     fetch_unread(thread) ⟹ result ∈ List[Turn] (no count cap).
     mark_read=true marks matching unread turns read (read-cursor side effect). Projection of agent_bus. See agent_skill:agent_bus.
   json_schema:

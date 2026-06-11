@@ -414,3 +414,34 @@ def test_migration_adds_source_ref_column() -> None:
     migration_055.migrate(conn)
     cols = {row["name"] for row in conn.execute("PRAGMA table_info(session_journals)")}
     assert "source_ref" in cols
+
+
+@pytest.mark.offline
+def test_journal_write_stamps_transcript_timestamps(
+    session_env: dict[str, Path],
+) -> None:
+    """Regression (friction a16837): journal_write must not 500 on json_encode.
+
+    ``session_close_helpers._stamp_transcript_timestamps`` referenced
+    ``json_encode`` without importing it, so every ``journal_write`` raised
+    HTTP 500 ``NameError: name 'json_encode' is not defined`` (input-independent).
+    This exercises the full ``_op_journal_write`` path and asserts the transcript
+    entity's attributes carry ``opened_at`` / ``closed_at`` with no NameError.
+    """
+    session_id = "claude-web-2026-06-11-043000-a16"
+    result = ops_journals._op_journal_write(
+        timestamp="2026-06-11T04:30:00Z",
+        agent="claude-web",
+        summary="a16837 regression guard",
+        session_id=session_id,
+    )
+    assert "error" not in result, result
+    entity = _query_one(
+        session_env["db_path"],
+        "SELECT attributes FROM entities WHERE id = ?",
+        (f"transcript:{session_id}",),
+    )
+    assert entity is not None
+    attrs = json.loads(entity["attributes"])
+    assert attrs["closed_at"] == "2026-06-11T04:30:00Z"
+    assert attrs["opened_at"] == "2026-06-11T04:30:00Z"

@@ -65,7 +65,7 @@ def register_agent_bus_read_tool(mcp: FastMCP) -> None:
         Operations (identical semantics to the matching agent_bus ops):
           threads      (status?, tags?, lifecycle_state?, last?, limit?, has_unread?)
           fetch        (to?, thread?, last?, unread?, compact?, mark_read?, all?)
-          fetch_unread (to?, thread?, mark_read?, compact?)  — recipient scope: bounded per-thread unread digest; thread scope: that thread's full unread turn list
+          fetch_unread (to?, thread?, mark_read?, compact?)  — recipient scope: sparse per-thread unread digest (thread id + unread_count + head turn); thread scope: that thread's full unread turn list
           get          (thread, turn_number)
           wait         (thread, after_turn?, wait_seconds?, completion?, from_agent?)
 

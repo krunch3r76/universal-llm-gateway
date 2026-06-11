@@ -111,6 +111,17 @@ _FRICTION_CATEGORIES = frozenset(
     }
 )
 
+
+def normalize_service_slug(service: str) -> str:
+    """Accept bare slug (mcp-server) or entity ID (service:mcp-server)."""
+    return service.removeprefix("service:")
+
+
+def service_entity_id(service: str) -> str:
+    """Canonical service:* entity_id from either slug form."""
+    return f"service:{normalize_service_slug(service)}"
+
+
 try:
     from mcp_events import record as _record
 except (

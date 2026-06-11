@@ -44,6 +44,20 @@ dispatch — set `workflow_state: blocked` + `block_reason` on the blocked leaf.
 
 Full attribute table: `universal-llm-gateway/.cursor/rules/todo_ws.mdc` §Dispatch metadata.
 
+## Friction-ticket packets (extra preflight)
+
+When the handoff targets a filed friction (not a todo spec arc):
+
+| Check | Why (16849 / thread 1576) |
+|---|---|
+| Friction ID resolves to `service:*` assertion | Assertion 16737 was a `task:` completion row, not friction 16737 |
+| Bound task not already `done` | Dispatched investigate on a closed arc |
+| Corpus names exact `entity_id` | Web queried `service:stargate`; friction lived on `service:universal-stargate` |
+| `<mcp_capabilities>` uses assertion lookup, not guessed service | `assertions(entity_id=service:…)` or `frictions` with the **same** service slug |
+| Operator confirmed dispatch intent | Typo request → void protocol, not `team_dispatch` |
+
+See `friction-review.md` § Friction ID preflight / Void recall.
+
 ## Preflight (mandatory — before writing a packet)
 
 Complete for a **consult** AND a bound **implement** (`role=cursor-implement` or `role=web-implement` handoff):
