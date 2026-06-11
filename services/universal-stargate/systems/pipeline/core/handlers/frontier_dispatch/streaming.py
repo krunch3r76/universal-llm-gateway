@@ -1,7 +1,6 @@
 """SSE streaming closures for ``frontier_dispatch_v1``.
 
-Extracted from ``frontier_dispatch.py`` to keep that module under the SLOC
-ceiling.  Three public factory functions build the callables that
+Package-private SSE streaming closures. Three public factory functions build the callables that
 ``FrontierDispatchHandler.execute`` passes to ``run_native_tool_loop``:
 
 - ``build_in_process_sender`` — the ``send_native`` callable; streams provider-
@@ -18,7 +17,7 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from .protocol import PipelineContext
+    from ..protocol import PipelineContext
 
 DISPATCH_STALL_TIMEOUT_S = 180.0
 
@@ -59,7 +58,7 @@ def build_on_tool_event(
     publish: Callable[[object], None],
 ) -> Callable[[str, dict[str, Any]], None]:
     """Translate lib-emitted tool events to Stargate event-bus factories."""
-    from ..events.dispatch import (
+    from ...events.dispatch import (
         PipelineFrontierDispatchToolCalled,
         PipelineFrontierDispatchToolFailed,
     )
@@ -124,7 +123,7 @@ def build_in_process_sender(
 
     from systems.proxy.routers.cloud_passthrough import _get_cloud_forwarder
 
-    from ..events.dispatch import PipelineFrontierDispatchToolRequested
+    from ...events.dispatch import PipelineFrontierDispatchToolRequested
 
     execution_id = context.execution_id
     # An explicit per-step ``timeout_seconds`` wins; otherwise fall back to the

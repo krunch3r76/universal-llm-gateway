@@ -93,6 +93,29 @@ def test_mcp_capabilities_enriched(tmp_path: Path) -> None:
     assert "quality_gate" in mcp
 
 
+def test_mcp_capabilities_always_carries_arch_skillrefs(tmp_path: Path) -> None:
+    """Materialized packets always reference the universal + ULG arch layers so a
+    handoff to an MCP seat passes handoff_packet_missing_arch_skillrefs, even when
+    the source entity's required_skills omitted them."""
+    mcp = (
+        materialize(_sample_spec(skills=[]), out_dir=tmp_path)
+        .text.split("<mcp_capabilities>")[1]
+        .split("</mcp_capabilities>")[0]
+    )
+    assert "agent-skills/architecture-invariants.md" in mcp
+    assert "agent-skills/ulg-architecture.md" in mcp
+
+
+def test_mcp_capabilities_arch_skillrefs_not_duplicated(tmp_path: Path) -> None:
+    """A required_skill that overlaps the arch set is emitted once."""
+    mcp = (
+        materialize(_sample_spec(skills=["ulg-architecture"]), out_dir=tmp_path)
+        .text.split("<mcp_capabilities>")[1]
+        .split("</mcp_capabilities>")[0]
+    )
+    assert mcp.count("agent-skills/ulg-architecture.md") == 1
+
+
 def test_task_guidance_numbered(tmp_path: Path) -> None:
     result = materialize(_sample_spec(), out_dir=tmp_path)
     guidance = result.text.split("<task_guidance>")[1].split("</task_guidance>")[0]

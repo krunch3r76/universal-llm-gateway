@@ -13,8 +13,8 @@ anomaly classes:
   variant mismatch). Precedes a terminal ``pipeline_execution_failed``.
 
 Consumers:
-- ``core/handlers/frontier_dispatch_observability.py`` — OutputShort, TerminationShadow
-- ``core/handlers/frontier_dispatch_admission.py`` — AgentModelMismatch
+- ``core/handlers/frontier_dispatch/observability.py`` — OutputShort, TerminationShadow
+- ``core/handlers/frontier_dispatch/admission_checks.py`` — AgentModelMismatch
 
 Signals: ``pipeline.frontier.dispatch.{output.short,termination.shadow,mismatch}``.
 """

@@ -3,7 +3,7 @@
 Reads all assertions on the thread anchor entity in a single cortex
 round-trip, projects non-superseded turn assertions
 (predicate-form ``user_turn(N)`` / ``assistant_turn(N)``) into a
-``[{role, content}]`` prefix consumed by the ``frontier_dispatch_request``
+``[{role, content}]`` prefix consumed by ``frontier_dispatch.request``
 Mode-1 ``handler_inputs.messages`` binding, and prepends a §6.10
 consolidation summary message when one is present on the anchor.
 

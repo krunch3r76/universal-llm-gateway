@@ -29,6 +29,12 @@ async def get_ranked_candidates(
     requirements: dict[str, object],
     estimated_source_tokens: int | None = None,
 ) -> list[str]:
+    """Resolve and cache ranked model IDs for one step within a pipeline execution.
+
+    Stores results on ``context._resolved_model_candidates`` keyed by step name,
+    requirements dict, and optional token estimate so repeated lookups within the
+    same DAG run avoid duplicate routing calls.
+    """
     cache: dict[str, list[str]] | None = getattr(
         context,
         "_resolved_model_candidates",

@@ -14,9 +14,15 @@ Do not duplicate the cortex playbook body here — load the SOT section you need
 | Lane → transport table | `.cursor/rules/todo_ws.mdc` §Dispatch metadata |
 | Handoff dispatch shapes | `projects/.cursor/rules/handoff-dispatchers.mdc` |
 
-**Quick ref — implement dispatch** (canonical detail in cortex SOT):
+**Quick ref — implement dispatch** (default = `cursor-sdk` generate, **dense packet required**; handoff = operator-attended fallback; canonical detail in cortex SOT § Dispatch targets / Implement lane):
 
 ```python
+# DEFAULT — auto Composer, no IDE pickup
+team_dispatch(op="generate", role="cursor-sdk", contract="implement",
+              packet_path="tmp/reviews/{slug}-implement-packet.md",
+              dispatch_thread_id="{arc-id}")
+
+# FALLBACK — operator-attended IDE
 team_dispatch(op="handoff", role="cursor-implement",
               source_ref="todo:{slug}", subject="Implement {slug}")
 ```

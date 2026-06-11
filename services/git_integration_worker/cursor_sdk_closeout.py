@@ -8,7 +8,12 @@ from dataclasses import dataclass
 _IMPLEMENT_PREAMBLE = (
     "Execute this task NOW using your tools. Make the code/file changes the packet "
     "specifies. If you are blocked, reply with `status: blocked` and the specific "
-    "reason. Do NOT reply with an acknowledgement-only message."
+    "reason. Do NOT reply with an acknowledgement-only message.\n\n"
+    "Before any fs write: read fs(cortex, agent-skills/architecture-invariants.md) and "
+    "fs(cortex, agent-skills/ulg-architecture.md); also load any additional cortex "
+    "skills named in <invariants>. Engineering-discipline rules (SLOC, scope, logging) "
+    "auto-load via setting_sources; the architecture layer (topology_ws, event contracts, "
+    "domain routing) is description-gated and does NOT reliably attach without these reads."
 )
 
 _CONTRACT_FRONTMATTER_RE = re.compile(

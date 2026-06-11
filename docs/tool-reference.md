@@ -27,7 +27,11 @@ For `team_dispatch(op="handoff")` only: returns synchronously with
 `op` values (`team_dispatch`):
 - `"generate"` — **default bus mode** for API roles: auto-provisions thread +
   `output_contract=thread`; poll `poll_hint` (agent-bus wait). `cursor-sdk` uses
-  the dedicated SDK orchestrator (same bus default).
+  the dedicated SDK orchestrator (same bus default). **`role=cursor-sdk` is the
+  default transport for bound mechanical implement** (`packet_path` + `contract=implement`,
+  auto Composer, no IDE pickup) — the `cursor-implement` handoff is the operator-attended
+  fallback. The implement packet MUST be dense (Composer executes mechanically). See
+  `agent-skills/consult-routing.md` § Dispatch targets.
 - `"to_thread"` — bus mode when caller already owns `thread`; Stargate posts the
   role's reply on its behalf after dispatch completes.
 - `"handoff"` (**team_dispatch only**) — manual-seat handoff (`web-consult` → `claude-web`, `web-implement` → `claude-web` (bound implement), `cursor-consult` / `cursor-implement` → `claude-cursor`). Creates an agent-bus thread with a packet pointer synchronously. Returns `{thread_id, subject, to_agent, resolved_handoff_seat, handoff_contract, handoff_contract_source, push_reminder, result_handle, handoff_status, poll_hint}`. No model dispatch; web seats need operator push; Cursor seats need opening the thread in the IDE.
@@ -57,7 +61,7 @@ entity, assembles birth + briefing + continuation, and rejects violations before
 | `packet_path` | `str\|None` | `op="handoff"` only — workspaces-relative path to a pre-written six-block packet. Hand-authored alternative to `source_ref`; both-present triggers the `implement_spec_hash` drift guard. |
 | `pointer_body` | `str\|None` | `op="handoff"` only — override the pointer turn body (≤25 lines) |
 | `tags` | `list[str]\|None` | `op="handoff"` only — bus thread tags (default: `["agent:{to_agent}", "type:handoff", "contract:{handoff_contract}"]`). Caller-supplied tags are preserved; `contract:{value}` is appended if absent |
-| `role=cursor-sdk` (op=generate) | — | SDK auto substrate; default delivery=thread; consult via `messages[]`; implement via `packet_path`; poll via `poll_hint` (agent-bus), not `pipeline(op=result)` |
+| `role=cursor-sdk` (op=generate) | — | **Default transport for bound mechanical implement.** SDK auto substrate; default delivery=thread; consult via `messages[]`; implement via `packet_path` (+ `contract=implement`); poll via `poll_hint` (agent-bus), not `pipeline(op=result)`. **Dense packet required** (Composer executes mechanically). `cursor-implement` handoff = operator-attended fallback |
 | `op=handoff, seat=cursor-sdk` | — | **Deprecated** — normalizes to generate + warning (`deprecated_alias` in response) |
 
 **`op="generate"` / `op="to_thread"` — admission guard for web/manual seats:**

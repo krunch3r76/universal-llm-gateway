@@ -16,7 +16,7 @@ correlation when ``.started`` is absent (these branches fire during admission,
 before the started event would be emitted).
 
 Consumers: ``core/handlers/frontier_dispatch.py`` (Enabled, Misconfigured),
-``core/handlers/frontier_dispatch_admission.py`` (Unsupported).
+``core/handlers/frontier_dispatch/admission_checks.py`` (Unsupported).
 
 Signals: ``pipeline.frontier.dispatch.remotemcp.{enabled,misconfigured,unsupported}``.
 """

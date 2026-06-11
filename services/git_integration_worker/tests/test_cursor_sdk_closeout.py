@@ -63,6 +63,7 @@ def test_resolve_prompt_preamble_implement_fallback() -> None:
         inferred_contract="implement",
     )
     assert "Execute this task NOW" in preamble
+    assert "architecture-invariants.md" in preamble
 
 
 def test_format_closeout_body_degraded() -> None:

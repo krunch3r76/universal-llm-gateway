@@ -1,3 +1,12 @@
+"""Classify whether a failed model invocation should trigger ranked fallback.
+
+Used by DAG step runners and generate handlers when a primary model call fails.
+Maps exceptions (proxy errors, transport timeouts, deterministic local faults)
+to a ``FallbackEligibility`` verdict consumed by ``step_model_fallback`` and
+``model_fallback`` handlers. Suppression reasons block fallback when routing
+constraints (e.g. cloud-only primary on a local worker) would make retry futile.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

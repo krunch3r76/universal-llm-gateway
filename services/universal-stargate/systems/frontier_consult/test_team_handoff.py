@@ -51,9 +51,15 @@ _GOOD_SUBJECT = "test handoff"
 # Fully-conformant six-block packet (incl. <mcp_capabilities> + acceptance) so a
 # single on-disk file satisfies every happy-path route test (consult, implement,
 # web seat, cursor seat).
-_CONFORMANT_PACKET = """\
+_ARCH_SKILL_REFS = (
+    "- fs(cortex, agent-skills/architecture-invariants.md)\n"
+    "- fs(cortex, agent-skills/ulg-architecture.md)"
+)
+
+_CONFORMANT_PACKET = f"""\
 <scope>Goal: x. Selection mode: targeted.</scope>
-<invariants>[scope] every changed line traces to task.</invariants>
+<invariants>[scope] every changed line traces to task.
+{_ARCH_SKILL_REFS}</invariants>
 <task_guidance>## Acceptance criteria
 1. It works.</task_guidance>
 <corpus>the artifact</corpus>
@@ -61,9 +67,10 @@ _CONFORMANT_PACKET = """\
 <output_format>Reply on thread.</output_format>
 """
 
-_CONSULT_ONLY_PACKET = """\
+_CONSULT_ONLY_PACKET = f"""\
 <scope>Goal: x. Selection mode: targeted.</scope>
-<invariants>[scope] every changed line traces to task.</invariants>
+<invariants>[scope] every changed line traces to task.
+{_ARCH_SKILL_REFS}</invariants>
 <task_guidance>Review questions and risks.</task_guidance>
 <corpus>the artifact</corpus>
 <mcp_capabilities>You have MCP. Cite tool calls.</mcp_capabilities>
@@ -217,6 +224,33 @@ def test_h1a_route_web_consult_pointer_includes_consult_contract(
     body_text = captured["payload"]["body"]
     assert "Contract: consult" in body_text
     assert _GOOD_PACKET in body_text
+
+
+def test_h1a_route_web_consult_rejects_missing_arch_skillrefs(
+    monkeypatch: pytest.MonkeyPatch,
+    _handoff_app: FastAPI,
+    tmp_path: Path,
+) -> None:
+    """role=web-consult → claude-web; packet without arch skill-refs is rejected
+    at admission (the densify-lane hole this gate closes)."""
+    monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
+    _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-thread-web"))
+    _write_packet(
+        tmp_path, _GOOD_PACKET, _CONFORMANT_PACKET.replace(_ARCH_SKILL_REFS, "")
+    )
+
+    client = TestClient(_handoff_app, raise_server_exceptions=False)
+    resp = client.post(
+        "/api/v1/team/handoff",
+        json={
+            "op": "handoff",
+            "role": "web-consult",
+            "packet_path": _GOOD_PACKET,
+            "subject": _GOOD_SUBJECT,
+        },
+    )
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["error"]["code"] == "handoff_packet_missing_arch_skillrefs"
 
 
 def test_h1a_route_web_consult_push_reminder_mentions_web_push(
@@ -644,8 +678,32 @@ def test_h5_default_template_cites_packet_path() -> None:
     )
     assert _GOOD_PACKET in result
     assert _GOOD_SUBJECT in result
+    assert "architecture-invariants.md" in result
     lines = result.splitlines()
     assert len(lines) <= 25
+
+
+def test_h5b_consult_pointer_omits_arch_read_on_override() -> None:
+    result = build_pointer_body(
+        request_id="req-h5b",
+        packet_path=_GOOD_PACKET,
+        subject=_GOOD_SUBJECT,
+        pointer_body="custom consult pointer",
+        handoff_contract="consult",
+    )
+    assert result == "custom consult pointer"
+    assert "architecture-invariants.md" not in result
+
+
+def test_h5c_implement_pointer_omits_consult_arch_read() -> None:
+    result = build_pointer_body(
+        request_id="req-h5c",
+        packet_path=_GOOD_PACKET,
+        subject=_GOOD_SUBJECT,
+        pointer_body=None,
+        handoff_contract="implement",
+    )
+    assert "architecture-invariants.md" not in result
 
 
 # ---------------------------------------------------------------------------
@@ -1121,6 +1179,65 @@ def test_pv_mcp_capabilities_required_for_grok_web_seat(tmp_path: Path) -> None:
         )
     assert exc_info.value.code == "handoff_packet_invalid"
     assert "<mcp_capabilities>" in exc_info.value.reason
+
+
+def test_pv_arch_skillrefs_required_for_web_seat(tmp_path: Path) -> None:
+    """Both arch skill-refs absent from an MCP-seat packet → reject, cite both."""
+    packet = _CONFORMANT_PACKET.replace(_ARCH_SKILL_REFS, "")
+    _write_packet(tmp_path, _PV_REL, packet)
+    with pytest.raises(FrontierEndpointError) as exc_info:
+        validate_packet(
+            request_id="req-pv-arch1",
+            packet_path=_PV_REL,
+            to_agent="claude-web",
+            handoff_contract="consult",
+            workspaces_root=tmp_path,
+        )
+    err = exc_info.value
+    assert err.status_code == 422
+    assert err.code == "handoff_packet_missing_arch_skillrefs"
+    assert "agent-skills/architecture-invariants" in err.reason
+    assert "agent-skills/ulg-architecture" in err.reason
+
+
+def test_pv_arch_skillrefs_partial_rejected(tmp_path: Path) -> None:
+    """One ref present, the other missing → reject citing only the missing one."""
+    packet = _CONFORMANT_PACKET.replace(
+        "- fs(cortex, agent-skills/ulg-architecture.md)", ""
+    )
+    _write_packet(tmp_path, _PV_REL, packet)
+    with pytest.raises(FrontierEndpointError) as exc_info:
+        validate_packet(
+            request_id="req-pv-arch2",
+            packet_path=_PV_REL,
+            to_agent="claude-web",
+            handoff_contract="consult",
+            workspaces_root=tmp_path,
+        )
+    err = exc_info.value
+    assert err.code == "handoff_packet_missing_arch_skillrefs"
+    assert "agent-skills/ulg-architecture" in err.reason
+    assert "agent-skills/architecture-invariants" not in err.reason
+
+
+def test_pv_arch_skillrefs_anywhere_in_packet_admitted(tmp_path: Path) -> None:
+    """Refs satisfy the gate from any block (matches materializer placement)."""
+    packet = _CONFORMANT_PACKET.replace(
+        _ARCH_SKILL_REFS, "[scope] no skill refs in invariants"
+    ).replace(
+        "<mcp_capabilities>You have MCP. Cite tool calls.",
+        "<mcp_capabilities>You have MCP. Cite tool calls. "
+        "fs(cortex, agent-skills/architecture-invariants.md) "
+        "fs(cortex, agent-skills/ulg-architecture.md)",
+    )
+    _write_packet(tmp_path, _PV_REL, packet)
+    validate_packet(
+        request_id="req-pv-arch3",
+        packet_path=_PV_REL,
+        to_agent="claude-web",
+        handoff_contract="consult",
+        workspaces_root=tmp_path,
+    )
 
 
 def test_pv_implement_without_acceptance_rejected(tmp_path: Path) -> None:
@@ -2187,7 +2304,9 @@ _IMPLEMENT_PACKET_FM = """\
 source_ref: todo:traced
 ---
 <scope>Goal: x.</scope>
-<invariants>x</invariants>
+<invariants>x
+- fs(cortex, agent-skills/architecture-invariants.md)
+- fs(cortex, agent-skills/ulg-architecture.md)</invariants>
 <task_guidance>## Acceptance criteria
 1. It works.</task_guidance>
 <corpus>the artifact</corpus>

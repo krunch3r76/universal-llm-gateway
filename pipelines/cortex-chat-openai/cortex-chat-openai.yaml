@@ -80,7 +80,7 @@ steps:
       artifact_uri: archive_user.json.artifact_uri
 
   # 3) Frontier model call with server-assembled messages prefix +
-  #    current user turn (frontier_dispatch_request appends the
+  #    current user turn (frontier_dispatch.request appends the
   #    sourceNs.text turn to the assembled prefix per Phase 2 binding).
   - name: respond
     type: frontier_dispatch_v1

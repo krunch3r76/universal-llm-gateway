@@ -61,12 +61,15 @@ reduce per-session re-onboarding.
 |---|---|---|
 | Deep file splits (complex consumers, PHANTOM symbols) | `team_dispatch(op=handoff, seat=claude-web)` modularize packet | Gradual default |
 | Scoped post-split review | web-consult six-block packet → `claude-web` | Gradual default |
-| Mechanical apply + gates | cursor-implement / IDE self | Clear split plan, bounded diff |
+| Mechanical apply + gates | **`team_dispatch(op=generate, role=cursor-sdk, packet_path=…, contract=implement)`** (default, auto Composer) · `cursor-implement` handoff (operator-attended fallback) · IDE self when the dispatching seat is already Cursor | Clear split plan, bounded diff; **packet must be dense** (Composer executes mechanically) |
 | Bulk modularize plan | `scripts/modularize plan {file}` | ≤500 SLOC, ≤3 consumers, no event-factory density |
 | Automated review / split | `team-generate` via `/consult-review` or `/modularize` | `/overhaul frontier` only |
 
 Read `agent-skills/consult-routing.md` before any handoff. Anthropic-family models
 route to manual seats (`claude-web` / `claude-cursor`), not API `generate` lanes.
+Consult/review steps stay `web-consult` handoff; only the **implement** lane changes
+default. `cursor-sdk` is **not** a prohibited API generate lane — it runs `cursor/composer-2.5`
+via Cursor's subscription substrate (`substrate=sdk`), so the manual-seat directive is preserved.
 
 ## Pre-submission NARROW scope
 

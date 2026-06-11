@@ -45,6 +45,17 @@ _REQUIRED_PACKET_TAGS: tuple[str, ...] = (
 # investigate via tools, not the inlined corpus alone (Block 5).
 _MCP_CAPABILITIES_TAG = "<mcp_capabilities>"
 
+# Block 2 skill-refs the contract marks load-bearing for MCP-seat handoffs
+# (architecture-handoff-protocol.mdc § Block 2 — "Read before findings"). The
+# IDE does not auto-load the architecture layer and claude-web has no auto-load
+# backstop at all, so omitting these refs lets a reviewer review blind to the
+# universal invariants + ULG topology/lifecycle. Required unconditionally for
+# every MCP-seat handoff (decision: 2026-06-11 operator).
+_REQUIRED_INVARIANT_SKILL_REFS: tuple[str, ...] = (
+    "agent-skills/architecture-invariants",
+    "agent-skills/ulg-architecture",
+)
+
 
 def _mcp_packet_seats() -> frozenset[str]:
     """Manual handoff seats with an MCP tool surface — packets to these seats
@@ -52,8 +63,7 @@ def _mcp_packet_seats() -> frozenset[str]:
     return frozenset(
         f"{family}-{platform}"
         for (family, platform), profile in load_profiles().items()
-        if profile.manual_handoff
-        and profile.tool_surface == "mcp"
+        if profile.manual_handoff and profile.tool_surface == "mcp"
     )
 
 
@@ -170,6 +180,26 @@ def validate_packet(
             status_code=422,
             code="handoff_packet_invalid",
         )
+
+    if to_agent in _mcp_packet_seats():
+        missing_refs = [
+            ref for ref in _REQUIRED_INVARIANT_SKILL_REFS if ref not in text
+        ]
+        if missing_refs:
+            raise FrontierEndpointError(
+                request_id=request_id,
+                field="packet_path",
+                reason=(
+                    f"Packet {packet_path!r} missing required architecture "
+                    f"skill-ref(s): {', '.join(missing_refs)}. MCP-seat handoffs "
+                    "must reference the "
+                    "universal invariant + ULG architecture layers (Block 2 / "
+                    "Block 5) so the reviewer reads them before findings. "
+                    f"{_PROTOCOL_HINT}"
+                ),
+                status_code=422,
+                code="handoff_packet_missing_arch_skillrefs",
+            )
 
     if handoff_contract == "implement":
         guidance = _extract_block(text, "task_guidance")
@@ -303,6 +333,16 @@ _CONTRACT_LINES: dict[str, str] = {
     ),
 }
 
+# Mechanical arch-layer reminder for web-consult (B′): web has no IDE rule
+# auto-load; packet <invariants> skill-refs are necessary but not sufficient
+# without an explicit pre-findings read instruction on the bus pointer.
+_CONSULT_ARCH_READ = (
+    "Before findings: read fs(cortex, agent-skills/architecture-invariants.md) "
+    "and fs(cortex, agent-skills/ulg-architecture.md) per packet <invariants> / "
+    "<mcp_capabilities> item 0; load additional cortex skills named there. "
+    "Web has no IDE rule auto-load — these reads are mandatory."
+)
+
 
 def build_pointer_body(
     *,
@@ -333,6 +373,8 @@ def build_pointer_body(
                 "\n\nFallback: re-read via source_ref frontmatter if packet "
                 "absent locally."
             )
+        if handoff_contract == "consult":
+            body += f"\n\n{_CONSULT_ARCH_READ}"
     lines = body.splitlines()
     if len(lines) > _POINTER_MAX_LINES:
         raise FrontierEndpointError(

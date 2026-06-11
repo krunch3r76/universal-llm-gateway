@@ -1,7 +1,6 @@
 """Post-loop observability emission for ``frontier_dispatch_v1``.
 
-Keeps the main handler under the 400-SLOC soft limit while adding the
-Phase-1 hoisted signals. One entry point, ``emit_post_loop_observability``,
+Package-private post-loop observability. One entry point, ``emit_post_loop_observability``,
 orchestrates both detectors and their Stargate event-factory translations:
 
 - ``pipeline.frontier.dispatch.output.short`` — fires when a team-seat
@@ -30,16 +29,16 @@ from frontier_observability import (
 )
 from frontier_observability.output_short import SHORT_OUTPUT_TOKEN_THRESHOLD
 
-from ..events.dispatch import (
+from ...events.dispatch import (
     PipelineFrontierDispatchOutputShort,
     PipelineFrontierDispatchTerminationShadow,
 )
-from ..events.refusal import PipelineFrontierDispatchRefusalSuspected
+from ...events.refusal import PipelineFrontierDispatchRefusalSuspected
 
 if TYPE_CHECKING:
     from agent_seat.native_loop import NativeLoopResult
 
-    from .protocol import PipelineContext
+    from ..protocol import PipelineContext
 
 # Module-level detector — stateless, safe to share across dispatches.
 _TERMINATION_DETECTOR = TerminationShadowDetector()

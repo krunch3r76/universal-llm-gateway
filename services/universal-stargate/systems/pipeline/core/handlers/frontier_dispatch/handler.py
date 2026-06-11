@@ -14,7 +14,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from ..builtin import BaseHandler
-from ..frontier_dispatch_admission import validate_frontier_dispatch_step
+from .admission_checks import validate_frontier_dispatch_step
 from ..protocol import StepOutput
 from ..registry import register_handler
 from .admission_gate import run_admission_gate

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from systems.pipeline.core.handlers.frontier_dispatch_request import (
+from systems.pipeline.core.handlers.frontier_dispatch.request import (
     translate_reasoning_effort,
 )
 

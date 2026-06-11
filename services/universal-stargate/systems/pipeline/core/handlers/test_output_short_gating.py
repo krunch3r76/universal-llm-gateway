@@ -4,7 +4,7 @@ Covers:
 - D6: output_short heuristic is suppressed when output_contract="thread"
 - D7: output_short heuristic still fires when output_contract="inline"
 
-The gating is in frontier_dispatch_observability._emit_output_short:
+The gating is in frontier_dispatch.observability._emit_output_short:
 
     short_hint = (
         _emit_output_short(...)
@@ -18,7 +18,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
-from systems.pipeline.core.handlers.frontier_dispatch_observability import (
+from systems.pipeline.core.handlers.frontier_dispatch.observability import (
     emit_post_loop_observability,
 )
 

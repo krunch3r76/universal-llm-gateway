@@ -1,6 +1,8 @@
 # Handoff Packet Authoring
 
-Durable skeleton + checklist for authoring a `team_dispatch(op=handoff)` packet.
+Durable skeleton + checklist for authoring a bound implement / consult packet — the
+six-block shape is shared by both `team_dispatch(op=handoff)` and the default implement
+transport `team_dispatch(op=generate, role=cursor-sdk, packet_path=…)`.
 Promoted out of ephemeral `tmp/reviews/_handoff-packet-template.md` so it cannot
 go missing under task pressure (incident threads 1296/1297). Authority for the
 block contract: project `.cursor/rules/architecture-handoff-protocol.mdc`
@@ -10,7 +12,10 @@ block contract: project `.cursor/rules/architecture-handoff-protocol.mdc`
 
 **Invariant:** Reasoning tier (`web-consult` / `cursor-consult` / Opus) authors
 dispatch-ready specs (`tasks/specs/{slug}.md` + todo seed); mechanical tier
-(`cursor-implement` / Composer) executes them — **never the reverse**.
+(`cursor-sdk` generate / Composer — default; `cursor-implement` handoff fallback)
+executes them — **never the reverse**. Because Composer is mechanical, the implement
+packet MUST be dense and complete (every file/function/test shape pinned, forks resolved);
+an under-specified cursor-sdk packet is a routing error, not a thin spec the executor rescues.
 
 Read `attributes.dispatch_lane` on the leaf `todo:` before writing anything.
 
@@ -18,8 +23,9 @@ Read `attributes.dispatch_lane` on the leaf `todo:` before writing anything.
 |---|---|---|---|
 | `web-implement-packet` | web-claude | six-block **consult** packet that authors an implement packet | `team_dispatch(op=handoff, seat=claude-web)` (shorthand `web-consult`) |
 | `web-spec` | web-claude | six-block **consult** packet (findings) | `team_dispatch(web-consult)` |
-| `cursor-mechanical` | cursor IDE | skeleton or full packet on disk; **no web** when spec is sufficient | IDE or `cursor-implement` |
-| `cursor-implement` | cursor (handoff) | bound implement packet with acceptance criteria | `team_dispatch(cursor-implement)` |
+| `cursor-sdk-implement` *(default for bound implement)* | any dispatching seat | **dense** six-block implement packet + acceptance criteria | `team_dispatch(op=generate, role=cursor-sdk, packet_path=…, contract=implement)` — auto Composer, no IDE pickup |
+| `cursor-mechanical` | cursor IDE | skeleton or full packet on disk; **no web** when spec is sufficient | `cursor-sdk` generate (default) · IDE / `cursor-implement` when already in Cursor |
+| `cursor-implement` | cursor (handoff) | bound implement packet with acceptance criteria | `team_dispatch(op=handoff, role=cursor-implement)` — **fallback**: operator opens IDE |
 | `operator-gate` | operator | assert template / export — not a handoff packet | — |
 
 **Canonical pipeline:** reasoning upstream (web consult or plan author) → dense artifact
@@ -143,8 +149,38 @@ You have MCP. Investigate before forming findings. Cite every tool call.
 </output_format>
 ```
 
+## Preliminary scaffold (Composer) → densification (reasoner)
+
+**Invariant:** ∀ packet whose mechanical blocks are templated: a cheap tier
+(`composer-2.5`) MAY draft the **scaffold**; the reasoning tier (web-claude /
+cursor-consult / Opus) **densifies** the judgment-bearing blocks. The dense,
+dispatch-ready artifact's authorship stays with the reasoner — this does NOT
+invert the § Dispatch lifecycle invariant, because the scaffold carries structure,
+¬ conclusions.
+
+Gate (per block): scaffold iff the block is low-judgment; densify iff it carries
+design judgment a wrong draft could **anchor**.
+
+| Block | Scaffold (Composer) | Densify (reasoner) |
+|---|---|---|
+| `<scope>` | path list, git SHA, selection mode | — (mechanical) |
+| `<corpus>` | changed-file manifest (paths only) | — (mechanical) |
+| `<invariants>` | skill-ref lines, SLOC/no-bc boilerplate | per-task narrowing |
+| `<output_format>` | finding/closeout shape boilerplate | — (mechanical) |
+| `<task_guidance>` | section headers / question stubs | **all judgment** — questions, criteria, acceptance |
+| `<mcp_capabilities>` | tool list boilerplate | evidence-format specifics |
+
+**Anchoring caveat:** the pattern is upside-only where the scaffold is structural.
+Where a preliminary artifact would embed a *design decision* (e.g. proposed module
+boundaries), a cheap draft can anchor the reasoner into elaborating a flawed
+structure rather than reasoning fresh. There, prefer either/or tiers with
+escalation, ¬ scaffold→densify chaining — unless the draft is explicitly labeled
+"candidate, re-derive don't elaborate." See `.cursor/commands/overhaul.md` § 2
+(split planning) for the worked exclusion.
+
 ## Naming + delivery
 
+- **Default implement transport = `cursor-sdk` generate** (`team_dispatch(op=generate, role=cursor-sdk, packet_path=…, contract=implement)`) — auto Composer, no IDE pickup. `cursor-implement` handoff is the operator-attended **fallback**, not a peer default. The packet must be **dense** (Composer executes mechanically). Full policy: `agent-skills/consult-routing.md` § Dispatch targets.
 - Packet path: `tmp/reviews/<task>-<seat>-packet.md` (write the file **before** the handoff call).
 - **`packet_path` root**: Stargate resolves `packet_path` relative to `PROJECT_ROOT`
   (`/mnt/torus/projects/universal-llm-gateway`). Use `tmp/reviews/<file>.md` — **no repo prefix**.
@@ -152,13 +188,24 @@ You have MCP. Investigate before forming findings. Cite every tool call.
   `universal-llm-gateway/` prefix. These are different; conflating them gives `handoff_packet_missing`.
 - Web boot-gate fields (when target is `claude-web`): ensure `<invariants>` carries the
   `architecture-invariants` + `ulg-architecture` skill-ref lines — web has no IDE `*_ws.mdc` backstop.
-- Cursor note (when target is `claude-cursor`): keep the same skill-ref lines + narrowing + Block 5
-  item 0 — a packet-booted IDE thread auto-loads only the engineering-discipline layer
-  (`alwaysApply: true`); the arch layer (`topology_ws`, `mcp-integration_ws`, …) is
-  description-gated and does NOT reliably attach, so the skill-refs are load-bearing, not a
-  backstop. Only genuine trim: ¬ re-inline the auto-loaded engineering-discipline layer
-  (SLOC/modularization, code style, scope, `no-bc`, logging).
+- **Cursor + cursor-sdk arch-layer note** (when target is `claude-cursor` or `cursor-sdk`
+  implement via `team_dispatch(op=generate, role=cursor-sdk, …)`): keep the same skill-ref
+  lines + task narrowing + Block 5 item 0 as for `claude-web`. Both seats load project rules
+  via `setting_sources=all`, but only the engineering-discipline layer (`alwaysApply: true`)
+  auto-attaches; the arch layer (`topology_ws`, `mcp-integration_ws`, `event-debugging_ws`, …)
+  is description-gated and does NOT reliably attach in a packet-booted thread, so Block 2
+  skill-refs (`architecture-invariants`, `ulg-architecture`) and Block 5 item 0 (`fs(cortex, …)`
+  reads before findings/edits) are **load-bearing**, not a backstop. **cursor-sdk** also
+  receives a mechanical implement preamble enforcing these reads — packet authors must still
+  include skill-refs and narrowing so the executor loads task-specific cortex skills beyond
+  the universal pair. Only genuine trim: ¬ re-inline the auto-loaded engineering-discipline
+  layer (SLOC/modularization, code style, scope, `no-bc`, logging).
 - Only a ≤25-line pointer is posted to the bus; the packet stays on disk.
+- **Web-consult pointer (B′, server-enforced):** default `build_pointer_body` for
+  `handoff_contract=consult` appends a mechanical arch-layer read reminder (same
+  substance as cursor-sdk implement preamble) — packet authors must still include
+  Block 2 skill-refs, Block 5 item 0 in `<mcp_capabilities>`, and web boot-gate
+  frontmatter (`active_project_tag`, `cortex_boot_confirmed`, `related_thread_ids`).
 
 ## Authority
 

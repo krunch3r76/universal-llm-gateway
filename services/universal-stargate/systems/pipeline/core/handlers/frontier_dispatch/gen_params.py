@@ -37,16 +37,16 @@ from ...execution.errors import (
     CapabilityCatalogMissError,
     CapabilityKnobRejectedError,
 )
-from ..frontier_dispatch_admission import (
+from .admission_checks import (
     build_runtime_context_block,
     prepend_dispatch_context,
 )
-from ..frontier_dispatch_request import (
+from .request import (
     resolve_default_reasoning_effort,
     resolve_messages,
     translate_reasoning_effort,
 )
-from ..frontier_dispatch_tools import XAI_BUILTIN_TOOLS
+from .tools import XAI_BUILTIN_TOOLS
 
 if TYPE_CHECKING:
     from ..protocol import PipelineContext

@@ -1,7 +1,6 @@
 """Request assembly helpers for ``frontier_dispatch_v1``.
 
-Extracted from ``frontier_dispatch.py`` to keep that module under the SLOC
-ceiling.  Contains:
+Package-private request assembly helpers. Contains:
 
 - ``_VALID_REASONING_EFFORTS`` — accepted effort vocabulary (union of
   documented provider surfaces; per-model support is enforced at the
@@ -27,11 +26,11 @@ from agent_seat import normalize_agent_slug
 from agent_seat.registry import resolve_agent_model
 from llm_adapters.capability_dispatch import default_reasoning_effort, wrapper_for
 
-from ..execution.resolver import NamespaceResolver, traverse_path
+from ...execution.resolver import NamespaceResolver, traverse_path
 
 if TYPE_CHECKING:
-    from ..schemas import StepConfig
-    from .protocol import PipelineContext
+    from ...schemas import StepConfig
+    from ..protocol import PipelineContext
 
 # Accepted effort vocabulary (union of documented provider surfaces). Per-model
 # support — and the native-shape translation — is owned by the

@@ -153,8 +153,20 @@ def _render_task_guidance(spec: ImplementSpec) -> str:
     return "\n".join(parts)
 
 
+# Architecture skill layers required in every MCP-seat handoff packet so the
+# reviewer reads the universal invariants + ULG topology/lifecycle before
+# findings (handoff.py validate_packet § handoff_packet_missing_arch_skillrefs).
+# Emitted unconditionally; deduped against the spec's own required_skills.
+_REQUIRED_ARCH_SKILLS: tuple[str, ...] = (
+    "architecture-invariants",
+    "ulg-architecture",
+)
+
+
 def _render_mcp_capabilities(spec: ImplementSpec) -> str:
-    lines = [_skill_read(s) for s in spec.skills]
+    skills = list(spec.skills)
+    skills.extend(s for s in _REQUIRED_ARCH_SKILLS if s not in skills)
+    lines = [_skill_read(s) for s in skills]
     lines.append(f"Tool surface: {_TOOL_SURFACE}")
     if any(f.endswith(".py") for f in spec.scope.files_expected):
         files = ", ".join(

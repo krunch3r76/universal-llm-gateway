@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from ..frontier_dispatch_observability import emit_post_loop_observability
+from .observability import emit_post_loop_observability
 from ..protocol import StepOutput
 
 if TYPE_CHECKING:

@@ -10,10 +10,10 @@ by ``tool_call_id`` (Anthropic ``content_block.id``, OpenAI/xAI ``item.id``;
 Google has no native id and emits ``None``).
 
 Consumers:
-- ``core/handlers/frontier_dispatch_streaming.py`` — Requested, Called, Failed
+- ``core/handlers/frontier_dispatch/streaming.py`` — Requested, Called, Failed
   (lazy imports)
-- ``core/handlers/frontier_dispatch_admission.py`` — Suppressed (admission path)
-- ``core/handlers/frontier_dispatch_tools.py`` — ToolListSupplied, Suppressed
+- ``core/handlers/frontier_dispatch/admission_checks.py`` — Suppressed (admission path)
+- ``core/handlers/frontier_dispatch/tools.py`` — ToolListSupplied, Suppressed
   (lazy)
 
 Signals: ``pipeline.frontier.dispatch.{tool.requested,tool.called,tool.failed,

@@ -1,7 +1,6 @@
 """Admission, context injection, and prompt-block construction for frontier_dispatch_v1.
 
-Kept in a sibling module to hold frontier_dispatch.py under the file-size
-ceiling.  Seven responsibilities:
+Package-private admission helpers for ``frontier_dispatch_v1``. Seven responsibilities:
 
 1. ``check_agent_model_consistency`` — pre-hydration guard for concrete
    family/platform seats. Functional roles are model-agnostic; explicit model
@@ -47,12 +46,12 @@ from agent_seat.registry import (
     resolve_agent_valid_family,
 )
 
-from ..events.dispatch import (
+from ...events.dispatch import (
     PipelineFrontierDispatchAgentModelMismatch,
     PipelineFrontierDispatchRemoteMcpUnsupported,
     PipelineFrontierDispatchToolSuppressed,
 )
-from ..execution.errors import (
+from ...execution.errors import (
     AgentModelMismatchError,
     RemoteMcpUnsupportedError,
     UnknownPipelineOptionsError,
@@ -61,8 +60,8 @@ from ..execution.errors import (
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from ..schemas import StepConfig
-    from .protocol import PipelineContext
+    from ...schemas import StepConfig
+    from ..protocol import PipelineContext
 
 
 def prepend_dispatch_context(system: str) -> str:

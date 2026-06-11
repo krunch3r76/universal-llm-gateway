@@ -10,7 +10,7 @@ completion rates previously derived from the deprecated
 Consumers:
 - ``core/handlers/frontier_dispatch.py`` — Completed, EmptyCompletion,
   Exhausted, Started
-- ``core/handlers/frontier_dispatch_tools.py`` — Hydrated
+- ``core/handlers/frontier_dispatch/tools.py`` — Hydrated
 
 Signals: ``pipeline.frontier.dispatch.{hydrated,started,completed,
 empty.completion,exhausted}``.

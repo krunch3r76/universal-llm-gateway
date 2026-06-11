@@ -24,7 +24,7 @@ from systems.pipeline.core.handlers.frontier_dispatch import (
 from systems.pipeline.core.handlers.frontier_dispatch import (
     native_loop as fd_native_mod,
 )
-from systems.pipeline.core.handlers.frontier_dispatch_tools import XAI_BUILTIN_TOOLS
+from systems.pipeline.core.handlers.frontier_dispatch.tools import XAI_BUILTIN_TOOLS
 
 _TEST_MODEL_ENTITY_ID = "model:test-slug"
 
@@ -377,7 +377,7 @@ async def test_handler_exhausted_empty_content_raises(
 def test_tool_event_translation_produces_frontier_signals(
     published_events: list[Any],
 ) -> None:
-    from systems.pipeline.core.handlers.frontier_dispatch_streaming import (
+    from systems.pipeline.core.handlers.frontier_dispatch.streaming import (
         build_on_tool_event,
     )
 
@@ -1042,7 +1042,7 @@ async def test_handler_non_default_model_unaffected_by_default_resolution(
 
 def test_resolve_default_reasoning_effort_grok43_returns_high() -> None:
     """Unit test: ``xai/grok-4.3`` resolves to ``high``."""
-    from .frontier_dispatch_request import resolve_default_reasoning_effort
+    from .frontier_dispatch.request import resolve_default_reasoning_effort
 
     assert resolve_default_reasoning_effort("xai/grok-4.3") == "high"
 
@@ -1063,7 +1063,7 @@ def test_resolve_default_reasoning_effort_other_models_return_none(
     model: str | None,
 ) -> None:
     """Unit test: every non-listed model (and falsy values) returns None."""
-    from .frontier_dispatch_request import resolve_default_reasoning_effort
+    from .frontier_dispatch.request import resolve_default_reasoning_effort
 
     assert resolve_default_reasoning_effort(model) is None
 
@@ -1098,7 +1098,7 @@ async def test_handler_surfaces_canonical_model_entity_id(
 
 
 def test_resolve_remote_mcp_defaults_by_provider() -> None:
-    from systems.pipeline.core.handlers.frontier_dispatch_admission import (
+    from systems.pipeline.core.handlers.frontier_dispatch.admission_checks import (
         resolve_remote_mcp,
     )
 
@@ -1137,7 +1137,7 @@ def test_resolve_agent_uses_options_then_domain_field() -> None:
     radius across module-internal references); the *return value* is a
     normalized role slug used for Cortex role:{slug} resolution.
     """
-    from .frontier_dispatch_request import resolve_agent
+    from .frontier_dispatch.request import resolve_agent
 
     step_with_domain = _FakeStep(domain_fields={"role": "synthesizer"})
     assert resolve_agent({}, step_with_domain) == "synthesizer"
@@ -1156,7 +1156,7 @@ def test_reject_unknown_runtime_options_raises_on_unknown_keys(
 ) -> None:
     """Unknown ``runtime_options`` keys must raise ``UnknownPipelineOptionsError``."""
     from systems.pipeline.core.execution.errors import UnknownPipelineOptionsError
-    from systems.pipeline.core.handlers.frontier_dispatch_admission import (
+    from systems.pipeline.core.handlers.frontier_dispatch.admission_checks import (
         reject_unknown_runtime_options,
     )
 
@@ -1176,7 +1176,7 @@ def test_reject_unknown_runtime_options_passes_on_accepted_keys(
     handler: FrontierDispatchHandler,
 ) -> None:
     """All keys in ``_ACCEPTED_RUNTIME_OPTION_KEYS`` must be admitted without error."""
-    from systems.pipeline.core.handlers.frontier_dispatch_admission import (
+    from systems.pipeline.core.handlers.frontier_dispatch.admission_checks import (
         reject_unknown_runtime_options,
     )
 
@@ -1202,7 +1202,7 @@ def test_reject_unknown_runtime_options_ignores_injected_stream_flag(
     not list ``stream`` in ``_ACCEPTED_RUNTIME_OPTION_KEYS``; the gate must
     treat it as framework-injected and admit the dispatch.
     """
-    from systems.pipeline.core.handlers.frontier_dispatch_admission import (
+    from systems.pipeline.core.handlers.frontier_dispatch.admission_checks import (
         reject_unknown_runtime_options,
     )
 
@@ -1216,7 +1216,7 @@ def test_reject_unknown_runtime_options_ignores_injected_stream_flag(
 
 def test_check_agent_model_consistency_allows_role_provider_override() -> None:
     """Functional roles are model-agnostic; explicit models may cross providers."""
-    from systems.pipeline.core.handlers.frontier_dispatch_admission import (
+    from systems.pipeline.core.handlers.frontier_dispatch.admission_checks import (
         check_agent_model_consistency,
     )
 
@@ -1237,7 +1237,7 @@ def test_check_agent_model_consistency_allows_role_provider_override() -> None:
 def test_check_agent_model_consistency_rejects_concrete_seat_mismatch() -> None:
     """Concrete family/platform seats remain provider-bound."""
     from systems.pipeline.core.execution.errors import AgentModelMismatchError
-    from systems.pipeline.core.handlers.frontier_dispatch_admission import (
+    from systems.pipeline.core.handlers.frontier_dispatch.admission_checks import (
         check_agent_model_consistency,
     )
 
@@ -1268,7 +1268,7 @@ def test_check_agent_model_consistency_rejects_concrete_seat_mismatch() -> None:
 
 def test_check_agent_model_consistency_accepts_valid_family() -> None:
     """Matching agent/provider with a multi-agent model must not raise or emit."""
-    from systems.pipeline.core.handlers.frontier_dispatch_admission import (
+    from systems.pipeline.core.handlers.frontier_dispatch.admission_checks import (
         check_agent_model_consistency,
     )
 
@@ -1290,7 +1290,7 @@ def test_check_agent_model_consistency_allows_non_multi_agent_for_skeptic_role()
     None
 ):
     """Skeptic is a functional role; multi-agent is only the default seat."""
-    from systems.pipeline.core.handlers.frontier_dispatch_admission import (
+    from systems.pipeline.core.handlers.frontier_dispatch.admission_checks import (
         check_agent_model_consistency,
     )
 
@@ -1313,7 +1313,7 @@ def test_check_agent_model_consistency_rejects_non_multi_agent_for_concrete_seat
 ):
     """grok-api-multi still requires a multi-agent xAI model."""
     from systems.pipeline.core.execution.errors import AgentModelMismatchError
-    from systems.pipeline.core.handlers.frontier_dispatch_admission import (
+    from systems.pipeline.core.handlers.frontier_dispatch.admission_checks import (
         check_agent_model_consistency,
     )
 
@@ -1342,7 +1342,7 @@ def test_check_agent_model_consistency_rejects_non_multi_agent_for_concrete_seat
 
 def test_check_agent_model_consistency_passes_unknown_agent() -> None:
     """Unknown agents (not in registry) are not checked — custom slugs are allowed."""
-    from systems.pipeline.core.handlers.frontier_dispatch_admission import (
+    from systems.pipeline.core.handlers.frontier_dispatch.admission_checks import (
         check_agent_model_consistency,
     )
 
@@ -1374,7 +1374,7 @@ def test_check_agent_model_consistency_accepts_agents_without_variant_requiremen
     provider: str,
 ) -> None:
     """Known agents without _AGENT_MODEL_REQUIREMENTS entries pass without event."""
-    from systems.pipeline.core.handlers.frontier_dispatch_admission import (
+    from systems.pipeline.core.handlers.frontier_dispatch.admission_checks import (
         check_agent_model_consistency,
     )
 
@@ -1664,7 +1664,7 @@ async def test_default_capability_tier_does_not_suppress(
     async def fake_loop(**_k: Any) -> _FakeLoopResult:
         return _FakeLoopResult(provider="anthropic")
 
-    from systems.pipeline.core.handlers import frontier_dispatch_tools as fdt_mod
+    from systems.pipeline.core.handlers.frontier_dispatch import tools as fdt_mod
 
     monkeypatch.setattr(agent_seat, "hydrate_agent", fake_hydrate)
     monkeypatch.setattr(fdt_mod, "resolve_default_tools", fake_resolve)

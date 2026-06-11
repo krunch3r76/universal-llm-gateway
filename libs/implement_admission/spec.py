@@ -169,6 +169,24 @@ class ImplementSpec(BaseModel):
         return self
 
 
+def _canonical_default(o: object) -> object:
+    from datetime import date, datetime
+    from enum import Enum
+
+    if isinstance(o, Enum):
+        return o.value
+    if isinstance(o, (datetime, date)):
+        return o.isoformat()
+    if isinstance(o, (set, frozenset)):
+        return sorted(
+            o, key=lambda x: json.dumps(x, sort_keys=True, separators=(",", ":"))
+        )
+    raise TypeError(
+        f"implement_spec_hash: non-canonical type {type(o)!r} reached the hash encoder; "
+        "classify the field as hash-participating with a deterministic encoding or elide it as volatile."
+    )
+
+
 def implement_spec_hash(spec: ImplementSpec) -> str:
     """SHA256 over canonical JSON with provenance.implement_spec_hash elided."""
     payload = spec.model_dump()
@@ -191,7 +209,9 @@ def implement_spec_hash(spec: ImplementSpec) -> str:
         source_version = source.get("source_version")
         if source_version is not None and source_version.get("deck_sha256") is None:
             source_version.pop("deck_sha256", None)
-    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    canonical = json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), default=_canonical_default
+    )
     digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
     return f"sha256:{digest}"
 

@@ -20,19 +20,19 @@ from llm_adapters import effective_provider_for_model
 from model_id import ModelId, canonical_model_entity_id
 
 from ...events.dispatch import PipelineFrontierDispatchRemoteMcpEnabled
-from ..frontier_dispatch_admission import (
+from .admission_checks import (
     check_agent_model_consistency,
     check_boot_provider_compatibility,
     reject_unknown_runtime_options,
     resolve_remote_mcp,
 )
-from ..frontier_dispatch_request import (
+from .request import (
     resolve_agent,
     resolve_model,
     resolve_system_prompt,
     resolve_user_prompt,
 )
-from ..frontier_dispatch_tools import resolve_dispatch_tool_set
+from .tools import resolve_dispatch_tool_set
 
 if TYPE_CHECKING:
     from ..protocol import PipelineContext

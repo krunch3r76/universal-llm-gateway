@@ -4,17 +4,15 @@ Routes pipeline dispatch calls to Stargate's provider-native endpoints
 via the in-process ``CloudProxyClient`` forwarder. Uses
 ``libs/agent_seat/native_loop`` for the bounded tool loop.
 
-Subsystems extracted into sibling modules:
+Package-private submodules (consolidated from former handler-level siblings):
 
-- ``frontier_dispatch_admission`` — unknown-option rejection, remote-MCP
-  resolution, agent/model consistency checks, context injection.
-- ``frontier_dispatch_request`` — model/agent/prompt resolution, reasoning-effort
-  translation.
-- ``frontier_dispatch_tools`` — default tool tiers, xAI built-ins, 3-way
-  tool-set resolution (endpoint-supplied / persona-bound / persona-free).
-- ``frontier_dispatch_streaming`` — cancel check, native sender, tool-event
-  dispatcher.
-- ``frontier_dispatch_observability`` — post-loop anomaly detection.
+- ``admission_checks`` — unknown-option rejection, remote-MCP resolution,
+  agent/model consistency checks, context injection.
+- ``request`` — model/agent/prompt resolution, reasoning-effort translation.
+- ``tools`` — default tool tiers, xAI built-ins, 3-way tool-set resolution
+  (endpoint-supplied / persona-bound / persona-free).
+- ``streaming`` — cancel check, native sender, tool-event dispatcher.
+- ``observability`` — post-loop anomaly detection.
 
 This package is the package-shadow of the former ``frontier_dispatch.py`` module
 (unit 14 of the pipeline modularize overhaul). ``FrontierDispatchHandler`` is the

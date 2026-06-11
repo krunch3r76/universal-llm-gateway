@@ -79,7 +79,7 @@ _ANTHROPIC_MAX_OUTPUT_CEILINGS: tuple[tuple[str, int], ...] = (
     ("claude-3-sonnet", 4096),
     ("claude-3-haiku", 4096),
 )
-# ── Reasoning families (reshaped frontier_dispatch_request maps) ──────────────
+# ── Reasoning families (reshaped frontier_dispatch.request maps) ──────────────
 # Adaptive-capable Anthropic families (per adaptive-thinking.md).
 _ANTHROPIC_ADAPTIVE_FAMILIES: frozenset[str] = frozenset(
     {

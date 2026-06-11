@@ -1,7 +1,6 @@
 """Tool configuration helpers for ``frontier_dispatch_v1``.
 
-Extracted from ``frontier_dispatch.py`` to keep that module under the SLOC
-ceiling.  Contains:
+Package-private tool configuration helpers. Contains:
 
 - ``XAI_BUILTIN_TOOLS`` — server-side built-in tool descriptors for xAI.
 - ``resolve_default_tools`` — resolve curated tool names from live MCP catalog
@@ -122,7 +121,7 @@ async def resolve_dispatch_tool_set(
         resolve_tool_definitions,
     )
 
-    from ..events.dispatch import (
+    from ...events.dispatch import (
         PipelineFrontierDispatchHydrated,
         PipelineFrontierDispatchToolListSupplied,
         PipelineFrontierDispatchToolSuppressed,

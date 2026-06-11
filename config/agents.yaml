@@ -267,8 +267,14 @@ profiles:
 #   web-consult / web-implement → claude-web; cursor-consult / cursor-implement → claude-cursor.
 #   Web consult shorthand: team_dispatch(op="handoff", role="web-consult") → claude-web + operator push.
 #   Cursor consult shorthand: team_dispatch(op="handoff", role="cursor-consult") → claude-cursor IDE.
-#   Bound implement (Cursor): team_dispatch(op="handoff", role="cursor-implement") →
-#     claude-cursor from any dispatching seat; packet + acceptance criteria required.
+#   Bound implement (DEFAULT, automated): team_dispatch(op="generate", role="cursor-sdk",
+#     packet_path=…, contract="implement") → auto Composer (cursor/composer-2.5), no IDE
+#     pickup; poll poll_hint (agent-bus wait). PRECONDITION — DENSE INSTRUCTIONS: the packet
+#     must be dense/complete (Composer executes mechanically, no design judgment). cursor-sdk
+#     is substrate=sdk on the Cursor subscription, NOT an Anthropic-API generate lane.
+#   Bound implement (operator-attended FALLBACK): team_dispatch(op="handoff", role="cursor-implement") →
+#     claude-cursor from any dispatching seat; packet + acceptance criteria required. Use only
+#     when SDK worker unavailable or attended IDE execution is explicitly wanted.
 #   Bound implement (Web): team_dispatch(op="handoff", role="web-implement") →
 #     claude-web + operator push; packet + acceptance criteria required. Symmetric
 #     with cursor-implement — web's path to the implement contract (web-consult is

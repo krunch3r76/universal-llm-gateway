@@ -29,7 +29,7 @@ from ...execution.errors import (
     EmptyCompletionError,
     FrontierDispatchExhaustedError,
 )
-from ..frontier_dispatch_streaming import (
+from .streaming import (
     REMOTE_MCP_OVERALL_TIMEOUT_S,
     build_cancel_check,
     build_in_process_sender,

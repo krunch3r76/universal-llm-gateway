@@ -5,7 +5,7 @@ First step of the cortex-chat-openai compaction loop. Reads
 ``thread:openai-chat:{chat_id}`` anchor entity, and projects the last
 ``window_size`` non-superseded turn assertions into a
 ``[{role, content}]`` prefix consumed downstream by
-``frontier_dispatch_request``'s ``handler_inputs.messages`` binding.
+``frontier_dispatch.request``'s ``handler_inputs.messages`` binding.
 
 Output shape (JSON namespace on the step's StepOutput):
 
