@@ -6,7 +6,7 @@ from typing import Any, Protocol
 
 
 class CortexReader(Protocol):
-    def entity_get(self, entity_id: str, **kwargs: Any) -> dict[str, Any]: ...
+    def assertion_state(self, entity_id: str, **kwargs: Any) -> dict[str, Any]: ...
 
 
 class DecisionNotAssertedError(Exception):
@@ -28,14 +28,13 @@ def require_decision_asserted(*, cortex: CortexReader) -> None:
     """Fail closed if the unified-implement-admission decision is not asserted."""
     entity_id = DecisionNotAssertedError.entity_id
     try:
-        result = cortex.entity_get(entity_id, include_assertions=True)
+        result = cortex.assertion_state(entity_id)
     except Exception as exc:
         raise DecisionNotAssertedError(f"could not load {entity_id}: {exc}") from exc
 
-    assertions = result.get("assertions") or []
-    active = [
-        a for a in assertions if not a.get("superseded_by") and not a.get("superseded")
-    ]
-    confirmed = [a for a in active if a.get("confidence") == "confirmed"]
-    if not confirmed:
+    if result.get("error"):
+        raise DecisionNotAssertedError(
+            f"assertion_state failed for {entity_id}: {result['error']}"
+        )
+    if not result.get("ratified"):
         raise DecisionNotAssertedError()

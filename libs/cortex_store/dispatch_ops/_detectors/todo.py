@@ -1,36 +1,24 @@
 """Todo seed-contract completeness gate.
 
 Fires when an implementation-intent todo (workflow_state ∈ {open, in_progress})
-is missing the structural fields that make it navigable by a fresh agent without
-session memory:
+is missing structural fields that make it navigable by a fresh agent without
+session memory. Checks are driven by the ``todo`` row in
+``type_attribute_schemas`` when registered (migration 059); pre-migration
+sandboxes with no registry row skip this detector (graceful degradation).
 
+Default seed contract when the registry row exists:
   * source_uri — stub spec file (tasks/specs/{slug}.md) a fresh agent opens first
-  * required_skills — ≥1 entry in attributes (agent_skill references for execution)
+  * required_skills — when listed in the registry optional/required keys
   * context edge — ≥1 active relationship incident to the todo whose *other*
     endpoint is NOT an agent_skill entity
-    (e.g. references→decision:*, relates_to→service:*, evidence_uris→thread sidecar)
 
 Suppressed when:
   * workflow_state ∈ {done, deferred, cancelled, blocked} — not implementation-intent
   * attributes.backlog = true — author explicitly marked this as backlog-only
   * attributes.seed_contract_ack present (any value) — documented-intent escape hatch
 
-The context-edge predicate filters on the *other endpoint's* entity type (NOT an
-agent_skill), not the relationship type. This is deliberate: a bare skill-edge
-proves the executor read their skills, but does not supply the decision rationale or
-substrate context a fresh agent needs to author a spec. Prose mentions in description
-do not count — only graph-traversable relationships.
-
-The edge query is direction-agnostic. Symmetric relationship types (e.g.
-related_to) are stored lexicographically canonicalized, so a todo's context edge
-to decision:* / service:* lands with the todo as *target* (decision:/service:
-sort before todo:). Asymmetric types (child_of, references) preserve insertion
-direction. Counting edges *incident* to the todo — either endpoint — covers both
-cases without depending on canonicalization order.
-
-Severity: warning. A gap is a discipline shortfall, never a critical fault.
-
-Grounded in: decision:todo-creation-rich-seed-contract (thread 1144).
+Grounded in: decision:todo-creation-rich-seed-contract (thread 1144);
+tasks/specs/implement-input-schema.md §3 (registry convergence).
 """
 
 from __future__ import annotations
@@ -39,6 +27,7 @@ import json
 from typing import Any
 
 from ...db import query
+from ...type_schemas import type_attribute_schema
 from ._shared import _finding
 
 _IMPL_INTENT_STATES = ("open", "in_progress")
@@ -47,12 +36,14 @@ _IMPL_INTENT_STATES = ("open", "in_progress")
 def detect_todo_implementation_seed_incomplete(
     conn, subject: str | None = None
 ) -> list[dict[str, Any]]:
-    """Todos in open/in_progress state missing source_uri, required_skills, or
-    a context edge — the minimum structural seed for spec-without-session handoff.
+    """Todos in open/in_progress state missing registry-defined seed fields."""
+    schema = type_attribute_schema(conn, "todo")
+    if schema is None:
+        return []
 
-    Does not flag todos outside implementation-intent states, or todos suppressed
-    via attributes.backlog=true / attributes.seed_contract_ack.
-    """
+    registry_keys = set(schema["required"]) | set(schema["optional"])
+    check_required_skills = "required_skills" in registry_keys
+
     placeholders = ",".join("?" * len(_IMPL_INTENT_STATES))
     sql = (
         "SELECT id, name, source_uri, attributes FROM entities "
@@ -65,7 +56,6 @@ def detect_todo_implementation_seed_incomplete(
 
     rows = query(conn, sql, params)
 
-    # Filter suppressed todos; accumulate qualifying rows with parsed attrs.
     impl_rows: list[dict] = []
     for r in rows:
         attrs = r.get("attributes")
@@ -85,11 +75,6 @@ def detect_todo_implementation_seed_incomplete(
     if not impl_rows:
         return []
 
-    # Bulk-load context edges for qualifying IDs in one query.
-    # A context edge is any active relationship incident to the todo (either
-    # endpoint) whose *other* endpoint is NOT an agent_skill — skill-only edges
-    # prove executor hygiene, not substrate context. Direction-agnostic because
-    # symmetric types (related_to) canonicalize the todo into the target slot.
     entity_ids = [r["id"] for r in impl_rows]
     entity_id_set = set(entity_ids)
     edge_placeholders = ",".join("?" * len(entity_ids))
@@ -104,8 +89,6 @@ def detect_todo_implementation_seed_incomplete(
     has_context_edge: set[str] = set()
     for edge in context_edge_rows:
         frm, to = edge["from_entity"], edge["to_entity"]
-        # For each endpoint that is one of our todos, the OTHER endpoint must
-        # not be an agent_skill for the edge to count as substrate context.
         if frm in entity_id_set and not to.startswith("agent_skill:"):
             has_context_edge.add(frm)
         if to in entity_id_set and not frm.startswith("agent_skill:"):
@@ -120,9 +103,10 @@ def detect_todo_implementation_seed_incomplete(
         if not r.get("source_uri") or not str(r["source_uri"]).strip():
             gaps.append("source_uri (stub spec at tasks/specs/{slug}.md)")
 
-        rs = attrs.get("required_skills")
-        if not rs or (isinstance(rs, list) and len(rs) == 0):
-            gaps.append("required_skills (≥1 agent_skill slug in attributes)")
+        if check_required_skills:
+            rs = attrs.get("required_skills")
+            if not rs or (isinstance(rs, list) and len(rs) == 0):
+                gaps.append("required_skills (≥1 agent_skill slug in attributes)")
 
         if todo_id not in has_context_edge:
             gaps.append(

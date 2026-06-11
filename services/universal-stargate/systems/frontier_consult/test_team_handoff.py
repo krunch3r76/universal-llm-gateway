@@ -24,6 +24,8 @@ from implement_admission.drift_gates import DriftGateState
 
 from .admission import (
     FrontierEndpointError,
+    enforce_team_dispatch_generate_admit,
+    resolve_cursor_sdk_handoff_seat,
     resolve_handoff_contract,
     resolve_handoff_seat,
     resolve_handoff_target,
@@ -1304,6 +1306,21 @@ def test_pv_route_missing_packet_returns_422(
 class _Phase2StubCortex:
     """Stub cortex reader for source_ref handoff tests."""
 
+    def assertion_state(self, entity_id: str, **kwargs: Any) -> dict[str, Any]:  # noqa: ANN003, ARG002
+        if entity_id == "decision:unified-implement-admission":
+            return {
+                "entity_id": entity_id,
+                "ratified": True,
+                "confirmed_count": 1,
+                "latest_confirmed_assertion_id": 1,
+            }
+        return {
+            "entity_id": entity_id,
+            "ratified": False,
+            "confirmed_count": 0,
+            "latest_confirmed_assertion_id": None,
+        }
+
     def entity_get(self, entity_id: str, **kwargs: Any) -> dict[str, Any]:  # noqa: ANN003, ARG002
         if entity_id == "decision:unified-implement-admission":
             return {
@@ -1325,6 +1342,16 @@ class _Phase2StubCortex:
 
 
 class _Phase2BelievedOnlyCortex(_Phase2StubCortex):
+    def assertion_state(self, entity_id: str, **kwargs: Any) -> dict[str, Any]:  # noqa: ANN003, ARG002
+        if entity_id == "decision:unified-implement-admission":
+            return {
+                "entity_id": entity_id,
+                "ratified": False,
+                "confirmed_count": 0,
+                "latest_confirmed_assertion_id": None,
+            }
+        return super().assertion_state(entity_id, **kwargs)
+
     def entity_get(self, entity_id: str, **kwargs: Any) -> dict[str, Any]:  # noqa: ANN003, ARG002
         if entity_id == "decision:unified-implement-admission":
             return {
@@ -1357,6 +1384,9 @@ def _patch_phase2_reader(
     stub = cortex or _Phase2StubCortex()
 
     class _Reader:
+        def assertion_state(self, entity_id: str, **kwargs: Any) -> dict[str, Any]:  # noqa: ANN003
+            return stub.assertion_state(entity_id, **kwargs)
+
         def entity_get(self, entity_id: str, **kwargs: Any) -> dict[str, Any]:  # noqa: ANN003
             return stub.entity_get(entity_id, **kwargs)
 
@@ -1976,6 +2006,14 @@ class _V2LaneCortex:
     def __init__(self, *, dispatch_lane: str) -> None:
         self._lane = dispatch_lane
 
+    def assertion_state(self, entity_id: str, **kwargs: Any) -> dict[str, Any]:  # noqa: ANN003, ARG002
+        return {
+            "entity_id": entity_id,
+            "ratified": True,
+            "confirmed_count": 1,
+            "latest_confirmed_assertion_id": 1,
+        }
+
     def entity_get(self, entity_id: str, **kwargs: Any) -> dict[str, Any]:  # noqa: ANN003, ARG002
         return {
             "id": entity_id,
@@ -2517,7 +2555,7 @@ def test_s4_packet_lane_skips_gate_b_both_present(
         packet_path=rel,
         cortex=_Phase2StubCortex(),
         workspaces_root=tmp_path,
-    )
+    ).implement_spec_hash
     assert spec_hash.startswith("sha256:")
 
     _patch_phase2_reader(monkeypatch)
@@ -2679,3 +2717,208 @@ def test_dd_acceptance_gate_unchanged(
     )
     assert resp.status_code == 422
     assert resp.json()["error"]["code"] == "handoff_packet_missing_acceptance"
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 — cursor-sdk automated seat routing (thread 1561)
+# ---------------------------------------------------------------------------
+
+
+def test_t1_cursor_sdk_profile_load() -> None:
+    from agent_seat.profiles import get_profile
+
+    profile = get_profile("cursor", "sdk")
+    assert profile.provider == "cursor"
+    assert profile.tool_surface == "sdk"
+    assert profile.dispatchable is False
+
+
+def test_t1_resolve_cursor_sdk_handoff_seat() -> None:
+    to_agent, family, platform, resolved_model = resolve_cursor_sdk_handoff_seat(
+        "cursor-sdk",
+        request_id="req-t1",
+    )
+    assert to_agent == "cursor-sdk"
+    assert family == "cursor"
+    assert platform == "sdk"
+    assert resolved_model == "cursor/composer-2.5"
+
+
+def test_t3_cursor_sdk_handoff_admits_and_dispatches_worker(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
+    _write_packet(tmp_path, _GOOD_PACKET, _CONFORMANT_PACKET)
+    _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-cursor-sdk"))
+
+    worker_calls: list[dict[str, Any]] = []
+
+    async def _fake_dispatch(**kwargs: Any) -> tuple[bool, str | None]:
+        worker_calls.append(kwargs)
+        return True, None
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.route.dispatch_cursor_sdk_worker",
+        _fake_dispatch,
+    )
+
+    client = TestClient(
+        _route_app(monkeypatch, tmp_path), raise_server_exceptions=False
+    )
+    resp = client.post(
+        "/api/v1/team/handoff",
+        json={
+            "op": "handoff",
+            "seat": "cursor-sdk",
+            "packet_path": _GOOD_PACKET,
+            "contract": "implement",
+            "subject": _GOOD_SUBJECT,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["thread_id"] == "bus-cursor-sdk"
+    assert body["to_agent"] == "cursor-sdk"
+    assert body["resolved_model"] == "cursor/composer-2.5"
+    assert body["poll_hint"]["arguments"]["from_agent"] == "cursor-sdk"
+    assert "automated" in body["push_reminder"].lower()
+    assert len(worker_calls) == 1
+    assert worker_calls[0]["thread_id"] == "bus-cursor-sdk"
+    assert worker_calls[0]["model"] == "cursor/composer-2.5"
+    assert worker_calls[0]["packet_path"] == _GOOD_PACKET
+
+
+def test_t6a_cursor_sdk_seat_capability(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
+    _write_packet(tmp_path, _GOOD_PACKET, _CONFORMANT_PACKET)
+    _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-t6a"))
+
+    async def _fake_dispatch(**kwargs: Any) -> tuple[bool, str | None]:
+        return True, None
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.route.dispatch_cursor_sdk_worker",
+        _fake_dispatch,
+    )
+
+    client = TestClient(
+        _route_app(monkeypatch, tmp_path), raise_server_exceptions=False
+    )
+    resp = client.post(
+        "/api/v1/team/handoff",
+        json={
+            "op": "handoff",
+            "seat": "cursor-sdk",
+            "packet_path": _GOOD_PACKET,
+            "contract": "implement",
+            "subject": _GOOD_SUBJECT,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    sc = resp.json()["seat_capability"]
+    assert sc == {
+        "delivery": "auto",
+        "dispatchable": False,
+        "tool_surface": "sdk",
+        "picker_range": [
+            "cursor/composer-2.5",
+            "cursor/claude-sonnet-4-6",
+            "cursor/claude-opus-4-8",
+        ],
+        "default_model": "cursor/composer-2.5",
+        "recommended_executor": sc["recommended_executor"],
+    }
+
+
+def test_t6b_web_consult_seat_capability_matches_profile(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from agent_seat.profiles import get_profile
+
+    from .admission import resolve_handoff_target
+
+    monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
+    _write_packet(tmp_path, _DD_REL, _CONSULT_ONLY_PACKET)
+    _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-t6b"))
+
+    client = TestClient(
+        _route_app(monkeypatch, tmp_path), raise_server_exceptions=False
+    )
+    resp = client.post(
+        "/api/v1/team/handoff",
+        json={
+            "op": "handoff",
+            "role": "web-consult",
+            "packet_path": _DD_REL,
+            "subject": _GOOD_SUBJECT,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    _to, fam, plat, _m = resolve_handoff_target(role="web-consult", request_id="t6b")
+    expected = get_profile(fam, plat)
+    sc = resp.json()["seat_capability"]
+    assert sc["delivery"] == expected.delivery == "manual"
+    assert sc["dispatchable"] == expected.dispatchable
+    assert sc["tool_surface"] == expected.tool_surface
+    assert sc["picker_range"] == list(expected.allowed_models)
+    assert sc["default_model"] == expected.default_model
+    assert sc["recommended_executor"] is None
+
+
+def test_t4_cursor_sdk_role_rejected_on_generate() -> None:
+    with pytest.raises(FrontierEndpointError) as exc_info:
+        enforce_team_dispatch_generate_admit("cursor-sdk", request_id="req-t4")
+    err = exc_info.value
+    assert err.status_code == 422
+    assert err.code == "web_seat_not_generate_target"
+    assert "cursor-sdk" in err.reason
+
+
+def test_t5_cursor_sdk_worker_down_degraded_path(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
+    _write_packet(tmp_path, _GOOD_PACKET, _CONFORMANT_PACKET)
+    _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-cursor-sdk-down"))
+
+    async def _fail_dispatch(**kwargs: Any) -> tuple[bool, str | None]:
+        return False, "worker_dispatch: failed"
+
+    failure_calls: list[str] = []
+
+    async def _fake_failure(*, thread_id: str, request_id: str) -> None:
+        failure_calls.append(thread_id)
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.route.dispatch_cursor_sdk_worker",
+        _fail_dispatch,
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.route.post_worker_failure_turn",
+        _fake_failure,
+    )
+
+    client = TestClient(
+        _route_app(monkeypatch, tmp_path), raise_server_exceptions=False
+    )
+    resp = client.post(
+        "/api/v1/team/handoff",
+        json={
+            "op": "handoff",
+            "seat": "cursor-sdk",
+            "packet_path": _GOOD_PACKET,
+            "contract": "implement",
+            "subject": _GOOD_SUBJECT,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["thread_id"] == "bus-cursor-sdk-down"
+    assert "worker_dispatch: failed" in body["warnings"]
+    assert failure_calls == ["bus-cursor-sdk-down"]

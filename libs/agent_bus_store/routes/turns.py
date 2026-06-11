@@ -14,6 +14,7 @@ from ..db import (
     delete_turn,
     get_turn_by_number,
     get_turns,
+    get_unread_thread_toc,
     insert_turn,
     mark_turn_read,
     normalize_thread_id,
@@ -30,6 +31,8 @@ from ..turns_models import (
     TurnStatus,
     TurnStatusUpdate,
     TurnUpdate,
+    UnreadThreadToc,
+    UnreadThreadTocRow,
     turn_body_limit_error,
 )
 
@@ -155,6 +158,45 @@ async def list_turns(
         include_superseded=include_superseded,
     )
     return TurnList(turns=[_turn_from_row(r) for r in rows])
+
+
+@router.get(
+    "/turns/unread-toc",
+    response_model=UnreadThreadToc,
+)
+async def list_unread_thread_toc(
+    to: AgentName = Query(...),
+    mark_read_flag: bool = Query(False, alias="mark_read"),
+    limit: int | None = Query(None),
+) -> UnreadThreadToc:
+    """Recipient-scoped unread inbox digest: one row per thread with unread
+    turns addressed to ``to``.
+
+    Bounded by thread count so the post-boot catch-up read stays under the MCP
+    inline response guard regardless of unread volume (friction 16835). Use
+    GET /turns?thread=…&unread=true for the full unread turn list of a single
+    thread. ``mark_read=true`` marks every matching unread turn read.
+    """
+    rows, marked = get_unread_thread_toc(to=to, mark_read=mark_read_flag, limit=limit)
+    toc_rows = [
+        UnreadThreadTocRow(
+            thread=r["thread"],
+            slug=r.get("slug"),
+            unread_count=r["unread_count"],
+            latest_turn_number=r["latest_turn_number"],
+            latest_subject=r.get("latest_subject"),
+            latest_from=r.get("latest_from"),
+            latest_to=r.get("latest_to"),
+            latest_created_at=r["latest_created_at"],
+        )
+        for r in rows
+    ]
+    return UnreadThreadToc(
+        threads=toc_rows,
+        total_unread_threads=len(toc_rows),
+        total_unread_turns=sum(r.unread_count for r in toc_rows),
+        marked_read=marked,
+    )
 
 
 @router.patch("/turns/{turn_id}/read")

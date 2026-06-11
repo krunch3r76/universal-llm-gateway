@@ -30,6 +30,7 @@ from .service_config import (
     is_agent_bus_configured,
     is_cloud_proxy_configured,
     is_cortex_configured,
+    is_email_bridge_configured,
     is_mcp_configured,
     is_rag_configured,
 )
@@ -207,6 +208,10 @@ async def stop_local_services(
         stop_ops.append(("cortex_api", ctl.stop_cortex_api))
     if is_agent_bus_configured():
         stop_ops.append(("agent_bus", ctl.stop_agent_bus))
+    if is_email_bridge_configured():
+        stop_ops.append(("email_bridge", ctl.stop_email_bridge))
+    # git-integration-worker: always-on master host TCP (no config gate, D1).
+    stop_ops.append(("git_integration_worker", ctl.stop_git_integration_worker))
 
     stop_results = await run_ops_parallel(stop_ops)
     stop_dict: dict[str, bool] = {}
@@ -244,6 +249,15 @@ def _build_start_ops(
             else ctl.start_agent_bus
         )
         start_ops.append(("agent_bus", agent_bus_op))
+    # git-integration-worker: always-on master host TCP (no config gate, D1).
+    # Host process ⇒ rebuild == restart == stop+start; conditional mirrors
+    # agent_bus for uniformity (both branches equivalent here).
+    giw_op = (
+        ctl.rebuild_git_integration_worker
+        if rebuild_supporting_services
+        else ctl.start_git_integration_worker
+    )
+    start_ops.append(("git_integration_worker", giw_op))
     if is_cloud_proxy_configured():
         start_ops.append(("cloud_proxy", ctl.start_cloud_proxy))
     if is_mcp_configured(ws_root):
@@ -262,6 +276,13 @@ def _build_start_ops(
             else ctl.start_cortex_api
         )
         start_ops.append(("cortex_api", cortex_api_op))
+    if is_email_bridge_configured():
+        email_bridge_op = (
+            ctl.rebuild_email_bridge
+            if rebuild_supporting_services
+            else ctl.start_email_bridge
+        )
+        start_ops.append(("email_bridge", email_bridge_op))
     if is_rag_configured():
         start_ops.append(("rag", ctl.start_rag))
     return start_ops

@@ -17,8 +17,14 @@ from implement_admission.closeout import flatten_evidence_uris
 from implement_admission.closeout_models import AdapterResult, ImplementCloseout
 from implement_admission.closeout_runtime import get_runtime
 from implement_admission.normalize import normalize
+from implement_admission.routing import classify_risk_tier, risk_tier_rank
 from implement_admission.source_ref import SourceRefError
-from implement_admission.spec import ImplementSpec, Source, implement_spec_hash
+from implement_admission.spec import (
+    ImplementSpec,
+    ReadinessState,
+    Source,
+    implement_spec_hash,
+)
 
 logger = get_logger(__name__)
 
@@ -369,3 +375,50 @@ def apply_closeout_gate_b(
             "deviations": [*closeout.deviations, deviation],
         }
     )
+
+
+def review_attestation_warnings(spec: ImplementSpec) -> list[str]:
+    """Phase-1 warn-only gate — recompute floor from spec; never raises."""
+    if spec.readiness.state != ReadinessState.READY:
+        return []
+
+    att = spec.provenance.review_attestation
+    req_tier = classify_risk_tier(spec)
+    fam = att.author_family if att else "claude"
+    floor_required = req_tier in {"material", "critical"} and fam == "claude"
+    if not floor_required:
+        return []
+
+    warnings: list[str] = []
+    if att is None:
+        warnings.append(
+            f"review required (tier={req_tier}) but no review_attestation present."
+        )
+        return warnings
+
+    if not att.required or risk_tier_rank(att.risk_tier) < risk_tier_rank(req_tier):
+        warnings.append(
+            "review_attestation under-classifies risk "
+            f"(stored={att.risk_tier}, recomputed={req_tier})."
+        )
+
+    if att.disposition in {"missing", "pending", "blocked"}:
+        warnings.append(
+            f"no passing cross-family review (disposition={att.disposition})."
+        )
+
+    if att.disposition in {"pass", "pass_with_conditions"} and att.spec_hash is None:
+        warnings.append("UNBOUND pass — review not bound to any spec_hash.")
+
+    current = implement_spec_hash(spec)
+    if att.spec_hash is not None and att.spec_hash != current:
+        warnings.append(
+            f"STALE — review bound to {att.spec_hash}, packet now {current}."
+        )
+
+    if att.unresolved_blocker_ids:
+        n = len(att.unresolved_blocker_ids)
+        ids = ", ".join(att.unresolved_blocker_ids)
+        warnings.append(f"{n} unresolved blocker(s): {ids}.")
+
+    return warnings

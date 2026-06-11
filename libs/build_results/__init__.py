@@ -1,8 +1,7 @@
 """Shared build-result spool — the common channel for large build-result inspection.
 
-Backend-neutral: consumes the canonical build envelope dict (the shape cursorbuild
-emits), never a backend-specific dataclass. `libs/cursorbuild` imports this so the
-channel is defined once above the harness fork line
+Backend-neutral: consumes the canonical build envelope dict (harness-neutral shape),
+never a backend-specific dataclass. Shared above the harness fork line
 (decision:build-result-common-channel).
 
 Spool layout (per dispatch):

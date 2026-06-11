@@ -221,6 +221,23 @@ profiles:
       - session-close-markdown-audit
       - session-close-transcript
 
+  cursor/sdk:
+    # Automated SDK executor — team_dispatch(op=handoff, seat=cursor-sdk) routes
+    # to git_integration_worker; NOT a team_dispatch generate target.
+    provider: cursor
+    default_model: cursor/composer-2.5
+    tool_surface: sdk
+    delivery: auto
+    include_deadlines: false
+    include_review_queue: false
+    confirm_and_proceed: false
+    addenda: []
+    dispatchable: false
+    allowed_models:
+      - cursor/composer-2.5
+      - cursor/claude-sonnet-4-6
+      - cursor/claude-opus-4-8
+
   subagent/subagent:
     provider: anthropic
     default_model: null

@@ -33,7 +33,7 @@ class _StubCortex:
         if entity_id.startswith("plan_phase:"):
             attrs["phase_number"] = 2
         if "threshold" in entity_id:
-            attrs["trips_todo_plan_threshold"] = True
+            attrs["multi_phase_arc"] = True
         if "bounded" in entity_id or "relay-bounded" in entity_id:
             attrs["files_expected"] = ["a.py", "b.py"]
         if entity_id.startswith("plan:"):

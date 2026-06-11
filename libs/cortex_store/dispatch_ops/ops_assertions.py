@@ -16,7 +16,7 @@ from typing import Any
 from fastapi import HTTPException
 from universal_logging import get_logger
 
-from ..db import cortex_conn
+from ..db import cortex_conn, query
 from ..entity_aliases import resolve_entity_reference
 from ..models import ImpactAnalysisRequest
 from ..routes.assertions import (
@@ -38,7 +38,7 @@ from .ops_assertions_write import (
     _op_friction_close,
     _op_observe,
 )
-from .ops_entities import _op_entities
+from .ops_entities import _op_entities, _resolve_read_entity_id
 
 logger = get_logger("cortex-api.dispatch_ops.assertions")
 
@@ -59,6 +59,51 @@ def _op_age_staged(
             limit=limit,
         )
     )
+
+
+def _op_assertion_state(
+    entity_id: str | None = None,
+    resolve_aliases: bool = True,
+    raw_id: bool = False,
+    **_: object,
+) -> dict[str, Any]:
+    """Lightweight ratification/count projection for a single entity."""
+    if not entity_id:
+        return {"error": "entity_id is required"}
+    with cortex_conn() as conn:
+        try:
+            canonical_id = _resolve_read_entity_id(
+                conn,
+                entity_id,
+                resolve_aliases=resolve_aliases,
+                raw_id=raw_id,
+            )
+        except HTTPException as exc:
+            return {"error": exc.detail, "status_code": exc.status_code}
+        count_rows = query(
+            conn,
+            "SELECT COUNT(*) AS confirmed_count FROM assertions "
+            "WHERE entity_id = ? AND confidence = 'confirmed' AND superseded_by IS NULL",
+            (canonical_id,),
+        )
+        confirmed_count = int(count_rows[0]["confirmed_count"]) if count_rows else 0
+        latest_id: int | None = None
+        if confirmed_count > 0:
+            latest_rows = query(
+                conn,
+                "SELECT id FROM assertions "
+                "WHERE entity_id = ? AND confidence = 'confirmed' AND superseded_by IS NULL "
+                "ORDER BY created_at DESC LIMIT 1",
+                (canonical_id,),
+            )
+            if latest_rows:
+                latest_id = int(latest_rows[0]["id"])
+        return {
+            "entity_id": canonical_id,
+            "ratified": confirmed_count >= 1,
+            "confirmed_count": confirmed_count,
+            "latest_confirmed_assertion_id": latest_id,
+        }
 
 
 def _op_assertions(
@@ -305,6 +350,7 @@ __all__ = [
     "_op_activate",
     "_op_age_staged",
     "_op_analyze_impact",
+    "_op_assertion_state",
     "_op_assertions",
     "_op_frictions",
     "_op_review_queue",

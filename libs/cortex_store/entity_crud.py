@@ -408,6 +408,14 @@ def update_entity_impl(
             conn, str(prior["type"]), str(updates["workflow_state"])
         )
 
+    if "attributes" in updates:
+        attrs = merged.get("attributes")
+        validate_required_attributes(
+            conn,
+            str(prior["type"]),
+            attrs if isinstance(attrs, dict) else None,
+        )
+
     sets: list[str] = []
     params: list[object] = []
     for field, value in updates.items():

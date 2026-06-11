@@ -2,16 +2,20 @@
 
 In-memory idempotency registry state is lost on worker restart (Phase 1 scope).
 
-T2b probe (2026-06-11): concurrent local dispatches rewrite
-``~/.cursor/cli-config.json`` (cursor-agent token refresh). Phase 2 HOME
-isolation is **required** before production concurrent volume — see
-``tasks/specs/cursor-sdk-executor.md`` Phase 2.
+Phase 2 HOME isolation (T2b 2026-06-11, thread 1559): each dispatch seeds a
+private HOME with copied ``cli-config.json`` (identity) and XDG ``auth.json``
+(credential). ``Client.launch_bridge`` snapshots ``os.environ`` at ``Popen`` (no
+``env=`` kwarg in cursor-sdk 0.1.7), so HOME override uses a process-global
+swap guarded by ``_SDK_DISPATCH_LOCK`` for the launch→wait→close window.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import os
+import threading
+from contextlib import contextmanager
 from pathlib import Path
 
 from cursor_sdk import Client
@@ -26,6 +30,10 @@ from services.git_integration_worker.cursor_bus import CursorBusClient
 from services.git_integration_worker.cursor_dispatch_registry import (
     CursorDispatchRegistry,
     DispatchConflict,
+)
+from services.git_integration_worker.cursor_home import (
+    CursorHomeConfigError,
+    setup_cursor_dispatch_home,
 )
 from services.git_integration_worker.cursor_models import (
     build_model_selection,
@@ -44,6 +52,7 @@ _CONFIG: WorkerConfig = load_config()
 _REG = CursorDispatchRegistry.instance()
 _SDK_BRIDGE_BIN = os.environ.get("CURSOR_SDK_BRIDGE_BIN", "").strip() or None
 _SDK_TIMEOUT_S = float(os.environ.get("CURSOR_SDK_TIMEOUT", "1800"))
+_SDK_DISPATCH_LOCK = threading.Lock()
 
 
 def _config(request: Request) -> WorkerConfig:
@@ -65,6 +74,20 @@ def _resolve_prompt(req: CursorDispatchRequest, source_repo: Path) -> str:
     return packet.read_text(encoding="utf-8")
 
 
+@contextmanager
+def _isolated_dispatch_home(home: Path):
+    with _SDK_DISPATCH_LOCK:
+        prev = os.environ.get("HOME")
+        os.environ["HOME"] = str(home)
+        try:
+            yield
+        finally:
+            if prev is None:
+                os.environ.pop("HOME", None)
+            else:
+                os.environ["HOME"] = prev
+
+
 def _run_sdk_sync(
     *,
     source_repo: Path,
@@ -73,21 +96,29 @@ def _run_sdk_sync(
     selection_overrides: dict[str, str] | None,
     dispatch_id: str,
 ) -> str:
+    dispatch_home = setup_cursor_dispatch_home(dispatch_id)
+    bridge_state = dispatch_home / "bridge-state"
+    bridge_state.mkdir(parents=True, exist_ok=True)
+
     config = resolve_cursor(config_model_id)
     selection = build_model_selection(config, selection_overrides)
-    client = Client.launch_bridge(
-        _SDK_BRIDGE_BIN,
-        workspace=str(source_repo),
-        timeout=_SDK_TIMEOUT_S,
-        local=LocalAgentOptions(cwd=str(source_repo)),
-    )
-    try:
-        agent = client.create_agent(model=selection)
-        run = agent.send(prompt, idempotency_key=dispatch_id)
-        result = run.wait()
-        return result.result
-    finally:
-        client.close()
+
+    with _isolated_dispatch_home(dispatch_home):
+        client = Client.launch_bridge(
+            _SDK_BRIDGE_BIN,
+            workspace=str(source_repo),
+            state_root=str(bridge_state),
+            timeout=_SDK_TIMEOUT_S,
+            local=LocalAgentOptions(cwd=str(source_repo)),
+        )
+        try:
+            agent = client.create_agent(model=selection)
+            # Local bridge Send rejects Idempotency-Key (cloud-only in SDK v1).
+            run = agent.send(prompt)
+            result = run.wait()
+            return result.result
+        finally:
+            client.close()
 
 
 async def _run_sdk_dispatch(
@@ -119,6 +150,24 @@ async def _run_sdk_dispatch(
                 bus_result.status_code,
                 bus_result.body,
             )
+    except CursorHomeConfigError as exc:
+        logger.error(
+            "cursor sdk home/auth config failed: dispatch_id=%s err=%s",
+            req.dispatch_id,
+            exc,
+        )
+        env = error_envelope(
+            code="CURSOR_HOME_CONFIG",
+            message=str(exc),
+            source="gateway",
+        )
+        await bus.reply(
+            thread_id=req.thread_id,
+            to_agent="dispatch",
+            from_agent="cursor-sdk",
+            subject=f"cursor-sdk dispatch {req.dispatch_id} FAILED (home/auth)",
+            body=f"```json\n{json.dumps(env, indent=2)}\n```",
+        )
     except Exception:
         logger.exception("cursor sdk dispatch failed: dispatch_id=%s", req.dispatch_id)
 

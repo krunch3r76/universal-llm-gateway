@@ -279,6 +279,68 @@ def resolve_handoff_seat(
     return to_agent, family, platform, to_agent
 
 
+def resolve_cursor_sdk_handoff_seat(
+    seat: str,
+    *,
+    request_id: str,
+) -> tuple[str, str, str, str]:
+    """Resolve automated cursor-sdk handoff seat (``cursor-sdk`` only).
+
+    Admission predicate (FOL):
+      admit(seat) ⟺ profile.delivery == auto
+                 ∧ family == cursor
+                 ∧ tool_surface == sdk
+
+    Returns ``(to_agent, family, platform, resolved_model)`` where
+    ``resolved_model`` is the profile ``default_model``.
+    """
+    canonical = normalize_agent_slug(seat)
+    if canonical != "cursor-sdk":
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="seat",
+            reason=f"seat {seat!r} is not cursor-sdk",
+            status_code=422,
+            code="handoff_seat_invalid",
+        )
+    try:
+        profile = get_profile("cursor", "sdk")
+    except KeyError:
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="seat",
+            reason=f"cursor-sdk profile not registered for seat {seat!r}",
+            status_code=422,
+            code="handoff_seat_invalid",
+        )
+    if not (
+        profile.delivery == "auto"
+        and profile.family == "cursor"
+        and profile.tool_surface == "sdk"
+    ):
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="seat",
+            reason=(
+                f"cursor-sdk requires delivery=auto, family=cursor, tool_surface=sdk; "
+                f"got delivery={profile.delivery!r}, family={profile.family!r}, "
+                f"tool_surface={profile.tool_surface!r}"
+            ),
+            status_code=422,
+            code="handoff_seat_invalid",
+        )
+    default_model = profile.default_model
+    if not default_model:
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="seat",
+            reason="cursor-sdk profile has no default_model",
+            status_code=422,
+            code="handoff_seat_invalid",
+        )
+    return "cursor-sdk", "cursor", "sdk", default_model
+
+
 async def verify_thread_writable(
     thread: str,
     *,

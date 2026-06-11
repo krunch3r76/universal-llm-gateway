@@ -2,13 +2,140 @@
 
 from __future__ import annotations
 
+import fnmatch
+import re
+from typing import Literal
+
+from agent_seat import seat_to_family
+
 from implement_admission.spec import (
     ExecutorStyle,
+    ImplementSpec,
     OrchestrationMode,
     Routing,
     RoutingDerivation,
     SourceKind,
 )
+
+_RISK_TIER_RANK = {"mechanical": 0, "material": 1, "critical": 2}
+
+_PATH_GLOBS = (
+    "migrations/**",
+    "**/migrations/**",
+    "**/migration_*.py",
+    "**/*.sql",
+    "libs/cortex_store/**",
+    "libs/agent_bus_store/**",
+    "libs/event_store/**",
+    "services/*store*/**",
+    "libs/implement_admission/**",
+    "services/universal-stargate/systems/frontier_consult/**",
+    "config/mcp/canonical.yaml",
+)
+
+_MATERIAL_TOKENS = (
+    "schema migration",
+    "migration",
+    "entity_rekey",
+    "entity_merge",
+    "rekey",
+    "merge",
+    "tombstone",
+    "resolver",
+    "alias",
+    "foreign key",
+    "foreign_key",
+    "unique index",
+    "partial index",
+    "dedup",
+    "repoint",
+    "transaction",
+    "atomicity",
+    "defer_foreign_keys",
+    "dispatch",
+    "admission",
+    "handoff",
+    "executor",
+    "pipeline",
+)
+
+_CRITICAL_TOKENS = (
+    "irreversible",
+    "data-destructive",
+    "drop table",
+    "money",
+    "funds",
+    "payment",
+    "order routing",
+    "auth",
+    "security",
+    "credential",
+    "legal",
+    "deadline",
+)
+
+
+def normalize_author_family(seat_or_family: str | None) -> str:
+    """Map seat slug to canonical family; unknown → claude (conservative)."""
+    if not seat_or_family:
+        return "claude"
+    mapped = seat_to_family(seat_or_family)
+    if mapped in {"claude", "gpt", "grok", "gemini"}:
+        return mapped
+    if seat_or_family in {"claude", "gpt", "grok", "gemini"}:
+        return seat_or_family
+    return "claude"
+
+
+def _spec_haystack(spec: ImplementSpec) -> str:
+    parts: list[str] = [
+        spec.intent.summary,
+        spec.intent.description or "",
+        spec.source.source_ref,
+        *spec.skills,
+        *spec.acceptance.criteria,
+    ]
+    if spec.scope.deck_body:
+        parts.append(spec.scope.deck_body)
+    return " ".join(parts).lower()
+
+
+def _token_match(haystack: str, token: str) -> bool:
+    if " " in token:
+        return token in haystack
+    return re.search(rf"\b{re.escape(token)}\b", haystack) is not None
+
+
+def _path_matches_material(path: str) -> bool:
+    lowered = path.lower()
+    return any(fnmatch.fnmatch(lowered, pattern.lower()) for pattern in _PATH_GLOBS)
+
+
+def _material_signal(spec: ImplementSpec) -> bool:
+    if any(_path_matches_material(p) for p in spec.scope.files_expected):
+        return True
+    haystack = _spec_haystack(spec)
+    return any(_token_match(haystack, token) for token in _MATERIAL_TOKENS)
+
+
+def _critical_signal(spec: ImplementSpec) -> bool:
+    haystack = _spec_haystack(spec)
+    return any(_token_match(haystack, token) for token in _CRITICAL_TOKENS)
+
+
+def classify_risk_tier(
+    spec: ImplementSpec,
+) -> Literal["mechanical", "material", "critical"]:
+    """Deterministic risk classifier — critical first, then material, else mechanical."""
+    if _critical_signal(spec):
+        return "critical"
+    if _material_signal(spec):
+        return "material"
+    return "mechanical"
+
+
+def risk_tier_rank(tier: str) -> int:
+    return _RISK_TIER_RANK.get(tier, 0)
 
 
 def derive_orchestration_mode(
@@ -154,4 +281,6 @@ def _style_rule(
         return "sparse/architectural, open substrate choice → reasoning"
     if has_complete_file_list and has_dense_acs:
         return "complete file list + dense ACs, no open design → mechanical"
-    return f"default style derivation → {style}" + (" + checkpoint" if checkpoint else "")
+    return f"default style derivation → {style}" + (
+        " + checkpoint" if checkpoint else ""
+    )

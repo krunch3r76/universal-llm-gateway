@@ -1,11 +1,12 @@
 """Unit tests for the todo_implementation_seed_incomplete audit gate.
 
-Verifies the three-gap check (source_uri / required_skills / context edge)
+Verifies registry-driven seed checks (source_uri / required_skills / context edge)
 and suppression conditions (deferred, done, backlog=true, seed_contract_ack).
 Context edges are defined as active relationships whose target is NOT an
 agent_skill entity — skill-only edges are insufficient for the seed contract.
 
-Grounded in: decision:todo-creation-rich-seed-contract (thread 1144).
+Grounded in: decision:todo-creation-rich-seed-contract (thread 1144);
+tasks/specs/implement-input-schema.md §3.
 """
 
 from __future__ import annotations
@@ -21,6 +22,15 @@ from cortex_store.dispatch_ops._detectors.todo import (
 
 _KIND = "todo_implementation_seed_incomplete"
 
+_TODO_SCHEMA = {
+    "required_keys": "[]",
+    "optional_keys": json.dumps(
+        ["files_expected", "acceptance_criteria", "required_skills", "multi_phase_arc"]
+    ),
+    "enum_constraints": json.dumps({"multi_phase_arc": [True, False]}),
+    "notes": "seed contract test fixture",
+}
+
 
 @pytest.fixture()
 def conn() -> sqlite3.Connection:
@@ -28,6 +38,13 @@ def conn() -> sqlite3.Connection:
     c.row_factory = sqlite3.Row
     c.executescript(
         """
+        CREATE TABLE type_attribute_schemas (
+            entity_type TEXT PRIMARY KEY,
+            required_keys TEXT NOT NULL,
+            optional_keys TEXT NOT NULL,
+            enum_constraints TEXT NOT NULL,
+            notes TEXT
+        );
         CREATE TABLE entities (
             id TEXT PRIMARY KEY,
             type TEXT NOT NULL,
@@ -44,6 +61,17 @@ def conn() -> sqlite3.Connection:
             active INTEGER NOT NULL DEFAULT 1
         );
         """
+    )
+    c.execute(
+        "INSERT INTO type_attribute_schemas "
+        "(entity_type, required_keys, optional_keys, enum_constraints, notes) "
+        "VALUES ('todo', ?, ?, ?, ?)",
+        (
+            _TODO_SCHEMA["required_keys"],
+            _TODO_SCHEMA["optional_keys"],
+            _TODO_SCHEMA["enum_constraints"],
+            _TODO_SCHEMA["notes"],
+        ),
     )
     return c
 
@@ -385,3 +413,22 @@ def test_non_todo_entity_not_flagged(conn: sqlite3.Connection) -> None:
         "VALUES ('project:p1', 'project', 'P1', 'open')",
     )
     assert detect_todo_implementation_seed_incomplete(conn) == []
+
+
+def test_no_registry_row_skips_detector(conn: sqlite3.Connection) -> None:
+    bare = sqlite3.connect(":memory:")
+    bare.row_factory = sqlite3.Row
+    bare.executescript(
+        """
+        CREATE TABLE entities (
+            id TEXT PRIMARY KEY,
+            type TEXT NOT NULL,
+            name TEXT,
+            source_uri TEXT,
+            workflow_state TEXT,
+            attributes TEXT
+        );
+        """
+    )
+    _add_todo(bare, "todo:t1")
+    assert detect_todo_implementation_seed_incomplete(bare) == []

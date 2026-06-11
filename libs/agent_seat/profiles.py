@@ -36,11 +36,11 @@ class CapabilityProfile:
       allowed_models, model_requirement, capability_tier, dispatchable
     """
 
-    family: Literal["claude", "gpt", "grok", "gemini", "subagent"]
-    platform: Literal["api", "api-multi", "web", "cursor", "subagent"]
-    provider: Literal["anthropic", "openai", "xai", "google"]
+    family: Literal["claude", "gpt", "grok", "gemini", "subagent", "cursor"]
+    platform: Literal["api", "api-multi", "web", "cursor", "subagent", "sdk"]
+    provider: Literal["anthropic", "openai", "xai", "google", "cursor"]
     default_model: str | None  # None → not API-reachable (web platforms)
-    tool_surface: Literal["mcp", "inline-only"]
+    tool_surface: Literal["mcp", "inline-only", "sdk"]
     delivery: Literal["auto", "manual"]
     include_deadlines: bool
     include_review_queue: bool

@@ -239,7 +239,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         opt-out codes: ``pure_cortex_doc_edit`` (with ``web-inline``),
         ``capability_gap`` / ``protocol_heavy`` (non-Composer tier), or
         ``design_judgment_remaining`` (re-scope warning, coerced to composer).
-        Advisory on manual seats until cursorbuild binds the picker.
+        Advisory on manual seats; IDE picker binds the actual executor tier.
 
         **``op="generate"`` / ``op="to_thread"``** — API functional roles via
         ``role`` (regenerate roster via ``scripts/gen-mcp-dispatch-role-docs``):

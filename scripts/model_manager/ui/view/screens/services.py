@@ -117,6 +117,7 @@ class ServicesScreen(Screen):
             yield Static("  AgentBus: —", id="svc-agentbus")
             yield Static("  Events:   checking...", id="svc-events")
             yield Static("  EmailBridge: —", id="svc-emailbridge")
+            yield Static("  GitWorker:   —", id="svc-gitworker")
 
         with Vertical(id="build-options"):
             yield Select(
@@ -167,9 +168,7 @@ class ServicesScreen(Screen):
                 yield Button(
                     "Stop Events", id="btn-stop-events", variant="error", disabled=True
                 )
-                yield Button(
-                    "Sync + Start MCP", id="btn-start-mcp", variant="success"
-                )
+                yield Button("Sync + Start MCP", id="btn-start-mcp", variant="success")
                 yield Button(
                     "Stop MCP", id="btn-stop-mcp", variant="error", disabled=True
                 )
@@ -208,6 +207,18 @@ class ServicesScreen(Screen):
                 yield Button(
                     "Stop Email Bridge",
                     id="btn-stop-emailbridge",
+                    variant="error",
+                    disabled=True,
+                )
+                yield Button(
+                    "Start Git Worker",
+                    id="btn-start-gitworker",
+                    variant="success",
+                    disabled=True,
+                )
+                yield Button(
+                    "Stop Git Worker",
+                    id="btn-stop-gitworker",
                     variant="error",
                     disabled=True,
                 )
@@ -326,6 +337,15 @@ class ServicesScreen(Screen):
                     self.run_worker(self._start_email_bridge(), exclusive=True)
                 else:
                     self.run_worker(self._stop_email_bridge(), exclusive=True)
+            case "btn-start-gitworker" | "btn-stop-gitworker":
+                self.query_one("#btn-start-gitworker", Button).disabled = True
+                self.query_one("#btn-stop-gitworker", Button).disabled = True
+                if event.button.id == "btn-start-gitworker":
+                    self.run_worker(
+                        self._start_git_integration_worker(), exclusive=True
+                    )
+                else:
+                    self.run_worker(self._stop_git_integration_worker(), exclusive=True)
             case "btn-restart-local":
                 self.run_worker(self._restart_local(), exclusive=True)
             case "btn-force-toggle":
@@ -504,6 +524,16 @@ class ServicesScreen(Screen):
             )
             self.query_one("#btn-start-emailbridge", Button).disabled = True
             self.query_one("#btn-stop-emailbridge", Button).disabled = True
+
+        giw = svc.service_state.check_git_integration_worker()
+        self.query_one("#svc-gitworker", Static).update(
+            f"  GitWorker:   {giw.detail or giw.status}"
+        )
+        # TCP host service: check() never reports ownership=MANAGED, so gate on
+        # status (RUNNING/UNHEALTHY ⇒ Stop), mirroring gateway/rag — NOT ownership.
+        giw_up = giw.status is not ServiceStatus.STOPPED
+        self.query_one("#btn-start-gitworker", Button).disabled = giw_up
+        self.query_one("#btn-stop-gitworker", Button).disabled = not giw_up
 
         events = svc.service_state.check_event_service()
         self.query_one("#svc-events", Static).update(
@@ -805,6 +835,23 @@ class ServicesScreen(Screen):
         svc = self.app.service_controller  # type: ignore[attr-defined]
         await self._run_gated_action(
             "stop", "email_bridge", lambda: svc.stop_email_bridge()
+        )
+        await asyncio.sleep(2)
+        self._refresh_status()
+
+    async def _start_git_integration_worker(self) -> None:
+        svc = self.app.service_controller  # type: ignore[attr-defined]
+        result = await svc.start_git_integration_worker()
+        self.query_one("#svc-log", LogStream).write_line(result)
+        await asyncio.sleep(2)
+        self._refresh_status()
+
+    async def _stop_git_integration_worker(self) -> None:
+        svc = self.app.service_controller  # type: ignore[attr-defined]
+        await self._run_gated_action(
+            "stop",
+            "git_integration_worker",
+            lambda: svc.stop_git_integration_worker(),
         )
         await asyncio.sleep(2)
         self._refresh_status()

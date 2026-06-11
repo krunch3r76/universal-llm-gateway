@@ -9,7 +9,11 @@ from typing import Any, Protocol
 
 from implement_admission.admission_read import read_packet
 from implement_admission.deck_resolver import NormalizedDeck, resolve_phase_deck
-from implement_admission.routing import derive_routing
+from implement_admission.routing import (
+    classify_risk_tier,
+    derive_routing,
+    normalize_author_family,
+)
 from implement_admission.source_ref import SourceRef, SourceRefError, parse_source_ref
 from implement_admission.spec import (
     Acceptance,
@@ -19,6 +23,7 @@ from implement_admission.spec import (
     Intent,
     Readiness,
     ReadinessState,
+    ReviewAttestation,
     Scope,
     Source,
     SourceKind,
@@ -37,30 +42,51 @@ def normalize(
     cortex: CortexReader,
     workspaces_root: Any = None,
     dirty_tree_risk: bool = False,
+    author_family: str | None = None,
 ) -> ImplementSpec:
     """Parse, resolve (read-only), derive routing, and return ImplementSpec."""
     ref = parse_source_ref(raw_source_ref)
     now = datetime.now(UTC)
 
     if ref.source_kind == SourceKind.AGENT_BUS.value:
-        return _normalize_agent_bus(
+        spec = _normalize_agent_bus(
             ref, cortex=cortex, now=now, dirty_tree_risk=dirty_tree_risk
         )
-
-    if ref.source_kind == SourceKind.PACKET.value:
-        return _normalize_packet(
+    elif ref.source_kind == SourceKind.PACKET.value:
+        spec = _normalize_packet(
             ref,
             workspaces_root=workspaces_root,
             now=now,
             dirty_tree_risk=dirty_tree_risk,
         )
+    else:
+        spec = _normalize_entity(
+            ref,
+            cortex=cortex,
+            now=now,
+            dirty_tree_risk=dirty_tree_risk,
+            workspaces_root=workspaces_root,
+        )
+    return _stamp_review_attestation(spec, author_family)
 
-    return _normalize_entity(
-        ref,
-        cortex=cortex,
-        now=now,
-        dirty_tree_risk=dirty_tree_risk,
-        workspaces_root=workspaces_root,
+
+def _stamp_review_attestation(
+    spec: ImplementSpec,
+    author_family: str | None,
+) -> ImplementSpec:
+    risk_tier = classify_risk_tier(spec)
+    fam = normalize_author_family(author_family)
+    att = ReviewAttestation(
+        required=(risk_tier in {"material", "critical"} and fam == "claude"),
+        risk_tier=risk_tier,
+        author_family=fam,
+        spec_hash=None,
+        disposition="missing",
+    )
+    return spec.model_copy(
+        update={
+            "provenance": spec.provenance.model_copy(update={"review_attestation": att})
+        }
     )
 
 
@@ -100,7 +126,7 @@ def _normalize_entity(
     gated_reason: str | None = None
 
     if kind == SourceKind.PLAN.value:
-        phases = attrs.get("phases") or attrs.get("phase_count") or 0
+        phases = attrs.get("phases") or 0
         if isinstance(phases, list):
             multi_phase = len(phases) > 1
         elif isinstance(phases, int):
@@ -110,7 +136,7 @@ def _normalize_entity(
 
     deck: NormalizedDeck | None = None
     if kind == SourceKind.PLAN_PHASE.value:
-        phase_dir = attrs.get("phase_dir") or attrs.get("directory")
+        phase_dir = attrs.get("phase_dir")
         if phase_dir is None and not attrs.get("phase_number"):
             raise SourceRefError(
                 code="phase_not_found",
@@ -130,9 +156,7 @@ def _normalize_entity(
             )
 
     if kind == SourceKind.TODO.value:
-        trips_threshold = bool(
-            attrs.get("trips_todo_plan_threshold") or attrs.get("multi_phase_arc")
-        )
+        trips_threshold = bool(attrs.get("multi_phase_arc"))
 
     files_expected = _files_from_entity(attrs)
     entity_acs = _acceptance_from_entity(attrs, name)
@@ -173,12 +197,19 @@ def _normalize_entity(
         )
 
     adapter = _adapter_for_kind(kind)
+    raw_uri = entity.get("source_uri")
+    source_uri: str | None = None
+    if raw_uri is not None:
+        stripped = str(raw_uri).strip()
+        if stripped:
+            source_uri = stripped.removeprefix("files://")
     source = Source(
         source_ref=ref.external_ref,
         canonical_ref=ref.canonical_ref,
         parent_ref=ref.parent_ref,
         selector=ref.selector,
         source_kind=SourceKind(kind),
+        source_uri=source_uri,
         source_version=SourceVersion(
             content_hash=content_hash,
             deck_sha256=deck.sha256 if deck is not None else None,
@@ -417,7 +448,7 @@ def _packet_routing_flags(text: str) -> tuple[bool, bool]:
 
 
 def _files_from_entity(attrs: dict[str, Any]) -> list[str]:
-    files = attrs.get("files_expected") or attrs.get("files_modified") or []
+    files = attrs.get("files_expected") or []
     if isinstance(files, str):
         return [files]
     return list(files)
@@ -442,7 +473,7 @@ def _acceptance_from_packet(text: str) -> list[str]:
 
 
 def _acceptance_from_entity(attrs: dict[str, Any], name: str) -> list[str]:
-    raw = attrs.get("acceptance_criteria") or attrs.get("acceptance") or []
+    raw = attrs.get("acceptance_criteria") or []
     if isinstance(raw, str):
         return [raw]
     if isinstance(raw, list):

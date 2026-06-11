@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -29,6 +30,7 @@ from implement_admission.drift_gates import (
     clear_gate_state_cache,
     evaluate_drift_gate,
     gate_state,
+    review_attestation_warnings,
 )
 from implement_admission.spec import (
     Acceptance,
@@ -39,10 +41,13 @@ from implement_admission.spec import (
     ImplementSpec,
     Intent,
     OrchestrationMode,
+    Provenance,
     Readiness,
     ReadinessState,
+    ReviewAttestation,
     Routing,
     RoutingDerivation,
+    Scope,
     Source,
     SourceKind,
     SourceVersion,
@@ -321,3 +326,198 @@ def test_apply_gate_b_complete_to_partial(monkeypatch: pytest.MonkeyPatch) -> No
     out = apply_closeout_gate_b(closeout)
     assert out.status == CloseoutStatus.PARTIAL
     assert out.deviations
+
+
+def _material_claude_spec(**att_kwargs) -> ImplementSpec:  # noqa: ANN003
+    att_defaults = {
+        "risk_tier": "material",
+        "author_family": "claude",
+        "disposition": "missing",
+    }
+    att_defaults.update(att_kwargs)
+    att = ReviewAttestation(**att_defaults)
+    return finalize_spec(
+        ImplementSpec(
+            source=Source(
+                source_ref="todo:mat",
+                canonical_ref="todo:mat",
+                source_kind=SourceKind.TODO,
+            ),
+            intent=Intent(summary="dispatch admission wiring"),
+            scope=Scope(files_expected=["libs/implement_admission/routing.py"]),
+            readiness=Readiness(state=ReadinessState.READY),
+            routing=Routing(
+                orchestration_mode=OrchestrationMode.SINGLE,
+                executor_style=ExecutorStyle.MECHANICAL,
+                derivation=RoutingDerivation(mode_rule="m", style_rule="s"),
+            ),
+            acceptance=Acceptance(criteria=["wire handoff warnings"]),
+            closeout=Closeout(adapter=CloseoutAdapterKind.TODO),
+            provenance=Provenance(review_attestation=att),
+        )
+    )
+
+
+def test_review_attestation_warnings_missing_disposition() -> None:
+    spec = _material_claude_spec(required=True, disposition="missing")
+    warnings = review_attestation_warnings(spec)
+    assert any("no passing cross-family review" in w for w in warnings)
+
+
+def test_review_attestation_warnings_hand_set_required_false() -> None:
+    spec = _material_claude_spec(required=False, disposition="missing")
+    warnings = review_attestation_warnings(spec)
+    assert any("under-classifies risk" in w for w in warnings)
+
+
+def test_review_attestation_warnings_unbound_pass() -> None:
+    spec = _material_claude_spec(
+        required=True,
+        disposition="pass",
+        spec_hash=None,
+    )
+    warnings = review_attestation_warnings(spec)
+    assert any("UNBOUND pass" in w for w in warnings)
+
+
+def test_review_attestation_warnings_stale_hash() -> None:
+    spec = _material_claude_spec(
+        required=True,
+        disposition="pass",
+        spec_hash="sha256:old",
+    )
+    warnings = review_attestation_warnings(spec)
+    assert any("STALE" in w for w in warnings)
+
+
+def test_review_attestation_warnings_unresolved_blockers() -> None:
+    spec = _material_claude_spec(
+        required=True,
+        disposition="pass",
+        spec_hash=implement_spec_hash(_material_claude_spec()),
+        unresolved_blocker_ids=["b1", "b2"],
+    )
+    warnings = review_attestation_warnings(spec)
+    assert any("2 unresolved blocker(s)" in w for w in warnings)
+
+
+def test_review_attestation_warnings_none_attestation() -> None:
+    spec = _material_claude_spec().model_copy(
+        update={"provenance": Provenance(review_attestation=None)}
+    )
+    warnings = review_attestation_warnings(spec)
+    assert any("no review_attestation present" in w for w in warnings)
+
+
+def test_review_attestation_warnings_empty_for_mechanical() -> None:
+    spec = finalize_spec(
+        ImplementSpec(
+            source=Source(
+                source_ref="todo:mech",
+                canonical_ref="todo:mech",
+                source_kind=SourceKind.TODO,
+            ),
+            intent=Intent(summary="rename a local var"),
+            readiness=Readiness(state=ReadinessState.READY),
+            routing=Routing(
+                orchestration_mode=OrchestrationMode.SINGLE,
+                executor_style=ExecutorStyle.MECHANICAL,
+                derivation=RoutingDerivation(mode_rule="m", style_rule="s"),
+            ),
+            acceptance=Acceptance(criteria=["done"]),
+            closeout=Closeout(adapter=CloseoutAdapterKind.TODO),
+            provenance=Provenance(
+                review_attestation=ReviewAttestation(
+                    risk_tier="mechanical",
+                    author_family="claude",
+                    disposition="missing",
+                )
+            ),
+        )
+    )
+    assert review_attestation_warnings(spec) == []
+
+
+def test_review_attestation_warnings_empty_for_gated() -> None:
+    spec = _material_claude_spec().model_copy(
+        update={
+            "readiness": Readiness(
+                state=ReadinessState.GATED,
+                gated_reason="blocked",
+            ),
+            "routing": None,
+        }
+    )
+    assert review_attestation_warnings(spec) == []
+
+
+def test_review_attestation_warnings_empty_for_valid_bound_pass() -> None:
+    base = _material_claude_spec()
+    bound_hash = implement_spec_hash(base)
+    spec = base.model_copy(
+        update={
+            "provenance": base.provenance.model_copy(
+                update={
+                    "review_attestation": ReviewAttestation(
+                        required=True,
+                        risk_tier="material",
+                        author_family="claude",
+                        disposition="pass",
+                        spec_hash=bound_hash,
+                    )
+                }
+            )
+        }
+    )
+    assert review_attestation_warnings(spec) == []
+
+
+def test_review_attestation_warnings_surfaced_via_bridge(tmp_path: Path) -> None:
+    from systems.frontier_consult.implement_admission_bridge import (
+        resolve_source_ref_to_packet,
+    )
+
+    class Reader:
+        def entity_get(self, entity_id: str, **kwargs):  # noqa: ANN003
+            return {
+                "id": entity_id,
+                "name": "dispatch infra",
+                "attributes": {
+                    "acceptance_criteria": ["wire admission handoff executor"],
+                    "files_expected": ["libs/implement_admission/routing.py"],
+                },
+            }
+
+    ulg = tmp_path / "universal-llm-gateway"
+    ulg.mkdir(parents=True)
+    clear_gate_state_cache()
+    result = resolve_source_ref_to_packet(
+        "todo:mat",
+        cortex=Reader(),
+        workspaces_root=tmp_path,
+        author_family="claude-cursor",
+    )
+    assert not result.gated
+    assert any("no passing cross-family review" in w for w in result.warnings)
+
+
+def test_material_missing_attestation_warn_only_not_reject() -> None:
+    spec = _material_claude_spec(required=True, disposition="missing")
+    gate_b = check_packet_hash_drift(
+        spec, on_disk_sha256=spec.source.source_version.packet_sha256
+    )
+    assert review_attestation_warnings(spec)
+    assert gate_b.action != "reject"
+
+
+def test_drift_gate_b_still_rejects_genuine_mismatch() -> None:
+    spec = _ready_spec()
+    with patch(
+        "implement_admission.drift_gates.gate_state",
+        return_value=DriftGateState.ENFORCE,
+    ):
+        result = check_packet_hash_drift(
+            spec,
+            on_disk_sha256="sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        )
+    assert result.action == "reject"

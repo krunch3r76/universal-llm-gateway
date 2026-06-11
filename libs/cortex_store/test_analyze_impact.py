@@ -129,8 +129,8 @@ def test_dual_substrate_mirror_deduped_with_both_provenances() -> None:
 def test_blocked_by_excluded_from_default_blast_radius() -> None:
     """Thread 1174 turn 7: blocked_by is workflow state, not knowledge-propagation."""
     conn = _conn()
-    seed = "plan_phase:cursorbuild-mvp/phase-3"
-    blocked = "todo:cursorbuild-green-gate-verifies-consumers"
+    seed = "plan_phase:green-gate-mvp/phase-3"
+    blocked = "todo:green-gate-verifies-consumers"
     _entity(conn, seed)
     _entity(conn, blocked)
     _rel(conn, blocked, seed, "blocked_by")

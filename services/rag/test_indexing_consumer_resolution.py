@@ -1,9 +1,9 @@
 """Regression: indexing._delete_file must be importable via the indexing module.
 
-Exemplar (c) for the cursorbuild green-gate-verifies-consumers gate (commit 86f3afa3
-modularize split indexing into sub-modules; the prior head left watcher_runtime
-calling indexing._delete_file while the impl lived only in _indexing_delete.py with
-no re-export).  An import-time resolution check catches this class of regression at
+Regression guard for modularize splits that leave a public module attribute
+unresolvable after impl moves to a private submodule (commit 86f3afa3: watcher_runtime
+called indexing._delete_file while the impl lived only in _indexing_delete.py with
+no re-export). An import-time resolution check catches this class of regression at
 test time before a live watcher tries to delete a file.
 """
 

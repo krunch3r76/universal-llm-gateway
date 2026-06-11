@@ -11,7 +11,6 @@ from pathlib import Path
 from implement_admission.source_ref import SourceRefError
 
 _ULG_REPO_DIRNAME = "universal-llm-gateway"
-_FRONTMATTER_KEY = re.compile(r"^({key}):\s*(\S+)", re.MULTILINE)
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,9 +91,33 @@ def replace_frontmatter_value(text: str, key: str, value: str) -> str:
     return text[:3] + new_region + text[end:]
 
 
+def _strip_review_attestation_block(frontmatter: str) -> str:
+    """Remove the nested review_attestation YAML block from frontmatter."""
+    lines = frontmatter.split("\n")
+    out: list[str] = []
+    i = 0
+    while i < len(lines):
+        if lines[i].startswith("review_attestation:"):
+            i += 1
+            while i < len(lines) and (
+                lines[i].startswith("  ") or lines[i].startswith("\t")
+            ):
+                i += 1
+            continue
+        out.append(lines[i])
+        i += 1
+    return "\n".join(out)
+
+
 def compute_packet_sha256(text: str) -> str:
-    """SHA256 with frontmatter packet_sha256 canonicalized to PENDING."""
+    """SHA256 with packet_sha256 PENDING and review_attestation elided."""
     elided = replace_frontmatter_value(text, "packet_sha256", "PENDING")
+    region = _frontmatter_region(elided)
+    if region is not None:
+        stripped = _strip_review_attestation_block(region)
+        if stripped != region:
+            end = elided.find("\n---", 3)
+            elided = elided[:3] + stripped + elided[end:]
     return _sha256_bytes(elided.encode("utf-8"))
 
 

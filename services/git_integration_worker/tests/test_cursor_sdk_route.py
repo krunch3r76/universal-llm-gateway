@@ -16,6 +16,7 @@ from services.git_integration_worker.cursor_dispatch_registry import (
     CursorDispatchRegistry,
     DispatchConflict,
 )
+from services.git_integration_worker.cursor_home import CursorHomeConfigError
 from services.git_integration_worker.models.cursor_api import (
     CursorDispatchRequest,
     CursorDispatchResponse,
@@ -133,10 +134,19 @@ async def test_bus_client_599_on_transport_error(
     async def _boom(*_args: Any, **_kwargs: Any) -> Any:
         raise httpx.ConnectError("down")
 
+    inner = MagicMock()
+    inner.get = AsyncMock(
+        return_value=MagicMock(
+            status_code=200,
+            json=lambda: {"turns": [{"turn_number": 1}]},
+        )
+    )
+    inner.post = _boom
+
     monkeypatch.setattr(
         "services.git_integration_worker.cursor_bus.make_async_client",
         lambda *_a, **_k: MagicMock(
-            __aenter__=AsyncMock(return_value=MagicMock(post=_boom)),
+            __aenter__=AsyncMock(return_value=inner),
             __aexit__=AsyncMock(return_value=False),
         ),
     )
@@ -149,6 +159,78 @@ async def test_bus_client_599_on_transport_error(
         body="b",
     )
     assert result.status_code == 599
+
+
+@pytest.mark.asyncio
+async def test_bus_client_marks_inbox_and_sets_after_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    inner = MagicMock()
+    inner.get = AsyncMock(
+        side_effect=[
+            MagicMock(status_code=200, json=lambda: {"turns": []}),
+            MagicMock(
+                status_code=200,
+                json=lambda: {"turns": [{"turn_number": 3}]},
+            ),
+        ]
+    )
+    inner.post = AsyncMock(
+        return_value=MagicMock(status_code=201, json=lambda: {"turn_number": 4})
+    )
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_bus.make_async_client",
+        lambda *_a, **_k: MagicMock(
+            __aenter__=AsyncMock(return_value=inner),
+            __aexit__=AsyncMock(return_value=False),
+        ),
+    )
+    bus = CursorBusClient(token="tok")
+    result = await bus.reply(
+        thread_id="1567",
+        to_agent="dispatch",
+        from_agent="cursor-sdk",
+        subject="smoke",
+        body="PONG",
+    )
+    assert result.status_code == 201
+    assert inner.get.await_count == 2
+    post_payload = inner.post.await_args.kwargs["json"]
+    assert post_payload["after_turn"] == 3
+
+
+@pytest.mark.asyncio
+async def test_dispatch_home_config_error_posts_bus_reply(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    req = CursorDispatchRequest(
+        thread_id="99",
+        model="cursor/composer-2.5",
+        dispatch_id="disp-home-fail",
+        message="hello",
+    )
+    bus = AsyncMock()
+    bus.reply = AsyncMock(return_value=MagicMock(status_code=200, body={}))
+
+    def _boom(**_kwargs: Any) -> str:
+        raise CursorHomeConfigError("no credential")
+
+    monkeypatch.setattr(route_mod, "_run_sdk_sync", _boom)
+
+    await route_mod._run_sdk_dispatch(
+        req=req,
+        source_repo=route_mod._CONFIG.source_repo,
+        bus=bus,
+    )
+
+    bus.reply.assert_awaited_once()
+    call = bus.reply.await_args
+    assert call is not None
+    assert "FAILED (home/auth)" in call.kwargs["subject"]
+    assert "CURSOR_HOME_CONFIG" in call.kwargs["body"]
 
 
 def test_active_work_busy_with_running_dispatch(client: TestClient) -> None:

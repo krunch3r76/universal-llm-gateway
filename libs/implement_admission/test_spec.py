@@ -15,6 +15,7 @@ from implement_admission.spec import (
     OrchestrationMode,
     Readiness,
     ReadinessState,
+    ReviewAttestation,
     Routing,
     RoutingDerivation,
     Source,
@@ -80,7 +81,9 @@ def test_implement_spec_hash_excludes_hash_field() -> None:
     spec = _ready_spec()
     h = implement_spec_hash(spec)
     spec_with_hash = spec.model_copy(
-        update={"provenance": spec.provenance.model_copy(update={"implement_spec_hash": h})}
+        update={
+            "provenance": spec.provenance.model_copy(update={"implement_spec_hash": h})
+        }
     )
     assert implement_spec_hash(spec_with_hash) == h
 
@@ -124,3 +127,68 @@ def test_ready_requires_routing() -> None:
             acceptance=Acceptance(criteria=["x"]),
             closeout=Closeout(adapter=CloseoutAdapterKind.TODO),
         )
+
+
+def test_review_attestation_defaults() -> None:
+    att = ReviewAttestation()
+    assert att.required is False
+    assert att.risk_tier == "mechanical"
+    assert att.disposition == "missing"
+    assert att.author_family == "claude"
+    assert att.unresolved_blocker_ids == []
+    assert att.resolved_blocker_map == {}
+
+
+def test_implement_spec_hash_invariant_review_attestation_none() -> None:
+    spec = finalize_spec(_ready_spec())
+    base_hash = implement_spec_hash(spec)
+    without = spec.model_copy(
+        update={
+            "provenance": spec.provenance.model_copy(
+                update={"review_attestation": None}
+            )
+        }
+    )
+    assert implement_spec_hash(without) == base_hash
+
+
+def test_implement_spec_hash_invariant_stamped_missing() -> None:
+    spec = finalize_spec(_ready_spec())
+    base_hash = implement_spec_hash(spec)
+    stamped = spec.model_copy(
+        update={
+            "provenance": spec.provenance.model_copy(
+                update={
+                    "review_attestation": ReviewAttestation(
+                        required=True,
+                        risk_tier="material",
+                        disposition="missing",
+                    )
+                }
+            )
+        }
+    )
+    assert implement_spec_hash(stamped) == base_hash
+
+
+def test_implement_spec_hash_invariant_mutated_pass_blockers() -> None:
+    spec = finalize_spec(_ready_spec())
+    base_hash = implement_spec_hash(spec)
+    mutated = spec.model_copy(
+        update={
+            "provenance": spec.provenance.model_copy(
+                update={
+                    "review_attestation": ReviewAttestation(
+                        required=True,
+                        risk_tier="critical",
+                        disposition="pass",
+                        spec_hash="sha256:deadbeef",
+                        reviewer_family="gpt",
+                        unresolved_blocker_ids=["b1"],
+                        resolved_blocker_map={"b1": "ac-3"},
+                    )
+                }
+            )
+        }
+    )
+    assert implement_spec_hash(mutated) == base_hash

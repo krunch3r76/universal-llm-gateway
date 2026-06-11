@@ -265,6 +265,69 @@ def get_turns(
         return rows
 
 
+def get_unread_thread_toc(
+    *,
+    to: str,
+    mark_read: bool = False,
+    limit: int | None = None,
+) -> tuple[list[dict[str, Any]], int]:
+    """Recipient-scoped unread inbox digest — one row per thread with unread
+    turns addressed to ``to``.
+
+    Mirrors get_turns' recipient/unread/non-superseded filter
+    (recipient_in_clause + read_at IS NULL + status != 'superseded') so each
+    row's unread_count reflects turns THIS seat must read — not the
+    thread-global unread_count carried on ThreadDetail.
+
+    The result is bounded by thread count (O(threads)), so a recipient-scoped
+    catch-up read stays under the MCP inline response guard regardless of total
+    unread turn volume (friction 16835: the flat List[Turn] form overflowed at
+    routine fan-out). Per-thread latest-turn metadata is taken from the most
+    recent unread turn addressed to the seat (the actionable head).
+
+    When ``mark_read`` is True, every matching unread turn is marked read in the
+    same transaction (preserves the fetch_unread(to=…, mark_read=true)
+    "clear all" contract relied on by the 409 unread_turns_exist remediation).
+
+    Returns ``(rows, marked_read_count)``; marked_read_count is 0 unless
+    mark_read is True.
+    """
+    inbox_clause, inbox_params = recipient_in_clause(to, include_team=to != "kaywan")
+    where = f"{inbox_clause} AND turns.read_at IS NULL AND turns.status != 'superseded'"
+    limit_clause = f"LIMIT {int(limit)}" if limit is not None else ""
+    # SQLite bare-column rule: with a single MAX() aggregate the non-aggregated
+    # columns resolve to the row holding the max — so latest_* come from the
+    # highest-turn_number unread turn in each thread.
+    select_sql = f"""
+        SELECT
+            turns.thread AS thread,
+            threads.slug AS slug,
+            COUNT(*) AS unread_count,
+            MAX(turns.turn_number) AS latest_turn_number,
+            turns.subject AS latest_subject,
+            turns.from_agent AS latest_from,
+            turns.to_agent AS latest_to,
+            turns.created_at AS latest_created_at
+        FROM turns
+        LEFT JOIN threads ON threads.id = turns.thread
+        WHERE {where}
+        GROUP BY turns.thread
+        ORDER BY latest_created_at DESC
+        {limit_clause}
+    """
+    with connect() as conn:
+        rows = [dict(row) for row in conn.execute(select_sql, inbox_params).fetchall()]
+        marked = 0
+        if mark_read:
+            ts = now()
+            cur = conn.execute(
+                f"UPDATE turns SET read_at = ? WHERE {where}",
+                [ts, *inbox_params],
+            )
+            marked = max(cur.rowcount, 0)
+        return rows, marked
+
+
 def mark_turn_read(turn_id: int) -> str | None:
     """Returns read_at timestamp, or None if turn not found."""
     with connect() as conn:

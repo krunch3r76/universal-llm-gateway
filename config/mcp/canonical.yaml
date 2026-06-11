@@ -116,6 +116,39 @@ tools:
   cache_priority: on_demand
   introduced: 2026-05-24
 
+- canonical_name: cortex_assertion_state
+  domain: cortex
+  operation: assertion_state
+  dispatcher_call_shape:
+    tool: cortex
+    dispatch_key: op
+    dispatch_value: assertion_state
+  flat_call_shape:
+    tool: cortex_assertion_state
+    substrate_qualified: user-vortex__cortex_assertion_state
+  fol_descriptor: |
+    ∀ entity_id ∈ str ∧ entity_id ≠ ∅:
+      assertion_state(entity_id) ⟹
+        result = {entity_id, ratified, confirmed_count, latest_confirmed_assertion_id}
+        ∧ confirmed_count = |{a : a.entity_id = resolve(entity_id)
+            ∧ a.confidence = 'confirmed' ∧ a.superseded_by IS NULL}|
+        ∧ ratified = (confirmed_count ≥ 1)
+        ∧ latest_confirmed_assertion_id = argmax_{created_at}(that set) ∨ null.
+    ∀ entity_id = ∅ ⟹ error("entity_id is required").
+    Read-only. Lightweight ratification/count projection; mirrors
+    preflight.py::require_decision_asserted (no review_status filter).
+    See agent_skill:cortex.
+  json_schema:
+    type: object
+    properties:
+      entity_id: {type: string, description: "Required. Entity to project (alias-resolved, like entity_get)."}
+    required: [entity_id]
+  skill_uri: agent_skill:cortex
+  seat_visibility: [mcp, mcp_claude]
+  mandate_safety: read_only
+  cache_priority: on_demand
+  introduced: 2026-06-11
+
 - canonical_name: cortex_entity_get
   domain: cortex
   operation: entity_get
@@ -1102,8 +1135,9 @@ tools:
     tool: agent_bus_read_fetch_unread
     substrate_qualified: user-vortex__agent_bus_read_fetch_unread
   fol_descriptor: |
-    ∀ recipient ∨ thread: fetch_unread ⟹ result ∈ List[Turn] (no count cap).
-    Read-only. ¬side-effects. Read-only projection of agent_bus. See agent_skill:agent_bus.
+    fetch_unread(to) ∧ ¬thread ⟹ result ∈ UnreadThreadToc (one row per thread; bounded by thread count).
+    fetch_unread(thread) ⟹ result ∈ List[Turn] (no count cap).
+    mark_read=true marks matching unread turns read (read-cursor side effect). Projection of agent_bus. See agent_skill:agent_bus.
   json_schema:
     type: object
     properties:
@@ -1829,11 +1863,10 @@ tools:
       expected_diff_sha256: {type: string}
       remove_worktree: {type: boolean, default: true}
     required: [arc, phase, worktree_path, approval, expected_diff_sha256]
-  # headless/arc-only: git is an external-agent / manual-worktree concern, not a
-  # Cursor-IDE concern (decision:cursorbuild-ide-interface). Demoted off mcp_claude
-  # → overflow for Claude seats (still tool_search-discoverable for a Claude lead).
+  # headless/arc-only: git relays to git-integration-worker (decision:lead-agent-git-integration).
+  # Not a Cursor-IDE concern — demoted off mcp_claude → overflow for Claude seats.
   seat_visibility: [mcp]
-  skill_uri: agent_skill:cursorbuild
+  skill_uri: agent_skill:lead-agent-git-integration
   mandate_safety: write
   cache_priority: on_demand
   introduced: 2026-05-29
@@ -1868,7 +1901,7 @@ tools:
     required: [arc, phase, worktree_path, approval, expected_diff_sha256]
   # headless/arc-only (see git_integrate note). Off mcp_claude → overflow for Claude.
   seat_visibility: [mcp]
-  skill_uri: agent_skill:cursorbuild
+  skill_uri: agent_skill:lead-agent-git-integration
   mandate_safety: write
   cache_priority: on_demand
   introduced: 2026-05-31
@@ -1895,7 +1928,7 @@ tools:
     required: [worktree_path]
   # headless/arc-only (see git_integrate note). Off mcp_claude → overflow for Claude.
   seat_visibility: [mcp]
-  skill_uri: agent_skill:cursorbuild
+  skill_uri: agent_skill:lead-agent-git-integration
   mandate_safety: read_only
   cache_priority: on_demand
   introduced: 2026-05-29
@@ -1926,7 +1959,7 @@ tools:
     required: [worktree_path]
   # headless/arc-only (see git_integrate note). Off mcp_claude → overflow for Claude.
   seat_visibility: [mcp]
-  skill_uri: agent_skill:cursorbuild
+  skill_uri: agent_skill:lead-agent-git-integration
   mandate_safety: read_only
   cache_priority: on_demand
   introduced: 2026-05-29
@@ -1962,7 +1995,7 @@ tools:
     required: [worktree_path, expected_branch, paths]
   # headless/arc-only (see git_integrate note). Off mcp_claude → overflow for Claude.
   seat_visibility: [mcp]
-  skill_uri: agent_skill:cursorbuild
+  skill_uri: agent_skill:lead-agent-git-integration
   mandate_safety: write
   cache_priority: on_demand
   introduced: 2026-05-31

@@ -178,6 +178,34 @@ class TurnList(BaseModel):
     turns: list[Turn]
 
 
+class UnreadThreadTocRow(BaseModel):
+    """One thread's unread digest for a recipient-scoped fetch_unread."""
+
+    thread: str
+    slug: str | None = None
+    unread_count: int
+    latest_turn_number: int
+    latest_subject: str | None = None
+    latest_from: str | None = None
+    latest_to: str | None = None
+    latest_created_at: datetime
+
+
+class UnreadThreadToc(BaseModel):
+    """Recipient-scoped unread inbox digest — bounded, one row per thread.
+
+    Returned by GET /turns/unread-toc and by recipient-scoped fetch_unread
+    (``to`` set, ``thread`` unset). Thread-scoped fetch_unread returns TurnList.
+    Bounded by thread count so the catch-up read stays under the MCP inline
+    response guard regardless of unread turn volume (friction 16835).
+    """
+
+    threads: list[UnreadThreadTocRow]
+    total_unread_threads: int
+    total_unread_turns: int
+    marked_read: int = 0
+
+
 class TurnUpdate(BaseModel):
     subject: str | None = None
     body: str | None = None

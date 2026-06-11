@@ -50,7 +50,11 @@ class NormalizedDeck:
 
 
 def _slug_and_phase(ref: SourceRef) -> tuple[str, int]:
-    rest = ref.canonical_ref.split(":", 1)[1] if ":" in ref.canonical_ref else ref.canonical_ref
+    rest = (
+        ref.canonical_ref.split(":", 1)[1]
+        if ":" in ref.canonical_ref
+        else ref.canonical_ref
+    )
     match = _CANONICAL.match(rest)
     if not match:
         raise SourceRefError(
@@ -110,7 +114,7 @@ def resolve_phase_deck(
     slug, phase_num = _slug_and_phase(ref)
     base = _repo_base(workspaces_root)
 
-    override_dir = attrs.get("phase_dir") or attrs.get("directory")
+    override_dir = attrs.get("phase_dir")
     deck_dir = (
         (base / override_dir)
         if override_dir
@@ -214,7 +218,9 @@ def _lift_objective(body: str) -> str | None:
     section = _extract_section(body, r"Objective")
     if not section:
         return None
-    text = " ".join(line.strip() for line in section.splitlines() if line.strip()).strip()
+    text = " ".join(
+        line.strip() for line in section.splitlines() if line.strip()
+    ).strip()
     return text[:280] or None
 
 

@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import hashlib
-import re
-import urllib.parse
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from admission_common.tree_probe import probe_working_tree
-from implement_admission.drift_gates import check_packet_hash_drift
+from implement_admission.drift_gates import (
+    check_packet_hash_drift,
+    review_attestation_warnings,
+)
 from implement_admission.materialize import materialize
 from implement_admission.normalize import normalize
 from implement_admission.source_ref import parse_source_ref
@@ -24,6 +26,12 @@ from .handoff import _resolve_packet_file, _workspaces_root
 _ULG_REPO_DIRNAME = "universal-llm-gateway"
 _FRONTMATTER_HASH = re.compile(r"^implement_spec_hash:\s*(\S+)", re.MULTILINE)
 _CORTEX_TIMEOUT = 15.0
+
+
+@dataclass(frozen=True, slots=True)
+class VerifyHashResult:
+    implement_spec_hash: str
+    warnings: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,23 +68,22 @@ def _executor_probe_root(workspaces_root: Path) -> Path:
 class StargateCortexReader:
     """Thin sync HTTP relay to cortex-api for implement_admission readers."""
 
-    def entity_get(self, entity_id: str, **kwargs: Any) -> dict[str, Any]:
-        path = f"/entities/{urllib.parse.quote(entity_id, safe=':')}"
+    def _dispatch(self, tool: str, entity_id: str, **kwargs: Any) -> dict[str, Any]:
+        payload = {"tool": tool, "arguments": {"entity_id": entity_id, **kwargs}}
         with make_sync_client(DEFAULT_CORTEX_URL, timeout=_CORTEX_TIMEOUT) as client:
-            resp = client.get(path)
+            resp = client.post("/dispatch", json=payload)
             resp.raise_for_status()
             data: dict[str, Any] = resp.json()
-
-        raw_assertions = data.get("assertions") or []
-        data["assertions"] = [
-            {
-                "superseded": bool(item.get("superseded_by")),
-                "confidence": item.get("confidence"),
-                **item,
-            }
-            for item in raw_assertions
-        ]
         return data
+
+    def assertion_state(self, entity_id: str, **kwargs: Any) -> dict[str, Any]:
+        return self._dispatch("assertion_state", entity_id, **kwargs)
+
+    def entity_get(self, entity_id: str, **kwargs: Any) -> dict[str, Any]:
+        # Entity-seed normalize (todo:/plan:/plan_phase:) reads the entity here.
+        # Without this method, _normalize_entity's broad except surfaces the
+        # AttributeError as source_not_found — the bug stub readers masked.
+        return self._dispatch("entity_get", entity_id, **kwargs)
 
 
 def _repo_base(workspaces_root: Path) -> Path:
@@ -161,7 +168,8 @@ def verify_both_present_hash(
     workspaces_root: Path | None = None,
     enable_dirty_tree_risk: bool = False,
     cwd: str | None = None,
-) -> str:
+    author_family: str | None = None,
+) -> VerifyHashResult:
     """Compare frontmatter implement_spec_hash to normalize(source_ref); return hash.
 
     Stamp-on-admit: an **absent** frontmatter ``implement_spec_hash`` is trusted
@@ -195,8 +203,10 @@ def verify_both_present_hash(
         cortex=cortex,
         workspaces_root=root,
         dirty_tree_risk=dirty_tree_risk,
+        author_family=author_family,
     )
     expected = spec.provenance.implement_spec_hash or implement_spec_hash(spec)
+    attestation_warnings = review_attestation_warnings(spec)
 
     if frontmatter_hash is not None and frontmatter_hash != expected:
         raise FrontierEndpointError(
@@ -216,7 +226,10 @@ def verify_both_present_hash(
             spec=spec,
             packet_sha256=_sha256_file(candidate),
         )
-    return expected
+    return VerifyHashResult(
+        implement_spec_hash=expected,
+        warnings=attestation_warnings,
+    )
 
 
 def resolve_source_ref_to_packet(
@@ -227,6 +240,7 @@ def resolve_source_ref_to_packet(
     enable_dirty_tree_risk: bool = False,
     cwd: str | None = None,
     request_id: str | None = None,
+    author_family: str | None = None,
 ) -> BridgeResult:
     """Normalize + materialize source_ref into a workspaces-relative packet path."""
     root = (workspaces_root or _workspaces_root()).resolve()
@@ -239,6 +253,7 @@ def resolve_source_ref_to_packet(
         cortex=cortex,
         workspaces_root=root,
         dirty_tree_risk=dirty_tree_risk,
+        author_family=author_family,
     )
 
     if spec.readiness.state == ReadinessState.GATED:
@@ -249,6 +264,7 @@ def resolve_source_ref_to_packet(
         )
 
     spec_hash = spec.provenance.implement_spec_hash or implement_spec_hash(spec)
+    attestation_warnings = review_attestation_warnings(spec)
 
     if _is_packet_lane(source_ref):
         packet_path_part = source_ref.split(":", 1)[1]
@@ -268,6 +284,7 @@ def resolve_source_ref_to_packet(
             packet_path=rel_path,
             implement_spec_hash=spec_hash,
             packet_sha256=spec.source.source_version.packet_sha256,
+            warnings=attestation_warnings,
         )
 
     out_dir = _materialized_out_dir(root)
@@ -286,7 +303,7 @@ def resolve_source_ref_to_packet(
     present = probe_packet_presence(
         rel_path, workspaces_root=root, probe_root=probe_root
     )
-    bridge_warnings: list[str] = []
+    bridge_warnings: list[str] = list(attestation_warnings)
     if not present:
         bridge_warnings.append(
             "materialization.executor_absent: "

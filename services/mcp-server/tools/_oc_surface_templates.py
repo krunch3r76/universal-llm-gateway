@@ -75,7 +75,7 @@ set is auto-derived. See `tasks/discoveries/mcp-tool-definition-context-churn.md
 
 `git_*` tools (`git_status`, `git_diff`, `git_commit`, `git_integrate`,
 `git_land`) are intentionally NOT in the Claude primary catalog and are
-**headless / arc-worktree only** (`decision:cursorbuild-ide-interface`). A Cursor
+**headless / arc-worktree only** (`decision:lead-agent-git-integration`). A Cursor
 IDE session does not use them even if `tool_search` surfaces them — use the
 editor + native apply/review instead. See `commit-and-git-scope_ws.mdc`."""
 
@@ -133,7 +133,7 @@ prior-session assertions or this doc over a live attempt. `tool_search` returns
 overflow relay templates only; they require bound `dispatch`.
 
 ## Dispatch & Consult (claude-web /mcp seat)
-Pick by CAPABILITY, not model family. To consult a MODEL (any provider, incl. grok) you do NOT use a build harness (cursorbuild).
+Pick by CAPABILITY, not model family. To consult a MODEL (any provider, incl. grok) you do NOT use a build harness.
 When connector-bound: team_dispatch + panel_dispatch are server-primary — call directly.
 - local file/entity work (you ARE claude-web) → fs / cortex / agent_bus directly — ¬ team_dispatch(op="generate"|"to_thread", model="claude-web") (422)
 - manual seat handoff → team_dispatch(op="handoff", seat=claude-web|claude-cursor, packet_path=…|source_ref=…, subject=…) — shorthands accepted; handoff seat-map: web-consult, web-implement → claude-web; cursor-consult, cursor-implement → claude-cursor.
@@ -142,7 +142,7 @@ When connector-bound: team_dispatch + panel_dispatch are server-primary — call
 - handoff roles: web-consult, web-implement, cursor-consult, cursor-implement (complete roster)
 - consensus panel → panel_dispatch(messages=[…], dispatch_thread_id="…", disposition="panel") → panel_executions; lead adjudication NON-offloadable
 - strategic advice / in-pipeline RAG → dispatch(tool="advisor" | "pipeline_consult", …)  [overflow]
-- close-to-code build → cursorbuild (forward harness)
+- close-to-code build (auto) → team_dispatch(op=handoff, seat=cursor-sdk)
 Read agent-skills/dispatch-workflow.md §0a before first dispatch. Source: claude-web-dispatch-decision-table.md (§2/§3/§4)."""
 
 GEMINI_WEB_TOOL_SURFACE = """\
@@ -170,7 +170,7 @@ tool_search(query="pipeline")    # → enables pipeline(op="result", ...)
 
 **Dispatch & Consult — pick by CAPABILITY, not model family:**
 - API consult → `team_dispatch(op="generate", role=..., dispatch_thread_id=..., model="provider/model"?, messages=...)`
-- close-to-code build (multi-writer) → `cursorbuild` (forward harness)
+- close-to-code build (auto) → team_dispatch(op=handoff, seat=cursor-sdk)
 
 On the shared `/mcp` surface `team_dispatch` is primary — call directly.
 Optional `model=` must be `provider/model` (bare name = 404). A build harness

@@ -34,7 +34,9 @@ class SourceRef:
 class SourceRefError(Exception):
     """Typed resolution failure carrying code, source_ref, and rule."""
 
-    def __init__(self, *, code: str, source_ref: str, rule: str, message: str | None = None) -> None:
+    def __init__(
+        self, *, code: str, source_ref: str, rule: str, message: str | None = None
+    ) -> None:
         self.code = code
         self.source_ref = source_ref
         self.rule = rule
@@ -111,7 +113,11 @@ def parse_source_ref(raw: str) -> SourceRef:
         else:
             kind = entity_match.group("kind").lower()
         rest = entity_match.group("rest")
-        canonical = f"{kind}:{rest}" if kind != SourceKind.PLAN_PHASE.value else f"plan_phase:{rest}"
+        canonical = (
+            f"{kind}:{rest}"
+            if kind != SourceKind.PLAN_PHASE.value
+            else f"plan_phase:{rest}"
+        )
         parent: str | None = None
         selector: str | None = None
         if kind == SourceKind.PLAN_PHASE.value:

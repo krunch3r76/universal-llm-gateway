@@ -82,7 +82,7 @@ criteria but no contract signal is rejected (`handoff_contract_ambiguous`).
 
 **Executor override (implement):** optional front-matter or request fields —
 server resolves `recommended_executor` on the handoff response (advisory on
-manual seats until cursorbuild):
+manual seats; IDE picker binds the executor tier):
 
 ```yaml
 executor_override: composer | composer-fast | composer-thinking | web-inline | <non-composer-tier>

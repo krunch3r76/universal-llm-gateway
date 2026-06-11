@@ -11,8 +11,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from request_profile import bind_request
 from fastmcp.tools.tool import ToolResult
+from request_profile import bind_request
 from response_size_guard import (
     _agent_bus_manifest,
     _measure_result,
@@ -21,6 +21,7 @@ from response_size_guard import (
 from tools.agent_bus import (  # noqa: E402
     _fetch_dispatch,
     _fetch_impl,
+    _fetch_unread_dispatch,
     _format_agent_bus_error,
 )
 
@@ -205,3 +206,69 @@ def test_turn_fetch_manifest_still_suggests_last_window() -> None:
     assert manifest["adaptive_last"] is not None
     options = "\n".join(manifest["selective_options"])
     assert '"last":' in options
+
+
+def test_fetch_unread_recipient_scope_routes_to_toc_endpoint() -> None:
+    """friction 16835: recipient-scoped fetch_unread must hit the bounded
+    /turns/unread-toc digest, not the uncapped /turns?unread=true fan-out."""
+    captured: dict[str, str] = {}
+
+    def relay(service: str, method: str, path: str, **kwargs) -> dict:
+        del service, method, kwargs
+        captured["path"] = path
+        captured.update(
+            {k: v[0] for k, v in parse_qs(urlparse(path).query).items()}
+        )
+        return {
+            "threads": [],
+            "total_unread_threads": 0,
+            "total_unread_turns": 0,
+            "marked_read": 0,
+        }
+
+    with patch("tools.agent_bus._relay", side_effect=relay):
+        out = _fetch_unread_dispatch(to="claude-web")
+
+    assert captured["path"].startswith("/turns/unread-toc")
+    assert captured["to"] == "claude-web"
+    assert "unread" not in captured  # not the flat /turns?unread=true path
+    assert out["total_unread_threads"] == 0
+
+
+def test_fetch_unread_recipient_scope_forwards_mark_read() -> None:
+    captured: dict[str, str] = {}
+
+    def relay(service: str, method: str, path: str, **kwargs) -> dict:
+        del service, method, kwargs
+        captured["path"] = path
+        captured.update(
+            {k: v[0] for k, v in parse_qs(urlparse(path).query).items()}
+        )
+        return {"threads": []}
+
+    with patch("tools.agent_bus._relay", side_effect=relay):
+        _fetch_unread_dispatch(to="claude-web", mark_read=True)
+
+    assert captured["path"].startswith("/turns/unread-toc")
+    assert captured["mark_read"] == "true"
+
+
+def test_fetch_unread_thread_scope_still_returns_turn_list() -> None:
+    """Thread-scoped fetch_unread keeps the flat List[Turn] turn path."""
+    captured: dict[str, str] = {}
+
+    def relay(service: str, method: str, path: str, **kwargs) -> dict:
+        del service, method, kwargs
+        captured["path"] = path
+        captured.update(
+            {k: v[0] for k, v in parse_qs(urlparse(path).query).items()}
+        )
+        return {"turns": []}
+
+    with patch("tools.agent_bus._relay", side_effect=relay):
+        _fetch_unread_dispatch(thread="1138")
+
+    assert captured["path"].startswith("/turns?")
+    assert captured["thread"] == "1138"
+    assert captured["unread"] == "true"
+    assert "/turns/unread-toc" not in captured["path"]

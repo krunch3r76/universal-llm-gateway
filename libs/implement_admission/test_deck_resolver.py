@@ -213,7 +213,9 @@ def test_open_design_alternatives_heading(tmp_path: Path) -> None:
 
 
 def test_open_design_optional_consultation(tmp_path: Path) -> None:
-    body = _DECK.replace("**Optional Consultation**: None", "**Optional Consultation**: gpt-5.5")
+    body = _DECK.replace(
+        "**Optional Consultation**: None", "**Optional Consultation**: gpt-5.5"
+    )
     _write_deck(tmp_path, "sample", "phase-1-sample.md", content=body)
     deck = resolve_phase_deck(_ref(), workspaces_root=tmp_path)
     assert deck.open_design is True
@@ -274,9 +276,12 @@ def _hash_with_pop_oracle(spec) -> str:
     if payload.get("readiness") is not None:
         payload["readiness"]["freshness_checked_at"] = None
     payload["scope"].pop("deck_body", None)
-    source_version = payload.get("source", {}).get("source_version")
-    if source_version is not None and source_version.get("deck_sha256") is None:
-        source_version.pop("deck_sha256", None)
+    source = payload.get("source")
+    if source is not None:
+        source.pop("source_uri", None)
+        source_version = source.get("source_version")
+        if source_version is not None and source_version.get("deck_sha256") is None:
+            source_version.pop("deck_sha256", None)
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
     return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
@@ -301,6 +306,7 @@ def test_corpus_embeds_deck_verbatim() -> None:
     corpus = _render_corpus(spec)
     assert corpus.startswith("Source:")
     assert "Intent:" in corpus
+    assert "attributes are authoritative" not in corpus
     assert "--- PHASE DECK (verbatim) ---" in corpus
     # Verbatim: BEFORE/AFTER bodies + nested fences survive, not [:20]-truncated.
     assert "**BEFORE:**" in corpus
@@ -325,7 +331,9 @@ def test_sanitize_corpus_embed_counts() -> None:
 def test_non_plan_phase_corpus_unchanged() -> None:
     spec = _mk_plan_phase_spec(deck_body=_DECK)
     spec = spec.model_copy(
-        update={"source": spec.source.model_copy(update={"source_kind": SourceKind.TODO})}
+        update={
+            "source": spec.source.model_copy(update={"source_kind": SourceKind.TODO})
+        }
     )
     corpus = _render_corpus(spec)
     assert "PHASE DECK" not in corpus

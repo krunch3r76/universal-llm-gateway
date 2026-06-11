@@ -1,7 +1,7 @@
 """Narrow shared admission primitives — tree probe and prompt safety only.
 
-Charter: stateless signals consumed by cursorbuild and implement_admission bridge.
-No routing, no decision gates, no imports from cursorbuild or implement_admission.
+Charter: stateless signals consumed by implement_admission bridge.
+No routing, no decision gates, no imports from implement_admission.
 """
 
 from admission_common.prompt_safety import forbidden_token_reason

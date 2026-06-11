@@ -62,6 +62,8 @@ class Source(BaseModel):
     parent_ref: str | None = None
     selector: str | None = None
     source_kind: SourceKind
+    # Human narrative path for corpus display only; drift-bound via content_hash.
+    source_uri: str | None = None
     source_version: SourceVersion = Field(default_factory=SourceVersion)
 
 
@@ -115,8 +117,29 @@ class Closeout(BaseModel):
     bus_thread: str | None = None
 
 
+class ReviewAttestation(BaseModel):
+    required: bool = False
+    risk_tier: Literal["mechanical", "material", "critical"] = "mechanical"
+    spec_hash: str | None = None
+    author_family: str = "claude"
+    reviewer_family: str | None = None
+    reviewer_model: str | None = None
+    review_execution_id: str | None = None
+    review_artifact_uri: str | None = None
+    disposition: Literal[
+        "pass",
+        "pass_with_conditions",
+        "blocked",
+        "pending",
+        "missing",
+    ] = "missing"
+    unresolved_blocker_ids: list[str] = Field(default_factory=list)
+    resolved_blocker_map: dict[str, str] = Field(default_factory=dict)
+
+
 class Provenance(BaseModel):
     implement_spec_hash: str | None = None
+    review_attestation: ReviewAttestation | None = None
     generated_from: str = "implement_admission_v1"
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     normalizer_version: str = "1.0.0"
@@ -150,6 +173,7 @@ def implement_spec_hash(spec: ImplementSpec) -> str:
     """SHA256 over canonical JSON with provenance.implement_spec_hash elided."""
     payload = spec.model_dump()
     payload["provenance"]["implement_spec_hash"] = None
+    payload["provenance"]["review_attestation"] = None
     # Volatile at normalize()/materialize() time — must not affect drift-guard stability.
     payload["provenance"]["created_at"] = None
     if payload.get("readiness") is not None:
@@ -161,9 +185,12 @@ def implement_spec_hash(spec: ImplementSpec) -> str:
         payload["scope"].pop("deck_body", None)
     # deck_sha256 binds the deck fingerprint when present; pop when None so
     # deck-less specs are unaffected by the new field.
-    source_version = payload.get("source", {}).get("source_version")
-    if source_version is not None and source_version.get("deck_sha256") is None:
-        source_version.pop("deck_sha256", None)
+    source = payload.get("source")
+    if source is not None:
+        source.pop("source_uri", None)
+        source_version = source.get("source_version")
+        if source_version is not None and source_version.get("deck_sha256") is None:
+            source_version.pop("deck_sha256", None)
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
     digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
     return f"sha256:{digest}"
@@ -173,6 +200,8 @@ def finalize_spec(spec: ImplementSpec) -> ImplementSpec:
     """Attach implement_spec_hash to provenance."""
     h = implement_spec_hash(spec)
     updated = spec.model_copy(
-        update={"provenance": spec.provenance.model_copy(update={"implement_spec_hash": h})}
+        update={
+            "provenance": spec.provenance.model_copy(update={"implement_spec_hash": h})
+        }
     )
     return updated

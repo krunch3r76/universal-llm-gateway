@@ -12,7 +12,10 @@ pipeline tracker. No pseudo execution_id is minted for handoff.
 from __future__ import annotations
 
 import json
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
+
+if TYPE_CHECKING:
+    from agent_seat.profiles import CapabilityProfile
 
 # Ship C: only observable pre-reply state (no read_at-derived push proxy).
 HandoffStatus = Literal["awaiting_first_reply"]
@@ -84,6 +87,24 @@ def build_recommended_review(*, handoff_contract: str) -> dict[str, Any]:
     return {"recommended_review": value}
 
 
+def build_seat_capability(
+    *,
+    profile: CapabilityProfile,
+    recommended_executor: str | None,
+) -> dict[str, Any]:
+    """Seat-capability advisory block for the handoff response."""
+    return {
+        "seat_capability": {
+            "delivery": profile.delivery,
+            "dispatchable": profile.dispatchable,
+            "tool_surface": profile.tool_surface,
+            "picker_range": list(profile.allowed_models),
+            "default_model": profile.default_model,
+            "recommended_executor": recommended_executor,
+        }
+    }
+
+
 def build_push_reminder(
     *,
     thread_id: str,
@@ -101,6 +122,13 @@ def build_push_reminder(
         "the operator must do, and how results return. Do not paste this "
         "reminder verbatim."
     )
+    if platform == "sdk":
+        return (
+            f"**Automated cursor-sdk dispatch**: handoff posted to thread "
+            f"{thread_id}. Worker admission runs asynchronously; poll via "
+            f"poll_hint for the first reply from cursor-sdk."
+            f"{seat_obligation}"
+        )
     if platform == "cursor":
         executor_hint = (
             " Default executor for bound implement handoffs is Composer "

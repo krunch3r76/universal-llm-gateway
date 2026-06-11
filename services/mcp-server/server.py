@@ -418,6 +418,7 @@ def _build_server() -> tuple[
     def fs(
         op: str,
         sandbox: str,
+        description: str = "",
         path: str = "",
         paths: list[str] | None = None,
         content: str = "",

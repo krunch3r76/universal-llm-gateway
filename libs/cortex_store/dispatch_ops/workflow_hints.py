@@ -129,6 +129,10 @@ _WORKFLOW_HINTS: dict[str, str] = {
         "next: review the spreading activation results for structurally connected "
         "assertions the original search wouldn't find directly"
     ),
+    "assertion_state": (
+        "drill down: assertions(entity_id=…, confidence=confirmed) "
+        "or entity_get(intent=card)"
+    ),
 }
 
 _FRICTION_TICKET_NEXT = (
@@ -153,16 +157,14 @@ _FRICTION_HINT = (
 )
 
 _WORKFLOW_HINTS["friction"] = (
-    "Logged observation only — to open a fix cycle use "
-    + _FRICTION_TICKET_NEXT
+    "Logged observation only — to open a fix cycle use " + _FRICTION_TICKET_NEXT
 )
 
 _WORKFLOW_HINTS["frictions"] = (
     "tip: defaults to open assertions on service:* entities. "
     "Narrow with service, category (tool_error, schema_gap, …), or seeded_by. "
     "Per-service lookup: assertions(entity_id='service:mcp-server', filter='tool_error'). "
-    "Close via friction_close after fix. "
-    + _FRICTION_TICKET_NEXT
+    "Close via friction_close after fix. " + _FRICTION_TICKET_NEXT
 )
 
 _CORTEX_FORMAT_HINT = (
@@ -198,6 +200,7 @@ _CORTEX_HALLUCINATED_TOOLS: dict[str, str] = {
     "traverse": "edge_traverse",
     "list_edge_types": "edge_types",
     "get_edge_types": "edge_types",
+    "decision_status": "assertion_state",
 }
 
 

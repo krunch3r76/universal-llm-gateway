@@ -28,7 +28,9 @@ def _paths_touch_event_catalog(paths: list[str]) -> bool:
             return True
         if not path.endswith(".py"):
             continue
-        if not any(path.startswith(f"{root}/") for root in ("services", "libs", "systems")):
+        if not any(
+            path.startswith(f"{root}/") for root in ("services", "libs", "systems")
+        ):
             continue
         parts = path.split("/")
         if "events" in parts or parts[-1].startswith("events"):
@@ -193,6 +195,15 @@ def _sanitize_corpus_embed(text: str) -> tuple[str, int]:
     return out, mutated
 
 
+def _authoritative_attrs_line(spec: ImplementSpec) -> str | None:
+    if spec.source.source_kind not in (SourceKind.TODO, SourceKind.PLAN):
+        return None
+    uri = spec.source.source_uri
+    if uri:
+        return f"narrative spec: {uri}; attributes are authoritative"
+    return "attributes are authoritative"
+
+
 def _render_corpus(spec: ImplementSpec) -> str:
     header = [
         f"Source: {spec.source.canonical_ref}",
@@ -229,22 +240,53 @@ def _render_corpus(spec: ImplementSpec) -> str:
         prefix = ("\n".join(notes) + "\n\n") if notes else ""
         return "\n".join(header) + "\n\n" + _DECK_EMBED_DELIM + "\n\n" + prefix + body
 
-    return "\n".join(header[:20])
+    lines = list(header[:20])
+    auth_line = _authoritative_attrs_line(spec)
+    if auth_line is not None:
+        lines.append(auth_line)
+    return "\n".join(lines)
+
+
+def _render_review_attestation_block(spec: ImplementSpec) -> str:
+    att = spec.provenance.review_attestation
+    if att is None:
+        return ""
+    reviewer_family = att.reviewer_family if att.reviewer_family is not None else "none"
+    spec_hash = att.spec_hash if att.spec_hash is not None else "unbound"
+    ids = att.unresolved_blocker_ids
+    ids_repr = "[]" if not ids else str(ids)
+    lines = [
+        "review_attestation:",
+        f"  author_family: {att.author_family}",
+        f"  disposition: {att.disposition}",
+        f"  required: {str(att.required).lower()}",
+        f"  reviewer_family: {reviewer_family}",
+        f"  risk_tier: {att.risk_tier}",
+        f"  spec_hash: {spec_hash}",
+        f"  unresolved_blocker_ids: {ids_repr}",
+    ]
+    return "\n".join(lines)
 
 
 def _render_packet(spec: ImplementSpec, *, spec_hash: str) -> str:
     source_ref = spec.source.source_ref
-    frontmatter = "\n".join(
+    att_block = _render_review_attestation_block(spec)
+    frontmatter_lines = [
+        "---",
+        f"source_ref: {source_ref}",
+        f"implement_spec_hash: {spec_hash}",
+    ]
+    if att_block:
+        frontmatter_lines.append(att_block)
+    frontmatter_lines.extend(
         [
-            "---",
-            f"source_ref: {source_ref}",
-            f"implement_spec_hash: {spec_hash}",
             "packet_sha256: PENDING",
             "generated_from: implement_admission_v1",
             "---",
             "",
         ]
     )
+    frontmatter = "\n".join(frontmatter_lines)
 
     body = f"""{frontmatter}<scope>
 {_render_scope(spec)}

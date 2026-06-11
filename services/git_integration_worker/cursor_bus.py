@@ -33,6 +33,41 @@ class CursorBusClient:
             token if token is not None else os.environ.get("AGENT_BUS_TOKEN", "")
         ).strip()
 
+    def _headers(self) -> dict[str, str]:
+        if not self._token:
+            return {}
+        return {"Authorization": f"Bearer {self._token}"}
+
+    async def _consume_inbox(
+        self, client: httpx.AsyncClient, *, thread_id: str, from_agent: str
+    ) -> None:
+        """Mark unread turns addressed to ``from_agent`` read before replying."""
+        await client.get(
+            "/turns",
+            params={
+                "thread": thread_id,
+                "to": from_agent,
+                "unread": "true",
+                "mark_read": "true",
+            },
+            headers=self._headers(),
+        )
+
+    async def _latest_turn_number(
+        self, client: httpx.AsyncClient, *, thread_id: str
+    ) -> int:
+        resp = await client.get(
+            "/turns",
+            params={"thread": thread_id, "last": 1},
+            headers=self._headers(),
+        )
+        if resp.status_code >= 400:
+            return 0
+        turns = resp.json().get("turns") or []
+        if not turns:
+            return 0
+        return int(turns[-1]["turn_number"])
+
     async def reply(
         self,
         *,
@@ -42,9 +77,7 @@ class CursorBusClient:
         subject: str,
         body: str,
     ) -> BusReplyResult:
-        headers: dict[str, str] = {}
-        if self._token:
-            headers["Authorization"] = f"Bearer {self._token}"
+        headers = self._headers()
         payload = {
             "thread": thread_id,
             "from": from_agent,
@@ -52,10 +85,15 @@ class CursorBusClient:
             "subject": subject,
             "body": body,
             "status": "open",
-            "after_turn": 0,
         }
         try:
             async with make_async_client(self._base_url, timeout=15.0) as client:
+                await self._consume_inbox(
+                    client, thread_id=thread_id, from_agent=from_agent
+                )
+                after_turn = await self._latest_turn_number(client, thread_id=thread_id)
+                if after_turn:
+                    payload["after_turn"] = after_turn
                 resp = await client.post("/turns", json=payload, headers=headers)
         except httpx.HTTPError as exc:
             logger.error("cursor bus transport error: %s", exc)
