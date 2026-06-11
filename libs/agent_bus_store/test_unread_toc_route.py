@@ -35,23 +35,33 @@ def _new_thread(client, *, slug, frm, to, subject, body):
 def _add_turn(client, *, thread, frm, to, subject, body):
     resp = client.post(
         "/turns",
-        json={"thread": thread, "from": frm, "to": to, "subject": subject, "body": body},
+        json={
+            "thread": thread,
+            "from": frm,
+            "to": to,
+            "subject": subject,
+            "body": body,
+        },
     )
     assert resp.status_code == 201, resp.text
 
 
 def test_unread_toc_one_row_per_thread_recipient_scoped(tmp_path) -> None:
     with TestClient(_app(tmp_path)) as client:
-        t1 = _new_thread(client, slug="toc-a", frm="cursor", to="web",
-                         subject="a1", body="body-a1")
-        _add_turn(client, thread=t1, frm="cursor", to="web",
-                  subject="a2", body="body-a2")
-        t2 = _new_thread(client, slug="toc-b", frm="cursor", to="web",
-                         subject="b1", body="body-b1")
+        t1 = _new_thread(
+            client, slug="toc-a", frm="cursor", to="web", subject="a1", body="body-a1"
+        )
+        _add_turn(
+            client, thread=t1, frm="cursor", to="web", subject="a2", body="body-a2"
+        )
+        t2 = _new_thread(
+            client, slug="toc-b", frm="cursor", to="web", subject="b1", body="body-b1"
+        )
         # A thread whose only unread turn is addressed to someone else must not
         # appear in web's digest (recipient scoping).
-        _new_thread(client, slug="toc-c", frm="web", to="cursor",
-                    subject="c1", body="body-c1")
+        _new_thread(
+            client, slug="toc-c", frm="web", to="cursor", subject="c1", body="body-c1"
+        )
 
         resp = client.get("/turns/unread-toc?to=web")
         assert resp.status_code == 200, resp.text
@@ -74,10 +84,10 @@ def test_unread_toc_one_row_per_thread_recipient_scoped(tmp_path) -> None:
 
 def test_unread_toc_mark_read_clears_inbox(tmp_path) -> None:
     with TestClient(_app(tmp_path)) as client:
-        t1 = _new_thread(client, slug="toc-mr", frm="cursor", to="web",
-                         subject="m1", body="b1")
-        _add_turn(client, thread=t1, frm="cursor", to="web",
-                  subject="m2", body="b2")
+        t1 = _new_thread(
+            client, slug="toc-mr", frm="cursor", to="web", subject="m1", body="b1"
+        )
+        _add_turn(client, thread=t1, frm="cursor", to="web", subject="m2", body="b2")
 
         # First call clears and reports what was cleared.
         resp = client.get("/turns/unread-toc?to=web&mark_read=true")

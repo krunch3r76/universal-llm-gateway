@@ -103,3 +103,30 @@ class CursorBusClient:
         except ValueError:
             parsed = resp.text
         return BusReplyResult(status_code=resp.status_code, body=parsed)
+
+    async def terminate_dispatch(
+        self,
+        *,
+        thread_id: str,
+        terminal_status: str,
+        execution_id: str | None = None,
+    ) -> BusReplyResult:
+        payload: dict[str, Any] = {"terminal_status": terminal_status}
+        if execution_id is not None:
+            payload["execution_id"] = execution_id
+        headers = self._headers()
+        try:
+            async with make_async_client(self._base_url, timeout=15.0) as client:
+                resp = await client.post(
+                    f"/threads/{thread_id}/dispatch-terminate",
+                    json=payload,
+                    headers=headers,
+                )
+        except httpx.HTTPError as exc:
+            logger.error("cursor bus terminate transport error: %s", exc)
+            return BusReplyResult(status_code=599, body=str(exc))
+        try:
+            parsed: dict[str, Any] | str = resp.json()
+        except ValueError:
+            parsed = resp.text
+        return BusReplyResult(status_code=resp.status_code, body=parsed)

@@ -170,3 +170,46 @@ def admit_dispatch(
             _transition_lifecycle_state(conn, thread_id, "admitted", "admit")
 
     return get_thread_with_links(thread_id)
+
+
+def terminate_dispatch(
+    *,
+    thread_id: str,
+    terminal_status: str,
+    execution_id: str | None = None,
+) -> dict[str, Any] | None:
+    """Mark dispatch link(s) terminal — sets terminal_status, terminal_at, delivery_at.
+
+    When ``execution_id`` is omitted, updates all non-terminal links for the thread
+    (SDK is 1:1). Idempotent: rows already terminal are skipped via the NULL guard.
+    """
+    if terminal_status not in ("completed", "failed"):
+        raise ValueError(
+            f"terminal_status must be 'completed' or 'failed', got {terminal_status!r}"
+        )
+
+    ts = now()
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT id FROM threads WHERE id = ?", (thread_id,)
+        ).fetchone()
+        if row is None:
+            return None
+
+        if execution_id is not None:
+            conn.execute(
+                "UPDATE thread_dispatch_links "
+                "SET terminal_status = ?, terminal_at = ?, delivery_at = ? "
+                "WHERE thread_id = ? AND execution_id = ? "
+                "AND terminal_status IS NULL",
+                (terminal_status, ts, ts, thread_id, execution_id),
+            )
+        else:
+            conn.execute(
+                "UPDATE thread_dispatch_links "
+                "SET terminal_status = ?, terminal_at = ?, delivery_at = ? "
+                "WHERE thread_id = ? AND terminal_status IS NULL",
+                (terminal_status, ts, ts, thread_id),
+            )
+
+    return get_thread_with_links(thread_id)

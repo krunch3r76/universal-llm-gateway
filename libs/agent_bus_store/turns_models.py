@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -308,6 +309,7 @@ class ThreadWithTurnCreate(BaseModel):
     after_turn: int | None = None
     attachments: list[AttachmentCreate] | None = None
     tags: list[str] = Field(default_factory=list)
+    lifecycle_state: str | None = None
 
 
 class ThreadWithTurnCreated(BaseModel):
@@ -330,3 +332,10 @@ class DispatchAdmit(BaseModel):
     execution_id: str
     pipeline_id: str
     caller_agent: str | None = None
+
+
+class DispatchTerminate(BaseModel):
+    """Payload for POST /threads/{id}/dispatch-terminate."""
+
+    terminal_status: Literal["completed", "failed"]
+    execution_id: str | None = None

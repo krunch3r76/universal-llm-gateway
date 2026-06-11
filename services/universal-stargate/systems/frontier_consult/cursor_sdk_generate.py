@@ -19,7 +19,7 @@ from .cursor_sdk_worker_dispatch import (
     post_worker_failure_turn,
 )
 from .dispatch_messages import extract_last_user_message
-from .handoff import create_handoff_thread
+from .handoff import admit_handoff_dispatch, create_handoff_thread
 from .handoff_response import build_handoff_result, build_sdk_generate_result
 
 
@@ -82,6 +82,15 @@ async def dispatch_cursor_sdk_generate(
         caller_agent=caller_agent,
         tags=["cursor-sdk-generate"],
         handoff_contract=handoff_contract,
+        lifecycle_state="pending",
+    )
+
+    await admit_handoff_dispatch(
+        request_id=request_id,
+        thread_id=thread_id,
+        execution_id=execution_id,
+        pipeline_id="cursor-sdk-generate",
+        caller_agent=caller_agent,
     )
 
     emit_sdk_thread_created(

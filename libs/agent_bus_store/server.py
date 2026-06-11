@@ -21,6 +21,7 @@ from .routes.threads import router as threads_router
 from .routes.turns import router as turns_router
 from .routes.wait import router as wait_router
 from .turns_models import MAX_TURN_BODY_CHARS, body_too_large_envelope
+from .reconcile import reconcile_orphaned_dispatches
 from .watchdog import run_watchdog
 
 logger = logging.getLogger("agent-bus")
@@ -37,6 +38,12 @@ def create_app(*, db_path: str | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         init_db()
+        try:
+            reaped = reconcile_orphaned_dispatches()
+            if reaped:
+                logger.warning("orphan reconcile: reaped %s dispatch link(s)", reaped)
+        except Exception:
+            logger.exception("orphan reconcile failed at startup")
         watchdog_task = asyncio.create_task(run_watchdog())
         logger.info("agent-bus started")
         try:

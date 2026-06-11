@@ -105,6 +105,49 @@ def emit_sdk_worker_completed(
     )
 
 
+@event_factory
+def FrontierSdkWorkerTimeout(  # noqa: N802
+    dispatch_id: str,
+    thread_id: str,
+    resolved_model: str,
+    timeout_s: float,
+) -> Event:
+    return Event(
+        signal="frontier.sdk.worker.timeout",
+        payload={
+            "dispatch_id": dispatch_id,
+            "thread_id": thread_id,
+            "resolved_model": resolved_model,
+            "timeout_s": timeout_s,
+        },
+        scope="node",
+    )
+
+
+def emit_sdk_worker_timeout(
+    *,
+    dispatch_id: str,
+    thread_id: str,
+    resolved_model: str,
+    timeout_s: float,
+) -> None:
+    _emit(
+        FrontierSdkWorkerTimeout(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            resolved_model=resolved_model,
+            timeout_s=timeout_s,
+        )
+    )
+    logger.error(
+        "cursor sdk worker timeout: dispatch_id=%s thread_id=%s model=%s timeout_s=%s",
+        dispatch_id,
+        thread_id,
+        resolved_model,
+        timeout_s,
+    )
+
+
 def emit_sdk_worker_failed(
     *,
     dispatch_id: str,

@@ -6,6 +6,7 @@ from .lifecycle import (
     AgentBusThreadLifecycleTransitioned,
     AgentBusThreadReopened,
     emit_dispatch_admit_failed,
+    emit_dispatch_orphaned,
     emit_lifecycle_transitioned,
     emit_thread_reopened,
 )
@@ -16,6 +17,7 @@ __all__ = [
     "AgentBusThreadLifecycleTransitioned",
     "AgentBusThreadReopened",
     "emit_dispatch_admit_failed",
+    "emit_dispatch_orphaned",
     "emit_lifecycle_transitioned",
     "emit_thread_reopened",
 ]

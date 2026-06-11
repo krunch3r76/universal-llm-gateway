@@ -197,3 +197,43 @@ def emit_watchdog_sweep_failed(error: str) -> None:
     """Build and publish a watchdog.sweep.failed event."""
     event = AgentBusWatchdogSweepFailed(error=error)
     _publish(event.signal, event.payload)
+
+
+@event_factory
+def AgentBusDispatchOrphaned(  # noqa: N802
+    execution_id: str,
+    thread_id: str,
+    pipeline_id: str,
+    linked_at: str,
+    age_s: float,
+) -> Event:
+    """Signal: mcp.agentbus.dispatch.orphaned"""
+    return Event(
+        signal="mcp.agentbus.dispatch.orphaned",
+        payload={
+            "execution_id": execution_id,
+            "thread_id": thread_id,
+            "pipeline_id": pipeline_id,
+            "linked_at": linked_at,
+            "age_s": age_s,
+        },
+    )
+
+
+def emit_dispatch_orphaned(
+    *,
+    execution_id: str,
+    thread_id: str,
+    pipeline_id: str,
+    linked_at: str,
+    age_s: float,
+) -> None:
+    """Build and publish a dispatch.orphaned event."""
+    event = AgentBusDispatchOrphaned(
+        execution_id=execution_id,
+        thread_id=thread_id,
+        pipeline_id=pipeline_id,
+        linked_at=linked_at,
+        age_s=age_s,
+    )
+    _publish(event.signal, event.payload)

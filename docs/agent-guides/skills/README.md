@@ -15,8 +15,8 @@
 
 | Slug | Repo path |
 |------|-----------|
-| `architecture-invariants` | `architecture-invariants.md` |
-| `ulg-architecture` | `ulg-architecture.md` |
+| `architecture-invariants` | `architecture-invariants.md` · deferred: `architecture-invariants/events-docs.md`, `architecture-invariants/quality-gates.md` · stub: `.cursor/skills/architecture-invariants/SKILL.md` |
+| `ulg-architecture` | `ulg-architecture.md` · deferred: `ulg-architecture/model-lifecycle.md`, `ulg-architecture/service-ops.md` · stub: `.cursor/skills/ulg-architecture/SKILL.md` |
 | `build-pipeline` | `build-pipeline/` (SKILL + reference files) |
 | `refine-pipeline` | `refine-pipeline.md` |
 | `friction-review` | `friction-review.md` — friction log vs codified bug ticket; pass zoom-out duty on bus pickup |

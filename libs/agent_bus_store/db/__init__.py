@@ -16,7 +16,12 @@ from .threads import (
     set_thread_tags,
     update_thread,
 )
-from .threads_atomic import admit_dispatch, close_thread, create_thread_with_turn
+from .threads_atomic import (
+    admit_dispatch,
+    close_thread,
+    create_thread_with_turn,
+    terminate_dispatch,
+)
 from .turns import (
     TurnAlreadyAcknowledged,
     UnreadTurnsExist,
@@ -38,6 +43,7 @@ __all__ = [
     "close_thread",
     "create_thread",
     "create_thread_with_turn",
+    "terminate_dispatch",
     "delete_thread",
     "delete_turn",
     "get_messages",

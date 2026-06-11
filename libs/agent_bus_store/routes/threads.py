@@ -14,6 +14,7 @@ from ..db import (
     close_thread,
     create_thread,
     create_thread_with_turn,
+    terminate_dispatch,
     delete_thread,
     get_thread,
     get_thread_summary,
@@ -27,6 +28,7 @@ from ..db.turns import UnreadTurnsExist
 from ..turns_models import (
     DispatchAdmit,
     DispatchLinkSummary,
+    DispatchTerminate,
     ThreadClose,
     ThreadCreate,
     ThreadDetail,
@@ -278,6 +280,7 @@ async def create_thread_with_turn_route(
             after_turn=body.after_turn,
             attachments=att_dicts,
             tags=body.tags,
+            lifecycle_state=body.lifecycle_state,
         )
     except UnreadTurnsExist as e:
         raise HTTPException(
@@ -378,6 +381,28 @@ async def dispatch_admit_route(thread_id: str, body: DispatchAdmit) -> ThreadDet
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Thread {thread_id} not found",
+        )
+    return _thread_detail(row)
+
+
+@router.post(
+    "/threads/{thread_id}/dispatch-terminate",
+    response_model=ThreadDetail,
+)
+async def dispatch_terminate_route(
+    thread_id: str, body: DispatchTerminate
+) -> ThreadDetail:
+    """Mark dispatch link terminal_status (completed or failed)."""
+    thread_id = normalize_thread_id(thread_id)
+    row = terminate_dispatch(
+        thread_id=thread_id,
+        terminal_status=body.terminal_status,
+        execution_id=body.execution_id,
+    )
     if row is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

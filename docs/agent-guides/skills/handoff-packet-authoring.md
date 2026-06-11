@@ -126,10 +126,16 @@ Primary artifacts: <paths>.  Out of scope: <...>.
 
 <invariants>
 Read before editing:
-- fs(cortex, agent-skills/architecture-invariants.md)   — universal layer
-- fs(cortex, agent-skills/ulg-architecture.md)           — ULG layer (when ULG)
-Per-task narrowing:
-[universal:no-bc] <...>   [scope] every changed line traces to task   [quality] SLOC ≤400/≤300
+- fs(cortex, agent-skills/architecture-invariants.md) — universal tag index
+- fs(cortex, agent-skills/ulg-architecture.md) — ULG tag index (when ULG)
+- fs(workspaces, .cursor/rules/architecture-handoff-protocol.mdc) — six-block contract
+Per-task narrowing (tag | rule — reason):
+| Tag | Rule |
+|---|---|
+| [universal:no-bc] | delete old surfaces; update consumers same change |
+| [scope] | every changed line traces to task |
+| [quality] | SLOC ≤400/≤300; load quality-gates.md on code change |
+| [ulg:service-ops] | manage MCP only; load service-ops.md on deploy |
 </invariants>
 
 <task_guidance>

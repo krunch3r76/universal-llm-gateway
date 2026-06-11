@@ -396,6 +396,86 @@ def _slug_from_subject(subject: str) -> str:
     return slug[:50].strip("-") or "handoff"
 
 
+async def admit_handoff_dispatch(
+    *,
+    request_id: str,
+    thread_id: str,
+    execution_id: str,
+    pipeline_id: str,
+    caller_agent: str | None,
+) -> None:
+    """POST dispatch-admit; emit mcp.agentbus.dispatch.admit.failed on error."""
+    token = os.getenv("AGENT_BUS_TOKEN", "").strip()
+    allow_unset = os.getenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    if not token and not allow_unset:
+        return
+
+    payload = {
+        "execution_id": execution_id,
+        "pipeline_id": pipeline_id,
+        "caller_agent": caller_agent,
+    }
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    try:
+        async with make_async_client(DEFAULT_AGENT_BUS_URL, timeout=10.0) as client:
+            resp = await client.post(
+                f"/threads/{thread_id}/dispatch-admit",
+                headers=headers,
+                json=payload,
+            )
+            if resp.status_code not in (200, 201):
+                _emit_dispatch_admit_failed(
+                    execution_id=execution_id,
+                    thread_id=thread_id,
+                    status_code=resp.status_code,
+                    error_preview=resp.text[:200],
+                )
+    except httpx.HTTPError as exc:
+        logger.error(
+            "handoff dispatch-admit transport error: request_id=%s thread=%s error=%s",
+            request_id,
+            thread_id,
+            exc,
+        )
+        _emit_dispatch_admit_failed(
+            execution_id=execution_id,
+            thread_id=thread_id,
+            status_code=0,
+            error_preview=str(exc)[:200],
+        )
+
+
+def _emit_dispatch_admit_failed(
+    *,
+    execution_id: str,
+    thread_id: str,
+    status_code: int,
+    error_preview: str,
+) -> None:
+    from systems.pipeline.core.events.delivery import AgentBusDispatchAdmitFailed
+
+    try:
+        from systems.proxy.dependencies import get_proxy
+
+        proxy = get_proxy()
+        event_bus = getattr(proxy, "event_bus", None)
+        if event_bus is not None:
+            event_bus.publish_from_sync(
+                AgentBusDispatchAdmitFailed(
+                    execution_id=execution_id,
+                    thread=thread_id,
+                    status_code=status_code,
+                    error_preview=error_preview,
+                )
+            )
+    except Exception:
+        return
+
+
 async def create_handoff_thread(
     *,
     request_id: str,
@@ -405,6 +485,7 @@ async def create_handoff_thread(
     caller_agent: str | None,
     tags: list[str] | None,
     handoff_contract: str,
+    lifecycle_state: str | None = None,
 ) -> str:
     """POST to agent-bus /threads/with-turn; return thread_id.
 
@@ -456,6 +537,8 @@ async def create_handoff_thread(
         "after_turn": 0,
         "tags": effective_tags,
     }
+    if lifecycle_state is not None:
+        payload["lifecycle_state"] = lifecycle_state
 
     headers = {"Authorization": f"Bearer {token}"} if token else {}
     try:

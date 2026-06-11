@@ -55,6 +55,7 @@ from services.git_integration_worker.cursor_sdk_context import (
 from services.git_integration_worker.cursor_sdk_events import (
     emit_sdk_worker_completed,
     emit_sdk_worker_failed,
+    emit_sdk_worker_timeout,
 )
 from services.git_integration_worker.models.cursor_api import (
     CursorDispatchRequest,
@@ -69,6 +70,7 @@ _CONFIG: WorkerConfig = load_config()
 _REG = CursorDispatchRegistry.instance()
 _SDK_BRIDGE_BIN = os.environ.get("CURSOR_SDK_BRIDGE_BIN", "").strip() or None
 _SDK_TIMEOUT_S = float(os.environ.get("CURSOR_SDK_TIMEOUT", "1800"))
+_SDK_TIMEOUT_BUFFER_S = 120.0
 _SDK_DISPATCH_LOCK = threading.Lock()
 
 
@@ -165,22 +167,66 @@ def _run_sdk_sync(
             client.close()
 
 
+async def _terminate_link(
+    bus: CursorBusClient, *, thread_id: str, terminal_status: str
+) -> None:
+    result = await bus.terminate_dispatch(
+        thread_id=thread_id, terminal_status=terminal_status
+    )
+    if result.status_code >= 400:
+        logger.error(
+            "cursor bus terminate failed: status=%s body=%s",
+            result.status_code,
+            result.body,
+        )
+
+
 async def _run_sdk_dispatch(
     *,
     req: CursorDispatchRequest,
     source_repo: Path,
     bus: CursorBusClient,
 ) -> None:
+    outer_timeout_s = _SDK_TIMEOUT_S + _SDK_TIMEOUT_BUFFER_S
     try:
         prompt = _resolve_prompt(req, source_repo)
-        outcome = await asyncio.to_thread(
-            _run_sdk_sync,
-            source_repo=source_repo,
-            prompt=prompt,
-            config_model_id=req.model,
-            selection_overrides=req.model_knobs,
-            dispatch_id=req.dispatch_id,
-        )
+        try:
+            outcome = await asyncio.wait_for(
+                asyncio.to_thread(
+                    _run_sdk_sync,
+                    source_repo=source_repo,
+                    prompt=prompt,
+                    config_model_id=req.model,
+                    selection_overrides=req.model_knobs,
+                    dispatch_id=req.dispatch_id,
+                ),
+                timeout=outer_timeout_s,
+            )
+        except TimeoutError:
+            emit_sdk_worker_timeout(
+                dispatch_id=req.dispatch_id,
+                thread_id=req.thread_id,
+                resolved_model=req.model,
+                timeout_s=outer_timeout_s,
+            )
+            env = error_envelope(
+                code="CURSOR_SDK_TIMEOUT",
+                message=(
+                    f"cursor-sdk dispatch exceeded outer timeout ({outer_timeout_s:.0f}s)"
+                ),
+                source="gateway",
+            )
+            await bus.reply(
+                thread_id=req.thread_id,
+                to_agent="dispatch",
+                from_agent="cursor-sdk",
+                subject=f"cursor-sdk dispatch {req.dispatch_id} FAILED (timeout)",
+                body=f"```json\n{json.dumps(env, indent=2)}\n```",
+            )
+            await _terminate_link(
+                bus, thread_id=req.thread_id, terminal_status="failed"
+            )
+            return
         inferred_contract = None
         if not req.handoff_contract and not req.message and req.packet_path:
             inferred_contract = infer_contract_from_text(
@@ -213,6 +259,7 @@ async def _run_sdk_dispatch(
                 bus_result.status_code,
                 bus_result.body,
             )
+        await _terminate_link(bus, thread_id=req.thread_id, terminal_status="completed")
     except CursorHomeConfigError as exc:
         logger.error(
             "cursor sdk home/auth config failed: dispatch_id=%s err=%s",
@@ -231,6 +278,7 @@ async def _run_sdk_dispatch(
             subject=f"cursor-sdk dispatch {req.dispatch_id} FAILED (home/auth)",
             body=f"```json\n{json.dumps(env, indent=2)}\n```",
         )
+        await _terminate_link(bus, thread_id=req.thread_id, terminal_status="failed")
     except Exception as exc:
         logger.exception("cursor sdk dispatch failed: dispatch_id=%s", req.dispatch_id)
         emit_sdk_worker_failed(
@@ -250,6 +298,7 @@ async def _run_sdk_dispatch(
             subject=f"cursor-sdk dispatch {req.dispatch_id} FAILED",
             body=f"```json\n{json.dumps(env, indent=2)}\n```",
         )
+        await _terminate_link(bus, thread_id=req.thread_id, terminal_status="failed")
 
 
 @router.post("/dispatch", response_model=CursorDispatchResponse)

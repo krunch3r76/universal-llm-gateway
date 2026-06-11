@@ -36,6 +36,13 @@ def _reset_registry() -> None:
     reg._records.clear()
 
 
+def _mock_bus() -> AsyncMock:
+    bus = AsyncMock()
+    bus.reply = AsyncMock(return_value=MagicMock(status_code=200, body={}))
+    bus.terminate_dispatch = AsyncMock(return_value=MagicMock(status_code=200, body={}))
+    return bus
+
+
 def _dispatch_body(**overrides: Any) -> dict[str, Any]:
     base = {
         "thread_id": "1558",
@@ -236,8 +243,7 @@ async def test_dispatch_implement_stub_degraded(
         message="---\ncontract: implement\n---\npacket",
         handoff_contract="implement",
     )
-    bus = AsyncMock()
-    bus.reply = AsyncMock(return_value=MagicMock(status_code=200, body={}))
+    bus = _mock_bus()
     emitted: list[dict[str, object]] = []
 
     def _capture(**kwargs: object) -> None:
@@ -282,8 +288,7 @@ async def test_dispatch_implement_success_ok(
         message="---\ncontract: implement\n---\npacket",
         handoff_contract="implement",
     )
-    bus = AsyncMock()
-    bus.reply = AsyncMock(return_value=MagicMock(status_code=200, body={}))
+    bus = _mock_bus()
     emitted: list[dict[str, object]] = []
 
     monkeypatch.setattr(
@@ -312,6 +317,9 @@ async def test_dispatch_implement_success_ok(
     assert "status: degraded" not in body
     assert emitted[0]["outcome"] == "ok"
     assert emitted[0]["tool_call_count"] == 2
+    bus.terminate_dispatch.assert_awaited_once_with(
+        thread_id="1590", terminal_status="completed"
+    )
 
 
 @pytest.mark.asyncio
@@ -327,8 +335,7 @@ async def test_dispatch_consult_zero_tool_calls_not_degraded(
         message="---\ncontract: consult\n---\npacket",
         handoff_contract="consult",
     )
-    bus = AsyncMock()
-    bus.reply = AsyncMock(return_value=MagicMock(status_code=200, body={}))
+    bus = _mock_bus()
     emitted: list[dict[str, object]] = []
 
     monkeypatch.setattr(
@@ -370,8 +377,7 @@ async def test_dispatch_exception_posts_failure_turn_and_event(
         dispatch_id="disp-fail",
         message="hello",
     )
-    bus = AsyncMock()
-    bus.reply = AsyncMock(return_value=MagicMock(status_code=200, body={}))
+    bus = _mock_bus()
     failed: list[dict[str, object]] = []
 
     monkeypatch.setattr(
@@ -392,6 +398,9 @@ async def test_dispatch_exception_posts_failure_turn_and_event(
     )
 
     bus.reply.assert_awaited_once()
+    bus.terminate_dispatch.assert_awaited_once_with(
+        thread_id="1601", terminal_status="failed"
+    )
     call = bus.reply.await_args
     assert call is not None
     assert "FAILED" in call.kwargs["subject"]
@@ -429,8 +438,7 @@ async def test_dispatch_home_config_error_posts_bus_reply(
         dispatch_id="disp-home-fail",
         message="hello",
     )
-    bus = AsyncMock()
-    bus.reply = AsyncMock(return_value=MagicMock(status_code=200, body={}))
+    bus = _mock_bus()
 
     def _boom(**_kwargs: Any) -> str:
         raise CursorHomeConfigError("no credential")
@@ -444,10 +452,64 @@ async def test_dispatch_home_config_error_posts_bus_reply(
     )
 
     bus.reply.assert_awaited_once()
+    bus.terminate_dispatch.assert_awaited_once_with(
+        thread_id="99", terminal_status="failed"
+    )
     call = bus.reply.await_args
     assert call is not None
     assert "FAILED (home/auth)" in call.kwargs["subject"]
     assert "CURSOR_HOME_CONFIG" in call.kwargs["body"]
+
+
+@pytest.mark.asyncio
+async def test_dispatch_timeout_posts_failure_and_terminates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    req = CursorDispatchRequest(
+        thread_id="1607",
+        model="cursor/composer-2.5",
+        dispatch_id="disp-timeout",
+        message="hello",
+    )
+    bus = _mock_bus()
+    timeout_events: list[dict[str, object]] = []
+
+    monkeypatch.setattr(route_mod, "_SDK_TIMEOUT_S", 0.01)
+    monkeypatch.setattr(route_mod, "_SDK_TIMEOUT_BUFFER_S", 0.01)
+    monkeypatch.setattr(
+        route_mod,
+        "emit_sdk_worker_timeout",
+        lambda **kwargs: timeout_events.append(dict(kwargs)),
+    )
+
+    def _slow(**_kwargs: object) -> SdkRunOutcome:
+        import time
+
+        time.sleep(1.0)
+        return SdkRunOutcome(
+            body="late",
+            status="finished",
+            duration_ms=1000,
+            tool_call_count=0,
+        )
+
+    monkeypatch.setattr(route_mod, "_run_sdk_sync", _slow)
+
+    await route_mod._run_sdk_dispatch(
+        req=req,
+        source_repo=route_mod._CONFIG.source_repo,
+        bus=bus,
+    )
+
+    bus.reply.assert_awaited_once()
+    assert "FAILED (timeout)" in bus.reply.await_args.kwargs["subject"]
+    bus.terminate_dispatch.assert_awaited_once_with(
+        thread_id="1607", terminal_status="failed"
+    )
+    assert timeout_events[0]["dispatch_id"] == "disp-timeout"
+    assert timeout_events[0]["thread_id"] == "1607"
 
 
 def test_active_work_busy_with_running_dispatch(client: TestClient) -> None:
