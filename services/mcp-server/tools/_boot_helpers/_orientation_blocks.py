@@ -67,7 +67,8 @@ When connector-bound: team_dispatch + panel_dispatch are server-primary — call
 - consensus panel (≥2 families)     → panel_dispatch(messages=[…], dispatch_thread_id="…", disposition="panel")  [primary]
 - stronger-model strategic advice   → dispatch(tool="advisor", arguments='{"problem":"…"}')                                  [overflow]
 - RAG advice inside a pipeline      → dispatch(tool="pipeline_consult", arguments='{"execution_id":"…","step_name":"…","problem":"…"}')  [overflow]
-- close-to-code build (auto) → team_dispatch(op=handoff, seat=cursor-sdk)
+- close-to-code build (auto) → team_dispatch(op=generate, role=cursor-sdk, dispatch_thread_id=…, messages=[…] | packet_path=…)
+- deprecated: op=handoff,seat=cursor-sdk normalizes to generate with a warning
 - run a named pipeline              → pipeline (op=run|async)
 ⚠ A build harness is not a model picker. "Want a grok answer" → team_dispatch(op=generate, role=artisan, model="xai/grok-4.3", …), never a build harness.
 Full shapes: reference:claude-web-lead-seat-surface → claude-web-dispatch-decision-table.md"""

@@ -8,6 +8,8 @@ from functools import partial
 from typing import Annotated, Any, Literal
 
 import httpx
+from agent_seat.profiles import get_profile
+from agent_seat.registry import normalize_agent_slug
 from fastapi import APIRouter, Response
 from fastapi.responses import JSONResponse
 from implement_admission.preflight import (
@@ -20,23 +22,23 @@ from transport_utils import DEFAULT_STARGATE_URL, make_async_client
 from universal_logging import get_logger
 
 from .admission import (
-    resolve_cursor_sdk_handoff_seat,
+    is_cursor_sdk_generate_role,
     resolve_handoff_seat,
     resolve_handoff_target,
 )
-from .cursor_sdk_worker_dispatch import (
-    dispatch_cursor_sdk_worker,
-    post_worker_failure_turn,
-)
-from agent_seat.profiles import get_profile
-from agent_seat.registry import normalize_agent_slug
 from .closeout_reply import parse_closeout_payload, run_implement_closeout_pipeline
 from .contract_derivation import derive_contract
+from .cursor_sdk_generate import dispatch_cursor_sdk_generate
 from .events import (
     FrontierHandoffCreated,
+    FrontierHandoffDeprecatedAlias,
     FrontierHandoffExecutorOverride,
     FrontierHandoffMaterializationIncomplete,
     FrontierHandoffRequested,
+)
+from .executor_resolution import (
+    _read_packet_executor_inputs,
+    should_emit_executor_override_audit,
 )
 from .handoff import (
     _resolve_packet_file,
@@ -52,10 +54,6 @@ from .handoff_response import (
     build_recommended_executor,
     build_recommended_review,
     build_seat_capability,
-)
-from .executor_resolution import (
-    _read_packet_executor_inputs,
-    should_emit_executor_override_audit,
 )
 from .implement_admission_bridge import (
     BridgeResult,
@@ -111,6 +109,8 @@ class TeamDispatchGenerateBody(_DispatchCommon):
     role: str
     dispatch_thread_id: str
     model: str | None = None
+    packet_path: str | None = None
+    contract: Literal["consult", "implement"] | None = None
     # thread / subject MUST NOT appear — extra="forbid" rejects any caller that
     # supplies them (schema-level enforcement per Phase 0 contract).
 
@@ -293,6 +293,29 @@ async def team_dispatch(
     Agents use MCP ``team_dispatch`` for all consult surfaces. This HTTP route
     is for Stargate-internal and pipeline-composition callers.
     """
+    request_id = uuid.uuid4().hex[:12]
+    role = getattr(body, "role", None)
+    if (
+        body.op == "generate"
+        and role is not None
+        and is_cursor_sdk_generate_role(role, request_id=request_id)
+    ):
+        try:
+            result = await dispatch_cursor_sdk_generate(
+                request_id=request_id,
+                role=role,
+                messages=body.messages,
+                model=getattr(body, "model", None),
+                subject=None,
+                caller_agent=body.caller_agent,
+                packet_path=getattr(body, "packet_path", None),
+                message_text=None,
+            )
+        except FrontierEndpointError as exc:
+            return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
+        response.status_code = 202
+        return result
+
     req = FrontierGenerateRequest(**_normalize_op_body(body))
     return await _dispatch(req, response)
 
@@ -461,12 +484,42 @@ async def team_handoff(
 
         if body.seat is not None:
             if normalize_agent_slug(body.seat) == "cursor-sdk":
-                to_agent, family, platform, resolved_model = (
-                    resolve_cursor_sdk_handoff_seat(
-                        body.seat,
+                # DEPRECATED ALIAS: op=handoff,seat=cursor-sdk normalizes to the
+                # canonical generate path. packet_path is already resolved above
+                # (source_ref bridge + `assert packet_path is not None`) and
+                # require_decision_asserted has already run, so route straight to
+                # the SDK generate orchestrator. It creates the thread and
+                # dispatches the worker itself — do NOT duplicate either here.
+                result = await dispatch_cursor_sdk_generate(
+                    request_id=request_id,
+                    role="cursor-sdk",
+                    messages=[],
+                    model=None,
+                    subject=body.subject,
+                    caller_agent=body.caller_agent,
+                    packet_path=packet_path,
+                    message_text=body.pointer_body,
+                )
+                result["deprecated_alias"] = {
+                    "normalized_from": "op=handoff,seat=cursor-sdk",
+                    "use_instead": "team_dispatch(op=generate, role=cursor-sdk, …)",
+                }
+                result["warnings"] = (
+                    list(result.get("warnings") or [])
+                    + warnings
+                    + [
+                        "op=handoff,seat=cursor-sdk is deprecated — use "
+                        "team_dispatch(op=generate, role=cursor-sdk, …)"
+                    ]
+                )
+                _publish(
+                    FrontierHandoffDeprecatedAlias(
                         request_id=request_id,
+                        normalized_op="generate",
+                        seat="cursor-sdk",
                     )
                 )
+                return result
             else:
                 to_agent, family, platform, resolved_model = resolve_handoff_seat(
                     seat=body.seat,
@@ -477,8 +530,6 @@ async def team_handoff(
                 role=body.role or "",
                 request_id=request_id,
             )
-
-        is_cursor_sdk = to_agent == "cursor-sdk"
 
         handoff_contract, contract_source = await loop.run_in_executor(
             None,
@@ -548,20 +599,6 @@ async def team_handoff(
             tags=body.tags,
             handoff_contract=handoff_contract,
         )
-
-        if is_cursor_sdk:
-            worker_ok, worker_warning = await dispatch_cursor_sdk_worker(
-                request_id=request_id,
-                thread_id=thread_id,
-                model=resolved_model,
-                packet_path=packet_path,
-            )
-            if not worker_ok:
-                await post_worker_failure_turn(
-                    thread_id=thread_id,
-                    request_id=request_id,
-                )
-                warnings.append(worker_warning or "worker_dispatch: failed")
 
         _publish(
             FrontierHandoffCreated(

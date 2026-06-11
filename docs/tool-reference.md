@@ -52,10 +52,12 @@ entity, assembles birth + briefing + continuation, and rejects violations before
 | `packet_path` | `str\|None` | `op="handoff"` only — workspaces-relative path to a pre-written six-block packet. Hand-authored alternative to `source_ref`; both-present triggers the `implement_spec_hash` drift guard. |
 | `pointer_body` | `str\|None` | `op="handoff"` only — override the pointer turn body (≤25 lines) |
 | `tags` | `list[str]\|None` | `op="handoff"` only — bus thread tags (default: `["agent:{to_agent}", "type:handoff", "contract:{handoff_contract}"]`). Caller-supplied tags are preserved; `contract:{value}` is appended if absent |
+| `role=cursor-sdk` (op=generate) | — | SDK auto substrate; default delivery=thread; consult via `messages[]`; implement via `packet_path`; poll via `poll_hint` (agent-bus), not `pipeline(op=result)` |
+| `op=handoff, seat=cursor-sdk` | — | **Deprecated** — normalizes to generate + warning (`deprecated_alias` in response) |
 
 **`op="generate"` / `op="to_thread"` — admission guard for web/manual seats:**
 
-Roles or seat slugs that resolve to a non-dispatchable profile (`dispatchable=false`,
+Roles or seat slugs that resolve to a manual-handoff profile (`manual_handoff=true`,
 e.g. `claude/web`, `grok/web`) are rejected **before** dispatch with 422
 `web_seat_not_generate_target` — including when `model=` is supplied explicitly.
 Valid generate roles: API-default roster slots (`reviewer`, `gatherer`,
@@ -103,8 +105,8 @@ human-readable), and `arguments_json` (string — **use this** for MCP `agent_bu
 calls; see `agent-skills/dispatch-shape.md`). Re-call with `wait_seconds` until
 `status` is `complete`. Web seats start after the operator pushes the bus
 message; Cursor seats start when the operator opens the thread in the IDE. The
-endpoint enforces that the role resolves to a manual, non-dispatchable seat
-(`delivery=manual, dispatchable=false`); dispatchable roles (reviewer, gatherer, etc.)
+endpoint enforces that the role resolves to a manual-handoff seat
+(`delivery=manual, manual_handoff=true`); API-dispatchable roles (reviewer, gatherer, etc.)
 are rejected with `handoff_requires_web_seat` 422.
 
 **Self-handoff:** a manual seat may call `op="handoff"` with the matching roster

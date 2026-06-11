@@ -3,10 +3,10 @@
 Resolves each role's default ``(family, platform)`` to its ``CapabilityProfile``
 and partitions the roster by dispatch op:
 
-- ``generate_roles()`` — roles whose resolved profile is ``dispatchable`` (valid
-  for ``team_dispatch(op="generate"|"to_thread")``).
-- ``handoff_roles()`` — roles whose resolved profile is ``delivery="manual"`` and
-  ``¬dispatchable`` (valid for ``team_dispatch(op="handoff")`` only).
+- ``generate_roles()`` — roles whose resolved profile is ``api_dispatchable``
+  (valid for ``team_dispatch(op="generate"|"to_thread")`` via cloud/API path).
+- ``handoff_roles()`` — roles whose resolved profile is ``manual_handoff``
+  (valid for ``team_dispatch(op="handoff")`` only).
 
 The render helpers produce the exact agent-facing clause strings embedded in
 ``config/mcp/canonical.yaml``, ``services/mcp-server/tools/frontier.py``,
@@ -34,18 +34,13 @@ def _resolved_profile(role: str) -> CapabilityProfile:
 
 
 def generate_roles() -> list[str]:
-    """Roles valid on ``op=generate``/``to_thread`` (resolved profile dispatchable)."""
-    return [r for r in load_roles() if _resolved_profile(r).dispatchable]
+    """Roles valid on ``op=generate``/``to_thread`` (api_dispatchable profiles)."""
+    return [r for r in load_roles() if _resolved_profile(r).api_dispatchable]
 
 
 def handoff_roles() -> list[str]:
-    """Roles valid on ``op=handoff`` only (manual, non-dispatchable seat)."""
-    out: list[str] = []
-    for role in load_roles():
-        profile = _resolved_profile(role)
-        if profile.delivery == "manual" and not profile.dispatchable:
-            out.append(role)
-    return out
+    """Roles valid on ``op=handoff`` only (manual_handoff profiles)."""
+    return [r for r in load_roles() if _resolved_profile(r).manual_handoff]
 
 
 def handoff_role_seat(role: str) -> str:

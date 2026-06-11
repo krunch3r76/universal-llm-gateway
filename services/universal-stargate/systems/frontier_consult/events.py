@@ -146,6 +146,64 @@ def FrontierHandoffCreated(  # noqa: N802
 
 
 @event_factory
+def FrontierSdkGenerateRequested(  # noqa: N802
+    request_id: str,
+    role: str,
+    execution_id: str,
+    handoff_contract: str,
+    resolved_model: str,
+) -> Event:
+    """SDK generate admitted — bypassing cloud pipeline."""
+    return Event(
+        signal="frontier.sdk.generate.requested",
+        payload={
+            "request_id": request_id,
+            "role": role,
+            "execution_id": execution_id,
+            "handoff_contract": handoff_contract,
+            "resolved_model": resolved_model,
+        },
+        scope="node",
+    )
+
+
+@event_factory
+def FrontierSdkWorkerDispatched(  # noqa: N802
+    request_id: str,
+    thread_id: str,
+    execution_id: str,
+) -> Event:
+    """SDK worker dispatch accepted."""
+    return Event(
+        signal="frontier.sdk.worker.dispatched",
+        payload={
+            "request_id": request_id,
+            "thread_id": thread_id,
+            "execution_id": execution_id,
+        },
+        scope="node",
+    )
+
+
+@event_factory
+def FrontierSdkWorkerDispatchFailed(  # noqa: N802
+    request_id: str,
+    thread_id: str,
+    error: str,
+) -> Event:
+    """SDK worker dispatch rejected or unreachable."""
+    return Event(
+        signal="frontier.sdk.worker.failed",
+        payload={
+            "request_id": request_id,
+            "thread_id": thread_id,
+            "error": error,
+        },
+        scope="node",
+    )
+
+
+@event_factory
 def FrontierHandoffMaterializationIncomplete(  # noqa: N802
     request_id: str,
     packet_path: str,
@@ -160,6 +218,24 @@ def FrontierHandoffMaterializationIncomplete(  # noqa: N802
             "packet_path": packet_path,
             "probe_root": probe_root,
             "source_ref": source_ref,
+        },
+        scope="node",
+    )
+
+
+@event_factory
+def FrontierHandoffDeprecatedAlias(  # noqa: N802
+    request_id: str,
+    normalized_op: str,
+    seat: str,
+) -> Event:
+    """Deprecated op=handoff,seat=cursor-sdk normalized to the generate path."""
+    return Event(
+        signal="frontier.handoff.deprecated.alias",
+        payload={
+            "request_id": request_id,
+            "normalized_op": normalized_op,
+            "seat": seat,
         },
         scope="node",
     )

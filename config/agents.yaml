@@ -8,7 +8,8 @@
 # Profile fields map 1:1 to CapabilityProfile dataclass fields.
 # Optional fields omitted here use their dataclass defaults:
 #   allowed_models: []  model_requirement: null  capability_tier: null
-#   dispatchable: true  session_limit: 3  self_reflections_limit: 5
+#   api_dispatchable: false  auto_dispatchable: false  manual_handoff: false
+#   session_limit: 3  self_reflections_limit: 5
 
 # Operator lead seats — material-decision posture (consensus-steelman rule 0).
 # Claude + GPT Cursor today. Add gemini-cursor after gemini MCP wiring verify.
@@ -22,12 +23,12 @@ profiles:
   claude/cursor:
     # Manual IDE seat — team_dispatch(op="handoff", role="cursor-consult"|"cursor-implement", ...)
     # creates an agent-bus thread for a dedicated Cursor session (e.g. Opus). Not a
-    # team_dispatch generate target (dispatchable: false), same admission as claude/web.
+    # team_dispatch generate target (manual_handoff: true), same admission as claude/web.
     provider: anthropic
     default_model: anthropic/claude-sonnet-4-6
     tool_surface: mcp
     delivery: manual
-    dispatchable: false
+    manual_handoff: true
     include_deadlines: true
     include_review_queue: true
     confirm_and_proceed: true
@@ -44,6 +45,7 @@ profiles:
     default_model: anthropic/claude-sonnet-4-6
     tool_surface: mcp
     delivery: auto
+    api_dispatchable: true
     include_deadlines: true
     include_review_queue: false
     confirm_and_proceed: true
@@ -56,7 +58,7 @@ profiles:
 
   claude/web:
     # Preferred reviewer when reviews go to agent-bus (claude-web + operator push).
-    # Not a team_dispatch *generate* target (dispatchable: false); reachable via
+    # Not a team_dispatch *generate* target (manual_handoff: true); reachable via
     # team_dispatch(op="handoff", ...) which creates the bus thread + returns thread_id.
     provider: anthropic
     default_model: null
@@ -65,7 +67,7 @@ profiles:
     include_deadlines: true
     include_review_queue: true
     confirm_and_proceed: true
-    dispatchable: false
+    manual_handoff: true
     addenda:
       - claude-web-tool-surface
       - session-close-pointer-web
@@ -77,6 +79,7 @@ profiles:
     default_model: openai/gpt-5.4
     tool_surface: mcp
     delivery: manual
+    manual_handoff: true
     include_deadlines: true
     include_review_queue: true
     confirm_and_proceed: true
@@ -91,6 +94,7 @@ profiles:
     default_model: openai/gpt-5.5
     tool_surface: mcp
     delivery: auto
+    api_dispatchable: true
     include_deadlines: true
     include_review_queue: true
     confirm_and_proceed: true
@@ -107,6 +111,7 @@ profiles:
     default_model: xai/grok-4.20-0309-reasoning
     tool_surface: mcp
     delivery: manual
+    manual_handoff: true
     include_deadlines: true
     include_review_queue: true
     confirm_and_proceed: true
@@ -123,6 +128,7 @@ profiles:
     default_model: xai/grok-4.20-0309-reasoning
     tool_surface: mcp
     delivery: auto
+    api_dispatchable: true
     include_deadlines: true
     include_review_queue: true
     confirm_and_proceed: true
@@ -136,6 +142,7 @@ profiles:
     default_model: xai/grok-4.20-multi-agent-0309
     tool_surface: inline-only
     delivery: auto
+    api_dispatchable: true
     include_deadlines: true
     include_review_queue: true
     confirm_and_proceed: true
@@ -153,7 +160,7 @@ profiles:
     include_deadlines: true
     include_review_queue: true
     confirm_and_proceed: true
-    dispatchable: false
+    manual_handoff: true
     addenda:
       - grok-web-tool-surface
       - session-close-pointer-web-generic
@@ -170,6 +177,7 @@ profiles:
     default_model: google/gemini-3.5-flash
     tool_surface: mcp
     delivery: auto
+    api_dispatchable: true
     include_deadlines: true
     include_review_queue: true
     confirm_and_proceed: true
@@ -188,6 +196,7 @@ profiles:
     default_model: google/gemini-3.5-flash
     tool_surface: mcp
     delivery: manual
+    manual_handoff: true
     include_deadlines: true
     include_review_queue: true
     confirm_and_proceed: true
@@ -214,7 +223,7 @@ profiles:
     include_deadlines: true
     include_review_queue: true
     confirm_and_proceed: true
-    dispatchable: false
+    manual_handoff: true
     addenda:
       - gemini-web-tool-surface
       - session-close-pointer-web-generic
@@ -222,8 +231,8 @@ profiles:
       - session-close-transcript
 
   cursor/sdk:
-    # Automated SDK executor — team_dispatch(op=handoff, seat=cursor-sdk) routes
-    # to git_integration_worker; NOT a team_dispatch generate target.
+    # Automated SDK executor — team_dispatch(op=generate, role=cursor-sdk) routes
+    # to git_integration_worker (substrate=sdk); NOT cloud CapabilityDispatch.
     provider: cursor
     default_model: cursor/composer-2.5
     tool_surface: sdk
@@ -232,7 +241,7 @@ profiles:
     include_review_queue: false
     confirm_and_proceed: false
     addenda: []
-    dispatchable: false
+    auto_dispatchable: true
     allowed_models:
       - cursor/composer-2.5
       - cursor/claude-sonnet-4-6
@@ -246,7 +255,7 @@ profiles:
     include_deadlines: false
     include_review_queue: false
     confirm_and_proceed: false
-    dispatchable: false
+    manual_handoff: true
     addenda:
       - session-close-pointer-subagent
 

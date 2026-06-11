@@ -166,6 +166,7 @@ def build_agent_options(
     """Full create_agent options for IDE-parity cursor-sdk dispatch."""
     return AgentOptions(
         model=model,
+        mode="agent",
         local=build_local_agent_options(source_repo),
         mcp_servers=build_mcp_servers(source_repo, real_home=real_home),
     )

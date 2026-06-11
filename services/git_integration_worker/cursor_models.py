@@ -33,7 +33,7 @@ _TRUSTED_CURSOR_MODELS: dict[str, CursorSdkModelConfig] = {
     "composer-2.5": CursorSdkModelConfig(
         model_id="composer-2.5",
         params=(
-            CursorKnobSpec(name="fast", accepted=("true", "false"), default="false"),
+            CursorKnobSpec(name="fast", accepted=("true", "false"), default="true"),
         ),
     ),
     "claude-opus-4-8": CursorSdkModelConfig(
@@ -42,17 +42,16 @@ _TRUSTED_CURSOR_MODELS: dict[str, CursorSdkModelConfig] = {
             CursorKnobSpec(name="thinking", accepted=("true", "false")),
             CursorKnobSpec(name="context", accepted=("200k", "300k", "1m")),
             CursorKnobSpec(name="effort", accepted=("low", "medium", "high", "xhigh")),
-            CursorKnobSpec(name="fast", accepted=("true", "false"), default="false"),
+            CursorKnobSpec(name="fast", accepted=("true", "false"), default="true"),
         ),
     ),
     "claude-sonnet-4-6": CursorSdkModelConfig(
         model_id="claude-sonnet-4-6",
         params=(
-            CursorKnobSpec(name="fast", accepted=("true", "false"), default="false"),
+            CursorKnobSpec(name="fast", accepted=("true", "false"), default="true"),
         ),
     ),
 }
-
 
 def resolve_cursor(model: str | ModelId) -> CursorSdkModelConfig:
     """Resolve a bare or ``cursor/``-prefixed model id to a trusted config."""

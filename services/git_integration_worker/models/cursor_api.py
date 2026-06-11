@@ -15,6 +15,9 @@ class CursorDispatchRequest(BaseModel):
     dispatch_id: str
     packet_path: str | None = None
     message: str | None = None
+    handoff_contract: str | None = None
+    prompt_preamble: str | None = None
+    model_knobs: dict[str, str] | None = None
 
     @model_validator(mode="after")
     def _packet_xor_message(self) -> CursorDispatchRequest:

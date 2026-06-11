@@ -96,7 +96,9 @@ def build_seat_capability(
     return {
         "seat_capability": {
             "delivery": profile.delivery,
-            "dispatchable": profile.dispatchable,
+            "api_dispatchable": profile.api_dispatchable,
+            "auto_dispatchable": profile.auto_dispatchable,
+            "manual_handoff": profile.manual_handoff,
             "tool_surface": profile.tool_surface,
             "picker_range": list(profile.allowed_models),
             "default_model": profile.default_model,
@@ -161,3 +163,45 @@ def build_handoff_result(*, thread_id: str, to_agent: str) -> dict[str, Any]:
         "handoff_status": _INITIAL_HANDOFF_STATUS,
         "poll_hint": build_poll_hint_wait(thread_id=thread_id, from_agent=to_agent),
     }
+
+
+def build_sdk_generate_result(
+    *,
+    role: str,
+    profile: CapabilityProfile,
+    handoff_fields: dict[str, Any],
+    execution_id: str,
+    thread_id: str,
+    to_agent: str,
+    resolved_model: str,
+    warnings: list[str],
+) -> dict[str, Any]:
+    """Generate-shaped 202 response for SDK-substrate cursor-sdk dispatch."""
+    result: dict[str, Any] = {
+        **handoff_fields,
+        "execution_id": execution_id,
+        "substrate": "sdk",
+        "output_contract": "thread",
+        "thread_id": thread_id,
+        "to_agent": to_agent,
+        "resolved_model": resolved_model,
+        "capabilities": {
+            "role": role,
+            "inline_only": True,
+            "mcp_enabled": False,
+            "tool_surface": profile.tool_surface,
+            "resolved_model": resolved_model,
+            "substrate": "sdk",
+        },
+        "poll_hint": handoff_fields["poll_hint"],
+        "result_handle": {
+            "kind": "dual",
+            "execution_id": execution_id,
+            "thread_id": thread_id,
+            "substrate": "sdk",
+            "durable": False,
+        },
+    }
+    if warnings:
+        result["warnings"] = warnings
+    return result

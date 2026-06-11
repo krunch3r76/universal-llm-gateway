@@ -62,7 +62,8 @@ def _mcp_base_admitted(model: str) -> bool:
 
 
 def mcp_enabled_for_frontier_dispatch(model: str, caller_mcp: bool | None) -> bool:
-    """Persona-free ``POST /api/v1/frontier/dispatch``: honor ``req.mcp`` unless inline-only.
+    """Persona-free ``POST /api/v1/frontier/dispatch``: honor ``req.mcp`` unless
+    inline-only.
 
     Default ``mcp=False`` when omitted (one-shot). Inline-only families (e.g.
     gemini) clamp to ``False`` even when the caller passes ``mcp=True`` — the
@@ -147,25 +148,27 @@ def enforce_team_dispatch_generate_admit(
     request_id: str,
     event_publisher: EventPublisher | None = None,
 ) -> None:
-    """Reject ``op=generate`` / ``op=to_thread`` for non-dispatchable profiles.
+    """Reject ``op=generate`` / ``op=to_thread`` when profile does not admit generate.
 
     Admission predicate (FOL):
-      admit_generate(role) ⟺ profile.dispatchable is True
+      admit_generate(role) ⟺ profile.admits_generate() is True
 
     Web/manual seats (``claude/web``, ``grok/web``, …) and roles whose default
-    platform is non-dispatchable (``web-consult``, ``web-implement``, …) raise 422 with
+    platform is manual_handoff (``web-consult``, ``web-implement``, …) raise 422 with
     code ``web_seat_not_generate_target``. Explicit ``model=`` does not bypass.
     """
     to_agent, _family, _platform, profile = _resolve_role_or_seat_profile(
         role, request_id=request_id
     )
-    if profile.dispatchable:
+    if profile.admits_generate():
         return
     reason = (
-        f"role {role!r} resolved to {to_agent} which is not dispatchable on "
+        f"role {role!r} resolved to {to_agent} which is not admitted on "
         f"op=generate/to_thread (delivery={profile.delivery!r}, "
-        f"dispatchable=false). Web/manual seats are reachable only via "
-        f"op=handoff (inbound). If you are {to_agent}, use fs/cortex locally; "
+        f"api_dispatchable={profile.api_dispatchable}, "
+        f"auto_dispatchable={profile.auto_dispatchable}). "
+        f"Manual seats are reachable only via op=handoff. "
+        f"If you are {to_agent}, use fs/cortex locally; "
         f"for peer consult use `team_dispatch(op=generate, role=reviewer, "
         f"dispatch_thread_id=…)` or another API role. Passing model= dispatches "
         f"an API endpoint only — it does not spawn a web session."
@@ -189,29 +192,31 @@ def resolve_web_handoff_seat(role: str, *, request_id: str) -> tuple[str, str, s
     """Return (to_agent_slug, family, platform) for a handoff-eligible role/seat.
 
     Admission predicate (FOL):
-      admit(role) ⟺ profile.delivery == "manual" ∧ profile.dispatchable is False
+      admit(role) ⟺ profile.admits_handoff() is True
 
-    Role examples: ``web-consult`` → ``claude-web``; ``cursor-consult`` → ``claude-cursor``.
+    Role examples: ``web-consult`` → ``claude-web``;
+    ``cursor-consult`` → ``claude-cursor``.
     Seat slugs and nicknames (``claude-web``, ``web-claude``, ``claude-cursor``,
     ``cursor-claude``, ``web``, ``cursor``) normalize via ``agent_seat.registry``.
 
     Raises FrontierEndpointError(field="role", status_code=422) when:
       - role/seat is unknown
-      - resolved profile is not a manual, non-dispatchable seat
+      - resolved profile is not manual_handoff
         → reason code "handoff_requires_web_seat"
     """
     to_agent, family, platform, profile = _resolve_role_or_seat_profile(
         role, request_id=request_id
     )
 
-    if not (profile.delivery == "manual" and not profile.dispatchable):
+    if not profile.admits_handoff():
         raise FrontierEndpointError(
             request_id=request_id,
             field="role",
             reason=(
-                f"handoff op requires a web/manual seat (delivery=manual, "
-                f"dispatchable=false); role {role!r} resolved to {to_agent} "
-                f"which is dispatchable — use op=generate/to_thread"
+                f"handoff op requires manual_handoff=true; role {role!r} "
+                f"resolved to {to_agent} which admits generate "
+                f"(api={profile.api_dispatchable}, auto={profile.auto_dispatchable}) "
+                f"— use op=generate/to_thread"
             ),
             status_code=422,
             code="handoff_requires_web_seat",
@@ -286,6 +291,9 @@ def resolve_cursor_sdk_handoff_seat(
 ) -> tuple[str, str, str, str]:
     """Resolve automated cursor-sdk handoff seat (``cursor-sdk`` only).
 
+    Deprecated at the HTTP handoff surface — ``op=handoff,seat=cursor-sdk``
+    normalizes to ``dispatch_cursor_sdk_generate``. Retained for unit tests.
+
     Admission predicate (FOL):
       admit(seat) ⟺ profile.delivery == auto
                  ∧ family == cursor
@@ -339,6 +347,86 @@ def resolve_cursor_sdk_handoff_seat(
             code="handoff_seat_invalid",
         )
     return "cursor-sdk", "cursor", "sdk", default_model
+
+
+def is_sdk_substrate_profile(profile: CapabilityProfile) -> bool:
+    """True when profile is the local SDK bridge (not cloud API)."""
+    return (
+        profile.family == "cursor"
+        and profile.platform == "sdk"
+        and profile.auto_dispatchable
+    )
+
+
+def resolve_cursor_sdk_generate_target(
+    role: str,
+    *,
+    model: str | None,
+    request_id: str,
+) -> tuple[str, str, str, str]:
+    """Resolve cursor-sdk generate target.
+
+    Admission predicate (FOL):
+      admit(role, model) ⟺ profile.auto_dispatchable
+                 ∧ family=cursor ∧ platform=sdk
+
+    Accepts role slug ``cursor-sdk`` or explicit ``model=cursor/…`` when role
+    resolves to cursor/sdk. Returns ``(to_agent, family, platform, resolved_model)``.
+    """
+    to_agent, family, platform, profile = _resolve_role_or_seat_profile(
+        role, request_id=request_id
+    )
+    if not is_sdk_substrate_profile(profile):
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="role",
+            reason=(
+                f"role {role!r} resolved to ({family!r}, {platform!r}) which is "
+                f"not an SDK auto-dispatch substrate"
+            ),
+            status_code=422,
+            code="sdk_substrate_required",
+        )
+    resolved_model = model or profile.default_model
+    if not resolved_model:
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="model",
+            reason="cursor-sdk requires default_model or explicit model=",
+            status_code=422,
+            code="sdk_generate_model_invalid",
+        )
+    if not resolved_model.startswith("cursor/"):
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="model",
+            reason=f"SDK substrate requires cursor/* model ids, got {resolved_model!r}",
+            status_code=422,
+            code="sdk_generate_model_invalid",
+        )
+    if profile.allowed_models and resolved_model not in profile.allowed_models:
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="model",
+            reason=(
+                f"model {resolved_model!r} not in cursor/sdk allowed_models: "
+                f"{sorted(profile.allowed_models)}"
+            ),
+            status_code=422,
+            code="sdk_generate_model_invalid",
+        )
+    return "cursor-sdk", family, platform, resolved_model
+
+
+def is_cursor_sdk_generate_role(role: str, *, request_id: str) -> bool:
+    """True when role/seat slug resolves to cursor/sdk auto_dispatchable profile."""
+    try:
+        _to, _fam, _plat, profile = _resolve_role_or_seat_profile(
+            role, request_id=request_id
+        )
+    except FrontierEndpointError:
+        return False
+    return is_sdk_substrate_profile(profile)
 
 
 async def verify_thread_writable(

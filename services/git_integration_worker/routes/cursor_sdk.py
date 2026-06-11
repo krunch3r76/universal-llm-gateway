@@ -39,10 +39,22 @@ from services.git_integration_worker.cursor_models import (
     build_model_selection,
     resolve_cursor,
 )
+from services.git_integration_worker.cursor_sdk_closeout import (
+    SdkRunOutcome,
+    count_tool_calls,
+    degraded_implement_reason,
+    format_closeout_body,
+    infer_contract_from_text,
+    resolve_prompt_preamble,
+)
 from services.git_integration_worker.cursor_sdk_context import (
     CursorSdkParityError,
     build_agent_options,
     validate_dispatch_context,
+)
+from services.git_integration_worker.cursor_sdk_events import (
+    emit_sdk_worker_completed,
+    emit_sdk_worker_failed,
 )
 from services.git_integration_worker.models.cursor_api import (
     CursorDispatchRequest,
@@ -64,7 +76,7 @@ def _config(request: Request) -> WorkerConfig:
     return getattr(request.app.state, "worker_config", _CONFIG)
 
 
-def _resolve_prompt(req: CursorDispatchRequest, source_repo: Path) -> str:
+def _read_packet_text(req: CursorDispatchRequest, source_repo: Path) -> str:
     if req.message:
         return req.message
     assert req.packet_path is not None
@@ -77,6 +89,17 @@ def _resolve_prompt(req: CursorDispatchRequest, source_repo: Path) -> str:
     if not packet.is_file():
         raise ValueError(f"packet_path not found: {rel!r}")
     return packet.read_text(encoding="utf-8")
+
+
+def _resolve_prompt(req: CursorDispatchRequest, source_repo: Path) -> str:
+    packet_text = _read_packet_text(req, source_repo)
+    inferred_contract = None if req.message else infer_contract_from_text(packet_text)
+    preamble = resolve_prompt_preamble(
+        handoff_contract=req.handoff_contract,
+        prompt_preamble=req.prompt_preamble,
+        inferred_contract=inferred_contract,
+    )
+    return f"{preamble}{packet_text}"
 
 
 @contextmanager
@@ -100,7 +123,7 @@ def _run_sdk_sync(
     config_model_id: str,
     selection_overrides: dict[str, str] | None,
     dispatch_id: str,
-) -> str:
+) -> SdkRunOutcome:
     dispatch_home = setup_cursor_dispatch_home(dispatch_id)
     bridge_state = dispatch_home / "bridge-state"
     bridge_state.mkdir(parents=True, exist_ok=True)
@@ -108,10 +131,12 @@ def _run_sdk_sync(
     config = resolve_cursor(config_model_id)
     selection = build_model_selection(config, selection_overrides)
     parity = validate_dispatch_context(source_repo)
+    knob_summary = {p.id: p.value for p in selection.params}
     logger.info(
-        "cursor sdk dispatch start: dispatch_id=%s model=%s parity=%s",
+        "cursor sdk dispatch start: dispatch_id=%s model=%s knobs=%s parity=%s",
         dispatch_id,
         config.model_id,
+        knob_summary,
         parity,
     )
     agent_options = build_agent_options(source_repo, selection)
@@ -129,7 +154,13 @@ def _run_sdk_sync(
             # Local bridge Send rejects Idempotency-Key (cloud-only in SDK v1).
             run = agent.send(prompt)
             result = run.wait()
-            return result.result
+            turns = run.conversation()
+            return SdkRunOutcome(
+                body=result.result,
+                status=str(result.status),
+                duration_ms=result.duration_ms,
+                tool_call_count=count_tool_calls(turns),
+            )
         finally:
             client.close()
 
@@ -142,13 +173,32 @@ async def _run_sdk_dispatch(
 ) -> None:
     try:
         prompt = _resolve_prompt(req, source_repo)
-        body = await asyncio.to_thread(
+        outcome = await asyncio.to_thread(
             _run_sdk_sync,
             source_repo=source_repo,
             prompt=prompt,
             config_model_id=req.model,
-            selection_overrides=None,
+            selection_overrides=req.model_knobs,
             dispatch_id=req.dispatch_id,
+        )
+        inferred_contract = None
+        if not req.handoff_contract and not req.message and req.packet_path:
+            inferred_contract = infer_contract_from_text(
+                _read_packet_text(req, source_repo)
+            )
+        contract = (req.handoff_contract or inferred_contract or "consult").lower()
+        degraded_reason = (
+            degraded_implement_reason(outcome) if contract == "implement" else None
+        )
+        outcome_label = "degraded" if degraded_reason else "ok"
+        body = format_closeout_body(outcome, degraded_reason)
+        emit_sdk_worker_completed(
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            duration_s=outcome.duration_ms / 1000.0,
+            tool_call_count=outcome.tool_call_count,
+            result_bytes=len(outcome.body.encode("utf-8")),
+            outcome=outcome_label,
         )
         bus_result = await bus.reply(
             thread_id=req.thread_id,
@@ -181,8 +231,25 @@ async def _run_sdk_dispatch(
             subject=f"cursor-sdk dispatch {req.dispatch_id} FAILED (home/auth)",
             body=f"```json\n{json.dumps(env, indent=2)}\n```",
         )
-    except Exception:
+    except Exception as exc:
         logger.exception("cursor sdk dispatch failed: dispatch_id=%s", req.dispatch_id)
+        emit_sdk_worker_failed(
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            error=str(exc),
+        )
+        env = error_envelope(
+            code="CURSOR_SDK_DISPATCH",
+            message=str(exc),
+            source="gateway",
+        )
+        await bus.reply(
+            thread_id=req.thread_id,
+            to_agent="dispatch",
+            from_agent="cursor-sdk",
+            subject=f"cursor-sdk dispatch {req.dispatch_id} FAILED",
+            body=f"```json\n{json.dumps(env, indent=2)}\n```",
+        )
 
 
 @router.post("/dispatch", response_model=CursorDispatchResponse)

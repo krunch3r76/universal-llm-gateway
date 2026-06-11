@@ -37,8 +37,14 @@ def test_build_model_selection_default_omit() -> None:
     selection = build_model_selection(cfg)
     assert selection.id == "claude-opus-4-8"
     emitted = {p.id: p.value for p in selection.params}
-    assert emitted == {"fast": "false"}
+    assert emitted == {"fast": "true"}
     assert "thinking" not in emitted
+
+
+def test_build_model_selection_composer_default_fast() -> None:
+    cfg = resolve_cursor("composer-2.5")
+    selection = build_model_selection(cfg)
+    assert selection.params[0].value == "true"
 
 
 def test_build_model_selection_override() -> None:

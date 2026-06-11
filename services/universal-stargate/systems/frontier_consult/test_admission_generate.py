@@ -38,8 +38,12 @@ def test_g3_reviewer_role_admitted() -> None:
     enforce_team_dispatch_generate_admit("reviewer", request_id="req-g3")
 
 
+def test_g4_cursor_sdk_admitted_on_generate() -> None:
+    enforce_team_dispatch_generate_admit("cursor-sdk", request_id="req-g4")
+
+
 def test_cursor_consult_role_rejected_on_generate() -> None:
-    """cursor-consult resolves to claude-cursor (manual, non-dispatchable) → 422."""
+    """cursor-consult resolves to claude-cursor (manual_handoff) → 422."""
     with pytest.raises(FrontierEndpointError) as exc_info:
         enforce_team_dispatch_generate_admit("cursor-consult", request_id="req-cl")
     err = exc_info.value

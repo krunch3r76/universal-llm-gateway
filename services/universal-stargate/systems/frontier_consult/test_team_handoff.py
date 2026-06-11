@@ -333,7 +333,7 @@ def test_handoff_response_backward_compatible_keys(
 
 
 # ---------------------------------------------------------------------------
-# H1b — cursor-consult / claude-cursor seat (manual, non-dispatchable)
+# H1b — cursor-consult / claude-cursor seat (manual_handoff)
 # ---------------------------------------------------------------------------
 
 
@@ -560,18 +560,19 @@ def test_h1d_route_web_implement_pointer_and_tag(
 
 
 # ---------------------------------------------------------------------------
-# H2 — dispatchable role → 422 handoff_requires_web_seat
+# H2 — api_dispatchable role → 422 handoff_requires_web_seat
 # ---------------------------------------------------------------------------
 
 
 def test_h2_dispatchable_role_rejected() -> None:
-    """reviewer → gpt/api is dispatchable → admission fails."""
+    """reviewer → gpt/api is api_dispatchable → admission fails."""
     with pytest.raises(FrontierEndpointError) as exc_info:
         resolve_web_handoff_seat("reviewer", request_id="req-h2")
     err = exc_info.value
     assert err.status_code == 422
     assert err.field == "role"
-    assert "handoff_requires_web_seat" in err.reason or "dispatchable" in err.reason
+    assert err.code == "handoff_requires_web_seat"
+    assert "manual_handoff" in err.reason
 
 
 def test_h2_route_dispatchable_role_returns_422(
@@ -2730,7 +2731,9 @@ def test_t1_cursor_sdk_profile_load() -> None:
     profile = get_profile("cursor", "sdk")
     assert profile.provider == "cursor"
     assert profile.tool_surface == "sdk"
-    assert profile.dispatchable is False
+    assert profile.auto_dispatchable is True
+    assert profile.api_dispatchable is False
+    assert profile.manual_handoff is False
 
 
 def test_t1_resolve_cursor_sdk_handoff_seat() -> None:
@@ -2759,7 +2762,7 @@ def test_t3_cursor_sdk_handoff_admits_and_dispatches_worker(
         return True, None
 
     monkeypatch.setattr(
-        "systems.frontier_consult.route.dispatch_cursor_sdk_worker",
+        "systems.frontier_consult.cursor_sdk_generate.dispatch_cursor_sdk_worker",
         _fake_dispatch,
     )
 
@@ -2778,15 +2781,97 @@ def test_t3_cursor_sdk_handoff_admits_and_dispatches_worker(
     )
     assert resp.status_code == 200, resp.text
     body = resp.json()
+    assert body["deprecated_alias"]["normalized_from"] == "op=handoff,seat=cursor-sdk"
+    assert any("deprecated" in w.lower() for w in body.get("warnings", []))
     assert body["thread_id"] == "bus-cursor-sdk"
     assert body["to_agent"] == "cursor-sdk"
     assert body["resolved_model"] == "cursor/composer-2.5"
+    assert body["substrate"] == "sdk"
+    assert body["output_contract"] == "thread"
+    assert body["execution_id"]
     assert body["poll_hint"]["arguments"]["from_agent"] == "cursor-sdk"
-    assert "automated" in body["push_reminder"].lower()
     assert len(worker_calls) == 1
     assert worker_calls[0]["thread_id"] == "bus-cursor-sdk"
     assert worker_calls[0]["model"] == "cursor/composer-2.5"
     assert worker_calls[0]["packet_path"] == _GOOD_PACKET
+
+
+def test_t3b_cursor_sdk_generate_admits_and_dispatches_worker(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
+    _write_packet(tmp_path, _GOOD_PACKET, _CONFORMANT_PACKET)
+    _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-cursor-sdk-gen"))
+
+    worker_calls: list[dict[str, Any]] = []
+
+    async def _fake_dispatch(**kwargs: Any) -> tuple[bool, str | None]:
+        worker_calls.append(kwargs)
+        return True, None
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_generate.dispatch_cursor_sdk_worker",
+        _fake_dispatch,
+    )
+
+    client = TestClient(
+        _route_app(monkeypatch, tmp_path), raise_server_exceptions=False
+    )
+    resp = client.post(
+        "/api/v1/team/dispatch",
+        json={
+            "op": "generate",
+            "role": "cursor-sdk",
+            "dispatch_thread_id": "dispatch-thread-sdk-gen",
+            "messages": [{"role": "user", "content": "PONG"}],
+            "packet_path": _GOOD_PACKET,
+        },
+    )
+    assert resp.status_code == 202, resp.text
+    body = resp.json()
+    assert body["substrate"] == "sdk"
+    assert body["output_contract"] == "thread"
+    assert body["thread_id"] == "bus-cursor-sdk-gen"
+    assert body["execution_id"]
+    assert body["poll_hint"]["tool"] == "wait"
+    assert body["poll_hint"]["arguments"]["from_agent"] == "cursor-sdk"
+    assert len(worker_calls) == 1
+    assert worker_calls[0]["thread_id"] == "bus-cursor-sdk-gen"
+
+
+def test_t3c_cursor_sdk_generate_consult_uses_message(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
+    _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-sdk-msg"))
+
+    msg_calls: list[dict[str, Any]] = []
+
+    async def _fake_msg(**kwargs: Any) -> tuple[bool, str | None]:
+        msg_calls.append(kwargs)
+        return True, None
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_generate.dispatch_cursor_sdk_worker_message",
+        _fake_msg,
+    )
+
+    client = TestClient(
+        _route_app(monkeypatch, tmp_path), raise_server_exceptions=False
+    )
+    resp = client.post(
+        "/api/v1/team/dispatch",
+        json={
+            "op": "generate",
+            "role": "cursor-sdk",
+            "dispatch_thread_id": "dt-consult",
+            "messages": [{"role": "user", "content": "Review this design."}],
+        },
+    )
+    assert resp.status_code == 202, resp.text
+    assert msg_calls[0]["message"] == "Review this design."
 
 
 def test_t6a_cursor_sdk_seat_capability(
@@ -2801,7 +2886,7 @@ def test_t6a_cursor_sdk_seat_capability(
         return True, None
 
     monkeypatch.setattr(
-        "systems.frontier_consult.route.dispatch_cursor_sdk_worker",
+        "systems.frontier_consult.cursor_sdk_generate.dispatch_cursor_sdk_worker",
         _fake_dispatch,
     )
 
@@ -2809,29 +2894,23 @@ def test_t6a_cursor_sdk_seat_capability(
         _route_app(monkeypatch, tmp_path), raise_server_exceptions=False
     )
     resp = client.post(
-        "/api/v1/team/handoff",
+        "/api/v1/team/dispatch",
         json={
-            "op": "handoff",
-            "seat": "cursor-sdk",
+            "op": "generate",
+            "role": "cursor-sdk",
+            "dispatch_thread_id": "dt-t6a",
+            "messages": [],
             "packet_path": _GOOD_PACKET,
-            "contract": "implement",
-            "subject": _GOOD_SUBJECT,
         },
     )
-    assert resp.status_code == 200, resp.text
-    sc = resp.json()["seat_capability"]
-    assert sc == {
-        "delivery": "auto",
-        "dispatchable": False,
-        "tool_surface": "sdk",
-        "picker_range": [
-            "cursor/composer-2.5",
-            "cursor/claude-sonnet-4-6",
-            "cursor/claude-opus-4-8",
-        ],
-        "default_model": "cursor/composer-2.5",
-        "recommended_executor": sc["recommended_executor"],
-    }
+    assert resp.status_code == 202, resp.text
+    sc = resp.json()["capabilities"]
+    assert sc["role"] == "cursor-sdk"
+    assert sc["substrate"] == "sdk"
+    assert sc["tool_surface"] == "sdk"
+    assert sc["resolved_model"] == "cursor/composer-2.5"
+    assert sc["inline_only"] is True
+    assert sc["mcp_enabled"] is False
 
 
 def test_t6b_web_consult_seat_capability_matches_profile(
@@ -2863,20 +2942,50 @@ def test_t6b_web_consult_seat_capability_matches_profile(
     expected = get_profile(fam, plat)
     sc = resp.json()["seat_capability"]
     assert sc["delivery"] == expected.delivery == "manual"
-    assert sc["dispatchable"] == expected.dispatchable
+    assert sc["api_dispatchable"] == expected.api_dispatchable is False
+    assert sc["auto_dispatchable"] == expected.auto_dispatchable is False
+    assert sc["manual_handoff"] == expected.manual_handoff is True
     assert sc["tool_surface"] == expected.tool_surface
     assert sc["picker_range"] == list(expected.allowed_models)
     assert sc["default_model"] == expected.default_model
     assert sc["recommended_executor"] is None
 
 
-def test_t4_cursor_sdk_role_rejected_on_generate() -> None:
+def test_t4_cursor_sdk_role_admitted_on_generate() -> None:
+    enforce_team_dispatch_generate_admit("cursor-sdk", request_id="req-t4")
+
+
+def test_t4b_resolve_cursor_sdk_generate_target_default_model() -> None:
+    from .admission import resolve_cursor_sdk_generate_target
+
+    to_agent, family, platform, model = resolve_cursor_sdk_generate_target(
+        "cursor-sdk", model=None, request_id="req-t4b"
+    )
+    assert to_agent == "cursor-sdk"
+    assert family == "cursor"
+    assert platform == "sdk"
+    assert model == "cursor/composer-2.5"
+
+
+def test_t4c_resolve_cursor_sdk_generate_target_explicit_model() -> None:
+    from .admission import resolve_cursor_sdk_generate_target
+
+    _to, _f, _p, model = resolve_cursor_sdk_generate_target(
+        "cursor-sdk",
+        model="cursor/claude-opus-4-8",
+        request_id="req-t4c",
+    )
+    assert model == "cursor/claude-opus-4-8"
+
+
+def test_t4d_reviewer_still_api_dispatchable() -> None:
+    enforce_team_dispatch_generate_admit("reviewer", request_id="req-t4d")
+
+
+def test_t4e_claude_web_still_rejected_on_generate() -> None:
     with pytest.raises(FrontierEndpointError) as exc_info:
-        enforce_team_dispatch_generate_admit("cursor-sdk", request_id="req-t4")
-    err = exc_info.value
-    assert err.status_code == 422
-    assert err.code == "web_seat_not_generate_target"
-    assert "cursor-sdk" in err.reason
+        enforce_team_dispatch_generate_admit("claude-web", request_id="req-t4e")
+    assert exc_info.value.code == "web_seat_not_generate_target"
 
 
 def test_t5_cursor_sdk_worker_down_degraded_path(
@@ -2896,11 +3005,11 @@ def test_t5_cursor_sdk_worker_down_degraded_path(
         failure_calls.append(thread_id)
 
     monkeypatch.setattr(
-        "systems.frontier_consult.route.dispatch_cursor_sdk_worker",
+        "systems.frontier_consult.cursor_sdk_generate.dispatch_cursor_sdk_worker",
         _fail_dispatch,
     )
     monkeypatch.setattr(
-        "systems.frontier_consult.route.post_worker_failure_turn",
+        "systems.frontier_consult.cursor_sdk_generate.post_worker_failure_turn",
         _fake_failure,
     )
 
@@ -2922,3 +3031,54 @@ def test_t5_cursor_sdk_worker_down_degraded_path(
     assert body["thread_id"] == "bus-cursor-sdk-down"
     assert "worker_dispatch: failed" in body["warnings"]
     assert failure_calls == ["bus-cursor-sdk-down"]
+
+
+def test_t7_handoff_cursor_sdk_alias_normalizes_to_generate(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from .handoff_response import build_handoff_result
+
+    monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
+    _write_packet(tmp_path, _GOOD_PACKET, _CONFORMANT_PACKET)
+    _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-alias"))
+
+    gen_calls: list[dict[str, Any]] = []
+
+    async def _fake_gen(**kwargs: Any) -> dict[str, Any]:
+        gen_calls.append(kwargs)
+        return {
+            "execution_id": "exec-alias",
+            "substrate": "sdk",
+            "output_contract": "thread",
+            "thread_id": "bus-alias",
+            "to_agent": "cursor-sdk",
+            "resolved_model": "cursor/composer-2.5",
+            **build_handoff_result(thread_id="bus-alias", to_agent="cursor-sdk"),
+        }
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.route.dispatch_cursor_sdk_generate",
+        _fake_gen,
+    )
+
+    client = TestClient(
+        _route_app(monkeypatch, tmp_path), raise_server_exceptions=False
+    )
+    resp = client.post(
+        "/api/v1/team/handoff",
+        json={
+            "op": "handoff",
+            "seat": "cursor-sdk",
+            "packet_path": _GOOD_PACKET,
+            "contract": "implement",
+            "subject": _GOOD_SUBJECT,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["deprecated_alias"]["normalized_from"] == "op=handoff,seat=cursor-sdk"
+    assert any("deprecated" in w.lower() for w in body.get("warnings", []))
+    assert len(gen_calls) == 1
+    assert gen_calls[0]["role"] == "cursor-sdk"
+    assert gen_calls[0]["packet_path"] == _GOOD_PACKET

@@ -47,13 +47,12 @@ _MCP_CAPABILITIES_TAG = "<mcp_capabilities>"
 
 
 def _mcp_packet_seats() -> frozenset[str]:
-    """Manual, non-dispatchable seats with an MCP tool surface — packets to
-    these seats must carry <mcp_capabilities> (they investigate via tools)."""
+    """Manual handoff seats with an MCP tool surface — packets to these seats
+    must carry <mcp_capabilities> (they investigate via tools)."""
     return frozenset(
         f"{family}-{platform}"
         for (family, platform), profile in load_profiles().items()
-        if profile.delivery == "manual"
-        and not profile.dispatchable
+        if profile.manual_handoff
         and profile.tool_surface == "mcp"
     )
 

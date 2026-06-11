@@ -18,6 +18,7 @@ from services.git_integration_worker.cursor_dispatch_registry import (
 )
 from services.git_integration_worker.cursor_home import CursorHomeConfigError
 from services.git_integration_worker.cursor_sdk_context import CursorSdkParityError
+from services.git_integration_worker.cursor_sdk_closeout import SdkRunOutcome
 from services.git_integration_worker.models.cursor_api import (
     CursorDispatchRequest,
     CursorDispatchResponse,
@@ -220,6 +221,200 @@ async def test_bus_client_marks_inbox_and_sets_after_turn(
     assert inner.get.await_count == 2
     post_payload = inner.post.await_args.kwargs["json"]
     assert post_payload["after_turn"] == 3
+
+
+@pytest.mark.asyncio
+async def test_dispatch_implement_stub_degraded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    req = CursorDispatchRequest(
+        thread_id="1589",
+        model="cursor/composer-2.5",
+        dispatch_id="disp-stub",
+        message="---\ncontract: implement\n---\npacket",
+        handoff_contract="implement",
+    )
+    bus = AsyncMock()
+    bus.reply = AsyncMock(return_value=MagicMock(status_code=200, body={}))
+    emitted: list[dict[str, object]] = []
+
+    def _capture(**kwargs: object) -> None:
+        emitted.append(dict(kwargs))
+
+    monkeypatch.setattr(route_mod, "emit_sdk_worker_completed", _capture)
+
+    def _stub_outcome(**_kwargs: object) -> SdkRunOutcome:
+        return SdkRunOutcome(
+            body="Implementing",
+            status="finished",
+            duration_ms=1200,
+            tool_call_count=0,
+        )
+
+    monkeypatch.setattr(route_mod, "_run_sdk_sync", _stub_outcome)
+
+    await route_mod._run_sdk_dispatch(
+        req=req,
+        source_repo=route_mod._CONFIG.source_repo,
+        bus=bus,
+    )
+
+    bus.reply.assert_awaited_once()
+    body = bus.reply.await_args.kwargs["body"]
+    assert body.startswith("status: degraded\nreason: zero_tool_calls")
+    assert "Implementing" in body
+    assert emitted[0]["outcome"] == "degraded"
+    assert emitted[0]["tool_call_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_dispatch_implement_success_ok(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    req = CursorDispatchRequest(
+        thread_id="1590",
+        model="cursor/composer-2.5",
+        dispatch_id="disp-ok",
+        message="---\ncontract: implement\n---\npacket",
+        handoff_contract="implement",
+    )
+    bus = AsyncMock()
+    bus.reply = AsyncMock(return_value=MagicMock(status_code=200, body={}))
+    emitted: list[dict[str, object]] = []
+
+    monkeypatch.setattr(
+        route_mod,
+        "emit_sdk_worker_completed",
+        lambda **kwargs: emitted.append(dict(kwargs)),
+    )
+
+    def _ok_outcome(**_kwargs: object) -> SdkRunOutcome:
+        return SdkRunOutcome(
+            body="## Closeout\nfiles touched",
+            status="finished",
+            duration_ms=5000,
+            tool_call_count=2,
+        )
+
+    monkeypatch.setattr(route_mod, "_run_sdk_sync", _ok_outcome)
+
+    await route_mod._run_sdk_dispatch(
+        req=req,
+        source_repo=route_mod._CONFIG.source_repo,
+        bus=bus,
+    )
+
+    body = bus.reply.await_args.kwargs["body"]
+    assert "status: degraded" not in body
+    assert emitted[0]["outcome"] == "ok"
+    assert emitted[0]["tool_call_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_dispatch_consult_zero_tool_calls_not_degraded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    req = CursorDispatchRequest(
+        thread_id="1600",
+        model="cursor/composer-2.5",
+        dispatch_id="disp-consult",
+        message="---\ncontract: consult\n---\npacket",
+        handoff_contract="consult",
+    )
+    bus = AsyncMock()
+    bus.reply = AsyncMock(return_value=MagicMock(status_code=200, body={}))
+    emitted: list[dict[str, object]] = []
+
+    monkeypatch.setattr(
+        route_mod,
+        "emit_sdk_worker_completed",
+        lambda **kwargs: emitted.append(dict(kwargs)),
+    )
+
+    def _consult_outcome(**_kwargs: object) -> SdkRunOutcome:
+        return SdkRunOutcome(
+            body="Findings only",
+            status="finished",
+            duration_ms=800,
+            tool_call_count=0,
+        )
+
+    monkeypatch.setattr(route_mod, "_run_sdk_sync", _consult_outcome)
+
+    await route_mod._run_sdk_dispatch(
+        req=req,
+        source_repo=route_mod._CONFIG.source_repo,
+        bus=bus,
+    )
+
+    body = bus.reply.await_args.kwargs["body"]
+    assert body == "Findings only"
+    assert emitted[0]["outcome"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_exception_posts_failure_turn_and_event(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    req = CursorDispatchRequest(
+        thread_id="1601",
+        model="cursor/composer-2.5",
+        dispatch_id="disp-fail",
+        message="hello",
+    )
+    bus = AsyncMock()
+    bus.reply = AsyncMock(return_value=MagicMock(status_code=200, body={}))
+    failed: list[dict[str, object]] = []
+
+    monkeypatch.setattr(
+        route_mod,
+        "emit_sdk_worker_failed",
+        lambda **kwargs: failed.append(dict(kwargs)),
+    )
+
+    def _boom(**_kwargs: object) -> SdkRunOutcome:
+        raise RuntimeError("bridge died")
+
+    monkeypatch.setattr(route_mod, "_run_sdk_sync", _boom)
+
+    await route_mod._run_sdk_dispatch(
+        req=req,
+        source_repo=route_mod._CONFIG.source_repo,
+        bus=bus,
+    )
+
+    bus.reply.assert_awaited_once()
+    call = bus.reply.await_args
+    assert call is not None
+    assert "FAILED" in call.kwargs["subject"]
+    assert "CURSOR_SDK_DISPATCH" in call.kwargs["body"]
+    assert failed[0]["error"] == "bridge died"
+
+
+@patch(
+    "services.git_integration_worker.routes.cursor_sdk.asyncio.create_task",
+    return_value=MagicMock(done=lambda: False),
+)
+def test_dispatch_admits_handoff_contract_fields(
+    _mock_task: MagicMock, client: TestClient
+) -> None:
+    resp = client.post(
+        "/api/v1/cursor/dispatch",
+        json=_dispatch_body(
+            handoff_contract="implement",
+            prompt_preamble="Contract: bound implementation.",
+        ),
+    )
+    assert resp.status_code == 200
+    assert resp.json()["admitted"] is True
 
 
 @pytest.mark.asyncio

@@ -21,21 +21,48 @@ def worker_base_url() -> str:
     return f"http://{host}:{port}"
 
 
+def derive_cursor_sdk_prompt_preamble(
+    *,
+    handoff_contract: str,
+    pointer: str,
+) -> str | None:
+    """Single imperative paragraph for implement dispatches (1b from pointer)."""
+    if handoff_contract != "implement":
+        return None
+    for line in pointer.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("Contract:"):
+            return (
+                f"{stripped} Execute this task NOW using your tools. Make the "
+                "code/file changes the packet specifies. If you are blocked, "
+                "reply with `status: blocked` and the specific reason. Do NOT "
+                "reply with an acknowledgement-only message."
+            )
+    return None
+
+
 async def dispatch_cursor_sdk_worker(
     *,
     request_id: str,
     thread_id: str,
     model: str,
     packet_path: str,
+    handoff_contract: str,
+    prompt_preamble: str | None = None,
+    model_knobs: dict[str, str] | None = None,
 ) -> tuple[bool, str | None]:
     """POST ``/api/v1/cursor/dispatch``; return ``(ok, warning)``."""
     dispatch_id = f"{request_id}-{uuid.uuid4().hex[:8]}"
-    payload = {
+    payload: dict[str, object] = {
         "thread_id": thread_id,
         "model": model,
         "packet_path": packet_path,
         "dispatch_id": dispatch_id,
+        "handoff_contract": handoff_contract,
+        "prompt_preamble": prompt_preamble,
     }
+    if model_knobs:
+        payload["model_knobs"] = model_knobs
     try:
         async with make_async_client(
             worker_base_url(), timeout=_WORKER_TIMEOUT
@@ -55,6 +82,43 @@ async def dispatch_cursor_sdk_worker(
             request_id,
             resp.status_code,
             resp.text[:200],
+        )
+        return False, _WORKER_DISPATCH_FAILED
+    return True, None
+
+
+async def dispatch_cursor_sdk_worker_message(
+    *,
+    request_id: str,
+    thread_id: str,
+    model: str,
+    message: str,
+) -> tuple[bool, str | None]:
+    """POST ``/api/v1/cursor/dispatch`` with ``message`` (consult path)."""
+    dispatch_id = f"{request_id}-{uuid.uuid4().hex[:8]}"
+    payload = {
+        "thread_id": thread_id,
+        "model": model,
+        "message": message,
+        "dispatch_id": dispatch_id,
+    }
+    try:
+        async with make_async_client(
+            worker_base_url(), timeout=_WORKER_TIMEOUT
+        ) as client:
+            resp = await client.post("/api/v1/cursor/dispatch", json=payload)
+    except httpx.HTTPError as exc:
+        logger.warning(
+            "cursor-sdk worker unreachable (message): request_id=%s err=%s",
+            request_id,
+            exc,
+        )
+        return False, _WORKER_DISPATCH_FAILED
+    if resp.status_code >= 400:
+        logger.warning(
+            "cursor-sdk worker rejected message dispatch: request_id=%s status=%s",
+            request_id,
+            resp.status_code,
         )
         return False, _WORKER_DISPATCH_FAILED
     return True, None

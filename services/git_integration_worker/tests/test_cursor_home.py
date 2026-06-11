@@ -58,9 +58,7 @@ def test_user_rules_copy_not_symlink(
     assert not copied.is_symlink()
 
 
-def test_mcp_json_copy_present(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_mcp_json_copy_present(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CURSOR_API_KEY", "test-key")
     real = tmp_path / "real-home"
     cursor = real / ".cursor"

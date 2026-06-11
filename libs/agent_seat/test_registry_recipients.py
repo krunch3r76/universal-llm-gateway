@@ -69,7 +69,7 @@ profiles:
     default_model: null
     tool_surface: mcp
     delivery: manual
-    dispatchable: false
+    manual_handoff: true
     include_deadlines: false
     include_review_queue: false
     confirm_and_proceed: false

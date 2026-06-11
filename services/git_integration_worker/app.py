@@ -15,6 +15,9 @@ from git_integrate.events import register_uds_publisher
 from universal_logging import get_logger
 
 from services.git_integration_worker.config import WorkerConfig, load_config
+from services.git_integration_worker.cursor_sdk_events import (
+    register_cursor_sdk_event_publisher,
+)
 from services.git_integration_worker.events import publish_lib_signal
 from services.git_integration_worker.routes.cursor_sdk import (
     router as cursor_sdk_router,
@@ -45,6 +48,7 @@ def _resolve_version() -> str:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     register_uds_publisher(publish_lib_signal)
+    register_cursor_sdk_event_publisher(publish_lib_signal)
     cfg: WorkerConfig = load_config()
     app.state.worker_config = cfg
     app.state.worker_version = _resolve_version()

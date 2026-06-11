@@ -260,8 +260,9 @@ def register_frontier_tools(mcp: FastMCP) -> None:
           If reasoning effort matters, inspect ``knob_resolution.status/parity/notes``;
           do not infer cross-provider parity.
           ``thread`` / ``subject`` must be absent when using this op.
-          Synthetic seat models (``claude-web``, ``claude-cursor``) are rejected
-          with 422 ``web_seat_not_generate_target``. Use API roles with optional
+          Manual seats (``claude-web``, ``claude-cursor``) are rejected with 422
+          ``web_seat_not_generate_target``. The SDK auto seat ``cursor-sdk`` is
+          admitted on ``op=generate`` (``auto_dispatchable`` substrate=sdk). Use API roles with optional
           ``model=`` override for provider-specific consults.
         - ``op="to_thread"``: admits dispatch; Stargate posts the role's
           reply to ``thread`` on its behalf after the dispatch completes
@@ -410,6 +411,15 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                         "message": "thread/subject are not allowed when op='generate'",
                     }
                 }
+            # cursor-sdk implement path: forward packet_path + contract so the
+            # Stargate generate intercept (route.py) can route to the worker.
+            # source_ref is intentionally NOT forwarded — TeamDispatchGenerateBody
+            # is extra="forbid" with no source_ref field; source_ref resolves only
+            # via the op=handoff alias. None-guarded, so API roles are unaffected.
+            if packet_path is not None:
+                body["packet_path"] = packet_path
+            if contract is not None:
+                body["contract"] = contract
         else:
             if thread is None:
                 return {

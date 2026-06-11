@@ -27,31 +27,39 @@ _AGENTS_YAML = Path(__file__).parent.parent.parent / "config" / "agents.yaml"
 class CapabilityProfile:
     """Per-(family, platform) routing + boot profile.
 
-    Mandatory:
-      family, platform, provider, default_model, tool_surface, delivery,
-      include_deadlines, include_review_queue, confirm_and_proceed,
-      addenda
+    Admission flags (replace legacy ``dispatchable``):
+      api_dispatchable — cloud/API generate-peer (CapabilityDispatch path)
+      auto_dispatchable — unattended local substrate (e.g. cursor/sdk bridge)
+      manual_handoff — human seat reachable only via op=handoff
 
-    Optional:
-      allowed_models, model_requirement, capability_tier, dispatchable
+    Invariant: at most one of api_dispatchable/auto_dispatchable is True;
+    manual_handoff profiles have delivery=manual.
     """
 
     family: Literal["claude", "gpt", "grok", "gemini", "subagent", "cursor"]
     platform: Literal["api", "api-multi", "web", "cursor", "subagent", "sdk"]
     provider: Literal["anthropic", "openai", "xai", "google", "cursor"]
-    default_model: str | None  # None → not API-reachable (web platforms)
+    default_model: str | None
     tool_surface: Literal["mcp", "inline-only", "sdk"]
     delivery: Literal["auto", "manual"]
     include_deadlines: bool
     include_review_queue: bool
     confirm_and_proceed: bool
-    addenda: tuple[str, ...]  # keys into _ADDENDA_BLOCKS dict
+    addenda: tuple[str, ...]
     allowed_models: tuple[str, ...] = field(default_factory=tuple)
-    model_requirement: str | None = None  # e.g. "multi-agent" substring requirement
+    model_requirement: str | None = None
     capability_tier: Literal["inline-only"] | None = None
-    dispatchable: bool = True  # False for web-only seats (web-claude, etc.)
+    api_dispatchable: bool = False
+    auto_dispatchable: bool = False
+    manual_handoff: bool = False
     session_limit: int = 3
     self_reflections_limit: int = 5
+
+    def admits_generate(self) -> bool:
+        return self.api_dispatchable or self.auto_dispatchable
+
+    def admits_handoff(self) -> bool:
+        return self.manual_handoff
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,11 +115,30 @@ def load_profiles() -> dict[tuple[str, str], CapabilityProfile]:
             allowed_models=tuple(entry.get("allowed_models") or []),
             model_requirement=entry.get("model_requirement"),
             capability_tier=entry.get("capability_tier"),
-            dispatchable=entry.get("dispatchable", True),
+            api_dispatchable=entry.get("api_dispatchable", False),
+            auto_dispatchable=entry.get("auto_dispatchable", False),
+            manual_handoff=entry.get("manual_handoff", False),
             session_limit=entry.get("session_limit", 3),
             self_reflections_limit=entry.get("self_reflections_limit", 5),
         )
+        _validate_profile_admission_flags(profiles[(family, platform)], key)
     return profiles
+
+
+def _validate_profile_admission_flags(profile: CapabilityProfile, key: str) -> None:
+    if profile.api_dispatchable and profile.auto_dispatchable:
+        raise ValueError(
+            f"agents.yaml profile {key!r}: api_dispatchable and auto_dispatchable "
+            "are mutually exclusive"
+        )
+    if profile.manual_handoff and profile.delivery != "manual":
+        raise ValueError(
+            f"agents.yaml profile {key!r}: manual_handoff requires delivery=manual"
+        )
+    if profile.auto_dispatchable and profile.delivery != "auto":
+        raise ValueError(
+            f"agents.yaml profile {key!r}: auto_dispatchable requires delivery=auto"
+        )
 
 
 @functools.cache
