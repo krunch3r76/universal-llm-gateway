@@ -1,9 +1,10 @@
 """Per-dispatch HOME isolation for cursor-sdk bridge dispatches.
 
-Each dispatch gets a private HOME with copied ``cli-config.json`` (identity) and
-XDG ``auth.json`` (credential). The bridge subprocess inherits HOME via
-``os.environ`` (see ``routes/cursor_sdk`` Branch B — ``launch_bridge`` snapshots
-``os.environ`` at ``Popen``).
+Each dispatch gets a private HOME with copied ``cli-config.json`` (identity),
+XDG ``auth.json`` (credential), and user-layer Cursor settings (``rules/``,
+``mcp.json``) so ``setting_sources=all`` matches the IDE Composer substrate.
+The bridge subprocess inherits HOME via ``os.environ`` (see ``routes/cursor_sdk``
+Branch B — ``launch_bridge`` snapshots ``os.environ`` at ``Popen``).
 """
 
 from __future__ import annotations
@@ -18,6 +19,8 @@ logger = get_logger(__name__)
 
 CURSOR_CONFIG_DIRNAME = ".cursor"
 CURSOR_IDENTITY_FILENAME = "cli-config.json"
+CURSOR_MCP_FILENAME = "mcp.json"
+CURSOR_USER_RULES_DIRNAME = "rules"
 CURSOR_XDG_CONFIG_RELPATH = Path(".config") / "cursor"
 CURSOR_CREDENTIAL_FILENAME = "auth.json"
 
@@ -37,6 +40,18 @@ def dispatch_home_path(dispatch_id: str, *, root: Path | None = None) -> Path:
     """``{root}/{dispatch_id}-home`` — root defaults to ``_DISPATCH_HOME_ROOT``."""
     base = root if root is not None else _DISPATCH_HOME_ROOT
     return base / f"{dispatch_id}-home"
+
+
+def _copy_path_if_present(src: Path, dst: Path) -> None:
+    if not src.exists():
+        return
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    if src.is_dir():
+        if dst.exists():
+            shutil.rmtree(dst)
+        shutil.copytree(src, dst, symlinks=False)
+        return
+    shutil.copy2(src, dst)
 
 
 def setup_cursor_dispatch_home(
@@ -74,4 +89,14 @@ def setup_cursor_dispatch_home(
             f"dispatch[{dispatch_id}]: no credential — real {real_cred} absent "
             f"and CURSOR_API_KEY unset; bridge would fail 'Authentication required'"
         )
+
+    real_cursor = real / CURSOR_CONFIG_DIRNAME
+    _copy_path_if_present(
+        real_cursor / CURSOR_USER_RULES_DIRNAME,
+        cursor_dir / CURSOR_USER_RULES_DIRNAME,
+    )
+    _copy_path_if_present(
+        real_cursor / CURSOR_MCP_FILENAME,
+        cursor_dir / CURSOR_MCP_FILENAME,
+    )
     return home

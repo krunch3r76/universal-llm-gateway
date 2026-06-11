@@ -43,6 +43,34 @@ def test_dispatch_home_path_shape(tmp_path: Path) -> None:
     assert dispatch_home_path("abc", root=root) == root / "abc-home"
 
 
+def test_user_rules_copy_not_symlink(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CURSOR_API_KEY", "test-key")
+    real = tmp_path / "real-home"
+    rules = real / ".cursor" / "rules"
+    rules.mkdir(parents=True)
+    (rules / "operator.mdc").write_text("rule", encoding="utf-8")
+    root = tmp_path / "homes"
+    home = setup_cursor_dispatch_home("d1", real_home=real, root=root)
+    copied = home / ".cursor" / "rules" / "operator.mdc"
+    assert copied.read_text(encoding="utf-8") == "rule"
+    assert not copied.is_symlink()
+
+
+def test_mcp_json_copy_present(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CURSOR_API_KEY", "test-key")
+    real = tmp_path / "real-home"
+    cursor = real / ".cursor"
+    cursor.mkdir(parents=True)
+    (cursor / "mcp.json").write_text(json.dumps({"mcpServers": {}}), encoding="utf-8")
+    root = tmp_path / "homes"
+    home = setup_cursor_dispatch_home("d1", real_home=real, root=root)
+    assert (home / ".cursor" / "mcp.json").exists()
+
+
 def test_identity_copy_not_symlink(tmp_path: Path) -> None:
     real = _fake_real_home(tmp_path)
     root = tmp_path / "homes"

@@ -3,10 +3,11 @@
 In-memory idempotency registry state is lost on worker restart (Phase 1 scope).
 
 Phase 2 HOME isolation (T2b 2026-06-11, thread 1559): each dispatch seeds a
-private HOME with copied ``cli-config.json`` (identity) and XDG ``auth.json``
-(credential). ``Client.launch_bridge`` snapshots ``os.environ`` at ``Popen`` (no
-``env=`` kwarg in cursor-sdk 0.1.7), so HOME override uses a process-global
-swap guarded by ``_SDK_DISPATCH_LOCK`` for the launch→wait→close window.
+private HOME with copied ``cli-config.json`` (identity), XDG ``auth.json``
+(credential), and user-layer Cursor settings for ``setting_sources=all``.
+``Client.launch_bridge`` snapshots ``os.environ`` at ``Popen`` (no ``env=``
+kwarg in cursor-sdk 0.1.7), so HOME override uses a process-global swap
+guarded by ``_SDK_DISPATCH_LOCK`` for the launch→wait→close window.
 """
 
 from __future__ import annotations
@@ -19,7 +20,6 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from cursor_sdk import Client
-from cursor_sdk.types import LocalAgentOptions
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from universal_logging import get_logger
@@ -38,6 +38,11 @@ from services.git_integration_worker.cursor_home import (
 from services.git_integration_worker.cursor_models import (
     build_model_selection,
     resolve_cursor,
+)
+from services.git_integration_worker.cursor_sdk_context import (
+    CursorSdkParityError,
+    build_agent_options,
+    validate_dispatch_context,
 )
 from services.git_integration_worker.models.cursor_api import (
     CursorDispatchRequest,
@@ -102,6 +107,14 @@ def _run_sdk_sync(
 
     config = resolve_cursor(config_model_id)
     selection = build_model_selection(config, selection_overrides)
+    parity = validate_dispatch_context(source_repo)
+    logger.info(
+        "cursor sdk dispatch start: dispatch_id=%s model=%s parity=%s",
+        dispatch_id,
+        config.model_id,
+        parity,
+    )
+    agent_options = build_agent_options(source_repo, selection)
 
     with _isolated_dispatch_home(dispatch_home):
         client = Client.launch_bridge(
@@ -109,10 +122,10 @@ def _run_sdk_sync(
             workspace=str(source_repo),
             state_root=str(bridge_state),
             timeout=_SDK_TIMEOUT_S,
-            local=LocalAgentOptions(cwd=str(source_repo)),
+            local=agent_options.local,
         )
         try:
-            agent = client.create_agent(model=selection)
+            agent = client.create_agent(agent_options)
             # Local bridge Send rejects Idempotency-Key (cloud-only in SDK v1).
             run = agent.send(prompt)
             result = run.wait()
@@ -199,6 +212,23 @@ async def cursor_dispatch(
                 source="gateway",
             ),
         )
+    try:
+        parity = validate_dispatch_context(cfg.source_repo)
+    except CursorSdkParityError as exc:
+        return JSONResponse(
+            status_code=422,
+            content=error_envelope(
+                code="CURSOR_SDK_PARITY",
+                message=str(exc),
+                source="gateway",
+            ),
+        )
+    logger.info(
+        "cursor sdk dispatch admitted: dispatch_id=%s thread_id=%s parity=%s",
+        req.dispatch_id,
+        req.thread_id,
+        parity,
+    )
 
     admission = CursorDispatchResponse(
         admitted=True,

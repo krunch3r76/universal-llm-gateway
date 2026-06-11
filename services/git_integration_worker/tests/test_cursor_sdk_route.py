@@ -17,6 +17,7 @@ from services.git_integration_worker.cursor_dispatch_registry import (
     DispatchConflict,
 )
 from services.git_integration_worker.cursor_home import CursorHomeConfigError
+from services.git_integration_worker.cursor_sdk_context import CursorSdkParityError
 from services.git_integration_worker.models.cursor_api import (
     CursorDispatchRequest,
     CursorDispatchResponse,
@@ -62,6 +63,27 @@ def test_dispatch_packet_traversal_reject(client: TestClient) -> None:
     )
     assert resp.status_code == 422
     assert resp.json()["code"] == "CURSOR_PACKET_INVALID"
+
+
+@patch(
+    "services.git_integration_worker.routes.cursor_sdk.asyncio.create_task",
+    return_value=MagicMock(done=lambda: False),
+)
+def test_dispatch_parity_failure_422(
+    _mock_task: MagicMock,
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _raise_parity(_repo: object) -> dict[str, object]:
+        raise CursorSdkParityError("MCP token not configured")
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.routes.cursor_sdk.validate_dispatch_context",
+        _raise_parity,
+    )
+    resp = client.post("/api/v1/cursor/dispatch", json=_dispatch_body())
+    assert resp.status_code == 422
+    assert resp.json()["code"] == "CURSOR_SDK_PARITY"
 
 
 @patch(
