@@ -132,6 +132,7 @@ def FrontierHandoffCreated(  # noqa: N802
     request_id: str,
     to_agent: str,
     thread_id: str,
+    reused: bool = False,
 ) -> Event:
     """Handoff thread created on agent-bus."""
     return Event(
@@ -140,6 +141,7 @@ def FrontierHandoffCreated(  # noqa: N802
             "request_id": request_id,
             "to_agent": to_agent,
             "thread_id": thread_id,
+            "reused": reused,
         },
         scope="node",
     )

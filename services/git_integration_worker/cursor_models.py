@@ -42,16 +42,18 @@ _TRUSTED_CURSOR_MODELS: dict[str, CursorSdkModelConfig] = {
             CursorKnobSpec(name="thinking", accepted=("true", "false")),
             CursorKnobSpec(name="context", accepted=("200k", "300k", "1m")),
             CursorKnobSpec(name="effort", accepted=("low", "medium", "high", "xhigh")),
-            CursorKnobSpec(name="fast", accepted=("true", "false"), default="true"),
+            # No fast default: opus is a reasoning model — forcing fast=true would
+            # silently degrade quality. Knob stays available for explicit opt-in.
+            CursorKnobSpec(name="fast", accepted=("true", "false")),
         ),
     ),
     "claude-sonnet-4-6": CursorSdkModelConfig(
         model_id="claude-sonnet-4-6",
-        params=(
-            CursorKnobSpec(name="fast", accepted=("true", "false"), default="true"),
-        ),
+        # No fast default (see opus): explicit opt-in only.
+        params=(CursorKnobSpec(name="fast", accepted=("true", "false")),),
     ),
 }
+
 
 def resolve_cursor(model: str | ModelId) -> CursorSdkModelConfig:
     """Resolve a bare or ``cursor/``-prefixed model id to a trusted config."""

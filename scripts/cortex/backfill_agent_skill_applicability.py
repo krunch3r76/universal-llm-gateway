@@ -34,7 +34,7 @@ import argparse
 import sys
 import urllib.parse
 
-from agent_seat.profiles import load_lead_agent_slugs
+from agent_seat.profiles import known_seats, load_lead_agent_slugs
 from transport_utils import DEFAULT_CORTEX_URL, make_sync_client
 
 PARTITION: dict[str, list[str]] = {
@@ -46,6 +46,7 @@ PARTITION: dict[str, list[str]] = {
         "agent_skill:cortex-orientation",
         "agent_skill:cortex-provenance-discipline",
         "agent_skill:cortex-v24-implementation-arc",
+        "agent_skill:document-ingestion",
         "agent_skill:document-ocr",
         "agent_skill:docx-ingestion",
         "agent_skill:email-bridge-mailbox",
@@ -55,6 +56,7 @@ PARTITION: dict[str, list[str]] = {
         "agent_skill:entity-lifecycle-discipline",
         "agent_skill:financial-reasoning",
         "agent_skill:friction-review",
+        "agent_skill:fs",
         "agent_skill:frontier-model-instructions",
         "agent_skill:grok-web-dispatch",
         "agent_skill:image-video-generation",
@@ -74,6 +76,7 @@ PARTITION: dict[str, list[str]] = {
         "agent_skill:session-close-handoff",
         "agent_skill:session-close-reflective-journal",
         "agent_skill:session-close-transcript",
+        "agent_skill:web-transcript-preprocessing",
         "agent_skill:skill-document-writing",
         "agent_skill:thirdparty-api-mirror",
         # Case-specific skills — applicable across both seats since cases are
@@ -104,9 +107,12 @@ PARTITION: dict[str, list[str]] = {
         "agent_skill:dispatch-shape",
         "agent_skill:consult-routing",
         "agent_skill:completion-provenance-discipline",
+        "agent_skill:commit-and-git-scope",
         "agent_skill:advisor-timing",
         "agent_skill:agent-identity-signoff",
+        "agent_skill:model-tier-awareness-web",
         "agent_skill:modularize-discipline",
+        "agent_skill:operator-posture",
         "agent_skill:provenance-granularity",
         # Partitioned here for backfill membership; OVERRIDDEN below to its true
         # multi-agent value ['claude-cursor', 'claude-web'] (not universal).
@@ -119,6 +125,25 @@ PARTITION: dict[str, list[str]] = {
         # Partitioned here for backfill membership; OVERRIDDEN below to
         # agents.yaml lead_seats (not universal).
         "agent_skill:consensus-steelman-posture",
+        # B0 backfill (2026-06-11): previously unpartitioned — default universal.
+        "agent_skill:add-mcp-tool",
+        "agent_skill:agent-bus-multitask",
+        "agent_skill:agent-guidance-writing",
+        "agent_skill:build-pipeline",
+        "agent_skill:cursor-rule-authoring",
+        "agent_skill:debug-with-events",
+        "agent_skill:email-tool-dispatch",
+        "agent_skill:flintridge-case-navigation",
+        "agent_skill:investigation-economy",
+        "agent_skill:lead-agent-git-integration",
+        "agent_skill:multi-model-review",
+        "agent_skill:planning-promotion-ladder",
+        "agent_skill:produce-uml",
+        "agent_skill:refine-pipeline",
+        "agent_skill:research-article-ingest",
+        "agent_skill:review-task-guidance",
+        "agent_skill:service-lifecycle",
+        "agent_skill:task-grouping-discipline",
     ],
     "claude-cursor": [
         # Reconciled 2026-05-29 (direct-verify caught it): cursor-workspace skill
@@ -153,7 +178,7 @@ OVERRIDES: dict[str, list[str]] = {
         "claude-web",
         "claude-cursor",
         "gpt-cursor",
-        "subagent",
+        "subagent-subagent",
     ],
     "agent_skill:grok-web-dispatch": ["grok-web", "claude-web", "claude-cursor"],
     "agent_skill:xai-mcp-calling-shape": [
@@ -163,7 +188,27 @@ OVERRIDES: dict[str, list[str]] = {
     ],
     # Lead-seat posture (thread 1189) — agents.yaml lead_seats; not universal.
     "agent_skill:consensus-steelman-posture": sorted(load_lead_agent_slugs()),
+    "agent_skill:handoff-packet-authoring": ["claude-web", "claude-cursor"],
 }
+
+
+def _validate_partition_slugs() -> None:
+    """Fail loud if any PARTITION bucket key or assigned slug is not a registered seat.
+
+    Guards the data-entry point: a `web`/`cursor`/typo slug here would silently never
+    match the canonical stored values once the route filters on the registry vocab.
+    """
+    allowed = known_seats() | {"*"}
+    bad_buckets = sorted(set(PARTITION) - allowed)
+    assigned = {s for vals in OVERRIDES.values() for s in vals} | {
+        s for s in PARTITION if s != "*"
+    }
+    bad_assigned = sorted(assigned - allowed)
+    if bad_buckets or bad_assigned:
+        raise SystemExit(
+            f"agents.yaml-unknown slugs — buckets={bad_buckets} assigned={bad_assigned}; "
+            f"allowed={sorted(allowed)}"
+        )
 
 
 def _request(
@@ -265,7 +310,7 @@ def _audit(client: object) -> int:
     print(f"  Active skills total     : {len(live_ids)}")
     print(f"  Excluded (deprecated)   : {len(excluded_deprecated)}")
     print(f"  In partition / overrides: {len(partitioned & live_ids)}")
-    print(f"  Unpartitioned (default ['*'] via COALESCE): {len(unpartitioned)}")
+    print(f"  Unpartitioned (withheld from all seats after deny-flip): {len(unpartitioned)}")
     for eid in unpartitioned:
         print(f"    - {eid}")
     print(f"  Drifted (PARTITION ≠ live): {len(drifted)}")
@@ -319,6 +364,7 @@ def _deprecate_retired(client: object, *, dry_run: bool) -> int:
 
 
 def main() -> int:
+    _validate_partition_slugs()
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--dry-run",

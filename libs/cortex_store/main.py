@@ -38,6 +38,7 @@ from .routes import (
     salience,
     session_handoff,
     session_journals,
+    skills,
     stats,
     subgraph,
     surface_forms,
@@ -142,6 +143,7 @@ def create_app(*, db_path: str | None = None) -> FastAPI:
     app.include_router(stats.router)
     app.include_router(salience.router)
     app.include_router(boot.router)
+    app.include_router(skills.router)
     app.include_router(todo_retrieval.router)
     app.include_router(todo_audit.router)
     app.include_router(extraction_runs.router)

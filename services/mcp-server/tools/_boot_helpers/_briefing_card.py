@@ -32,6 +32,55 @@ _LA = ZoneInfo("America/Los_Angeles")
 _DROPBOX_DISPLAY_MAX = 3
 
 
+def _tokenize_signal_text(text: str) -> set[str]:
+    return {t for t in re.split(r"[^a-z0-9]+", text.lower()) if len(t) > 2}
+
+
+def _collect_boot_signals(
+    *,
+    todos: list[dict[str, Any]] | None,
+    unread_threads: list[dict[str, Any]] | None,
+    open_arcs: list[dict[str, Any]] | None,
+    in_flight_todos: list[dict[str, Any]] | None,
+) -> set[str]:
+    """Lowercased session tokens for Tier-2 skill ranking."""
+    signals: set[str] = set()
+    for todo in todos or []:
+        for field in ("domain", "title"):
+            val = todo.get(field)
+            if val:
+                signals |= _tokenize_signal_text(str(val))
+        eid = str(todo.get("id") or "")
+        if eid:
+            signals |= _tokenize_signal_text(eid)
+            if ":" in eid:
+                signals |= _tokenize_signal_text(eid.split(":", 1)[1])
+    for thread in unread_threads or []:
+        for field in ("slug", "subject", "last_subject"):
+            val = thread.get(field)
+            if val:
+                signals |= _tokenize_signal_text(str(val))
+    for arc in open_arcs or []:
+        eid = str(arc.get("id") or "")
+        if eid:
+            signals |= _tokenize_signal_text(eid)
+            if ":" in eid:
+                signals |= _tokenize_signal_text(eid.split(":", 1)[1])
+        for child in arc.get("children") or []:
+            cid = str(child.get("id") or "")
+            if cid:
+                signals |= _tokenize_signal_text(cid)
+                if ":" in cid:
+                    signals |= _tokenize_signal_text(cid.split(":", 1)[1])
+    for todo in in_flight_todos or []:
+        eid = str(todo.get("id") or "")
+        if eid:
+            signals |= _tokenize_signal_text(eid)
+            if ":" in eid:
+                signals |= _tokenize_signal_text(eid.split(":", 1)[1])
+    return signals
+
+
 def render_briefing_card(
     *,
     deadlines: list[dict[str, Any]] | None = None,
@@ -181,7 +230,15 @@ def render_briefing_card(
     )
 
     if skills:
-        parts.extend(render_skills_section(skills, skills_unpartitioned_count))
+        boot_signals = _collect_boot_signals(
+            todos=todos,
+            unread_threads=unread_threads,
+            open_arcs=open_arcs,
+            in_flight_todos=in_flight_todos,
+        )
+        parts.extend(
+            render_skills_section(skills, skills_unpartitioned_count, boot_signals)
+        )
 
     if dropbox_files:
         n = len(dropbox_files)
@@ -361,13 +418,11 @@ def render_briefing_card(
                 if len(claim_preview) < len(claim_raw):
                     aid = a.get("id")
                     aid_part = f"a{aid} " if aid is not None else ""
-                    handle = (
-                        f" [{aid_part}+{len(claim_raw) - len(claim_preview)}ch]"
-                    )
+                    handle = f" [{aid_part}+{len(claim_raw) - len(claim_preview)}ch]"
                 parts.append(f"- {session_tag}{claim_preview}{handle}")
             parts.append(
                 "  *full text by id: `cortex(tool='assertions', "
-                f"arguments='{{\"entity_id\": \"family:{family or 'claude'}\"}}')`*"
+                f'arguments=\'{{"entity_id": "family:{family or "claude"}"}}\')`*'
             )
 
     if reflective_entries is not None:

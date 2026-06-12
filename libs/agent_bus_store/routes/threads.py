@@ -397,6 +397,8 @@ async def dispatch_terminate_route(
     thread_id: str, body: DispatchTerminate
 ) -> ThreadDetail:
     """Mark dispatch link terminal_status (completed or failed)."""
+    from agent_bus_store.disposition import maybe_auto_close_after_dispatch_terminate
+
     thread_id = normalize_thread_id(thread_id)
     row = terminate_dispatch(
         thread_id=thread_id,
@@ -408,6 +410,13 @@ async def dispatch_terminate_route(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Thread {thread_id} not found",
         )
+    closed = maybe_auto_close_after_dispatch_terminate(
+        thread_id,
+        terminal_status=body.terminal_status,
+        explicit_bus_lifecycle=body.bus_lifecycle,
+    )
+    if closed is not None:
+        row = closed
     return _thread_detail(row)
 
 

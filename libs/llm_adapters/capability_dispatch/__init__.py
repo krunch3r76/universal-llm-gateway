@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from .boundary import (
     CATALOG_MISS_EVENT,
+    CONTEXT_EXCEEDED_EVENT,
+    DEFAULT_INPUT_SAFETY_BUFFER,
     KNOB_REJECTED_EVENT,
     RESOLVED_EVENT,
     DispatchResolution,
@@ -32,6 +34,7 @@ from .types import (
     CapabilityReasoningDispatch,
     CapabilitySpecializations,
     CatalogMissError,
+    ContextWindowExceededError,
     KnobSpec,
     KnobViolation,
     ProtocolError,
@@ -55,6 +58,7 @@ __all__ = [
     "KnobViolation",
     "ProtocolError",
     "CatalogMissError",
+    "ContextWindowExceededError",
     # registry
     "resolve",
     "VALID_REASONING_EFFORTS",
@@ -79,4 +83,6 @@ __all__ = [
     "RESOLVED_EVENT",
     "KNOB_REJECTED_EVENT",
     "CATALOG_MISS_EVENT",
+    "CONTEXT_EXCEEDED_EVENT",
+    "DEFAULT_INPUT_SAFETY_BUFFER",
 ]

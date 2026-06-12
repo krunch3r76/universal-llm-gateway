@@ -110,12 +110,11 @@ class ResultDeliveryConfig(BaseModel):
     # Attachment metadata forwarded verbatim to the agent-bus turn POST body.
     # Each dict must satisfy the AttachmentCreate schema (filename, path, …).
     bus_attachments: list[dict[str, Any]] | None = None
-    # Thread post-delivery disposition.  ``ephemeral`` closes the bus thread
-    # automatically after a successful delivery POST, using an auto-generated
-    # summary derived from the record's terminal state.  ``persistent`` (default)
-    # leaves the thread open — correct for cross-agent handoff and async-by-design
-    # workflows where another agent will read the thread independently.
-    bus_lifecycle: Literal["persistent", "ephemeral"] = "persistent"
+    # Thread post-delivery disposition.  ``ephemeral`` (default) closes the bus
+    # thread automatically after a successful delivery POST, using an auto-generated
+    # summary derived from the record's terminal state.  ``persistent`` leaves the
+    # thread open for cross-agent arcs that need follow-up on the bus.
+    bus_lifecycle: Literal["persistent", "ephemeral"] = "ephemeral"
 
 
 class DispatchRequest(BaseModel):
@@ -154,20 +153,17 @@ class DispatchRequest(BaseModel):
     # On-behalf delivery identity (2026-05-22 architectural fix).
     from_agent: str | None = None
     reply_subject: str | None = None
-    # Post-delivery thread disposition for ``op="to_thread"``. Omitted ⇒
-    # team-dispatch one-shots default ``ephemeral``; other pipelines stay persistent.
+    # Post-delivery thread disposition for ``op="to_thread"``. Omitted ⇒ ephemeral.
     bus_lifecycle: Literal["persistent", "ephemeral"] | None = None
 
 
 def _resolve_bus_lifecycle(
     dispatch: DispatchRequest,
 ) -> Literal["persistent", "ephemeral"]:
-    """Apply pipeline-specific default when the caller omits ``bus_lifecycle``."""
+    """Apply default when the caller omits ``bus_lifecycle``."""
     if dispatch.bus_lifecycle is not None:
         return dispatch.bus_lifecycle
-    if dispatch.op == "to_thread" and dispatch.model == "team-dispatch":
-        return "ephemeral"
-    return "persistent"
+    return "ephemeral"
 
 
 def _error_response(status_code: int, code: str, message: str) -> JSONResponse:

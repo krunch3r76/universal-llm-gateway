@@ -79,6 +79,56 @@ _ANTHROPIC_MAX_OUTPUT_CEILINGS: tuple[tuple[str, int], ...] = (
     ("claude-3-sonnet", 4096),
     ("claude-3-haiku", 4096),
 )
+# ── Anthropic context windows (static, manually curated — researched) ─────────
+# Total input+output budget per family, grounded in the repo intelligence
+# profiles (``config/intelligence_profiles/anthropic-*.yaml``): opus-4 / sonnet-4
+# = 200k; opus-4.6 = 1M. The adaptive-era families (1M-context generation) carry
+# 1_000_000; older families carry the standard 200_000 Claude window. Ordered
+# most-specific first; substring match mirrors the ceiling table. Uncurated
+# markers fall through to ``None`` (no input-aware clamp). Manually extend with a
+# researched value when adding a model.
+_ANTHROPIC_CONTEXT_WINDOWS: tuple[tuple[str, int], ...] = (
+    ("claude-fable-5", 1_000_000),
+    ("claude-mythos-5", 1_000_000),
+    ("claude-mythos-preview", 1_000_000),
+    ("claude-opus-4-8", 1_000_000),
+    ("claude-opus-4.8", 1_000_000),
+    ("claude-opus-4-7", 1_000_000),
+    ("claude-opus-4.7", 1_000_000),
+    ("claude-opus-4-6", 1_000_000),
+    ("claude-opus-4.6", 1_000_000),
+    ("claude-sonnet-4-6", 1_000_000),
+    ("claude-sonnet-4.6", 1_000_000),
+)
+_ANTHROPIC_DEFAULT_CONTEXT_WINDOW = 200_000
+
+# Google context window — gemini-3.1-pro profile = 1M (surface-uniform for now).
+_GOOGLE_CONTEXT_WINDOW = 1_000_000
+
+# ── Responses (OpenAI / xAI) context windows (static, manually curated) ───────
+# Total input+output budget per family. Sources:
+#   - Repo intelligence profiles: gpt-5.2/5.3 = 200k, gpt-5.4 = 1.05M
+#   - OpenAI API model page (gpt-5.5): 1,050,000 context window
+#   - xAI model docs (grok-4.3 / grok-4 family): 1,000,000
+# Ordered most-specific first; substring match mirrors the Anthropic tables.
+# Manually extend when adding a model (see MODEL_ADD_CHECKLIST.md).
+_RESPONSES_CONTEXT_WINDOWS: tuple[tuple[str, int], ...] = (
+    ("gpt-5.5", 1_050_000),
+    ("gpt-5.4", 1_050_000),
+    ("grok-4.20", 1_000_000),
+    ("grok-4.3", 1_000_000),
+    ("grok-4-1", 1_000_000),
+    ("grok-4", 1_000_000),
+    ("grok-3", 1_000_000),
+    ("gpt-5.2", 200_000),
+    ("gpt-5.3", 200_000),
+    ("o4-", 200_000),
+    ("o3-", 200_000),
+    ("o1-", 200_000),
+)
+# Fallback for Responses-surface models with no marker match (conservative).
+_RESPONSES_DEFAULT_CONTEXT_WINDOW = 200_000
+
 # ── Reasoning families (reshaped frontier_dispatch.request maps) ──────────────
 # Adaptive-capable Anthropic families (per adaptive-thinking.md).
 _ANTHROPIC_ADAPTIVE_FAMILIES: frozenset[str] = frozenset(
@@ -133,9 +183,7 @@ def _resolve_provider(model: str | ModelId) -> tuple[str, str]:
 def _anthropic_card_missing(bare_model: str) -> bool:
     """True when no Anthropic capability card (ceiling marker) matches."""
     normalized = bare_model.strip().lower()
-    return not any(
-        marker in normalized for marker, _ in _ANTHROPIC_MAX_OUTPUT_CEILINGS
-    )
+    return not any(marker in normalized for marker, _ in _ANTHROPIC_MAX_OUTPUT_CEILINGS)
 
 
 def _anthropic_ceiling(bare_model: str) -> int:
@@ -144,6 +192,24 @@ def _anthropic_ceiling(bare_model: str) -> int:
         if marker in normalized:
             return limit
     raise CatalogMissError(bare_model, "no_capability_card")
+
+
+def _anthropic_context_window(bare_model: str) -> int:
+    """Static context window for an Anthropic family (200k default, 1M era families)."""
+    normalized = bare_model.strip().lower()
+    for marker, window in _ANTHROPIC_CONTEXT_WINDOWS:
+        if marker in normalized:
+            return window
+    return _ANTHROPIC_DEFAULT_CONTEXT_WINDOW
+
+
+def _responses_context_window(bare_model: str) -> int:
+    """Static context window for an OpenAI/xAI Responses-surface family."""
+    normalized = bare_model.strip().lower()
+    for marker, window in _RESPONSES_CONTEXT_WINDOWS:
+        if marker in normalized:
+            return window
+    return _RESPONSES_DEFAULT_CONTEXT_WINDOW
 
 
 def _anthropic_uses_adaptive(bare_model: str) -> bool:
@@ -217,6 +283,7 @@ def _build_max_output(provider: str, bare_model: str) -> CapabilityMaxOutput:
             ceiling=ceiling,
             floor=None,
             over_ceiling="clamp",
+            context_window=_anthropic_context_window(bare_model),
         )
     if provider == "google":
         return CapabilityMaxOutput(
@@ -225,6 +292,7 @@ def _build_max_output(provider: str, bare_model: str) -> CapabilityMaxOutput:
             ceiling=None,
             floor=None,
             over_ceiling="clamp",
+            context_window=_GOOGLE_CONTEXT_WINDOW,
         )
     # openai / chatgpt / xai → Responses API surface.
     return CapabilityMaxOutput(
@@ -233,6 +301,7 @@ def _build_max_output(provider: str, bare_model: str) -> CapabilityMaxOutput:
         ceiling=None,
         floor=_RESPONSES_FLOOR,
         over_ceiling="clamp",
+        context_window=_responses_context_window(bare_model),
     )
 
 

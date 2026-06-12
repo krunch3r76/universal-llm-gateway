@@ -330,12 +330,21 @@ async def test_persona_free_mcp_true_propagates() -> None:
     assert body["pipeline_options"]["mcp"] is True
 
 
+# NOTE — Gemini is MCP-capable: ``agents.yaml`` ``gemini/api`` declares
+# ``tool_surface: mcp`` (candidate seat; MCP tool loop verified by smoke), so
+# ``inline_only_for_model`` returns False and the caller ``mcp`` knob is honored,
+# not clamped. The prior inline-only-clamp expectations were stale. Two-surface
+# nuance — gemini's capability differs by model shape (recent vs older models /
+# generateContent surface variants) — is FUTURE WORK: add per-model-shape
+# capability resolution rather than a family-uniform profile flag.
 @pytest.mark.parametrize(
     ("model", "caller_mcp", "expected"),
     [
-        ("google/gemini-3.5-flash", True, False),
+        # Gemini honors the caller knob (mcp-capable); None = frontier omitted
+        # default OFF (one-shot), which is a default, not an inline-only clamp.
+        ("google/gemini-3.5-flash", True, True),
         ("google/gemini-3.5-flash", None, False),
-        ("google/gemini-2.5-pro", True, False),
+        ("google/gemini-2.5-pro", True, True),
         ("xai/grok-4.20-multi-agent-0309", True, False),
         ("xai/grok-4.20-multi-agent-0309", None, False),
         ("openai/gpt-5.4-mini", True, True),
@@ -352,8 +361,8 @@ def test_mcp_enabled_for_frontier_dispatch_inline_only_clamp(
 
 
 @pytest.mark.asyncio
-async def test_persona_free_gemini_mcp_true_clamped_false() -> None:
-    """Inline-only gemini: persona-free frontier HTTP clamps mcp=True to False at admission."""
+async def test_persona_free_gemini_mcp_true_honored() -> None:
+    """Gemini is MCP-capable: persona-free frontier honors caller mcp=True (no clamp)."""
     req = FrontierGenerateRequest(
         messages=[{"role": "user", "content": "x"}],
         model="google/gemini-3.5-flash",
@@ -361,7 +370,7 @@ async def test_persona_free_gemini_mcp_true_clamped_false() -> None:
     )
     body = await build_dispatch_body(req)
     assert body["model"] == "frontier-dispatch"
-    assert body["pipeline_options"]["mcp"] is False
+    assert body["pipeline_options"]["mcp"] is True
 
 
 @pytest.mark.asyncio
@@ -528,8 +537,10 @@ async def test_team_dispatch_collapses_to_latest_user_turn(
         ("xai/grok-4.20-multi-agent-0309", False),
         ("anthropic/claude-opus-4-8", True),
         ("openai/gpt-5.5", True),
-        ("google/gemini-3.5-flash", False),
-        ("google/gemini-2.5-pro", False),
+        # Gemini is MCP-capable now (agents.yaml gemini/api tool_surface=mcp) —
+        # no longer clamped. Two-surface-by-model-shape nuance is future work.
+        ("google/gemini-3.5-flash", True),
+        ("google/gemini-2.5-pro", True),
     ],
 )
 def test_mcp_enabled_for_team_dispatch_shared_client_loop_clamp(
@@ -540,11 +551,74 @@ def test_mcp_enabled_for_team_dispatch_shared_client_loop_clamp(
     assert mcp_enabled_for_team_dispatch(model) is expected
 
 
+@pytest.mark.parametrize(
+    ("model", "caller_mcp", "expected"),
+    [
+        # Anthropic native model honors explicit caller inline intent (thread
+        # 1653): caller_mcp=False → no MCP (→ remote_mcp default False → inline);
+        # None keeps the team default (tools-on); True keeps tools-on.
+        ("anthropic/claude-fable-5", False, False),
+        ("anthropic/claude-fable-5", True, True),
+        ("anthropic/claude-fable-5", None, True),
+        ("anthropic/claude-opus-4-8", False, False),
+        ("openai/gpt-5.5", False, False),
+        ("openai/gpt-5.5", None, True),
+        # Inline-only / no-client-tool families stay clamped to False regardless
+        # of caller intent (gemini clamp is covered by the catalog-backed
+        # shared_client_loop_clamp test; xai multi-agent clamps without catalog).
+        ("xai/grok-4.20-multi-agent-0309", True, False),
+    ],
+)
+def test_mcp_enabled_for_team_dispatch_honors_caller_intent(
+    model: str, caller_mcp: bool | None, expected: bool
+) -> None:
+    from .admission import mcp_enabled_for_team_dispatch
+
+    assert mcp_enabled_for_team_dispatch(model, caller_mcp) is expected
+
+
 @pytest.mark.asyncio
-async def test_explicit_gemini_reviewer_admitted_with_mcp_false(
+async def test_explicit_gemini_reviewer_admitted_caller_mcp_false_honored(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Guard 1: inline-only effective model is admitted; MCP suppressed at admission."""
+    """Gemini (mcp-capable) reviewer is admitted; an explicit caller mcp=False is
+    honored at admission (thread 1653 knob), not a family inline-only clamp."""
+
+    async def fake_hydrate(
+        agent: str, transcript_id: str | None = None, **_k: Any
+    ) -> HydrationBundle:
+        return _bundle(
+            AgentMeta(
+                default_model="openai/gpt-5.5",
+                allowed_models=["openai/gpt-5.5"],
+                allowed_options=None,
+                capability_tier="inline-only",
+            ),
+        )
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.service.hydrate_agent",
+        fake_hydrate,
+    )
+
+    req = FrontierGenerateRequest(
+        messages=[{"role": "user", "content": "x"}],
+        role="reviewer",
+        dispatch_thread_id=_DISPATCH_THREAD,
+        model="google/gemini-2.5-pro",
+        mcp=False,
+    )
+    body = await build_dispatch_body(req)
+    assert body["pipeline_options"]["model"] == "google/gemini-2.5-pro"
+    assert body["pipeline_options"]["mcp"] is False
+
+
+@pytest.mark.asyncio
+async def test_gemini_reviewer_team_default_mcp_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Gemini reviewer with the team default (caller omits mcp) is tools-on now
+    that gemini is MCP-capable — the prior inline-only clamp is gone."""
 
     async def fake_hydrate(
         agent: str, transcript_id: str | None = None, **_k: Any
@@ -570,5 +644,4 @@ async def test_explicit_gemini_reviewer_admitted_with_mcp_false(
         model="google/gemini-2.5-pro",
     )
     body = await build_dispatch_body(req)
-    assert body["pipeline_options"]["model"] == "google/gemini-2.5-pro"
-    assert body["pipeline_options"]["mcp"] is False
+    assert body["pipeline_options"]["mcp"] is True

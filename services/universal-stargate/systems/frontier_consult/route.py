@@ -111,8 +111,14 @@ class TeamDispatchGenerateBody(_DispatchCommon):
     role: str
     dispatch_thread_id: str
     model: str | None = None
+    # Caller inline-intent knob. ``None`` keeps the team default (tools-on for
+    # tool-capable families); ``False`` requests an inline-only generation (no
+    # client-side MCP loop and, for Anthropic, no server-side remote MCP),
+    # closing the forced-remote-MCP hang (thread 1653).
+    mcp: bool | None = None
     packet_path: str | None = None
     contract: Literal["consult", "implement"] | None = None
+    reuse_thread: str | None = None
     # thread / subject MUST NOT appear — extra="forbid" rejects any caller that
     # supplies them (schema-level enforcement per Phase 0 contract).
 
@@ -132,6 +138,8 @@ class TeamDispatchToThreadBody(_DispatchCommon):
     thread: str
     subject: str | None = None
     model: str | None = None
+    # Caller inline-intent knob (see ``TeamDispatchGenerateBody.mcp``).
+    mcp: bool | None = None
     # result_delivery MUST NOT appear — derived from thread + role; extra="forbid"
     # rejects any caller that supplies it.
 
@@ -194,9 +202,10 @@ def _normalize_op_body(
         "bus_lifecycle": body.bus_lifecycle,
     }
 
-    # Carry role / model / mcp depending on variant. ``mcp`` is exposed only
-    # on the frontier (role-free) surface; team variants derive mcp from
-    # the role's frontier_kind in service.build_dispatch_body.
+    # Carry role / model / mcp depending on variant. ``mcp`` is honored on every
+    # variant that declares it: the frontier (role-free) surface defaults it to
+    # False, the team variants default it to None (team default tools-on, unless
+    # the caller opts out) — see service.build_dispatch_body + admission.
     if hasattr(body, "role"):
         common["role"] = body.role
     if hasattr(body, "dispatch_thread_id"):
@@ -313,6 +322,8 @@ async def team_dispatch(
                 caller_agent=body.caller_agent,
                 packet_path=getattr(body, "packet_path", None),
                 message_text=None,
+                reuse_thread=getattr(body, "reuse_thread", None),
+                bus_lifecycle=getattr(body, "bus_lifecycle", None),
             )
         except FrontierEndpointError as exc:
             return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
@@ -390,6 +401,7 @@ class TeamHandoffBody(BaseModel):
     pointer_body: str | None = None
     tags: list[str] | None = None
     caller_agent: str | None = None
+    bus_lifecycle: Literal["persistent", "ephemeral"] | None = None
 
 
 @team_router.post("/handoff", status_code=200, response_model=None)
@@ -517,6 +529,8 @@ async def team_handoff(
                     caller_agent=body.caller_agent,
                     packet_path=packet_path,
                     message_text=body.pointer_body,
+                    reuse_thread=getattr(body, "reuse_thread", None),
+                    bus_lifecycle=getattr(body, "bus_lifecycle", None),
                 )
                 result["deprecated_alias"] = {
                     "normalized_from": "op=handoff,seat=cursor-sdk",
@@ -616,6 +630,7 @@ async def team_handoff(
             caller_agent=body.caller_agent,
             tags=body.tags,
             handoff_contract=handoff_contract,
+            bus_lifecycle=body.bus_lifecycle,
         )
 
         _publish(

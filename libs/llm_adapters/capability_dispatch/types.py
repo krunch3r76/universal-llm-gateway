@@ -57,6 +57,38 @@ class ProtocolError(Exception):
         super().__init__(f"unsupported dispatch knobs rejected: {detail}")
 
 
+class ContextWindowExceededError(Exception):
+    """Input alone leaves no usable generation space within the context window.
+
+    Raised at the single dispatch boundary when ``context_window − input_tokens``
+    does not exceed the safety buffer — i.e. the prompt is genuinely over-limit,
+    so no positive ``max_output`` can be requested without
+    ``input + max_output > context_window`` (the provider
+    ``context_length_exceeded`` failure this guard pre-empts). Surfaces as a
+    structured terminal error + observability event rather than an opaque
+    provider 400. Distinct from a mere ceiling clamp (which still has room).
+    """
+
+    def __init__(
+        self,
+        *,
+        model: str,
+        context_window: int,
+        input_tokens: int,
+        safety_buffer: int,
+    ) -> None:
+        self.model = model
+        self.context_window = context_window
+        self.input_tokens = input_tokens
+        self.safety_buffer = safety_buffer
+        self.available = context_window - input_tokens - safety_buffer
+        super().__init__(
+            f"input over context limit for {model!r}: input_tokens={input_tokens} "
+            f"+ safety_buffer={safety_buffer} leaves no room within "
+            f"context_window={context_window} (available={self.available})"
+        )
+
+
 class CatalogMissError(Exception):
     """G13: a model that resolves to no capability card is a structural
     fail-fast, never a silent default.
@@ -88,6 +120,11 @@ class CapabilityMaxOutput:
       exceeds ``ceiling``.
     - ``native_field``: the verbatim provider body field the resolved value is
       written to (``max_tokens`` / ``max_output_tokens`` / ``maxOutputTokens``).
+    - ``context_window``: total input+output token budget (the provider context
+      window). Static, manually-curated capability fact (researched per model).
+      ``None`` = uncurated → the boundary applies no input-aware clamp for the
+      model (current behavior preserved). Drives the input-aware output budget
+      ``min(ceiling, context_window − input_tokens − buffer)`` at the boundary.
     """
 
     default: int
@@ -95,6 +132,7 @@ class CapabilityMaxOutput:
     ceiling: int | None = None
     floor: int | None = None
     over_ceiling: OverCeiling = "clamp"
+    context_window: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

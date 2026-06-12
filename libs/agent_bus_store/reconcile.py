@@ -6,7 +6,7 @@ import os
 from datetime import UTC, datetime
 from typing import Any
 
-from .db.connection import connect, now
+from .db.connection import connect
 from .db.lifecycle import _transition_lifecycle_state
 from .db.threads_atomic import terminate_dispatch
 from .db.turns import get_turns, insert_turn
@@ -77,6 +77,28 @@ def _reap_orphan_link(link: dict[str, Any]) -> bool:
             terminal_status=status,
             execution_id=execution_id,
         )
+        # The closeout turn marks the LINK terminal, but a delivered turn never
+        # transitions thread lifecycle on its own, so the ephemeral thread can be
+        # left in admitted/active. Drive it to the matching terminal state so
+        # reconcile closes the THREAD, not just the link. Legal transitions
+        # (see lifecycle._LEGAL): active->completed|failed, admitted->abandoned.
+        with connect() as conn:
+            row = conn.execute(
+                "SELECT bus_lifecycle_state FROM threads WHERE id = ?",
+                (thread_id,),
+            ).fetchone()
+            current = row["bus_lifecycle_state"] if row is not None else None
+            if current == "active":
+                _transition_lifecycle_state(
+                    conn,
+                    thread_id,
+                    "completed" if status == "completed" else "failed",
+                    "watchdog_reap",
+                )
+            elif current == "admitted":
+                _transition_lifecycle_state(
+                    conn, thread_id, "abandoned", "watchdog_reap"
+                )
         return True
 
     with connect() as conn:

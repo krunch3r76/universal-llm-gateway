@@ -41,3 +41,22 @@ def test_resolve_dispatch_capabilities_reviewer_default() -> None:
     assert caps["inline_only"] is False
     assert caps["mcp_enabled"] is True
     assert caps["tool_surface"] == "mcp"
+
+
+def test_resolve_dispatch_capabilities_effective_gate_false_overrides_model() -> None:
+    """Caller ``mcp=False`` on a tool-capable model: echo is single-sourced with
+    the effective gate, not the model-only base admission (thread 1653 drift)."""
+    caps = resolve_dispatch_capabilities(model="openai/gpt-5.5", mcp_enabled=False)
+    assert caps["inline_only"] is True
+    assert caps["mcp_enabled"] is False
+    assert caps["tool_surface"] == "inline-only"
+
+
+def test_resolve_dispatch_capabilities_effective_gate_true_passthrough() -> None:
+    """Effective gate ``True`` flows straight through to the echoed surface."""
+    caps = resolve_dispatch_capabilities(
+        model="anthropic/claude-opus-4-6", mcp_enabled=True
+    )
+    assert caps["inline_only"] is False
+    assert caps["mcp_enabled"] is True
+    assert caps["tool_surface"] == "mcp"

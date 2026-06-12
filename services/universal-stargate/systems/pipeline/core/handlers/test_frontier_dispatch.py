@@ -407,6 +407,68 @@ def test_validate_requires_correct_step_type() -> None:
 
 
 @pytest.mark.asyncio
+async def test_handler_remote_mcp_zero_progress_hang_bounded_by_wall_clock(
+    handler: FrontierDispatchHandler,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A remote-MCP dispatch that never makes progress must surface a loud
+    terminal error within the loop-level wall-clock ceiling, not hang.
+
+    Regression for exec 012e5e1e (thread 1652): an Anthropic server-side MCP
+    loop ran ~449s with 0 tokens and no terminal event, past the 300s SSE
+    ceiling. The loop-level ``asyncio.timeout`` backstop converts that silent
+    hang into a RuntimeError regardless of SSE-frame behavior.
+    """
+    # Shrink the backstop so the test is fast; anthropic default → remote_mcp=True.
+    monkeypatch.setattr(fd_native_mod, "REMOTE_MCP_OVERALL_TIMEOUT_S", 0.1)
+    monkeypatch.setattr(fd_native_mod, "REMOTE_MCP_LOOP_GRACE_S", 0.05)
+
+    async def hanging_loop(**_k: Any) -> _FakeLoopResult:
+        import asyncio
+
+        await asyncio.sleep(30)  # never makes progress
+        return _FakeLoopResult(provider="anthropic")
+
+    monkeypatch.setattr(fd_native_mod, "run_native_tool_loop", hanging_loop)
+
+    step = _FakeStep()
+    context = _make_context(options={"model": "anthropic/claude-sonnet-4-6"})
+
+    with pytest.raises(RuntimeError, match="wall-clock ceiling"):
+        await handler.execute(step, context)
+
+
+@pytest.mark.asyncio
+async def test_handler_inline_dispatch_not_bounded_by_remote_mcp_ceiling(
+    handler: FrontierDispatchHandler,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An inline dispatch (remote_mcp=False) must NOT carry the remote-MCP
+    wall-clock backstop — only remote-MCP dispatches risk the silent hang.
+
+    A tiny ceiling plus a brief loop delay would trip the guard if it applied;
+    asserting clean completion proves the backstop is scoped to remote_mcp.
+    """
+    monkeypatch.setattr(fd_native_mod, "REMOTE_MCP_OVERALL_TIMEOUT_S", 0.1)
+    monkeypatch.setattr(fd_native_mod, "REMOTE_MCP_LOOP_GRACE_S", 0.05)
+
+    async def slow_inline_loop(**_k: Any) -> _FakeLoopResult:
+        import asyncio
+
+        await asyncio.sleep(0.3)  # longer than the (inapplicable) remote ceiling
+        return _FakeLoopResult(provider="anthropic")
+
+    monkeypatch.setattr(fd_native_mod, "run_native_tool_loop", slow_inline_loop)
+
+    step = _FakeStep()
+    context = _make_context(
+        options={"model": "anthropic/claude-sonnet-4-6", "mcp": False}
+    )
+    out = await handler.execute(step, context)
+    assert out.json["provider"] == "anthropic"
+
+
+@pytest.mark.asyncio
 async def test_handler_anthropic_allows_remote_mcp_false(
     handler: FrontierDispatchHandler,
     monkeypatch: pytest.MonkeyPatch,

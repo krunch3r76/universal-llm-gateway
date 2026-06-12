@@ -339,3 +339,4 @@ class DispatchTerminate(BaseModel):
 
     terminal_status: Literal["completed", "failed"]
     execution_id: str | None = None
+    bus_lifecycle: Literal["persistent", "ephemeral"] | None = None

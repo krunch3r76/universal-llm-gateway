@@ -347,3 +347,50 @@ def check_confirmed_validatability(
         )
 
     return warnings
+
+
+# ---------------------------------------------------------------------------
+# Claim-brevity advisory (friction 16982 — brief-claim + sidecar pattern)
+# ---------------------------------------------------------------------------
+
+# Soft cap on inline claim length. Above this, the assertion is shaped like a
+# document, not an index entry — the body belongs in a Cortex sidecar with the
+# claim reduced to a one/two-sentence summary + evidence_uris pointing at it.
+_CLAIM_BREVITY_THRESHOLD = 300
+
+
+def check_claim_brevity(
+    claim: str,
+    evidence_uris: list[str] | None,
+) -> list[dict[str, str]]:
+    """Advisory check: long inline claim with no sidecar (friction 16982).
+
+    Mirrors the existing reasoning_summary / auditor warning surface — appended
+    to validation_warnings, advisory only, never rejects and never routes to
+    staging. Fires only when the claim exceeds the brevity threshold AND no
+    evidence_uris point at a sidecar: a long claim that already references a
+    sidecar via evidence_uris is the desired shape, not a violation.
+
+    The brief-claim + sidecar pattern (analogous to the agent-bus brief-body
+    convention): keep the claim to a one/two-sentence index entry; move prose,
+    code blocks, and numbered detail into a Cortex sidecar referenced by
+    evidence_uris. Long claims inflate context on every entity_get, search hit,
+    and boot-card surface permanently. See agent_skill:cortex-orientation.
+    """
+    if len(claim) <= _CLAIM_BREVITY_THRESHOLD or evidence_uris:
+        return []
+
+    return [
+        {
+            "field": "claim",
+            "category": "brevity",
+            "message": (
+                f"claim is {len(claim)} chars (>{_CLAIM_BREVITY_THRESHOLD}) with no "
+                "evidence_uris — long inline claims inflate context on every "
+                "entity_get, search hit, and boot-card surface permanently. "
+                "Shorten the claim to a one/two-sentence summary, move the detail "
+                "to a Cortex sidecar, and set evidence_uris to point at it "
+                "(brief-claim + sidecar pattern). See agent_skill:cortex-orientation."
+            ),
+        }
+    ]

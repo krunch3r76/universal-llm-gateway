@@ -102,7 +102,8 @@ async def _deliver_legacy_envelope(
                 from_agent=from_agent,
             ),
         )
-        if cfg.get("bus_lifecycle") == "ephemeral":
+        lifecycle = cfg.get("bus_lifecycle") or record.bus_lifecycle or "ephemeral"
+        if lifecycle == "ephemeral":
             summary = _build_close_summary(record)
             close_code, close_text = await _close_thread(
                 url=url,

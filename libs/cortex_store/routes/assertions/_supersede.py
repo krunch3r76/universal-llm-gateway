@@ -12,7 +12,7 @@ from fastapi import HTTPException, status
 from pydantic import ValidationError
 
 from ... import vector_store
-from ...assertion_quality import check_confirmed_validatability
+from ...assertion_quality import check_claim_brevity, check_confirmed_validatability
 from ...belief_guard import analyze_assertion_impact
 from ...db import WRITE_LOCK, cortex_conn, decode_row, json_encode, query
 from ...enrichment import (
@@ -344,12 +344,17 @@ def supersede_assertion(body: SupersedeRequest) -> SupersedeResponse:
         claim=body.claim,
         acknowledge_audit_gaps=body.acknowledge_audit_gaps,
     )
+    brevity_warnings = check_claim_brevity(
+        claim=body.claim,
+        evidence_uris=eff_evidence_uris,
+    )
+    combined_warnings = (auditor_warnings or []) + brevity_warnings
 
     return SupersedeResponse(
         old=AssertionItem(**decode_row(old_result[0], _JSON_FIELDS)),
         new=AssertionItem(**decode_row(new_result[0], _JSON_FIELDS)),
         impact_warning=impact_warning,
-        validation_warnings=auditor_warnings or None,
+        validation_warnings=combined_warnings or None,
     )
 
 

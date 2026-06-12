@@ -11,7 +11,11 @@ import json
 import sqlite3
 from pathlib import Path
 
-from cortex_store.assertion_quality import check_confirmed_validatability
+from cortex_store.assertion_quality import (
+    _CLAIM_BREVITY_THRESHOLD,
+    check_claim_brevity,
+    check_confirmed_validatability,
+)
 from cortex_store.dispatch_ops.ops_audit_detectors import (
     detect_confirmed_attribute_no_assertion,
     detect_confirmed_entity_no_assertions,
@@ -188,6 +192,45 @@ def test_check3_suppress_via_acknowledge_audit_gaps() -> None:
         acknowledge_audit_gaps=["no_verbatim"],
     )
     assert not _w(w, "claim"), "suppressed via acknowledge_audit_gaps"
+
+
+# ---------------------------------------------------------------------------
+# Claim-brevity advisory (friction 16982)
+# ---------------------------------------------------------------------------
+
+
+def test_brevity_short_claim_no_warn() -> None:
+    w = check_claim_brevity(claim="A brief index entry.", evidence_uris=None)
+    assert w == [], "short claim should not warn"
+
+
+def test_brevity_long_claim_no_evidence_warns() -> None:
+    claim = "x" * (_CLAIM_BREVITY_THRESHOLD + 1)
+    w = check_claim_brevity(claim=claim, evidence_uris=None)
+    assert w, "long claim with no evidence_uris should warn"
+    assert w[0]["category"] == "brevity"
+    assert w[0]["field"] == "claim"
+    assert "sidecar" in w[0]["message"]
+
+
+def test_brevity_at_threshold_no_warn() -> None:
+    claim = "x" * _CLAIM_BREVITY_THRESHOLD
+    w = check_claim_brevity(claim=claim, evidence_uris=None)
+    assert w == [], "claim exactly at threshold must not warn (strict >)"
+
+
+def test_brevity_long_claim_with_sidecar_no_warn() -> None:
+    claim = "x" * (_CLAIM_BREVITY_THRESHOLD + 200)
+    w = check_claim_brevity(
+        claim=claim, evidence_uris=["cortex://notes/system/foo.md"]
+    )
+    assert w == [], "long claim that already references a sidecar is the desired shape"
+
+
+def test_brevity_long_claim_empty_evidence_list_warns() -> None:
+    claim = "x" * (_CLAIM_BREVITY_THRESHOLD + 1)
+    w = check_claim_brevity(claim=claim, evidence_uris=[])
+    assert w, "empty evidence_uris list is treated as no sidecar"
 
 
 # ---------------------------------------------------------------------------

@@ -60,8 +60,7 @@ class FrontierGenerateRequest:
     # On-behalf delivery (2026-05-22) — caller-supplied subject for the
     # reply turn posted by Stargate. None ⇒ delivery handler auto-derives.
     reply_subject: str | None = None
-    # Override post-delivery thread close for ``op="to_thread"``. None ⇒
-    # pipelines/dispatch applies pipeline-specific default (team-dispatch → ephemeral).
+    # Override post-delivery thread close for ``op="to_thread"``. None ⇒ ephemeral.
     bus_lifecycle: Literal["persistent", "ephemeral"] | None = None
 
 
@@ -195,13 +194,18 @@ async def build_dispatch_body(
         requested_max_output=_maxt if isinstance(_maxt, int) else None,
     )
     if req.role is not None:
-        mcp_enabled = mcp_enabled_for_team_dispatch(effective_model)
+        mcp_enabled = mcp_enabled_for_team_dispatch(effective_model, req.mcp)
     else:
         mcp_enabled = mcp_enabled_for_frontier_dispatch(effective_model, req.mcp)
 
     capability_preview: dict[str, Any] | None = None
     if req.role is not None:
-        capability_preview = resolve_dispatch_capabilities(model=effective_model)
+        # Echo single-sourced with the pipeline gate: passing the effective
+        # ``mcp_enabled`` (post caller-knob) means the transparency surface and
+        # ``pipeline_options["mcp"]`` derive from one value and cannot drift.
+        capability_preview = resolve_dispatch_capabilities(
+            model=effective_model, mcp_enabled=mcp_enabled
+        )
         capability_preview["role"] = req.role
 
     pipeline_options: dict[str, Any] = {

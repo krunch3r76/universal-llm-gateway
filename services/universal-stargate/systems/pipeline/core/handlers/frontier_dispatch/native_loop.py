@@ -11,6 +11,7 @@ content is non-empty.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -43,6 +44,82 @@ if TYPE_CHECKING:
     from ..schemas import StepConfig
     from .admission_gate import AdmissionResult
     from .handler import FrontierDispatchHandler
+
+
+# Hard wall-clock backstop for a remote-MCP dispatch, applied at the tool-loop
+# level (task cancellation) on top of the graceful SSE-level
+# ``REMOTE_MCP_OVERALL_TIMEOUT_S``. The accumulator ceiling resets on every SSE
+# frame and bounds the stream when frames behave; but a server-side MCP loop
+# that makes zero token progress was observed to outrun it in production (exec
+# 012e5e1e, thread 1652: ~449s with 0 tokens and no terminal event, past the
+# 300s SSE ceiling). ``asyncio.timeout`` does not depend on frame arrival, so it
+# converts any such silent hang into a loud terminal error regardless of how the
+# provider holds the HTTP response open. Sized a grace margin above the SSE
+# ceiling so the graceful SSE timeout (specific error) wins whenever it can fire.
+REMOTE_MCP_LOOP_GRACE_S = 30.0
+
+
+def _resolve_remote_mcp_ceiling(opts: dict[str, Any]) -> float:
+    """Loop-level wall-clock ceiling for a remote-MCP dispatch.
+
+    Honors a caller ``timeout_seconds`` (legitimate long consults) and otherwise
+    falls back to ``REMOTE_MCP_OVERALL_TIMEOUT_S``; a grace margin is added so
+    the SSE-level ceiling gets first chance to surface its specific error.
+    """
+    raw = opts.get("timeout_seconds")
+    base = (
+        float(raw)
+        if isinstance(raw, int | float) and raw > 0
+        else REMOTE_MCP_OVERALL_TIMEOUT_S
+    )
+    return base + REMOTE_MCP_LOOP_GRACE_S
+
+
+async def _run_loop_bounded(
+    *,
+    ceiling_s: float | None,
+    model: str,
+    req: FrontierRequest,
+    send_native: Any,
+    agent: str | None,
+    max_turns: int,
+    on_tool_event: Any,
+    cancel_check: Any,
+) -> NativeLoopResult:
+    """Run the native tool loop, bounding remote-MCP dispatches by wall-clock.
+
+    When ``ceiling_s`` is ``None`` (client-side loop / plain generate) the loop
+    runs unbounded — only remote-MCP dispatches carry the silent-hang risk this
+    backstop addresses. A breach raises ``RuntimeError`` (loud terminal →
+    ``pipeline_execution_failed``), mirroring the SSE-liveness-failure shape.
+    """
+    if ceiling_s is None:
+        return await run_native_tool_loop(
+            model=model,
+            req=req,
+            send_native=send_native,
+            agent=agent,
+            max_turns=max_turns,
+            on_tool_event=on_tool_event,
+            cancel_check=cancel_check,
+        )
+    try:
+        async with asyncio.timeout(ceiling_s):
+            return await run_native_tool_loop(
+                model=model,
+                req=req,
+                send_native=send_native,
+                agent=agent,
+                max_turns=max_turns,
+                on_tool_event=on_tool_event,
+                cancel_check=cancel_check,
+            )
+    except TimeoutError as exc:
+        raise RuntimeError(
+            f"remote-MCP dispatch exceeded wall-clock ceiling ({ceiling_s:.0f}s) "
+            "with no terminal result — bounding a zero-progress server-side MCP "
+            "hang (decision:remote-mcp-dispatch-overall-timeout)"
+        ) from exc
 
 
 @dataclass
@@ -107,8 +184,12 @@ async def run_dispatch_loop(
     )
 
     call_start = time.monotonic()
+    remote_mcp_ceiling = (
+        _resolve_remote_mcp_ceiling(opts) if admission.remote_mcp else None
+    )
     try:
-        result: NativeLoopResult = await run_native_tool_loop(
+        result: NativeLoopResult = await _run_loop_bounded(
+            ceiling_s=remote_mcp_ceiling,
             model=model,
             req=req,
             send_native=send_native,

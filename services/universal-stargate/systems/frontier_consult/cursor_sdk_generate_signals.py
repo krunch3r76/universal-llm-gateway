@@ -44,13 +44,14 @@ def emit_sdk_generate_requested(
 
 
 def emit_sdk_thread_created(
-    *, request_id: str, to_agent: str, thread_id: str
+    *, request_id: str, to_agent: str, thread_id: str, reused: bool = False
 ) -> None:
     publish_frontier_event(
         FrontierHandoffCreated(
             request_id=request_id,
             to_agent=to_agent,
             thread_id=thread_id,
+            reused=reused,
         )
     )
 

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any
+from typing import Any, Literal
 
 from agent_seat.profiles import get_profile
 
@@ -33,6 +33,8 @@ async def dispatch_cursor_sdk_generate(
     caller_agent: str | None,
     packet_path: str | None,
     message_text: str | None,
+    reuse_thread: str | None = None,
+    bus_lifecycle: Literal["persistent", "ephemeral"] | None = None,
 ) -> dict[str, Any]:
     """Execute cursor-sdk generate with to_thread default delivery.
 
@@ -74,16 +76,42 @@ async def dispatch_cursor_sdk_generate(
         resolved_model=resolved_model,
     )
 
-    thread_id = await create_handoff_thread(
-        request_id=request_id,
-        to_agent=to_agent,
-        subject=thread_subject,
-        pointer_body=pointer_body,
-        caller_agent=caller_agent,
-        tags=["cursor-sdk-generate"],
-        handoff_contract=handoff_contract,
-        lifecycle_state="pending",
-    )
+    if reuse_thread is not None:
+        from .handoff import post_pointer_turn
+
+        thread_id = reuse_thread
+        await post_pointer_turn(
+            request_id=request_id,
+            thread_id=thread_id,
+            to_agent=to_agent,
+            subject=thread_subject,
+            pointer_body=pointer_body,
+            caller_agent=caller_agent,
+        )
+        emit_sdk_thread_created(
+            request_id=request_id,
+            to_agent=to_agent,
+            thread_id=thread_id,
+            reused=True,
+        )
+    else:
+        thread_id = await create_handoff_thread(
+            request_id=request_id,
+            to_agent=to_agent,
+            subject=thread_subject,
+            pointer_body=pointer_body,
+            caller_agent=caller_agent,
+            tags=["cursor-sdk-generate"],
+            handoff_contract=handoff_contract,
+            lifecycle_state="pending",
+            bus_lifecycle=bus_lifecycle,
+        )
+        emit_sdk_thread_created(
+            request_id=request_id,
+            to_agent=to_agent,
+            thread_id=thread_id,
+            reused=False,
+        )
 
     await admit_handoff_dispatch(
         request_id=request_id,
@@ -91,10 +119,6 @@ async def dispatch_cursor_sdk_generate(
         execution_id=execution_id,
         pipeline_id="cursor-sdk-generate",
         caller_agent=caller_agent,
-    )
-
-    emit_sdk_thread_created(
-        request_id=request_id, to_agent=to_agent, thread_id=thread_id
     )
 
     if worker_packet is not None:

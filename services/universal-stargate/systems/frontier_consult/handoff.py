@@ -10,7 +10,7 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 from agent_seat.profiles import load_profiles
@@ -55,6 +55,34 @@ _REQUIRED_INVARIANT_SKILL_REFS: tuple[str, ...] = (
     "agent-skills/architecture-invariants",
     "agent-skills/ulg-architecture",
 )
+
+
+def _nonconforming_skill_ref_hint(text: str, missing_refs: list[str]) -> str | None:
+    """Return a precise rewrite hint when the packet references a required skill
+    in a non-canonical form instead of the slug.
+
+    A display-name path (e.g. ``agent-skills/Architecture Invariants — Universal
+    Layer.md``) names the right skill but does not match the canonical slug ref
+    and does not resolve on disk (friction 16958). We recognize the intent by
+    matching the slug stem with any separator run (space, hyphen, em/en dash) so
+    the author gets told the exact verbatim string to substitute rather than
+    re-discovering it through repeated 422s.
+    """
+    rewrites: list[str] = []
+    for ref in missing_refs:
+        basename = ref.rsplit("/", 1)[-1]
+        stem_pattern = r"[\s\-\u2013\u2014]+".join(
+            re.escape(part) for part in basename.split("-")
+        )
+        if re.search(stem_pattern, text, flags=re.IGNORECASE):
+            rewrites.append(f"write exactly {ref!r}")
+    if not rewrites:
+        return None
+    return (
+        "A reference that names a required skill was found in a non-canonical "
+        "form (e.g. a display-name path with spaces/dashes). Skill-refs must be "
+        "the on-disk slug: " + "; ".join(rewrites) + "."
+    )
 
 
 def _mcp_packet_seats() -> frozenset[str]:
@@ -186,19 +214,29 @@ def validate_packet(
             ref for ref in _REQUIRED_INVARIANT_SKILL_REFS if ref not in text
         ]
         if missing_refs:
+            reason = (
+                f"Packet {packet_path!r} missing required architecture "
+                f"skill-ref(s): {', '.join(missing_refs)}. MCP-seat handoffs "
+                "must reference the universal invariant + ULG architecture "
+                "layers (Block 2 / Block 5) so the reviewer reads them before "
+                "findings. Each ref must appear verbatim as the on-disk slug "
+                "(the 'agent-skills/<slug>' basename), not a display-name path "
+                "with spaces or dashes. Exact strings in details.expected_refs. "
+            )
+            nonconforming = _nonconforming_skill_ref_hint(text, missing_refs)
+            if nonconforming:
+                reason += nonconforming + " "
+            reason += _PROTOCOL_HINT
             raise FrontierEndpointError(
                 request_id=request_id,
                 field="packet_path",
-                reason=(
-                    f"Packet {packet_path!r} missing required architecture "
-                    f"skill-ref(s): {', '.join(missing_refs)}. MCP-seat handoffs "
-                    "must reference the "
-                    "universal invariant + ULG architecture layers (Block 2 / "
-                    "Block 5) so the reviewer reads them before findings. "
-                    f"{_PROTOCOL_HINT}"
-                ),
+                reason=reason,
                 status_code=422,
                 code="handoff_packet_missing_arch_skillrefs",
+                details={
+                    "expected_refs": list(_REQUIRED_INVARIANT_SKILL_REFS),
+                    "missing_refs": missing_refs,
+                },
             )
 
     if handoff_contract == "implement":
@@ -476,6 +514,63 @@ def _emit_dispatch_admit_failed(
         return
 
 
+async def post_pointer_turn(
+    *,
+    request_id: str,
+    thread_id: str,
+    to_agent: str,
+    subject: str,
+    pointer_body: str,
+    caller_agent: str | None,
+) -> None:
+    """POST a pointer turn onto an EXISTING thread (reuse_thread path). POST /turns."""
+    token = os.getenv("AGENT_BUS_TOKEN", "").strip()
+    allow_unset = os.getenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    if not token and not allow_unset:
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="thread",
+            reason=(
+                "AGENT_BUS_TOKEN not configured; "
+                "reuse_thread requires agent-bus access."
+            ),
+            status_code=503,
+        )
+    payload: dict[str, Any] = {
+        "thread": thread_id,
+        "from": caller_agent or "dispatch",
+        "to": to_agent,
+        "subject": subject,
+        "body": pointer_body,
+        "status": "open",
+    }
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    try:
+        async with make_async_client(DEFAULT_AGENT_BUS_URL, timeout=10.0) as client:
+            resp = await client.post("/turns", headers=headers, json=payload)
+    except httpx.HTTPError as exc:
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="thread",
+            reason=f"Agent-bus unreachable: {exc}",
+            status_code=503,
+        ) from exc
+    if resp.status_code >= 400:
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="thread",
+            reason=(
+                f"Agent-bus turn post failed: "
+                f"HTTP {resp.status_code} — {resp.text[:200]}"
+            ),
+            status_code=502,
+        )
+
+
 async def create_handoff_thread(
     *,
     request_id: str,
@@ -486,6 +581,7 @@ async def create_handoff_thread(
     tags: list[str] | None,
     handoff_contract: str,
     lifecycle_state: str | None = None,
+    bus_lifecycle: Literal["persistent", "ephemeral"] | None = None,
 ) -> str:
     """POST to agent-bus /threads/with-turn; return thread_id.
 
@@ -514,6 +610,8 @@ async def create_handoff_thread(
 
     slug = _slug_from_subject(subject)
     from_agent = caller_agent or "dispatch"
+    from agent_bus_store.disposition import append_bus_lifecycle_tags
+
     contract_tag = f"contract:{handoff_contract}"
     if tags is None:
         effective_tags: list[str] = [
@@ -526,6 +624,15 @@ async def create_handoff_thread(
         effective_tags = list(tags)
         if contract_tag not in effective_tags:
             effective_tags.append(contract_tag)
+    # consult threads must survive delivery — default persistent so the
+    # Stargate on-behalf close path cannot close them regardless of the
+    # FrontierGenerateRequest's bus_lifecycle field (which is absent for
+    # op=generate dispatches).  Callers may still override via bus_lifecycle.
+    consult_default = "persistent" if handoff_contract == "consult" else "ephemeral"
+    effective_tags = append_bus_lifecycle_tags(
+        effective_tags,
+        bus_lifecycle=bus_lifecycle or consult_default,
+    )
 
     payload: dict[str, Any] = {
         "slug": slug,

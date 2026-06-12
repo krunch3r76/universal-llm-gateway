@@ -58,6 +58,30 @@ def FrontierSdkWorkerCompleted(  # noqa: N802
 
 
 @event_factory
+def FrontierSdkWorkerProgress(  # noqa: N802
+    dispatch_id: str,
+    thread_id: str,
+    resolved_model: str,
+    elapsed_s: float,
+    tool_call_count: int,
+) -> Event:
+    # Sibling-asymmetry (intentional): progress carries resolved_model+elapsed_s for
+    # liveness; completed/failed carry outcome. OQ2: resolved_model, NEVER model_entity_id.
+    return Event(
+        signal="frontier.sdk.worker.progress",
+        payload={
+            "dispatch_id": dispatch_id,
+            "thread_id": thread_id,
+            "resolved_model": resolved_model,
+            "elapsed_s": elapsed_s,
+            "tool_call_count": tool_call_count,
+        },
+        scope="node",
+        role="realtime",
+    )
+
+
+@event_factory
 def FrontierSdkWorkerFailed(  # noqa: N802
     dispatch_id: str,
     thread_id: str,
@@ -71,6 +95,25 @@ def FrontierSdkWorkerFailed(  # noqa: N802
             "error": error,
         },
         scope="node",
+    )
+
+
+def emit_sdk_worker_progress(
+    *,
+    dispatch_id: str,
+    thread_id: str,
+    resolved_model: str,
+    elapsed_s: float,
+    tool_call_count: int,
+) -> None:
+    _emit(
+        FrontierSdkWorkerProgress(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            resolved_model=resolved_model,
+            elapsed_s=elapsed_s,
+            tool_call_count=tool_call_count,
+        )
     )
 
 

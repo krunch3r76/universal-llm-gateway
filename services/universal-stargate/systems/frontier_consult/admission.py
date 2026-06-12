@@ -75,7 +75,7 @@ def mcp_enabled_for_frontier_dispatch(model: str, caller_mcp: bool | None) -> bo
     return bool(caller_mcp)
 
 
-def mcp_enabled_for_team_dispatch(model: str) -> bool:
+def mcp_enabled_for_team_dispatch(model: str, caller_mcp: bool | None = None) -> bool:
     """Derive team_dispatch MCP tooling from the effective model at admission.
 
     Guard 1 (thread 1206 turn 7): capability binds to the **effective model**.
@@ -84,9 +84,23 @@ def mcp_enabled_for_team_dispatch(model: str) -> bool:
     also sets ``inline_only`` and the pipeline suppresses the client-side tool
     loop — ¬ strict admission reject.
 
+    ``caller_mcp`` honors an explicit caller intent symmetrically with
+    ``mcp_enabled_for_frontier_dispatch``: the inline-only clamp runs first, then
+    an explicit ``False`` opts the dispatch out of the MCP tool loop (and, via the
+    ``remote_mcp`` default ``supports ∧ mcp_enabled``, out of Anthropic
+    server-side remote MCP). When the caller omits the knob (``None``) the
+    team_dispatch default remains tools-on for tool-capable families — peer
+    consults are expected to reach cortex/rag/agent_bus. Without this, an
+    Anthropic native model was forced ``mcp=True`` → remote_mcp=True even when the
+    caller wanted a one-shot inline generation (thread 1653).
+
     Multi-agent and inline-only clamps: ``client_side_mcp_tool_loop_admitted``.
     """
-    return _mcp_base_admitted(model)
+    if not _mcp_base_admitted(model):
+        return False
+    if caller_mcp is None:
+        return True
+    return bool(caller_mcp)
 
 
 @dataclass(slots=True)
@@ -96,13 +110,17 @@ class FrontierEndpointError(Exception):
     reason: str
     status_code: int = 400
     code: str = "persona_violation"
+    details: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "error": {"code": self.code, "message": self.reason},
             "field": self.field,
             "request_id": self.request_id,
         }
+        if self.details:
+            payload["details"] = self.details
+        return payload
 
 
 def _resolve_role_or_seat_profile(

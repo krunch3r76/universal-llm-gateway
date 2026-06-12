@@ -13,6 +13,7 @@ from pydantic import ValidationError
 
 from ...assertion_quality import (
     DERIVATION_TYPE_TAXONOMY,
+    check_claim_brevity,
     check_confirmed_validatability,
     validate_assertion,
 )
@@ -112,6 +113,15 @@ def create_assertion(
         if validation_warnings is None:
             validation_warnings = []
         validation_warnings.extend(auditor_warnings)
+
+    brevity_warnings = check_claim_brevity(
+        claim=body.claim,
+        evidence_uris=body.evidence_uris,
+    )
+    if brevity_warnings:
+        if validation_warnings is None:
+            validation_warnings = []
+        validation_warnings.extend(brevity_warnings)
 
     # Protocol guard: supersedes_id chains lineage ONLY when force=true. The CAS
     # UPDATE that writes the target's superseded_by (below) is gated on

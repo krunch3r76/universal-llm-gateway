@@ -16,8 +16,10 @@ import asyncio
 import json
 import os
 import threading
+import time
 from contextlib import contextmanager
 from pathlib import Path
+from threading import Event as _ThreadEvent, Thread
 
 from cursor_sdk import Client
 from fastapi import APIRouter, Request
@@ -27,8 +29,8 @@ from universal_protocol import error_envelope
 
 from services.git_integration_worker.config import WorkerConfig, load_config
 from services.git_integration_worker.cursor_bus import CursorBusClient
-from services.git_integration_worker.cursor_dispatch_registry import (
-    CursorDispatchRegistry,
+from services.git_integration_worker.cursor_dispatch_ledger import (
+    CursorDispatchLedger,
     DispatchConflict,
 )
 from services.git_integration_worker.cursor_home import (
@@ -55,6 +57,7 @@ from services.git_integration_worker.cursor_sdk_context import (
 from services.git_integration_worker.cursor_sdk_events import (
     emit_sdk_worker_completed,
     emit_sdk_worker_failed,
+    emit_sdk_worker_progress,
     emit_sdk_worker_timeout,
 )
 from services.git_integration_worker.models.cursor_api import (
@@ -67,10 +70,10 @@ logger = get_logger(__name__)
 router = APIRouter(prefix="/api/v1/cursor", tags=["cursor-sdk"])
 
 _CONFIG: WorkerConfig = load_config()
-_REG = CursorDispatchRegistry.instance()
 _SDK_BRIDGE_BIN = os.environ.get("CURSOR_SDK_BRIDGE_BIN", "").strip() or None
 _SDK_TIMEOUT_S = float(os.environ.get("CURSOR_SDK_TIMEOUT", "1800"))
 _SDK_TIMEOUT_BUFFER_S = 120.0
+_SDK_HEARTBEAT_S = float(os.environ.get("CURSOR_SDK_HEARTBEAT", "30"))
 _SDK_DISPATCH_LOCK = threading.Lock()
 
 
@@ -118,6 +121,36 @@ def _isolated_dispatch_home(home: Path):
                 os.environ["HOME"] = prev
 
 
+def _start_heartbeat(
+    *, dispatch_id: str, thread_id: str, resolved_model: str
+) -> tuple[Thread, _ThreadEvent]:
+    stop = _ThreadEvent()
+    started = time.monotonic()
+
+    def _loop() -> None:
+        while not stop.wait(_SDK_HEARTBEAT_S):
+            elapsed = time.monotonic() - started
+            try:
+                emit_sdk_worker_progress(
+                    dispatch_id=dispatch_id,
+                    thread_id=thread_id,
+                    resolved_model=resolved_model,
+                    elapsed_s=elapsed,
+                    tool_call_count=0,
+                )
+                CursorDispatchLedger.instance().bump_heartbeat(dispatch_id=dispatch_id)
+            except Exception as exc:  # heartbeat must never kill the dispatch
+                logger.warning(
+                    "sdk heartbeat emit failed: dispatch_id=%s err=%s",
+                    dispatch_id,
+                    exc,
+                )
+
+    t = Thread(target=_loop, name=f"sdk-hb-{dispatch_id}", daemon=True)
+    t.start()
+    return t, stop
+
+
 def _run_sdk_sync(
     *,
     source_repo: Path,
@@ -125,10 +158,15 @@ def _run_sdk_sync(
     config_model_id: str,
     selection_overrides: dict[str, str] | None,
     dispatch_id: str,
+    thread_id: str,
+    resolved_model: str,
 ) -> SdkRunOutcome:
     dispatch_home = setup_cursor_dispatch_home(dispatch_id)
     bridge_state = dispatch_home / "bridge-state"
     bridge_state.mkdir(parents=True, exist_ok=True)
+    CursorDispatchLedger.instance().record_state_root(
+        dispatch_id=dispatch_id, state_root=str(bridge_state)
+    )
 
     config = resolve_cursor(config_model_id)
     selection = build_model_selection(config, selection_overrides)
@@ -144,6 +182,9 @@ def _run_sdk_sync(
     agent_options = build_agent_options(source_repo, selection)
 
     with _isolated_dispatch_home(dispatch_home):
+        hb_thread, hb_stop = _start_heartbeat(
+            dispatch_id=dispatch_id, thread_id=thread_id, resolved_model=resolved_model
+        )
         client = Client.launch_bridge(
             _SDK_BRIDGE_BIN,
             workspace=str(source_repo),
@@ -155,6 +196,11 @@ def _run_sdk_sync(
             agent = client.create_agent(agent_options)
             # Local bridge Send rejects Idempotency-Key (cloud-only in SDK v1).
             run = agent.send(prompt)
+            CursorDispatchLedger.instance().record_sdk_identity(
+                dispatch_id=dispatch_id,
+                agent_id=getattr(agent, "id", None),
+                run_id=getattr(run, "id", None),
+            )
             result = run.wait()
             turns = run.conversation()
             return SdkRunOutcome(
@@ -164,6 +210,8 @@ def _run_sdk_sync(
                 tool_call_count=count_tool_calls(turns),
             )
         finally:
+            hb_stop.set()
+            hb_thread.join(timeout=5.0)
             client.close()
 
 
@@ -199,6 +247,8 @@ async def _run_sdk_dispatch(
                     config_model_id=req.model,
                     selection_overrides=req.model_knobs,
                     dispatch_id=req.dispatch_id,
+                    thread_id=req.thread_id,
+                    resolved_model=req.model,
                 ),
                 timeout=outer_timeout_s,
             )
@@ -260,6 +310,11 @@ async def _run_sdk_dispatch(
                 bus_result.body,
             )
         await _terminate_link(bus, thread_id=req.thread_id, terminal_status="completed")
+        await asyncio.to_thread(
+            CursorDispatchLedger.instance().mark_terminal,
+            dispatch_id=req.dispatch_id,
+            terminal_status="completed",
+        )
     except CursorHomeConfigError as exc:
         logger.error(
             "cursor sdk home/auth config failed: dispatch_id=%s err=%s",
@@ -279,6 +334,11 @@ async def _run_sdk_dispatch(
             body=f"```json\n{json.dumps(env, indent=2)}\n```",
         )
         await _terminate_link(bus, thread_id=req.thread_id, terminal_status="failed")
+        await asyncio.to_thread(
+            CursorDispatchLedger.instance().mark_terminal,
+            dispatch_id=req.dispatch_id,
+            terminal_status="failed",
+        )
     except Exception as exc:
         logger.exception("cursor sdk dispatch failed: dispatch_id=%s", req.dispatch_id)
         emit_sdk_worker_failed(
@@ -299,6 +359,11 @@ async def _run_sdk_dispatch(
             body=f"```json\n{json.dumps(env, indent=2)}\n```",
         )
         await _terminate_link(bus, thread_id=req.thread_id, terminal_status="failed")
+        await asyncio.to_thread(
+            CursorDispatchLedger.instance().mark_terminal,
+            dispatch_id=req.dispatch_id,
+            terminal_status="failed",
+        )
 
 
 @router.post("/dispatch", response_model=CursorDispatchResponse)
@@ -352,9 +417,17 @@ async def cursor_dispatch(
         thread_id=req.thread_id,
         model_id=config.model_id,
     )
-    fingerprint = _REG.fingerprint(req)
+    ledger = CursorDispatchLedger.instance()
+    fingerprint = ledger.fingerprint(req)
     try:
-        cached = await _REG.admit(req.dispatch_id, fingerprint, admission)
+        cached = await asyncio.to_thread(
+            ledger.admit,
+            req=req,
+            fingerprint=fingerprint,
+            execution_id=getattr(req, "execution_id", None),
+            resolved_model=config.model_id,
+            admission=admission,
+        )
     except DispatchConflict as exc:
         return JSONResponse(
             status_code=409,
@@ -371,5 +444,6 @@ async def cursor_dispatch(
     task = asyncio.create_task(
         _run_sdk_dispatch(req=req, source_repo=cfg.source_repo, bus=bus)
     )
-    _REG.attach_task(req.dispatch_id, task)
+    ledger.register_task(req.dispatch_id, task)
+    await asyncio.to_thread(ledger.mark_running, dispatch_id=req.dispatch_id)
     return admission

@@ -92,9 +92,7 @@ def project_knob_resolution(
         ]
     elif native is None:
         status = "no_thinking"
-        notes = [
-            f"effort '{requested_effort}' not in budget_map → no thinking emitted"
-        ]
+        notes = [f"effort '{requested_effort}' not in budget_map → no thinking emitted"]
     else:
         status = "mapped"
         notes: list[str] = []

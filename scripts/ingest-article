@@ -75,6 +75,7 @@ SUBDIRECTORY_TO_SCOPE: dict[str, str] = {
     "bug-bounty-research": "bug_bounty_research",
     "agent-skills": "agent_skills_research",
     "legal-reasoning": "legal_reasoning_llm",
+    "agent-substrate": "agent_substrate",
 }
 
 

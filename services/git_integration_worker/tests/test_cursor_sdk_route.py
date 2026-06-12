@@ -12,8 +12,8 @@ from fastapi.testclient import TestClient
 
 from services.git_integration_worker.app import create_app
 from services.git_integration_worker.cursor_bus import CursorBusClient
-from services.git_integration_worker.cursor_dispatch_registry import (
-    CursorDispatchRegistry,
+from services.git_integration_worker.cursor_dispatch_ledger import (
+    CursorDispatchLedger,
     DispatchConflict,
 )
 from services.git_integration_worker.cursor_home import CursorHomeConfigError
@@ -31,9 +31,11 @@ def client() -> TestClient:
 
 
 @pytest.fixture(autouse=True)
-def _reset_registry() -> None:
-    reg = CursorDispatchRegistry.instance()
-    reg._records.clear()
+def _reset_ledger(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    CursorDispatchLedger._instance = None
+    yield
+    CursorDispatchLedger._instance = None
 
 
 def _mock_bus() -> AsyncMock:
@@ -137,8 +139,8 @@ def test_dispatch_conflict_409(_mock_task: MagicMock, client: TestClient) -> Non
 
 
 @pytest.mark.asyncio
-async def test_registry_conflict_raises() -> None:
-    reg = CursorDispatchRegistry.instance()
+async def test_ledger_conflict_raises() -> None:
+    ledger = CursorDispatchLedger.instance()
     admission = CursorDispatchResponse(
         admitted=True,
         dispatch_id="d1",
@@ -147,14 +149,26 @@ async def test_registry_conflict_raises() -> None:
     )
     req = CursorDispatchRequest(
         thread_id="t1",
-        model="composer-2.5",
+        model="cursor/composer-2.5",
         dispatch_id="d1",
         message="a",
     )
-    fp = reg.fingerprint(req)
-    await reg.admit("d1", fp, admission)
+    fp = ledger.fingerprint(req)
+    ledger.admit(
+        req=req,
+        fingerprint=fp,
+        execution_id=None,
+        resolved_model="composer-2.5",
+        admission=admission,
+    )
     with pytest.raises(DispatchConflict):
-        await reg.admit("d1", "other-fingerprint", admission)
+        ledger.admit(
+            req=req,
+            fingerprint="other-fingerprint",
+            execution_id=None,
+            resolved_model="composer-2.5",
+            admission=admission,
+        )
 
 
 @pytest.mark.asyncio
@@ -513,31 +527,29 @@ async def test_dispatch_timeout_posts_failure_and_terminates(
 
 
 def test_active_work_busy_with_running_dispatch(client: TestClient) -> None:
-    reg = CursorDispatchRegistry.instance()
-    loop = asyncio.new_event_loop()
-    task = loop.create_task(asyncio.sleep(60))
-    reg._records["disp-1"] = type(
-        "R",
-        (),
-        {
-            "fingerprint": "fp",
-            "admission": CursorDispatchResponse(
-                admitted=True,
-                dispatch_id="disp-1",
-                thread_id="1",
-                model_id="composer-2.5",
-            ),
-            "task": task,
-        },
-    )()
-    try:
-        resp = client.get("/api/v1/git/active-work")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["cursor_dispatches"]["running"] == 1
-        assert data["busy"] is True
-    finally:
-        task.cancel()
-        loop.run_until_complete(asyncio.gather(task, return_exceptions=True))
-        loop.close()
-        reg._records.clear()
+    ledger = CursorDispatchLedger.instance()
+    req = CursorDispatchRequest(
+        thread_id="1",
+        model="cursor/composer-2.5",
+        dispatch_id="disp-1",
+        message="hello",
+    )
+    ledger.admit(
+        req=req,
+        fingerprint=ledger.fingerprint(req),
+        execution_id=None,
+        resolved_model="composer-2.5",
+        admission=CursorDispatchResponse(
+            admitted=True,
+            dispatch_id="disp-1",
+            thread_id="1",
+            model_id="composer-2.5",
+        ),
+    )
+    ledger.mark_running(dispatch_id="disp-1")
+
+    resp = client.get("/api/v1/git/active-work")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["cursor_dispatches"]["running"] == 1
+    assert data["busy"] is True

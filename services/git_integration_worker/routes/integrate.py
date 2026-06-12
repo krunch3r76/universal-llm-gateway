@@ -291,11 +291,13 @@ async def commit(req: CommitRequest, request: Request) -> IntegrateResponse:
 )
 async def get_active_work():
     """Return gate occupancy so manage can defer restart during integrate."""
-    from services.git_integration_worker import cursor_dispatch_registry as cursor_reg
+    from services.git_integration_worker.cursor_dispatch_ledger import (
+        CursorDispatchLedger,
+    )
 
     running = _GATE.active_count
     queued = _GATE.queue_length
-    cursor = cursor_reg.CursorDispatchRegistry.instance().active_snapshot()
+    cursor = CursorDispatchLedger.instance().active_snapshot()
     integrate_busy = running > 0 or queued > 0
     cursor_busy = cursor["running"] > 0
     return JSONResponse(

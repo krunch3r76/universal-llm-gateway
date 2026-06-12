@@ -37,8 +37,19 @@ def test_build_model_selection_default_omit() -> None:
     selection = build_model_selection(cfg)
     assert selection.id == "claude-opus-4-8"
     emitted = {p.id: p.value for p in selection.params}
-    assert emitted == {"fast": "true"}
-    assert "thinking" not in emitted
+    # Opus is a reasoning model: no knob defaults emit, incl. no fast=true.
+    assert emitted == {}
+
+
+def test_build_model_selection_reasoning_models_no_fast_default() -> None:
+    """Reasoning cursor models must NOT default fast=true (quality degradation)."""
+    for model in ("claude-opus-4-8", "claude-sonnet-4-6"):
+        selection = build_model_selection(resolve_cursor(model))
+        emitted = {p.id: p.value for p in selection.params}
+        assert "fast" not in emitted, f"{model} should not default fast"
+    # Opt-in still works.
+    opted = build_model_selection(resolve_cursor("claude-sonnet-4-6"), {"fast": "true"})
+    assert {p.id: p.value for p in opted.params} == {"fast": "true"}
 
 
 def test_build_model_selection_composer_default_fast() -> None:

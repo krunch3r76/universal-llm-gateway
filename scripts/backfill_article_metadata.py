@@ -48,6 +48,7 @@ SUBDIRECTORY_TO_SCOPE: dict[str, str] = {
     "constitutional-ai": "constitutional_ai",
     "agent-skills": "agent_skills_research",
     "legal-reasoning": "legal_reasoning_llm",
+    "agent-substrate": "agent_substrate",
 }
 
 

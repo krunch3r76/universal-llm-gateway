@@ -131,6 +131,7 @@ async def dispatch_api_role_generate(
         caller_agent=body.caller_agent,
         tags=[f"agent:{role}", "type:generate", f"contract:{contract}"],
         handoff_contract=contract,
+        bus_lifecycle=getattr(body, "bus_lifecycle", None),
     )
 
     req = FrontierGenerateRequest(
@@ -138,6 +139,7 @@ async def dispatch_api_role_generate(
         model=body.model,
         role=role,
         system=body.system,
+        mcp=getattr(body, "mcp", None),
         reasoning_effort=body.reasoning_effort,
         generation_options=body.generation_options,
         max_tool_turns=body.max_tool_turns,

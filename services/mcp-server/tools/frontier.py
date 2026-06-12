@@ -173,6 +173,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         messages: list[dict[str, Any]] = [],  # noqa: B006
         dispatch_thread_id: str = "",
         model: str | None = None,
+        mcp: bool | None = None,
         system: str = "",
         reasoning_effort: str | None = None,
         generation_options: dict[str, Any] | None = None,
@@ -278,10 +279,15 @@ def register_frontier_tools(mcp: FastMCP) -> None:
           ``agent_bus(tool="wait", …)`` from ``poll_hint`` — not
           ``pipeline(op="result")``.
 
-        Tool surface (no caller knob — derived from the effective model):
+        Tool surface (defaults derived from the effective model; ``mcp`` overrides):
         - xAI multi-agent models — no client-side MCP tools.
-        - Anthropic models — remote MCP when enabled by the dispatcher.
-        - Other MCP-capable providers — in-process tool loop.
+        - Anthropic models — remote MCP by default when enabled; pass
+          ``mcp=False`` for a one-shot inline generation (no client-side loop and
+          no server-side remote MCP).
+        - Other MCP-capable providers — in-process tool loop unless ``mcp=False``.
+        - ``mcp``: ``None`` (default) keeps the per-model default (tools-on for
+          tool-capable families); ``False`` forces inline-only; inline-only
+          families (e.g. gemini) stay clamped to no-tools regardless.
 
         ``dispatch_thread_id`` — required compaction key for server-owned
         thread persistence on the ``team-dispatch`` pipeline (generate/to_thread
@@ -362,6 +368,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                 ("pointer_body", pointer_body),
                 ("tags", tags),
                 ("caller_agent", caller_agent),
+                ("bus_lifecycle", bus_lifecycle),
             ):
                 if val is not None:
                     handoff_body[key] = val
@@ -435,6 +442,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
 
         for key, val in (
             ("model", model),
+            ("mcp", mcp),
             ("reasoning_effort", reasoning_effort),
             ("generation_options", generation_options),
             ("max_tool_turns", max_tool_turns),

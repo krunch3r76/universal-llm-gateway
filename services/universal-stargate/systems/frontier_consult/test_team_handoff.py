@@ -18,9 +18,8 @@ import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from pydantic import ValidationError
-
 from implement_admission.drift_gates import DriftGateState
+from pydantic import ValidationError
 
 from .admission import (
     FrontierEndpointError,
@@ -77,7 +76,8 @@ _CONSULT_ONLY_PACKET = f"""\
 <output_format>Reply on thread.</output_format>
 """
 
-# 1296-style improvised packet: numbered sections, missing <corpus> + <mcp_capabilities>.
+# 1296-style improvised packet: numbered sections, missing
+# <corpus> + <mcp_capabilities>.
 _BAD_1296_PACKET = """\
 <scope>Goal: improvised.</scope>
 <invariants>[scope] none.</invariants>
@@ -257,7 +257,7 @@ def test_h1a_route_web_consult_push_reminder_mentions_web_push(
     monkeypatch: pytest.MonkeyPatch,
     _handoff_app: FastAPI,
 ) -> None:
-    """role=web-consult → claude-web; push_reminder tells operator to push bus message."""
+    """role=web-consult → claude-web; push_reminder tells operator to push."""
     monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
     _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-thread-web"))
 
@@ -1075,7 +1075,7 @@ def test_pv_conformant_consult_passes(tmp_path: Path) -> None:
 
 
 def test_pv_consult_without_acceptance_passes(tmp_path: Path) -> None:
-    """Consult (role=web-consult) does not require acceptance criteria in task_guidance."""
+    """Consult (web-consult) does not require acceptance in task_guidance."""
     consult_packet = _CONFORMANT_PACKET.replace(
         "## Acceptance criteria\n1. It works.", "Review questions and risks."
     )
@@ -1238,6 +1238,41 @@ def test_pv_arch_skillrefs_anywhere_in_packet_admitted(tmp_path: Path) -> None:
         handoff_contract="consult",
         workspaces_root=tmp_path,
     )
+
+
+def test_pv_arch_skillrefs_display_name_rejected_with_rewrite_hint(
+    tmp_path: Path,
+) -> None:
+    """Display-name skill-ref paths reject with exact expected_refs + a precise
+    rewrite hint (friction 16958) instead of a bare slug-only 422.
+    """
+    display_refs = (
+        "- fs(cortex, agent-skills/Architecture Invariants — Universal Layer.md)\n"
+        "- fs(cortex, agent-skills/ULG Architecture — universal-llm-gateway Layer.md)"
+    )
+    packet = _CONFORMANT_PACKET.replace(_ARCH_SKILL_REFS, display_refs)
+    _write_packet(tmp_path, _PV_REL, packet)
+    with pytest.raises(FrontierEndpointError) as exc_info:
+        validate_packet(
+            request_id="req-pv-arch-display",
+            packet_path=_PV_REL,
+            to_agent="claude-web",
+            handoff_contract="consult",
+            workspaces_root=tmp_path,
+        )
+    err = exc_info.value
+    assert err.code == "handoff_packet_missing_arch_skillrefs"
+    # Structured exact strings ride in the 422 body.
+    assert err.details is not None
+    assert err.details["expected_refs"] == [
+        "agent-skills/architecture-invariants",
+        "agent-skills/ulg-architecture",
+    ]
+    assert err.to_dict()["details"]["expected_refs"]
+    # Near-miss recognized → precise rewrite guidance, not a re-discovery loop.
+    assert "non-canonical" in err.reason
+    assert "agent-skills/architecture-invariants" in err.reason
+    assert "agent-skills/ulg-architecture" in err.reason
 
 
 def test_pv_implement_without_acceptance_rejected(tmp_path: Path) -> None:
@@ -2655,7 +2690,7 @@ def test_s4_packet_lane_skips_gate_b_both_present(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """Gate B removed for packet lane when source_ref and packet_path both present (E2a′)."""
+    """Gate B removed for packet lane when source_ref and packet_path present."""
     from .implement_admission_bridge import verify_both_present_hash
 
     monkeypatch.setenv("PROJECT_ROOT", str(tmp_path))

@@ -282,6 +282,17 @@ def known_families() -> frozenset[str]:
     return frozenset(family for family, _platform in load_profiles())
 
 
+@functools.cache
+def known_seats() -> frozenset[str]:
+    """Canonical seat slugs ({family}-{platform}) from the agents.yaml profile cells.
+
+    The closed seat vocabulary for applicability gating. Derived from the profile
+    registry — no second hardcoded list. '*' (universal) is NOT a seat; callers add
+    it explicitly where universal is permitted.
+    """
+    return frozenset(f"{family}-{platform}" for family, platform in load_profiles())
+
+
 def seat_to_family(slug: str) -> str | None:
     """Project a seat slug to its model family (provenance granularity).
 

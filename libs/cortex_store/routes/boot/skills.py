@@ -10,6 +10,7 @@ from fastapi import APIRouter, Query
 from ...confidence_field import lifecycle_not_value_sql_predicate
 from ...db import cortex_conn
 from ...db import query as db_query
+from ...seat_applicability import FOR_AGENT_CLAUSE, canonical_seat_or_422
 from ._skill_trigger import skill_trigger_text
 
 _DEPRECATED_EXCLUDE = lifecycle_not_value_sql_predicate("deprecated")
@@ -19,29 +20,21 @@ router = APIRouter(tags=["boot"])
 # `applicable_agents` is a JSON-list attribute on each agent_skill entity that
 # names which agent slugs should see the skill on their boot card. The list
 # may contain `"*"` (visible to every agent) and/or specific slugs. Skills
-# without the attribute are treated as `["*"]` via COALESCE so the default
-# behaviour pre-backfill is "show to everyone" — no silent narrowing.
+# without the attribute are withheld from every seat (default-deny); universal
+# visibility requires an explicit `["*"]`.
 _BOOT_SKILLS_SQL = f"""
     SELECT id, name, description, source_uri,
-           json_extract(attributes, '$.skill_binding') AS skill_binding_json
+           json_extract(attributes, '$.skill_binding') AS skill_binding_json,
+           json_extract(attributes, '$.trigger_short') AS trigger_short,
+           json_extract(attributes, '$.skill_category') AS skill_category,
+           json_extract(attributes, '$.trigger_match_terms') AS trigger_match_terms_json,
+           json_extract(attributes, '$.boot_importance') AS boot_importance
     FROM entities
     WHERE type = 'agent_skill'
       AND {_DEPRECATED_EXCLUDE}
       {{for_agent_filter}}
     ORDER BY name ASC
     LIMIT ?
-"""
-
-_FOR_AGENT_CLAUSE = """
-    AND EXISTS (
-        SELECT 1 FROM json_each(
-            COALESCE(
-                json_extract(attributes, '$.applicable_agents'),
-                json_array('*')
-            )
-        )
-        WHERE value IN ('*', ?)
-    )
 """
 
 _UNPARTITIONED_COUNT_SQL = f"""
@@ -81,6 +74,16 @@ def _derive_binding_kind(
     return skill_class
 
 
+def _decode_match_terms(raw: str | None) -> list[str]:
+    if not raw:
+        return []
+    try:
+        terms = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return []
+    return [str(t) for t in terms] if isinstance(terms, list) else []
+
+
 def _boot_skill_row(row: dict[str, Any]) -> dict[str, Any]:
     skill_class, tool_binding = _parse_skill_binding(row.get("skill_binding_json"))
     item: dict[str, Any] = {
@@ -88,6 +91,10 @@ def _boot_skill_row(row: dict[str, Any]) -> dict[str, Any]:
         "entity_id": row["id"],
         "name": row["name"],
         "description_first_sentence": skill_trigger_text(row),
+        "trigger_short": row.get("trigger_short"),
+        "skill_category": row.get("skill_category"),
+        "trigger_match_terms": _decode_match_terms(row.get("trigger_match_terms_json")),
+        "boot_importance": row.get("boot_importance"),
         "skill_class": skill_class,
         "binding_kind": _derive_binding_kind(skill_class, tool_binding),
     }
@@ -103,10 +110,11 @@ def get_boot_skills(
         None,
         description=(
             "Filter to skills whose `applicable_agents` list contains "
-            "either `*` (universal) or this agent slug. Skills without "
-            "the attribute are treated as universal — pre-backfill safe "
-            "default. Pass the agent slug used by cortex_boot (e.g. "
-            "'cursor', 'web', 'grok-cursor') to get the per-agent partition."
+            "either `*` (universal) or this seat slug. Canonical seat slug "
+            "(e.g. `claude-web`, `claude-cursor`, `cursor-sdk`); legacy "
+            "spellings are normalized; skills with no `applicable_agents` "
+            "are withheld (default-deny) — universal skills carry explicit "
+            "`['*']`."
         ),
     ),
 ) -> dict[str, Any]:
@@ -120,8 +128,9 @@ def get_boot_skills(
     """
     params: list[Any] = ["deprecated"]
     if for_agent:
-        for_agent_filter = _FOR_AGENT_CLAUSE
-        params.append(for_agent)
+        canonical = canonical_seat_or_422(for_agent)
+        for_agent_filter = FOR_AGENT_CLAUSE
+        params.append(canonical)
     else:
         for_agent_filter = ""
     params.append(limit)
@@ -133,9 +142,7 @@ def get_boot_skills(
         # this as a drift reminder so the partition script doesn't go stale
         # silently as Kaywan adds new and temp skills. Single SQL query, no
         # row data, ~30 bytes on the wire.
-        unpartitioned_rows = db_query(
-            conn, _UNPARTITIONED_COUNT_SQL, ("deprecated",)
-        )
+        unpartitioned_rows = db_query(conn, _UNPARTITIONED_COUNT_SQL, ("deprecated",))
     finally:
         conn.close()
     items = [_boot_skill_row(r) for r in rows]

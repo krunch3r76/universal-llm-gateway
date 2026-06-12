@@ -72,6 +72,7 @@ def _patch_client(
 async def test_deliver_sent_on_2xx(monkeypatch: pytest.MonkeyPatch) -> None:
     bus = _FakeBus()
     record = _make_record()
+    record.bus_lifecycle = "persistent"
     captured: dict[str, Any] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -277,10 +278,18 @@ async def test_ephemeral_close_failure_emits_close_failed_event(
 async def test_persistent_does_not_close_thread(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Default persistent lifecycle → close is never called."""
+    """Explicit persistent lifecycle → close is never called."""
     bus = _FakeBus()
     captured: dict[str, object] = {}
-    record = _make_record()  # bus_lifecycle defaults to persistent (not set)
+    record = _make_record(
+        result_delivery={
+            "bus_thread": "626",
+            "bus_from_agent": "gatherer",
+            "bus_to_agent": "cursor",
+            "bus_subject": "done",
+            "bus_lifecycle": "persistent",
+        }
+    )
 
     _patch_client(monkeypatch, _make_close_handler(captured))
 
@@ -288,6 +297,30 @@ async def test_persistent_does_not_close_thread(
     await asyncio.sleep(0)
 
     assert captured.get("close_called") is None
+
+
+@pytest.mark.asyncio
+async def test_default_ephemeral_closes_thread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Omitted bus_lifecycle on record defaults to ephemeral → close called."""
+    bus = _FakeBus()
+    captured: dict[str, object] = {}
+    record = _make_record(
+        result_delivery={
+            "bus_thread": "626",
+            "bus_from_agent": "gatherer",
+            "bus_to_agent": "cursor",
+            "bus_subject": "done",
+        }
+    )
+
+    _patch_client(monkeypatch, _make_close_handler(captured))
+
+    await deliver_result(record, event_bus=bus, auth_token="secret")
+    await asyncio.sleep(0)
+
+    assert captured.get("close_called") is True
 
 
 # ---------------------------------------------------------------------------
@@ -636,9 +669,10 @@ async def test_on_behalf_ephemeral_closes_thread_on_2xx(
 async def test_on_behalf_persistent_skips_close(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Default persistent lifecycle leaves the thread open after delivery."""
+    """Explicit persistent lifecycle leaves the thread open after delivery."""
     captured: dict[str, Any] = {}
     record = _make_to_thread_record()
+    record.bus_lifecycle = "persistent"
 
     _patch_client(monkeypatch, _make_thread_aware_transport(captured))
 

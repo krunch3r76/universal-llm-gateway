@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from ._skill_bodies import skill_relpath, skill_slug
+from ._skill_bodies import skill_slug
 from ._time import relative_time
 
 # Reflective Journal / Your Notes preview length. Cap is the hard byte ceiling;
@@ -180,97 +180,130 @@ def render_audit_alerts_section(counters: dict[str, int]) -> list[str]:
     ]
 
 
-_SKILL_CLASS_ORDER = (
-    "tool_manual",
-    "protocol",
-    "matter_playbook",
-    "discipline",
+_TIER1_GATE_SLUGS: frozenset[str] = frozenset(
+    {
+        "lead-seat-boot",
+        "dispatch-shape",
+        "consult-routing",
+        "completion-provenance-discipline",
+        "consensus-steelman-posture",
+        "lead-agent-git-integration",
+        "session-close",
+    }
 )
-_EXPOSURE_ORDER = ("primary", "overflow", "private")
-_EXPOSURE_HEADERS: dict[str, str] = {
-    "primary": "### Tool Manuals — Primary",
-    "overflow": "### Tool Manuals — Overflow",
-    "private": "### Tool Manuals — Private",
-}
-_CLASS_HEADERS: dict[str, str] = {
-    "protocol": "### Protocols",
-    "matter_playbook": "### Matter Playbooks",
-    "discipline": "### Disciplines",
-}
+# NOTE: gate slugs are ENTITY ids (what skill_slug() returns), NOT file names —
+# verified live: agent_skill:session-close (its file is session-close-kernel.md).
+# A2 projection fallback: some entities carry a legacy `trigger_keywords` array.
+# COALESCE order for the ranker corpus: trigger_match_terms → trigger_keywords →
+# FOL-stripped trigger_short.
+
+_FOL_OPERATORS = {"∨", "∧", "⇒", "⇔", "¬", "→", "∈", "∉", "∪", "∩", "⊆", "⊂", "|"}
+_TIER2_INLINE_MAX = 12
+_SKILLS_BYTE_BUDGET = 8192
 
 
-def _append_skill_index(lines: list[str], bucket: list[dict[str, Any]]) -> None:
-    """Emit slug + trigger + md_read hint per skill (manifest-only — no TOC bodies)."""
+def _normalize_terms(skill: dict[str, Any]) -> set[str]:
+    terms = skill.get("trigger_match_terms") or []
+    if terms:
+        return {t.lower() for t in terms}
+    raw = skill.get("trigger_short") or skill.get("description_first_sentence") or ""
+    for op in _FOL_OPERATORS:
+        raw = raw.replace(op, " ")
+    return {tok for tok in raw.lower().split() if len(tok) > 2}
+
+
+def _rank_score(skill: dict[str, Any], signals: set[str]) -> int:
+    return len(_normalize_terms(skill) & signals)
+
+
+def _skill_trigger_display(skill: dict[str, Any]) -> str:
+    return (
+        skill.get("trigger_short") or skill.get("description_first_sentence") or ""
+    ).strip()
+
+
+def _append_skill_index(
+    lines: list[str], bucket: list[dict[str, Any]], names_only: bool = False
+) -> None:
+    """Emit `- **slug** — trigger_short` per skill. No per-line fs() call.
+
+    names_only collapses the trigger (Tier-3 under byte pressure) while keeping
+    every slug present so no skill becomes undiscoverable.
+    """
     for skill in sorted(bucket, key=skill_slug):
         slug = skill_slug(skill)
-        rel = skill_relpath(skill)
-        trigger = (skill.get("description_first_sentence") or "").strip()
+        if names_only:
+            lines.append(f"- **`{slug}`**")
+            continue
+        trigger = _skill_trigger_display(skill)
         trigger_part = f" — {trigger}" if trigger else ""
-        lines.append(
-            f"- **`{slug}`**{trigger_part} | "
-            f'`fs(sandbox="cortex", op="md_read", path="{rel}")`'
-        )
+        lines.append(f"- **`{slug}`**{trigger_part}")
 
 
 def render_skills_section(
     skills: list[dict[str, Any]],
     skills_unpartitioned_count: int,
+    boot_signals: set[str] | None = None,
 ) -> list[str]:
-    """Group agent skills by class; index slugs + triggers (bodies on demand via fs md_*)."""
+    """Render skills in 3 tiers: required gates, session-ranked, catalog-by-category."""
     lines: list[str] = [
         f"\n## Agent Skills ({len(skills)} on this seat — manifest only)",
         (
-            "> Full SKILL.md bodies are **not** inlined. Browse: "
-            '`fs(sandbox="cortex", op="md_list", path="agent-skills/")`; '
-            "read one: `md_read` / section ops on the path below."
-        ),
-        (
-            "> Skills index: `cortex://agent-skills/README.md` — "
-            "scan trigger column before loading individual skills."
+            "> Load on demand: "
+            '`fs(sandbox="cortex", op="md_read", path="agent-skills/<slug>.md")` '
+            "— slug is the bolded id on each line. "
+            "Full index (all triggers): `cortex://agent-skills/README.md`."
         ),
     ]
-    by_class: dict[str | None, list[dict[str, Any]]] = {}
-    for skill in skills:
-        by_class.setdefault(skill.get("skill_class"), []).append(skill)
+    signals = boot_signals or set()
 
-    no_class = by_class.pop(None, [])
+    def _is_gate(s: dict[str, Any]) -> bool:
+        return (
+            s.get("boot_importance") == "required_gate"
+            or skill_slug(s) in _TIER1_GATE_SLUGS
+        )
 
-    for skill_class in _SKILL_CLASS_ORDER:
-        bucket = by_class.pop(skill_class, None)
-        if not bucket:
-            continue
-        if skill_class == "tool_manual":
-            by_exposure: dict[str, list[dict[str, Any]]] = {}
-            for skill in bucket:
-                tb = skill.get("tool_binding") or {}
-                exposure = str(tb.get("exposure", "primary")).lower()
-                by_exposure.setdefault(exposure, []).append(skill)
-            for exposure in _EXPOSURE_ORDER:
-                sub = by_exposure.pop(exposure, None)
-                if not sub:
-                    continue
-                lines.append(_EXPOSURE_HEADERS[exposure])
-                _append_skill_index(lines, sub)
-            for exposure in sorted(by_exposure):
-                lines.append(f"### Tool Manuals — {exposure.replace('_', ' ').title()}")
-                _append_skill_index(lines, by_exposure[exposure])
-        else:
-            lines.append(_CLASS_HEADERS[skill_class])
-            _append_skill_index(lines, bucket)
+    tier1 = [s for s in skills if _is_gate(s)]
+    rest = [s for s in skills if not _is_gate(s)]
 
-    for skill_class in sorted(by_class):
-        lines.append(f"### {skill_class.replace('_', ' ').title()}")
-        _append_skill_index(lines, by_class[skill_class])
+    ranked = sorted(
+        ((_rank_score(s, signals), s) for s in rest),
+        key=lambda p: (-p[0], skill_slug(p[1])),
+    )
+    tier2 = [s for score, s in ranked if score > 0][:_TIER2_INLINE_MAX]
+    tier2_ids = {id(s) for s in tier2}
+    tier3 = [s for s in rest if id(s) not in tier2_ids]
 
-    if no_class:
-        lines.append("### Other Skills")
-        _append_skill_index(lines, no_class)
+    if tier1:
+        lines.append("\n### Required gates")
+        _append_skill_index(lines, tier1)
+    if tier2:
+        lines.append("\n### Relevant now")
+        _append_skill_index(lines, tier2)
+
+    lines.append("\n### Catalog")
+    names_only = sum(len(s.encode("utf-8")) for s in lines) >= _SKILLS_BYTE_BUDGET
+    by_cat: dict[str | None, list[dict[str, Any]]] = {}
+    for s in tier3:
+        by_cat.setdefault(s.get("skill_category"), []).append(s)
+    for cat in sorted(k for k in by_cat if k is not None):
+        lines.append(f"**{cat}** ({len(by_cat[cat])})")
+        _append_skill_index(lines, by_cat[cat], names_only=names_only)
+        if (
+            not names_only
+            and sum(len(x.encode("utf-8")) for x in lines) >= _SKILLS_BYTE_BUDGET
+        ):
+            names_only = True
+    uncategorized = by_cat.get(None, [])
+    if uncategorized:
+        lines.append("**uncategorized**")
+        _append_skill_index(lines, uncategorized, names_only=names_only)
 
     if skills_unpartitioned_count:
         lines.append(
             f"\n> **Skill partition drift**: {skills_unpartitioned_count} "
-            f"skill(s) missing `applicable_agents` (default to universal "
-            f"via COALESCE). Audit: `scripts/cortex/"
+            f"skill(s) missing `applicable_agents` — WITHHELD from all seats "
+            f"(default-deny); run backfill. Audit: `scripts/cortex/"
             f"backfill_agent_skill_applicability.py --audit`."
         )
     return lines

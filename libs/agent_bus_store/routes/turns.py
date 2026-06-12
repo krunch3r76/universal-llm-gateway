@@ -116,6 +116,25 @@ async def create_turn(turn: TurnCreate) -> TurnCreated:
         )
     except Exception:
         pass
+    try:
+        from agent_bus_store.disposition import (
+            maybe_auto_close_after_implement_handoff_reply,
+        )
+
+        maybe_auto_close_after_implement_handoff_reply(
+            turn.thread,
+            turn_number=turn_number,
+            from_agent=turn.from_agent,
+        )
+    except Exception:
+        from universal_logging import get_logger
+
+        get_logger(__name__).warning(
+            "auto-close after implement reply failed: thread=%s turn=%s",
+            turn.thread,
+            turn_number,
+            exc_info=True,
+        )
     return TurnCreated(
         id=turn_id,
         thread=turn.thread,

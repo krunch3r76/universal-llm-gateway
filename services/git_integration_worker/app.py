@@ -15,6 +15,9 @@ from git_integrate.events import register_uds_publisher
 from universal_logging import get_logger
 
 from services.git_integration_worker.config import WorkerConfig, load_config
+from services.git_integration_worker.cursor_dispatch_ledger import (
+    CursorDispatchLedger,
+)
 from services.git_integration_worker.cursor_sdk_events import (
     register_cursor_sdk_event_publisher,
 )
@@ -49,6 +52,10 @@ def _resolve_version() -> str:
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     register_uds_publisher(publish_lib_signal)
     register_cursor_sdk_event_publisher(publish_lib_signal)
+    # Construct the dispatch ledger at startup, under the real worker HOME and
+    # before any per-dispatch HOME swap, so the cursor_sdk_dispatches table
+    # exists regardless of which dispatch op touches the ledger first.
+    CursorDispatchLedger.instance()
     cfg: WorkerConfig = load_config()
     app.state.worker_config = cfg
     app.state.worker_version = _resolve_version()
