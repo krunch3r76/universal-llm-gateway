@@ -216,9 +216,7 @@ def test_fetch_unread_recipient_scope_routes_to_toc_endpoint() -> None:
     def relay(service: str, method: str, path: str, **kwargs) -> dict:
         del service, method, kwargs
         captured["path"] = path
-        captured.update(
-            {k: v[0] for k, v in parse_qs(urlparse(path).query).items()}
-        )
+        captured.update({k: v[0] for k, v in parse_qs(urlparse(path).query).items()})
         return {
             "threads": [],
             "total_unread_threads": 0,
@@ -241,9 +239,7 @@ def test_fetch_unread_recipient_scope_forwards_mark_read() -> None:
     def relay(service: str, method: str, path: str, **kwargs) -> dict:
         del service, method, kwargs
         captured["path"] = path
-        captured.update(
-            {k: v[0] for k, v in parse_qs(urlparse(path).query).items()}
-        )
+        captured.update({k: v[0] for k, v in parse_qs(urlparse(path).query).items()})
         return {"threads": []}
 
     with patch("tools.agent_bus._relay", side_effect=relay):
@@ -260,9 +256,7 @@ def test_fetch_unread_thread_scope_still_returns_turn_list() -> None:
     def relay(service: str, method: str, path: str, **kwargs) -> dict:
         del service, method, kwargs
         captured["path"] = path
-        captured.update(
-            {k: v[0] for k, v in parse_qs(urlparse(path).query).items()}
-        )
+        captured.update({k: v[0] for k, v in parse_qs(urlparse(path).query).items()})
         return {"turns": []}
 
     with patch("tools.agent_bus._relay", side_effect=relay):

@@ -184,8 +184,10 @@ def register_panel_dispatch_tools(mcp: FastMCP) -> None:
         Optional ``include_synthesizer`` adds the gemini tiebreaker (inline-only).
 
         Returns ``panel_executions`` (role → ``execution_id``),
-        ``panel_capabilities`` (per-member ``inline_only`` / ``mcp_enabled`` /
-        ``tool_surface`` / ``resolved_model``), ``panel_families``, and per-role
+        ``panel_capabilities`` (per-member ``inline_only`` /
+        ``mcp_connector_active`` / ``tool_surface`` / ``resolved_model``;
+        ``mcp_connector_active`` = Stargate connector activated for this member,
+        not executor tool access), ``panel_families``, and per-role
         ``dispatches``. Returns ``member_knob_resolution`` per panel member for reasoning knob
         transparency: ``value_kind``, ``reasoning_native``, ``status``,
         ``parity`` (``not_claimed`` unless otherwise stated), and ``notes``.

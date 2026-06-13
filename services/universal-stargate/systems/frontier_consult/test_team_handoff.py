@@ -3072,8 +3072,8 @@ def test_t6a_cursor_sdk_seat_capability(
     assert sc["substrate"] == "sdk"
     assert sc["tool_surface"] == "sdk"
     assert sc["resolved_model"] == "cursor/composer-2.5"
-    assert sc["inline_only"] is True
-    assert sc["mcp_enabled"] is False
+    assert sc["inline_only"] is False
+    assert sc["mcp_connector_active"] is False
 
 
 def test_t6b_web_consult_seat_capability_matches_profile(

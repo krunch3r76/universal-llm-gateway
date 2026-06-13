@@ -89,6 +89,8 @@ from .ops_transcript_assembly import _op_assemble_transcript
 from .workflow_hints import (
     _CORTEX_FORMAT_HINT,
     _CORTEX_HALLUCINATED_TOOLS,
+    _CORTEX_LARGE_PAYLOAD_OPS,
+    _CORTEX_OFFLOAD_HINT,
     _FRICTION_HINT,
     _WORKFLOW_HINTS,
     _enrich_entity_completeness,
@@ -184,8 +186,15 @@ def execute_op(tool: str, arguments: object) -> Any:
 
     parsed = _parse_cortex_arguments(arguments, tool)
     if parsed is None:
+        error = _CORTEX_FORMAT_HINT
+        # Mirror the mcp-server dispatch sites: a failed *string* parse is almost
+        # always an escaping problem on a large quote-heavy payload, so point the
+        # caller at the file-path / CLI offload instead of leaving them to
+        # re-escape by hand. See decision:dispatch-arguments-string-wire-form.
+        if isinstance(arguments, str) and tool in _CORTEX_LARGE_PAYLOAD_OPS:
+            error += _CORTEX_OFFLOAD_HINT
         return {
-            "error": _CORTEX_FORMAT_HINT,
+            "error": error,
             "format_example": (
                 f'cortex(tool="{tool}", arguments=\'{{"entity_id": "type:slug"}}\')'
             ),

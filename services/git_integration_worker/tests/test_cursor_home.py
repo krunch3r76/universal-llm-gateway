@@ -9,8 +9,11 @@ import pytest
 
 from services.git_integration_worker.cursor_home import (
     CursorHomeConfigError,
+    CursorVenvConfigError,
     dispatch_home_path,
+    resolve_repo_venv,
     setup_cursor_dispatch_home,
+    validate_repo_venv,
 )
 
 
@@ -152,3 +155,47 @@ def test_container_home_unset(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     home = setup_cursor_dispatch_home("d1", real_home=real, root=root)
     assert home.name == "d1-home"
     assert (home / ".config" / "cursor" / "auth.json").exists()
+
+
+def _fake_venv(tmp_path: Path, *, with_executables: bool = True) -> Path:
+    venv = tmp_path / "venv"
+    if with_executables:
+        bindir = venv / "bin"
+        bindir.mkdir(parents=True)
+        for exe in ("python", "pytest", "ruff"):
+            (bindir / exe).touch()
+    return venv
+
+
+def test_resolve_repo_venv_default_from_real_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake_home = tmp_path / "operator"
+    monkeypatch.delenv("CURSOR_SDK_VENV_PATH", raising=False)
+    assert resolve_repo_venv(real_home=fake_home) == fake_home / ".venvs" / "universal"
+
+
+def test_resolve_repo_venv_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    override = tmp_path / "custom-venv"
+    monkeypatch.setenv("CURSOR_SDK_VENV_PATH", str(override))
+    assert resolve_repo_venv() == override
+
+
+def test_validate_repo_venv_ok(tmp_path: Path) -> None:
+    venv = _fake_venv(tmp_path)
+    assert validate_repo_venv(venv) is None
+
+
+def test_validate_repo_venv_missing_dir(tmp_path: Path) -> None:
+    venv = tmp_path / "missing"
+    with pytest.raises(CursorVenvConfigError, match="venv dir"):
+        validate_repo_venv(venv)
+
+
+def test_validate_repo_venv_missing_executable(tmp_path: Path) -> None:
+    venv = _fake_venv(tmp_path)
+    (venv / "bin" / "pytest").unlink()
+    with pytest.raises(CursorVenvConfigError, match="bin/pytest"):
+        validate_repo_venv(venv)

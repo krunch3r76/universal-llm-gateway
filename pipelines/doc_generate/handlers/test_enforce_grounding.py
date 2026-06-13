@@ -68,7 +68,9 @@ def _authored_loss(existing_doc: str, reviewed_doc: str) -> list[str]:
 
 
 def test_dropped_authored_region_is_loss():
-    existing = "<!-- AUTHORED:START -->\ncritical human design note\n<!-- AUTHORED:END -->"
+    existing = (
+        "<!-- AUTHORED:START -->\ncritical human design note\n<!-- AUTHORED:END -->"
+    )
     reviewed = "## Overview\nregenerated body with the human note silently gone\n"
     loss = _authored_loss(existing, reviewed)
     assert loss == ["critical human design note"]
@@ -84,7 +86,9 @@ def test_preserved_authored_region_no_loss():
 
 def test_altered_authored_region_is_loss():
     """String equality: any mutation of the region body counts as loss."""
-    existing = "<!-- AUTHORED:START -->\nrationale: we chose X over Y\n<!-- AUTHORED:END -->"
+    existing = (
+        "<!-- AUTHORED:START -->\nrationale: we chose X over Y\n<!-- AUTHORED:END -->"
+    )
     reviewed = "<!-- AUTHORED:START -->\nrationale: we chose X\n<!-- AUTHORED:END -->"
     loss = _authored_loss(existing, reviewed)
     assert loss == ["rationale: we chose X over Y"]

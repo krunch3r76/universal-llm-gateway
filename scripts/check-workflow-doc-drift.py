@@ -119,19 +119,13 @@ def _scan_file(
 
         for pid in PIPELINE_ID_RE.findall(line) + PIPELINE_COLON_RE.findall(line):
             if pid in RETIRED_CITATIONS and not allow_retired:
-                findings.append(
-                    f"{path}:{lineno}: retired pipeline citation `{pid}`"
-                )
+                findings.append(f"{path}:{lineno}: retired pipeline citation `{pid}`")
             elif pid not in pipeline_ids and pid not in RETIRED_CITATIONS:
-                findings.append(
-                    f"{path}:{lineno}: unknown pipeline_id `{pid}`"
-                )
+                findings.append(f"{path}:{lineno}: unknown pipeline_id `{pid}`")
 
         for op in CORTEX_TOOL_RE.findall(line) + CORTEX_TOOL_JSON_RE.findall(line):
             if op in RETIRED_CITATIONS and not allow_retired:
-                findings.append(
-                    f"{path}:{lineno}: retired cortex op `{op}`"
-                )
+                findings.append(f"{path}:{lineno}: retired cortex op `{op}`")
             elif op not in cortex_ops and op not in PENDING_CORTEX_OPS:
                 findings.append(f"{path}:{lineno}: unknown cortex op `{op}`")
 

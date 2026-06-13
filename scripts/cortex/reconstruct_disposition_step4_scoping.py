@@ -209,7 +209,9 @@ def classify_tail(conn: sqlite3.Connection) -> dict[str, Any]:
         uris = parse_uris(r["evidence_uris"])
         eid = str(r["entity_id"])
         non_marker_count = int(
-            conn.execute(NON_MARKER_ASSERTIONS_ON_ENTITY_SQL, (eid, MARKER)).fetchone()[0]
+            conn.execute(NON_MARKER_ASSERTIONS_ON_ENTITY_SQL, (eid, MARKER)).fetchone()[
+                0
+            ]
         )
         net_new_entity = non_marker_count == 0
         enriched.append(

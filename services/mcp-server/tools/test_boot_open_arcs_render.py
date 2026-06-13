@@ -52,3 +52,5 @@ def test_entity_hierarchy_orientation_block() -> None:
     card, _ = render_briefing_card()
     assert "## Entity granularity" in card
     assert "child_of" in card
+    assert "Todos have steps; plans have phases" in card
+    assert "PHASE 1/2/3" in card

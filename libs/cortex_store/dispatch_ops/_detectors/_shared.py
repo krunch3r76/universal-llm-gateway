@@ -62,6 +62,7 @@ SEVERITY = {
     # Fires on open/in_progress todos missing source_uri, required_skills, or a
     # context edge to a non-agent_skill entity.
     "todo_implementation_seed_incomplete": "warning",
+    "todo_implement_readiness_risk": "warning",
     # Handoff prompt ⊄ source file — warn-only at close (thread 1188;
     # decision:handoff-surface-consistency, 2-B). Fires when both
     # handoff_source_path and handoff_prompt are supplied but the prompt

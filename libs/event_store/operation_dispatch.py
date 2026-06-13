@@ -13,6 +13,12 @@ from universal_logging import get_logger
 
 from .operation_catalog import get_operation
 from .operation_types import OperationCallable
+from .operations_delivery_audit import (
+    _delivery_audit_artifacts,
+    _delivery_audit_baseline_campaign,
+    _delivery_audit_parent,
+    _delivery_audit_token_rollup,
+)
 from .operations_impl import (
     _coordination_audit,
     _model_timeline,
@@ -54,6 +60,10 @@ _DISPATCH: dict[str, OperationCallable] = {
     "stack-last-started": _stack_last_started,
     "realtime-snapshot": _realtime_snapshot,
     "verify-tool-execution": _verify_tool_execution,
+    "delivery-audit-parent": _delivery_audit_parent,
+    "delivery-audit-artifacts": _delivery_audit_artifacts,
+    "delivery-audit-token-rollup": _delivery_audit_token_rollup,
+    "delivery-audit-baseline-campaign": _delivery_audit_baseline_campaign,
 }
 
 

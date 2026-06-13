@@ -316,7 +316,9 @@ def _audit(client: object) -> int:
     print(f"  Active skills total     : {len(live_ids)}")
     print(f"  Excluded (deprecated)   : {len(excluded_deprecated)}")
     print(f"  In partition / overrides: {len(partitioned & live_ids)}")
-    print(f"  Unpartitioned (withheld from all seats after deny-flip): {len(unpartitioned)}")
+    print(
+        f"  Unpartitioned (withheld from all seats after deny-flip): {len(unpartitioned)}"
+    )
     for eid in unpartitioned:
         print(f"    - {eid}")
     print(f"  Drifted (PARTITION ≠ live): {len(drifted)}")

@@ -213,6 +213,7 @@ async def test_ledger_non_authority(monkeypatch: pytest.MonkeyPatch) -> None:
     await route_mod._run_sdk_dispatch(
         req=req,
         source_repo=route_mod._CONFIG.source_repo,
+        dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
         bus=bus,
     )
 

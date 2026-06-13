@@ -129,10 +129,10 @@ def _resolve_mcp_token_env(*, real_home: Path | str | None = None) -> dict[str, 
     return env
 
 
-def build_local_agent_options(source_repo: Path) -> LocalAgentOptions:
-    """Mirror IDE Composer ambient settings for a repo checkout."""
+def build_local_agent_options(dispatch_workspace: Path) -> LocalAgentOptions:
+    """Mirror IDE Composer ambient settings; cwd = dispatch write-surface anchor."""
     return LocalAgentOptions(
-        cwd=str(source_repo.resolve()),
+        cwd=str(dispatch_workspace.resolve()),
         setting_sources=_SETTING_SOURCES,
     )
 
@@ -159,6 +159,7 @@ def build_mcp_servers(
 
 def build_agent_options(
     source_repo: Path,
+    dispatch_workspace: Path,
     model: ModelSelection,
     *,
     real_home: Path | str | None = None,
@@ -167,6 +168,6 @@ def build_agent_options(
     return AgentOptions(
         model=model,
         mode="agent",
-        local=build_local_agent_options(source_repo),
+        local=build_local_agent_options(dispatch_workspace),
         mcp_servers=build_mcp_servers(source_repo, real_home=real_home),
     )

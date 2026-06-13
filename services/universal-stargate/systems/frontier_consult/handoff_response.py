@@ -239,8 +239,8 @@ def build_sdk_generate_result(
         "resolved_contract": resolved_contract,
         "capabilities": {
             "role": role,
-            "inline_only": True,
-            "mcp_enabled": False,
+            "inline_only": False,
+            "mcp_connector_active": False,
             "tool_surface": profile.tool_surface,
             "resolved_model": resolved_model,
             "substrate": "sdk",

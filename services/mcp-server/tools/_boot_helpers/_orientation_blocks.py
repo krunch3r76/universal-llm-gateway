@@ -46,7 +46,7 @@ Three layers — do not conflate:
   - **Pre-bound** — tool is in the initial callable set → call directly.
   - **Deferred** — tool absent initially but loadable via `tool_search` → one load hop, then direct call. This is a VALID connector-bound shape; session 0856 observed N=0 pre-bound with all 15 server-primary tools deferred behind `tool_search` (every loaded tool reached a healthy server).
   - **tool_search is the bootstrap** — it is connector-side, always exposed in your system-prompt deferred-tools block (NOT a pre-bound server function). If `team_dispatch` / `tool_search` / any primary looks "absent," that means *not pre-bound*, not dropped: call `tool_search(query="<tool>")` FIRST. "I cannot dispatch because tool_search is missing" is a misread — the bootstrap is always there.
-Probe guidance: "absent from initial set" ≠ "connector dropped it" — run a `tool_search` load hop first. The `mcp.request.started`-event test applies ONLY to deferred SERVER-PRIMARY tools (fs, team_dispatch, …) AFTER a load hop: no-load AND no started event = connector omission → hand off (cursor-consult). It does NOT apply to `tool_search` itself, which is connector-side and emits no server event — never infer omission of `tool_search` from missing events. Do not loop `tool_search`.
+Probe guidance: "absent from initial set" ≠ "connector dropped it" — run a `tool_search` load hop first. The `mcp.request.started`-event test applies ONLY to deferred SERVER-PRIMARY tools (fs, team_dispatch, …) AFTER a load hop: no-load AND no started event = connector omission → hand off (cursor-consult). It does NOT apply to `tool_search` itself, which is connector-side and emits no server event — never infer omission of `tool_search` from missing events. 0 `mcp.tool.search.called` events server-side ≠ `tool_search` never ran — connector-side/pre-bound lookups are invisible to the server; server-side calls DO emit `mcp.tool.search.called` (`tool_search.py`). Do not loop `tool_search`.
 
 **Overflow / deferred load via `tool_search`**:
 ```
@@ -70,7 +70,7 @@ When connector-bound: team_dispatch + panel_dispatch are server-primary — call
 - consensus panel (≥2 families)     → panel_dispatch(messages=[…], dispatch_thread_id="…", disposition="panel")  [primary]
 - stronger-model strategic advice   → dispatch(tool="advisor", arguments='{"problem":"…","context":"goal/evidence/approach/uncertainty/decision"}')  [overflow]
 - RAG advice inside a pipeline      → dispatch(tool="pipeline_consult", arguments='{"execution_id":"…","step_name":"…","problem":"…"}')  [overflow]
-- bounded determinate task → team_dispatch(op=generate, role=cursor-sdk, dispatch_thread_id=<thread>, contract=pure-mechanical|implement, packet_path?=…)
+- bounded determinate task → team_dispatch(op=generate, role=cursor-sdk, dispatch_thread_id=<thread>, contract=light-bounded|pure-mechanical|implement, packet_path?=…)
 - deprecated: op=handoff,seat=cursor-sdk normalizes to generate with a warning
 - run a named pipeline              → pipeline (op=run|async)
 ⚠ A build harness is not a model picker. "Want a grok answer" → team_dispatch(op=generate, role=artisan, model="xai/grok-4.3", …), never a build harness.
@@ -81,8 +81,9 @@ Full shapes: reference:claude-web-lead-seat-surface → claude-web-dispatch-deci
 # to prose — it is reference-density, recoverable from commit-and-git-scope_ws.mdc.
 _ENTITY_HIERARCHY_BLOCK = """\
 ## Entity granularity — seed the right type
+- **Todos have steps; plans have phases** — invariant. `phase` / `Phase N` is plan-domain only (`plan:` / `plan_phase:` / `/implement-plan`). On `todo:` / `task:` use **steps** or **slices**, never phases.
 - **work item** is the canonical genus for actionable Cortex work: `project:`, `plan:`, `task:`, and `todo:`. Use `entity` for graph/storage representation, not as the domain umbrella.
-- **plan:** → **plan_phase:** children — ordered **phases** ("phase" is reserved for plan: / plan_phase: / /implement-plan).
+- **plan:** → **plan_phase:** children — ordered **phases**.
 - **task:** → **todo:** children via `child_of`; umbrella `project:` via `related_to` — bounded arc of ≥2 leaf todos ordered by **steps** (todo ordering / `depends_on`), NOT plan_phase.
 - **todo:** → steps inline in the body — one unit of work. Do NOT cram "PHASE 1/2/3" into a todo (that's a plan).
 Seed with generic primitives (`entity_create` + `relationship_create` `child_of`); refs: `agent-skills/entity-lifecycle-discipline.md` §Vocabulary / §task:X."""
@@ -113,7 +114,7 @@ Mandatory preflight before ANY handoff packet or team_dispatch(op=handoff) — i
   fs(workspaces, .cursor/rules/architecture-handoff-protocol.mdc)   # § Six Blocks
   fs(workspaces, .cursor/rules/handoff-dispatchers.mdc)             # § target seat
 Executor-tier policy (R1/R2/R3 — spec authorship, Composer acceptance, widened-discovery): `consult-routing.md` § Executor tier & handoff mechanics → Canonical routing policy (¬ restate here).
-Codified bug ticket = TWO phases (investigate→dense spec, then execute) + pass zoom-out duty (widen beyond filed symptom; touch-point inventory; bug-class grep; labeled secondary findings in closeout). A filed bug defaults to the INVESTIGATION tier (friction 13571 → thread 1377). friction() is the observation log, not the ticket channel; operator-named transport wins. Full model: consult-routing.md § Codified bug reports → Pass zoom-out duty."""
+Codified bug ticket = the investigate→execute fix cycle (investigate → dense spec, then execute) + pass zoom-out duty (widen beyond filed symptom; touch-point inventory; bug-class grep; labeled secondary findings in closeout). A filed bug defaults to the INVESTIGATION tier (friction 13571 → thread 1377). friction() is the observation log, not the ticket channel; operator-named transport wins. Full model: consult-routing.md § Codified bug reports → Pass zoom-out duty."""
 
 _RAG_SCOPE_AWARENESS_BLOCK = """\
 ## RAG scope-awareness — default search is auto-scoped, not corpus-wide

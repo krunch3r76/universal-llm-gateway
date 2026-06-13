@@ -292,6 +292,7 @@ class AuthMiddleware:
             scope["mcp_caller_identity"] = caller_identity
             record(
                 "mcp.auth.admitted",
+                role="coordination",
                 client_ip=client_ip,
                 client_port=client_port,
                 auth_mode="static",
@@ -314,6 +315,7 @@ class AuthMiddleware:
                 caller_identity = token_record.client_id
                 record(
                     "mcp.auth.admitted",
+                    role="coordination",
                     client_ip=client_ip,
                     client_port=client_port,
                     auth_mode="oauth",
@@ -322,7 +324,11 @@ class AuthMiddleware:
                     path=path,
                     user_agent=user_agent,
                 )
-                record("mcp.oauth.token.accepted", client_id=token_record.client_id)
+                record(
+                    "mcp.oauth.token.accepted",
+                    role="coordination",
+                    client_id=token_record.client_id,
+                )
                 scope["auth_mode"] = "oauth"
                 scope["oauth_client_id"] = token_record.client_id
                 scope["mcp_caller_identity"] = caller_identity
@@ -334,16 +340,22 @@ class AuthMiddleware:
                 )
                 await self._app(scope, receive, send)
                 return
-            record("mcp.oauth.token.rejected", reason="unknown_or_expired")
+            record(
+                "mcp.oauth.token.rejected",
+                role="coordination",
+                reason="unknown_or_expired",
+            )
 
         if token is not None:
             record(
                 "mcp.profile.rejected",
+                role="coordination",
                 reason="unauthorized_token",
             )
 
         record(
             "mcp.request.unauthorized",
+            role="coordination",
             client_ip=client_ip,
             client_port=client_port,
             path=path,

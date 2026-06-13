@@ -150,11 +150,22 @@ def _resolve_payload_var(
     required: tuple[str, ...] = ()
     optional: list[str] = []
     for stmt in ast.walk(funcdef):
-        if (
-            isinstance(stmt, ast.Assign)
-            and len(stmt.targets) == 1
-            and isinstance(stmt.targets[0], ast.Name)
-            and stmt.targets[0].id == name
+        if isinstance(stmt, ast.Assign):
+            if (
+                len(stmt.targets) == 1
+                and isinstance(stmt.targets[0], ast.Name)
+                and stmt.targets[0].id == name
+                and isinstance(stmt.value, ast.Dict)
+            ):
+                required = tuple(
+                    k.value
+                    for k in stmt.value.keys
+                    if isinstance(k, ast.Constant) and isinstance(k.value, str)
+                )
+        elif (
+            isinstance(stmt, ast.AnnAssign)
+            and isinstance(stmt.target, ast.Name)
+            and stmt.target.id == name
             and isinstance(stmt.value, ast.Dict)
         ):
             required = tuple(

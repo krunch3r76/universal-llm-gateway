@@ -58,7 +58,9 @@ def main() -> int:
     print(f"- promotions: {counts.promotions}")
     print(f"- unchanged: {counts.unchanged}")
     print(f"- skipped: {counts.skipped}")
-    print(f"  - non_status_confidence_field: {counts.skipped_non_status_confidence_field}")
+    print(
+        f"  - non_status_confidence_field: {counts.skipped_non_status_confidence_field}"
+    )
     print(f"  - lifecycle_axis: {counts.skipped_lifecycle_axis}")
     print(f"  - adoption_type: {counts.skipped_adoption_type}")
     print(f"  - missing_entity: {counts.skipped_missing_entity}")

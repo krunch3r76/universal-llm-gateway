@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from cursor_sdk.types import ModelSelection
 
+from services.git_integration_worker.config import _DIFF_SCOPED_GATE_SCRIPT, load_config
 from services.git_integration_worker.cursor_sdk_context import (
     CursorSdkParityError,
     build_agent_options,
@@ -25,12 +26,46 @@ def _stub_repo(tmp_path: Path) -> Path:
     return repo
 
 
+def test_local_agent_options_cwd_is_dispatch_workspace(tmp_path: Path) -> None:
+    """cwd must equal dispatch_workspace, NOT source_repo."""
+    dispatch_ws = tmp_path / "dispatch"
+    dispatch_ws.mkdir()
+    opts = build_local_agent_options(dispatch_ws)
+    assert opts.cwd == str(dispatch_ws.resolve())
+
+
 def test_local_agent_options_load_all_setting_sources(tmp_path: Path) -> None:
-    repo = tmp_path / "universal-llm-gateway"
-    repo.mkdir()
-    opts = build_local_agent_options(repo)
-    assert opts.cwd == str(repo.resolve())
+    dispatch_ws = tmp_path / "dispatch"
+    dispatch_ws.mkdir()
+    opts = build_local_agent_options(dispatch_ws)
+    assert opts.cwd == str(dispatch_ws.resolve())
     assert list(opts.setting_sources or ()) == ["all"]
+
+
+def test_mcp_proxy_anchors_to_source_repo(tmp_path: Path) -> None:
+    """MCP stdio proxy path stays anchored to source_repo even when dispatch_workspace differs."""
+    source_repo = tmp_path / "repo"
+    source_repo.mkdir()
+    proxy_dir = source_repo / "scripts"
+    proxy_dir.mkdir(parents=True)
+    proxy = proxy_dir / "mcp-stdio-proxy.py"
+    proxy.touch()
+    servers = build_mcp_servers(source_repo)
+    assert "user-vortex" in servers
+    assert str(proxy.resolve()) in servers["user-vortex"].args
+
+
+def test_green_gate_cmd_independent_of_dispatch_workspace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """GIT_INTEGRATION_DISPATCH_WORKSPACE must not appear in or influence green_gate_cmd."""
+    fake_dispatch_ws = "/mnt/torus/projects/some-unrelated-path"
+    monkeypatch.setenv("GIT_INTEGRATION_DISPATCH_WORKSPACE", fake_dispatch_ws)
+    cfg = load_config()
+    gate_script = " ".join(cfg.green_gate_cmd)
+    assert "refs/heads/master...HEAD" in gate_script
+    assert fake_dispatch_ws not in gate_script
+    assert _DIFF_SCOPED_GATE_SCRIPT in gate_script
 
 
 def test_mcp_servers_use_stdio_proxy(tmp_path: Path) -> None:
@@ -135,9 +170,11 @@ def test_build_agent_options_wires_model_and_local(
 ) -> None:
     monkeypatch.setenv("MCP_TOKEN", "tok")
     repo = _stub_repo(tmp_path)
+    dispatch_ws = tmp_path / "dispatch"
+    dispatch_ws.mkdir()
     model = ModelSelection(id="composer-2.5")
 
-    opts = build_agent_options(repo, model)
+    opts = build_agent_options(repo, dispatch_ws, model)
     assert opts.model == model
     assert opts.mode == "agent"
     assert opts.local is not None

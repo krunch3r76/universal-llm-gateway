@@ -199,6 +199,64 @@ _register(
     )
 )
 
+_register(
+    OperationDef(
+        name="delivery-audit-parent",
+        description=(
+            "Fetch one B3 delivery-audit parent row from the sibling "
+            "delivery-audit.db registry"
+        ),
+        params={
+            "audit_id": {"type": "string"},
+            "execution_id": {"type": "string"},
+            "request_id": {"type": "string"},
+            "dispatch_id": {"type": "string"},
+        },
+        returns="parent row or null plus lookup key used",
+    )
+)
+
+_register(
+    OperationDef(
+        name="delivery-audit-artifacts",
+        description=(
+            "List delivered artifact rows for a B3 audit parent ordered by "
+            "artifact_sequence"
+        ),
+        params={"audit_id": {"type": "string", "required": True}},
+        returns="artifact rows plus count",
+    )
+)
+
+_register(
+    OperationDef(
+        name="delivery-audit-token-rollup",
+        description=(
+            "Per-execution/session token-locality rollup derived from B3 "
+            "delivered-artifact rows via derive_token_rollups"
+        ),
+        params={"audit_id": {"type": "string", "required": True}},
+        returns="token rollup object plus count",
+    )
+)
+
+_register(
+    OperationDef(
+        name="delivery-audit-baseline-campaign",
+        description=(
+            "Campaign p50/p95 token-locality report by workflow class and "
+            "seat substrate from guidance workflow-summary rows"
+        ),
+        params={
+            "campaign_id": {"type": "string", "required": True},
+            "phase": {"type": "string", "default": "baseline"},
+            "seat_substrate": {"type": "string"},
+            "workflow_class": {"type": "string"},
+        },
+        returns="workflow-class percentile summaries plus N<50 p95 caveats",
+    )
+)
+
 
 def list_operations() -> list[dict[str, Any]]:
     """Return all registered operation definitions as serializable dicts."""

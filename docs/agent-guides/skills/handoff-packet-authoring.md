@@ -8,6 +8,42 @@ go missing under task pressure (incident threads 1296/1297). Authority for the
 block contract: project `.cursor/rules/architecture-handoff-protocol.mdc`
 § "The Six Required Blocks".
 
+## Spec vs packet — two different artifacts (read first)
+
+A **spec** is the durable *design* (the cargo). A **packet** is an ephemeral
+*transport envelope* around it (the container). The same spec is re-wrapped into a
+fresh packet for each handoff leg — that loop is intended, not redundant.
+
+| | Spec | Packet |
+|---|---|---|
+| Nature | Durable design — *what to build* | Ephemeral transport — *one handoff's payload* |
+| Path | `tasks/specs/{slug}.md` (RAG `todo_specs`) | `tmp/reviews/{slug}-*.md` (disposable) |
+| Lifetime | Persists across sessions | Scoped to a single dispatch |
+| Author | Reasoning tier hardens it (web-Opus at densify) | Dispatching seat wraps it per leg |
+| Audience | Any agent who later picks up the work | The one model on the other end of *this* dispatch |
+| Holds | Problem, scope, touch points, steps, ACs, `<reasoning_trace>`, bound forks | Six XML blocks (scope/invariants/task_guidance/corpus/mcp_capabilities/output_format) |
+| Why it exists | Single source of truth for the design | Injects what the receiver is blind to (workspace rules, invariants, investigation targets, output contract) |
+
+**Naming discipline — never bare "packet".** Always qualify by contract:
+- **consult packet** — Gate 2; front-matter `contract: consult`; `<output_format>` asks the receiver to *produce a dense spec*.
+- **implement packet** — Gate 3; `contract: implement`; ACs with the literal word `acceptance` in `<task_guidance>`; asks the receiver to *execute*.
+
+The two carry **opposite output contracts** (design prose vs code edits) — that is why
+the same work needs two packets, and why one cannot be reused as the other.
+
+**The lifecycle loop (intended):**
+
+```
+consult packet   →   spec   →   implement packet
+  Gate 2 in         Gate 2 out      Gate 3 in
+```
+
+`architecture-handoff-protocol.mdc` Gate 3: *"Dense spec ≠ dispatchable packet"*
+(friction #16805). A spec is **never** dispatched raw to an executor — it is always
+re-wrapped into an implement packet (spec body → `<corpus>`, ACs → `<task_guidance>`).
+Web saying *"a spec is not a packet — I owe a hand-authored six-block packet"* is this
+rule firing correctly, **not** a verdict that the upstream consult packet was malformed.
+
 ## Dispatch lifecycle (when to author which packet)
 
 **Invariant:** Reasoning tier (`web-consult` / `cursor-consult` / Opus) authors
@@ -34,9 +70,9 @@ Read `attributes.dispatch_lane` on the leaf `todo:` before writing anything.
 **Counter-pattern:** mechanical work with a dense todo spec (e.g. corpus export) —
 `dispatch_lane: cursor-mechanical`, `density: mechanical`; skip web entirely.
 
-**Codified bug tickets bind to this same pipeline (two-phase):** a filed bug/friction
-defaults to **Phase 1 investigate + decide** (`cursor-consult` / `web-consult` — the
-reasoning-upstream hop that produces the dense spec) → **Phase 2 execute**
+**Codified bug tickets bind to this same pipeline (investigate→execute):** a filed bug/friction
+defaults to **investigate + decide** (`cursor-consult` / `web-consult` — the
+reasoning-upstream hop that produces the dense spec) → **execute**
 (`cursor-implement` against that spec, or web inline fix — the mechanical-downstream hop).
 Do not author a `cursor-implement` packet as the first hop on a bug whose root cause or
 design is still open; that collapses the upstream → dense-artifact → downstream pipeline
@@ -50,19 +86,125 @@ dispatch — set `workflow_state: blocked` + `block_reason` on the blocked leaf.
 
 Full attribute table: `universal-llm-gateway/.cursor/rules/todo_ws.mdc` §Dispatch metadata.
 
-## General execution without packet (messages-only)
+## Staging a todo for densification (operator trigger → fixed sequence)
+
+Operator says *"draft a preliminary packet for `todo:{slug}` and submit to web for
+densification"* (or *"stage `todo:{slug}` for densification"* / *"stage `todo:{slug}` for
+densification and submit to web-claude"*). This is **Gate 2 entry** —
+produce a **consult packet**, never an implement packet. "Preliminary packet" = the Gate 2
+consult packet (the container that *requests* the spec); it is **not** a Gate 3 implement
+packet built ahead of the spec. Run exactly, every time:
+
+**Authority boundary:** Gate 2 staging is retrieval/scaffolding only. The stager may
+perform mechanical synthesis — summarize known constraints, group candidate files, quote
+existing assertions, list hypotheses, and name forks — but MUST preserve judgment for the
+densifier. ¬ resolve design forks; ¬ select implementation shape; ¬ mark the task
+implementation-ready; ¬ author a Gate 3 implement packet. If the next useful step requires
+design judgment, write a minimal consult packet with the unresolved forks/questions and
+dispatch.
+
+**Triage precondition (declared-state, ¬ inferred).** Whether a sparse todo is densified
+by a reasoning tier or staged mechanically is an **escalation** decision — and the tier
+that would need to escalate (Composer at staging) is the one empirically least reliable at
+making it (`model-tier-awareness.mdc`, thread 807). So it is **declared** by an authorized
+reasoner/operator via `attributes.density_triage`, never inferred from prose by the stager:
+- `judgment_required` ⟹ this sequence (reasoning-tier densify); ¬ mechanical stage to Composer.
+- `mechanical` ⟹ skip densify only with a dense source + `required_skills` + context edge + **no open forks**.
+- `unknown` / unset ⟹ implement dispatch **blocked**; consult/densify is the only admissible path — set the triage before proceeding.
+A heuristic detector MUST NOT be the arbiter here (sparse-but-mechanical false-positives,
+confident-but-unresolved false-negatives, boilerplate gaming); the server enforces the
+*declared* state, judgment stays with the human/reasoner (thread 1783 critique).
+
+1. **Verify the lane.** `cortex(entity_get, todo:{slug}, intent=full)` — confirm
+   `dispatch_lane ∈ {web-spec, web-implement-packet}` (densify-bound), read `required_skills`,
+   prior assertions, source signals. Wrong lane (`cursor-mechanical`, or a dense spec already
+   exists) ⟹ densify is the wrong move — say so, do not dispatch.
+2. **Seed the stub spec** at `tasks/specs/{slug}.md` (Gate 2b draft): STEP 0 adequacy
+   verdict + Problem/Scope skeleton + `<reasoning_trace>` provenance table + **unresolved**
+   `§8` forks (Composer surfaces forks blank; does NOT resolve them). Then
+   `entity_update(source_uri="tasks/specs/{slug}.md", workflow_state="in_progress")`. The
+   stub IS written — folding it only into `<corpus>` and skipping the file is the divergence
+   this section closes.
+3. **Author the consult packet** at `tmp/reviews/{slug}-harden-web-consult-packet.md`:
+   front-matter `contract: consult` + web boot-gate fields (`active_project_tag`,
+   `cortex_boot_confirmed`, `related_thread_ids`). Six blocks, Gate-2 shaped
+   (skeleton: `handoff-dispatchers.mdc` § Gate 2 packet skeleton). `<corpus>` references the
+   stub + todo attributes; `<output_format>` demands a **dense spec**, not v1 patches;
+   closeout signal `ready-for-Composer-implement`. **Anchoring guard** — `<corpus>` MUST
+   label the stub as a *retrieval index, non-authoritative*: "re-derive from primary
+   artifacts; ¬ elaborate candidate structure unless independently confirmed." A cheap
+   scaffold silently anchors the densifier into elaborating a flawed design otherwise.
+4. **Dispatch.** `team_dispatch(op=handoff, role=web-consult, packet_path=tmp/reviews/{slug}-harden-web-consult-packet.md, subject=…)`.
+   ¬ pass a `contract=` param — `consult` is derived from front-matter; the `team_dispatch`
+   `contract` enum is `{light-bounded, pure-mechanical, implement}` only, so `contract="consult"`
+   is a **422 validation error**.
+5. **Hand back.** Report thread id + `push_reminder`. The dense spec lands at
+   `tasks/specs/{slug}.md` when web closes `ready-for-Composer-implement`. Gate 3 (wrap the
+   dense spec → implement packet) is a **separate, later** step — do NOT pre-author it now.
+   See § Gate 3 — wrap for the inline procedure.
+
+**Entity hygiene is the dispatching seat's duty — not something the reviewer should have to
+offer.** A staged-but-stale todo (`unsubstantiated`, no `source_uri`, no tracking assertion)
+forces the densify reviewer to either fix workflow-state it doesn't own or hold off and ask —
+the exact hesitation seen on thread 1770. Close it at the source:
+- **At stage** (step 2 already sets `source_uri` + `workflow_state=in_progress`): also seed a
+  tracking assertion on `todo:{slug}` — derivation `agent_observation`, citing the stub spec
+  path + dispatch thread (e.g. *"Staged for densification: stub spec at
+  `tasks/specs/{slug}.md`, consult packet dispatched to web on thread N."*). This clears the
+  *"no spec recorded"* flag and gives the entity a cited artifact.
+- **Leave `confidence_band` as-is** at stage — the design is not ratified yet; a stub spec is
+  not substantiation. Band promotion comes later, not from the act of staging.
+- **At Gate 2 close** (`ready-for-Composer-implement`): record an implement-ready assertion
+  citing the now-dense spec; promote `confidence_band` per the ratified design;
+  `workflow_state` stays `in_progress` until Gate 3 completes.
+
+The reviewer never has to ask permission to fix todo hygiene — by this contract it was never
+theirs to fix.
+
+## Gate 3 — wrap (inline mechanical, current-seat)
+
+Wrapping the dense spec into a six-block implement packet is **mechanical** — but only
+*after* the design is settled. Separate two acts the same word "wrap" hides:
+**artifact-generation** (write the packet) is mechanical and stays inline in the current
+seat; **implementation** (execute the packet) is the dispatch.
+
+**Precondition gate (both required).** ¬ wrap until:
+- an **active implement-ready assertion** cites the dense spec (¬ mere `source_uri` existence; ¬ a `seed_contract_ack`), AND
+- the dense spec has **zero OPEN forks** (`§8` empty or explicitly closed).
+
+The "is it dense?" check is now **mechanical**, not eyeballed: the dense spec MUST pass `validate_dense_spec` (`libs/implement_admission/dense_spec_schema.py` — required sections present, non-empty `<reasoning_trace>` attestation, zero live `OPEN:` markers on code-stripped text), the same gate admission re-runs at the cited evidence URI (`todo:dense-spec-schema`).
+
+**Inline wrap procedure** (current seat — ANY reasoning-authorized tier; ¬ a dispatch):
+1. Read `todo:{slug}` + `source_uri`; confirm the implement-ready assertion is active.
+2. Verify the dense spec carries: problem/scope, touched files/functions, steps, acceptance criteria, tests/verification, resolved-forks (or explicit "none").
+3. Author the implement packet inline at `tmp/reviews/{slug}-implement-packet.md`: spec body → `<corpus>`, ACs → `<task_guidance>` (literal `acceptance`), front-matter `contract: implement`; self-check the six anchored `^<tag>$` blocks.
+4. **Halt rule** — if any open fork or design gap surfaces during wrap, STOP and route back to Gate 2 densification. ¬ resolve it inside the wrap; wrapping is transport, not design.
+5. **Then** dispatch *implementation* of the now-dense packet: `team_dispatch(op=generate, role=cursor-sdk, contract=implement, packet_path=…, dispatch_thread_id={arc-id})`.
+
+**Antipattern — do NOT dispatch the wrap itself.** Routing the wrap *step* to `cursor-sdk`
+(case study `todo:densification-workflow-stage-wrap-tier-policy`, threads 1781/1785) cost a
+wrapper packet + a context thread (after `generate` rejected an empty `dispatch_thread_id`)
++ retry + a separate result-thread poll — disproportionate ceremony for inline
+packetization the current seat does in one write. The *implementation* dispatch after the
+packet existed ran clean (thread 1785: intended files only, compileall/ruff/pytest 45-passed/
+import-check green). A first-class wrap transport (`packet_path` with no pre-seeded dispatch
+thread) is a deferred fallback, considered only if inline current-seat wrap proves
+insufficient.
+
+## General execution without packet (contract-based)
 
 **Schema-free is NOT direction-free.** A `cursor-sdk` dispatch for a fully
 **determinate** task with **pre-authored** values may omit the six-block packet —
-`team_dispatch(op=generate, role=cursor-sdk, dispatch_thread_id=…, messages=[…])` —
-but Composer 2.5 is still a mechanical executor, so messages-only directions must be
-explicit, detailed, restrictive, and bounded. This is a distinct lane from the dense
-implement packet, **not** a lighter packet.
+`team_dispatch(op=generate, role=cursor-sdk, dispatch_thread_id=…, contract=light-bounded|pure-mechanical)` —
+with explicit instructions pre-staged on the dispatch thread. Composer 2.5 is still a
+mechanical executor, so thread-staged directions must be explicit, detailed,
+restrictive, and bounded. This is a distinct lane from the dense implement packet,
+**not** a lighter packet. `messages[]` is not on the wire.
 
 Canonical lane definition — the three-point spectrum (Dense Implement / Light Bounded
-Execution / Pure Mechanical Write Loop) and the 10-point messages-only instruction
+Execution / Pure Mechanical Write Loop) and the 10-point general-execution instruction
 checklist — lives in the SOT: `agent-skills/consult-routing.md` § General execution
-lane (messages-only — no packet). Do not duplicate the body here.
+lane (contract-based — no packet). Do not duplicate the body here.
 
 ## Friction-ticket packets (extra preflight)
 
@@ -180,6 +322,11 @@ invert the § Dispatch lifecycle invariant, because the scaffold carries structu
 
 Gate (per block): scaffold iff the block is low-judgment; densify iff it carries
 design judgment a wrong draft could **anchor**.
+
+Verification posture for densification: the preliminary todo/spec/packet is a
+fallible candidate, not authority. The reasoner must re-derive the task from
+primary artifacts before accepting the scaffold's claims, then correct or discard
+wrong framing instead of elaborating it into the dense artifact.
 
 | Block | Scaffold (Composer) | Densify (reasoner) |
 |---|---|---|

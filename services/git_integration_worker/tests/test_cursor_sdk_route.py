@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -289,6 +290,7 @@ async def test_dispatch_implement_stub_degraded(
     await route_mod._run_sdk_dispatch(
         req=req,
         source_repo=route_mod._CONFIG.source_repo,
+        dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
         bus=bus,
     )
 
@@ -337,6 +339,7 @@ async def test_dispatch_implement_success_ok(
     await route_mod._run_sdk_dispatch(
         req=req,
         source_repo=route_mod._CONFIG.source_repo,
+        dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
         bus=bus,
     )
 
@@ -381,6 +384,7 @@ async def test_dispatch_reply_targets_caller_agent(
     await route_mod._run_sdk_dispatch(
         req=req,
         source_repo=route_mod._CONFIG.source_repo,
+        dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
         bus=bus,
     )
 
@@ -417,6 +421,7 @@ async def test_dispatch_reply_defaults_to_dispatch(
     await route_mod._run_sdk_dispatch(
         req=req,
         source_repo=route_mod._CONFIG.source_repo,
+        dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
         bus=bus,
     )
 
@@ -459,6 +464,7 @@ async def test_dispatch_consult_zero_tool_calls_not_degraded(
     await route_mod._run_sdk_dispatch(
         req=req,
         source_repo=route_mod._CONFIG.source_repo,
+        dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
         bus=bus,
     )
 
@@ -497,6 +503,7 @@ async def test_dispatch_exception_posts_failure_turn_and_event(
     await route_mod._run_sdk_dispatch(
         req=req,
         source_repo=route_mod._CONFIG.source_repo,
+        dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
         bus=bus,
     )
 
@@ -553,6 +560,7 @@ async def test_dispatch_home_config_error_posts_bus_reply(
     await route_mod._run_sdk_dispatch(
         req=req,
         source_repo=route_mod._CONFIG.source_repo,
+        dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
         bus=bus,
     )
 
@@ -564,6 +572,156 @@ async def test_dispatch_home_config_error_posts_bus_reply(
     assert call is not None
     assert "FAILED (home/auth)" in call.kwargs["subject"]
     assert "CURSOR_HOME_CONFIG" in call.kwargs["body"]
+
+
+def _fake_repo_venv(tmp_path: Path) -> Path:
+    venv = tmp_path / "repo-venv"
+    bindir = venv / "bin"
+    bindir.mkdir(parents=True)
+    for exe in ("python", "pytest", "ruff"):
+        (bindir / exe).touch()
+    return venv
+
+
+def test_run_sdk_sync_injects_venv_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import os
+
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    repo_venv = _fake_repo_venv(tmp_path)
+    dispatch_home = tmp_path / "dispatch-home"
+    dispatch_home.mkdir()
+    monkeypatch.setenv("CURSOR_SDK_VENV_PATH", str(repo_venv))
+
+    prev_home = os.environ.get("HOME")
+    prev_venv = os.environ.get("VIRTUAL_ENV")
+    prev_path = os.environ.get("PATH")
+
+    captured: dict[str, str] = {}
+
+    def _fake_launch_bridge(*_args: object, **_kwargs: object) -> MagicMock:
+        captured.update(dict(os.environ))
+
+        class _Run:
+            def wait(self) -> MagicMock:
+                return MagicMock(result="ok", status="finished", duration_ms=100)
+
+            def conversation(self) -> list[object]:
+                return []
+
+        class _Agent:
+            id = "agent-1"
+
+            def send(self, _prompt: str) -> _Run:
+                return _Run()
+
+        client = MagicMock()
+        client.create_agent.return_value = _Agent()
+        client.close = MagicMock()
+        return client
+
+    monkeypatch.setattr(
+        route_mod, "setup_cursor_dispatch_home", lambda _did: dispatch_home
+    )
+    monkeypatch.setattr(route_mod, "validate_dispatch_context", lambda _repo: {})
+    monkeypatch.setattr(
+        route_mod, "resolve_cursor", lambda _mid: MagicMock(model_id="composer-2.5")
+    )
+    monkeypatch.setattr(
+        route_mod,
+        "build_model_selection",
+        lambda _cfg, _ov: MagicMock(params=[]),
+    )
+    monkeypatch.setattr(
+        route_mod,
+        "build_agent_options",
+        lambda _repo, _ws, _sel: MagicMock(local=True),
+    )
+    monkeypatch.setattr(route_mod.Client, "launch_bridge", _fake_launch_bridge)
+    monkeypatch.setattr(
+        route_mod, "_start_heartbeat", lambda **_kw: (MagicMock(), MagicMock())
+    )
+
+    route_mod._run_sdk_sync(
+        source_repo=route_mod._CONFIG.source_repo,
+        dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        prompt="hello",
+        config_model_id="cursor/composer-2.5",
+        selection_overrides=None,
+        dispatch_id="disp-venv",
+        thread_id="1752",
+        resolved_model="composer-2.5",
+    )
+
+    assert captured["HOME"] == str(dispatch_home)
+    assert captured["VIRTUAL_ENV"] == str(repo_venv)
+    assert captured["PATH"].split(os.pathsep)[0] == str(repo_venv / "bin")
+    assert os.environ.get("HOME") == prev_home
+    assert os.environ.get("VIRTUAL_ENV") == prev_venv
+    assert os.environ.get("PATH") == prev_path
+
+
+@pytest.mark.asyncio
+async def test_dispatch_venv_config_error_posts_bus_reply(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    req = CursorDispatchRequest(
+        thread_id="1752",
+        model="cursor/composer-2.5",
+        dispatch_id="disp-venv-fail",
+        execution_id="exec-venv-fail",
+        message="hello",
+    )
+    bus = _mock_bus()
+    launch_called = False
+    dispatch_home = tmp_path / "dispatch-home"
+    dispatch_home.mkdir()
+
+    def _track_launch(*_args: object, **_kwargs: object) -> MagicMock:
+        nonlocal launch_called
+        launch_called = True
+        return MagicMock()
+
+    monkeypatch.setenv("CURSOR_SDK_VENV_PATH", str(tmp_path / "missing-venv"))
+    monkeypatch.setattr(
+        route_mod, "setup_cursor_dispatch_home", lambda _did: dispatch_home
+    )
+    monkeypatch.setattr(route_mod, "validate_dispatch_context", lambda _repo: {})
+    monkeypatch.setattr(
+        route_mod, "resolve_cursor", lambda _mid: MagicMock(model_id="composer-2.5")
+    )
+    monkeypatch.setattr(
+        route_mod,
+        "build_model_selection",
+        lambda _cfg, _ov: MagicMock(params=[]),
+    )
+    monkeypatch.setattr(
+        route_mod,
+        "build_agent_options",
+        lambda _repo, _ws, _sel: MagicMock(local=True),
+    )
+    monkeypatch.setattr(route_mod.Client, "launch_bridge", _track_launch)
+
+    await route_mod._run_sdk_dispatch(
+        req=req,
+        source_repo=route_mod._CONFIG.source_repo,
+        dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        bus=bus,
+    )
+
+    assert not launch_called
+    bus.reply.assert_awaited_once()
+    bus.terminate_dispatch.assert_awaited_once_with(
+        thread_id="1752", terminal_status="failed"
+    )
+    call = bus.reply.await_args
+    assert call is not None
+    assert "FAILED (venv config)" in call.kwargs["subject"]
+    assert "CURSOR_VENV_CONFIG" in call.kwargs["body"]
 
 
 @pytest.mark.asyncio
@@ -606,6 +764,7 @@ async def test_dispatch_timeout_posts_failure_and_terminates(
     await route_mod._run_sdk_dispatch(
         req=req,
         source_repo=route_mod._CONFIG.source_repo,
+        dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
         bus=bus,
     )
 

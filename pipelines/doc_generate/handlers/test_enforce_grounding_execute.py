@@ -81,9 +81,7 @@ def _make_context(
 async def test_execute_raises_on_authored_loss_no_step_output():
     """F3 guarantee: dropped AUTHORED body aborts before any doc_markdown is emitted."""
     existing = (
-        "<!-- AUTHORED:START -->\n"
-        "critical human design note\n"
-        "<!-- AUTHORED:END -->"
+        "<!-- AUTHORED:START -->\ncritical human design note\n<!-- AUTHORED:END -->"
     )
     reviewed = "## Overview\nregenerated body without the human note\n"
     context = _make_context(existing_doc=existing, reviewed_doc=reviewed)

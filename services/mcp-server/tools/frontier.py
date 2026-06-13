@@ -266,8 +266,11 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         Three ops:
         - ``op="generate"``: admits dispatch and returns ``{execution_id,
           capabilities, knob_resolution, ...}``. ``capabilities`` echoes
-          effective ``inline_only``, ``mcp_enabled``, ``tool_surface``, and
-          ``resolved_model`` for the admitted role. Returns ``knob_resolution`` for reasoning
+          effective ``inline_only``, ``mcp_connector_active``, ``tool_surface``,
+          and ``resolved_model`` for the admitted role. ``mcp_connector_active``
+          is True iff Stargate activated a provider-side MCP connector for this
+          dispatch; it is not a general indicator of executor tool access — use
+          ``tool_surface`` for that. Returns ``knob_resolution`` for reasoning
           knob transparency: ``value_kind``, ``reasoning_native``, ``status``,
           ``parity`` (``not_claimed`` unless otherwise stated), and ``notes``.
           Poll with ``pipeline(op="result", execution_id=...)`` for content.

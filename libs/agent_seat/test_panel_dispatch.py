@@ -68,7 +68,6 @@ def test_build_team_dispatch_body_shape() -> None:
     spec = PanelMemberSpec(role="reviewer", model="openai/gpt-5.5")
     body = build_team_dispatch_body(
         spec=spec,
-        messages=[{"role": "user", "content": "test"}],
         dispatch_thread_id="cursor-2026-06-02-panel",
         caller_agent="claude-cursor",
     )
@@ -84,7 +83,6 @@ def test_build_team_dispatch_body_omits_model_when_role_default() -> None:
     spec = PanelMemberSpec(role="skeptic", model=None)
     body = build_team_dispatch_body(
         spec=spec,
-        messages=[{"role": "user", "content": "test"}],
         dispatch_thread_id="cursor-2026-06-02-panel",
     )
     assert body["role"] == "skeptic"
@@ -96,7 +94,6 @@ def test_build_team_dispatch_body_passes_generate_options() -> None:
     spec = PanelMemberSpec(role="reviewer", model="openai/gpt-5.5")
     body = build_team_dispatch_body(
         spec=spec,
-        messages=[{"role": "user", "content": "test"}],
         dispatch_thread_id="cursor-2026-06-02-panel",
         reasoning_effort="high",
         generation_options={"temperature": 0.2},
@@ -364,4 +361,4 @@ def test_panel_result_envelope_member_knob_resolution() -> None:
     assert "stamp_warnings" in envelope
     panel_caps = envelope["panel_capabilities"]
     assert panel_caps["skeptic"]["inline_only"] is True
-    assert panel_caps["reviewer"]["mcp_enabled"] is True
+    assert panel_caps["reviewer"]["mcp_connector_active"] is True

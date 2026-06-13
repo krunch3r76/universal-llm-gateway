@@ -61,6 +61,48 @@ def parse_dispatch_arguments(raw: object) -> dict[str, Any] | None:
     return None
 
 
+# Dispatch-style MCP tools: the inner ``arguments`` field is a JSON-encoded
+# object string. The schema deliberately declares ``arguments: str`` — Claude.ai's
+# MCP client silently drops optional params with anyOf/object JSON Schema
+# (``mcp-tool-param-types`` invariant), so widening this to an object/union shape
+# is NOT an option. Single source of truth for the tool set so descriptors, docs,
+# and tests cannot drift. See decision:dispatch-arguments-string-wire-form.
+DISPATCH_STYLE_TOOLS: frozenset[str] = frozenset(
+    {"cortex", "agent_bus", "agent_bus_read", "rag", "dispatch"}
+)
+
+# A failed parse of a *string* ``arguments`` is almost always an escaping problem
+# on a large, quote-heavy payload (frictions 12886, 17227 — session_close with
+# embedded quotes / JSON snippets / code fences). Point the caller at the safe
+# offload paths instead of leaving them to re-escape by hand.
+_DISPATCH_ARGS_OFFLOAD_HINT = (
+    " If the payload contains quotes, newlines, or embedded JSON/code fences "
+    "(e.g. a large transcript_md or handoff_prompt), do not hand-build the JSON "
+    "string: write the payload to a file and pass a file-path parameter instead "
+    "(session_close: transcript_jsonl_path / handoff_source_path / source_ref), "
+    "or use the /agent-bus CLI, which bypasses MCP shape validation."
+)
+
+
+def dispatch_arguments_error(raw: object, *, example: str) -> dict[str, str]:
+    """Build the standard dispatch-style "arguments did not parse" error.
+
+    Single source of truth for the message emitted when
+    ``parse_dispatch_arguments`` returns ``None`` across the dispatch-style MCP
+    surfaces (cortex/agent_bus/agent_bus_read/rag/dispatch). When ``raw`` is a
+    ``str`` (the canonical wire form) the message appends an offload hint, since a
+    failed string parse is almost always an escaping failure on a large
+    quote-heavy payload. See decision:dispatch-arguments-string-wire-form.
+    """
+    message = (
+        f"arguments must be a JSON-encoded object string (e.g. '{example}'); "
+        f"got {type(raw).__name__} that did not parse as a JSON object"
+    )
+    if isinstance(raw, str):
+        message += _DISPATCH_ARGS_OFFLOAD_HINT
+    return {"error": message}
+
+
 def _execute_cortex_dispatch(args: dict[str, Any]) -> str:
     """Execute the unified cortex dispatch tool via cortex-api POST /dispatch."""
     tool = args.get("tool", "")

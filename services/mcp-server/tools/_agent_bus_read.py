@@ -72,7 +72,10 @@ def register_agent_bus_read_tool(mcp: FastMCP) -> None:
         Note: mark_read=true mutates per-turn read pointers, not thread/turn
         content; it is permitted here as a read-cursor side effect.
         """
-        from ._agent_tools import parse_dispatch_arguments
+        from ._agent_tools import (
+            dispatch_arguments_error,
+            parse_dispatch_arguments,
+        )
 
         handler = AGENT_BUS_READ_OPS.get(tool)
         if handler is None:
@@ -90,14 +93,7 @@ def register_agent_bus_read_tool(mcp: FastMCP) -> None:
         try:
             parsed = parse_dispatch_arguments(arguments)
             if parsed is None:
-                return {
-                    "error": (
-                        "arguments must be a JSON-encoded object string "
-                        f'(e.g. \'{{"thread": "111"}}\'); got '
-                        f"{type(arguments).__name__} that did not parse as a "
-                        "JSON object"
-                    )
-                }
+                return dispatch_arguments_error(arguments, example='{"thread": "111"}')
             accepted = set(inspect.signature(handler).parameters)
             unknown = [k for k in parsed if k not in accepted]
             if unknown:

@@ -49,6 +49,7 @@ pre-bound callable set as a server function and emits no `mcp.request.started`
 event. Treat it as always available: if a primary looks absent,
 `tool_search(query="<tool>")` is the first move, not a blocker. Never conclude
 "tool_search is missing" from its absence in the pre-bound set or from missing events.
+0 `mcp.tool.search.called` events server-side ≠ `tool_search` never ran — connector-side/pre-bound lookups are invisible to the server; server-side calls DO emit `mcp.tool.search.called` (`tool_search.py`).
 
 **Overflow** tools (not in `_PRIMARY_TOOLS`) are reachable in two steps when
 `dispatch` is bound:
@@ -152,7 +153,7 @@ When connector-bound: team_dispatch + panel_dispatch are server-primary — call
 - handoff roles: web-consult, web-implement, cursor-consult, cursor-implement (complete roster)
 - consensus panel → panel_dispatch(messages=[…], dispatch_thread_id="…", disposition="panel") → panel_executions; lead adjudication NON-offloadable
 - strategic advice / in-pipeline RAG → dispatch(tool="advisor" | "pipeline_consult", …)  [overflow]
-- bounded determinate task → team_dispatch(op=generate, role=cursor-sdk, dispatch_thread_id="<thread>", contract=pure-mechanical|implement, packet_path?=…)
+- bounded determinate task → team_dispatch(op=generate, role=cursor-sdk, dispatch_thread_id="<thread>", contract=light-bounded|pure-mechanical|implement, packet_path?=…)
 - deprecated: op=handoff,seat=cursor-sdk normalizes to generate with a warning
 Read agent-skills/dispatch-workflow.md §0a before first dispatch. Source: claude-web-dispatch-decision-table.md (§2/§3/§4)."""
 
@@ -181,7 +182,7 @@ tool_search(query="pipeline")    # → enables pipeline(op="result", ...)
 
 **Dispatch & Consult — pick by CAPABILITY, not model family:**
 - API consult → pre-stage context on an agent-bus thread, then `team_dispatch(op="generate", role=..., dispatch_thread_id="<thread>", contract="light-bounded", model="provider/model"?)`
-- bounded determinate task → team_dispatch(op=generate, role=cursor-sdk, dispatch_thread_id="<thread>", contract=pure-mechanical|implement, packet_path?=…)
+- bounded determinate task → team_dispatch(op=generate, role=cursor-sdk, dispatch_thread_id="<thread>", contract=light-bounded|pure-mechanical|implement, packet_path?=…)
 - deprecated: op=handoff,seat=cursor-sdk normalizes to generate with a warning
 
 On the shared `/mcp` surface `team_dispatch` is primary — call directly.

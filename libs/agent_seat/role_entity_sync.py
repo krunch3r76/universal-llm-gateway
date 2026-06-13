@@ -63,6 +63,6 @@ def resolve_dispatch_capabilities(
     return {
         "resolved_model": model,
         "inline_only": not mcp_enabled,
-        "mcp_enabled": mcp_enabled,
+        "mcp_connector_active": mcp_enabled,
         "tool_surface": "inline-only" if not mcp_enabled else "mcp",
     }

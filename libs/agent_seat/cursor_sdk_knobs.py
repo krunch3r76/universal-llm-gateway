@@ -16,9 +16,7 @@ def derive_model_knobs(
     When ``None`` is returned the worker applies registry defaults (``fast=true``).
     """
     override = (
-        executor_override
-        if executor_override is not None
-        else packet_executor_override
+        executor_override if executor_override is not None else packet_executor_override
     )
     if override == _COMPOSER_FAST:
         return {"fast": "true"}

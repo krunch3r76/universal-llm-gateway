@@ -340,7 +340,7 @@ roles:
     description: "Analysis/synthesis via MCP tools. Full catalog access; writes allowed by model discretion. For guaranteed durable writes use reviewer (gpt-5.5) or claude-web."
     default_family: gemini
     default_platform: api
-    default_model: google/gemini-3.1-pro-preview
+    default_model: google/gemini-3.5-flash
     allowed_models:
       - google/gemini-3.1-pro-preview
       - google/gemini-3.5-flash

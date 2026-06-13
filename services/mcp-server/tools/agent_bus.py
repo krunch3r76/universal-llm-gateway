@@ -1164,7 +1164,10 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
           agent_bus(tool="create_thread", arguments='{"slug": "my-workflow", "lifecycle_state": "pending", "tags": ["project:ulg"]}')
           agent_bus(tool="update_thread", arguments='{"thread": "553", "tags": ["project:claudeburst", "type:restore"]}')
         """
-        from ._agent_tools import parse_dispatch_arguments
+        from ._agent_tools import (
+            dispatch_arguments_error,
+            parse_dispatch_arguments,
+        )
 
         handler = AGENT_BUS_OPS.get(tool)
         if handler is None:
@@ -1177,13 +1180,7 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
         try:
             parsed = parse_dispatch_arguments(arguments)
             if parsed is None:
-                return {
-                    "error": (
-                        "arguments must be a JSON-encoded object string "
-                        f'(e.g. \'{{"thread": "111"}}\'); got {type(arguments).__name__} '
-                        f"that did not parse as a JSON object"
-                    )
-                }
+                return dispatch_arguments_error(arguments, example='{"thread": "111"}')
             if tool == "post":
                 # Guardrail C: reconcile the `from` alias and reject
                 # continuation-shaped misuse before the unknown-argument gate.

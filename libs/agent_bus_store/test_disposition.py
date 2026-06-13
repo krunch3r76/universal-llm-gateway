@@ -211,8 +211,6 @@ def test_maybe_auto_close_skips_failed(bus_db) -> None:
     )
     thread_id = thread_row["id"]
     assert (
-        maybe_auto_close_after_dispatch_terminate(
-            thread_id, terminal_status="failed"
-        )
+        maybe_auto_close_after_dispatch_terminate(thread_id, terminal_status="failed")
         is None
     )

@@ -129,8 +129,13 @@ class _UDSPublisher:
 _publisher: _UDSPublisher | None = _UDSPublisher(_EVENTS_SOCK) if _ENABLED else None
 
 
-def record(signal: str, **payload: Any) -> None:
+def record(signal: str, *, role: str = "observation", **payload: Any) -> None:
     """Publish a structured event to the event service.
+
+    ``role`` selects the retention tier (default ``observation`` = session cap).
+    Pass ``role="coordination"`` for forensic events that must survive the
+    7-day age cap (request lifecycle, security audit). See libs/event_store
+    four-tier retention model.
 
     Signals follow dotted convention: mcp.{domain}.{action}
 
@@ -146,7 +151,7 @@ def record(signal: str, **payload: Any) -> None:
     event: dict[str, Any] = {
         "signal": signal,
         "source": "mcp-server",
-        "role": "observation",
+        "role": role,
         "scope": "global",
         "timestamp": (now := datetime.now(UTC)).isoformat(),
         "ts_unix_ms": int(now.timestamp() * 1000),

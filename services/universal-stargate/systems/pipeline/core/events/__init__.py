@@ -18,6 +18,17 @@ from .assess_loop import (
 )
 from .base import PipelineEvent
 from .checkpoint import CheckpointFailed, CheckpointLoaded, CheckpointSaved
+from .delivery_audit import (
+    DeliveryAuditParentFinalized,
+    DeliveryAuditParentOpened,
+    DeliveryAuditRegistryWriteFailed,
+)
+from .guidance_locality import (
+    GuidanceDeliveryDeduped,
+    GuidanceDeliveryRecorded,
+    GuidanceRestatementDetected,
+    GuidanceWorkflowSummarized,
+)
 from .inference import ModelInvocation
 from .lifecycle import (
     MapIterationCompleted,
@@ -126,6 +137,15 @@ __all__ = [
     "RagScopeRejected",
     "RagMetadataBoostApplied",
     "RagRerankCompleted",
+    # Delivery audit
+    "DeliveryAuditParentOpened",
+    "DeliveryAuditParentFinalized",
+    "DeliveryAuditRegistryWriteFailed",
+    # Guidance locality
+    "GuidanceDeliveryRecorded",
+    "GuidanceDeliveryDeduped",
+    "GuidanceRestatementDetected",
+    "GuidanceWorkflowSummarized",
     # Checkpoint
     "CheckpointSaved",
     "CheckpointLoaded",

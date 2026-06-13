@@ -169,7 +169,9 @@ def _insert_assertion(
 ) -> int | None:
     data = dict(row)
     assertion_id = data["id"]
-    if conn.execute("SELECT 1 FROM assertions WHERE id = ?", (assertion_id,)).fetchone():
+    if conn.execute(
+        "SELECT 1 FROM assertions WHERE id = ?", (assertion_id,)
+    ).fetchone():
         return None
     entity_id = data["entity_id"]
     claim = data["claim"]
@@ -320,7 +322,10 @@ def build_manifest(source_conn: sqlite3.Connection) -> dict[str, object]:
     for entity_id in recoverable:
         lifecycle, class_label, borderline = classify_entity(entity_id)
         for table, sql in [
-            ("assertions", "SELECT COUNT(*) FROM prewipe.assertions WHERE entity_id = ?"),
+            (
+                "assertions",
+                "SELECT COUNT(*) FROM prewipe.assertions WHERE entity_id = ?",
+            ),
             (
                 "relationships",
                 "SELECT COUNT(*) FROM prewipe.relationships "
@@ -474,7 +479,9 @@ def restore(
         "manifest": manifest,
         "stats": stats,
         "skipped_relationships": skipped_relationships,
-        "fk_violations_post": len(live_conn.execute("PRAGMA foreign_key_check").fetchall()),
+        "fk_violations_post": len(
+            live_conn.execute("PRAGMA foreign_key_check").fetchall()
+        ),
     }
 
 

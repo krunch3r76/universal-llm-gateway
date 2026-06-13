@@ -64,6 +64,7 @@ from ._detectors.skill_binding import (
     detect_skill_binding_tool_unknown,
 )
 from ._detectors.todo import detect_todo_implementation_seed_incomplete
+from ._detectors.todo_density_risk import detect_todo_implement_readiness_risk
 from ._detectors.workflow_coherence import (
     detect_decision_deprecated_not_terminal,
     detect_decision_workflow_state_incoherent,
@@ -104,6 +105,7 @@ GRAPH_ONLY_KINDS = {
     # todo seed-contract completeness (thread 1144) — open/in_progress todos
     # missing source_uri, required_skills, or a non-skill context edge.
     "todo_implementation_seed_incomplete",
+    "todo_implement_readiness_risk",
     # missing_handoff retired — handoffs are optional artifacts for manual
     # copy-paste at end of chat; absence is not a gap (assertion 8384,
     # session web-2026-05-04-1057).
@@ -133,8 +135,7 @@ ALL_KINDS = GRAPH_ONLY_KINDS | FS_TOUCHING_KINDS | INFO_KINDS
 def get_all_detectors() -> dict[str, Any]:
     """Registry of all detectors per v2 plan §6. Graph-only run by default for session_audit."""
     return {
-        "dangling_attribute_reference": lambda c,
-        s=None: [],  # TODO: implement (attributes referencing missing entities)
+        "dangling_attribute_reference": lambda c, s=None: [],  # TODO: implement (attributes referencing missing entities)
         "dangling_relationship_target": detect_dangling_relationship_target,
         "foreign_key_orphan": detect_foreign_key_orphan,
         "entity_source_uri_missing": detect_entity_source_uri_missing,
@@ -163,6 +164,7 @@ def get_all_detectors() -> dict[str, Any]:
         "decision_workflow_state_incoherent": detect_decision_workflow_state_incoherent,
         "decision_deprecated_not_terminal": detect_decision_deprecated_not_terminal,
         "todo_implementation_seed_incomplete": detect_todo_implementation_seed_incomplete,
+        "todo_implement_readiness_risk": detect_todo_implement_readiness_risk,
         "landed_claim_not_on_master": detect_landed_claim_not_on_master,
     }
 
@@ -248,6 +250,7 @@ __all__ = [
     "detect_skill_binding_missing",
     "detect_skill_binding_tool_unknown",
     "detect_todo_implementation_seed_incomplete",
+    "detect_todo_implement_readiness_risk",
     "detect_unregistered_document_in_markdown",
     "get_all_detectors",
     "run_detectors",

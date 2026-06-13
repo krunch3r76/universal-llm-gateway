@@ -14,7 +14,9 @@ from tools._line_range import apply_line_range
 def text_root(tmp_path: Path) -> Path:
     root = tmp_path / "sandbox"
     root.mkdir()
-    (root / "sample.txt").write_text("line0\nline1\nline2\nline3\nline4", encoding="utf-8")
+    (root / "sample.txt").write_text(
+        "line0\nline1\nline2\nline3\nline4", encoding="utf-8"
+    )
     return root
 
 

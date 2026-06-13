@@ -425,8 +425,14 @@ class EventStore:
 
         cutoff_ts = int(rows[0]["ts_unix_ms"])
         try:
+            # Role-aware: coordination events are the forensic audit trail,
+            # governed by the 7-day age cap (run_retention), NOT the session cap.
+            # Skipping them here is what makes role="coordination" actually retain
+            # past the 2-session boundary; without this filter the DELETE is
+            # role-blind and any role promotion upstream is a no-op.
             r1 = self._db.execute(
-                "DELETE FROM events WHERE ts_unix_ms < ?", (cutoff_ts,)
+                "DELETE FROM events WHERE ts_unix_ms < ? AND role != 'coordination'",
+                (cutoff_ts,),
             )
             r2 = self._db.execute(
                 "DELETE FROM request_snapshots WHERE ts_unix_ms < ?", (cutoff_ts,)

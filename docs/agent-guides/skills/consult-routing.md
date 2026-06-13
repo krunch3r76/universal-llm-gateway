@@ -13,7 +13,8 @@ Do not duplicate the cortex playbook body here — load the SOT section you need
 | Implement lane `source_ref` | `§ Implement lane — source_ref` |
 | Lane → transport table | `.cursor/rules/todo_ws.mdc` §Dispatch metadata |
 | Handoff dispatch shapes | `projects/.cursor/rules/handoff-dispatchers.mdc` |
-| General execution (messages-only, no packet) | `§ General execution lane (messages-only — no packet)` |
+| General execution (contract-based, no packet) | `§ General execution lane (contract-based — no packet)` |
+| Provider affordances vs roles | `§ Provider affordances vs team_dispatch roles (vocabulary)` |
 
 **Quick ref — implement dispatch** (default = `cursor-sdk` generate, **dense packet required**; handoff = operator-attended fallback; canonical detail in cortex SOT § Dispatch targets / Implement lane):
 

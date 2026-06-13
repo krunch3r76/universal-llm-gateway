@@ -88,6 +88,17 @@ class StargateCortexReader:
         # AttributeError as source_not_found — the bug stub readers masked.
         return self._dispatch("entity_get", entity_id, **kwargs)
 
+    def assertion_get(self, assertion_id: int) -> dict[str, Any]:
+        payload = {
+            "tool": "assertion_get",
+            "arguments": {"assertion_id": assertion_id},
+        }
+        with make_sync_client(DEFAULT_CORTEX_URL, timeout=_CORTEX_TIMEOUT) as client:
+            resp = client.post("/dispatch", json=payload)
+            resp.raise_for_status()
+            data: dict[str, Any] = resp.json()
+        return data
+
 
 def _repo_base(workspaces_root: Path) -> Path:
     root = workspaces_root.resolve()

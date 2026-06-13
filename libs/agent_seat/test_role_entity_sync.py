@@ -32,14 +32,14 @@ def test_reviewer_role_execution_attributes_mcp_capable() -> None:
 def test_resolve_dispatch_capabilities_skeptic_default() -> None:
     caps = resolve_dispatch_capabilities(model="xai/grok-4.20-multi-agent-0309")
     assert caps["inline_only"] is True
-    assert caps["mcp_enabled"] is False
+    assert caps["mcp_connector_active"] is False
     assert caps["tool_surface"] == "inline-only"
 
 
 def test_resolve_dispatch_capabilities_reviewer_default() -> None:
     caps = resolve_dispatch_capabilities(model="openai/gpt-5.5")
     assert caps["inline_only"] is False
-    assert caps["mcp_enabled"] is True
+    assert caps["mcp_connector_active"] is True
     assert caps["tool_surface"] == "mcp"
 
 
@@ -48,7 +48,7 @@ def test_resolve_dispatch_capabilities_effective_gate_false_overrides_model() ->
     the effective gate, not the model-only base admission (thread 1653 drift)."""
     caps = resolve_dispatch_capabilities(model="openai/gpt-5.5", mcp_enabled=False)
     assert caps["inline_only"] is True
-    assert caps["mcp_enabled"] is False
+    assert caps["mcp_connector_active"] is False
     assert caps["tool_surface"] == "inline-only"
 
 
@@ -58,5 +58,5 @@ def test_resolve_dispatch_capabilities_effective_gate_true_passthrough() -> None
         model="anthropic/claude-opus-4-6", mcp_enabled=True
     )
     assert caps["inline_only"] is False
-    assert caps["mcp_enabled"] is True
+    assert caps["mcp_connector_active"] is True
     assert caps["tool_surface"] == "mcp"

@@ -179,10 +179,10 @@ def _op_frictions(
     )
     if not result.get("error"):
         result["_next"] = (
-            "Actionable row → codified bug ticket, TWO phases: Phase 1 investigate "
+            "Actionable row → codified bug ticket, investigate→execute fix cycle: investigate "
             "(cursor: role=cursor-consult; web: role=web-consult) → dense spec; "
-            "Phase 2 execute (cursor: role=cursor-implement against spec; web: inline). "
-            "DEFAULT Phase 1 unless mechanical-only or a dense spec exists. "
+            "execute (cursor: role=cursor-implement against spec; web: inline). "
+            "DEFAULT investigate unless mechanical-only or a dense spec exists. "
             "lifecycle investigate→fix→report. friction() is log-only. "
             "Close via friction_close (agent_skill:|workflow:|todo:|superseded|wontfix). "
             "Skill: docs/agent-guides/skills/friction-review.md or consult-routing § Codified bug reports."

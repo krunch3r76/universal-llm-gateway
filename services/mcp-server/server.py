@@ -592,7 +592,10 @@ def _build_server() -> tuple[
         Example:
           rag(op="search", arguments='{"query": "embedding strategies", "scope": "research"}')
         """
-        from tools._agent_tools import parse_dispatch_arguments
+        from tools._agent_tools import (
+            dispatch_arguments_error,
+            parse_dispatch_arguments,
+        )
 
         tool_name = rag_op_tool.get(op)
         if tool_name is None:
@@ -620,13 +623,7 @@ def _build_server() -> tuple[
         try:
             args = parse_dispatch_arguments(arguments)
             if args is None:
-                return {
-                    "error": (
-                        "arguments must be a JSON-encoded object string "
-                        f'(e.g. \'{{"query": "..."}}\'); got {type(arguments).__name__} '
-                        f"that did not parse as a JSON object"
-                    )
-                }
+                return dispatch_arguments_error(arguments, example='{"query": "..."}')
 
             result = fn(**args)
             if asyncio.iscoroutine(result):
@@ -645,7 +642,10 @@ def _build_server() -> tuple[
         arguments: JSON-encoded object string (e.g. '{"key": "value"}').
         Use tool_search(query="...") to locate the tool name and dispatch_template.
         """
-        from tools._agent_tools import parse_dispatch_arguments
+        from tools._agent_tools import (
+            dispatch_arguments_error,
+            parse_dispatch_arguments,
+        )
 
         profile = current_profile()
         if not is_dispatch_tool_allowed(profile, tool):
@@ -675,13 +675,9 @@ def _build_server() -> tuple[
         if parsed is None:
             return {
                 "tool": tool,
-                "result": {
-                    "error": (
-                        "arguments must be a JSON-encoded object string "
-                        f'(e.g. \'{{"key": "value"}}\'); got {type(arguments).__name__} '
-                        f"that did not parse as a JSON object"
-                    )
-                },
+                "result": dispatch_arguments_error(
+                    arguments, example='{"key": "value"}'
+                ),
             }
         record(
             "mcp.profile.dispatch.routed",

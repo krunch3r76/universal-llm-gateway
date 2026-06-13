@@ -136,10 +136,10 @@ _WORKFLOW_HINTS: dict[str, str] = {
 }
 
 _FRICTION_TICKET_NEXT = (
-    "Actionable friction = codified bug ticket (NOT friction() alone), routed in TWO phases: "
-    "Phase 1 investigate+decide (cursor: role=cursor-consult; web: role=web-consult) → dense spec; "
-    "Phase 2 execute (cursor: role=cursor-implement against the spec; web: inline fix). "
-    "DEFAULT to Phase 1 unless operator says mechanical-only or a dense implement spec exists — "
+    "Actionable friction = codified bug ticket (NOT friction() alone), routed as the investigate→execute fix cycle: "
+    "investigate+decide (cursor: role=cursor-consult; web: role=web-consult) → dense spec; "
+    "execute (cursor: role=cursor-implement against the spec; web: inline fix). "
+    "DEFAULT to investigate unless operator says mechanical-only or a dense implement spec exists — "
     "do NOT make cursor-implement the first hop on a bug with open root cause/design. "
     "Lifecycle: investigate → fix → report; pass zoom-out duty (touch-point inventory, "
     "bug-class grep, labeled secondary findings in closeout). "
@@ -171,6 +171,29 @@ _CORTEX_FORMAT_HINT = (
     "arguments must be a JSON-encoded object string (the MCP tool schema "
     "declares type=string). "
     'Example: cortex(tool="entity_get", arguments=\'{"entity_id": "service:mcp-server"}\')'
+)
+
+# Ops whose payloads are routinely large and quote-heavy (transcripts, handoffs).
+# A *string* parse failure on these is almost always a hand-escaping problem on
+# embedded quotes / newlines / JSON / code fences (frictions 12886, 17227 —
+# session_close). Mirror of services/mcp-server _DISPATCH_ARGS_OFFLOAD_HINT so the
+# cortex relay path gives the same guidance as the mcp-server dispatch sites.
+# See decision:dispatch-arguments-string-wire-form.
+_CORTEX_LARGE_PAYLOAD_OPS: frozenset[str] = frozenset(
+    {
+        "session_close",
+        "session_close_preflight",
+        "session_handoff_upsert",
+        "journal_write",
+    }
+)
+
+_CORTEX_OFFLOAD_HINT = (
+    " If the payload contains quotes, newlines, or embedded JSON/code fences "
+    "(e.g. a large transcript_md or handoff_prompt), do not hand-build the JSON "
+    "string: write the payload to a file and pass a file-path parameter instead "
+    "(session_close: transcript_jsonl_path / handoff_source_path / source_ref), "
+    "or use the /agent-bus CLI, which bypasses MCP shape validation."
 )
 
 _CORTEX_HALLUCINATED_TOOLS: dict[str, str] = {

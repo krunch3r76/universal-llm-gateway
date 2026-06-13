@@ -27,7 +27,7 @@ async def test_dispatch_api_role_generate_provisions_thread_and_to_thread() -> N
         "execution_id": "exec-1",
         "status": "running",
         "knob_resolution": {"resolved_model": "anthropic/claude-sonnet-4-6"},
-        "capabilities": {"mcp_enabled": True},
+        "capabilities": {"mcp_connector_active": True},
     }
     mock_profile = type("Profile", (), {"tool_surface": "mcp"})()
 

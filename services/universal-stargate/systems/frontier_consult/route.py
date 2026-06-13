@@ -12,6 +12,7 @@ from agent_seat.profiles import get_profile
 from agent_seat.registry import normalize_agent_slug
 from fastapi import APIRouter, Response
 from fastapi.responses import JSONResponse
+from implement_admission.admission_read import frontmatter_value
 from implement_admission.preflight import (
     DecisionNotAssertedError,
     require_decision_asserted,
@@ -63,6 +64,7 @@ from .implement_admission_bridge import (
     resolve_source_ref_to_packet,
     verify_both_present_hash,
 )
+from .implement_ready_gate import require_implement_ready
 from .service import (
     FrontierEndpointError,
     FrontierGenerateRequest,
@@ -326,6 +328,27 @@ async def team_dispatch(
         and is_cursor_sdk_generate_role(role, request_id=request_id)
     ):
         try:
+            if body.contract == "implement":
+                loop = asyncio.get_running_loop()
+                fm_source_ref: str | None = None
+                packet_path = getattr(body, "packet_path", None)
+                if packet_path:
+                    ws_root = _workspaces_root().resolve()
+                    packet_file = _resolve_packet_file(ws_root, packet_path)
+                    if packet_file is not None:
+                        packet_text = packet_file.read_text(
+                            encoding="utf-8", errors="replace"
+                        )
+                        fm_source_ref = frontmatter_value(packet_text, "source_ref")
+                await loop.run_in_executor(
+                    None,
+                    partial(
+                        require_implement_ready,
+                        request_id=request_id,
+                        source_ref=fm_source_ref,
+                        cortex=StargateCortexReader(),
+                    ),
+                )
             source_text = (
                 ""
                 if body.contract == "implement"
@@ -617,6 +640,17 @@ async def team_handoff(
         )
         warnings.extend(validation.warnings)
         frontmatter_source_ref = validation.frontmatter_source_ref
+
+        if handoff_contract == "implement":
+            await loop.run_in_executor(
+                None,
+                partial(
+                    require_implement_ready,
+                    request_id=request_id,
+                    source_ref=body.source_ref or frontmatter_source_ref,
+                    cortex=reader,
+                ),
+            )
 
         _publish(
             FrontierHandoffRequested(

@@ -71,7 +71,15 @@ def _tail_str(args: tuple[str, ...]) -> str:
 
 _STATUS_INCOMPATIBLE: dict[str, frozenset[str]] = {
     "current": frozenset(
-        {"former", "expired", "inactive", "terminated", "closed", "past_due", "delinquent"}
+        {
+            "former",
+            "expired",
+            "inactive",
+            "terminated",
+            "closed",
+            "past_due",
+            "delinquent",
+        }
     ),
     "former": frozenset({"current", "active"}),
     "active": frozenset({"inactive", "closed", "terminated"}),
@@ -157,10 +165,11 @@ def main() -> int:
                 ",".join("?" * len(ids))
             )
             for row in conn.execute(q, ids):
-                pf_by_id[int(row[0])] = (str(row[1] or ""), row[2] and str(row[2]) or None)
-        staged_rows = [
-            Row(aid, eid, pf_by_id[aid][0], pf_by_id[aid][1]) for aid in ids
-        ]
+                pf_by_id[int(row[0])] = (
+                    str(row[1] or ""),
+                    row[2] and str(row[2]) or None,
+                )
+        staged_rows = [Row(aid, eid, pf_by_id[aid][0], pf_by_id[aid][1]) for aid in ids]
         cc = committed_count(conn, eid)
         if cc == 0:
             ids = [r.id for r in staged_rows]

@@ -93,7 +93,9 @@ def main(argv: list[str] | None = None) -> int:
         workspaces_root=workspaces_root,
     )
 
-    fixture_harness_passed = args.fixtures_only and report.friction_rate <= args.threshold
+    fixture_harness_passed = (
+        args.fixtures_only and report.friction_rate <= args.threshold
+    )
     full_falsifier_passed = (not args.fixtures_only) and report.passed
     full_falsifier_pending = args.fixtures_only or report.n < 150
 
@@ -117,14 +119,18 @@ def main(argv: list[str] | None = None) -> int:
         if fixture_harness_passed:
             print("PASS (fixture harness — full_falsifier_pending)")
             return 0
-        print(f"STOP — fixture harness friction_rate {report.friction_rate} exceeds threshold")
+        print(
+            f"STOP — fixture harness friction_rate {report.friction_rate} exceeds threshold"
+        )
         return 1
 
     if report.n < args.min_n:
         print(f"STOP — n {report.n} below min_n {args.min_n}")
         return 1
     if report.friction_rate > args.threshold:
-        print(f"STOP — friction_rate {report.friction_rate} exceeds threshold {args.threshold}")
+        print(
+            f"STOP — friction_rate {report.friction_rate} exceeds threshold {args.threshold}"
+        )
         return 1
     print("PASS")
     return 0

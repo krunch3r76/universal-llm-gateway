@@ -206,7 +206,7 @@ async def test_team_dispatch_xai_agent_auto_suppresses_mcp(
     caps = body["pipeline_options"]["_capability_preview"]
     assert caps["role"] == "skeptic"
     assert caps["inline_only"] is True
-    assert caps["mcp_enabled"] is False
+    assert caps["mcp_connector_active"] is False
     assert caps["resolved_model"] == "xai/grok-4.20-multi-agent-0309"
 
 
@@ -659,7 +659,9 @@ async def test_required_criticality_fails_closed_service(
             agent_meta=AgentMeta(default_model="xai/grok-4.3-multi-agent"),
             inline_only=True,
             required_body_unresolved=True,
-            injection_meta={"dropped": [{"id": "rule:critical", "reason": "body_missing"}]},
+            injection_meta={
+                "dropped": [{"id": "rule:critical", "reason": "body_missing"}]
+            },
         )
 
     monkeypatch.setattr(
@@ -749,7 +751,6 @@ async def test_event_emitted_enriched(monkeypatch: pytest.MonkeyPatch) -> None:
     assert payload["cold_fetches"] == 1
     assert payload["elapsed_ms"] == 12
     assert payload["deadline_hit"] is False
-
 
 
 @pytest.mark.asyncio

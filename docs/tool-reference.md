@@ -4,6 +4,35 @@ Detailed API docs for all primary MCP tools. Browse sections with
 `fs(op="md_list", sandbox="workspaces", path="universal-llm-gateway/docs/tool-reference.md")` and read
 individual tools with `fs(op="md_read", sandbox="workspaces", path="universal-llm-gateway/docs/tool-reference.md", section="<tool_name>")`.
 
+## Dispatch-style arguments
+
+`cortex`, `agent_bus`, `agent_bus_read`, `rag`, and `dispatch` are **dispatch-style**
+tools: an outer selector (`tool` or `op`) plus an inner **`arguments` JSON-encoded
+object string** — e.g. `cortex(tool="entity_get", arguments='{"entity_id": "decision:foo"}')`.
+
+The inner `arguments` is declared `type: string` **on purpose** and does not accept
+a bare object. Claude.ai's MCP client silently drops optional params with
+`anyOf`/`object` JSON Schema (`mcp-tool-param-types` invariant), so a union/object
+`arguments` schema would make the param invisible on the primary client. This is a
+ratified decision — see `decision:dispatch-arguments-string-wire-form`.
+
+### Large or quote-heavy payloads
+
+A failed parse (`arguments must be a JSON-encoded object string …`) is almost always
+an **escaping** failure: a large payload with embedded `"`, newlines, or JSON/code
+fences was hand-built into the JSON string and mis-escaped (e.g. a `session_close`
+`transcript_md` or `handoff_prompt`). Do **not** re-escape by hand. Instead:
+
+- Write the payload to a file and pass a **file-path parameter** read server-side:
+  `session_close` accepts `transcript_jsonl_path`, `handoff_source_path`, and
+  `source_ref` in place of inline `transcript_md` / `handoff_prompt`.
+- Or use the `/agent-bus` (`scripts/agent-bus`) **direct-UDS CLI**, which bypasses
+  MCP shape validation entirely.
+
+For `team_dispatch(op="handoff")` poll loops, keep using `poll_hint.arguments_json`
+(the correctly-serialized wire form) rather than `poll_hint.arguments` (the
+human-readable object).
+
 ## team_dispatch
 
 Sole agent-facing dispatch MCP tool. `frontier_generate`, `team_generate`,
@@ -22,7 +51,7 @@ For `team_dispatch(op="handoff")` only: returns synchronously with
 
 | Tool | Use for | Required args | Role injection |
 |---|---|---|---|
-| `team_dispatch` | **API consult** (`op=generate\|to_thread`): `reviewer`, `gatherer`, `synthesizer`, `artisan`, `skeptic` (+ optional `model=` within `allowed_models`). **Manual-seat handoff** (`op=handoff` only): `web-consult`, `web-implement`, `cursor-consult`, `cursor-implement` | `op`, `role`; + `messages`, `dispatch_thread_id` for generate/to_thread; + `subject` and **at least one of** `source_ref` \| `packet_path` for handoff | yes (generate/to_thread); handoff resolves seat only — no model dispatch |
+| `team_dispatch` | **API consult** (`op=generate\|to_thread`): `reviewer`, `gatherer`, `synthesizer`, `artisan`, `skeptic` (+ optional `model=` within `allowed_models`). **Manual-seat handoff** (`op=handoff` only): `web-consult`, `web-implement`, `cursor-consult`, `cursor-implement` | `op`, `role`, `contract`, `dispatch_thread_id` for generate/to_thread; + `subject` and **at least one of** `source_ref` \| `packet_path` for handoff | yes (generate/to_thread); handoff resolves seat only — no model dispatch |
 
 `op` values (`team_dispatch`):
 - `"generate"` — **default bus mode** for API roles: auto-provisions thread +
@@ -30,7 +59,7 @@ For `team_dispatch(op="handoff")` only: returns synchronously with
   the dedicated SDK orchestrator (same bus default). **`role=cursor-sdk` is the
   default transport for bound mechanical implement** (`packet_path` + `contract=implement`,
   auto Composer, no IDE pickup) — the `cursor-implement` handoff is the operator-attended
-  fallback. The implement packet MUST be dense (Composer executes mechanically); a determinate, pre-authored task may instead run messages-only (no packet, still explicit + bounded — § General execution lane). See
+  fallback. The implement packet MUST be dense (Composer executes mechanically); a determinate, pre-authored task may instead run via `contract=light-bounded` or `contract=pure-mechanical` with context on `dispatch_thread_id` (no packet, still explicit + bounded — § General execution lane). See
   `agent-skills/consult-routing.md` § Dispatch targets.
 - `"to_thread"` — bus mode when caller already owns `thread`; Stargate posts the
   role's reply on its behalf after dispatch completes.
@@ -47,9 +76,9 @@ entity, assembles birth + briefing + continuation, and rejects violations before
 | Arg | Type | Description |
 |---|---|---|
 | `op` | `"generate"\|"to_thread"\|"handoff"` | Output channel |
-| `role` | API (`generate`/`to_thread`): `reviewer`, `gatherer`, `synthesizer`, `artisan`, `skeptic`. Handoff only: `web-consult`, `web-implement`, `cursor-consult`, `cursor-implement` | `{platform}-{contract}` roster slug (seat aliases like `claude-web` → 422 `handoff_role_invalid`). **`skeptic`**: default `xai/grok-4.20-multi-agent-0309` is inline-only (no client-side MCP) — pre-stage context in `messages`; admission returns `capabilities.inline_only` / `capabilities.mcp_enabled`. |
-| `messages` | `list[dict]` | Latest user turn only — prior turns assembled from server-owned thread. Unused by `op="handoff"`. |
-| `dispatch_thread_id` | `str` | Compaction key for server-owned thread persistence (`thread:dispatch:{id}`). Stable per arc/session. Unused by `op="handoff"`. |
+| `role` | API (`generate`/`to_thread`): `reviewer`, `gatherer`, `synthesizer`, `artisan`, `skeptic`, `cursor-sdk`. Handoff only: `web-consult`, `web-implement`, `cursor-consult`, `cursor-implement` | `{platform}-{contract}` roster slug (seat aliases like `claude-web` → 422 `handoff_role_invalid`). **`skeptic`**: default `xai/grok-4.20-multi-agent-0309` is inline-only (no client-side MCP) — pre-stage context on `dispatch_thread_id`; admission returns `capabilities.inline_only` / `capabilities.mcp_enabled`. |
+| `contract` | `"light-bounded"\|"pure-mechanical"\|"implement"` | **Required** for `op="generate"`/`op="to_thread"`. Authority grant: `light-bounded` (bounded consult/execution), `pure-mechanical` (deterministic write loop), `implement` (dense packet path — requires `packet_path` for `cursor-sdk`). `consult` is dropped — migrate to `light-bounded`. |
+| `dispatch_thread_id` | `str` | Compaction key for server-owned thread persistence (`thread:dispatch:{id}`). Stable per arc/session. Context for non-packet dispatches is read from this thread's latest turn body. Unused by `op="handoff"`. |
 | `thread` | `str\|None` | Required when `op="to_thread"` — agent-bus thread ID |
 | `subject` | `str\|None` | Bus reply subject (`to_thread`); required packet subject (`handoff`) |
 | `model` | `str\|None` | Optional override; must be in persona's allowed set. Unused by `op="handoff"`. |
@@ -58,10 +87,10 @@ entity, assembles birth + briefing + continuation, and rejects violations before
 | `caller_agent` | `str\|None` | Dispatch provenance |
 | `timeout_seconds` | `int\|None` | Pipeline wall-clock cap |
 | `source_ref` | `str\|None` | `op="handoff"` only — admission ref (`todo:{slug}`, `plan:{slug}`, `plan_phase:{slug}[/phase-N]`, `agent-bus:N#turn-N`, `packet:{path}`). Stargate resolves `normalize → materialize → validate_packet` server-side from the source entity's **attributes** (`files_expected`, `acceptance_criteria`, `required_skills`, gate keys) — the `source_uri` spec body is fingerprinted via `content_hash`, never content-read. `agent-bus:N` is gated unless an explicit `#turn-N` resolves it; `task:`/`project:` are grammar-excluded (containers, not dispatchable). **Preferred for the implement lane** (`cursor-implement` / `web-implement`). Relay pass-through — the MCP client does NOT resolve it. |
-| `packet_path` | `str\|None` | `op="handoff"` only — workspaces-relative path to a pre-written six-block packet. Hand-authored alternative to `source_ref`; both-present triggers the `implement_spec_hash` drift guard. |
+| `packet_path` | `str\|None` | `op="generate"` with `role=cursor-sdk` and `contract=implement` — workspaces-relative path to dense six-block packet. `op="handoff"` — hand-authored alternative to `source_ref`; both-present triggers `implement_spec_hash` drift guard. |
 | `pointer_body` | `str\|None` | `op="handoff"` only — override the pointer turn body (≤25 lines) |
 | `tags` | `list[str]\|None` | `op="handoff"` only — bus thread tags (default: `["agent:{to_agent}", "type:handoff", "contract:{handoff_contract}"]`). Caller-supplied tags are preserved; `contract:{value}` is appended if absent |
-| `role=cursor-sdk` (op=generate) | — | **Default transport for bound mechanical implement.** SDK auto substrate; default delivery=thread; consult or determinate general-execution via `messages[]` (still explicit + bounded; SOT § General execution lane); implement via `packet_path` (+ `contract=implement`); poll via `poll_hint` (agent-bus), not `pipeline(op=result)`. **Dense packet required** (Composer executes mechanically). `cursor-implement` handoff = operator-attended fallback |
+| `role=cursor-sdk` (op=generate) | — | **Default transport for bound mechanical implement.** SDK auto substrate; default delivery=thread; general-execution via `contract=light-bounded|pure-mechanical` with context on `dispatch_thread_id` (SOT § General execution lane); implement via `packet_path` + `contract=implement`; poll via `poll_hint` (agent-bus), not `pipeline(op=result)`. **Dense packet required** for implement (Composer executes mechanically). `cursor-implement` handoff = operator-attended fallback |
 | `op=handoff, seat=cursor-sdk` | — | **Deprecated** — normalizes to generate + warning (`deprecated_alias` in response) |
 
 **`op="generate"` / `op="to_thread"` — admission guard for web/manual seats:**
@@ -179,12 +208,12 @@ the write root — zero regression on shared-mount deployments.
 Examples:
 
 ```python
-# Direct mode — result via pipeline(op="result")
+# Generate — pre-stage context on dispatch_thread_id, then dispatch
 team_dispatch(
     op="generate",
     role="gatherer",
     dispatch_thread_id="cursor-2026-06-02-design-review",
-    messages=[{"role": "user", "content": "Review this design..."}],
+    contract="light-bounded",
     reasoning_effort="high",
     max_tool_turns=25,
     caller_agent="cursor",
@@ -195,9 +224,9 @@ team_dispatch(
     op="to_thread",
     role="gatherer",
     dispatch_thread_id="cursor-2026-06-02-design-review",
+    contract="light-bounded",
     thread="123",
     subject="Design review",
-    messages=[{"role": "user", "content": "Review this design..."}],
     reasoning_effort="high",
     max_tool_turns=25,
     caller_agent="cursor",
@@ -243,14 +272,14 @@ on dispatch. Use `llm_generate` for those.
 `model=` override (must be in the role's `allowed_models`):
 
 ```python
-# GPT review (default reviewer model)
+# GPT review (default reviewer model) — pre-stage context on dispatch_thread_id
 team_dispatch(op="generate", role="reviewer", dispatch_thread_id="arc-123",
-              messages=[{"role": "user", "content": "Review this spec…"}])
+              contract="light-bounded")
 
 # Grok consult
 team_dispatch(op="generate", role="artisan", model="xai/grok-4.3",
               dispatch_thread_id="arc-123",
-              messages=[{"role": "user", "content": "Adversarial read…"}])
+              contract="light-bounded")
 ```
 
 ## panel_dispatch

@@ -396,9 +396,7 @@ async def test_delivery_outcome_carries_sidecar_uri_on_post_failure(
     over_limit = "x" * 8_001
     record = _make_to_thread_record(content=over_limit)
 
-    _patch_client(
-        monkeypatch, _make_thread_aware_transport(captured, post_status=503)
-    )
+    _patch_client(monkeypatch, _make_thread_aware_transport(captured, post_status=503))
     _patch_sidecar_ok(monkeypatch)
 
     outcome = await deliver_result(record, event_bus=bus, auth_token="secret")
@@ -561,6 +559,7 @@ async def test_run_delivery_sets_record_delivery_on_sidecar_success(
     assert delivery is not None
     assert delivery["recovery"]["kind"] == "sidecar"
     assert delivery["mode"] == "sidecar"
+
 
 @pytest.mark.asyncio
 async def test_default_ephemeral_closes_thread(
@@ -808,7 +807,9 @@ async def test_on_behalf_post_rejects_content_over_bus_limit(
     assert "cortex://notes/system/threads/" in body
     assert "abc123def456" in body
     sent = next(
-        e for e in bus.events if getattr(e, "signal", None) == "pipeline.dispatch.delivery.sent"
+        e
+        for e in bus.events
+        if getattr(e, "signal", None) == "pipeline.dispatch.delivery.sent"
     )
     assert sent.payload["delivery_mode"] == "sidecar"
     assert sent.payload["sidecar_status"] == "ok"
@@ -833,7 +834,9 @@ async def test_on_behalf_within_limit_writes_sidecar_and_posts_inline_with_refer
     assert captured["post_body"]["body"].startswith("Within limit body.")
     assert "Durable copy:" in captured["post_body"]["body"]
     sent = next(
-        e for e in bus.events if getattr(e, "signal", None) == "pipeline.dispatch.delivery.sent"
+        e
+        for e in bus.events
+        if getattr(e, "signal", None) == "pipeline.dispatch.delivery.sent"
     )
     assert sent.payload["delivery_mode"] == "inline"
     assert sent.payload["sidecar_status"] == "ok"
@@ -858,7 +861,9 @@ async def test_on_behalf_within_limit_sidecar_fail_posts_inline_degraded(
     assert outcome.delivery_mode == "inline"
     assert captured["post_body"]["body"] == "Degraded inline body."
     sent = next(
-        e for e in bus.events if getattr(e, "signal", None) == "pipeline.dispatch.delivery.sent"
+        e
+        for e in bus.events
+        if getattr(e, "signal", None) == "pipeline.dispatch.delivery.sent"
     )
     assert sent.payload["sidecar_status"] == "failed"
     assert sent.payload["sidecar_uri"] is None
@@ -905,7 +910,9 @@ async def test_on_behalf_over_limit_sidecar_fail_is_terminal(
     assert outcome.failure_reason == "sidecar_write_failed"
     assert "post_path" not in captured
     failed = next(
-        e for e in bus.events if getattr(e, "signal", None) == "pipeline.dispatch.delivery.failed"
+        e
+        for e in bus.events
+        if getattr(e, "signal", None) == "pipeline.dispatch.delivery.failed"
     )
     assert "sidecar_write_failed" in failed.payload["error_preview"]
 
@@ -1134,9 +1141,7 @@ async def test_delivery_outcome_carries_sidecar_uri_on_post_failure(
     over_limit = "x" * 8_001
     record = _make_to_thread_record(content=over_limit)
 
-    _patch_client(
-        monkeypatch, _make_thread_aware_transport(captured, post_status=503)
-    )
+    _patch_client(monkeypatch, _make_thread_aware_transport(captured, post_status=503))
     _patch_sidecar_ok(monkeypatch)
 
     outcome = await deliver_result(record, event_bus=bus, auth_token="secret")

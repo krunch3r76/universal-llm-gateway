@@ -32,8 +32,16 @@ _DISPATCH_HOME_ROOT = Path(
 ).expanduser()
 
 
+DEFAULT_REPO_VENV_RELPATH = Path(".venvs") / "universal"
+REQUIRED_VENV_EXECUTABLES: tuple[str, ...] = ("python", "pytest", "ruff")
+
+
 class CursorHomeConfigError(RuntimeError):
     """No usable cursor credential under the swapped HOME — fail closed pre-launch."""
+
+
+class CursorVenvConfigError(RuntimeError):
+    """Configured repo venv missing or incomplete — fail closed pre-launch."""
 
 
 def dispatch_home_path(dispatch_id: str, *, root: Path | None = None) -> Path:
@@ -100,3 +108,32 @@ def setup_cursor_dispatch_home(
         cursor_dir / CURSOR_MCP_FILENAME,
     )
     return home
+
+
+def resolve_repo_venv(
+    *, real_home: Path | str | None = None, override: str | None = None
+) -> Path:
+    """Repo venv root: CURSOR_SDK_VENV_PATH override, else <real_home>/.venvs/universal.
+
+    Read the real operator home BEFORE the per-dispatch HOME swap.
+    """
+    if override is None:
+        override = os.environ.get("CURSOR_SDK_VENV_PATH", "").strip() or None
+    if override:
+        return Path(override).expanduser()
+    real = Path(real_home) if real_home else Path(os.environ.get("HOME") or "~")
+    return real.expanduser() / DEFAULT_REPO_VENV_RELPATH
+
+
+def validate_repo_venv(venv: Path) -> None:
+    """Raise CursorVenvConfigError if the venv dir or a required executable is absent."""
+    missing: list[str] = []
+    if not venv.is_dir():
+        missing.append(f"venv dir {venv}")
+    for exe in REQUIRED_VENV_EXECUTABLES:
+        if not (venv / "bin" / exe).exists():
+            missing.append(f"bin/{exe}")
+    if missing:
+        raise CursorVenvConfigError(
+            f"cursor-sdk repo venv invalid: {venv} — missing: {', '.join(missing)}"
+        )

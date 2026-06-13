@@ -24,7 +24,10 @@ def test_skill_slug_prefers_entity_id_over_display_name() -> None:
 
 
 def test_skill_slug_accepts_entity_id_key() -> None:
-    row = {"entity_id": "agent_skill:ulg-architecture", "name": "ULG Architecture — Layer"}
+    row = {
+        "entity_id": "agent_skill:ulg-architecture",
+        "name": "ULG Architecture — Layer",
+    }
     assert skill_slug(row) == "ulg-architecture"
 
 

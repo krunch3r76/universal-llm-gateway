@@ -21,6 +21,7 @@ _DIFF_SCOPED_GATE_SCRIPT = (
 )
 _DEFAULT_GREEN_GATE = ["bash", "-lc", _DIFF_SCOPED_GATE_SCRIPT]
 _DEFAULT_SOURCE_REPO = "/mnt/torus/projects/universal-llm-gateway"
+_DEFAULT_DISPATCH_WORKSPACE = str(Path(_DEFAULT_SOURCE_REPO).parent)
 _DEFAULT_WORKTREE_ROOT = "/mnt/torus/projects/ulg-arc-worktrees"
 
 
@@ -32,6 +33,7 @@ class WorkerConfig:
     port: int
     source_repo: Path
     worktree_root: Path
+    dispatch_workspace: Path
     green_gate_cmd: list[str]
 
     @property
@@ -64,6 +66,9 @@ def load_config() -> WorkerConfig:
         source_repo=_env_path("GIT_INTEGRATION_SOURCE_REPO", _DEFAULT_SOURCE_REPO),
         worktree_root=_env_path(
             "GIT_INTEGRATION_WORKTREE_ROOT", _DEFAULT_WORKTREE_ROOT
+        ),
+        dispatch_workspace=_env_path(
+            "GIT_INTEGRATION_DISPATCH_WORKSPACE", _DEFAULT_DISPATCH_WORKSPACE
         ),
         green_gate_cmd=_parse_green_gate_cmd(),
     )

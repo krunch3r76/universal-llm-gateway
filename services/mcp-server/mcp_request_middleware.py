@@ -229,7 +229,7 @@ class McpRequestEventsMiddleware:
             **({"caller_identity": caller_identity} if caller_identity else {}),
         }
 
-        record("mcp.request.started", **started_payload)
+        record("mcp.request.started", role="coordination", **started_payload)
 
         transport_started: dict[str, Any] = {
             "transport": "https",
@@ -310,7 +310,7 @@ class McpRequestEventsMiddleware:
                 }
                 if tool_name:
                     failed_payload["tool_name"] = tool_name
-                record("mcp.request.failed", **failed_payload)
+                record("mcp.request.failed", role="coordination", **failed_payload)
                 tfail = {
                     "transport": "https",
                     "client_ip": client_ip,
@@ -350,7 +350,9 @@ class McpRequestEventsMiddleware:
                     **({"tool_name": tool_name} if tool_name else {}),
                     **({"caller_identity": caller_identity} if caller_identity else {}),
                 }
-                record("mcp.request.completed", **completed_payload)
+                record(
+                    "mcp.request.completed", role="coordination", **completed_payload
+                )
                 tdone: dict[str, Any] = {
                     "transport": "https",
                     "client_ip": client_ip,
@@ -370,6 +372,7 @@ class McpRequestEventsMiddleware:
                 if _is_suspected_fs_timeout(tool_name, duration, response_bytes):
                     record(
                         "fs.timeout.suspected",
+                        role="coordination",
                         tool_name=tool_name,
                         duration_s=round(duration, 3),
                         response_bytes=response_bytes,

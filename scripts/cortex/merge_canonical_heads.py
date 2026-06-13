@@ -392,9 +392,7 @@ def main() -> int:
                 print(f"  dangling on dup after merge: {dangling}")
         if not dry_run:
             alias_report = rebuild_entity_aliases(conn)
-            print(
-                f"\n## entity_aliases rebuilt: {alias_report.row_count} rows"
-            )
+            print(f"\n## entity_aliases rebuilt: {alias_report.row_count} rows")
             if alias_report.residual_collisions:
                 print(
                     f"  residual cross-entity collisions (first-wins): "

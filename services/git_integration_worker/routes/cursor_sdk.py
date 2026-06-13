@@ -36,7 +36,10 @@ from services.git_integration_worker.cursor_dispatch_ledger import (
 )
 from services.git_integration_worker.cursor_home import (
     CursorHomeConfigError,
+    CursorVenvConfigError,
+    resolve_repo_venv,
     setup_cursor_dispatch_home,
+    validate_repo_venv,
 )
 from services.git_integration_worker.cursor_models import (
     build_model_selection,
@@ -110,18 +113,33 @@ def _resolve_prompt(req: CursorDispatchRequest, source_repo: Path) -> str:
     return f"{preamble}{packet_text}"
 
 
+def _restore_env(key: str, prev: str | None) -> None:
+    if prev is None:
+        os.environ.pop(key, None)
+    else:
+        os.environ[key] = prev
+
+
 @contextmanager
-def _isolated_dispatch_home(home: Path):
+def _isolated_dispatch_home(home: Path, *, repo_venv: Path | None = None):
     with _SDK_DISPATCH_LOCK:
-        prev = os.environ.get("HOME")
+        prev_home = os.environ.get("HOME")
+        prev_venv = os.environ.get("VIRTUAL_ENV")
+        prev_path = os.environ.get("PATH")
         os.environ["HOME"] = str(home)
+        if repo_venv is not None:
+            os.environ["VIRTUAL_ENV"] = str(repo_venv)
+            bin_dir = str(repo_venv / "bin")
+            os.environ["PATH"] = (
+                f"{bin_dir}{os.pathsep}{prev_path}" if prev_path else bin_dir
+            )
         try:
             yield
         finally:
-            if prev is None:
-                os.environ.pop("HOME", None)
-            else:
-                os.environ["HOME"] = prev
+            _restore_env("HOME", prev_home)
+            if repo_venv is not None:
+                _restore_env("VIRTUAL_ENV", prev_venv)
+                _restore_env("PATH", prev_path)
 
 
 def _start_heartbeat(
@@ -157,6 +175,7 @@ def _start_heartbeat(
 def _run_sdk_sync(
     *,
     source_repo: Path,
+    dispatch_workspace: Path,
     prompt: str,
     config_model_id: str,
     selection_overrides: dict[str, str] | None,
@@ -165,6 +184,8 @@ def _run_sdk_sync(
     resolved_model: str,
 ) -> SdkRunOutcome:
     dispatch_home = setup_cursor_dispatch_home(dispatch_id)
+    repo_venv = resolve_repo_venv()
+    validate_repo_venv(repo_venv)
     bridge_state = dispatch_home / "bridge-state"
     bridge_state.mkdir(parents=True, exist_ok=True)
     CursorDispatchLedger.instance().record_state_root(
@@ -182,15 +203,15 @@ def _run_sdk_sync(
         knob_summary,
         parity,
     )
-    agent_options = build_agent_options(source_repo, selection)
+    agent_options = build_agent_options(source_repo, dispatch_workspace, selection)
 
-    with _isolated_dispatch_home(dispatch_home):
+    with _isolated_dispatch_home(dispatch_home, repo_venv=repo_venv):
         hb_thread, hb_stop = _start_heartbeat(
             dispatch_id=dispatch_id, thread_id=thread_id, resolved_model=resolved_model
         )
         client = Client.launch_bridge(
             _SDK_BRIDGE_BIN,
-            workspace=str(source_repo),
+            workspace=str(dispatch_workspace),
             state_root=str(bridge_state),
             timeout=_SDK_TIMEOUT_S,
             local=agent_options.local,
@@ -236,16 +257,23 @@ async def _run_sdk_dispatch(
     *,
     req: CursorDispatchRequest,
     source_repo: Path,
+    dispatch_workspace: Path,
     bus: CursorBusClient,
 ) -> None:
     async with sdk_dispatch_slot(dispatch_id=req.dispatch_id):
-        await _run_sdk_dispatch_gated(req=req, source_repo=source_repo, bus=bus)
+        await _run_sdk_dispatch_gated(
+            req=req,
+            source_repo=source_repo,
+            dispatch_workspace=dispatch_workspace,
+            bus=bus,
+        )
 
 
 async def _run_sdk_dispatch_gated(
     *,
     req: CursorDispatchRequest,
     source_repo: Path,
+    dispatch_workspace: Path,
     bus: CursorBusClient,
 ) -> None:
     reply_to = req.caller_agent or "dispatch"
@@ -257,6 +285,7 @@ async def _run_sdk_dispatch_gated(
                 asyncio.to_thread(
                     _run_sdk_sync,
                     source_repo=source_repo,
+                    dispatch_workspace=dispatch_workspace,
                     prompt=prompt,
                     config_model_id=req.model,
                     selection_overrides=req.model_knobs,
@@ -352,6 +381,26 @@ async def _run_sdk_dispatch_gated(
             to_agent=reply_to,
             from_agent="cursor-sdk",
             subject=f"cursor-sdk dispatch {req.dispatch_id} FAILED (home/auth)",
+            body=f"```json\n{json.dumps(env, indent=2)}\n```",
+        )
+        await _terminate_link(bus, thread_id=req.thread_id, terminal_status="failed")
+        await asyncio.to_thread(
+            CursorDispatchLedger.instance().mark_terminal,
+            dispatch_id=req.dispatch_id,
+            terminal_status="failed",
+        )
+    except CursorVenvConfigError as exc:
+        logger.error(
+            "cursor sdk venv config failed: dispatch_id=%s err=%s", req.dispatch_id, exc
+        )
+        env = error_envelope(
+            code="CURSOR_VENV_CONFIG", message=str(exc), source="gateway"
+        )
+        await bus.reply(
+            thread_id=req.thread_id,
+            to_agent=reply_to,
+            from_agent="cursor-sdk",
+            subject=f"cursor-sdk dispatch {req.dispatch_id} FAILED (venv config)",
             body=f"```json\n{json.dumps(env, indent=2)}\n```",
         )
         await _terminate_link(bus, thread_id=req.thread_id, terminal_status="failed")
@@ -465,7 +514,12 @@ async def cursor_dispatch(
 
     bus = CursorBusClient()
     task = asyncio.create_task(
-        _run_sdk_dispatch(req=req, source_repo=cfg.source_repo, bus=bus)
+        _run_sdk_dispatch(
+            req=req,
+            source_repo=cfg.source_repo,
+            dispatch_workspace=cfg.dispatch_workspace,
+            bus=bus,
+        )
     )
     ledger.register_task(req.dispatch_id, task)
     await asyncio.to_thread(ledger.mark_running, dispatch_id=req.dispatch_id)
