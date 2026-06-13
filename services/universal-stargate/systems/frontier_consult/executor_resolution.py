@@ -15,6 +15,15 @@ _DESIGN_JUDGMENT_REMAINING = "design_judgment_remaining"
 
 _CONSULT_REVIEW_DEFAULT = "cross-family-reconcile:default-on"
 
+_DENSIFY_DEFAULT_ON = frozenset(
+    {
+        "judgment_required",
+        "cross_cutting",
+        "dispatch_surface",
+        "admission_path",
+    }
+)
+
 
 def _frontmatter_line_value(text: str, key: str) -> str | None:
     """Read a frontmatter scalar or quoted / rest-of-line string value."""
@@ -171,6 +180,19 @@ def derive_recommended_executor(
 def derive_recommended_review(handoff_contract: str) -> str | None:
     """Consult adversarial-pass default advisory (Q-sibling dual)."""
     if handoff_contract == "consult":
+        return _CONSULT_REVIEW_DEFAULT
+    return None
+
+
+def derive_generate_review(
+    density_triage: str | None,
+    *,
+    auto_review_child: bool,
+) -> str | None:
+    """Generate-path cross-family review advisory (distinct from handoff resolver)."""
+    if auto_review_child:
+        return None
+    if density_triage in _DENSIFY_DEFAULT_ON:
         return _CONSULT_REVIEW_DEFAULT
     return None
 

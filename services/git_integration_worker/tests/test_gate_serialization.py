@@ -155,9 +155,10 @@ async def test_concurrent_cursor_sdk_dispatch_serializes(
         "thread_id": "t1",
         "model": "cursor/composer-2.5",
         "dispatch_id": "disp-ser-1",
+        "execution_id": "exec-ser-1",
         "message": "hello",
     }
-    body2 = {**body, "thread_id": "t2", "dispatch_id": "disp-ser-2"}
+    body2 = {**body, "thread_id": "t2", "dispatch_id": "disp-ser-2", "execution_id": "exec-ser-2"}
 
     with (
         patch(

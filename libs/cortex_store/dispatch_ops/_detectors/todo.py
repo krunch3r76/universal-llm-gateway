@@ -130,4 +130,73 @@ def detect_todo_implementation_seed_incomplete(
     return findings
 
 
-__all__ = ["detect_todo_implementation_seed_incomplete"]
+def _attrs_list_nonempty(raw: object) -> bool:
+    return isinstance(raw, list) and len(raw) > 0
+
+
+def detect_todo_dense_spec_attributes_unpopulated(
+    conn, subject: str | None = None
+) -> list[dict[str, Any]]:
+    """Declared Gate-2-closed todos missing distilled implement-lane attributes."""
+    placeholders = ",".join("?" * len(_IMPL_INTENT_STATES))
+    sql = (
+        "SELECT id, name, source_uri, attributes FROM entities "
+        f"WHERE type = 'todo' AND workflow_state IN ({placeholders})"
+    )
+    params: tuple = tuple(_IMPL_INTENT_STATES)
+    if subject:
+        sql += " AND id = ?"
+        params = (*params, subject)
+
+    rows = query(conn, sql, params)
+    findings: list[dict[str, Any]] = []
+
+    for r in rows:
+        attrs = r.get("attributes")
+        try:
+            if isinstance(attrs, str):
+                attrs = json.loads(attrs) if attrs else {}
+        except json.JSONDecodeError:
+            attrs = {}
+        if not isinstance(attrs, dict):
+            attrs = {}
+
+        if attrs.get("attributes_distillation_waived") is not None:
+            continue
+        if attrs.get("density_triage") != "judgment_required":
+            continue
+        if not r.get("source_uri") or not str(r["source_uri"]).strip():
+            continue
+        if attrs.get("implement_ready_assertion_id") is None:
+            continue
+
+        missing: list[str] = []
+        if not _attrs_list_nonempty(attrs.get("files_expected")):
+            missing.append("files_expected")
+        if not _attrs_list_nonempty(attrs.get("acceptance_criteria")):
+            missing.append("acceptance_criteria")
+        if not missing:
+            continue
+
+        spec_path = str(r["source_uri"]).strip()
+        findings.append(
+            _finding(
+                "todo_dense_spec_attributes_unpopulated",
+                r["id"],
+                f"todo '{r['name']}' is implement-ready (assertion "
+                f"{attrs.get('implement_ready_assertion_id')}) but missing "
+                f"distilled attributes: {', '.join(missing)}. Dense spec at "
+                f"{spec_path}. Distill files_expected + acceptance_criteria "
+                "from the dense spec at Gate-2 close (consult-routing densify "
+                "lane). Suppress via attributes.attributes_distillation_waived="
+                "'<reason>' when documented intent waives distillation.",
+            )
+        )
+
+    return findings
+
+
+__all__ = [
+    "detect_todo_dense_spec_attributes_unpopulated",
+    "detect_todo_implementation_seed_incomplete",
+]

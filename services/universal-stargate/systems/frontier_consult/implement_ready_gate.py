@@ -124,6 +124,11 @@ def require_implement_ready(
         if cited_uri is not None:
             dense_spec_text = _read_dense_spec_text(cited_uri)
 
+    raw_files = attrs.get("files_expected")
+    files_expected = raw_files if isinstance(raw_files, list) else []
+    raw_acs = attrs.get("acceptance_criteria")
+    acceptance_criteria = raw_acs if isinstance(raw_acs, list) else []
+
     verdict = evaluate_implement_ready(
         todo_id=ref.canonical_ref,
         density_triage=attrs.get("density_triage"),
@@ -133,6 +138,9 @@ def require_implement_ready(
         now_iso=datetime.now(UTC).isoformat(),
         dense_spec_uri=cited_uri,
         dense_spec_text=dense_spec_text,
+        files_expected=files_expected,
+        acceptance_criteria=acceptance_criteria,
+        entity_name=entity.get("name"),
     )
     if not verdict.admitted:
         raise FrontierEndpointError(

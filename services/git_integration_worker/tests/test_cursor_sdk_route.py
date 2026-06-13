@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -36,6 +37,32 @@ def _reset_ledger(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     CursorDispatchLedger._instance = None
     yield
     CursorDispatchLedger._instance = None
+
+
+@pytest.fixture(autouse=True)
+def _noop_gate(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Patch gate acquire/release to no-ops so route tests don't touch the real gate.
+
+    Route tests stub _run_sdk_sync and never call release_sdk_dispatch_slot_sync.
+    Without this fixture the module-level _GATE would accumulate leaked active slots.
+    """
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    async def _noop_acquire(*, dispatch_id: str | None = None) -> str:
+        return dispatch_id or "test-slot"
+
+    monkeypatch.setattr(route_mod, "acquire_sdk_dispatch_slot", _noop_acquire)
+    monkeypatch.setattr(route_mod, "release_sdk_dispatch_slot_sync", lambda *_: None)
+
+
+@pytest.fixture(autouse=True)
+def _stub_closeout_trigger(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
+    """Stub emit_implement_closeout_trigger so success-path tests skip real HTTP."""
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    stub = AsyncMock()
+    monkeypatch.setattr(route_mod, "emit_implement_closeout_trigger", stub)
+    return stub
 
 
 def _mock_bus() -> AsyncMock:
@@ -253,14 +280,168 @@ async def test_bus_client_marks_inbox_and_sets_after_turn(
     assert inner.get.await_count == 2
     post_payload = inner.post.await_args.kwargs["json"]
     assert post_payload["after_turn"] == 3
+    assert post_payload["allow_long_body"] is False
 
 
 @pytest.mark.asyncio
-async def test_dispatch_implement_stub_degraded(
+async def test_bus_client_passes_allow_long_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    inner = MagicMock()
+    inner.get = AsyncMock(
+        side_effect=[
+            MagicMock(status_code=200, json=lambda: {"turns": []}),
+            MagicMock(status_code=200, json=lambda: {"turns": []}),
+        ]
+    )
+    inner.post = AsyncMock(
+        return_value=MagicMock(status_code=201, json=lambda: {"turn_number": 2})
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_bus.make_async_client",
+        lambda *_a, **_k: MagicMock(
+            __aenter__=AsyncMock(return_value=inner),
+            __aexit__=AsyncMock(return_value=False),
+        ),
+    )
+    bus = CursorBusClient(token="tok")
+    await bus.reply(
+        thread_id="1",
+        to_agent="dispatch",
+        from_agent="cursor-sdk",
+        subject="s",
+        body="b",
+        allow_long_body=True,
+    )
+    assert inner.post.await_args.kwargs["json"]["allow_long_body"] is True
+
+
+@pytest.mark.asyncio
+async def test_dispatch_large_result_posts_bounded_closeout_with_sidecar(
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from services.git_integration_worker.routes import cursor_sdk as route_mod
 
+    source_repo = tmp_path / "repo"
+    source_repo.mkdir()
+    big_body = "x" * 8500
+    req = CursorDispatchRequest(
+        thread_id="1831",
+        model="cursor/composer-2.5",
+        dispatch_id="disp-big",
+        execution_id="exec-big",
+        message="---\ncontract: implement\n---\npacket",
+        handoff_contract="implement",
+    )
+    bus = _mock_bus()
+
+    def _big_outcome(**_kwargs: object) -> SdkRunOutcome:
+        return SdkRunOutcome(
+            body=big_body,
+            status="finished",
+            duration_ms=130762,
+            tool_call_count=85,
+        )
+
+    monkeypatch.setattr(route_mod, "_run_sdk_sync", _big_outcome)
+    monkeypatch.setattr(route_mod, "emit_sdk_worker_completed", lambda **_kwargs: None)
+
+    await route_mod._run_sdk_dispatch_gated(
+        req=req,
+        source_repo=source_repo,
+        dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        bus=bus,
+    )
+
+    reply_kwargs = bus.reply.await_args.kwargs
+    assert len(reply_kwargs["body"]) <= 8000
+    assert reply_kwargs["allow_long_body"] is True
+    assert (
+        "workspaces://universal-llm-gateway/tmp/reviews/closeouts/disp-big.md"
+        in reply_kwargs["body"]
+    )
+    sidecar = source_repo / "tmp/reviews/closeouts/disp-big.md"
+    assert sidecar.read_text(encoding="utf-8") == big_body
+    bus.terminate_dispatch.assert_awaited_once_with(
+        thread_id="1831", terminal_status="completed"
+    )
+
+
+@pytest.mark.asyncio
+async def test_dispatch_reply_413_emits_delivery_failed_and_terminates_failed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    source_repo = tmp_path / "repo"
+    source_repo.mkdir()
+    req = CursorDispatchRequest(
+        thread_id="1831",
+        model="cursor/composer-2.5",
+        dispatch_id="disp-413",
+        execution_id="exec-413",
+        message="hello",
+    )
+    bus = AsyncMock()
+    bus.reply = AsyncMock(
+        side_effect=[
+            MagicMock(status_code=413, body={"reason": "body_too_large"}),
+            MagicMock(status_code=201, body={}),
+        ]
+    )
+    bus.terminate_dispatch = AsyncMock(return_value=MagicMock(status_code=200, body={}))
+
+    delivery_failed: list[dict[str, object]] = []
+    completed: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        route_mod,
+        "emit_sdk_worker_delivery_failed",
+        lambda **kwargs: delivery_failed.append(dict(kwargs)),
+    )
+    monkeypatch.setattr(
+        route_mod,
+        "emit_sdk_worker_completed",
+        lambda **kwargs: completed.append(dict(kwargs)),
+    )
+
+    def _ok_outcome(**_kwargs: object) -> SdkRunOutcome:
+        return SdkRunOutcome(
+            body="done",
+            status="finished",
+            duration_ms=100,
+            tool_call_count=1,
+        )
+
+    monkeypatch.setattr(route_mod, "_run_sdk_sync", _ok_outcome)
+
+    await route_mod._run_sdk_dispatch_gated(
+        req=req,
+        source_repo=source_repo,
+        dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        bus=bus,
+    )
+
+    assert bus.reply.await_count == 2
+    assert delivery_failed[0]["status_code"] == 413
+    assert delivery_failed[0]["execution_id"] == "exec-413"
+    assert completed[0]["outcome"] == "delivery_failed"
+    assert "DELIVERY FAILED" in bus.reply.await_args_list[1].kwargs["subject"]
+    bus.terminate_dispatch.assert_awaited_once_with(
+        thread_id="1831", terminal_status="failed"
+    )
+
+
+@pytest.mark.asyncio
+async def test_dispatch_implement_stub_degraded(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    source_repo = tmp_path / "repo"
+    source_repo.mkdir()
     req = CursorDispatchRequest(
         thread_id="1589",
         model="cursor/composer-2.5",
@@ -287,17 +468,26 @@ async def test_dispatch_implement_stub_degraded(
 
     monkeypatch.setattr(route_mod, "_run_sdk_sync", _stub_outcome)
 
-    await route_mod._run_sdk_dispatch(
+    await route_mod._run_sdk_dispatch_gated(
         req=req,
-        source_repo=route_mod._CONFIG.source_repo,
+        source_repo=source_repo,
         dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
         bus=bus,
     )
 
     bus.reply.assert_awaited_once()
     body = bus.reply.await_args.kwargs["body"]
-    assert body.startswith("status: degraded\nreason: zero_tool_calls")
-    assert "Implementing" in body
+    payload = json.loads(body)
+    assert payload["status"] == "partial"
+    assert "zero_tool_calls" in payload["summary"]
+    sidecar_ref = (
+        "workspaces://universal-llm-gateway/tmp/reviews/closeouts/disp-stub.md"
+    )
+    assert payload["evidence_uris"]["artifact_paths"] == [sidecar_ref]
+    assert len(body) <= 8000
+    sidecar = source_repo / "tmp/reviews/closeouts/disp-stub.md"
+    assert sidecar.is_file()
+    assert "Implementing" in sidecar.read_text(encoding="utf-8")
     assert emitted[0]["outcome"] == "degraded"
     assert emitted[0]["tool_call_count"] == 0
     assert emitted[0]["execution_id"] == "exec-stub"
@@ -305,10 +495,13 @@ async def test_dispatch_implement_stub_degraded(
 
 @pytest.mark.asyncio
 async def test_dispatch_implement_success_ok(
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from services.git_integration_worker.routes import cursor_sdk as route_mod
 
+    source_repo = tmp_path / "repo"
+    source_repo.mkdir()
     req = CursorDispatchRequest(
         thread_id="1590",
         model="cursor/composer-2.5",
@@ -336,15 +529,16 @@ async def test_dispatch_implement_success_ok(
 
     monkeypatch.setattr(route_mod, "_run_sdk_sync", _ok_outcome)
 
-    await route_mod._run_sdk_dispatch(
+    await route_mod._run_sdk_dispatch_gated(
         req=req,
-        source_repo=route_mod._CONFIG.source_repo,
+        source_repo=source_repo,
         dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
         bus=bus,
     )
 
     body = bus.reply.await_args.kwargs["body"]
     assert "status: degraded" not in body
+    assert bus.reply.await_args.kwargs["allow_long_body"] is True
     assert emitted[0]["outcome"] == "ok"
     assert emitted[0]["tool_call_count"] == 2
     assert emitted[0]["execution_id"] == "exec-ok"
@@ -381,7 +575,7 @@ async def test_dispatch_reply_targets_caller_agent(
     monkeypatch.setattr(route_mod, "_run_sdk_sync", _ok_outcome)
     monkeypatch.setattr(route_mod, "emit_sdk_worker_completed", lambda **_kwargs: None)
 
-    await route_mod._run_sdk_dispatch(
+    await route_mod._run_sdk_dispatch_gated(
         req=req,
         source_repo=route_mod._CONFIG.source_repo,
         dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
@@ -418,7 +612,7 @@ async def test_dispatch_reply_defaults_to_dispatch(
     monkeypatch.setattr(route_mod, "_run_sdk_sync", _ok_outcome)
     monkeypatch.setattr(route_mod, "emit_sdk_worker_completed", lambda **_kwargs: None)
 
-    await route_mod._run_sdk_dispatch(
+    await route_mod._run_sdk_dispatch_gated(
         req=req,
         source_repo=route_mod._CONFIG.source_repo,
         dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
@@ -430,10 +624,13 @@ async def test_dispatch_reply_defaults_to_dispatch(
 
 @pytest.mark.asyncio
 async def test_dispatch_consult_zero_tool_calls_not_degraded(
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from services.git_integration_worker.routes import cursor_sdk as route_mod
 
+    source_repo = tmp_path / "repo"
+    source_repo.mkdir()
     req = CursorDispatchRequest(
         thread_id="1600",
         model="cursor/composer-2.5",
@@ -461,15 +658,21 @@ async def test_dispatch_consult_zero_tool_calls_not_degraded(
 
     monkeypatch.setattr(route_mod, "_run_sdk_sync", _consult_outcome)
 
-    await route_mod._run_sdk_dispatch(
+    await route_mod._run_sdk_dispatch_gated(
         req=req,
-        source_repo=route_mod._CONFIG.source_repo,
+        source_repo=source_repo,
         dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
         bus=bus,
     )
 
     body = bus.reply.await_args.kwargs["body"]
-    assert body == "Findings only"
+    payload = json.loads(body)
+    sidecar_ref = (
+        "workspaces://universal-llm-gateway/tmp/reviews/closeouts/disp-consult.md"
+    )
+    assert payload["evidence_uris"]["artifact_paths"] == [sidecar_ref]
+    sidecar = source_repo / "tmp/reviews/closeouts/disp-consult.md"
+    assert sidecar.read_text(encoding="utf-8") == "Findings only"
     assert emitted[0]["outcome"] == "ok"
 
 
@@ -500,7 +703,7 @@ async def test_dispatch_exception_posts_failure_turn_and_event(
 
     monkeypatch.setattr(route_mod, "_run_sdk_sync", _boom)
 
-    await route_mod._run_sdk_dispatch(
+    await route_mod._run_sdk_dispatch_gated(
         req=req,
         source_repo=route_mod._CONFIG.source_repo,
         dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
@@ -557,7 +760,7 @@ async def test_dispatch_home_config_error_posts_bus_reply(
 
     monkeypatch.setattr(route_mod, "_run_sdk_sync", _boom)
 
-    await route_mod._run_sdk_dispatch(
+    await route_mod._run_sdk_dispatch_gated(
         req=req,
         source_repo=route_mod._CONFIG.source_repo,
         dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
@@ -586,7 +789,17 @@ def _fake_repo_venv(tmp_path: Path) -> Path:
 def test_run_sdk_sync_injects_venv_env(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Bridge subprocess env must contain dispatch HOME/venv without mutating os.environ.
+
+    The thread-local overlay (_dispatch_home_overlay) sets _dispatch_env.overrides.
+    _bridge_subprocess_env_with_overlay reads those overrides when building the env
+    dict the real bridge passes to Popen.  We verify by calling _bridge_subprocess_env
+    (which is the patched overlay after _install_bridge_env_patch) inside the fake
+    launch_bridge to simulate what the real bridge would produce.
+    """
     import os
+
+    from cursor_sdk import _bridge as _sdk_bridge
 
     from services.git_integration_worker.routes import cursor_sdk as route_mod
 
@@ -602,7 +815,10 @@ def test_run_sdk_sync_injects_venv_env(
     captured: dict[str, str] = {}
 
     def _fake_launch_bridge(*_args: object, **_kwargs: object) -> MagicMock:
-        captured.update(dict(os.environ))
+        # Simulate what the real bridge does: call the patched _bridge_subprocess_env
+        # (which is _bridge_subprocess_env_with_overlay after _install_bridge_env_patch)
+        # to get the env the bridge process would receive.
+        captured.update(dict(_sdk_bridge._bridge_subprocess_env()))
 
         class _Run:
             def wait(self) -> MagicMock:
@@ -653,11 +869,14 @@ def test_run_sdk_sync_injects_venv_env(
         dispatch_id="disp-venv",
         thread_id="1752",
         resolved_model="composer-2.5",
+        gate_loop=MagicMock(),
     )
 
+    # Verify the bridge subprocess env (via overlay) has dispatch HOME/venv.
     assert captured["HOME"] == str(dispatch_home)
     assert captured["VIRTUAL_ENV"] == str(repo_venv)
     assert captured["PATH"].split(os.pathsep)[0] == str(repo_venv / "bin")
+    # Verify os.environ was NOT mutated (thread-local isolation invariant).
     assert os.environ.get("HOME") == prev_home
     assert os.environ.get("VIRTUAL_ENV") == prev_venv
     assert os.environ.get("PATH") == prev_path
@@ -706,7 +925,7 @@ async def test_dispatch_venv_config_error_posts_bus_reply(
     )
     monkeypatch.setattr(route_mod.Client, "launch_bridge", _track_launch)
 
-    await route_mod._run_sdk_dispatch(
+    await route_mod._run_sdk_dispatch_gated(
         req=req,
         source_repo=route_mod._CONFIG.source_repo,
         dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
@@ -761,7 +980,7 @@ async def test_dispatch_timeout_posts_failure_and_terminates(
 
     monkeypatch.setattr(route_mod, "_run_sdk_sync", _slow)
 
-    await route_mod._run_sdk_dispatch(
+    await route_mod._run_sdk_dispatch_gated(
         req=req,
         source_repo=route_mod._CONFIG.source_repo,
         dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
@@ -776,6 +995,101 @@ async def test_dispatch_timeout_posts_failure_and_terminates(
     assert timeout_events[0]["dispatch_id"] == "disp-timeout"
     assert timeout_events[0]["thread_id"] == "1607"
     assert timeout_events[0]["execution_id"] == "exec-timeout"
+
+
+@pytest.mark.asyncio
+async def test_closeout_fires_trigger_on_success(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    _stub_closeout_trigger: AsyncMock,
+) -> None:
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    source_repo = tmp_path / "repo"
+    source_repo.mkdir()
+    packet = source_repo / "packet.md"
+    packet.write_text(
+        "---\ncontract: implement\nsource_ref: todo:x\n---\nbody", encoding="utf-8"
+    )
+    req = CursorDispatchRequest(
+        thread_id="1865",
+        model="cursor/composer-2.5",
+        dispatch_id="disp-trig",
+        execution_id="exec-trig",
+        packet_path="packet.md",
+        handoff_contract="implement",
+    )
+    bus = AsyncMock()
+    bus.reply = AsyncMock(
+        return_value=MagicMock(status_code=200, body={"turn_number": 9})
+    )
+    bus.terminate_dispatch = AsyncMock(return_value=MagicMock(status_code=200, body={}))
+
+    def _ok_outcome(**_kwargs: object) -> SdkRunOutcome:
+        return SdkRunOutcome(
+            body="done", status="finished", duration_ms=100, tool_call_count=2
+        )
+
+    monkeypatch.setattr(route_mod, "_run_sdk_sync", _ok_outcome)
+    monkeypatch.setattr(route_mod, "emit_sdk_worker_completed", lambda **_kwargs: None)
+
+    await route_mod._run_sdk_dispatch_gated(
+        req=req,
+        source_repo=source_repo,
+        dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        bus=bus,
+    )
+
+    _stub_closeout_trigger.assert_awaited_once()
+    kwargs = _stub_closeout_trigger.await_args.kwargs
+    assert kwargs["source_ref"] == "todo:x"
+    assert kwargs["idempotency_key"].startswith("implement-closeout:")
+    assert kwargs["idempotency_key"].endswith(":9")
+
+
+@pytest.mark.asyncio
+async def test_closeout_no_trigger_on_delivery_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    _stub_closeout_trigger: AsyncMock,
+) -> None:
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    source_repo = tmp_path / "repo"
+    source_repo.mkdir()
+    req = CursorDispatchRequest(
+        thread_id="1866",
+        model="cursor/composer-2.5",
+        dispatch_id="disp-notrig",
+        execution_id="exec-notrig",
+        message="hello",
+    )
+    bus = AsyncMock()
+    bus.reply = AsyncMock(
+        side_effect=[
+            MagicMock(status_code=413, body={"reason": "too_large"}),
+            MagicMock(status_code=201, body={}),
+        ]
+    )
+    bus.terminate_dispatch = AsyncMock(return_value=MagicMock(status_code=200, body={}))
+    monkeypatch.setattr(route_mod, "emit_sdk_worker_delivery_failed", lambda **_k: None)
+    monkeypatch.setattr(route_mod, "emit_sdk_worker_completed", lambda **_k: None)
+
+    def _ok_outcome(**_kwargs: object) -> SdkRunOutcome:
+        return SdkRunOutcome(
+            body="done", status="finished", duration_ms=100, tool_call_count=1
+        )
+
+    monkeypatch.setattr(route_mod, "_run_sdk_sync", _ok_outcome)
+
+    await route_mod._run_sdk_dispatch_gated(
+        req=req,
+        source_repo=source_repo,
+        dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        bus=bus,
+    )
+
+    _stub_closeout_trigger.assert_not_awaited()
 
 
 def test_active_work_busy_with_running_dispatch(client: TestClient) -> None:

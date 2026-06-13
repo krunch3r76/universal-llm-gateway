@@ -13,6 +13,32 @@ from .route import TeamDispatchGenerateBody
 
 
 @pytest.mark.asyncio
+async def test_dispatch_api_role_generate_packet_path_raises_422() -> None:
+    body = TeamDispatchGenerateBody(
+        op="generate",
+        role="synthesizer",
+        dispatch_thread_id="thread:dispatch:test",
+        contract="light-bounded",
+        packet_path="tmp/packet.md",
+        caller_agent="cursor",
+    )
+    response = Response()
+
+    from .api_role_generate import dispatch_api_role_generate
+
+    with pytest.raises(FrontierEndpointError) as exc_info:
+        await dispatch_api_role_generate(
+            request_id="req-packet",
+            body=body,
+            response=response,
+        )
+
+    assert exc_info.value.status_code == 422
+    assert exc_info.value.field == "packet_path"
+    assert exc_info.value.code == "packet_not_supported_for_api_role"
+
+
+@pytest.mark.asyncio
 async def test_dispatch_api_role_generate_provisions_thread_and_to_thread() -> None:
     body = TeamDispatchGenerateBody(
         op="generate",
@@ -284,3 +310,97 @@ async def test_dispatch_api_role_generate_capabilities_model_fallback() -> None:
         )
 
     assert result["resolved_model"] == "anthropic/claude-opus-4-6"
+
+
+@pytest.mark.asyncio
+async def test_api_generate_default_on_recommended_review() -> None:
+    body = TeamDispatchGenerateBody(
+        op="generate",
+        role="synthesizer",
+        dispatch_thread_id="thread:dispatch:test",
+        contract="light-bounded",
+        density_triage="judgment_required",
+        caller_agent="cursor",
+    )
+    response = Response()
+    dispatch_payload = {"execution_id": "exec-3", "status": "running"}
+    mock_profile = type("Profile", (), {"tool_surface": "mcp"})()
+
+    with (
+        patch(
+            "systems.frontier_consult.api_role_generate.create_handoff_thread",
+            new_callable=AsyncMock,
+            return_value="1604",
+        ),
+        patch(
+            "systems.frontier_consult.route._dispatch",
+            new_callable=AsyncMock,
+            return_value=dispatch_payload,
+        ),
+        patch(
+            "systems.frontier_consult.api_role_generate._resolve_role_profile",
+            return_value=("synthesizer", "anthropic", "api", mock_profile),
+        ),
+        patch(
+            "systems.frontier_consult.api_role_generate.read_latest_dispatch_thread_body",
+            new_callable=AsyncMock,
+            return_value="ping",
+        ),
+    ):
+        from .api_role_generate import dispatch_api_role_generate
+
+        result = await dispatch_api_role_generate(
+            request_id="req-density",
+            body=body,
+            response=response,
+        )
+
+    assert "recommended_review" in result
+    assert result["recommended_review"] == "cross-family-reconcile:default-on"
+
+
+@pytest.mark.asyncio
+async def test_api_generate_trivial_present_null_review() -> None:
+    body = TeamDispatchGenerateBody(
+        op="generate",
+        role="synthesizer",
+        dispatch_thread_id="thread:dispatch:test",
+        contract="light-bounded",
+        density_triage="trivial",
+        caller_agent="cursor",
+    )
+    response = Response()
+    dispatch_payload = {"execution_id": "exec-4", "status": "running"}
+    mock_profile = type("Profile", (), {"tool_surface": "mcp"})()
+
+    with (
+        patch(
+            "systems.frontier_consult.api_role_generate.create_handoff_thread",
+            new_callable=AsyncMock,
+            return_value="1604",
+        ),
+        patch(
+            "systems.frontier_consult.route._dispatch",
+            new_callable=AsyncMock,
+            return_value=dispatch_payload,
+        ),
+        patch(
+            "systems.frontier_consult.api_role_generate._resolve_role_profile",
+            return_value=("synthesizer", "anthropic", "api", mock_profile),
+        ),
+        patch(
+            "systems.frontier_consult.api_role_generate.read_latest_dispatch_thread_body",
+            new_callable=AsyncMock,
+            return_value="ping",
+        ),
+    ):
+        from .api_role_generate import dispatch_api_role_generate
+
+        result = await dispatch_api_role_generate(
+            request_id="req-trivial",
+            body=body,
+            response=response,
+        )
+
+    assert "recommended_review" in result
+    assert result["recommended_review"] is None

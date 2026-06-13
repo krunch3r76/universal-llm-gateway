@@ -10,10 +10,11 @@ import re
 from typing import Final
 
 # Pattern: domain.subdomain.action[.qualifier]
-# - lowercase only
+# - lowercase only; underscores allowed within segments (e.g. skill_suggest)
 # - 2-5 segments
-# - no underscores, no uppercase
-EVENT_SIGNAL_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[a-z]+(\.[a-z]+){1,4}$")
+EVENT_SIGNAL_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*){1,4}$"
+)
 
 
 def is_valid_event_signal(signal: str) -> bool:

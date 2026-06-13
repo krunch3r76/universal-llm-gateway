@@ -20,6 +20,10 @@ from .operations_delivery_audit import (
     _delivery_audit_selfassess,
     _delivery_audit_token_rollup,
 )
+from .operations_densify_review import (
+    _densify_review_admitted,
+    _densify_review_outcome,
+)
 from .operations_impl import (
     _coordination_audit,
     _model_timeline,
@@ -66,6 +70,8 @@ _DISPATCH: dict[str, OperationCallable] = {
     "delivery-audit-token-rollup": _delivery_audit_token_rollup,
     "delivery-audit-baseline-campaign": _delivery_audit_baseline_campaign,
     "delivery-audit-selfassess": _delivery_audit_selfassess,
+    "frontier.densify.review.admitted": _densify_review_admitted,
+    "frontier.densify.review.outcome": _densify_review_outcome,
 }
 
 

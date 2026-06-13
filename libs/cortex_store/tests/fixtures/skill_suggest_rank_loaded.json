@@ -1,0 +1,6 @@
+{
+  "ranked": [
+    {"slug": "fs", "reason": "already loaded"},
+    {"slug": "consult-routing", "reason": "valid after loaded drop"}
+  ]
+}

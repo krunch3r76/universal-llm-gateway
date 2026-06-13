@@ -102,6 +102,29 @@ def FrontierSdkWorkerFailed(  # noqa: N802
     )
 
 
+@event_factory
+def FrontierSdkWorkerDeliveryFailed(  # noqa: N802
+    dispatch_id: str,
+    thread_id: str,
+    execution_id: str,
+    status_code: int,
+    result_bytes: int,
+    sidecar_ref: str,
+) -> Event:
+    return Event(
+        signal="frontier.sdk.worker.delivery_failed",
+        payload={
+            "dispatch_id": dispatch_id,
+            "thread_id": thread_id,
+            "execution_id": execution_id,
+            "status_code": status_code,
+            "result_bytes": result_bytes,
+            "sidecar_ref": sidecar_ref,
+        },
+        scope="node",
+    )
+
+
 def emit_sdk_worker_progress(
     *,
     dispatch_id: str,
@@ -215,4 +238,34 @@ def emit_sdk_worker_failed(
             execution_id=execution_id,
             error=error,
         )
+    )
+
+
+def emit_sdk_worker_delivery_failed(
+    *,
+    dispatch_id: str,
+    thread_id: str,
+    execution_id: str,
+    status_code: int,
+    result_bytes: int,
+    sidecar_ref: str,
+) -> None:
+    _emit(
+        FrontierSdkWorkerDeliveryFailed(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            execution_id=execution_id,
+            status_code=status_code,
+            result_bytes=result_bytes,
+            sidecar_ref=sidecar_ref,
+        )
+    )
+    logger.error(
+        "cursor sdk worker delivery failed: dispatch_id=%s thread_id=%s "
+        "status_code=%s result_bytes=%s sidecar=%s",
+        dispatch_id,
+        thread_id,
+        status_code,
+        result_bytes,
+        sidecar_ref,
     )

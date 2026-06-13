@@ -66,18 +66,24 @@ def test_claude_primary_tools_match_manifest(main_server_state: dict) -> None:
 
 
 def test_claude_primary_tools_count(main_server_state: dict) -> None:
-    """D-T2: Claude /mcp exposes exactly 14 dispatcher domains; cap ≤ 24 (D3/P10).
+    """D-T2: Claude /mcp exposes exactly 15 dispatcher domains; cap ≤ 24 (D3/P10).
 
     git_* demoted off mcp_claude; grokbuild demoted (11588). Standalone
     team_dispatch + panel_dispatch + agent_bus_read on mcp_claude; dispatch
     domain is overflow-only after dispatch_frontier/dispatch_team removal.
+    skill_suggest promoted as first-class primary tool (todo:skill-suggest-mcp-tool).
     """
     manifest = main_server_state["manifest"]
-    assert len(manifest) == 14, (
-        f"Expected 14 Claude dispatcher domains, got {len(manifest)}: "
+    assert len(manifest) == 15, (
+        f"Expected 15 Claude dispatcher domains, got {len(manifest)}: "
         f"{sorted(e['domain'] for e in manifest)}"
     )
     assert len(manifest) <= 24, f"D3 cap violated: {len(manifest)} > 24"
+    assert "skill_suggest" in main_server_state["primary_tools"]
+
+
+def test_skill_suggest_registered_in_server(main_server_state: dict) -> None:
+    assert "skill_suggest" in main_server_state["tool_names"]
 
 
 # ── Test 3: absent domains accessible via dispatch ────────────────────────────

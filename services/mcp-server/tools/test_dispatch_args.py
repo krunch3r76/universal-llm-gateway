@@ -65,6 +65,44 @@ def test_parse_large_quote_heavy_markdown_round_trips() -> None:
     assert '{"handoff":' in parsed["transcript_md"]
 
 
+def test_parse_handoff_prompt_with_nested_poll_hint_round_trips() -> None:
+    """Friction 17357: handoff_prompt embedding poll-hint JSON must round-trip
+    when correctly JSON-escaped (the wire contract holds; hand-escaping breaks)."""
+    poll_hint = {
+        "tool": "wait",
+        "arguments": json.dumps({"thread": "1810", "after_turn": 2}),
+    }
+    handoff_prompt = (
+        "## Deferred\n\nthread 1810 — poll:\n```json\n"
+        + json.dumps(poll_hint)
+        + "\n```"
+    )
+    inner = {"session_id": "web-1", "handoff_prompt": handoff_prompt}
+    raw = json.dumps(inner)
+    parsed = parse_dispatch_arguments(raw)
+    assert parsed is not None
+    assert parsed["handoff_prompt"] == handoff_prompt
+
+
+def test_parse_handoff_prompt_hand_mis_escaped_returns_none() -> None:
+    poll_hint = {
+        "tool": "wait",
+        "arguments": json.dumps({"thread": "1810", "after_turn": 2}),
+    }
+    handoff_prompt = (
+        "## Deferred\n\nthread 1810 — poll:\n```json\n"
+        + json.dumps(poll_hint)
+        + "\n```"
+    )
+    # Unescaped inner quote in handoff_prompt — canonical escaping failure mode.
+    malformed = (
+        '{"session_id": "web-1", "handoff_prompt": '
+        + json.dumps(handoff_prompt).replace('\\"', '"', 1)
+        + "}"
+    )
+    assert parse_dispatch_arguments(malformed) is None
+
+
 def test_parse_malformed_string_returns_none() -> None:
     # Unescaped inner quote — the canonical escaping failure mode.
     assert parse_dispatch_arguments('{"transcript_md": "he said "hi""}') is None

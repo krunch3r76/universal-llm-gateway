@@ -15,7 +15,13 @@ logger = get_logger(__name__)
 _REQUEST_TIMEOUT = 30.0
 
 
-def cx(method: str, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
+def cx(
+    method: str,
+    path: str,
+    body: dict[str, Any] | None = None,
+    *,
+    headers: dict[str, str] | None = None,
+) -> dict[str, Any]:
     """Relay to cortex-api via UDS, normalizing error shape.
 
     Success: returns the parsed JSON body as a dict.
@@ -36,7 +42,7 @@ def cx(method: str, path: str, body: dict[str, Any] | None = None) -> dict[str, 
 
     try:
         with make_sync_client(DEFAULT_CORTEX_URL, timeout=_REQUEST_TIMEOUT) as client:
-            response = client.request(method, path, json=body)
+            response = client.request(method, path, json=body, headers=headers)
     except httpx.RequestError as exc:
         duration = monotonic_now() - t0
         record(

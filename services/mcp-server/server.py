@@ -78,6 +78,7 @@ from tools.rag import register_rag_tools
 from tools.rag_articles import register_rag_article_tools
 from tools.security import register_security_tools
 from tools.security_js import register_security_js_tools
+from tools.skill_suggest import register_skill_suggest_tools
 from tools.sqlite import register_sqlite_tools
 from tools.topology import register_topology_tools
 from tools.web import register_web_tools
@@ -300,6 +301,7 @@ def _build_server() -> tuple[
     register_panel_dispatch_tools(mcp)
     register_git_integrate_tools(mcp)
     register_quality_tools(mcp)
+    register_skill_suggest_tools(mcp)
     register_agent_bus_tools(mcp)
     register_agent_bus_read_tool(mcp)
     register_cortex_tools(mcp)

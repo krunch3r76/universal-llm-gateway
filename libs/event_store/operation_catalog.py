@@ -276,6 +276,30 @@ _register(
     )
 )
 
+_register(
+    OperationDef(
+        name="frontier.densify.review.admitted",
+        description=(
+            "Densify review admitted events with opt-out / blank-hold tripwire "
+            "readings over a time window"
+        ),
+        params={"minutes": {"type": "int"}, "limit": {"type": "int", "default": 200}},
+        returns="admitted rows + opt_out_rate tripwire",
+    )
+)
+
+_register(
+    OperationDef(
+        name="frontier.densify.review.outcome",
+        description=(
+            "Densify review outcome events with finding-delta / rubber-stamp "
+            "tripwire readings over a time window"
+        ),
+        params={"minutes": {"type": "int"}, "limit": {"type": "int", "default": 200}},
+        returns="outcome rows + finding_delta tripwire",
+    )
+)
+
 
 def list_operations() -> list[dict[str, Any]]:
     """Return all registered operation definitions as serializable dicts."""

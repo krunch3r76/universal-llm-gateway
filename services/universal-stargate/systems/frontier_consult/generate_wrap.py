@@ -38,6 +38,9 @@ class GenerateWrapResult:
     gated_reason: str | None = None
     materialized: bool = False
     warnings: list[str] = field(default_factory=list)
+    implement_spec_hash: str | None = None
+    packet_sha256: str | None = None
+    materialization_present: bool | None = None
 
 
 def prepare_implement_packet(
@@ -101,6 +104,9 @@ def prepare_implement_packet(
         packet_path=bridge.packet_path,
         materialized=True,
         warnings=list(bridge.warnings),
+        implement_spec_hash=bridge.implement_spec_hash,
+        packet_sha256=bridge.packet_sha256,
+        materialization_present=bridge.materialization_present,
     )
 
 
@@ -115,6 +121,72 @@ async def dispatch_cursor_sdk_generate_route(
     from .admission import FrontierEndpointError
 
     try:
+        source_ref = getattr(body, "source_ref", None)
+        if body.contract == "wrap":
+            if getattr(body, "packet_path", None) is not None:
+                return JSONResponse(
+                    status_code=422,
+                    content=FrontierEndpointError(
+                        request_id=request_id,
+                        field="packet_path",
+                        reason="packet_path is forbidden for contract=wrap",
+                        status_code=422,
+                        code="wrap_with_packet_path",
+                    ).to_dict(),
+                )
+            if source_ref is None:
+                return JSONResponse(
+                    status_code=422,
+                    content=FrontierEndpointError(
+                        request_id=request_id,
+                        field="source_ref",
+                        reason="source_ref is required for contract=wrap",
+                        status_code=422,
+                        code="wrap_requires_source_ref",
+                    ).to_dict(),
+                )
+            loop = asyncio.get_running_loop()
+            wrap_result = await loop.run_in_executor(
+                None,
+                partial(
+                    prepare_implement_packet,
+                    request_id=request_id,
+                    source_ref=source_ref,
+                    packet_path=None,
+                    caller_agent=body.caller_agent,
+                    cortex=StargateCortexReader(),
+                    workspaces_root=_workspaces_root(),
+                ),
+            )
+            if wrap_result.gated:
+                return JSONResponse(
+                    status_code=422,
+                    content=FrontierEndpointError(
+                        request_id=request_id,
+                        field="source_ref",
+                        reason=(
+                            wrap_result.gated_reason
+                            or "source_ref not implement-ready"
+                        ),
+                        status_code=422,
+                        code="generate_source_ref_gated",
+                    ).to_dict(),
+                )
+            response.status_code = 200
+            return {
+                "contract": "wrap",
+                "status": "materialized",
+                "materialized": True,
+                "materialization_mode": "auto",
+                "source_ref": source_ref,
+                "packet_path": wrap_result.packet_path,
+                "implement_spec_hash": wrap_result.implement_spec_hash,
+                "packet_sha256": wrap_result.packet_sha256,
+                "materialization_present": wrap_result.materialization_present,
+                "warnings": list(wrap_result.warnings),
+                "request_id": request_id,
+            }
+
         wrap = GenerateWrapResult(packet_path=getattr(body, "packet_path", None))
         if body.contract == "implement":
             loop = asyncio.get_running_loop()
@@ -141,9 +213,30 @@ async def dispatch_cursor_sdk_generate_route(
                         code="generate_source_ref_gated",
                     ).to_dict(),
                 )
+        elif getattr(body, "packet_path", None) is not None:
+            packet_path = body.packet_path
+            packet_file = _resolve_packet_file(
+                _workspaces_root().resolve(), packet_path
+            )
+            if packet_file is None:
+                return JSONResponse(
+                    status_code=422,
+                    content=FrontierEndpointError(
+                        request_id=request_id,
+                        field="packet_path",
+                        reason=(
+                            f"packet_path {packet_path!r} not found under "
+                            "workspaces root"
+                        ),
+                        status_code=422,
+                        code="packet_path_unresolved",
+                    ).to_dict(),
+                )
+            wrap = GenerateWrapResult(packet_path=packet_path)
+        has_packet = wrap.packet_path is not None
         source_text = (
             ""
-            if body.contract == "implement"
+            if (body.contract == "implement" or has_packet)
             else await read_latest_dispatch_thread_body(
                 request_id=request_id,
                 dispatch_thread_id=body.dispatch_thread_id,
@@ -160,6 +253,11 @@ async def dispatch_cursor_sdk_generate_route(
             message_text=source_text,
             reuse_thread=getattr(body, "reuse_thread", None),
             bus_lifecycle=getattr(body, "bus_lifecycle", None),
+            density_triage=getattr(body, "density_triage", None),
+            review_opt_out_reason_code=getattr(
+                body, "review_opt_out_reason_code", None
+            ),
+            auto_review_child=getattr(body, "auto_review_child", False),
         )
         if isinstance(result, dict) and wrap.materialized:
             result["materialization_mode"] = "auto"

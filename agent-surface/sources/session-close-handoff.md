@@ -89,6 +89,8 @@ from becoming a noisy inventory.
 
 ## Verified alternative (`handoff_source_path`)
 
+Use the file-backed path not only when the body is long, but whenever the handoff contains embedded JSON, quotes, code fences, or a serialized command snippet (a `poll_hint` / `arguments_json` reference). Hand-escaping nested JSON into the inline `handoff_prompt` — which itself rides inside the `cortex(… arguments='…')` JSON string — is the cause of friction 17357.
+
 Prefer file-backed derivation when the handoff body is long:
 
 1. Append to `session_summary_md` (or a sidecar) a `## Handoff` section wrapped in:
@@ -136,4 +138,5 @@ cold-distrust gauntlet. Prose stays suppressed (assertion 8384).
 | Multiple threads in one imperative runbook | Separate arcs named in inventory; one thread per operator-directed session |
 | Bare roadmap inventory — names without status, or a guessed status | Every item carries a status token + `(live)`/`(unknown)`; unread ⇒ `unknown`, never inferred |
 | Show only the active subtree when it sits under a project | Lead with nearest container + active position + one-hop relevant siblings |
+| Inline `handoff_prompt` containing `{"thread":…,"poll_hint":…}` / `arguments_json` JSON | File-backed handoff (`handoff_source_path`); Deferred inventory cites `thread N` in prose only |
 <!-- /target:* -->

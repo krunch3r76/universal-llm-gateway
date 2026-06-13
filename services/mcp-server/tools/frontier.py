@@ -10,15 +10,19 @@ execution contract in Cortex. Optional ``model=`` overrides within
   generate/to_thread roles: reviewer, gatherer, synthesizer, artisan, skeptic
   handoff roles: web-consult, web-implement, cursor-consult, cursor-implement
 
-Op enum: "generate" (returns content via tracker), "to_thread" (reply lands on
-``thread``), or "handoff" (manual-seat agent-bus thread via ``role=``).
+Op enum: "generate" (auto result thread; on-behalf delivery), "to_thread" (reply
+lands on ``thread`` via on-behalf delivery), or "handoff" (manual-seat agent-bus
+thread via ``role=``).
 
 Thin async-by-default relay: forward to Stargate, return the dispatch envelope
 (execution_id, pipeline, started_at, status) immediately.
 
 Callers:
-- For ``op="generate"``: poll with ``pipeline(op="result", execution_id=...)``
-  to retrieve content.
+- For ``op="generate"``: Stargate auto-provisions a result thread and posts the
+  model's reply on the role's behalf; poll via ``agent_bus(tool="wait", …)`` from
+  ``poll_hint`` (``pipeline(op="result")`` is metadata fallback). Do NOT instruct
+  the model to "reply on this thread" — with ``mcp=true`` it self-posts on top of
+  on-behalf delivery (friction #17396).
 - For ``op="to_thread"``: Stargate posts the model's reply on the role's behalf
   when the dispatch completes. Read with
   ``agent_bus(tool="fetch", arguments={"thread": ...})``.
@@ -39,7 +43,9 @@ from universal_logging import get_logger
 
 from ._frontier_intake import (
     normalize_dispatch_model,
+    reject_unsupported_packet_inputs,
     require_dispatch_thread_id,
+    validate_wrap_inputs,
 )
 
 if TYPE_CHECKING:
@@ -197,8 +203,27 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         subject: str | None = None,
         packet_path: str | None = None,
         source_ref: str | None = None,
-        contract: Literal["light-bounded", "pure-mechanical", "implement"]
+        contract: Literal["light-bounded", "pure-mechanical", "implement", "wrap"]
         | None = None,
+        density_triage: (
+            Literal[
+                "judgment_required",
+                "cross_cutting",
+                "dispatch_surface",
+                "admission_path",
+                "trivial",
+            ]
+            | None
+        ) = None,
+        review_opt_out_reason_code: (
+            Literal[
+                "routine_single_subsystem",
+                "suggestion_only_first_pass",
+                "cost_exceeds_false_negative_risk",
+            ]
+            | None
+        ) = None,
+        auto_review_child: bool = False,
         executor_override: str | None = None,
         executor_override_reason_code: str | None = None,
         executor_override_reason: str | None = None,
@@ -212,14 +237,20 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         - ``seat="claude-web"`` → operator pushes bus message
         - ``seat="claude-cursor"`` → open IDE thread
 
-        **Contract (authority grant):** pass ``contract="light-bounded"``,
-        ``contract="pure-mechanical"``, or ``contract="implement"`` for an explicit authority grant — highest
-        priority in server-side derivation. When omitted, contract is derived:
+        **Contract (authority grant) — handoff only:** for ``op="handoff"`` the
+        ``contract`` param is OPTIONAL and, when supplied, is the
+        highest-priority explicit override. When omitted, Stargate derives the
+        handoff contract (handoff admission path only):
         explicit param → ``source_ref`` dispatch_lane → packet front-matter
         ``contract:`` → role ``default_contract`` → default ``consult``.
-        A packet with acceptance criteria in ``<task_guidance>`` but no contract
-        signal resolves to ``handoff_contract_ambiguous`` (422) — never silent
-        consult admission.
+        The derived value may be ``consult`` — a handoff-only contract that is
+        NOT a passable ``contract`` argument (the param enum is
+        ``light-bounded | pure-mechanical | implement``) and is NOT a valid
+        generate/to_thread contract. A packet with acceptance criteria in
+        ``<task_guidance>`` but no contract signal resolves to
+        ``handoff_contract_ambiguous`` (422) — never silent consult admission.
+        Generate/to_thread contract rules are in the ``op="generate"`` /
+        ``op="to_thread"`` section below.
 
         **``source_ref``** — scheme-prefixed entity/pointer ref only:
         ``todo:`` / ``plan:`` / ``plan_phase:`` / ``plan:{slug}/phase-N`` /
@@ -263,6 +294,29 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         ``role`` is required for generate/to_thread. Each role carries a default
         provider model used when ``model`` is omitted on those ops.
 
+        **Contract (REQUIRED — generate/to_thread):** ``contract`` is REQUIRED
+        on ``op="generate"`` and ``op="to_thread"``; there is NO derivation on
+        these paths.         ``op="generate"`` accepts
+        ``light-bounded | pure-mechanical | implement`` (``implement`` is
+        generate-only — the ``cursor-sdk`` packet lane); ``contract=wrap`` is
+        also generate-only on ``role=cursor-sdk`` — server-side gate-then-
+        materialize via ``prepare_implement_packet``, returns HTTP 200 with
+        ``packet_path`` + provenance (no SDK worker); requires ``source_ref``,
+        forbids ``packet_path``, exempts ``dispatch_thread_id``; rejects
+        gating-misleading knobs (``density_triage``, ``review_opt_out_reason_code``,
+        ``auto_review_child``). For ``role=cursor-sdk`` generate,
+        ``packet_path`` is honored across ``light-bounded``, ``pure-mechanical``,
+        and ``implement``; ``source_ref`` is implement-only (and ``wrap``).
+        When no ``packet_path`` is supplied, prompt context is read from the
+        latest turn on ``dispatch_thread_id`` (bus-turn fallback). When both
+        ``packet_path`` and a non-empty dispatch-thread turn are present,
+        ``packet_path`` wins (bus turn ignored). ``op="to_thread"`` accepts ``light-bounded |
+        pure-mechanical``. An omitted ``contract`` is
+        rejected with ``validation_error`` "contract is required for
+        op='generate'/'to_thread'". The legacy ``consult`` contract is DROPPED
+        (operator ruling 2026-06-12, ``decision:team-dispatch-messages-fold``) —
+        it is NOT aliased to ``light-bounded``; migrate explicitly.
+
         Three ops:
         - ``op="generate"``: admits dispatch and returns ``{execution_id,
           capabilities, knob_resolution, ...}``. ``capabilities`` echoes
@@ -273,7 +327,14 @@ def register_frontier_tools(mcp: FastMCP) -> None:
           ``tool_surface`` for that. Returns ``knob_resolution`` for reasoning
           knob transparency: ``value_kind``, ``reasoning_native``, ``status``,
           ``parity`` (``not_claimed`` unless otherwise stated), and ``notes``.
-          Poll with ``pipeline(op="result", execution_id=...)`` for content.
+          For API roles, ``op="generate"`` auto-provisions a result thread and
+          Stargate posts the role reply on its behalf (system-on-behalf
+          delivery); poll via ``agent_bus(tool="wait", ...)`` from ``poll_hint``
+          (``pipeline(op="result")`` is metadata fallback). The
+          ``dispatch_thread_id`` latest turn becomes the model prompt verbatim:
+          do NOT instruct the model to "reply on this thread" — with
+          ``mcp=true`` that triggers a redundant model self-post on top of
+          on-behalf delivery (friction #17396).
           If reasoning effort matters, inspect ``knob_resolution.status/parity/notes``;
           do not infer cross-provider parity.
           ``thread`` / ``subject`` must be absent when using this op.
@@ -308,8 +369,13 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         thread persistence on the ``team-dispatch`` pipeline (generate/to_thread
         only) — **required** and validated at intake: an empty value is
         rejected with a descriptive 422 naming the field rather than failing
-        late in the pipeline. Prompt context for generate/to_thread is read from
-        the latest turn body on this agent-bus thread; ``messages[]`` is not a
+        late in the pipeline. **Exempt for ``contract=wrap``** on
+        ``op=generate`` — wrap materializes from ``source_ref`` only and never
+        reads the dispatch thread. Prompt context for other generate/to_thread
+        contracts without ``packet_path`` is read from the latest turn body on
+        this agent-bus thread; for ``role=cursor-sdk`` generate with
+        ``packet_path``, the packet is the instruction channel (bus turn
+        ignored when both are present). ``messages[]`` is not a
         team_dispatch parameter. Distinct from ``thread`` (agent-bus
         delivery on ``op="to_thread"``) and ``transcript_id`` (provenance only).
 
@@ -323,6 +389,17 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         reported in ``knob_resolution``. No parity claim by default.
         """
         if op == "handoff":
+            if contract == "wrap":
+                return {
+                    "error": {
+                        "code": "validation_error",
+                        "message": (
+                            "contract=wrap is only valid with op='generate', "
+                            "role='cursor-sdk'"
+                        ),
+                    },
+                    "field": "contract",
+                }
             if not subject:
                 return {
                     "error": {
@@ -411,9 +488,6 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         # Intake normalization + validation (F16655/F16656/F16657) — see
         # tools/_frontier_intake.py. Each guard returns an error envelope the
         # caller surfaces verbatim; the model strip is applied before forwarding.
-        thread_id_err = require_dispatch_thread_id(op, dispatch_thread_id)
-        if thread_id_err is not None:
-            return thread_id_err
         model = normalize_dispatch_model(model)
 
         body: dict[str, Any] = {
@@ -428,11 +502,32 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                     "code": "validation_error",
                     "message": (
                         "contract is required for op='generate'/'to_thread'; "
-                        "use light-bounded, pure-mechanical, or implement"
+                        "use light-bounded, pure-mechanical, implement, or wrap"
                     ),
                 },
                 "field": "contract",
             }
+        role_is_sdk = role == "cursor-sdk"
+        wrap_err = validate_wrap_inputs(
+            op,
+            contract,
+            role_is_sdk,
+            packet_path,
+            source_ref,
+            density_triage=density_triage,
+            review_opt_out_reason_code=review_opt_out_reason_code,
+            auto_review_child=auto_review_child,
+        )
+        if wrap_err is not None:
+            return wrap_err
+        packet_input_err = reject_unsupported_packet_inputs(
+            op, contract, packet_path, source_ref
+        )
+        if packet_input_err is not None:
+            return packet_input_err
+        thread_id_err = require_dispatch_thread_id(op, dispatch_thread_id, contract)
+        if thread_id_err is not None:
+            return thread_id_err
         if op == "generate":
             if thread is not None or subject is not None:
                 return {
@@ -454,12 +549,21 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                 body["source_ref"] = source_ref
             if contract is not None:
                 body["contract"] = contract
+            if density_triage is not None:
+                body["density_triage"] = density_triage
+            if review_opt_out_reason_code is not None:
+                body["review_opt_out_reason_code"] = review_opt_out_reason_code
+            if auto_review_child:
+                body["auto_review_child"] = auto_review_child
         else:
-            if contract == "implement":
+            if contract in ("implement", "wrap"):
                 return {
                     "error": {
                         "code": "validation_error",
-                        "message": "contract=implement is only valid with op='generate'",
+                        "message": (
+                            f"contract={contract} is only valid with "
+                            "op='generate', role='cursor-sdk'"
+                        ),
                     },
                     "field": "contract",
                 }
@@ -474,6 +578,8 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             if subject is not None:
                 body["subject"] = subject
             body["contract"] = contract
+            if auto_review_child:
+                body["auto_review_child"] = auto_review_child
 
         for key, val in (
             ("model", model),

@@ -9,7 +9,12 @@ from implement_admission.admission_read import (
     read_packet,
     replace_frontmatter_value,
 )
-from implement_admission.materialize import materialize, packet_is_sufficient
+from implement_admission.materialize import (
+    _is_defaulted_acceptance,
+    _render_corpus,
+    materialize,
+    packet_is_sufficient,
+)
 from implement_admission.spec import (
     Acceptance,
     Closeout,
@@ -285,3 +290,47 @@ def test_packet_sha256_deterministic_across_repeated_materialize(
     first = materialize(spec, out_dir=tmp_path / "a")
     second = materialize(spec, out_dir=tmp_path / "b")
     assert first.packet_sha256 == second.packet_sha256
+
+
+def test_todo_corpus_headers_only_no_spec_prose_body() -> None:
+    spec_path = Path(__file__).resolve().parents[2] / (
+        "tasks/specs/densify-spec-attribute-distillation.md"
+    )
+    spec_prose_snippet = "The two-schema distinction (the whole bug)."
+    assert spec_prose_snippet in spec_path.read_text(encoding="utf-8")
+    spec = _sample_spec(
+        criteria=["Real AC one", "Real AC two"],
+        files_expected=["libs/a.py"],
+    ).model_copy(
+        update={
+            "source": _sample_spec().source.model_copy(
+                update={"source_uri": str(spec_path.relative_to(spec_path.parents[2]))},
+            ),
+        }
+    )
+    corpus = _render_corpus(spec)
+    assert "Source:" in corpus
+    assert "Intent:" in corpus
+    assert "attributes are authoritative" in corpus
+    assert spec_prose_snippet not in corpus
+
+
+def test_full_packet_with_distilled_attrs_not_defaulted(tmp_path: Path) -> None:
+    criteria = [
+        "AC one",
+        "AC two",
+        "AC three",
+        "AC four",
+        "AC five",
+        "AC six",
+        "AC seven",
+    ]
+    files = [f"libs/file{i}.py" for i in range(7)]
+    spec = _sample_spec(criteria=criteria, files_expected=files)
+    assert _is_defaulted_acceptance(spec) is False
+    result = materialize(spec, out_dir=tmp_path)
+    corpus = result.text.split("<corpus>")[1].split("</corpus>")[0]
+    assert "Acceptance criteria count: 7" in corpus
+    assert "Files expected:" in corpus
+    assert "acceptance defaulted from source" not in result.text
+    assert packet_is_sufficient(result.text) is True

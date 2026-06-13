@@ -65,6 +65,9 @@ class FrontierGenerateRequest:
     # Override post-delivery thread close for ``op="to_thread"``. None ⇒ ephemeral.
     bus_lifecycle: Literal["persistent", "ephemeral"] | None = None
     resolved_contract: str | None = None
+    density_triage: str | None = None
+    review_opt_out_reason_code: str | None = None
+    auto_review_child: bool = False
 
 
 async def build_dispatch_body(

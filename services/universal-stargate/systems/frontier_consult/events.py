@@ -277,3 +277,70 @@ def FrontierHandoffDeprecatedAlias(  # noqa: N802
         },
         scope="node",
     )
+
+
+@event_factory
+def FrontierDensifyReviewAdmitted(  # noqa: N802
+    parent_request_id: str,
+    parent_execution_id: str | None,
+    parent_dispatch_thread_id: str,
+    densify_thread_id: str,
+    staged_draft_uri: str,
+    reasoning_trace_uri: str,
+    density_triage: str | None,
+    draft_adequacy: str,
+    opt_out: bool,
+    opt_out_reason_code: str | None,
+    reviewer_family: str | None,
+    reviewer_model: str | None,
+    target_thread_id: str | None,
+    review_execution_id: str | None,
+    review_spawned: bool,
+    hold_reason: str | None = None,
+) -> Event:
+    """Default-on densify candidate admitted, opted-out, or blank-held."""
+    return Event(
+        signal="frontier.densify.review.admitted",
+        payload={
+            "parent_request_id": parent_request_id,
+            "parent_execution_id": parent_execution_id,
+            "parent_dispatch_thread_id": parent_dispatch_thread_id,
+            "densify_thread_id": densify_thread_id,
+            "staged_draft_uri": staged_draft_uri,
+            "reasoning_trace_uri": reasoning_trace_uri,
+            "density_triage": density_triage,
+            "draft_adequacy": draft_adequacy,
+            "opt_out": opt_out,
+            "opt_out_reason_code": opt_out_reason_code,
+            "reviewer_family": reviewer_family,
+            "reviewer_model": reviewer_model,
+            "target_thread_id": target_thread_id,
+            "review_execution_id": review_execution_id,
+            "auto_review_child": False,
+            "review_spawned": review_spawned,
+            "hold_reason": hold_reason,
+        },
+        scope="node",
+    )
+
+
+@event_factory
+def FrontierDensifyReviewOutcome(  # noqa: N802
+    parent_request_id: str,
+    review_execution_id: str,
+    finding_delta: int,
+    reviewer_concur_only: bool,
+    folded_finding_ids: list[str],
+) -> Event:
+    """Validated densify_review_reconcile closeout on the densify thread."""
+    return Event(
+        signal="frontier.densify.review.outcome",
+        payload={
+            "parent_request_id": parent_request_id,
+            "review_execution_id": review_execution_id,
+            "finding_delta": finding_delta,
+            "reviewer_concur_only": reviewer_concur_only,
+            "folded_finding_ids": folded_finding_ids,
+        },
+        scope="node",
+    )

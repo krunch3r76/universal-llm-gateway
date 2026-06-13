@@ -93,6 +93,9 @@ def _judgment_ready_kwargs(**overrides: object) -> dict:
         "now_iso": _NOW,
         "dense_spec_uri": f"workspaces://universal-llm-gateway/{_SPEC}",
         "dense_spec_text": _VALID_DENSE_SPEC,
+        "files_expected": ["module.py"],
+        "acceptance_criteria": ["Validator passes dense specs."],
+        "entity_name": "densification-implement-admission-gate",
     }
     base.update(overrides)
     return base
@@ -246,3 +249,32 @@ def test_hash_drift_rejects() -> None:
     )
     assert verdict.admitted is False
     assert verdict.code == "implement_spec_drifted_since_ready"
+
+
+@pytest.mark.offline
+def test_empty_files_expected_rejects() -> None:
+    verdict = evaluate_implement_ready(
+        **_judgment_ready_kwargs(files_expected=[]),
+    )
+    assert verdict.admitted is False
+    assert verdict.code == "implement_attrs_unpopulated"
+
+
+@pytest.mark.offline
+def test_default_acceptance_rejects() -> None:
+    verdict = evaluate_implement_ready(
+        **_judgment_ready_kwargs(
+            acceptance_criteria=[f"Complete work for {_TODO}"],
+        ),
+    )
+    assert verdict.admitted is False
+    assert verdict.code == "implement_attrs_unpopulated"
+
+
+@pytest.mark.offline
+def test_empty_acceptance_rejects() -> None:
+    verdict = evaluate_implement_ready(
+        **_judgment_ready_kwargs(acceptance_criteria=[]),
+    )
+    assert verdict.admitted is False
+    assert verdict.code == "implement_attrs_unpopulated"

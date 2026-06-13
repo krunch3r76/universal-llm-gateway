@@ -79,6 +79,98 @@ async def test_cursor_sdk_implement_admits_without_messages(
 
 
 @pytest.mark.asyncio
+async def test_cursor_sdk_light_bounded_packet_skips_dispatch_thread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """light-bounded + packet_path admits via packet channel; thread never read."""
+    sdk_mock, thread_read = _patch_sdk_and_thread_read(
+        monkeypatch,
+        sdk_return={"execution_id": "exec-light", "thread_id": "1730"},
+        thread_body="should-not-be-read",
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.generate_wrap._resolve_packet_file",
+        lambda _root, _path: __import__("pathlib").Path("/tmp/packet.md"),
+    )
+
+    body = TeamDispatchGenerateBody(
+        op="generate",
+        role="cursor-sdk",
+        dispatch_thread_id="todo:some-arc",
+        contract="light-bounded",
+        packet_path="tmp/reviews/light-packet.md",
+    )
+    result = await team_dispatch(body, Response())
+
+    assert result == {"execution_id": "exec-light", "thread_id": "1730"}
+    thread_read.assert_not_awaited()
+    sdk_mock.assert_awaited_once()
+    kwargs = sdk_mock.await_args.kwargs
+    assert kwargs["contract"] == "light-bounded"
+    assert kwargs["packet_path"] == "tmp/reviews/light-packet.md"
+    assert kwargs["message_text"] == ""
+
+
+@pytest.mark.asyncio
+async def test_cursor_sdk_pure_mechanical_packet_skips_dispatch_thread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """pure-mechanical + packet_path admits via packet channel; thread never read."""
+    sdk_mock, thread_read = _patch_sdk_and_thread_read(
+        monkeypatch,
+        sdk_return={"execution_id": "exec-mech", "thread_id": "1731"},
+        thread_body="should-not-be-read",
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.generate_wrap._resolve_packet_file",
+        lambda _root, _path: __import__("pathlib").Path("/tmp/packet.md"),
+    )
+
+    body = TeamDispatchGenerateBody(
+        op="generate",
+        role="cursor-sdk",
+        dispatch_thread_id="todo:some-arc",
+        contract="pure-mechanical",
+        packet_path="tmp/reviews/mech-packet.md",
+    )
+    await team_dispatch(body, Response())
+
+    thread_read.assert_not_awaited()
+    sdk_mock.assert_awaited_once()
+    assert sdk_mock.await_args.kwargs["packet_path"] == "tmp/reviews/mech-packet.md"
+    assert sdk_mock.await_args.kwargs["message_text"] == ""
+
+
+@pytest.mark.asyncio
+async def test_cursor_sdk_light_bounded_unresolved_packet_returns_422(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Missing packet_path on light generate → 422 packet_path_unresolved."""
+    sdk_mock = AsyncMock()
+    monkeypatch.setattr(
+        "systems.frontier_consult.generate_wrap.dispatch_cursor_sdk_generate", sdk_mock
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.generate_wrap._resolve_packet_file",
+        lambda _root, _path: None,
+    )
+
+    body = TeamDispatchGenerateBody(
+        op="generate",
+        role="cursor-sdk",
+        dispatch_thread_id="todo:some-arc",
+        contract="light-bounded",
+        packet_path="tmp/missing.md",
+    )
+    result = await team_dispatch(body, Response())
+
+    assert result.status_code == 422
+    payload = result.body.decode()
+    assert "packet_path_unresolved" in payload
+    sdk_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_cursor_sdk_non_implement_reads_dispatch_thread(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

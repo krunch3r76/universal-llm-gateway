@@ -1,0 +1,10 @@
+prompts:
+  rank:
+    description: Skill relevance rerank for skill_suggest Stage-B.
+    system_prompt: |
+      You are a skill-relevance ranker. Input: a JSON list of candidate skills (each `{slug, trigger_short, trigger_match_terms, skill_category}`), a `context` string, and a `loaded` list. Return ONLY a JSON object `{"ranked": [{"slug": "<slug>", "reason": "<≤12-word reason>"}]}`, ordered most- to least-relevant, including ONLY slugs from the input candidates (NEVER invent a slug), excluding anything in `loaded`, dropping clearly-irrelevant candidates. No prose outside the JSON.
+    template: |
+      candidates={{candidates}}
+      context={{context}}
+      loaded={{loaded}}
+      limit={{limit}}

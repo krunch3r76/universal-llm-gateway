@@ -2300,6 +2300,40 @@ tools:
   cache_priority: always_loaded
   introduced: 2026-05-22
 
+  # ─── domain: skill_suggest ───────────────────────────────────────────────────
+  # In-session skill relevance delta — deterministic Stage-A + optional rerank.
+
+- canonical_name: skill_suggest_suggest
+  domain: skill_suggest
+  operation: suggest
+  dispatcher_call_shape:
+    tool: skill_suggest
+    dispatch_key: op
+    dispatch_value: suggest
+  flat_call_shape:
+    tool: skill_suggest
+    substrate_qualified: user-vortex__skill_suggest
+  fol_descriptor: |
+    ∀ seat ∈ SeatSlug ∧ loaded ∈ List[str] ∧ context ∈ str:
+      skill_suggest(loaded, conversation_context=context, agent=seat) ⟹
+        suggestions ⊆ ApplicableSkills(seat) \ loaded
+        ∧ suggestions determined by literal trigger_match_terms overlap.
+    Read-only. Seat required (relay injects caller seat). See todo:skill-suggest-mcp-tool.
+  json_schema:
+    type: object
+    properties:
+      loaded: {type: array, items: {type: string}}
+      conversation_context: {type: string}
+      limit: {type: integer}
+      agent: {type: string}
+      rerank: {type: boolean}
+    required: [loaded]
+  skill_uri: agent_skill:cortex
+  seat_visibility: [mcp, mcp_claude]
+  mandate_safety: read_only
+  cache_priority: on_demand
+  introduced: 2026-06-13
+
   # ─── domain: tool_search ─────────────────────────────────────────────────────
   # Single-op domain: discovers overflow tools by keyword.
 
@@ -2342,12 +2376,15 @@ tools:
   fol_descriptor: |-
     ∀ role ∈ GenerateRoles ∧ dispatch_thread_id ∈ AgentBusThread ∧ contract ∈ {light-bounded,pure-mechanical,implement}:
       team_dispatch(op=generate, role, dispatch_thread_id, contract, packet_path?) ⟹
-        execution_id ∈ UUIDv4 ∧ poll poll_hint for content
+        execution_id ∈ UUIDv4 ∧ auto-provisions a result thread ∧ Stargate posts the role reply ON-BEHALF to it
+        ∧ poll poll_hint (agent-bus wait) for content — NOT pipeline(op=result)
         ∧ knob_resolution ∈ Response ∧ parity ∉ {claimed_by_default}
         ∧ resolved_contract = contract.
+      Delivery is on-behalf (parity with to_thread): the dispatch_thread_id latest turn becomes the model prompt verbatim — do NOT instruct the model to "reply on this thread"; that plus mcp=true causes a redundant model self-post on top of on-behalf delivery (friction #17396). For a specific existing thread use op=to_thread.
+      mcp (optional, honored as passthrough though absent from json_schema): reserve for genuine codebase investigation; omit for self-contained consults to avoid the self-post failure mode.
     GenerateRoles = generate/to_thread roles (reviewer/gatherer/synthesizer/artisan/skeptic).
     cursor-sdk ∈ GenerateTargets via auto_dispatchable (substrate=sdk); ¬ cloud CapabilityDispatch.
-      Default output_contract=thread for sdk; no-packet context is read from dispatch_thread_id's latest agent-bus turn; implement via packet_path;
+      Default output_contract=thread for sdk; packet_path honored for cursor-sdk generate across {light-bounded,pure-mechanical,implement}; source_ref implement-only; dispatch-thread latest turn is fallback when no packet;
       poll via poll_hint (agent-bus wait), NOT pipeline(op=result), until the execution registry (Track 2).
     ¬ web-consult/web-implement/cursor-consult/cursor-implement (handoff-only). Async. Mutating. See agent_skill:dispatch.
   json_schema:

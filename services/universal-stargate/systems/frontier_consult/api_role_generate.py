@@ -22,6 +22,7 @@ from .admission import (
     enforce_team_dispatch_generate_admit,
     is_cursor_sdk_generate_role,
 )
+from .densify_triage import validate_generate_density_intake
 from .dispatch_thread_context import as_user_message, read_latest_dispatch_thread_body
 from .handoff import create_handoff_thread
 from .handoff_response import build_api_generate_result, build_handoff_result
@@ -89,6 +90,30 @@ async def dispatch_api_role_generate(
 ) -> dict[str, Any]:
     """Auto-provision bus thread and admit API-role generate on to_thread contract."""
     role = body.role
+    if getattr(body, "packet_path", None) is not None:
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="packet_path",
+            reason=(
+                "API-role generate consumes dispatch-thread context; packet_path/"
+                "source_ref are honored only by the cursor-sdk worker lane "
+                "(role=cursor-sdk)"
+            ),
+            status_code=422,
+            code="packet_not_supported_for_api_role",
+        )
+    if getattr(body, "source_ref", None) is not None:
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="source_ref",
+            reason=(
+                "API-role generate consumes dispatch-thread context; packet_path/"
+                "source_ref are honored only by the cursor-sdk worker lane "
+                "(role=cursor-sdk)"
+            ),
+            status_code=422,
+            code="packet_not_supported_for_api_role",
+        )
     if is_cursor_sdk_generate_role(role, request_id=request_id):
         raise FrontierEndpointError(
             request_id=request_id,
@@ -100,6 +125,13 @@ async def dispatch_api_role_generate(
     enforce_team_dispatch_generate_admit(role, request_id=request_id)
 
     contract = body.contract
+    validate_generate_density_intake(
+        request_id=request_id,
+        contract=contract,
+        density_triage=body.density_triage,
+        review_opt_out_reason_code=body.review_opt_out_reason_code,
+        auto_review_child=body.auto_review_child,
+    )
     if contract == "implement":
         raise FrontierEndpointError(
             request_id=request_id,
@@ -192,6 +224,9 @@ async def dispatch_api_role_generate(
         thread_id=thread_id,
         resolved_model=resolved_model,
         resolved_contract=contract,
+        density_triage=body.density_triage,
+        review_opt_out_reason_code=body.review_opt_out_reason_code,
+        auto_review_child=body.auto_review_child,
     )
 
 

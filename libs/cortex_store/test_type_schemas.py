@@ -20,6 +20,7 @@ from fastapi import HTTPException
 
 from cortex_store.type_schemas import (
     type_attribute_schema,
+    validate_distilled_attributes,
     validate_required_attributes,
 )
 
@@ -131,3 +132,74 @@ def test_validation_no_op_when_registry_table_absent() -> None:
     assert type_attribute_schema(c, "legal_source") is None
     validate_required_attributes(c, "legal_source", {})
     validate_required_attributes(c, "legal_source", None)
+
+
+def _todo_conn() -> sqlite3.Connection:
+    c = sqlite3.connect(":memory:")
+    c.row_factory = sqlite3.Row
+    c.execute(
+        "CREATE TABLE type_attribute_schemas ("
+        "  entity_type TEXT PRIMARY KEY,"
+        "  required_keys TEXT NOT NULL,"
+        "  optional_keys TEXT NOT NULL,"
+        "  enum_constraints TEXT NOT NULL,"
+        "  notes TEXT"
+        ")"
+    )
+    c.execute(
+        "INSERT INTO type_attribute_schemas VALUES (?, ?, ?, ?, ?)",
+        (
+            "todo",
+            json.dumps([]),
+            json.dumps(
+                [
+                    "files_expected",
+                    "acceptance_criteria",
+                    "required_skills",
+                    "density_triage",
+                ]
+            ),
+            json.dumps({}),
+            None,
+        ),
+    )
+    return c
+
+
+def test_distilled_attributes_accepts_well_formed() -> None:
+    c = _todo_conn()
+    validate_distilled_attributes(
+        c,
+        "todo",
+        {
+            "files_expected": ["libs/a.py"],
+            "acceptance_criteria": ["AC one"],
+            "required_skills": ["architecture-invariants"],
+            "priority": "high",
+        },
+    )
+
+
+def test_distilled_attributes_no_op_without_lane_keys() -> None:
+    c = _todo_conn()
+    validate_distilled_attributes(c, "todo", {"priority": "high"})
+
+
+@pytest.mark.parametrize(
+    ("attrs", "error"),
+    [
+        ({"files_expected": []}, "implement_attr_shape_invalid"),
+        ({"acceptance_criteria": "x"}, "implement_attr_shape_invalid"),
+        ({"required_skills": [" "]}, "implement_attr_shape_invalid"),
+        ({"files_modified": ["a.py"]}, "implement_attr_alias_rejected"),
+        ({"acceptance": ["done"]}, "implement_attr_alias_rejected"),
+    ],
+)
+def test_distilled_attributes_rejects_bad_shape_or_alias(
+    attrs: dict, error: str
+) -> None:
+    c = _todo_conn()
+    with pytest.raises(HTTPException) as exc:
+        validate_distilled_attributes(c, "todo", attrs)
+    assert exc.value.status_code == 422
+    assert exc.value.detail["error"] == error

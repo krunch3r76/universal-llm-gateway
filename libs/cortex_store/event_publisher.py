@@ -282,3 +282,109 @@ def cortex_entity_source_changed(
     )
     record(ev.signal, **ev.payload)
     return ev
+
+
+@event_factory
+def cortex_skill_suggest_called(
+    suggest_id: str,
+    agent: str,
+    transport: str,
+    context_len: int,
+    context_sha256: str,
+    loaded_count: int,
+    rerank_requested: bool,
+) -> Event:
+    """cortex.skill_suggest.called — entry telemetry (context hash+len only)."""
+    ev = Event(
+        signal="cortex.skill_suggest.called",
+        role="observation",
+        scope="global",
+        payload={
+            "suggest_id": suggest_id,
+            "agent": agent,
+            "transport": transport,
+            "context_len": context_len,
+            "context_sha256": context_sha256,
+            "loaded_count": loaded_count,
+            "rerank_requested": rerank_requested,
+        },
+    )
+    record(ev.signal, **ev.payload)
+    return ev
+
+
+@event_factory
+def cortex_skill_suggest_completed(
+    suggest_id: str,
+    agent: str,
+    candidate_count: int,
+    suggested_count: int,
+    omitted_count: int,
+    ranker_status: str,
+    latency_ms: int,
+    rank_execution_id: str | None = None,
+) -> Event:
+    """cortex.skill_suggest.completed — successful suggest path."""
+    payload: dict[str, Any] = {
+        "suggest_id": suggest_id,
+        "agent": agent,
+        "candidate_count": candidate_count,
+        "suggested_count": suggested_count,
+        "omitted_count": omitted_count,
+        "ranker_status": ranker_status,
+        "latency_ms": latency_ms,
+    }
+    if rank_execution_id:
+        payload["rank_execution_id"] = rank_execution_id
+    ev = Event(
+        signal="cortex.skill_suggest.completed",
+        role="observation",
+        scope="global",
+        payload=payload,
+    )
+    record(ev.signal, **ev.payload)
+    return ev
+
+
+@event_factory
+def cortex_skill_suggest_degraded(
+    suggest_id: str,
+    ranker_status: str,
+    degraded_reason: str,
+    latency_ms: int,
+) -> Event:
+    """cortex.skill_suggest.degraded — rerank requested but Stage-A returned."""
+    ev = Event(
+        signal="cortex.skill_suggest.degraded",
+        role="observation",
+        scope="global",
+        payload={
+            "suggest_id": suggest_id,
+            "ranker_status": ranker_status,
+            "degraded_reason": degraded_reason,
+            "latency_ms": latency_ms,
+        },
+    )
+    record(ev.signal, **ev.payload)
+    return ev
+
+
+@event_factory
+def cortex_skill_suggest_failed(
+    suggest_id: str,
+    exc_type: str,
+    detail: str,
+) -> Event:
+    """cortex.skill_suggest.failed — true endpoint errors (not rerank degrade)."""
+    ev = Event(
+        signal="cortex.skill_suggest.failed",
+        role="observation",
+        scope="global",
+        payload={
+            "suggest_id": suggest_id,
+            "exc_type": exc_type,
+            "detail": detail,
+        },
+    )
+    record(ev.signal, **ev.payload)
+    return ev

@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import time
 import uuid
 from functools import partial
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, Self
 
 import httpx
 from agent_seat.profiles import get_profile
@@ -16,8 +17,8 @@ from implement_admission.preflight import (
     DecisionNotAssertedError,
     require_decision_asserted,
 )
-from implement_admission.source_ref import SourceRefError
-from pydantic import BaseModel, Field
+from implement_admission.source_ref import SourceRefError, parse_source_ref
+from pydantic import BaseModel, Field, model_validator
 from transport_utils import DEFAULT_STARGATE_URL, make_async_client
 from universal_logging import get_logger
 
@@ -111,7 +112,7 @@ class TeamDispatchGenerateBody(_DispatchCommon):
 
     op: Literal["generate"]
     role: str
-    dispatch_thread_id: str
+    dispatch_thread_id: str | None = None
     model: str | None = None
     # Caller inline-intent knob. ``None`` keeps the team default (tools-on for
     # tool-capable families); ``False`` requests an inline-only generation (no
@@ -120,13 +121,57 @@ class TeamDispatchGenerateBody(_DispatchCommon):
     mcp: bool | None = None
     packet_path: str | None = None
     source_ref: str | None = None
-    # When set and packet_path is absent (contract=implement), the server
+    # When set and packet_path is absent (contract=implement|wrap), the server
     # materializes the six-block packet via resolve_source_ref_to_packet
     # (first-class wrap). Grammar: todo:/plan:/plan_phase:/agent-bus:/packet:.
-    contract: Literal["light-bounded", "pure-mechanical", "implement"]
+    contract: Literal["light-bounded", "pure-mechanical", "implement", "wrap"]
     reuse_thread: str | None = None
+    density_triage: (
+        Literal[
+            "judgment_required",
+            "cross_cutting",
+            "dispatch_surface",
+            "admission_path",
+            "trivial",
+        ]
+        | None
+    ) = None
+    review_opt_out_reason_code: (
+        Literal[
+            "routine_single_subsystem",
+            "suggestion_only_first_pass",
+            "cost_exceeds_false_negative_risk",
+        ]
+        | None
+    ) = None
+    auto_review_child: bool = False
     # thread / subject MUST NOT appear — extra="forbid" rejects any caller that
     # supplies them (schema-level enforcement per Phase 0 contract).
+
+    @model_validator(mode="after")
+    def _require_dispatch_thread_id_unless_wrap(self) -> Self:
+        if self.contract != "wrap":
+            if not self.dispatch_thread_id or not self.dispatch_thread_id.strip():
+                raise ValueError(
+                    "dispatch_thread_id is required when contract is not wrap"
+                )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_wrap_contract_inputs(self) -> Self:
+        if self.contract != "wrap":
+            return self
+        if self.packet_path is not None:
+            raise ValueError("wrap_with_packet_path")
+        if self.source_ref is None:
+            raise ValueError("wrap_requires_source_ref")
+        if self.density_triage is not None:
+            raise ValueError("wrap_field_not_applicable:density_triage")
+        if self.review_opt_out_reason_code is not None:
+            raise ValueError("wrap_field_not_applicable:review_opt_out_reason_code")
+        if self.auto_review_child:
+            raise ValueError("wrap_field_not_applicable:auto_review_child")
+        return self
 
 
 class TeamDispatchToThreadBody(_DispatchCommon):
@@ -147,6 +192,7 @@ class TeamDispatchToThreadBody(_DispatchCommon):
     # Caller inline-intent knob (see ``TeamDispatchGenerateBody.mcp``).
     mcp: bool | None = None
     contract: Literal["light-bounded", "pure-mechanical", "implement"]
+    auto_review_child: bool = False
     # result_delivery MUST NOT appear — derived from thread + role; extra="forbid"
     # rejects any caller that supplies it.
 
@@ -233,6 +279,12 @@ def _normalize_op_body(
         common["mcp"] = body.mcp
     if hasattr(body, "contract"):
         common["resolved_contract"] = body.contract
+    if hasattr(body, "density_triage"):
+        common["density_triage"] = body.density_triage
+    if hasattr(body, "review_opt_out_reason_code"):
+        common["review_opt_out_reason_code"] = body.review_opt_out_reason_code
+    if hasattr(body, "auto_review_child"):
+        common["auto_review_child"] = body.auto_review_child
 
     if body.op == "generate":
         common["output_contract"] = "inline"
@@ -336,6 +388,25 @@ async def team_dispatch(
             body=body,
             role=role,
             response=response,
+        )
+
+    if (
+        body.op == "generate"
+        and getattr(body, "contract", None) == "wrap"
+        and role is not None
+        and not is_cursor_sdk_generate_role(role, request_id=request_id)
+    ):
+        return JSONResponse(
+            status_code=422,
+            content=FrontierEndpointError(
+                request_id=request_id,
+                field="role",
+                reason=(
+                    "contract=wrap is only admitted on the cursor-sdk generate branch"
+                ),
+                status_code=422,
+                code="wrap_role_not_admitted",
+            ).to_dict(),
         )
 
     if body.op == "generate" and role is not None:
@@ -782,6 +853,30 @@ async def team_handoff(
     return result
 
 
+_CLOSEOUT_DEDUPE_TTL_S = 3600.0
+_closeout_dedupe: dict[
+    str, float
+] = {}  # TODO(durable-dedupe): todo:wire-closeout-trigger-consumer
+
+
+def _closeout_dedupe_seen(key: str) -> bool:
+    """Return True iff key already seen within TTL; otherwise record and return False.
+
+    Synchronous (no await) so check-and-set is atomic on the event loop. In-memory
+    only — markers are lost on restart (v1 trade-off, see
+    todo:wire-closeout-trigger-consumer).
+    """
+    now = time.monotonic()
+    for k in [
+        k for k, ts in _closeout_dedupe.items() if now - ts > _CLOSEOUT_DEDUPE_TTL_S
+    ]:
+        _closeout_dedupe.pop(k, None)
+    if key in _closeout_dedupe:
+        return True
+    _closeout_dedupe[key] = now
+    return False
+
+
 class ImplementCloseoutBody(BaseModel):
     """Dispatched implement closeout — triggers pipeline:implement-closeout."""
 
@@ -789,6 +884,7 @@ class ImplementCloseoutBody(BaseModel):
 
     closeout: dict[str, Any]
     source_ref: str | None = None
+    idempotency_key: str | None = None
 
 
 @implement_router.post("/closeout", status_code=200, response_model=None)
@@ -809,7 +905,66 @@ async def implement_closeout(
                 code="closeout_invalid",
             ).to_dict(),
         )
+
+    # Idempotency dedupe (producer path only; manual callers omit the key).
+    if body.idempotency_key and _closeout_dedupe_seen(body.idempotency_key):
+        logger.info("closeout deduped: key=%s", body.idempotency_key)
+        return {"ok": True, "deduped": True, "idempotency_key": body.idempotency_key}
+
+    # Status presence (ImplementCloseout requires it; fail fast at ingress).
+    if "status" not in payload:
+        return JSONResponse(
+            status_code=422,
+            content=FrontierEndpointError(
+                request_id=request_id,
+                field="closeout",
+                reason="closeout.status is required",
+                status_code=422,
+                code="closeout_invalid",
+            ).to_dict(),
+        )
+
+    # source_ref resolvability — required on keyed (producer) path; reject sidecars.
+    effective_source_ref = body.source_ref or payload.get("source_ref")
+    if body.idempotency_key:
+        if effective_source_ref is None:
+            logger.warning("closeout source_ref missing: key=%s", body.idempotency_key)
+            return JSONResponse(
+                status_code=422,
+                content=FrontierEndpointError(
+                    request_id=request_id,
+                    field="source_ref",
+                    reason="source_ref is required on the keyed (producer) path",
+                    status_code=422,
+                    code="closeout_source_unresolvable",
+                ).to_dict(),
+            )
+        try:
+            parse_source_ref(effective_source_ref)
+        except SourceRefError as exc:
+            logger.warning(
+                "closeout source_ref unresolvable: key=%s ref=%s err=%s",
+                body.idempotency_key,
+                effective_source_ref,
+                exc,
+            )
+            return JSONResponse(
+                status_code=422,
+                content=FrontierEndpointError(
+                    request_id=request_id,
+                    field="source_ref",
+                    reason=f"source_ref not adapter-resolvable: {effective_source_ref}",
+                    status_code=422,
+                    code="closeout_source_unresolvable",
+                ).to_dict(),
+            )
+
     loop = asyncio.get_running_loop()
+    logger.info(
+        "closeout accepted: key=%s ref=%s",
+        body.idempotency_key,
+        effective_source_ref,
+    )
     try:
         result = await loop.run_in_executor(
             None,

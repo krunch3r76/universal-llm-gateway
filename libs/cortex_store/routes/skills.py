@@ -13,26 +13,38 @@ todo:skills-http-endpoint / decision:http-first-agent-substrate.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import time
+import uuid
 from typing import Annotated, Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Header, HTTPException, Query, Request
+from pydantic import BaseModel, Field, ValidationError
 
 from ..confidence_field import lifecycle_not_value_sql_predicate
 from ..db import cortex_conn
 from ..db import query as db_query
+from ..event_publisher import (
+    cortex_skill_suggest_called,
+    cortex_skill_suggest_completed,
+    cortex_skill_suggest_degraded,
+    cortex_skill_suggest_failed,
+)
 from ..seat_applicability import (
     CAPABILITY_CLAUSE,
     FOR_AGENT_CLAUSE,
     canonical_seat_or_422,
     seat_capabilities_json,
 )
+from ..skill_suggest_rank import apply_rerank, rerank_enabled_default
 from ._skill_index import (
     body_digest,
     entity_types_for_layer,
     index_envelope_fields,
     slug_from_row,
 )
+from ._skill_suggest import run_stage_a
 from .boot._skill_trigger import _resolve_skill_file, skill_trigger_text
 
 _DEPRECATED_EXCLUDE = lifecycle_not_value_sql_predicate("deprecated")
@@ -195,3 +207,163 @@ def get_skill_body(
         "digest": digest,
         "body": body_text,
     }
+
+
+_CONTEXT_MAX = 16384
+
+
+class SkillSuggestRequest(BaseModel):
+    agent: str | None = None
+    loaded: list[str]
+    conversation_context: str | None = None
+    limit: int = Field(default=8, ge=1, le=25)
+    rerank: bool | None = None
+
+
+def _validate_loaded_value(loaded: Any) -> list[str]:
+    if not isinstance(loaded, list):
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "loaded_invalid", "message": "loaded must be a list"},
+        )
+    for item in loaded:
+        if not isinstance(item, str):
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "loaded_invalid",
+                    "message": "loaded elements must be strings",
+                },
+            )
+    return loaded
+
+
+def _parse_suggest_request(data: dict[str, Any]) -> SkillSuggestRequest:
+    _validate_loaded_value(data.get("loaded"))
+    try:
+        return SkillSuggestRequest.model_validate(data)
+    except ValidationError as exc:
+        detail = exc.errors()[0] if exc.errors() else {}
+        loc = detail.get("loc", ())
+        if "limit" in loc:
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "validation_error", "message": str(exc)},
+            ) from exc
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+def _context_digest(context: str | None) -> tuple[int, str]:
+    text = context or ""
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    return len(text), digest
+
+
+def _public_stage_a_result(result: dict[str, Any]) -> dict[str, Any]:
+    out = {k: v for k, v in result.items() if k != "stage_a_candidates"}
+    return out
+
+
+@router.post("/suggest")
+async def post_skill_suggest(
+    request: Request,
+    x_cortex_transport: Annotated[str | None, Header()] = None,
+) -> dict[str, Any]:
+    """Seat-gated deterministic skill delta suggestions with optional rerank."""
+    data = await request.json()
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=422, detail="request body must be a JSON object")
+    body = _parse_suggest_request(data)
+    suggest_id = str(uuid.uuid4())
+    transport = (x_cortex_transport or "http").strip() or "http"
+    t0 = time.monotonic()
+
+    if not body.agent or not str(body.agent).strip():
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "agent_required", "message": "agent is required"},
+        )
+
+    if body.conversation_context is not None and len(body.conversation_context) > _CONTEXT_MAX:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "context_too_large",
+                "message": f"conversation_context exceeds {_CONTEXT_MAX} characters",
+            },
+        )
+
+    ctx_len, ctx_sha = _context_digest(body.conversation_context)
+    effective_rerank = (
+        body.rerank if body.rerank is not None else rerank_enabled_default()
+    )
+    cortex_skill_suggest_called(
+        suggest_id=suggest_id,
+        agent=body.agent,
+        transport=transport,
+        context_len=ctx_len,
+        context_sha256=ctx_sha,
+        loaded_count=len(body.loaded),
+        rerank_requested=bool(effective_rerank),
+    )
+
+    try:
+        stage_a = run_stage_a(
+            agent=body.agent,
+            loaded=body.loaded,
+            conversation_context=body.conversation_context,
+            limit=body.limit,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        cortex_skill_suggest_failed(
+            suggest_id=suggest_id,
+            exc_type=type(exc).__name__,
+            detail=str(exc),
+        )
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    result = _public_stage_a_result(stage_a)
+    ranker_status = str(result.get("ranker_status") or "disabled")
+    degraded_reason: str | None = None
+    rank_execution_id: str | None = None
+
+    ctx_present = bool((body.conversation_context or "").strip())
+    if (
+        effective_rerank
+        and ctx_present
+        and result.get("suggestions")
+        and ranker_status != "skipped_no_context"
+    ):
+        result, ranker_status, degraded_reason, rank_execution_id = apply_rerank(
+            stage_a_result=result,
+            stage_a_candidates=stage_a.get("stage_a_candidates", []),
+            conversation_context=body.conversation_context or "",
+            loaded=body.loaded,
+            limit=body.limit,
+        )
+    elif not effective_rerank and ranker_status != "skipped_no_context":
+        result["ranker_status"] = "disabled"
+        ranker_status = "disabled"
+
+    latency_ms = int((time.monotonic() - t0) * 1000)
+    if degraded_reason:
+        cortex_skill_suggest_degraded(
+            suggest_id=suggest_id,
+            ranker_status=ranker_status,
+            degraded_reason=degraded_reason,
+            latency_ms=latency_ms,
+        )
+
+    cortex_skill_suggest_completed(
+        suggest_id=suggest_id,
+        agent=result["agent"],
+        candidate_count=len(stage_a.get("stage_a_candidates", [])),
+        suggested_count=result.get("count", 0),
+        omitted_count=len(result.get("omitted", [])),
+        ranker_status=ranker_status,
+        latency_ms=latency_ms,
+        rank_execution_id=rank_execution_id,
+    )
+    return result

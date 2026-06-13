@@ -208,9 +208,13 @@ async def test_ledger_non_authority(monkeypatch: pytest.MonkeyPatch) -> None:
             tool_call_count=0,
         )
 
+    async def _noop_acquire(*, dispatch_id: str | None = None) -> str:
+        return dispatch_id or "test-slot"
+
+    monkeypatch.setattr(route_mod, "acquire_sdk_dispatch_slot", _noop_acquire)
     monkeypatch.setattr(route_mod, "_run_sdk_sync", _ok_outcome)
 
-    await route_mod._run_sdk_dispatch(
+    await route_mod._run_sdk_dispatch_gated(
         req=req,
         source_repo=route_mod._CONFIG.source_repo,
         dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
@@ -252,7 +256,7 @@ def test_ledger_db_path_stable_across_home_swap(
         admission=_admission(req),
     )
 
-    # Simulate _isolated_dispatch_home swapping HOME for the bridge window.
+    # Defensive: a HOME change must not move the ledger DB path (captured pre-swap).
     monkeypatch.setenv("HOME", str(swapped_home))
 
     # Pre-fix, this raised sqlite3.OperationalError("no such table: ...").

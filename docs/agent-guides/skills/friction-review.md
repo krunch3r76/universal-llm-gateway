@@ -50,18 +50,18 @@ unless the operator says mechanical-only or a dense implement spec already exist
 
 | Stage | When (default) | Transport | Tier |
 |---|---|---|---|
-| **Investigate + decide** | Root cause unknown, multi-file/protocol, design choice open, most `friction()` categories except operator-confirmed mechanical-only | `web-consult` (consult packet) OR `cursor-consult` (Opus IDE) | web-claude / Opus |
+| **Investigate + decide** | Root cause unknown, multi-file/protocol, design choice open, most `friction()` categories except operator-confirmed mechanical-only | Ordered preference: (1) `web-consult` / web-claude, (2) GPT-5.5 generate when the corpus is self-contained and multi-turn web is unnecessary, (3) `cursor-consult` only when Cursor-seat affordances are required or the operator asks for Cursor | web-claude / GPT-5.5 / Opus |
 | **Execute** | A dense implement spec exists OR operator confirms mechanical-only | `cursor-implement` (Composer 2.5 Fast) OR web Path A inline fix via `fs` | Composer / web |
 
 | Initiator / seat | Investigate | Execute |
 |------------------|-----------|-----------|
-| **claude-cursor** (IDE) | `team_dispatch(op=handoff, role=cursor-consult, packet_path=…)` | `team_dispatch(op=handoff, role=cursor-implement, packet_path=tmp/reviews/<slug>-cursor-packet.md, …)` against the investigate-stage spec |
+| **claude-cursor** (IDE) | Prefer `team_dispatch(op=handoff, role=web-consult, packet_path=…)`; use GPT-5.5 generate for self-contained consults; use `cursor-consult` only for Cursor-seat need/operator request | `team_dispatch(op=handoff, role=cursor-implement, packet_path=tmp/reviews/<slug>-cursor-packet.md, …)` against the investigate-stage spec |
 | **claude-web** | `team_dispatch(op=handoff, role=web-consult, packet_path=…)` — consult packet | web Path A inline fix via `fs`, or `team_dispatch(op=handoff, role=web-implement, packet_path=…)` (acceptance criteria required) |
 | Operator names different transport | Obey operator or stop and ask — never substitute `agent_bus` for named `team_dispatch` | — |
 
 **Lifecycle (order matters):**
 
-1. **Investigate + decide** — `cursor-consult`/`web-consult` consult packet;
+1. **Investigate + decide** — default to `web-consult` / web-claude; use GPT-5.5 generate for a self-contained corpus; use `cursor-consult` only for Cursor-seat need/operator request;
    reproduce, trace root cause, inventory touch points, resolve design choice → dense spec
 2. **Execute** — `cursor-implement` (or web inline) against the investigate-stage spec; patch, verify, restart if substrate change
 3. **Report** — bus closeout: root cause, paths, verification evidence

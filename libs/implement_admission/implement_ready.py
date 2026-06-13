@@ -58,6 +58,20 @@ def _reject(code: str, reason: str) -> ImplementReadyVerdict:
     return ImplementReadyVerdict(admitted=False, code=code, reason=reason)
 
 
+def _acceptance_unpopulated_or_default(
+    acs: list[str] | None,
+    *,
+    todo_id: str,
+    name: str | None,
+) -> bool:
+    if not acs or not all(isinstance(x, str) and x.strip() for x in acs):
+        return True
+    defaults = {f"Complete work for {todo_id}"}
+    if name:
+        defaults.add(f"Complete {name}")
+    return all(a in defaults for a in acs)
+
+
 def evaluate_implement_ready(
     *,
     todo_id: str,
@@ -68,6 +82,9 @@ def evaluate_implement_ready(
     now_iso: str,
     dense_spec_uri: str | None = None,
     dense_spec_text: str | None = None,
+    files_expected: list[str] | None = None,
+    acceptance_criteria: list[str] | None = None,
+    entity_name: str | None = None,
 ) -> ImplementReadyVerdict:
     """Deterministic implement-readiness verdict over declared todo state."""
     triage = (density_triage or "").strip() or None
@@ -146,6 +163,25 @@ def evaluate_implement_ready(
             f"{todo_id}: current spec content is not attested by assertion "
             f"{implement_ready_assertion_id} (cite spec_sha256:<hex> of the "
             "validated content; rerun the validator and refresh the assertion)",
+        )
+
+    if not files_expected:
+        return _reject(
+            "implement_attrs_unpopulated",
+            f"{todo_id}: implement-ready but attrs.files_expected is empty — "
+            "distill files_expected from the dense spec at Gate-2 close "
+            "(consult-routing densify lane).",
+        )
+    if _acceptance_unpopulated_or_default(
+        acceptance_criteria,
+        todo_id=todo_id,
+        name=entity_name,
+    ):
+        return _reject(
+            "implement_attrs_unpopulated",
+            f"{todo_id}: attrs.acceptance_criteria is empty or the default "
+            "placeholder — distill acceptance_criteria from the dense spec at "
+            "Gate-2 close.",
         )
 
     return ImplementReadyVerdict(

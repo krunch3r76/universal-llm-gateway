@@ -35,29 +35,42 @@ async def dispatch_cursor_sdk_generate(
     message_text: str | None,
     reuse_thread: str | None = None,
     bus_lifecycle: Literal["persistent", "ephemeral"] | None = None,
+    density_triage: str | None = None,
+    review_opt_out_reason_code: str | None = None,
+    auto_review_child: bool = False,
 ) -> dict[str, Any]:
     """Execute cursor-sdk generate with to_thread default delivery.
 
-    Light/pure-mechanical: pass dispatch-thread text → worker gets ``message=``.
-    Implement: pass ``packet_path`` → worker gets ``packet_path=``.
+    Packet present: worker gets ``packet_path=`` (durable instruction channel).
+    No packet: dispatch-thread text → worker gets ``message=`` (bus-turn fallback).
     """
+    from .densify_triage import validate_generate_density_intake
+
+    validate_generate_density_intake(
+        request_id=request_id,
+        contract=contract,
+        density_triage=density_triage,
+        review_opt_out_reason_code=review_opt_out_reason_code,
+        auto_review_child=auto_review_child,
+    )
     to_agent, family, platform, resolved_model = resolve_cursor_sdk_generate_target(
         role, model=model, request_id=request_id
     )
     execution_id = str(uuid.uuid4())
     thread_subject = subject or f"cursor-sdk generate — {execution_id[:8]}"
 
-    if contract == "implement":
-        if packet_path is None:
-            from .admission import FrontierEndpointError
+    if contract == "implement" and packet_path is None:
+        from .admission import FrontierEndpointError
 
-            raise FrontierEndpointError(
-                request_id=request_id,
-                field="packet_path",
-                reason="contract=implement requires packet_path",
-                status_code=422,
-            )
-        pointer_body = f"SDK implement dispatch — see packet `{packet_path}`."
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="packet_path",
+            reason="contract=implement requires packet_path",
+            status_code=422,
+        )
+
+    if packet_path is not None:
+        pointer_body = f"SDK {contract} dispatch — see packet `{packet_path}`."
         worker_packet = packet_path
         worker_message = None
     else:
@@ -184,4 +197,7 @@ async def dispatch_cursor_sdk_generate(
         resolved_model=resolved_model,
         resolved_contract=handoff_contract,
         warnings=warnings,
+        density_triage=density_triage,
+        review_opt_out_reason_code=review_opt_out_reason_code,
+        auto_review_child=auto_review_child,
     )

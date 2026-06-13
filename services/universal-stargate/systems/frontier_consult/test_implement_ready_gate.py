@@ -84,13 +84,24 @@ def _entity(
     density_triage: str | None = None,
     assertion_id: int | None = None,
     source_uri: str | None = _SPEC,
+    files_expected: list[str] | None = None,
+    acceptance_criteria: list[str] | None = None,
+    name: str | None = "densification-implement-admission-gate",
 ) -> dict:
     attrs: dict = {}
     if density_triage is not None:
         attrs["density_triage"] = density_triage
     if assertion_id is not None:
         attrs["implement_ready_assertion_id"] = assertion_id
-    return {"attributes": attrs, "source_uri": source_uri}
+    if files_expected is not None:
+        attrs["files_expected"] = files_expected
+    if acceptance_criteria is not None:
+        attrs["acceptance_criteria"] = acceptance_criteria
+    return {
+        "attributes": attrs,
+        "source_uri": source_uri,
+        "name": name,
+    }
 
 
 def _assertion(spec_text: str = _VALID_DENSE_SPEC, **overrides: object) -> dict:
@@ -173,7 +184,12 @@ def test_judgment_required_with_valid_assertion_admits(spec_file: Path) -> None:
         request_id="req-1",
         source_ref=_TODO,
         cortex=_FakeCortex(
-            entity=_entity(density_triage="judgment_required", assertion_id=99),
+            entity=_entity(
+                density_triage="judgment_required",
+                assertion_id=99,
+                files_expected=["module.py"],
+                acceptance_criteria=["Validator passes dense specs."],
+            ),
             assertion=_assertion(),
         ),
     )
@@ -246,10 +262,35 @@ def test_hash_drift_raises(spec_file: Path) -> None:
             request_id="req-1",
             source_ref=_TODO,
             cortex=_FakeCortex(
-                entity=_entity(density_triage="judgment_required", assertion_id=99),
+                entity=_entity(
+                    density_triage="judgment_required",
+                    assertion_id=99,
+                    files_expected=["module.py"],
+                    acceptance_criteria=["Validator passes dense specs."],
+                ),
                 assertion=_assertion(
                     evidence_uris=[f"workspaces://universal-llm-gateway/{_SPEC}"],
                 ),
             ),
         )
     assert exc.value.code == "implement_spec_drifted_since_ready"
+
+
+@pytest.mark.offline
+def test_unpopulated_attrs_raises_before_materialization(spec_file: Path) -> None:
+    with pytest.raises(FrontierEndpointError) as exc:
+        require_implement_ready(
+            request_id="req-1",
+            source_ref=_TODO,
+            cortex=_FakeCortex(
+                entity=_entity(
+                    density_triage="judgment_required",
+                    assertion_id=99,
+                    files_expected=[],
+                    acceptance_criteria=[],
+                ),
+                assertion=_assertion(),
+            ),
+        )
+    assert exc.value.code == "implement_attrs_unpopulated"
+    assert exc.value.status_code == 422

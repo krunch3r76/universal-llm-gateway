@@ -59,7 +59,7 @@ from .status_trait_write import (
     trait_insert_extras,
 )
 from .trait_vocabulary import NON_LIVE_LIFECYCLE
-from .type_schemas import validate_required_attributes
+from .type_schemas import validate_distilled_attributes, validate_required_attributes
 from .workflow_state import (
     emit_todo_closure_gap_if_needed,
     validate_workflow_state,
@@ -446,6 +446,11 @@ def update_entity_impl(
             str(prior["type"]),
             attrs if isinstance(attrs, dict) else None,
         )
+        validate_distilled_attributes(
+            conn,
+            str(prior["type"]),
+            attrs if isinstance(attrs, dict) else None,
+        )
 
     if str(prior.get("type")) == "agent_skill":
         attrs = merged.get("attributes")
@@ -591,6 +596,7 @@ def create_entity_impl(
         )
 
     validate_required_attributes(conn, body.type, body.attributes)
+    validate_distilled_attributes(conn, body.type, body.attributes)
 
     if body.type == "agent_skill":
         validate_applicable_agents(

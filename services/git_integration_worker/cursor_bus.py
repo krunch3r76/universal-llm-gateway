@@ -76,6 +76,7 @@ class CursorBusClient:
         from_agent: str,
         subject: str,
         body: str,
+        allow_long_body: bool = False,
     ) -> BusReplyResult:
         headers = self._headers()
         payload = {
@@ -85,6 +86,7 @@ class CursorBusClient:
             "subject": subject,
             "body": body,
             "status": "open",
+            "allow_long_body": allow_long_body,
         }
         try:
             async with make_async_client(self._base_url, timeout=15.0) as client:

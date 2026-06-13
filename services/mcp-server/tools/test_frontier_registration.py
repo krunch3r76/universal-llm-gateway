@@ -356,3 +356,40 @@ def test_team_dispatch_handoff_packet_only_parity() -> None:
         "packet_path": "universal-llm-gateway/tmp/test-packet.md",
         "subject": "Test handoff subject",
     }
+
+
+
+def test_team_dispatch_generate_requires_contract() -> None:
+    """op='generate' with contract=None is rejected at intake — no relay (F17362)."""
+    recorder = _ToolNameRecorder()
+    register_frontier_tools(recorder)
+    team_dispatch_fn = recorder.functions["team_dispatch"]
+
+    relay_calls: list[dict[str, Any]] = []
+
+    async def _fake_relay(
+        *, endpoint: str, body: dict[str, Any], record_prefix: str
+    ) -> dict[str, Any]:
+        relay_calls.append({"endpoint": endpoint, "body": body})
+        return {"execution_id": "should-not-be-reached"}
+
+    def _fake_record(event: str, **kwargs: Any) -> None:
+        return None
+
+    with (
+        patch("tools.frontier._relay", side_effect=_fake_relay),
+        patch("tools.frontier.record", side_effect=_fake_record),
+    ):
+        result = asyncio.run(
+            team_dispatch_fn(
+                op="generate",
+                role="reviewer",
+                dispatch_thread_id="arc-f17362",
+                contract=None,
+            )
+        )
+
+    assert len(relay_calls) == 0
+    assert result["error"]["code"] == "validation_error"
+    assert result["field"] == "contract"
+    assert "contract is required" in result["error"]["message"]

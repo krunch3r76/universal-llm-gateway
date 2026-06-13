@@ -1,12 +1,13 @@
 # Handoff Packet Authoring
 
-Durable skeleton + checklist for authoring a bound implement / consult packet — the
-six-block shape is shared by both `team_dispatch(op=handoff)` and the default implement
-transport `team_dispatch(op=generate, role=cursor-sdk, packet_path=…)`.
-Promoted out of ephemeral `tmp/reviews/_handoff-packet-template.md` so it cannot
-go missing under task pressure (incident threads 1296/1297). Authority for the
-block contract: project `.cursor/rules/architecture-handoff-protocol.mdc`
-§ "The Six Required Blocks".
+Durable skeleton + checklist for the **stage → densify → wrap → dispatch-by-`source_ref`**
+lifecycle — Gate 2 **consult briefs**, **dense specs**, and server-**materialized
+implement packets** share the six-block shape. Default bound-implement transport:
+`team_dispatch(op=generate, role=cursor-sdk, contract=implement, source_ref=todo:{slug})`
+(server materializes from todo attributes; auto Composer, no IDE pickup). Promoted out
+of ephemeral `tmp/reviews/_handoff-packet-template.md` so it cannot go missing under task
+pressure (incident threads 1296/1297). Authority for the block contract: project
+`.cursor/rules/architecture-handoff-protocol.mdc` § "The Six Required Blocks".
 
 ## Spec vs packet — two different artifacts (read first)
 
@@ -24,9 +25,10 @@ fresh packet for each handoff leg — that loop is intended, not redundant.
 | Holds | Problem, scope, touch points, steps, ACs, `<reasoning_trace>`, bound forks | Six XML blocks (scope/invariants/task_guidance/corpus/mcp_capabilities/output_format) |
 | Why it exists | Single source of truth for the design | Injects what the receiver is blind to (workspace rules, invariants, investigation targets, output contract) |
 
-**Naming discipline — never bare "packet".** Always qualify by contract:
-- **consult packet** — Gate 2; front-matter `contract: consult`; `<output_format>` asks the receiver to *produce a dense spec*.
-- **implement packet** — Gate 3; `contract: implement`; ACs with the literal word `acceptance` in `<task_guidance>`; asks the receiver to *execute*.
+**Naming discipline — never bare "packet".** Always qualify:
+- **consult brief** — Gate 2 **consult packet** (six-block); front-matter `contract: consult`; `<output_format>` asks the receiver to *produce a dense spec*.
+- **dense spec** — durable design at `tasks/specs/{slug}.md`; fingerprinted by `content_hash`, never parsed as the instruction source.
+- **materialized implement packet** — Gate 3 six-block transport; `contract: implement`; ACs with the literal word `acceptance` in `<task_guidance>`; asks the receiver to *execute*. Default path: server materializes from `source_ref=todo:{slug}` attributes (`files_expected`, `acceptance_criteria`, `required_skills`).
 
 The two carry **opposite output contracts** (design prose vs code edits) — that is why
 the same work needs two packets, and why one cannot be reused as the other.
@@ -57,22 +59,25 @@ Read `attributes.dispatch_lane` on the leaf `todo:` before writing anything.
 
 | `dispatch_lane` | Who authors | Packet type | Typical seat |
 |---|---|---|---|
-| `web-implement-packet` | web-claude | six-block **consult** packet that authors an implement packet | `team_dispatch(op=handoff, seat=claude-web)` (shorthand `web-consult`) |
-| `web-spec` | web-claude | six-block **consult** packet (findings) | `team_dispatch(web-consult)` |
-| `cursor-sdk-implement` *(default for bound implement)* | any dispatching seat | **dense** six-block implement packet + acceptance criteria | `team_dispatch(op=generate, role=cursor-sdk, packet_path=…, contract=implement)` — auto Composer, no IDE pickup |
+| `web-implement-packet` | web-claude | six-block **consult brief** that authors a materialized implement packet | `team_dispatch(op=handoff, seat=claude-web)` (shorthand `web-consult`) |
+| `web-spec` | web-claude | six-block **consult brief** (findings) | `team_dispatch(web-consult)` |
+| `cursor-sdk-implement` *(default for bound implement)* | any dispatching seat | distilled todo attributes (server-materialized implement packet) | `team_dispatch(op=generate, role=cursor-sdk, source_ref=todo:{slug}, contract=implement)` — auto Composer, no IDE pickup |
 | `cursor-mechanical` | cursor IDE | skeleton or full packet on disk; **no web** when spec is sufficient | `cursor-sdk` generate (default) · IDE / `cursor-implement` when already in Cursor |
-| `cursor-implement` | cursor (handoff) | bound implement packet with acceptance criteria | `team_dispatch(op=handoff, role=cursor-implement)` — **fallback**: operator opens IDE |
+| `cursor-implement` | cursor (handoff) | materialized implement packet with acceptance criteria | `team_dispatch(op=handoff, role=cursor-implement, source_ref=todo:{slug})` — **fallback**: operator opens IDE |
 | `operator-gate` | operator | assert template / export — not a handoff packet | — |
 
 **Canonical pipeline:** reasoning upstream (web consult or plan author) → dense artifact
-(implement packet or phase doc) → mechanical downstream (`composer-2.5` / cursor-only).
+(dense spec + distilled attributes, or phase doc) → mechanical downstream via
+`source_ref=todo:{slug}` dispatch (`composer-2.5` / cursor-sdk default).
 
 **Counter-pattern:** mechanical work with a dense todo spec (e.g. corpus export) —
 `dispatch_lane: cursor-mechanical`, `density: mechanical`; skip web entirely.
 
 **Codified bug tickets bind to this same pipeline (investigate→execute):** a filed bug/friction
-defaults to **investigate + decide** (`cursor-consult` / `web-consult` — the
-reasoning-upstream hop that produces the dense spec) → **execute**
+defaults to **investigate + decide** with ordered consult preference: `web-consult`
+(web-claude) first, GPT-5.5 generate when the corpus is self-contained, and
+`cursor-consult` only when Cursor-seat affordances are required or the operator asks for
+Cursor. That reasoning-upstream hop produces the dense spec → **execute**
 (`cursor-implement` against that spec, or web inline fix — the mechanical-downstream hop).
 Do not author a `cursor-implement` packet as the first hop on a bug whose root cause or
 design is still open; that collapses the upstream → dense-artifact → downstream pipeline
@@ -91,16 +96,16 @@ Full attribute table: `universal-llm-gateway/.cursor/rules/todo_ws.mdc` §Dispat
 Operator says *"draft a preliminary packet for `todo:{slug}` and submit to web for
 densification"* (or *"stage `todo:{slug}` for densification"* / *"stage `todo:{slug}` for
 densification and submit to web-claude"*). This is **Gate 2 entry** —
-produce a **consult packet**, never an implement packet. "Preliminary packet" = the Gate 2
-consult packet (the container that *requests* the spec); it is **not** a Gate 3 implement
-packet built ahead of the spec. Run exactly, every time:
+produce a **consult brief**, never a materialized implement packet. "Preliminary packet" = the Gate 2
+consult brief (the container that *requests* the dense spec); it is **not** a Gate 3 materialized
+implement packet built ahead of the dense spec. Run exactly, every time:
 
 **Authority boundary:** Gate 2 staging is retrieval/scaffolding only. The stager may
 perform mechanical synthesis — summarize known constraints, group candidate files, quote
 existing assertions, list hypotheses, and name forks — but MUST preserve judgment for the
 densifier. ¬ resolve design forks; ¬ select implementation shape; ¬ mark the task
-implementation-ready; ¬ author a Gate 3 implement packet. If the next useful step requires
-design judgment, write a minimal consult packet with the unresolved forks/questions and
+implementation-ready; ¬ author a Gate 3 materialized implement packet. If the next useful step requires
+design judgment, write a minimal consult brief with the unresolved forks/questions and
 dispatch.
 
 **Triage precondition (declared-state, ¬ inferred).** Whether a sparse todo is densified
@@ -125,7 +130,7 @@ confident-but-unresolved false-negatives, boilerplate gaming); the server enforc
    `entity_update(source_uri="tasks/specs/{slug}.md", workflow_state="in_progress")`. The
    stub IS written — folding it only into `<corpus>` and skipping the file is the divergence
    this section closes.
-3. **Author the consult packet** at `tmp/reviews/{slug}-harden-web-consult-packet.md`:
+3. **Author the consult brief** at `tmp/reviews/{slug}-harden-web-consult-packet.md`:
    front-matter `contract: consult` + web boot-gate fields (`active_project_tag`,
    `cortex_boot_confirmed`, `related_thread_ids`). Six blocks, Gate-2 shaped
    (skeleton: `handoff-dispatchers.mdc` § Gate 2 packet skeleton). `<corpus>` references the
@@ -139,9 +144,18 @@ confident-but-unresolved false-negatives, boilerplate gaming); the server enforc
    `contract` enum is `{light-bounded, pure-mechanical, implement}` only, so `contract="consult"`
    is a **422 validation error**.
 5. **Hand back.** Report thread id + `push_reminder`. The dense spec lands at
-   `tasks/specs/{slug}.md` when web closes `ready-for-Composer-implement`. Gate 3 (wrap the
-   dense spec → implement packet) is a **separate, later** step — do NOT pre-author it now.
-   See § Gate 3 — wrap for the inline procedure.
+   `tasks/specs/{slug}.md` when web closes `ready-for-Composer-implement`. Gate 3
+   (direct `source_ref` implement dispatch) is a **separate, later** step — do NOT
+   pre-author an implement packet now.
+   See § Gate 3 — direct implement dispatch for the default procedure.
+6. **Distill attributes (Gate-2 close, mandatory).** Before declaring implement-ready,
+   project the dense spec onto the todo as structured attributes the materializer consumes:
+   `files_expected` (non-empty `list[str]`), `acceptance_criteria` (non-empty `list[str]`),
+   and `required_skills` when applicable. Use `entity_update` — the materializer for
+   `source_ref=todo:{slug}` reads attributes only; prose in `tasks/specs/{slug}.md` is
+   fingerprinted by `content_hash`, never content-read. Dispatch rejects (422
+   `implement_attrs_unpopulated`) when these attrs are empty or defaulted. Waive the
+   advisory session-close detector only via `attributes.attributes_distillation_waived`.
 
 **Entity hygiene is the dispatching seat's duty — not something the reviewer should have to
 offer.** A staged-but-stale todo (`unsubstantiated`, no `source_uri`, no tracking assertion)
@@ -156,30 +170,118 @@ the exact hesitation seen on thread 1770. Close it at the source:
   not substantiation. Band promotion comes later, not from the act of staging.
 - **At Gate 2 close** (`ready-for-Composer-implement`): record an implement-ready assertion
   citing the now-dense spec; promote `confidence_band` per the ratified design;
+  **distill `files_expected` + `acceptance_criteria`** onto the todo (see step 6 above);
   `workflow_state` stays `in_progress` until Gate 3 completes.
 
 The reviewer never has to ask permission to fix todo hygiene — by this contract it was never
 theirs to fix.
 
-## Gate 3 — wrap (inline mechanical, current-seat)
+## Gate 3 — direct implement dispatch (default: server materialization)
 
-Wrapping the dense spec into a six-block implement packet is **mechanical** — but only
-*after* the design is settled. Separate two acts the same word "wrap" hides:
-**artifact-generation** (write the packet) is mechanical and stays inline in the current
-seat; **implementation** (execute the packet) is the dispatch.
+After Gate 2 closes (`ready-for-Composer-implement`) with attributes distilled onto
+`todo:{slug}`, **default Gate 3** is one-hop dispatch-by-`source_ref` — the server
+materializes the six-block materialized implement packet from todo attributes and
+executes via `cursor-sdk`:
 
-**Precondition gate (both required).** ¬ wrap until:
+```python
+team_dispatch(op="generate", role="cursor-sdk", contract="implement",
+              source_ref="todo:{slug}", dispatch_thread_id="{arc-id}")
+```
+
+Materialization consumes `files_expected`, `acceptance_criteria`, and `required_skills`
+from the todo row; dense-spec prose at `tasks/specs/{slug}.md` is fingerprinted by
+`content_hash`, never content-read as the instruction source.
+
+### Compliance predicate (all five required)
+
+If any check fails, route per the rejecting branch table below — **do not wrap**.
+
+1. `source_ref=todo:{slug}` resolves to the intended todo.
+2. An active implement-ready assertion (`ready-for-Composer-implement`) cites the dense spec **and** its `spec_sha256`.
+3. Distilled attrs present/valid: non-empty `files_expected`, non-empty `acceptance_criteria` (+ `required_skills` when applicable); pass `validate_distilled_attributes`.
+4. Zero unresolved forks / material decision branches (`validate_dense_spec` passes).
+5. The dense-spec artifact is still the one fingerprinted by the cited `spec_sha256` (no spec/attrs drift); else route back and re-distill.
+
+### Rejecting behavior (branch table)
+
+| Condition | Verdict | Action |
+|---|---|---|
+| Missing/empty distilled attrs | reject `implement_attrs_unpopulated` | distill/backfill, retry |
+| No implement-ready assertion | reject (not ready) | return to Gate 2 |
+| Open fork / decision remains | reject (not ready) | resolve fork first |
+| Spec/attrs (sha) drift | reject `implement_spec_drifted_since_ready` | re-validate, refresh assertion with new `spec_sha256` |
+| Need inspect / no-Composer artifact | — | W4 `contract=wrap` |
+| Need richer corpus / manual seat | — | W1 `packet_path` / manual handoff |
+| Materializer broken + urgent | — | break-glass `packet_path` WITH incident note |
+
+### Anti-pattern triggers (when wrap is correct vs a violation)
+
+**Governing principle: wrap is non-remedial.** Wrap exists for alternate transport or
+a richer corpus, never to make an incompliant todo look implementable. A `source_ref`
+rejection (gate fired) means fix the todo or route back, not wrap.
+
+**Closed set of legitimate wrap triggers** (the ONLY cases):
+
+| Bucket | Surface | When correct |
+|---|---|---|
+| Inspection artifact (W4) | `contract=wrap`, `source_ref=todo:{slug}` | Need the materialized packet WITHOUT spawning Composer — pre-dispatch audit, frozen packet for a thread, manual review, provenance/hash-trace. |
+| Alternate transport / manual seat (W1) | `packet_path`, or `op=handoff` `cursor-implement`/`web-implement` | Target is a non-sdk/manual seat whose transport is packet-file based. |
+| Non-projectable corpus (W1) | `packet_path` | Executor needs corpus content not faithfully representable by `files_expected`+`acceptance_criteria`+`required_skills` (verbatim refs, cross-file narrative). Bar is high: if mechanical-ready the projection suffices; if not, suspect residual design judgment → route back. |
+| Break-glass incident (W1) | `packet_path` WITH incident note | `source_ref` materializer temporarily broken + urgent. Label break-glass, not a protocol exception. |
+
+**NOT wrap triggers** (route back / fix precondition):
+
+- Distilled attrs unpopulated → 422 `implement_attrs_unpopulated`; distill/backfill then retry.
+- Open fork survives Gate-2 → not implement-ready; return to Gate 2 densification.
+- No active implement-ready assertion → gate blocks; record it.
+- Multi-todo batch → aggregate into one compliant item or route as `task:`/`plan:`.
+- Executor-tier override → carried by `executor_override` request/front-matter field; needs no hand-authored packet.
+
+**Legacy / escape-hatch — inline hand-authored wrap:** when the source is not yet
+representable as `todo:`/`plan:`/`plan_phase:` attributes, the materializer output is
+known-insufficient for a one-off, or for materialized-vs-hand-authored debug, the
+dispatching seat MAY inline-wrap a dense spec into a hand-authored materialized
+implement packet (see procedure below), then dispatch with `packet_path` (legacy).
+
+Separate two acts the word "wrap" hides:
+**artifact-generation** (write the materialized implement packet) vs **implementation**
+(execute via dispatch).
+
+**Wrap — four senses (disambiguation, friction #17374).** "wrap" is overloaded; only W1/W2 are the Gate-3 lifecycle "wrap," and **none** of the four is a Gate-2 densify:
+- **W1 — lifecycle Gate-3 wrap (legacy/escape-hatch):** inline mechanical act of wrapping a dense spec into a hand-authored materialized implement packet (current-seat, **no dispatch**).
+- **W2 — the act-split inside W1:** *artifact-generation* (write the materialized implement packet — mechanical, inline) vs *implementation* (execute the packet — the dispatch). See the paragraph above.
+- **W3 — `generate_wrap.prepare_implement_packet`:** the **server** function that gate-then-materializes a materialized implement packet (used by `contract=implement` + `source_ref` materialization and `contract=wrap`).
+- **W4 — `contract=wrap` (landed):** first-class generate-lane transport on `role=cursor-sdk` — server hard-gates implement-ready + ratification, materializes the six-block materialized implement packet via `prepare_implement_packet`, returns HTTP 200 with `packet_path` + provenance **without** spawning Composer. Explicitly invoked (¬ auto-closeout); materialize-only sibling of default `contract=implement` + `source_ref`. Call: `team_dispatch(op=generate, role=cursor-sdk, contract=wrap, source_ref=todo:{slug})` — `source_ref` required, `packet_path` forbidden, `dispatch_thread_id` exempt.
+
+Collision to avoid: a Gate-2 densify whose **subject** is W3/W4 must not be mistaken for a W1 Gate-3 wrap (which forbids dispatch). Cross-family steering on a self-authored W3/W4 design is the friction #17374 misroute.
+
+**Precondition gate (both required).** ¬ wrap or dispatch until:
 - an **active implement-ready assertion** cites the dense spec (¬ mere `source_uri` existence; ¬ a `seed_contract_ack`), AND
 - the dense spec has **zero OPEN forks** (`§8` empty or explicitly closed).
 
 The "is it dense?" check is now **mechanical**, not eyeballed: the dense spec MUST pass `validate_dense_spec` (`libs/implement_admission/dense_spec_schema.py` — required sections present, non-empty `<reasoning_trace>` attestation, zero live `OPEN:` markers on code-stripped text), the same gate admission re-runs at the cited evidence URI (`todo:dense-spec-schema`).
 
-**Inline wrap procedure** (current seat — ANY reasoning-authorized tier; ¬ a dispatch):
+**Legacy / escape-hatch — inline hand-authored wrap procedure** (current seat — ANY reasoning-authorized tier; ¬ a dispatch):
 1. Read `todo:{slug}` + `source_uri`; confirm the implement-ready assertion is active.
 2. Verify the dense spec carries: problem/scope, touched files/functions, steps, acceptance criteria, tests/verification, resolved-forks (or explicit "none").
-3. Author the implement packet inline at `tmp/reviews/{slug}-implement-packet.md`: spec body → `<corpus>`, ACs → `<task_guidance>` (literal `acceptance`), front-matter `contract: implement`; self-check the six anchored `^<tag>$` blocks.
+3. Author the materialized implement packet inline at `tmp/reviews/{slug}-implement-packet.md`: spec body → `<corpus>`, ACs → `<task_guidance>` (literal `acceptance`), front-matter `contract: implement`; self-check the six anchored `^<tag>$` blocks.
 4. **Halt rule** — if any open fork or design gap surfaces during wrap, STOP and route back to Gate 2 densification. ¬ resolve it inside the wrap; wrapping is transport, not design.
-5. **Then** dispatch *implementation* of the now-dense packet: `team_dispatch(op=generate, role=cursor-sdk, contract=implement, packet_path=…, dispatch_thread_id={arc-id})`.
+5. **Then** dispatch *implementation* — compliant-default first (when attrs are distilled and gates pass):
+
+```python
+# Compliant-default — server materializes from source_ref
+team_dispatch(op="generate", role="cursor-sdk", contract="implement",
+              source_ref="todo:{slug}", dispatch_thread_id="{arc-id}")
+```
+
+Named exception only — hand-authored `packet_path`:
+
+```python
+# Legacy / escape-hatch — hand-authored packet_path only
+team_dispatch(op="generate", role="cursor-sdk", contract="implement",
+              packet_path="tmp/reviews/{slug}-implement-packet.md",
+              dispatch_thread_id="{arc-id}")
+```
 
 **Antipattern — do NOT dispatch the wrap itself.** Routing the wrap *step* to `cursor-sdk`
 (case study `todo:densification-workflow-stage-wrap-tier-policy`, threads 1781/1785) cost a
@@ -187,9 +289,11 @@ wrapper packet + a context thread (after `generate` rejected an empty `dispatch_
 + retry + a separate result-thread poll — disproportionate ceremony for inline
 packetization the current seat does in one write. The *implementation* dispatch after the
 packet existed ran clean (thread 1785: intended files only, compileall/ruff/pytest 45-passed/
-import-check green). A first-class wrap transport (`packet_path` with no pre-seeded dispatch
-thread) is a deferred fallback, considered only if inline current-seat wrap proves
-insufficient.
+import-check green). **`contract=wrap`** is the landed first-class server-materialization
+transport for materialize-only (no Composer spawn):
+`team_dispatch(op=generate, role=cursor-sdk, contract=wrap, source_ref=todo:{slug})`.
+**Server materialization via `source_ref=todo:{slug}` is the documented Gate-3 default** for
+bound implement dispatch (`contract=implement`).
 
 ## General execution without packet (contract-based)
 
@@ -198,7 +302,7 @@ insufficient.
 `team_dispatch(op=generate, role=cursor-sdk, dispatch_thread_id=…, contract=light-bounded|pure-mechanical)` —
 with explicit instructions pre-staged on the dispatch thread. Composer 2.5 is still a
 mechanical executor, so thread-staged directions must be explicit, detailed,
-restrictive, and bounded. This is a distinct lane from the dense implement packet,
+restrictive, and bounded. This is a distinct lane from the materialized implement packet,
 **not** a lighter packet. `messages[]` is not on the wire.
 
 Canonical lane definition — the three-point spectrum (Dense Implement / Light Bounded
@@ -233,6 +337,23 @@ fs(workspaces, .cursor/rules/handoff-dispatchers.mdc)                   # § tar
 The protocol files live at **project** `.cursor/rules/` (one level above the
 repo; **no** `universal-llm-gateway/` prefix). Skipping the trio when the boot
 card `_CONSULT_ROUTING_GATE` is present is a protocol violation.
+
+### Skill URI Resolution
+
+Temporary guardrail until `skill_suggest` is primary: do not derive a skill load
+path from the slug. Resolve task-specific skills through
+`agent_skill:<slug>.source_uri` before writing packet `fs` lines.
+
+| Skill source | Packet load line |
+|---|---|
+| `source_uri=cortex://agent-skills/<slug>.md` | `fs(cortex, op=read, path="agent-skills/<slug>.md")` |
+| `source_uri=workspaces://universal-llm-gateway/.cursor/skills/<slug>/SKILL.md` | `fs(workspaces, op=read, path="universal-llm-gateway/.cursor/skills/<slug>/SKILL.md")` |
+
+Do not assume every `agent_skill:*` entity has a Cortex
+`agent-skills/<slug>.md` body. Example: `agent_skill:add-mcp-tool` resolves to
+`workspaces://universal-llm-gateway/.cursor/skills/add-mcp-tool/SKILL.md`; the
+Cortex-native analog for MCP surface changes is
+`fs(cortex, op=read, path="agent-skills/mcp-surface-change.md")`.
 
 ## The Six Required Blocks
 
@@ -347,9 +468,9 @@ escalation, ¬ scaffold→densify chaining — unless the draft is explicitly la
 
 ## Naming + delivery
 
-- **Default implement transport = `cursor-sdk` generate** (`team_dispatch(op=generate, role=cursor-sdk, packet_path=…, contract=implement)`) — auto Composer, no IDE pickup. `cursor-implement` handoff is the operator-attended **fallback**, not a peer default. The packet must be **dense** (Composer executes mechanically). Full policy: `agent-skills/consult-routing.md` § Dispatch targets.
-- Packet path: `tmp/reviews/<task>-<seat>-packet.md` (write the file **before** the handoff call).
-- **`packet_path` root**: Stargate resolves `packet_path` relative to `PROJECT_ROOT`
+- **Default implement transport = `cursor-sdk` generate + `source_ref`** (`team_dispatch(op=generate, role=cursor-sdk, source_ref=todo:{slug}, contract=implement)`) — server materializes from todo attributes; auto Composer, no IDE pickup. `cursor-implement` handoff is the operator-attended **fallback**, not a peer default. Attributes MUST be distilled (Composer executes mechanically). Full policy: `agent-skills/consult-routing.md` § Implement lane — source_ref.
+- **Legacy / escape-hatch:** hand-authored materialized implement packet at `tmp/reviews/<task>-<seat>-packet.md` + `packet_path=` on generate, or `packet_path=` on handoff consult briefs — write the file **before** the dispatch call.
+- **`packet_path` root** (legacy hand-authored paths only): Stargate resolves `packet_path` relative to `PROJECT_ROOT`
   (`/mnt/torus/projects/universal-llm-gateway`). Use `tmp/reviews/<file>.md` — **no repo prefix**.
   `fs(sandbox="workspaces")` uses a different root (`/mnt/torus/projects`) and needs the
   `universal-llm-gateway/` prefix. These are different; conflating them gives `handoff_packet_missing`.

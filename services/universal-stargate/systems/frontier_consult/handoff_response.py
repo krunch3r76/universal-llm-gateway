@@ -180,12 +180,22 @@ def build_api_generate_result(
     thread_id: str,
     resolved_model: str,
     resolved_contract: str,
+    density_triage: str | None = None,
+    review_opt_out_reason_code: str | None = None,
+    auto_review_child: bool = False,
 ) -> dict[str, Any]:
     """Generate-shaped 202 for API roles with default bus thread delivery."""
+    from .densify_triage import build_generate_review_envelope
+
     execution_id = dispatch_result.get("execution_id")
     result: dict[str, Any] = {
         **dispatch_result,
         **handoff_fields,
+        **build_generate_review_envelope(
+            density_triage=density_triage,
+            review_opt_out_reason_code=review_opt_out_reason_code,
+            auto_review_child=auto_review_child,
+        ),
         "op": "generate",
         "output_contract": "thread",
         "thread_id": thread_id,
@@ -226,10 +236,20 @@ def build_sdk_generate_result(
     resolved_model: str,
     resolved_contract: str,
     warnings: list[str],
+    density_triage: str | None = None,
+    review_opt_out_reason_code: str | None = None,
+    auto_review_child: bool = False,
 ) -> dict[str, Any]:
     """Generate-shaped 202 response for SDK-substrate cursor-sdk dispatch."""
+    from .densify_triage import build_generate_review_envelope
+
     result: dict[str, Any] = {
         **handoff_fields,
+        **build_generate_review_envelope(
+            density_triage=density_triage,
+            review_opt_out_reason_code=review_opt_out_reason_code,
+            auto_review_child=auto_review_child,
+        ),
         "execution_id": execution_id,
         "substrate": "sdk",
         "output_contract": "thread",

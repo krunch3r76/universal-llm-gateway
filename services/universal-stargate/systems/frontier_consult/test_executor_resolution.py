@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from .executor_resolution import (
+    derive_generate_review,
     derive_recommended_executor,
     derive_recommended_review,
     should_emit_executor_override_audit,
@@ -82,6 +83,19 @@ def test_ac9_consult_review_default_on() -> None:
 
 def test_ac9_implement_no_review_default() -> None:
     assert derive_recommended_review("implement") is None
+
+
+def test_ac4_generate_default_on_discriminator() -> None:
+    assert (
+        derive_generate_review("dispatch_surface", auto_review_child=False)
+        == "cross-family-reconcile:default-on"
+    )
+    assert derive_generate_review("trivial", auto_review_child=False) is None
+    assert derive_generate_review(None, auto_review_child=False) is None
+
+
+def test_ac6_recursion_guard_child_marker() -> None:
+    assert derive_generate_review("judgment_required", auto_review_child=True) is None
 
 
 def test_honored_non_composer_with_gap_reason() -> None:

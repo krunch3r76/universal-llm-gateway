@@ -116,3 +116,80 @@ def validate_required_attributes(
                 "violations": enum_violations,
             },
         )
+
+
+_IMPLEMENT_LANE_KEYS = ("files_expected", "acceptance_criteria", "required_skills")
+_DEPRECATED_IMPLEMENT_ALIASES = {
+    "files_modified": "files_expected",
+    "acceptance": "acceptance_criteria",
+}
+
+
+def _implement_lane_shape_invalid(key: str, value: object) -> bool:
+    if not isinstance(value, list) or not value:
+        return True
+    return not all(isinstance(item, str) and item.strip() for item in value)
+
+
+def validate_distilled_attributes(
+    conn: sqlite3.Connection,
+    entity_type: str,
+    attributes: dict[str, object] | None,
+) -> None:
+    """Stricter-than-materializer shape gate for implement-lane attrs.
+
+    Runs only on supplied implement-lane keys. Rejects (422):
+      - deprecated aliases (files_modified / acceptance) — post-059 typos;
+      - implement-lane key present but not a non-empty list[str] of non-empty strings;
+      - implement-lane key not registered in the type's schema (when the type is registered).
+    Other attribute keys (priority, domain, density_triage, ...) are untouched.
+    """
+    attrs = attributes or {}
+    present_lane_keys = [key for key in _IMPLEMENT_LANE_KEYS if key in attrs]
+    if not present_lane_keys and not any(k in attrs for k in _DEPRECATED_IMPLEMENT_ALIASES):
+        return
+
+    for alias, canonical in _DEPRECATED_IMPLEMENT_ALIASES.items():
+        if alias in attrs:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "error": "implement_attr_alias_rejected",
+                    "entity_type": entity_type,
+                    "alias": alias,
+                    "canonical": canonical,
+                },
+            )
+
+    schema = type_attribute_schema(conn, entity_type)
+    registered: set[str] | None = None
+    if schema is not None:
+        registered = set(schema["required"]) | set(schema["optional"])
+        assert isinstance(registered, set)
+
+    for key in present_lane_keys:
+        if registered is not None and key not in registered:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "error": "implement_attr_not_registered",
+                    "entity_type": entity_type,
+                    "attribute": key,
+                },
+            )
+        if _implement_lane_shape_invalid(key, attrs[key]):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "error": "implement_attr_shape_invalid",
+                    "entity_type": entity_type,
+                    "attribute": key,
+                },
+            )
+
+
+__all__ = [
+    "type_attribute_schema",
+    "validate_distilled_attributes",
+    "validate_required_attributes",
+]
