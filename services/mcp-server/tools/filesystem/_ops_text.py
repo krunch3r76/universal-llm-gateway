@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import secrets
+from pathlib import Path
 from typing import Any
 
 from mcp_events import record
@@ -18,6 +19,7 @@ from ._paths import (
     SHARED_IMAGE_DIR,
     path_write_lock,
     safe_path,
+    sha256_hex_of_file,
     sha256_of_file,
 )
 
@@ -88,6 +90,9 @@ def write_file_impl(
       - ``expected_sha256`` present → file must exist and hash must match.
       - ``if_absent=True`` → create-only; fails when the path already exists.
       - Both guard params together → ``ValueError``.
+
+    On success, response includes ``written_sha256``: bare lowercase hex of the
+    resulting file bytes. Callers compose ``sha256:`` / ``spec_sha256:`` prefixes.
     """
     if expected_sha256 is not None and if_absent:
         raise ValueError("expected_sha256 and if_absent are mutually exclusive")
@@ -130,7 +135,11 @@ def write_file_impl(
 
     record("mcp.tool.file.written", path=path, resolved=str(dest), chars=len(content))
     logger.debug("write_file: wrote %s (%d chars)", dest, len(content))
-    return {"status": "written", "path": str(dest)}
+    return {
+        "status": "written",
+        "path": str(dest),
+        "written_sha256": sha256_hex_of_file(dest),
+    }
 
 
 def read_file_impl(

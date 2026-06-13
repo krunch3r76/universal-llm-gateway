@@ -50,7 +50,7 @@ from .filesystem._ops_search import (
     compile_pattern,
     search_in_text,
 )
-from .filesystem._paths import SANDBOX_ROOT, trash_destination
+from .filesystem._paths import SANDBOX_ROOT, sha256_hex_of_file, trash_destination
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -771,7 +771,9 @@ def register_project_tools(mcp: FastMCP) -> None:
             content: Full file content to write.
 
         Returns:
-            {"status": "written", "path": "<relative path>"}
+            {"status": "written", "path": "<relative path>",
+            "written_sha256": "<hex>"} — bare lowercase hex; callers compose
+            ``sha256:`` / ``spec_sha256:`` prefixes as needed.
         """
         target = _safe_project_path(path)
         suffix = target.suffix.lower()
@@ -785,7 +787,11 @@ def register_project_tools(mcp: FastMCP) -> None:
         rel = str(target.relative_to(_PROJECT_ROOT.resolve()))
         logger.info("write_project_file: %s (%d chars)", rel, len(content))
         record("mcp.project.file.written", path=rel, size=len(content))
-        return {"status": "written", "path": rel}
+        return {
+            "status": "written",
+            "path": rel,
+            "written_sha256": sha256_hex_of_file(target),
+        }
 
     @mcp.tool(title="Edit Project File")
     def edit_project_file(
@@ -813,7 +819,9 @@ def register_project_tools(mcp: FastMCP) -> None:
             all_occurrences: For "replace": replace all matches vs first only.
 
         Returns:
-            {"status": "edited: <operation>", "path": "<relative path>"}
+            {"status": "edited: <operation>", "path": "<relative path>",
+            "written_sha256": "<hex>"} — bare lowercase hex; callers compose
+            ``sha256:`` / ``spec_sha256:`` prefixes as needed.
             For replace: includes "replacements_made".
         """
         target = _safe_project_path(path)

@@ -4,8 +4,11 @@ Friction rows are **assertions** on `service:{name}` with claims like `[tool_err
 They record tool/schema/boot gaps (F5 funnel).
 
 **Critical split:** `friction()` = **observation log**. A fix cycle = **codified bug ticket**
-via `team_dispatch(op=handoff)` + six-block implement packet. Operator says "dispatch /
-address / fix the friction" → open the ticket; do not stop at logging.
+via the investigate→execute lifecycle; once the investigate close distills attributes, the
+execute default is server materialization via
+`team_dispatch(op=generate, role=cursor-sdk, contract=implement, source_ref=todo:{slug})` —
+`cursor-implement` / `web-implement` + `packet_path` are the named fallback. Operator says
+"dispatch / address / fix the friction" → open the ticket; do not stop at logging.
 
 Full transport matrix: `fs(cortex, agent-skills/consult-routing.md)` § Codified bug reports.
 
@@ -51,22 +54,33 @@ unless the operator says mechanical-only or a dense implement spec already exist
 | Stage | When (default) | Transport | Tier |
 |---|---|---|---|
 | **Investigate + decide** | Root cause unknown, multi-file/protocol, design choice open, most `friction()` categories except operator-confirmed mechanical-only | Ordered preference: (1) `web-consult` / web-claude, (2) GPT-5.5 generate when the corpus is self-contained and multi-turn web is unnecessary, (3) `cursor-consult` only when Cursor-seat affordances are required or the operator asks for Cursor | web-claude / GPT-5.5 / Opus |
-| **Execute** | A dense implement spec exists OR operator confirms mechanical-only | `cursor-implement` (Composer 2.5 Fast) OR web Path A inline fix via `fs` | Composer / web |
+| **Execute** | A dense implement spec exists OR operator confirms mechanical-only | default `team_dispatch(op=generate, role=cursor-sdk, contract=implement, source_ref=todo:{slug})` (server-materialized); web-native inline `fs` fix; `cursor-implement` / `web-implement` + `packet_path` = named fallback (see § Fallback triggers) | Composer / web |
 
 | Initiator / seat | Investigate | Execute |
 |------------------|-----------|-----------|
-| **claude-cursor** (IDE) | Prefer `team_dispatch(op=handoff, role=web-consult, packet_path=…)`; use GPT-5.5 generate for self-contained consults; use `cursor-consult` only for Cursor-seat need/operator request | `team_dispatch(op=handoff, role=cursor-implement, packet_path=tmp/reviews/<slug>-cursor-packet.md, …)` against the investigate-stage spec |
-| **claude-web** | `team_dispatch(op=handoff, role=web-consult, packet_path=…)` — consult packet | web Path A inline fix via `fs`, or `team_dispatch(op=handoff, role=web-implement, packet_path=…)` (acceptance criteria required) |
+| **claude-cursor** (IDE) | Prefer `team_dispatch(op=handoff, role=web-consult, packet_path=…)`; use GPT-5.5 generate for self-contained consults; use `cursor-consult` only for Cursor-seat need/operator request | Default: `team_dispatch(op=generate, role=cursor-sdk, contract=implement, source_ref=todo:{slug})` after investigate close distills attrs; fallback: `team_dispatch(op=handoff, role=cursor-implement, …)` |
+| **claude-web** | `team_dispatch(op=handoff, role=web-consult, packet_path=…)` — consult packet | Default: web-native inline `fs` fix or `team_dispatch(op=generate, role=cursor-sdk, contract=implement, source_ref=todo:{slug})`; fallback: `team_dispatch(op=handoff, role=web-implement, packet_path=…)` |
 | Operator names different transport | Obey operator or stop and ask — never substitute `agent_bus` for named `team_dispatch` | — |
 
 **Lifecycle (order matters):**
 
 1. **Investigate + decide** — default to `web-consult` / web-claude; use GPT-5.5 generate for a self-contained corpus; use `cursor-consult` only for Cursor-seat need/operator request;
    reproduce, trace root cause, inventory touch points, resolve design choice → dense spec
-2. **Execute** — `cursor-implement` (or web inline) against the investigate-stage spec; patch, verify, restart if substrate change
-3. **Report** — bus closeout: root cause, paths, verification evidence
-4. **Secondary findings** — issues found during investigation → labeled in closeout;
+2. **Investigate close** — dense spec at `tasks/specs/{slug}.md` + `ready-for-Composer-implement` +
+   **distill `files_expected` / `acceptance_criteria` (+ `required_skills`) onto the bug-fix `todo:`** +
+   implement-ready assertion citing the spec + `spec_sha256` (cross-ref `handoff-packet-authoring.md`
+   § Gate 2 step 6 + `consult-routing.md` § Densify lane)
+3. **Execute** — default `team_dispatch(op=generate, role=cursor-sdk, contract=implement, source_ref=todo:{slug})`;
+   web-native inline `fs` fix on web seat; patch, verify, restart if substrate change
+4. **Report** — bus closeout: root cause, paths, verification evidence
+5. **Secondary findings** — issues found during investigation → labeled in closeout;
    spin separate friction/handoff if they need their own cycle
+
+## Fallback triggers (named exceptions)
+
+`cursor-implement` / `web-implement` handoff and hand-authored `packet_path` remain correct only in the
+closed wrap-exception set — see `handoff-packet-authoring.md` § Gate 3 ("Wrap — four senses" + branch
+table) and `handoff-dispatchers.mdc`. Do not re-state that table here.
 
 ## Pass zoom-out duty
 

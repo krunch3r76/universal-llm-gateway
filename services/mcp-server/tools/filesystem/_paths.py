@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
-import hashlib
 import os
 import threading
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from collections.abc import Iterator
+
+from tools._hashing import sha256_hex_of_bytes, sha256_hex_of_file, sha256_of_file
+
+__all__ = [
+    "sha256_hex_of_bytes",
+    "sha256_hex_of_file",
+    "sha256_of_file",
+]
 
 SANDBOX_ROOT = Path("/data/files")
 TRASH_ROOT = SANDBOX_ROOT / "trash"
@@ -93,16 +100,6 @@ def normalize_files_reference(path: str) -> str:
 _PATH_LOCKS: dict[str, threading.Lock] = {}
 _PATH_LOCKS_MUTEX = threading.Lock()
 
-
-def sha256_of_file(path: Path) -> str | None:
-    """Return ``sha256:<hex>`` of file bytes, or None when *path* is absent."""
-    if not path.is_file():
-        return None
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(65536), b""):
-            digest.update(chunk)
-    return f"sha256:{digest.hexdigest()}"
 
 
 @contextmanager

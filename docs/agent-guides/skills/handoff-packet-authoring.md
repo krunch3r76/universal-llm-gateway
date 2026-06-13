@@ -77,8 +77,13 @@ Read `attributes.dispatch_lane` on the leaf `todo:` before writing anything.
 defaults to **investigate + decide** with ordered consult preference: `web-consult`
 (web-claude) first, GPT-5.5 generate when the corpus is self-contained, and
 `cursor-consult` only when Cursor-seat affordances are required or the operator asks for
-Cursor. That reasoning-upstream hop produces the dense spec → **execute**
-(`cursor-implement` against that spec, or web inline fix — the mechanical-downstream hop).
+Cursor. That reasoning-upstream hop produces the dense spec; **investigate close** MUST
+distill `files_expected` / `acceptance_criteria` (+ `required_skills`) onto the bug-fix
+`todo:` and record an implement-ready assertion citing the spec + `spec_sha256` (see § Gate 2
+step 6 + `consult-routing.md` § Densify lane) → **execute** default =
+`team_dispatch(op=generate, role=cursor-sdk, contract=implement, source_ref=todo:{slug})`
+(server materialization); web-native inline `fs` fix on web seat; `cursor-implement` /
+`web-implement` + `packet_path` = named fallback (§ Gate 3 wrap-exception table).
 Do not author a `cursor-implement` packet as the first hop on a bug whose root cause or
 design is still open; that collapses the upstream → dense-artifact → downstream pipeline
 into a single mechanical step with no spec. **Pass zoom-out duty** binds every bug pickup:

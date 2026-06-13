@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from tools._hashing import sha256_hex_of_file
+
 
 def perform_edit(
     path: Path,
@@ -31,7 +33,10 @@ def perform_edit(
 
     Returns:
         A dictionary confirming the operation.
-        Example: {"status": "edited: prepend", "path": "/path/to/file"}.
+        Example: {"status": "edited: prepend", "path": "/path/to/file",
+        "written_sha256": "<hex>"}.
+        ``written_sha256`` is bare lowercase hex; callers compose
+        ``sha256:`` / ``spec_sha256:`` prefixes as needed.
         For "replace" operation, also includes "replacements_made".
 
     Raises:
@@ -91,6 +96,7 @@ def perform_edit(
     result: dict[str, str | int] = {
         "status": f"edited: {operation}",
         "path": str(path),
+        "written_sha256": sha256_hex_of_file(path),
     }
     if operation == "replace":
         result["replacements_made"] = replacements_made

@@ -10,7 +10,7 @@ from typing import Any
 
 from mcp_events import record
 
-from ._paths import BINARY_MAX_BYTES, safe_path
+from ._paths import BINARY_MAX_BYTES, safe_path, sha256_hex_of_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +56,12 @@ def write_binary_impl(rel_path: str, content_base64: str) -> dict[str, Any]:
         binary=True,
     )
     logger.debug("write_binary: wrote %s (%d bytes)", dest, len(raw))
-    return {"status": "written", "path": str(dest), "bytes": len(raw)}
+    return {
+        "status": "written",
+        "path": str(dest),
+        "bytes": len(raw),
+        "written_sha256": sha256_hex_of_bytes(raw),
+    }
 
 
 def append_binary_impl(rel_path: str, content_base64: str) -> dict[str, Any]:

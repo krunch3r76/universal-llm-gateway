@@ -42,19 +42,22 @@ second opinion, hand off reasoning, **or hand off a bound implementation**.
 4. **`agent_bus(reply)`** on an existing thread = **iteration/follow-up only** — not the
    standard opener for a substantive review consult. Thread continuity does not override
    handoff routing.
-5. **Bug/friction tickets (two-phase + pass zoom-out)**: an actionable defect needing a fix
-   cycle routes in **two phases** — **Phase 1 investigate + decide** (`role=cursor-consult`
+5. **Bug/friction tickets (investigate→execute + pass zoom-out)**: an actionable defect needing a fix
+   cycle routes in **two stages** — **investigate + decide** (`role=cursor-consult`
    from the IDE, or `role=web-consult` from web) to trace root cause, inventory touch points,
-   and resolve design choice into a dense spec; **Phase 2 execute** (`role=cursor-implement`
-   against that spec, or web inline fix) only once a spec exists or the operator confirms
-   mechanical-only. **Pass zoom-out duty:** on every `type:bug` bus pickup or bug handoff to
-   web/cursor, zoom out in the pass — grep the bug-class pattern service-wide, audit sibling
-   touch points, and label secondary findings in closeout (`verify-now` | `flag-deferred` |
-   `spin-ticket`; `None observed.` if empty). **Default:** a filed bug/friction → assume Phase 1
-   unless the operator says mechanical-only or a dense implement spec already exists — do **not**
-   make `cursor-implement` the first hop on a bug whose root cause or design is still open.
-   `friction()` is the observation log only — it records a defect, it does NOT submit a ticket.
-   See `consult-routing.md` § Codified bug reports → Pass zoom-out duty.
+   and resolve design choice into a dense spec; **investigate close** distills `files_expected` /
+   `acceptance_criteria` (+ `required_skills`) and records implement-ready + `spec_sha256`;
+   **execute** default = `team_dispatch(op=generate, role=cursor-sdk, contract=implement,
+   source_ref=todo:{slug})` (or web-native inline `fs` fix) only once attrs are distilled;
+   `cursor-implement` / `web-implement` + `packet_path` = named fallback. **Pass zoom-out duty:**
+   on every `type:bug` bus pickup or bug handoff to web/cursor, zoom out in the pass — grep the
+   bug-class pattern service-wide, audit sibling touch points, and label secondary findings in
+   closeout (`verify-now` | `flag-deferred` | `spin-ticket`; `None observed.` if empty).
+   **Default:** a filed bug/friction → assume investigate unless the operator says mechanical-only
+   or a dense implement spec already exists — do **not** make `cursor-implement` the first hop on
+   a bug whose root cause or design is still open. `friction()` is the observation log only — it
+   records a defect, it does NOT submit a ticket. See `consult-routing.md` § Codified bug reports
+   → Pass zoom-out duty.
 
 ### 1. Before Substantive Work
 
@@ -153,12 +156,12 @@ bouncing between two incompatible approaches.
 | Use handoff for thin implement ping | `agent_bus(post, to=claude-cursor, …)` + spec/tags |
 | Poll `pipeline(op=result)` after handoff | `agent_bus(wait)` from `poll_hint` — handoff has no `execution_id` |
 | Override operator `team_dispatch` with `agent_bus`, citing the thin-ping row | Operator-named transport wins; obey it or stop and ask — never silently substitute |
-| `cursor-implement` as the first hop on a bug with open root cause / design (friction 13571 → thread 1377) | Phase 1 `cursor-consult`/`web-consult` to produce a spec → Phase 2 `cursor-implement` against it |
+| `cursor-implement` as the first hop on a bug with open root cause / design (friction 13571 → thread 1377) | investigate + decide (`cursor-consult`/`web-consult`) → distill attrs at investigate close → execute default `cursor-sdk` + `source_ref`; `cursor-implement` = fallback |
 | Composer / `cursor-implement` authors its own dispatch-ready spec (`tasks/specs/{slug}.md`) | Reasoning tier (`web-consult` / `cursor-consult` / Opus) authors spec + todo seed; mechanical tier executes — never the reverse (`handoff-packet-authoring.md` § Dispatch lifecycle) |
 | Open a codified bug report with redesign / graph-walk before investigate/fix/report | Run the bug cycle first; secondary findings belong in the closeout |
 | Treat a codified bug report as file+friction only (no fix) | Bound implement: investigate, fix, verify, report |
 | Fix only the filed symptom on a bug bus pickup (no touch-point sweep / secondary findings) | Pass zoom-out duty: inventory touch points, bug-class grep, labeled `## Secondary findings` in closeout |
-| Submit a bug ticket via `friction()` (observation log) | `team_dispatch(op=handoff)` + implement packet; `friction()` only as grounding |
+| Submit a bug ticket via `friction()` (observation log) | investigate→execute cycle; execute default = `cursor-sdk` generate + `source_ref` once attrs distilled; `friction()` only as grounding |
 
 ## Relationship to Other Rules
 

@@ -116,7 +116,7 @@ Mandatory preflight before ANY handoff packet or team_dispatch(op=handoff) — i
   fs(workspaces, .cursor/rules/architecture-handoff-protocol.mdc)   # § Six Blocks
   fs(workspaces, .cursor/rules/handoff-dispatchers.mdc)             # § target seat
 Executor-tier policy (R1/R2/R3 — spec authorship, Composer acceptance, widened-discovery): `consult-routing.md` § Executor tier & handoff mechanics → Canonical routing policy (¬ restate here).
-Codified bug ticket = the investigate→execute fix cycle (investigate → dense spec, then execute) + pass zoom-out duty (widen beyond filed symptom; touch-point inventory; bug-class grep; labeled secondary findings in closeout). A filed bug defaults to the INVESTIGATION tier (friction 13571 → thread 1377). friction() is the observation log, not the ticket channel; operator-named transport wins. Full model: consult-routing.md § Codified bug reports → Pass zoom-out duty."""
+Codified bug ticket = the investigate→execute fix cycle (investigate → dense spec + attribute distillation at investigate close, then execute via the bound-implement default — `cursor-sdk` + `source_ref` once Gate-2 attrs distilled) + pass zoom-out duty (widen beyond filed symptom; touch-point inventory; bug-class grep; labeled secondary findings in closeout). A filed bug defaults to the INVESTIGATION tier (friction 13571 → thread 1377). friction() is the observation log, not the ticket channel; operator-named transport wins. Full model: consult-routing.md § Codified bug reports → Pass zoom-out duty."""
 
 _RAG_SCOPE_AWARENESS_BLOCK = """\
 ## RAG scope-awareness — default search is auto-scoped, not corpus-wide

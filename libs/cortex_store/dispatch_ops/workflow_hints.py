@@ -137,8 +137,10 @@ _WORKFLOW_HINTS: dict[str, str] = {
 
 _FRICTION_TICKET_NEXT = (
     "Actionable friction = codified bug ticket (NOT friction() alone), routed as the investigate→execute fix cycle: "
-    "investigate+decide (cursor: role=cursor-consult; web: role=web-consult) → dense spec; "
-    "execute (cursor: role=cursor-implement against the spec; web: inline fix). "
+    "investigate+decide (cursor: role=cursor-consult; web: role=web-consult) → dense spec + attribute distillation "
+    "at investigate close (files_expected, acceptance_criteria, implement-ready assertion + spec_sha256); "
+    "execute default = team_dispatch(op=generate, role=cursor-sdk, contract=implement, source_ref=todo:{slug}) "
+    "(server-materialized once attrs distilled); cursor-implement / web-inline = named fallback. "
     "DEFAULT to investigate unless operator says mechanical-only or a dense implement spec exists — "
     "do NOT make cursor-implement the first hop on a bug with open root cause/design. "
     "Lifecycle: investigate → fix → report; pass zoom-out duty (touch-point inventory, "
