@@ -123,6 +123,7 @@ def _resolve_prompt(req: CursorDispatchRequest, source_repo: Path) -> str:
         handoff_contract=req.handoff_contract,
         prompt_preamble=req.prompt_preamble,
         inferred_contract=inferred_contract,
+        dispatch_thread_id=req.thread_id,
     )
     return f"{preamble}{packet_text}"
 

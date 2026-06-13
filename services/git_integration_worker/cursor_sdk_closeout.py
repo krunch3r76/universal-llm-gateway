@@ -30,6 +30,12 @@ _IMPLEMENT_PREAMBLE = (
     "domain routing) is description-gated and does NOT reliably attach without these reads."
 )
 
+_THREAD_BINDING_TEMPLATE = (
+    "Your agent-bus reply thread for this dispatch is `{thread_id}`. Post your "
+    "closeout ONLY to this thread. Do NOT fetch or act on other unread agent-bus turns "
+    "during this dispatch."
+)
+
 _CONTRACT_FRONTMATTER_RE = re.compile(
     r"^contract:\s*(\S+)\s*$",
     re.IGNORECASE | re.MULTILINE,
@@ -102,17 +108,31 @@ def extract_source_ref_from_packet(text: str) -> str | None:
     return None
 
 
+def _thread_binding_sentence(dispatch_thread_id: str) -> str:
+    return _THREAD_BINDING_TEMPLATE.format(thread_id=dispatch_thread_id)
+
+
 def resolve_prompt_preamble(
     *,
     handoff_contract: str | None,
     prompt_preamble: str | None,
     inferred_contract: str | None,
+    dispatch_thread_id: str | None = None,
 ) -> str:
     contract = (handoff_contract or inferred_contract or "consult").lower()
     if prompt_preamble:
-        return f"{prompt_preamble.strip()}\n\n"
-    if contract == "implement":
-        return f"{_IMPLEMENT_PREAMBLE}\n\n"
+        preamble = prompt_preamble.strip()
+    elif contract == "implement":
+        preamble = _IMPLEMENT_PREAMBLE
+    else:
+        preamble = ""
+
+    if contract == "implement" and dispatch_thread_id:
+        binding = _thread_binding_sentence(dispatch_thread_id)
+        preamble = f"{preamble}\n\n{binding}" if preamble else binding
+
+    if preamble:
+        return f"{preamble}\n\n"
     return ""
 
 

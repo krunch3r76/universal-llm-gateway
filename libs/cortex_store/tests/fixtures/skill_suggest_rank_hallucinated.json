@@ -1,7 +1,0 @@
-{
-  "ranked": [
-    {"slug": "consult-routing", "reason": "valid slug"},
-    {"slug": "hallucinated-skill", "reason": "should drop"},
-    {"slug": "session-close", "reason": "also valid"}
-  ]
-}

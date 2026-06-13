@@ -265,7 +265,19 @@ def render_skills_section(
             "— slug is the bolded id on each line. "
             "Full index (all triggers): `cortex://agent-skills/README.md`. "
             "Invariant-tier bodies (`architecture-invariants`, `ulg-architecture`) "
-            "auto-append to the web system prompt — not inlined here."
+            "auto-append to the web system prompt — not inlined here. "
+            "Verify they loaded: grep `cortex:invariant-skills-autoappend` in your "
+            "own prompt (the sentinel carries a `sha256` over the body + a `count`)."
+        ),
+        (
+            "> **Discovery (you call it, never the operator)**: at task inflection "
+            "points — handoff/packet authoring, `team_dispatch`/dispatch, task pivot, "
+            "MCP/pipeline/service-surface work — call "
+            "`skill_suggest(loaded=[…already-loaded slugs…], conversation_context=…)` "
+            "BEFORE pattern-matching this manifest. It returns the not-yet-loaded "
+            "delta; fetch each hit via its `uri`. "
+            "If `skill_suggest` is not pre-bound this session, "
+            '`tool_search("skill_suggest")` first (one load hop), then call it.'
         ),
     ]
     signals = boot_signals or set()
@@ -289,6 +301,10 @@ def render_skills_section(
 
     if tier1:
         lines.append("\n### Required gates")
+        lines.append(
+            "- **skill discovery** — at inflection point → "
+            "`skill_suggest(loaded=…)` before scanning this manifest"
+        )
         _append_skill_index(lines, tier1)
     if tier2:
         lines.append("\n### Relevant now")

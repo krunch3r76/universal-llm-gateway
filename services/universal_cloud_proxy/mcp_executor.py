@@ -22,6 +22,7 @@ parses as ``{family}-{platform}``.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import time
@@ -101,12 +102,29 @@ def _is_web_seat(seat: str) -> bool:
     return profile is not None and profile.platform == "web"
 
 
+def _invariant_presence_sentinel(block: str, injected: list[dict[str, Any]]) -> str:
+    """One-line, grep-able, VERIFIABLE presence marker for the invariant block.
+
+    Per-block ``<!-- invariant-skill:slug digest:… -->`` markers exist already,
+    but an agent could not cheaply confirm the WHOLE invariant set loaded
+    (thread 1876 gap row A2). Format reconciled with claude-web's GPT-5.5 spec
+    (thread 1879): ``sha256`` is taken over the body block (sans this sentinel),
+    UTF-8, ``\\n``-normalized, so a seat can RECOMPUTE the hash over its own
+    system prompt rather than merely substring-matching a slug list."""
+    count = len([i for i in injected if str(i.get("id") or "").strip()])
+    if count == 0:
+        return ""
+    normalized = block.replace("\r\n", "\n").replace("\r", "\n")
+    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+    return f"<!-- cortex:invariant-skills-autoappend sha256={digest} count={count} -->"
+
+
 async def _append_web_invariant_bodies(content: str, seat: str) -> str:
     """Append the two invariant skill bodies for web seats (marker-deduped)."""
     if not _is_web_seat(seat):
         return content
     entries = await asyncio.to_thread(fetch_web_invariant_entries)
-    block, _, _ = build_injected_bodies_md(
+    block, injected, _ = build_injected_bodies_md(
         seat,
         entries,
         already_present=content,
@@ -115,6 +133,9 @@ async def _append_web_invariant_bodies(content: str, seat: str) -> str:
     )
     if not block:
         return content
+    sentinel = _invariant_presence_sentinel(block, injected)
+    if sentinel and "cortex:invariant-skills-autoappend" not in content:
+        block = f"\n\n{sentinel}{block}"
     return content + block
 
 

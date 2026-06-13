@@ -343,11 +343,20 @@ The protocol files live at **project** `.cursor/rules/` (one level above the
 repo; **no** `universal-llm-gateway/` prefix). Skipping the trio when the boot
 card `_CONSULT_ROUTING_GATE` is present is a protocol violation.
 
-### Skill URI Resolution
+### Skill discovery and URI resolution
 
-Temporary guardrail until `skill_suggest` is primary: do not derive a skill load
-path from the slug. Resolve task-specific skills through
-`agent_skill:<slug>.source_uri` before writing packet `fs` lines.
+**Primary (in-session):** call MCP `skill_suggest(loaded=[...], conversation_context=...)`
+at inflection points before authoring packet `fs` lines. Playbook:
+`docs/agent-guides/skills/skill-suggest-utilization.md`.
+
+**Web / inline-only invariant bodies:** `architecture-invariants` and `ulg-architecture`
+are server-injected on web boot and inline-only dispatch (Track B Slice F + G3). Packet
+authors must **not** rely on hand-carried `fs` refs as the only delivery path for those
+two on web — omit redundant invariant lines unless verifying digest drift.
+
+**When the skill set is already known** (todo `required_skills`, static consult corpus):
+do not derive a load path from slug alone. Resolve via `agent_skill:<slug>.source_uri`
+(or `GET /skills/body?id=&expected_digest=`).
 
 | Skill source | Packet load line |
 |---|---|

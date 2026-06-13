@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import dataclass
 from typing import Any
 
 from ..confidence_field import lifecycle_not_value_sql_predicate
@@ -19,6 +20,15 @@ from ..seat_applicability import (
 _DEPRECATED_EXCLUDE = lifecycle_not_value_sql_predicate("deprecated")
 
 _TOKEN_SPLIT_RE = re.compile(r"[^a-z0-9_+.-]+")
+
+# Generic singleton match terms that bleed into the tail on unrelated contexts
+# (thread 1881 reviewer verdict — deterministic precision gate). A candidate
+# whose ONLY matched evidence is one of these is dropped unless it also has a
+# contiguous multi-token phrase match. Routing-meaningful tokens (handoff,
+# dispatch, packet, consensus, steelman, …) are deliberately NOT generic.
+_GENERIC_SINGLETON_MATCH_TERMS = frozenset(
+    {"lead", "seat", "consult", "review", "agent", "skill"}
+)
 
 STOPWORDS = frozenset(
     {
@@ -158,13 +168,23 @@ def build_loaded_set(loaded: list[str]) -> set[str]:
     return {norm_loaded(x) for x in loaded if isinstance(x, str) and x.strip()}
 
 
+_SCHEME_RE = re.compile(r"^[a-z][a-z0-9+.-]*:/{0,2}", re.IGNORECASE)
+
+
 def slug_from_source_uri(source_uri: str | None) -> str | None:
-    """Canonical slug from source_uri stem (§1 — not entity name)."""
+    """Canonical bare slug from source_uri stem (§1 — not entity name).
+
+    Robust to scheme- or path-carrying source_uris (`cortex://…`,
+    `workspaces://…/skills/…`, malformed `cortex:agent-skills/…`): strip any
+    scheme, reduce to the final path segment, drop the `.md` suffix. The slug
+    MUST stay a bare token — `run_stage_a` assembles `cortex://agent-skills/{slug}.md`
+    unconditionally, so a slug that still carries a scheme/path double-schemes
+    the uri and 404s any consumer that fetches the body (thread 1876 gap table).
+    """
     if not source_uri:
         return None
-    s = str(source_uri).strip()
-    if s.startswith("agent-skills/"):
-        s = s[len("agent-skills/") :]
+    s = _SCHEME_RE.sub("", str(source_uri).strip())
+    s = s.rsplit("/", 1)[-1]
     if s.endswith(".md"):
         s = s[:-3]
     return s or None
@@ -238,6 +258,70 @@ def _priority_boost(delivery_priority: int) -> float:
     return (100 - min(delivery_priority, 100)) / 200
 
 
+@dataclass(frozen=True)
+class _CandidateScore:
+    """Scoring metadata for the deterministic precision gate (thread 1881).
+
+    `score` is the boosted total used for sorting; the gate reads ONLY the
+    base deterministic signals (`matched_specific_terms`, `has_phrase_match`)
+    so required-gate / delivery-priority boosts cannot rescue generic tail
+    bleed.
+    """
+
+    score: float
+    base_score: int
+    matched_terms: tuple[str, ...]
+    matched_specific_terms: frozenset[str]
+    has_phrase_match: bool
+
+
+def _normalized_context(text: str) -> str:
+    """Whitespace-joined token stream of `text` — phrase-match substrate.
+
+    Reuses the canonical token split (no stopword removal here: a phrase like
+    'lead seat boot' must survive intact for contiguous matching)."""
+    return " ".join(t for t in _TOKEN_SPLIT_RE.split(text.lower()) if t)
+
+
+def _has_contiguous_phrase_match(term: str, normalized_context: str) -> bool:
+    """True iff `term` is multi-token and appears contiguously in context."""
+    normalized = " ".join(t for t in _TOKEN_SPLIT_RE.split(term.lower()) if t)
+    if len(normalized.split()) < 2:
+        return False
+    return f" {normalized} " in f" {normalized_context} "
+
+
+def _is_specific_term(term: str) -> bool:
+    """A matched term is specific iff it carries ≥1 non-generic token.
+
+    `_matched_terms` counts a multi-token trigger term whenever ALL its tokens
+    appear anywhere in context (subset, NOT contiguous). So an all-generic
+    phrase like 'lead seat' would otherwise masquerade as a specific match on
+    incidental prose. Such phrases must clear the gate only via the CONTIGUOUS
+    phrase rescue (`_has_contiguous_phrase_match`), never as a specific term."""
+    tokens = [t for t in _TOKEN_SPLIT_RE.split(term.lower()) if t]
+    return any(t not in _GENERIC_SINGLETON_MATCH_TERMS for t in tokens)
+
+
+def _passes_precision_gate(score: _CandidateScore) -> bool:
+    """Drop tail candidates whose only evidence is generic singleton token(s).
+
+    Pass iff a contiguous multi-token phrase matched, or at least one specific
+    (non-generic) term matched. Reads base metadata only — required-gate and
+    delivery-priority boosts cannot rescue generic-only bleed.
+
+    Deviation from the thread-1881 reviewer's literal ``>= 2 specific`` rule:
+    the reviewer's target was generic-singleton bleed (lead/seat/consult), but
+    ``>= 2`` also drops legitimate single-SPECIFIC-term matches that the system
+    contractually surfaces (`test_prompt_injection_treated_as_tokens` — a lone
+    specific token must still recommend its skill). ``>= 1 specific`` kills the
+    named bleeders identically while preserving that contract.
+    """
+    if score.has_phrase_match:
+        return True
+    return len(score.matched_specific_terms) >= 1
+
+
 def _fetch_candidates(agent: str) -> list[dict[str, Any]]:
     canonical = canonical_seat_or_422(agent)
     params: list[Any] = ["deprecated", canonical, seat_capabilities_json(canonical)]
@@ -253,8 +337,8 @@ def _fetch_candidates(agent: str) -> list[dict[str, Any]]:
 
 
 def _score_candidate(
-    row: dict[str, Any], ctx_tokens: set[str]
-) -> tuple[float, list[str]] | None:
+    row: dict[str, Any], ctx_tokens: set[str], normalized_context: str
+) -> _CandidateScore | None:
     slug = slug_from_source_uri(row.get("source_uri"))
     if not slug:
         return None
@@ -268,7 +352,17 @@ def _score_candidate(
     if row.get("boot_importance") == "required_gate":
         score += 0.5
     score += _priority_boost(int(row.get("delivery_priority") or 100))
-    return score, matched
+    matched_specific = frozenset(m for m in matched if _is_specific_term(m))
+    has_phrase = any(
+        _has_contiguous_phrase_match(term, normalized_context) for term in trigger_terms
+    )
+    return _CandidateScore(
+        score=score,
+        base_score=base_score,
+        matched_terms=tuple(matched),
+        matched_specific_terms=matched_specific,
+        has_phrase_match=has_phrase,
+    )
 
 
 def _sort_key(
@@ -306,6 +400,7 @@ def run_stage_a(
 
     loaded_set = build_loaded_set(loaded)
     ctx_tokens = tokenize_text(ctx)
+    normalized_context = _normalized_context(ctx)
     canonical_agent = canonical_seat_or_422(agent)
     rows = _fetch_candidates(agent)
 
@@ -318,16 +413,16 @@ def run_stage_a(
         if not slug:
             continue
         entity_id = str(row.get("id") or "")
-        scored = _score_candidate(row, ctx_tokens)
+        scored = _score_candidate(row, ctx_tokens, normalized_context)
         if scored is None:
             continue
-        score, matched = scored
+        matched = list(scored.matched_terms)
         trigger_terms = _decode_term_list(row.get("trigger_match_terms_json"))
         entry = {
             "id": entity_id,
             "slug": slug,
             "uri": f"cortex://agent-skills/{slug}.md",
-            "score": score,
+            "score": scored.score,
             "trigger_match": matched[:5],
             "reason": "matches: " + ", ".join(matched[:5]),
             "reason_source": "deterministic",
@@ -341,13 +436,17 @@ def run_stage_a(
             if slug not in loaded_echo:
                 loaded_echo.append(slug)
             scored_loaded.append(entry)
-        else:
+        elif _passes_precision_gate(scored):
             scored_new.append(entry)
 
     loaded_echo = sorted(set(loaded_echo))
     scored_new.sort(key=_sort_key)
     suggestions = [
-        {k: v for k, v in item.items() if k not in {"boot_importance", "delivery_priority"}}
+        {
+            k: v
+            for k, v in item.items()
+            if k not in {"boot_importance", "delivery_priority"}
+        }
         for item in scored_new[:limit]
     ]
     omitted = [

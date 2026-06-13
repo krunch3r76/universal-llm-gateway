@@ -1,6 +1,0 @@
-{
-  "ranked": [
-    {"slug": "consult-routing", "reason": "consult handoff routing"},
-    {"slug": "session-close", "reason": "session close protocol"}
-  ]
-}

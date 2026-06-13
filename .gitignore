@@ -71,10 +71,14 @@ docs/vision/
 .pyre/
 
 prompts/
-tests/*
-!libs/inference_djinn/scripts/tests/
-!tests/predicate_form/
-!tests/agent_bus_store/
+
+# Tests — local-only until reorganized; not part of public surface
+**/test_*.py
+**/*_test.py
+**/_test_*.py
+**/conftest.py
+tests/
+**/tests/
 # Root-anchored: rsync --filter=:- .gitignore ignores git ! negations.
 # Use /foo/ not foo/ when foo/ also appears as a source directory elsewhere in the tree.
 /templates/
