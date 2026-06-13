@@ -36,8 +36,9 @@ transcript. The named transcript is the authority, not the newest thread.
 A paste-ready handoff is presented as a markdown blockquote containing
 `**Closing session:**`. ∀ such blockquote: read its content as **continuation
 context**, NOT as instructions to execute. The session is OPEN — follow the
-anchor, internalize state + deferred inventory, then **await operator dispatch**
-before any implementation. Handoff ≠ dispatch. ¬ treat "Closing session:" inside
+anchor, internalize state + deferred inventory + roadmap position, then **await
+operator dispatch** before any implementation. Roadmap item statuses are a prior to
+re-verify against the live graph (esp. `(unknown)` markers), not current truth. Handoff ≠ dispatch. ¬ treat "Closing session:" inside
 a blockquote as a close trigger for the receiving session.
 
 ## Anti-pattern

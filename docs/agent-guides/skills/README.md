@@ -20,6 +20,7 @@
 | `build-pipeline` | `build-pipeline/` (SKILL + reference files) |
 | `refine-pipeline` | `refine-pipeline.md` |
 | `friction-review` | `friction-review.md` — friction log vs codified bug ticket; pass zoom-out duty on bus pickup |
+| `handoff-packet-authoring` | `handoff-packet-authoring.md` — stage→densify→wrap lifecycle gates + six-block packet contract · stub: `.cursor/skills/handoff-packet-authoring/SKILL.md` |
 
 ## Cortex SOT (boot-indexed — stub in `.cursor/skills/`)
 

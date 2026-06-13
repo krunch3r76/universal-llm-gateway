@@ -9,7 +9,7 @@ relay to cortex-api ``POST /dispatch``; agent_bus uses ``.agent_bus.AGENT_BUS_OP
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Annotated, Any
 
 from agent_seat import (
     TEAM_TOOL_DEFINITIONS as TEAM_TOOL_DEFINITIONS,  # noqa: PLC0414 (re-export)
@@ -17,6 +17,7 @@ from agent_seat import (
 from agent_seat import (
     TOOL_DEFINITIONS as TOOL_DEFINITIONS,  # noqa: PLC0414 (re-export)
 )
+from pydantic.functional_validators import BeforeValidator
 
 from ._cortex_relay import cx
 
@@ -59,6 +60,30 @@ def parse_dispatch_arguments(raw: object) -> dict[str, Any] | None:
         except json.JSONDecodeError:
             return None
     return None
+
+
+def _coerce_dispatch_arguments(v: object) -> object:
+    """Coerce a dict to a JSON string before Pydantic validates the ``str`` type.
+
+    Agents occasionally produce ``arguments={...}`` (object literal) instead of
+    the canonical ``arguments='{"...": "..."}'`` wire form.  This
+    ``BeforeValidator`` normalises the input transparently so the FastMCP handler
+    receives a valid JSON string in either case.
+
+    The outer Pydantic type annotation stays ``str``, so the generated JSON
+    Schema remains ``{"type": "string"}`` — satisfying the ``mcp-tool-param-types``
+    invariant that forbids ``anyOf / object`` on optional params.
+    """
+    if isinstance(v, dict):
+        return json.dumps(v)
+    return v
+
+
+# Type alias: ``str`` wire form with automatic dict→JSON coercion at the MCP
+# boundary.  Use this instead of bare ``str`` for dispatch-style ``arguments``
+# params so agents that pass an object literal are handled gracefully.
+# JSON Schema stays ``{"type": "string"}`` — see _coerce_dispatch_arguments.
+JsonArgStr = Annotated[str, BeforeValidator(_coerce_dispatch_arguments)]
 
 
 # Dispatch-style MCP tools: the inner ``arguments`` field is a JSON-encoded

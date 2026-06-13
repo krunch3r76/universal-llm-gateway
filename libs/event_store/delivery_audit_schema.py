@@ -113,15 +113,7 @@ CREATE TABLE IF NOT EXISTS delivered_artifacts (
     artifact_sequence INTEGER NOT NULL,
     artifact_identity_key TEXT NOT NULL UNIQUE,
 
-    artifact_class TEXT NOT NULL CHECK (
-        artifact_class IN (
-            'http_rule_body',
-            'http_skill_body',
-            'boot_card_block',
-            'tool_fol_descriptor',
-            'provider_affordance_surface'
-        )
-    ),
+    artifact_class TEXT NOT NULL,
     artifact_id TEXT NOT NULL,
     artifact_version TEXT,
     artifact_revision TEXT,
@@ -232,6 +224,137 @@ CREATE INDEX IF NOT EXISTS idx_guidance_workflow_class
 """
 
 
+_DELIVERED_ARTIFACTS_REBUILD_INDEXES = (
+    "CREATE INDEX IF NOT EXISTS idx_delivered_artifacts_audit"
+    " ON delivered_artifacts(audit_id, artifact_sequence)",
+    "CREATE INDEX IF NOT EXISTS idx_delivered_artifacts_status"
+    " ON delivered_artifacts(audit_status)",
+    "CREATE INDEX IF NOT EXISTS idx_delivered_artifacts_class"
+    " ON delivered_artifacts(artifact_class, artifact_id)",
+    "CREATE INDEX IF NOT EXISTS idx_delivered_artifacts_affordance"
+    " ON delivered_artifacts(affordance_kind)"
+    " WHERE affordance_kind IS NOT NULL",
+)
+
+# Standalone CREATE TABLE used by _migrate_artifact_class_check so the rebuild
+# is scoped to delivered_artifacts only and does not touch other tables.
+_DELIVERED_ARTIFACTS_CREATE_SQL = f"""
+CREATE TABLE IF NOT EXISTS delivered_artifacts (
+    artifact_record_id TEXT PRIMARY KEY,
+    audit_id TEXT NOT NULL REFERENCES delivery_audits(audit_id)
+        ON DELETE CASCADE,
+    artifact_sequence INTEGER NOT NULL,
+    artifact_identity_key TEXT NOT NULL UNIQUE,
+
+    artifact_class TEXT NOT NULL,
+    artifact_id TEXT NOT NULL,
+    artifact_version TEXT,
+    artifact_revision TEXT,
+    artifact_title TEXT,
+
+    delivery_step TEXT NOT NULL,
+    recipient_scope TEXT,
+    recipient_agent TEXT,
+    recipient_surface TEXT,
+
+    source_uri TEXT,
+    source_content_hash TEXT,
+    rendered_uri TEXT,
+    rendered_content_hash TEXT,
+    rendered_content_length INTEGER,
+    rendered_mime_type TEXT,
+
+    audit_status TEXT NOT NULL CHECK (
+        audit_status IN (
+            'audited-clean',
+            'audit-divergent',
+            'unaudited',
+            'not-applicable',
+            'write-failed'
+        )
+    ),
+    audit_reason_code TEXT,
+    audit_reason TEXT,
+    audit_checker TEXT,
+    audit_checker_version TEXT,
+    audit_checked_at TEXT,
+    audit_evidence_uris TEXT,
+
+    delivery_attempted_at TEXT,
+    delivery_succeeded_at TEXT,
+    delivery_failed_at TEXT,
+    delivery_error_code TEXT,
+    delivery_error TEXT,
+
+    write_attempted_at TEXT,
+    write_succeeded_at TEXT,
+    write_failed_at TEXT,
+    write_error_code TEXT,
+    write_error TEXT,
+
+    provider TEXT,
+    model TEXT,
+    dispatch_contract TEXT,
+    dispatch_role TEXT,
+    affordance_kind TEXT,
+    tool_surface TEXT,
+
+    {_TOKEN_LOCALITY_DDL},
+
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+)
+"""
+
+
+def _migrate_artifact_class_check(db: sqlite3.Connection) -> None:
+    """Rebuild delivered_artifacts when a stale artifact_class CHECK excludes boot_card_block.
+
+    SQLite does not support ALTER TABLE MODIFY COLUMN.  The CHECK constraint
+    is dropped entirely — artifact_class validation lives in VALID_ARTIFACT_CLASSES
+    (Python layer) and does not need a redundant DB-level constraint.
+
+    Detection: rebuild only when ``artifact_class IN (...)`` exists in the DDL
+    AND ``boot_card_block`` is absent.  A table with no CHECK (new or already
+    rebuilt) passes the guard and is left untouched.
+    """
+    row = db.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='delivered_artifacts'"
+    ).fetchone()
+    if row is None:
+        return
+    current_sql: str = row[0]
+    if "artifact_class IN (" not in current_sql or "boot_card_block" in current_sql:
+        return
+
+    existing_cols = [
+        r[1] for r in db.execute("PRAGMA table_info(delivered_artifacts)").fetchall()
+    ]
+    cols_csv = ", ".join(existing_cols)
+
+    db.execute("ALTER TABLE delivered_artifacts RENAME TO _delivered_artifacts_mig_bak")
+    for idx in (
+        "idx_delivered_artifacts_audit",
+        "idx_delivered_artifacts_status",
+        "idx_delivered_artifacts_class",
+        "idx_delivered_artifacts_affordance",
+    ):
+        db.execute(f"DROP INDEX IF EXISTS {idx}")
+
+    # Create delivered_artifacts fresh using the scoped constant — avoids
+    # re-running the full _DDL executescript against an older delivery_audits schema.
+    db.execute(_DELIVERED_ARTIFACTS_CREATE_SQL)
+    for stmt in _DELIVERED_ARTIFACTS_REBUILD_INDEXES:
+        db.execute(stmt)
+
+    if existing_cols:
+        db.execute(
+            f"INSERT INTO delivered_artifacts ({cols_csv})"
+            f" SELECT {cols_csv} FROM _delivered_artifacts_mig_bak"
+        )
+    db.execute("DROP TABLE _delivered_artifacts_mig_bak")
+
+
 def _migrate_token_locality_columns(db: sqlite3.Connection) -> None:
     """Add token-locality columns to an existing B3 ``delivered_artifacts`` table."""
     existing = {
@@ -270,6 +393,7 @@ def ensure_schema(conn: sqlite3.Connection | None = None) -> None:
     db = conn or connect()
     try:
         db.executescript(_DDL)
+        _migrate_artifact_class_check(db)
         _migrate_token_locality_columns(db)
         if owns:
             db.commit()

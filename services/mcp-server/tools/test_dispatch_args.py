@@ -1,13 +1,15 @@
 """Dispatch-style ``arguments`` parse + error-builder contract.
 
-Covers ``parse_dispatch_arguments`` and ``dispatch_arguments_error`` in
-``tools._agent_tools``. Pins the narrowed contract from
-decision:dispatch-arguments-string-wire-form (agent-bus 1741):
+Covers ``parse_dispatch_arguments``, ``dispatch_arguments_error``, and
+``JsonArgStr`` coercion in ``tools._agent_tools``. Pins the narrowed contract
+from decision:dispatch-arguments-string-wire-form (agent-bus 1741):
 
 - the inner ``arguments`` wire form stays a JSON-encoded object string;
 - correctly-escaped large/quote-heavy payloads round-trip to a dict;
 - a malformed *string* parse failure yields an actionable offload hint;
-- non-object JSON and dict passthrough keep their existing behavior.
+- non-object JSON and dict passthrough keep their existing behavior;
+- ``JsonArgStr`` coerces dict → JSON string at the MCP boundary while keeping
+  the JSON Schema as ``{"type": "string"}``.
 """
 
 from __future__ import annotations
@@ -23,6 +25,7 @@ from tools import _agent_tools as at  # noqa: E402
 parse_dispatch_arguments = at.parse_dispatch_arguments
 dispatch_arguments_error = at.dispatch_arguments_error
 DISPATCH_STYLE_TOOLS = at.DISPATCH_STYLE_TOOLS
+JsonArgStr = at.JsonArgStr
 
 
 # ── parse_dispatch_arguments ────────────────────────────────────────────────
@@ -113,3 +116,38 @@ def test_dispatch_style_tool_set_is_the_single_source_of_truth() -> None:
     assert DISPATCH_STYLE_TOOLS == frozenset(
         {"cortex", "agent_bus", "agent_bus_read", "rag", "dispatch"}
     )
+
+
+# ── JsonArgStr coercion ──────────────────────────────────────────────────────
+
+
+def test_json_arg_str_coerces_dict_to_json_string() -> None:
+    """Agents that pass an object literal instead of a JSON string are coerced
+    transparently — the MCP boundary normalises the value before the handler
+    receives it, eliminating mid-session self-correction."""
+    from pydantic import TypeAdapter
+
+    ta = TypeAdapter(JsonArgStr)
+    result = ta.validate_python({"entity_id": "decision:foo", "intent": "card"})
+    assert result == '{"entity_id": "decision:foo", "intent": "card"}'
+    # Round-trips: the coerced string is valid JSON.
+    assert json.loads(result) == {"entity_id": "decision:foo", "intent": "card"}
+
+
+def test_json_arg_str_passes_string_through_unchanged() -> None:
+    from pydantic import TypeAdapter
+
+    ta = TypeAdapter(JsonArgStr)
+    raw = '{"entity_id": "todo:foo"}'
+    assert ta.validate_python(raw) == raw
+
+
+def test_json_arg_str_schema_stays_string_type() -> None:
+    """JSON Schema must remain ``{"type": "string"}`` — the mcp-tool-param-types
+    invariant forbids ``anyOf/object`` on optional params because Claude.ai's
+    MCP client silently drops them (decision:dispatch-arguments-string-wire-form).
+    """
+    from pydantic import TypeAdapter
+
+    schema = TypeAdapter(JsonArgStr).json_schema()
+    assert schema == {"type": "string"}

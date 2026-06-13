@@ -17,6 +17,7 @@ from .operations_delivery_audit import (
     _delivery_audit_artifacts,
     _delivery_audit_baseline_campaign,
     _delivery_audit_parent,
+    _delivery_audit_selfassess,
     _delivery_audit_token_rollup,
 )
 from .operations_impl import (
@@ -64,6 +65,7 @@ _DISPATCH: dict[str, OperationCallable] = {
     "delivery-audit-artifacts": _delivery_audit_artifacts,
     "delivery-audit-token-rollup": _delivery_audit_token_rollup,
     "delivery-audit-baseline-campaign": _delivery_audit_baseline_campaign,
+    "delivery-audit-selfassess": _delivery_audit_selfassess,
 }
 
 

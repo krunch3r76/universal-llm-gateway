@@ -107,7 +107,7 @@ PARTITION: dict[str, list[str]] = {
         "agent_skill:dispatch-shape",
         "agent_skill:consult-routing",
         "agent_skill:completion-provenance-discipline",
-        "agent_skill:commit-and-git-scope",
+        "agent_skill:git-posture",
         "agent_skill:advisor-timing",
         "agent_skill:agent-identity-signoff",
         "agent_skill:model-tier-awareness-web",

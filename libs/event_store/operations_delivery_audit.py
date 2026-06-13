@@ -13,6 +13,7 @@ from .delivery_audit_registry import (
     fetch_parent_by_correlation,
     list_artifacts_for_audit,
 )
+from .delivery_audit_selfassess import score_selfassess_rubric
 from .store import EventStore
 
 logger = get_logger(__name__)
@@ -101,6 +102,25 @@ async def _delivery_audit_baseline_campaign(
         return {"error": "campaign_id is required"}
     try:
         return summarize_baseline_campaign(
+            str(campaign_id),
+            phase=str(params.get("phase") or "baseline"),
+            seat_substrate=params.get("seat_substrate"),
+            workflow_class=params.get("workflow_class"),
+        )
+    except ValueError as exc:
+        return {"error": str(exc)}
+
+
+async def _delivery_audit_selfassess(
+    params: dict[str, Any],
+    store: EventStore,
+) -> dict[str, Any]:
+    del store
+    campaign_id = params.get("campaign_id")
+    if not campaign_id:
+        return {"error": "campaign_id is required"}
+    try:
+        return score_selfassess_rubric(
             str(campaign_id),
             phase=str(params.get("phase") or "baseline"),
             seat_substrate=params.get("seat_substrate"),

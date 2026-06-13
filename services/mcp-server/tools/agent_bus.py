@@ -23,6 +23,7 @@ from ._agent_bus_post_guard import (
     reconcile_post_arguments,
     structured_route_guard,
 )
+from ._agent_tools import JsonArgStr
 from ._local_relay import relay as _relay
 
 if TYPE_CHECKING:
@@ -1077,7 +1078,7 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
     """Register the dispatch-style agent_bus tool on the MCP server instance."""
 
     @mcp.tool(title="Agent Bus")
-    def agent_bus(tool: str, arguments: str = "{}") -> Any:
+    def agent_bus(tool: str, arguments: JsonArgStr = "{}") -> Any:
         """Inter-agent message bus — threads, turns, read/reply coordination.
 
         tool: operation name (see table below)

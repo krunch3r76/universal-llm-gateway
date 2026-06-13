@@ -56,6 +56,7 @@ _VALID_OPERATIONS = frozenset(
         "delivery-audit-artifacts",
         "delivery-audit-token-rollup",
         "delivery-audit-baseline-campaign",
+        "delivery-audit-selfassess",
         "operations",
         "raw_sql",
     }
@@ -173,6 +174,7 @@ def register_event_tools(mcp: FastMCP) -> None:
           delivery-audit-token-rollup (audit_id)      — token-locality rollup for a parent
           delivery-audit-baseline-campaign (campaign_id)
                                                       — p50/p95 baseline campaign report
+          delivery-audit-selfassess (campaign_id)     — §6 rubric self-assessment report
           operations           ()                    — list all available operations
           raw_sql              (sql, params?, limit?) — raw SQL SELECT query
 

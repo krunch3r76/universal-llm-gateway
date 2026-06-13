@@ -257,6 +257,25 @@ _register(
     )
 )
 
+_register(
+    OperationDef(
+        name="delivery-audit-selfassess",
+        description=(
+            "Cross-seat §6 rubric self-assessment by workflow class and seat "
+            "substrate from guidance workflow-summary rows"
+        ),
+        params={
+            "campaign_id": {"type": "string", "required": True},
+            "phase": {"type": "string", "default": "baseline"},
+            "seat_substrate": {"type": "string"},
+            "workflow_class": {"type": "string"},
+        },
+        returns=(
+            "per-group rubric dimension verdicts plus summed token-expense vector"
+        ),
+    )
+)
+
 
 def list_operations() -> list[dict[str, Any]]:
     """Return all registered operation definitions as serializable dicts."""

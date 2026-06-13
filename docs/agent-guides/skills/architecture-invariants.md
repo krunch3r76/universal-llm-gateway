@@ -31,6 +31,7 @@ Cite applicable tags in handoff Block 2; load deferred refs by tag when procedur
 | `[docs]` | Event/API/runtime contract changes ⇒ doc audit; generated catalog regions via `gen-event-catalog --check` | Contract/semantics changes | → `events-docs.md` |
 | `[docker]` | `--no-cache` disables layer reuse + `--pull`; scoped buildx prune only | Docker rebuild/cache decisions | → `quality-gates.md` |
 | `[universal:refs]` | Cross-resident refs use `cortex://` or `workspaces://` URI form; ¬absolute paths in cross-resident artifacts | Packets, specs, handoffs consumed by other residents | grep `/mnt/torus/` in artifacts |
+| `[universal:git-posture]` | Canonical state = working tree (what exists/says) + cortex/RAG (provenance) + live process (liveness); git ≠ project index (`tasks/` + most of `docs/` gitignored by design). ¬infer existence/canonicality/authorship/done-ness from `git ls-files`/`status`/`log`; commit is optional bookkeeping (never a liveness/completion gate); revert is scoped to owned paths | Any task reasoning about whether a file exists / is canonical / is done, probing authorship, or proposing git operations | Review for git-state inference + broad revert + commit-as-gate |
 
 ## Deferred references
 

@@ -197,6 +197,52 @@ def test_team_dispatch_handoff_relays_to_handoff_endpoint() -> None:
     assert "mcp.team.handoff.called" in telemetry_events
 
 
+def test_team_dispatch_generate_forwards_source_ref() -> None:
+    """op='generate' forwards source_ref so the first-class wrap transport works.
+
+    Regression: the MCP layer previously dropped source_ref on op=generate
+    (TeamDispatchGenerateBody was extra="forbid" with no source_ref). The
+    first-class wrap transport added source_ref to the generate body so a bare
+    source_ref (no packet_path) materializes the implement packet server-side.
+    """
+    recorder = _ToolNameRecorder()
+    register_frontier_tools(recorder)
+    team_dispatch_fn = recorder.functions["team_dispatch"]
+
+    relay_calls: list[dict[str, Any]] = []
+
+    async def _fake_relay(
+        *, endpoint: str, body: dict[str, Any], record_prefix: str
+    ) -> dict[str, Any]:
+        relay_calls.append({"endpoint": endpoint, "body": body})
+        return {"execution_id": "exec-test", "thread_id": "thread-test"}
+
+    def _fake_record(event: str, **kwargs: Any) -> None:
+        return None
+
+    with (
+        patch("tools.frontier._relay", side_effect=_fake_relay),
+        patch("tools.frontier.record", side_effect=_fake_record),
+    ):
+        asyncio.run(
+            team_dispatch_fn(
+                op="generate",
+                role="cursor-sdk",
+                contract="implement",
+                source_ref="todo:first-class-wrap-transport",
+                dispatch_thread_id="todo:first-class-wrap-transport",
+            )
+        )
+
+    assert len(relay_calls) == 1
+    body = relay_calls[0]["body"]
+    assert body["op"] == "generate"
+    assert body["source_ref"] == "todo:first-class-wrap-transport"
+    assert body["contract"] == "implement"
+    # bare source_ref → no caller packet_path forwarded
+    assert "packet_path" not in body
+
+
 def _run_handoff_relay(
     **kwargs: Any,
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:

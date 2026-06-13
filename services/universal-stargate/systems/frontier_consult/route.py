@@ -12,7 +12,6 @@ from agent_seat.profiles import get_profile
 from agent_seat.registry import normalize_agent_slug
 from fastapi import APIRouter, Response
 from fastapi.responses import JSONResponse
-from implement_admission.admission_read import frontmatter_value
 from implement_admission.preflight import (
     DecisionNotAssertedError,
     require_decision_asserted,
@@ -42,6 +41,7 @@ from .executor_resolution import (
     _read_packet_executor_inputs,
     should_emit_executor_override_audit,
 )
+from .generate_wrap import dispatch_cursor_sdk_generate_route
 from .handoff import (
     _resolve_packet_file,
     _workspaces_root,
@@ -119,6 +119,10 @@ class TeamDispatchGenerateBody(_DispatchCommon):
     # closing the forced-remote-MCP hang (thread 1653).
     mcp: bool | None = None
     packet_path: str | None = None
+    source_ref: str | None = None
+    # When set and packet_path is absent (contract=implement), the server
+    # materializes the six-block packet via resolve_source_ref_to_packet
+    # (first-class wrap). Grammar: todo:/plan:/plan_phase:/agent-bus:/packet:.
     contract: Literal["light-bounded", "pure-mechanical", "implement"]
     reuse_thread: str | None = None
     # thread / subject MUST NOT appear — extra="forbid" rejects any caller that
@@ -327,52 +331,12 @@ async def team_dispatch(
         and role is not None
         and is_cursor_sdk_generate_role(role, request_id=request_id)
     ):
-        try:
-            if body.contract == "implement":
-                loop = asyncio.get_running_loop()
-                fm_source_ref: str | None = None
-                packet_path = getattr(body, "packet_path", None)
-                if packet_path:
-                    ws_root = _workspaces_root().resolve()
-                    packet_file = _resolve_packet_file(ws_root, packet_path)
-                    if packet_file is not None:
-                        packet_text = packet_file.read_text(
-                            encoding="utf-8", errors="replace"
-                        )
-                        fm_source_ref = frontmatter_value(packet_text, "source_ref")
-                await loop.run_in_executor(
-                    None,
-                    partial(
-                        require_implement_ready,
-                        request_id=request_id,
-                        source_ref=fm_source_ref,
-                        cortex=StargateCortexReader(),
-                    ),
-                )
-            source_text = (
-                ""
-                if body.contract == "implement"
-                else await read_latest_dispatch_thread_body(
-                    request_id=request_id,
-                    dispatch_thread_id=body.dispatch_thread_id,
-                )
-            )
-            result = await dispatch_cursor_sdk_generate(
-                request_id=request_id,
-                role=role,
-                model=getattr(body, "model", None),
-                subject=None,
-                caller_agent=body.caller_agent,
-                contract=body.contract,
-                packet_path=getattr(body, "packet_path", None),
-                message_text=source_text,
-                reuse_thread=getattr(body, "reuse_thread", None),
-                bus_lifecycle=getattr(body, "bus_lifecycle", None),
-            )
-        except FrontierEndpointError as exc:
-            return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
-        response.status_code = 202
-        return result
+        return await dispatch_cursor_sdk_generate_route(
+            request_id=request_id,
+            body=body,
+            role=role,
+            response=response,
+        )
 
     if body.op == "generate" and role is not None:
         from .api_role_generate import dispatch_api_role_generate

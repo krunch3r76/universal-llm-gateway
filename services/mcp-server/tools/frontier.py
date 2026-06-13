@@ -443,11 +443,15 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                 }
             # cursor-sdk implement path: forward packet_path + contract so the
             # Stargate generate intercept (route.py) can route to the worker.
-            # source_ref is intentionally NOT forwarded — TeamDispatchGenerateBody
-            # is extra="forbid" with no source_ref field; source_ref resolves only
-            # via the op=handoff alias. None-guarded, so API roles are unaffected.
+            # source_ref is ALSO forwarded — the first-class wrap transport
+            # (todo:first-class-wrap-transport) added source_ref to
+            # TeamDispatchGenerateBody so a bare source_ref (no packet_path)
+            # materializes the implement packet server-side via
+            # resolve_source_ref_to_packet. None-guarded, so API roles unaffected.
             if packet_path is not None:
                 body["packet_path"] = packet_path
+            if source_ref is not None:
+                body["source_ref"] = source_ref
             if contract is not None:
                 body["contract"] = contract
         else:

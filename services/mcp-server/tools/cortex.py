@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from ._agent_tools import JsonArgStr
 from ._cortex_relay import cx
 
 if TYPE_CHECKING:
@@ -19,7 +20,7 @@ def register_cortex_tools(mcp: FastMCP) -> None:
     """Register the dispatch-style cortex tool on the MCP server instance."""
 
     @mcp.tool(title="Cortex Knowledge Graph")
-    def cortex(tool: str, arguments: str = "{}") -> Any:
+    def cortex(tool: str, arguments: JsonArgStr = "{}") -> Any:
         """Cortex knowledge system — entities, assertions, relationships, edges, journals.
 
                 tool: operation name (see table below)

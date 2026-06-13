@@ -199,18 +199,14 @@ def test_parent_rejects_duplicate_non_null_execution_id(registry_db: Path) -> No
 
 
 def test_child_rejects_unknown_artifact_class(registry_db: Path) -> None:
-    audit_id = new_audit_id()
-    with connect(registry_db) as conn:
-        _insert_parent(conn, audit_id=audit_id)
-        conn.commit()
-        with pytest.raises(sqlite3.IntegrityError):
-            _insert_child(
-                conn,
-                audit_id=audit_id,
-                artifact_sequence=1,
-                artifact_class="unknown_artifact",
-            )
-            conn.commit()
+    # artifact_class validation moved to Python layer (VALID_ARTIFACT_CLASSES +
+    # require_known); the DB-level CHECK was removed so that new classes can be
+    # added without a table-rebuild migration.  Verify the Python guard fires.
+    from event_store.delivery_audit_baseline_types import require_known
+    from event_store.delivery_audit_registry import VALID_ARTIFACT_CLASSES
+
+    with pytest.raises(ValueError, match="unknown artifact_class"):
+        require_known("unknown_artifact", VALID_ARTIFACT_CLASSES, "artifact_class")
 
 
 def test_child_rejects_unknown_audit_status(registry_db: Path) -> None:

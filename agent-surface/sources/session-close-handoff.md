@@ -46,6 +46,40 @@ the pickup agent to open or implement them.
 Dispatch happens when the operator issues a **separate** execution directive
 after pickup. Recency of bus threads is ¬ authority (see `handoff-pickup_ws.mdc`).
 
+## Roadmap position (forward half — when relevant)
+
+A handoff's forward half MUST carry the active arc's **roadmap position** whenever
+`write_handoff(S) ∧ in_flight_arc(S) ∧ active_work_has_parent_container(S)` — the active
+`todo:`/`task:` is a child (or leaf) under a `project:` or `task:` container, or shares a
+parent with ≥1 sibling work-item. A standalone parent-less, sibling-less todo has no
+roadmap to show — omit the block (Deferred inventory already names it).
+
+When relevant, in order:
+
+1. **Top-level container** — the nearest enclosing `project:` (or `task:`): id + name.
+2. **Active position** — where this arc sits inside it (`task:` and/or `todo:` id + name).
+3. **Relevant siblings** — direct children of the nearest parent, **one hop**. Non-terminal
+   (`open` / `in_progress` / `blocked`) listed in full; terminal (`done` / `cancelled`)
+   collapsed to a count. ¬ traverse to a grandparent portfolio or unrelated projects.
+
+∀ listed item: an explicit **status token** ∈ `{open, in_progress, done, blocked, deferred,
+cancelled, unknown}` **and** a provenance marker:
+
+- `(live)` — read this session from the entity's `workflow_state`.
+- `(unknown)` — not read this session. A bare name with no status, or a *guessed* status, is
+  non-compliant: unread ⇒ `unknown`, **never** an inference.
+
+Cheapest live read: one `render_subgraph(root="{nearest_parent}", hops=1)` (or `entity_get`
+per node) materializes parent + children + `workflow_state` in a single call. Verify at
+minimum the container + active position; siblings MAY be `(unknown)` if unread, but say so.
+
+**Roadmap ≠ Deferred inventory ≠ boot card.** Roadmap position = *where the work sits*
+(status); Deferred inventory = *dispatches with operator actions*. They compose; neither
+replaces the other. The block is justified despite the handoff∩boot-card-minimal redundancy
+principle (assertion 11572) because a paste-forward handoff often lands in a **cold context
+without this cortex's boot Arc digest** — the relevance predicate + one-hop scope keep it
+from becoming a noisy inventory.
+
 ## Depth
 
 | Operator signal | `transcript_depth` |
@@ -100,4 +134,6 @@ cold-distrust gauntlet. Prose stays suppressed (assertion 8384).
 | `transcript_depth=none` + handoff | `light` + handoff (422 otherwise) |
 | "First action: `/agent-bus 1340`"; "parallelize"; "proceed to implement" (handoff as dispatch) | `**Await operator:**` + deferred inventory; dispatch is a later operator message |
 | Multiple threads in one imperative runbook | Separate arcs named in inventory; one thread per operator-directed session |
+| Bare roadmap inventory — names without status, or a guessed status | Every item carries a status token + `(live)`/`(unknown)`; unread ⇒ `unknown`, never inferred |
+| Show only the active subtree when it sits under a project | Lead with nearest container + active position + one-hop relevant siblings |
 <!-- /target:* -->

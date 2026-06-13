@@ -78,7 +78,7 @@ Full shapes: reference:claude-web-lead-seat-surface → claude-web-dispatch-deci
 
 # Co-located liveness block (2a durable home). Trimmed per F4-A finding (thread
 # 1289): 3-question redirect + salience line kept inline; substrate table collapsed
-# to prose — it is reference-density, recoverable from commit-and-git-scope_ws.mdc.
+# to prose — it is reference-density, recoverable from commit-and-git-scope_ws.mdc (git-posture content; entity agent_skill:git-posture).
 _ENTITY_HIERARCHY_BLOCK = """\
 ## Entity granularity — seed the right type
 - **Todos have steps; plans have phases** — invariant. `phase` / `Phase N` is plan-domain only (`plan:` / `plan_phase:` / `/implement-plan`). On `todo:` / `task:` use **steps** or **slices**, never phases.
@@ -89,7 +89,8 @@ _ENTITY_HIERARCHY_BLOCK = """\
 Seed with generic primitives (`entity_create` + `relationship_create` `child_of`); refs: `agent-skills/entity-lifecycle-discipline.md` §Vocabulary / §task:X."""
 
 _LIVENESS_BLOCK = """\
-## Liveness — the running process is the source of truth (commit-decoupled)
+## Git posture & liveness — disk + cortex are canonical; git is not the project index
+Truth substrate: the working tree is canonical for what EXISTS / what it SAYS; cortex/RAG for provenance/decisions; the running process for what is LIVE. Git is a checkpoint/transport layer, NOT the project index — `tasks/` + most of `docs/` are gitignored by design, so "not git-tracked" says nothing about real/canonical/done. ¬ infer existence / canonicality / authorship / done-ness from `git ls-files`/`status`/`log` — read the file, the entity, or a live probe. "No established git workflow" is the default, not an omission to patch.
 A change is LIVE only when LOADED into the running process at its last deploy/restart. Git commit/master is neither necessary nor sufficient.
 Before claiming a surface changed, ask three questions — do NOT read git for this:
   1. WHICH substrate?   2. Did its LOAD EVENT fire?   3. What does the LIVE PROBE say?
