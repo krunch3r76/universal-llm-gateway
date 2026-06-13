@@ -11,9 +11,7 @@ from .entity_rekey_core import entity_rekey_impl
 __all__ = ["entity_merge_impl", "entity_rekey_impl"]
 
 
-def entity_rekey(
-    conn: sqlite3.Connection, old_id: str, new_id: str
-) -> dict[str, Any]:
+def entity_rekey(conn: sqlite3.Connection, old_id: str, new_id: str) -> dict[str, Any]:
     return entity_rekey_impl(conn, old_id, new_id)
 
 

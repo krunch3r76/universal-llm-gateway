@@ -141,7 +141,9 @@ def _capture_records(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, dict]]:
     def _fake_record(signal: str, **payload: object) -> None:
         captured.append((signal, dict(payload)))
 
-    monkeypatch.setattr("cortex_store.dispatch_ops._assertions_shared.record", _fake_record)
+    monkeypatch.setattr(
+        "cortex_store.dispatch_ops._assertions_shared.record", _fake_record
+    )
     return captured
 
 

@@ -37,7 +37,7 @@ def test_s1_generate_normalizes_to_inline() -> None:
         op="generate",
         role="gatherer",
         dispatch_thread_id="dispatch-thread-1",
-        messages=[{"role": "user", "content": "pong"}],
+        contract="light-bounded",
     )
     kwargs = _normalize_op_body(body)
     assert kwargs["output_contract"] == "inline"
@@ -53,7 +53,7 @@ def test_s1_to_thread_normalizes_to_thread_contract() -> None:
         role="gatherer",
         dispatch_thread_id="dispatch-thread-1",
         thread="867",
-        messages=[{"role": "user", "content": "pong"}],
+        contract="light-bounded",
     )
     kwargs = _normalize_op_body(body)
     assert kwargs["output_contract"] == "thread"
@@ -69,7 +69,7 @@ def test_to_thread_propagates_subject_as_reply_subject() -> None:
         dispatch_thread_id="dispatch-thread-1",
         thread="1051",
         subject="Re: plan-promotion review",
-        messages=[{"role": "user", "content": "x"}],
+        contract="light-bounded",
     )
     kwargs = _normalize_op_body(body)
     assert kwargs["reply_subject"] == "Re: plan-promotion review"
@@ -82,7 +82,7 @@ def test_to_thread_omits_reply_subject_when_unset() -> None:
         role="reviewer",
         dispatch_thread_id="dispatch-thread-1",
         thread="1051",
-        messages=[{"role": "user", "content": "x"}],
+        contract="light-bounded",
     )
     kwargs = _normalize_op_body(body)
     assert "reply_subject" not in kwargs
@@ -100,7 +100,7 @@ def test_s2_generate_body_rejects_thread_field() -> None:
             role="gatherer",
             dispatch_thread_id="dispatch-thread-1",
             thread="867",  # type: ignore[call-arg]  # forbidden extra field
-            messages=[{"role": "user", "content": "x"}],
+            contract="light-bounded",
         )
     errors = exc_info.value.errors()
     assert any(
@@ -119,7 +119,7 @@ def test_s3_generate_body_rejects_result_delivery() -> None:
             op="generate",
             role="gatherer",
             dispatch_thread_id="dispatch-thread-1",
-            messages=[{"role": "user", "content": "x"}],
+            contract="light-bounded",
             result_delivery={"bus_thread": "867"},  # type: ignore[call-arg]
         )
 
@@ -135,7 +135,7 @@ def test_s5_to_thread_body_requires_thread() -> None:
             op="to_thread",
             role="gatherer",
             dispatch_thread_id="dispatch-thread-1",
-            messages=[{"role": "user", "content": "x"}],
+            contract="light-bounded",
             # thread intentionally omitted
         )
     errors = exc_info.value.errors()

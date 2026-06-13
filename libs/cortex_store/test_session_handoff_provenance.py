@@ -158,9 +158,7 @@ def test_entity_state_snapshot_annotates_type_phase() -> None:
             '{"phase": "investigate"}',
         ),
     )
-    prompt = (
-        "If task:implement-dispatch-composer-default is done, verify probe state."
-    )
+    prompt = "If task:implement-dispatch-composer-default is done, verify probe state."
     snapshot = format_cited_entity_state_snapshot(
         prompt,
         session_id="claude-web-2026-06-10-220549-9ab",
@@ -169,6 +167,69 @@ def test_entity_state_snapshot_annotates_type_phase() -> None:
     assert snapshot is not None
     assert "task:implement-dispatch-composer-default state=done" in snapshot
     assert "investigate-phase" in snapshot
+
+
+def test_build_handoff_verification_passes_deferred_entity_ref(
+    tmp_path: Path,
+) -> None:
+    import sqlite3
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute(
+        "CREATE TABLE entities (id TEXT PRIMARY KEY, type TEXT, "
+        "workflow_state TEXT, attributes TEXT)"
+    )
+    session_id = "web-2026-06-10-1200-abc"
+    prompt = (
+        f"**Closing session:** transcript:{session_id}\n"
+        "**Deferred inventory:**\n"
+        "- deferred decision:http-first-agent-substrate — planned next arc\n"
+    )
+    verification = build_handoff_verification(
+        session_id=session_id,
+        handoff_prompt=prompt,
+        handoff_source_path=None,
+        files_root=tmp_path,
+        conn=conn,
+    )
+    assert verification is not None
+    resolvability = next(
+        c for c in verification["checks"] if c["name"] == "cited_entities_resolvable"
+    )
+    assert resolvability["status"] == "passed"
+    assert "deferred (planned)" in resolvability["detail"]
+
+
+def test_build_handoff_verification_fails_missing_entity_without_deferral(
+    tmp_path: Path,
+) -> None:
+    import sqlite3
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute(
+        "CREATE TABLE entities (id TEXT PRIMARY KEY, type TEXT, "
+        "workflow_state TEXT, attributes TEXT)"
+    )
+    session_id = "web-2026-06-10-1200-abc"
+    prompt = (
+        f"**Closing session:** transcript:{session_id}\n"
+        "Continue task:definitely-missing-slug immediately."
+    )
+    verification = build_handoff_verification(
+        session_id=session_id,
+        handoff_prompt=prompt,
+        handoff_source_path=None,
+        files_root=tmp_path,
+        conn=conn,
+    )
+    assert verification is not None
+    resolvability = next(
+        c for c in verification["checks"] if c["name"] == "cited_entities_resolvable"
+    )
+    assert resolvability["status"] == "failed"
+    assert "task:definitely-missing-slug" in resolvability["detail"]
 
 
 def test_build_handoff_verification_all_pass(tmp_path: Path) -> None:

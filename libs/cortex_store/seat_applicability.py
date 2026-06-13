@@ -8,10 +8,11 @@ today; reused by the /skills HTTP endpoint (todo:skills-http-endpoint) and Track
 
 from __future__ import annotations
 
-from fastapi import HTTPException
+import json
 
-from agent_seat.profiles import known_seats
+from agent_seat.profiles import CAPABILITY_TOKENS, known_seats, seat_capability_map
 from agent_seat.registry import normalize_agent_slug
+from fastapi import HTTPException
 
 UNIVERSAL = "*"
 
@@ -23,6 +24,13 @@ FOR_AGENT_CLAUSE = """
     AND EXISTS (
         SELECT 1 FROM json_each(json_extract(attributes, '$.applicable_agents'))
         WHERE value IN ('*', ?)
+    )
+"""
+
+CAPABILITY_CLAUSE = """
+    AND NOT EXISTS (
+        SELECT 1 FROM json_each(json_extract(attributes, '$.capabilities_required'))
+        WHERE value NOT IN (SELECT value FROM json_each(?))
     )
 """
 
@@ -45,3 +53,46 @@ def canonical_seat_or_422(slug: str) -> str:
             ),
         )
     return canonical
+
+
+def seat_capabilities_json(seat: str) -> str:
+    """JSON array of capability tokens for the seat (CAPABILITY_CLAUSE bind value)."""
+    toks = seat_capability_map().get(seat, frozenset())
+    return json.dumps(sorted(toks))
+
+
+def validate_applicable_agents(attributes: dict[str, object] | None) -> None:
+    """Reject an entity write whose applicable_agents holds an unknown seat slug."""
+    if not attributes:
+        return
+    agents = attributes.get("applicable_agents")
+    if agents is None:
+        return
+    if not isinstance(agents, list):
+        raise HTTPException(
+            status_code=422, detail="applicable_agents must be a JSON list"
+        )
+    for slug in agents:
+        canonical_seat_or_422(str(slug))
+
+
+def validate_capabilities_required(attributes: dict[str, object] | None) -> None:
+    """Reject capability tokens outside the closed enum."""
+    if not attributes:
+        return
+    required = attributes.get("capabilities_required")
+    if required is None:
+        return
+    if not isinstance(required, list):
+        raise HTTPException(
+            status_code=422, detail="capabilities_required must be a JSON list"
+        )
+    for token in required:
+        if str(token) not in CAPABILITY_TOKENS:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Unknown capability token {token!r}; "
+                    f"expected one of {sorted(CAPABILITY_TOKENS)}."
+                ),
+            )

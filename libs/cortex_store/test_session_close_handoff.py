@@ -550,6 +550,45 @@ def test_session_close_warns_when_prior_session_id_is_omitted(
     assert any(f["kind"] == "prior_session_id_omitted" for f in findings)
 
 
+def test_session_close_suppresses_prior_session_warning_without_continuation_claim(
+    session_env: dict[str, Path],
+) -> None:
+    first = ops_journals._op_session_close(
+        **_payload(
+            session_id="orion-2026-05-04-070000-a02",
+            transcripts_root=session_env["transcripts_root"],
+        )
+    )
+    assert "error" not in first
+
+    second = ops_journals._op_session_close(
+        **_payload(
+            session_id="orion-2026-05-04-084700-a03",
+            transcripts_root=session_env["transcripts_root"],
+        )
+    )
+    assert "error" not in second
+    findings = second.get("_warning", {}).get("post_close_findings", [])
+    assert not any(f["kind"] == "prior_session_id_omitted" for f in findings)
+
+
+def test_preflight_returns_copy_paste_session_id_when_supplied_differs(
+    session_env: dict[str, Path],
+) -> None:
+    jsonl_path = session_env["transcripts_root"] / "cursor-uuid" / "cursor-uuid.jsonl"
+    _write_jsonl(jsonl_path)
+    result = ops_journals._op_session_close_preflight(
+        session_id="cursor-2099-12-31-235959-fff",
+        agent="cursor",
+        transcript_jsonl_path=str(jsonl_path),
+        session_summary_md=_session_summary("Preflight session_id anchor."),
+        summary="Preflight session_id anchor.",
+    )
+    assert result["ok"] is True
+    assert "session_id_from_jsonl_start" in result
+    assert result.get("session_id") == result["session_id_from_jsonl_start"]
+
+
 # ---- transcript_depth dial tests (Phase 1 of session-close-transcript-depth-dial) ----
 
 

@@ -90,3 +90,57 @@ def _build_on_behalf_subject(record: PipelineExecutionRecord) -> str:
     short_id = record.execution_id[:8]
     actor = record.from_agent or "dispatch"
     return f"{actor} reply — execution {short_id}"
+
+
+def _extract_pointer_summary(content: str, *, max_chars: int = 300) -> str | None:
+    body = content.lstrip()
+    if body.startswith("---"):
+        end = body.find("\n---", 3)
+        if end != -1:
+            body = body[end + 4 :].lstrip()
+    if not body:
+        return None
+    lines = [ln.strip() for ln in body.splitlines() if ln.strip()]
+    heading = None
+    for ln in lines:
+        if ln.startswith("#"):
+            heading = ln.lstrip("#").strip()
+            break
+    prose = next(
+        (ln for ln in lines if not ln.startswith(("#", "```", "|", "-", "*"))),
+        "",
+    )
+    sentence = prose.split(". ")[0].strip()
+    out = " — ".join(p for p in (heading, sentence) if p) or body
+    return out[:max_chars].rstrip()
+
+
+def _build_relocation_pointer(
+    record: PipelineExecutionRecord,
+    *,
+    sidecar_uri: str,
+    sha256: str,
+    body_chars: int,
+    summary: str | None,
+) -> str:
+    from .constants import _BUS_MAX_BODY_CHARS
+
+    parts = [
+        "**Full reply relocated to cortex (not lost).** "
+        f"Body was {body_chars} chars (bus limit {_BUS_MAX_BODY_CHARS}).",
+        "",
+        f"- Durable copy: `{sidecar_uri}`",
+        f"- sha256: `{sha256}`",
+        f"- execution: `{record.execution_id}`",
+    ]
+    if summary:
+        parts += ["", "**Summary:**", "", summary]
+    parts += [
+        "",
+        f"_Read the full content: fs(cortex, read, {sidecar_uri.removeprefix('cortex://')})_",
+    ]
+    return "\n".join(parts)
+
+
+def _build_inline_with_reference(content: str, *, sidecar_uri: str, sha256: str) -> str:
+    return f"{content}\n\n---\n_Durable copy: `{sidecar_uri}` · sha256 `{sha256[:12]}`_"

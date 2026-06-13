@@ -121,9 +121,7 @@ def test_rekey_full_surface_repoints_children_and_seeds_alias(
     assert not conn.execute(
         "SELECT id FROM entities WHERE id = ?", (old_id,)
     ).fetchone()
-    assert conn.execute(
-        "SELECT id FROM entities WHERE id = ?", (new_id,)
-    ).fetchone()
+    assert conn.execute("SELECT id FROM entities WHERE id = ?", (new_id,)).fetchone()
 
     row = conn.execute(
         "SELECT entrenchment_score FROM assertions WHERE id = ?", (assertion_id,)
@@ -328,9 +326,7 @@ def test_resolver_passthrough_unchanged_for_normal_entity(
     monkeypatch.setattr(
         "cortex_store.dispatch_ops.ops_relationships.cortex_conn", lambda: conn
     )
-    monkeypatch.setattr(
-        "cortex_store.dispatch_ops.ops_misc.cortex_conn", lambda: conn
-    )
+    monkeypatch.setattr("cortex_store.dispatch_ops.ops_misc.cortex_conn", lambda: conn)
 
     resolved = resolve_entity_reference(conn, entity_id, resolve_aliases=True)
     assert resolved.entity_id == entity_id

@@ -116,17 +116,26 @@ def test_team_dispatch_source_ref_signature() -> None:
     assert sig.parameters["source_ref"].default is None
 
 
-def test_team_dispatch_messages_has_default() -> None:
-    """messages defaults to [] so op='handoff' callers can omit it."""
+def test_team_dispatch_messages_removed_from_signature() -> None:
+    """messages[] is not part of the team_dispatch wire contract."""
     recorder = _ToolNameRecorder()
     register_frontier_tools(recorder)
 
     sig = inspect.signature(recorder.functions["team_dispatch"])
-    assert "messages" in sig.parameters
-    param = sig.parameters["messages"]
-    assert param.default == [], (
-        f"messages should default to [] for handoff callers; got {param.default!r}"
-    )
+    assert "messages" not in sig.parameters
+
+
+def test_team_dispatch_contract_enum_excludes_consult() -> None:
+    """Public contract enum is light-bounded/pure-mechanical/implement."""
+    recorder = _ToolNameRecorder()
+    register_frontier_tools(recorder)
+
+    sig = inspect.signature(recorder.functions["team_dispatch"])
+    annotation = str(sig.parameters["contract"].annotation)
+    assert "light-bounded" in annotation
+    assert "pure-mechanical" in annotation
+    assert "implement" in annotation
+    assert "consult" not in annotation
 
 
 def test_team_dispatch_handoff_relays_to_handoff_endpoint() -> None:

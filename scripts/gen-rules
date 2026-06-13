@@ -2,7 +2,7 @@
 """Generate cursor `.mdc` rule files from `agent-surface/` neutral-canonical sources.
 
 Usage:
-    scripts/gen-rules --target {cursor|command-map|agent-guides-rules} [--check] [--dry-run]
+    scripts/gen-rules --target {cursor|command-map|agent-guides-rules|cortex-rules} [--check] [--dry-run]
 
 Targets:
     cursor       Emit `.cursor/rules/cursor-boot_ws.mdc` + `.cursor/rules/mcp-tool-awareness_ws.mdc`;
@@ -12,6 +12,9 @@ Targets:
                  `agent-surface/sources/command-map.md` (wildcard target blocks).
     agent-guides-rules  Emit `docs/agent-guides/rules/*.md` from the MVW conduct manifest
                  in `libs/gen_rules/agent_guides.py` (wildcard `target:*` blocks).
+    cortex-rules Upsert `rule:<slug>` cortex projections (source_uri + digest +
+                 applicability) via scripts/cortex/ingest_rules.py. Run AFTER
+                 agent-guides-rules so generated files exist to digest.
 
 Flags:
     --check     Diff-gate: exit non-zero if generated output differs from committed
@@ -32,9 +35,14 @@ if str(_REPO / "libs") not in sys.path:
     sys.path.insert(0, str(_REPO / "libs"))
 
 from gen_rules.agent_guides import emit_agent_guides_rules  # noqa: E402
+
+_SCRIPTS_CORTEX = _REPO / "scripts" / "cortex"
+if str(_SCRIPTS_CORTEX) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_CORTEX))
 from gen_rules.check import diff_against, extract_core_subagent_table  # noqa: E402
 from gen_rules.parser import parse_source  # noqa: E402
 from gen_rules.renderer import _do_not_edit, render_cursor_mdc  # noqa: E402
+from ingest_rules import main as ingest_rules_main  # noqa: E402
 
 # Section registry: single source of authoritative IDs and paths. The migration
 # entry-point (`scripts/gen-rules`) stays under SLOC budget by delegating parse/
@@ -157,7 +165,9 @@ def _emit_command_map(root: Path, *, check: bool, dry_run: bool) -> int:
         )
         if d:
             print(d, end="")
-            print(f"DRIFT: {out_path} out of sync with {spec['source']}", file=sys.stderr)
+            print(
+                f"DRIFT: {out_path} out of sync with {spec['source']}", file=sys.stderr
+            )
             return 1
         return 0
 
@@ -171,7 +181,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--target",
-        choices=("cursor", "command-map", "agent-guides-rules"),
+        choices=("cursor", "command-map", "agent-guides-rules", "cortex-rules"),
         required=True,
     )
     parser.add_argument("--check", action="store_true")
@@ -183,8 +193,15 @@ def main(argv: list[str] | None = None) -> int:
         rc = _emit_cursor(root, check=args.check, dry_run=args.dry_run)
     elif args.target == "command-map":
         rc = _emit_command_map(root, check=args.check, dry_run=args.dry_run)
-    else:
+    elif args.target == "agent-guides-rules":
         rc = emit_agent_guides_rules(root, check=args.check, dry_run=args.dry_run)
+    else:
+        ingest_argv: list[str] = ["--root", str(root)]
+        if args.check:
+            ingest_argv.append("--check")
+        if args.dry_run:
+            ingest_argv.append("--dry-run")
+        rc = ingest_rules_main(ingest_argv)
 
     if args.check and rc == 0:
         print(f"OK gen-rules --check --target {args.target}")

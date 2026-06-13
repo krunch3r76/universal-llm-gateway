@@ -226,6 +226,40 @@ def FrontierHandoffMaterializationIncomplete(  # noqa: N802
 
 
 @event_factory
+def InlineBodyInjectionResolved(  # noqa: N802
+    request_id: str,
+    seat: str,
+    model: str | None,
+    injected: list[dict[str, object]],
+    dropped: list[dict[str, object]],
+    total_bytes: int,
+    budget_bytes: int,
+    cache_hit: bool,
+    cold_fetches: int,
+    elapsed_ms: int,
+    deadline_hit: bool,
+) -> Event:
+    """Inline-only dispatch body injection audit (G3-owned, not B3 substrate)."""
+    return Event(
+        signal="inline.body.injection.resolved",
+        payload={
+            "request_id": request_id,
+            "seat": seat,
+            "model": model,
+            "injected": injected,
+            "dropped": dropped,
+            "total_bytes": total_bytes,
+            "budget_bytes": budget_bytes,
+            "cache_hit": cache_hit,
+            "cold_fetches": cold_fetches,
+            "elapsed_ms": elapsed_ms,
+            "deadline_hit": deadline_hit,
+        },
+        scope="node",
+    )
+
+
+@event_factory
 def FrontierHandoffDeprecatedAlias(  # noqa: N802
     request_id: str,
     normalized_op: str,

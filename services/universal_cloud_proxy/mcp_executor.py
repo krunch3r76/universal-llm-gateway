@@ -47,6 +47,12 @@ _RESTART_ERROR_REASON = "server_restarting"
 _RESTART_ERROR_MESSAGE = "MCP server is restarting; retry in 30s"
 _RESTART_RETRY_DELAYS_S = (5.0, 15.0)
 
+from agent_seat.body_injection import (
+    INVARIANT_SKILL_ENTITY_IDS as _INVARIANT_SKILL_ENTITY_IDS,
+    build_injected_bodies_md,
+    fetch_web_invariant_entries,
+)
+
 _DISPATCH_COMPAT_TOOL_DEFS: dict[str, dict[str, Any]] = {
     "web_fetch": {
         "type": "function",
@@ -72,6 +78,44 @@ _DISPATCH_COMPAT_TOOL_DEFS: dict[str, dict[str, Any]] = {
         },
     }
 }
+
+
+def _boot_seat_slug(kwargs: dict[str, str]) -> str | None:
+    agent = kwargs.get("agent")
+    if agent:
+        from agent_seat.registry import normalize_agent_slug
+
+        return normalize_agent_slug(agent)
+    family = (kwargs.get("family") or "claude").lower()
+    platform = (kwargs.get("platform") or "cursor").lower()
+    return f"{family}-{platform}"
+
+
+def _is_web_seat(seat: str) -> bool:
+    from agent_seat.profiles import load_profiles
+
+    parts = seat.split("-", 1)
+    if len(parts) != 2:
+        return False
+    profile = load_profiles().get((parts[0], parts[1]))
+    return profile is not None and profile.platform == "web"
+
+
+async def _append_web_invariant_bodies(content: str, seat: str) -> str:
+    """Append the two invariant skill bodies for web seats (marker-deduped)."""
+    if not _is_web_seat(seat):
+        return content
+    entries = await asyncio.to_thread(fetch_web_invariant_entries)
+    block, _, _ = build_injected_bodies_md(
+        seat,
+        entries,
+        already_present=content,
+        marker_prefix="invariant-skill",
+        budget_bytes=None,
+    )
+    if not block:
+        return content
+    return content + block
 
 
 def _jsonrpc_request(
@@ -331,7 +375,11 @@ class McpToolExecutor:
             briefing = boot_data.get("briefing_card", result)
         except (json.JSONDecodeError, AttributeError):
             briefing = result
-        first["content"] = content.replace(matched_span, briefing, 1)
+        updated = content.replace(matched_span, briefing, 1)
+        seat = _boot_seat_slug(directive_kwargs)
+        if seat:
+            updated = await _append_web_invariant_bodies(updated, seat)
+        first["content"] = updated
 
     async def run_tool_loop(
         self,

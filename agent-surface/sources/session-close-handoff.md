@@ -77,6 +77,11 @@ attribute: `{checks:[{name,status,detail}], passed:N, total:M}` covering
 transcript anchor, cited-entity resolvability, cited-entity state snapshot
 (type/phase annotated), and `prompt_in_source` when a source path is also set.
 
+**Deferred / planned entity refs:** `cited_entities_resolvable` passes when a
+missing entity is explicitly marked deferred/planned (e.g. in **Deferred
+inventory** or prose with "deferred", "planned", "not yet created"). Truly broken
+refs (no deferral signal) still fail the check.
+
 Boot renders the precomputed verification line. The "no confirmation writes"
 gate keys on **failed checks** (`passed < total`), not the legacy `¬verified`
 bit — a well-formed inline handoff with all checks passing boots without the

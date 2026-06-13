@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -17,8 +16,8 @@ from services.git_integration_worker.cursor_dispatch_ledger import (
     DispatchConflict,
 )
 from services.git_integration_worker.cursor_home import CursorHomeConfigError
-from services.git_integration_worker.cursor_sdk_context import CursorSdkParityError
 from services.git_integration_worker.cursor_sdk_closeout import SdkRunOutcome
+from services.git_integration_worker.cursor_sdk_context import CursorSdkParityError
 from services.git_integration_worker.models.cursor_api import (
     CursorDispatchRequest,
     CursorDispatchResponse,
@@ -547,6 +546,7 @@ def test_active_work_busy_with_running_dispatch(client: TestClient) -> None:
         ),
     )
     ledger.mark_running(dispatch_id="disp-1")
+    ledger.register_task("disp-1", MagicMock(done=lambda: False))
 
     resp = client.get("/api/v1/git/active-work")
     assert resp.status_code == 200

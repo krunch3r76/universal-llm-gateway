@@ -30,7 +30,7 @@ For `team_dispatch(op="handoff")` only: returns synchronously with
   the dedicated SDK orchestrator (same bus default). **`role=cursor-sdk` is the
   default transport for bound mechanical implement** (`packet_path` + `contract=implement`,
   auto Composer, no IDE pickup) — the `cursor-implement` handoff is the operator-attended
-  fallback. The implement packet MUST be dense (Composer executes mechanically). See
+  fallback. The implement packet MUST be dense (Composer executes mechanically); a determinate, pre-authored task may instead run messages-only (no packet, still explicit + bounded — § General execution lane). See
   `agent-skills/consult-routing.md` § Dispatch targets.
 - `"to_thread"` — bus mode when caller already owns `thread`; Stargate posts the
   role's reply on its behalf after dispatch completes.
@@ -61,7 +61,7 @@ entity, assembles birth + briefing + continuation, and rejects violations before
 | `packet_path` | `str\|None` | `op="handoff"` only — workspaces-relative path to a pre-written six-block packet. Hand-authored alternative to `source_ref`; both-present triggers the `implement_spec_hash` drift guard. |
 | `pointer_body` | `str\|None` | `op="handoff"` only — override the pointer turn body (≤25 lines) |
 | `tags` | `list[str]\|None` | `op="handoff"` only — bus thread tags (default: `["agent:{to_agent}", "type:handoff", "contract:{handoff_contract}"]`). Caller-supplied tags are preserved; `contract:{value}` is appended if absent |
-| `role=cursor-sdk` (op=generate) | — | **Default transport for bound mechanical implement.** SDK auto substrate; default delivery=thread; consult via `messages[]`; implement via `packet_path` (+ `contract=implement`); poll via `poll_hint` (agent-bus), not `pipeline(op=result)`. **Dense packet required** (Composer executes mechanically). `cursor-implement` handoff = operator-attended fallback |
+| `role=cursor-sdk` (op=generate) | — | **Default transport for bound mechanical implement.** SDK auto substrate; default delivery=thread; consult or determinate general-execution via `messages[]` (still explicit + bounded; SOT § General execution lane); implement via `packet_path` (+ `contract=implement`); poll via `poll_hint` (agent-bus), not `pipeline(op=result)`. **Dense packet required** (Composer executes mechanically). `cursor-implement` handoff = operator-attended fallback |
 | `op=handoff, seat=cursor-sdk` | — | **Deprecated** — normalizes to generate + warning (`deprecated_alias` in response) |
 
 **`op="generate"` / `op="to_thread"` — admission guard for web/manual seats:**

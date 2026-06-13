@@ -41,7 +41,9 @@ def insert_entity(
     attributes: str | None = None,
 ) -> None:
     now = datetime.now(UTC).isoformat()
-    confidence_band = status if status in {"unsubstantiated", "provisional", "confirmed"} else None
+    confidence_band = (
+        status if status in {"unsubstantiated", "provisional", "confirmed"} else None
+    )
     lifecycle = status if status in {"merged", "deprecated", "reaped"} else None
     conn.execute(
         "INSERT INTO entities (id, type, name, description, confidence_band, lifecycle, "

@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from agent_seat import AgentMeta, assemble_system_prompt, hydrate_agent
+from agent_seat.body_injection import INJECTED_BODY_BUDGET_BYTES
 from agent_seat.role_entity_sync import resolve_dispatch_capabilities
 from llm_adapters.capability_dispatch import project_knob_resolution
 from model_id import (
@@ -32,6 +33,7 @@ from .dispatch_messages import extract_last_user_message, wire_latest_user_turn
 from .events import (
     FrontierEndpointPersonaResolved,
     FrontierEndpointRequested,
+    InlineBodyInjectionResolved,
 )
 
 _FRONTIER_DISPATCH_PIPELINE_ID = "frontier-dispatch"
@@ -62,6 +64,7 @@ class FrontierGenerateRequest:
     reply_subject: str | None = None
     # Override post-delivery thread close for ``op="to_thread"``. None ⇒ ephemeral.
     bus_lifecycle: Literal["persistent", "ephemeral"] | None = None
+    resolved_contract: str | None = None
 
 
 async def build_dispatch_body(
@@ -116,13 +119,43 @@ async def build_dispatch_body(
                     ),
                 )
             )
+        if bundle.required_body_unresolved:
+            raise FrontierEndpointError(
+                request_id=request_id,
+                field="injected_bodies",
+                reason="required conduct rule body failed to resolve",
+            )
         system_assembled = assemble_system_prompt(
             req.role,
             briefing_card_md=bundle.briefing_card_md,
             continuation_md=bundle.continuation_md,
             extra_system=req.system,
             inline_only=bundle.inline_only,
+            injected_bodies_md=bundle.injected_bodies_md,
         )
+        if bundle.inline_only and event_publisher is not None:
+            meta_inj = bundle.injection_meta or {}
+            metrics = meta_inj.get("metrics") or {}
+            injected = meta_inj.get("injected") or []
+            event_publisher(
+                InlineBodyInjectionResolved(
+                    request_id=request_id,
+                    seat=req.role,
+                    model=req.model or meta.default_model,
+                    injected=injected,
+                    dropped=meta_inj.get("dropped") or [],
+                    total_bytes=sum(
+                        int(item.get("bytes", 0))
+                        for item in injected
+                        if isinstance(item, dict)
+                    ),
+                    budget_bytes=INJECTED_BODY_BUDGET_BYTES,
+                    cache_hit=bool(metrics.get("cache_hit")),
+                    cold_fetches=int(metrics.get("cold_fetches", 0)),
+                    elapsed_ms=int(metrics.get("elapsed_ms", 0)),
+                    deadline_hit=bool(metrics.get("deadline_hit")),
+                )
+            )
 
     effective_model = req.model or meta.default_model
     if not effective_model:
@@ -218,6 +251,8 @@ async def build_dispatch_body(
         "_knob_resolution_preview": _knob_resolution_preview,
         "output_contract": req.output_contract,
     }
+    if req.resolved_contract is not None:
+        pipeline_options["resolved_contract"] = req.resolved_contract
     if capability_preview is not None:
         pipeline_options["_capability_preview"] = capability_preview
     if req.role:
@@ -301,6 +336,8 @@ async def build_dispatch_body(
         body["target_thread"] = req.target_thread
     if req.op is not None:
         body["op"] = req.op
+    if req.resolved_contract is not None:
+        body["resolved_contract"] = req.resolved_contract
     if req.op == "to_thread":
         if req.role:
             body["from_agent"] = req.role

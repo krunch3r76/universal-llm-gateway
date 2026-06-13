@@ -11,6 +11,7 @@ from pathlib import Path
 
 from cortex_store.routes.boot import continuity
 
+
 def _ensure_workflow_state(db_path: Path) -> None:
     conn = sqlite3.connect(db_path)
     try:

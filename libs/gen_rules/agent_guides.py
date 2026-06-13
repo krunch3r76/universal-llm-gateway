@@ -4,25 +4,110 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import TypedDict
+
+from agent_seat.profiles import known_seats
 
 from .check import diff_against
 from .parser import parse_source
 from .renderer import _do_not_edit
 
+UNIVERSAL_AGENTS = ["*"]
+
+
+class RuleManifestEntry(TypedDict, total=False):
+    source: str
+    applicable_agents: list[str]
+    capabilities_required: list[str]
+    delivery_priority: int
+
+
 # Explicit manifest — one output file per slug; grow incrementally (MVW conduct slice).
-AGENT_GUIDES_RULE_SLUGS: dict[str, str] = {
-    "provenance-discipline": "agent-surface/sources/provenance-discipline.md",
-    "cortex-essentials": "agent-surface/sources/cortex-essentials.md",
-    "advisor-timing": "agent-surface/sources/advisor-timing.md",
-    "system-conduct": "agent-surface/sources/system-conduct.md",
-    "agent-identity-signoff": "agent-surface/sources/agent-identity-signoff.md",
-    "md-navigation": "agent-surface/sources/md-navigation.md",
-    "capability-dispatch": "agent-surface/sources/capability-dispatch.md",
-    "handoff-pickup": "agent-surface/sources/handoff-pickup.md",
-    "commit-optionality": "agent-surface/sources/commit-optionality.md",
-    "git-revert-scope": "agent-surface/sources/git-revert-scope.md",
-    "plan-slug-coherence": "agent-surface/sources/plan-slug-coherence.md",
+AGENT_GUIDES_RULE_SLUGS: dict[str, RuleManifestEntry | str] = {
+    "provenance-discipline": {
+        "source": "agent-surface/sources/provenance-discipline.md",
+        "applicable_agents": ["*"],
+    },
+    "cortex-essentials": {
+        "source": "agent-surface/sources/cortex-essentials.md",
+        "applicable_agents": ["*"],
+    },
+    "advisor-timing": {
+        "source": "agent-surface/sources/advisor-timing.md",
+        "applicable_agents": ["*"],
+    },
+    "system-conduct": {
+        "source": "agent-surface/sources/system-conduct.md",
+        "applicable_agents": ["*"],
+    },
+    "agent-identity-signoff": {
+        "source": "agent-surface/sources/agent-identity-signoff.md",
+        "applicable_agents": ["*"],
+    },
+    "md-navigation": {
+        "source": "agent-surface/sources/md-navigation.md",
+        "applicable_agents": ["*"],
+    },
+    "capability-dispatch": {
+        "source": "agent-surface/sources/capability-dispatch.md",
+        "applicable_agents": ["*"],
+    },
+    "handoff-pickup": {
+        "source": "agent-surface/sources/handoff-pickup.md",
+        "applicable_agents": ["*"],
+    },
+    "commit-optionality": {
+        "source": "agent-surface/sources/commit-optionality.md",
+        "applicable_agents": ["*"],
+    },
+    "git-revert-scope": {
+        "source": "agent-surface/sources/git-revert-scope.md",
+        "applicable_agents": ["*"],
+    },
+    "plan-slug-coherence": {
+        "source": "agent-surface/sources/plan-slug-coherence.md",
+        "applicable_agents": ["*"],
+    },
 }
+
+
+def normalize_rule_entry(entry: RuleManifestEntry | str) -> RuleManifestEntry:
+    """Return a manifest entry with defaulted applicability fields."""
+    if isinstance(entry, str):
+        return {
+            "source": entry,
+            "applicable_agents": list(UNIVERSAL_AGENTS),
+            "capabilities_required": [],
+            "delivery_priority": 100,
+        }
+    return {
+        "source": entry["source"],
+        "applicable_agents": list(entry.get("applicable_agents", UNIVERSAL_AGENTS)),
+        "capabilities_required": list(entry.get("capabilities_required", [])),
+        "delivery_priority": int(entry.get("delivery_priority", 100)),
+    }
+
+
+def validate_rule_manifest_slugs(
+    manifest: dict[str, RuleManifestEntry | str] | None = None,
+) -> None:
+    """Fail loud if any applicable_agents slug is outside the seat registry."""
+    allowed = known_seats() | {"*"}
+    source = manifest if manifest is not None else AGENT_GUIDES_RULE_SLUGS
+    bad: list[str] = []
+    for slug, raw in source.items():
+        entry = normalize_rule_entry(raw)
+        unknown = sorted(set(entry["applicable_agents"]) - allowed)
+        if unknown:
+            bad.append(f"{slug}={unknown}")
+    if bad:
+        raise SystemExit(
+            f"agents.yaml-unknown slugs in rule manifest — {bad}; "
+            f"allowed={sorted(allowed)}"
+        )
+
+
+validate_rule_manifest_slugs()
 
 
 def render_agent_guides_rule(parsed, source_rel: str) -> str:
@@ -44,7 +129,9 @@ def emit_agent_guides_rules(
     fail = 0
     out_dir = root / "docs/agent-guides/rules"
 
-    for slug, source_rel in AGENT_GUIDES_RULE_SLUGS.items():
+    for slug, raw_entry in AGENT_GUIDES_RULE_SLUGS.items():
+        entry = normalize_rule_entry(raw_entry)
+        source_rel = entry["source"]
         source_path = root / source_rel
         out_path = out_dir / f"{slug}.md"
         if not source_path.exists():

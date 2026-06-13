@@ -221,9 +221,7 @@ def test_brevity_at_threshold_no_warn() -> None:
 
 def test_brevity_long_claim_with_sidecar_no_warn() -> None:
     claim = "x" * (_CLAIM_BREVITY_THRESHOLD + 200)
-    w = check_claim_brevity(
-        claim=claim, evidence_uris=["cortex://notes/system/foo.md"]
-    )
+    w = check_claim_brevity(claim=claim, evidence_uris=["cortex://notes/system/foo.md"])
     assert w == [], "long claim that already references a sidecar is the desired shape"
 
 

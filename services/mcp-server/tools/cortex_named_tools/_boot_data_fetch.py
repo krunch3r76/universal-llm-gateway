@@ -202,6 +202,14 @@ def build_futures_spec(
         "GET",
         f"/boot-skills?{urlencode({'limit': 120, 'for_agent': agent})}",
     )
+    # read-only: rule-layer index (layer=rules) — seat-filtered conduct rules for
+    # the briefing-card Agent Rules section. Same /boot-skills envelope as skills
+    # (FOR_AGENT_CLAUSE + CAPABILITY_CLAUSE apply server-side over type='rule').
+    futures_spec["rules"] = (
+        wrapped_cx,
+        "GET",
+        f"/boot-skills?{urlencode({'limit': 80, 'layer': 'rules', 'for_agent': agent})}",
+    )
     # read-only: fetch recent plan/todo activity summary
     futures_spec["recent_work"] = (wrapped_cx, "GET", "/boot-recent-work")
     # read-only: severity counts only — ¬full audit findings payload (~MB-scale)
@@ -268,6 +276,7 @@ def extract_boot_results(
 
     recent_mentions: list[dict[str, Any]] = safe_list(raw.get("recent_mentions", []))
     skills: list[dict[str, Any]] = safe_list(raw.get("skills", []))
+    rules: list[dict[str, Any]] = safe_list(raw.get("rules", []))
     # `/boot-skills` ships a sibling `unpartitioned_count` (skills missing
     # `applicable_agents`). Surfaced on the briefing card as a drift reminder
     # so the partition script doesn't go stale silently.
@@ -360,6 +369,7 @@ def extract_boot_results(
         "rj_total": rj_total,
         "recent_mentions": recent_mentions,
         "skills": skills,
+        "rules": rules,
         "skills_unpartitioned_count": skills_unpartitioned,
         "plan_phases": plan_phases,
         "in_flight_todos": in_flight_todos,

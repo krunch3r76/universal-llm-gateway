@@ -167,6 +167,12 @@ RETIRED_BOOT_SKILLS: tuple[str, ...] = (
 )
 
 
+# G3 delivery_priority for invariant skills (lower = higher priority).
+DELIVERY_PRIORITY_OVERRIDES: dict[str, int] = {
+    "agent_skill:architecture-invariants": 0,
+    "agent_skill:ulg-architecture": 1,
+}
+
 # Multi-agent assignments. Wins over the bucket-derived value above.
 OVERRIDES: dict[str, list[str]] = {
     # Reconciled 2026-05-29 (direct-verify): cursor+web, not universal; matches live attr.
@@ -424,11 +430,18 @@ def main() -> int:
         if not isinstance(existing, dict):
             existing = {}
         prior = existing.get("applicable_agents")
-        if prior == applicable:
+        target_priority = DELIVERY_PRIORITY_OVERRIDES.get(entity_id)
+        priority_ok = (
+            target_priority is None
+            or existing.get("delivery_priority") == target_priority
+        )
+        if prior == applicable and priority_ok:
             print(f"  noop  {entity_id:60s}  → {applicable}")
             continue
         merged = dict(existing)
         merged["applicable_agents"] = applicable
+        if entity_id in DELIVERY_PRIORITY_OVERRIDES:
+            merged["delivery_priority"] = DELIVERY_PRIORITY_OVERRIDES[entity_id]
 
         if args.dry_run:
             print(f"  WOULD {entity_id:60s}  → {applicable}  ({label})  prior={prior}")

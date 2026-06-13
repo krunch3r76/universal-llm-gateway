@@ -22,6 +22,7 @@ from ._briefing_card_render import (
 )
 from ._manifest import build_manifest
 from ._orientation_blocks import render_orientation_blocks
+from ._rules_section import render_rules_section
 from ._time import relative_time
 
 _LA = ZoneInfo("America/Los_Angeles")
@@ -102,6 +103,7 @@ def render_briefing_card(
     recent_mentions_window_days: int = 7,
     skills: list[dict[str, Any]] | None = None,
     skills_unpartitioned_count: int = 0,
+    rules: list[dict[str, Any]] | None = None,
     plan_phases: list[dict[str, Any]] | None = None,
     in_flight_todos: list[dict[str, Any]] | None = None,
     open_arcs: list[dict[str, Any]] | None = None,
@@ -229,16 +231,18 @@ def render_briefing_card(
         )
     )
 
+    boot_signals = _collect_boot_signals(
+        todos=todos,
+        unread_threads=unread_threads,
+        open_arcs=open_arcs,
+        in_flight_todos=in_flight_todos,
+    )
     if skills:
-        boot_signals = _collect_boot_signals(
-            todos=todos,
-            unread_threads=unread_threads,
-            open_arcs=open_arcs,
-            in_flight_todos=in_flight_todos,
-        )
         parts.extend(
             render_skills_section(skills, skills_unpartitioned_count, boot_signals)
         )
+    if rules:
+        parts.extend(render_rules_section(rules, boot_signals))
 
     if dropbox_files:
         n = len(dropbox_files)

@@ -45,7 +45,8 @@ Three layers — do not conflate:
 **Invariant**: server-primary ≠ initial callable set. The connector loads tools in two shapes:
   - **Pre-bound** — tool is in the initial callable set → call directly.
   - **Deferred** — tool absent initially but loadable via `tool_search` → one load hop, then direct call. This is a VALID connector-bound shape; session 0856 observed N=0 pre-bound with all 15 server-primary tools deferred behind `tool_search` (every loaded tool reached a healthy server).
-Probe guidance: "absent from initial set" ≠ "connector dropped it" — run a `tool_search` load hop first. Only no-load AND no `mcp.request.started` event = connector omission → hand off (cursor-consult); do not loop `tool_search`.
+  - **tool_search is the bootstrap** — it is connector-side, always exposed in your system-prompt deferred-tools block (NOT a pre-bound server function). If `team_dispatch` / `tool_search` / any primary looks "absent," that means *not pre-bound*, not dropped: call `tool_search(query="<tool>")` FIRST. "I cannot dispatch because tool_search is missing" is a misread — the bootstrap is always there.
+Probe guidance: "absent from initial set" ≠ "connector dropped it" — run a `tool_search` load hop first. The `mcp.request.started`-event test applies ONLY to deferred SERVER-PRIMARY tools (fs, team_dispatch, …) AFTER a load hop: no-load AND no started event = connector omission → hand off (cursor-consult). It does NOT apply to `tool_search` itself, which is connector-side and emits no server event — never infer omission of `tool_search` from missing events. Do not loop `tool_search`.
 
 **Overflow / deferred load via `tool_search`**:
 ```
@@ -58,8 +59,8 @@ _DISPATCH_CONSULT_BLOCK_CLAUDE = """\
 ## Dispatch & Consult — pick by CAPABILITY, not model family
 To consult a MODEL (any provider, incl. grok) you do NOT use a build harness.
 When connector-bound: team_dispatch + panel_dispatch are server-primary — call directly (if unbound, see MCP binding block above). Model strings = provider/model on optional model= override (bare name = 404).
-- API consult (any provider)        → team_dispatch (op=generate, role=reviewer|artisan|skeptic|…, dispatch_thread_id=…, model="provider/model"?) → execution_id + thread_id + poll_hint; poll agent_bus(wait) from poll_hint (pipeline result = metadata fallback)
-- role=skeptic                      → default xai/grok-4.20-multi-agent-0309 is inline-only/no-MCP; pre-stage corpus in messages (¬ expect Cortex/fs writes from skeptic)
+- API consult (any provider)        → pre-stage context on agent-bus thread; team_dispatch (op=generate, role=reviewer|artisan|skeptic|…, dispatch_thread_id=<thread>, contract=light-bounded, model="provider/model"?) → execution_id + thread_id + poll_hint; poll agent_bus(wait) from poll_hint (pipeline result = metadata fallback)
+- role=skeptic                      → default xai/grok-4.20-multi-agent-0309 is inline-only/no-MCP; pre-stage corpus on the dispatch thread (¬ expect Cortex/fs writes from skeptic)
 - by API role (reviewer/artisan/…) → team_dispatch (op=generate, role=…) — ¬ synthetic seat models on generate (422)
 **Bound mechanical implement (default) → `team_dispatch(op=generate, role=cursor-sdk, packet_path=…, contract=implement, dispatch_thread_id=…)`** — auto Composer (cursor/composer-2.5), no IDE pickup; poll `poll_hint` (agent_bus wait). ⚠ PRECONDITION — DENSE INSTRUCTIONS: every file/function/test/SQL shape determinate, ACs explicit, zero design forks. Composer executes mechanically, so density is the safety substitute for the human-in-the-loop the default removes — a thin/ambiguous packet is a routing error: densify first or use the handoff fallback. SOT: agent-skills/consult-routing.md § Implement lane.
 **Delivering a CONSULT packet to a manual seat IS `team_dispatch(op=handoff)` — the default for consult, not an option.** It posts the pointer + returns `push_reminder`/`poll_hint`. (Implement handoff = operator-attended FALLBACK only — SDK worker unavailable, tier picker, or Multitask.)
@@ -68,7 +69,7 @@ When connector-bound: team_dispatch + panel_dispatch are server-primary — call
 - consensus panel (≥2 families)     → panel_dispatch(messages=[…], dispatch_thread_id="…", disposition="panel")  [primary]
 - stronger-model strategic advice   → dispatch(tool="advisor", arguments='{"problem":"…"}')                                  [overflow]
 - RAG advice inside a pipeline      → dispatch(tool="pipeline_consult", arguments='{"execution_id":"…","step_name":"…","problem":"…"}')  [overflow]
-- close-to-code build (auto) → team_dispatch(op=generate, role=cursor-sdk, dispatch_thread_id=…, messages=[…] | packet_path=…)
+- bounded determinate task → team_dispatch(op=generate, role=cursor-sdk, dispatch_thread_id=<thread>, contract=pure-mechanical|implement, packet_path?=…)
 - deprecated: op=handoff,seat=cursor-sdk normalizes to generate with a warning
 - run a named pipeline              → pipeline (op=run|async)
 ⚠ A build harness is not a model picker. "Want a grok answer" → team_dispatch(op=generate, role=artisan, model="xai/grok-4.3", …), never a build harness.
@@ -79,6 +80,7 @@ Full shapes: reference:claude-web-lead-seat-surface → claude-web-dispatch-deci
 # to prose — it is reference-density, recoverable from commit-and-git-scope_ws.mdc.
 _ENTITY_HIERARCHY_BLOCK = """\
 ## Entity granularity — seed the right type
+- **work item** is the canonical genus for actionable Cortex work: `project:`, `plan:`, `task:`, and `todo:`. Use `entity` for graph/storage representation, not as the domain umbrella.
 - **plan:** → **plan_phase:** children — ordered **phases** ("phase" is reserved for plan: / plan_phase: / /implement-plan).
 - **task:** → **todo:** children via `child_of`; umbrella `project:` via `related_to` — bounded arc of ≥2 leaf todos ordered by **steps** (todo ordering / `depends_on`), NOT plan_phase.
 - **todo:** → steps inline in the body — one unit of work. Do NOT cram "PHASE 1/2/3" into a todo (that's a plan).

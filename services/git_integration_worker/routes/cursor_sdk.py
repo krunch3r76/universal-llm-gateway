@@ -19,7 +19,8 @@ import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from threading import Event as _ThreadEvent, Thread
+from threading import Event as _ThreadEvent
+from threading import Thread
 
 from cursor_sdk import Client
 from fastapi import APIRouter, Request
@@ -60,6 +61,7 @@ from services.git_integration_worker.cursor_sdk_events import (
     emit_sdk_worker_progress,
     emit_sdk_worker_timeout,
 )
+from services.git_integration_worker.cursor_sdk_gate import sdk_dispatch_slot
 from services.git_integration_worker.models.cursor_api import (
     CursorDispatchRequest,
     CursorDispatchResponse,
@@ -84,12 +86,13 @@ def _config(request: Request) -> WorkerConfig:
 def _read_packet_text(req: CursorDispatchRequest, source_repo: Path) -> str:
     if req.message:
         return req.message
-    assert req.packet_path is not None
+    if req.packet_path is None:
+        raise ValueError("dispatch requires either message or packet_path")
     rel = req.packet_path.strip()
     if rel.startswith("/") or ".." in Path(rel).parts:
         raise ValueError(f"packet_path must be workspaces-relative: {rel!r}")
     packet = (source_repo / rel).resolve()
-    if not str(packet).startswith(str(source_repo.resolve())):
+    if not packet.is_relative_to(source_repo.resolve()):
         raise ValueError(f"packet_path escapes source_repo: {rel!r}")
     if not packet.is_file():
         raise ValueError(f"packet_path not found: {rel!r}")
@@ -235,6 +238,16 @@ async def _run_sdk_dispatch(
     source_repo: Path,
     bus: CursorBusClient,
 ) -> None:
+    async with sdk_dispatch_slot(dispatch_id=req.dispatch_id):
+        await _run_sdk_dispatch_gated(req=req, source_repo=source_repo, bus=bus)
+
+
+async def _run_sdk_dispatch_gated(
+    *,
+    req: CursorDispatchRequest,
+    source_repo: Path,
+    bus: CursorBusClient,
+) -> None:
     outer_timeout_s = _SDK_TIMEOUT_S + _SDK_TIMEOUT_BUFFER_S
     try:
         prompt = _resolve_prompt(req, source_repo)
@@ -275,6 +288,11 @@ async def _run_sdk_dispatch(
             )
             await _terminate_link(
                 bus, thread_id=req.thread_id, terminal_status="failed"
+            )
+            await asyncio.to_thread(
+                CursorDispatchLedger.instance().mark_terminal,
+                dispatch_id=req.dispatch_id,
+                terminal_status="failed",
             )
             return
         inferred_contract = None

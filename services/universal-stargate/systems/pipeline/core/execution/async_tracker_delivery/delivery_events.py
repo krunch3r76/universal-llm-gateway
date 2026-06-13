@@ -44,6 +44,12 @@ def _build_sent_event(
     thread: str,
     to_agent: str,
     from_agent: str,
+    op: str = "",
+    output_contract: str = "inline",
+    delivery_mode: str = "inline",
+    sidecar_uri: str | None = None,
+    content_sha256: str | None = None,
+    sidecar_status: str = "ok",
 ) -> Event:
     from ...events.delivery import PipelineDispatchDeliverySent
 
@@ -53,6 +59,12 @@ def _build_sent_event(
         thread=thread,
         to_agent=to_agent,
         from_agent=from_agent,
+        op=op,
+        output_contract=output_contract,
+        delivery_mode=delivery_mode,
+        sidecar_uri=sidecar_uri,
+        content_sha256=content_sha256,
+        sidecar_status=sidecar_status,
     )
 
 

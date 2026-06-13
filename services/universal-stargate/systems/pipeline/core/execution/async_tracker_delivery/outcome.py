@@ -27,3 +27,7 @@ class DeliveryOutcome:
 
     status: Literal["delivered", "failed", "skipped"]
     failure_reason: str | None = None
+    delivery_mode: Literal["inline", "sidecar"] | None = None
+    thread: str | None = None
+    sidecar_uri: str | None = None
+    content_sha256: str | None = None

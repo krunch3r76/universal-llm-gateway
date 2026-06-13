@@ -46,6 +46,7 @@ For this invocation, your Cortex grounding is the context supplied in this conve
 If you cannot ground a claim in the supplied context, mark it [UNGROUNDED] and note what query would resolve it.
 
 Shared vocabulary: "Cortex" = the knowledge graph, not the service · \
+"work item" = genus for project/plan/task/todo · \
 "directive" = implement now · "ticket" = deferred work.
 """
 
@@ -128,8 +129,9 @@ def assemble_system_prompt(
     *,
     include_cortex_quickref: bool = True,
     inline_only: bool = False,
+    injected_bodies_md: str | None = None,
 ) -> str:
-    """Assemble the stacked system prompt: preamble + briefing [+ continuation] [+ extra].
+    """Assemble the stacked system prompt: preamble + briefing [+ injected] [+ continuation] [+ extra].
 
     Birth-prompt loading was retired in Phase 7 (files absent from
     $AGENT_IDENTITY_DIR; loader was failing on every dispatch role call).
@@ -146,7 +148,7 @@ def assemble_system_prompt(
       The briefing card should also have been rendered with ``inline_only=True``
       so the skills header does not instruct fs(...) reads.
 
-    Order: preamble → briefing → continuation → extra.
+    Order: preamble → briefing → injected_bodies → continuation → extra.
     """
     parts: list[str] = [
         build_subagent_preamble(
@@ -157,6 +159,8 @@ def assemble_system_prompt(
     ]
     if briefing_card_md and briefing_card_md.strip():
         parts.append(briefing_card_md.strip())
+    if injected_bodies_md and injected_bodies_md.strip():
+        parts.append(injected_bodies_md.strip())
     if continuation_md and continuation_md.strip():
         parts.append(continuation_md.strip())
     if extra_system and extra_system.strip():

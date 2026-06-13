@@ -29,6 +29,15 @@ def panel_dispatch_fn() -> Any:
     return recorder.functions["panel_dispatch"]
 
 
+@pytest.fixture(autouse=True)
+def _no_agent_bus_stage() -> Any:
+    with patch(
+        "tools.panel_dispatch._stage_panel_member_turn",
+        new=AsyncMock(),
+    ):
+        yield
+
+
 @pytest.mark.asyncio
 async def test_panel_dispatch_distinct_member_dispatch_keys(
     panel_dispatch_fn: Any,

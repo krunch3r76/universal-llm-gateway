@@ -68,13 +68,19 @@ def test_mcp_token_from_yaml(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     (gateway / "mcp.yaml").write_text("auth_token: yaml-token\n", encoding="utf-8")
     monkeypatch.delenv("MCP_TOKEN", raising=False)
     monkeypatch.delenv("MCP_AUTH_TOKEN", raising=False)
+    monkeypatch.delenv("CURSOR_API_KEY", raising=False)
 
     token, source = resolve_mcp_token(real_home=home)
     assert token == "yaml-token"
     assert source == "yaml:auth_token"
 
 
-def test_validate_dispatch_context_passes(tmp_path: Path) -> None:
+def test_validate_dispatch_context_passes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("MCP_TOKEN", raising=False)
+    monkeypatch.delenv("MCP_AUTH_TOKEN", raising=False)
+    monkeypatch.delenv("CURSOR_API_KEY", raising=False)
     home = tmp_path / "home"
     cursor_rules = home / ".cursor" / "rules"
     cursor_rules.mkdir(parents=True)
@@ -92,7 +98,12 @@ def test_validate_dispatch_context_passes(tmp_path: Path) -> None:
     assert report["user_rules_dir_present"] is True
 
 
-def test_validate_dispatch_context_missing_mcp_token(tmp_path: Path) -> None:
+def test_validate_dispatch_context_missing_mcp_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("MCP_TOKEN", raising=False)
+    monkeypatch.delenv("MCP_AUTH_TOKEN", raising=False)
+    monkeypatch.delenv("CURSOR_API_KEY", raising=False)
     home = tmp_path / "home"
     xdg = home / ".config" / "cursor"
     xdg.mkdir(parents=True)
@@ -103,7 +114,12 @@ def test_validate_dispatch_context_missing_mcp_token(tmp_path: Path) -> None:
         validate_dispatch_context(repo, real_home=home)
 
 
-def test_validate_dispatch_context_missing_cursor_auth(tmp_path: Path) -> None:
+def test_validate_dispatch_context_missing_cursor_auth(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("MCP_TOKEN", raising=False)
+    monkeypatch.delenv("MCP_AUTH_TOKEN", raising=False)
+    monkeypatch.delenv("CURSOR_API_KEY", raising=False)
     home = tmp_path / "home"
     gateway = home / ".gateway"
     gateway.mkdir(parents=True)
@@ -123,6 +139,7 @@ def test_build_agent_options_wires_model_and_local(
 
     opts = build_agent_options(repo, model)
     assert opts.model == model
+    assert opts.mode == "agent"
     assert opts.local is not None
     assert opts.mcp_servers is not None
     assert "user-vortex" in opts.mcp_servers

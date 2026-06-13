@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -78,6 +79,12 @@ def check_handoff_transcript_anchor(
     )
 
 
+_DEFERRAL_CONTEXT_RE = re.compile(
+    r"\b(?:deferred|planned|not\s+yet\s+created|future\s+work|to\s+be\s+created)\b",
+    re.IGNORECASE,
+)
+
+
 def cited_entity_ids_in_prompt(
     handoff_prompt: str,
     *,
@@ -88,6 +95,23 @@ def cited_entity_ids_in_prompt(
     if session_id:
         ids.discard(f"transcript:{session_id}")
     return ids
+
+
+def is_deferred_entity_reference(handoff_prompt: str, entity_id: str) -> bool:
+    """True when *entity_id* is cited as intentional future/planned work."""
+    if entity_id not in handoff_prompt:
+        return False
+    for line in handoff_prompt.splitlines():
+        if entity_id not in line:
+            continue
+        lowered = line.lower()
+        if "deferred inventory" in lowered or _DEFERRAL_CONTEXT_RE.search(line):
+            return True
+    idx = handoff_prompt.find(entity_id)
+    if idx < 0:
+        return False
+    window = handoff_prompt[max(0, idx - 80) : idx + len(entity_id) + 80]
+    return bool(_DEFERRAL_CONTEXT_RE.search(window))
 
 
 def _entity_phase_note(entity_type: str, attrs: dict[str, Any]) -> str:

@@ -103,10 +103,14 @@ def _hard_delete_entity(conn: sqlite3.Connection, entity_id: str) -> None:
     conn.execute("PRAGMA foreign_keys=ON")
 
 
-def _hard_delete_assertions(conn: sqlite3.Connection, assertion_ids: tuple[int, ...]) -> None:
+def _hard_delete_assertions(
+    conn: sqlite3.Connection, assertion_ids: tuple[int, ...]
+) -> None:
     conn.commit()
     conn.execute("PRAGMA foreign_keys=OFF")
-    conn.executemany("DELETE FROM assertions WHERE id = ?", ((i,) for i in assertion_ids))
+    conn.executemany(
+        "DELETE FROM assertions WHERE id = ?", ((i,) for i in assertion_ids)
+    )
     conn.execute("PRAGMA foreign_keys=ON")
 
 

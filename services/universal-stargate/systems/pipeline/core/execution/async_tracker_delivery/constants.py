@@ -11,11 +11,11 @@ from __future__ import annotations
 # GET thread). Wraps ``httpx.AsyncClient`` via ``make_async_client``.
 _HTTP_TIMEOUT_S = 15.0
 
-# Bus turn body hard limit. Mirrors
-# ``libs/agent_bus_store/turns_models.MAX_TURN_BODY_CHARS`` — kept as a
+# Bus long-body hard limit. Mirrors
+# ``libs/agent_bus_store/turns_models.MAX_LONG_TURN_BODY_CHARS`` — kept as a
 # module-level constant rather than imported so this package stays
 # self-contained for testing without the agent_bus_store dependency tree.
-_BUS_MAX_BODY_CHARS = 8_000
+_BUS_MAX_BODY_CHARS = 64_000
 
 # Threshold below which we post inline without ``allow_long_body=true``. Above
 # this, opt into long-body to suppress the briefing-rule 413 envelope; still

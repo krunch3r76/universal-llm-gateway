@@ -29,6 +29,7 @@ from .admission import (
 from .closeout_reply import parse_closeout_payload, run_implement_closeout_pipeline
 from .contract_derivation import derive_contract
 from .cursor_sdk_generate import dispatch_cursor_sdk_generate
+from .dispatch_thread_context import as_user_message, read_latest_dispatch_thread_body
 from .events import (
     FrontierHandoffCreated,
     FrontierHandoffDeprecatedAlias,
@@ -84,7 +85,6 @@ class _DispatchCommon(BaseModel):
 
     model_config = {"extra": "forbid"}
 
-    messages: list[dict[str, Any]]
     system: str = ""
     reasoning_effort: str | None = None
     generation_options: dict[str, Any] | None = None
@@ -117,7 +117,7 @@ class TeamDispatchGenerateBody(_DispatchCommon):
     # closing the forced-remote-MCP hang (thread 1653).
     mcp: bool | None = None
     packet_path: str | None = None
-    contract: Literal["consult", "implement"] | None = None
+    contract: Literal["light-bounded", "pure-mechanical", "implement"]
     reuse_thread: str | None = None
     # thread / subject MUST NOT appear — extra="forbid" rejects any caller that
     # supplies them (schema-level enforcement per Phase 0 contract).
@@ -140,6 +140,7 @@ class TeamDispatchToThreadBody(_DispatchCommon):
     model: str | None = None
     # Caller inline-intent knob (see ``TeamDispatchGenerateBody.mcp``).
     mcp: bool | None = None
+    contract: Literal["light-bounded", "pure-mechanical", "implement"]
     # result_delivery MUST NOT appear — derived from thread + role; extra="forbid"
     # rejects any caller that supplies it.
 
@@ -151,7 +152,13 @@ TeamDispatchBody = Annotated[
 ]
 
 
-class FrontierDispatchGenerateBody(_DispatchCommon):
+class _FrontierDispatchCommon(_DispatchCommon):
+    """Persona-free frontier dispatch still accepts OpenAI-shaped messages."""
+
+    messages: list[dict[str, Any]]
+
+
+class FrontierDispatchGenerateBody(_FrontierDispatchCommon):
     """``POST /api/v1/frontier/dispatch`` with ``op="generate"`` — persona-free."""
 
     op: Literal["generate"]
@@ -162,7 +169,7 @@ class FrontierDispatchGenerateBody(_DispatchCommon):
     mcp: bool = False
 
 
-class FrontierDispatchToThreadBody(_DispatchCommon):
+class FrontierDispatchToThreadBody(_FrontierDispatchCommon):
     """``POST /api/v1/frontier/dispatch`` with ``op="to_thread"`` — persona-free."""
 
     op: Literal["to_thread"]
@@ -185,12 +192,16 @@ def _normalize_op_body(
         | FrontierDispatchGenerateBody
         | FrontierDispatchToThreadBody
     ),
+    *,
+    source_text: str | None = None,
 ) -> dict[str, Any]:
     """Translate a discriminated dispatch body into ``FrontierGenerateRequest``
     kwargs.
     """
     common: dict[str, Any] = {
-        "messages": body.messages,
+        "messages": as_user_message(source_text)
+        if source_text is not None
+        else getattr(body, "messages", []),
         "system": body.system,
         "reasoning_effort": body.reasoning_effort,
         "generation_options": body.generation_options,
@@ -214,6 +225,8 @@ def _normalize_op_body(
         common["model"] = body.model
     if hasattr(body, "mcp"):
         common["mcp"] = body.mcp
+    if hasattr(body, "contract"):
+        common["resolved_contract"] = body.contract
 
     if body.op == "generate":
         common["output_contract"] = "inline"
@@ -313,15 +326,23 @@ async def team_dispatch(
         and is_cursor_sdk_generate_role(role, request_id=request_id)
     ):
         try:
+            source_text = (
+                ""
+                if body.contract == "implement"
+                else await read_latest_dispatch_thread_body(
+                    request_id=request_id,
+                    dispatch_thread_id=body.dispatch_thread_id,
+                )
+            )
             result = await dispatch_cursor_sdk_generate(
                 request_id=request_id,
                 role=role,
-                messages=body.messages,
                 model=getattr(body, "model", None),
                 subject=None,
                 caller_agent=body.caller_agent,
+                contract=body.contract,
                 packet_path=getattr(body, "packet_path", None),
-                message_text=None,
+                message_text=source_text,
                 reuse_thread=getattr(body, "reuse_thread", None),
                 bus_lifecycle=getattr(body, "bus_lifecycle", None),
             )
@@ -345,7 +366,11 @@ async def team_dispatch(
             response.status_code = 202
         return result
 
-    req = FrontierGenerateRequest(**_normalize_op_body(body))
+    source_text = await read_latest_dispatch_thread_body(
+        request_id=request_id,
+        dispatch_thread_id=body.dispatch_thread_id,
+    )
+    req = FrontierGenerateRequest(**_normalize_op_body(body, source_text=source_text))
     return await _dispatch(req, response)
 
 
@@ -393,7 +418,7 @@ class TeamHandoffBody(BaseModel):
     seat: str | None = None
     packet_path: str | None = None
     source_ref: str | None = None
-    contract: Literal["consult", "implement"] | None = None
+    contract: Literal["light-bounded", "pure-mechanical", "implement"] | None = None
     executor_override: str | None = None
     executor_override_reason_code: str | None = None
     executor_override_reason: str | None = None
@@ -523,10 +548,10 @@ async def team_handoff(
                 result = await dispatch_cursor_sdk_generate(
                     request_id=request_id,
                     role="cursor-sdk",
-                    messages=[],
                     model=None,
                     subject=body.subject,
                     caller_agent=body.caller_agent,
+                    contract="implement",
                     packet_path=packet_path,
                     message_text=body.pointer_body,
                     reuse_thread=getattr(body, "reuse_thread", None),

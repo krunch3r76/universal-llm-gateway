@@ -123,6 +123,9 @@ class HydrationBundle:
     section_counts: dict[str, int] = field(default_factory=dict)
     agent_meta: AgentMeta = field(default_factory=AgentMeta)
     inline_only: bool = False
+    injected_bodies_md: str | None = None
+    required_body_unresolved: bool = False
+    injection_meta: dict[str, Any] = field(default_factory=dict)
 
 
 async def _cortex_get(path: str) -> Any:
@@ -411,6 +414,45 @@ async def hydrate_agent(
         inline_only=inline_only,
     )
 
+    injected_bodies_md: str | None = None
+    required_body_unresolved = False
+    injection_meta: dict[str, Any] = {}
+    if inline_only:
+        from agent_seat.body_injection import (
+            RequiredBodyUnresolved,
+            resolve_inline_only_bodies,
+        )
+
+        already_present = (briefing or "") + (continuation_md or "")
+        try:
+            (
+                injected_bodies_md,
+                injected,
+                dropped,
+                metrics,
+            ) = await asyncio.to_thread(
+                resolve_inline_only_bodies,
+                normalized_agent,
+                already_present=already_present,
+            )
+            injection_meta = {
+                "injected": injected,
+                "dropped": dropped,
+                "metrics": metrics,
+            }
+        except RequiredBodyUnresolved as exc:
+            required_body_unresolved = True
+            injection_meta = {
+                "injected": [],
+                "dropped": exc.dropped,
+                "metrics": {
+                    "elapsed_ms": 0,
+                    "cold_fetches": 0,
+                    "cache_hit": False,
+                    "deadline_hit": False,
+                },
+            }
+
     section_counts = {
         "briefing_bytes": len(briefing),
         "sessions": len(sessions),
@@ -430,4 +472,7 @@ async def hydrate_agent(
         section_counts=section_counts,
         agent_meta=agent_meta,
         inline_only=inline_only,
+        injected_bodies_md=injected_bodies_md,
+        required_body_unresolved=required_body_unresolved,
+        injection_meta=injection_meta,
     )

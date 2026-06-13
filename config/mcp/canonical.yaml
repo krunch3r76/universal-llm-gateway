@@ -2340,13 +2340,14 @@ tools:
     tool: team_dispatch
     substrate_qualified: user-vortex__team_dispatch
   fol_descriptor: |-
-    ∀ role ∈ GenerateRoles ∧ messages ∈ List[Msg] ∧ dispatch_thread_id ∈ ThreadKey:
-      team_dispatch(op=generate, role, messages, dispatch_thread_id) ⟹
-        execution_id ∈ UUIDv4 ∧ poll pipeline(op=result, execution_id) for content
-        ∧ knob_resolution ∈ Response ∧ parity ∉ {claimed_by_default}.
+    ∀ role ∈ GenerateRoles ∧ dispatch_thread_id ∈ AgentBusThread ∧ contract ∈ {light-bounded,pure-mechanical,implement}:
+      team_dispatch(op=generate, role, dispatch_thread_id, contract, packet_path?) ⟹
+        execution_id ∈ UUIDv4 ∧ poll poll_hint for content
+        ∧ knob_resolution ∈ Response ∧ parity ∉ {claimed_by_default}
+        ∧ resolved_contract = contract.
     GenerateRoles = generate/to_thread roles (reviewer/gatherer/synthesizer/artisan/skeptic).
     cursor-sdk ∈ GenerateTargets via auto_dispatchable (substrate=sdk); ¬ cloud CapabilityDispatch.
-      Default output_contract=thread for sdk; consult via messages[], implement via packet_path;
+      Default output_contract=thread for sdk; no-packet context is read from dispatch_thread_id's latest agent-bus turn; implement via packet_path;
       poll via poll_hint (agent-bus wait), NOT pipeline(op=result), until the execution registry (Track 2).
     ¬ web-consult/web-implement/cursor-consult/cursor-implement (handoff-only). Async. Mutating. See agent_skill:dispatch.
   json_schema:
@@ -2354,7 +2355,6 @@ tools:
     properties:
       op: {type: string, enum: [generate, to_thread]}
       role: {type: string}
-      messages: {type: array, items: {type: object}}
       dispatch_thread_id: {type: string}
       model: {type: string}
       system: {type: string}
@@ -2362,8 +2362,8 @@ tools:
       thread: {type: string}
       subject: {type: string}
       packet_path: {type: string}
-      contract: {type: string, enum: [consult, implement]}
-    required: [op, role, messages, dispatch_thread_id]
+      contract: {type: string, enum: [light-bounded, pure-mechanical, implement]}
+    required: [op, role, dispatch_thread_id, contract]
   skill_uri: agent_skill:dispatch
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: write
@@ -2380,9 +2380,10 @@ tools:
     tool: team_dispatch_to_thread
     substrate_qualified: user-vortex__team_dispatch_to_thread
   fol_descriptor: |-
-    ∀ role ∈ GenerateRoles ∧ thread ∈ ThreadID ∧ dispatch_thread_id ∈ ThreadKey:
-      team_dispatch(op=to_thread, role, messages, dispatch_thread_id, thread) ⟹
+    ∀ role ∈ GenerateRoles ∧ thread ∈ ThreadID ∧ dispatch_thread_id ∈ AgentBusThread ∧ contract ∈ {light-bounded,pure-mechanical}:
+      team_dispatch(op=to_thread, role, dispatch_thread_id, contract, thread) ⟹
         Stargate posts the role reply on its behalf to thread after dispatch completes.
+      Context is read from dispatch_thread_id's latest agent-bus turn; messages[] is not a parameter.
     GenerateRoles = generate/to_thread roles (reviewer/gatherer/synthesizer/artisan/skeptic).
     Async. Mutating. See agent_skill:dispatch.
   json_schema:
@@ -2390,14 +2391,14 @@ tools:
     properties:
       op: {type: string, enum: [generate, to_thread]}
       role: {type: string}
-      messages: {type: array, items: {type: object}}
       dispatch_thread_id: {type: string}
       model: {type: string}
       system: {type: string}
       reasoning_effort: {type: string}
       thread: {type: string}
       subject: {type: string}
-    required: [op, role, messages, dispatch_thread_id, thread]
+      contract: {type: string, enum: [light-bounded, pure-mechanical]}
+    required: [op, role, dispatch_thread_id, thread, contract]
   skill_uri: agent_skill:dispatch
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: write

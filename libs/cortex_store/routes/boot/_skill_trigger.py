@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 from typing import Any
 
 from ...dispatch_ops._shared import _FILES_ROOT
+
+_WORKSPACES_ROOT = Path(
+    os.environ.get("WORKSPACES_ROOT", "/mnt/torus/projects")
+).resolve()
 
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---", re.DOTALL)
 _TRIGGER_LINE_RE = re.compile(r"^\*\*Trigger:\*\*\s*(.+)$", re.MULTILINE)
@@ -46,12 +51,36 @@ def _parse_trigger_line(text: str) -> str | None:
 
 def _resolve_skill_file(source_uri: str | None, slug: str) -> Path | None:
     if source_uri:
-        raw = source_uri.removeprefix("cortex://")
-        candidate = (
-            Path(source_uri) if Path(source_uri).is_absolute() else _FILES_ROOT / raw
-        )
-        if candidate.is_file():
-            return candidate
+        if source_uri.startswith("workspaces://"):
+            rest = source_uri.removeprefix("workspaces://")
+            candidate = (_WORKSPACES_ROOT / rest).resolve()
+            if candidate.is_file():
+                return candidate
+        elif "://" not in source_uri:
+            candidate = (
+                Path(source_uri)
+                if Path(source_uri).is_absolute()
+                else _FILES_ROOT / source_uri
+            )
+            if candidate.is_file():
+                return candidate
+            if not Path(source_uri).is_absolute() and source_uri.startswith(
+                "docs/agent-guides/"
+            ):
+                ws_candidate = (
+                    _WORKSPACES_ROOT / "universal-llm-gateway" / source_uri
+                ).resolve()
+                if ws_candidate.is_file():
+                    return ws_candidate
+        else:
+            raw = source_uri.removeprefix("cortex://")
+            candidate = (
+                Path(source_uri)
+                if Path(source_uri).is_absolute()
+                else _FILES_ROOT / raw
+            )
+            if candidate.is_file():
+                return candidate
     fallback = _FILES_ROOT / "agent-skills" / f"{slug}.md"
     return fallback if fallback.is_file() else None
 

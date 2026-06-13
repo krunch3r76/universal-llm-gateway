@@ -17,9 +17,10 @@ from .models import AgentName
 
 # Agent-bus convention: turns are short briefings with sidecar markdown
 # references. Full documents belong in notes/system/threads/ and are
-# referenced, not inlined. A per-request escape hatch exists for rare
-# web-agent communications that require inline long form.
+# referenced, not inlined. Team-dispatch uses the explicit long-body lane for
+# pre-staged prompt context; that lane is still hard-capped.
 MAX_TURN_BODY_CHARS = 8_000
+MAX_LONG_TURN_BODY_CHARS = 64_000
 
 
 def body_too_large_envelope(*, limit: int, body_chars: int) -> dict[str, object]:
@@ -43,10 +44,11 @@ def turn_body_limit_error(
     body: str, *, allow_long_body: bool = False
 ) -> dict[str, object] | None:
     """Return the structured limit error unless this request opts into long form."""
-    if allow_long_body or len(body) <= MAX_TURN_BODY_CHARS:
+    limit = MAX_LONG_TURN_BODY_CHARS if allow_long_body else MAX_TURN_BODY_CHARS
+    if len(body) <= limit:
         return None
     return body_too_large_envelope(
-        limit=MAX_TURN_BODY_CHARS,
+        limit=limit,
         body_chars=len(body),
     )
 

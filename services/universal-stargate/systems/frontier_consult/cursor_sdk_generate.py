@@ -14,11 +14,11 @@ from .cursor_sdk_generate_signals import (
     emit_sdk_worker_outcome,
 )
 from .cursor_sdk_worker_dispatch import (
+    derive_cursor_sdk_prompt_preamble,
     dispatch_cursor_sdk_worker,
     dispatch_cursor_sdk_worker_message,
     post_worker_failure_turn,
 )
-from .dispatch_messages import extract_last_user_message
 from .handoff import admit_handoff_dispatch, create_handoff_thread
 from .handoff_response import build_handoff_result, build_sdk_generate_result
 
@@ -27,10 +27,10 @@ async def dispatch_cursor_sdk_generate(
     *,
     request_id: str,
     role: str,
-    messages: list[dict[str, Any]],
     model: str | None,
     subject: str | None,
     caller_agent: str | None,
+    contract: Literal["light-bounded", "pure-mechanical", "implement"],
     packet_path: str | None,
     message_text: str | None,
     reuse_thread: str | None = None,
@@ -38,7 +38,7 @@ async def dispatch_cursor_sdk_generate(
 ) -> dict[str, Any]:
     """Execute cursor-sdk generate with to_thread default delivery.
 
-    Consult: pass ``messages`` only → worker gets ``message=`` (last user turn).
+    Light/pure-mechanical: pass dispatch-thread text → worker gets ``message=``.
     Implement: pass ``packet_path`` → worker gets ``packet_path=``.
     """
     to_agent, family, platform, resolved_model = resolve_cursor_sdk_generate_target(
@@ -47,26 +47,35 @@ async def dispatch_cursor_sdk_generate(
     execution_id = str(uuid.uuid4())
     thread_subject = subject or f"cursor-sdk generate — {execution_id[:8]}"
 
-    if packet_path is not None:
+    if contract == "implement":
+        if packet_path is None:
+            from .admission import FrontierEndpointError
+
+            raise FrontierEndpointError(
+                request_id=request_id,
+                field="packet_path",
+                reason="contract=implement requires packet_path",
+                status_code=422,
+            )
         pointer_body = f"SDK implement dispatch — see packet `{packet_path}`."
         worker_packet = packet_path
         worker_message = None
     else:
-        last_user = message_text or extract_last_user_message(messages)
+        last_user = message_text or ""
         if not last_user:
             from .admission import FrontierEndpointError
 
             raise FrontierEndpointError(
                 request_id=request_id,
-                field="messages",
-                reason="At least one non-empty user message is required for consult",
+                field="dispatch_thread_id",
+                reason="Dispatch thread must contain a non-empty prompt body",
                 status_code=422,
             )
         pointer_body = last_user[:2000]
         worker_packet = None
         worker_message = last_user
 
-    handoff_contract = "consult" if worker_packet is None else "implement"
+    handoff_contract = contract
 
     emit_sdk_generate_requested(
         request_id=request_id,
@@ -122,12 +131,20 @@ async def dispatch_cursor_sdk_generate(
     )
 
     if worker_packet is not None:
+        preamble_pointer = pointer_body
+        if handoff_contract == "implement" and "Contract:" not in pointer_body:
+            preamble_pointer = f"Contract: implement.\n{pointer_body}"
+        prompt_preamble = derive_cursor_sdk_prompt_preamble(
+            handoff_contract=handoff_contract,
+            pointer=preamble_pointer,
+        )
         worker_ok, worker_warning = await dispatch_cursor_sdk_worker(
             request_id=request_id,
             thread_id=thread_id,
             model=resolved_model,
             packet_path=worker_packet,
             handoff_contract=handoff_contract,
+            prompt_preamble=prompt_preamble,
         )
     else:
         worker_ok, worker_warning = await dispatch_cursor_sdk_worker_message(
@@ -161,5 +178,6 @@ async def dispatch_cursor_sdk_generate(
         thread_id=thread_id,
         to_agent=to_agent,
         resolved_model=resolved_model,
+        resolved_contract=handoff_contract,
         warnings=warnings,
     )

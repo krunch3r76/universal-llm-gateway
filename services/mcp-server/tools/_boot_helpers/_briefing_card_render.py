@@ -180,6 +180,10 @@ def render_audit_alerts_section(counters: dict[str, int]) -> list[str]:
     ]
 
 
+_INVARIANT_SKILL_SLUGS: frozenset[str] = frozenset(
+    {"architecture-invariants", "ulg-architecture"}
+)
+
 _TIER1_GATE_SLUGS: frozenset[str] = frozenset(
     {
         "lead-seat-boot",
@@ -237,6 +241,13 @@ def _append_skill_index(
             continue
         trigger = _skill_trigger_display(skill)
         trigger_part = f" — {trigger}" if trigger else ""
+        uri = skill.get("source_uri")
+        if slug in _INVARIANT_SKILL_SLUGS and isinstance(uri, str) and uri.strip():
+            trigger_part = (
+                f"{trigger_part} (`{uri.strip()}`)"
+                if trigger_part
+                else f" (`{uri.strip()}`)"
+            )
         lines.append(f"- **`{slug}`**{trigger_part}")
 
 
@@ -252,7 +263,9 @@ def render_skills_section(
             "> Load on demand: "
             '`fs(sandbox="cortex", op="md_read", path="agent-skills/<slug>.md")` '
             "— slug is the bolded id on each line. "
-            "Full index (all triggers): `cortex://agent-skills/README.md`."
+            "Full index (all triggers): `cortex://agent-skills/README.md`. "
+            "Invariant-tier bodies (`architecture-invariants`, `ulg-architecture`) "
+            "auto-append to the web system prompt — not inlined here."
         ),
     ]
     signals = boot_signals or set()

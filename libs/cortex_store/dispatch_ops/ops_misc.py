@@ -15,8 +15,45 @@ from ..routes.stats import _get_stats_impl
 from ..routes.surface_forms import _list_surface_forms_impl
 from ..routes.tags import _assign_tag_impl, _list_tags_impl
 from ._shared import record
+from ._thread_sidecar import (
+    _slugify,
+    content_sha256,
+    render_thread_sidecar_markdown,
+    thread_sidecar_uri,
+    write_thread_sidecar,
+)
 
 logger = get_logger("cortex-api.dispatch_ops.misc")
+
+
+def _op_thread_sidecar_write(
+    thread: str,
+    subject: str,
+    content: str,
+    from_agent: str | None = None,
+    execution_id: str | None = None,
+    oversized: bool = False,
+    **_: object,
+) -> dict[str, Any]:
+    slug = _slugify(subject)
+    digest = content_sha256(content)
+    md = render_thread_sidecar_markdown(
+        thread=thread,
+        subject=subject,
+        content=content,
+        from_agent=from_agent,
+        execution_id=execution_id,
+        sha256=digest,
+        body_chars=len(content),
+        oversized=oversized,
+    )
+    path = write_thread_sidecar(thread, slug, md)
+    return {
+        "uri": thread_sidecar_uri(thread, slug),
+        "path": path,
+        "sha256": digest,
+        "body_chars": len(content),
+    }
 
 
 def _op_stats(**_: object) -> dict[str, Any]:

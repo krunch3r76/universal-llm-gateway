@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from agent_seat.session_id import session_id_time_base
 from fastapi import HTTPException
 from universal_logging import get_logger
 
@@ -20,6 +21,7 @@ from ..transcript_assembly import (
     TranscriptPathError,
     assemble_verbatim_md,
     compose_full_transcript,
+    derive_prior_session_id_from_jsonl_path,
     derive_session_id_from_jsonl_start,
     resolve_jsonl_path,
     session_id_timing_hint,
@@ -277,9 +279,17 @@ def _op_session_close_preflight(
         "transcript_depth": transcript_depth,
     }
     if jsonl_resolved is not None:
-        preflight["session_id_from_jsonl_start"] = derive_session_id_from_jsonl_start(
+        from_jsonl = derive_session_id_from_jsonl_start(
             jsonl_path=jsonl_resolved, agent=agent
         )
+        preflight["session_id_from_jsonl_start"] = from_jsonl
+        if session_id_time_base(session_id) != session_id_time_base(from_jsonl):
+            preflight["session_id"] = from_jsonl
+        prior_suggestion = derive_prior_session_id_from_jsonl_path(
+            jsonl_path=jsonl_resolved, agent=agent
+        )
+        if prior_suggestion:
+            preflight["prior_session_id_suggestion"] = prior_suggestion
         timing_hint = session_id_timing_hint(
             session_id=session_id,
             jsonl_path=jsonl_resolved,

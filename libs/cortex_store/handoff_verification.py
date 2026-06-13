@@ -10,6 +10,7 @@ from .handoff_audit import (
     check_handoff_transcript_anchor,
     cited_entity_ids_in_prompt,
     format_cited_entity_state_snapshot,
+    is_deferred_entity_reference,
 )
 
 _CHECK_PASS = "passed"
@@ -64,6 +65,7 @@ def build_handoff_verification(
 
     entity_ids = cited_entity_ids_in_prompt(handoff_prompt, session_id=session_id)
     unresolved: list[str] = []
+    deferred: list[str] = []
     if entity_ids:
         db_conn = conn
         owns_conn = db_conn is None
@@ -77,20 +79,28 @@ def build_handoff_verification(
                     "SELECT id FROM entities WHERE id = ?", (entity_id,)
                 ).fetchone()
                 if row is None:
-                    unresolved.append(entity_id)
+                    if is_deferred_entity_reference(handoff_prompt, entity_id):
+                        deferred.append(entity_id)
+                    else:
+                        unresolved.append(entity_id)
         finally:
             if owns_conn:
                 db_conn.close()  # type: ignore[union-attr]
+
+    if unresolved:
+        resolvability_detail = f"unresolved: {', '.join(unresolved)}"
+    elif deferred:
+        resolvability_detail = (
+            f"all cited entities resolve; deferred (planned): {', '.join(deferred)}"
+        )
+    else:
+        resolvability_detail = "all cited entities resolve"
 
     _append_check(
         checks,
         name="cited_entities_resolvable",
         passed=not unresolved,
-        detail=(
-            "all cited entities resolve"
-            if not unresolved
-            else f"unresolved: {', '.join(unresolved)}"
-        ),
+        detail=resolvability_detail,
     )
 
     snapshot = format_cited_entity_state_snapshot(

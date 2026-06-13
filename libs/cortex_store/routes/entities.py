@@ -75,9 +75,10 @@ def list_entities(
         None,
         description=(
             "Filter to entities whose `applicable_agents` JSON-list "
-            "attribute contains either `*` (universal) or this agent "
-            "slug. Entities without the attribute are treated as "
-            "universal."
+            "attribute contains either `*` (universal) or this seat slug. "
+            "For `agent_skill` rows, entities without the attribute are "
+            "withheld (default-deny). Other entity types retain fail-open "
+            "NULL → universal semantics."
         ),
     ),
     query: str | None = Query(

@@ -10,7 +10,8 @@ Invariants:
 - ``.skipped`` means ``result_delivery`` was absent or incomplete — not
   an error.
 - Bus-mode (``op="to_thread"``): ``.sent`` on the on-behalf POST 2xx;
-  ``.failed`` on POST non-2xx, oversized content, or unresolved to_agent.
+  ``.failed`` on POST non-2xx, oversized sidecar write failure, or
+  unresolved to_agent.
   The legacy ``pipeline.dispatch.delivery.completed`` signal (reply-
   observation success) was retired with the 2026-05-22 delivery
   architectural fix.
@@ -30,6 +31,10 @@ def PipelineDispatchDeliverySent(  # noqa: N802
     from_agent: str,
     op: str = "",
     output_contract: str = "inline",
+    delivery_mode: str = "inline",
+    sidecar_uri: str | None = None,
+    content_sha256: str | None = None,
+    sidecar_status: str = "ok",
 ) -> Event:
     """Emitted when a terminal-state turn has been posted successfully."""
     return Event(
@@ -42,6 +47,10 @@ def PipelineDispatchDeliverySent(  # noqa: N802
             "from_agent": from_agent,
             "op": op,
             "output_contract": output_contract,
+            "delivery_mode": delivery_mode,
+            "sidecar_uri": sidecar_uri,
+            "content_sha256": content_sha256,
+            "sidecar_status": sidecar_status,
         },
     )
 

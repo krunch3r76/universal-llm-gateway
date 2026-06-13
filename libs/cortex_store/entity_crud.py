@@ -41,6 +41,12 @@ from .models import (
     EntitySummary,
 )
 from .routes.assertions import _ASSERTION_COLS
+from .seat_applicability import (
+    FOR_AGENT_CLAUSE,
+    canonical_seat_or_422,
+    validate_applicable_agents,
+    validate_capabilities_required,
+)
 from .status_trait_read import (
     apply_option_c_read_projection,
     entity_has_trait_columns,
@@ -248,15 +254,40 @@ def list_entities_impl(
         params.append(workflow_state)
 
     if for_agent:
-        # applicable_agents is a JSON list attribute that names the agent
-        # slugs that should see the entity. NULL/missing → universal via
-        # COALESCE so pre-backfill behaviour is "include".
-        clauses.append(
-            "EXISTS (SELECT 1 FROM json_each("
-            "COALESCE(json_extract(attributes, '$.applicable_agents'), "
-            "json_array('*'))) WHERE value IN ('*', ?))"
-        )
-        params.append(for_agent)
+        canonical = canonical_seat_or_422(for_agent)
+        # Slice-D audit: agent_skill and todo set applicable_agents; todos may
+        # rely on fail-open NULL → universal. Deny-flip is scoped to agent_skill
+        # only (F4-scope ELSE branch); other types keep the prior COALESCE gate.
+        if entity_type == "agent_skill":
+            agent_skill_gate = FOR_AGENT_CLAUSE.strip()
+            if agent_skill_gate.upper().startswith("AND "):
+                agent_skill_gate = agent_skill_gate[4:].strip()
+            clauses.append(agent_skill_gate)
+            params.append(canonical)
+        elif entity_type is not None:
+            clauses.append(
+                "EXISTS (SELECT 1 FROM json_each("
+                "COALESCE(json_extract(attributes, '$.applicable_agents'), "
+                "json_array('*'))) WHERE value IN ('*', ?))"
+            )
+            params.append(canonical)
+        else:
+            clauses.append(
+                "("
+                "(type = 'agent_skill' "
+                "AND json_extract(attributes, '$.applicable_agents') IS NOT NULL "
+                "AND EXISTS ("
+                "SELECT 1 FROM json_each(json_extract(attributes, '$.applicable_agents')) "
+                "WHERE value IN ('*', ?))) "
+                "OR "
+                "(type != 'agent_skill' AND EXISTS ("
+                "SELECT 1 FROM json_each("
+                "COALESCE(json_extract(attributes, '$.applicable_agents'), "
+                "json_array('*'))) WHERE value IN ('*', ?)))"
+                ")"
+            )
+            params.append(canonical)
+            params.append(canonical)
 
     if content_hash is not None:
         # Strip sha256: prefix — the column stores raw hex. Callers may
@@ -416,6 +447,12 @@ def update_entity_impl(
             attrs if isinstance(attrs, dict) else None,
         )
 
+    if str(prior.get("type")) == "agent_skill":
+        attrs = merged.get("attributes")
+        if isinstance(attrs, dict):
+            validate_applicable_agents(attrs)
+            validate_capabilities_required(attrs)
+
     sets: list[str] = []
     params: list[object] = []
     for field, value in updates.items():
@@ -554,6 +591,14 @@ def create_entity_impl(
         )
 
     validate_required_attributes(conn, body.type, body.attributes)
+
+    if body.type == "agent_skill":
+        validate_applicable_agents(
+            dict(body.attributes) if body.attributes is not None else None
+        )
+        validate_capabilities_required(
+            dict(body.attributes) if body.attributes is not None else None
+        )
 
     # Spec § 1.3 — exhibit entities require a `belongs_to (case:<slug>)`
     # relationship at write time. The hook validates the ID grammar and

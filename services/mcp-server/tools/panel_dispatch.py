@@ -11,6 +11,7 @@ NON-offloadable.
 from __future__ import annotations
 
 import asyncio
+import os
 from typing import TYPE_CHECKING, Any, Literal
 
 from agent_seat.panel_dispatch import (
@@ -28,12 +29,15 @@ from agent_seat.panel_idempotency import (
     build_panel_request_fingerprint,
     check_or_reserve,
     commit,
-    disabled as panel_idem_disabled,
     release,
+)
+from agent_seat.panel_idempotency import (
+    disabled as panel_idem_disabled,
 )
 from implement_admission.admission_read import read_packet
 from implement_admission.source_ref import SourceRefError
 from mcp_events import record
+from transport_utils import DEFAULT_AGENT_BUS_URL, make_async_client
 from universal_logging import get_logger
 
 if TYPE_CHECKING:
@@ -50,6 +54,57 @@ async def _relay_team_dispatch(body: dict[str, Any]) -> dict[str, Any]:
         body=body,
         record_prefix="mcp.panel.dispatch",
     )
+
+
+def _latest_user_text(messages: list[dict[str, Any]]) -> str:
+    for message in reversed(messages):
+        if not isinstance(message, dict) or message.get("role") != "user":
+            continue
+        content = message.get("content")
+        if isinstance(content, str) and content.strip():
+            return content.strip()
+    return ""
+
+
+async def _stage_panel_member_turn(
+    *,
+    thread_id: str,
+    role: str,
+    body: str,
+    caller_agent: str | None,
+) -> None:
+    """Pre-stage the panel member prompt on its dispatch thread."""
+    token = os.getenv("AGENT_BUS_TOKEN", "").strip()
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    async with make_async_client(DEFAULT_AGENT_BUS_URL, timeout=10.0) as client:
+        create_payload = {
+            "id": thread_id,
+            "slug": thread_id,
+            "summary": f"panel dispatch member {role}",
+            "tags": ["type:panel-dispatch", f"agent:{role}"],
+            "lifecycle_state": "pending",
+        }
+        created = await client.post("/threads", json=create_payload, headers=headers)
+        if created.status_code not in (200, 201, 409):
+            raise RuntimeError(
+                f"failed to create panel dispatch thread {thread_id}: "
+                f"{created.status_code} {created.text[:200]}"
+            )
+        turn_payload = {
+            "thread": thread_id,
+            "from": caller_agent or "panel_dispatch",
+            "to": role,
+            "subject": f"Panel member prompt — {role}",
+            "body": body,
+            "after_turn": 0,
+            "allow_long_body": True,
+        }
+        posted = await client.post("/turns", json=turn_payload, headers=headers)
+        if posted.status_code not in (200, 201):
+            raise RuntimeError(
+                f"failed to post panel dispatch turn {thread_id}: "
+                f"{posted.status_code} {posted.text[:200]}"
+            )
 
 
 def _poll_execution(execution_id: str, wait_seconds: float) -> dict[str, Any]:
@@ -290,6 +345,15 @@ def register_panel_dispatch_tools(mcp: FastMCP) -> None:
             spec.role: member_dispatch_thread_id(dispatch_thread_id, spec.role)
             for spec in plan.members
         }
+        member_prompt = _latest_user_text(member_messages)
+        if not member_prompt:
+            record("mcp.panel.dispatch.rejected", reason="empty_prompt")
+            return {
+                "error": {
+                    "code": "validation_error",
+                    "message": "panel_dispatch messages must include a non-empty user message",
+                }
+            }
 
         record(
             "mcp.panel.dispatch.called",
@@ -303,24 +367,37 @@ def register_panel_dispatch_tools(mcp: FastMCP) -> None:
             payload = await _relay_team_dispatch(body)
             return spec_role, payload
 
-        bodies = [
-            (
-                spec.role,
-                build_team_dispatch_body(
-                    spec=spec,
-                    messages=member_messages,
-                    dispatch_thread_id=member_keys[spec.role],
+        bodies = []
+        try:
+            for spec in plan.members:
+                key = member_keys[spec.role]
+                await _stage_panel_member_turn(
+                    thread_id=key,
+                    role=spec.role,
+                    body=member_prompt,
                     caller_agent=caller_agent,
-                    system=member_system,
-                    reasoning_effort=reasoning_effort,
-                    generation_options=generation_options,
-                    max_tool_turns=max_tool_turns,
-                    transcript_id=transcript_id,
-                    timeout_seconds=timeout_seconds,
-                ),
-            )
-            for spec in plan.members
-        ]
+                )
+                bodies.append(
+                    (
+                        spec.role,
+                        build_team_dispatch_body(
+                            spec=spec,
+                            dispatch_thread_id=key,
+                            caller_agent=caller_agent,
+                            system=member_system,
+                            reasoning_effort=reasoning_effort,
+                            generation_options=generation_options,
+                            max_tool_turns=max_tool_turns,
+                            transcript_id=transcript_id,
+                            timeout_seconds=timeout_seconds,
+                        ),
+                    )
+                )
+        except RuntimeError as exc:
+            if reserved and panel_request_id:
+                release(panel_request_id)
+            record("mcp.panel.dispatch.rejected", reason="stage_thread")
+            return {"error": {"code": "panel_stage_failed", "message": str(exc)}}
         pairs = await asyncio.gather(*[_one(role, body) for role, body in bodies])
         dispatches = dict(pairs)
 

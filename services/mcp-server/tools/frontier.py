@@ -1,6 +1,6 @@
 """team_dispatch MCP relay to Stargate.
 
-``team_dispatch(op=..., role=..., messages=..., dispatch_thread_id=..., ...)`` is
+``team_dispatch(op=..., role=..., dispatch_thread_id=..., contract=..., ...)`` is
 the sole agent-facing dispatch door. ``role`` selects a functional seat or API
 role; each resolves its default (family, platform, model) via the ``role:{slug}``
 execution contract in Cortex. Optional ``model=`` overrides within
@@ -40,7 +40,6 @@ from universal_logging import get_logger
 from ._frontier_intake import (
     normalize_dispatch_model,
     require_dispatch_thread_id,
-    validate_dispatch_messages,
 )
 
 if TYPE_CHECKING:
@@ -132,10 +131,22 @@ async def _relay(
         # envelope shape so callers parse one error format and `.rejected`
         # carries the offending field name (last element of `loc`).
         if isinstance(detail_obj, list) and detail_obj:
-            first = detail_obj[0] if isinstance(detail_obj[0], dict) else {}
-            loc = first.get("loc") or []
-            field = str(loc[-1]) if loc else ""
-            msg = first.get("msg") or "validation error"
+            violations = []
+            for item in detail_obj:
+                if not isinstance(item, dict):
+                    continue
+                loc = item.get("loc") or []
+                field_i = str(loc[-1]) if loc else ""
+                violations.append(
+                    {
+                        "field": field_i,
+                        "message": item.get("msg") or "validation error",
+                        "type": item.get("type") or "validation_error",
+                    }
+                )
+            first = violations[0] if violations else {}
+            field = str(first.get("field") or "")
+            msg = str(first.get("message") or "validation error")
             record(
                 f"{record_prefix}.rejected",
                 status=resp.status_code,
@@ -144,6 +155,7 @@ async def _relay(
             return {
                 "error": {"code": "validation_error", "message": msg},
                 "field": field,
+                "validation_errors": violations,
             }
         field = detail_obj.get("field", "") if isinstance(detail_obj, dict) else ""
         record(
@@ -170,7 +182,6 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         op: Literal["generate", "to_thread", "handoff"],
         role: str | None = None,
         seat: str | None = None,
-        messages: list[dict[str, Any]] = [],  # noqa: B006
         dispatch_thread_id: str = "",
         model: str | None = None,
         mcp: bool | None = None,
@@ -186,7 +197,8 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         subject: str | None = None,
         packet_path: str | None = None,
         source_ref: str | None = None,
-        contract: Literal["consult", "implement"] | None = None,
+        contract: Literal["light-bounded", "pure-mechanical", "implement"]
+        | None = None,
         executor_override: str | None = None,
         executor_override_reason_code: str | None = None,
         executor_override_reason: str | None = None,
@@ -200,8 +212,8 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         - ``seat="claude-web"`` → operator pushes bus message
         - ``seat="claude-cursor"`` → open IDE thread
 
-        **Contract (authority grant):** pass ``contract="consult"`` or
-        ``contract="implement"`` for an explicit authority grant — highest
+        **Contract (authority grant):** pass ``contract="light-bounded"``,
+        ``contract="pure-mechanical"``, or ``contract="implement"`` for an explicit authority grant — highest
         priority in server-side derivation. When omitted, contract is derived:
         explicit param → ``source_ref`` dispatch_lane → packet front-matter
         ``contract:`` → role ``default_contract`` → default ``consult``.
@@ -289,13 +301,13 @@ def register_frontier_tools(mcp: FastMCP) -> None:
           tool-capable families); ``False`` forces inline-only; inline-only
           families (e.g. gemini) stay clamped to no-tools regardless.
 
-        ``dispatch_thread_id`` — required compaction key for server-owned
+        ``dispatch_thread_id`` — required compaction key and caller-owned
         thread persistence on the ``team-dispatch`` pipeline (generate/to_thread
         only) — **required** and validated at intake: an empty value is
         rejected with a descriptive 422 naming the field rather than failing
-        late in the pipeline. Prior turns are assembled from cortex; pass only
-        the **latest**
-        user message in ``messages``. Distinct from ``thread`` (agent-bus
+        late in the pipeline. Prompt context for generate/to_thread is read from
+        the latest turn body on this agent-bus thread; ``messages[]`` is not a
+        team_dispatch parameter. Distinct from ``thread`` (agent-bus
         delivery on ``op="to_thread"``) and ``transcript_id`` (provenance only).
 
         ``transcript_id`` — caller's session ID for provenance attribution only.
@@ -399,18 +411,25 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         thread_id_err = require_dispatch_thread_id(op, dispatch_thread_id)
         if thread_id_err is not None:
             return thread_id_err
-        messages_err = validate_dispatch_messages(messages)
-        if messages_err is not None:
-            return messages_err
         model = normalize_dispatch_model(model)
 
         body: dict[str, Any] = {
             "op": op,
-            "messages": messages,
             "role": role,
             "dispatch_thread_id": dispatch_thread_id,
             "system": system,
         }
+        if contract is None:
+            return {
+                "error": {
+                    "code": "validation_error",
+                    "message": (
+                        "contract is required for op='generate'/'to_thread'; "
+                        "use light-bounded, pure-mechanical, or implement"
+                    ),
+                },
+                "field": "contract",
+            }
         if op == "generate":
             if thread is not None or subject is not None:
                 return {
@@ -429,6 +448,14 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             if contract is not None:
                 body["contract"] = contract
         else:
+            if contract == "implement":
+                return {
+                    "error": {
+                        "code": "validation_error",
+                        "message": "contract=implement is only valid with op='generate'",
+                    },
+                    "field": "contract",
+                }
             if thread is None:
                 return {
                     "error": {
@@ -439,6 +466,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             body["thread"] = thread
             if subject is not None:
                 body["subject"] = subject
+            body["contract"] = contract
 
         for key, val in (
             ("model", model),

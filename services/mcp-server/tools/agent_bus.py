@@ -1100,7 +1100,9 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
           + durable sidecar file is always preferred over an inline wall of text.
           Rare exception: pass allow_long_body=true on post/reply only when the
           recipient needs inline long-form content and a sidecar would break the
-          communication contract.
+          communication contract. Stargate on-behalf pipeline delivery performs
+          the equivalent durable sidecar write automatically (see
+          ``async_tracker_delivery/on_behalf.py``).
 
         Operations:
           threads       (status?, tags?, lifecycle_state?)              — list threads; status: active|blocked|waiting|closed|all (default active); tags: AND-filter; lifecycle_state: pending|admitted|delivered|failed (exact match)

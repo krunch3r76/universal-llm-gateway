@@ -53,6 +53,7 @@ from __future__ import annotations
 
 from .errors import TrackerCapacityError
 from .records import (
+    DeliveryState,
     PipelineExecutionError,
     PipelineExecutionRecord,
     PipelineExecutionResult,
@@ -60,6 +61,7 @@ from .records import (
 from .tracker import PipelineExecutionTracker
 
 __all__ = [
+    "DeliveryState",
     "PipelineExecutionError",
     "PipelineExecutionRecord",
     "PipelineExecutionResult",

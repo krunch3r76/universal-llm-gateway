@@ -54,6 +54,60 @@ class PipelineExecutionError:
 
 
 @dataclass(slots=True, kw_only=True)
+class DeliveryState:
+    """Caller-facing delivery outcome for op="to_thread" records (friction 16985)."""
+
+    status: Literal["delivered", "failed", "skipped"]
+    mode: Literal["inline", "sidecar"] | None = None
+    thread: str | None = None
+    sidecar_uri: str | None = None
+    content_sha256: str | None = None
+    failure_reason: str | None = None
+
+    def to_dict(self, execution_id: str) -> dict[str, Any]:
+        if self.sidecar_uri:
+            kind = "sidecar"
+        elif self.status == "delivered":
+            kind = "thread"
+        else:
+            kind = "pipeline_result"
+
+        if kind == "sidecar":
+            path = self.sidecar_uri.removeprefix("cortex://")
+            hint = f"Read the durable copy: fs(cortex, op=read, path={path})."
+            if self.status == "failed":
+                hint += (
+                    " Bus delivery failed, but the full content is persisted "
+                    "in the sidecar above."
+                )
+        elif kind == "thread":
+            hint = f"Delivered to agent-bus thread {self.thread}."
+        else:
+            hint = (
+                "Delivery failed; retrieve the result via "
+                f"pipeline(op=result, execution_id={execution_id}) "
+                "before tracker retention expires."
+            )
+
+        return {
+            "attempted": True,
+            "status": self.status,
+            "mode": self.mode,
+            "thread": self.thread,
+            "sidecar_uri": self.sidecar_uri,
+            "content_sha256": self.content_sha256,
+            "failure_reason": self.failure_reason,
+            "recovery": {
+                "kind": kind,
+                "thread": self.thread,
+                "execution_id": execution_id,
+                "sidecar_uri": self.sidecar_uri,
+                "hint": hint,
+            },
+        }
+
+
+@dataclass(slots=True, kw_only=True)
 class PipelineExecutionRecord:
     """Per-execution record retained by the tracker.
 
@@ -97,6 +151,9 @@ class PipelineExecutionRecord:
     # closes the bus thread after a successful on-behalf POST (team-dispatch
     # one-shots default ephemeral at admission).
     bus_lifecycle: Literal["persistent", "ephemeral"] = "ephemeral"
+    # Caller-facing delivery outcome (friction 16985). None until op="to_thread"
+    # delivery runs; legacy result_delivery path leaves this None.
+    delivery: DeliveryState | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to the shape returned by ``GET /api/v1/pipelines/executions/{id}``."""  # noqa: E501
@@ -134,4 +191,9 @@ class PipelineExecutionRecord:
             "target_thread": self.target_thread,
             "op": self.op,
             "thread_reply_observed_at": self.thread_reply_observed_at,
+            "delivery": (
+                self.delivery.to_dict(self.execution_id)
+                if self.delivery is not None
+                else None
+            ),
         }

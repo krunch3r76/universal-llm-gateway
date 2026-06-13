@@ -294,18 +294,23 @@ async def get_active_work():
     from services.git_integration_worker.cursor_dispatch_ledger import (
         CursorDispatchLedger,
     )
+    from services.git_integration_worker.cursor_sdk_gate import sdk_dispatch_gate_stats
 
     running = _GATE.active_count
     queued = _GATE.queue_length
     cursor = CursorDispatchLedger.instance().active_snapshot()
+    sdk_gate = sdk_dispatch_gate_stats()
     integrate_busy = running > 0 or queued > 0
-    cursor_busy = cursor["running"] > 0
+    cursor_busy = (
+        cursor["running"] > 0 or sdk_gate["active"] > 0 or sdk_gate["queued"] > 0
+    )
     return JSONResponse(
         status_code=200,
         content={
             "running": running,
             "queued": queued,
             "cursor_dispatches": cursor,
+            "cursor_sdk_gate": sdk_gate,
             "busy": integrate_busy or cursor_busy,
         },
     )

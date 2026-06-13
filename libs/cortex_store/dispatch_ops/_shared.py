@@ -108,6 +108,8 @@ _FRICTION_CATEGORIES = frozenset(
         "lesson_gap",
         "lesson_conflict",
         "stale_context",
+        "doc_drift",
+        "protocol",
     }
 )
 

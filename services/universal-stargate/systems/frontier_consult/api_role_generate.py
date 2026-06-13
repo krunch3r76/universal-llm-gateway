@@ -22,7 +22,7 @@ from .admission import (
     enforce_team_dispatch_generate_admit,
     is_cursor_sdk_generate_role,
 )
-from .dispatch_messages import extract_last_user_message
+from .dispatch_thread_context import as_user_message, read_latest_dispatch_thread_body
 from .handoff import create_handoff_thread
 from .handoff_response import build_api_generate_result, build_handoff_result
 from .service import FrontierGenerateRequest
@@ -99,16 +99,7 @@ async def dispatch_api_role_generate(
 
     enforce_team_dispatch_generate_admit(role, request_id=request_id)
 
-    last_user = extract_last_user_message(body.messages)
-    if not last_user:
-        raise FrontierEndpointError(
-            request_id=request_id,
-            field="messages",
-            reason="At least one non-empty user message is required",
-            status_code=422,
-        )
-
-    contract = getattr(body, "contract", None) or "consult"
+    contract = body.contract
     if contract == "implement":
         raise FrontierEndpointError(
             request_id=request_id,
@@ -119,6 +110,11 @@ async def dispatch_api_role_generate(
             ),
             status_code=422,
         )
+
+    last_user = await read_latest_dispatch_thread_body(
+        request_id=request_id,
+        dispatch_thread_id=body.dispatch_thread_id,
+    )
 
     thread_subject = f"{role} generate — {request_id}"
     reply_subject = f"{role} reply — {request_id[:8]}"
@@ -135,7 +131,7 @@ async def dispatch_api_role_generate(
     )
 
     req = FrontierGenerateRequest(
-        messages=body.messages,
+        messages=as_user_message(last_user),
         model=body.model,
         role=role,
         system=body.system,
@@ -152,6 +148,7 @@ async def dispatch_api_role_generate(
         target_thread=thread_id,
         op="to_thread",
         reply_subject=reply_subject,
+        resolved_contract=contract,
     )
 
     from .route import _dispatch
@@ -194,6 +191,7 @@ async def dispatch_api_role_generate(
         dispatch_result=dispatch_result,
         thread_id=thread_id,
         resolved_model=resolved_model,
+        resolved_contract=contract,
     )
 
 

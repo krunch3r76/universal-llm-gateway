@@ -318,6 +318,7 @@ def run_cortex_boot(
         recent_mentions=extracted["recent_mentions"] or None,
         skills=extracted["skills"] or None,
         skills_unpartitioned_count=extracted.get("skills_unpartitioned_count", 0),
+        rules=extracted["rules"] or None,
         plan_phases=extracted["plan_phases"] or None,
         in_flight_todos=extracted["in_flight_todos"] or None,
         open_arcs=extracted.get("open_arcs") or None,

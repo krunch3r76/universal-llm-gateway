@@ -179,6 +179,7 @@ def build_api_generate_result(
     dispatch_result: dict[str, Any],
     thread_id: str,
     resolved_model: str,
+    resolved_contract: str,
 ) -> dict[str, Any]:
     """Generate-shaped 202 for API roles with default bus thread delivery."""
     execution_id = dispatch_result.get("execution_id")
@@ -191,6 +192,7 @@ def build_api_generate_result(
         "thread": thread_id,
         "to_agent": role,
         "resolved_model": resolved_model or dispatch_result.get("resolved_model"),
+        "resolved_contract": resolved_contract,
         "substrate": "api",
         "poll_hint": handoff_fields["poll_hint"],
         "result_handle": {
@@ -222,6 +224,7 @@ def build_sdk_generate_result(
     thread_id: str,
     to_agent: str,
     resolved_model: str,
+    resolved_contract: str,
     warnings: list[str],
 ) -> dict[str, Any]:
     """Generate-shaped 202 response for SDK-substrate cursor-sdk dispatch."""
@@ -233,6 +236,7 @@ def build_sdk_generate_result(
         "thread_id": thread_id,
         "to_agent": to_agent,
         "resolved_model": resolved_model,
+        "resolved_contract": resolved_contract,
         "capabilities": {
             "role": role,
             "inline_only": True,

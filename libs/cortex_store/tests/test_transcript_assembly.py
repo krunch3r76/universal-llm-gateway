@@ -14,6 +14,7 @@ from cortex_store.transcript_assembly import (
     assemble_verbatim_md,
     compose_full_transcript,
     compute_text_content_hash,
+    derive_prior_session_id_from_jsonl_path,
     derive_session_id_from_jsonl_start,
     resolve_jsonl_path,
     session_id_timing_hint,
@@ -193,6 +194,61 @@ def test_derive_session_id_from_jsonl_start_uses_mtime(
         r"cursor-\d{4}-\d{2}-\d{2}-\d{6}-[0-9a-f]{3}",
         derived,
     )
+
+
+def test_derive_session_id_prefers_jsonl_timestamp_tag(
+    transcripts_root: Path,
+) -> None:
+    jsonl = transcripts_root / "uuid-ts" / "uuid-ts.jsonl"
+    jsonl.parent.mkdir(parents=True)
+    _write_jsonl(
+        jsonl,
+        [
+            {
+                "role": "user",
+                "message": {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": (
+                                "<timestamp>Saturday, June 12, 2026, "
+                                "12:28 AM (UTC)</timestamp>\nhello"
+                            ),
+                        }
+                    ]
+                },
+            }
+        ],
+    )
+    derived = derive_session_id_from_jsonl_start(
+        jsonl_path=jsonl, agent="claude-cursor"
+    )
+    assert derived.startswith("claude-cursor-2026-06-12-0028")
+
+
+def test_derive_prior_session_id_from_jsonl_path(
+    transcripts_root: Path,
+) -> None:
+    older = transcripts_root / "older-uuid" / "older-uuid.jsonl"
+    newer = transcripts_root / "newer-uuid" / "newer-uuid.jsonl"
+    older.parent.mkdir(parents=True)
+    newer.parent.mkdir(parents=True)
+    _write_jsonl(
+        older,
+        [{"role": "user", "message": {"content": [{"type": "text", "text": "a"}]}}],
+    )
+    _write_jsonl(
+        newer,
+        [{"role": "user", "message": {"content": [{"type": "text", "text": "b"}]}}],
+    )
+    older.touch()
+    import time
+
+    time.sleep(0.01)
+    newer.touch()
+    prior = derive_prior_session_id_from_jsonl_path(jsonl_path=newer, agent="cursor")
+    assert prior is not None
+    assert prior.startswith("cursor-")
 
 
 def test_session_id_timing_hint_when_ids_differ(transcripts_root: Path) -> None:

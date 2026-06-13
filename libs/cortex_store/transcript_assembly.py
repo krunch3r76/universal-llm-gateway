@@ -35,11 +35,17 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from agent_seat.session_id import SessionMintMode, mint_session_id, session_id_time_base
+from agent_seat.session_id import (
+    SessionMintMode,
+    derive_session_id_from_timestamp,
+    mint_session_id,
+    session_id_time_base,
+)
 from universal_logging import get_logger
 
 logger = get_logger("cortex-api.transcript_assembly")
@@ -276,19 +282,119 @@ def compose_full_transcript(verbatim_md: str, session_summary_md: str) -> str:
     return base + session_summary_md.rstrip("\n") + "\n"
 
 
-def derive_session_id_from_jsonl_start(*, jsonl_path: Path, agent: str) -> str:
-    """Derive ``{agent}-YYYY-MM-DD-HHMMSS-{3hex}`` from JSONL file birth time.
+_JSONL_TIMESTAMP_TAG_RE = re.compile(
+    r"<timestamp>\s*([^<]+?)\s*</timestamp>", re.IGNORECASE
+)
+_CURSOR_NL_TIMESTAMP_RE = re.compile(
+    r"(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday),\s+"
+    r"(January|February|March|April|May|June|July|August|September|"
+    r"October|November|December)\s+(\d{1,2}),\s+(\d{4}),\s+"
+    r"(\d{1,2}):(\d{2})\s+(AM|PM)",
+    re.IGNORECASE,
+)
+_MONTH_TO_INT = {
+    "january": 1,
+    "february": 2,
+    "march": 3,
+    "april": 4,
+    "may": 5,
+    "june": 6,
+    "july": 7,
+    "august": 8,
+    "september": 9,
+    "october": 10,
+    "november": 11,
+    "december": 12,
+}
 
-    Cursor agent-transcripts files are created at session start; their birth
-    time (Linux ``st_birthtime``, else ``st_mtime``) is the canonical proxy when
-    the agent did not hold a ``cortex_boot`` ``session_id``.
+
+def _normalize_cursor_timestamp(raw: str) -> str:
+    """Normalize Cursor harness timestamps to ISO-ish strings for session_id mint."""
+    match = _CURSOR_NL_TIMESTAMP_RE.search(raw)
+    if not match:
+        return raw
+    month_name, day, year, hour, minute, ampm = match.groups()
+    month = _MONTH_TO_INT[month_name.lower()]
+    h = int(hour)
+    if ampm.upper() == "AM":
+        h = 0 if h == 12 else h
+    else:
+        h = 12 if h == 12 else h + 12
+    return f"{year}-{month:02d}-{int(day):02d} {h:02d}:{minute}:00"
+
+
+def _extract_jsonl_start_timestamp(jsonl_path: Path) -> str | None:
+    """Best-effort session-start timestamp from the first user turn in JSONL."""
+    try:
+        records = _read_jsonl(jsonl_path)
+    except (OSError, ValueError):
+        return None
+    for record in records:
+        if record.get("role") != "user":
+            continue
+        message = record.get("message") or {}
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        user_text = _extract_user_text(content)
+        if not user_text:
+            continue
+        match = _JSONL_TIMESTAMP_TAG_RE.search(user_text)
+        if match:
+            return match.group(1).strip()
+        break
+    return None
+
+
+def _jsonl_paths_by_mtime_desc(root: Path) -> list[Path]:
+    """JSONL files under *root*, newest directory mtime first."""
+    ranked: list[tuple[float, Path]] = []
+    if not root.is_dir():
+        return []
+    for entry in root.iterdir():
+        if not entry.is_dir():
+            continue
+        jsonl = entry / f"{entry.name}.jsonl"
+        if jsonl.is_file():
+            ranked.append((jsonl.stat().st_mtime, jsonl))
+    ranked.sort(key=lambda item: item[0], reverse=True)
+    return [path for _, path in ranked]
+
+
+def derive_session_id_from_jsonl_start(*, jsonl_path: Path, agent: str) -> str:
+    """Derive ``{agent}-YYYY-MM-DD-HHMMSS-{3hex}`` from JSONL session start.
+
+    Priority: (1) ``<timestamp>`` on the first user turn, (2) file birth time
+    when the platform exposes ``st_birthtime``, (3) ``st_mtime`` last — unsafe
+    on Linux when birth time is unavailable (close-time touch can mis-anchor).
     """
+    tagged = _extract_jsonl_start_timestamp(jsonl_path)
+    if tagged:
+        return derive_session_id_from_timestamp(
+            agent, _normalize_cursor_timestamp(tagged)
+        )
     st = jsonl_path.stat()
     started = getattr(st, "st_birthtime", None)
     if started is None or started <= 0:
         started = st.st_mtime
     dt = datetime.fromtimestamp(started, tz=UTC)
     return mint_session_id(agent, mode=SessionMintMode.LIVE, at=dt)
+
+
+def derive_prior_session_id_from_jsonl_path(
+    *, jsonl_path: Path, agent: str
+) -> str | None:
+    """Suggest ``prior_session_id`` from the second-newest transcript JSONL."""
+    root = _transcripts_root()
+    ordered = _jsonl_paths_by_mtime_desc(root)
+    resolved = jsonl_path.resolve()
+    try:
+        idx = next(i for i, path in enumerate(ordered) if path.resolve() == resolved)
+    except StopIteration:
+        return None
+    if idx + 1 >= len(ordered):
+        return None
+    return derive_session_id_from_jsonl_start(jsonl_path=ordered[idx + 1], agent=agent)
 
 
 def session_id_timing_hint(
@@ -303,8 +409,9 @@ def session_id_timing_hint(
         return None
     return (
         f"session_id {session_id!r} differs from JSONL session-start "
-        f"{from_jsonl!r}; use the boot-held session_id or the JSONL-start ID "
-        "(web-claude convention), not UTC wall clock at close."
+        f"{from_jsonl!r}; use session_close_preflight copy-paste session_id "
+        f"{from_jsonl!r} (boot-held ID or JSONL-start), not UTC wall clock "
+        "at close."
     )
 
 
@@ -324,6 +431,7 @@ __all__ = [
     "assemble_verbatim_md",
     "compose_full_transcript",
     "compute_text_content_hash",
+    "derive_prior_session_id_from_jsonl_path",
     "derive_session_id_from_jsonl_start",
     "resolve_jsonl_path",
     "session_id_timing_hint",

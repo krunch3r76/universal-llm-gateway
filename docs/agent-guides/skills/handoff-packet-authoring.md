@@ -50,6 +50,20 @@ dispatch — set `workflow_state: blocked` + `block_reason` on the blocked leaf.
 
 Full attribute table: `universal-llm-gateway/.cursor/rules/todo_ws.mdc` §Dispatch metadata.
 
+## General execution without packet (messages-only)
+
+**Schema-free is NOT direction-free.** A `cursor-sdk` dispatch for a fully
+**determinate** task with **pre-authored** values may omit the six-block packet —
+`team_dispatch(op=generate, role=cursor-sdk, dispatch_thread_id=…, messages=[…])` —
+but Composer 2.5 is still a mechanical executor, so messages-only directions must be
+explicit, detailed, restrictive, and bounded. This is a distinct lane from the dense
+implement packet, **not** a lighter packet.
+
+Canonical lane definition — the three-point spectrum (Dense Implement / Light Bounded
+Execution / Pure Mechanical Write Loop) and the 10-point messages-only instruction
+checklist — lives in the SOT: `agent-skills/consult-routing.md` § General execution
+lane (messages-only — no packet). Do not duplicate the body here.
+
 ## Friction-ticket packets (extra preflight)
 
 When the handoff targets a filed friction (not a todo spec arc):

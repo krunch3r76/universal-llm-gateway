@@ -44,6 +44,12 @@ what `tools/list` advertises. Initial callable set may be **pre-bound** (call
 directly) or **deferred** (one load hop, then call by name) — see the boot
 binding block. Absent from the initial set ≠ connector dropped the tool.
 
+**tool_search is the connector-side bootstrap** — it never appears in the
+pre-bound callable set as a server function and emits no `mcp.request.started`
+event. Treat it as always available: if a primary looks absent,
+`tool_search(query="<tool>")` is the first move, not a blocker. Never conclude
+"tool_search is missing" from its absence in the pre-bound set or from missing events.
+
 **Overflow** tools (not in `_PRIMARY_TOOLS`) are reachable in two steps when
 `dispatch` is bound:
 
@@ -131,18 +137,22 @@ Server-primary tools are listed at boot (`tools/list` manifest line). Your
 connector-bound callable set may differ — probe with a direct call; do not trust
 prior-session assertions or this doc over a live attempt. `tool_search` returns
 overflow relay templates only; they require bound `dispatch`.
+`tool_search` itself is the always-present connector-side bootstrap (no server
+event, never pre-bound as a function): if a primary looks absent, run
+`tool_search(query="<tool>")` FIRST — never conclude tool_search is missing from
+a pre-bound-set or event check.
 
 ## Dispatch & Consult (claude-web /mcp seat)
 Pick by CAPABILITY, not model family. To consult a MODEL (any provider, incl. grok) you do NOT use a build harness.
 When connector-bound: team_dispatch + panel_dispatch are server-primary — call directly.
 - local file/entity work (you ARE claude-web) → fs / cortex / agent_bus directly — ¬ team_dispatch(op="generate"|"to_thread", model="claude-web") (422)
 - manual seat handoff → team_dispatch(op="handoff", seat=claude-web|claude-cursor, packet_path=…|source_ref=…, subject=…) — shorthands accepted; handoff seat-map: web-consult, web-implement → claude-web; cursor-consult, cursor-implement → claude-cursor.
-- API consult (any provider) → team_dispatch(op="generate", role="reviewer"|"artisan"|…, dispatch_thread_id="…", model="provider/model"?, messages=[…]) → execution_id; poll pipeline(op="result", execution_id=…)
+- API consult (any provider) → pre-stage context on an agent-bus thread, then team_dispatch(op="generate", role="reviewer"|"artisan"|…, dispatch_thread_id="<thread>", contract="light-bounded", model="provider/model"?) → execution_id + poll_hint
 - forbidden on generate → synthetic seat models (claude-web, claude-cursor) — use op="handoff" with role= instead
 - handoff roles: web-consult, web-implement, cursor-consult, cursor-implement (complete roster)
 - consensus panel → panel_dispatch(messages=[…], dispatch_thread_id="…", disposition="panel") → panel_executions; lead adjudication NON-offloadable
 - strategic advice / in-pipeline RAG → dispatch(tool="advisor" | "pipeline_consult", …)  [overflow]
-- close-to-code build (auto) → team_dispatch(op=generate, role=cursor-sdk, dispatch_thread_id=…, messages=[…] | packet_path=…)
+- bounded determinate task → team_dispatch(op=generate, role=cursor-sdk, dispatch_thread_id="<thread>", contract=pure-mechanical|implement, packet_path?=…)
 - deprecated: op=handoff,seat=cursor-sdk normalizes to generate with a warning
 Read agent-skills/dispatch-workflow.md §0a before first dispatch. Source: claude-web-dispatch-decision-table.md (§2/§3/§4)."""
 
@@ -170,8 +180,8 @@ tool_search(query="pipeline")    # → enables pipeline(op="result", ...)
 ```
 
 **Dispatch & Consult — pick by CAPABILITY, not model family:**
-- API consult → `team_dispatch(op="generate", role=..., dispatch_thread_id=..., model="provider/model"?, messages=...)`
-- close-to-code build (auto) → team_dispatch(op=generate, role=cursor-sdk, dispatch_thread_id=…, messages=[…] | packet_path=…)
+- API consult → pre-stage context on an agent-bus thread, then `team_dispatch(op="generate", role=..., dispatch_thread_id="<thread>", contract="light-bounded", model="provider/model"?)`
+- bounded determinate task → team_dispatch(op=generate, role=cursor-sdk, dispatch_thread_id="<thread>", contract=pure-mechanical|implement, packet_path?=…)
 - deprecated: op=handoff,seat=cursor-sdk normalizes to generate with a warning
 
 On the shared `/mcp` surface `team_dispatch` is primary — call directly.
@@ -194,7 +204,7 @@ Edge protocol: entities only as edge nodes, never assertion IDs. `superseded_by`
   Always call this before guessing a model ID — wrong format → 404.
 
 Inference routing (pick by capability — see boot briefing):
-- `team_dispatch(op=..., role=..., messages=..., dispatch_thread_id=..., model=..., ...)` — consult by API role (`reviewer`, `artisan`, `skeptic`, …). Optional `model=` override within role `allowed_models`. Role briefing + contract from `role:{slug}`; MCP on by default for non-xAI models. `dispatch_thread_id` is required — stable per arc/session for server-owned thread compaction.
+- `team_dispatch(op=..., role=..., dispatch_thread_id="<agent-bus-thread>", contract=..., model=..., ...)` — consult by API role (`reviewer`, `artisan`, `skeptic`, …). Optional `model=` override within role `allowed_models`. Role briefing + contract from `role:{slug}`; MCP on by default for non-xAI models. The latest prompt body is read from the caller-owned dispatch thread; `messages[]` is not accepted.
 - `llm_generate(model=..., messages=...)` — universal chat/completions path for any model ID (including `google/gemini-2.5-pro`); no dispatch role/tools/transcript_id surface.
 - OpenRouter and local models → use `llm_generate`, not provider-native dispatch tools"""
 
@@ -205,7 +215,8 @@ natural part of how you work, not an exceptional event.
 
 **Pick by capability** (same axis as the boot briefing — not "always team first"):
 - Consult via **API role** (`reviewer`, `artisan`, `skeptic`, `gatherer`, …) →
-  `team_dispatch(op=generate|to_thread, role=…, dispatch_thread_id=…, messages=…)`.
+  pre-stage context on an agent-bus thread, then
+  `team_dispatch(op=generate|to_thread, role=…, dispatch_thread_id=<thread>, contract=light-bounded|pure-mechanical, …)`.
 - Override model within role `allowed_models` → add `model="provider/model"`.
   **Not** seat slugs (`claude-web`) — web seats have no `default_model` on `generate`.
 
@@ -219,11 +230,11 @@ Handoff is different: `team_dispatch(op="handoff", ...)` returns a
 from_agent=...)`, never `pipeline(op="result")`.
 
 **Role-based dispatch**:
-`team_dispatch(op=..., role=..., dispatch_thread_id=..., messages=..., generation_options=...)`.
+`team_dispatch(op=..., role=..., dispatch_thread_id=<thread>, contract=..., generation_options=...)`.
 Roles are model-agnostic: explicit `model=...` may fill any role; omitted
-models resolve from the role's `default_model`. `dispatch_thread_id` binds
-server-owned thread persistence — pass only the latest user turn in
-``messages``. Enforces `allowed_options`,
+models resolve from the role's `default_model`. `dispatch_thread_id` identifies
+the caller-owned agent-bus thread whose latest body is the dispatch prompt.
+Enforces `allowed_options`,
 auto-assembles role briefing + continuation, and rejects contract violations
 with a structured error envelope **before** dispatch.
 
@@ -284,7 +295,7 @@ Pick by capability (aligned with boot briefing and `claude-web-dispatch-decision
 
 **Consult by API role** — `team_dispatch`:
 ```
-team_dispatch(op="generate", role=..., dispatch_thread_id=..., messages=..., model=..., generation_options=..., caller_agent=...)
+team_dispatch(op="generate", role=..., dispatch_thread_id="<thread>", contract="light-bounded", model=..., generation_options=..., caller_agent=...)
 ```
 then `pipeline(op="result", execution_id=..., wait_seconds=60)`. Role contract:
 `default_model` when model omitted, `allowed_models` when `model=` supplied,
@@ -293,7 +304,7 @@ with `field` and `request_id` BEFORE dispatch.
 
 **Durable bus artifacts** (`op="to_thread"`):
 ```
-team_dispatch(op="to_thread", role=..., dispatch_thread_id=..., thread="<id>", messages=..., subject=...)
+team_dispatch(op="to_thread", role=..., dispatch_thread_id="<thread>", contract="light-bounded", thread="<id>", subject=...)
 ```
 then `agent_bus(tool="fetch", arguments='{"thread": "<id>"}')`. Stargate posts
 on the callee's behalf — no `agent_bus.reply` required from the dispatched model.

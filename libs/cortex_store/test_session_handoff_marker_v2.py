@@ -201,9 +201,7 @@ def test_dry_run_inline_auto_persisted_skips_advisory_when_checks_pass(
         summary=summary,
         transcript_depth="light",
         dry_run=True,
-        handoff_prompt=_anchored_handoff(
-            session_id, "Inline handoff, no source file."
-        ),
+        handoff_prompt=_anchored_handoff(session_id, "Inline handoff, no source file."),
     )
     assert result["dry_run"] is True
     assert result["handoff_valid"] is True

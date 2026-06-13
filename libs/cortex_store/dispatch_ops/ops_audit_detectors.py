@@ -133,7 +133,8 @@ ALL_KINDS = GRAPH_ONLY_KINDS | FS_TOUCHING_KINDS | INFO_KINDS
 def get_all_detectors() -> dict[str, Any]:
     """Registry of all detectors per v2 plan §6. Graph-only run by default for session_audit."""
     return {
-        "dangling_attribute_reference": lambda c, s=None: [],  # TODO: implement (attributes referencing missing entities)
+        "dangling_attribute_reference": lambda c,
+        s=None: [],  # TODO: implement (attributes referencing missing entities)
         "dangling_relationship_target": detect_dangling_relationship_target,
         "foreign_key_orphan": detect_foreign_key_orphan,
         "entity_source_uri_missing": detect_entity_source_uri_missing,

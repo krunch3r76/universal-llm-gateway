@@ -282,6 +282,31 @@ def known_families() -> frozenset[str]:
     return frozenset(family for family, _platform in load_profiles())
 
 
+def seat_capabilities(profile: CapabilityProfile) -> frozenset[str]:
+    """Closed capability-token set derived from the profile axes (no second table)."""
+    toks: set[str] = set()
+    if profile.tool_surface == "mcp":
+        toks.add("mcp_fs")
+    if profile.tool_surface in ("mcp", "sdk"):
+        toks.add("local_fs_write")
+    if profile.tool_surface == "sdk":
+        toks.add("git_worktree")
+    return frozenset(toks)
+
+
+CAPABILITY_TOKENS: frozenset[str] = frozenset(
+    {"mcp_fs", "local_fs_write", "git_worktree"}
+)
+
+
+@functools.cache
+def seat_capability_map() -> dict[str, frozenset[str]]:
+    return {
+        f"{family}-{platform}": seat_capabilities(prof)
+        for (family, platform), prof in load_profiles().items()
+    }
+
+
 @functools.cache
 def known_seats() -> frozenset[str]:
     """Canonical seat slugs ({family}-{platform}) from the agents.yaml profile cells.

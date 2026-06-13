@@ -189,7 +189,6 @@ def lint_panel_messages(messages: list[dict[str, Any]]) -> dict[str, Any] | None
 def build_team_dispatch_body(
     *,
     spec: PanelMemberSpec,
-    messages: list[dict[str, Any]],
     dispatch_thread_id: str,
     caller_agent: str | None = None,
     system: str = "",
@@ -203,8 +202,8 @@ def build_team_dispatch_body(
     body: dict[str, Any] = {
         "op": "generate",
         "role": spec.role,
-        "messages": messages,
         "dispatch_thread_id": dispatch_thread_id,
+        "contract": "light-bounded",
         "system": system,
     }
     if spec.model is not None:

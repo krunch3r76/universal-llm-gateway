@@ -33,7 +33,9 @@ def conn(migrated_conn: sqlite3.Connection) -> sqlite3.Connection:
     return migrated_conn
 
 
-def test_partial_attributes_update_preserves_prior_keys(conn: sqlite3.Connection) -> None:
+def test_partial_attributes_update_preserves_prior_keys(
+    conn: sqlite3.Connection,
+) -> None:
     update_entity_impl(
         conn,
         entity_id="todo:x",

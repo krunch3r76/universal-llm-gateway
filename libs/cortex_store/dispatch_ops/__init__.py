@@ -17,12 +17,12 @@ from .ops_assertions import (
     _op_analyze_impact,
     _op_assert,
     _op_assertion_get,
-    _op_assertion_update,
     _op_assertion_state,
+    _op_assertion_update,
     _op_assertions,
+    _op_friction,
     _op_friction_close,
     _op_frictions,
-    _op_friction,
     _op_observe,
     _op_review_queue,
     _op_search,
@@ -62,6 +62,7 @@ from .ops_misc import (
     _op_tag_assign,
     _op_tag_list,
     _op_tag_resolve,
+    _op_thread_sidecar_write,
 )
 from .ops_reflective import (
     _op_rj_consolidate,
@@ -90,9 +91,9 @@ from .workflow_hints import (
     _CORTEX_HALLUCINATED_TOOLS,
     _FRICTION_HINT,
     _WORKFLOW_HINTS,
-    attach_session_close_protocol,
     _enrich_entity_completeness,
     _parse_cortex_arguments,
+    attach_session_close_protocol,
 )
 
 logger = get_logger("cortex-api.dispatch_ops")
@@ -149,6 +150,7 @@ _OPS: dict[str, Any] = {
     "tag_resolve": _op_tag_resolve,
     "todo_candidates": _op_todo_candidates,
     "todo_audit": _op_todo_audit,
+    "thread_sidecar_write": _op_thread_sidecar_write,
     "todo_close_sidecar": _op_todo_close_sidecar,
     "register_skill_substrate": _op_register_skill_substrate,
     "audit": _op_audit,

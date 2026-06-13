@@ -53,13 +53,16 @@ def test_admit_idempotent_across_restart() -> None:
     fp = ledger.fingerprint(req)
     admission = _admission(req)
 
-    assert ledger.admit(
-        req=req,
-        fingerprint=fp,
-        execution_id=None,
-        resolved_model="composer-2.5",
-        admission=admission,
-    ) is None
+    assert (
+        ledger.admit(
+            req=req,
+            fingerprint=fp,
+            execution_id=None,
+            resolved_model="composer-2.5",
+            admission=admission,
+        )
+        is None
+    )
 
     CursorDispatchLedger._instance = None
     ledger2 = CursorDispatchLedger.instance()

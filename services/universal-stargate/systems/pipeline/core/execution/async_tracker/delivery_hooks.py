@@ -18,14 +18,26 @@ from universal_logging import get_logger
 
 from ...events.dispatch import PipelineDispatchCompleted
 from .journal import _schedule_journal
-from .records import PipelineExecutionError
+from .records import DeliveryState, PipelineExecutionError
 from .tracker_events import _emit
 
 if TYPE_CHECKING:
+    from ..async_tracker_delivery import DeliveryOutcome
     from .records import PipelineExecutionRecord
     from .tracker import PipelineExecutionTracker
 
 logger = get_logger(__name__)
+
+
+def _delivery_state_from_outcome(outcome: DeliveryOutcome) -> DeliveryState:
+    return DeliveryState(
+        status=outcome.status,
+        mode=outcome.delivery_mode,
+        thread=outcome.thread,
+        sidecar_uri=outcome.sidecar_uri,
+        content_sha256=outcome.content_sha256,
+        failure_reason=outcome.failure_reason,
+    )
 
 
 def _schedule_delivery(
@@ -105,6 +117,9 @@ async def _run_delivery_with_outcome(
         if record.op == "to_thread":
             _schedule_journal(tracker, record)
         return
+
+    if record.op == "to_thread":
+        record.delivery = _delivery_state_from_outcome(result)
 
     if (
         result.status == "failed"

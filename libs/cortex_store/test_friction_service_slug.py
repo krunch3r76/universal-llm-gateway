@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from cortex_store.dispatch_ops._shared import normalize_service_slug, service_entity_id
 from cortex_store.dispatch_ops.ops_assertions import _op_frictions
 from cortex_store.dispatch_ops.ops_assertions_write import _op_friction
@@ -60,3 +62,31 @@ def test_op_friction_accepts_qualified_service(monkeypatch) -> None:
 
     assert "error" not in result
     assert captured["entity_id"] == "service:agent-bus"
+
+
+@pytest.mark.parametrize("category", ["doc_drift", "protocol"])
+def test_op_friction_accepts_expanded_categories(monkeypatch, category: str) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_create(body: dict[str, object]) -> dict[str, object]:
+        captured.update(body)
+        return {"item": {"id": 1}}
+
+    monkeypatch.setattr(
+        "cortex_store.dispatch_ops.ops_assertions_write._create_assertion_impl",
+        fake_create,
+    )
+    monkeypatch.setattr(
+        "cortex_store.dispatch_ops.ops_assertions_write.record",
+        lambda *a, **k: None,
+    )
+
+    result = _op_friction(
+        service="mcp-server",
+        category=category,
+        note="session-close taxonomy",
+        agent="pytest",
+    )
+
+    assert "error" not in result
+    assert captured["claim"] == f"[{category}] session-close taxonomy"

@@ -145,7 +145,7 @@ cortex(tool="friction", arguments='{"service": "mcp-server", "category": "tool_e
 ```
 
 Categories: `tool_error`, `tool_mismatch`, `tool_absent`, `schema_gap`, `boot_drift`,
-`lesson_gap`, `lesson_conflict`, `stale_context`.
+`lesson_gap`, `lesson_conflict`, `stale_context`, `doc_drift`, `protocol`.
 
 ## Avoid
 

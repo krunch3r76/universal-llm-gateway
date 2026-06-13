@@ -25,7 +25,9 @@ def test_empty_entity_ids_skips_scan_and_returns_clean(monkeypatch):
         raise AssertionError("scan must not run when entity_ids is empty")
 
     monkeypatch.setattr(gate, "_run_session_audit_graph_only", _spy_scan)
-    monkeypatch.setattr(gate, "record", lambda signal, **kw: events.append((signal, kw)))
+    monkeypatch.setattr(
+        gate, "record", lambda signal, **kw: events.append((signal, kw))
+    )
     monkeypatch.setenv("CORTEX_SESSION_AUDIT_MODE", "warn")
 
     out = _run_session_audit_or_block(

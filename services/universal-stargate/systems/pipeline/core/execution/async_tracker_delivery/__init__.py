@@ -10,15 +10,12 @@ Two delivery paths gated on ``record.op``:
 
 **Bus-mode path** (``record.op == "to_thread"``):
   Stargate posts ``record.result.content`` to ``record.target_thread`` on
-  behalf of the dispatched role/model. ``from_agent`` is supplied at
-  admission (role for team_dispatch, model identifier for persona-free
-  frontier HTTP); ``to_agent`` is resolved from ``record.caller_agent``
-  with a thread last-turn-from fallback. Long content (> ~1.5 KB)
-  passes ``allow_long_body=true`` so the agent-bus briefing-rule warning
-  is suppressed. Content above the bus 8 000-char hard limit fails with
-  ``content_exceeds_bus_limit`` (poll ``pipeline(op="result")`` for the
-  full text; sidecar-write fallback is a v2 follow-up). Implementation:
-  ``on_behalf._post_content_on_behalf``.
+  behalf of the dispatched role/model. Every delivery writes a durable cortex
+  sidecar first. Within the bus 8 000-char limit the turn carries full content
+  plus a durable-copy footer; above the limit it carries a relocation pointer
+  (URI + sha256 + summary). Terminal failure without POST occurs only when
+  content exceeds the limit and the sidecar write also fails.
+  Implementation: ``on_behalf._post_content_on_behalf``.
 
   This replaces the previous "observe the model self-posting" contract
   (architectural fix 2026-05-22 —
@@ -32,7 +29,7 @@ Invariants:
 - ∀ legacy record with ``result_delivery`` ∧ terminal transition: emit
   exactly one of ``.sent`` or ``.failed``.
 - ∀ bus-mode record with non-empty ``result.content``: emit ``.sent`` on
-  POST 2xx, ``.failed`` on POST non-2xx or content-too-large.
+  POST 2xx, ``.failed`` on POST non-2xx or oversized sidecar write failure.
 - ∀ bus-mode record with empty ``result.content``: skip POST and emit
   ``.skipped`` — the record is already ``failed`` by EmptyCompletionError.
 - ∀ delivery failure: tracker record mutation is the caller's
@@ -58,6 +55,7 @@ at git ``c47304ed5a8ceeb2168bab373edbf802f00b4815``):
 - ``resolution`` — ``_resolve_to_agent`` + UTC-ISO helper
 - ``delivery_events`` — ``_emit`` + lazy event-class factories
 - ``on_behalf`` — bus-mode (``op="to_thread"``) implementation
+- ``sidecar`` — cortex thread sidecar client (``thread_sidecar_write`` op)
 - ``legacy_path`` — legacy ``result_delivery`` envelope post + ephemeral close
 - ``deliver`` — ``deliver_result`` router
 

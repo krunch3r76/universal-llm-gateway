@@ -18,7 +18,7 @@ async def test_dispatch_api_role_generate_provisions_thread_and_to_thread() -> N
         op="generate",
         role="synthesizer",
         dispatch_thread_id="thread:dispatch:test",
-        messages=[{"role": "user", "content": "ping"}],
+        contract="light-bounded",
         model="anthropic/claude-sonnet-4-6",
         caller_agent="cursor",
     )
@@ -45,6 +45,11 @@ async def test_dispatch_api_role_generate_provisions_thread_and_to_thread() -> N
         patch(
             "systems.frontier_consult.api_role_generate._resolve_role_profile",
             return_value=("synthesizer", "anthropic", "api", mock_profile),
+        ),
+        patch(
+            "systems.frontier_consult.api_role_generate.read_latest_dispatch_thread_body",
+            new_callable=AsyncMock,
+            return_value="ping",
         ),
     ):
         from .api_role_generate import dispatch_api_role_generate
@@ -74,19 +79,31 @@ async def test_dispatch_api_role_generate_provisions_thread_and_to_thread() -> N
 
 
 @pytest.mark.asyncio
-async def test_dispatch_api_role_generate_empty_messages_raises_422() -> None:
+async def test_dispatch_api_role_generate_empty_thread_raises_422() -> None:
     body = TeamDispatchGenerateBody(
         op="generate",
         role="synthesizer",
         dispatch_thread_id="thread:dispatch:test",
-        messages=[{"role": "user", "content": ""}],
+        contract="light-bounded",
         caller_agent="cursor",
     )
     response = Response()
 
     from .api_role_generate import dispatch_api_role_generate
 
-    with pytest.raises(FrontierEndpointError) as exc_info:
+    with (
+        patch(
+            "systems.frontier_consult.api_role_generate.read_latest_dispatch_thread_body",
+            new_callable=AsyncMock,
+            side_effect=FrontierEndpointError(
+                request_id="req-empty",
+                field="dispatch_thread_id",
+                reason="latest turn on dispatch thread is empty",
+                status_code=422,
+            ),
+        ),
+        pytest.raises(FrontierEndpointError) as exc_info,
+    ):
         await dispatch_api_role_generate(
             request_id="req-empty",
             body=body,
@@ -94,7 +111,7 @@ async def test_dispatch_api_role_generate_empty_messages_raises_422() -> None:
         )
 
     assert exc_info.value.status_code == 422
-    assert exc_info.value.field == "messages"
+    assert exc_info.value.field == "dispatch_thread_id"
 
 
 @pytest.mark.asyncio
@@ -103,7 +120,6 @@ async def test_dispatch_api_role_generate_implement_contract_raises_422() -> Non
         op="generate",
         role="synthesizer",
         dispatch_thread_id="thread:dispatch:test",
-        messages=[{"role": "user", "content": "ping"}],
         contract="implement",
         caller_agent="cursor",
     )
@@ -128,7 +144,7 @@ async def test_dispatch_api_role_generate_json_response_posts_failure_turn() -> 
         op="generate",
         role="synthesizer",
         dispatch_thread_id="thread:dispatch:test",
-        messages=[{"role": "user", "content": "ping"}],
+        contract="light-bounded",
         caller_agent="cursor",
     )
     response = Response()
@@ -152,6 +168,11 @@ async def test_dispatch_api_role_generate_json_response_posts_failure_turn() -> 
             "systems.frontier_consult.api_role_generate._post_api_role_dispatch_failure_turn",
             new_callable=AsyncMock,
         ) as failure_turn,
+        patch(
+            "systems.frontier_consult.api_role_generate.read_latest_dispatch_thread_body",
+            new_callable=AsyncMock,
+            return_value="ping",
+        ),
     ):
         from .api_role_generate import dispatch_api_role_generate
 
@@ -176,7 +197,7 @@ async def test_dispatch_api_role_generate_dict_error_posts_failure_turn() -> Non
         op="generate",
         role="synthesizer",
         dispatch_thread_id="thread:dispatch:test",
-        messages=[{"role": "user", "content": "ping"}],
+        contract="light-bounded",
         caller_agent="cursor",
     )
     response = Response()
@@ -197,6 +218,11 @@ async def test_dispatch_api_role_generate_dict_error_posts_failure_turn() -> Non
             "systems.frontier_consult.api_role_generate._post_api_role_dispatch_failure_turn",
             new_callable=AsyncMock,
         ) as failure_turn,
+        patch(
+            "systems.frontier_consult.api_role_generate.read_latest_dispatch_thread_body",
+            new_callable=AsyncMock,
+            return_value="ping",
+        ),
     ):
         from .api_role_generate import dispatch_api_role_generate
 
@@ -217,7 +243,7 @@ async def test_dispatch_api_role_generate_capabilities_model_fallback() -> None:
         op="generate",
         role="synthesizer",
         dispatch_thread_id="thread:dispatch:test",
-        messages=[{"role": "user", "content": "ping"}],
+        contract="light-bounded",
         caller_agent="cursor",
     )
     response = Response()
@@ -242,6 +268,11 @@ async def test_dispatch_api_role_generate_capabilities_model_fallback() -> None:
         patch(
             "systems.frontier_consult.api_role_generate._resolve_role_profile",
             return_value=("synthesizer", "anthropic", "api", mock_profile),
+        ),
+        patch(
+            "systems.frontier_consult.api_role_generate.read_latest_dispatch_thread_body",
+            new_callable=AsyncMock,
+            return_value="ping",
         ),
     ):
         from .api_role_generate import dispatch_api_role_generate

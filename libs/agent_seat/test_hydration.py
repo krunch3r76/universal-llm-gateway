@@ -12,7 +12,7 @@ from typing import Any
 import pytest
 
 from agent_seat import hydration as _hyd
-from agent_seat.hydration import HydrationBundle, hydrate_agent
+from agent_seat.hydration import AgentMeta, HydrationBundle, hydrate_agent
 
 
 class _Scripted:
@@ -245,6 +245,86 @@ async def test_hydrate_role_loads_default_model_from_role_anchor(
     meta_entity_calls = [c for c in fake.calls if "/entities/" in c]
     assert any("role:synthesizer" in c for c in meta_entity_calls)
     assert not any("family:gemini" in c and "role:" not in c for c in meta_entity_calls)
+
+
+@pytest.mark.asyncio
+async def test_non_inline_seat_no_injection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resolve_calls: list[str] = []
+
+    def fake_resolve(seat: str, **_: object) -> tuple[str, list, list, dict]:
+        resolve_calls.append(seat)
+        return "", [], [], {}
+
+    monkeypatch.setattr(_hyd, "_cortex_get", _Scripted({"/": {}}))
+    monkeypatch.setattr(_hyd, "_bus_get", _Scripted({"/": {}}))
+    monkeypatch.setattr(
+        "agent_seat.body_injection.resolve_inline_only_bodies",
+        fake_resolve,
+    )
+
+    bundle = await hydrate_agent("gatherer", model="openai/gpt-5.5")
+
+    assert bundle.inline_only is False
+    assert bundle.injected_bodies_md is None
+    assert resolve_calls == []
+
+
+@pytest.mark.asyncio
+async def test_already_present_includes_continuation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: dict[str, str] = {}
+
+    def fake_resolve(seat: str, *, already_present: str = "", **_: object) -> tuple:
+        seen["already_present"] = already_present
+        return (
+            "",
+            [],
+            [],
+            {
+                "elapsed_ms": 0,
+                "cold_fetches": 0,
+                "cache_hit": False,
+                "deadline_hit": False,
+            },
+        )
+
+    monkeypatch.setattr(_hyd, "_cortex_get", _Scripted({"/": {}}))
+    monkeypatch.setattr(_hyd, "_bus_get", _Scripted({"/": {}}))
+    monkeypatch.setattr(
+        "agent_seat.body_injection.resolve_inline_only_bodies",
+        fake_resolve,
+    )
+
+    async def fake_meta(_agent: str) -> AgentMeta:
+        return AgentMeta(
+            default_model="xai/grok-4.3-multi-agent",
+            frontier_kind="xai",
+            allowed_models=["xai/grok-4.3-multi-agent"],
+        )
+
+    async def fake_continuation(
+        _transcript_id: str,
+    ) -> tuple[str | None, str | None]:
+        return (
+            "## Resuming From: `transcript:abc123`\n**Summary**: prior\n",
+            "transcript:abc123",
+        )
+
+    monkeypatch.setattr(_hyd, "_fetch_agent_meta", fake_meta)
+    monkeypatch.setattr(_hyd, "_resolve_continuation", fake_continuation)
+
+    bundle = await hydrate_agent(
+        "grok-api-multi",
+        transcript_id="abc123",
+        model="xai/grok-4.3-multi-agent",
+    )
+
+    assert bundle.inline_only is True
+    assert "Resuming From" in seen.get("already_present", "")
+    assert bundle.briefing_card_md.split("Resuming From")[0] in seen["already_present"]
 
 
 def test_static_tool_fallback_unique_names() -> None:

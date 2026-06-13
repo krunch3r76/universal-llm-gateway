@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from unittest.mock import patch
 
 import httpx
 import pytest
@@ -167,6 +168,54 @@ async def test_resolve_boot_directive_passes_all_primary_params() -> None:
             },
         )
     ]
+
+
+@pytest.mark.asyncio
+async def test_t14_web_boot_appends_invariant_bodies_digest_stamped() -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    async def _fake_execute(name: str, arguments: dict[str, object]) -> str:
+        calls.append((name, arguments))
+        return json.dumps({"briefing_card": "BRIEFING CARD"})
+
+    def _fake_fetch(entity_id: str) -> dict[str, object]:
+        slug = entity_id.removeprefix("agent_skill:")
+        return {
+            "id": entity_id,
+            "digest": f"sha256:{slug[:8]}",
+            "body": f"# {slug}\nInvariant body for {slug}.",
+        }
+
+    executor = McpToolExecutor(mcp_url="https://mcp.example.com/mcp")
+    executor.execute_tool = _fake_execute  # type: ignore[method-assign]
+
+    messages = [
+        {
+            "role": "system",
+            "content": 'Prefix cortex_boot(agent="claude-web") suffix',
+        }
+    ]
+    with patch(
+        "services.universal_cloud_proxy.mcp_executor._fetch_skill_body_sync",
+        side_effect=_fake_fetch,
+    ):
+        await executor._resolve_boot_directive(messages)
+
+    content = messages[0]["content"]
+    assert "BRIEFING CARD" in content
+    assert "architecture-invariants" in content
+    assert "ulg-architecture" in content
+    assert "digest:sha256:architec" in content
+    assert "digest:sha256:ulg-arch" in content
+
+    # Dedup: second pass with digest already present skips re-append
+    prior_len = len(content)
+    with patch(
+        "services.universal_cloud_proxy.mcp_executor._fetch_skill_body_sync",
+        side_effect=_fake_fetch,
+    ):
+        await mcp_executor_module._append_web_invariant_bodies(content, "claude-web")
+    assert len(content) == prior_len
 
 
 @pytest.mark.asyncio
@@ -385,3 +434,49 @@ async def test_execute_tool_retries_on_connect_error(
 
     assert result == "ok"
     assert calls == 2
+
+
+@pytest.mark.asyncio
+async def test_web_precedent_unchanged_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T12 — refactored path matches pre-G3 golden output (3-backtick fence)."""
+    from services.universal_cloud_proxy.mcp_executor import _append_web_invariant_bodies
+
+    entries = [
+        {
+            "id": "agent_skill:architecture-invariants",
+            "name": "architecture-invariants",
+            "digest": "sha256:inv0",
+            "body": "# Architecture Invariants\nBody one.",
+        },
+        {
+            "id": "agent_skill:ulg-architecture",
+            "name": "ulg-architecture",
+            "digest": "sha256:inv1",
+            "body": "# ULG Architecture\nBody two.",
+        },
+    ]
+
+    def fake_is_web(_seat: str) -> bool:
+        return True
+
+    monkeypatch.setattr(
+        "services.universal_cloud_proxy.mcp_executor._is_web_seat",
+        fake_is_web,
+    )
+    monkeypatch.setattr(
+        "services.universal_cloud_proxy.mcp_executor.fetch_web_invariant_entries",
+        lambda: entries,
+    )
+
+    content = "boot card"
+    out = await _append_web_invariant_bodies(content, "claude-web")
+    golden = (
+        content
+        + "\n\n<!-- invariant-skill:architecture-invariants digest:sha256:inv0 -->\n"
+        + "```markdown\n# Architecture Invariants\nBody one.\n```"
+        + "\n\n<!-- invariant-skill:ulg-architecture digest:sha256:inv1 -->\n"
+        + "```markdown\n# ULG Architecture\nBody two.\n```"
+    )
+    assert out == golden

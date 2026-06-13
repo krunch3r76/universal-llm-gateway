@@ -3,14 +3,20 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Query
 
 from ...confidence_field import lifecycle_not_value_sql_predicate
 from ...db import cortex_conn
 from ...db import query as db_query
-from ...seat_applicability import FOR_AGENT_CLAUSE, canonical_seat_or_422
+from ...seat_applicability import (
+    CAPABILITY_CLAUSE,
+    FOR_AGENT_CLAUSE,
+    canonical_seat_or_422,
+    seat_capabilities_json,
+)
+from .._skill_index import entity_types_for_layer, index_envelope_fields
 from ._skill_trigger import skill_trigger_text
 
 _DEPRECATED_EXCLUDE = lifecycle_not_value_sql_predicate("deprecated")
@@ -30,9 +36,9 @@ _BOOT_SKILLS_SQL = f"""
            json_extract(attributes, '$.trigger_match_terms') AS trigger_match_terms_json,
            json_extract(attributes, '$.boot_importance') AS boot_importance
     FROM entities
-    WHERE type = 'agent_skill'
+    WHERE type IN ({{type_placeholders}})
       AND {_DEPRECATED_EXCLUDE}
-      {{for_agent_filter}}
+      {{for_agent_filter}}{{capability_filter}}
     ORDER BY name ASC
     LIMIT ?
 """
@@ -100,12 +106,17 @@ def _boot_skill_row(row: dict[str, Any]) -> dict[str, Any]:
     }
     if tool_binding is not None:
         item["tool_binding"] = tool_binding
+    item.update(index_envelope_fields(row))
     return item
 
 
 @router.get("/boot-skills")
 def get_boot_skills(
     limit: int = Query(50, ge=1, le=200, description="Max skill entries"),
+    layer: Annotated[
+        str,
+        Query(description="Discovery layer: skills, rules, or all."),
+    ] = "skills",
     for_agent: str | None = Query(
         None,
         description=(
@@ -126,25 +137,38 @@ def get_boot_skills(
     present the skill_binding axes (skill_class, tool_binding, binding_kind).
     Full SKILL.md bodies are loaded on demand via fs md_* (manifest-only card).
     """
-    params: list[Any] = ["deprecated"]
+    entity_types = entity_types_for_layer(layer)
+    type_placeholders = ", ".join("?" * len(entity_types))
+    params: list[Any] = [*entity_types, "deprecated"]
     if for_agent:
         canonical = canonical_seat_or_422(for_agent)
         for_agent_filter = FOR_AGENT_CLAUSE
+        capability_filter = CAPABILITY_CLAUSE
         params.append(canonical)
+        params.append(seat_capabilities_json(canonical))
     else:
         for_agent_filter = ""
+        capability_filter = ""
     params.append(limit)
-    sql = _BOOT_SKILLS_SQL.format(for_agent_filter=for_agent_filter)
+    sql = _BOOT_SKILLS_SQL.format(
+        type_placeholders=type_placeholders,
+        for_agent_filter=for_agent_filter,
+        capability_filter=capability_filter,
+    )
     conn = cortex_conn()
     try:
         rows = db_query(conn, sql, tuple(params))
-        # Count of skills missing applicable_agents — the boot card surfaces
-        # this as a drift reminder so the partition script doesn't go stale
-        # silently as Kaywan adds new and temp skills. Single SQL query, no
-        # row data, ~30 bytes on the wire.
-        unpartitioned_rows = db_query(conn, _UNPARTITIONED_COUNT_SQL, ("deprecated",))
+        unpartitioned = 0
+        if layer == "skills":
+            # Count of skills missing applicable_agents — the boot card surfaces
+            # this as a drift reminder so the partition script doesn't go stale
+            # silently as Kaywan adds new and temp skills. Single SQL query, no
+            # row data, ~30 bytes on the wire.
+            unpartitioned_rows = db_query(
+                conn, _UNPARTITIONED_COUNT_SQL, ("deprecated",)
+            )
+            unpartitioned = int(unpartitioned_rows[0]["n"]) if unpartitioned_rows else 0
     finally:
         conn.close()
     items = [_boot_skill_row(r) for r in rows]
-    unpartitioned = int(unpartitioned_rows[0]["n"]) if unpartitioned_rows else 0
-    return {"items": items, "unpartitioned_count": unpartitioned}
+    return {"items": items, "unpartitioned_count": unpartitioned, "layer": layer}

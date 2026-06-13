@@ -37,8 +37,8 @@ Caller::
 
     # Agent surface (MCP — preferred):
     team_dispatch(op="generate", role="gatherer", model="openai/gpt-5.4",
-                  dispatch_thread_id="cursor-2026-06-02-example",
-                  messages=[{"role": "user", "content": "..."}])
+                  dispatch_thread_id="<agent-bus-thread>",
+                  contract="light-bounded")
 
     # Internal HTTP (pipeline composition / Stargate callers):
     POST /api/v1/frontier/dispatch  # persona-free

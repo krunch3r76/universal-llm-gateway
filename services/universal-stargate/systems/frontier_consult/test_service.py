@@ -645,3 +645,107 @@ async def test_gemini_reviewer_team_default_mcp_enabled(
     )
     body = await build_dispatch_body(req)
     assert body["pipeline_options"]["mcp"] is True
+
+
+@pytest.mark.asyncio
+async def test_required_criticality_fails_closed_service(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_hydrate(
+        agent: str, transcript_id: str | None = None, **_k: Any
+    ) -> HydrationBundle:
+        return HydrationBundle(
+            briefing_card_md="# briefing",
+            agent_meta=AgentMeta(default_model="xai/grok-4.3-multi-agent"),
+            inline_only=True,
+            required_body_unresolved=True,
+            injection_meta={"dropped": [{"id": "rule:critical", "reason": "body_missing"}]},
+        )
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.service.hydrate_agent",
+        fake_hydrate,
+    )
+
+    req = FrontierGenerateRequest(
+        messages=[{"role": "user", "content": "x"}],
+        role="grok-api-multi",
+        dispatch_thread_id=_DISPATCH_THREAD,
+    )
+    with pytest.raises(FrontierEndpointError) as exc:
+        await build_dispatch_body(req)
+    assert exc.value.field == "injected_bodies"
+
+
+@pytest.mark.asyncio
+async def test_event_emitted_enriched(monkeypatch: pytest.MonkeyPatch) -> None:
+    events: list[Any] = []
+
+    async def fake_hydrate(
+        agent: str, transcript_id: str | None = None, **_k: Any
+    ) -> HydrationBundle:
+        return HydrationBundle(
+            briefing_card_md="# briefing",
+            agent_meta=AgentMeta(default_model="xai/grok-4.3-multi-agent"),
+            inline_only=True,
+            injected_bodies_md="<!-- injected-body:rule:foo digest:sha256:abc -->",
+            injection_meta={
+                "injected": [{"id": "rule:foo", "digest": "sha256:abc", "bytes": 42}],
+                "dropped": [{"id": "rule:bar", "reason": "budget"}],
+                "metrics": {
+                    "cache_hit": True,
+                    "cold_fetches": 1,
+                    "elapsed_ms": 12,
+                    "deadline_hit": False,
+                },
+            },
+        )
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.service.hydrate_agent",
+        fake_hydrate,
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.service.enforce_model",
+        lambda **_k: None,
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.service.enforce_options",
+        lambda **_k: None,
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.service.enforce_team_dispatch_generate_admit",
+        lambda *_a, **_k: None,
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.service.resolve_wire_model_id",
+        lambda model, **_: type("R", (), {"wire_id": model})(),
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.service.canonical_model_entity_id",
+        lambda _m: "model:test",
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.service.is_chat_completions_only",
+        lambda _m: False,
+    )
+
+    req = FrontierGenerateRequest(
+        messages=[{"role": "user", "content": "x"}],
+        role="grok-api-multi",
+        dispatch_thread_id=_DISPATCH_THREAD,
+        model="xai/grok-4.3-multi-agent",
+    )
+    await build_dispatch_body(req, event_publisher=events.append)
+
+    inline_events = [e for e in events if e.signal == "inline.body.injection.resolved"]
+    assert len(inline_events) == 1
+    payload = inline_events[0].payload
+    assert payload["injected"]
+    assert payload["dropped"][0]["reason"] == "budget"
+    assert payload["total_bytes"] == 42
+    assert payload["budget_bytes"] == 24000
+    assert payload["cache_hit"] is True
+    assert payload["cold_fetches"] == 1
+    assert payload["elapsed_ms"] == 12
+    assert payload["deadline_hit"] is False
