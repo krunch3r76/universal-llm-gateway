@@ -191,6 +191,7 @@ def FrontierSdkWorkerDispatched(  # noqa: N802
 def FrontierSdkWorkerDispatchFailed(  # noqa: N802
     request_id: str,
     thread_id: str,
+    execution_id: str,
     error: str,
 ) -> Event:
     """SDK worker dispatch rejected or unreachable."""
@@ -199,6 +200,7 @@ def FrontierSdkWorkerDispatchFailed(  # noqa: N802
         payload={
             "request_id": request_id,
             "thread_id": thread_id,
+            "execution_id": execution_id,
             "error": error,
         },
         scope="node",

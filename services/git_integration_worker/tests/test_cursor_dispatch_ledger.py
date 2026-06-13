@@ -31,6 +31,7 @@ def _req(**overrides: object) -> CursorDispatchRequest:
         "thread_id": "t1",
         "model": "cursor/composer-2.5",
         "dispatch_id": "disp-ac1",
+        "execution_id": "exec-disp-ac1",
         "message": "hello",
     }
     base.update(overrides)
@@ -57,7 +58,8 @@ def test_admit_idempotent_across_restart() -> None:
         ledger.admit(
             req=req,
             fingerprint=fp,
-            execution_id=None,
+            execution_id=req.execution_id,
+            caller_agent=None,
             resolved_model="composer-2.5",
             admission=admission,
         )
@@ -69,7 +71,8 @@ def test_admit_idempotent_across_restart() -> None:
     cached = ledger2.admit(
         req=req,
         fingerprint=fp,
-        execution_id=None,
+        execution_id=req.execution_id,
+        caller_agent=None,
         resolved_model="composer-2.5",
         admission=admission,
     )
@@ -91,7 +94,8 @@ def test_admit_fingerprint_conflict() -> None:
     ledger.admit(
         req=req,
         fingerprint=fp,
-        execution_id=None,
+        execution_id=req.execution_id,
+        caller_agent=None,
         resolved_model="composer-2.5",
         admission=_admission(req),
     )
@@ -101,7 +105,8 @@ def test_admit_fingerprint_conflict() -> None:
         ledger.admit(
             req=mutated,
             fingerprint=ledger.fingerprint(mutated),
-            execution_id=None,
+            execution_id=mutated.execution_id,
+            caller_agent=None,
             resolved_model="other-model",
             admission=_admission(mutated),
         )
@@ -114,7 +119,8 @@ def test_status_lifecycle() -> None:
     ledger.admit(
         req=req,
         fingerprint=ledger.fingerprint(req),
-        execution_id=None,
+        execution_id=req.execution_id,
+        caller_agent=None,
         resolved_model="composer-2.5",
         admission=_admission(req),
     )
@@ -135,7 +141,8 @@ def test_status_lifecycle() -> None:
     ledger.admit(
         req=req2,
         fingerprint=ledger.fingerprint(req2),
-        execution_id=None,
+        execution_id=req2.execution_id,
+        caller_agent=None,
         resolved_model="composer-2.5",
         admission=_admission(req2),
     )
@@ -162,13 +169,15 @@ async def test_ledger_non_authority(monkeypatch: pytest.MonkeyPatch) -> None:
         thread_id="1604",
         model="cursor/composer-2.5",
         dispatch_id="disp-nonauth",
+        execution_id="exec-nonauth",
         message="hello",
     )
     fp = ledger.fingerprint(req)
     ledger.admit(
         req=req,
         fingerprint=fp,
-        execution_id=None,
+        execution_id=req.execution_id,
+        caller_agent=None,
         resolved_model="composer-2.5",
         admission=CursorDispatchResponse(
             admitted=True,
@@ -236,7 +245,8 @@ def test_ledger_db_path_stable_across_home_swap(
     ledger.admit(
         req=req,
         fingerprint=ledger.fingerprint(req),
-        execution_id=None,
+        execution_id=req.execution_id,
+        caller_agent=None,
         resolved_model="composer-2.5",
         admission=_admission(req),
     )
@@ -249,3 +259,67 @@ def test_ledger_db_path_stable_across_home_swap(
 
     assert ledger._db_path == real_home / ".gateway" / "cursor-sdk-dispatch.db"
     CursorDispatchLedger._instance = None
+
+
+def test_execution_id_stable_across_restart() -> None:
+    """AC3: re-admit after singleton reset returns same persisted execution_id."""
+    ledger = CursorDispatchLedger.instance()
+    req = _req(execution_id="exec-stable-1")
+    fp = ledger.fingerprint(req)
+    admission = _admission(req)
+
+    assert (
+        ledger.admit(
+            req=req,
+            fingerprint=fp,
+            execution_id=req.execution_id,
+            caller_agent=None,
+            resolved_model="composer-2.5",
+            admission=admission,
+        )
+        is None
+    )
+
+    CursorDispatchLedger._instance = None
+    ledger2 = CursorDispatchLedger.instance()
+    cached = ledger2.admit(
+        req=req,
+        fingerprint=fp,
+        execution_id=req.execution_id,
+        caller_agent=None,
+        resolved_model="composer-2.5",
+        admission=admission,
+    )
+    assert cached == admission
+
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT execution_id FROM cursor_sdk_dispatches WHERE dispatch_id = ?",
+            (req.dispatch_id,),
+        ).fetchone()
+    assert row["execution_id"] == "exec-stable-1"
+
+
+def test_execution_id_fingerprint_conflict() -> None:
+    """AC4: changed execution_id for same dispatch_id raises DispatchConflict."""
+    ledger = CursorDispatchLedger.instance()
+    req = _req(execution_id="exec-a")
+    ledger.admit(
+        req=req,
+        fingerprint=ledger.fingerprint(req),
+        execution_id=req.execution_id,
+        caller_agent=None,
+        resolved_model="composer-2.5",
+        admission=_admission(req),
+    )
+
+    swapped = _req(execution_id="exec-b")
+    with pytest.raises(DispatchConflict):
+        ledger.admit(
+            req=swapped,
+            fingerprint=ledger.fingerprint(swapped),
+            execution_id=swapped.execution_id,
+            caller_agent=None,
+            resolved_model="composer-2.5",
+            admission=_admission(swapped),
+        )

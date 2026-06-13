@@ -52,6 +52,8 @@ CREATE TABLE IF NOT EXISTS cursor_sdk_dispatches (
 );
 CREATE INDEX IF NOT EXISTS idx_sdk_dispatch_running
     ON cursor_sdk_dispatches(status) WHERE status = 'running';
+CREATE INDEX IF NOT EXISTS idx_sdk_dispatch_execution
+    ON cursor_sdk_dispatches(execution_id);
 """
 
 
@@ -84,6 +86,7 @@ class LedgerRow:
     dispatch_id: str
     thread_id: str
     execution_id: str | None
+    caller_agent: str | None
     resolved_model: str
     state_root: str | None
     sdk_agent_id: str | None
@@ -110,6 +113,14 @@ class CursorDispatchLedger:
         self._db_path: Path = _ledger_path()
         with self._connect() as conn:
             conn.executescript(_DDL)
+            cols = {
+                r["name"]
+                for r in conn.execute("PRAGMA table_info(cursor_sdk_dispatches)")
+            }
+            if "caller_agent" not in cols:
+                conn.execute(
+                    "ALTER TABLE cursor_sdk_dispatches ADD COLUMN caller_agent TEXT"
+                )
 
     def _connect(self) -> sqlite3.Connection:
         return _connect(self._db_path)
@@ -126,6 +137,7 @@ class CursorDispatchLedger:
             "thread_id": req.thread_id,
             "model": req.model,
             "dispatch_id": req.dispatch_id,
+            "execution_id": req.execution_id,
             "packet_path": req.packet_path,
             "message": req.message,
         }
@@ -138,6 +150,7 @@ class CursorDispatchLedger:
         req: CursorDispatchRequest,
         fingerprint: str,
         execution_id: str | None,
+        caller_agent: str | None,
         resolved_model: str,
         admission: CursorDispatchResponse,
     ) -> CursorDispatchResponse | None:
@@ -158,14 +171,15 @@ class CursorDispatchLedger:
                 return admission  # idempotent hit (now restart-durable)
             conn.execute(
                 "INSERT INTO cursor_sdk_dispatches "
-                "(dispatch_id, fingerprint, thread_id, execution_id, resolved_model, "
-                " packet_path, message_present, status, record_json) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "(dispatch_id, fingerprint, thread_id, execution_id, caller_agent, "
+                " resolved_model, packet_path, message_present, status, record_json) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     req.dispatch_id,
                     fingerprint,
                     req.thread_id,
                     execution_id,
+                    caller_agent,
                     resolved_model,
                     req.packet_path,
                     1 if req.message else 0,
@@ -221,8 +235,8 @@ class CursorDispatchLedger:
         """status='running' rows with NO live local task (restart survivors)."""
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT dispatch_id, thread_id, execution_id, resolved_model, state_root, "
-                "sdk_agent_id, sdk_run_id, status, started_at, last_heartbeat_at "
+                "SELECT dispatch_id, thread_id, execution_id, caller_agent, resolved_model, "
+                "state_root, sdk_agent_id, sdk_run_id, status, started_at, last_heartbeat_at "
                 "FROM cursor_sdk_dispatches WHERE status='running'"
             ).fetchall()
         out: list[LedgerRow] = []

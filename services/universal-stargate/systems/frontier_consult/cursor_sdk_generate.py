@@ -142,8 +142,10 @@ async def dispatch_cursor_sdk_generate(
             request_id=request_id,
             thread_id=thread_id,
             model=resolved_model,
+            execution_id=execution_id,
             packet_path=worker_packet,
             handoff_contract=handoff_contract,
+            caller_agent=caller_agent,
             prompt_preamble=prompt_preamble,
         )
     else:
@@ -152,6 +154,8 @@ async def dispatch_cursor_sdk_generate(
             thread_id=thread_id,
             model=resolved_model,
             message=worker_message or "",
+            execution_id=execution_id,
+            caller_agent=caller_agent,
         )
 
     emit_sdk_worker_outcome(

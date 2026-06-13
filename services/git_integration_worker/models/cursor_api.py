@@ -13,6 +13,8 @@ class CursorDispatchRequest(BaseModel):
     thread_id: str
     model: str
     dispatch_id: str
+    execution_id: str
+    caller_agent: str | None = None
     packet_path: str | None = None
     message: str | None = None
     handoff_contract: str | None = None

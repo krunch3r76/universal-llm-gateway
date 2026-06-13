@@ -7,7 +7,8 @@ provided context.
 
 Designed for the advisor timing pattern: checkpoint 1 (before substantive
 work), checkpoint 3 (recurring failure), and lightweight checkpoint 2 (before
-declaring done). Heavier consultations use ``team_dispatch``, ``panel_dispatch``, or ``/consult-*``.
+declaring done). Heavier consultations use ``team_dispatch``, ``panel_dispatch``,
+or ``/consult-*``. This is a consult checkpoint, not a ``team_dispatch`` role.
 """
 
 from __future__ import annotations
@@ -32,8 +33,8 @@ _DEFAULT_MODEL = "anthropic/claude-opus-4-6"
 _MAX_ADVICE_TOKENS = 1024
 
 _ADVISOR_SYSTEM = """\
-You are a senior engineering advisor. Your role is to review the problem \
-context provided and return a concise, actionable plan.
+You are a senior engineering advisor. Review the problem context provided and \
+return a concise, actionable plan.
 
 Rules:
 - Respond in under 200 words using enumerated steps, not explanations.
@@ -62,6 +63,11 @@ def register_advisor_tools(mcp: FastMCP) -> None:
         default) and returns concise, actionable advice. The advisor has no
         tool access — it reasons purely over what you provide.
 
+        This tool is distinct from ``team_dispatch`` role-based consults. Use it
+        as a lightweight checkpoint when the lead agent can package the relevant
+        session concern directly; use ``team_dispatch`` when the consult needs
+        MCP tools, bus-thread delivery, or a named dispatch role.
+
         **When to use** (advisor timing checkpoints):
 
         1. **Before substantive work** — you've gathered context and are about
@@ -71,6 +77,18 @@ def register_advisor_tools(mcp: FastMCP) -> None:
            tried, what failed, and the error. The advisor escapes your framing.
         3. **Before declaring done** — quick sanity check on completed work.
         4. **At a decision fork** — two approaches, unclear trade-offs.
+
+        **Session context packaging**:
+
+        - Cursor sessions can summarize or quote the relevant transcript/tool
+          evidence in ``context``.
+        - Web sessions should provide a compact "session concern bundle":
+          goal, evidence already seen, candidate approach, uncertainty, and the
+          exact decision requested. The advisor cannot inspect the browser/chat
+          transcript unless you include it.
+        - If the concern depends on live files, events, Cortex, RAG, or bus
+          history the advisor cannot fetch, gather that evidence first or use a
+          tool-capable consult path instead.
 
         **When NOT to use**:
 
@@ -82,9 +100,9 @@ def register_advisor_tools(mcp: FastMCP) -> None:
         Args:
             problem: The decision point, failure description, or trade-off to
                 evaluate. Be specific — include what was tried and what failed.
-            context: Optional additional context (file contents, error output,
-                prior approach description). Keep concise — the advisor budget
-                is small.
+            context: Optional additional context: file contents, error output,
+                prior approach description, or a compact session concern bundle.
+                Keep concise — the advisor budget is small.
             model: Model ID for the advisor. Default: ``anthropic/claude-opus-4-6``.
                 Must be a cloud model reachable via Stargate.
             max_tokens: Maximum tokens for the advisor response. Default: 1024.

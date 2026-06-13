@@ -49,10 +49,18 @@ def _dispatch_body(**overrides: Any) -> dict[str, Any]:
         "thread_id": "1558",
         "model": "cursor/composer-2.5",
         "dispatch_id": "disp-1",
+        "execution_id": "exec-disp-1",
         "message": "hello",
     }
     base.update(overrides)
     return base
+
+
+def test_dispatch_missing_execution_id_422(client: TestClient) -> None:
+    body = _dispatch_body()
+    del body["execution_id"]
+    resp = client.post("/api/v1/cursor/dispatch", json=body)
+    assert resp.status_code == 422
 
 
 def test_dispatch_untrusted_model_422(client: TestClient) -> None:
@@ -150,13 +158,15 @@ async def test_ledger_conflict_raises() -> None:
         thread_id="t1",
         model="cursor/composer-2.5",
         dispatch_id="d1",
+        execution_id="exec-d1",
         message="a",
     )
     fp = ledger.fingerprint(req)
     ledger.admit(
         req=req,
         fingerprint=fp,
-        execution_id=None,
+        execution_id=req.execution_id,
+        caller_agent=None,
         resolved_model="composer-2.5",
         admission=admission,
     )
@@ -164,7 +174,8 @@ async def test_ledger_conflict_raises() -> None:
         ledger.admit(
             req=req,
             fingerprint="other-fingerprint",
-            execution_id=None,
+            execution_id=req.execution_id,
+            caller_agent=None,
             resolved_model="composer-2.5",
             admission=admission,
         )
@@ -253,6 +264,7 @@ async def test_dispatch_implement_stub_degraded(
         thread_id="1589",
         model="cursor/composer-2.5",
         dispatch_id="disp-stub",
+        execution_id="exec-stub",
         message="---\ncontract: implement\n---\npacket",
         handoff_contract="implement",
     )
@@ -286,6 +298,7 @@ async def test_dispatch_implement_stub_degraded(
     assert "Implementing" in body
     assert emitted[0]["outcome"] == "degraded"
     assert emitted[0]["tool_call_count"] == 0
+    assert emitted[0]["execution_id"] == "exec-stub"
 
 
 @pytest.mark.asyncio
@@ -298,6 +311,7 @@ async def test_dispatch_implement_success_ok(
         thread_id="1590",
         model="cursor/composer-2.5",
         dispatch_id="disp-ok",
+        execution_id="exec-ok",
         message="---\ncontract: implement\n---\npacket",
         handoff_contract="implement",
     )
@@ -330,9 +344,83 @@ async def test_dispatch_implement_success_ok(
     assert "status: degraded" not in body
     assert emitted[0]["outcome"] == "ok"
     assert emitted[0]["tool_call_count"] == 2
+    assert emitted[0]["execution_id"] == "exec-ok"
     bus.terminate_dispatch.assert_awaited_once_with(
         thread_id="1590", terminal_status="completed"
     )
+
+
+@pytest.mark.asyncio
+async def test_dispatch_reply_targets_caller_agent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC6: bus replies target caller_agent when present."""
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    req = CursorDispatchRequest(
+        thread_id="1608",
+        model="cursor/composer-2.5",
+        dispatch_id="disp-caller",
+        execution_id="exec-caller",
+        caller_agent="claude-web",
+        message="hello",
+    )
+    bus = _mock_bus()
+
+    def _ok_outcome(**_kwargs: object) -> SdkRunOutcome:
+        return SdkRunOutcome(
+            body="done",
+            status="finished",
+            duration_ms=100,
+            tool_call_count=1,
+        )
+
+    monkeypatch.setattr(route_mod, "_run_sdk_sync", _ok_outcome)
+    monkeypatch.setattr(route_mod, "emit_sdk_worker_completed", lambda **_kwargs: None)
+
+    await route_mod._run_sdk_dispatch(
+        req=req,
+        source_repo=route_mod._CONFIG.source_repo,
+        bus=bus,
+    )
+
+    assert bus.reply.await_args.kwargs["to_agent"] == "claude-web"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_reply_defaults_to_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC6: bus replies default to dispatch when caller_agent absent."""
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    req = CursorDispatchRequest(
+        thread_id="1609",
+        model="cursor/composer-2.5",
+        dispatch_id="disp-default",
+        execution_id="exec-default",
+        message="hello",
+    )
+    bus = _mock_bus()
+
+    def _ok_outcome(**_kwargs: object) -> SdkRunOutcome:
+        return SdkRunOutcome(
+            body="done",
+            status="finished",
+            duration_ms=100,
+            tool_call_count=1,
+        )
+
+    monkeypatch.setattr(route_mod, "_run_sdk_sync", _ok_outcome)
+    monkeypatch.setattr(route_mod, "emit_sdk_worker_completed", lambda **_kwargs: None)
+
+    await route_mod._run_sdk_dispatch(
+        req=req,
+        source_repo=route_mod._CONFIG.source_repo,
+        bus=bus,
+    )
+
+    assert bus.reply.await_args.kwargs["to_agent"] == "dispatch"
 
 
 @pytest.mark.asyncio
@@ -345,6 +433,7 @@ async def test_dispatch_consult_zero_tool_calls_not_degraded(
         thread_id="1600",
         model="cursor/composer-2.5",
         dispatch_id="disp-consult",
+        execution_id="exec-consult",
         message="---\ncontract: consult\n---\npacket",
         handoff_contract="consult",
     )
@@ -388,6 +477,7 @@ async def test_dispatch_exception_posts_failure_turn_and_event(
         thread_id="1601",
         model="cursor/composer-2.5",
         dispatch_id="disp-fail",
+        execution_id="exec-fail",
         message="hello",
     )
     bus = _mock_bus()
@@ -419,6 +509,7 @@ async def test_dispatch_exception_posts_failure_turn_and_event(
     assert "FAILED" in call.kwargs["subject"]
     assert "CURSOR_SDK_DISPATCH" in call.kwargs["body"]
     assert failed[0]["error"] == "bridge died"
+    assert failed[0]["execution_id"] == "exec-fail"
 
 
 @patch(
@@ -449,6 +540,7 @@ async def test_dispatch_home_config_error_posts_bus_reply(
         thread_id="99",
         model="cursor/composer-2.5",
         dispatch_id="disp-home-fail",
+        execution_id="exec-home-fail",
         message="hello",
     )
     bus = _mock_bus()
@@ -484,6 +576,7 @@ async def test_dispatch_timeout_posts_failure_and_terminates(
         thread_id="1607",
         model="cursor/composer-2.5",
         dispatch_id="disp-timeout",
+        execution_id="exec-timeout",
         message="hello",
     )
     bus = _mock_bus()
@@ -523,6 +616,7 @@ async def test_dispatch_timeout_posts_failure_and_terminates(
     )
     assert timeout_events[0]["dispatch_id"] == "disp-timeout"
     assert timeout_events[0]["thread_id"] == "1607"
+    assert timeout_events[0]["execution_id"] == "exec-timeout"
 
 
 def test_active_work_busy_with_running_dispatch(client: TestClient) -> None:
@@ -531,12 +625,14 @@ def test_active_work_busy_with_running_dispatch(client: TestClient) -> None:
         thread_id="1",
         model="cursor/composer-2.5",
         dispatch_id="disp-1",
+        execution_id="exec-active-1",
         message="hello",
     )
     ledger.admit(
         req=req,
         fingerprint=ledger.fingerprint(req),
-        execution_id=None,
+        execution_id=req.execution_id,
+        caller_agent=None,
         resolved_model="composer-2.5",
         admission=CursorDispatchResponse(
             admitted=True,

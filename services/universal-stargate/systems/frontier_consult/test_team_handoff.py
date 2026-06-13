@@ -2978,7 +2978,7 @@ def test_t3b_cursor_sdk_generate_admits_and_dispatches_worker(
             "op": "generate",
             "role": "cursor-sdk",
             "dispatch_thread_id": "dispatch-thread-sdk-gen",
-            "messages": [{"role": "user", "content": "PONG"}],
+            "contract": "implement",
             "packet_path": _GOOD_PACKET,
         },
     )
@@ -3012,6 +3012,15 @@ def test_t3c_cursor_sdk_generate_consult_uses_message(
         _fake_msg,
     )
 
+    async def _fake_thread_read(**_kwargs: Any) -> str:
+        # Folded wire: consult context comes from the dispatch thread, not messages[].
+        return "Review this design."
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.route.read_latest_dispatch_thread_body",
+        _fake_thread_read,
+    )
+
     client = TestClient(
         _route_app(monkeypatch, tmp_path), raise_server_exceptions=False
     )
@@ -3021,7 +3030,7 @@ def test_t3c_cursor_sdk_generate_consult_uses_message(
             "op": "generate",
             "role": "cursor-sdk",
             "dispatch_thread_id": "dt-consult",
-            "messages": [{"role": "user", "content": "Review this design."}],
+            "contract": "light-bounded",
         },
     )
     assert resp.status_code == 202, resp.text
@@ -3053,7 +3062,7 @@ def test_t6a_cursor_sdk_seat_capability(
             "op": "generate",
             "role": "cursor-sdk",
             "dispatch_thread_id": "dt-t6a",
-            "messages": [],
+            "contract": "implement",
             "packet_path": _GOOD_PACKET,
         },
     )

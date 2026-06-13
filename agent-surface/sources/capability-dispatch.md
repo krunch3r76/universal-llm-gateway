@@ -80,6 +80,37 @@ To see the real per-dispatch resolution, read the `knob_resolution` /
 `member_knob_resolution` echo on the dispatch envelope, or call `resolve_dispatch()`.
 Never assume parity across providers.
 
+## Provider affordances — workflow options beyond knobs
+
+`CapabilityDispatch` describes the dispatch facet: surface, output limits, reasoning
+translation, and accepted request knobs. It is not the whole provider capability
+card. Some provider features change the workflow shape and must be surfaced as
+**provider affordances** alongside the descriptor instead of being forced into
+`team_dispatch` role language.
+
+| Provider | Affordance class | Current agent-facing guidance |
+|---|---|---|
+| Anthropic | Advisor-style strategic checkpoint | Existing MCP `advisor` is a lightweight consult over caller-packaged context. Provider-native Anthropic advisor is a dispatch affordance candidate for Anthropic API calls: Sonnet/Haiku executor with Opus advisor inside one Messages request. It is not a `team_dispatch` role. |
+| Anthropic | Remote MCP / server-side toolset | `remote_mcp=True` is Anthropic-only in the frontier dispatcher today; local MCP tool loops and provider-native MCP are different substrates. |
+| Anthropic | Prompt/context controls | Adapter already exposes `context_management`, compact/fast betas, and output config through `provider_options.anthropic`; cost/latency behavior belongs in provider-affordance docs, not only knob validation. |
+| OpenAI / xAI | Responses API state and reasoning | Responses requests use `reasoning.effort`, encrypted reasoning replay, `store=False`, and optional provider-native MCP for OpenAI. xAI remote MCP is currently rejected; xAI server-side built-ins are injected separately. |
+| Google / Gemini | Thinking visibility and long-context behavior | Gemini uses `thinkingConfig` with `includeThoughts` when reasoning is requested; thought summaries are observable enough to support termination-shadow triage. Treat this as a workflow affordance, not just a reasoning knob. |
+
+Agent rule: when an approach/session concern is mostly "is this the right path?",
+consider the lightweight MCP `advisor` checkpoint before dispatching a full role
+consult. Cursor seats can package transcript/tool evidence directly. Web seats must
+construct a compact session concern bundle in `advisor.context` because the MCP
+advisor cannot inspect the browser/chat transcript unless the caller includes it.
+Use `team_dispatch` when the consult needs a named role, MCP tools, bus-thread
+delivery, or durable handoff semantics. Use `panel_dispatch` when cross-family
+disagreement is the point.
+
+Audit target: maintain a provider-affordance card per API family (Anthropic,
+OpenAI/xAI Responses, Google Gemini) so agents see overlooked provider-native
+features before selecting a workflow. The card should answer: What can this
+provider do that changes orchestration? Is it implemented? How is it enabled?
+What are the cost/latency/accounting risks?
+
 ## Agent interface — lookup (read)
 
 ```python

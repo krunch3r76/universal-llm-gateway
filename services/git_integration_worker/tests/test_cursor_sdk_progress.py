@@ -45,12 +45,14 @@ def test_heartbeat_emits_and_bumps(monkeypatch: pytest.MonkeyPatch) -> None:
         thread_id="900",
         model="cursor/composer-2.5",
         dispatch_id="hb-1",
+        execution_id="exec-hb-1",
         message="x",
     )
     ledger.admit(
         req=real_req,
         fingerprint=ledger.fingerprint(real_req),
-        execution_id=None,
+        execution_id=real_req.execution_id,
+        caller_agent=None,
         resolved_model="composer-2.5",
         admission=CursorDispatchResponse(
             admitted=True,

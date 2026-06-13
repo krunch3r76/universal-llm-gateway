@@ -38,6 +38,7 @@ def _emit(event: Event) -> None:
 def FrontierSdkWorkerCompleted(  # noqa: N802
     dispatch_id: str,
     thread_id: str,
+    execution_id: str,
     duration_s: float,
     tool_call_count: int,
     result_bytes: int,
@@ -48,6 +49,7 @@ def FrontierSdkWorkerCompleted(  # noqa: N802
         payload={
             "dispatch_id": dispatch_id,
             "thread_id": thread_id,
+            "execution_id": execution_id,
             "duration_s": duration_s,
             "tool_call_count": tool_call_count,
             "result_bytes": result_bytes,
@@ -85,6 +87,7 @@ def FrontierSdkWorkerProgress(  # noqa: N802
 def FrontierSdkWorkerFailed(  # noqa: N802
     dispatch_id: str,
     thread_id: str,
+    execution_id: str,
     error: str,
 ) -> Event:
     return Event(
@@ -92,6 +95,7 @@ def FrontierSdkWorkerFailed(  # noqa: N802
         payload={
             "dispatch_id": dispatch_id,
             "thread_id": thread_id,
+            "execution_id": execution_id,
             "error": error,
         },
         scope="node",
@@ -121,6 +125,7 @@ def emit_sdk_worker_completed(
     *,
     dispatch_id: str,
     thread_id: str,
+    execution_id: str,
     duration_s: float,
     tool_call_count: int,
     result_bytes: int,
@@ -130,6 +135,7 @@ def emit_sdk_worker_completed(
         FrontierSdkWorkerCompleted(
             dispatch_id=dispatch_id,
             thread_id=thread_id,
+            execution_id=execution_id,
             duration_s=duration_s,
             tool_call_count=tool_call_count,
             result_bytes=result_bytes,
@@ -152,6 +158,7 @@ def emit_sdk_worker_completed(
 def FrontierSdkWorkerTimeout(  # noqa: N802
     dispatch_id: str,
     thread_id: str,
+    execution_id: str,
     resolved_model: str,
     timeout_s: float,
 ) -> Event:
@@ -160,6 +167,7 @@ def FrontierSdkWorkerTimeout(  # noqa: N802
         payload={
             "dispatch_id": dispatch_id,
             "thread_id": thread_id,
+            "execution_id": execution_id,
             "resolved_model": resolved_model,
             "timeout_s": timeout_s,
         },
@@ -171,6 +179,7 @@ def emit_sdk_worker_timeout(
     *,
     dispatch_id: str,
     thread_id: str,
+    execution_id: str,
     resolved_model: str,
     timeout_s: float,
 ) -> None:
@@ -178,6 +187,7 @@ def emit_sdk_worker_timeout(
         FrontierSdkWorkerTimeout(
             dispatch_id=dispatch_id,
             thread_id=thread_id,
+            execution_id=execution_id,
             resolved_model=resolved_model,
             timeout_s=timeout_s,
         )
@@ -195,12 +205,14 @@ def emit_sdk_worker_failed(
     *,
     dispatch_id: str,
     thread_id: str,
+    execution_id: str,
     error: str,
 ) -> None:
     _emit(
         FrontierSdkWorkerFailed(
             dispatch_id=dispatch_id,
             thread_id=thread_id,
+            execution_id=execution_id,
             error=error,
         )
     )

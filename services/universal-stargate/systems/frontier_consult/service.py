@@ -251,8 +251,6 @@ async def build_dispatch_body(
         "_knob_resolution_preview": _knob_resolution_preview,
         "output_contract": req.output_contract,
     }
-    if req.resolved_contract is not None:
-        pipeline_options["resolved_contract"] = req.resolved_contract
     if capability_preview is not None:
         pipeline_options["_capability_preview"] = capability_preview
     if req.role:

@@ -749,3 +749,100 @@ async def test_event_emitted_enriched(monkeypatch: pytest.MonkeyPatch) -> None:
     assert payload["cold_fetches"] == 1
     assert payload["elapsed_ms"] == 12
     assert payload["deadline_hit"] is False
+
+
+
+@pytest.mark.asyncio
+async def test_build_dispatch_body_omits_resolved_contract_from_pipeline_options(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """resolved_contract is dispatch metadata (outer body), not a runtime option.
+
+    Regression: api_role_generate's op=generate path set resolved_contract on the
+    request; build_dispatch_body leaked it into pipeline_options, which the
+    team-dispatch handler hard-rejects via reject_unknown_runtime_options. The fix
+    keeps it on the outer body only. See agent-bus:1731.
+    """
+
+    async def fake_hydrate(
+        agent: str, transcript_id: str | None = None, **_k: Any
+    ) -> HydrationBundle:
+        return _bundle(
+            AgentMeta(
+                default_model="openai/gpt-5.5",
+                allowed_models=[],
+                allowed_options=None,
+            ),
+        )
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.service.hydrate_agent",
+        fake_hydrate,
+    )
+
+    req = FrontierGenerateRequest(
+        messages=[{"role": "user", "content": "x"}],
+        role="reviewer",
+        dispatch_thread_id=_DISPATCH_THREAD,
+        output_contract="thread",
+        op="to_thread",
+        resolved_contract="light-bounded",
+        # target_thread omitted so verify_thread_writable is skipped
+        # (guard is output_contract == "thread" and target_thread).
+    )
+    body = await build_dispatch_body(req)
+
+    assert body["resolved_contract"] == "light-bounded"
+    assert "resolved_contract" not in body["pipeline_options"]
+    assert body["pipeline_options"]["output_contract"] == "thread"
+
+
+@pytest.mark.asyncio
+async def test_build_dispatch_body_pipeline_options_within_handler_accepted_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Class guard: emitted pipeline_options must stay within the handler's
+    accepted runtime-option key set after route._dispatch pops the response-only
+    preview keys. Catches the whole leak class, not just resolved_contract.
+    See agent-bus:1731.
+    """
+    from systems.pipeline.core.handlers.frontier_dispatch.handler import (
+        FrontierDispatchHandler,
+    )
+
+    async def fake_hydrate(
+        agent: str, transcript_id: str | None = None, **_k: Any
+    ) -> HydrationBundle:
+        return _bundle(
+            AgentMeta(
+                default_model="openai/gpt-5.5",
+                allowed_models=[],
+                allowed_options=None,
+            ),
+        )
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.service.hydrate_agent",
+        fake_hydrate,
+    )
+
+    req = FrontierGenerateRequest(
+        messages=[{"role": "user", "content": "x"}],
+        role="reviewer",
+        dispatch_thread_id=_DISPATCH_THREAD,
+        output_contract="thread",
+        op="to_thread",
+        resolved_contract="light-bounded",
+    )
+    body = await build_dispatch_body(req)
+    po = dict(body["pipeline_options"])
+    # Replay route._dispatch sanitization: response-only previews are popped
+    # before the body is forwarded to the pipeline.
+    po.pop("_knob_resolution_preview", None)
+    po.pop("_capability_preview", None)
+    leaked = (
+        set(po) - {"stream"} - FrontierDispatchHandler._ACCEPTED_RUNTIME_OPTION_KEYS
+    )
+    assert leaked == set(), (
+        f"pipeline_options leaked non-accepted keys: {sorted(leaked)}"
+    )

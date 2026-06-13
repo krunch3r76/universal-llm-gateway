@@ -46,8 +46,10 @@ async def dispatch_cursor_sdk_worker(
     request_id: str,
     thread_id: str,
     model: str,
+    execution_id: str,
     packet_path: str,
     handoff_contract: str,
+    caller_agent: str | None = None,
     prompt_preamble: str | None = None,
     model_knobs: dict[str, str] | None = None,
 ) -> tuple[bool, str | None]:
@@ -58,9 +60,12 @@ async def dispatch_cursor_sdk_worker(
         "model": model,
         "packet_path": packet_path,
         "dispatch_id": dispatch_id,
+        "execution_id": execution_id,
         "handoff_contract": handoff_contract,
         "prompt_preamble": prompt_preamble,
     }
+    if caller_agent is not None:
+        payload["caller_agent"] = caller_agent
     if model_knobs:
         payload["model_knobs"] = model_knobs
     try:
@@ -93,6 +98,8 @@ async def dispatch_cursor_sdk_worker_message(
     thread_id: str,
     model: str,
     message: str,
+    execution_id: str,
+    caller_agent: str | None = None,
 ) -> tuple[bool, str | None]:
     """POST ``/api/v1/cursor/dispatch`` with ``message`` (consult path)."""
     dispatch_id = f"{request_id}-{uuid.uuid4().hex[:8]}"
@@ -101,7 +108,10 @@ async def dispatch_cursor_sdk_worker_message(
         "model": model,
         "message": message,
         "dispatch_id": dispatch_id,
+        "execution_id": execution_id,
     }
+    if caller_agent is not None:
+        payload["caller_agent"] = caller_agent
     try:
         async with make_async_client(
             worker_base_url(), timeout=_WORKER_TIMEOUT

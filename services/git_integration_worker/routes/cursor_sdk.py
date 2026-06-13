@@ -248,6 +248,7 @@ async def _run_sdk_dispatch_gated(
     source_repo: Path,
     bus: CursorBusClient,
 ) -> None:
+    reply_to = req.caller_agent or "dispatch"
     outer_timeout_s = _SDK_TIMEOUT_S + _SDK_TIMEOUT_BUFFER_S
     try:
         prompt = _resolve_prompt(req, source_repo)
@@ -269,6 +270,7 @@ async def _run_sdk_dispatch_gated(
             emit_sdk_worker_timeout(
                 dispatch_id=req.dispatch_id,
                 thread_id=req.thread_id,
+                execution_id=req.execution_id,
                 resolved_model=req.model,
                 timeout_s=outer_timeout_s,
             )
@@ -281,7 +283,7 @@ async def _run_sdk_dispatch_gated(
             )
             await bus.reply(
                 thread_id=req.thread_id,
-                to_agent="dispatch",
+                to_agent=reply_to,
                 from_agent="cursor-sdk",
                 subject=f"cursor-sdk dispatch {req.dispatch_id} FAILED (timeout)",
                 body=f"```json\n{json.dumps(env, indent=2)}\n```",
@@ -309,6 +311,7 @@ async def _run_sdk_dispatch_gated(
         emit_sdk_worker_completed(
             dispatch_id=req.dispatch_id,
             thread_id=req.thread_id,
+            execution_id=req.execution_id,
             duration_s=outcome.duration_ms / 1000.0,
             tool_call_count=outcome.tool_call_count,
             result_bytes=len(outcome.body.encode("utf-8")),
@@ -316,7 +319,7 @@ async def _run_sdk_dispatch_gated(
         )
         bus_result = await bus.reply(
             thread_id=req.thread_id,
-            to_agent="dispatch",
+            to_agent=reply_to,
             from_agent="cursor-sdk",
             subject=f"cursor-sdk dispatch {req.dispatch_id}",
             body=body,
@@ -346,7 +349,7 @@ async def _run_sdk_dispatch_gated(
         )
         await bus.reply(
             thread_id=req.thread_id,
-            to_agent="dispatch",
+            to_agent=reply_to,
             from_agent="cursor-sdk",
             subject=f"cursor-sdk dispatch {req.dispatch_id} FAILED (home/auth)",
             body=f"```json\n{json.dumps(env, indent=2)}\n```",
@@ -362,6 +365,7 @@ async def _run_sdk_dispatch_gated(
         emit_sdk_worker_failed(
             dispatch_id=req.dispatch_id,
             thread_id=req.thread_id,
+            execution_id=req.execution_id,
             error=str(exc),
         )
         env = error_envelope(
@@ -371,7 +375,7 @@ async def _run_sdk_dispatch_gated(
         )
         await bus.reply(
             thread_id=req.thread_id,
-            to_agent="dispatch",
+            to_agent=reply_to,
             from_agent="cursor-sdk",
             subject=f"cursor-sdk dispatch {req.dispatch_id} FAILED",
             body=f"```json\n{json.dumps(env, indent=2)}\n```",
@@ -442,7 +446,8 @@ async def cursor_dispatch(
             ledger.admit,
             req=req,
             fingerprint=fingerprint,
-            execution_id=getattr(req, "execution_id", None),
+            execution_id=req.execution_id,
+            caller_agent=req.caller_agent,
             resolved_model=config.model_id,
             admission=admission,
         )

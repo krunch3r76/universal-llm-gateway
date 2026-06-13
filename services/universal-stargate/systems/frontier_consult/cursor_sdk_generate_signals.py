@@ -77,6 +77,7 @@ def emit_sdk_worker_outcome(
         FrontierSdkWorkerDispatchFailed(
             request_id=request_id,
             thread_id=thread_id,
+            execution_id=execution_id,
             error=worker_warning or "worker_dispatch: failed",
         )
     )
