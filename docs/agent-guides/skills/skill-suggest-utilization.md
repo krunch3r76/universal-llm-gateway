@@ -58,7 +58,7 @@ Track slugs as you fetch bodies; refresh `loaded` after each load.
 
 ## How to load suggested bodies
 
-1. Take `id`, `slug`, `uri`, and `digest` from each suggestion (never invent a path from slug alone).
+1. Take `id`, `slug`, `source_uri`, and `digest` from each suggestion (never invent a path from slug alone).
 2. Resolve body by `source_uri`:
 
 | `source_uri` pattern | Load |

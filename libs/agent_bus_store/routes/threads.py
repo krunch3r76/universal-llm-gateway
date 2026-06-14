@@ -9,11 +9,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from ..auth import require_token
 from ..db import (
+    SlugExists,
     ThreadHasReadTurns,
     admit_dispatch,
     close_thread,
     create_thread,
     create_thread_with_turn,
+    create_turn,
     terminate_dispatch,
     delete_thread,
     get_thread,
@@ -40,6 +42,8 @@ from ..turns_models import (
     ThreadWithTurnCreate,
     ThreadWithTurnCreated,
     TurnCreated,
+    TurnSendCreate,
+    TurnSendCreated,
     post_continuation_misuse_error,
     turn_body_limit_error,
 )
@@ -298,6 +302,164 @@ async def create_thread_with_turn_route(
         turn=TurnCreated(
             id=turn_id,
             thread=thread_row["id"],
+            turn_number=turn_number,
+            created_at=datetime.fromisoformat(ts),
+        ),
+    )
+
+
+def _send_xor_violation(*, provided: list[str]) -> dict[str, object]:
+    if provided:
+        message = (
+            "thread and new_slug are mutually exclusive — provide exactly one"
+        )
+    else:
+        message = (
+            "exactly one of thread or new_slug is required — neither was provided"
+        )
+    return {
+        "error": message,
+        "reason": "send_xor_violation",
+        "provided": provided,
+        "required": "exactly_one_of_thread_or_new_slug",
+    }
+
+
+@router.post(
+    "/threads/send",
+    status_code=status.HTTP_201_CREATED,
+    response_model=TurnSendCreated,
+)
+async def send_route(body: TurnSendCreate) -> TurnSendCreated:
+    """Unified send: create new thread (new_slug) OR continue existing (thread)."""
+    has_new_slug = body.new_slug is not None
+    has_thread = bool(body.thread)
+    if has_new_slug and has_thread:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=_send_xor_violation(provided=["thread", "new_slug"]),
+        )
+    if not has_new_slug and not has_thread:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=_send_xor_violation(provided=[]),
+        )
+    if error_detail := turn_body_limit_error(
+        body.body,
+        allow_long_body=body.allow_long_body,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=error_detail,
+        )
+    att_dicts = [a.model_dump() for a in body.attachments] if body.attachments else None
+
+    if has_new_slug:
+        if body.after_turn is not None and body.after_turn > 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "error": "after_turn > 0 is invalid on the new_slug (new-thread) path",
+                    "reason": "after_turn_not_valid_on_new_thread",
+                },
+            )
+        try:
+            thread_row, turn_id, ts, turn_number = create_thread_with_turn(
+                slug=body.new_slug,
+                summary=body.summary,
+                from_agent=body.from_agent,
+                to_agent=body.to,
+                subject=body.subject,
+                body=body.body,
+                status=body.status,
+                after_turn=0,
+                attachments=att_dicts,
+                tags=body.tags or [],
+                lifecycle_state=body.lifecycle_state,
+                strict_slug=True,
+            )
+        except SlugExists as e:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "error": "slug_exists",
+                    "slug": e.slug,
+                    "existing_thread_id": e.existing_thread_id,
+                    "message": (
+                        f"A thread with slug {e.slug!r} already exists "
+                        f"(thread {e.existing_thread_id}). "
+                        "Use send(thread=<id>, ...) to continue it or choose "
+                        "a different new_slug."
+                    ),
+                },
+            )
+        except UnreadTurnsExist as e:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "error": "unread_turns_exist",
+                    "message": "Read all turns addressed to you before posting",
+                    "unread_turns": e.unread,
+                },
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        return TurnSendCreated(
+            send_path="new_thread",
+            thread=_thread_detail(thread_row),
+            turn=TurnCreated(
+                id=turn_id,
+                thread=thread_row["id"],
+                turn_number=turn_number,
+                created_at=datetime.fromisoformat(ts),
+            ),
+        )
+
+    if body.lifecycle_state is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": (
+                    "lifecycle_state is only valid on the new_slug (new-thread) path"
+                ),
+                "reason": "lifecycle_state_not_valid_on_continue",
+            },
+        )
+
+    thread_id = normalize_thread_id(body.thread)
+    try:
+        thread_row, turn_id, ts, turn_number = create_turn(
+            thread_id=thread_id,
+            from_agent=body.from_agent,
+            to_agent=body.to,
+            subject=body.subject,
+            body=body.body,
+            status=body.status,
+            after_turn=body.after_turn,
+            attachments=att_dicts,
+            close=body.close,
+            mark_read=body.mark_read,
+        )
+    except UnreadTurnsExist as e:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": "unread_turns_exist",
+                "message": "Read all turns addressed to you before posting",
+                "unread_turns": e.unread,
+            },
+        )
+    except KeyError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Thread {thread_id} not found",
+        )
+    return TurnSendCreated(
+        send_path="continue",
+        thread=_thread_detail(thread_row),
+        turn=TurnCreated(
+            id=turn_id,
+            thread=thread_id,
             turn_number=turn_number,
             created_at=datetime.fromisoformat(ts),
         ),

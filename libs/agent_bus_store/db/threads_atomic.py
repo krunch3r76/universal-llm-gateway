@@ -22,6 +22,7 @@ def create_thread_with_turn(
     attachments: list[dict[str, Any]] | None = None,
     tags: list[str] | None = None,
     lifecycle_state: str | None = None,
+    strict_slug: bool = False,
 ) -> tuple[dict[str, Any], int, str, int]:
     """Atomically create a thread and its first turn in one transaction.
 
@@ -32,10 +33,17 @@ def create_thread_with_turn(
     lifecycle_state: when provided, transitions the new thread into that
     state as part of the same transaction and emits the coordination event.
     """
-    from .turns import UnreadTurnsExist, _insert_attachments
+    from .turns import SlugExists, UnreadTurnsExist, _insert_attachments
 
     ts = now()
     with connect() as conn:
+        if strict_slug:
+            existing = conn.execute(
+                "SELECT id FROM threads WHERE slug = ? LIMIT 1", (slug,)
+            ).fetchone()
+            if existing is not None:
+                raise SlugExists(slug, existing["id"])
+
         thread_id = _next_auto_id(conn)
         conn.execute(
             "INSERT INTO threads (id, slug, summary, created_at, updated_at) "

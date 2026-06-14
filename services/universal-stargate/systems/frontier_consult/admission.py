@@ -312,6 +312,11 @@ def resolve_cursor_sdk_handoff_seat(
     Deprecated at the HTTP handoff surface — ``op=handoff,seat=cursor-sdk``
     normalizes to ``dispatch_cursor_sdk_generate``. Retained for unit tests.
 
+    This function returns the bare ``"cursor-sdk"`` recipient (not the
+    per-dispatch scoped form ``cursor-sdk:dispatch:{execution_id}``).
+    Production bus recipients are scoped in ``cursor_sdk_generate.py`` after
+    ``execution_id`` is minted — this path is NOT on that code route.
+
     Admission predicate (FOL):
       admit(seat) ⟺ profile.delivery == auto
                  ∧ family == cursor

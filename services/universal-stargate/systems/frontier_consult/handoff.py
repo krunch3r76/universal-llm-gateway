@@ -575,6 +575,7 @@ async def create_handoff_thread(
     *,
     request_id: str,
     to_agent: str,
+    tag_agent: str | None = None,
     subject: str,
     pointer_body: str,
     caller_agent: str | None,
@@ -589,6 +590,11 @@ async def create_handoff_thread(
     (or ALLOW_UNSET_AGENT_BUS_TOKEN=true local bypass); if absent and no bypass,
     raise FrontierEndpointError(field="thread", status_code=503).
     Transport errors are translated to 502/503 FrontierEndpointError.
+
+    ``tag_agent`` overrides the ``agent:*`` thread tag when the turn recipient
+    (``to_agent``) is a scoped per-dispatch id (e.g. ``cursor-sdk:dispatch:{uuid}``)
+    but the thread should remain filterable by family slug (e.g. ``cursor-sdk``).
+    Defaults to ``to_agent`` when not supplied.
     """
     token = os.getenv("AGENT_BUS_TOKEN", "").strip()
     allow_unset = os.getenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "").strip().lower() in (
@@ -615,7 +621,7 @@ async def create_handoff_thread(
     contract_tag = f"contract:{handoff_contract}"
     if tags is None:
         effective_tags: list[str] = [
-            f"agent:{to_agent}",
+            f"agent:{tag_agent or to_agent}",
             "type:handoff",
             contract_tag,
         ]

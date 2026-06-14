@@ -10,6 +10,17 @@ from .connection import connect, now
 from .threads import _next_auto_id
 
 
+class SlugExists(Exception):  # noqa: N818
+    """Raised when strict_slug=True and the requested slug is already taken."""
+
+    def __init__(self, slug: str, existing_thread_id: str) -> None:
+        self.slug = slug
+        self.existing_thread_id = existing_thread_id
+        super().__init__(
+            f"Slug {slug!r} already exists on thread {existing_thread_id}"
+        )
+
+
 class UnreadTurnsExist(Exception):  # noqa: N818
     """Raised when after_turn check finds unread turns addressed to the poster."""
 
@@ -457,3 +468,51 @@ def delete_turn(turn_id: int, *, force: bool = False) -> dict[str, Any]:
         "thread": thread_id,
         "turn_number": turn_number,
     }
+
+
+def create_turn(
+    *,
+    thread_id: str,
+    from_agent: str,
+    to_agent: str,
+    subject: str,
+    body: str,
+    status: str = "open",
+    after_turn: int | None = None,
+    attachments: list[dict[str, Any]] | None = None,
+    close: bool = False,
+    mark_read: bool = False,
+) -> tuple[dict[str, Any], int, str, int]:
+    """Post a turn to an existing thread for POST /threads/send continue path.
+
+    Raises KeyError when thread_id does not exist.
+    """
+    from .threads import get_thread_with_links, normalize_thread_id
+    from .threads_atomic import close_thread
+
+    thread_id = normalize_thread_id(thread_id)
+    if get_thread_with_links(thread_id) is None:
+        raise KeyError(thread_id)
+
+    effective_after = after_turn if after_turn and after_turn > 0 else None
+    turn_id, ts, turn_number = insert_turn(
+        thread=thread_id,
+        from_agent=from_agent,
+        to_agent=to_agent,
+        subject=subject,
+        body=body,
+        status=status,
+        after_turn=effective_after,
+        attachments=attachments,
+    )
+
+    if mark_read:
+        mark_turn_read(turn_id)
+
+    if close:
+        close_thread(thread_id, mark_all_read=True)
+
+    thread_row = get_thread_with_links(thread_id)
+    if thread_row is None:
+        raise KeyError(thread_id)
+    return thread_row, turn_id, ts, turn_number

@@ -1057,6 +1057,9 @@ tools:
   mandate_safety: write
   cache_priority: always_loaded
   introduced: 2026-05-22
+  deprecated_at: 2026-06-14
+  remove_at: "2026-09-01"
+  replacement: agent_bus_send
 
 - canonical_name: agent_bus_post
   domain: agent_bus
@@ -1087,6 +1090,67 @@ tools:
   mandate_safety: write
   cache_priority: on_demand
   introduced: 2026-05-22
+  deprecated_at: 2026-06-14
+  remove_at: "2026-09-01"
+  replacement: agent_bus_send
+
+- canonical_name: agent_bus_send
+  domain: agent_bus
+  operation: send
+  dispatcher_call_shape:
+    tool: agent_bus
+    dispatch_key: op
+    dispatch_value: send
+  flat_call_shape:
+    tool: agent_bus_send
+    substrate_qualified: user-vortex__agent_bus_send
+  fol_descriptor: |
+    ∀ args: (new_slug ∈ args XOR thread ∈ args) ∧ from_agent ∈ args ∧ to ∈ args
+      ⟹ TurnSendCreated ∧ send_path ∈ {new_thread, continue}.
+    new_slug ∈ args ∧ slug_collision ⟹ 409 slug_exists.
+    ¬(new_slug ∈ args XOR thread ∈ args) ⟹ 400 send_xor_violation.
+    Mutating. ¬idempotent. Replaces post + reply (post/reply remove 2026-09-01).
+    See agent_skill:agent_bus.
+  json_schema:
+    type: object
+    properties:
+      new_slug:
+        type: string
+        description: "Human label for NEW thread. Mutually exclusive with thread. Slug uniqueness enforced (409 on collision)."
+      thread:
+        type: string
+        description: "ID of EXISTING thread to continue. Mutually exclusive with new_slug."
+      to: {type: string}
+      subject: {type: string}
+      body: {type: string}
+      from_agent:
+        type: string
+        description: "Seat authoring the turn (e.g. cursor, claude-web). No default."
+      summary:
+        type: string
+        description: "Thread summary (new_slug path only; ignored on continue path)."
+      tags: {type: array, items: {type: string}}
+      lifecycle_state:
+        type: string
+        description: "Bus lifecycle (new_slug path only; 400 on continue path)."
+      after_turn:
+        type: integer
+        description: "Concurrency guard. 0 = skip (default). Must be 0 or absent on new_slug path."
+      status: {type: string}
+      mark_read: {type: boolean}
+      close:
+        type: boolean
+        description: "Close thread after posting (continue path only)."
+      allow_long_body: {type: boolean}
+    required: [to, subject, body, from_agent]
+    oneOf:
+      - required: [new_slug]
+      - required: [thread]
+  skill_uri: agent_skill:agent_bus
+  seat_visibility: [mcp, mcp_claude]
+  mandate_safety: write
+  cache_priority: always_loaded
+  introduced: 2026-06-14
 
   # ─── domain: agent_bus_read ──────────────────────────────────────────────────
   # Read-only projection of the agent_bus surface for the Claude/web seat only.

@@ -57,6 +57,11 @@ async def dispatch_cursor_sdk_generate(
         role, model=model, request_id=request_id
     )
     execution_id = str(uuid.uuid4())
+    # Scope the bus recipient to this dispatch so `fetch-unread --to cursor-sdk`
+    # returns empty and sibling dispatches cannot contaminate each other's inbox
+    # (structurally safe at CURSOR_SDK_DISPATCH_CONCURRENCY>1).
+    # Thread TAG remains family-level "cursor-sdk" — passed as tag_agent below.
+    to_agent = f"cursor-sdk:dispatch:{execution_id}"
     thread_subject = subject or f"cursor-sdk generate — {execution_id[:8]}"
 
     if contract == "implement" and packet_path is None:
@@ -120,6 +125,7 @@ async def dispatch_cursor_sdk_generate(
         thread_id = await create_handoff_thread(
             request_id=request_id,
             to_agent=to_agent,
+            tag_agent="cursor-sdk",
             subject=thread_subject,
             pointer_body=pointer_body,
             caller_agent=caller_agent,
@@ -181,7 +187,9 @@ async def dispatch_cursor_sdk_generate(
 
     warnings: list[str] = []
     if not worker_ok:
-        await post_worker_failure_turn(thread_id=thread_id, request_id=request_id)
+        await post_worker_failure_turn(
+            thread_id=thread_id, request_id=request_id, to_agent=to_agent
+        )
         if worker_warning:
             warnings.append(worker_warning)
 

@@ -321,6 +321,40 @@ class ThreadWithTurnCreated(BaseModel):
     turn: TurnCreated
 
 
+class TurnSendCreate(BaseModel):
+    """Unified send payload — POST /threads/send.
+
+    Exactly one of new_slug (new-thread path) or thread (continue path) required.
+    Both or neither → 400 send_xor_violation (validated in route, not here).
+    """
+
+    model_config = {"populate_by_name": True}
+
+    new_slug: str | None = None
+    thread: str | None = None
+    from_agent: AgentName = Field(alias="from")
+    to: AgentName
+    subject: str
+    body: str
+    allow_long_body: bool = False
+    summary: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    lifecycle_state: str | None = None
+    after_turn: int | None = None
+    status: TurnStatus = TurnStatus.OPEN
+    mark_read: bool = False
+    close: bool = False
+    attachments: list[AttachmentCreate] | None = None
+
+
+class TurnSendCreated(BaseModel):
+    """Unified response for POST /threads/send."""
+
+    send_path: Literal["new_thread", "continue"]
+    thread: ThreadDetail
+    turn: TurnCreated
+
+
 class ThreadClose(BaseModel):
     """Atomic close: marks all turns read + sets status to closed."""
 

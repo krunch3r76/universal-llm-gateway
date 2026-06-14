@@ -42,6 +42,7 @@ PARTITION: dict[str, list[str]] = {
         "agent_skill:architecture-invariants",
         "agent_skill:boot-execution-discipline",
         "agent_skill:case-evidence-retrieval",
+        "agent_skill:coding-workflow",
         "agent_skill:cortex-entity-restructure",
         "agent_skill:cortex-orientation",
         "agent_skill:cortex-provenance-discipline",

@@ -16,6 +16,7 @@ from ..seat_applicability import (
     canonical_seat_or_422,
     seat_capabilities_json,
 )
+from ._skill_index import index_envelope_fields
 
 _DEPRECATED_EXCLUDE = lifecycle_not_value_sql_predicate("deprecated")
 
@@ -27,7 +28,7 @@ _TOKEN_SPLIT_RE = re.compile(r"[^a-z0-9_+.-]+")
 # contiguous multi-token phrase match. Routing-meaningful tokens (handoff,
 # dispatch, packet, consensus, steelman, …) are deliberately NOT generic.
 _GENERIC_SINGLETON_MATCH_TERMS = frozenset(
-    {"lead", "seat", "consult", "review", "agent", "skill"}
+    {"lead", "seat", "consult", "review", "agent", "skill", "decision"}
 )
 
 STOPWORDS = frozenset(
@@ -170,24 +171,43 @@ def build_loaded_set(loaded: list[str]) -> set[str]:
 
 _SCHEME_RE = re.compile(r"^[a-z][a-z0-9+.-]*:/{0,2}", re.IGNORECASE)
 
+# Directory-layout skills store their body at `…/<slug>/SKILL.md` (or README.md);
+# the filename stem is a fixed convention marker, NOT the slug (friction 17551).
+_DIR_LAYOUT_FILE_STEMS = frozenset({"skill", "readme"})
+
 
 def slug_from_source_uri(source_uri: str | None) -> str | None:
     """Canonical bare slug from source_uri stem (§1 — not entity name).
 
     Robust to scheme- or path-carrying source_uris (`cortex://…`,
     `workspaces://…/skills/…`, malformed `cortex:agent-skills/…`): strip any
-    scheme, reduce to the final path segment, drop the `.md` suffix. The slug
-    MUST stay a bare token — `run_stage_a` assembles `cortex://agent-skills/{slug}.md`
-    unconditionally, so a slug that still carries a scheme/path double-schemes
-    the uri and 404s any consumer that fetches the body (thread 1876 gap table).
+    scheme, then derive the slug from the path tail. Two layouts:
+
+    * Flat-file skill — `…/<slug>.md` → slug is the filename stem (thread 1876).
+    * Directory-layout skill — `…/<slug>/SKILL.md` (or `README.md`) → the stem is
+      a convention marker; the slug is the **parent directory** (friction 17551).
+      Without this every directory-layout skill collapses to slug "SKILL" and the
+      assembled uris collide on a single `cortex://agent-skills/SKILL.md`.
+
+    The slug MUST stay a bare token — `run_stage_a` uses it for load-state
+    dedup (`_is_loaded`) and as the entry `slug` identity field. The suggestion
+    uri is NO LONGER slug-derived: SF1 (todo:skill-suggest-authoritative-uri)
+    routes provenance through `index_envelope_fields(row)` →
+    `{source_uri, digest}`, dropping the old `cortex://agent-skills/{slug}.md`
+    assembly that 404'd on directory-layout skills (thread 1876 gap table).
     """
     if not source_uri:
         return None
-    s = _SCHEME_RE.sub("", str(source_uri).strip())
-    s = s.rsplit("/", 1)[-1]
-    if s.endswith(".md"):
-        s = s[:-3]
-    return s or None
+    s = _SCHEME_RE.sub("", str(source_uri).strip()).strip("/")
+    if not s:
+        return None
+    segments = [seg for seg in s.split("/") if seg]
+    stem = segments[-1]
+    if stem.endswith(".md"):
+        stem = stem[:-3]
+    if stem.lower() in _DIR_LAYOUT_FILE_STEMS and len(segments) >= 2:
+        return segments[-2] or None
+    return stem or None
 
 
 def tokenize_text(text: str) -> set[str]:
@@ -292,15 +312,21 @@ def _has_contiguous_phrase_match(term: str, normalized_context: str) -> bool:
 
 
 def _is_specific_term(term: str) -> bool:
-    """A matched term is specific iff it carries ≥1 non-generic token.
+    """A matched term is specific iff it carries only non-generic tokens.
 
     `_matched_terms` counts a multi-token trigger term whenever ALL its tokens
-    appear anywhere in context (subset, NOT contiguous). So an all-generic
-    phrase like 'lead seat' would otherwise masquerade as a specific match on
-    incidental prose. Such phrases must clear the gate only via the CONTIGUOUS
-    phrase rescue (`_has_contiguous_phrase_match`), never as a specific term."""
+    appear anywhere in context (subset, NOT contiguous). Multi-token terms
+    require EVERY token to be non-generic — otherwise a phrase like
+    'decision point' would masquerade as specific on the incidental token
+    'point' while 'decision' is generic prose. Such mixed phrases must clear
+    the gate only via contiguous phrase rescue (`_has_contiguous_phrase_match`).
+    Single-token terms pass iff that token is not in the generic singleton set."""
     tokens = [t for t in _TOKEN_SPLIT_RE.split(term.lower()) if t]
-    return any(t not in _GENERIC_SINGLETON_MATCH_TERMS for t in tokens)
+    if not tokens:
+        return False
+    if len(tokens) >= 2:
+        return all(t not in _GENERIC_SINGLETON_MATCH_TERMS for t in tokens)
+    return tokens[0] not in _GENERIC_SINGLETON_MATCH_TERMS
 
 
 def _passes_precision_gate(score: _CandidateScore) -> bool:
@@ -383,7 +409,20 @@ def run_stage_a(
     conversation_context: str | None,
     limit: int,
 ) -> dict[str, Any]:
-    """Pure deterministic Stage-A engine (§3)."""
+    """Pure deterministic Stage-A engine (§3).
+
+    degraded_skills scope: captures only entities where slug_from_source_uri()
+    returned None — null, empty, or scheme-only source_uri (e.g. bare "cortex://",
+    "workspaces://"). Skills with a structurally valid source_uri pointing at a
+    missing or unreadable file are NOT captured here: they receive a non-None slug,
+    pass through scoring normally, and surface in suggestions with digest=None.
+    Consumers needing a complete view of unreachable skills must check both signals:
+      degraded_skills  — source_uri-derivation failures (slug underivable)
+      null digests in suggestions — body-unresolvable (URI valid, file missing/404)
+    This two-signal design is intentional and test-backed: offline tests cannot
+    resolve files, so body-unresolvable skills are contractually expected in
+    suggestions with digest=None rather than in degraded_skills.
+    """
     ctx = (conversation_context or "").strip()
     if not ctx:
         return {
@@ -396,6 +435,7 @@ def run_stage_a(
             "count": 0,
             "reason": "insufficient_context",
             "stage_a_candidates": [],
+            "degraded_skills": [],
         }
 
     loaded_set = build_loaded_set(loaded)
@@ -407,10 +447,20 @@ def run_stage_a(
     scored_loaded: list[dict[str, Any]] = []
     scored_new: list[dict[str, Any]] = []
     loaded_echo: list[str] = []
+    degraded_skills: list[dict[str, Any]] = []
 
     for row in rows:
-        slug = slug_from_source_uri(row.get("source_uri"))
+        source_uri_val = row.get("source_uri")
+        slug = slug_from_source_uri(source_uri_val)
         if not slug:
+            degraded_skills.append({
+                "id": str(row.get("id") or ""),
+                "name": str(row.get("name") or ""),
+                "source_uri": source_uri_val,
+                "skill_category": row.get("skill_category") or "",
+                "degraded": True,
+                "reason": "source_uri_null" if not source_uri_val else "source_uri_unparseable",
+            })
             continue
         entity_id = str(row.get("id") or "")
         scored = _score_candidate(row, ctx_tokens, normalized_context)
@@ -418,10 +468,11 @@ def run_stage_a(
             continue
         matched = list(scored.matched_terms)
         trigger_terms = _decode_term_list(row.get("trigger_match_terms_json"))
+        envelope = index_envelope_fields(row)
         entry = {
             "id": entity_id,
             "slug": slug,
-            "uri": f"cortex://agent-skills/{slug}.md",
+            **envelope,
             "score": scored.score,
             "trigger_match": matched[:5],
             "reason": "matches: " + ", ".join(matched[:5]),
@@ -459,8 +510,9 @@ def run_stage_a(
         "loaded_echo": loaded_echo,
         "omitted": omitted,
         "ranker_status": "disabled",
-        "degraded": False,
+        "degraded": bool(degraded_skills),
         "agent": canonical_agent,
         "count": len(suggestions),
         "stage_a_candidates": scored_new,
+        "degraded_skills": degraded_skills,
     }

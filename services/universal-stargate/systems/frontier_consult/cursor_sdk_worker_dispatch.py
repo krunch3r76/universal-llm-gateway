@@ -134,7 +134,9 @@ async def dispatch_cursor_sdk_worker_message(
     return True, None
 
 
-async def post_worker_failure_turn(*, thread_id: str, request_id: str) -> None:
+async def post_worker_failure_turn(
+    *, thread_id: str, request_id: str, to_agent: str = "cursor-sdk"
+) -> None:
     """Best-effort failure turn when worker dispatch does not admit."""
     token = os.getenv("AGENT_BUS_TOKEN", "").strip()
     allow_unset = os.getenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "").strip().lower() in (
@@ -147,7 +149,7 @@ async def post_worker_failure_turn(*, thread_id: str, request_id: str) -> None:
     payload = {
         "thread": thread_id,
         "from": "dispatch",
-        "to": "cursor-sdk",
+        "to": to_agent,
         "subject": f"cursor-sdk worker dispatch failed ({request_id})",
         "body": (
             "Automated cursor-sdk worker dispatch failed (worker unreachable or "

@@ -93,3 +93,33 @@ def structured_route_guard(result: dict[str, Any]) -> dict[str, Any] | None:
         if key != "message":
             envelope[key] = value
     return envelope
+
+
+def reconcile_send_arguments(
+    parsed: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Reconcile ``from`` → ``from_agent`` for the MCP ``send`` dispatch surface."""
+    args = dict(parsed)
+    if "from" in args:
+        alias_value = args.pop("from")
+        args.setdefault("from_agent", alias_value)
+    return args, None
+
+
+def structured_slug_exists(result: dict[str, Any]) -> dict[str, Any] | None:
+    """Surface REST 409 slug_exists as an actionable MCP send envelope."""
+    detail = result.get("detail")
+    if not (isinstance(detail, dict) and detail.get("error") == "slug_exists"):
+        return None
+    slug = detail.get("slug", "")
+    existing_id = detail.get("existing_thread_id", "")
+    return {
+        "error": (
+            f"send: slug {slug!r} already exists (thread {existing_id}). "
+            "Use send(thread=<id>, ...) to continue it or choose a different "
+            "new_slug."
+        ),
+        "reason": "slug_exists",
+        "slug": slug,
+        "existing_thread_id": existing_id,
+    }

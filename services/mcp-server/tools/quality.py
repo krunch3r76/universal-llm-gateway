@@ -30,6 +30,16 @@ _TEST_TIMEOUT = 120
 # by explicit path. Add new on-seat suites here — one table, no new MCP tool.
 _OFFLINE_TEST_SUITES: tuple[dict[str, Any], ...] = (
     {
+        "name": "skill_suggest_slug_uri",
+        "source_segments": (
+            "/libs/cortex_store/routes/_skill_suggest",
+            "/libs/cortex_store/test_skill_suggest_slug_uri",
+        ),
+        "test_paths": ("libs/cortex_store/test_skill_suggest_slug_uri.py",),
+        "marker": "offline",
+        "extra_pythonpath": ("libs",),
+    },
+    {
         "name": "lane_a_registry",
         "source_segments": ("/libs/llm_adapters/", "/libs/model_id/"),
         "test_paths": ("libs/llm_adapters", "libs/model_id"),

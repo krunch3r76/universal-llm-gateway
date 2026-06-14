@@ -23,8 +23,10 @@ from .threads_atomic import (
     terminate_dispatch,
 )
 from .turns import (
+    SlugExists,
     TurnAlreadyAcknowledged,
     UnreadTurnsExist,
+    create_turn,
     delete_turn,
     get_turn_by_number,
     get_turns,
@@ -36,6 +38,7 @@ from .turns import (
 )
 
 __all__ = [
+    "SlugExists",
     "ThreadHasReadTurns",
     "TurnAlreadyAcknowledged",
     "UnreadTurnsExist",
@@ -43,6 +46,7 @@ __all__ = [
     "close_thread",
     "create_thread",
     "create_thread_with_turn",
+    "create_turn",
     "terminate_dispatch",
     "delete_thread",
     "delete_turn",

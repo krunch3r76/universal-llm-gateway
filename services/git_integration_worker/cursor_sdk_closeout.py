@@ -32,8 +32,7 @@ _IMPLEMENT_PREAMBLE = (
 
 _THREAD_BINDING_TEMPLATE = (
     "Your agent-bus reply thread for this dispatch is `{thread_id}`. Post your "
-    "closeout ONLY to this thread. Do NOT fetch or act on other unread agent-bus turns "
-    "during this dispatch."
+    "closeout ONLY to this thread."
 )
 
 _CONTRACT_FRONTMATTER_RE = re.compile(

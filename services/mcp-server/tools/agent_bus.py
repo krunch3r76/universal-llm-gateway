@@ -21,7 +21,9 @@ from mcp_toolprogress import toolprogress_begin, toolprogress_end
 
 from ._agent_bus_post_guard import (
     reconcile_post_arguments,
+    reconcile_send_arguments,
     structured_route_guard,
+    structured_slug_exists,
 )
 from ._agent_tools import JsonArgStr
 from ._local_relay import relay as _relay
@@ -268,6 +270,80 @@ def _post_impl(
             agent=from_agent,
             op="post",
         )
+    return result
+
+
+def _send_impl(
+    *,
+    new_slug: str | None,
+    thread: str | None,
+    to: str,
+    subject: str,
+    body: str,
+    from_agent: str,
+    summary: str | None,
+    tags: list[str] | None,
+    lifecycle_state: str | None,
+    after_turn: int,
+    status: str,
+    mark_read: bool,
+    close: bool,
+    attachments: list[dict[str, Any]] | None,
+    allow_long_body: bool,
+) -> dict[str, Any]:
+    """Relay to POST /threads/send."""
+    payload: dict[str, Any] = {
+        "from": from_agent,
+        "to": to,
+        "subject": subject,
+        "body": body,
+        "status": status,
+    }
+    if new_slug is not None:
+        payload["new_slug"] = new_slug
+    if thread is not None:
+        payload["thread"] = thread
+    if summary is not None:
+        payload["summary"] = summary
+    if tags:
+        payload["tags"] = tags
+    if lifecycle_state is not None:
+        payload["lifecycle_state"] = lifecycle_state
+    if after_turn > 0:
+        payload["after_turn"] = after_turn
+    if mark_read:
+        payload["mark_read"] = True
+    if close:
+        payload["close"] = True
+    if attachments:
+        payload["attachments"] = attachments
+    if allow_long_body:
+        payload["allow_long_body"] = True
+
+    result = _relay("agent-bus", "POST", "/threads/send", body=payload)
+    if "error" in result:
+        record("mcp.agentbus.send.failed", error=str(result["error"]))
+        structured = _structured_body_too_large(result, op="send")
+        if structured is not None:
+            return structured
+        structured = structured_slug_exists(result)
+        if structured is not None:
+            return structured
+        structured = _structured_relay_error(result, op="send")
+        if structured is not None:
+            return structured
+        return {"error": _format_agent_bus_error(result, op="send")}
+
+    send_path = result.get("send_path", "")
+    thread_id = (result.get("thread") or {}).get("id", "")
+    turn_number = (result.get("turn") or {}).get("turn_number", 1)
+    record(
+        "mcp.agentbus.send.posted",
+        send_path=send_path,
+        thread=thread_id,
+        to=to,
+        turn_number=turn_number,
+    )
     return result
 
 
@@ -793,7 +869,7 @@ def _post_dispatch(
             "error": f"post: missing required field(s): {'; '.join(missing)}",
             "missing_fields": [f.split(" ")[0] for f in missing],
         }
-    return _post_impl(
+    result = _post_impl(
         slug=slug,
         to=to,
         subject=subject,
@@ -804,6 +880,14 @@ def _post_dispatch(
         tags=tags,
         allow_long_body=allow_long_body,
     )
+    if "error" not in result:
+        result["_deprecated"] = {
+            "op": "post",
+            "remove_at": "2026-09-01",
+            "replacement": "send",
+        }
+        record("mcp.agentbus.deprecated.op", op="post", caller=from_agent)
+    return result
 
 
 def _reply_dispatch(
@@ -849,13 +933,120 @@ def _reply_dispatch(
             "error": f"reply: missing required field(s): {'; '.join(missing)}",
             "missing_fields": [f.split(" ")[0] for f in missing],
         }
-    return _reply_impl(
+    result = _reply_impl(
         thread=thread,
         to=to,
         subject=subject,
         body=body,
         after_turn=after_turn,
         from_agent=from_agent,
+        status=status,
+        mark_read=mark_read,
+        close=close,
+        attachments=attachments,
+        allow_long_body=allow_long_body,
+    )
+    if "error" not in result:
+        result["_deprecated"] = {
+            "op": "reply",
+            "remove_at": "2026-09-01",
+            "replacement": "send",
+        }
+        record("mcp.agentbus.deprecated.op", op="reply", caller=from_agent)
+    return result
+
+
+def _send_dispatch(
+    *,
+    new_slug: str | None = None,
+    thread: str | int | None = None,
+    to: str = "",
+    subject: str = "",
+    body: str = "",
+    from_agent: str = "",
+    summary: str | None = None,
+    tags: list[str] | None = None,
+    lifecycle_state: str | None = None,
+    after_turn: int = 0,
+    status: str = "open",
+    mark_read: bool = False,
+    close: bool = False,
+    attachments: list[dict[str, Any]] | None = None,
+    allow_long_body: bool = False,
+) -> dict[str, Any]:
+    if isinstance(thread, int):
+        thread = str(thread)
+
+    has_new_slug = new_slug is not None
+    has_thread = bool(thread)
+    if has_new_slug and has_thread:
+        record("mcp.agentbus.send.rejected", reason="xor_both")
+        return {
+            "error": (
+                "send: thread and new_slug are mutually exclusive — "
+                "provide exactly one to route the turn"
+            ),
+            "reason": "send_xor_violation",
+            "provided": ["thread", "new_slug"],
+            "required": "exactly_one_of_thread_or_new_slug",
+        }
+    if not has_new_slug and not has_thread:
+        record("mcp.agentbus.send.rejected", reason="xor_neither")
+        return {
+            "error": (
+                "send: exactly one of thread or new_slug is required — "
+                "neither was provided"
+            ),
+            "reason": "send_xor_violation",
+            "provided": [],
+            "required": "exactly_one_of_thread_or_new_slug",
+        }
+
+    missing: list[str] = []
+    if not to:
+        missing.append("to (str)")
+    if not subject:
+        missing.append("subject (str)")
+    if not body:
+        missing.append("body (str)")
+    if not from_agent:
+        missing.append(
+            "from_agent (str, REQUIRED — no default; name the seat authoring "
+            'this turn, e.g. "cursor", "claude-web", "gpt-cursor", "claude-api")'
+        )
+    if missing:
+        return {
+            "error": f"send: missing required field(s): {'; '.join(missing)}",
+            "missing_fields": [f.split(" ")[0] for f in missing],
+        }
+
+    if has_new_slug and after_turn > 0:
+        return {
+            "error": (
+                "send: after_turn > 0 is invalid on the new_slug (new-thread) path"
+            ),
+            "reason": "after_turn_not_valid_on_new_thread",
+            "suggestion": "omit after_turn on new-thread path (it has no meaning)",
+        }
+    if has_thread and lifecycle_state is not None:
+        return {
+            "error": (
+                "send: lifecycle_state is only valid on the new_slug (new-thread) path"
+            ),
+            "reason": "lifecycle_state_not_valid_on_continue",
+        }
+
+    return _send_impl(
+        new_slug=new_slug,
+        thread=thread,
+        to=to,
+        subject=subject,
+        body=body,
+        from_agent=from_agent,
+        summary=summary,
+        tags=tags,
+        lifecycle_state=lifecycle_state,
+        after_turn=after_turn,
         status=status,
         mark_read=mark_read,
         close=close,
@@ -1054,6 +1245,7 @@ def _wait_dispatch(
 
 
 AGENT_BUS_OPS: dict[str, Callable[..., Any]] = {
+    "send": _send_dispatch,
     "post": _post_dispatch,
     "reply": _reply_dispatch,
     "fetch": _fetch_dispatch,
@@ -1111,8 +1303,9 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
           fetch_unread  (to?, thread?, mark_read?, compact?)                        — recipient scope (to set, thread unset): sparse per-thread unread digest (thread id + unread_count + head turn_number; expand a thread with fetch_unread(thread=N) / get / threads). thread scope: that thread's full unread turn list (no count cap; compact controls bodies). At least one of to/thread required.
           fetch         (to?, thread?, last?, unread?, compact?, mark_read?, all?)  — get turns; at least one of to/thread required; all=true fetches every turn (no limit); unread=true fetches all unread (last ignored; prefer fetch_unread); last caps windowed fetches (default 10, unread default false); compact default false (bodies projected) — pass compact=true for metadata-only
           get           (thread, turn_number)                           — get one specific turn
-          post          (slug, to, subject, body, from_agent, summary?, attachments?, tags?, allow_long_body?) — start a new thread (atomic: creates thread + first turn). from_agent is REQUIRED — name the seat authoring the turn (e.g. "cursor", "claude-web", "gpt-cursor", "claude-api"); there is no default.
-          reply         (thread, to, subject, body, after_turn, from_agent, status?, mark_read?, close?, attachments?, allow_long_body?) — reply to a thread; allow_long_body=true explicitly bypasses the 8k briefing limit for rare inline long-form messages; close=true posts this as the final turn and closes the thread (marks all turns read). from_agent is REQUIRED — name the seat authoring the turn; there is no default.
+          post          (slug, to, subject, body, from_agent, summary?, attachments?, tags?, allow_long_body?) — start a new thread (atomic: creates thread + first turn). from_agent is REQUIRED — name the seat authoring the turn (e.g. "cursor", "claude-web", "gpt-cursor", "claude-api"); there is no default. DEPRECATED 2026-06-14 — use send(new_slug=..., ...) instead; removed 2026-09-01.
+          send          (new_slug XOR thread, to, subject, body, from_agent, summary?, tags?, lifecycle_state?, after_turn?, status?, mark_read?, close?, attachments?, allow_long_body?) — unified post/reply surface. Exactly one of new_slug (new thread) or thread (continue) required; slug uniqueness enforced on new_slug path (409 slug_exists on collision). from_agent is REQUIRED.
+          reply         (thread, to, subject, body, after_turn, from_agent, status?, mark_read?, close?, attachments?, allow_long_body?) — reply to a thread; allow_long_body=true explicitly bypasses the 8k briefing limit for rare inline long-form messages; close=true posts this as the final turn and closes the thread (marks all turns read). from_agent is REQUIRED — name the seat authoring the turn; there is no default. DEPRECATED 2026-06-14 — use send(thread=..., ...) instead; removed 2026-09-01.
           update        (thread, turn_number, body?, append?, subject?) — edit or append to an existing turn
           mark_read     (thread, turn_number)                           — mark a turn as read
           wait          (thread, after_turn?, wait_seconds?, completion?, from_agent?) — server-side short-block until consult posts a bus turn after the pointer (completion=first_reply_from + canonical from_agent; alias-aware) or thread closes (completion=thread_closed); wait_seconds clamped <=60 (0=snapshot). Returns {thread_id, complete, status, push_required, suggested_next (object: consult_turn_posted + steps fetch/apply/close when complete and thread still active), qualifying_reply_turn, thread_status, ...}. first_reply_from complete means a consult bus turn exists, not findings applied. Re-call to keep polling — one HTTP call, not a client loop.
@@ -1192,6 +1385,10 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
                         reason=str(misuse.get("reason", "")),
                     )
                     return misuse
+            if tool == "send":
+                parsed, alias_error = reconcile_send_arguments(parsed)
+                if alias_error is not None:
+                    return alias_error
             accepted = set(inspect.signature(handler).parameters)
             unknown = [k for k in parsed if k not in accepted]
             if unknown:
@@ -1206,7 +1403,7 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
             if (
                 isinstance(result, dict)
                 and "error" not in result
-                and tool in ("post", "reply")
+                and tool in ("post", "reply", "send")
             ):
                 result["_next"] = (
                     "If this message records a decision or surfaces an insight, "
