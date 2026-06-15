@@ -76,6 +76,19 @@ async def dispatch_cursor_sdk_generate(
             status_code=422,
         )
 
+    if contract == "pure-mechanical" and packet_path is not None:
+        from .admission import FrontierEndpointError
+
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="packet_path",
+            reason=(
+                "contract=pure-mechanical is packet-free; use contract=implement "
+                "or light-bounded for packet-based dispatches"
+            ),
+            status_code=422,
+        )
+
     if packet_path is not None:
         pointer_body = f"SDK {contract} dispatch — see packet `{packet_path}`."
         worker_packet = packet_path
@@ -137,7 +150,11 @@ async def dispatch_cursor_sdk_generate(
             subject=thread_subject,
             pointer_body=pointer_body,
             caller_agent=caller_agent,
-            tags=["cursor-sdk-generate", "type:generate"],
+            tags=[
+                "cursor-sdk-generate",
+                "type:generate",
+                f"contract:{handoff_contract}",
+            ],
             handoff_contract=handoff_contract,
             lifecycle_state="pending",
             bus_lifecycle=effective_bus_lifecycle,
