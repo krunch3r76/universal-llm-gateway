@@ -95,6 +95,25 @@ _SDK_TIMEOUT_S = float(os.environ.get("CURSOR_SDK_TIMEOUT", "1800"))
 _SDK_TIMEOUT_BUFFER_S = 120.0
 _SDK_HEARTBEAT_S = float(os.environ.get("CURSOR_SDK_HEARTBEAT", "30"))
 
+# Bounded retry for the pre-discovery bridge-launch transient: cursor-sdk
+# intermittently exits the bridge BEFORE the discovery handshake with an empty
+# "--tool-callback-auth-token" (the local callback token is momentarily
+# unavailable at launch, e.g. while the cursor credential is mid-rotation).
+# Pre-discovery => the agent never ran and nothing was written, so re-seeding the
+# dispatch HOME (to pick up the rotated credential) and relaunching is
+# side-effect-free and safe. Confirmed self-recovering 2026-06-15
+# (79cc476a->e4afe1fe, 69eededb->0ae492ce); see cortex assertion 19136 /
+# notes/system/threads/cursor-sdk-bridge-token-fix.md.
+_SDK_LAUNCH_ATTEMPTS = max(1, int(os.environ.get("CURSOR_SDK_LAUNCH_ATTEMPTS", "3")))
+_SDK_LAUNCH_BACKOFFS_S = (2.0, 5.0)
+_PRE_DISCOVERY_TRANSIENT_MARKERS = ("before discovery", "--tool-callback-auth-token")
+
+
+def _is_pre_discovery_transient(exc: BaseException) -> bool:
+    """True iff exc is the safe-to-retry pre-discovery bridge launch transient."""
+    msg = str(exc)
+    return any(marker in msg for marker in _PRE_DISCOVERY_TRANSIENT_MARKERS)
+
 
 def _config(request: Request) -> WorkerConfig:
     return getattr(request.app.state, "worker_config", _CONFIG)
@@ -277,17 +296,38 @@ def _run_sdk_sync(
         agent_options = build_agent_options(source_repo, dispatch_workspace, selection)
 
         with _dispatch_home_overlay(dispatch_home, repo_venv=repo_venv):
+            client = None
+            for attempt in range(_SDK_LAUNCH_ATTEMPTS):
+                try:
+                    client = Client.launch_bridge(
+                        _SDK_BRIDGE_BIN,
+                        workspace=str(dispatch_workspace),
+                        state_root=str(bridge_state),
+                        timeout=_SDK_TIMEOUT_S,
+                        local=agent_options.local,
+                    )
+                    break
+                except Exception as launch_exc:  # noqa: BLE001
+                    is_last = attempt + 1 >= _SDK_LAUNCH_ATTEMPTS
+                    if is_last or not _is_pre_discovery_transient(launch_exc):
+                        raise
+                    backoff = _SDK_LAUNCH_BACKOFFS_S[
+                        min(attempt, len(_SDK_LAUNCH_BACKOFFS_S) - 1)
+                    ]
+                    logger.warning(
+                        "cursor sdk bridge pre-discovery transient: "
+                        "dispatch_id=%s attempt=%d/%d err=%s; retrying in %.1fs",
+                        dispatch_id,
+                        attempt + 1,
+                        _SDK_LAUNCH_ATTEMPTS,
+                        launch_exc,
+                        backoff,
+                    )
+                    time.sleep(backoff)
             hb_thread, hb_stop = _start_heartbeat(
                 dispatch_id=dispatch_id,
                 thread_id=thread_id,
                 resolved_model=resolved_model,
-            )
-            client = Client.launch_bridge(
-                _SDK_BRIDGE_BIN,
-                workspace=str(dispatch_workspace),
-                state_root=str(bridge_state),
-                timeout=_SDK_TIMEOUT_S,
-                local=agent_options.local,
             )
             try:
                 agent = client.create_agent(agent_options)

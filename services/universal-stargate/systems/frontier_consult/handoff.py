@@ -639,6 +639,12 @@ async def create_handoff_thread(
         effective_tags,
         bus_lifecycle=bus_lifecycle or consult_default,
     )
+    from agent_bus_store.close_on_read import append_close_on_read_marker
+
+    effective_tags = append_close_on_read_marker(
+        effective_tags,
+        bus_lifecycle=bus_lifecycle or consult_default,
+    )
 
     payload: dict[str, Any] = {
         "slug": slug,

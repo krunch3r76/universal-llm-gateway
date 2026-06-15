@@ -98,6 +98,7 @@ def close_thread(
     *,
     summary: str | None = None,
     mark_all_read: bool = True,
+    lifecycle_trigger: str = "close",
 ) -> dict[str, Any] | None:
     """Atomically close a thread: mark turns read + set status + summary.
 
@@ -131,7 +132,9 @@ def close_thread(
         # the caller is responsible for ensuring the thread reached active first.
         lifecycle = row["bus_lifecycle_state"]
         if lifecycle == "active":
-            _transition_lifecycle_state(conn, thread_id, "completed", "close")
+            _transition_lifecycle_state(
+                conn, thread_id, "completed", lifecycle_trigger
+            )
 
     return get_thread_with_links(thread_id)
 

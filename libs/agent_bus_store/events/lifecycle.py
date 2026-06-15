@@ -26,6 +26,7 @@ def AgentBusThreadLifecycleTransitioned(  # noqa: N802
         "create",
         "admit",
         "close",
+        "close_on_read",
         "turn_posted",
         "delivery_sent",
         "delivery_failed",

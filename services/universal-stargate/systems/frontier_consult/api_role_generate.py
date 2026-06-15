@@ -157,6 +157,7 @@ async def dispatch_api_role_generate(
         subject=thread_subject,
         pointer_body=last_user[:2000],
         caller_agent=body.caller_agent,
+        # type:generate + consult persistent → dispatch:close_on_read via handoff.py
         tags=[f"agent:{role}", "type:generate", f"contract:{contract}"],
         handoff_contract=contract,
         bus_lifecycle=getattr(body, "bus_lifecycle", None),

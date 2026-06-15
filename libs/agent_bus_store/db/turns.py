@@ -247,6 +247,7 @@ def get_turns(
     limit = f"LIMIT {last}" if last is not None else ""
 
     sql = f"SELECT {select} FROM turns {where} {order} {limit}"
+    close_candidates: set[str] = set()
     with connect() as conn:
         rows = [dict(row) for row in conn.execute(sql, params).fetchall()]
 
@@ -262,6 +263,9 @@ def get_turns(
                 for row in rows:
                     if row["read_at"] is None:
                         row["read_at"] = ts
+                close_candidates = {
+                    r["thread"] for r in rows if r["id"] in unread_ids
+                }
 
         if compact:
             for row in rows:
@@ -273,7 +277,9 @@ def get_turns(
             for row in rows:
                 row["attachments"] = att_map.get(row["id"])
 
-        return rows
+    for affected in close_candidates:
+        _maybe_close_generate_thread_on_read(affected)
+    return rows
 
 
 def get_unread_thread_toc(
@@ -323,6 +329,7 @@ def get_unread_thread_toc(
         ORDER BY MAX(turns.created_at) DESC
         {limit_clause}
     """
+    close_candidates: list[str] = []
     with connect() as conn:
         rows = [dict(row) for row in conn.execute(select_sql, inbox_params).fetchall()]
         marked = 0
@@ -333,22 +340,47 @@ def get_unread_thread_toc(
                 [ts, *inbox_params],
             )
             marked = max(cur.rowcount, 0)
-        return rows, marked
+            if marked:
+                close_candidates = [str(thread_row["thread"]) for thread_row in rows]
+        result = rows, marked
+    for thread_id in close_candidates:
+        _maybe_close_generate_thread_on_read(thread_id)
+    return result
 
 
 def mark_turn_read(turn_id: int) -> str | None:
     """Returns read_at timestamp, or None if turn not found."""
+    thread_id: str | None = None
     with connect() as conn:
         row = conn.execute(
-            "SELECT read_at FROM turns WHERE id = ?", (turn_id,)
+            "SELECT read_at, thread FROM turns WHERE id = ?", (turn_id,)
         ).fetchone()
         if row is None:
             return None
         if row["read_at"] is not None:
             return row["read_at"]
+        thread_id = row["thread"]
         ts = now()
         conn.execute("UPDATE turns SET read_at = ? WHERE id = ?", (ts, turn_id))
-        return ts
+
+    if thread_id is not None:
+        _maybe_close_generate_thread_on_read(thread_id)
+    return ts
+
+
+def _maybe_close_generate_thread_on_read(thread_id: str) -> None:
+    try:
+        from ..close_on_read import maybe_close_generate_thread_on_read
+
+        maybe_close_generate_thread_on_read(thread_id)
+    except Exception:
+        from universal_logging import get_logger
+
+        get_logger(__name__).warning(
+            "close-on-read hook failed: thread=%s",
+            thread_id,
+            exc_info=True,
+        )
 
 
 def update_turn_status(

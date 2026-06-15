@@ -1,4 +1,9 @@
-"""One-shot startup reconciliation for orphaned SDK dispatch links."""
+"""One-shot startup reconciliation for orphaned SDK dispatch links.
+
+Delivered+read persistent generate threads are closed event-timely by
+``agent_bus_store.close_on_read`` when the caller marks the on-behalf result
+turn read; this sweep remains orphan-only and does not replace that path.
+"""
 
 from __future__ import annotations
 

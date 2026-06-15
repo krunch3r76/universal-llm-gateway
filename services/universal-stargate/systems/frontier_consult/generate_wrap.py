@@ -165,8 +165,7 @@ async def dispatch_cursor_sdk_generate_route(
                         request_id=request_id,
                         field="source_ref",
                         reason=(
-                            wrap_result.gated_reason
-                            or "source_ref not implement-ready"
+                            wrap_result.gated_reason or "source_ref not implement-ready"
                         ),
                         status_code=422,
                         code="generate_source_ref_gated",
@@ -253,6 +252,7 @@ async def dispatch_cursor_sdk_generate_route(
             message_text=source_text,
             reuse_thread=getattr(body, "reuse_thread", None),
             bus_lifecycle=getattr(body, "bus_lifecycle", None),
+            parent_dispatch_thread_id=body.dispatch_thread_id,
             density_triage=getattr(body, "density_triage", None),
             review_opt_out_reason_code=getattr(
                 body, "review_opt_out_reason_code", None

@@ -8,6 +8,7 @@ from typing import Any, Literal
 from agent_seat.profiles import get_profile
 
 from .admission import resolve_cursor_sdk_generate_target
+from .cursor_sdk_coord_notify import post_coord_admit_pointer
 from .cursor_sdk_generate_signals import (
     emit_sdk_generate_requested,
     emit_sdk_thread_created,
@@ -35,6 +36,7 @@ async def dispatch_cursor_sdk_generate(
     message_text: str | None,
     reuse_thread: str | None = None,
     bus_lifecycle: Literal["persistent", "ephemeral"] | None = None,
+    parent_dispatch_thread_id: str | None = None,
     density_triage: str | None = None,
     review_opt_out_reason_code: str | None = None,
     auto_review_child: bool = False,
@@ -94,6 +96,12 @@ async def dispatch_cursor_sdk_generate(
         worker_message = last_user
 
     handoff_contract = contract
+    # Prong-1 close-on-read parity with API-role generate: persistent + type:generate
+    # so spawned worker threads stay readable until the result turn is consumed.
+    effective_bus_lifecycle: Literal["persistent", "ephemeral"] = (
+        bus_lifecycle if bus_lifecycle is not None else "persistent"
+    )
+    coord_recipient = caller_agent or "dispatch"
 
     emit_sdk_generate_requested(
         request_id=request_id,
@@ -129,10 +137,10 @@ async def dispatch_cursor_sdk_generate(
             subject=thread_subject,
             pointer_body=pointer_body,
             caller_agent=caller_agent,
-            tags=["cursor-sdk-generate"],
+            tags=["cursor-sdk-generate", "type:generate"],
             handoff_contract=handoff_contract,
             lifecycle_state="pending",
-            bus_lifecycle=bus_lifecycle,
+            bus_lifecycle=effective_bus_lifecycle,
         )
         emit_sdk_thread_created(
             request_id=request_id,
@@ -140,6 +148,14 @@ async def dispatch_cursor_sdk_generate(
             thread_id=thread_id,
             reused=False,
         )
+
+    await post_coord_admit_pointer(
+        coord_thread_id=parent_dispatch_thread_id,
+        worker_thread_id=thread_id,
+        to_agent=coord_recipient,
+        caller_agent=caller_agent,
+        contract=handoff_contract,
+    )
 
     await admit_handoff_dispatch(
         request_id=request_id,
