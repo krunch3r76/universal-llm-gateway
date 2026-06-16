@@ -4,12 +4,19 @@ from __future__ import annotations
 
 import json
 import re
+import sqlite3
 from dataclasses import dataclass
 from typing import Any
 
+from agent_seat.body_injection import (
+    CODING_SESSION_BUNDLE,
+    is_web_seat_slug,
+    web_auto_inject_skill_slugs,
+)
+
 from ..confidence_field import (
-    SUPPRESSED_SKILL_LIFECYCLES,
-    lifecycle_not_in_sql_predicate,
+    DISCOVERABLE_SKILL_LIFECYCLE,
+    discoverable_skill_lifecycle_sql_predicate,
 )
 from ..db import cortex_conn
 from ..db import query as db_query
@@ -17,13 +24,12 @@ from ..seat_applicability import (
     CAPABILITY_CLAUSE,
     FOR_AGENT_CLAUSE,
     canonical_seat_or_422,
+    for_agent_filter_clause,
     seat_capabilities_json,
 )
 from ._skill_index import index_envelope_fields
 
-_SUPPRESSED_LIFECYCLE_EXCLUDE = lifecycle_not_in_sql_predicate(
-    SUPPRESSED_SKILL_LIFECYCLES
-)
+_DISCOVERABLE_SKILL_LIFECYCLE = discoverable_skill_lifecycle_sql_predicate()
 
 _TOKEN_SPLIT_RE = re.compile(r"[^a-z0-9_+.-]+")
 
@@ -149,6 +155,108 @@ STOPWORDS = frozenset(
 # related_skills (thread 2011 F4 — no transitive closure, no relationship walk).
 _RELATED_SKILLS_BOOST = 0.25
 
+_CODING_SESSION_START_TRIGGER = "coding-session-start"
+_CODING_SESSION_CONTEXT_PHRASES = (
+    "coding session",
+    "code-touching",
+    "implement in repo",
+    "diff review",
+    "diff-review",
+    "code modification",
+    "session review",
+)
+
+
+def _coding_session_bundle_slugs() -> frozenset[str]:
+    inject = tuple(
+        entity_id.removeprefix("agent_skill:")
+        for entity_id in CODING_SESSION_BUNDLE["inject"]
+    )
+    return frozenset((*inject, *CODING_SESSION_BUNDLE["advertise"]))
+
+
+def _coding_session_bundle_entity_ids() -> tuple[str, ...]:
+    return tuple(
+        f"agent_skill:{slug}" for slug in sorted(_coding_session_bundle_slugs())
+    )
+
+
+def _matches_coding_session_start(ctx: str) -> bool:
+    lowered = ctx.lower()
+    return any(phrase in lowered for phrase in _CODING_SESSION_CONTEXT_PHRASES)
+
+
+def _explicit_session_close_intent(ctx: str) -> bool:
+    lowered = ctx.lower()
+    return "session close" in lowered or "session-close" in lowered
+
+
+def _suppress_session_close_false_positive(ctx: str, slug: str) -> bool:
+    return (
+        slug == "session-close"
+        and _matches_coding_session_start(ctx)
+        and not _explicit_session_close_intent(ctx)
+    )
+
+
+def _apply_coding_session_start(
+    scored_new: list[dict[str, Any]],
+    rows: list[dict[str, Any]],
+    bundle_rows: list[dict[str, Any]],
+    loaded_set: set[str],
+    ctx: str,
+) -> list[dict[str, Any]]:
+    if not _matches_coding_session_start(ctx):
+        return scored_new
+
+    filtered = [
+        item
+        for item in scored_new
+        if not _suppress_session_close_false_positive(ctx, item["slug"])
+    ]
+    present = {item["slug"] for item in filtered}
+    bundle_slugs = _coding_session_bundle_slugs()
+    by_slug: dict[str, dict[str, Any]] = {}
+    for row in bundle_rows:
+        slug = slug_from_source_uri(row.get("source_uri"))
+        if slug:
+            by_slug[slug] = row
+    for row in rows:
+        slug = slug_from_source_uri(row.get("source_uri"))
+        if slug and slug not in by_slug:
+            by_slug[slug] = row
+
+    for slug in sorted(bundle_slugs):
+        if slug in present:
+            continue
+        row = by_slug.get(slug)
+        if row is None:
+            continue
+        entity_id = str(row.get("id") or "")
+        if _is_loaded(slug, entity_id, loaded_set):
+            continue
+        trigger_terms = _decode_term_list(row.get("trigger_match_terms_json"))
+        envelope = index_envelope_fields(row)
+        filtered.append(
+            {
+                "id": entity_id,
+                "slug": slug,
+                **envelope,
+                "score": 100.0,
+                "trigger_match": [_CODING_SESSION_START_TRIGGER],
+                "reason": f"matches: {_CODING_SESSION_START_TRIGGER}",
+                "reason_source": "deterministic",
+                "boot_importance": row.get("boot_importance"),
+                "delivery_priority": int(row.get("delivery_priority") or 100),
+                "trigger_short": row.get("trigger_short") or "",
+                "trigger_match_terms": trigger_terms,
+                "skill_category": row.get("skill_category") or "",
+            }
+        )
+        present.add(slug)
+    return filtered
+
+
 _SUGGEST_CANDIDATE_SQL = f"""
     SELECT id, name, source_uri,
            json_extract(attributes, '$.trigger_short') AS trigger_short,
@@ -160,7 +268,7 @@ _SUGGEST_CANDIDATE_SQL = f"""
                AS delivery_priority
     FROM entities
     WHERE type = 'agent_skill'
-      AND {_SUPPRESSED_LIFECYCLE_EXCLUDE}
+      AND {_DISCOVERABLE_SKILL_LIFECYCLE}
       {{for_agent_filter}}{{capability_filter}}
 """
 
@@ -177,6 +285,14 @@ def norm_loaded(value: str) -> str:
 
 def build_loaded_set(loaded: list[str]) -> set[str]:
     return {norm_loaded(x) for x in loaded if isinstance(x, str) and x.strip()}
+
+
+def _seat_preloaded_norm_slugs(agent: str) -> frozenset[str]:
+    """Web auto-inject slugs merged into loaded_set (Slice F tracking)."""
+    canonical = canonical_seat_or_422(agent)
+    if not is_web_seat_slug(canonical):
+        return frozenset()
+    return frozenset(norm_loaded(slug) for slug in web_auto_inject_skill_slugs())
 
 
 _SCHEME_RE = re.compile(r"^[a-z][a-z0-9+.-]*:/{0,2}", re.IGNORECASE)
@@ -401,22 +517,48 @@ def _passes_precision_gate(score: _CandidateScore) -> bool:
     return len(score.matched_specific_terms) >= 1
 
 
-def _fetch_candidates(agent: str) -> list[dict[str, Any]]:
+def _fetch_candidates(conn: sqlite3.Connection, agent: str) -> list[dict[str, Any]]:
     canonical = canonical_seat_or_422(agent)
     params: list[Any] = [
-        *SUPPRESSED_SKILL_LIFECYCLES,
+        DISCOVERABLE_SKILL_LIFECYCLE,
         canonical,
         seat_capabilities_json(canonical),
     ]
     sql = _SUGGEST_CANDIDATE_SQL.format(
-        for_agent_filter=FOR_AGENT_CLAUSE,
+        for_agent_filter=for_agent_filter_clause(canonical),
         capability_filter=CAPABILITY_CLAUSE,
     )
-    conn = cortex_conn()
-    try:
-        return [dict(r) for r in db_query(conn, sql, tuple(params))]
-    finally:
-        conn.close()
+    return [dict(r) for r in db_query(conn, sql, tuple(params))]
+
+
+def _fetch_coding_session_bundle_rows(
+    conn: sqlite3.Connection, agent: str
+) -> list[dict[str, Any]]:
+    """Bundle-scoped fetch with permissive seat filter (honors ``*``).
+
+    Web seats use explicit-only discovery in ``_fetch_candidates``; the curated
+    coding-session bundle is allowlisted separately so ``*``-tagged members
+    can still be boosted without relaxing general web discovery.
+    """
+    canonical = canonical_seat_or_422(agent)
+    entity_ids = _coding_session_bundle_entity_ids()
+    if not entity_ids:
+        return []
+    id_placeholders = ", ".join("?" * len(entity_ids))
+    params: list[Any] = [
+        DISCOVERABLE_SKILL_LIFECYCLE,
+        canonical,
+        seat_capabilities_json(canonical),
+        *entity_ids,
+    ]
+    sql = (
+        _SUGGEST_CANDIDATE_SQL.format(
+            for_agent_filter=FOR_AGENT_CLAUSE,
+            capability_filter=CAPABILITY_CLAUSE,
+        )
+        + f"\n      AND id IN ({id_placeholders})"
+    )
+    return [dict(r) for r in db_query(conn, sql, tuple(params))]
 
 
 def _score_candidate(
@@ -488,24 +630,43 @@ def run_stage_a(
     """
     ctx = (conversation_context or "").strip()
     if not ctx:
+        canonical_agent = canonical_seat_or_422(agent)
+        seat_preloaded = (
+            list(web_auto_inject_skill_slugs())
+            if is_web_seat_slug(canonical_agent)
+            else []
+        )
         return {
             "suggestions": [],
             "loaded_echo": [],
             "omitted": [],
+            "seat_preloaded": seat_preloaded,
             "ranker_status": "skipped_no_context",
             "degraded": False,
-            "agent": canonical_seat_or_422(agent),
+            "agent": canonical_agent,
             "count": 0,
             "reason": "insufficient_context",
             "stage_a_candidates": [],
             "degraded_skills": [],
         }
 
-    loaded_set = build_loaded_set(loaded)
+    canonical_agent = canonical_seat_or_422(agent)
+    seat_preloaded = (
+        list(web_auto_inject_skill_slugs()) if is_web_seat_slug(canonical_agent) else []
+    )
+    loaded_set = build_loaded_set(loaded) | _seat_preloaded_norm_slugs(agent)
     ctx_tokens = tokenize_text(ctx)
     normalized_context = _normalized_context(ctx)
-    canonical_agent = canonical_seat_or_422(agent)
-    rows = _fetch_candidates(agent)
+    conn = cortex_conn()
+    try:
+        rows = _fetch_candidates(conn, agent)
+        bundle_rows = (
+            _fetch_coding_session_bundle_rows(conn, agent)
+            if _matches_coding_session_start(ctx)
+            else []
+        )
+    finally:
+        conn.close()
     related_union = _build_related_union(rows, loaded_set)
 
     scored_loaded: list[dict[str, Any]] = []
@@ -561,6 +722,9 @@ def run_stage_a(
             scored_new.append(entry)
 
     loaded_echo = sorted(set(loaded_echo))
+    scored_new = _apply_coding_session_start(
+        scored_new, rows, bundle_rows, loaded_set, ctx
+    )
     scored_new.sort(key=_sort_key)
     suggestions = [
         {
@@ -579,6 +743,7 @@ def run_stage_a(
         "suggestions": suggestions,
         "loaded_echo": loaded_echo,
         "omitted": omitted,
+        "seat_preloaded": seat_preloaded,
         "ranker_status": "disabled",
         "degraded": bool(degraded_skills),
         "agent": canonical_agent,

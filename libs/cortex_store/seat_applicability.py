@@ -10,7 +10,12 @@ from __future__ import annotations
 
 import json
 
-from agent_seat.profiles import CAPABILITY_TOKENS, known_seats, seat_capability_map
+from agent_seat.profiles import (
+    CAPABILITY_TOKENS,
+    known_seats,
+    load_profiles,
+    seat_capability_map,
+)
 from agent_seat.registry import normalize_agent_slug
 from fastapi import HTTPException
 
@@ -26,6 +31,17 @@ FOR_AGENT_CLAUSE = """
         WHERE value IN ('*', ?)
     )
 """
+
+# Web/API seats: universal ``*`` does not imply visibility — explicit seat slug only.
+FOR_AGENT_EXPLICIT_CLAUSE = """
+    AND json_extract(attributes, '$.applicable_agents') IS NOT NULL
+    AND EXISTS (
+        SELECT 1 FROM json_each(json_extract(attributes, '$.applicable_agents'))
+        WHERE value = ?
+    )
+"""
+
+_REMOTE_SKILL_PLATFORMS = frozenset({"web", "api", "api-multi"})
 
 CAPABILITY_CLAUSE = """
     AND NOT EXISTS (
@@ -59,6 +75,16 @@ def seat_capabilities_json(seat: str) -> str:
     """JSON array of capability tokens for the seat (CAPABILITY_CLAUSE bind value)."""
     toks = seat_capability_map().get(seat, frozenset())
     return json.dumps(sorted(toks))
+
+
+def for_agent_filter_clause(canonical_seat: str) -> str:
+    """Seat filter for skill discovery: cursor inherits universal ``*``; web/api explicit only."""
+    parts = canonical_seat.split("-", 1)
+    if len(parts) == 2:
+        profile = load_profiles().get((parts[0], parts[1]))
+        if profile is not None and profile.platform in _REMOTE_SKILL_PLATFORMS:
+            return FOR_AGENT_EXPLICIT_CLAUSE
+    return FOR_AGENT_CLAUSE
 
 
 def validate_applicable_agents(attributes: dict[str, object] | None) -> None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import time
 from collections import OrderedDict
@@ -15,17 +16,55 @@ INJECTED_INDEX_TIMEOUT_MS = int(os.getenv("INJECTED_INDEX_TIMEOUT_MS", "300"))
 INJECTED_BODY_TIMEOUT_MS = int(os.getenv("INJECTED_BODY_TIMEOUT_MS", "300"))
 INJECTED_TOTAL_DEADLINE_MS = int(os.getenv("INJECTED_TOTAL_DEADLINE_MS", "1500"))
 
+# Web Slice-F auto-inject: appended to system prompt after cortex_boot (proxy path)
+# and treated as loaded by skill_suggest for web seats.
 INVARIANT_SKILL_ENTITY_IDS: tuple[str, ...] = (
     "agent_skill:architecture-invariants",
     "agent_skill:ulg-architecture",
+    "agent_skill:cortex-orientation",
+    "agent_skill:cortex-provenance-discipline",
 )
+
+INVARIANT_PAIR_ENTITY_IDS: tuple[str, ...] = (
+    "agent_skill:architecture-invariants",
+    "agent_skill:ulg-architecture",
+)
+
+CODING_SESSION_BUNDLE: dict[str, tuple[str, ...]] = {
+    "inject": INVARIANT_PAIR_ENTITY_IDS,
+    "advertise": (
+        "implement-work-item",
+        "git-posture",
+        "service-lifecycle",
+        "completion-provenance-discipline",
+        "fs",
+    ),
+}
+
+
+def web_auto_inject_skill_slugs() -> tuple[str, ...]:
+    """Bare slugs server-injected on web seats (Slice F + skill_suggest preload)."""
+    return tuple(
+        entity_id.removeprefix("agent_skill:") for entity_id in INVARIANT_SKILL_ENTITY_IDS
+    )
+
+
+def is_web_seat_slug(seat: str) -> bool:
+    """True when ``seat`` resolves to a profile with platform=web."""
+    from agent_seat.profiles import load_profiles
+
+    parts = seat.split("-", 1)
+    if len(parts) != 2:
+        return False
+    profile = load_profiles().get((parts[0], parts[1]))
+    return profile is not None and profile.platform == "web"
 
 _PAYLOAD_CACHE: OrderedDict[tuple[str, str], str] = OrderedDict()
 _PAYLOAD_CACHE_LOCK = Lock()
 _PAYLOAD_CACHE_MAX = 256
 
 
-class RequiredBodyUnresolved(Exception):
+class RequiredBodyUnresolved(Exception):  # noqa: N818 — public API; rename is out of scope
     """A delivery_criticality=required body failed to resolve."""
 
     def __init__(self, dropped: list[dict[str, Any]]) -> None:
@@ -107,6 +146,7 @@ def _fetch_body_sync(
     entity_id: str,
     expected_digest: str | None,
     *,
+    include_non_active: bool = False,
     timeout_ms: int = INJECTED_BODY_TIMEOUT_MS,
 ) -> tuple[dict[str, Any] | None, str | None]:
     """Return (payload, drop_reason). ``drop_reason`` set on non-200 responses."""
@@ -117,6 +157,8 @@ def _fetch_body_sync(
             params: dict[str, str] = {"id": entity_id}
             if expected_digest:
                 params["expected_digest"] = expected_digest
+            if include_non_active:
+                params["include_non_active"] = "true"
             resp = client.get("/skills/body", params=params)
             if resp.status_code == 200:
                 payload = resp.json()
@@ -272,16 +314,18 @@ def resolve_inline_only_bodies(
         if row and (row.get("delivery_criticality") or "").strip() == "required":
             raise RequiredBodyUnresolved(dropped)
 
-    total_bytes = sum(item["bytes"] for item in injected)
     metrics["elapsed_ms"] = int((time.monotonic() - start) * 1000)
     return block_md, injected, dropped, metrics
 
 
-def fetch_web_invariant_entries() -> list[dict[str, Any]]:
-    """Resolve invariant-skill bodies for the web Slice-F path."""
+def _fetch_invariant_entries_for(
+    entity_ids: tuple[str, ...],
+) -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
-    for entity_id in INVARIANT_SKILL_ENTITY_IDS:
-        payload, _reason = _fetch_body_sync(entity_id, None)
+    for entity_id in entity_ids:
+        payload, _reason = _fetch_body_sync(
+            entity_id, None, include_non_active=True
+        )
         if not payload:
             continue
         digest = str(payload.get("digest") or "")
@@ -297,3 +341,52 @@ def fetch_web_invariant_entries() -> list[dict[str, Any]]:
             }
         )
     return entries
+
+
+def fetch_invariant_pair_entries() -> list[dict[str, Any]]:
+    """Resolve the architecture invariant pair for code-touching generate."""
+    return _fetch_invariant_entries_for(INVARIANT_PAIR_ENTITY_IDS)
+
+
+def fetch_web_invariant_entries() -> list[dict[str, Any]]:
+    """Resolve invariant-skill bodies for the web Slice-F path."""
+    return _fetch_invariant_entries_for(INVARIANT_SKILL_ENTITY_IDS)
+
+
+def _invariant_presence_sentinel(block: str, injected: list[dict[str, Any]]) -> str:
+    """Grep-able marker confirming the full invariant block loaded."""
+    count = len([i for i in injected if str(i.get("id") or "").strip()])
+    if count == 0:
+        return ""
+    normalized = block.replace("\r\n", "\n").replace("\r", "\n")
+    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+    return (
+        f"<!-- cortex:invariant-skills-autoappend sha256={digest} count={count} -->"
+    )
+
+
+def append_invariant_pair_bodies(
+    content: str,
+    *,
+    already_present: str = "",
+    entries: list[dict[str, Any]] | None = None,
+) -> tuple[str, dict[str, Any]]:
+    """Append invariant skill bodies with sentinel; seat-agnostic."""
+    resolved_entries = (
+        entries if entries is not None else fetch_invariant_pair_entries()
+    )
+    present = f"{already_present}{content}"
+    block, injected, dropped = build_injected_bodies_md(
+        "",
+        resolved_entries,
+        already_present=present,
+        marker_prefix="invariant-skill",
+        budget_bytes=None,
+    )
+    meta: dict[str, Any] = {"injected": injected, "dropped": dropped, "block": block}
+    if not block:
+        return content, meta
+    sentinel = _invariant_presence_sentinel(block, injected)
+    if sentinel and "cortex:invariant-skills-autoappend" not in present:
+        block = f"\n\n{sentinel}{block}"
+    return content + block, meta

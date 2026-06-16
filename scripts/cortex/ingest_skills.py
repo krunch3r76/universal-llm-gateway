@@ -28,14 +28,19 @@ if str(_REPO / "libs") not in sys.path:
 if str(_SCRIPTS_CORTEX) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_CORTEX))
 
-from transport_utils import DEFAULT_CORTEX_URL, make_sync_client  # noqa: E402
-
-from _skill_related_parse import declared_related_skills, parse_frontmatter  # noqa: E402
+from _skill_related_parse import (  # noqa: E402
+    BARE_SLUG_RE,
+    declared_related_skills,
+    parse_frontmatter,
+)
 from _skill_related_sync import (  # noqa: E402
+    list_outgoing_reference_edges,
+    patch_sot_skill_attrs,
     remediation_hint,
     sync_declared_related,
     sync_reference_edges_only,
 )
+from transport_utils import DEFAULT_CORTEX_URL, make_sync_client  # noqa: E402
 
 _CANONICAL_DOC_RE = re.compile(
     r"universal-llm-gateway/docs/agent-guides/skills/([A-Za-z0-9_-]+)\.md"
@@ -69,11 +74,12 @@ def _cortex_files_root() -> Path:
     ).expanduser()
 
 
-def _scan_cortex_sot_declared() -> dict[str, list[str]]:
+def _scan_cortex_sot_metadata() -> dict[str, dict[str, object]]:
+    """Declared frontmatter from cortex ``agent-skills/*.md`` (not workspace stubs)."""
     skills_dir = _cortex_files_root() / "agent-skills"
     if not skills_dir.is_dir():
         return {}
-    found: dict[str, list[str]] = {}
+    found: dict[str, dict[str, object]] = {}
     for path in sorted(skills_dir.glob("*.md")):
         slug = path.stem
         if slug in _SKIP_CORTEX_SOT:
@@ -84,10 +90,27 @@ def _scan_cortex_sot_declared() -> dict[str, list[str]]:
             print(f"ERROR: unreadable {path}", file=sys.stderr)
             continue
         fm = parse_frontmatter(text)
+        entry: dict[str, object] = {}
         declared = declared_related_skills(text, fm)
-        if declared:
-            found[slug] = declared
+        if isinstance(fm.get("related_skills"), list):
+            entry["related_skills"] = declared
+        elif declared:
+            entry["related_skills"] = declared
+        for key in ("trigger_match_terms", "trigger_short", "skill_category"):
+            if key in fm:
+                entry[key] = fm[key]
+        if entry:
+            found[slug] = entry
     return found
+
+
+def _scan_cortex_sot_declared() -> dict[str, list[str]]:
+    meta = _scan_cortex_sot_metadata()
+    return {
+        slug: list(meta["related_skills"])
+        for slug, meta in meta.items()
+        if isinstance(meta.get("related_skills"), list)
+    }
 
 
 def _parse_frontmatter(text: str) -> dict[str, object]:
@@ -238,6 +261,56 @@ def _upsert(
     return True
 
 
+def _expected_declared_related(
+    scanned: dict[str, object],
+    live: dict | None,
+) -> list[str] | None:
+    fm = scanned["frontmatter"]
+    assert isinstance(fm, dict)
+    declared = scanned.get("related_skills")
+    if isinstance(declared, list) and (
+        declared or isinstance(fm.get("related_skills"), list)
+    ):
+        return [str(v) for v in declared]
+    if live is not None:
+        attrs = live.get("attributes") or {}
+        if isinstance(attrs, dict) and "related_skills" in attrs:
+            live_related = attrs.get("related_skills")
+            if isinstance(live_related, list):
+                return [str(v) for v in live_related]
+    return None
+
+
+def _reference_edge_drift(
+    client: object,
+    slug: str,
+    declared: list[str],
+    live_edges: list[dict] | None = None,
+) -> list[str]:
+    eid = f"agent_skill:{slug}"
+    if live_edges is None:
+        live_edges = list_outgoing_reference_edges(client, slug)
+    declared_set = set(declared)
+    edge_targets: set[str] = set()
+    for row in live_edges:
+        target_id = str(row.get("target_id") or "")
+        if not target_id.startswith("agent_skill:"):
+            continue
+        edge_targets.add(target_id.removeprefix("agent_skill:"))
+    out: list[str] = []
+    for target in sorted(declared_set - edge_targets):
+        out.append(
+            f"{eid} missing references edge to agent_skill:{target} — "
+            f"run: {remediation_hint()}"
+        )
+    for target in sorted(edge_targets - declared_set):
+        out.append(
+            f"{eid} stale references edge to agent_skill:{target} "
+            f"(not in declared list) — run: {remediation_hint()}"
+        )
+    return out
+
+
 def _related_skills_drift(
     client: object,
     slug: str,
@@ -295,6 +368,9 @@ def _drifts(
         ok, reason = _matches(live, _projection(scanned[slug], live=live))
         if not ok:
             out.append(f"{eid} {reason}")
+        expected = _expected_declared_related(scanned[slug], live)
+        if expected is not None:
+            out.extend(_reference_edge_drift(client, slug, expected))
     if cortex_declared:
         for slug in sorted(cortex_declared):
             if slug in scanned:
@@ -304,7 +380,60 @@ def _drifts(
             )
             if drift:
                 out.append(drift)
+            out.extend(
+                _reference_edge_drift(client, slug, cortex_declared[slug])
+            )
     return out
+
+
+def _resolve_slug(
+    client: object,
+    slug: str,
+    scanned: dict[str, dict[str, object]],
+    cortex_meta: dict[str, dict[str, object]],
+) -> str | None:
+    if slug in scanned or slug in cortex_meta:
+        return slug
+    status, live = _entity_get(client, f"agent_skill:{slug}")
+    if status == 200 and live.get("lifecycle") not in _SUPPRESSED:
+        return slug
+    return None
+
+
+def _filter_for_slug(
+    slug: str,
+    scanned: dict[str, dict[str, object]],
+    cortex_meta: dict[str, dict[str, object]],
+) -> tuple[dict[str, dict[str, object]], dict[str, dict[str, object]]]:
+    ws = {slug: scanned[slug]} if slug in scanned else {}
+    cortex = {slug: cortex_meta[slug]} if slug in cortex_meta else {}
+    return ws, cortex
+
+
+def _sync_live_only_skill(
+    client: object,
+    slug: str,
+    *,
+    dry_run: bool,
+) -> bool:
+    status, live = _entity_get(client, f"agent_skill:{slug}")
+    if status != 200:
+        print(f"  FAIL  agent_skill:{slug:40s}  [GET {status}]", file=sys.stderr)
+        return False
+    if live.get("lifecycle") in _SUPPRESSED:
+        print(f"  SKIP  agent_skill:{slug:40s}  (lifecycle={live.get('lifecycle')})")
+        return True
+    attrs = live.get("attributes") or {}
+    declared = attrs.get("related_skills")
+    if not isinstance(declared, list):
+        declared = []
+    return sync_reference_edges_only(
+        client,
+        slug,
+        [str(v) for v in declared],
+        dry_run=dry_run,
+        source_uri=_SYNC_SOURCE_URI,
+    )
 
 
 def _audit(client: object, scanned: dict[str, dict[str, object]], root: Path) -> int:
@@ -339,21 +468,62 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--check", action="store_true")
     parser.add_argument("--audit", action="store_true")
+    parser.add_argument(
+        "--slug",
+        type=str,
+        default=None,
+        help="Reconcile only this skill slug (workspace, cortex SOT, or live entity)",
+    )
     parser.add_argument("--root", type=Path, default=_REPO)
     args = parser.parse_args(argv)
-    scanned = _scan_skills(args.root.resolve())
-    if not scanned:
+
+    if args.slug and not BARE_SLUG_RE.match(args.slug):
+        print(f"ERROR: invalid slug {args.slug!r}", file=sys.stderr)
         return 2
+
+    scanned = _scan_skills(args.root.resolve())
+    cortex_meta = _scan_cortex_sot_metadata()
+    cortex_declared = _scan_cortex_sot_declared()
+
     try:
         client = make_sync_client(DEFAULT_CORTEX_URL)
     except Exception as exc:
         print(f"ERROR: cortex-api unreachable: {exc}", file=sys.stderr)
         return 2
+
+    slug_filter = args.slug
+    if slug_filter:
+        if _resolve_slug(client, slug_filter, scanned, cortex_meta) is None:
+            print(f"ERROR: unknown skill slug {slug_filter!r}", file=sys.stderr)
+            return 2
+        scanned, cortex_meta = _filter_for_slug(slug_filter, scanned, cortex_meta)
+        cortex_declared = (
+            {slug_filter: cortex_declared[slug_filter]}
+            if slug_filter in cortex_declared
+            else {}
+        )
+
+    if not slug_filter and not scanned:
+        return 2
+
     if args.audit:
         return _audit(client, scanned, args.root.resolve())
+
     if args.check:
-        cortex_declared = _scan_cortex_sot_declared()
         drifted = _drifts(client, scanned, cortex_declared=cortex_declared)
+        if slug_filter and not scanned and slug_filter not in cortex_declared:
+            status, live = _entity_get(client, f"agent_skill:{slug_filter}")
+            if status == 200 and live.get("lifecycle") not in _SUPPRESSED:
+                attrs = live.get("attributes") or {}
+                declared = attrs.get("related_skills")
+                if isinstance(declared, list):
+                    drifted.extend(
+                        _reference_edge_drift(
+                            client,
+                            slug_filter,
+                            [str(v) for v in declared],
+                        )
+                    )
         if drifted:
             for line in drifted:
                 print(f"DRIFT: {line}", file=sys.stderr)
@@ -365,10 +535,15 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         print("OK ingest_skills --check")
         return 0
-    print(f"Ingesting {len(scanned)} workspace skills")
-    cortex_declared = _scan_cortex_sot_declared()
+
+    if slug_filter:
+        print(f"Ingesting skill slug: {slug_filter}")
+    else:
+        print(f"Ingesting {len(scanned)} workspace skills")
     if cortex_declared:
         print(f"Cortex SOT declared related_skills: {len(cortex_declared)} skill(s)")
+    if cortex_meta:
+        print(f"Cortex SOT metadata sync: {len(cortex_meta)} skill(s)")
     if args.dry_run:
         print("DRY RUN — no writes will be issued")
     print()
@@ -391,25 +566,43 @@ def main(argv: list[str] | None = None) -> int:
             failures += 1
             continue
         declared = entry.get("related_skills")
-        if isinstance(declared, list) and declared:
+        fm = entry["frontmatter"]
+        assert isinstance(fm, dict)
+        if isinstance(declared, list) and (
+            declared or isinstance(fm.get("related_skills"), list)
+        ):
+            sync_list = [str(v) for v in declared]
             if not sync_reference_edges_only(
                 client,
                 slug,
-                declared,
+                sync_list,
                 dry_run=args.dry_run,
                 source_uri=_SYNC_SOURCE_URI,
             ):
                 failures += 1
-    for slug in sorted(cortex_declared):
-        if slug in scanned:
-            continue
-        if not sync_declared_related(
-            client,
-            slug,
-            cortex_declared[slug],
-            dry_run=args.dry_run,
-            source_uri=_SYNC_SOURCE_URI,
+    for slug in sorted(cortex_meta):
+        meta = cortex_meta[slug]
+        declared = meta.get("related_skills")
+        if slug not in scanned and isinstance(declared, list):
+            if not sync_declared_related(
+                client,
+                slug,
+                [str(v) for v in declared],
+                dry_run=args.dry_run,
+                source_uri=_SYNC_SOURCE_URI,
+            ):
+                failures += 1
+        attr_patch = {
+            k: meta[k]
+            for k in ("trigger_match_terms", "trigger_short", "skill_category")
+            if k in meta
+        }
+        if attr_patch and not patch_sot_skill_attrs(
+            client, slug, attr_patch, dry_run=args.dry_run
         ):
+            failures += 1
+    if slug_filter and not scanned and not cortex_meta:
+        if not _sync_live_only_skill(client, slug_filter, dry_run=args.dry_run):
             failures += 1
     return 1 if failures else 0
 

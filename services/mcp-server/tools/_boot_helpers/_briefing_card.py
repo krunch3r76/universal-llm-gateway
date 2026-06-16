@@ -479,5 +479,6 @@ def render_briefing_card(
         views_data=views_data,
         async_dispatches=async_dispatches,
         audit_counters=audit_counters,
+        agent=agent,
     )
     return card, manifest

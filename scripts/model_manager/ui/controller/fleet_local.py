@@ -204,6 +204,15 @@ async def _drain_stop_git_worker(ctl: ServiceController) -> str:
     scored by ``_classify_result``. See todo:git-worker-drain-p3-fleet
     (gpt-5.5 review thread 2018).
     """
+    from ..model.service_state import ServiceStatus
+
+    info = await asyncio.to_thread(ctl.service_state.check_git_integration_worker)
+    if info.status is ServiceStatus.STOPPED:
+        # Drain gate probes /health and defers with probe_error when the worker is
+        # down — that would fail-closed the entire fleet stop/restart cycle even
+        # though there is nothing to drain.
+        return "git-integration-worker is not running."
+
     supervisor = ctl.build_git_worker_drain_supervisor(
         kill=ctl.git_worker_kill_for("stop")
     )
@@ -253,9 +262,7 @@ async def stop_local_services(
     if is_email_bridge_configured():
         stop_ops.append(("email_bridge", ctl.stop_email_bridge))
     if not _FLEET_SKIP_GIT_WORKER:
-        stop_ops.append(
-            ("git_integration_worker", lambda: _drain_stop_git_worker(ctl))
-        )
+        stop_ops.append(("git_integration_worker", lambda: _drain_stop_git_worker(ctl)))
 
     stop_results = await run_ops_parallel(stop_ops)
     stop_dict: dict[str, bool] = {}

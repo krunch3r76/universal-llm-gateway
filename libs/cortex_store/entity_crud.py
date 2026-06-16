@@ -25,6 +25,7 @@ from .assertion_deserialize_telemetry import (
     assertion_deserialize_skip_reason,
     emit_assertion_deserialize_skipped,
 )
+from .confidence_field import DISCOVERABLE_SKILL_LIFECYCLE
 from .db import cortex_conn, decode_row, json_encode
 from .db import query as db_query
 from .entity_aliases import sync_entity_aliases
@@ -241,6 +242,7 @@ def list_entities_impl(
     query: str | None = None,
     content_hash: str | None = None,
     fields: list[str] | None = None,
+    include_non_active: bool = False,
 ) -> dict[str, list[dict[str, object]]]:
     clauses: list[str] = []
     params: list[object] = []
@@ -314,6 +316,10 @@ def list_entities_impl(
             clauses.append("(id LIKE ? ESCAPE '\\' OR name LIKE ? ESCAPE '\\')")
             params.append(pattern)
             params.append(pattern)
+
+    if not include_non_active:
+        clauses.append("(type != 'agent_skill' OR lifecycle = ?)")
+        params.append(DISCOVERABLE_SKILL_LIFECYCLE)
 
     where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
     if fields:

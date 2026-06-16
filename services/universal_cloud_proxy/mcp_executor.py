@@ -22,7 +22,6 @@ parses as ``{family}-{platform}``.
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import logging
 import time
@@ -30,6 +29,10 @@ from copy import deepcopy
 from typing import Any
 
 import httpx
+from agent_seat.body_injection import (
+    append_invariant_pair_bodies,
+    fetch_web_invariant_entries,
+)
 from llm_adapters._tool_schema import sanitize_tool_parameters
 
 from services.universal_cloud_proxy.boot_directive import (
@@ -47,12 +50,6 @@ _RESTART_ERROR_CODE = -32099
 _RESTART_ERROR_REASON = "server_restarting"
 _RESTART_ERROR_MESSAGE = "MCP server is restarting; retry in 30s"
 _RESTART_RETRY_DELAYS_S = (5.0, 15.0)
-
-from agent_seat.body_injection import (
-    INVARIANT_SKILL_ENTITY_IDS as _INVARIANT_SKILL_ENTITY_IDS,
-    build_injected_bodies_md,
-    fetch_web_invariant_entries,
-)
 
 _DISPATCH_COMPAT_TOOL_DEFS: dict[str, dict[str, Any]] = {
     "web_fetch": {
@@ -102,41 +99,17 @@ def _is_web_seat(seat: str) -> bool:
     return profile is not None and profile.platform == "web"
 
 
-def _invariant_presence_sentinel(block: str, injected: list[dict[str, Any]]) -> str:
-    """One-line, grep-able, VERIFIABLE presence marker for the invariant block.
-
-    Per-block ``<!-- invariant-skill:slug digest:… -->`` markers exist already,
-    but an agent could not cheaply confirm the WHOLE invariant set loaded
-    (thread 1876 gap row A2). Format reconciled with claude-web's GPT-5.5 spec
-    (thread 1879): ``sha256`` is taken over the body block (sans this sentinel),
-    UTF-8, ``\\n``-normalized, so a seat can RECOMPUTE the hash over its own
-    system prompt rather than merely substring-matching a slug list."""
-    count = len([i for i in injected if str(i.get("id") or "").strip()])
-    if count == 0:
-        return ""
-    normalized = block.replace("\r\n", "\n").replace("\r", "\n")
-    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
-    return f"<!-- cortex:invariant-skills-autoappend sha256={digest} count={count} -->"
-
-
 async def _append_web_invariant_bodies(content: str, seat: str) -> str:
-    """Append the two invariant skill bodies for web seats (marker-deduped)."""
+    """Append invariant skill bodies for web seats (marker-deduped)."""
     if not _is_web_seat(seat):
         return content
     entries = await asyncio.to_thread(fetch_web_invariant_entries)
-    block, injected, _ = build_injected_bodies_md(
-        seat,
-        entries,
+    updated, _ = append_invariant_pair_bodies(
+        content,
         already_present=content,
-        marker_prefix="invariant-skill",
-        budget_bytes=None,
+        entries=entries,
     )
-    if not block:
-        return content
-    sentinel = _invariant_presence_sentinel(block, injected)
-    if sentinel and "cortex:invariant-skills-autoappend" not in content:
-        block = f"\n\n{sentinel}{block}"
-    return content + block
+    return updated
 
 
 def _jsonrpc_request(

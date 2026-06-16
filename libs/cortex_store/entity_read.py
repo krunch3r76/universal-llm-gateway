@@ -19,6 +19,7 @@ from .assertion_deserialize_telemetry import (
     emit_assertion_deserialize_skipped,
 )
 from .compaction import apply_compaction_filter
+from .confidence_field import agent_skill_is_discoverable
 from .db import decode_row, query
 from .handoff_surface import apply_handoff_read_projection
 from .models import (
@@ -150,7 +151,7 @@ def get_entity_impl(
         detail_row,
         existing_hints=hints or None,
     )
-    return EntityDetail(
+    payload = EntityDetail(
         **detail_row,
         assertions=assertions,
         relationships=relationships,
@@ -158,3 +159,8 @@ def get_entity_impl(
         action_hints=hints,
         compaction_projection=compaction_projection,
     ).model_dump(mode="json")
+    if detail_row.get("type") == "agent_skill":
+        payload["discoverable"] = agent_skill_is_discoverable(
+            detail_row.get("lifecycle")  # type: ignore[arg-type]
+        )
+    return payload

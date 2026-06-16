@@ -26,6 +26,7 @@ from ..transcript_assembly import (
     resolve_jsonl_path,
     session_id_timing_hint,
 )
+from ._session_todo_reconciliation import todo_reconciliation_preflight_fields
 from ._shared import _FILES_ROOT, record
 from .ops_audit_detectors import run_detectors
 from .ops_review_gate import _run_session_audit_or_block, summarize_audit_outcome
@@ -297,6 +298,13 @@ def _op_session_close_preflight(
         )
         if timing_hint:
             preflight["warnings"] = [*structural_warnings, timing_hint]
+    todo_recon = todo_reconciliation_preflight_fields(entity_ids)
+    preflight.update(todo_recon)
+    if todo_recon.get("todo_reconciliation_warning"):
+        preflight["warnings"] = [
+            *(preflight.get("warnings") or []),
+            todo_recon["todo_reconciliation_warning"],
+        ]
     if handoff_source_path or handoff_prompt:
         handoff_preview = handoff_dry_run_preview(
             files_root=_FILES_ROOT,
@@ -454,6 +462,13 @@ def _op_session_close(
                 dry_payload.pop("would_succeed", None)
                 dry_payload["would_fail"] = True
                 dry_payload["reason"] = "handoff.missing_transcript_anchor"
+        todo_recon = todo_reconciliation_preflight_fields(entity_ids)
+        dry_payload.update(todo_recon)
+        if todo_recon.get("todo_reconciliation_warning"):
+            dry_payload["warnings"] = [
+                *(dry_payload.get("warnings") or []),
+                todo_recon["todo_reconciliation_warning"],
+            ]
         return dry_payload
 
     body: dict[str, Any] = {

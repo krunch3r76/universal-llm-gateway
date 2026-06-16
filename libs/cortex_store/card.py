@@ -29,6 +29,7 @@ from .compaction import (
     is_compaction_pointer,
     is_tombstone_only,
 )
+from .confidence_field import agent_skill_is_discoverable
 from .db import json_decode, query
 from .models import (
     CardAssertion,
@@ -322,7 +323,10 @@ def get_entity_card(
         },
         debug=debug_payload,
     )
-    return card.model_dump(mode="json")
+    payload = card.model_dump(mode="json")
+    if str(e["type"]) == "agent_skill":
+        payload["discoverable"] = agent_skill_is_discoverable(e.get("lifecycle"))  # type: ignore[arg-type]
+    return payload
 
 
 def _card_assertion(r: dict[str, object]) -> CardAssertion:

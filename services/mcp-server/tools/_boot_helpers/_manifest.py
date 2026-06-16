@@ -19,6 +19,7 @@ def build_manifest(
     views_data: list[dict[str, Any]] | None = None,
     async_dispatches: list[dict[str, Any]] | None = None,
     audit_counters: dict[str, int] | None = None,
+    agent: str | None = None,
 ) -> list[dict[str, Any]]:
     """Build the section manifest returned alongside the briefing card."""
     manifest: list[dict[str, Any]] = []
@@ -100,19 +101,35 @@ def build_manifest(
             }
         )
     if skills:
+        hint = (
+            "Index on briefing_card ## Agent Skills. Browse: "
+            'fs(sandbox="cortex", op="md_list", path="agent-skills/"); '
+            'read: fs(sandbox="cortex", op="md_read", path="agent-skills/<slug>.md"). '
+            "Refresh entity list: cortex(tool='entities', "
+            'arguments=\'{"type": "agent_skill"}\'). '
+            "Agent-skill entity listing returns only lifecycle=active by default; "
+            "pass include_non_active=true only for maintenance/debug inspection."
+        )
         manifest.append(
             {
                 "section": "skills",
                 "count": len(skills),
-                "hint": (
-                    "Index on briefing_card ## Agent Skills. Browse: "
-                    'fs(sandbox="cortex", op="md_list", path="agent-skills/"); '
-                    'read: fs(sandbox="cortex", op="md_read", path="agent-skills/<slug>.md"). '
-                    "Refresh entity list: cortex(tool='entities', "
-                    'arguments=\'{"type": "agent_skill"}\')'
-                ),
+                "hint": hint,
             }
         )
+        from agent_seat.body_injection import is_web_seat_slug
+
+        if agent and is_web_seat_slug(agent):
+            manifest.append(
+                {
+                    "section": "skills_index",
+                    "count": len(skills),
+                    "hint": (
+                        f"notes/system/boot/skills-index-{agent}.md "
+                        "(LIVE boot writes; see cortex_boot skills_index_ref)"
+                    ),
+                }
+            )
 
     # §C.4: view materialization entries — one per requested view entity.
     # render_subgraph is the canonical retrieval primitive for these entries.

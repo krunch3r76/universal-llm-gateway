@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
 from enum import Enum
@@ -24,12 +25,78 @@ from ._boot_transcript import resolve_transcript
 
 _LA = ZoneInfo("America/Los_Angeles")
 _OPS_CONTEXT_DIR = Path("/data/files/notes/system/shared")
+_SKILLS_INDEX_DIR = Path("/data/files/notes/system/boot")
 # Per-seat delivered-card byte ceilings (UTF-8). Tripwire = projected max-load
 # size + ~0.5KB headroom (thread 1427 §A.3); breach self-announces on-card and
 # emits mcp.cortex.boot.card.overbudget. Declared intent: ratchet DOWN as fixed
 # doctrine graduates to skills.
 _CARD_BYTE_CEILINGS = {"web": 19_000, "default": 15_500}
 logger = get_logger(__name__)
+
+
+def _web_auto_inject_skills_md(seat_slug: str) -> str:
+    """Slice F: full skill bodies for web seats (native MCP + audit manifest)."""
+    from agent_seat.body_injection import (
+        build_injected_bodies_md,
+        fetch_web_invariant_entries,
+        is_web_seat_slug,
+    )
+
+    if not is_web_seat_slug(seat_slug):
+        return ""
+    entries = fetch_web_invariant_entries()
+    block, injected, _ = build_injected_bodies_md(
+        seat_slug,
+        entries,
+        marker_prefix="invariant-skill",
+        budget_bytes=None,
+    )
+    if not block:
+        return ""
+    normalized = block.replace("\r\n", "\n").replace("\r", "\n")
+    count = len([i for i in injected if str(i.get("id") or "").strip()])
+    if count and "cortex:invariant-skills-autoappend" not in block:
+        digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+        block = f"\n\n<!-- cortex:invariant-skills-autoappend sha256={digest} count={count} -->{block}"
+    return block.strip()
+
+
+def _materialize_skills_index(
+    seat_slug: str,
+    skills: list[dict[str, Any]],
+    mode: BootMode,
+) -> tuple[str, str, bool]:
+    """Build and optionally persist the web seat skills index sidecar."""
+    from agent_seat.body_injection import is_web_seat_slug, web_auto_inject_skill_slugs
+
+    from .._boot_helpers._skills_index_render import (
+        render_skills_index_md,
+        skills_index_rel_path,
+    )
+
+    if not skills or not is_web_seat_slug(seat_slug):
+        return "", "", False
+    ref = skills_index_rel_path(seat_slug)
+    md = render_skills_index_md(
+        seat_slug,
+        skills,
+        preloaded_slugs=web_auto_inject_skill_slugs(),
+    )
+    written = False
+    if mode == BootMode.LIVE:
+        try:
+            _SKILLS_INDEX_DIR.mkdir(parents=True, exist_ok=True)
+            (_SKILLS_INDEX_DIR / f"skills-index-{seat_slug}.md").write_text(md)
+            written = True
+        except OSError as exc:
+            logger.warning("Could not write skills index to %s: %s", ref, exc)
+            record(
+                "mcp.cortex.boot.skills_index.writefailed",
+                agent=seat_slug,
+                path=ref,
+                error=str(exc),
+            )
+    return ref, md, written
 
 
 class BootMode(Enum):
@@ -288,6 +355,12 @@ def run_cortex_boot(
 
     views_data: list[dict[str, Any]] = _materialize_views(views) if views else []
 
+    skills_index_ref, skills_index_md, skills_index_written = _materialize_skills_index(
+        seat_slug,
+        list(extracted.get("skills") or []),
+        mode,
+    )
+
     card, manifest = render_briefing_card(
         deadlines=extracted["deadlines"]
         if profile_dict.get("include_deadlines", True)
@@ -357,6 +430,29 @@ def run_cortex_boot(
         recorder=recorder,
     )
 
+    auto_inject_skills_md = _web_auto_inject_skills_md(seat_slug)
+    if auto_inject_skills_md:
+        artifacts.append(
+            InjectedArtifact.from_text(
+                name="auto_inject_skills",
+                mode="inline",
+                source="fetch_web_invariant_entries()",
+                text=auto_inject_skills_md,
+            )
+        )
+
+    if skills_index_md:
+        artifacts.append(
+            InjectedArtifact.from_text(
+                name="skills_index",
+                mode="written_file",
+                source=f"render_skills_index_md(seat={seat_slug!r})",
+                text=skills_index_md,
+                path=skills_index_ref,
+            )
+        )
+        _ = skills_index_written
+
     audit_dump_path: str | None = None
     if mode == BootMode.LIVE:
         audit_dump_path = write_audit_dump(
@@ -398,6 +494,13 @@ def run_cortex_boot(
         "injected_artifacts": serialize_manifest(artifacts),
         "audit_dump_path": audit_dump_path,
     }
+    if auto_inject_skills_md:
+        result["auto_inject_skills_md"] = auto_inject_skills_md
+
+    if skills_index_ref:
+        result["skills_index_ref"] = skills_index_ref
+    if skills_index_md:
+        result["skills_index_md"] = skills_index_md
 
     if tc_summary:
         result["continuation_transcript"] = {

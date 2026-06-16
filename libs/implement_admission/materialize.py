@@ -6,6 +6,8 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from agent_seat.body_injection import CODING_SESSION_BUNDLE
+
 from implement_admission.admission_read import (
     compute_packet_sha256,
     replace_frontmatter_value,
@@ -157,15 +159,19 @@ def _render_task_guidance(spec: ImplementSpec) -> str:
 # reviewer reads the universal invariants + ULG topology/lifecycle before
 # findings (handoff.py validate_packet § handoff_packet_missing_arch_skillrefs).
 # Emitted unconditionally; deduped against the spec's own required_skills.
-_REQUIRED_ARCH_SKILLS: tuple[str, ...] = (
-    "architecture-invariants",
-    "ulg-architecture",
+_REQUIRED_ARCH_SKILLS: tuple[str, ...] = tuple(
+    entity_id.removeprefix("agent_skill:")
+    for entity_id in CODING_SESSION_BUNDLE["inject"]
 )
 
 
 def _render_mcp_capabilities(spec: ImplementSpec) -> str:
     skills = list(spec.skills)
+    inject_slugs = set(_REQUIRED_ARCH_SKILLS)
     skills.extend(s for s in _REQUIRED_ARCH_SKILLS if s not in skills)
+    for slug in CODING_SESSION_BUNDLE["advertise"]:
+        if slug not in skills and slug not in inject_slugs:
+            skills.append(slug)
     lines = [_skill_read(s) for s in skills]
     lines.append(f"Tool surface: {_TOOL_SURFACE}")
     if any(f.endswith(".py") for f in spec.scope.files_expected):

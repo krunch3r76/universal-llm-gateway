@@ -105,6 +105,7 @@ def _op_entities(
     for_agent: str | None = None,
     content_hash: str | None = None,
     fields: list[str] | None = None,
+    include_non_active: bool = False,
     **_: object,
 ) -> dict[str, Any]:
     _, _, _, _list_entities_impl, _ = _impls()
@@ -118,6 +119,7 @@ def _op_entities(
             for_agent=for_agent,
             content_hash=content_hash,
             fields=fields,
+            include_non_active=include_non_active,
         )
 
 

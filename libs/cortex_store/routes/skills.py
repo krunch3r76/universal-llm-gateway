@@ -23,8 +23,8 @@ from fastapi import APIRouter, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field, ValidationError
 
 from ..confidence_field import (
-    SUPPRESSED_SKILL_LIFECYCLES,
-    lifecycle_not_in_sql_predicate,
+    DISCOVERABLE_SKILL_LIFECYCLE,
+    discoverable_skill_lifecycle_sql_predicate,
 )
 from ..db import cortex_conn
 from ..db import query as db_query
@@ -36,8 +36,8 @@ from ..event_publisher import (
 )
 from ..seat_applicability import (
     CAPABILITY_CLAUSE,
-    FOR_AGENT_CLAUSE,
     canonical_seat_or_422,
+    for_agent_filter_clause,
     seat_capabilities_json,
 )
 from ..skill_suggest_rank import apply_rerank, rerank_enabled_default
@@ -50,7 +50,7 @@ from ._skill_index import (
 from ._skill_suggest import run_stage_a
 from .boot._skill_trigger import _resolve_skill_file, skill_trigger_text
 
-_SUPPRESSED_LIFECYCLE_EXCLUDE = lifecycle_not_in_sql_predicate(SUPPRESSED_SKILL_LIFECYCLES)
+_DISCOVERABLE_SKILL_LIFECYCLE = discoverable_skill_lifecycle_sql_predicate()
 
 router = APIRouter(prefix="/skills", tags=["skills"])
 
@@ -68,7 +68,7 @@ _SKILLS_MANIFEST_SQL = f"""
            json_extract(attributes, '$.delivery_criticality') AS delivery_criticality
     FROM entities
     WHERE type IN ({{type_placeholders}})
-      AND {_SUPPRESSED_LIFECYCLE_EXCLUDE}
+      AND {_DISCOVERABLE_SKILL_LIFECYCLE}
       {{for_agent_filter}}{{capability_filter}}
     ORDER BY name ASC
     LIMIT ?
@@ -113,11 +113,11 @@ def get_skills(
     for_agent: str | None = Query(
         None,
         description=(
-            "Filter to skills whose `applicable_agents` list contains either "
-            "`*` (universal) or this seat slug. Canonical seat slug (e.g. "
-            "`claude-web`, `claude-cursor`, `cursor-sdk`); legacy spellings are "
-            "normalized; unknown slugs return HTTP 422. Skills with no "
-            "`applicable_agents` are withheld (default-deny)."
+            "Filter to skills whose `applicable_agents` list contains this "
+            "seat slug. Cursor/sdk seats also inherit universal `*`. Web and "
+            "API seats require an explicit slug. Unknown slugs return HTTP "
+            "422. Skills with no `applicable_agents` are withheld "
+            "(default-deny). Only `lifecycle=active` skills are listed."
         ),
     ),
 ) -> dict[str, Any]:
@@ -129,10 +129,10 @@ def get_skills(
     """
     entity_types = entity_types_for_layer(layer)
     type_placeholders = ", ".join("?" * len(entity_types))
-    params: list[Any] = [*entity_types, *SUPPRESSED_SKILL_LIFECYCLES]
+    params: list[Any] = [*entity_types, DISCOVERABLE_SKILL_LIFECYCLE]
     if for_agent:
         canonical = canonical_seat_or_422(for_agent)
-        for_agent_filter = FOR_AGENT_CLAUSE
+        for_agent_filter = for_agent_filter_clause(canonical)
         capability_filter = CAPABILITY_CLAUSE
         params.append(canonical)
         params.append(seat_capabilities_json(canonical))
@@ -165,13 +165,22 @@ def get_skill_body(
     expected_digest: str | None = Query(
         None, description="Optional digest for drift detection (409 on mismatch)"
     ),
+    include_non_active: Annotated[
+        bool,
+        Query(
+            description=(
+                "Maintenance/debug: return body for an inactive skill. "
+                "Not a security boundary."
+            ),
+        ),
+    ] = False,
 ) -> dict[str, Any]:
     """Return the substantive skill/rule body with source_uri and content digest."""
     conn = cortex_conn()
     try:
         rows = db_query(
             conn,
-            "SELECT id, name, source_uri, type FROM entities WHERE id = ? "
+            "SELECT id, name, source_uri, type, lifecycle FROM entities WHERE id = ? "
             "AND type IN ('agent_skill', 'rule')",
             (id,),
         )
@@ -183,6 +192,17 @@ def get_skill_body(
     entity_id = str(row.get("id") or "")
     slug = slug_from_row(row)
     source_uri = row.get("source_uri")
+    lifecycle = row.get("lifecycle")
+    is_skill = row.get("type") == "agent_skill"
+    discoverable = (not is_skill) or (lifecycle == DISCOVERABLE_SKILL_LIFECYCLE)
+    if is_skill and not discoverable and not include_non_active:
+        return {
+            "id": entity_id,
+            "lifecycle": lifecycle,
+            "discoverable": False,
+            "body": None,
+            "reason": "inactive_lifecycle_withheld",
+        }
     path = _resolve_skill_file(source_uri, slug)
     if path is None:
         raise HTTPException(
@@ -209,6 +229,8 @@ def get_skill_body(
         "source_uri": source_uri,
         "digest": digest,
         "body": body_text,
+        "lifecycle": lifecycle,
+        "discoverable": discoverable,
     }
 
 

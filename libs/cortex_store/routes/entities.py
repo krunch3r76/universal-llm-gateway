@@ -105,6 +105,15 @@ def list_entities(
             "applicable_agents). Returns raw dict rows, not EntitySummary."
         ),
     ),
+    include_non_active: bool = Query(
+        False,
+        description=(
+            "Maintenance/debug: include inactive agent_skill rows "
+            "(draft, deprecated, retired, merged, NULL lifecycle). "
+            "Default listing returns only lifecycle=active skills. "
+            "Not a security boundary."
+        ),
+    ),
 ) -> EntityList | dict[str, object]:
     """List entities, optionally constrained to one entity type / workflow_state."""
     field_list: list[str] | None = None
@@ -120,6 +129,7 @@ def list_entities(
             query=query,
             content_hash=content_hash,
             fields=field_list,
+            include_non_active=include_non_active,
         )
     if field_list:
         return data

@@ -8,7 +8,10 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from agent_seat import AgentMeta, assemble_system_prompt, hydrate_agent
-from agent_seat.body_injection import INJECTED_BODY_BUDGET_BYTES
+from agent_seat.body_injection import (
+    INJECTED_BODY_BUDGET_BYTES,
+    append_invariant_pair_bodies,
+)
 from agent_seat.role_entity_sync import resolve_dispatch_capabilities
 from llm_adapters.capability_dispatch import project_knob_resolution
 from model_id import (
@@ -38,6 +41,14 @@ from .events import (
 
 _FRONTIER_DISPATCH_PIPELINE_ID = "frontier-dispatch"
 _TEAM_DISPATCH_PIPELINE_ID = "team-dispatch"
+
+
+def _code_touching_generate(req: FrontierGenerateRequest) -> bool:
+    return (
+        req.role == "cursor-sdk"
+        or (req.resolved_contract or "") == "implement"
+        or bool(req.generation_options and req.generation_options.get("coding_session"))
+    )
 
 
 @dataclass(slots=True)
@@ -128,13 +139,20 @@ async def build_dispatch_body(
                 field="injected_bodies",
                 reason="required conduct rule body failed to resolve",
             )
+        injected_bodies_md = bundle.injected_bodies_md
+        code_injection_meta: dict[str, Any] | None = None
+        if not bundle.inline_only and _code_touching_generate(req):
+            injected_bodies_md, code_injection_meta = append_invariant_pair_bodies(
+                injected_bodies_md or "",
+                already_present=bundle.briefing_card_md or "",
+            )
         system_assembled = assemble_system_prompt(
             req.role,
             briefing_card_md=bundle.briefing_card_md,
             continuation_md=bundle.continuation_md,
             extra_system=req.system,
             inline_only=bundle.inline_only,
-            injected_bodies_md=bundle.injected_bodies_md,
+            injected_bodies_md=injected_bodies_md,
         )
         if bundle.inline_only and event_publisher is not None:
             meta_inj = bundle.injection_meta or {}
@@ -157,6 +175,27 @@ async def build_dispatch_body(
                     cold_fetches=int(metrics.get("cold_fetches", 0)),
                     elapsed_ms=int(metrics.get("elapsed_ms", 0)),
                     deadline_hit=bool(metrics.get("deadline_hit")),
+                )
+            )
+        elif code_injection_meta and event_publisher is not None:
+            injected = code_injection_meta.get("injected") or []
+            event_publisher(
+                InlineBodyInjectionResolved(
+                    request_id=request_id,
+                    seat=req.role,
+                    model=req.model or meta.default_model,
+                    injected=injected,
+                    dropped=code_injection_meta.get("dropped") or [],
+                    total_bytes=sum(
+                        int(item.get("bytes", 0))
+                        for item in injected
+                        if isinstance(item, dict)
+                    ),
+                    budget_bytes=INJECTED_BODY_BUDGET_BYTES,
+                    cache_hit=False,
+                    cold_fetches=len(injected),
+                    elapsed_ms=0,
+                    deadline_hit=False,
                 )
             )
 

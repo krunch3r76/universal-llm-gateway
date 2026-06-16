@@ -8,23 +8,21 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Query
 
 from ...confidence_field import (
-    SUPPRESSED_SKILL_LIFECYCLES,
-    lifecycle_not_in_sql_predicate,
+    DISCOVERABLE_SKILL_LIFECYCLE,
+    discoverable_skill_lifecycle_sql_predicate,
 )
 from ...db import cortex_conn
 from ...db import query as db_query
 from ...seat_applicability import (
     CAPABILITY_CLAUSE,
-    FOR_AGENT_CLAUSE,
     canonical_seat_or_422,
+    for_agent_filter_clause,
     seat_capabilities_json,
 )
 from .._skill_index import entity_types_for_layer, index_envelope_fields
 from ._skill_trigger import skill_trigger_text
 
-_SUPPRESSED_LIFECYCLE_EXCLUDE = lifecycle_not_in_sql_predicate(
-    SUPPRESSED_SKILL_LIFECYCLES
-)
+_DISCOVERABLE_SKILL_LIFECYCLE = discoverable_skill_lifecycle_sql_predicate()
 
 router = APIRouter(tags=["boot"])
 
@@ -43,7 +41,7 @@ _BOOT_SKILLS_SQL = f"""
            json_extract(attributes, '$.related_skills') AS related_skills_json
     FROM entities
     WHERE type IN ({{type_placeholders}})
-      AND {_SUPPRESSED_LIFECYCLE_EXCLUDE}
+      AND {_DISCOVERABLE_SKILL_LIFECYCLE}
       {{for_agent_filter}}{{capability_filter}}
     ORDER BY name ASC
     LIMIT ?
@@ -53,7 +51,7 @@ _UNPARTITIONED_COUNT_SQL = f"""
     SELECT COUNT(*) AS n
     FROM entities
     WHERE type = 'agent_skill'
-      AND {_SUPPRESSED_LIFECYCLE_EXCLUDE}
+      AND {_DISCOVERABLE_SKILL_LIFECYCLE}
       AND json_extract(attributes, '$.applicable_agents') IS NULL
 """
 
@@ -146,12 +144,12 @@ def get_boot_skills(
     for_agent: str | None = Query(
         None,
         description=(
-            "Filter to skills whose `applicable_agents` list contains "
-            "either `*` (universal) or this seat slug. Canonical seat slug "
-            "(e.g. `claude-web`, `claude-cursor`, `cursor-sdk`); legacy "
-            "spellings are normalized; skills with no `applicable_agents` "
-            "are withheld (default-deny) — universal skills carry explicit "
-            "`['*']`."
+            "Filter to skills whose `applicable_agents` list contains this "
+            "seat slug (canonical e.g. `claude-web`, `claude-cursor`). "
+            "Cursor/sdk seats also inherit universal `*`. Web and API seats "
+            "require an explicit slug — `*` alone does not apply. Skills with "
+            "no `applicable_agents` are withheld (default-deny). Only "
+            "`lifecycle=active` skills are listed."
         ),
     ),
 ) -> dict[str, Any]:
@@ -165,10 +163,10 @@ def get_boot_skills(
     """
     entity_types = entity_types_for_layer(layer)
     type_placeholders = ", ".join("?" * len(entity_types))
-    params: list[Any] = [*entity_types, *SUPPRESSED_SKILL_LIFECYCLES]
+    params: list[Any] = [*entity_types, DISCOVERABLE_SKILL_LIFECYCLE]
     if for_agent:
         canonical = canonical_seat_or_422(for_agent)
-        for_agent_filter = FOR_AGENT_CLAUSE
+        for_agent_filter = for_agent_filter_clause(canonical)
         capability_filter = CAPABILITY_CLAUSE
         params.append(canonical)
         params.append(seat_capabilities_json(canonical))
@@ -191,7 +189,7 @@ def get_boot_skills(
             # silently as Kaywan adds new and temp skills. Single SQL query, no
             # row data, ~30 bytes on the wire.
             unpartitioned_rows = db_query(
-                conn, _UNPARTITIONED_COUNT_SQL, SUPPRESSED_SKILL_LIFECYCLES
+                conn, _UNPARTITIONED_COUNT_SQL, (DISCOVERABLE_SKILL_LIFECYCLE,)
             )
             unpartitioned = int(unpartitioned_rows[0]["n"]) if unpartitioned_rows else 0
     finally:

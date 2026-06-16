@@ -1,4 +1,8 @@
-"""Bounded synchronous Stage-B rerank client for skill_suggest (§4)."""
+"""Bounded synchronous Stage-B rerank client for skill_suggest (§4).
+
+Future: optional cursor-sdk / frontier LLM rerank over Stage-A candidates with
+deterministic Stage-A as fallback when rerank disabled, times out, or degrades.
+"""
 
 from __future__ import annotations
 

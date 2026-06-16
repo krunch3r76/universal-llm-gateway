@@ -97,6 +97,19 @@ SUPPRESSED_SKILL_LIFECYCLES: tuple[str, ...] = (
     "merged",
 )
 
+# Positive filter for boot /skills / skill_suggest — only graduated active skills.
+DISCOVERABLE_SKILL_LIFECYCLE: str = "active"
+
+
+def discoverable_skill_lifecycle_sql_predicate(column_prefix: str = "") -> str:
+    """Match only ``lifecycle='active'`` for agent skill discovery surfaces."""
+    return lifecycle_is_value_sql_predicate(DISCOVERABLE_SKILL_LIFECYCLE, column_prefix)
+
+
+def agent_skill_is_discoverable(lifecycle: str | None) -> bool:
+    """Whether an ``agent_skill`` row is on automatic discovery surfaces."""
+    return lifecycle == DISCOVERABLE_SKILL_LIFECYCLE
+
 
 def lifecycle_not_in_sql_predicate(
     values: tuple[str, ...], column_prefix: str = ""

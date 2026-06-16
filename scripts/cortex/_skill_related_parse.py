@@ -68,6 +68,6 @@ def parse_related_skills_section(text: str) -> list[str]:
 
 def declared_related_skills(text: str, fm: dict[str, object]) -> list[str]:
     from_fm = fm.get("related_skills")
-    if isinstance(from_fm, list) and from_fm:
+    if isinstance(from_fm, list):
         return [str(v) for v in from_fm]
     return parse_related_skills_section(text)

@@ -181,7 +181,12 @@ def render_audit_alerts_section(counters: dict[str, int]) -> list[str]:
 
 
 _INVARIANT_SKILL_SLUGS: frozenset[str] = frozenset(
-    {"architecture-invariants", "ulg-architecture"}
+    {
+        "architecture-invariants",
+        "ulg-architecture",
+        "cortex-orientation",
+        "cortex-provenance-discipline",
+    }
 )
 
 _TIER1_GATE_SLUGS: frozenset[str] = frozenset(
@@ -220,9 +225,9 @@ def _rank_score(skill: dict[str, Any], signals: set[str]) -> int:
     return len(_normalize_terms(skill) & signals)
 
 
-def _skill_trigger_display(skill: dict[str, Any]) -> str:
+def _skill_prose_display(skill: dict[str, Any]) -> str:
     return (
-        skill.get("trigger_short") or skill.get("description_first_sentence") or ""
+        skill.get("description_first_sentence") or skill.get("trigger_short") or ""
     ).strip()
 
 
@@ -239,7 +244,7 @@ def _append_skill_index(
         if names_only:
             lines.append(f"- **`{slug}`**")
             continue
-        trigger = _skill_trigger_display(skill)
+        trigger = _skill_prose_display(skill)
         trigger_part = f" — {trigger}" if trigger else ""
         uri = skill.get("source_uri")
         if slug in _INVARIANT_SKILL_SLUGS and isinstance(uri, str) and uri.strip():
@@ -258,16 +263,23 @@ def render_skills_section(
 ) -> list[str]:
     """Render skills in 3 tiers: required gates, session-ranked, catalog-by-category."""
     lines: list[str] = [
-        f"\n## Agent Skills ({len(skills)} on this seat — manifest only)",
+        f"\n## Agent Skills ({len(skills)} active on this seat — manifest only)",
+        (
+            "> **Active only**: `lifecycle=active` skills for this seat. Draft, "
+            "deprecated, retired, and unset lifecycle are withheld unless an "
+            "operator explicitly requests inactive catalog access."
+        ),
         (
             "> Load on demand: "
             '`fs(sandbox="cortex", op="md_read", path="agent-skills/<slug>.md")` '
             "— slug is the bolded id on each line. "
             "Full index (all triggers): `cortex://agent-skills/README.md`. "
-            "Invariant-tier bodies (`architecture-invariants`, `ulg-architecture`) "
-            "auto-append to the web system prompt — not inlined here. "
-            "Verify they loaded: grep `cortex:invariant-skills-autoappend` in your "
-            "own prompt (the sentinel carries a `sha256` over the body + a `count`)."
+            "Web auto-inject bodies (`architecture-invariants`, `ulg-architecture`, "
+            "`cortex-orientation`, `cortex-provenance-discipline`) append to the web "
+            "system prompt — not inlined here. `skill_suggest` treats them as loaded "
+            "for web seats (`seat_preloaded` in the response). Verify injection: grep "
+            "`cortex:invariant-skills-autoappend` in your prompt (sentinel `sha256` + "
+            "`count` over the injected block)."
         ),
         (
             "> **Discovery (you call it, never the operator)**: at task inflection "
@@ -278,6 +290,13 @@ def render_skills_section(
             "delta; fetch each hit via its `uri`. "
             "If `skill_suggest` is not pre-bound this session, "
             '`tool_search("skill_suggest")` first (one load hop), then call it.'
+        ),
+        (
+            "> **Coding session**: when the operator declares a coding session, code "
+            "modification, diff-review, or implement-in-repo work, call "
+            '`skill_suggest(loaded=[…], conversation_context="coding session: <task>")` '
+            "and load the returned coding-session bundle. Invariant bodies stay on "
+            "their auto-inject path."
         ),
     ]
     signals = boot_signals or set()
@@ -311,22 +330,22 @@ def render_skills_section(
         _append_skill_index(lines, tier2)
 
     lines.append("\n### Catalog")
-    names_only = sum(len(s.encode("utf-8")) for s in lines) >= _SKILLS_BYTE_BUDGET
+    # Concise listing by design: slug + short trigger only, never expanded inline.
+    # The listing exists to give ideas of what can help; the trigger IS the idea.
+    # Budget is controlled by the active-skill count (lifecycle-active gate + the
+    # thread-2057 inactive-presentation removal) and the doctrine-block trim — NOT
+    # by stripping skill triggers. _SKILLS_BYTE_BUDGET is reserved for a possible
+    # future safety-net and is intentionally NOT wired (do not re-wire as a trim).
     by_cat: dict[str | None, list[dict[str, Any]]] = {}
     for s in tier3:
         by_cat.setdefault(s.get("skill_category"), []).append(s)
     for cat in sorted(k for k in by_cat if k is not None):
         lines.append(f"**{cat}** ({len(by_cat[cat])})")
-        _append_skill_index(lines, by_cat[cat], names_only=names_only)
-        if (
-            not names_only
-            and sum(len(x.encode("utf-8")) for x in lines) >= _SKILLS_BYTE_BUDGET
-        ):
-            names_only = True
+        _append_skill_index(lines, by_cat[cat])
     uncategorized = by_cat.get(None, [])
     if uncategorized:
         lines.append("**uncategorized**")
-        _append_skill_index(lines, uncategorized, names_only=names_only)
+        _append_skill_index(lines, uncategorized)
 
     if skills_unpartitioned_count:
         lines.append(
