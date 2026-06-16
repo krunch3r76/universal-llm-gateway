@@ -1,22 +1,149 @@
-"""skill_suggest MCP tool — thin relay to cortex-api POST /skills/suggest."""
+"""skill_suggest MCP tool — seat-routed relay to suggest or suggest-dispatch."""
 
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING, Any
 
+import httpx
 from agent_seat.profiles import known_seats
 from agent_seat.registry import normalize_agent_slug
+from mcp_events import monotonic_now, record
 from request_profile import current_request_metadata
+from transport_utils import DEFAULT_STARGATE_URL, make_sync_client
+from universal_logging import get_logger
 
 from tools._cortex_relay import cx
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
 
+logger = get_logger(__name__)
+
+
+def _load_dispatch_enabled() -> bool:
+    raw = os.environ.get("SKILL_SUGGEST_DISPATCH_ENABLED", "0")
+    return raw.strip().lower() in {"1", "true", "on", "yes"}
+
+
+_DISPATCH_ENABLED = _load_dispatch_enabled()
+_DISPATCH_TIMEOUT = 330.0
+
+
+def _uses_dispatch_shim(agent: str, *, prefer_worker: bool | None) -> bool:
+    if not _DISPATCH_ENABLED:
+        return False
+    if prefer_worker is False:
+        return False
+    if prefer_worker is True:
+        return True
+    return normalize_agent_slug(agent) in known_seats()
+
+
+def _route_reason_for_direct(*, agent: str, prefer_worker: bool | None) -> str:
+    if not _DISPATCH_ENABLED:
+        return "dispatch_disabled"
+    if prefer_worker is False:
+        return "prefer_worker_false"
+    if normalize_agent_slug(agent) not in known_seats():
+        return "unknown_seat"
+    return "dispatch_not_selected"
+
+
+def _annotate_direct_route(
+    result: dict[str, Any],
+    *,
+    agent: str,
+    prefer_worker: bool | None,
+) -> dict[str, Any]:
+    if "error" in result:
+        return result
+    annotated = dict(result)
+    annotated["route"] = "direct"
+    annotated["route_reason"] = _route_reason_for_direct(
+        agent=agent,
+        prefer_worker=prefer_worker,
+    )
+    return annotated
+
+
+def _relay_suggest_dispatch(payload: dict[str, Any]) -> dict[str, Any]:
+    """Thin relay to Stargate worker-hop endpoint (orchestration stays on Stargate)."""
+    t0 = monotonic_now()
+    record(
+        "mcp.skill_suggest.dispatch_relay.called",
+        agent=str(payload.get("agent") or ""),
+        timeout_s=_DISPATCH_TIMEOUT,
+    )
+    try:
+        with make_sync_client(
+            DEFAULT_STARGATE_URL, timeout=_DISPATCH_TIMEOUT
+        ) as client:
+            response = client.post("/api/v1/skills/suggest-dispatch", json=payload)
+    except httpx.RequestError as exc:
+        duration = monotonic_now() - t0
+        record(
+            "mcp.skill_suggest.dispatch_relay.failed",
+            error="request_error",
+            duration_s=round(duration, 3),
+            detail=str(exc),
+        )
+        logger.error("skill_suggest dispatch relay failed: %s", exc)
+        return {
+            "error": f"stargate connection failed: {exc}",
+            "status_code": None,
+        }
+
+    duration = monotonic_now() - t0
+    if response.status_code >= 400:
+        detail = response.text
+        record(
+            "mcp.skill_suggest.dispatch_relay.failed",
+            error="http_error",
+            status_code=response.status_code,
+            duration_s=round(duration, 3),
+            **({"detail": detail[:500]} if detail else {}),
+        )
+        try:
+            parsed_detail = response.json()
+        except ValueError:
+            parsed_detail = detail
+        return {
+            "error": f"stargate error: HTTP {response.status_code}",
+            "status_code": response.status_code,
+            "detail": parsed_detail,
+        }
+
+    try:
+        result = response.json()
+    except ValueError as exc:
+        record(
+            "mcp.skill_suggest.dispatch_relay.failed",
+            error="non_json",
+            status_code=response.status_code,
+            duration_s=round(duration, 3),
+            detail=str(exc),
+        )
+        return {
+            "error": f"stargate returned non-JSON: HTTP {response.status_code}",
+            "status_code": response.status_code,
+        }
+
+    record(
+        "mcp.skill_suggest.dispatch_relay.ok",
+        agent=str(payload.get("agent") or ""),
+        route=str(result.get("route") or ""),
+        duration_s=round(duration, 3),
+    )
+    return result
+
 
 def _resolve_effective_agent(agent: str | None) -> str | None:
     if agent and str(agent).strip():
-        return normalize_agent_slug(str(agent).strip())
+        canonical = normalize_agent_slug(str(agent).strip())
+        if canonical not in known_seats():
+            return None
+        return canonical
 
     meta = current_request_metadata()
     caller_identity = str(meta.get("caller_identity") or "").strip()
@@ -47,6 +174,8 @@ def register_skill_suggest_tools(mcp: FastMCP) -> None:
         limit: int | None = None,
         agent: str | None = None,
         rerank: bool | None = None,
+        prefer_worker: bool | None = None,
+        worker_timeout_seconds: int | None = None,
     ) -> dict[str, Any]:
         """Suggest newly relevant, not-yet-loaded skills for the caller seat.
 
@@ -73,6 +202,13 @@ def register_skill_suggest_tools(mcp: FastMCP) -> None:
         """
         effective_agent = _resolve_effective_agent(agent)
         if not effective_agent:
+            if agent and str(agent).strip():
+                return {
+                    "error": (
+                        f"unknown agent seat {normalize_agent_slug(str(agent).strip())!r}; "
+                        "pass a known seat slug (e.g. claude-cursor, claude-web)"
+                    )
+                }
             return {
                 "error": (
                     "agent seat could not be resolved from session context; "
@@ -91,9 +227,18 @@ def register_skill_suggest_tools(mcp: FastMCP) -> None:
         if rerank is not None:
             payload["rerank"] = rerank
 
-        return cx(
-            "POST",
-            "/skills/suggest",
-            payload,
-            headers={"X-Cortex-Transport": "mcp"},
+        if _uses_dispatch_shim(effective_agent, prefer_worker=prefer_worker):
+            if worker_timeout_seconds is not None:
+                payload["worker_timeout_seconds"] = worker_timeout_seconds
+            return _relay_suggest_dispatch(payload)
+
+        return _annotate_direct_route(
+            cx(
+                "POST",
+                "/skills/suggest",
+                payload,
+                headers={"X-Cortex-Transport": "mcp"},
+            ),
+            agent=effective_agent,
+            prefer_worker=prefer_worker,
         )

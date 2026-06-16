@@ -36,6 +36,7 @@ from .events import (
     FrontierHandoffDeprecatedAlias,
     FrontierHandoffExecutorOverride,
     FrontierHandoffMaterializationIncomplete,
+    FrontierHandoffPacketEnriched,
     FrontierHandoffRequested,
 )
 from .executor_resolution import (
@@ -65,6 +66,7 @@ from .implement_admission_bridge import (
     resolve_source_ref_to_packet,
     verify_both_present_hash,
 )
+from .handoff_packet_enrich import WEB_RECEIVER_AGENT, enrich_web_handoff_packet
 from .implement_ready_gate import require_implement_ready
 from .service import (
     FrontierEndpointError,
@@ -665,6 +667,26 @@ async def team_handoff(
             workspaces_root=workspaces_root,
         )
 
+        if to_agent == WEB_RECEIVER_AGENT:
+            packet_file = _resolve_packet_file(workspaces_root.resolve(), packet_path)
+            if packet_file is not None:
+                original = packet_file.read_text(encoding="utf-8", errors="replace")
+                enrich_result = enrich_web_handoff_packet(
+                    original,
+                    cortex=reader,
+                )
+                if enrich_result.changed:
+                    packet_file.write_text(enrich_result.text, encoding="utf-8")
+                    _publish(
+                        FrontierHandoffPacketEnriched(
+                            request_id=request_id,
+                            packet_path=packet_path,
+                            to_agent=to_agent,
+                            skills_added=enrich_result.skills_added,
+                            threads_added=enrich_result.threads_added,
+                        )
+                    )
+
         validation = validate_packet(
             request_id=request_id,
             packet_path=packet_path,
@@ -714,6 +736,7 @@ async def team_handoff(
             pointer_body=body.pointer_body,
             handoff_contract=handoff_contract,
             materialization_fallback=materialization_present is False,
+            to_agent=to_agent,
         )
 
         thread_id = await create_handoff_thread(

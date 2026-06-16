@@ -210,34 +210,51 @@ def validate_packet(
         )
 
     if to_agent in _mcp_packet_seats():
-        missing_refs = [
-            ref for ref in _REQUIRED_INVARIANT_SKILL_REFS if ref not in text
-        ]
-        if missing_refs:
-            reason = (
-                f"Packet {packet_path!r} missing required architecture "
-                f"skill-ref(s): {', '.join(missing_refs)}. MCP-seat handoffs "
-                "must reference the universal invariant + ULG architecture "
-                "layers (Block 2 / Block 5) so the reviewer reads them before "
-                "findings. Each ref must appear verbatim as the on-disk slug "
-                "(the 'agent-skills/<slug>' basename), not a display-name path "
-                "with spaces or dashes. Exact strings in details.expected_refs. "
-            )
-            nonconforming = _nonconforming_skill_ref_hint(text, missing_refs)
-            if nonconforming:
-                reason += nonconforming + " "
-            reason += _PROTOCOL_HINT
-            raise FrontierEndpointError(
-                request_id=request_id,
-                field="packet_path",
-                reason=reason,
-                status_code=422,
-                code="handoff_packet_missing_arch_skillrefs",
-                details={
-                    "expected_refs": list(_REQUIRED_INVARIANT_SKILL_REFS),
-                    "missing_refs": missing_refs,
-                },
-            )
+        if to_agent == _WEB_RECEIVER_AGENT:
+            from .handoff_packet_enrich import has_densify_floor
+
+            if not has_densify_floor(text):
+                raise FrontierEndpointError(
+                    request_id=request_id,
+                    field="packet_path",
+                    reason=(
+                        f"Packet {packet_path!r} missing web densify floor: "
+                        "require ≥1 task-class skill ref (via source_uri) and, "
+                        "when related_thread_ids is set, ≥1 agent_bus(fetch) "
+                        f"step per upstream thread. {_PROTOCOL_HINT}"
+                    ),
+                    status_code=422,
+                    code="handoff_packet_missing_densify_floor",
+                )
+        else:
+            missing_refs = [
+                ref for ref in _REQUIRED_INVARIANT_SKILL_REFS if ref not in text
+            ]
+            if missing_refs:
+                reason = (
+                    f"Packet {packet_path!r} missing required architecture "
+                    f"skill-ref(s): {', '.join(missing_refs)}. MCP-seat handoffs "
+                    "must reference the universal invariant + ULG architecture "
+                    "layers (Block 2 / Block 5) so the reviewer reads them before "
+                    "findings. Each ref must appear verbatim as the on-disk slug "
+                    "(the 'agent-skills/<slug>' basename), not a display-name path "
+                    "with spaces or dashes. Exact strings in details.expected_refs. "
+                )
+                nonconforming = _nonconforming_skill_ref_hint(text, missing_refs)
+                if nonconforming:
+                    reason += nonconforming + " "
+                reason += _PROTOCOL_HINT
+                raise FrontierEndpointError(
+                    request_id=request_id,
+                    field="packet_path",
+                    reason=reason,
+                    status_code=422,
+                    code="handoff_packet_missing_arch_skillrefs",
+                    details={
+                        "expected_refs": list(_REQUIRED_INVARIANT_SKILL_REFS),
+                        "missing_refs": missing_refs,
+                    },
+                )
 
     if handoff_contract == "implement":
         guidance = _extract_block(text, "task_guidance")
@@ -371,15 +388,25 @@ _CONTRACT_LINES: dict[str, str] = {
     ),
 }
 
-# Mechanical arch-layer reminder for web-consult (B′): web has no IDE rule
-# auto-load; packet <invariants> skill-refs are necessary but not sufficient
-# without an explicit pre-findings read instruction on the bus pointer.
+# Mechanical arch-layer reminder for MCP consult seats that lack server-injected
+# arch bodies (claude-cursor). Web uses _WEB_CONSULT_PRIMING instead (2235).
 _CONSULT_ARCH_READ = (
     "Before findings: read fs(cortex, agent-skills/architecture-invariants.md) "
     "and fs(cortex, agent-skills/ulg-architecture.md) per packet <invariants> / "
     "<mcp_capabilities> item 0; load additional cortex skills named there. "
     "Web has no IDE rule auto-load — these reads are mandatory."
 )
+
+_WEB_CONSULT_PRIMING = (
+    "Before findings: follow the web-receiver priming checklist in the packet "
+    "(handoff-packet-authoring.md § Web-receiver priming checklist): call "
+    "skill_suggest at step 1, agent_bus(fetch) each related_thread_ids thread, "
+    "load task-class skills from packet <invariants>. Web has no IDE rule "
+    "auto-load — arch bodies are server-injected on boot; do not re-read "
+    "architecture-invariants/ulg-architecture unless verifying digest drift."
+)
+
+_WEB_RECEIVER_AGENT = "claude-web"
 
 
 def build_pointer_body(
@@ -390,6 +417,7 @@ def build_pointer_body(
     pointer_body: str | None,
     handoff_contract: str,
     materialization_fallback: bool = False,
+    to_agent: str | None = None,
 ) -> str:
     """Return the bus turn body.
 
@@ -412,7 +440,12 @@ def build_pointer_body(
                 "absent locally."
             )
         if handoff_contract == "consult":
-            body += f"\n\n{_CONSULT_ARCH_READ}"
+            priming = (
+                _WEB_CONSULT_PRIMING
+                if to_agent == _WEB_RECEIVER_AGENT
+                else _CONSULT_ARCH_READ
+            )
+            body += f"\n\n{priming}"
     lines = body.splitlines()
     if len(lines) > _POINTER_MAX_LINES:
         raise FrontierEndpointError(

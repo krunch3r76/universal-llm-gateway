@@ -231,6 +231,45 @@ def _skill_prose_display(skill: dict[str, Any]) -> str:
     ).strip()
 
 
+def _skill_trigger_display(skill: dict[str, Any]) -> str:
+    """Listing trigger: trigger_short first; short description fallback only."""
+    ts = (skill.get("trigger_short") or "").strip()
+    if ts:
+        return ts
+    dfs = (skill.get("description_first_sentence") or "").strip()
+    return dfs[:72] + ("…" if len(dfs) > 72 else "")
+
+
+def _skill_tags_suffix(skill: dict[str, Any], *, max_tags: int = 3) -> str:
+    """Net-new tags only: trigger_match_terms minus tokens already in trigger_short."""
+    terms = skill.get("trigger_match_terms") or []
+    if not terms:
+        return ""
+    shown = {t for t in (skill.get("trigger_short") or "").lower().split() if t}
+    net_new = [str(t) for t in terms if str(t).lower() not in shown]
+    if not net_new:
+        return ""
+    return f" [{', '.join(net_new[:max_tags])}]"
+
+
+def _is_gate_skill(skill: dict[str, Any]) -> bool:
+    return (
+        skill.get("boot_importance") == "required_gate"
+        or skill_slug(skill) in _TIER1_GATE_SLUGS
+    )
+
+
+def _append_skill_line_flat(
+    lines: list[str], skill: dict[str, Any], *, is_gate: bool
+) -> None:
+    slug = skill_slug(skill)
+    marker = "⚑ " if is_gate else ""
+    trigger = _skill_trigger_display(skill)
+    tags = _skill_tags_suffix(skill)
+    trigger_part = f" — {trigger}" if trigger else ""
+    lines.append(f"- {marker}`{slug}`{trigger_part}{tags}")
+
+
 def _append_skill_index(
     lines: list[str], bucket: list[dict[str, Any]], names_only: bool = False
 ) -> None:
@@ -261,91 +300,37 @@ def render_skills_section(
     skills_unpartitioned_count: int,
     boot_signals: set[str] | None = None,
 ) -> list[str]:
-    """Render skills in 3 tiers: required gates, session-ranked, catalog-by-category."""
+    """Render skills as a flat domain-grouped concise manifest."""
+    _ = boot_signals  # signature retained; ranking belongs in skill_suggest
+    gate_ids = {skill_slug(s) for s in skills if _is_gate_skill(s)}
     lines: list[str] = [
-        f"\n## Agent Skills ({len(skills)} active on this seat — manifest only)",
+        f"\n## Agent Skills ({len(skills)} active — concise manifest)",
         (
-            "> **Active only**: `lifecycle=active` skills for this seat. Draft, "
-            "deprecated, retired, and unset lifecycle are withheld unless an "
-            "operator explicitly requests inactive catalog access."
-        ),
-        (
-            "> Load on demand: "
+            "> **Load on demand**: "
             '`fs(sandbox="cortex", op="md_read", path="agent-skills/<slug>.md")` '
-            "— slug is the bolded id on each line. "
-            "Full index (all triggers): `cortex://agent-skills/README.md`. "
-            "Web auto-inject bodies (`architecture-invariants`, `ulg-architecture`, "
-            "`cortex-orientation`, `cortex-provenance-discipline`) append to the web "
-            "system prompt — not inlined here. `skill_suggest` treats them as loaded "
-            "for web seats (`seat_preloaded` in the response). Verify injection: grep "
-            "`cortex:invariant-skills-autoappend` in your prompt (sentinel `sha256` + "
-            "`count` over the injected block)."
+            "— slug is the backticked id on each line. Web auto-inject bodies "
+            "(`architecture-invariants`, `ulg-architecture`, `cortex-orientation`, "
+            "`cortex-provenance-discipline`) append to the web prompt (`seat_preloaded`)."
         ),
         (
             "> **Discovery (you call it, never the operator)**: at task inflection "
-            "points — handoff/packet authoring, `team_dispatch`/dispatch, task pivot, "
-            "MCP/pipeline/service-surface work — call "
-            "`skill_suggest(loaded=[…already-loaded slugs…], conversation_context=…)` "
-            "BEFORE pattern-matching this manifest. It returns the not-yet-loaded "
-            "delta; fetch each hit via its `uri`. "
-            "If `skill_suggest` is not pre-bound this session, "
-            '`tool_search("skill_suggest")` first (one load hop), then call it.'
+            "points call `skill_suggest(conversation_context=…)` BEFORE scanning "
+            'this manifest. If unbound: `tool_search("skill_suggest")` first.'
         ),
-        (
-            "> **Coding session**: when the operator declares a coding session, code "
-            "modification, diff-review, or implement-in-repo work, call "
-            '`skill_suggest(loaded=[…], conversation_context="coding session: <task>")` '
-            "and load the returned coding-session bundle. Invariant bodies stay on "
-            "their auto-inject path."
-        ),
+        "> `⚑` = required gate.",
     ]
-    signals = boot_signals or set()
-
-    def _is_gate(s: dict[str, Any]) -> bool:
-        return (
-            s.get("boot_importance") == "required_gate"
-            or skill_slug(s) in _TIER1_GATE_SLUGS
+    by_domain: dict[str, list[dict[str, Any]]] = {}
+    for skill in skills:
+        by_domain.setdefault(str(skill.get("skill_category") or "uncategorized"), []).append(
+            skill
         )
-
-    tier1 = [s for s in skills if _is_gate(s)]
-    rest = [s for s in skills if not _is_gate(s)]
-
-    ranked = sorted(
-        ((_rank_score(s, signals), s) for s in rest),
-        key=lambda p: (-p[0], skill_slug(p[1])),
-    )
-    tier2 = [s for score, s in ranked if score > 0][:_TIER2_INLINE_MAX]
-    tier2_ids = {id(s) for s in tier2}
-    tier3 = [s for s in rest if id(s) not in tier2_ids]
-
-    if tier1:
-        lines.append("\n### Required gates")
-        lines.append(
-            "- **skill discovery** — at inflection point → "
-            "`skill_suggest(loaded=…)` before scanning this manifest"
-        )
-        _append_skill_index(lines, tier1)
-    if tier2:
-        lines.append("\n### Relevant now")
-        _append_skill_index(lines, tier2)
-
-    lines.append("\n### Catalog")
-    # Concise listing by design: slug + short trigger only, never expanded inline.
-    # The listing exists to give ideas of what can help; the trigger IS the idea.
-    # Budget is controlled by the active-skill count (lifecycle-active gate + the
-    # thread-2057 inactive-presentation removal) and the doctrine-block trim — NOT
-    # by stripping skill triggers. _SKILLS_BYTE_BUDGET is reserved for a possible
-    # future safety-net and is intentionally NOT wired (do not re-wire as a trim).
-    by_cat: dict[str | None, list[dict[str, Any]]] = {}
-    for s in tier3:
-        by_cat.setdefault(s.get("skill_category"), []).append(s)
-    for cat in sorted(k for k in by_cat if k is not None):
-        lines.append(f"**{cat}** ({len(by_cat[cat])})")
-        _append_skill_index(lines, by_cat[cat])
-    uncategorized = by_cat.get(None, [])
-    if uncategorized:
-        lines.append("**uncategorized**")
-        _append_skill_index(lines, uncategorized)
+    for domain in sorted(by_domain):
+        bucket = by_domain[domain]
+        lines.append(f"\n**{domain} ({len(bucket)})**")
+        for skill in sorted(bucket, key=skill_slug):
+            _append_skill_line_flat(
+                lines, skill, is_gate=skill_slug(skill) in gate_ids
+            )
 
     if skills_unpartitioned_count:
         lines.append(

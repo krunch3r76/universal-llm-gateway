@@ -136,8 +136,8 @@ confident-but-unresolved false-negatives, boilerplate gaming); the server enforc
    stub IS written — folding it only into `<corpus>` and skipping the file is the divergence
    this section closes.
 3. **Author the consult brief** at `tmp/reviews/{slug}-harden-web-consult-packet.md`:
-   front-matter `contract: consult` + web boot-gate fields (`active_project_tag`,
-   `cortex_boot_confirmed`, `related_thread_ids`). Six blocks, Gate-2 shaped
+   front-matter `contract: consult` + the web boot-gate frontmatter (single canonical
+   home: § Web-receiver priming checklist → Frontmatter). Six blocks, Gate-2 shaped
    (skeleton: `handoff-dispatchers.mdc` § Gate 2 packet skeleton). `<corpus>` references the
    stub + todo attributes; `<output_format>` demands a **dense spec**, not v1 patches;
    closeout signal `ready-for-Composer-implement`. **Anchoring guard** — `<corpus>` MUST
@@ -349,31 +349,139 @@ The protocol files live at **project** `.cursor/rules/` (one level above the
 repo; **no** `universal-llm-gateway/` prefix). Skipping the trio when the boot
 card `_CONSULT_ROUTING_GATE` is present is a protocol violation.
 
-### Skill discovery and URI resolution
+### Skill discovery (in-session)
 
-**Primary (in-session):** call MCP `skill_suggest(loaded=[...], conversation_context=...)`
-at inflection points before authoring packet `fs` lines. Playbook:
-`docs/agent-guides/skills/skill-suggest-utilization.md`.
+**Web** — MCP `skill_suggest(…)` at inflection points before authoring packet `fs`
+lines (`skill-suggest-utilization.md` § Web). **Cursor IDE** — match
+`<available_skills>` / Read `.cursor/skills/` stubs; ¬ `skill_suggest`.
 
-**Web / inline-only invariant bodies:** `architecture-invariants` and `ulg-architecture`
-are server-injected on web boot and inline-only dispatch (Track B Slice F + G3). Packet
-authors must **not** rely on hand-carried `fs` refs as the only delivery path for those
-two on web — omit redundant invariant lines unless verifying digest drift.
+When the skill set is already known (todo `required_skills`, static consult corpus),
+follow § **Skill load resolution (mandatory)** — never derive a load path from slug alone.
 
-**When the skill set is already known** (todo `required_skills`, static consult corpus):
-do not derive a load path from slug alone. Resolve via `agent_skill:<slug>.source_uri`
-(or `GET /skills/body?id=&expected_digest=`).
+## Skill load resolution (mandatory)
 
-| Skill source | Packet load line |
+∀ skill slug `S` referenced in a handoff packet:
+
+```
+1. cortex(entity_get, id=agent_skill:S) → read source_uri (+ digest if available)
+2. Translate source_uri to fs load line:
+   workspaces://universal-llm-gateway/… → fs(workspaces, op=read, path=universal-llm-gateway/…)
+   agent-skills/foo.md (relative)       → fs(cortex, op=read, path=agent-skills/foo.md)
+3. Put translated line in <invariants> or numbered <mcp_capabilities> step
+¬ derive path from slug alone
+¬ use cortex://agent-skills/{slug}.md without entity_get confirmation
+```
+
+### Three path surfaces
+
+| Surface | Root | Example |
+|---|---|---|
+| `packet_path` | `PROJECT_ROOT` | `tmp/reviews/foo.md` |
+| `fs(workspaces)` | `/mnt/torus/projects/` | `universal-llm-gateway/docs/…` or `projects/.cursor/rules/…` |
+| `fs(cortex)` | cortex sandbox | `agent-skills/consult-routing.md` |
+
+### Resolved examples (entity_get ground truth — verify live before citing)
+
+| Skill source | Example slug | Packet load line |
+|---|---|---|
+| Repo SOT (`workspaces://…/docs/agent-guides/skills/…`) | `agent-guidance-writing` | `fs(workspaces, op=read, path="universal-llm-gateway/docs/agent-guides/skills/agent-guidance-writing.md")` |
+| Cortex SOT (`agent-skills/…`) | `skill-document-writing` | `fs(cortex, op=read, path="agent-skills/skill-document-writing.md")` |
+| Cursor stub SOT | `add-mcp-tool` | `fs(workspaces, op=read, path="universal-llm-gateway/.cursor/skills/add-mcp-tool/SKILL.md")` |
+
+Do not assume every `agent_skill:*` entity has a Cortex `agent-skills/<slug>.md` body.
+The Cortex-native analog for MCP surface changes is
+`fs(cortex, op=read, path="agent-skills/mcp-surface-change.md")` — not slug-derived from
+`add-mcp-tool`.
+
+**Anti-pattern:** posting skill-ref supplements on agent-bus turn 2 after dispatch — all
+skill load lines belong in the packet file on turn 1.
+
+## Web-receiver priming checklist (mandatory before `web-consult` / `web-implement`)
+
+**Invariant:** claude-web has full MCP but ¬ IDE rules, ¬ `.cursor/skills` auto-load,
+¬ terminals. The packet MUST inject what web cannot discover. Completing this checklist
+is part of packet authoring — ¬ a post-dispatch supplement (incident: thread 2229).
+**When:** ∀ `team_dispatch(op=handoff, role=web-consult|web-implement, packet_path=…)`.
+
+This section is the single canonical home; `lead-seat-boot.md` (receiver-side gate),
+`handoff-dispatchers.mdc` § web-claude, and `consult-routing/SKILL.md` cross-ref here.
+
+### Frontmatter (boot gate — receiver halts past Gate 2 if missing)
+
+| Field | Required when |
 |---|---|
-| `source_uri=cortex://agent-skills/<slug>.md` | `fs(cortex, op=read, path="agent-skills/<slug>.md")` |
-| `source_uri=workspaces://universal-llm-gateway/.cursor/skills/<slug>/SKILL.md` | `fs(workspaces, op=read, path="universal-llm-gateway/.cursor/skills/<slug>/SKILL.md")` |
+| `active_project_tag` | project-scoped work (web halts + requests if absent) |
+| `cortex_boot_confirmed: true` | cursor already booted this session |
+| `related_thread_ids` | any upstream agent-bus thread |
+| `todo:` / `plan:` | bound arc (entity slug) |
 
-Do not assume every `agent_skill:*` entity has a Cortex
-`agent-skills/<slug>.md` body. Example: `agent_skill:add-mcp-tool` resolves to
-`workspaces://universal-llm-gateway/.cursor/skills/add-mcp-tool/SKILL.md`; the
-Cortex-native analog for MCP surface changes is
-`fs(cortex, op=read, path="agent-skills/mcp-surface-change.md")`.
+Enforcement: receiver-side gate is canonical — `lead-seat-boot.md` § Cursor Dispatch
+Packet Compliance. Author-side, the server `build_pointer_body` reminder (consult)
+backstops; it does not replace this checklist.
+
+### Block 2 `<invariants>` — skill refs (minimum set)
+
+**Do NOT hand-carry `architecture-invariants` / `ulg-architecture` fs-lines on web** —
+their bodies are server-injected on web boot (Track B Slice F + G3); include an fs-line
+ONLY to verify digest drift. (This differs from `claude-cursor` / `cursor-sdk`, where the
+arch layer is description-gated, never injected, and the fs-lines ARE load-bearing — see
+`handoff-dispatchers.mdc` § web-claude "Rule/skill surface asymmetry".)
+
+Minimum set for web:
+- `lead-seat-boot.md` — web boot gate (or rely on `cortex_boot_confirmed`)
+- `consult-routing.md` — when the consult may close implement-ready (post-densify lane)
+- **≥1 task-class skill** (see matrix) — resolve via `agent_skill:<slug>.source_uri`,
+  never a path guessed from the slug (cortex-native vs `.cursor/skills` differ).
+- Todo `required_skills`: when `todo:{slug}` exists, `cortex(entity_get)` → mirror each
+  as an `fs` line.
+
+Task-class refs (non-exhaustive decision aid — `skill_suggest` + `required_skills` are
+the real discovery; reuse the slugs already named in `handoff-dispatchers.mdc` § web-claude):
+
+| Task class | Skill ref |
+|---|---|
+| MCP surface / routing | `mcp-surface-change.md` |
+| Non-trivial edit / SLOC gates | `modularize-discipline.md` |
+| Phased / todo implement | `implement-todo.md` · `implementation-plan-workflow.md` |
+| Pipeline work | `build-pipeline.md` · `refine-pipeline.md` · `debug-with-events.md` |
+| cursor-sdk worker message | `cursor-sdk-instruction-standard.md` |
+| Observability / queue forensics | `debug-with-events.md` |
+| Re-enable / smoke after change | `service-lifecycle.md` |
+| Dispatch / poll handles | `dispatch-shape.md` |
+
+### Block 4 `<corpus>` — repo pointers (minimum set)
+
+Explicit `fs(workspaces, op=read, path=…)` lines for: primary spec
+(`tasks/specs/{slug}.md`) when present; operator pickup/sidecar (`tmp/prompts/…`) when
+present; every file in the todo's `files_expected` (or the spec touch-point table);
+offline tests for the touched package (`test_*.py`). Label any scaffold as
+*retrieval index, non-authoritative — re-derive from primary artifacts* (anchoring guard).
+
+### Block 5 `<mcp_capabilities>` — numbered investigation plan (SHOULD be structured; MUST be concrete)
+
+1. **Boot + skills** — `skill_suggest(conversation_context=…)` at the inflection
+   (`skill-suggest-utilization.md` § Web; pass context only — `loaded[]` is server-owned)
+   + task-class refs resolved by `source_uri`.
+2. **Bus + cortex** — `agent_bus(fetch, thread=<id>)` for **each** `related_thread_ids`
+   (MUST — the gap thread 2229 hit); `cortex(entity_get|search)` for the todo + decisions.
+3. **Primary code paths** — one numbered `fs(read)` per file web must verify live.
+4. **Live probes** — `observability(recent-events, signal_prefix=…)` for signals named
+   in the task.
+
+**Anti-pattern:** a generic "you have MCP, investigate" block with <5 concrete steps.
+
+### Pre-dispatch self-check (author — evidence before `team_dispatch`)
+
+- [ ] Frontmatter boot-gate fields present
+- [ ] ≥1 task-class skill ref in `<invariants>`, resolved via `source_uri`
+      (¬ redundant arch-invariants/ulg-architecture fs-lines on web)
+- [ ] Todo `required_skills` mirrored (if a todo exists)
+- [ ] ≥1 `agent_bus(fetch)` per upstream thread in `<mcp_capabilities>`
+- [ ] Every spec touch-point has a numbered `fs(read)`
+- [ ] ≥1 observability probe if the task names a queue/event/live gap
+- [ ] Scaffold blocks carry no design judgment (Composer-scaffold stubs only)
+
+Failure → complete the checklist first; ¬ dispatch-then-supplement on thread 2.
 
 ## The Six Required Blocks
 
@@ -494,12 +602,15 @@ escalation, ¬ scaffold→densify chaining — unless the draft is explicitly la
   (`/mnt/torus/projects/universal-llm-gateway`). Use `tmp/reviews/<file>.md` — **no repo prefix**.
   `fs(sandbox="workspaces")` uses a different root (`/mnt/torus/projects`) and needs the
   `universal-llm-gateway/` prefix. These are different; conflating them gives `handoff_packet_missing`.
-- Web boot-gate fields (when target is `claude-web`): ensure `<invariants>` carries the
-  `architecture-invariants` + `ulg-architecture` skill-ref lines — web has no IDE `*_ws.mdc` backstop.
+- **Web handoffs (`web-consult` / `web-implement`):** complete § **Web-receiver priming checklist**
+  above before dispatch. The server `build_pointer_body` arch-layer reminder (consult) is a
+  backstop only — it does not replace the checklist.
 - **Cursor + cursor-sdk arch-layer note** (when target is `claude-cursor` or `cursor-sdk`
-  implement via `team_dispatch(op=generate, role=cursor-sdk, …)`): keep the same skill-ref
-  lines + task narrowing + Block 5 item 0 as for `claude-web`. Both seats load project rules
-  via `setting_sources=all`, but only the engineering-discipline layer (`alwaysApply: true`)
+  implement via `team_dispatch(op=generate, role=cursor-sdk, …)`): include Block 2
+  skill-refs for `architecture-invariants` + `ulg-architecture`, task narrowing, and Block 5
+  item 0 arch-layer reads — **unlike web**, where those bodies are server-injected (§ Web-receiver
+  priming checklist). Both cursor seats load project rules via `setting_sources=all`, but only
+  the engineering-discipline layer (`alwaysApply: true`)
   auto-attaches; the arch layer (`topology_ws`, `mcp-integration_ws`, `event-debugging_ws`, …)
   is description-gated and does NOT reliably attach in a packet-booted thread, so Block 2
   skill-refs (`architecture-invariants`, `ulg-architecture`) and Block 5 item 0 (`fs(cortex, …)`
@@ -509,11 +620,6 @@ escalation, ¬ scaffold→densify chaining — unless the draft is explicitly la
   the universal pair. Only genuine trim: ¬ re-inline the auto-loaded engineering-discipline
   layer (SLOC/modularization, code style, scope, `no-bc`, logging).
 - Only a ≤25-line pointer is posted to the bus; the packet stays on disk.
-- **Web-consult pointer (B′, server-enforced):** default `build_pointer_body` for
-  `handoff_contract=consult` appends a mechanical arch-layer read reminder (same
-  substance as cursor-sdk implement preamble) — packet authors must still include
-  Block 2 skill-refs, Block 5 item 0 in `<mcp_capabilities>`, and web boot-gate
-  frontmatter (`active_project_tag`, `cortex_boot_confirmed`, `related_thread_ids`).
 
 ## Authority
 

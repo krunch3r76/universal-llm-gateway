@@ -1,20 +1,28 @@
-# Skill suggest — in-session discovery (primary path)
+# Skill suggest — in-session discovery
 
 **North star:** optimal skill utilization under `project:agent-workflow-parity`.
 
-**Feedback loop (web ↔ Cursor):** thread **1876** (and follow-ups) probe claude-web on
-**available / effective / usable** skills; Cursor lands interface changes (boot orientation,
-`skill_suggest` surface, adoption gates) from the gap table — then re-probe.
+## Surface split
 
-**Cursor:** `skill-suggest-utilization_ws.mdc` is **always-applied** — the call invariant is
-resident every turn; this doc is the full playbook.
-
-**Live surface:** MCP `skill_suggest` (first-class) → cortex-api `POST /skills/suggest`.
-Index + bodies: `GET /skills`, `GET /skills/body`. Boot index unchanged: `GET /boot-skills`.
+| Seat | Discovery path |
+|---|---|
+| **Cursor IDE** | Native `<available_skills>` index + Read `.cursor/skills/<slug>/SKILL.md` stubs (defer to canonical/cortex). Rules (`.mdc`) carry always vs description-gated invariants. **¬** MCP `skill_suggest`. Resident: `skill-suggest-utilization_ws.mdc` (~10 lines). |
+| **claude-web / API** | MCP `skill_suggest` at inflection points (§ Web below). Boot index: `GET /boot-skills`. |
 
 ---
 
-## When to call `skill_suggest`
+## Cursor IDE (native skill surface)
+
+1. Match task to a skill in `<available_skills>` by `description`.
+2. Read `.cursor/skills/<slug>/SKILL.md` (stub → `fs` deferral to shared SOT).
+3. Load description-gated **rules** when the task matches their `description` (e.g. dispatch/handoff rules — load one `##` section via md_read, not whole file).
+4. **Do not** call `skill_suggest` — adds MCP latency; Cursor already indexes registered skills.
+
+Todo `required_skills` + `entity_get` → `source_uri` still applies when the skill set is known upfront.
+
+---
+
+## Web — when to call `skill_suggest`
 
 Call at **conversational inflection points**, not every turn:
 
@@ -33,26 +41,33 @@ entity_get, session-close with skills loaded).
 
 ## What to pass
 
+**Web (claude-web):** pass **`conversation_context` only**. The skill server maintains
+the session loaded set — boot auto-inject (returned as `seat_preloaded`) plus slugs
+whose bodies were fetched this session via `GET /skills/body` or `fs`. Do **not**
+manually build or pass a `loaded[]` ledger.
+
 ```python
 skill_suggest(
-    loaded=["consult-routing", "dispatch-shape", "architecture-invariants"],
-    conversation_context="Bounded 1–3 sentence task summary (≤16k chars).",
+    conversation_context="Rich task context — any format you prefer (≤16k chars).",
     limit=8,          # optional; default 8
-    rerank=False,     # optional; default OFF — deterministic Stage A only
 )
 ```
 
 | Field | Rule |
 |---|---|
-| `loaded` | **Required.** Slugs, `agent_skill:<slug>`, or paths already in context (include boot-loaded + manually fetched). Duplicates tolerated. |
-| `conversation_context` | Bounded turn/task summary; omit only when probing with empty context (returns insufficient-context path). |
+| `conversation_context` | Encode **your** read of the task: what you're doing, what seems relevant, what you already ruled in/out. Handoff excerpt, bus thread body, todo + ACs, bullets, or prose — any format, up to 16k chars. Do not compress to a one-liner. Omit only when probing empty context (returns `insufficient_context`). |
+| `loaded` | **Server-owned on web** — session registry on the skill server, not agent memory. |
 | `agent` | Omit on MCP when seat resolves from session; pass explicitly when resolution fails. |
 
-### `loaded[]` is caller-owned (session endpoints deferred)
+**You reason; the tool returns delta.** At inflection points, form a judgment from boot +
+task context, then call `skill_suggest` to surface slugs you may have missed. Accept or
+reject each hit on merits. Ignore the server `rerank` flag — not part of the agent model.
 
-Server-side session loaded-state (`GET/POST /skills/session/…`) is **not** implemented.
-cortex-api has no conversation buffer; `loaded` must reflect what the agent already holds.
-Track slugs as you fetch bodies; refresh `loaded` after each load.
+**Implementation note:** full session registry (`GET/POST /skills/session/…`) is the
+target contract; today the server merges **web seat preload** into the loaded set
+automatically (`seat_preloaded` in the response). Wire-level `loaded` may still appear
+on the MCP schema until session binding is complete — web agents must not treat it as
+their bookkeeping responsibility.
 
 ---
 
@@ -67,7 +82,8 @@ Track slugs as you fetch bodies; refresh `loaded` after each load.
 | `workspaces://universal-llm-gateway/...` | `fs(workspaces, op=read, path="<repo-relative path>")` |
 | Other / missing | `GET /skills/body?id=<id>&expected_digest=<digest>` (409 on digest drift) |
 
-3. Append the slug to your mental/session `loaded` list before the next `skill_suggest` call.
+3. Fetch the body — the skill server records the slug as loaded for your session when
+   you pull via `GET /skills/body` or `fs` (web agents do not re-pass it on the next suggest).
 
 **Web / inline-only dispatch:** invariant skill **bodies** (`architecture-invariants`,
 `ulg-architecture`) are auto-injected server-side (Track B Slice F + G3). Do not hand-fetch

@@ -11,6 +11,14 @@
 | **cortex `agent_skill:*`** | Boot index; repo skills use `source_uri` → `workspaces://…/docs/agent-guides/skills/…` |
 | **`.cursor/skills/<slug>/SKILL.md`** | Thin stub: trigger + `fs(cortex|workspaces, …)` read |
 
+## Single resolver
+
+Author the skill body once → register `agent_skill:*` with `source_uri` → all seats
+resolve via that URI (`skill_suggest` emits authoritative `source_uri`; SF1 done).
+Cursor rules = thin `alwaysApply` invariants; skills = procedural SOT in repo docs OR
+cortex `agent-skills/` — not both. Packet authors: `entity_get` before every skill `fs`
+line (`handoff-packet-authoring.md` § Skill load resolution).
+
 ## Migrated (Track A — repo SOT)
 
 | Slug | Repo path |
@@ -21,12 +29,14 @@
 | `refine-pipeline` | `refine-pipeline.md` |
 | `friction-review` | `friction-review.md` — friction log vs codified bug ticket; pass zoom-out duty on bus pickup |
 | `handoff-packet-authoring` | `handoff-packet-authoring.md` — stage→densify→wrap lifecycle gates + six-block packet contract · stub: `.cursor/skills/handoff-packet-authoring/SKILL.md` |
+| `agent-guidance-writing` | `agent-guidance-writing.md` — rules/skills/agent-guides authoring · stub: `.cursor/skills/agent-guidance-writing/SKILL.md` |
 
 ## Cortex SOT (boot-indexed — stub in `.cursor/skills/`)
 
 | Slug | Cortex path | Cursor stub |
 |------|-------------|-------------|
 | `consult-routing` | `agent-skills/consult-routing.md` | `.cursor/skills/consult-routing/SKILL.md` |
+| `skill-document-writing` | `agent-skills/skill-document-writing.md` | — (no Cursor stub yet; read from boot index) |
 | `dispatch-workflow` | `agent-skills/dispatch-workflow.md` | — (read from boot index on first dispatch) |
 
 Do not hand-maintain duplicate long-form copies in cortex or `.cursor/skills`.

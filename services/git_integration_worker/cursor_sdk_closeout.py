@@ -36,12 +36,9 @@ _IMPLEMENT_PREAMBLE = (
     "fs(cortex, agent-skills/ulg-architecture.md); also load any additional cortex "
     "skills named in <invariants>. Engineering-discipline rules (SLOC, scope, logging) "
     "auto-load via setting_sources; the architecture layer (topology_ws, event contracts, "
-    "domain routing) is description-gated and does NOT reliably attach without these reads."
-)
-
-_THREAD_BINDING_TEMPLATE = (
-    "Your agent-bus reply thread for this dispatch is `{thread_id}`. Post your "
-    "closeout ONLY to this thread."
+    "domain routing) is description-gated and does NOT reliably attach without these reads.\n\n"
+    "Do NOT post your result to the agent-bus yourself — the worker delivers your "
+    "closeout automatically. Produce your result as your final message only."
 )
 
 _CONTRACT_FRONTMATTER_RE = re.compile(
@@ -248,16 +245,11 @@ def extract_source_ref_from_packet(text: str) -> str | None:
     return None
 
 
-def _thread_binding_sentence(dispatch_thread_id: str) -> str:
-    return _THREAD_BINDING_TEMPLATE.format(thread_id=dispatch_thread_id)
-
-
 def resolve_prompt_preamble(
     *,
     handoff_contract: str | None,
     prompt_preamble: str | None,
     inferred_contract: str | None,
-    dispatch_thread_id: str | None = None,
 ) -> str:
     contract = (handoff_contract or inferred_contract or "consult").lower()
     if prompt_preamble:
@@ -266,10 +258,6 @@ def resolve_prompt_preamble(
         preamble = _IMPLEMENT_PREAMBLE
     else:
         preamble = ""
-
-    if contract == "implement" and dispatch_thread_id:
-        binding = _thread_binding_sentence(dispatch_thread_id)
-        preamble = f"{preamble}\n\n{binding}" if preamble else binding
 
     if preamble:
         return f"{preamble}\n\n"
@@ -445,16 +433,24 @@ def prepare_closeout_delivery(
     sidecar_path = _write_sidecar(source_repo, dispatch_id, full_text)
     sidecar_ref = sidecar_workspaces_ref(dispatch_id)
     result_bytes = len(full_text.encode("utf-8"))
-    change_set = changed_paths(source_repo, baseline)
-    files_expected = _files_expected_from_packet(packet_text)
-    verification = verify_deliverables(
-        spec=None,
-        change_set=change_set,
-        outcome=outcome,
-        sidecar_path=sidecar_path,
-        files_expected=files_expected,
-        baseline=baseline,
-    )
+    if baseline is None:
+        # No admit-time baseline (non-implement dispatch): a whole-repo git
+        # diff would attribute peer/stale uncommitted edits to this dispatch
+        # (bug 2116 / friction 19602). files_* is undefined for these
+        # dispatches — emit empty and skip change-set-derived verification.
+        change_set = ChangeSet(created=(), modified=(), deleted=())
+        verification = []
+    else:
+        change_set = changed_paths(source_repo, baseline)
+        files_expected = _files_expected_from_packet(packet_text)
+        verification = verify_deliverables(
+            spec=None,
+            change_set=change_set,
+            outcome=outcome,
+            sidecar_path=sidecar_path,
+            files_expected=files_expected,
+            baseline=baseline,
+        )
     body = build_implement_closeout_body(
         dispatch_id=dispatch_id,
         outcome=outcome,

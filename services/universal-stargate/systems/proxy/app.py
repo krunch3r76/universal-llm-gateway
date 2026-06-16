@@ -31,6 +31,9 @@ from systems.frontier_consult.route import (
 from systems.frontier_consult.route import (
     team_router as frontier_consult_team_router,
 )
+from systems.frontier_consult.skill_suggest_dispatch import (
+    skills_router as frontier_consult_skills_router,
+)
 
 from .core.common import ErrorNormalizer
 from .core.streaming import StreamingErrorHandler
@@ -498,6 +501,7 @@ async def root():
 app.include_router(v1.router)  # /v1/* endpoints (OpenAI API compatible)
 app.include_router(api.router)  # /api/v1/* endpoints (administrative)
 app.include_router(frontier_consult_team_router)  # /api/v1/team/generate
+app.include_router(frontier_consult_skills_router)  # /api/v1/skills/suggest-dispatch
 app.include_router(frontier_consult_frontier_router)  # /api/v1/frontier/generate
 app.include_router(frontier_consult_implement_router)  # /api/v1/implement/closeout
 app.include_router(frontier_consult_densify_router)  # /api/v1/team/densify/*

@@ -40,6 +40,7 @@ from ..seat_applicability import (
     for_agent_filter_clause,
     seat_capabilities_json,
 )
+from ..skill_listing_format import render_concise_skill_index
 from ..skill_suggest_rank import apply_rerank, rerank_enabled_default
 from ._skill_index import (
     body_digest,
@@ -49,6 +50,11 @@ from ._skill_index import (
 )
 from ._skill_suggest import run_stage_a
 from .boot._skill_trigger import _resolve_skill_file, skill_trigger_text
+from .boot.skills import (
+    _BOOT_SKILLS_SQL,
+    _UNPARTITIONED_COUNT_SQL,
+    _boot_skill_row,
+)
 
 _DISCOVERABLE_SKILL_LIFECYCLE = discoverable_skill_lifecycle_sql_predicate()
 
@@ -103,6 +109,83 @@ def _manifest_row(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+_VALID_VIEWS = frozenset({"manifest", "boot"})
+_VALID_RENDERS = frozenset({"concise"})
+
+
+def _seat_filter_params(
+    for_agent: str | None,
+) -> tuple[str, str, list[Any]]:
+    if for_agent:
+        canonical = canonical_seat_or_422(for_agent)
+        for_agent_filter = for_agent_filter_clause(canonical)
+        capability_filter = CAPABILITY_CLAUSE
+        seat_params = [canonical, seat_capabilities_json(canonical)]
+    else:
+        for_agent_filter = ""
+        capability_filter = ""
+        seat_params = []
+    return for_agent_filter, capability_filter, seat_params
+
+
+def _fetch_boot_skills_view(
+    conn: Any,
+    *,
+    limit: int,
+    layer: str,
+    for_agent_filter: str,
+    capability_filter: str,
+    seat_params: list[Any],
+    entity_types: tuple[str, ...],
+) -> tuple[list[dict[str, Any]], int]:
+    type_placeholders = ", ".join("?" * len(entity_types))
+    params: list[Any] = [
+        *entity_types,
+        DISCOVERABLE_SKILL_LIFECYCLE,
+        *seat_params,
+        limit,
+    ]
+    sql = _BOOT_SKILLS_SQL.format(
+        type_placeholders=type_placeholders,
+        for_agent_filter=for_agent_filter,
+        capability_filter=capability_filter,
+    )
+    rows = db_query(conn, sql, tuple(params))
+    unpartitioned = 0
+    if layer == "skills":
+        unpartitioned_rows = db_query(
+            conn, _UNPARTITIONED_COUNT_SQL, (DISCOVERABLE_SKILL_LIFECYCLE,)
+        )
+        unpartitioned = int(unpartitioned_rows[0]["n"]) if unpartitioned_rows else 0
+    items = [_boot_skill_row(r) for r in rows]
+    return items, unpartitioned
+
+
+def _fetch_manifest_view(
+    conn: Any,
+    *,
+    limit: int,
+    for_agent_filter: str,
+    capability_filter: str,
+    seat_params: list[Any],
+    entity_types: tuple[str, ...],
+) -> list[dict[str, Any]]:
+    type_placeholders = ", ".join("?" * len(entity_types))
+    params: list[Any] = [
+        *entity_types,
+        DISCOVERABLE_SKILL_LIFECYCLE,
+        *seat_params,
+        limit,
+    ]
+    sql = _SKILLS_MANIFEST_SQL.format(
+        type_placeholders=type_placeholders,
+        for_agent_filter=for_agent_filter,
+        capability_filter=capability_filter,
+    )
+    rows = db_query(conn, sql, tuple(params))
+    return [_manifest_row(r) for r in rows]
+
+
 @router.get("")
 def get_skills(
     limit: int = Query(200, ge=1, le=500, description="Max manifest entries"),
@@ -120,6 +203,14 @@ def get_skills(
             "(default-deny). Only `lifecycle=active` skills are listed."
         ),
     ),
+    view: Annotated[
+        str,
+        Query(description="Projection: manifest (default) or boot."),
+    ] = "manifest",
+    render: Annotated[
+        str | None,
+        Query(description="Optional render mode: concise (server-side markdown)."),
+    ] = None,
 ) -> dict[str, Any]:
     """Seat-filtered skill manifest INDEX over HTTP (bodies pull-on-demand).
 
@@ -127,36 +218,69 @@ def get_skills(
     seat-correct skill set. Each item ships the body `source_uri` + `digest`;
     full bodies are fetched on demand, never inlined here.
     """
+    if view not in _VALID_VIEWS:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "invalid_view",
+                "message": f"Unknown view {view!r}; expected one of {sorted(_VALID_VIEWS)}.",
+            },
+        )
+    if render is not None and render not in _VALID_RENDERS:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "invalid_render",
+                "message": f"Unknown render {render!r}; expected one of {sorted(_VALID_RENDERS)}.",
+            },
+        )
+
     entity_types = entity_types_for_layer(layer)
-    type_placeholders = ", ".join("?" * len(entity_types))
-    params: list[Any] = [*entity_types, DISCOVERABLE_SKILL_LIFECYCLE]
-    if for_agent:
-        canonical = canonical_seat_or_422(for_agent)
-        for_agent_filter = for_agent_filter_clause(canonical)
-        capability_filter = CAPABILITY_CLAUSE
-        params.append(canonical)
-        params.append(seat_capabilities_json(canonical))
-    else:
-        for_agent_filter = ""
-        capability_filter = ""
-    params.append(limit)
-    sql = _SKILLS_MANIFEST_SQL.format(
-        type_placeholders=type_placeholders,
-        for_agent_filter=for_agent_filter,
-        capability_filter=capability_filter,
-    )
+    for_agent_filter, capability_filter, seat_params = _seat_filter_params(for_agent)
+
     conn = cortex_conn()
     try:
-        rows = db_query(conn, sql, tuple(params))
+        if view == "boot":
+            items, unpartitioned = _fetch_boot_skills_view(
+                conn,
+                limit=limit,
+                layer=layer,
+                for_agent_filter=for_agent_filter,
+                capability_filter=capability_filter,
+                seat_params=seat_params,
+                entity_types=entity_types,
+            )
+            response: dict[str, Any] = {
+                "items": items,
+                "unpartitioned_count": unpartitioned,
+                "layer": layer,
+                "schema_version": "skills.boot.v1",
+                "view": "boot",
+            }
+        else:
+            items = _fetch_manifest_view(
+                conn,
+                limit=limit,
+                for_agent_filter=for_agent_filter,
+                capability_filter=capability_filter,
+                seat_params=seat_params,
+                entity_types=entity_types,
+            )
+            response = {
+                "items": items,
+                "for_agent": for_agent,
+                "layer": layer,
+                "count": len(items),
+            }
     finally:
         conn.close()
-    items = [_manifest_row(r) for r in rows]
-    return {
-        "items": items,
-        "for_agent": for_agent,
-        "layer": layer,
-        "count": len(items),
-    }
+
+    if render == "concise":
+        response["rendered"] = {
+            "concise_markdown": render_concise_skill_index(items),
+        }
+
+    return response
 
 
 @router.get("/body")

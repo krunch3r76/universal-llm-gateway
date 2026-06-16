@@ -2382,7 +2382,9 @@ tools:
       skill_suggest(loaded, conversation_context=context, agent=seat) ⟹
         suggestions ⊆ ApplicableSkills(seat) \ loaded
         ∧ suggestions determined by literal trigger_match_terms overlap.
-    Read-only. Seat required (relay injects caller seat). See todo:skill-suggest-mcp-tool.
+    claude-web routes via Stargate POST /api/v1/skills/suggest-dispatch (worker-hop
+    primary, Stage-A fallback); other seats use direct POST /skills/suggest unless
+    prefer_worker=true. Read-only. Seat required (relay injects caller seat).
   json_schema:
     type: object
     properties:
@@ -2391,6 +2393,8 @@ tools:
       limit: {type: integer}
       agent: {type: string}
       rerank: {type: boolean}
+      prefer_worker: {type: boolean}
+      worker_timeout_seconds: {type: integer}
     required: [loaded]
   skill_uri: agent_skill:cortex
   seat_visibility: [mcp, mcp_claude]

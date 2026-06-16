@@ -450,6 +450,33 @@ def _sync_live_only_skill(
     )
 
 
+def _audit_terms(client: object, scanned: dict[str, dict[str, object]]) -> int:
+    _ = scanned
+    status, body = _request(client, "GET", "/entities?type=agent_skill&limit=500")
+    if status != 200:
+        print(f"AUDIT-TERMS FAIL: GET /entities?type=agent_skill {status}", file=sys.stderr)
+        return 2
+    empty: list[str] = []
+    for stub in body.get("items", []):
+        entity_id = str(stub.get("id") or "")
+        if not entity_id.startswith("agent_skill:"):
+            continue
+        get_status, live = _entity_get(client, entity_id)
+        if get_status != 200:
+            print(f"AUDIT-TERMS FAIL: GET /entities/{entity_id} {get_status}", file=sys.stderr)
+            return 2
+        if live.get("lifecycle") in _SUPPRESSED:
+            continue
+        attrs = live.get("attributes") or {}
+        terms = attrs.get("trigger_match_terms") if isinstance(attrs, dict) else None
+        if not isinstance(terms, list) or not terms:
+            empty.append(entity_id)
+    print(f"Audit-terms: {len(empty)} active agent_skill(s) with empty trigger_match_terms")
+    for eid in sorted(empty):
+        print(f"  - {eid}")
+    return 0 if not empty else 1
+
+
 def _audit(client: object, scanned: dict[str, dict[str, object]], root: Path) -> int:
     status, body = _request(client, "GET", "/entities?type=agent_skill&limit=500")
     if status != 200:
@@ -482,6 +509,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--check", action="store_true")
     parser.add_argument("--audit", action="store_true")
+    parser.add_argument(
+        "--audit-terms",
+        action="store_true",
+        help="Exit 1 if any active agent_skill has empty trigger_match_terms",
+    )
     parser.add_argument(
         "--slug",
         type=str,
@@ -522,6 +554,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.audit:
         return _audit(client, scanned, args.root.resolve())
+
+    if args.audit_terms:
+        return _audit_terms(client, scanned)
 
     if args.check:
         drifted = _drifts(client, scanned, cortex_declared=cortex_declared)

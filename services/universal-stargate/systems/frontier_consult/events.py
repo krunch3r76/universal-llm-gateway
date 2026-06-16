@@ -208,6 +208,28 @@ def FrontierSdkWorkerDispatchFailed(  # noqa: N802
 
 
 @event_factory
+def FrontierHandoffPacketEnriched(  # noqa: N802
+    request_id: str,
+    packet_path: str,
+    to_agent: str,
+    skills_added: list[str],
+    threads_added: list[str],
+) -> Event:
+    """Web handoff packet auto-enriched before validation (assertion #19650)."""
+    return Event(
+        signal="frontier.handoff.packet.enriched",
+        payload={
+            "request_id": request_id,
+            "packet_path": packet_path,
+            "to_agent": to_agent,
+            "skills_added": skills_added,
+            "threads_added": threads_added,
+        },
+        scope="node",
+    )
+
+
+@event_factory
 def FrontierHandoffMaterializationIncomplete(  # noqa: N802
     request_id: str,
     packet_path: str,
@@ -341,6 +363,48 @@ def FrontierDensifyReviewOutcome(  # noqa: N802
             "finding_delta": finding_delta,
             "reviewer_concur_only": reviewer_concur_only,
             "folded_finding_ids": folded_finding_ids,
+        },
+        scope="node",
+    )
+
+
+@event_factory
+def FrontierSkillSuggestDispatchCompleted(  # noqa: N802
+    request_id: str,
+    agent: str,
+    route: str,
+    latency_ms: int,
+) -> Event:
+    """Skill-suggest dispatch returned via worker-hop capture path."""
+    return Event(
+        signal="frontier.skill_suggest_dispatch.completed",
+        payload={
+            "request_id": request_id,
+            "agent": agent,
+            "route": route,
+            "latency_ms": latency_ms,
+        },
+        scope="node",
+    )
+
+
+@event_factory
+def FrontierSkillSuggestDispatchDegraded(  # noqa: N802
+    request_id: str,
+    agent: str,
+    route: str,
+    reason: str,
+    latency_ms: int,
+) -> Event:
+    """Skill-suggest dispatch fell back to direct POST /skills/suggest."""
+    return Event(
+        signal="frontier.skill_suggest_dispatch.degraded",
+        payload={
+            "request_id": request_id,
+            "agent": agent,
+            "route": route,
+            "reason": reason,
+            "latency_ms": latency_ms,
         },
         scope="node",
     )
