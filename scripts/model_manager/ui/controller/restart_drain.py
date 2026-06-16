@@ -463,6 +463,65 @@ async def run_gated_drain_supervised(
     return _drain_deferred_result(intent)
 
 
+async def run_gated_drain_supervised_blocking(
+    gate: RestartDrainGate,
+    action: str,
+    service: str,
+    *,
+    store: Any,
+    supervisor: Any,
+    reason: str,
+) -> dict[str, Any]:
+    """Like ``run_gated_drain_supervised`` but AWAIT the drain to terminal state.
+
+    Fleet stop/restart cycles must not return until the worker has drained and
+    been killed, so a later fleet START phase does not race the supervisor
+    (Phase-3 fleet re-enable — decision on todo:git-worker-drain-p3-fleet,
+    gpt-5.5 review thread 2018). Acquires the restart-mutex slot, persists a
+    pending_drain intent, runs the supervisor INLINE (vs ``_spawn_supervised``),
+    releases the slot, then re-reads the intent to classify the terminal status.
+    Coalescing: if the slot is already held by an in-flight supervision, the
+    existing live intent's deferred envelope is returned (that supervisor owns
+    the drain).
+    """
+    outcome = await gate.evaluate(service, force=False)
+    if outcome is not None:
+        existing = store.active_for_service(service)
+        if existing is not None:
+            return _drain_deferred_result(
+                existing, reason="drain already in progress for this service"
+            )
+        return outcome.to_result()
+
+    deadline_at = (
+        datetime.now(UTC) + timedelta(seconds=supervisor.deadline_s)
+    ).isoformat()
+    try:
+        intent = store.create_intent(
+            service=service, action=action, deadline_at=deadline_at, reason=reason
+        )
+    except Exception:
+        await gate.release(service)
+        raise
+
+    try:
+        await supervisor.supervise(intent)
+    finally:
+        await gate.release(service)
+
+    final = store.get(intent.intent_id)
+    # "completed" mirrors restart_intent_store.STATUS_COMPLETED; kept as a literal
+    # to preserve this module's duck-typed (concrete-store-free) store contract.
+    drained_ok = final is not None and final.status == "completed"
+    return {
+        "status": "ok" if drained_ok else "error",
+        "drain_status": (final.status if final is not None else "missing"),
+        "service": service,
+        "action": action,
+        "restart_intent_id": intent.intent_id,
+    }
+
+
 async def resume_drain_supervision(
     gate: RestartDrainGate, service: str, *, supervisor: Any, intent: Any
 ) -> None:

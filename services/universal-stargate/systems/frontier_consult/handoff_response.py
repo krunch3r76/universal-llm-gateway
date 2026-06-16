@@ -10,9 +10,9 @@ The handle's ``kind`` is authoritative for source-of-truth routing.
   pipeline tracker. No pseudo ``execution_id`` is minted.
 - ``kind == "dual"`` (generate with default bus delivery): bus-first precedence —
   ``thread_id`` is authoritative (poll via ``poll_hint`` / agent-bus wait);
-  ``execution_id`` is the inline fallback only when bus polling is unavailable.
-  ``durable: false`` marks the inline handle as non-durable; the bus thread is
-  the durable surface.
+  ``execution_id`` is pollable for the full lifecycle when ``durable: true``
+  (dispatch-link persisted at admit); otherwise the bus thread remains the
+  durable surface.
 """
 
 from __future__ import annotations
@@ -189,6 +189,7 @@ def build_api_generate_result(
     thread_id: str,
     resolved_model: str,
     resolved_contract: str,
+    durable: bool = False,
     density_triage: str | None = None,
     review_opt_out_reason_code: str | None = None,
     auto_review_child: bool = False,
@@ -220,8 +221,7 @@ def build_api_generate_result(
             "execution_id": execution_id,
             "thread_id": thread_id,
             "substrate": "api",
-            # durable=False: inline execution_id handle; bus thread is durable
-            "durable": False,
+            "durable": durable,
         },
     }
     if "capabilities" not in result and profile is not None:
@@ -245,6 +245,7 @@ def build_sdk_generate_result(
     resolved_model: str,
     resolved_contract: str,
     warnings: list[str],
+    durable: bool = False,
     density_triage: str | None = None,
     review_opt_out_reason_code: str | None = None,
     auto_review_child: bool = False,
@@ -283,8 +284,7 @@ def build_sdk_generate_result(
             "execution_id": execution_id,
             "thread_id": thread_id,
             "substrate": "sdk",
-            # durable=False: inline execution_id handle; bus thread is durable
-            "durable": False,
+            "durable": durable,
         },
     }
     if warnings:

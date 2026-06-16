@@ -225,6 +225,7 @@ async def dispatch_api_role_generate(
         thread_id=thread_id,
         resolved_model=resolved_model,
         resolved_contract=contract,
+        durable=False,
         density_triage=body.density_triage,
         review_opt_out_reason_code=body.review_opt_out_reason_code,
         auto_review_child=body.auto_review_child,

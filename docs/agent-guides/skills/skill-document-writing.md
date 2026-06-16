@@ -50,14 +50,17 @@ Rules:
   are reserved for execution-gating manifests on project/plan/todo entities.
 - Do not infer companions by scraping the body — declared list only.
 
-### Ingest + audit
+### Ingest + audit (steady state — binding)
+
+**Invariant:** after any edit to a declared companion list, run **`python scripts/cortex/ingest_skills.py`**. That command syncs workspace `.cursor/skills/*/SKILL.md` **and** cortex `agent-skills/*.md` declared lists to the entity `related_skills` attribute **and** seeds matching `references` edges. On attribute⟷edge drift, update the declared list and run ingest again — never the archived prose miner.
 
 | Surface | Contract |
 |---|---|
-| `ingest_skills.py` | Parses frontmatter or `## Related skills` → `attributes.related_skills`; `--check` flags drift |
-| `detect_agent_skill_related_skills_no_relationship` | Warning when attribute⟷`references`/`related_to` edges drift |
+| `ingest_skills.py` | Declared frontmatter or `## Related skills` → `attributes.related_skills` + `references` edges; `--check` flags drift |
+| `detect_agent_skill_related_skills_no_relationship` | Warning when attribute⟷edge drift; finding text points at `ingest_skills.py` |
+| `archive/bootstrap_skill_sot_prose_miner.py` | **Archived** — one-time F5 bootstrap / prose-mining recovery only; on drift, declare + `ingest_skills.py` |
 
-After editing a workspace `.cursor/skills/*/SKILL.md` companion list, run:
+After editing a companion list (workspace stub **or** cortex SOT):
 
 ```bash
 python scripts/cortex/ingest_skills.py

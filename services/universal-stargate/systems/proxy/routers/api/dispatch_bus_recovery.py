@@ -1,8 +1,8 @@
-"""Recover terminal pipeline execution state from durable agent-bus dispatch links.
+"""Recover pipeline execution state from durable agent-bus dispatch links.
 
 When the in-memory tracker and sqlite journal both miss after a restart, the
 dispatch link row (and optional closeout turn on the thread) still holds enough
-signal to synthesize a terminal GET /pipelines/executions/{id} payload.
+signal to synthesize a recovered GET /pipelines/executions/{id} payload.
 """
 
 from __future__ import annotations
@@ -65,7 +65,7 @@ async def recover_execution_from_bus_thread(
     url: str,
     auth_token: str,
 ) -> dict[str, Any] | None:
-    """Return a synthesized terminal record, or None when no bus signal exists."""
+    """Return a synthesized recovered record, or None when no bus signal exists."""
     if not auth_token:
         return None
     headers = {"Authorization": f"Bearer {auth_token}"}
@@ -90,9 +90,7 @@ async def recover_execution_from_bus_thread(
             terminal_status = link.get("terminal_status")
             terminal_at = link.get("terminal_at")
             if terminal_status in {"completed", "failed"}:
-                completed_at = (
-                    terminal_at if isinstance(terminal_at, str) else None
-                )
+                completed_at = terminal_at if isinstance(terminal_at, str) else None
                 return _build_recovered_record(
                     execution_id=execution_id,
                     pipeline_id=pipeline_id,
@@ -111,7 +109,13 @@ async def recover_execution_from_bus_thread(
             turns = turns_resp.json().get("turns") or []
             closeout = _sdk_terminal_turn(turns)
             if closeout is None:
-                return None
+                return _build_recovered_record(
+                    execution_id=execution_id,
+                    pipeline_id=pipeline_id,
+                    thread_id=thread_id,
+                    status="running",
+                    completed_at=None,
+                )
             status = _infer_terminal_status(str(closeout.get("subject") or ""))
             return _build_recovered_record(
                 execution_id=execution_id,

@@ -176,7 +176,7 @@ async def dispatch_cursor_sdk_generate(
         contract=handoff_contract,
     )
 
-    await admit_handoff_dispatch(
+    admitted = await admit_handoff_dispatch(
         request_id=request_id,
         thread_id=thread_id,
         execution_id=execution_id,
@@ -244,6 +244,7 @@ async def dispatch_cursor_sdk_generate(
         resolved_model=resolved_model,
         resolved_contract=handoff_contract,
         warnings=warnings,
+        durable=admitted,
         density_triage=density_triage,
         review_opt_out_reason_code=review_opt_out_reason_code,
         auto_review_child=auto_review_child,

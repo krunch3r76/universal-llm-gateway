@@ -441,8 +441,8 @@ async def admit_handoff_dispatch(
     execution_id: str,
     pipeline_id: str,
     caller_agent: str | None,
-) -> None:
-    """POST dispatch-admit; emit mcp.agentbus.dispatch.admit.failed on error."""
+) -> bool:
+    """POST dispatch-admit; return True when a dispatch-link row was persisted."""
     token = os.getenv("AGENT_BUS_TOKEN", "").strip()
     allow_unset = os.getenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "").strip().lower() in (
         "1",
@@ -450,7 +450,7 @@ async def admit_handoff_dispatch(
         "yes",
     )
     if not token and not allow_unset:
-        return
+        return False
 
     payload = {
         "execution_id": execution_id,
@@ -472,6 +472,8 @@ async def admit_handoff_dispatch(
                     status_code=resp.status_code,
                     error_preview=resp.text[:200],
                 )
+                return False
+            return True
     except httpx.HTTPError as exc:
         logger.error(
             "handoff dispatch-admit transport error: request_id=%s thread=%s error=%s",
@@ -485,6 +487,7 @@ async def admit_handoff_dispatch(
             status_code=0,
             error_preview=str(exc)[:200],
         )
+        return False
 
 
 def _emit_dispatch_admit_failed(

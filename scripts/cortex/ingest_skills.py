@@ -1,32 +1,49 @@
 #!/usr/bin/env python3
-"""Upsert agent_skill projections from .cursor/skills/*/SKILL.md (no stored digest)."""
+"""Upsert agent_skill projections from workspace + cortex SOT declared fields.
+
+Workspace: ``.cursor/skills/*/SKILL.md`` (description, applicable_agents, …).
+Cortex SOT: ``$CORTEX_FILES_ROOT/agent-skills/*.md`` declared ``related_skills`` only.
+
+Steady-state companion graph sync (attribute + ``references`` edges) is **always**
+``python scripts/cortex/ingest_skills.py`` after editing a declared companion list.
+The prose miner is archived at
+``scripts/cortex/archive/bootstrap_skill_sot_prose_miner.py`` (one-time F5 bootstrap /
+prose-mining recovery only — not routine maintenance). Recovery from prose-only refs:
+declare them in the SOT ``related_skills`` list, then re-run this script.
+"""
 
 from __future__ import annotations
 
 import argparse
-import json
+import os
 import re
 import sys
 import urllib.parse
 from pathlib import Path
 
 _REPO = Path(__file__).resolve().parent.parent.parent
+_SCRIPTS_CORTEX = Path(__file__).resolve().parent
 if str(_REPO / "libs") not in sys.path:
     sys.path.insert(0, str(_REPO / "libs"))
+if str(_SCRIPTS_CORTEX) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_CORTEX))
 
 from transport_utils import DEFAULT_CORTEX_URL, make_sync_client  # noqa: E402
 
-_FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---", re.DOTALL)
-_RELATED_SKILLS_SECTION_RE = re.compile(
-    r"^## Related skills\s*\n((?:[-*]\s+[a-z0-9-]+\s*\n)+)",
-    re.MULTILINE,
+from _skill_related_parse import declared_related_skills, parse_frontmatter  # noqa: E402
+from _skill_related_sync import (  # noqa: E402
+    remediation_hint,
+    sync_declared_related,
+    sync_reference_edges_only,
 )
-_BARE_SLUG_RE = re.compile(r"^[a-z0-9-]+$")
+
 _CANONICAL_DOC_RE = re.compile(
     r"universal-llm-gateway/docs/agent-guides/skills/([A-Za-z0-9_-]+)\.md"
 )
 _SUPPRESSED = frozenset({"deprecated", "retired"})
 _WS = "workspaces://universal-llm-gateway"
+_SYNC_SOURCE_URI = f"{_WS}/docs/agent-guides/skills/skill-document-writing.md"
+_SKIP_CORTEX_SOT = frozenset({"README"})
 
 
 def _request(
@@ -46,64 +63,39 @@ def _entity_get(client: object, entity_id: str) -> tuple[int, dict]:
     return _request(client, "GET", f"/entities/{q}")
 
 
-def _parse_frontmatter(text: str) -> dict[str, object]:
-    match = _FRONTMATTER_RE.match(text)
-    if not match:
+def _cortex_files_root() -> Path:
+    return Path(
+        os.environ.get("CORTEX_FILES_ROOT", "/mnt/torus/mcp-data/files")
+    ).expanduser()
+
+
+def _scan_cortex_sot_declared() -> dict[str, list[str]]:
+    skills_dir = _cortex_files_root() / "agent-skills"
+    if not skills_dir.is_dir():
         return {}
-    data: dict[str, object] = {}
-    for line in match.group(1).splitlines():
-        if ":" not in line:
+    found: dict[str, list[str]] = {}
+    for path in sorted(skills_dir.glob("*.md")):
+        slug = path.stem
+        if slug in _SKIP_CORTEX_SOT:
             continue
-        key, raw = line.split(":", 1)
-        key, raw = key.strip(), raw.strip()
-        if not key:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            print(f"ERROR: unreadable {path}", file=sys.stderr)
             continue
-        if key == "applicable_agents":
-            try:
-                parsed = json.loads(raw)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(parsed, list):
-                data[key] = [str(v) for v in parsed]
-            continue
-        if key == "related_skills":
-            try:
-                parsed = json.loads(raw)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(parsed, list):
-                data[key] = [str(v).split("#", 1)[0].strip() for v in parsed]
-            continue
-        if (raw.startswith('"') and raw.endswith('"')) or (
-            raw.startswith("'") and raw.endswith("'")
-        ):
-            raw = raw[1:-1]
-        data[key] = raw
-    return data
+        fm = parse_frontmatter(text)
+        declared = declared_related_skills(text, fm)
+        if declared:
+            found[slug] = declared
+    return found
 
 
-def _parse_related_skills_section(text: str) -> list[str]:
-    match = _RELATED_SKILLS_SECTION_RE.search(text)
-    if not match:
-        return []
-    slugs: list[str] = []
-    for line in match.group(1).splitlines():
-        line = line.strip()
-        if not line.startswith(("-", "*")):
-            continue
-        slug = line.lstrip("-*").strip().split("#", 1)[0].strip()
-        if slug.startswith("agent_skill:"):
-            slug = slug.removeprefix("agent_skill:")
-        if _BARE_SLUG_RE.match(slug) and slug not in slugs:
-            slugs.append(slug)
-    return slugs
+def _parse_frontmatter(text: str) -> dict[str, object]:
+    return parse_frontmatter(text)
 
 
 def _declared_related_skills(text: str, fm: dict[str, object]) -> list[str]:
-    from_fm = fm.get("related_skills")
-    if isinstance(from_fm, list) and from_fm:
-        return [str(v) for v in from_fm]
-    return _parse_related_skills_section(text)
+    return declared_related_skills(text, fm)
 
 
 def _source_uri(slug: str, body: str) -> str:
@@ -127,7 +119,7 @@ def _scan_skills(root: Path) -> dict[str, dict[str, object]]:
         except OSError:
             print(f"ERROR: unreadable {skill_path}", file=sys.stderr)
             continue
-        fm = _parse_frontmatter(text)
+        fm = parse_frontmatter(text)
         description = str(fm.get("description") or "").strip()
         if not description:
             print(f"ERROR: missing description: {skill_path}", file=sys.stderr)
@@ -137,7 +129,7 @@ def _scan_skills(root: Path) -> dict[str, dict[str, object]]:
             "frontmatter": fm,
             "description": description,
             "source_uri": _source_uri(slug, text),
-            "related_skills": _declared_related_skills(text, fm),
+            "related_skills": declared_related_skills(text, fm),
         }
     return found
 
@@ -158,7 +150,7 @@ def _projection(
         attrs["applicable_agents"] = ["*"]
     else:
         attrs["applicable_agents"] = live_attrs.get("applicable_agents", ["*"])
-    for key in ("skill_category", "trigger_short"):
+    for key in ("skill_category", "trigger_short", "trigger_match_terms"):
         if key in fm:
             attrs[key] = fm[key]
     declared = scanned.get("related_skills")
@@ -186,8 +178,14 @@ def _matches(live: dict, expected: dict[str, object]) -> tuple[bool, str]:
             return False, f"{field} live={live.get(field)!r}"
     if attrs.get("applicable_agents") != exp.get("applicable_agents"):
         return False, f"applicable_agents live={attrs.get('applicable_agents')!r}"
-    if attrs.get("related_skills") != exp.get("related_skills"):
-        return False, f"related_skills live={attrs.get('related_skills')!r}"
+    live_related = attrs.get("related_skills")
+    exp_related = exp.get("related_skills")
+    if live_related is not None or exp_related is not None:
+        if sorted(live_related or []) != sorted(exp_related or []):
+            return (
+                False,
+                f"related_skills live={live_related!r} declared={exp_related!r}",
+            )
     if "digest" in attrs:
         return False, "digest must not be stored on agent_skill"
     return True, ""
@@ -240,10 +238,41 @@ def _upsert(
     return True
 
 
+def _related_skills_drift(
+    client: object,
+    slug: str,
+    declared: list[str],
+    live_by_id: dict[str, dict] | None = None,
+) -> str | None:
+    eid = f"agent_skill:{slug}"
+    if live_by_id is None:
+        status, live = _entity_get(client, eid)
+        if status == 404:
+            return f"{eid} missing from cortex"
+        if status != 200:
+            return f"{eid} GET {status}"
+    else:
+        live = live_by_id.get(eid)
+        if live is None:
+            return f"{eid} missing from cortex"
+    if live.get("lifecycle") in _SUPPRESSED:
+        return None
+    attrs = live.get("attributes") or {}
+    live_related = attrs.get("related_skills")
+    if sorted(live_related or []) != sorted(declared or []):
+        return (
+            f"{eid} related_skills live={live_related!r} "
+            f"declared={declared!r} — run: {remediation_hint()}"
+        )
+    return None
+
+
 def _drifts(
     client: object,
     scanned: dict[str, dict[str, object]],
     live_by_id: dict[str, dict] | None = None,
+    *,
+    cortex_declared: dict[str, list[str]] | None = None,
 ) -> list[str]:
     out: list[str] = []
     for slug in sorted(scanned):
@@ -266,6 +295,15 @@ def _drifts(
         ok, reason = _matches(live, _projection(scanned[slug], live=live))
         if not ok:
             out.append(f"{eid} {reason}")
+    if cortex_declared:
+        for slug in sorted(cortex_declared):
+            if slug in scanned:
+                continue
+            drift = _related_skills_drift(
+                client, slug, cortex_declared[slug], live_by_id
+            )
+            if drift:
+                out.append(drift)
     return out
 
 
@@ -275,7 +313,8 @@ def _audit(client: object, scanned: dict[str, dict[str, object]], root: Path) ->
         print(f"AUDIT FAIL: GET /entities?type=agent_skill {status}", file=sys.stderr)
         return 2
     live_by_id = {row["id"]: row for row in body.get("items", [])}
-    drifted = _drifts(client, scanned, live_by_id)
+    cortex_declared = _scan_cortex_sot_declared()
+    drifted = _drifts(client, scanned, live_by_id, cortex_declared=cortex_declared)
     file_gone = [
         eid
         for eid, row in live_by_id.items()
@@ -313,15 +352,23 @@ def main(argv: list[str] | None = None) -> int:
     if args.audit:
         return _audit(client, scanned, args.root.resolve())
     if args.check:
-        drifted = _drifts(client, scanned)
+        cortex_declared = _scan_cortex_sot_declared()
+        drifted = _drifts(client, scanned, cortex_declared=cortex_declared)
         if drifted:
             for line in drifted:
                 print(f"DRIFT: {line}", file=sys.stderr)
-            print(f"CHECK FAIL: {len(drifted)} drift(s)", file=sys.stderr)
+            print(
+                f"CHECK FAIL: {len(drifted)} drift(s) — fix declared lists then "
+                f"{remediation_hint()}",
+                file=sys.stderr,
+            )
             return 1
         print("OK ingest_skills --check")
         return 0
     print(f"Ingesting {len(scanned)} workspace skills")
+    cortex_declared = _scan_cortex_sot_declared()
+    if cortex_declared:
+        print(f"Cortex SOT declared related_skills: {len(cortex_declared)} skill(s)")
     if args.dry_run:
         print("DRY RUN — no writes will be issued")
     print()
@@ -334,11 +381,34 @@ def main(argv: list[str] | None = None) -> int:
             failures += 1
             continue
         live_body = live if status == 200 else None
+        entry = scanned[slug]
         if not _upsert(
             client,
-            _projection(scanned[slug], live=live_body),
+            _projection(entry, live=live_body),
             dry_run=args.dry_run,
             live=live_body,
+        ):
+            failures += 1
+            continue
+        declared = entry.get("related_skills")
+        if isinstance(declared, list) and declared:
+            if not sync_reference_edges_only(
+                client,
+                slug,
+                declared,
+                dry_run=args.dry_run,
+                source_uri=_SYNC_SOURCE_URI,
+            ):
+                failures += 1
+    for slug in sorted(cortex_declared):
+        if slug in scanned:
+            continue
+        if not sync_declared_related(
+            client,
+            slug,
+            cortex_declared[slug],
+            dry_run=args.dry_run,
+            source_uri=_SYNC_SOURCE_URI,
         ):
             failures += 1
     return 1 if failures else 0

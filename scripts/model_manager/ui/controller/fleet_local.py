@@ -26,6 +26,7 @@ from .fleet_remote import (
     deploy_and_build_remote,
 )
 from .operation_log import tee_with_summary
+from .restart_drain import run_gated_drain_supervised_blocking
 from .service_config import (
     is_agent_bus_configured,
     is_cloud_proxy_configured,
@@ -45,10 +46,13 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
-# git-integration-worker is excluded from fleet Sync+Restart / Rebuild+Deploy
-# cycles — operator restarts it manually to avoid killing in-flight cursor-sdk
-# dispatches mid-run.
-_FLEET_SKIP_GIT_WORKER = True
+# git-integration-worker now participates in fleet Sync+Restart / Rebuild+Deploy
+# cycles via P2's event-driven cooperative drain: the fleet STOP phase routes it
+# through a supervised action=stop drain (await git_worker.drain.completed then
+# SIGTERM) so in-flight cursor-sdk dispatches are not killed mid-run; fleet START
+# brings it back. Retained as a toggle (set True to re-exclude). See
+# todo:git-worker-drain-p3-fleet.
+_FLEET_SKIP_GIT_WORKER = False
 
 
 async def wait_event_service_healthy(
@@ -191,6 +195,39 @@ async def parallel_build(
     return local_build.result(), results
 
 
+async def _drain_stop_git_worker(ctl: ServiceController) -> str:
+    """Fleet git-worker STOP via P2's supervised drain (action=stop).
+
+    Awaits the cooperative drain to terminal state (begin-drain -> worker
+    git_worker.drain.completed -> SIGTERM) so the fleet START phase does not race
+    the supervisor. On success the worker is not running; the returned message is
+    scored by ``_classify_result``. See todo:git-worker-drain-p3-fleet
+    (gpt-5.5 review thread 2018).
+    """
+    supervisor = ctl.build_git_worker_drain_supervisor(
+        kill=ctl.git_worker_kill_for("stop")
+    )
+    result = await run_gated_drain_supervised_blocking(
+        ctl.restart_gate,
+        "stop",
+        "git_integration_worker",
+        store=ctl.restart_intent_store,
+        supervisor=supervisor,
+        reason="fleet stop (supervised drain)",
+    )
+    intent_id = str(result.get("restart_intent_id", ""))[:8]
+    drain_status = result.get("drain_status", result.get("status"))
+    if result.get("status") == "ok":
+        return (
+            "git-integration-worker drained and stopped — worker is not running "
+            f"(intent {intent_id})"
+        )
+    return (
+        "git-integration-worker supervised drain did not converge: "
+        f"{drain_status} (intent {intent_id})"
+    )
+
+
 async def stop_local_services(
     ctl: ServiceController, sink: FleetProgressSink
 ) -> list[str]:
@@ -216,7 +253,9 @@ async def stop_local_services(
     if is_email_bridge_configured():
         stop_ops.append(("email_bridge", ctl.stop_email_bridge))
     if not _FLEET_SKIP_GIT_WORKER:
-        stop_ops.append(("git_integration_worker", ctl.stop_git_integration_worker))
+        stop_ops.append(
+            ("git_integration_worker", lambda: _drain_stop_git_worker(ctl))
+        )
 
     stop_results = await run_ops_parallel(stop_ops)
     stop_dict: dict[str, bool] = {}

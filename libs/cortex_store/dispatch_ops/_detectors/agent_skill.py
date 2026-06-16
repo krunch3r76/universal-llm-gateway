@@ -23,6 +23,11 @@ from typing import Any
 from ...db import query
 from ._shared import _finding
 
+_INGEST_RELATED_REMEDIATION = (
+    "Update the declared related_skills list in the SKILL.md / cortex SOT, then run: "
+    "python scripts/cortex/ingest_skills.py"
+)
+
 _BARE_SLUG_RE = re.compile(r"^[a-z0-9-]+$")
 _SKILL_EDGE_TYPES = ("references", "related_to")
 
@@ -163,7 +168,7 @@ def detect_agent_skill_related_skills_no_relationship(
                         f"{skill_id.removeprefix('agent_skill:')} but no active "
                         f"`references` or `related_to` relationship from "
                         f"{source_id} → {skill_id} exists. Wire via "
-                        "relationship_create or rerun the related-skills backfill.",
+                        f"{_INGEST_RELATED_REMEDIATION}",
                     )
                 )
         wired_targets = wired_by_source.get(source_id, set())
@@ -177,7 +182,7 @@ def detect_agent_skill_related_skills_no_relationship(
                         f"relationship to {skill_id} but "
                         f"{skill_id.removeprefix('agent_skill:')} is absent from "
                         "its related_skills attribute — attribute⟷edge drift. "
-                        "Add the slug to related_skills or retire the relationship.",
+                        f"{_INGEST_RELATED_REMEDIATION}",
                     )
                 )
 
