@@ -22,7 +22,6 @@ from ..db import cortex_conn
 from ..db import query as db_query
 from ..seat_applicability import (
     CAPABILITY_CLAUSE,
-    FOR_AGENT_CLAUSE,
     canonical_seat_or_422,
     for_agent_filter_clause,
     seat_capabilities_json,
@@ -175,12 +174,6 @@ def _coding_session_bundle_slugs() -> frozenset[str]:
     return frozenset((*inject, *CODING_SESSION_BUNDLE["advertise"]))
 
 
-def _coding_session_bundle_entity_ids() -> tuple[str, ...]:
-    return tuple(
-        f"agent_skill:{slug}" for slug in sorted(_coding_session_bundle_slugs())
-    )
-
-
 def _matches_coding_session_start(ctx: str) -> bool:
     lowered = ctx.lower()
     return any(phrase in lowered for phrase in _CODING_SESSION_CONTEXT_PHRASES)
@@ -202,7 +195,6 @@ def _suppress_session_close_false_positive(ctx: str, slug: str) -> bool:
 def _apply_coding_session_start(
     scored_new: list[dict[str, Any]],
     rows: list[dict[str, Any]],
-    bundle_rows: list[dict[str, Any]],
     loaded_set: set[str],
     ctx: str,
 ) -> list[dict[str, Any]]:
@@ -217,13 +209,9 @@ def _apply_coding_session_start(
     present = {item["slug"] for item in filtered}
     bundle_slugs = _coding_session_bundle_slugs()
     by_slug: dict[str, dict[str, Any]] = {}
-    for row in bundle_rows:
-        slug = slug_from_source_uri(row.get("source_uri"))
-        if slug:
-            by_slug[slug] = row
     for row in rows:
         slug = slug_from_source_uri(row.get("source_uri"))
-        if slug and slug not in by_slug:
+        if slug:
             by_slug[slug] = row
 
     for slug in sorted(bundle_slugs):
@@ -531,36 +519,6 @@ def _fetch_candidates(conn: sqlite3.Connection, agent: str) -> list[dict[str, An
     return [dict(r) for r in db_query(conn, sql, tuple(params))]
 
 
-def _fetch_coding_session_bundle_rows(
-    conn: sqlite3.Connection, agent: str
-) -> list[dict[str, Any]]:
-    """Bundle-scoped fetch with permissive seat filter (honors ``*``).
-
-    Web seats use explicit-only discovery in ``_fetch_candidates``; the curated
-    coding-session bundle is allowlisted separately so ``*``-tagged members
-    can still be boosted without relaxing general web discovery.
-    """
-    canonical = canonical_seat_or_422(agent)
-    entity_ids = _coding_session_bundle_entity_ids()
-    if not entity_ids:
-        return []
-    id_placeholders = ", ".join("?" * len(entity_ids))
-    params: list[Any] = [
-        DISCOVERABLE_SKILL_LIFECYCLE,
-        canonical,
-        seat_capabilities_json(canonical),
-        *entity_ids,
-    ]
-    sql = (
-        _SUGGEST_CANDIDATE_SQL.format(
-            for_agent_filter=FOR_AGENT_CLAUSE,
-            capability_filter=CAPABILITY_CLAUSE,
-        )
-        + f"\n      AND id IN ({id_placeholders})"
-    )
-    return [dict(r) for r in db_query(conn, sql, tuple(params))]
-
-
 def _score_candidate(
     row: dict[str, Any],
     ctx_tokens: set[str],
@@ -660,11 +618,6 @@ def run_stage_a(
     conn = cortex_conn()
     try:
         rows = _fetch_candidates(conn, agent)
-        bundle_rows = (
-            _fetch_coding_session_bundle_rows(conn, agent)
-            if _matches_coding_session_start(ctx)
-            else []
-        )
     finally:
         conn.close()
     related_union = _build_related_union(rows, loaded_set)
@@ -722,9 +675,7 @@ def run_stage_a(
             scored_new.append(entry)
 
     loaded_echo = sorted(set(loaded_echo))
-    scored_new = _apply_coding_session_start(
-        scored_new, rows, bundle_rows, loaded_set, ctx
-    )
+    scored_new = _apply_coding_session_start(scored_new, rows, loaded_set, ctx)
     scored_new.sort(key=_sort_key)
     suggestions = [
         {

@@ -46,6 +46,7 @@ _CANONICAL_DOC_RE = re.compile(
     r"universal-llm-gateway/docs/agent-guides/skills/([A-Za-z0-9_-]+)\.md"
 )
 _SUPPRESSED = frozenset({"deprecated", "retired"})
+_CREATE_SUPPRESSED_LIFECYCLES = frozenset({"deprecated", "retired", "merged"})
 _WS = "workspaces://universal-llm-gateway"
 _SYNC_SOURCE_URI = f"{_WS}/docs/agent-guides/skills/skill-document-writing.md"
 _SKIP_CORTEX_SOT = frozenset({"README"})
@@ -121,6 +122,16 @@ def _declared_related_skills(text: str, fm: dict[str, object]) -> list[str]:
     return declared_related_skills(text, fm)
 
 
+def _create_lifecycle(fm: dict[str, object]) -> str:
+    """Default discoverable lifecycle on CREATE when source frontmatter is non-suppressed."""
+    raw = fm.get("lifecycle")
+    if isinstance(raw, str):
+        lc = raw.strip().lower()
+        if lc in _CREATE_SUPPRESSED_LIFECYCLES:
+            return lc
+    return "active"
+
+
 def _source_uri(slug: str, body: str) -> str:
     match = _CANONICAL_DOC_RE.search(body)
     if match:
@@ -182,7 +193,7 @@ def _projection(
         attrs["related_skills"] = declared
     elif live is not None and "related_skills" in live_attrs:
         attrs["related_skills"] = live_attrs["related_skills"]
-    return {
+    result: dict[str, object] = {
         "id": f"agent_skill:{slug}",
         "type": "agent_skill",
         "name": " ".join(p.capitalize() for p in slug.split("-")),
@@ -190,6 +201,9 @@ def _projection(
         "source_uri": scanned["source_uri"],
         "attributes": attrs,
     }
+    if live is None:
+        result["lifecycle"] = _create_lifecycle(fm)
+    return result
 
 
 def _matches(live: dict, expected: dict[str, object]) -> tuple[bool, str]:

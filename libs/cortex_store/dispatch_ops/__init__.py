@@ -84,7 +84,12 @@ from .ops_session_close import (
     _op_session_handoff_upsert,
 )
 from .ops_subgraph import _op_render_subgraph, _op_walk_subgraph
-from .ops_todos import _op_todo_audit, _op_todo_candidates, _op_todo_close_sidecar
+from .ops_todos import (
+    _op_todo_audit,
+    _op_todo_candidates,
+    _op_todo_close_sidecar,
+    _op_todo_distill_implement_gate,
+)
 from .ops_transcript_assembly import _op_assemble_transcript
 from .workflow_hints import (
     _CORTEX_FORMAT_HINT,
@@ -154,6 +159,7 @@ _OPS: dict[str, Any] = {
     "todo_audit": _op_todo_audit,
     "thread_sidecar_write": _op_thread_sidecar_write,
     "todo_close_sidecar": _op_todo_close_sidecar,
+    "todo_distill_implement_gate": _op_todo_distill_implement_gate,
     "register_skill_substrate": _op_register_skill_substrate,
     "audit": _op_audit,
     "session_audit": _op_session_audit,

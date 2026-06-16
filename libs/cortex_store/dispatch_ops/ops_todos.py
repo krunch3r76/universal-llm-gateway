@@ -13,6 +13,7 @@ from ._todo_closure_sidecar import (
     slug_from_todo_id,
     write_closure_sidecar,
 )
+from ._todo_gate_distillation_impl import distill_todo_implement_gate
 from .ops_entities import _op_entity_update
 
 
@@ -105,3 +106,34 @@ def _op_todo_close_sidecar(
     if "error" in update:
         result["attribute_update_error"] = update["error"]
     return result
+
+
+def _op_todo_distill_implement_gate(
+    todo_id: str | None = None,
+    files_expected: list[str] | None = None,
+    acceptance_criteria: list[str] | None = None,
+    required_skills: list[str] | None = None,
+    claim: str | None = None,
+    evidence: str | None = None,
+    agent: str | None = None,
+    session_id: str | None = None,
+    seeded_by: str | None = None,
+    density_triage: str | None = None,
+    source_uri: str | None = None,
+    **kwargs: object,
+) -> dict[str, Any]:
+    """Wire implement-admission gate fields atomically at Gate-2 close."""
+    return distill_todo_implement_gate(
+        todo_id=todo_id,
+        files_expected=files_expected,
+        acceptance_criteria=acceptance_criteria,
+        required_skills=required_skills,
+        claim=claim,
+        evidence=evidence,
+        agent=agent,
+        session_id=session_id,
+        seeded_by=seeded_by,
+        density_triage=density_triage,
+        source_uri=source_uri,
+        **kwargs,
+    )

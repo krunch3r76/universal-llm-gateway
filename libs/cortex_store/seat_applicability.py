@@ -32,7 +32,7 @@ FOR_AGENT_CLAUSE = """
     )
 """
 
-# Web/API seats: universal ``*`` does not imply visibility — explicit seat slug only.
+# API seats: universal ``*`` does not imply visibility — explicit seat slug only.
 FOR_AGENT_EXPLICIT_CLAUSE = """
     AND json_extract(attributes, '$.applicable_agents') IS NOT NULL
     AND EXISTS (
@@ -41,7 +41,7 @@ FOR_AGENT_EXPLICIT_CLAUSE = """
     )
 """
 
-_REMOTE_SKILL_PLATFORMS = frozenset({"web", "api", "api-multi"})
+_EXPLICIT_ONLY_PLATFORMS = frozenset({"api", "api-multi"})
 
 CAPABILITY_CLAUSE = """
     AND NOT EXISTS (
@@ -78,11 +78,11 @@ def seat_capabilities_json(seat: str) -> str:
 
 
 def for_agent_filter_clause(canonical_seat: str) -> str:
-    """Seat filter for skill discovery: cursor inherits universal ``*``; web/api explicit only."""
+    """Seat filter for skill discovery: cursor/web inherit universal ``*``; api explicit only."""
     parts = canonical_seat.split("-", 1)
     if len(parts) == 2:
         profile = load_profiles().get((parts[0], parts[1]))
-        if profile is not None and profile.platform in _REMOTE_SKILL_PLATFORMS:
+        if profile is not None and profile.platform in _EXPLICIT_ONLY_PLATFORMS:
             return FOR_AGENT_EXPLICIT_CLAUSE
     return FOR_AGENT_CLAUSE
 

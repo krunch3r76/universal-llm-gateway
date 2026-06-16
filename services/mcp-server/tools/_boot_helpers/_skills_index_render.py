@@ -7,12 +7,11 @@ from typing import Any
 from agent_seat.body_injection import web_auto_inject_skill_slugs
 
 from ._briefing_card_render import (
-    _INVARIANT_SKILL_SLUGS,
     _TIER1_GATE_SLUGS,
     _TIER2_INLINE_MAX,
     _rank_score,
 )
-from ._skill_bodies import skill_relpath, skill_slug
+from ._skill_bodies import skill_slug
 
 
 def skills_index_rel_path(seat_slug: str) -> str:
@@ -46,13 +45,6 @@ def _category_counts(skills: list[dict[str, Any]]) -> dict[str, int]:
         cat = skill.get("skill_category") or "uncategorized"
         counts[str(cat)] = counts.get(str(cat), 0) + 1
     return counts
-
-
-def _source_line(skill: dict[str, Any]) -> str:
-    uri = skill.get("source_uri")
-    if isinstance(uri, str) and uri.strip():
-        return uri.strip()
-    return f"cortex:{skill_relpath(skill)}"
 
 
 def render_skills_index_md(
@@ -90,7 +82,6 @@ def render_skills_index_md(
                 lines.append(f"- **Summary**: {prose}")
             if trigger and trigger != prose:
                 lines.append(f"- **Trigger**: {trigger}")
-            lines.append(f"- **Source**: {_source_line(skill)}")
             digest = skill.get("digest")
             if isinstance(digest, str) and digest.strip():
                 lines.append(f"- **Digest**: {digest.strip()}")
