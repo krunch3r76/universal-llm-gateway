@@ -23,6 +23,8 @@ from .cursor_sdk_worker_dispatch import (
 from .handoff import admit_handoff_dispatch, create_handoff_thread
 from .handoff_response import build_handoff_result, build_sdk_generate_result
 
+CURSOR_SDK_REPLY_SEAT = "cursor-sdk"
+
 
 async def dispatch_cursor_sdk_generate(
     *,
@@ -227,7 +229,11 @@ async def dispatch_cursor_sdk_generate(
             warnings.append(worker_warning)
 
     profile = get_profile(family, platform)
-    handoff_fields = build_handoff_result(thread_id=thread_id, to_agent=to_agent)
+    handoff_fields = build_handoff_result(
+        thread_id=thread_id,
+        to_agent=to_agent,
+        reply_from_agent=CURSOR_SDK_REPLY_SEAT,
+    )
     return build_sdk_generate_result(
         role=role,
         profile=profile,

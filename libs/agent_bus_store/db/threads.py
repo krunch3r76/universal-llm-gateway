@@ -70,6 +70,21 @@ def _load_dispatch_links(
     return [dict(r) for r in rows]
 
 
+def get_dispatch_link_by_execution_id(
+    execution_id: str,
+) -> dict[str, Any] | None:
+    """Resolve a dispatch link row by execution_id (indexed lookup)."""
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT thread_id, pipeline_id, terminal_status, terminal_at "
+            "FROM thread_dispatch_links WHERE execution_id = ? LIMIT 1",
+            (execution_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return dict(row)
+
+
 def _normalize_tags(tags: list[str] | None) -> list[str]:
     """Canonicalize a tag list: strip + lowercase + drop empties + dedupe.
 

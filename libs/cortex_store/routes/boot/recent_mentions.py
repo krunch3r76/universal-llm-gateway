@@ -7,11 +7,14 @@ from typing import Any
 from fastapi import APIRouter, Query
 
 from ...compaction import POINTER_SQL_LIKE
-from ...confidence_field import lifecycle_not_value_sql_predicate
+from ...confidence_field import (
+    SUPPRESSED_SKILL_LIFECYCLES,
+    lifecycle_not_in_sql_predicate,
+)
 from ...db import cortex_conn
 from ...db import query as db_query
 
-_DEPRECATED_EXCLUDE = lifecycle_not_value_sql_predicate("deprecated", "e")
+_SUPPRESSED_LIFECYCLE_EXCLUDE = lifecycle_not_in_sql_predicate(SUPPRESSED_SKILL_LIFECYCLES, "e")
 
 router = APIRouter(tags=["boot"])
 
@@ -60,11 +63,11 @@ _RECENT_MENTIONS_DEFAULT_EXCLUDE = (
 #   [3] days_arg         — enriched_count subquery: created_at <= window boundary
 #   [4] days_arg         — LEFT JOIN: created_at > window
 #   [5] days_arg         — WHERE: entity created_at > window
-#   [6] "deprecated"     — _DEPRECATED_EXCLUDE lifecycle predicate (ONE bind)
-#   [7..N] excluded types (variable)
-#   [N+1] days_arg       — HAVING: entity created_at > window
-#   [N+2] include_flag
-#   [N+3] limit
+#   [6..9] SUPPRESSED_SKILL_LIFECYCLES — _SUPPRESSED_LIFECYCLE_EXCLUDE (4 binds: deprecated, draft, retired, merged)
+#   [10..M] excluded types (variable)
+#   [M+1] days_arg       — HAVING: entity created_at > window
+#   [M+2] include_flag
+#   [M+3] limit
 _RECENT_MENTIONS_SQL = f"""
     SELECT
         e.id AS entity_id,
@@ -92,7 +95,7 @@ _RECENT_MENTIONS_SQL = f"""
             e.created_at > datetime('now', ?)
             OR a.id IS NOT NULL
           )
-      AND {_DEPRECATED_EXCLUDE}
+      AND {_SUPPRESSED_LIFECYCLE_EXCLUDE}
       {{type_filter}}
     GROUP BY e.id
     HAVING (
@@ -167,7 +170,7 @@ def get_boot_recent_mentions(
         days_arg,  # enriched_count subquery: created_at <= window
         days_arg,  # LEFT JOIN: created_at > window
         days_arg,  # WHERE: entity created_at > window
-        "deprecated",  # lifecycle_not_value predicate (trait-native; ONE bind)
+        *SUPPRESSED_SKILL_LIFECYCLES,  # lifecycle_not_in predicate (4 binds: deprecated, draft, retired, merged)
     ]
     if excluded:
         placeholders = ",".join("?" * len(excluded))

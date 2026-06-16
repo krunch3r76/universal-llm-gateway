@@ -31,15 +31,20 @@ def attach_session_close_protocol(result: dict[str, Any], tool: str) -> None:
 
 _WORKFLOW_HINTS: dict[str, str] = {
     "entity_create": (
+        "read-first: search/entities before create (write_discipline nudge is advisory); "
         "next: assert (seed claims with evidence_uris) "
-        "→ relationship_create (wire edges to related entities) "
-        "→ entity_get (verify full graph)"
+        "→ relationship_create (wire child_of for leaf types) "
+        "→ entity_get (verify full graph). "
+        "Exact-slug 409 unchanged; post-create collision_warning surfaces semantic "
+        "near-duplicates (advisory, non-blocking)"
     ),
     "entities_bulk_upsert": (
         "next: relationships_bulk_upsert to wire graph links in one atomic call; "
         "entity_get on representative IDs to verify"
     ),
     "assert": (
+        "read-first: analyze_impact(entity_id, claim) before assert when unsure; "
+        "write_discipline nudge (advisory) flags similar claims + hub bloat. "
         "next: relationship_create if this claim connects two entities; "
         "entity_get to verify the assertion appears on the entity. "
         "If validation_warnings present, the handler sets a per-call _next "

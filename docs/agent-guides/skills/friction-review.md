@@ -51,6 +51,14 @@ A codified bug ticket follows the **investigate→execute fix cycle** — invest
 **Default heuristic:** a friction/bug filed → **assume the investigate stage**
 unless the operator says mechanical-only or a dense implement spec already exists.
 
+**Entity scope vs dispatch lane (do not conflate):** Friction subsumption
+(`do NOT open a standalone fix arc`; fold under an existing `todo:`/`task:`) governs
+**entity scoping** — which cortex row tracks the work. It does **not** waive the
+**dispatch lane**: investigate-before-execute via `web-consult` still applies unless
+the operator confirms mechanical-only or a dense implement spec with investigate-close
+attrs already exists. A friction claim that names an interim remedy is input to
+investigate, not authorization to skip investigate and self-execute.
+
 | Stage | When (default) | Transport | Tier |
 |---|---|---|---|
 | **Investigate + decide** | Root cause unknown, multi-file/protocol, design choice open, most `friction()` categories except operator-confirmed mechanical-only | Ordered preference: (1) `web-consult` / web-claude, (2) GPT-5.5 generate when the corpus is self-contained and multi-turn web is unnecessary, (3) `cursor-consult` only when Cursor-seat affordances are required or the operator asks for Cursor | web-claude / GPT-5.5 / Opus |
@@ -75,6 +83,13 @@ unless the operator says mechanical-only or a dense implement spec already exist
 4. **Report** — bus closeout: root cause, paths, verification evidence
 5. **Secondary findings** — issues found during investigation → labeled in closeout;
    spin separate friction/handoff if they need their own cycle
+
+**Inline execution — todo entity is optional.** When the operator says "investigate and fix"
+and both stages complete in the same session, a friction claim's embedded "promote to investigate
+todo" suggestion is satisfied by the inline completion. ¬ create a `todo:` entity for work already
+done — use a friction closure assertion (resolution row on `service:*`) as provenance instead.
+`todo:` is warranted only when the work spans sessions, requires handoff, or has residual open
+items. See lesson `tasks/lessons/tooling-inline-todo-redundancy.md`.
 
 ## Fallback triggers (named exceptions)
 

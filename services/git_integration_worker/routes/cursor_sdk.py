@@ -20,7 +20,7 @@ import json
 import os
 import threading
 import time
-from collections.abc import Mapping
+from collections.abc import Awaitable, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 from threading import Event as _ThreadEvent
@@ -32,6 +32,10 @@ from fastapi.responses import JSONResponse
 from universal_logging import get_logger
 from universal_protocol import error_envelope
 
+from services.git_integration_worker.admission import (
+    Draining503,
+    WorkAdmissionController,
+)
 from services.git_integration_worker.config import WorkerConfig, load_config
 from services.git_integration_worker.cursor_bus import CursorBusClient
 from services.git_integration_worker.cursor_dispatch_ledger import (
@@ -53,6 +57,7 @@ from services.git_integration_worker.cursor_sdk_closeout import (
     SdkRunOutcome,
     _extract_turn_number,
     build_closeout_idempotency_key,
+    capture_wt_baseline,
     count_tool_calls,
     degraded_implement_reason,
     emit_implement_closeout_trigger,
@@ -94,6 +99,8 @@ _SDK_BRIDGE_BIN = os.environ.get("CURSOR_SDK_BRIDGE_BIN", "").strip() or None
 _SDK_TIMEOUT_S = float(os.environ.get("CURSOR_SDK_TIMEOUT", "1800"))
 _SDK_TIMEOUT_BUFFER_S = 120.0
 _SDK_HEARTBEAT_S = float(os.environ.get("CURSOR_SDK_HEARTBEAT", "30"))
+# Retry-After hint (seconds) on the 503 returned while draining.
+_DRAIN_RETRY_AFTER_S = int(os.environ.get("GIT_WORKER_DRAIN_RETRY_AFTER", "5"))
 
 # Bounded retry for the pre-discovery bridge-launch transient: cursor-sdk
 # intermittently exits the bridge BEFORE the discovery handshake with an empty
@@ -117,6 +124,36 @@ def _is_pre_discovery_transient(exc: BaseException) -> bool:
 
 def _config(request: Request) -> WorkerConfig:
     return getattr(request.app.state, "worker_config", _CONFIG)
+
+
+def _controller(request: Request) -> WorkAdmissionController:
+    controller = getattr(request.app.state, "admission_controller", None)
+    if controller is None:
+        # Lifespan didn't run (some test transports skip it); construct a lazy
+        # controller bound to the ledger singleton so the route still functions.
+        controller = WorkAdmissionController(
+            ledger=CursorDispatchLedger.instance(),
+            worker_id="lazy",
+            pid=0,
+            worker_started_at="lazy",
+        )
+        request.app.state.admission_controller = controller
+    return controller
+
+
+def _draining_response(exc: Draining503) -> JSONResponse:
+    """503 envelope + ``Retry-After`` for a dispatch rejected by drain."""
+    return JSONResponse(
+        status_code=503,
+        content=error_envelope(
+            code="GIT_WORKER_DRAINING",
+            message=str(exc),
+            source="gateway",
+            retryable=True,
+            data={"retry_after_s": _DRAIN_RETRY_AFTER_S},
+        ),
+        headers={"Retry-After": str(_DRAIN_RETRY_AFTER_S)},
+    )
 
 
 def _read_packet_text(req: CursorDispatchRequest, source_repo: Path) -> str:
@@ -379,7 +416,12 @@ async def _deliver_sdk_closeout(
     bus: CursorBusClient,
     reply_to: str,
     work_item_ref: str | None,
+    packet_text: str = "",
 ) -> None:
+    baseline = await asyncio.to_thread(
+        CursorDispatchLedger.instance().read_wt_baseline,
+        dispatch_id=req.dispatch_id,
+    )
     delivery = prepare_closeout_delivery(
         source_repo=source_repo,
         dispatch_id=req.dispatch_id,
@@ -387,8 +429,12 @@ async def _deliver_sdk_closeout(
         degraded_reason=degraded_reason,
         thread_id=req.thread_id,
         work_item_ref=work_item_ref,
+        baseline=baseline,
+        packet_text=packet_text or None,
     )
     run_outcome = resolve_run_outcome_label(degraded_reason)
+    if delivery.closeout_status.value == "partial":
+        run_outcome = "degraded"
     duration_s = outcome.duration_ms / 1000.0
 
     bus_result = await bus.reply(
@@ -472,12 +518,32 @@ async def _deliver_sdk_closeout(
     )
 
 
+async def _close_ticket_after(
+    coro: Awaitable[None], *, controller: WorkAdmissionController, op_id: str
+) -> None:
+    """Run a gated dispatch coro, then close its admission ticket on-loop.
+
+    The ticket is closed only after ``coro`` has fully completed — i.e. after the
+    dispatch's ``ledger.mark_terminal`` on whichever path it exits — so the
+    recomputed ``active_count`` no longer counts this dispatch and a 1->0
+    transition emits ``git_worker.drain.completed`` exactly once. This runs as the
+    body of the tracked dispatch task, so the close always happens on the loop.
+    The ledger already holds the authoritative terminal status; the ticket's
+    status is a cosmetic close marker.
+    """
+    try:
+        await coro
+    finally:
+        controller.close_ticket(op_id, terminal_status="closed")
+
+
 async def _run_sdk_dispatch_gated(
     *,
     req: CursorDispatchRequest,
     source_repo: Path,
     dispatch_workspace: Path,
     bus: CursorBusClient,
+    controller: WorkAdmissionController,
 ) -> None:
     reply_to = req.caller_agent or "dispatch"
     outer_timeout_s = _SDK_TIMEOUT_S + _SDK_TIMEOUT_BUFFER_S
@@ -488,7 +554,7 @@ async def _run_sdk_dispatch_gated(
 
     prompt = _resolve_prompt(req, source_repo)
 
-    worker_task = asyncio.create_task(
+    worker_task = controller.create_tracked_task(
         asyncio.to_thread(
             _run_sdk_sync,
             source_repo=source_repo,
@@ -500,7 +566,8 @@ async def _run_sdk_dispatch_gated(
             thread_id=req.thread_id,
             resolved_model=req.model,
             gate_loop=gate_loop,
-        )
+        ),
+        op_id=f"{req.dispatch_id}:worker",
     )
 
     done, _ = await asyncio.wait({worker_task}, timeout=outer_timeout_s)
@@ -634,6 +701,7 @@ async def _run_sdk_dispatch_gated(
         bus=bus,
         reply_to=reply_to,
         work_item_ref=work_item_ref,
+        packet_text=packet_text,
     )
 
 
@@ -682,6 +750,17 @@ async def cursor_dispatch(
         parity,
     )
 
+    controller = _controller(request)
+    # Early synchronous drain reject: skip creating a ledger row at all in the
+    # common draining case. The binding TOCTOU guarantee is in try_admit below
+    # (its drain check and ticket reservation share one synchronous frame).
+    if controller.is_draining():
+        return _draining_response(
+            Draining503(
+                f"git-integration-worker is draining (epoch={controller.drain_epoch})"
+            )
+        )
+
     admission = CursorDispatchResponse(
         admitted=True,
         dispatch_id=req.dispatch_id,
@@ -690,6 +769,40 @@ async def cursor_dispatch(
     )
     ledger = CursorDispatchLedger.instance()
     fingerprint = ledger.fingerprint(req)
+    packet_text = (
+        _read_packet_text(req, cfg.source_repo)
+        if req.packet_path
+        else (req.message or "")
+    )
+    inferred_contract = (
+        infer_contract_from_text(packet_text)
+        if (not req.handoff_contract and packet_text)
+        else None
+    )
+    contract = (req.handoff_contract or inferred_contract or "consult").lower()
+    source_repo_str = str(cfg.source_repo.resolve())
+    if contract == "implement":
+        active = await asyncio.to_thread(
+            ledger.active_implement_for_repo,
+            source_repo=source_repo_str,
+            exclude_dispatch_id=req.dispatch_id,
+        )
+        if active:
+            return JSONResponse(
+                status_code=409,
+                content=error_envelope(
+                    code="CURSOR_DISPATCH_CONFLICT",
+                    message=(
+                        f"concurrent implement dispatch already active on {source_repo_str!r}: "
+                        f"{active!r}"
+                    ),
+                    source="gateway",
+                ),
+            )
+    wt_baseline = None
+    if contract == "implement":
+        baseline_map = await asyncio.to_thread(capture_wt_baseline, cfg.source_repo)
+        wt_baseline = json.dumps(baseline_map)
     try:
         cached = await asyncio.to_thread(
             ledger.admit,
@@ -699,6 +812,9 @@ async def cursor_dispatch(
             caller_agent=req.caller_agent,
             resolved_model=config.model_id,
             admission=admission,
+            wt_baseline=wt_baseline,
+            contract=contract,
+            source_repo=source_repo_str,
         )
     except DispatchConflict as exc:
         return JSONResponse(
@@ -710,17 +826,44 @@ async def cursor_dispatch(
             ),
         )
     if cached is not None:
+        # Idempotent replay: return the cached admission WITHOUT reserving a new
+        # ticket (try_admit runs only on the first-admit path below).
         return cached
 
-    bus = CursorBusClient()
-    task = asyncio.create_task(
-        _run_sdk_dispatch_gated(
-            req=req,
-            source_repo=cfg.source_repo,
-            dispatch_workspace=cfg.dispatch_workspace,
-            bus=bus,
+    # Reserve the admission ticket synchronously. try_admit re-checks drain with
+    # no await between the check and the reservation; if a drain began during the
+    # ledger.admit await above, it raises and we roll the fresh ledger row back to
+    # terminal so it never lingers as a phantom pending dispatch.
+    try:
+        ticket = controller.try_admit(
+            "cursor_sdk",
+            op_id=req.dispatch_id,
+            route="/api/v1/cursor/dispatch",
         )
+    except Draining503 as exc:
+        await asyncio.to_thread(
+            ledger.mark_terminal,
+            dispatch_id=req.dispatch_id,
+            terminal_status="failed",
+        )
+        return _draining_response(exc)
+
+    bus = CursorBusClient()
+    task = controller.create_tracked_task(
+        _close_ticket_after(
+            _run_sdk_dispatch_gated(
+                req=req,
+                source_repo=cfg.source_repo,
+                dispatch_workspace=cfg.dispatch_workspace,
+                bus=bus,
+                controller=controller,
+            ),
+            controller=controller,
+            op_id=req.dispatch_id,
+        ),
+        op_id=req.dispatch_id,
     )
     ledger.register_task(req.dispatch_id, task)
+    ticket.mark_running()
     await asyncio.to_thread(ledger.mark_running, dispatch_id=req.dispatch_id)
     return admission

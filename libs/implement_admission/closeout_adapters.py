@@ -12,6 +12,7 @@ from implement_admission.closeout_helpers import (
 )
 from implement_admission.closeout_models import AdapterResult, ImplementCloseout
 from implement_admission.closeout_runtime import get_runtime
+from implement_admission.deliverable_verification import gate_d_passed
 from implement_admission.spec import CloseoutAdapterKind, CloseoutStatus, Source
 
 
@@ -43,6 +44,7 @@ class TodoCloseoutAdapter:
 
         todo_id = source.canonical_ref
         errors: list[str] = []
+        deliverable_ok = gate_d_passed(closeout)
 
         sidecar = rt.dispatch(
             "todo_close_sidecar",
@@ -61,40 +63,73 @@ class TodoCloseoutAdapter:
             if uri and uri not in evidence_uris:
                 evidence_uris.append(uri)
 
-        assert_args: dict[str, object] = {
-            "entity_id": todo_id,
-            "claim": closeout.summary,
-            "confidence": "confirmed",
-            "evidence": closeout.summary,
-            "derivation_type": "agent_observation",
-            "confidence_score": 0.8,
-            "seeded_by": "pipeline:implement-closeout",
-        }
-        if evidence_uris:
-            assert_args["evidence_uris"] = evidence_uris
-        assert_resp = rt.dispatch("assert", assert_args)
-        if assert_resp.get("error"):
-            errors.append(f"assert: {assert_resp['error']}")
+        if deliverable_ok:
+            assert_args: dict[str, object] = {
+                "entity_id": todo_id,
+                "claim": closeout.summary,
+                "confidence": "confirmed",
+                "evidence": closeout.summary,
+                "derivation_type": "agent_observation",
+                "confidence_score": 0.8,
+                "seeded_by": "pipeline:implement-closeout",
+            }
+            if evidence_uris:
+                assert_args["evidence_uris"] = evidence_uris
+            assert_resp = rt.dispatch("assert", assert_args)
+            if assert_resp.get("error"):
+                errors.append(f"assert: {assert_resp['error']}")
+        else:
+            gate_reason = next(
+                (
+                    v.command.removeprefix("gate_d:").split(";", 1)[0]
+                    for v in closeout.verification
+                    if v.command.startswith("gate_d:") and v.exit_code
+                ),
+                "deliverable_verification_failed",
+            )
+            needs_review = rt.dispatch(
+                "assert",
+                {
+                    "entity_id": todo_id,
+                    "claim": f"Dispatch deliverable verification failed: {gate_reason}",
+                    "confidence": "believed",
+                    "evidence": closeout.summary,
+                    "derivation_type": "agent_observation",
+                    "confidence_score": 0.8,
+                    "seeded_by": "pipeline:implement-closeout",
+                },
+            )
+            if needs_review.get("error"):
+                errors.append(f"needs_review: {needs_review['error']}")
 
-        wf = rt.dispatch(
-            "entity_update",
-            {"entity_id": todo_id, "workflow_state": "done"},
-        )
-        if wf.get("error"):
-            errors.append(f"workflow_update: {wf['error']}")
+        wf: dict[str, object] = {}
+        if deliverable_ok:
+            wf = rt.dispatch(
+                "entity_update",
+                {"entity_id": todo_id, "workflow_state": "done"},
+            )
+            if wf.get("error"):
+                errors.append(f"workflow_update: {wf['error']}")
 
-        if wf.get("error"):
+        if not deliverable_ok:
+            status = CloseoutStatus.PARTIAL.value
+        elif wf.get("error"):
             status = CloseoutStatus.FAILED.value
         elif errors:
             status = CloseoutStatus.PARTIAL.value
         else:
             status = CloseoutStatus.COMPLETE.value
 
+        mutation = (
+            f"in-process todo-close: {todo_id} workflow_state=done"
+            if deliverable_ok
+            else f"withheld done for {todo_id}: gate_d failed"
+        )
         return [
             _result(
                 adapter=CloseoutAdapterKind.TODO.value,
                 status=status,
-                mutation=f"in-process todo-close: {todo_id} workflow_state=done",
+                mutation=mutation,
                 error="; ".join(errors) or None,
             )
         ]

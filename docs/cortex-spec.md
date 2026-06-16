@@ -358,6 +358,7 @@ primitive walks:
 |---|---|---|
 | Reverse-dependency BFS | `impact` | **both** — `relationships` ∪ `session_edges` |
 | Subgraph render | `render_subgraph` | `relationships` only (structural) |
+| Subgraph walk | `walk_subgraph` | `relationships` only (structural) — lean topology, no assertion canvas; depth-aware neighbor fidelity on `render_subgraph` mirrors assertion **8164** (see `entity_get` / boot sparse rendering) |
 | Reasoning-edge walk | `edge_traverse` | `session_edges` only (reasoning) |
 | Write-path contradiction | `check_contradictions` | `session_edges` only (reasoning — by design; see below) |
 | Spreading activation | `activate` | **both** — `relationships` ∪ `session_edges` |

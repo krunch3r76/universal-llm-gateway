@@ -17,6 +17,7 @@ from .controller.restart_drain import (
     BackgroundFailedHook,
     run_gated,
     run_gated_deferred,
+    run_gated_drain_supervised,
 )
 
 if TYPE_CHECKING:
@@ -111,11 +112,14 @@ async def execute(
 
         case "stop":
             require_service(service)
+            force = bool(params.get("force", False))
+            if service == "git_integration_worker" and not force:
+                return await _git_worker_drain_supervised(ctl, "stop")
             return await run_gated(
                 ctl.restart_gate,
                 "stop",
                 service,
-                force=bool(params.get("force", False)),
+                force=force,
                 lifecycle=lambda: _stop(ctl, service),
             )
 
@@ -132,11 +136,14 @@ async def execute(
                     no_cache=False,
                     scheduled_message=_MCP_RESTART_ALIASED_MSG,
                 )
+            force = bool(params.get("force", False))
+            if service == "git_integration_worker" and not force:
+                return await _git_worker_drain_supervised(ctl, "restart")
             return await run_gated(
                 ctl.restart_gate,
                 "restart",
                 service,
-                force=bool(params.get("force", False)),
+                force=force,
                 lifecycle=lambda: _restart_cycle(ctl, service),
             )
 
@@ -174,11 +181,14 @@ async def execute(
                     force=bool(params.get("force", False)),
                     no_cache=False,
                 )
+            force = bool(params.get("force", False))
+            if service == "git_integration_worker" and not force:
+                return await _git_worker_drain_supervised(ctl, "sync_restart")
             return await run_gated(
                 ctl.restart_gate,
                 "sync_restart",
                 service,
-                force=bool(params.get("force", False)),
+                force=force,
                 lifecycle=lambda: _sync_restart(ctl, service),
             )
 
@@ -206,6 +216,29 @@ def require_service(service: str) -> None:
         raise ValueError(
             f"Unknown service: '{service}'. Valid: {', '.join(sorted(VALID_SERVICES))}"
         )
+
+
+async def _git_worker_drain_supervised(
+    ctl: ServiceController, action: str
+) -> dict[str, Any]:
+    """Route a non-force git-worker lifecycle action to the drain supervisor.
+
+    git_integration_worker non-force stop/restart/sync_restart converge via the
+    event-driven drain (durable intent + worker begin-drain + 202 deferred) rather
+    than the generic busy-probe deferral. force=true keeps the existing immediate
+    kill path. The terminal lifecycle is action-appropriate: stop vs restart.
+    """
+    supervisor = ctl.build_git_worker_drain_supervisor(
+        kill=ctl.git_worker_kill_for(action)
+    )
+    return await run_gated_drain_supervised(
+        ctl.restart_gate,
+        action,
+        "git_integration_worker",
+        store=ctl.restart_intent_store,
+        supervisor=supervisor,
+        reason=f"manage {action} (deferred drain)",
+    )
 
 
 async def _busy_status(ctl: ServiceController) -> dict[str, Any]:

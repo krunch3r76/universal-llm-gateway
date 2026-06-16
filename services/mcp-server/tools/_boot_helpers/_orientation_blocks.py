@@ -119,8 +119,16 @@ Executor-tier policy (R1/R2/R3 — spec authorship, Composer acceptance, widened
 Codified bug ticket = the investigate→execute fix cycle (investigate → dense spec + attribute distillation at investigate close, then execute via the bound-implement default — `cursor-sdk` + `source_ref` once Gate-2 attrs distilled) + pass zoom-out duty (widen beyond filed symptom; touch-point inventory; bug-class grep; labeled secondary findings in closeout). A filed bug defaults to the INVESTIGATION tier (friction 13571 → thread 1377). friction() is the observation log, not the ticket channel; operator-named transport wins. Full model: consult-routing.md § Codified bug reports → Pass zoom-out duty."""
 
 _RAG_SCOPE_AWARENESS_BLOCK = """\
+## RAG corpus retrieval — primary tool (call directly; ¬ dispatch overflow)
+Semantic corpus search from any MCP seat (incl. Cursor): call the **primary** `rag` dispatcher directly — do NOT route through `dispatch(tool="rag_search")` or `tool_search` overflow templates.
+```
+rag(op="search", arguments='{"query": "<natural language>", "scope": "<scope>", "limit": 20}')
+rag(op="list_scopes")   # enumerate ~68 scopes before an absence claim
+rag(op="coverage")      # per-scope indexed file counts
+```
+`pipeline_consult` is overflow-only and requires a prior `execution_id` — it is for in-pipeline step advice, not ad-hoc corpus lookup. `search_project_files` is regex/literal file search (`pattern=`, not `query=`).
 ## RAG scope-awareness — default search is auto-scoped, not corpus-wide
-`rag(op="search")` runs an LLM scope-classifier (default), then searches only the predicted scope(s) — ~68 scopes exist (`software_agents`, `workflows`, `agent_skills_research`, `temporal_provenance`, …).
+When `scope` is omitted, `rag(op="search")` runs an LLM scope-classifier, then searches only the predicted scope(s) — scopes include `software_agents`, `workflows`, `agent_skills_research`, `temporal_provenance`, `research`, …
 Before concluding "no prior art / nothing exists / not in the corpus": run `rag(op="list_scopes")` (or `coverage`) and re-search with an explicit `scope=` over the relevant domains. A single default search is necessary-but-not-sufficient for an absence claim."""
 
 

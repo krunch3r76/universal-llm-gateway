@@ -16,6 +16,7 @@ from universal_logging import get_logger
 from ..db import cortex_conn
 from ..entity_aliases import resolve_entity_reference
 from ..routes.assertions import _create_assertion_impl
+from ..write_discipline_nudge import attach_write_discipline, build_assert_nudge
 from ._assertions_shared import (
     _emit_predicate_form_normalize_events,
     _project_seeded_by,
@@ -97,6 +98,7 @@ def _op_assert(
         if not val:
             return {"error": f"{field} is required"}
     assert entity_id is not None
+    write_nudge = None
     with cortex_conn() as conn:
         try:
             resolved = resolve_entity_reference(
@@ -108,7 +110,19 @@ def _op_assert(
             )
         except HTTPException as exc:
             return {"error": exc.detail, "status_code": exc.status_code}
-    entity_id = resolved.entity_id if not raw_id else entity_id
+        canonical_entity_id = resolved.entity_id if not raw_id else entity_id
+        try:
+            write_nudge = build_assert_nudge(
+                conn, canonical_entity_id, claim, confidence or "believed"
+            )
+        except Exception:  # noqa: BLE001 — advisory nudge must never block the write
+            logger.warning(
+                "build_assert_nudge failed for %s — proceeding without advisory",
+                canonical_entity_id,
+                exc_info=True,
+            )
+            write_nudge = None
+    entity_id = canonical_entity_id
     assert confidence is not None
     if confidence not in _VALID_CONFIDENCE:
         return {
@@ -202,6 +216,8 @@ def _op_assert(
                 )
             if hints:
                 result["_next"] = "; ".join(hints)
+        if write_nudge:
+            attach_write_discipline(result, write_nudge)
     return result
 
 

@@ -23,6 +23,10 @@ Three forms, one purpose — give agents durable instructions:
 **Frontmatter** (required on all `.mdc` / `SKILL.md` files):
 - `name`: slug matching the filename
 - `description`: trigger terms — the agent uses this to decide whether to load
+- `applicable_agents` (optional on `SKILL.md` only): JSON list of seat slugs (e.g.
+  `["claude-cursor"]`, `["claude-web","claude-cursor"]`) or `["*"]` for universal
+  visibility. Default `["*"]` when absent. Read by `scripts/cortex/ingest_skills.py` on
+  registration; omitted on PATCH preserves the live partition value.
 
 **Body discipline**:
 - First line of body: actionable content — no motivational opener, no name restatement
@@ -81,3 +85,7 @@ For any guidance doc before shipping:
 3. Within line-count target for its complexity tier?
 4. Tables used where prose would exceed 3 lines?
 5. No duplication of content already injected by an alwaysApply rule?
+6. Registered as a cortex `agent_skill` entity? A local `SKILL.md` alone is NOT done — run
+   `scripts/cortex/ingest_skills.py` and verify `cortex(entity_get agent_skill:<slug>)`
+   resolves with the correct `source_uri` and the skill appears in `GET /boot-skills`.
+   Filesystem-only skills are invisible to `skill_suggest` / boot-skills / web + dispatch seats.

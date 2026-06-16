@@ -7,7 +7,10 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Query
 
-from ...confidence_field import lifecycle_not_value_sql_predicate
+from ...confidence_field import (
+    SUPPRESSED_SKILL_LIFECYCLES,
+    lifecycle_not_in_sql_predicate,
+)
 from ...db import cortex_conn
 from ...db import query as db_query
 from ...seat_applicability import (
@@ -19,7 +22,9 @@ from ...seat_applicability import (
 from .._skill_index import entity_types_for_layer, index_envelope_fields
 from ._skill_trigger import skill_trigger_text
 
-_DEPRECATED_EXCLUDE = lifecycle_not_value_sql_predicate("deprecated")
+_SUPPRESSED_LIFECYCLE_EXCLUDE = lifecycle_not_in_sql_predicate(
+    SUPPRESSED_SKILL_LIFECYCLES
+)
 
 router = APIRouter(tags=["boot"])
 
@@ -34,10 +39,11 @@ _BOOT_SKILLS_SQL = f"""
            json_extract(attributes, '$.trigger_short') AS trigger_short,
            json_extract(attributes, '$.skill_category') AS skill_category,
            json_extract(attributes, '$.trigger_match_terms') AS trigger_match_terms_json,
-           json_extract(attributes, '$.boot_importance') AS boot_importance
+           json_extract(attributes, '$.boot_importance') AS boot_importance,
+           json_extract(attributes, '$.related_skills') AS related_skills_json
     FROM entities
     WHERE type IN ({{type_placeholders}})
-      AND {_DEPRECATED_EXCLUDE}
+      AND {_SUPPRESSED_LIFECYCLE_EXCLUDE}
       {{for_agent_filter}}{{capability_filter}}
     ORDER BY name ASC
     LIMIT ?
@@ -47,7 +53,7 @@ _UNPARTITIONED_COUNT_SQL = f"""
     SELECT COUNT(*) AS n
     FROM entities
     WHERE type = 'agent_skill'
-      AND {_DEPRECATED_EXCLUDE}
+      AND {_SUPPRESSED_LIFECYCLE_EXCLUDE}
       AND json_extract(attributes, '$.applicable_agents') IS NULL
 """
 
@@ -90,6 +96,25 @@ def _decode_match_terms(raw: str | None) -> list[str]:
     return [str(t) for t in terms] if isinstance(terms, list) else []
 
 
+def _decode_related_skills(raw: str | None) -> list[str]:
+    if not raw:
+        return []
+    try:
+        values = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return []
+    if not isinstance(values, list):
+        return []
+    slugs: list[str] = []
+    for entry in values:
+        slug = str(entry).strip()
+        if slug.startswith("agent_skill:"):
+            slug = slug.removeprefix("agent_skill:")
+        if slug.split("#", 1)[0] and slug not in slugs:
+            slugs.append(slug.split("#", 1)[0])
+    return slugs
+
+
 def _boot_skill_row(row: dict[str, Any]) -> dict[str, Any]:
     skill_class, tool_binding = _parse_skill_binding(row.get("skill_binding_json"))
     item: dict[str, Any] = {
@@ -101,6 +126,7 @@ def _boot_skill_row(row: dict[str, Any]) -> dict[str, Any]:
         "skill_category": row.get("skill_category"),
         "trigger_match_terms": _decode_match_terms(row.get("trigger_match_terms_json")),
         "boot_importance": row.get("boot_importance"),
+        "related_skills": _decode_related_skills(row.get("related_skills_json")),
         "skill_class": skill_class,
         "binding_kind": _derive_binding_kind(skill_class, tool_binding),
     }
@@ -139,7 +165,7 @@ def get_boot_skills(
     """
     entity_types = entity_types_for_layer(layer)
     type_placeholders = ", ".join("?" * len(entity_types))
-    params: list[Any] = [*entity_types, "deprecated"]
+    params: list[Any] = [*entity_types, *SUPPRESSED_SKILL_LIFECYCLES]
     if for_agent:
         canonical = canonical_seat_or_422(for_agent)
         for_agent_filter = FOR_AGENT_CLAUSE
@@ -165,7 +191,7 @@ def get_boot_skills(
             # silently as Kaywan adds new and temp skills. Single SQL query, no
             # row data, ~30 bytes on the wire.
             unpartitioned_rows = db_query(
-                conn, _UNPARTITIONED_COUNT_SQL, ("deprecated",)
+                conn, _UNPARTITIONED_COUNT_SQL, SUPPRESSED_SKILL_LIFECYCLES
             )
             unpartitioned = int(unpartitioned_rows[0]["n"]) if unpartitioned_rows else 0
     finally:

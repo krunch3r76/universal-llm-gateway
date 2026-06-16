@@ -79,3 +79,14 @@ cortex(tool="entity_update", arguments={
 
 Once both schemas pass with zero open forks, Gate-3 closeout hands off to direct
 `source_ref` implement dispatch — wrap is not on the happy path.
+
+## Codified bug reports
+
+**Entity scope vs dispatch lane:** Friction/todo subsumption (`do NOT open a standalone
+fix arc`; fold under an existing `todo:`/`task:`) governs **entity scoping** — which
+cortex row tracks the work. It does **not** waive the **dispatch lane**:
+investigate-before-execute (`web-consult` default) still applies unless the operator
+confirms mechanical-only or a dense implement spec with investigate-close attrs already
+exists. A friction claim that names an interim remedy is input to investigate, not
+authorization to skip investigate and self-execute. Full transport matrix and pass
+zoom-out duty: `fs(cortex, agent-skills/consult-routing.md)` § Codified bug reports.

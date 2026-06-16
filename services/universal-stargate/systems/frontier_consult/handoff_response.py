@@ -158,16 +158,25 @@ def build_push_reminder(
     )
 
 
-def build_handoff_result(*, thread_id: str, to_agent: str) -> dict[str, Any]:
+def build_handoff_result(
+    *,
+    thread_id: str,
+    to_agent: str,
+    reply_from_agent: str | None = None,
+) -> dict[str, Any]:
     """Assemble the three additive handoff-response fields.
 
-    ``to_agent`` is the resolved web seat — it is the ``from_agent`` whose reply
-    the wait hint waits on (the seat that will author the reply turn).
+    ``to_agent`` is the bus recipient address for the dispatch turn.
+    ``reply_from_agent`` is the predicted closeout author for ``poll_hint``;
+    defaults to ``to_agent`` when omitted (manual handoff / API-role generate).
     """
     return {
         "result_handle": build_result_handle(thread_id=thread_id),
         "handoff_status": _INITIAL_HANDOFF_STATUS,
-        "poll_hint": build_poll_hint_wait(thread_id=thread_id, from_agent=to_agent),
+        "poll_hint": build_poll_hint_wait(
+            thread_id=thread_id,
+            from_agent=reply_from_agent or to_agent,
+        ),
     }
 
 

@@ -20,6 +20,7 @@ from ..card import (
 )
 from ..db import WRITE_LOCK, cortex_conn
 from ..db import query as db_query
+from ..entity_collision import attach_collision_warning, check_entity_collision
 from ..entity_crud import (
     create_entity_impl,
     list_entities_impl,
@@ -305,5 +306,21 @@ def create_entity(body: EntityCreate) -> EntityDetail:
                     "detail": f"Cortex temporarily unavailable: {exc}",
                     "retryable": True,
                 },
+            )
+        try:
+            collision = check_entity_collision(
+                conn,
+                entity_id=body.id,
+                entity_type=body.type,
+                name=body.name,
+                description=body.description,
+            )
+            if collision is not None:
+                attach_collision_warning(result, collision)
+        except Exception:
+            logger.warning(
+                "Entity create collision_warning failed for %s — proceeding",
+                body.id,
+                exc_info=True,
             )
     return EntityDetail(**result)

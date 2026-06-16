@@ -56,6 +56,7 @@ from ._detectors.panel_disposition import (
     detect_panel_falsifier_phase3_metric,
 )
 from ._detectors.predicate_form import detect_unresolved_bare_token_in_predicate_form
+from ._detectors.agent_skill import detect_agent_skill_related_skills_no_relationship
 from ._detectors.project import detect_project_required_skills_no_relationship
 from ._detectors.relationship import detect_dangling_relationship_target
 from ._detectors.session import detect_prior_session_id_omitted
@@ -97,6 +98,7 @@ GRAPH_ONLY_KINDS = {
     # Skill-manifest structural drift — see migrations 041 + 045 (covers
     # project / plan / plan_phase / todo).
     "project_required_skills_no_relationship",
+    "agent_skill_related_skills_no_relationship",
     # v1.3.1 normalization ledger Path 2 detector
     "unresolved_bare_token_in_predicate_form",
     # skill_binding substrate (thread 1067)
@@ -156,6 +158,7 @@ def get_all_detectors() -> dict[str, Any]:
         "panel_disposition_incomplete": detect_panel_disposition_incomplete,
         "panel_falsifier_phase3_metric": detect_panel_falsifier_phase3_metric,
         "project_required_skills_no_relationship": detect_project_required_skills_no_relationship,
+        "agent_skill_related_skills_no_relationship": detect_agent_skill_related_skills_no_relationship,
         "entity_source_uri_unresolved": detect_entity_source_uri_unresolved,
         "agent_skill_not_in_canonical_sandbox": detect_agent_skill_not_in_canonical_sandbox,
         "unregistered_document_in_markdown": detect_unregistered_document_in_markdown,
@@ -251,6 +254,7 @@ __all__ = [
     "detect_markdown_section_drift",
     "detect_marker_nesting_violation",
     "detect_prior_session_id_omitted",
+    "detect_agent_skill_related_skills_no_relationship",
     "detect_project_required_skills_no_relationship",
     "detect_skill_binding_missing",
     "detect_skill_binding_tool_unknown",

@@ -149,13 +149,15 @@ def run_adapters(closeout: ImplementCloseout, source: Source) -> list[AdapterRes
 
 
 def apply_closeout(closeout: ImplementCloseout) -> ImplementCloseout:
+    from implement_admission.deliverable_verification import apply_closeout_gate_d
     from implement_admission.drift_gates import (
         apply_closeout_gate_b,
         apply_closeout_gate_c,
     )
 
     source = source_from_ref(closeout.source_ref)
-    results = run_adapters(closeout, source)
-    reconciled = reconcile_closeout(closeout, results)
+    gated_d = apply_closeout_gate_d(closeout, source=source)
+    results = run_adapters(gated_d, source)
+    reconciled = reconcile_closeout(gated_d, results)
     gated = apply_closeout_gate_c(reconciled, results, source=source)
     return apply_closeout_gate_b(gated)

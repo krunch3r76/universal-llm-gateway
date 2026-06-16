@@ -27,6 +27,7 @@ import time
 import uuid
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol, runtime_checkable
 
 import httpx
@@ -377,3 +378,102 @@ async def run_gated_deferred(
     _DEFERRED_RESTART_TASKS.add(task)
     task.add_done_callback(_DEFERRED_RESTART_TASKS.discard)
     return {"status": "ok", "message": scheduled_message}
+
+
+# ---------------------------------------------------------------------------
+# git-integration-worker event-driven deferred restart (Phase 2)
+# ---------------------------------------------------------------------------
+# A git-worker-specific branch: instead of the busy-probe deferral, manage holds
+# the restart-mutex slot, persists a durable restart intent, kicks off the worker
+# drain, and hands the rest to an async drain supervisor. The slot is released by
+# the supervise task's finally (mirrors run_gated_deferred). The generic
+# run_gated/run_gated_deferred contract above is untouched for every other service.
+
+# Strong refs to in-flight supervise tasks — a dropped task leaks the held
+# restart-mutex slot (the supervise finally is the sole release of that slot).
+_SUPERVISE_TASKS: set[asyncio.Task[None]] = set()
+
+
+def _drain_deferred_result(intent: Any, *, reason: str | None = None) -> dict[str, Any]:
+    """The 202 envelope for a deferred, drain-supervised git-worker restart."""
+    return {
+        "status": "deferred",
+        "state": "draining",
+        "service": intent.service,
+        "restart_intent_id": intent.intent_id,
+        "deadline_at": intent.deadline_at,
+        "reason": reason or "draining; completion delivered via git_worker.drain events",
+    }
+
+
+def _spawn_supervised(
+    gate: RestartDrainGate, service: str, supervisor: Any, intent: Any
+) -> None:
+    """Schedule supervise(intent) as a tracked task; release the slot in finally."""
+
+    async def _background() -> None:
+        try:
+            await supervisor.supervise(intent)
+        finally:
+            await gate.release(service)
+
+    task = asyncio.create_task(_background())
+    _SUPERVISE_TASKS.add(task)
+    task.add_done_callback(_SUPERVISE_TASKS.discard)
+
+
+async def run_gated_drain_supervised(
+    gate: RestartDrainGate,
+    action: str,
+    service: str,
+    *,
+    store: Any,
+    supervisor: Any,
+    reason: str,
+) -> dict[str, Any]:
+    """git-worker non-force stop/restart/sync_restart → durable drain supervision.
+
+    Acquires the restart-mutex slot (NOT the busy-probe deferral), persists a
+    ``pending_drain`` intent, schedules the supervisor, and returns a 202 deferred
+    envelope. Coalescing (AC-6): if the slot is already held by an in-flight
+    supervision, the existing live intent's id is returned — no second intent, no
+    second begin-drain.
+    """
+    outcome = await gate.evaluate(service, force=False)
+    if outcome is not None:
+        existing = store.active_for_service(service)
+        if existing is not None:
+            return _drain_deferred_result(
+                existing, reason="drain already in progress for this service"
+            )
+        return outcome.to_result()
+
+    deadline_at = (
+        datetime.now(UTC) + timedelta(seconds=supervisor.deadline_s)
+    ).isoformat()
+    try:
+        intent = store.create_intent(
+            service=service, action=action, deadline_at=deadline_at, reason=reason
+        )
+    except Exception:
+        # Never leak the held slot if the durable write fails.
+        await gate.release(service)
+        raise
+    _spawn_supervised(gate, service, supervisor, intent)
+    return _drain_deferred_result(intent)
+
+
+async def resume_drain_supervision(
+    gate: RestartDrainGate, service: str, *, supervisor: Any, intent: Any
+) -> None:
+    """Startup reconcile: resume a persisted pending intent on a fresh supervisor.
+
+    Acquires the slot without a busy-probe (force=True → evaluate returns None,
+    slot held) and schedules the supervisor; begin-drain is idempotent and the
+    subscription resumes from the stored last_seen_event_seq, so this never
+    duplicates a kill. A slot already held (concurrent resume) is a no-op.
+    """
+    outcome = await gate.evaluate(service, force=True)
+    if outcome is not None:
+        return
+    _spawn_supervised(gate, service, supervisor, intent)

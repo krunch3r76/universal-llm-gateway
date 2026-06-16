@@ -53,6 +53,23 @@ def register_skill_suggest_tools(mcp: FastMCP) -> None:
         Returns ranked skill-slug deltas with concise reasons. The server injects
         the caller seat when ``agent`` is omitted; pass ``agent`` explicitly when
         seat resolution is unavailable.
+
+        Response — two unreachable-skill channels. Check both for a complete view
+        of skills that failed to load:
+
+        ``degraded_skills`` (list) — skills omitted from ``suggestions`` entirely
+        because source_uri is null, empty, or unparseable (slug could not be
+        derived). Each entry: {id, name, skill_category, source_uri,
+        degraded=true, reason="source_uri_null"|"source_uri_unparseable"}.
+        These skills have no body/digest and are invisible to context scoring.
+
+        ``suggestions[].digest == null`` — the skill appeared in ``suggestions``
+        (source_uri was structurally parseable and slug derivable) but the
+        referenced file could not be resolved on disk. The entry is visible and
+        scored normally; only its body/digest is unavailable.
+
+        These channels are mutually exclusive by design. Triage pattern:
+            broken = degraded_skills + [s for s in suggestions if not s["digest"]]
         """
         effective_agent = _resolve_effective_agent(agent)
         if not effective_agent:

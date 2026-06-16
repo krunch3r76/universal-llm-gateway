@@ -63,7 +63,16 @@ class CursorBusClient:
         )
         if resp.status_code >= 400:
             return 0
-        turns = resp.json().get("turns") or []
+        try:
+            payload = resp.json()
+        except ValueError:
+            logger.warning(
+                "cursor bus turns response not JSON: thread=%s body_prefix=%s",
+                thread_id,
+                resp.text[:200],
+            )
+            return 0
+        turns = payload.get("turns") or []
         if not turns:
             return 0
         return int(turns[-1]["turn_number"])

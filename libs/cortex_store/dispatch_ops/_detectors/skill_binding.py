@@ -14,11 +14,14 @@ from typing import Any
 
 from universal_logging import WARNING, get_logger
 
-from ...confidence_field import lifecycle_not_value_sql_predicate
+from ...confidence_field import (
+    SUPPRESSED_SKILL_LIFECYCLES,
+    lifecycle_not_in_sql_predicate,
+)
 from ...db import query
-
-_DEPRECATED_EXCLUDE = lifecycle_not_value_sql_predicate("deprecated")
 from ._shared import _finding
+
+_SUPPRESSED_LIFECYCLE_EXCLUDE = lifecycle_not_in_sql_predicate(SUPPRESSED_SKILL_LIFECYCLES)
 
 logger = get_logger(__name__)
 
@@ -140,10 +143,10 @@ def detect_skill_binding_missing(
     sql = f"""
         SELECT id FROM entities
         WHERE type = 'agent_skill'
-          AND {_DEPRECATED_EXCLUDE}
+          AND {_SUPPRESSED_LIFECYCLE_EXCLUDE}
           AND json_extract(attributes, '$.skill_binding') IS NULL
     """
-    params: list[Any] = ["deprecated"]
+    params: list[Any] = [*SUPPRESSED_SKILL_LIFECYCLES]
     if subject:
         sql += " AND id = ?"
         params.append(subject)

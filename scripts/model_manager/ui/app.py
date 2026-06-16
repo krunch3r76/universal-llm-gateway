@@ -194,6 +194,10 @@ class ModelManagerApp(App):
             )
             self.set_timer(10, self._retry_api_server)
 
+        # Resume any persisted, non-terminal restart intents (event-driven drain
+        # supervisor) — robust to a manage restart mid-drain. Never crashes boot.
+        await self._service_controller.reconcile_pending_restart_intents()
+
     async def _retry_api_server(self) -> None:
         """Retry binding manage.sock after a startup failure.
 

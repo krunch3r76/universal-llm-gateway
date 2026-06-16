@@ -88,6 +88,30 @@ def lifecycle_is_value_sql_predicate(value: str, column_prefix: str = "") -> str
     return f"{p}lifecycle = ?"
 
 
+# Non-production lifecycle values excluded from all agent-facing skill surfaces.
+# Bind as: db_query(conn, sql, (*SUPPRESSED_SKILL_LIFECYCLES, ...other params...))
+SUPPRESSED_SKILL_LIFECYCLES: tuple[str, ...] = (
+    "deprecated",
+    "draft",
+    "retired",
+    "merged",
+)
+
+
+def lifecycle_not_in_sql_predicate(
+    values: tuple[str, ...], column_prefix: str = ""
+) -> str:
+    """Exclude entities at any lifecycle in *values* (bind ``values`` tuple in order).
+
+    Generates ``(lifecycle IS NULL OR lifecycle NOT IN (?,...))``).
+    NULL lifecycle is explicitly included (default-discoverable when unset).
+    For single-value exclusion, ``lifecycle_not_value_sql_predicate`` (``!=``) is equivalent.
+    """
+    p = f"{column_prefix}." if column_prefix else ""
+    placeholders = ",".join("?" for _ in values)
+    return f"({p}lifecycle IS NULL OR {p}lifecycle NOT IN ({placeholders}))"
+
+
 def adoption_in_sql_predicate(
     adoption_values: tuple[str, ...],
     legacy_status_values: tuple[str, ...] = ("confirmed",),

@@ -12,7 +12,7 @@ import os
 import signal
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from scripts.model_manager.observation_event import (
     emit_build_image_completed,
@@ -21,7 +21,13 @@ from scripts.model_manager.observation_event import (
 
 from ...model.build_state import BuildState, BuildStatus, ImageInfo
 from ...model.service_state import ServiceState
-from ..restart_drain import RestartDrainGate
+from ..git_worker_drain_supervisor import build_git_worker_drain_supervisor
+from ..restart_drain import (
+    GIT_INTEGRATION_WORKER_URL,
+    RestartDrainGate,
+    resume_drain_supervision,
+)
+from ..restart_intent_store import RestartIntentStore
 from ..service_config import (
     GATEWAY_DIR,
     NODES_DIR,
@@ -51,7 +57,9 @@ except ImportError:
     _email_bridge_svc = None
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncIterator, Awaitable, Callable
+
+    from ..git_worker_drain_supervisor import GitWorkerDrainSupervisor
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +73,16 @@ _MCP_HEALTH_POLL_INTERVAL_S = 1.0
 _BUILD_LOG_POLL_INTERVAL_S = 0.25
 _DEFAULT_STARGATE_SHUTDOWN_GRACE_S = 20.0
 _STARGATE_SHUTDOWN_BUFFER_S = 2.0
+# git-integration-worker SIGTERM budget — defense-in-depth for an unmanaged/direct
+# kill (the event-driven drain is the primary convergence mechanism). Default grace
+# aligns with the worker lifespan drain budget (GIT_WORKER_DRAIN_LIFESPAN_TIMEOUT,
+# default 30s) so a managed SIGTERM does not truncate the worker's own wait_idle.
+_DEFAULT_GIT_WORKER_SHUTDOWN_GRACE_S = 30.0
+_GIT_WORKER_SHUTDOWN_BUFFER_S = 2.0
+# Intent deadline for the drain supervisor — a true last resort (~10 min) that
+# should essentially never fire; observability (manage.restart.draining) is the
+# mechanism, not the timer. Env-overridable for tests / tuning.
+_GIT_WORKER_DRAIN_DEADLINE_S = float(os.environ.get("GIT_WORKER_DRAIN_DEADLINE_S", "600"))
 
 
 async def _pump_build_log(
@@ -109,6 +127,10 @@ class ServiceController:
         # Drain-aware restart coordination — persists across manage calls so the
         # per-service restart mutex coalesces concurrent agents / TUI.
         self._restart_gate = RestartDrainGate()
+        # Durable restart-intent store (event-driven deferred restart, P2). The
+        # singleton survives across manage calls; pending intents are reconciled
+        # at boot via reconcile_pending_restart_intents().
+        self._restart_intent_store = RestartIntentStore.instance()
         # Process-level quit guard — tracks in-flight manage.sock JSON-RPC and
         # long-running TUI activities so ./manage cannot exit mid-operation.
         self._shutdown_gate = ManageShutdownGate()
@@ -126,6 +148,11 @@ class ServiceController:
     def restart_gate(self) -> RestartDrainGate:
         """Shared drain-aware restart gate (busy probe + per-service mutex)."""
         return self._restart_gate
+
+    @property
+    def restart_intent_store(self) -> RestartIntentStore:
+        """Durable restart-intent store for the git-worker drain supervisor."""
+        return self._restart_intent_store
 
     @property
     def shutdown_gate(self) -> ManageShutdownGate:
@@ -566,10 +593,117 @@ class ServiceController:
         )
 
     async def stop_git_integration_worker(self) -> str:
-        """Stop git-integration-worker gracefully."""
+        """Stop git-integration-worker gracefully (extended SIGTERM budget).
+
+        Injects the git-worker SIGTERM budget (``_git_worker_sigterm_timeout``)
+        into the kill path so a managed stop gives the worker's lifespan drain room
+        to finish. The wrapper is confined here — the shared uvicorn stop helper is
+        untouched.
+        """
+        sigterm_timeout = self._git_worker_sigterm_timeout()
+
+        async def _kill(pid: int, pid_file: Path | None, **kwargs: Any) -> str:
+            kwargs.setdefault("sigterm_timeout", sigterm_timeout)
+            return await self._kill_and_wait(pid, pid_file, **kwargs)
+
         return await git_integration_worker_service.stop_git_integration_worker(
-            self._service_state, self._root, self._kill_and_wait
+            self._service_state, self._root, _kill
         )
+
+    def _git_worker_sigterm_timeout(self) -> float:
+        """SIGTERM wait budget for a git-integration-worker stop.
+
+        Mirrors ``_stargate_sigterm_timeout``; defense-in-depth ONLY (the
+        event-driven drain is the primary convergence mechanism). Default aligns
+        with the worker lifespan drain budget so a direct/managed SIGTERM does not
+        truncate the worker's own ``wait_idle``. Honors ``GIT_WORKER_SHUTDOWN_GRACE``.
+        """
+        env = build_service_env(self._root)
+        raw = env.get("GIT_WORKER_SHUTDOWN_GRACE", "").strip()
+        if not raw:
+            return _DEFAULT_GIT_WORKER_SHUTDOWN_GRACE_S + _GIT_WORKER_SHUTDOWN_BUFFER_S
+        try:
+            grace = float(raw)
+        except ValueError:
+            logger.warning(
+                "Invalid GIT_WORKER_SHUTDOWN_GRACE=%r; using default %.1fs",
+                raw,
+                _DEFAULT_GIT_WORKER_SHUTDOWN_GRACE_S,
+            )
+            grace = _DEFAULT_GIT_WORKER_SHUTDOWN_GRACE_S
+        return max(grace, 0.0) + _GIT_WORKER_SHUTDOWN_BUFFER_S
+
+    def build_git_worker_drain_supervisor(
+        self, *, kill: Callable[[], Awaitable[str]]
+    ) -> GitWorkerDrainSupervisor:
+        """Construct a drain supervisor wired to the live worker + event service.
+
+        ``kill`` is the action-appropriate terminal lifecycle: ``stop_*`` for a stop
+        intent, ``restart_*`` for restart/sync_restart (host process → sync=restart).
+        """
+        return build_git_worker_drain_supervisor(
+            self._restart_intent_store,
+            worker_url=GIT_INTEGRATION_WORKER_URL,
+            events_query_socket=os.environ.get(
+                "EVENTS_QUERY_SOCK", "/tmp/universal-protocol/events-query.sock"
+            ),
+            kill=kill,
+            deadline_s=_GIT_WORKER_DRAIN_DEADLINE_S,
+        )
+
+    def git_worker_kill_for(self, action: str) -> Callable[[], Awaitable[str]]:
+        """Map a gated action to the worker's terminal lifecycle callable."""
+        if action in ("restart", "sync_restart"):
+            return self.restart_git_integration_worker
+        return self.stop_git_integration_worker
+
+    async def reconcile_pending_restart_intents(self) -> None:
+        """Resume persisted, non-terminal restart intents at manage boot (R-D).
+
+        For each pending intent: re-derive the supervisor (action-appropriate kill)
+        and resume supervision (idempotent begin-drain, resume_from the stored
+        ``last_seen_event_seq``; the final epoch-check guards a worker that already
+        restarted). Never crashes boot — a reconcile failure advances that intent to
+        ``failed`` and logs.
+        """
+        try:
+            pending = self._restart_intent_store.pending_intents()
+        except Exception:
+            logger.exception("restart-intent reconcile: cannot read pending intents")
+            return
+        for intent in pending:
+            try:
+                supervisor = self.build_git_worker_drain_supervisor(
+                    kill=self.git_worker_kill_for(intent.action)
+                )
+                await resume_drain_supervision(
+                    self._restart_gate,
+                    intent.service,
+                    supervisor=supervisor,
+                    intent=intent,
+                )
+                logger.info(
+                    "restart-intent reconcile: resumed intent_id=%s service=%s "
+                    "action=%s status=%s",
+                    intent.intent_id,
+                    intent.service,
+                    intent.action,
+                    intent.status,
+                )
+            except Exception:
+                logger.exception(
+                    "restart-intent reconcile failed for intent_id=%s",
+                    intent.intent_id,
+                )
+                try:
+                    self._restart_intent_store.advance(
+                        intent.intent_id, status="failed"
+                    )
+                except Exception:
+                    logger.exception(
+                        "restart-intent reconcile: cannot mark intent failed: %s",
+                        intent.intent_id,
+                    )
 
     async def restart_git_integration_worker(self) -> str:
         """Restart git-integration-worker (stop then start)."""

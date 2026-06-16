@@ -2,18 +2,22 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import time
 import traceback
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
+from uuid import uuid4
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from git_integrate.events import register_uds_publisher
 from universal_logging import get_logger
 
+from services.git_integration_worker.admission import WorkAdmissionController
 from services.git_integration_worker.config import WorkerConfig, load_config
 from services.git_integration_worker.cursor_dispatch_ledger import (
     CursorDispatchLedger,
@@ -22,11 +26,17 @@ from services.git_integration_worker.cursor_sdk_events import (
     register_cursor_sdk_event_publisher,
 )
 from services.git_integration_worker.events import publish_lib_signal
+from services.git_integration_worker.git_worker_drain_events import (
+    register_git_worker_drain_event_publisher,
+)
+from services.git_integration_worker.routes.admin import router as admin_router
 from services.git_integration_worker.routes.cursor_sdk import (
     router as cursor_sdk_router,
 )
 from services.git_integration_worker.routes.health import router as health_router
 from services.git_integration_worker.routes.integrate import router as integrate_router
+
+_DRAIN_LIFESPAN_TIMEOUT_S = float(os.getenv("GIT_WORKER_DRAIN_LIFESPAN_TIMEOUT", "30"))
 
 logger = get_logger(__name__)
 
@@ -52,23 +62,58 @@ def _resolve_version() -> str:
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     register_uds_publisher(publish_lib_signal)
     register_cursor_sdk_event_publisher(publish_lib_signal)
+    register_git_worker_drain_event_publisher(publish_lib_signal)
     # Construct the dispatch ledger at startup, under the real worker HOME and
     # before any per-dispatch HOME swap, so the cursor_sdk_dispatches table
     # exists regardless of which dispatch op touches the ledger first.
-    CursorDispatchLedger.instance()
+    ledger = CursorDispatchLedger.instance()
+    # Worker generation identity: fresh uuid + wall-clock boot ts per process.
+    # Drain events carry these so a Phase-2 manage supervisor can detect a
+    # stale-epoch event emitted by a prior worker generation across a restart.
+    app.state.worker_id = str(uuid4())
+    worker_boot_ts = datetime.now(UTC).isoformat()
+    app.state.worker_boot_ts = worker_boot_ts
+    controller = WorkAdmissionController(
+        ledger=ledger,
+        worker_id=app.state.worker_id,
+        pid=os.getpid(),
+        worker_started_at=worker_boot_ts,
+    )
+    app.state.admission_controller = controller
     cfg: WorkerConfig = load_config()
     app.state.worker_config = cfg
     app.state.worker_version = _resolve_version()
     app.state.worker_started_at = time.monotonic()
     logger.info(
-        "git-integration-worker started: version=%s port=%d source_repo=%s",
+        "git-integration-worker started: version=%s port=%d source_repo=%s "
+        "worker_id=%s",
         app.state.worker_version,
         cfg.port,
         cfg.source_repo,
+        app.state.worker_id,
     )
     try:
         yield
     finally:
+        # Defense-in-depth cooperative drain on process shutdown: close admission
+        # and wait (bounded) for in-flight mutating work to finish before exit.
+        # Phase-2 manage drives the PRIMARY drain via the admin route ahead of
+        # SIGTERM; this hook only covers a drain not already started (e.g. a
+        # direct signal with no manage supervisor in the loop).
+        if not controller.is_draining():
+            controller.begin_drain(
+                reason="lifespan_shutdown",
+                intent_id=f"lifespan-{app.state.worker_id}",
+                drain_epoch=controller.next_epoch(),
+            )
+        drained = await controller.wait_idle(timeout_s=_DRAIN_LIFESPAN_TIMEOUT_S)
+        if not drained:
+            logger.warning(
+                "git-integration-worker lifespan drain timed out after %.1fs "
+                "with %d op(s) still in flight",
+                _DRAIN_LIFESPAN_TIMEOUT_S,
+                controller.active_count(),
+            )
         logger.info(
             "git-integration-worker stopped after %.1fs",
             time.monotonic() - app.state.worker_started_at,
@@ -98,6 +143,7 @@ def create_app() -> FastAPI:
     app.include_router(health_router)
     app.include_router(integrate_router)
     app.include_router(cursor_sdk_router)
+    app.include_router(admin_router)
     return app
 
 

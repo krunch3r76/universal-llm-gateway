@@ -54,6 +54,18 @@ class EntityCreate(_EntityCommon):
     retention_ttl_days: int | None = None
 
 
+class EntityCollisionMatch(BaseModel):
+    entity_id: str
+    entity_type: str | None = None
+    name: str | None = None
+    similarity: float
+
+
+class EntityCollisionWarning(BaseModel):
+    matches: list[EntityCollisionMatch]
+    threshold: float
+
+
 class EntitySummary(BaseModel):
     id: str
     type: str
@@ -86,6 +98,7 @@ class EntityDetail(_EntityCommon):
     reasoning_edges: list[EdgeItem] = Field(default_factory=list)
     action_hints: list[ActionHint] | None = None
     compaction_projection: CompactionProjection | None = None
+    collision_warning: EntityCollisionWarning | None = None
 
 
 class EntityUpdate(BaseModel):

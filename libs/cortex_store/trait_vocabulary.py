@@ -9,12 +9,14 @@ CONFIDENCE_BAND_VALUES = frozenset({"unsubstantiated", "provisional", "confirmed
 LIFECYCLE_VALUES = frozenset(
     {
         "active",
-        "superseded",
-        "merged",
         "deprecated",
-        "reaped",
-        "invalidated",
         "dismissed",
+        "draft",
+        "invalidated",
+        "merged",
+        "reaped",
+        "retired",
+        "superseded",
     }
 )
 
@@ -22,7 +24,8 @@ LIFECYCLE_VALUES = frozenset(
 # entity (excluded from alias binding / bare-token resolution). NULL lifecycle
 # is the live default and is NOT in this set. Canonical SOT for the cortex_store
 # consumers and the predicate_form documented local mirror.
-NON_LIVE_LIFECYCLE = frozenset({"merged", "deprecated", "reaped"})
+# Note: "draft" is intentionally excluded — draft entities remain live/resolvable.
+NON_LIVE_LIFECYCLE = frozenset({"deprecated", "merged", "reaped", "retired"})
 
 ADOPTION_VALUES = frozenset({"proposed", "adopted", "superseded"})
 

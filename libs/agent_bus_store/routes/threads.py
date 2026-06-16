@@ -16,19 +16,21 @@ from ..db import (
     create_thread,
     create_thread_with_turn,
     create_turn,
-    terminate_dispatch,
     delete_thread,
+    get_dispatch_link_by_execution_id,
     get_thread,
     get_thread_summary,
     get_thread_turns_asc,
     list_threads_v2,
     normalize_thread_id,
     rename_thread,
+    terminate_dispatch,
     update_thread,
 )
 from ..db.turns import UnreadTurnsExist
 from ..turns_models import (
     DispatchAdmit,
+    DispatchLinkByExecution,
     DispatchLinkSummary,
     DispatchTerminate,
     ThreadClose,
@@ -149,6 +151,29 @@ async def get_thread_route(thread_id: str) -> ThreadDetail:
             detail=f"Thread {thread_id} not found",
         )
     return _thread_detail(row)
+
+
+@router.get(
+    "/dispatch-links/{execution_id}",
+    response_model=DispatchLinkByExecution,
+)
+async def get_dispatch_link_route(execution_id: str) -> DispatchLinkByExecution:
+    """Resolve execution_id to its durable dispatch link row."""
+    row = get_dispatch_link_by_execution_id(execution_id)
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Dispatch link for execution_id {execution_id!r} not found",
+        )
+    terminal_at = row.get("terminal_at")
+    return DispatchLinkByExecution(
+        thread_id=row["thread_id"],
+        pipeline_id=row["pipeline_id"],
+        terminal_status=row.get("terminal_status"),
+        terminal_at=(
+            datetime.fromisoformat(terminal_at) if terminal_at is not None else None
+        ),
+    )
 
 
 @router.get(

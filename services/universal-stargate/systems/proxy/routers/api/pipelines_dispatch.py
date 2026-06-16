@@ -34,6 +34,7 @@ from systems.pipeline.core.execution.dispatch_journal import fetch_terminal
 
 from ...dependencies import get_auth_dependency, get_proxy
 from ...stargate_core import StargateProxy
+from .dispatch_bus_recovery import recover_execution_from_bus_thread
 
 if TYPE_CHECKING:
     from systems.pipeline.core.execution.async_tracker import (
@@ -405,6 +406,13 @@ async def get_pipeline_execution(
         )
         if journal_record is not None:
             return JSONResponse(status_code=200, content=journal_record)
+        recovered = await recover_execution_from_bus_thread(
+            execution_id,
+            url=tracker._agent_bus_url,
+            auth_token=tracker._agent_bus_token,
+        )
+        if recovered is not None:
+            return JSONResponse(status_code=200, content=recovered)
         return _error_response(
             404,
             "execution_id_expired_or_unknown",

@@ -47,6 +47,7 @@ from tool_search_manifest import (
 from tool_search_matcher import (
     _all_manifest_summary,
     _entry_to_response,
+    primary_tool_hint_for_search,
     search_manifest,
 )
 
@@ -131,12 +132,21 @@ def register_tool_search_tool(
                     "query keywords."
                 ),
             }
-        return {
+        primary_hint = primary_tool_hint_for_search(query, results)
+        payload: dict[str, Any] = {
             "query": query,
             "results": [_entry_to_response(e) for e in results],
             "total_matches": len(results),
-            "_next": (
+        }
+        if primary_hint:
+            payload["primary_tool_hint"] = primary_hint
+            payload["_next"] = (
+                'Use primary_tool_hint — call rag(op="search") directly; '
+                "overflow dispatch templates below are secondary."
+            )
+        else:
+            payload["_next"] = (
                 "Call dispatch with the template — do not re-search unless "
                 "the result is clearly wrong."
-            ),
-        }
+            )
+        return payload

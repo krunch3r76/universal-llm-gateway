@@ -27,7 +27,13 @@ from git_integrate.land import land_op
 from git_integrate.schema import RC_NOT_A_GIT_REPO, RC_WORKTREE_MISSING
 from universal_concurrency import FifoCapacityGate
 from universal_logging import get_logger
+from universal_protocol import error_envelope
 
+from services.git_integration_worker.admission import (
+    Draining503,
+    Ticket,
+    WorkAdmissionController,
+)
 from services.git_integration_worker.config import WorkerConfig, load_config
 from services.git_integration_worker.models.api import (
     CommitRequest,
@@ -57,14 +63,87 @@ _CONFIG: WorkerConfig = load_config()
 _SHA_TOKEN_RE = re.compile(r"^[0-9a-fA-F]{7,40}$")
 
 
+# Retry-After hint (seconds) on the 503 returned while draining.
+_DRAIN_RETRY_AFTER_S = int(os.getenv("GIT_WORKER_DRAIN_RETRY_AFTER", "5"))
+
+
+def _controller(request: Request) -> WorkAdmissionController:
+    controller = getattr(request.app.state, "admission_controller", None)
+    if controller is None:
+        # Lifespan didn't run (some test transports skip it); construct a lazy
+        # controller bound to the ledger singleton so the route still functions.
+        from services.git_integration_worker.cursor_dispatch_ledger import (
+            CursorDispatchLedger,
+        )
+
+        controller = WorkAdmissionController(
+            ledger=CursorDispatchLedger.instance(),
+            worker_id="lazy",
+            pid=0,
+            worker_started_at="lazy",
+        )
+        request.app.state.admission_controller = controller
+    return controller
+
+
+def _draining_response(exc: Draining503) -> JSONResponse:
+    """503 envelope + ``Retry-After`` for an admission rejected by drain."""
+    return JSONResponse(
+        status_code=503,
+        content=error_envelope(
+            code="GIT_WORKER_DRAINING",
+            message=str(exc),
+            source="gateway",
+            retryable=True,
+            data={"retry_after_s": _DRAIN_RETRY_AFTER_S},
+        ),
+        headers={"Retry-After": str(_DRAIN_RETRY_AFTER_S)},
+    )
+
+
 @asynccontextmanager
-async def _integrate_slot() -> AsyncIterator[None]:
-    req_id = str(uuid.uuid4())
-    await _GATE.acquire(req_id)
+async def _admit_and_slot(
+    controller: WorkAdmissionController, *, kind: str, route: str
+) -> AsyncIterator[Ticket]:
+    """Admission-gated integrate slot. Order is load-bearing (AC-4 / AC-10):
+
+    1. synchronous ``try_admit`` — **no await between the drain check and the
+       ticket reservation**; raises ``Draining503`` if already draining.
+    2. ``await _GATE.acquire`` — the existing FIFO serializer, unchanged, so
+       integrate/land/commit still run one-at-a-time in gate order.
+    3. re-check ``should_proceed`` ONCE after the wait — if a drain began while
+       this op queued, abort the still-``pending`` ticket (the TOCTOU
+       "rejected" branch) rather than starting mutating work.
+    4. ``mark_running`` then yield.
+
+    The gate is always released and the ticket always closed in ``finally``, so
+    a drop to zero in-flight reliably triggers ``git_worker.drain.completed``.
+    """
+    op_id = str(uuid.uuid4())
+    # (1) synchronous admission: raises Draining503 before any await if draining.
+    ticket = controller.try_admit(kind, op_id=op_id, route=route)
+    # (2) FIFO gate — unchanged serialization semantics (AC-10).
+    await _GATE.acquire(op_id)
+    terminal = "completed"
     try:
-        yield
+        # (3) one post-wait re-check: a drain may have begun while we queued.
+        if not ticket.should_proceed():
+            terminal = "rejected_drain"
+            raise Draining503(
+                f"git-integration-worker began draining while queued "
+                f"(epoch={controller.drain_epoch})"
+            )
+        # (4) commit to running, then hand the slot to the route body.
+        ticket.mark_running()
+        yield ticket
+    except Draining503:
+        raise
+    except Exception:
+        terminal = "error"
+        raise
     finally:
         await _GATE.release()
+        controller.close_ticket(op_id, terminal_status=terminal)
 
 
 def _config(request: Request) -> WorkerConfig:
@@ -217,20 +296,32 @@ def _diff_sync(
     status_code=200,
     summary="Atomically merge a reviewed arc worktree into master (ref-level CAS).",
 )
-async def integrate(req: IntegrateRequest, request: Request) -> IntegrateResponse:
-    """Serialize integrates via ``FifoCapacityGate(limit=1)`` in this single owner."""
+async def integrate(
+    req: IntegrateRequest, request: Request
+) -> IntegrateResponse:
+    """Serialize integrates via ``FifoCapacityGate(limit=1)`` in this single owner.
+
+    Admission-gated: returns ``503 GIT_WORKER_DRAINING`` if the worker is already
+    draining, or begins draining while this request is queued on the gate.
+    """
     cfg = _config(request)
-    async with _integrate_slot():
-        result = await integrate_op(
-            arc=req.arc,
-            phase=req.phase,
-            worktree_path=req.worktree_path,
-            approval=req.approval,
-            expected_diff_sha256=req.expected_diff_sha256,
-            source_repo=str(cfg.source_repo),
-            green_gate_cmd=list(cfg.green_gate_cmd),
-            remove_worktree=req.remove_worktree,
-        )
+    controller = _controller(request)
+    try:
+        async with _admit_and_slot(
+            controller, kind="git_integrate", route="/api/v1/git/integrate"
+        ):
+            result = await integrate_op(
+                arc=req.arc,
+                phase=req.phase,
+                worktree_path=req.worktree_path,
+                approval=req.approval,
+                expected_diff_sha256=req.expected_diff_sha256,
+                source_repo=str(cfg.source_repo),
+                green_gate_cmd=list(cfg.green_gate_cmd),
+                remove_worktree=req.remove_worktree,
+            )
+    except Draining503 as exc:
+        return _draining_response(exc)
     return IntegrateResponse(**result)
 
 
@@ -241,20 +332,30 @@ async def integrate(req: IntegrateRequest, request: Request) -> IntegrateRespons
     summary="Atomically commit (if dirty), merge, gate, and land arc into master.",
 )
 async def land(req: LandRequest, request: Request) -> IntegrateResponse:
-    """Serialize land via ``FifoCapacityGate(limit=1)`` — same slot as integrate."""
+    """Serialize land via ``FifoCapacityGate(limit=1)`` — same slot as integrate.
+
+    Admission-gated: returns ``503 GIT_WORKER_DRAINING`` if the worker is already
+    draining, or begins draining while this request is queued on the gate.
+    """
     cfg = _config(request)
-    async with _integrate_slot():
-        result = await land_op(
-            arc=req.arc,
-            phase=req.phase,
-            worktree_path=req.worktree_path,
-            approval=req.approval,
-            expected_diff_sha256=req.expected_diff_sha256,
-            commit_message=req.commit_message,
-            source_repo=str(cfg.source_repo),
-            green_gate_cmd=list(cfg.green_gate_cmd),
-            remove_worktree=req.remove_worktree,
-        )
+    controller = _controller(request)
+    try:
+        async with _admit_and_slot(
+            controller, kind="git_integrate", route="/api/v1/git/land"
+        ):
+            result = await land_op(
+                arc=req.arc,
+                phase=req.phase,
+                worktree_path=req.worktree_path,
+                approval=req.approval,
+                expected_diff_sha256=req.expected_diff_sha256,
+                commit_message=req.commit_message,
+                source_repo=str(cfg.source_repo),
+                green_gate_cmd=list(cfg.green_gate_cmd),
+                remove_worktree=req.remove_worktree,
+            )
+    except Draining503 as exc:
+        return _draining_response(exc)
     return IntegrateResponse(**result)
 
 
@@ -264,24 +365,33 @@ async def land(req: LandRequest, request: Request) -> IntegrateResponse:
     status_code=200,
     summary="Commit explicit named paths on the current branch (non-arc, gated).",
 )
-async def commit(req: CommitRequest, request: Request) -> IntegrateResponse:
+async def commit(
+    req: CommitRequest, request: Request
+) -> IntegrateResponse:
     """Path-explicit gated commit; serialized via the shared integrate gate.
 
     ``dry_run=true`` returns the path-scoped fingerprint + numstat for approval
     binding without committing. The fingerprint covers ONLY the named paths;
     the commit isolates to them via ``git commit -- <paths>`` so concurrent
-    edits to unnamed files are never captured.
+    edits to unnamed files are never captured. Admission-gated: returns
+    ``503 GIT_WORKER_DRAINING`` if the worker is draining.
     """
-    async with _integrate_slot():
-        result = await commit_op(
-            worktree_path=req.worktree_path,
-            expected_branch=req.expected_branch,
-            paths=req.paths,
-            approval=req.approval,
-            expected_paths_sha256=req.expected_paths_sha256,
-            commit_message=req.commit_message,
-            dry_run=req.dry_run,
-        )
+    controller = _controller(request)
+    try:
+        async with _admit_and_slot(
+            controller, kind="git_integrate", route="/api/v1/git/commit"
+        ):
+            result = await commit_op(
+                worktree_path=req.worktree_path,
+                expected_branch=req.expected_branch,
+                paths=req.paths,
+                approval=req.approval,
+                expected_paths_sha256=req.expected_paths_sha256,
+                commit_message=req.commit_message,
+                dry_run=req.dry_run,
+            )
+    except Draining503 as exc:
+        return _draining_response(exc)
     return IntegrateResponse(**result)
 
 
@@ -289,21 +399,24 @@ async def commit(req: CommitRequest, request: Request) -> IntegrateResponse:
     "/active-work",
     summary="Aggregate in-flight integrate count for drain-aware restart.",
 )
-async def get_active_work():
-    """Return gate occupancy so manage can defer restart during integrate."""
+async def get_active_work(request: Request):
+    """Return aggregate in-flight work so manage can defer restart.
+
+    ``busy`` and ``active_count`` are the admission controller's authoritative
+    count (in-flight tickets ∪ live ledger dispatches, de-duplicated by op_id);
+    the legacy gate/ledger detail keys are retained for back-compat callers.
+    """
     from services.git_integration_worker.cursor_dispatch_ledger import (
         CursorDispatchLedger,
     )
     from services.git_integration_worker.cursor_sdk_gate import sdk_dispatch_gate_stats
 
+    controller = _controller(request)
     running = _GATE.active_count
     queued = _GATE.queue_length
     cursor = CursorDispatchLedger.instance().active_snapshot()
     sdk_gate = sdk_dispatch_gate_stats()
-    integrate_busy = running > 0 or queued > 0
-    cursor_busy = (
-        cursor["running"] > 0 or sdk_gate["active"] > 0 or sdk_gate["queued"] > 0
-    )
+    active_count = controller.active_count()
     return JSONResponse(
         status_code=200,
         content={
@@ -311,7 +424,9 @@ async def get_active_work():
             "queued": queued,
             "cursor_dispatches": cursor,
             "cursor_sdk_gate": sdk_gate,
-            "busy": integrate_busy or cursor_busy,
+            "active_count": active_count,
+            "active_ops": controller.active_ops(),
+            "busy": active_count > 0,
         },
     )
 

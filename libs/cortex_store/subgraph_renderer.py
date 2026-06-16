@@ -31,7 +31,16 @@ from .event_publisher import (
     cortex_subgraph_render_completed,
     cortex_subgraph_render_failed,
 )
-from .subgraph_cards import CardBuildError, augment_entity_columns, build_cards
+from .subgraph_cards import (
+    CardBuildError,
+    _batch_relationship_counts,
+    augment_entity_columns,
+    build_cards,
+)
+from .subgraph_neighbor_fidelity import (
+    NeighborFidelity,
+    hub_rel_threshold_default,
+)
 from .subgraph_template import build_subgraph_markdown
 from .subgraph_traversal import (
     _CapExceededError,
@@ -39,6 +48,7 @@ from .subgraph_traversal import (
     bfs_traverse,
     induced_edges,
 )
+from .subgraph_walker import walk_subgraph
 
 logger = get_logger(__name__)
 
@@ -79,6 +89,7 @@ class SubgraphRenderResult:
     hops: int
     entity_count: int
     edge_count: int
+    neighbor_fidelity: NeighborFidelity = "depth_aware"
 
 
 class SubgraphRenderError(Exception):
@@ -107,12 +118,30 @@ def render_subgraph(
     top_k_assertions: int = 7,
     include_superseded: bool = False,
     edge_types: list[str] | None = None,
+    neighbor_fidelity: NeighborFidelity = "depth_aware",
+    hub_rel_threshold: int | None = None,
 ) -> SubgraphRenderResult:
     """Render a cortex subgraph rooted at ``root``.
 
     Emits ``.called`` on entry, ``.completed`` on success, ``.failed``
     on every error path. All events carry a shared ``render_id``.
     """
+    hub_threshold = (
+        hub_rel_threshold
+        if hub_rel_threshold is not None
+        else hub_rel_threshold_default()
+    )
+
+    if neighbor_fidelity == "edges_only":
+        walk = walk_subgraph(
+            conn,
+            root=root,
+            hops=hops,
+            edge_types=edge_types,
+            hub_rel_threshold=hub_threshold,
+        )
+        return _walk_as_render_result(walk, neighbor_fidelity="edges_only")
+
     t0 = time.perf_counter()
     render_id = uuid.uuid4().hex
     r = (root or "").strip()
@@ -180,12 +209,19 @@ def render_subgraph(
     ]
     edges_sorted = sorted(rendered_edges, key=_edge_sort_key)
 
+    rel_counts = _batch_relationship_counts(conn, list(visited))
+
     try:
         cards = build_cards(
             conn=conn,
             visited_ids=list(visited),
             top_k_assertions=top_k_assertions,
             include_superseded=include_superseded,
+            root=r,
+            visited=visited,
+            neighbor_fidelity=neighbor_fidelity,
+            hub_rel_threshold=hub_threshold,
+            rel_counts=rel_counts,
         )
     except CardBuildError as exc:
         _fail(render_id, r, "card_build_failed", hops)
@@ -208,6 +244,9 @@ def render_subgraph(
         edges=edges_sorted,
         hops=hops,
         top_k_assertions=top_k_assertions,
+        neighbor_fidelity=neighbor_fidelity,
+        hub_rel_threshold=hub_threshold,
+        rel_counts=rel_counts,
     )
 
     duration_ms = int((time.perf_counter() - t0) * 1000)
@@ -220,6 +259,7 @@ def render_subgraph(
         hops=hops,
         entity_count=len(entity_objs),
         edge_count=len(edges_sorted),
+        neighbor_fidelity=neighbor_fidelity,
     )
     cortex_subgraph_render_completed(
         render_id=render_id,
@@ -231,6 +271,50 @@ def render_subgraph(
         rendered_bytes=len(rendered_md.encode("utf-8")),
     )
     return result
+
+
+def _walk_as_render_result(walk: Any, *, neighbor_fidelity: NeighborFidelity) -> SubgraphRenderResult:
+    entities = [
+        RenderedEntity(
+            entity_id=n.entity_id,
+            hop_distance=n.hop_distance,
+            card={
+                "entity_id": n.entity_id,
+                "type": n.entity_type,
+                "name": n.name,
+                "active_assertion_count": n.active_assertion_count,
+                "relationship_count": n.relationship_count,
+                "edge_types": n.edge_types,
+                "summary_row": n.summary_row,
+                "predicate_summary": n.predicate_summary,
+                "status_summary": n.status_summary,
+            },
+        )
+        for n in walk.nodes
+    ]
+    edges = [
+        RenderedEdge(
+            source_id=e.source_id,
+            target_id=e.target_id,
+            type_id=e.type_id,
+            role=e.role,
+            strength=e.strength,
+            direction_from_root=e.direction_from_root,
+            hop_at=e.hop_at,
+        )
+        for e in walk.edges
+    ]
+    return SubgraphRenderResult(
+        rendered=walk.rendered_table,
+        root_entity_id=walk.root_entity_id,
+        entities=entities,
+        edges=edges,
+        generated_at=walk.generated_at,
+        hops=walk.hops,
+        entity_count=walk.entity_count,
+        edge_count=walk.edge_count,
+        neighbor_fidelity=neighbor_fidelity,
+    )
 
 
 def _fail(render_id: str, root: str, reason: str, hops: int) -> None:

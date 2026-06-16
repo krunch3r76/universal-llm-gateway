@@ -121,6 +121,18 @@ class CursorDispatchLedger:
                 conn.execute(
                     "ALTER TABLE cursor_sdk_dispatches ADD COLUMN caller_agent TEXT"
                 )
+            if "wt_baseline" not in cols:
+                conn.execute(
+                    "ALTER TABLE cursor_sdk_dispatches ADD COLUMN wt_baseline TEXT"
+                )
+            if "contract" not in cols:
+                conn.execute(
+                    "ALTER TABLE cursor_sdk_dispatches ADD COLUMN contract TEXT"
+                )
+            if "source_repo" not in cols:
+                conn.execute(
+                    "ALTER TABLE cursor_sdk_dispatches ADD COLUMN source_repo TEXT"
+                )
 
     def _connect(self) -> sqlite3.Connection:
         return _connect(self._db_path)
@@ -153,6 +165,9 @@ class CursorDispatchLedger:
         caller_agent: str | None,
         resolved_model: str,
         admission: CursorDispatchResponse,
+        wt_baseline: str | None = None,
+        contract: str | None = None,
+        source_repo: str | None = None,
     ) -> CursorDispatchResponse | None:
         """Durable idempotency (F2). Returns cached admission on hit, None on first admit.
         Raises DispatchConflict on fingerprint mismatch."""
@@ -172,8 +187,9 @@ class CursorDispatchLedger:
             conn.execute(
                 "INSERT INTO cursor_sdk_dispatches "
                 "(dispatch_id, fingerprint, thread_id, execution_id, caller_agent, "
-                " resolved_model, packet_path, message_present, status, record_json) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " resolved_model, packet_path, message_present, status, record_json, "
+                " wt_baseline, contract, source_repo) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     req.dispatch_id,
                     fingerprint,
@@ -185,8 +201,47 @@ class CursorDispatchLedger:
                     1 if req.message else 0,
                     _STATUS_ADMITTED,
                     "{}",
+                    wt_baseline,
+                    contract,
+                    source_repo,
                 ),
             )
+        return None
+
+    def read_wt_baseline(self, *, dispatch_id: str) -> dict[str, str] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT wt_baseline FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+                (dispatch_id,),
+            ).fetchone()
+        if row is None or not row["wt_baseline"]:
+            return None
+        try:
+            parsed = json.loads(row["wt_baseline"])
+        except json.JSONDecodeError:
+            return None
+        return parsed if isinstance(parsed, dict) else None
+
+    def active_implement_for_repo(
+        self, *, source_repo: str, exclude_dispatch_id: str | None = None
+    ) -> str | None:
+        """Return dispatch_id of an in-flight implement dispatch on the same repo."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT dispatch_id FROM cursor_sdk_dispatches "
+                "WHERE source_repo=? AND contract='implement' "
+                "AND status IN ('admitted','running')",
+                (source_repo,),
+            ).fetchall()
+        for row in rows:
+            dispatch_id = row["dispatch_id"]
+            if exclude_dispatch_id and dispatch_id == exclude_dispatch_id:
+                continue
+            task = self._tasks.get(dispatch_id)
+            if task is not None and not task.done():
+                return dispatch_id
+            if task is None:
+                return dispatch_id
         return None
 
     def mark_running(self, *, dispatch_id: str) -> None:

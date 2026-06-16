@@ -15,6 +15,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from .subgraph_neighbor_fidelity import NeighborFidelity
+
 if TYPE_CHECKING:
     from .subgraph_renderer import RenderedEdge, RenderedEntity
 
@@ -91,6 +93,9 @@ def build_subgraph_markdown(
     edges: list[RenderedEdge],
     hops: int,
     top_k_assertions: int,
+    neighbor_fidelity: NeighborFidelity = "full",
+    hub_rel_threshold: int = 20,
+    rel_counts: dict[str, int] | None = None,
 ) -> str:
     """Render the spec markdown template.
 
@@ -100,7 +105,11 @@ def build_subgraph_markdown(
     """
     parts: list[str] = []
     parts.extend(_render_root(root_id, cards, descriptions, statuses))
-    parts.extend(_render_root_assertions(cards[root_id], top_k_assertions))
+    parts.extend(
+        _render_root_assertions(
+            cards[root_id], top_k_assertions, include_observed=(neighbor_fidelity == "full")
+        )
+    )
     parts.extend(
         _render_related(
             root_id=root_id,
@@ -110,6 +119,9 @@ def build_subgraph_markdown(
             entity_objs=entity_objs,
             edges=edges,
             hops=hops,
+            neighbor_fidelity=neighbor_fidelity,
+            hub_rel_threshold=hub_rel_threshold,
+            rel_counts=rel_counts or {},
         )
     )
     return "\n\n".join(parts) + "\n"
@@ -145,7 +157,7 @@ def _render_root(
 
 
 def _render_root_assertions(
-    root_card: dict[str, Any], top_k_assertions: int
+    root_card: dict[str, Any], top_k_assertions: int, *, include_observed: bool = True
 ) -> list[str]:
     parts: list[str] = [f"## Active Assertions (top {top_k_assertions})"]
     assertions = root_card.get("top_k_assertions") or []
@@ -159,7 +171,7 @@ def _render_root_assertions(
         observed = a.get("observed_at") or ""
         flag = _provenance_flag(a)
         assertion_lines.append(f"- **[{conf}]**{flag} {claim}")
-        if observed:
+        if include_observed and observed:
             assertion_lines.append(f"  - *Observed:* {observed}")
     parts.append("\n".join(assertion_lines))
     return parts
@@ -174,6 +186,9 @@ def _render_related(
     entity_objs: list[RenderedEntity],
     edges: list[RenderedEdge],
     hops: int,
+    neighbor_fidelity: NeighborFidelity,
+    hub_rel_threshold: int,
+    rel_counts: dict[str, int],
 ) -> list[str]:
     related_entities = [e for e in entity_objs if e.entity_id != root_id]
     parts: list[str] = [
@@ -200,12 +215,16 @@ def _render_related(
         other_id = entity.entity_id
         parts.append(
             _render_entity_block(
+                root_id=root_id,
                 other_id=other_id,
                 entity_edges=edges_by_entity[other_id],
                 cards=cards,
                 descriptions=descriptions,
                 statuses=statuses,
                 hop_by_id=hop_by_id,
+                neighbor_fidelity=neighbor_fidelity,
+                hub_rel_threshold=hub_rel_threshold,
+                rel_counts=rel_counts,
             )
         )
     return parts
@@ -228,17 +247,67 @@ def _heading_arrow(entity_edges: list[RenderedEdge]) -> str:
 
 def _render_entity_block(
     *,
+    root_id: str,
     other_id: str,
     entity_edges: list[RenderedEdge],
     cards: dict[str, dict[str, Any]],
     descriptions: dict[str, str],
     statuses: dict[str, str],
     hop_by_id: dict[str, int],
+    neighbor_fidelity: NeighborFidelity = "full",
+    hub_rel_threshold: int = 20,
+    rel_counts: dict[str, int] | None = None,
+) -> str:
+    from .subgraph_neighbor_fidelity import neighbor_block_mode
+
+    tcard = cards[other_id]
+    t_hop = hop_by_id.get(other_id, 0)
+    rel_n = (rel_counts or {}).get(other_id, tcard.get("relationship_count", 0))
+    mode = neighbor_block_mode(
+        entity_id=other_id,
+        root=root_id,
+        hop=t_hop,
+        fidelity=neighbor_fidelity,
+        hub_rel_threshold=hub_rel_threshold,
+        rel_count=int(rel_n),
+    )
+
+    if mode == "hop2_sparse":
+        return _render_hop2_sparse_block(other_id, tcard, t_hop, entity_edges)
+    if mode == "hop1_sparse":
+        return _render_hop1_sparse_block(
+            other_id,
+            tcard,
+            statuses,
+            t_hop,
+            entity_edges,
+            int(tcard.get("active_assertion_count", rel_n)),
+        )
+    if mode == "hub_promoted":
+        return _render_hub_promoted_block(
+            other_id,
+            tcard,
+            descriptions,
+            statuses,
+            t_hop,
+            entity_edges,
+            int(rel_n),
+        )
+    return _render_full_entity_block(
+        other_id, tcard, descriptions, statuses, t_hop, entity_edges
+    )
+
+
+def _render_full_entity_block(
+    other_id: str,
+    tcard: dict[str, Any],
+    descriptions: dict[str, str],
+    statuses: dict[str, str],
+    t_hop: int,
+    entity_edges: list[RenderedEdge],
 ) -> str:
     arrow = _heading_arrow(entity_edges)
-    tcard = cards[other_id]
     t_updated = (tcard.get("freshness") or {}).get("updated_at", "")
-    t_hop = hop_by_id.get(other_id, 0)
     edge_labels = (
         " | ".join(
             f"{e.type_id} {_DIRECTION_ARROW.get(e.direction_from_root, chr(0x2192))}"
@@ -255,6 +324,87 @@ def _render_entity_block(
     tdesc = _escape_md(descriptions.get(other_id, ""))
     if tdesc:
         block_lines.append(tdesc)
+    t_assertions = tcard.get("top_k_assertions") or []
+    if t_assertions:
+        top = t_assertions[0]
+        flag = _provenance_flag(top)
+        block_lines.append(
+            f"**Top assertion:** [{top.get('confidence', '')}]{flag} "
+            f"{_escape_md(str(top.get('claim', '')))}"
+        )
+    block_lines.append("---")
+    return "\n\n".join(block_lines)
+
+
+def _render_hop1_sparse_block(
+    other_id: str,
+    tcard: dict[str, Any],
+    statuses: dict[str, str],
+    t_hop: int,
+    entity_edges: list[RenderedEdge],
+    assn_count: int,
+) -> str:
+    arrow = _heading_arrow(entity_edges)
+    edge_labels = (
+        " | ".join(
+            f"{e.type_id} {_DIRECTION_ARROW.get(e.direction_from_root, chr(0x2192))}"
+            for e in entity_edges
+        )
+        or "(none)"
+    )
+    block_lines = [
+        f"#### {arrow} {tcard['name']} (`{other_id}`)",
+        f"{tcard.get('type', '')} · {statuses.get(other_id, '')} · hop {t_hop} · "
+        f"{assn_count} assns · via {edge_labels}",
+        "---",
+    ]
+    return "\n\n".join(block_lines)
+
+
+def _render_hop2_sparse_block(
+    other_id: str,
+    tcard: dict[str, Any],
+    t_hop: int,
+    entity_edges: list[RenderedEdge],
+) -> str:
+    edge_type = entity_edges[0].type_id if entity_edges else "(none)"
+    assn_count = tcard.get("active_assertion_count", 0)
+    block_lines = [
+        f"#### {tcard['name']} (`{other_id}`)",
+        f"**Type:** {tcard.get('type', '')} | **Hop:** {t_hop} | "
+        f"**Edge:** {edge_type} | **Assertions:** {assn_count}",
+        "---",
+    ]
+    return "\n\n".join(block_lines)
+
+
+def _render_hub_promoted_block(
+    other_id: str,
+    tcard: dict[str, Any],
+    descriptions: dict[str, str],
+    statuses: dict[str, str],
+    t_hop: int,
+    entity_edges: list[RenderedEdge],
+    assn_count: int,
+) -> str:
+    arrow = _heading_arrow(entity_edges)
+    edge_labels = (
+        " | ".join(
+            f"{e.type_id} {_DIRECTION_ARROW.get(e.direction_from_root, chr(0x2192))}"
+            for e in entity_edges
+        )
+        or "(none)"
+    )
+    block_lines = [
+        f"#### {arrow} {tcard['name']} (`{other_id}`)",
+        f"**Type:** {tcard.get('type', '')} | **Status:** {statuses.get(other_id, '')} | "
+        f"**Hop:** {t_hop}",
+        f"**Connected via:** {edge_labels}",
+        f"**Active assertions:** {assn_count}",
+    ]
+    summary = tcard.get("summary_row") or descriptions.get(other_id, "")
+    if summary:
+        block_lines.append(_escape_md(str(summary)[:120]))
     t_assertions = tcard.get("top_k_assertions") or []
     if t_assertions:
         top = t_assertions[0]

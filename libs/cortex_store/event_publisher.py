@@ -211,6 +211,91 @@ def cortex_subgraph_render_failed(
 
 
 @event_factory
+def cortex_subgraph_walk_called(
+    walk_id: str,
+    root: str,
+    hops: int,
+    edge_types_count: int,
+    direction: str,
+    entity_cap: int,
+    include_counts: bool,
+    promote_hubs: bool,
+) -> Event:
+    """cortex.subgraph.walk.called — emitted at entry to walk_subgraph."""
+    ev = Event(
+        signal="cortex.subgraph.walk.called",
+        role="observation",
+        scope="global",
+        payload={
+            "walk_id": walk_id,
+            "root": root,
+            "hops": hops,
+            "edge_types_count": edge_types_count,
+            "direction": direction,
+            "entity_cap": entity_cap,
+            "include_counts": include_counts,
+            "promote_hubs": promote_hubs,
+        },
+    )
+    record(ev.signal, **ev.payload)
+    return ev
+
+
+@event_factory
+def cortex_subgraph_walk_completed(
+    walk_id: str,
+    root: str,
+    hops: int,
+    entity_count: int,
+    edge_count: int,
+    duration_ms: int,
+    envelope_bytes: int,
+    table_bytes: int,
+) -> Event:
+    """cortex.subgraph.walk.completed — emitted on successful walk."""
+    ev = Event(
+        signal="cortex.subgraph.walk.completed",
+        role="observation",
+        scope="global",
+        payload={
+            "walk_id": walk_id,
+            "root": root,
+            "hops": hops,
+            "entity_count": entity_count,
+            "edge_count": edge_count,
+            "duration_ms": duration_ms,
+            "envelope_bytes": envelope_bytes,
+            "table_bytes": table_bytes,
+        },
+    )
+    record(ev.signal, **ev.payload)
+    return ev
+
+
+@event_factory
+def cortex_subgraph_walk_failed(
+    walk_id: str,
+    root: str,
+    reason: str,
+    hops: int,
+) -> Event:
+    """cortex.subgraph.walk.failed — emitted on error paths inside walk_subgraph."""
+    ev = Event(
+        signal="cortex.subgraph.walk.failed",
+        role="observation",
+        scope="global",
+        payload={
+            "walk_id": walk_id,
+            "root": root,
+            "reason": reason,
+            "hops": hops,
+        },
+    )
+    record(ev.signal, **ev.payload)
+    return ev
+
+
+@event_factory
 def cortex_search_failed(
     exc_type: str,
     detail: str,

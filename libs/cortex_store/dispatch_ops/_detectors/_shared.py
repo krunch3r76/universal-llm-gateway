@@ -47,6 +47,7 @@ SEVERITY = {
     # `requires` relationships to the named agent_skill entities drift apart
     # (in either direction).
     "project_required_skills_no_relationship": "warning",
+    "agent_skill_related_skills_no_relationship": "warning",
     # v1.3.1 normalization-decision ledger (shadow, Path 2/3)
     "unresolved_bare_token_in_predicate_form": "warning",
     # skill_binding substrate (thread 1067 backfill, U2 audit-gate)

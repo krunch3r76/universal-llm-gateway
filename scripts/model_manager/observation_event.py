@@ -222,3 +222,110 @@ def emit_relay_socket_recovery(
         "relay.socket.recovery",
         {"socket_dir": socket_dir, "owner_uid": owner_uid, "recovered": recovered},
     )
+
+
+# ---------------------------------------------------------------------------
+# Deferred restart-intent lifecycle events (git-worker event-driven drain, P2)
+# ---------------------------------------------------------------------------
+# Follow this module's UDS observation-emit pattern (top-level ``signal`` field,
+# which the event-service WS ``/v1/subscribe`` filter keys on), colocated with
+# the fleet emitters above. Signal names satisfy the lib signal regex
+# (^[a-z]+(\.[a-z]+){1,4}$); scope=node.
+
+
+async def emit_manage_restart_deferred(
+    *, intent_id: str, service: str, drain_epoch: int | None, deadline_at: str
+) -> None:
+    """A non-force restart was deferred; the worker is draining (202 path)."""
+    await _emit(
+        "manage.restart.deferred",
+        {
+            "intent_id": intent_id,
+            "service": service,
+            "drain_epoch": drain_epoch,
+            "deadline_at": deadline_at,
+        },
+    )
+
+
+async def emit_manage_restart_draining(
+    *,
+    intent_id: str,
+    service: str,
+    elapsed_s: float,
+    active_count: int,
+    active_ops: list[dict[str, Any]],
+) -> None:
+    """Periodic drain-progress heartbeat — observability-first (§3.2 step 5).
+
+    Carries the live active-ops snapshot so a wedged/slow drain is visible and
+    actionable well before any deadline; the deadline is a last resort, never the
+    mechanism.
+    """
+    await _emit(
+        "manage.restart.draining",
+        {
+            "intent_id": intent_id,
+            "service": service,
+            "elapsed_s": round(elapsed_s, 1),
+            "active_count": active_count,
+            "active_ops": active_ops,
+        },
+    )
+
+
+async def emit_manage_restart_drain_completed(
+    *, intent_id: str, drain_epoch: int, worker_id: str | None
+) -> None:
+    """The worker converged to idle for this intent's epoch (pre-SIGTERM)."""
+    await _emit(
+        "manage.restart.drain_completed",
+        {
+            "intent_id": intent_id,
+            "drain_epoch": drain_epoch,
+            "worker_id": worker_id,
+        },
+    )
+
+
+async def emit_manage_restart_completed(
+    *, intent_id: str, duration_s: float
+) -> None:
+    """The deferred restart finished (SIGTERM delivered, intent completed)."""
+    await _emit(
+        "manage.restart.completed",
+        {"intent_id": intent_id, "duration_s": round(duration_s, 1)},
+    )
+
+
+async def emit_manage_restart_failed(*, intent_id: str, reason: str) -> None:
+    """The deferred restart could not complete (kill error / abort)."""
+    await _emit(
+        "manage.restart.failed",
+        {"intent_id": intent_id, "reason": reason},
+    )
+
+
+async def emit_manage_restart_timeout(
+    *,
+    intent_id: str,
+    service: str,
+    deadline_at: str | None,
+    stuck_ops: list[dict[str, Any]],
+    affordances: list[str],
+) -> None:
+    """Alert-only terminal: the deadline passed before convergence (R-F).
+
+    NEVER an auto-SIGKILL — the supervisor stops and surfaces the stuck-op
+    identity + the explicit-force affordance for an operator to act.
+    """
+    await _emit(
+        "manage.restart.timeout",
+        {
+            "intent_id": intent_id,
+            "service": service,
+            "deadline_at": deadline_at,
+            "stuck_ops": stuck_ops,
+            "affordances": affordances,
+        },
+    )

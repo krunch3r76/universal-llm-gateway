@@ -14,8 +14,9 @@ from typing import Any, Literal
 from .db import query
 
 DirectionFromRoot = Literal["outbound", "inbound", "cross"]
+WalkDirection = Literal["outbound", "inbound", "both"]
 
-_ENTITY_CAP = 50
+_ENTITY_CAP_DEFAULT = 50
 
 
 class _CapExceededError(Exception):
@@ -49,16 +50,19 @@ def bfs_traverse(
     hops: int,
     edge_types: list[str] | None,
     archived: set[str],
+    entity_cap: int = _ENTITY_CAP_DEFAULT,
+    direction: WalkDirection = "both",
 ) -> dict[str, int]:
     """BFS with strict ``hops`` depth bound and entity cap.
 
     Returns ``{entity_id: hop_distance}`` for every visited entity
     including root. Raises :class:`_CapExceededError` if the visited set would
-    exceed :data:`_ENTITY_CAP`.
+    exceed ``entity_cap``.
 
     Filters: ``valid_until IS NULL`` (canonical active-row predicate
-    across cortex-api), self-loops, archived entities, and any edge type
-    not in ``edge_types`` when that filter is set.
+    across cortex-api), self-loops, archived entities, optional
+    ``direction`` (outbound/inbound/both), and any edge type not in
+    ``edge_types`` when that filter is set.
     """
     allowed = set(edge_types) if edge_types else None
     visited: dict[str, int] = {root: 0}
@@ -83,10 +87,14 @@ def bfs_traverse(
                 continue
             if allowed is not None and typ not in allowed:
                 continue
+            if direction == "outbound" and src != curr:
+                continue
+            if direction == "inbound" and tgt != curr:
+                continue
             neigh = tgt if src == curr else src
             if neigh in visited or neigh in archived:
                 continue
-            if len(visited) >= _ENTITY_CAP:
+            if len(visited) >= entity_cap:
                 raise _CapExceededError()
             visited[neigh] = d + 1
             q.append((neigh, d + 1))

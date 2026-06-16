@@ -84,6 +84,18 @@ them for every web generate unless the packet explicitly requires a fresh read.
 | In-session delta | `skill_suggest` | Ranked slugs **not** in `loaded` |
 | Body | `GET /skills/body` or `fs` | Pull-on-demand only |
 
+### Graph-backed discovery (Slice B)
+
+When a parent skill is already in `loaded[]`, Stage A reads that parent's
+`related_skills` attribute (1-hop only — no relationship traversal, no transitive
+closure) and applies a deterministic score boost to matching candidates. This
+surfaces companions declared at ingest/backfill time without parsing SKILL.md
+bodies or calling `cortex(relationships)`.
+
+Boot cards expose the same attribute: `GET /boot-skills` includes
+`related_skills: []` per skill when populated. Prefer `skill_suggest` for
+in-session delta; use boot `related_skills` for orientation at session open.
+
 ---
 
 ## Packet authors (handoff)

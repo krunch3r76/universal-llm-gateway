@@ -4,11 +4,20 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from implement_admission.closeout_models import EvidenceUris, ImplementCloseout
-from implement_admission.spec import CloseoutStatus
+from implement_admission.closeout_models import (
+    EvidenceUris,
+    ImplementCloseout,
+    Verification,
+)
+from implement_admission.deliverable_verification import (
+    evaluate_deliverable_verification,
+)
+from implement_admission.normalize import _files_from_packet
+from implement_admission.spec import CloseoutStatus, ImplementSpec
 from transport_utils import DEFAULT_STARGATE_URL, make_async_client
 from universal_logging import get_logger
 
@@ -50,11 +59,143 @@ class SdkRunOutcome:
 
 
 @dataclass(frozen=True)
+class ChangeSet:
+    created: tuple[str, ...]
+    modified: tuple[str, ...]
+    deleted: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class CloseoutDelivery:
     body: str
     sidecar_ref: str
     sidecar_path: Path
     full_result_bytes: int
+    closeout_status: CloseoutStatus
+
+
+def _parse_porcelain_z(raw: bytes) -> dict[str, str]:
+    entries: dict[str, str] = {}
+    if not raw:
+        return entries
+    parts = raw.split(b"\0")
+    i = 0
+    while i < len(parts):
+        chunk = parts[i]
+        if not chunk:
+            i += 1
+            continue
+        text = chunk.decode("utf-8", errors="replace")
+        if len(text) >= 4 and text[2] == " ":
+            status = text[:2]
+            path = text[3:]
+            if status.startswith("R") and i + 1 < len(parts):
+                path = parts[i + 1].decode("utf-8", errors="replace")
+                i += 1
+            entries[path] = status
+        i += 1
+    return entries
+
+
+def capture_wt_baseline(source_repo: Path) -> dict[str, str]:
+    """Snapshot working-tree paths at admit for later delta isolation."""
+    try:
+        proc = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(source_repo),
+                "status",
+                "--porcelain",
+                "-z",
+                "--untracked-files=all",
+            ],
+            capture_output=True,
+            check=True,
+            timeout=10,
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as exc:
+        logger.warning("wt baseline capture failed for repo=%s: %s", source_repo, exc)
+        return {}
+    return _parse_porcelain_z(proc.stdout)
+
+
+def changed_paths(source_repo: Path, baseline: dict[str, str] | None) -> ChangeSet:
+    """Derive created/modified/deleted paths vs an admit-time baseline."""
+    current = capture_wt_baseline(source_repo)
+    base = baseline or {}
+    created: list[str] = []
+    modified: list[str] = []
+    deleted: list[str] = []
+    all_paths = set(current) | set(base)
+    for path in sorted(all_paths):
+        cur = current.get(path)
+        prev = base.get(path)
+        if cur is None and prev is not None:
+            deleted.append(path)
+        elif cur is not None and prev is None:
+            if cur.startswith("?"):
+                created.append(path)
+            else:
+                modified.append(path)
+        elif cur is not None and prev is not None and cur != prev:
+            modified.append(path)
+    return ChangeSet(
+        created=tuple(created),
+        modified=tuple(modified),
+        deleted=tuple(deleted),
+    )
+
+
+def _baseline_dirty_in_expected(
+    baseline: dict[str, str] | None, files_expected: list[str]
+) -> bool:
+    if not baseline or not files_expected:
+        return False
+    from implement_admission.deliverable_verification import _normalize_expected_path
+
+    expected = {_normalize_expected_path(p) for p in files_expected}
+    for path in baseline:
+        norm = path.lstrip("/")
+        if norm in expected or any(norm.endswith(f"/{exp}") for exp in expected):
+            return True
+    return False
+
+
+def _files_expected_from_packet(packet_text: str | None) -> list[str]:
+    if not packet_text:
+        return []
+    return _files_from_packet(packet_text)
+
+
+def verify_deliverables(
+    *,
+    spec: ImplementSpec | None,
+    change_set: ChangeSet,
+    outcome: SdkRunOutcome,
+    sidecar_path: Path | None,
+    files_expected: list[str] | None = None,
+    baseline: dict[str, str] | None = None,
+) -> list[Verification]:
+    expected = files_expected or (spec.scope.files_expected if spec else [])
+    closeout_probe = ImplementCloseout(
+        status=CloseoutStatus.COMPLETE,
+        summary="probe",
+        source_ref="todo:probe",
+        files_created=list(change_set.created),
+        files_modified=list(change_set.modified),
+        files_deleted=list(change_set.deleted),
+    )
+    sidecar_ok = sidecar_path is not None and sidecar_path.is_file()
+    return evaluate_deliverable_verification(
+        spec=spec,
+        closeout=closeout_probe,
+        sidecar_resolvable=sidecar_ok,
+        run_finished=outcome.status == "finished",
+        tool_call_count=outcome.tool_call_count,
+        baseline_dirty_in_expected=_baseline_dirty_in_expected(baseline, expected),
+        files_expected=expected,
+    )
 
 
 def count_tool_calls(turns: list) -> int:
@@ -179,6 +320,8 @@ def build_implement_closeout_body(
     result_bytes: int,
     thread_id: str,
     work_item_ref: str | None,
+    change_set: ChangeSet | None = None,
+    verification: list[Verification] | None = None,
 ) -> str:
     """Build a compact, valid ImplementCloseout JSON turn body.
 
@@ -199,10 +342,17 @@ def build_implement_closeout_body(
     )
     if degraded_reason:
         summary = f"{summary} (degraded: {degraded_reason})"
+    status = _map_closeout_status(degraded_reason)
+    if verification and any(v.exit_code for v in verification):
+        status = CloseoutStatus.PARTIAL
     closeout = ImplementCloseout(
-        status=_map_closeout_status(degraded_reason),
+        status=status,
         summary=summary,
         source_ref=work_item_ref or sidecar_ref,
+        files_created=list(change_set.created) if change_set else [],
+        files_modified=list(change_set.modified) if change_set else [],
+        files_deleted=list(change_set.deleted) if change_set else [],
+        verification=verification or [],
         evidence_uris=EvidenceUris(
             artifact_paths=[sidecar_ref],
             bus_threads=[thread_id],
@@ -282,6 +432,8 @@ def prepare_closeout_delivery(
     degraded_reason: str | None,
     thread_id: str,
     work_item_ref: str | None,
+    baseline: dict[str, str] | None = None,
+    packet_text: str | None = None,
 ) -> CloseoutDelivery:
     """Write the full Composer result to a sidecar and return a structured closeout body.
 
@@ -293,6 +445,16 @@ def prepare_closeout_delivery(
     sidecar_path = _write_sidecar(source_repo, dispatch_id, full_text)
     sidecar_ref = sidecar_workspaces_ref(dispatch_id)
     result_bytes = len(full_text.encode("utf-8"))
+    change_set = changed_paths(source_repo, baseline)
+    files_expected = _files_expected_from_packet(packet_text)
+    verification = verify_deliverables(
+        spec=None,
+        change_set=change_set,
+        outcome=outcome,
+        sidecar_path=sidecar_path,
+        files_expected=files_expected,
+        baseline=baseline,
+    )
     body = build_implement_closeout_body(
         dispatch_id=dispatch_id,
         outcome=outcome,
@@ -301,12 +463,16 @@ def prepare_closeout_delivery(
         result_bytes=result_bytes,
         thread_id=thread_id,
         work_item_ref=work_item_ref,
+        change_set=change_set,
+        verification=verification,
     )
+    parsed = json.loads(body)
     return CloseoutDelivery(
         body=body,
         sidecar_ref=sidecar_ref,
         sidecar_path=sidecar_path,
         full_result_bytes=result_bytes,
+        closeout_status=CloseoutStatus(parsed["status"]),
     )
 
 

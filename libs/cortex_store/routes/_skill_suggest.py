@@ -7,7 +7,10 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from ..confidence_field import lifecycle_not_value_sql_predicate
+from ..confidence_field import (
+    SUPPRESSED_SKILL_LIFECYCLES,
+    lifecycle_not_in_sql_predicate,
+)
 from ..db import cortex_conn
 from ..db import query as db_query
 from ..seat_applicability import (
@@ -18,7 +21,9 @@ from ..seat_applicability import (
 )
 from ._skill_index import index_envelope_fields
 
-_DEPRECATED_EXCLUDE = lifecycle_not_value_sql_predicate("deprecated")
+_SUPPRESSED_LIFECYCLE_EXCLUDE = lifecycle_not_in_sql_predicate(
+    SUPPRESSED_SKILL_LIFECYCLES
+)
 
 _TOKEN_SPLIT_RE = re.compile(r"[^a-z0-9_+.-]+")
 
@@ -140,17 +145,22 @@ STOPWORDS = frozenset(
     }
 )
 
+# Deterministic 1-hop companion boost when a loaded parent declares the slug in
+# related_skills (thread 2011 F4 — no transitive closure, no relationship walk).
+_RELATED_SKILLS_BOOST = 0.25
+
 _SUGGEST_CANDIDATE_SQL = f"""
     SELECT id, name, source_uri,
            json_extract(attributes, '$.trigger_short') AS trigger_short,
            json_extract(attributes, '$.trigger_match_terms') AS trigger_match_terms_json,
            json_extract(attributes, '$.skill_category') AS skill_category,
            json_extract(attributes, '$.boot_importance') AS boot_importance,
+           json_extract(attributes, '$.related_skills') AS related_skills_json,
            COALESCE(CAST(json_extract(attributes, '$.delivery_priority') AS INTEGER), 100)
                AS delivery_priority
     FROM entities
     WHERE type = 'agent_skill'
-      AND {_DEPRECATED_EXCLUDE}
+      AND {_SUPPRESSED_LIFECYCLE_EXCLUDE}
       {{for_agent_filter}}{{capability_filter}}
 """
 
@@ -226,6 +236,49 @@ def _decode_term_list(raw: str | None) -> list[str]:
     if not isinstance(values, list):
         return []
     return [str(v).strip().lower() for v in values if str(v).strip()]
+
+
+def _decode_related_slugs(raw: str | None) -> list[str]:
+    if not raw:
+        return []
+    try:
+        values = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return []
+    if not isinstance(values, list):
+        return []
+    slugs: list[str] = []
+    for entry in values:
+        slug = str(entry).strip().lower()
+        if slug.startswith("agent_skill:"):
+            slug = slug.removeprefix("agent_skill:")
+        slug = slug.split("#", 1)[0]
+        if slug and slug not in slugs:
+            slugs.append(slug)
+    return slugs
+
+
+def _build_related_union(
+    rows: list[dict[str, Any]], loaded_set: set[str]
+) -> frozenset[str]:
+    """Union of ``related_skills`` slugs declared on loaded parent rows."""
+    by_slug: dict[str, dict[str, Any]] = {}
+    by_id: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        slug = slug_from_source_uri(row.get("source_uri"))
+        if slug:
+            by_slug[norm_loaded(slug)] = row
+        entity_id = str(row.get("id") or "")
+        if entity_id:
+            by_id[norm_loaded(entity_id)] = row
+
+    union: set[str] = set()
+    for loaded_key in loaded_set:
+        parent = by_slug.get(loaded_key) or by_id.get(loaded_key)
+        if not parent:
+            continue
+        union.update(_decode_related_slugs(parent.get("related_skills_json")))
+    return frozenset(union)
 
 
 def _decode_trigger_short(raw: str | None) -> list[str]:
@@ -350,7 +403,11 @@ def _passes_precision_gate(score: _CandidateScore) -> bool:
 
 def _fetch_candidates(agent: str) -> list[dict[str, Any]]:
     canonical = canonical_seat_or_422(agent)
-    params: list[Any] = ["deprecated", canonical, seat_capabilities_json(canonical)]
+    params: list[Any] = [
+        *SUPPRESSED_SKILL_LIFECYCLES,
+        canonical,
+        seat_capabilities_json(canonical),
+    ]
     sql = _SUGGEST_CANDIDATE_SQL.format(
         for_agent_filter=FOR_AGENT_CLAUSE,
         capability_filter=CAPABILITY_CLAUSE,
@@ -363,7 +420,11 @@ def _fetch_candidates(agent: str) -> list[dict[str, Any]]:
 
 
 def _score_candidate(
-    row: dict[str, Any], ctx_tokens: set[str], normalized_context: str
+    row: dict[str, Any],
+    ctx_tokens: set[str],
+    normalized_context: str,
+    *,
+    related_union: frozenset[str] = frozenset(),
 ) -> _CandidateScore | None:
     slug = slug_from_source_uri(row.get("source_uri"))
     if not slug:
@@ -378,6 +439,8 @@ def _score_candidate(
     if row.get("boot_importance") == "required_gate":
         score += 0.5
     score += _priority_boost(int(row.get("delivery_priority") or 100))
+    if norm_loaded(slug) in related_union:
+        score += _RELATED_SKILLS_BOOST
     matched_specific = frozenset(m for m in matched if _is_specific_term(m))
     has_phrase = any(
         _has_contiguous_phrase_match(term, normalized_context) for term in trigger_terms
@@ -443,6 +506,7 @@ def run_stage_a(
     normalized_context = _normalized_context(ctx)
     canonical_agent = canonical_seat_or_422(agent)
     rows = _fetch_candidates(agent)
+    related_union = _build_related_union(rows, loaded_set)
 
     scored_loaded: list[dict[str, Any]] = []
     scored_new: list[dict[str, Any]] = []
@@ -453,17 +517,23 @@ def run_stage_a(
         source_uri_val = row.get("source_uri")
         slug = slug_from_source_uri(source_uri_val)
         if not slug:
-            degraded_skills.append({
-                "id": str(row.get("id") or ""),
-                "name": str(row.get("name") or ""),
-                "source_uri": source_uri_val,
-                "skill_category": row.get("skill_category") or "",
-                "degraded": True,
-                "reason": "source_uri_null" if not source_uri_val else "source_uri_unparseable",
-            })
+            degraded_skills.append(
+                {
+                    "id": str(row.get("id") or ""),
+                    "name": str(row.get("name") or ""),
+                    "source_uri": source_uri_val,
+                    "skill_category": row.get("skill_category") or "",
+                    "degraded": True,
+                    "reason": "source_uri_null"
+                    if not source_uri_val
+                    else "source_uri_unparseable",
+                }
+            )
             continue
         entity_id = str(row.get("id") or "")
-        scored = _score_candidate(row, ctx_tokens, normalized_context)
+        scored = _score_candidate(
+            row, ctx_tokens, normalized_context, related_union=related_union
+        )
         if scored is None:
             continue
         matched = list(scored.matched_terms)

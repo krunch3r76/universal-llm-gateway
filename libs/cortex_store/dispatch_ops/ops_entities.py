@@ -12,12 +12,14 @@ from ..card import CARD_INTENTS_DEFERRED as _CARD_INTENTS_DEFERRED
 from ..card import CARD_TOP_K_DEFAULT as _CARD_TOP_K_DEFAULT
 from ..db import WRITE_LOCK, cortex_conn
 from ..entity_aliases import resolve_entity_reference
+from ..entity_collision import attach_collision_warning, check_entity_collision
 from ..entity_rekey import entity_merge_impl, entity_rekey_impl
 from ..trait_vocabulary import (
     ADOPTION_VALUES,
     CONFIDENCE_BAND_VALUES,
     LIFECYCLE_VALUES,
 )
+from ..write_discipline_nudge import attach_write_discipline, build_entity_create_nudge
 from ._shared import (
     _ENTITY_MUTABLE,
     _VALID_STATUS,
@@ -240,6 +242,23 @@ def _op_entity_create(
         **({} if content_hash is None else {"content_hash": content_hash}),
     }
     _create_entity_impl, _, _get_entity_impl, _, _ = _impls()
+    write_nudge = None
+    try:
+        with cortex_conn() as conn:
+            write_nudge = build_entity_create_nudge(
+                conn,
+                entity_id=str(id),
+                entity_type=str(type),
+                name=str(name),
+                description=description,
+            )
+    except Exception:  # noqa: BLE001 — advisory nudge must never block the create
+        logger.warning(
+            "build_entity_create_nudge failed for %s — proceeding without advisory",
+            id,
+            exc_info=True,
+        )
+        write_nudge = None
     try:
         with cortex_conn() as conn:
             result = _create_entity_impl(conn, payload)
@@ -283,6 +302,25 @@ def _op_entity_create(
     if "error" not in result:
         logger.info("cortex entity_create: %s (%s)", id, type)
         record("mcp.cortex.entity.created", entity_id=id, entity_type=type)
+        if write_nudge:
+            attach_write_discipline(result, write_nudge)
+        try:
+            with cortex_conn() as conn:
+                collision = check_entity_collision(
+                    conn,
+                    entity_id=str(id),
+                    entity_type=str(type),
+                    name=str(name),
+                    description=description,
+                )
+            if collision is not None:
+                attach_collision_warning(result, collision)
+        except Exception:  # noqa: BLE001 — advisory warning must never block create
+            logger.warning(
+                "entity_create collision_warning failed for %s — proceeding",
+                id,
+                exc_info=True,
+            )
     return result
 
 

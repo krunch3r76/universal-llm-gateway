@@ -83,7 +83,7 @@ from .ops_session_close import (
     _op_session_close_preflight,
     _op_session_handoff_upsert,
 )
-from .ops_subgraph import _op_render_subgraph
+from .ops_subgraph import _op_render_subgraph, _op_walk_subgraph
 from .ops_todos import _op_todo_audit, _op_todo_candidates, _op_todo_close_sidecar
 from .ops_transcript_assembly import _op_assemble_transcript
 from .workflow_hints import (
@@ -165,6 +165,7 @@ _OPS: dict[str, Any] = {
     "rj_link": _op_rj_link,
     "rj_consolidate": _op_rj_consolidate,
     "render_subgraph": _op_render_subgraph,
+    "walk_subgraph": _op_walk_subgraph,
 }
 
 

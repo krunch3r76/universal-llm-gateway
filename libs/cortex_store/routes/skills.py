@@ -22,7 +22,10 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field, ValidationError
 
-from ..confidence_field import lifecycle_not_value_sql_predicate
+from ..confidence_field import (
+    SUPPRESSED_SKILL_LIFECYCLES,
+    lifecycle_not_in_sql_predicate,
+)
 from ..db import cortex_conn
 from ..db import query as db_query
 from ..event_publisher import (
@@ -47,7 +50,7 @@ from ._skill_index import (
 from ._skill_suggest import run_stage_a
 from .boot._skill_trigger import _resolve_skill_file, skill_trigger_text
 
-_DEPRECATED_EXCLUDE = lifecycle_not_value_sql_predicate("deprecated")
+_SUPPRESSED_LIFECYCLE_EXCLUDE = lifecycle_not_in_sql_predicate(SUPPRESSED_SKILL_LIFECYCLES)
 
 router = APIRouter(prefix="/skills", tags=["skills"])
 
@@ -65,7 +68,7 @@ _SKILLS_MANIFEST_SQL = f"""
            json_extract(attributes, '$.delivery_criticality') AS delivery_criticality
     FROM entities
     WHERE type IN ({{type_placeholders}})
-      AND {_DEPRECATED_EXCLUDE}
+      AND {_SUPPRESSED_LIFECYCLE_EXCLUDE}
       {{for_agent_filter}}{{capability_filter}}
     ORDER BY name ASC
     LIMIT ?
@@ -126,7 +129,7 @@ def get_skills(
     """
     entity_types = entity_types_for_layer(layer)
     type_placeholders = ", ".join("?" * len(entity_types))
-    params: list[Any] = [*entity_types, "deprecated"]
+    params: list[Any] = [*entity_types, *SUPPRESSED_SKILL_LIFECYCLES]
     if for_agent:
         canonical = canonical_seat_or_422(for_agent)
         for_agent_filter = FOR_AGENT_CLAUSE

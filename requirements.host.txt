@@ -89,3 +89,14 @@ vulture>=2.14
 # ============================================================================
 asyncio-mqtt>=0.16.0
 websockets>=11.0
+
+# ============================================================================
+# Cursor SDK (git_integration_worker cursor-sdk dispatch bridge)
+# ============================================================================
+# Pinned EXACT: the cursor-sdk-bridge CLI arg-contract is version-sensitive and
+# the gateway monkeypatches cursor_sdk internals (services/git_integration_worker/
+# routes/cursor_sdk.py) against this baseline. Installed-good in
+# /home/io/.venvs/universal as of 2026-06-15 (verified via dispatch a39ccedf).
+# Unpinned drift on `pip -U`/rebuild can silently break the bridge launch.
+# See cortex notes/system/threads/cursor-sdk-bridge-token-fix.md.
+cursor-sdk==0.1.7

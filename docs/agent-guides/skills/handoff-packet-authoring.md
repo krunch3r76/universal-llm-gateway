@@ -311,9 +311,15 @@ restrictive, and bounded. This is a distinct lane from the materialized implemen
 **not** a lighter packet. `messages[]` is not on the wire.
 
 Canonical lane definition — the three-point spectrum (Dense Implement / Light Bounded
-Execution / Pure Mechanical Write Loop) and the 10-point general-execution instruction
-checklist — lives in the SOT: `agent-skills/consult-routing.md` § General execution
-lane (contract-based — no packet). Do not duplicate the body here.
+Execution / Pure Mechanical Write Loop) — lives in the SOT: `agent-skills/consult-routing.md`
+§ General execution lane (contract-based — no packet). Do not duplicate the body here.
+
+**Instruction quality (mandatory):** Load `.cursor/skills/cursor-sdk-instruction-standard/SKILL.md`
+before authoring any cursor-sdk dispatch turn. Encodes the four required disciplines
+(D1 determinate steps, D2 constraint repetition, D3 mandatory self-check clause,
+D4 preflight hard-stop) and the pre-dispatch checklist. Grounded in friction 19196:
+a `light-bounded` dispatch missing D2/D3 wrote to the wrong path and under-reported
+bound assertions, requiring lead-seat verification to trust the self-reported "done".
 
 ## Friction-ticket packets (extra preflight)
 

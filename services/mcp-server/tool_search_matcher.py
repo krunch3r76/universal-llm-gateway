@@ -66,9 +66,37 @@ _KEYWORD_BOOSTS: dict[str, set[str]] = {
     },
 }
 
+# Overflow tools that duplicate a primary dispatcher op — tool_search must steer
+# agents to the primary call shape, not dispatch(tool=<overflow_name>).
+_RAG_OVERFLOW_TOOLS: frozenset[str] = frozenset({"rag_search", "rag_search_preview"})
+_RAG_PRIMARY_CALL = (
+    'rag(op="search", arguments=\'{"query": "<natural language>", '
+    '"scope": "<scope>", "limit": 20}\')'
+)
+_RAG_PRIMARY_HINT = (
+    "Semantic RAG retrieval is a server-primary tool — call "
+    f"{_RAG_PRIMARY_CALL} directly. Do NOT use dispatch(tool='rag_search') "
+    "or tool_search overflow templates for corpus search."
+)
+_RAG_QUERY_TOKENS: frozenset[str] = frozenset(
+    {"rag", "corpus", "retrieval", "semantic", "research", "scope", "index"}
+)
+
 # Manifest overrides for overflow tools whose live schema/docstring under-specify
 # the dispatch wire shape (op + nested JSON ``arguments`` string).
 _MANIFEST_OVERRIDES: dict[str, dict[str, Any]] = {
+    "rag_search": {
+        "purpose": (
+            "Overflow alias for semantic RAG retrieval — prefer primary "
+            f"{_RAG_PRIMARY_CALL} (see primary_tool_hint in tool_search)."
+        ),
+    },
+    "rag_search_preview": {
+        "purpose": (
+            "Bounded RAG preview (overflow) — for full retrieval prefer primary "
+            f"{_RAG_PRIMARY_CALL}."
+        ),
+    },
     "email": {
         "dispatch_template": (
             'dispatch(tool="email", arguments=\'{"op": "review_extract", '
@@ -271,3 +299,17 @@ def _all_manifest_summary(
     manifest: dict[str, ManifestEntry],
 ) -> list[dict[str, str]]:
     return [{"name": e.name, "purpose": e.purpose} for e in manifest.values()]
+
+
+def primary_tool_hint_for_search(
+    query: str, results: list[ManifestEntry]
+) -> str | None:
+    """Return a primary-tool redirect when RAG overflow tools would mislead agents."""
+    tokens = set(_tokenize(query))
+    rag_query = bool(tokens & _RAG_QUERY_TOKENS) or any(
+        t in {"rag", "corpus", "retrieval"} for t in tokens
+    )
+    rag_results = any(e.name in _RAG_OVERFLOW_TOOLS for e in results)
+    if rag_query or rag_results:
+        return _RAG_PRIMARY_HINT
+    return None

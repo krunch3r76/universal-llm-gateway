@@ -232,6 +232,15 @@ class DispatchLinkSummary(BaseModel):
     delivery_at: datetime | None = None
 
 
+class DispatchLinkByExecution(BaseModel):
+    """Dispatch link resolved by execution_id (cross-thread lookup)."""
+
+    thread_id: str
+    pipeline_id: str
+    terminal_status: str | None = None
+    terminal_at: datetime | None = None
+
+
 class ThreadCreate(BaseModel):
     id: str | None = None
     slug: str
