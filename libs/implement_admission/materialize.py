@@ -12,6 +12,7 @@ from implement_admission.admission_read import (
     compute_packet_sha256,
     replace_frontmatter_value,
 )
+from implement_admission.skill_fs_line import skill_slug_to_fs_line
 from implement_admission.spec import ImplementSpec, SourceKind, implement_spec_hash
 
 _TOOL_SURFACE = (
@@ -83,7 +84,7 @@ def _extract_block(text: str, tag: str) -> str | None:
 
 
 def _skill_read(slug: str) -> str:
-    return f'fs(sandbox="cortex", op="md_read", path="agent-skills/{slug}.md")'
+    return skill_slug_to_fs_line(slug)
 
 
 def _render_scope(spec: ImplementSpec) -> str:

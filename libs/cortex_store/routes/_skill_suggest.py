@@ -165,6 +165,14 @@ _CODING_SESSION_CONTEXT_PHRASES = (
     "session review",
 )
 
+_GIT_POSTURE_MD_LIST_PATH = (
+    "universal-llm-gateway/docs/agent-guides/skills/git-posture.md"
+)
+_GIT_POSTURE_CODING_SESSION_NUDGE = (
+    f"git-posture: fs(workspaces, md_list {_GIT_POSTURE_MD_LIST_PATH}) → "
+    "md_read § Execution lanes | Commit posture | What not to infer"
+)
+
 
 def _coding_session_bundle_slugs() -> frozenset[str]:
     inject = tuple(
@@ -225,6 +233,9 @@ def _apply_coding_session_start(
             continue
         trigger_terms = _decode_term_list(row.get("trigger_match_terms_json"))
         envelope = index_envelope_fields(row)
+        reason = f"matches: {_CODING_SESSION_START_TRIGGER}"
+        if slug == "git-posture":
+            reason = f"{reason}; {_GIT_POSTURE_CODING_SESSION_NUDGE}"
         filtered.append(
             {
                 "id": entity_id,
@@ -232,7 +243,7 @@ def _apply_coding_session_start(
                 **envelope,
                 "score": 100.0,
                 "trigger_match": [_CODING_SESSION_START_TRIGGER],
-                "reason": f"matches: {_CODING_SESSION_START_TRIGGER}",
+                "reason": reason,
                 "reason_source": "deterministic",
                 "boot_importance": row.get("boot_importance"),
                 "delivery_priority": int(row.get("delivery_priority") or 100),
