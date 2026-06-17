@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse
 from implement_admission.admission_read import frontmatter_value
 from implement_admission.preflight import (
     DecisionNotAssertedError,
+    RouteContractContradictionError,
     require_decision_asserted,
 )
 from implement_admission.source_ref import SourceRefError
@@ -41,6 +42,7 @@ class GenerateWrapResult:
     implement_spec_hash: str | None = None
     packet_sha256: str | None = None
     materialization_present: bool | None = None
+    route_contract: dict[str, Any] | None = None
 
 
 def prepare_implement_packet(
@@ -51,6 +53,11 @@ def prepare_implement_packet(
     caller_agent: str | None,
     cortex: StargateCortexReader,
     workspaces_root: Path,
+    contract: str = "implement",
+    role: str = "cursor-sdk",
+    operator_pickup_required: bool | None = None,
+    autonomy: str | None = None,
+    transport: str = "team_dispatch",
 ) -> GenerateWrapResult:
     """Hard-gate, then materialize the implement packet when none was supplied.
 
@@ -93,6 +100,11 @@ def prepare_implement_packet(
         workspaces_root=workspaces_root,
         request_id=request_id,
         author_family=caller_agent,
+        contract=contract,
+        role=role,
+        transport=transport,
+        operator_pickup_required=operator_pickup_required,
+        autonomy=autonomy,
     )
     if bridge.gated:
         return GenerateWrapResult(
@@ -107,6 +119,7 @@ def prepare_implement_packet(
         implement_spec_hash=bridge.implement_spec_hash,
         packet_sha256=bridge.packet_sha256,
         materialization_present=bridge.materialization_present,
+        route_contract=bridge.route_contract,
     )
 
 
@@ -156,6 +169,8 @@ async def dispatch_cursor_sdk_generate_route(
                     caller_agent=body.caller_agent,
                     cortex=StargateCortexReader(),
                     workspaces_root=_workspaces_root(),
+                    contract="wrap",
+                    role=role,
                 ),
             )
             if wrap_result.gated:
@@ -172,7 +187,7 @@ async def dispatch_cursor_sdk_generate_route(
                     ).to_dict(),
                 )
             response.status_code = 200
-            return {
+            payload = {
                 "contract": "wrap",
                 "status": "materialized",
                 "materialized": True,
@@ -185,6 +200,9 @@ async def dispatch_cursor_sdk_generate_route(
                 "warnings": list(wrap_result.warnings),
                 "request_id": request_id,
             }
+            if wrap_result.route_contract is not None:
+                payload["route_contract"] = wrap_result.route_contract
+            return payload
 
         wrap = GenerateWrapResult(packet_path=getattr(body, "packet_path", None))
         if body.contract == "implement":
@@ -199,6 +217,8 @@ async def dispatch_cursor_sdk_generate_route(
                     caller_agent=body.caller_agent,
                     cortex=StargateCortexReader(),
                     workspaces_root=_workspaces_root(),
+                    contract=body.contract,
+                    role=role,
                 ),
             )
             if wrap.gated:
@@ -263,6 +283,19 @@ async def dispatch_cursor_sdk_generate_route(
             result["materialization_mode"] = "auto"
             if wrap.warnings:
                 result["warnings"] = list(result.get("warnings") or []) + wrap.warnings
+            if wrap.route_contract is not None:
+                result["route_contract"] = wrap.route_contract
+    except RouteContractContradictionError as exc:
+        return JSONResponse(
+            status_code=422,
+            content=FrontierEndpointError(
+                request_id=request_id,
+                field=exc.field,
+                reason=str(exc),
+                status_code=422,
+                code=exc.code,
+            ).to_dict(),
+        )
     except SourceRefError as exc:
         return JSONResponse(
             status_code=422,

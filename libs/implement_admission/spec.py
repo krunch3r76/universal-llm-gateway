@@ -108,6 +108,18 @@ class Routing(BaseModel):
     requested_execution_mode: str | None = None
 
 
+class RouteContract(BaseModel):
+    """Server-owned dispatch semantics — authoritative over lead-seat prose."""
+
+    policy_source: str
+    policy_version: str
+    dispatch_kind: str
+    transport: str
+    autonomy: Literal["auto_executed", "manual_pickup"]
+    operator_pickup_required: bool
+    lead_claim_authority: str
+
+
 class Acceptance(BaseModel):
     criteria: list[str]
 
@@ -153,6 +165,7 @@ class ImplementSpec(BaseModel):
     readiness: Readiness
     skills: list[str] = Field(default_factory=list)
     routing: Routing | None = None
+    route_contract: RouteContract | None = None
     acceptance: Acceptance
     closeout: Closeout
     provenance: Provenance = Field(default_factory=Provenance)
@@ -192,6 +205,7 @@ def implement_spec_hash(spec: ImplementSpec) -> str:
     payload = spec.model_dump()
     payload["provenance"]["implement_spec_hash"] = None
     payload["provenance"]["review_attestation"] = None
+    payload.pop("route_contract", None)
     # Volatile at normalize()/materialize() time — must not affect drift-guard stability.
     payload["provenance"]["created_at"] = None
     if payload.get("readiness") is not None:
@@ -216,12 +230,29 @@ def implement_spec_hash(spec: ImplementSpec) -> str:
     return f"sha256:{digest}"
 
 
-def finalize_spec(spec: ImplementSpec) -> ImplementSpec:
-    """Attach implement_spec_hash to provenance."""
+def finalize_spec(
+    spec: ImplementSpec,
+    *,
+    contract: str | None = None,
+    seat: str | None = None,
+    role: str | None = None,
+    transport: str = "team_dispatch",
+) -> ImplementSpec:
+    """Attach implement_spec_hash; optionally attach route_contract at this chokepoint."""
+    from implement_admission.routing import with_route_contract
+
     h = implement_spec_hash(spec)
     updated = spec.model_copy(
         update={
             "provenance": spec.provenance.model_copy(update={"implement_spec_hash": h})
         }
     )
+    if contract is not None:
+        updated = with_route_contract(
+            updated,
+            contract=contract,
+            seat=seat,
+            role=role,
+            transport=transport,
+        )
     return updated

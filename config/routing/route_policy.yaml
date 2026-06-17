@@ -1,0 +1,40 @@
+# Machine-readable routing policy — single source for resolver + consult-routing drift check.
+policy_source: consult-routing
+policy_version: "2026-06-17"
+lead_claim_authority: server_contract_overrides_packet_prose
+
+routes:
+  implement:
+    cursor-sdk:
+      dispatch_kind: implement
+      transport: team_dispatch
+      autonomy: auto_executed
+      operator_pickup_required: false
+    cursor-implement:
+      dispatch_kind: implement
+      transport: team_dispatch
+      autonomy: manual_pickup
+      operator_pickup_required: true
+    web-implement:
+      dispatch_kind: implement
+      transport: team_dispatch
+      autonomy: manual_pickup
+      operator_pickup_required: true
+  wrap:
+    cursor-sdk:
+      dispatch_kind: wrap
+      transport: team_dispatch
+      autonomy: auto_executed
+      operator_pickup_required: false
+  light-bounded:
+    cursor-sdk:
+      dispatch_kind: light-bounded
+      transport: team_dispatch
+      autonomy: auto_executed
+      operator_pickup_required: false
+  pure-mechanical:
+    cursor-sdk:
+      dispatch_kind: pure-mechanical
+      transport: team_dispatch
+      autonomy: auto_executed
+      operator_pickup_required: false

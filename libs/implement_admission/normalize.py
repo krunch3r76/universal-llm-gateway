@@ -43,14 +43,28 @@ def normalize(
     workspaces_root: Any = None,
     dirty_tree_risk: bool = False,
     author_family: str | None = None,
+    contract: str | None = None,
+    seat: str | None = None,
+    role: str | None = None,
+    transport: str = "team_dispatch",
 ) -> ImplementSpec:
     """Parse, resolve (read-only), derive routing, and return ImplementSpec."""
     ref = parse_source_ref(raw_source_ref)
     now = datetime.now(UTC)
+    route_kwargs = {
+        "contract": contract,
+        "seat": seat,
+        "role": role,
+        "transport": transport,
+    }
 
     if ref.source_kind == SourceKind.AGENT_BUS.value:
         spec = _normalize_agent_bus(
-            ref, cortex=cortex, now=now, dirty_tree_risk=dirty_tree_risk
+            ref,
+            cortex=cortex,
+            now=now,
+            dirty_tree_risk=dirty_tree_risk,
+            route_kwargs=route_kwargs,
         )
     elif ref.source_kind == SourceKind.PACKET.value:
         spec = _normalize_packet(
@@ -58,6 +72,7 @@ def normalize(
             workspaces_root=workspaces_root,
             now=now,
             dirty_tree_risk=dirty_tree_risk,
+            route_kwargs=route_kwargs,
         )
     else:
         spec = _normalize_entity(
@@ -66,6 +81,7 @@ def normalize(
             now=now,
             dirty_tree_risk=dirty_tree_risk,
             workspaces_root=workspaces_root,
+            route_kwargs=route_kwargs,
         )
     return _stamp_review_attestation(spec, author_family)
 
@@ -97,6 +113,7 @@ def _normalize_entity(
     now: datetime,
     dirty_tree_risk: bool = False,
     workspaces_root: Any = None,
+    route_kwargs: dict[str, Any] | None = None,
 ) -> ImplementSpec:
     entity_id = ref.canonical_ref
     try:
@@ -234,7 +251,7 @@ def _normalize_entity(
         acceptance=Acceptance(criteria=acs or [f"Complete work for {entity_id}"]),
         closeout=Closeout(adapter=adapter),
     )
-    return finalize_spec(spec)
+    return finalize_spec(spec, **(route_kwargs or {}))
 
 
 def _dedupe_preserve(items: list[str]) -> list[str]:
@@ -276,6 +293,7 @@ def _normalize_packet(
     workspaces_root: Any,
     now: datetime,
     dirty_tree_risk: bool = False,
+    route_kwargs: dict[str, Any] | None = None,
 ) -> ImplementSpec:
     path = ref.external_ref.split(":", 1)[1]
     try:
@@ -325,7 +343,7 @@ def _normalize_packet(
         acceptance=Acceptance(criteria=_acceptance_from_packet(packet.text)),
         closeout=Closeout(adapter=CloseoutAdapterKind.PACKET),
     )
-    return finalize_spec(spec)
+    return finalize_spec(spec, **(route_kwargs or {}))
 
 
 def _normalize_agent_bus(
@@ -334,6 +352,7 @@ def _normalize_agent_bus(
     cortex: CortexReader,
     now: datetime,
     dirty_tree_risk: bool = False,
+    route_kwargs: dict[str, Any] | None = None,
 ) -> ImplementSpec:
     ambiguous = ref.turn is None
     gated_reason = (
@@ -367,7 +386,7 @@ def _normalize_agent_bus(
                 bus_thread=ref.canonical_ref.split("#")[0],
             ),
         )
-        return finalize_spec(spec)
+        return finalize_spec(spec, **(route_kwargs or {}))
 
     spec = ImplementSpec(
         source=source,
@@ -384,7 +403,7 @@ def _normalize_agent_bus(
             bus_thread=ref.canonical_ref,
         ),
     )
-    return finalize_spec(spec)
+    return finalize_spec(spec, **(route_kwargs or {}))
 
 
 def _adapter_for_kind(kind: str) -> CloseoutAdapterKind:

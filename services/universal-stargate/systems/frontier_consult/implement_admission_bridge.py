@@ -19,6 +19,10 @@ from implement_admission.drift_gates import (
 )
 from implement_admission.materialize import materialize
 from implement_admission.normalize import normalize
+from implement_admission.preflight import (
+    admission_route_contract_payload,
+    run_route_preflight,
+)
 from implement_admission.source_ref import parse_source_ref
 from implement_admission.spec import ReadinessState, SourceKind, implement_spec_hash
 from transport_utils import DEFAULT_CORTEX_URL, make_sync_client
@@ -47,6 +51,7 @@ class BridgeResult:
     packet_sha256: str | None = None
     materialization_present: bool | None = None
     warnings: list[str] = field(default_factory=list)
+    route_contract: dict[str, Any] | None = None
 
 
 def probe_packet_presence(
@@ -314,6 +319,13 @@ def resolve_source_ref_to_packet(
     cwd: str | None = None,
     request_id: str | None = None,
     author_family: str | None = None,
+    contract: str | None = None,
+    role: str | None = None,
+    seat: str | None = None,
+    transport: str = "team_dispatch",
+    operator_pickup_required: bool | None = None,
+    autonomy: str | None = None,
+    packet_text: str | None = None,
 ) -> BridgeResult:
     """Normalize + materialize source_ref into a workspaces-relative packet path."""
     root = (workspaces_root or _workspaces_root()).resolve()
@@ -327,6 +339,10 @@ def resolve_source_ref_to_packet(
         workspaces_root=root,
         dirty_tree_risk=dirty_tree_risk,
         author_family=author_family,
+        contract=contract,
+        role=role,
+        seat=seat,
+        transport=transport,
     )
 
     if spec.readiness.state == ReadinessState.GATED:
@@ -336,13 +352,26 @@ def resolve_source_ref_to_packet(
             source_ref=source_ref,
         )
 
+    route_warnings = run_route_preflight(
+        spec,
+        operator_pickup_required=operator_pickup_required,
+        autonomy=autonomy,
+        transport=transport,
+        packet_text=packet_text,
+    )
+    route_payload = admission_route_contract_payload(spec)
+    route_contract = route_payload.get("route_contract")
+
     spec_hash = spec.provenance.implement_spec_hash or implement_spec_hash(spec)
     hvh = _headless_vs_human(author_family)
-    attestation_warnings = _attestation_warnings_for_spec(
-        spec,
-        request_id=request_id,
-        headless_vs_human=hvh,
-    )
+    attestation_warnings = [
+        *_attestation_warnings_for_spec(
+            spec,
+            request_id=request_id,
+            headless_vs_human=hvh,
+        ),
+        *route_warnings,
+    ]
 
     if _is_packet_lane(source_ref):
         packet_path_part = source_ref.split(":", 1)[1]
@@ -363,6 +392,7 @@ def resolve_source_ref_to_packet(
             implement_spec_hash=spec_hash,
             packet_sha256=spec.source.source_version.packet_sha256,
             warnings=attestation_warnings,
+            route_contract=route_contract,
         )
 
     out_dir = _materialized_out_dir(root)
@@ -396,4 +426,5 @@ def resolve_source_ref_to_packet(
         packet_sha256=mp.packet_sha256,
         materialization_present=present,
         warnings=bridge_warnings,
+        route_contract=route_contract,
     )

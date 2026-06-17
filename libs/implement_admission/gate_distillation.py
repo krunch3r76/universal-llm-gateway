@@ -116,7 +116,9 @@ def prepare_gate_distillation(
             )
 
     spec_path = normalize_dense_spec_path(source_uri, todo_id=todo_id)
-    spec_text = read_dense_spec_text(spec_path, workspaces_root_path=workspaces_root_path)
+    spec_text = read_dense_spec_text(
+        spec_path, workspaces_root_path=workspaces_root_path
+    )
     if spec_text is None:
         return (
             "implement_spec_unreadable",

@@ -3,19 +3,28 @@
 from __future__ import annotations
 
 import fnmatch
+import hashlib
 import re
-from typing import Literal
+from pathlib import Path
+from typing import Any, Literal
 
+import yaml
 from agent_seat import seat_to_family
 
 from implement_admission.spec import (
     ExecutorStyle,
     ImplementSpec,
     OrchestrationMode,
+    RouteContract,
     Routing,
     RoutingDerivation,
     SourceKind,
 )
+
+_POLICY_MARKER_START = "<!-- route-policy:v1:start -->"
+_POLICY_MARKER_END = "<!-- route-policy:v1:end -->"
+_ULG_ROOT = Path(__file__).resolve().parents[2]
+_DEFAULT_POLICY_PATH = _ULG_ROOT / "config/routing/route_policy.yaml"
 
 _RISK_TIER_RANK = {"mechanical": 0, "material": 1, "critical": 2}
 
@@ -284,3 +293,162 @@ def _style_rule(
     return f"default style derivation → {style}" + (
         " + checkpoint" if checkpoint else ""
     )
+
+
+def default_policy_path() -> Path:
+    return _DEFAULT_POLICY_PATH
+
+
+def load_route_policy(path: Path | None = None) -> dict[str, Any]:
+    """Load canonical routing policy from the machine-readable artifact."""
+    policy_path = path or _DEFAULT_POLICY_PATH
+    with policy_path.open(encoding="utf-8") as fh:
+        data = yaml.safe_load(fh)
+    if not isinstance(data, dict):
+        msg = f"route policy must be a mapping: {policy_path}"
+        raise ValueError(msg)
+    return data
+
+
+def _route_lookup_key(*, seat: str | None, role: str | None) -> str:
+    if role:
+        return role.strip()
+    if seat:
+        return seat.strip()
+    return "cursor-sdk"
+
+
+def resolve_route_contract(
+    spec: ImplementSpec,
+    routing: Routing,
+    risk_tier: str,
+    *,
+    contract: str,
+    seat: str | None = None,
+    role: str | None = None,
+    transport: str = "team_dispatch",
+    policy: dict[str, Any] | None = None,
+) -> RouteContract:
+    """Map canonical policy + derived routing into a populated RouteContract."""
+    del spec, routing, risk_tier  # reserved for future style/seat-aware overrides
+    loaded = policy or load_route_policy()
+    routes = loaded.get("routes") or {}
+    contract_routes = routes.get(contract)
+    if not isinstance(contract_routes, dict):
+        msg = f"unknown contract {contract!r} in route policy"
+        raise ValueError(msg)
+
+    lookup = _route_lookup_key(seat=seat, role=role)
+    entry = contract_routes.get(lookup)
+    if entry is None and lookup.endswith("-implement"):
+        entry = contract_routes.get(lookup)
+    if entry is None and contract == "implement" and lookup == "cursor-sdk":
+        entry = contract_routes.get("cursor-sdk")
+    if not isinstance(entry, dict):
+        msg = f"no route policy entry for contract={contract!r} seat/role={lookup!r}"
+        raise ValueError(msg)
+
+    canonical_transport = str(entry.get("transport") or "team_dispatch")
+    if transport != canonical_transport:
+        msg = (
+            f"transport {transport!r} is not admitted for contract={contract!r} "
+            f"(canonical {canonical_transport!r})"
+        )
+        raise ValueError(msg)
+
+    autonomy = entry.get("autonomy")
+    if autonomy not in {"auto_executed", "manual_pickup"}:
+        msg = f"invalid autonomy in route policy: {autonomy!r}"
+        raise ValueError(msg)
+
+    return RouteContract(
+        policy_source=str(loaded.get("policy_source") or "consult-routing"),
+        policy_version=str(loaded.get("policy_version") or ""),
+        dispatch_kind=str(entry.get("dispatch_kind") or contract),
+        transport=canonical_transport,
+        autonomy=autonomy,
+        operator_pickup_required=bool(entry.get("operator_pickup_required")),
+        lead_claim_authority=str(
+            loaded.get("lead_claim_authority")
+            or "server_contract_overrides_packet_prose"
+        ),
+    )
+
+
+def with_route_contract(
+    spec: ImplementSpec,
+    *,
+    contract: str,
+    seat: str | None = None,
+    role: str | None = None,
+    transport: str = "team_dispatch",
+    policy: dict[str, Any] | None = None,
+) -> ImplementSpec:
+    """Attach route_contract once routing is present."""
+    if spec.routing is None:
+        return spec
+    risk_tier = classify_risk_tier(spec)
+    route_contract = resolve_route_contract(
+        spec,
+        spec.routing,
+        risk_tier,
+        contract=contract,
+        seat=seat,
+        role=role,
+        transport=transport,
+        policy=policy,
+    )
+    return spec.model_copy(update={"route_contract": route_contract})
+
+
+def render_consult_routing_policy_block(policy: dict[str, Any] | None = None) -> str:
+    """Render the consult-routing canonical policy block from route_policy.yaml."""
+    loaded = policy or load_route_policy()
+    lines = [
+        _POLICY_MARKER_START,
+        "### Canonical routing policy (generated from config/routing/route_policy.yaml)",
+        "",
+        f"- **policy_source:** `{loaded.get('policy_source', 'consult-routing')}`",
+        f"- **policy_version:** `{loaded.get('policy_version', '')}`",
+        f"- **lead_claim_authority:** `{loaded.get('lead_claim_authority', '')}`",
+        "",
+        "| contract | seat/role | autonomy | operator_pickup_required |",
+        "|---|---|---|---|",
+    ]
+    routes = loaded.get("routes") or {}
+    for contract, entries in sorted(routes.items()):
+        if not isinstance(entries, dict):
+            continue
+        for seat_role, entry in sorted(entries.items()):
+            if not isinstance(entry, dict):
+                continue
+            lines.append(
+                f"| {contract} | {seat_role} | {entry.get('autonomy')} | "
+                f"{str(entry.get('operator_pickup_required')).lower()} |"
+            )
+    lines.append(_POLICY_MARKER_END)
+    return "\n".join(lines)
+
+
+def policy_block_sha256(policy: dict[str, Any] | None = None) -> str:
+    block = render_consult_routing_policy_block(policy)
+    digest = hashlib.sha256(block.encode("utf-8")).hexdigest()
+    return f"sha256:{digest}"
+
+
+def verify_consult_routing_policy_drift(
+    consult_routing_path: Path,
+    *,
+    policy_path: Path | None = None,
+) -> bool:
+    """Return True when consult-routing embed matches the machine-readable policy."""
+    expected = render_consult_routing_policy_block(load_route_policy(policy_path))
+    text = consult_routing_path.read_text(encoding="utf-8")
+    if expected in text:
+        return True
+    start = text.find(_POLICY_MARKER_START)
+    end = text.find(_POLICY_MARKER_END)
+    if start == -1 or end == -1:
+        return False
+    embedded = text[start : end + len(_POLICY_MARKER_END)]
+    return embedded.strip() == expected.strip()
