@@ -83,7 +83,7 @@ def _measure(record: dict[str, Any]) -> dict[str, int]:
 def _collect(include_overflow: bool) -> list[dict[str, Any]]:
     from server import _PRIMARY_TOOLS, _build_server
 
-    mcp = _build_server()
+    mcp, _, _ = _build_server()
     tools = asyncio.run(mcp.list_tools())
 
     rows: list[dict[str, Any]] = []

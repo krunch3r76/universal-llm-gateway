@@ -18,7 +18,9 @@ Block text is operator-approved (2026-05-31); the grok model string is
 
 from __future__ import annotations
 
-# Dispatch & Consult block (operator-approved 2026-06-01, thread 1167).
+from agent_seat.inject_channels import ORIENTATION_BLOCK_SKILL_MAP
+
+# inject-channel block keys → slugs: agent_seat.inject_channels.ORIENTATION_BLOCK_SKILL_MAP
 # Lead seats (config/agents.yaml lead_seats) use this claude-form block on /mcp
 # (mcp_claude). team_dispatch (+ panel_dispatch) are PRIMARY/direct-call on lead
 # surfaces after the standalone-domain re-land:
@@ -35,12 +37,14 @@ from __future__ import annotations
 # (_PRIMARY_TOOLS / tools/list) ≠ connector-bound callable set on claude-web.
 # Dispatch shapes below apply only to tools bound THIS session — probe first.
 
+# inject-channel block key: mcp-binding-block
 _MCP_BINDING_LIVENESS_BLOCK = """\
 ## MCP binding — connector-bound callable set (live probe required)
 Three layers — do not conflate: (1) **Server primary** — `_PRIMARY_TOOLS`/`tools/list` (manifest line follows); (2) **Overflow** — reachable via `dispatch(tool=…)` when `dispatch` is bound; (3) **Connector-bound** — what claude.ai loads into your callable set THIS session.
 **Invariant**: server-primary ≠ initial callable set. Two shapes: **pre-bound** (in initial set → call directly) and **deferred** (absent initially but loadable via `tool_search` → one hop, then call by name — a VALID shape; N=0 pre-bound with all primaries deferred is normal, not a drop). **`tool_search` is the bootstrap** — connector-side, always in your system-prompt deferred-tools block. If `team_dispatch`/any primary looks "absent," that means *not pre-bound*, not dropped: call `tool_search(query="<tool>")` FIRST, then call the loaded primary by name (¬ via `dispatch`, which rejects primary names).
 Genuine omission only if a deferred primary neither loads nor emits an `mcp.request.started` after the hop → hand off (cursor-consult); never infer omission for `tool_search` itself (connector-side, emits no server event)."""
 
+# inject-channel block key: dispatch-consult-block
 _DISPATCH_CONSULT_BLOCK_CLAUDE = """\
 ## Dispatch & Consult — pick by CAPABILITY, not model family
 To consult a MODEL (any provider, incl. grok) you do NOT use a build harness. When connector-bound, `team_dispatch`/`panel_dispatch` are server-primary — call directly (if unbound, see MCP binding block). Model strings = `provider/model` on optional `model=` override (bare name = 404).
@@ -55,12 +59,14 @@ Full shapes + wrap/contract semantics + executor tiers: agent-skills/consult-rou
 # Co-located liveness block (2a durable home). Trimmed per F4-A finding (thread
 # 1289): 3-question redirect + salience line kept inline; substrate table collapsed
 # to prose — reference-density detail lives in git-posture skill (entity agent_skill:git-posture).
+# inject-channel block key: entity-hierarchy-block
 _ENTITY_HIERARCHY_BLOCK = """\
 ## Entity granularity — seed the right type
 - **Todos have steps; plans have phases** — invariant. `phase`/`Phase N` is plan-domain only (`plan:` / `plan_phase:` / `/implement-plan`); on `todo:`/`task:` use **steps**/**slices**, never phases.
 - **work item** = canonical genus for `project:`/`plan:`/`task:`/`todo:`. plan→plan_phase children (phases); task→todo children via `child_of` + umbrella `project:` via `related_to` (bounded arc of ≥2 leaf todos ordered by steps/`depends_on`); todo→steps inline in the body (¬ cram "PHASE 1/2/3" — that's a plan).
 Seed via `entity_create` + `relationship_create child_of`; refs: agent-skills/entity-lifecycle-discipline.md."""
 
+# inject-channel block key: liveness-block
 _LIVENESS_BLOCK = """\
 ## Git posture & liveness — disk + cortex canonical; git ≠ project index
 A change is LIVE only when LOADED into the running process at its last deploy/restart — git commit/master is neither necessary nor sufficient. Before claiming a surface changed, ask: (1) WHICH substrate? (2) did its LOAD EVENT fire? (3) what does the LIVE PROBE say? — service behavior→`sync_restart`+observability · MCP surface→mcp restart+boot manifest · routing→`/v1/models` · agent-context→`cortex_boot`. ¬ infer existence/canonicality/done-ness from git; commit is NOT a completion gate.
@@ -69,6 +75,7 @@ Coding-session detail: `agent_skill:git-posture` → `docs/agent-guides/skills/g
 # Compact index — full playbook is agent-skills/consult-routing.md (current superset,
 # verified 2026-06-04). The two highest-frequency traps are kept inline; everything
 # else defers to the skill. See F2 finding, thread 1289.
+# inject-channel block key: consult-routing-gate-block
 _CONSULT_ROUTING_GATE = """\
 ## Consult routing — read the skill before dispatching
 On any consult / review / second-opinion / handoff / dispatch outside this seat, read `agent-skills/consult-routing.md` BEFORE choosing transport (full playbook; this block is only the index).
@@ -103,6 +110,7 @@ def _render_server_primary_manifest_line() -> str:
     )
 
 
+# inject-channel block key: session-close-web-block
 _SESSION_CLOSE_WEB_BLOCK = """\
 ## Session Close — MANDATORY on "close session" / "session end"
 Web seats have **no** auto-loaded `session-close.mdc`. Before `cortex(tool="session_close", ...)`:
@@ -154,6 +162,7 @@ def _session_close_orientation_for_agent(agent: str | None) -> str | None:
 # natural part of every web session. Derived home for the full protocol is the
 # cortex skill named below — edit that first. Web tuple is 3-axis (family /
 # effort / thinking); the context axis is Cursor-only. (todo: web tier-awareness)
+# inject-channel block key: tier-selection-block
 _TIER_SELECTION_BLOCK = """\
 ## Model tier — declare your config; fit-check every session
 No reliable runtime self-identifier for your active model/tier → the mechanism is operator-in-the-middle. Config is a 3-axis tuple: **family × effort × thinking** (context is a fixed per-family property on web, not a knob).
@@ -168,6 +177,7 @@ def _tier_selection_orientation_for_agent(agent: str | None) -> str | None:
     return None
 
 
+# inject-channel block key: capability-verify-block
 _SEAT_CAPABILITY_VERIFY_BLOCK = """\
 ## Seat capability verify — verification is shell-free on web (probe before refusing)
 Absence of a shell ≠ a step is unavailable. Before ANY "this seat cannot run Y" claim, run `tool_search("Y")` and bind to the catalog row (deferred PRIMARY tools load by name; OVERFLOW tools run via `dispatch(tool="…")`).
@@ -182,6 +192,7 @@ def _seat_capability_verify_orientation_for_agent(agent: str | None) -> str | No
     return None
 
 
+# inject-channel block key: operator-posture-block
 _OPERATOR_POSTURE_BLOCK = """\
 ## Operator posture — binding default (web + cursor seats)
 You are the operator's orchestrator and committed teammate. Drive the endeavor; keep him oriented. Full conviction pointed at the work, never at the operator's intent. No persona; no passive concierge ("here's the status, what would you like?" is failure).
@@ -230,3 +241,8 @@ def render_orientation_blocks(
     if capability_verify_block:
         blocks.insert(2, capability_verify_block)
     return blocks
+
+
+def orientation_block_skill_map() -> dict[str, tuple[str, ...]]:
+    """Shared-lib inject-channel map (drift-trap re-export for renderer binding)."""
+    return ORIENTATION_BLOCK_SKILL_MAP

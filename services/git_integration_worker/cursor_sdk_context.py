@@ -3,6 +3,12 @@
 Loads the same ambient Cursor settings layers as the IDE Composer seat:
 project rules (repo + parent traversal), user rules, team/plugins, and the
 vortex MCP stdio surface used in ``~/.cursor/mcp.json``.
+
+.. note::
+   The stdio proxy (``scripts/mcp-stdio-proxy.py``) is **deprecated** as of
+   2026-06-17. Cursor steady-state is direct HTTPS; SDK dispatches still wire
+   stdio temporarily until ``fastmcp-remote`` replaces the custom proxy
+   (Track 3 follow-on: ``fastmcp-remote`` eval after pin green).
 """
 
 from __future__ import annotations
@@ -142,7 +148,7 @@ def build_mcp_servers(
     *,
     real_home: Path | str | None = None,
 ) -> dict[str, StdioMcpServerConfig]:
-    """Stdio vortex MCP — same transport as IDE ``mcp.json`` fallback."""
+    """Stdio vortex MCP — deprecated fallback transport (see module docstring)."""
     proxy = (source_repo / _STDIO_PROXY_RELPATH).resolve()
     if not proxy.is_file():
         raise FileNotFoundError(f"vortex MCP proxy missing: {proxy}")

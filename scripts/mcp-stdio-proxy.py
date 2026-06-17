@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Optional stdio → HTTP fallback proxy for the vortex MCP server.
+"""DEPRECATED — stdio → HTTP fallback proxy for the vortex MCP server.
+
+.. deprecated:: 2026-06-17
+   Steady-state Cursor uses direct HTTPS MCP (``https://mcp.k-1.me/mcp``).
+   This 738-line custom proxy is fallback-only and scheduled for removal after
+   ``fastmcp-remote`` (Track 3) re-homes watchdog, restart-retry, and event-UDS
+   telemetry. Do not add new features here.
 
 Steady-state Cursor integration uses direct HTTPS MCP. This proxy remains
 available for fallback/debug transport scenarios and should stay transport-
@@ -53,6 +59,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+import warnings
 from pathlib import Path
 from typing import Any, Literal
 
@@ -679,6 +686,12 @@ def _post_with_watchdog(
 
 
 def main() -> None:
+    warnings.warn(
+        "mcp-stdio-proxy is deprecated (2026-06-17): use direct HTTPS MCP; "
+        "replacement planned via fastmcp-remote (Track 3).",
+        DeprecationWarning,
+        stacklevel=1,
+    )
     try:
         mcp_token = _resolve_mcp_token()
     except RuntimeError as exc:

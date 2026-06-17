@@ -46,6 +46,7 @@ from services.git_integration_worker.cursor_dispatch_ledger import (
 from services.git_integration_worker.cursor_home import (
     CursorHomeConfigError,
     CursorVenvConfigError,
+    build_dispatch_path_prepend,
     resolve_repo_venv,
     setup_cursor_dispatch_home,
     validate_repo_venv,
@@ -256,7 +257,12 @@ def _install_bridge_env_patch() -> None:
 
 
 @contextmanager
-def _dispatch_home_overlay(home: Path, *, repo_venv: Path | None = None):
+def _dispatch_home_overlay(
+    home: Path,
+    *,
+    repo_venv: Path | None = None,
+    real_home: Path | str | None = None,
+):
     """Thread-confined HOME/venv overlay for one dispatch.
 
     Records the override in thread-local storage read by the patched
@@ -268,7 +274,9 @@ def _dispatch_home_overlay(home: Path, *, repo_venv: Path | None = None):
     overrides: dict[str, str] = {"HOME": str(home)}
     if repo_venv is not None:
         overrides["VIRTUAL_ENV"] = str(repo_venv)
-        overrides[_PATH_PREPEND_KEY] = str(repo_venv / "bin")
+        overrides[_PATH_PREPEND_KEY] = build_dispatch_path_prepend(
+            repo_venv, real_home=real_home
+        )
     prev = getattr(_dispatch_env, "overrides", None)
     _dispatch_env.overrides = overrides
     try:
@@ -323,7 +331,8 @@ def _run_sdk_sync(
     gate_loop: asyncio.AbstractEventLoop,
 ) -> SdkRunOutcome:
     dispatch_home = setup_cursor_dispatch_home(dispatch_id)
-    repo_venv = resolve_repo_venv()
+    real_home = Path(os.environ.get("HOME") or "~").expanduser()
+    repo_venv = resolve_repo_venv(real_home=real_home)
     validate_repo_venv(repo_venv)
     bridge_state = dispatch_home / "bridge-state"
     bridge_state.mkdir(parents=True, exist_ok=True)
@@ -344,7 +353,9 @@ def _run_sdk_sync(
         )
         agent_options = build_agent_options(source_repo, dispatch_workspace, selection)
 
-        with _dispatch_home_overlay(dispatch_home, repo_venv=repo_venv):
+        with _dispatch_home_overlay(
+            dispatch_home, repo_venv=repo_venv, real_home=real_home
+        ):
             client = None
             for attempt in range(_SDK_LAUNCH_ATTEMPTS):
                 try:

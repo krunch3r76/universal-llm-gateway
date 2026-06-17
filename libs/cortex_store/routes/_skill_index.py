@@ -33,7 +33,7 @@ BOOT_SKILLS_SQL = f"""
            json_extract(attributes, '$.related_skills') AS related_skills_json
     FROM entities
     WHERE type IN ({{type_placeholders}})
-      AND {_DISCOVERABLE_SKILL_LIFECYCLE}
+      AND (type != 'agent_skill' OR {_DISCOVERABLE_SKILL_LIFECYCLE})
       {{for_agent_filter}}{{capability_filter}}
     ORDER BY name ASC
     LIMIT ?

@@ -19,6 +19,7 @@ import json
 import os
 from typing import Any
 
+from agent_seat.inject_channels import OPCONTEXT_SECTION_SKILL_MAP
 from agent_seat.registry import is_lead_agent
 from universal_logging import get_logger
 
@@ -184,6 +185,7 @@ def render_operational_context(
     # for inline-only subagent execution where the discipline belongs to the
     # dispatcher, not the executor.
     if not (family == "subagent" and platform == "subagent"):
+        # inject-channel section key: frontier-reasoning
         sections.append(
             templates.render_frontier_reasoning(lead_posture=is_lead_agent(agent))
         )
@@ -192,10 +194,17 @@ def render_operational_context(
     sections.append(templates.NOTES_TO_SELF)
     sections.append(_SHARED_VOCABULARY)
     if not (family == "subagent" and platform == "subagent"):
+        # inject-channel section key: team-consultation
         sections.append(templates.TEAM_CONSULTATION)
     sections.append(templates.FRONTIER_MODEL_ROUTING)
     sections.append(templates.TOOL_REFERENCE_POINTERS)
+    # inject-channel section key: prose-discipline
     sections.append(templates.PROSE_DISCIPLINE_SCOPE)
     sections.append(templates.ON_DEMAND_POINTERS)
 
     return "\n\n".join(sections)
+
+
+def operational_context_section_skill_map() -> dict[str, tuple[str, ...]]:
+    """Shared-lib inject-channel map (drift-trap re-export for renderer binding)."""
+    return OPCONTEXT_SECTION_SKILL_MAP

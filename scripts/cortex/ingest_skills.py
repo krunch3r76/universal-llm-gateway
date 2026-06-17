@@ -45,6 +45,9 @@ from transport_utils import DEFAULT_CORTEX_URL, make_sync_client  # noqa: E402
 _CANONICAL_DOC_RE = re.compile(
     r"universal-llm-gateway/docs/agent-guides/skills/([A-Za-z0-9_-]+)\.md"
 )
+_CORTEX_SOT_RE = re.compile(
+    r"SOT:\*{0,2}\s*`?cortex://agent-skills/([A-Za-z0-9_-]+)\.md`?"
+)
 _SUPPRESSED = frozenset({"deprecated", "retired"})
 _CREATE_SUPPRESSED_LIFECYCLES = frozenset({"deprecated", "retired", "merged"})
 _WS = "workspaces://universal-llm-gateway"
@@ -132,11 +135,16 @@ def _create_lifecycle(fm: dict[str, object]) -> str:
     return "active"
 
 
-def _source_uri(slug: str, body: str) -> str:
+def _source_uri(slug: str, body: str, root: Path) -> str:
+    sot = _CORTEX_SOT_RE.search(body)
+    if sot:
+        return f"agent-skills/{sot.group(1)}.md"
     match = _CANONICAL_DOC_RE.search(body)
-    if match:
-        doc = match.group(1)
-        return f"{_WS}/docs/agent-guides/skills/{doc}.md"
+    if match and match.group(1) == slug:
+        return f"{_WS}/docs/agent-guides/skills/{slug}.md"
+    subdir_skill = root / "docs" / "agent-guides" / "skills" / slug / "SKILL.md"
+    if subdir_skill.is_file():
+        return f"{_WS}/docs/agent-guides/skills/{slug}/SKILL.md"
     return f"{_WS}/.cursor/skills/{slug}/SKILL.md"
 
 
@@ -162,7 +170,7 @@ def _scan_skills(root: Path) -> dict[str, dict[str, object]]:
             "slug": slug,
             "frontmatter": fm,
             "description": description,
-            "source_uri": _source_uri(slug, text),
+            "source_uri": _source_uri(slug, text, root),
             "related_skills": declared_related_skills(text, fm),
         }
     return found
@@ -394,9 +402,7 @@ def _drifts(
             )
             if drift:
                 out.append(drift)
-            out.extend(
-                _reference_edge_drift(client, slug, cortex_declared[slug])
-            )
+            out.extend(_reference_edge_drift(client, slug, cortex_declared[slug]))
     return out
 
 
@@ -454,7 +460,10 @@ def _audit_terms(client: object, scanned: dict[str, dict[str, object]]) -> int:
     _ = scanned
     status, body = _request(client, "GET", "/entities?type=agent_skill&limit=500")
     if status != 200:
-        print(f"AUDIT-TERMS FAIL: GET /entities?type=agent_skill {status}", file=sys.stderr)
+        print(
+            f"AUDIT-TERMS FAIL: GET /entities?type=agent_skill {status}",
+            file=sys.stderr,
+        )
         return 2
     empty: list[str] = []
     for stub in body.get("items", []):
@@ -463,7 +472,10 @@ def _audit_terms(client: object, scanned: dict[str, dict[str, object]]) -> int:
             continue
         get_status, live = _entity_get(client, entity_id)
         if get_status != 200:
-            print(f"AUDIT-TERMS FAIL: GET /entities/{entity_id} {get_status}", file=sys.stderr)
+            print(
+                f"AUDIT-TERMS FAIL: GET /entities/{entity_id} {get_status}",
+                file=sys.stderr,
+            )
             return 2
         if live.get("lifecycle") in _SUPPRESSED:
             continue
@@ -471,7 +483,9 @@ def _audit_terms(client: object, scanned: dict[str, dict[str, object]]) -> int:
         terms = attrs.get("trigger_match_terms") if isinstance(attrs, dict) else None
         if not isinstance(terms, list) or not terms:
             empty.append(entity_id)
-    print(f"Audit-terms: {len(empty)} active agent_skill(s) with empty trigger_match_terms")
+    print(
+        f"Audit-terms: {len(empty)} active agent_skill(s) with empty trigger_match_terms"
+    )
     for eid in sorted(empty):
         print(f"  - {eid}")
     return 0 if not empty else 1

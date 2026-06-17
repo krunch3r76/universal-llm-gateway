@@ -13,6 +13,7 @@ from agent_seat.body_injection import (
     is_web_seat_slug,
     web_auto_inject_skill_slugs,
 )
+from agent_seat.inject_channels import web_seat_injected_skill_slugs
 
 from ..confidence_field import (
     DISCOVERABLE_SKILL_LIFECYCLE,
@@ -306,11 +307,18 @@ def build_loaded_set(loaded: list[str]) -> set[str]:
 
 
 def _seat_preloaded_norm_slugs(agent: str) -> frozenset[str]:
-    """Web auto-inject slugs merged into loaded_set (Slice F tracking)."""
+    """Web inject channels 1–3 merged into loaded_set (Slice F + boot inline)."""
     canonical = canonical_seat_or_422(agent)
     if not is_web_seat_slug(canonical):
         return frozenset()
-    return frozenset(norm_loaded(slug) for slug in web_auto_inject_skill_slugs())
+    parts = canonical.split("-", 1)
+    family, platform = (parts[0], parts[1]) if len(parts) == 2 else ("", "")
+    return frozenset(
+        norm_loaded(slug)
+        for slug in web_seat_injected_skill_slugs(
+            canonical, family=family, platform=platform
+        )
+    )
 
 
 _SCHEME_RE = re.compile(r"^[a-z][a-z0-9+.-]*:/{0,2}", re.IGNORECASE)

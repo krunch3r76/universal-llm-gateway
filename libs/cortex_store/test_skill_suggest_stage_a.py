@@ -149,17 +149,34 @@ def test_stage_a_filters_generic_singleton_tail_for_handoff_dispatch_context() -
 def test_stage_a_preserves_genuine_handoff_dispatch_top3_after_precision_gate() -> None:
     result = _run(_handoff_conn(), _HANDOFF_CONTEXT)
     slugs = [s["slug"] for s in result["suggestions"]]
-    assert set(slugs[:3]) == {
-        "consult-routing",
+    omitted = {item["slug"] for item in result["omitted"]}
+    assert "consult-routing" in omitted
+    assert "consult-routing" not in slugs
+    assert set(slugs[:2]) == {
         "handoff-packet-authoring",
         "consensus-steelman-posture",
     }
-    assert slugs[0] == "consult-routing"
 
 
 @pytest.mark.offline
 def test_stage_a_phrase_match_can_pass_precision_gate_for_required_gate_skill() -> None:
-    result = _run(_handoff_conn(), "lead seat boot protocol setup")
+    conn = _conn()
+    _insert(
+        conn,
+        "agent_skill:lead-seat-boot",
+        source_uri="agent-skills/lead-seat-boot.md",
+        trigger_match_terms=["lead", "seat", "boot", "lead seat"],
+        boot_importance="required_gate",
+        applicable_agents=["claude-cursor"],
+    )
+    conn.commit()
+    with patch("cortex_store.routes._skill_suggest.cortex_conn", return_value=conn):
+        result = run_stage_a(
+            agent="claude-cursor",
+            loaded=[],
+            conversation_context="lead seat boot protocol setup",
+            limit=8,
+        )
     slugs = {s["slug"] for s in result["suggestions"]}
     assert "lead-seat-boot" in slugs
 
@@ -207,6 +224,7 @@ def _generic_phrase_conn() -> sqlite3.Connection:
         trigger_match_terms=["lead", "seat", "lead seat"],
         boot_importance="required_gate",
         delivery_priority=5,
+        applicable_agents=["claude-cursor"],
     )
     conn.commit()
     return conn
@@ -223,7 +241,16 @@ def test_stage_a_all_generic_phrase_dropped_when_non_contiguous() -> None:
 
 @pytest.mark.offline
 def test_stage_a_all_generic_phrase_kept_when_contiguous() -> None:
-    result = _run(_generic_phrase_conn(), "lead seat assignment for the crew")
+    with patch(
+        "cortex_store.routes._skill_suggest.cortex_conn",
+        return_value=_generic_phrase_conn(),
+    ):
+        result = run_stage_a(
+            agent="claude-cursor",
+            loaded=[],
+            conversation_context="lead seat assignment for the crew",
+            limit=8,
+        )
     slugs = {s["slug"] for s in result["suggestions"]}
     assert "lead-seat-boot" in slugs
 
@@ -307,8 +334,6 @@ def test_web_seat_preloaded_tracks_auto_inject_skills_as_loaded() -> None:
             limit=8,
         )
     assert result["seat_preloaded"] == [
-        "architecture-invariants",
-        "ulg-architecture",
         "cortex-orientation",
         "cortex-provenance-discipline",
     ]
@@ -318,6 +343,62 @@ def test_web_seat_preloaded_tracks_auto_inject_skills_as_loaded() -> None:
     suggested = {s["slug"] for s in result["suggestions"]}
     assert "cortex-orientation" not in suggested
     assert "cortex-provenance-discipline" not in suggested
+
+
+@pytest.mark.offline
+def test_web_loaded_set_unions_orientation_and_opcontext_channels() -> None:
+    """Channel-2/3 slugs suppress suggestions; index-only controls still surface."""
+    from agent_seat.inject_channels import (
+        web_opcontext_inject_skill_slugs,
+        web_orientation_inject_skill_slugs,
+    )
+
+    conn = _conn()
+    channel_slugs = tuple(
+        dict.fromkeys(
+            (
+                *web_orientation_inject_skill_slugs("claude-web"),
+                *web_opcontext_inject_skill_slugs("claude-web", "claude", "web"),
+            )
+        )
+    )
+    for slug in channel_slugs:
+        terms = [slug.replace("-", " "), slug]
+        if slug == "model-tier-awareness-web":
+            terms.extend(["model tier", "tier"])
+        _insert(
+            conn,
+            f"agent_skill:{slug}",
+            source_uri=f"agent-skills/{slug}.md",
+            trigger_match_terms=terms,
+        )
+    _insert(
+        conn,
+        "agent_skill:boot-execution-discipline",
+        source_uri="agent-skills/boot-execution-discipline.md",
+        trigger_match_terms=["boot", "execution", "discipline", "cortex boot"],
+    )
+    conn.commit()
+    context = (
+        "operator posture consult routing git posture entity lifecycle session close "
+        "model tier frontier reasoning prose discipline team dispatch boot execution"
+    )
+    with patch("cortex_store.routes._skill_suggest.cortex_conn", return_value=conn):
+        result = run_stage_a(
+            agent="claude-web",
+            loaded=[],
+            conversation_context=context,
+            limit=20,
+        )
+    suggested = {s["slug"] for s in result["suggestions"]}
+    omitted = {item["slug"] for item in result["omitted"]}
+    assert "boot-execution-discipline" in suggested
+    assert "operator-posture" in omitted
+    assert "consult-routing" in omitted
+    assert "model-tier-awareness-web" in omitted
+    assert "frontier-reasoning-discipline" in omitted
+    assert "operator-posture" not in suggested
+    assert "consult-routing" not in suggested
 
 
 @pytest.mark.offline
@@ -443,17 +524,18 @@ def test_coding_session_start_returns_bundle_not_session_close() -> None:
         )
     slugs = [s["slug"] for s in result["suggestions"]]
     assert "session-close" not in slugs
-    assert set(slugs) == set(advertise_slugs)
+    web_advertise = [slug for slug in advertise_slugs if slug != "git-posture"]
+    assert set(slugs) == set(web_advertise) | {
+        "architecture-invariants",
+        "ulg-architecture",
+    }
+    assert "git-posture" not in slugs
     for item in result["suggestions"]:
         assert item["score"] == 100.0
         assert "coding session" in item["reason"].lower()
         assert "trigger_match" not in item
     preloaded = set(result["seat_preloaded"])
-    assert "architecture-invariants" in preloaded
-    assert "ulg-architecture" in preloaded
-    suggested = {s["slug"] for s in result["suggestions"]}
-    assert "architecture-invariants" not in suggested
-    assert "ulg-architecture" not in suggested
+    assert preloaded == {"cortex-orientation", "cortex-provenance-discipline"}
 
 
 @pytest.mark.offline
@@ -541,7 +623,7 @@ def test_coding_session_start_git_posture_carries_md_list_nudge() -> None:
     conn.commit()
     with patch("cortex_store.routes._skill_suggest.cortex_conn", return_value=conn):
         result = run_stage_a(
-            agent="claude-web",
+            agent="claude-cursor",
             loaded=[],
             conversation_context="coding session: implement repo parity",
             limit=8,

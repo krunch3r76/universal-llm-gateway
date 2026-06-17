@@ -9,6 +9,8 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from agent_seat.body_injection import web_auto_inject_skill_slugs
+
 from .routes.boot._skill_trigger import canonical_skill_summary
 
 _LOAD_CONTRACT_LINE = (
@@ -118,13 +120,6 @@ def _append_row_lines(
     lines.append("")
 
 
-_INVARIANT_SKILL_SLUGS: tuple[str, ...] = (
-    "architecture-invariants",
-    "ulg-architecture",
-    "cortex-orientation",
-    "cortex-provenance-discipline",
-)
-
 _TIER1_GATE_SLUGS: frozenset[str] = frozenset(
     {
         "lead-seat-boot",
@@ -188,7 +183,7 @@ def render_skills_card_section(
             "> **Load on demand**: "
             '`fs(sandbox="cortex", op="md_read", path="agent-skills/<slug>.md")` '
             "— slug is the backticked id on each line. Web auto-inject bodies "
-            f"({', '.join(f'`{slug}`' for slug in _INVARIANT_SKILL_SLUGS)}) "
+            f"({', '.join(f'`{slug}`' for slug in web_auto_inject_skill_slugs())}) "
             "append to the web prompt (`seat_preloaded`)."
         ),
         (

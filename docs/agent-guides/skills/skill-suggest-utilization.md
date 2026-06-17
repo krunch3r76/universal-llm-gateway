@@ -101,9 +101,12 @@ their bookkeeping responsibility.
 3. Fetch the body — the skill server records the slug as loaded for your session when
    you pull via `GET /skills/body` or `fs` (web agents do not re-pass it on the next suggest).
 
-**Web / inline-only dispatch:** invariant skill **bodies** (`architecture-invariants`,
-`ulg-architecture`) are auto-injected server-side (Track B Slice F + G3). Do not hand-fetch
-them for every web generate unless the packet explicitly requires a fresh read.
+**Web / inline-only dispatch:** cortex skill **bodies** (`cortex-orientation`,
+`cortex-provenance-discipline`) are auto-injected server-side (Track B Slice F + G3).
+`architecture-invariants` / `ulg-architecture` are pair-injected on coding-dispatch paths
+only — on web boot they are suggestible via `skill_suggest` when coding-relevant. Do not
+hand-fetch auto-injected cortex bodies for every web generate unless the packet explicitly
+requires a fresh read.
 
 ---
 

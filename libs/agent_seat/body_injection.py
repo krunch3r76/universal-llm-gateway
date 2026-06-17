@@ -17,10 +17,8 @@ INJECTED_BODY_TIMEOUT_MS = int(os.getenv("INJECTED_BODY_TIMEOUT_MS", "300"))
 INJECTED_TOTAL_DEADLINE_MS = int(os.getenv("INJECTED_TOTAL_DEADLINE_MS", "1500"))
 
 # Web Slice-F auto-inject: appended to system prompt after cortex_boot (proxy path)
-# and treated as loaded by skill_suggest for web seats.
-INVARIANT_SKILL_ENTITY_IDS: tuple[str, ...] = (
-    "agent_skill:architecture-invariants",
-    "agent_skill:ulg-architecture",
+# and treated as loaded by skill_suggest for web seats (cortex pair only).
+WEB_BOOT_INJECT_ENTITY_IDS: tuple[str, ...] = (
     "agent_skill:cortex-orientation",
     "agent_skill:cortex-provenance-discipline",
 )
@@ -45,8 +43,11 @@ CODING_SESSION_BUNDLE: dict[str, tuple[str, ...]] = {
 def web_auto_inject_skill_slugs() -> tuple[str, ...]:
     """Bare slugs server-injected on web seats (Slice F + skill_suggest preload)."""
     return tuple(
-        entity_id.removeprefix("agent_skill:") for entity_id in INVARIANT_SKILL_ENTITY_IDS
+        entity_id.removeprefix("agent_skill:") for entity_id in WEB_BOOT_INJECT_ENTITY_IDS
     )
+
+
+# Channel-2/3 maps: agent_seat.inject_channels (shared-lib SOT for skill_suggest).
 
 
 def is_web_seat_slug(seat: str) -> bool:
@@ -350,7 +351,7 @@ def fetch_invariant_pair_entries() -> list[dict[str, Any]]:
 
 def fetch_web_invariant_entries() -> list[dict[str, Any]]:
     """Resolve invariant-skill bodies for the web Slice-F path."""
-    return _fetch_invariant_entries_for(INVARIANT_SKILL_ENTITY_IDS)
+    return _fetch_invariant_entries_for(WEB_BOOT_INJECT_ENTITY_IDS)
 
 
 def _invariant_presence_sentinel(block: str, injected: list[dict[str, Any]]) -> str:

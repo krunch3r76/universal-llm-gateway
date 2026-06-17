@@ -34,6 +34,7 @@ _DISPATCH_HOME_ROOT = Path(
 
 DEFAULT_REPO_VENV_RELPATH = Path(".venvs") / "universal"
 REQUIRED_VENV_EXECUTABLES: tuple[str, ...] = ("python", "pytest", "ruff")
+_CURSOR_AGENT_SHIM = Path(".local") / "bin" / "agent"
 
 
 class CursorHomeConfigError(RuntimeError):
@@ -137,3 +138,53 @@ def validate_repo_venv(venv: Path) -> None:
         raise CursorVenvConfigError(
             f"cursor-sdk repo venv invalid: {venv} — missing: {', '.join(missing)}"
         )
+
+
+def _expand_real_home(real_home: Path | str | None) -> Path:
+    if real_home is not None:
+        return Path(real_home).expanduser()
+    return Path(os.environ.get("HOME") or "~").expanduser()
+
+
+def is_cursor_agent_shim(path: Path) -> bool:
+    """True when *path* resolves to cursor-agent, not grok's ``agent`` symlink."""
+    if not path.exists():
+        return False
+    try:
+        resolved = path.resolve()
+    except OSError:
+        return False
+    resolved_str = str(resolved)
+    if "cursor-agent" in resolved_str:
+        return True
+    if "/.grok/" in resolved_str or resolved.name.startswith("grok"):
+        return False
+    return resolved.name == "cursor-agent"
+
+
+def operator_local_bin_for_cursor_agent(
+    *, real_home: Path | str | None = None
+) -> Path | None:
+    """Return ``~/.local/bin`` when the operator has a verified cursor-agent shim."""
+    shim = _expand_real_home(real_home) / _CURSOR_AGENT_SHIM
+    if not is_cursor_agent_shim(shim):
+        return None
+    return shim.parent
+
+
+def build_dispatch_path_prepend(
+    repo_venv: Path,
+    *,
+    real_home: Path | str | None = None,
+) -> str:
+    """PATH prefix for bridge subprocess: repo venv, then cursor-agent shim dir.
+
+    Grok's CLI installer also publishes an ``agent`` binary. Prepending the
+    operator's verified ``~/.local/bin`` keeps cursor-agent ahead of grok when
+    dispatch HOME is swapped and PATH would otherwise lack the operator shim.
+    """
+    segments = [str(repo_venv / "bin")]
+    local_bin = operator_local_bin_for_cursor_agent(real_home=real_home)
+    if local_bin is not None:
+        segments.append(str(local_bin))
+    return os.pathsep.join(segments)

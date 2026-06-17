@@ -137,3 +137,6 @@ def patch_fastmcp_tool_serialization() -> None:
         return mcp_tool
 
     FunctionTool.to_mcp_tool = _compact_to_mcp  # type: ignore[assignment]
+    if FunctionTool.to_mcp_tool is not _compact_to_mcp:
+        msg = "schema_compact patch failed to bind FunctionTool.to_mcp_tool"
+        raise RuntimeError(msg)

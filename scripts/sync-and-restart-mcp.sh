@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Sync MCP Python source into the running container and restart (no image rebuild).
 # Pass --no-cache only for pip/Dockerfile/base-image changes (full build-mcp.sh rebuild).
+# ¬ curl x.ai/cli/install.sh here — that installer symlinks both grok and agent into
+#   ~/.grok/bin (and often ~/.local/bin), which can overwrite the Cursor agent binary.
 # Reads MCP_PROJECT_DIR, MCP_AUTH_TOKEN, etc. from ~/.gateway/mcp.yaml.
 # Usage: ./scripts/sync-and-restart-mcp.sh [--no-cache] [from repo root or any subdir]
 
@@ -273,8 +275,6 @@ restart_mcp_gracefully() {
 }
 
 if [[ "$NO_CACHE" == "true" ]]; then
-  echo "Syncing latest grok CLI..."
-  curl -fsSL https://x.ai/cli/install.sh | bash
   echo "Building MCP server (no cache, pulling fresh base images)..."
   bash docker/scripts/build/build-mcp.sh --no-cache
   remove_mcp_container_for_image_recreate
