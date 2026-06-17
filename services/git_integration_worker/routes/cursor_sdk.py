@@ -62,12 +62,14 @@ from services.git_integration_worker.cursor_sdk_closeout import (
     count_tool_calls,
     degraded_implement_reason,
     emit_implement_closeout_trigger,
+    empty_output_degraded_reason,
     extract_source_ref_from_packet,
     format_delivery_fallback_body,
     infer_contract_from_text,
     prepare_closeout_delivery,
     resolve_completion_outcome,
     resolve_prompt_preamble,
+    resolve_run_body,
     resolve_run_outcome_label,
 )
 from services.git_integration_worker.cursor_sdk_context import (
@@ -388,7 +390,7 @@ def _run_sdk_sync(
                 result = run.wait()
                 turns = run.conversation()
                 return SdkRunOutcome(
-                    body=result.result,
+                    body=resolve_run_body(result.result, turns),
                     status=str(result.status),
                     duration_ms=result.duration_ms,
                     tool_call_count=count_tool_calls(turns),
@@ -866,6 +868,12 @@ async def _run_sdk_dispatch_gated(
     degraded_reason = (
         degraded_implement_reason(outcome) if contract == "implement" else None
     )
+    # Empty-output invariant (friction 19819) applies to ALL contracts: a finished
+    # run whose captured body (after transcript reconstruction in resolve_run_body)
+    # is empty must never report status:complete + 0B. Implement-specific reasons
+    # (run_status / zero_tool_calls) take precedence when present.
+    if degraded_reason is None:
+        degraded_reason = empty_output_degraded_reason(outcome)
     await _deliver_sdk_closeout(
         req=req,
         source_repo=source_repo,
