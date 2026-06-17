@@ -30,15 +30,13 @@ def build_worker_message(
     conversation_context: str | None,
     agent: str,
     limit: int,
-    rerank: bool | None,
 ) -> str:
     """D1/D2/D3 worker instruction for pure-mechanical skill_suggest relay."""
     ctx_literal = json.dumps(conversation_context, ensure_ascii=False)
-    rerank_literal = "null" if rerank is None else str(rerank).lower()
     call = (
         f"skill_suggest(loaded={json.dumps(loaded, ensure_ascii=False)}, "
         f"conversation_context={ctx_literal}, agent={json.dumps(agent)}, "
-        f"limit={limit}, rerank={rerank_literal}, prefer_worker=false)"
+        f"limit={limit}, prefer_worker=false)"
     )
     output_contract = (
         "Emit ONLY one fenced ```json block containing the verbatim skill_suggest "
@@ -115,6 +113,10 @@ def validate_skill_suggest_envelope(
         return False
     if not isinstance(envelope["degraded"], bool):
         return False
+    if "degraded_reason" in envelope:
+        degraded_reason = envelope["degraded_reason"]
+        if degraded_reason is not None and not isinstance(degraded_reason, str):
+            return False
     if "status" in envelope and envelope.get("status") in {
         CloseoutStatus.FAILED.value,
         CloseoutStatus.PARTIAL.value,

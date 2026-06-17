@@ -5,12 +5,17 @@ from __future__ import annotations
 import base64
 import binascii
 import logging
-import os
 from typing import Any
 
 from mcp_events import record
 
-from ._paths import BINARY_MAX_BYTES, safe_path, sha256_hex_of_bytes
+from .._durable_write import (
+    WriteVerifyError,
+    durable_write_bytes,
+    verify_persisted,
+    write_verify_error_dict,
+)
+from ._paths import BINARY_MAX_BYTES, safe_path
 
 logger = logging.getLogger(__name__)
 
@@ -38,15 +43,11 @@ def write_binary_impl(rel_path: str, content_base64: str) -> dict[str, Any]:
             f"{BINARY_MAX_BYTES // (1024 * 1024)}MB limit"
         )
 
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    temp_path = dest.with_suffix(dest.suffix + ".tmp")
     try:
-        temp_path.write_bytes(raw)
-        os.replace(temp_path, dest)
-    except Exception:
-        if temp_path.exists():
-            temp_path.unlink()
-        raise
+        written_sha256 = durable_write_bytes(dest, raw)
+        verify_persisted(dest, written_sha256)
+    except WriteVerifyError as exc:
+        return write_verify_error_dict(exc)
 
     record(
         "mcp.tool.file.written",
@@ -60,7 +61,7 @@ def write_binary_impl(rel_path: str, content_base64: str) -> dict[str, Any]:
         "status": "written",
         "path": str(dest),
         "bytes": len(raw),
-        "written_sha256": sha256_hex_of_bytes(raw),
+        "written_sha256": written_sha256,
     }
 
 
@@ -81,24 +82,26 @@ def append_binary_impl(rel_path: str, content_base64: str) -> dict[str, Any]:
         )
         raise ValueError("content is not valid base64") from exc
 
-    current_size = dest.stat().st_size if dest.exists() else 0
-    if current_size + len(raw) > BINARY_MAX_BYTES:
+    current = dest.read_bytes() if dest.exists() else b""
+    combined = current + raw
+    if len(combined) > BINARY_MAX_BYTES:
         raise ValueError(
-            f"Appending {len(raw)} bytes to {current_size}-byte file "
+            f"Appending {len(raw)} bytes to {len(current)}-byte file "
             f"would exceed {BINARY_MAX_BYTES // (1024 * 1024)}MB limit"
         )
 
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    with dest.open("ab") as fh:
-        fh.write(raw)
+    try:
+        written_sha256 = durable_write_bytes(dest, combined)
+        verify_persisted(dest, written_sha256)
+    except WriteVerifyError as exc:
+        return write_verify_error_dict(exc)
 
-    final_size = dest.stat().st_size
     record(
         "mcp.tool.file.written",
         path=rel_path,
         resolved=str(dest),
         bytes=len(raw),
-        total_bytes=final_size,
+        total_bytes=len(combined),
         binary=True,
         append=True,
     )
@@ -106,11 +109,12 @@ def append_binary_impl(rel_path: str, content_base64: str) -> dict[str, Any]:
         "append_binary: appended %d bytes to %s (total %d)",
         len(raw),
         dest,
-        final_size,
+        len(combined),
     )
     return {
         "status": "appended",
         "path": str(dest),
         "bytes_appended": len(raw),
-        "total_bytes": final_size,
+        "total_bytes": len(combined),
+        "written_sha256": written_sha256,
     }

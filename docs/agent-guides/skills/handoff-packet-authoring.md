@@ -596,7 +596,8 @@ escalation, ¬ scaffold→densify chaining — unless the draft is explicitly la
 
 ## Naming + delivery
 
-- **Default implement transport = `cursor-sdk` generate + `source_ref`** (`team_dispatch(op=generate, role=cursor-sdk, source_ref=todo:{slug}, contract=implement)`) — server materializes from todo attributes; auto Composer, no IDE pickup. `cursor-implement` handoff is the operator-attended **fallback**, not a peer default. Attributes MUST be distilled (Composer executes mechanically). Full policy: `agent-skills/consult-routing.md` § Implement lane — source_ref.
+- **Light execution (default):** `team_dispatch(op=generate, role=cursor-sdk, source_ref=todo:{slug}, contract=implement)` runs **Composer automatically** on a bus thread — **no** `cursor-implement` handoff or IDE pickup. Same model tier as manual handoff; different transport. **`contract=implement`** preferred; `light-bounded` / `pure-mechanical` when narrower. Attributes MUST be distilled on the todo. `cursor-implement` handoff is operator-attended **fallback**, not a peer default. Full policy: `agent-skills/consult-routing.md` § Implement lane — source_ref.
+- **Web Gate-2 closeout:** distill attrs on the todo, then **cursor-sdk generate** (above) — do not route implement back to “operator open Cursor thread” unless SDK is ineligible.
 - **Legacy / escape-hatch:** hand-authored materialized implement packet at `tmp/reviews/<task>-<seat>-packet.md` + `packet_path=` on generate, or `packet_path=` on handoff consult briefs — write the file **before** the dispatch call.
 - **`packet_path` root** (legacy hand-authored paths only): Stargate resolves `packet_path` relative to `PROJECT_ROOT`
   (`/mnt/torus/projects/universal-llm-gateway`). Use `tmp/reviews/<file>.md` — **no repo prefix**.

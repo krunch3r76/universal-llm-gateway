@@ -421,7 +421,9 @@ async def post_skill_suggest(
     """Seat-gated deterministic skill delta suggestions with optional rerank."""
     data = await request.json()
     if not isinstance(data, dict):
-        raise HTTPException(status_code=422, detail="request body must be a JSON object")
+        raise HTTPException(
+            status_code=422, detail="request body must be a JSON object"
+        )
     body = _parse_suggest_request(data)
     suggest_id = str(uuid.uuid4())
     transport = (x_cortex_transport or "http").strip() or "http"
@@ -433,7 +435,10 @@ async def post_skill_suggest(
             detail={"code": "agent_required", "message": "agent is required"},
         )
 
-    if body.conversation_context is not None and len(body.conversation_context) > _CONTEXT_MAX:
+    if (
+        body.conversation_context is not None
+        and len(body.conversation_context) > _CONTEXT_MAX
+    ):
         raise HTTPException(
             status_code=422,
             detail={
@@ -495,6 +500,9 @@ async def post_skill_suggest(
     elif not effective_rerank and ranker_status != "skipped_no_context":
         result["ranker_status"] = "disabled"
         ranker_status = "disabled"
+
+    result["ranker_status"] = ranker_status
+    result["degraded_reason"] = degraded_reason
 
     latency_ms = int((time.monotonic() - t0) * 1000)
     if degraded_reason:

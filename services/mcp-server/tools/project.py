@@ -30,6 +30,12 @@ from typing import TYPE_CHECKING, Any, cast
 from mcp_events import record
 from universal_logging import get_logger
 
+from ._durable_write import (
+    WriteVerifyError,
+    durable_write_text,
+    verify_persisted,
+    write_verify_error_dict,
+)
 from ._file_helpers import load_searchable_text, read_file_result
 from ._project_paths import (
     multi_repo_root_unscoped,
@@ -50,7 +56,7 @@ from .filesystem._ops_search import (
     compile_pattern,
     search_in_text,
 )
-from .filesystem._paths import SANDBOX_ROOT, sha256_hex_of_file, trash_destination
+from .filesystem._paths import SANDBOX_ROOT, trash_destination
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -783,14 +789,18 @@ def register_project_tools(mcp: FastMCP) -> None:
             return {"error": f"Binary file type {suffix!r} cannot be written"}
 
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content, encoding="utf-8")
+        try:
+            written_sha256 = durable_write_text(target, content)
+            verify_persisted(target, written_sha256)
+        except WriteVerifyError as exc:
+            return cast("dict[str, str]", write_verify_error_dict(exc))
         rel = str(target.relative_to(_PROJECT_ROOT.resolve()))
         logger.info("write_project_file: %s (%d chars)", rel, len(content))
         record("mcp.project.file.written", path=rel, size=len(content))
         return {
             "status": "written",
             "path": rel,
-            "written_sha256": sha256_hex_of_file(target),
+            "written_sha256": written_sha256,
         }
 
     @mcp.tool(title="Edit Project File")
@@ -844,14 +854,17 @@ def register_project_tools(mcp: FastMCP) -> None:
                 {"error": "'target_str' cannot be empty for 'replace' operation"},
             )
 
-        result = perform_edit(
-            target,
-            operation,
-            content,
-            line=line if line > 0 else None,
-            target_str=target_str if target_str else None,
-            all_occurrences=all_occurrences,
-        )
+        try:
+            result = perform_edit(
+                target,
+                operation,
+                content,
+                line=line if line > 0 else None,
+                target_str=target_str if target_str else None,
+                all_occurrences=all_occurrences,
+            )
+        except WriteVerifyError as exc:
+            return cast("dict[str, str | int]", write_verify_error_dict(exc))
         rel = str(target.relative_to(_PROJECT_ROOT.resolve()))
         logger.info("edit_project_file: %s op=%s", rel, operation)
         record("mcp.project.file.edited", path=rel, operation=operation)

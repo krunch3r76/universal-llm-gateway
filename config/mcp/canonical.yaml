@@ -2365,7 +2365,8 @@ tools:
   introduced: 2026-05-22
 
   # ─── domain: skill_suggest ───────────────────────────────────────────────────
-  # In-session skill relevance delta — deterministic Stage-A + optional rerank.
+  # In-session skill relevance delta — deterministic Stage-A (agent judgment primary).
+  # Stage-B rerank is server-env-gated experimental-off; not an agent-facing param.
 
 - canonical_name: skill_suggest_suggest
   domain: skill_suggest
@@ -2392,7 +2393,6 @@ tools:
       conversation_context: {type: string}
       limit: {type: integer}
       agent: {type: string}
-      rerank: {type: boolean}
       prefer_worker: {type: boolean}
       worker_timeout_seconds: {type: integer}
     required: [loaded]

@@ -65,28 +65,31 @@ def _materialize_skills_index(
     seat_slug: str,
     skills: list[dict[str, Any]],
     mode: BootMode,
+    *,
+    concise_markdown: str | None = None,
 ) -> tuple[str, str, bool]:
-    """Build and optionally persist the web seat skills index sidecar."""
-    from agent_seat.body_injection import is_web_seat_slug, web_auto_inject_skill_slugs
+    """Persist the web seat skills index sidecar from server-rendered markdown."""
+    from agent_seat.body_injection import is_web_seat_slug
 
-    from .._boot_helpers._skills_index_render import (
-        render_skills_index_md,
-        skills_index_rel_path,
-    )
+    from .._boot_helpers._skills_index_render import skills_index_rel_path
 
-    if not skills or not is_web_seat_slug(seat_slug):
+    if not skills or not is_web_seat_slug(seat_slug) or not concise_markdown:
         return "", "", False
     ref = skills_index_rel_path(seat_slug)
-    md = render_skills_index_md(
-        seat_slug,
-        skills,
-        preloaded_slugs=web_auto_inject_skill_slugs(),
-    )
+    md = concise_markdown
     written = False
     if mode == BootMode.LIVE:
         try:
             _SKILLS_INDEX_DIR.mkdir(parents=True, exist_ok=True)
-            (_SKILLS_INDEX_DIR / f"skills-index-{seat_slug}.md").write_text(md)
+            target = _SKILLS_INDEX_DIR / f"skills-index-{seat_slug}.md"
+            new_hash = hashlib.sha256(md.encode("utf-8")).hexdigest()
+            if target.exists():
+                existing_hash = hashlib.sha256(
+                    target.read_text(encoding="utf-8").encode("utf-8")
+                ).hexdigest()
+                if existing_hash == new_hash:
+                    return ref, md, False
+            target.write_text(md)
             written = True
         except OSError as exc:
             logger.warning("Could not write skills index to %s: %s", ref, exc)
@@ -359,6 +362,7 @@ def run_cortex_boot(
         seat_slug,
         list(extracted.get("skills") or []),
         mode,
+        concise_markdown=extracted.get("skills_concise_markdown"),
     )
 
     card, manifest = render_briefing_card(
@@ -446,7 +450,7 @@ def run_cortex_boot(
             InjectedArtifact.from_text(
                 name="skills_index",
                 mode="written_file",
-                source=f"render_skills_index_md(seat={seat_slug!r})",
+                source=f"GET /skills?view=boot&render=concise (seat={seat_slug!r})",
                 text=skills_index_md,
                 path=skills_index_ref,
             )

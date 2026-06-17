@@ -61,7 +61,12 @@ skill_suggest(
 
 **You reason; the tool returns delta.** At inflection points, form a judgment from boot +
 task context, then call `skill_suggest` to surface slugs you may have missed. Accept or
-reject each hit on merits. Ignore the server `rerank` flag — not part of the agent model.
+reject each hit on merits.
+
+**Dispatch path (claude-web):** worker-hop relay is **Stage-A + agent judgment only**.
+Stage-B rerank (`skill-suggest-rank` pipeline) is **server-env-gated experimental-off**
+(`SKILL_SUGGEST_RERANK_ENABLED`, default false) — not agent-facing; do not attempt to
+toggle it from MCP calls.
 
 **Implementation note:** full session registry (`GET/POST /skills/session/…`) is the
 target contract; today the server merges **web seat preload** into the loaded set

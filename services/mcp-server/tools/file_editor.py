@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from tools._hashing import sha256_hex_of_file
+from tools._durable_write import durable_write_text, verify_persisted
 
 
 def perform_edit(
@@ -91,12 +91,13 @@ def perform_edit(
                 + "insert_at_line, replace."
             )
 
-    _ = path.write_text(modified, encoding="utf-8")
+    written_sha256 = durable_write_text(path, modified)
+    verify_persisted(path, written_sha256)
 
     result: dict[str, str | int] = {
         "status": f"edited: {operation}",
         "path": str(path),
-        "written_sha256": sha256_hex_of_file(path),
+        "written_sha256": written_sha256,
     }
     if operation == "replace":
         result["replacements_made"] = replacements_made

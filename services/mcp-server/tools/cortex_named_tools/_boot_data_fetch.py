@@ -190,17 +190,12 @@ def build_futures_spec(
         "GET",
         f"/boot-recent-mentions?{urlencode({'days': 7, 'limit': 10})}",
     )
-    # read-only: compact skill projection (id, name, description_first_sentence)
-    # via dedicated /boot-skills endpoint. The wider /entities surface ships
-    # full description bodies the renderer drops anyway. `for_agent` filters
-    # to skills whose `applicable_agents` attribute contains `*` (universal)
-    # or this agent slug — pre-backfill skills without the attribute are
-    # treated as universal so the filter is non-narrowing until each entity
-    # opts in via `entity_update`.
+    # read-only: boot skill projection via canonical GET /skills?view=boot.
+    # render=concise ships server-side sidecar markdown; card consumes items.
     futures_spec["skills"] = (
         wrapped_cx,
         "GET",
-        f"/boot-skills?{urlencode({'limit': 120, 'for_agent': agent})}",
+        f"/skills?{urlencode({'limit': 120, 'for_agent': agent, 'view': 'boot', 'render': 'concise'})}",
     )
     # read-only: rule-layer index (layer=rules) — seat-filtered conduct rules for
     # the briefing-card Agent Rules section. Same /boot-skills envelope as skills
@@ -277,7 +272,7 @@ def extract_boot_results(
     recent_mentions: list[dict[str, Any]] = safe_list(raw.get("recent_mentions", []))
     skills: list[dict[str, Any]] = safe_list(raw.get("skills", []))
     rules: list[dict[str, Any]] = safe_list(raw.get("rules", []))
-    # `/boot-skills` ships a sibling `unpartitioned_count` (skills missing
+    # GET /skills?view=boot ships `unpartitioned_count` (skills missing
     # `applicable_agents`). Surfaced on the briefing card as a drift reminder
     # so the partition script doesn't go stale silently.
     skills_raw = raw.get("skills", {})
@@ -286,6 +281,13 @@ def extract_boot_results(
         if isinstance(skills_raw, dict)
         else 0
     )
+    skills_concise_markdown: str | None = None
+    if isinstance(skills_raw, dict):
+        rendered = skills_raw.get("rendered")
+        if isinstance(rendered, dict):
+            concise = rendered.get("concise_markdown")
+            if isinstance(concise, str) and concise.strip():
+                skills_concise_markdown = concise
 
     recent_work_raw = raw.get("recent_work", {})
     plan_phases: list[dict[str, Any]] = (
@@ -371,6 +373,7 @@ def extract_boot_results(
         "skills": skills,
         "rules": rules,
         "skills_unpartitioned_count": skills_unpartitioned,
+        "skills_concise_markdown": skills_concise_markdown,
         "plan_phases": plan_phases,
         "in_flight_todos": in_flight_todos,
         "open_arcs": open_arcs,

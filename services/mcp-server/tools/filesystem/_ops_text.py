@@ -3,16 +3,22 @@
 from __future__ import annotations
 
 import logging
-import os
-import secrets
 from pathlib import Path
 from typing import Any
 
 from mcp_events import record
 
+from .._durable_write import (
+    WriteVerifyError,
+    durable_write_text,
+    finalize_atomic_replace,
+    temp_path_for,
+    verify_persisted,
+    write_verify_error_dict,
+)
 from .._file_helpers import read_file_result, read_files_batch
 from ..file_editor import perform_edit
-from ._format_writers import write_docx, write_pdf, write_plain
+from ._format_writers import write_docx, write_pdf
 from ._paths import (
     EDITABLE_SUFFIXES,
     SANDBOX_ROOT,
@@ -55,23 +61,28 @@ def _write_rejection(
     return payload
 
 
-def _atomic_write(dest: Path, content: str) -> None:
+def _write_content_durable(dest: Path, content: str) -> str:
+    """Write *content* to *dest* with fsync + atomic replace; return sha256 hex."""
     suffix = dest.suffix.lower()
-    write_handlers = {
-        ".docx": write_docx,
-        ".pdf": write_pdf,
-    }
-    write_handler = write_handlers.get(suffix, write_plain)
-    temp_path = dest.with_suffix(
-        dest.suffix + f".tmp-{os.getpid()}-{secrets.token_hex(4)}"
-    )
-    try:
-        write_handler(temp_path, content)
-        os.replace(temp_path, dest)
-    except Exception:
-        if temp_path.exists():
-            temp_path.unlink()
-        raise
+    if suffix in {".docx", ".pdf"}:
+        write_handlers = {
+            ".docx": write_docx,
+            ".pdf": write_pdf,
+        }
+        temp_path = temp_path_for(dest)
+        try:
+            write_handlers[suffix](temp_path, content)
+            finalize_atomic_replace(temp_path, dest)
+        except Exception:
+            if temp_path.exists():
+                temp_path.unlink()
+            raise
+        written_sha256 = sha256_hex_of_file(dest)
+        verify_persisted(dest, written_sha256)
+        return written_sha256
+    written_sha256 = durable_write_text(dest, content)
+    verify_persisted(dest, written_sha256)
+    return written_sha256
 
 
 def write_file_impl(
@@ -120,7 +131,9 @@ def write_file_impl(
                 actual_sha256=actual_sha256,
             )
         try:
-            _atomic_write(dest, content)
+            written_sha256 = _write_content_durable(dest, content)
+        except WriteVerifyError as exc:
+            return write_verify_error_dict(exc)
         except OSError as exc:
             record(
                 "mcp.tool.file.write_failed",
@@ -138,7 +151,7 @@ def write_file_impl(
     return {
         "status": "written",
         "path": str(dest),
-        "written_sha256": sha256_hex_of_file(dest),
+        "written_sha256": written_sha256,
     }
 
 
@@ -244,6 +257,17 @@ def edit_file_impl(
         record("mcp.tool.file.edited", **event_payload)
         logger.info("edit_file: %s on %s", operation, path)
         return result
+    except WriteVerifyError as exc:
+        record(
+            "mcp.tool.file.edit_failed",
+            sandbox="cortex",
+            path=path,
+            operation=operation,
+            reason=exc.reason,
+            expected_sha256=exc.expected_sha256,
+            actual_sha256=exc.actual_sha256,
+        )
+        return write_verify_error_dict(exc)
     except (FileNotFoundError, ValueError) as exc:
         reason = (
             "not_found" if isinstance(exc, FileNotFoundError) else "validation_error"

@@ -44,7 +44,6 @@ class SkillSuggestDispatchRequest(BaseModel):
     loaded: list[str]
     conversation_context: str | None = None
     limit: int = Field(default=8, ge=1, le=25)
-    rerank: bool | None = None
     worker_timeout_seconds: int = Field(default=120, ge=1, le=300)
 
 
@@ -58,8 +57,10 @@ class SkillSuggestDispatchResponse(BaseModel):
     seat_preloaded: list[Any]
     ranker_status: str
     degraded: bool
+    degraded_reason: str | None = None
     route: Literal["worker", "fallback"]
     dispatch_execution_id: str | None = None
+    dispatch_durable: bool | None = None
 
 
 def _publish_event(event: Any) -> None:
@@ -166,7 +167,6 @@ async def run_fallback(
     loaded: list[str],
     conversation_context: str | None,
     limit: int,
-    rerank: bool | None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "agent": agent,
@@ -175,8 +175,6 @@ async def run_fallback(
     }
     if conversation_context is not None:
         payload["conversation_context"] = conversation_context
-    if rerank is not None:
-        payload["rerank"] = rerank
     async with make_async_client(DEFAULT_CORTEX_URL, timeout=_CORTEX_TIMEOUT) as client:
         resp = await client.post(
             "/skills/suggest",
@@ -219,7 +217,6 @@ async def dispatch_skill_suggest(
         conversation_context=body.conversation_context,
         agent=canonical_agent,
         limit=body.limit,
-        rerank=body.rerank,
     )
     t0 = time.monotonic()
     execution_id: str | None = None
@@ -240,7 +237,6 @@ async def dispatch_skill_suggest(
             loaded=body.loaded,
             conversation_context=body.conversation_context,
             limit=body.limit,
-            rerank=body.rerank,
         )
         _publish_event(
             FrontierSkillSuggestDispatchDegraded(
@@ -255,13 +251,18 @@ async def dispatch_skill_suggest(
 
     execution_id = str(dispatch_result.get("execution_id") or "")
     thread_id = str(dispatch_result.get("thread_id") or "")
+    result_handle = dispatch_result.get("result_handle")
+    dispatch_durable: bool | None = None
+    if isinstance(result_handle, dict):
+        durable_val = result_handle.get("durable")
+        if isinstance(durable_val, bool):
+            dispatch_durable = durable_val
     if not thread_id:
         result = await run_fallback(
             agent=canonical_agent,
             loaded=body.loaded,
             conversation_context=body.conversation_context,
             limit=body.limit,
-            rerank=body.rerank,
         )
         _publish_event(
             FrontierSkillSuggestDispatchDegraded(
@@ -296,7 +297,6 @@ async def dispatch_skill_suggest(
             loaded=body.loaded,
             conversation_context=body.conversation_context,
             limit=body.limit,
-            rerank=body.rerank,
         )
         _publish_event(
             FrontierSkillSuggestDispatchDegraded(
@@ -311,6 +311,7 @@ async def dispatch_skill_suggest(
 
     envelope["route"] = "worker"
     envelope["dispatch_execution_id"] = execution_id or None
+    envelope["dispatch_durable"] = dispatch_durable
     _publish_event(
         FrontierSkillSuggestDispatchCompleted(
             request_id=request_id,

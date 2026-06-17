@@ -173,7 +173,6 @@ def register_skill_suggest_tools(mcp: FastMCP) -> None:
         conversation_context: str | None = None,
         limit: int | None = None,
         agent: str | None = None,
-        rerank: bool | None = None,
         prefer_worker: bool | None = None,
         worker_timeout_seconds: int | None = None,
     ) -> dict[str, Any]:
@@ -224,8 +223,6 @@ def register_skill_suggest_tools(mcp: FastMCP) -> None:
             payload["conversation_context"] = conversation_context
         if limit is not None:
             payload["limit"] = limit
-        if rerank is not None:
-            payload["rerank"] = rerank
 
         if _uses_dispatch_shim(effective_agent, prefer_worker=prefer_worker):
             if worker_timeout_seconds is not None:

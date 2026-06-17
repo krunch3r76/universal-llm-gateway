@@ -24,7 +24,9 @@ _MAX_INFLIGHT = int(os.environ.get("SKILL_SUGGEST_RERANK_MAX_INFLIGHT", "4"))
 _CIRCUIT_FAILURE_THRESHOLD = int(
     os.environ.get("SKILL_SUGGEST_RERANK_CIRCUIT_FAILURES", "5")
 )
-_CIRCUIT_COOLDOWN_S = float(os.environ.get("SKILL_SUGGEST_RERANK_CIRCUIT_COOLDOWN_S", "30"))
+_CIRCUIT_COOLDOWN_S = float(
+    os.environ.get("SKILL_SUGGEST_RERANK_CIRCUIT_COOLDOWN_S", "30")
+)
 
 _semaphore = threading.BoundedSemaphore(_MAX_INFLIGHT)
 _circuit_lock = threading.Lock()
@@ -60,7 +62,9 @@ def _record_success() -> None:
         _circuit_open_until = 0.0
 
 
-def _candidate_payload(stage_a_candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _candidate_payload(
+    stage_a_candidates: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     return [
         {
             "slug": item["slug"],

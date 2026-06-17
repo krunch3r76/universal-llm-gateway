@@ -123,6 +123,9 @@ def _resolve_source_uri(cortex: CortexEntityReader, slug: str) -> str | None:
     except Exception as exc:
         logger.warning("enrich entity_get failed slug=%s error=%s", slug, exc)
         return None
+    top = entity.get("source_uri")
+    if top and str(top).strip():
+        return str(top).strip()
     attrs = entity.get("attributes") or {}
     if not isinstance(attrs, dict):
         return None

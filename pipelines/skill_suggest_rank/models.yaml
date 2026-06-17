@@ -1,3 +1,6 @@
+# EXPERIMENTAL-OFF — Stage-B rerank pipeline. Gated by SKILL_SUGGEST_RERANK_ENABLED
+# (default false). Model ref known-broken (404 cloud-google, exec 23c45017…);
+# revival tracked separately. Pipeline retained for future server-env-gated use.
 models:
   ranker:
     model: google/gemini-2.0-flash

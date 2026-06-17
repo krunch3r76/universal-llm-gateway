@@ -410,6 +410,7 @@ async def get_pipeline_execution(
             execution_id,
             url=tracker._agent_bus_url,
             auth_token=tracker._agent_bus_token,
+            wait_seconds=wait_clamped,
         )
         if recovered is not None:
             return JSONResponse(status_code=200, content=recovered)

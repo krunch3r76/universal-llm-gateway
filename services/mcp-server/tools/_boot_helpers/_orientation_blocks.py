@@ -37,99 +37,56 @@ from __future__ import annotations
 
 _MCP_BINDING_LIVENESS_BLOCK = """\
 ## MCP binding — connector-bound callable set (live probe required)
-Three layers — do not conflate:
-  1. **Server primary** — `_PRIMARY_TOOLS` / `tools/list` (manifest line follows this block)
-  2. **Overflow** — demoted tools; reachable only via `dispatch(tool=…)` when `dispatch` is bound
-  3. **Connector-bound** — what claude.ai loads into your callable set THIS session
-
-**Invariant**: server-primary ≠ initial callable set. The connector loads tools in two shapes:
-  - **Pre-bound** — tool is in the initial callable set → call directly.
-  - **Deferred** — tool absent initially but loadable via `tool_search` → one load hop, then direct call. This is a VALID connector-bound shape; session 0856 observed N=0 pre-bound with all 15 server-primary tools deferred behind `tool_search` (every loaded tool reached a healthy server).
-  - **tool_search is the bootstrap** — it is connector-side, always exposed in your system-prompt deferred-tools block (NOT a pre-bound server function). If `team_dispatch` / `tool_search` / any primary looks "absent," that means *not pre-bound*, not dropped: call `tool_search(query="<tool>")` FIRST. "I cannot dispatch because tool_search is missing" is a misread — the bootstrap is always there.
-Probe guidance: "absent from initial set" ≠ "connector dropped it" — run a `tool_search` load hop first. The `mcp.request.started`-event test applies ONLY to deferred SERVER-PRIMARY tools (fs, team_dispatch, …) AFTER a load hop: no-load AND no started event = connector omission → hand off (cursor-consult). It does NOT apply to `tool_search` itself, which is connector-side and emits no server event — never infer omission of `tool_search` from missing events. 0 `mcp.tool.search.called` events server-side ≠ `tool_search` never ran — connector-side/pre-bound lookups are invisible to the server; server-side calls DO emit `mcp.tool.search.called` (`tool_search.py`). Do not loop `tool_search`.
-
-**Overflow / deferred load via `tool_search`**:
-```
-tool_search(query="<keywords>")          # surfaces overflow AND deferred primary tools
-```
-  - A deferred SERVER-PRIMARY tool loaded this way becomes a direct callable — call it by name, NOT via `dispatch(tool=primary_name)` (dispatch rejects primary names).
-  - A true OVERFLOW tool is reached via `dispatch(tool="<name>", arguments='…')` (only when `dispatch` is itself bound)."""
+Three layers — do not conflate: (1) **Server primary** — `_PRIMARY_TOOLS`/`tools/list` (manifest line follows); (2) **Overflow** — reachable via `dispatch(tool=…)` when `dispatch` is bound; (3) **Connector-bound** — what claude.ai loads into your callable set THIS session.
+**Invariant**: server-primary ≠ initial callable set. Two shapes: **pre-bound** (in initial set → call directly) and **deferred** (absent initially but loadable via `tool_search` → one hop, then call by name — a VALID shape; N=0 pre-bound with all primaries deferred is normal, not a drop). **`tool_search` is the bootstrap** — connector-side, always in your system-prompt deferred-tools block. If `team_dispatch`/any primary looks "absent," that means *not pre-bound*, not dropped: call `tool_search(query="<tool>")` FIRST, then call the loaded primary by name (¬ via `dispatch`, which rejects primary names).
+Genuine omission only if a deferred primary neither loads nor emits an `mcp.request.started` after the hop → hand off (cursor-consult); never infer omission for `tool_search` itself (connector-side, emits no server event)."""
 
 _DISPATCH_CONSULT_BLOCK_CLAUDE = """\
 ## Dispatch & Consult — pick by CAPABILITY, not model family
-To consult a MODEL (any provider, incl. grok) you do NOT use a build harness.
-When connector-bound: team_dispatch + panel_dispatch are server-primary — call directly (if unbound, see MCP binding block above). Model strings = provider/model on optional model= override (bare name = 404).
-- API consult (any provider)        → pre-stage context on agent-bus thread; team_dispatch (op=generate, role=reviewer|artisan|skeptic|…, dispatch_thread_id=<thread>, contract=light-bounded, model="provider/model"?) → execution_id + thread_id + poll_hint; poll agent_bus(wait) from poll_hint (pipeline result = metadata fallback)
-- approach checkpoint               → after read-only orientation and before committing: choose `advisor` (fast strategic consult over packaged context), `team_dispatch` (tool-capable role consult), or `panel_dispatch` (cross-family disagreement). Web sessions must package the relevant chat/session concern in `advisor.context`; Cursor sessions may quote/summarize transcript/tool evidence directly.
-- role=skeptic                      → default xai/grok-4.20-multi-agent-0309 is inline-only/no-MCP; pre-stage corpus on the dispatch thread (¬ expect Cortex/fs writes from skeptic)
-- by API role (reviewer/artisan/…) → team_dispatch (op=generate, role=…) — ¬ synthetic seat models on generate (422)
-**Bound mechanical implement (default) → `team_dispatch(op=generate, role=cursor-sdk, source_ref=todo:{slug}, contract=implement, dispatch_thread_id=…)`** — server materializes from distilled todo attrs; auto Composer (cursor/composer-2.5), no IDE pickup; poll `poll_hint` (agent_bus wait). `packet_path=…` is the named exception (alternate transport / non-projectable corpus / break-glass). ⚠ PRECONDITION — DENSE INSTRUCTIONS: every file/function/test/SQL shape determinate, ACs explicit, zero design forks. Composer executes mechanically, so density is the safety substitute for the human-in-the-loop the default removes — a thin/ambiguous packet is a routing error: densify first or use the handoff fallback. SOT: agent-skills/consult-routing.md § Implement lane.
-⚠ "wrap" is overloaded: W1 Gate-3 wrap = inline hand-authored packetization (exception only); W3 `prepare_implement_packet` = server materialization function; W4 `contract=wrap` (landed) = inspection/materialize-only transport — returns `packet_path` without spawning Composer; default `contract=implement` + `source_ref` materializes and executes in one hop. None is a Gate-2 densify — do not spawn cross-family steering "as part of wrap" (friction #17374). SOT: handoff-packet-authoring.md § Gate 3.
-**Delivering a CONSULT packet to a manual seat IS `team_dispatch(op=handoff)` — the default for consult, not an option.** It posts the pointer + returns `push_reminder`/`poll_hint`. (Implement handoff = operator-attended FALLBACK only — SDK worker unavailable, tier picker, or Multitask.)
-- manual seat handoff → team_dispatch (op=handoff, seat=claude-web|claude-cursor, packet_path=…|source_ref=…, subject=…) — contract derived server-side (source_ref dispatch_lane → packet front-matter → default consult); claude-web → operator push, claude-cursor → IDE thread. (seat,contract) shorthands accepted; handoff seat-map: web-consult, web-implement → claude-web; cursor-consult, cursor-implement → claude-cursor.
-  ⚠ ANTI-PATTERN: never offer "paste the packet manually OR fire the handoff" / never instruct a hand copy-paste — the handoff IS the delivery.
-- consensus panel (≥2 families)     → panel_dispatch(messages=[…], dispatch_thread_id="…", disposition="panel")  [primary]
-- stronger-model strategic advice   → dispatch(tool="advisor", arguments='{"problem":"…","context":"goal/evidence/approach/uncertainty/decision"}')  [overflow]
-- RAG advice inside a pipeline      → dispatch(tool="pipeline_consult", arguments='{"execution_id":"…","step_name":"…","problem":"…"}')  [overflow]
-- bounded determinate task → team_dispatch(op=generate, role=cursor-sdk, dispatch_thread_id=<thread>, contract=light-bounded|pure-mechanical|implement, source_ref=todo:{slug}|packet_path?=…) — implement defaults to source_ref; packet_path is the named exception
-- deprecated: op=handoff,seat=cursor-sdk normalizes to generate with a warning
-- run a named pipeline              → pipeline (op=run|async)
-⚠ A build harness is not a model picker. "Want a grok answer" → team_dispatch(op=generate, role=artisan, model="xai/grok-4.3", …), never a build harness.
-Full shapes: reference:claude-web-lead-seat-surface → claude-web-dispatch-decision-table.md"""
+To consult a MODEL (any provider, incl. grok) you do NOT use a build harness. When connector-bound, `team_dispatch`/`panel_dispatch` are server-primary — call directly (if unbound, see MCP binding block). Model strings = `provider/model` on optional `model=` override (bare name = 404).
+- **API consult / role** (reviewer|artisan|skeptic|…) → pre-stage context on an agent-bus thread; `team_dispatch(op=generate, role=…, dispatch_thread_id=<thread>, model="provider/model"?)` → execution_id + poll_hint; poll `agent_bus(wait)`. ¬ synthetic seat models on generate (422). role=skeptic (grok) is inline-only/no-MCP — pre-stage corpus in messages.
+- **Mechanical implement (default)** → `team_dispatch(op=generate, role=cursor-sdk, source_ref=todo:{slug}, contract=implement, dispatch_thread_id=…)` — server materializes from distilled todo attrs; auto Composer, no IDE pickup. PRECONDITION: dense, determinate instructions (Composer executes mechanically; thin packet = routing error). `packet_path=` is the named exception.
+- **Manual-seat handoff (consult default)** → `team_dispatch(op=handoff, seat=claude-web|claude-cursor, source_ref=…|packet_path=…, subject=…)`; web→operator push, cursor→IDE thread. The handoff IS the delivery — never instruct a manual copy-paste.
+- **Panel** (≥2 families) → `panel_dispatch(messages=[…], dispatch_thread_id="…", disposition="panel")`.
+- **Strategic advice** → `dispatch(tool="advisor", …)` [overflow]. **Named pipeline** → `pipeline(op=run|async)`.
+⚠ A build harness is not a model picker: "want a grok answer" → `team_dispatch(op=generate, role=artisan, model="xai/grok-4.3")`.
+Full shapes + wrap/contract semantics + executor tiers: agent-skills/consult-routing.md → claude-web-dispatch-decision-table.md."""
 
 # Co-located liveness block (2a durable home). Trimmed per F4-A finding (thread
 # 1289): 3-question redirect + salience line kept inline; substrate table collapsed
 # to prose — it is reference-density, recoverable from commit-and-git-scope_ws.mdc (git-posture content; entity agent_skill:git-posture).
 _ENTITY_HIERARCHY_BLOCK = """\
 ## Entity granularity — seed the right type
-- **Todos have steps; plans have phases** — invariant. `phase` / `Phase N` is plan-domain only (`plan:` / `plan_phase:` / `/implement-plan`). On `todo:` / `task:` use **steps** or **slices**, never phases.
-- **work item** is the canonical genus for actionable Cortex work: `project:`, `plan:`, `task:`, and `todo:`. Use `entity` for graph/storage representation, not as the domain umbrella.
-- **plan:** → **plan_phase:** children — ordered **phases**.
-- **task:** → **todo:** children via `child_of`; umbrella `project:` via `related_to` — bounded arc of ≥2 leaf todos ordered by **steps** (todo ordering / `depends_on`), NOT plan_phase.
-- **todo:** → steps inline in the body — one unit of work. Do NOT cram "PHASE 1/2/3" into a todo (that's a plan).
-Seed with generic primitives (`entity_create` + `relationship_create` `child_of`); refs: `agent-skills/entity-lifecycle-discipline.md` §Vocabulary / §task:X."""
+- **Todos have steps; plans have phases** — invariant. `phase`/`Phase N` is plan-domain only (`plan:` / `plan_phase:` / `/implement-plan`); on `todo:`/`task:` use **steps**/**slices**, never phases.
+- **work item** = canonical genus for `project:`/`plan:`/`task:`/`todo:`. plan→plan_phase children (phases); task→todo children via `child_of` + umbrella `project:` via `related_to` (bounded arc of ≥2 leaf todos ordered by steps/`depends_on`); todo→steps inline in the body (¬ cram "PHASE 1/2/3" — that's a plan).
+Seed via `entity_create` + `relationship_create child_of`; refs: agent-skills/entity-lifecycle-discipline.md."""
 
 _LIVENESS_BLOCK = """\
-## Git posture & liveness — disk + cortex are canonical; git is not the project index
-Truth substrate: the working tree is canonical for what EXISTS / what it SAYS; cortex/RAG for provenance/decisions; the running process for what is LIVE. Git is a checkpoint/transport layer, NOT the project index — `tasks/` + most of `docs/` are gitignored by design, so "not git-tracked" says nothing about real/canonical/done. ¬ infer existence / canonicality / authorship / done-ness from `git ls-files`/`status`/`log` — read the file, the entity, or a live probe. "No established git workflow" is the default, not an omission to patch.
-A change is LIVE only when LOADED into the running process at its last deploy/restart. Git commit/master is neither necessary nor sufficient.
-Before claiming a surface changed, ask three questions — do NOT read git for this:
-  1. WHICH substrate?   2. Did its LOAD EVENT fire?   3. What does the LIVE PROBE say?
-Substrates: service behavior (sync_restart/rebuild → observability probe) · MCP tool surface (mcp restart → boot manifest + binding probe, ¬ tool_search alone) · routing+catalog (sync_restart → /v1/models) · agent-context (cortex_boot → this card).
-⚠ Salience trap: "commit" is the loudest done/durable signal, so it gets grabbed as a liveness proxy under load. It is not one. Verify against the load event + probe, never the tree.
-⚠ Completion gate: commit is likewise NOT a completion gate. Agent dev work is done/handoffable when deliverables are durable in workspace + cortex and verification passes. Never gate, wait, or hand a task back "to commit", nor list "commit" as an outstanding action item — unless a named workflow defines a commit/merge/release step."""
+## Git posture & liveness — disk + cortex canonical; git ≠ project index
+A change is LIVE only when LOADED into the running process at its last deploy/restart — git commit/master is neither necessary nor sufficient. Before claiming a surface changed, ask: (1) WHICH substrate? (2) did its LOAD EVENT fire? (3) what does the LIVE PROBE say? — service behavior→`sync_restart`+observability · MCP surface→mcp restart+boot manifest · routing→`/v1/models` · agent-context→`cortex_boot`. ¬ infer existence/canonicality/done-ness from git; commit is NOT a completion gate.
+Full doctrine: injected `architecture-invariants` skill `[universal:git-posture]` + agent-skills/git-posture.md."""
 
 # Compact index — full playbook is agent-skills/consult-routing.md (current superset,
 # verified 2026-06-04). The two highest-frequency traps are kept inline; everything
 # else defers to the skill. See F2 finding, thread 1289.
 _CONSULT_ROUTING_GATE = """\
 ## Consult routing — read the skill before dispatching
-On any consult / review / second-opinion / handoff / dispatch outside this seat:
-read `agent-skills/consult-routing.md` BEFORE choosing transport (full playbook; this is only the index).
-Three traps that cost a round-trip:
-- team_dispatch(op=generate) with synthetic seat model (claude-web|claude-cursor) → 422; manual seats take op=handoff with role=.
-- "Want a grok answer" is not a build harness → team_dispatch(role=artisan, model="xai/grok-4.3").
-- role=skeptic is inline-only/no-MCP (default multi-agent grok) → pre-stage corpus in messages; read admission `capabilities` / `panel_capabilities`.
-- Wrong rules tree: the handoff protocol is NOT under `universal-llm-gateway/.cursor/rules/`. It lives at PROJECT `.cursor/rules/architecture-handoff-protocol.mdc` + `handoff-dispatchers.mdc` (no repo prefix).
-Mandatory preflight before ANY handoff packet or team_dispatch(op=handoff) — implement (role=cursor-implement) is NOT exempt:
+On any consult / review / second-opinion / handoff / dispatch outside this seat, read `agent-skills/consult-routing.md` BEFORE choosing transport (full playbook; this block is only the index).
+Mandatory preflight before ANY handoff packet or `team_dispatch(op=handoff)` (implement NOT exempt):
   fs(cortex, agent-skills/consult-routing.md)
   fs(workspaces, .cursor/rules/architecture-handoff-protocol.mdc)   # § Six Blocks
   fs(workspaces, .cursor/rules/handoff-dispatchers.mdc)             # § target seat
-Executor-tier policy (R1/R2/R3 — spec authorship, Composer acceptance, widened-discovery): `consult-routing.md` § Executor tier & handoff mechanics → Canonical routing policy (¬ restate here).
-Codified bug ticket = the investigate→execute fix cycle (investigate → dense spec + attribute distillation at investigate close, then execute via the bound-implement default — `cursor-sdk` + `source_ref` once Gate-2 attrs distilled) + pass zoom-out duty (widen beyond filed symptom; touch-point inventory; bug-class grep; labeled secondary findings in closeout). A filed bug defaults to the INVESTIGATION tier (friction 13571 → thread 1377). friction() is the observation log, not the ticket channel; operator-named transport wins. Full model: consult-routing.md § Codified bug reports → Pass zoom-out duty."""
+Executor-tier policy (R1/R2/R3), the codified-bug investigate→execute fix cycle + pass zoom-out duty, and the three round-trip traps all live in consult-routing.md — read it, don't restate from memory. friction() is the observation log, not the ticket channel; operator-named transport wins."""
 
 _RAG_SCOPE_AWARENESS_BLOCK = """\
 ## RAG corpus retrieval — primary tool (call directly; ¬ dispatch overflow)
-Semantic corpus search from any MCP seat (incl. Cursor): call the **primary** `rag` dispatcher directly — do NOT route through `dispatch(tool="rag_search")` or `tool_search` overflow templates.
+Semantic corpus search from any seat (incl. Cursor): call the **primary** `rag` dispatcher directly — ¬ via `dispatch(tool="rag_search")` or `tool_search` overflow.
 ```
 rag(op="search", arguments='{"query": "<natural language>", "scope": "<scope>", "limit": 20}')
-rag(op="list_scopes")   # enumerate ~68 scopes before an absence claim
+rag(op="list_scopes")   # enumerate scopes before any absence claim
 rag(op="coverage")      # per-scope indexed file counts
 ```
-`pipeline_consult` is overflow-only and requires a prior `execution_id` — it is for in-pipeline step advice, not ad-hoc corpus lookup. `search_project_files` is regex/literal file search (`pattern=`, not `query=`).
-## RAG scope-awareness — default search is auto-scoped, not corpus-wide
-When `scope` is omitted, `rag(op="search")` runs an LLM scope-classifier, then searches only the predicted scope(s) — scopes include `software_agents`, `workflows`, `agent_skills_research`, `temporal_provenance`, `research`, …
-Before concluding "no prior art / nothing exists / not in the corpus": run `rag(op="list_scopes")` (or `coverage`) and re-search with an explicit `scope=` over the relevant domains. A single default search is necessary-but-not-sufficient for an absence claim."""
+Default search is AUTO-SCOPED (LLM scope-classifier → predicted scope only), not corpus-wide. Before concluding "no prior art / not in the corpus": `list_scopes` then re-search with an explicit `scope=`. `pipeline_consult` is overflow + needs a prior `execution_id` (not ad-hoc lookup); `search_project_files` is regex/literal file search (`pattern=`)."""
 
 
 def _render_server_primary_manifest_line() -> str:
@@ -199,13 +156,10 @@ def _session_close_orientation_for_agent(agent: str | None) -> str | None:
 # effort / thinking); the context axis is Cursor-only. (todo: web tier-awareness)
 _TIER_SELECTION_BLOCK = """\
 ## Model tier — declare your config; fit-check every session
-You have NO reliable runtime self-identifier for your active model/tier, so the mechanism is operator-in-the-middle. Configuration is a 3-axis tuple: **family × effort × thinking**. Context is not a tunable knob on web — it is a fixed per-family property (Gemini 3.5 Flash = 1M; others = family default).
-- Reasoning ceiling order: **Fable 5** (flagship, most expensive) › **Opus 4.8** (reasoning default) ≈ **GPT-5.5** (cross-family reviewer / high-rework) › **Sonnet** (workhorse). **Gemini 3.5 Flash** is a lateral pick — flat (no effort/thinking knobs), 1M context, for large-corpus mechanical/summarization.
-- Effort (where exposed): Low / Medium / High / Extra / Max. Thinking: on / off. Gemini is flat — selecting it IS the whole config.
-When the operator prefixes a request with identity (`you are running {family} {effort} thinking={on|off}`): emit the **tier-check verdict** BEFORE other work — SUITABLE ⇒ proceed same turn; NOT SUITABLE ⇒ halt and wait.
-Absent a declared identity: surface a one-line non-blocking advisory only when a task-class trigger fires (cross-agent protocol, multi-subsystem review, schema/vocab design, adversarial work, 2 consecutive failures). The reliable path is the operator declaring identity — the passive fallback is a backstop.
-**Mid-session pivot**: track your last-declared tier; on a task-class pivot, DEFAULT to dispatching the sub-task OUT (`team_dispatch`) to hold context + stay lean — switch the resident tier only when the work is inseparable from the live thread. Picking up an agent-bus thread from a `team_dispatch`: the executor is pre-specified — accept it on turn 1, don't challenge it (mid-session pivots still allowed).
-Full protocol — verdict format, recommended-config table, escalate/downgrade triggers (derived home — edit this first): `fs(cortex, agent-skills/model-tier-awareness-web.md)`"""
+No reliable runtime self-identifier for your active model/tier → the mechanism is operator-in-the-middle. Config is a 3-axis tuple: **family × effort × thinking** (context is a fixed per-family property on web, not a knob).
+When the operator prefixes a request with identity (`you are running {family} {effort} thinking={on|off}`): emit the **tier-check verdict** BEFORE other work — SUITABLE ⇒ proceed same turn; NOT SUITABLE ⇒ halt and wait. Absent a declared identity: surface a one-line non-blocking advisory only when a task-class trigger fires (cross-agent protocol, multi-subsystem review, schema/vocab design, adversarial work, 2 consecutive failures).
+**Mid-session pivot**: on a task-class pivot, DEFAULT to dispatching the sub-task OUT (`team_dispatch`) to hold context + stay lean; switch the resident tier only when the work is inseparable from the live thread. Picking up an agent-bus thread from a `team_dispatch`: the executor is pre-specified — accept it on turn 1.
+Reasoning-ceiling order, recommended-config table, escalate/downgrade triggers (derived home — edit first): `fs(cortex, agent-skills/model-tier-awareness-web.md)`."""
 
 
 def _tier_selection_orientation_for_agent(agent: str | None) -> str | None:
@@ -216,26 +170,10 @@ def _tier_selection_orientation_for_agent(agent: str | None) -> str | None:
 
 _SEAT_CAPABILITY_VERIFY_BLOCK = """\
 ## Seat capability verify — verification is shell-free on web (probe before refusing)
-Absence of a shell ≠ a step is unavailable. Before ANY "this seat cannot run Y" claim, run
-`tool_search("Y")` and bind to the catalog row. Deferred PRIMARY tools load by name after the
-hop; OVERFLOW tools run via `dispatch(tool="…")`.
-**Callable today (no shell, via `dispatch` after a `tool_search` hop):**
-  - code gate → `dispatch(tool="quality_gate", arguments='{"files": ["path/a.py", "path/b.py"]}')`
-    (ruff + compileall + import-check; surfaces in `tool_search("quality gate")`). When edited
-    files touch `libs/llm_adapters/` or `libs/model_id/`, the gate also runs Lane A offline
-    pytest (`-m offline`) and returns a `"tests"` key.
-  - security replay → `dispatch(tool="http_replay", arguments='{"captured_request": {…}}')`;
-    same overflow path for `http_request`, `http_diff`, `session_store`, `js_analyze`.
-    NOTE: these do NOT reliably surface in `tool_search` by keyword — call them by EXACT name.
-**Outside `quality_gate` pytest closure:**
-  - arbitrary pytest paths (`services/rag/`, integration, etc.) are not MCP-runnable today.
-  - Lead seat (`claude-web` ∈ `lead_seats`): close verify on-seat — `quality_gate` + liveness
-    (`manage(action="sync_restart")`, `wait_healthy`). ¬ `team_dispatch(role=cursor-implement)`
-    for verify-only; dispatch only when implement substrate requires Cursor.
-**CLI-only (shell required — hand off):** `tools/pipeline_test replay`.
-Service restart/liveness: `manage(action="sync_restart", service=…)`. ¬ blanket "web cannot
-verify". Full rule: project-root `.cursor/rules/handoff-dispatchers.mdc` § Seat capability
-verify (Quick Reference) + `agent-skills/consult-routing.md`."""
+Absence of a shell ≠ a step is unavailable. Before ANY "this seat cannot run Y" claim, run `tool_search("Y")` and bind to the catalog row (deferred PRIMARY tools load by name; OVERFLOW tools run via `dispatch(tool="…")`).
+- code gate → `dispatch(tool="quality_gate", arguments='{"files": ["path/a.py"]}')` (ruff + compileall + import-check; +Lane-A offline pytest when edits touch `libs/llm_adapters/` or `libs/model_id/`). Security replay (`http_replay`/`http_request`/`http_diff`/`session_store`/`js_analyze`) — call by EXACT name (¬ reliably keyworded in `tool_search`).
+- **Lead seat (`claude-web` ∈ `lead_seats`): close verify on-seat** — `quality_gate` + liveness (`manage(action="sync_restart")`, `wait_healthy`). ¬ dispatch cursor for verify-only.
+Arbitrary pytest paths (`services/rag/`, integration) + `tools/pipeline_test replay` are shell/CLI-only → hand off. Full catalog: .cursor/rules/handoff-dispatchers.mdc § Seat capability verify + agent-skills/consult-routing.md."""
 
 
 def _seat_capability_verify_orientation_for_agent(agent: str | None) -> str | None:
