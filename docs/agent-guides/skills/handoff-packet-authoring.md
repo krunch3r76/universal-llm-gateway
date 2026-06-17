@@ -176,7 +176,7 @@ the exact hesitation seen on thread 1770. Close it at the source:
 - **At Gate 2 close** (`ready-for-Composer-implement`): record an implement-ready assertion
   citing the now-dense spec; promote `confidence_band` per the ratified design;
   **distill `files_expected` + `acceptance_criteria`** onto the todo (see step 6 above);
-  `workflow_state` stays `in_progress` until Gate 3 completes.
+  `workflow_state` stays `in_progress` until Gate 3 completes. **Predicate shape:** lead the implement-ready claim with implement-ready intent so it normalizes to `status({todo_id}, implement_ready, current)` — do NOT phrase it "reopened (in_progress)"/"in_progress" (normalizes to an `in_progress` predicate or a `has_attribute` no-match, which the materializer readiness gate ignores); cite the dense spec + `spec_sha256:<hex>` in `evidence_uris`; set `predicate_form` explicitly if the normalizer still mis-targets.
 
 The reviewer never has to ask permission to fix todo hygiene — by this contract it was never
 theirs to fix.

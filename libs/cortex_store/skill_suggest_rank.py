@@ -42,6 +42,23 @@ def rerank_enabled_default() -> bool:
     }
 
 
+def describe_only_enabled_default() -> bool:
+    """Runtime LLM describe_only fallback — OFF by default.
+
+    After boot-aligned projection (skill_description_text), a missing description
+    is a rare degraded state (file unreadable AND entity description empty); the
+    deterministic slug-humanize fallback covers it without a network hop. This
+    flag re-enables the Stage-B describe pass only when explicitly opted in.
+    """
+    return os.environ.get(
+        "SKILL_SUGGEST_DESCRIBE_ONLY_ENABLED", "false"
+    ).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+
+
 def _circuit_open() -> bool:
     return time.monotonic() < _circuit_open_until
 

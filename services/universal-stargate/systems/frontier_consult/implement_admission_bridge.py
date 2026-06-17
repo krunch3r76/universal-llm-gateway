@@ -82,6 +82,9 @@ class StargateCortexReader:
     def assertion_state(self, entity_id: str, **kwargs: Any) -> dict[str, Any]:
         return self._dispatch("assertion_state", entity_id, **kwargs)
 
+    def assertions(self, entity_id: str, **kwargs: Any) -> dict[str, Any]:
+        return self._dispatch("assertions", entity_id, **kwargs)
+
     def entity_get(self, entity_id: str, **kwargs: Any) -> dict[str, Any]:
         # Entity-seed normalize (todo:/plan:/plan_phase:) reads the entity here.
         # Without this method, _normalize_entity's broad except surfaces the

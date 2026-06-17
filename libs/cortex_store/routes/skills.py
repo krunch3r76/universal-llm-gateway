@@ -46,6 +46,7 @@ from ..skill_listing_format import (
 )
 from ..skill_suggest_rank import (
     apply_rerank,
+    describe_only_enabled_default,
     rerank_enabled_default,
     suggestions_need_description,
 )
@@ -486,6 +487,7 @@ async def post_skill_suggest(
     should_rank = effective_rerank and ctx_present and result.get("suggestions")
     should_describe = (
         not effective_rerank
+        and describe_only_enabled_default()
         and needs_description
         and ctx_present
         and result.get("suggestions")
@@ -497,7 +499,7 @@ async def post_skill_suggest(
             conversation_context=body.conversation_context or "",
             loaded=body.loaded,
             limit=body.limit,
-            describe_only=should_describe and not effective_rerank,
+            describe_only=should_describe,
         )
     elif (
         not effective_rerank

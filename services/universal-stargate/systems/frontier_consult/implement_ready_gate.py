@@ -43,6 +43,89 @@ def _coerce_assertion_id(raw: Any) -> int | None:
     return None
 
 
+_IMPLEMENT_READY_STATUS = "implement_ready"
+
+
+def _normalize_predicate(raw: Any) -> str:
+    if not isinstance(raw, str):
+        return ""
+    return "".join(raw.split()).lower()
+
+
+def _is_active_assertion(assertion: dict[str, Any], *, now_iso: str) -> bool:
+    if assertion.get("superseded_by"):
+        return False
+    valid_until = assertion.get("valid_until")
+    return not (valid_until and str(valid_until) <= now_iso)
+
+
+def _pin_needs_resolution(
+    assertion: dict[str, Any] | None,
+    *,
+    todo_id: str,
+    now_iso: str,
+) -> bool:
+    """True when the pinned assertion cannot serve as the readiness record."""
+    if assertion is None:
+        return True
+    if assertion.get("entity_id") != todo_id:
+        return True
+    return not _is_active_assertion(assertion, now_iso=now_iso)
+
+
+def _resolve_fresh_implement_ready(
+    *,
+    todo_id: str,
+    cortex: StargateCortexReader,
+    now_iso: str,
+) -> tuple[int, dict[str, Any]] | None:
+    """Latest active confirmed implement-ready assertion on the todo, or None.
+
+    Fallback for when the pinned ``implement_ready_assertion_id`` is missing,
+    inactive, or bound to the wrong entity (friction 19783): the pin is stamped
+    once at first materialization and a fresh manual declaration on a reopened
+    todo never restamps it. Selection keys off ``predicate_form`` ==
+    ``status({todo_id}, implement_ready, current)`` so a later ``implemented``
+    (or other-status) confirmed row can never be chosen — the failure mode that
+    makes assertion_state.latest_confirmed-based resolution unsafe.
+    """
+    listed = cortex.assertions(
+        todo_id,
+        confidence="confirmed",
+        superseded=False,
+        intent="full",
+        limit=50,
+    )
+    items = listed.get("items") if isinstance(listed, dict) else None
+    if not isinstance(items, list):
+        return None
+
+    target = _normalize_predicate(
+        f"status({todo_id}, {_IMPLEMENT_READY_STATUS}, current)"
+    )
+    best: dict[str, Any] | None = None
+    best_key: tuple[str, int] = ("", -1)
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        if item.get("entity_id") != todo_id:
+            continue
+        if _normalize_predicate(item.get("predicate_form")) != target:
+            continue
+        if not _is_active_assertion(item, now_iso=now_iso):
+            continue
+        aid = _coerce_assertion_id(item.get("id"))
+        if aid is None:
+            continue
+        key = (str(item.get("observed_at") or ""), aid)
+        if key > best_key:
+            best, best_key = item, key
+
+    if best is None:
+        return None
+    return best_key[1], best
+
+
 def _spec_basename(uri: str) -> str | None:
     match = _DENSE_SPEC_RE.search(uri)
     if not match:
@@ -107,12 +190,34 @@ def require_implement_ready(
 
     entity = cortex.entity_get(ref.canonical_ref)
     attrs = _decode_attributes(entity.get("attributes"))
+    triage = (attrs.get("density_triage") or "").strip()
+    now_iso = datetime.now(UTC).isoformat()
+
     aid = _coerce_assertion_id(attrs.get("implement_ready_assertion_id"))
     assertion: dict[str, Any] | None = None
     if aid is not None:
         loaded = cortex.assertion_get(aid)
         if isinstance(loaded, dict) and "error" not in loaded:
             assertion = loaded
+
+    # Friction 19783: the pinned implement_ready_assertion_id is stamped once at
+    # first materialization (distill) and is never re-resolved here. When a todo
+    # is reopened for a new spec version, a fresh implement-ready declaration
+    # does not restamp the pin, so the gate keeps citing the superseded id and
+    # the documented "record a fresh implement-ready declaration" remedy is inert
+    # unless distillation is rerun. Fall back to the latest active confirmed
+    # implement-ready assertion on the todo when the pinned row is missing,
+    # inactive, or bound to the wrong entity. Only the judgment_required lane
+    # consults an assertion at all. Resolution lives in the adapter;
+    # evaluate_implement_ready stays a pure verdict over a single resolved row.
+    if triage == "judgment_required" and _pin_needs_resolution(
+        assertion, todo_id=ref.canonical_ref, now_iso=now_iso
+    ):
+        resolved = _resolve_fresh_implement_ready(
+            todo_id=ref.canonical_ref, cortex=cortex, now_iso=now_iso
+        )
+        if resolved is not None:
+            aid, assertion = resolved
 
     evidence = assertion.get("evidence_uris") if assertion else None
     cited_uri: str | None = None
@@ -135,7 +240,7 @@ def require_implement_ready(
         source_uri=entity.get("source_uri"),
         implement_ready_assertion_id=aid,
         assertion=assertion,
-        now_iso=datetime.now(UTC).isoformat(),
+        now_iso=now_iso,
         dense_spec_uri=cited_uri,
         dense_spec_text=dense_spec_text,
         files_expected=files_expected,

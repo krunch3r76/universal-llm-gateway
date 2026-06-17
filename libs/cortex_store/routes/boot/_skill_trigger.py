@@ -7,7 +7,11 @@ import re
 from pathlib import Path
 from typing import Any
 
+from universal_logging import get_logger
+
 from ...dispatch_ops._shared import _FILES_ROOT
+
+logger = get_logger("cortex-api.boot._skill_trigger")
 
 _WORKSPACES_ROOT = Path(
     os.environ.get("WORKSPACES_ROOT", "/mnt/torus/projects")
@@ -93,7 +97,8 @@ def skill_trigger_text(row: dict[str, Any]) -> str:
     if path is not None:
         try:
             text = path.read_text(encoding="utf-8")
-        except OSError:
+        except OSError as exc:
+            logger.debug("skill trigger read failed for %s: %s", path, exc)
             text = ""
         else:
             for candidate in (

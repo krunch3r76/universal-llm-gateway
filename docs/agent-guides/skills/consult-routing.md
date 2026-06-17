@@ -36,6 +36,8 @@ team_dispatch(op="handoff", role="cursor-implement",
 #               dispatch_thread_id="{arc-id}")
 ```
 
+**Preflight — verify live (mandatory).** Before any `contract=implement` dispatch (or Gate-3 `source_ref` handoff), run `implement-todo` §1 verify-live: `entity_get(todo:{slug})`, confirm `workflow_state ∈ {open, in_progress}` (not `done`/`superseded`/stale — boot-card rows and bus turns go stale; the entity is canonical). Loading `cursor-sdk-instruction-standard` is necessary but not sufficient; it does not check liveness. **Re-versioned / previously-done todo:** `source_ref` can reuse a stale pinned `implement_ready_assertion_id` (silent — the inactive-assertion reject only fires on actual supersession), so refresh first (supersede old assertion → update `implement_ready_assertion_id` → re-distill attrs) or prefer `packet_path` until the pin is verified. Canonical detail: cortex SOT § Implement lane — source_ref.
+
 Introduced `todo:unified-admission-handoff-source-ref` (2026-06-08); arc shipped
 `task:unified-implement-admission` (2026-06-10).
 
@@ -76,6 +78,8 @@ cortex(tool="entity_update", arguments={
 **Waiver:** set `attributes.attributes_distillation_waived='<reason>'` to suppress the advisory session-close detector when documented intent waives distillation. This does **not** bypass the dispatch-time hard gate.
 
 **Write-time shape gate:** `validate_distilled_attributes` rejects malformed implement-lane values and deprecated aliases (`files_modified`, `acceptance`) at `entity_create`/`entity_update`.
+
+**Implement-ready predicate shape.** The Gate-2-close readiness assertion MUST normalize to `status({todo_id}, implement_ready, current)`. Lead the claim with implement-ready intent; avoid "reopened (in_progress)"/"in_progress" phrasing (it normalizes to an `in_progress` predicate or `has_attribute` no-match and the readiness gate won't recognize it). Cite dense spec + `spec_sha256:<hex>` in `evidence_uris`; set `predicate_form` explicitly if the normalizer mis-targets.
 
 Once both schemas pass with zero open forks, Gate-3 closeout hands off to direct
 `source_ref` implement dispatch — wrap is not on the happy path.

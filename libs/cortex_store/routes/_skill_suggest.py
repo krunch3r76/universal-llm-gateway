@@ -418,7 +418,7 @@ def _build_related_union(
 def _decode_trigger_short(raw: str | None) -> list[str]:
     if not raw:
         return []
-    return [t for t in tokenize_text(str(raw))]
+    return list(tokenize_text(str(raw)))
 
 
 def _term_matches(term: str, ctx_tokens: set[str]) -> bool:
@@ -540,8 +540,17 @@ def _public_suggestion(entry: dict[str, Any]) -> dict[str, Any]:
     return {k: entry[k] for k in _PUBLIC_SUGGESTION_KEYS if k in entry}
 
 
+def _humanize_slug(slug: str) -> str:
+    """Deterministic last-resort description — readable slug, no network hop."""
+    return slug.replace("-", " ").replace("_", " ").strip()
+
+
 def _suggestion_description(row: dict[str, Any]) -> str:
-    return skill_description_text(row)
+    description = skill_description_text(row)
+    if description:
+        return description
+    slug = slug_from_source_uri(row.get("source_uri")) or str(row.get("name") or "")
+    return _humanize_slug(slug)
 
 
 def _deterministic_reason(description: str, *, slug: str, ctx: str) -> str:
