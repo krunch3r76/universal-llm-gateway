@@ -9,6 +9,8 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from .routes.boot._skill_trigger import canonical_skill_summary
+
 _LOAD_CONTRACT_LINE = (
     "> **Load a body**: `GET /skills/body?id=agent_skill:<slug>&expected_digest=<digest>` "
     "(REST) or `fs(cortex, md_read, agent-skills/<slug>.md)`."
@@ -137,11 +139,11 @@ _TIER1_GATE_SLUGS: frozenset[str] = frozenset(
 
 def _skill_trigger_display(row: Mapping[str, Any]) -> str:
     """Listing trigger: trigger_short first; short description fallback only."""
-    ts = (row.get("trigger_short") or "").strip()
-    if ts:
-        return ts
-    dfs = (row.get("description_first_sentence") or "").strip()
-    return dfs[:72] + ("…" if len(dfs) > 72 else "")
+    return canonical_skill_summary(
+        row.get("trigger_short"),
+        str(row.get("description_first_sentence") or ""),
+        max_chars=72,
+    )
 
 
 def _skill_tags_suffix(row: Mapping[str, Any], *, max_tags: int = 3) -> str:

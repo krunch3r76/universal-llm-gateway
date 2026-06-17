@@ -58,7 +58,7 @@ from ._skill_index import (
     slug_from_row,
 )
 from ._skill_suggest import run_stage_a
-from .boot._skill_trigger import _resolve_skill_file, skill_trigger_text
+from .boot._skill_trigger import _resolve_skill_file, skill_description_text
 
 _DISCOVERABLE_SKILL_LIFECYCLE = discoverable_skill_lifecycle_sql_predicate()
 
@@ -100,7 +100,7 @@ def _manifest_row(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": entity_id,
         "name": row.get("name"),
-        "trigger": skill_trigger_text(row),
+        "trigger": skill_description_text(row),
         "skill_category": row.get("skill_category"),
         "applicable_agents": _decode_list(row.get("applicable_agents_json")),
         "delivery_priority": (

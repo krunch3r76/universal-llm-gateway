@@ -89,6 +89,24 @@ def _resolve_skill_file(source_uri: str | None, slug: str) -> Path | None:
     return fallback if fallback.is_file() else None
 
 
+def canonical_skill_summary(
+    trigger_short: str | None, fallback: str, *, max_chars: int | None = None
+) -> str:
+    """Canonical skill-summary order: curated trigger_short, else fallback.
+
+    Truncation (ellipsis) applies ONLY to the fallback branch — a curated
+    trigger_short is emitted verbatim. Mirrors the legacy boot-card behavior so
+    converging the surfaces does not change rendered bytes.
+    """
+    ts = (trigger_short or "").strip()
+    if ts:
+        return ts
+    fb = (fallback or "").strip()
+    if max_chars is not None and len(fb) > max_chars:
+        return fb[:max_chars] + "\u2026"
+    return fb
+
+
 def skill_trigger_text(row: dict[str, Any]) -> str:
     """Project manifest trigger from file frontmatter / Trigger line, else entity description."""
     entity_id = str(row.get("id") or "")
@@ -112,7 +130,4 @@ def skill_trigger_text(row: dict[str, Any]) -> str:
 
 def skill_description_text(row: dict[str, Any]) -> str:
     """Boot-aligned summary for skill_suggest — trigger_short, then L1 first sentence."""
-    trigger_short = str(row.get("trigger_short") or "").strip()
-    if trigger_short:
-        return trigger_short
-    return skill_trigger_text(row)
+    return canonical_skill_summary(row.get("trigger_short"), skill_trigger_text(row))
