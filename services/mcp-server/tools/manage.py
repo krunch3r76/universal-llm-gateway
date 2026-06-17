@@ -240,10 +240,14 @@ def register_manage_tools(mcp: FastMCP) -> None:
           wait_healthy  (service, timeout?) — block until RUNNING or timeout
           busy_status   (no service needed) — per-service busy read model: for
                                              each service {busy, restart_would_defer,
-                                             active_work} plus a process block
-                                             {manage_inflight, activities}. Reads
-                                             the drain probes WITHOUT acquiring any
-                                             restart slot — safe to poll live.
+                                             active_work, restart_intent} plus a
+                                             process block {manage_inflight,
+                                             activities}. restart_intent is null when
+                                             no live non-terminal intent exists;
+                                             otherwise {restart_intent_id, status,
+                                             drain_epoch, deadline_at, elapsed_s}.
+                                             Reads the drain probes WITHOUT acquiring
+                                             any restart slot — safe to poll live.
 
         Services: gateway, stargate, rag, cloud_proxy, mcp, event_service,
                   cortex_api, agent_bus, email_bridge, git_integration_worker

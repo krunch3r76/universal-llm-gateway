@@ -214,6 +214,7 @@ def FrontierHandoffPacketEnriched(  # noqa: N802
     to_agent: str,
     skills_added: list[str],
     threads_added: list[str],
+    skills_already_wired: list[str] | None = None,
 ) -> Event:
     """Web handoff packet auto-enriched before validation (assertion #19650)."""
     return Event(
@@ -223,6 +224,7 @@ def FrontierHandoffPacketEnriched(  # noqa: N802
             "packet_path": packet_path,
             "to_agent": to_agent,
             "skills_added": skills_added,
+            "skills_already_wired": skills_already_wired or [],
             "threads_added": threads_added,
         },
         scope="node",

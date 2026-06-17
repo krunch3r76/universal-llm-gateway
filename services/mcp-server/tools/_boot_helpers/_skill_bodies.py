@@ -8,7 +8,7 @@ _SKILL_PREFIX = "agent-skills/"
 
 
 def skill_slug(skill: dict[str, Any]) -> str:
-    """Return the on-disk filesystem slug for a boot-skills row.
+    """Return the on-disk filesystem slug for a boot-view skill/rule row.
 
     The slug is the basename of ``agent-skills/<slug>.md`` and is the canonical
     reference form agents must type in skill-refs (handoff packets, ``md_read``

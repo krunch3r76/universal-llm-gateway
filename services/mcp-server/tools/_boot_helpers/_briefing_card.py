@@ -16,7 +16,6 @@ from ._briefing_card_render import (
     render_async_dispatch_section,
     render_audit_alerts_section,
     render_compact_block,
-    render_skills_section,
     render_views_section,
     truncate_at_sentence,
 )
@@ -103,6 +102,7 @@ def render_briefing_card(
     recent_mentions_window_days: int = 7,
     skills: list[dict[str, Any]] | None = None,
     skills_unpartitioned_count: int = 0,
+    skills_card_markdown: str | None = None,
     rules: list[dict[str, Any]] | None = None,
     plan_phases: list[dict[str, Any]] | None = None,
     in_flight_todos: list[dict[str, Any]] | None = None,
@@ -237,10 +237,8 @@ def render_briefing_card(
         open_arcs=open_arcs,
         in_flight_todos=in_flight_todos,
     )
-    if skills:
-        parts.extend(
-            render_skills_section(skills, skills_unpartitioned_count, boot_signals)
-        )
+    if skills_card_markdown:
+        parts.extend(skills_card_markdown.split("\n"))
     if rules:
         parts.extend(render_rules_section(rules, boot_signals))
 

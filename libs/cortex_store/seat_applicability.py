@@ -1,9 +1,9 @@
-"""Seat-applicability vocabulary + the /boot-skills (and future /skills) seat filter.
+"""Seat-applicability vocabulary + the GET /skills?view=boot seat filter.
 
 Single enforcement seam for the canonical seat enum (derived from agent_seat config,
 not hardcoded), seat-slug validation/normalization, and the default-DENY SQL clause the
-boot/skills route family binds for `for_agent` filtering. Imported by routes/boot/skills.py
-today; reused by the /skills HTTP endpoint (todo:skills-http-endpoint) and Track B B2.
+GET /skills?view=boot route binds for `for_agent` filtering. Reused by the /skills HTTP
+endpoint and Track B B2.
 """
 
 from __future__ import annotations

@@ -1,7 +1,7 @@
 """Briefing-card Agent Rules section — seat-filtered, trigger-ranked rule INDEX.
 
-Rule rows arrive from GET /boot-skills?layer=rules with the SAME envelope as
-skill rows (both projected by routes/boot/skills.py::_boot_skill_row), so the
+Rule rows arrive from GET /skills?view=boot&layer=rules with the SAME envelope as
+skill rows (both projected by routes/_skill_index.py::boot_skill_row), so the
 shared ranking primitives apply unchanged. Manifest-only: bodies are NEVER
 inlined; each line carries the source_uri + digest needed to pull the body via
 GET /skills/body?id=<entity_id>&expected_digest=<digest>.
@@ -11,11 +11,25 @@ from __future__ import annotations
 
 from typing import Any
 
-from ._briefing_card_render import _rank_score
 from ._skill_bodies import skill_slug
 
 _RULES_BYTE_BUDGET = 4096
 _RULES_INLINE_MAX = 12
+_FOL_OPERATORS = {"∨", "∧", "⇒", "⇔", "¬", "→", "∈", "∉", "∪", "∩", "⊆", "⊂", "|"}
+
+
+def _normalize_terms(row: dict[str, Any]) -> set[str]:
+    terms = row.get("trigger_match_terms") or []
+    if terms:
+        return {t.lower() for t in terms}
+    raw = row.get("trigger_short") or row.get("description_first_sentence") or ""
+    for op in _FOL_OPERATORS:
+        raw = raw.replace(op, " ")
+    return {tok for tok in raw.lower().split() if len(tok) > 2}
+
+
+def _rank_score(row: dict[str, Any], signals: set[str]) -> int:
+    return len(_normalize_terms(row) & signals)
 
 
 def _append_rule_index(

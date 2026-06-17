@@ -54,7 +54,7 @@ Full shapes + wrap/contract semantics + executor tiers: agent-skills/consult-rou
 
 # Co-located liveness block (2a durable home). Trimmed per F4-A finding (thread
 # 1289): 3-question redirect + salience line kept inline; substrate table collapsed
-# to prose — it is reference-density, recoverable from commit-and-git-scope_ws.mdc (git-posture content; entity agent_skill:git-posture).
+# to prose — reference-density detail lives in git-posture skill (entity agent_skill:git-posture).
 _ENTITY_HIERARCHY_BLOCK = """\
 ## Entity granularity — seed the right type
 - **Todos have steps; plans have phases** — invariant. `phase`/`Phase N` is plan-domain only (`plan:` / `plan_phase:` / `/implement-plan`); on `todo:`/`task:` use **steps**/**slices**, never phases.
@@ -64,7 +64,7 @@ Seed via `entity_create` + `relationship_create child_of`; refs: agent-skills/en
 _LIVENESS_BLOCK = """\
 ## Git posture & liveness — disk + cortex canonical; git ≠ project index
 A change is LIVE only when LOADED into the running process at its last deploy/restart — git commit/master is neither necessary nor sufficient. Before claiming a surface changed, ask: (1) WHICH substrate? (2) did its LOAD EVENT fire? (3) what does the LIVE PROBE say? — service behavior→`sync_restart`+observability · MCP surface→mcp restart+boot manifest · routing→`/v1/models` · agent-context→`cortex_boot`. ¬ infer existence/canonicality/done-ness from git; commit is NOT a completion gate.
-Full doctrine: injected `architecture-invariants` skill `[universal:git-posture]` + agent-skills/git-posture.md."""
+Coding-session detail: `agent_skill:git-posture` → `docs/agent-guides/skills/git-posture.md` (md_list / md_read). Tag one-liner: `[universal:git-posture]` in injected `architecture-invariants`."""
 
 # Compact index — full playbook is agent-skills/consult-routing.md (current superset,
 # verified 2026-06-04). The two highest-frequency traps are kept inline; everything

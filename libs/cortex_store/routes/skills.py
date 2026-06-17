@@ -40,27 +40,26 @@ from ..seat_applicability import (
     for_agent_filter_clause,
     seat_capabilities_json,
 )
-from ..skill_listing_format import render_concise_skill_index
+from ..skill_listing_format import (
+    render_concise_skill_index,
+    render_skills_card_section,
+)
 from ..skill_suggest_rank import apply_rerank, rerank_enabled_default
 from ._skill_index import (
     body_digest,
     entity_types_for_layer,
+    fetch_boot_skills_view,
     index_envelope_fields,
     slug_from_row,
 )
 from ._skill_suggest import run_stage_a
 from .boot._skill_trigger import _resolve_skill_file, skill_trigger_text
-from .boot.skills import (
-    _BOOT_SKILLS_SQL,
-    _UNPARTITIONED_COUNT_SQL,
-    _boot_skill_row,
-)
 
 _DISCOVERABLE_SKILL_LIFECYCLE = discoverable_skill_lifecycle_sql_predicate()
 
 router = APIRouter(prefix="/skills", tags=["skills"])
 
-# Same default-DENY seat semantics as /boot-skills: a skill with no
+# Same default-DENY seat semantics as GET /skills?view=boot: a skill with no
 # `applicable_agents` attribute is withheld from every seat; universal
 # visibility requires an explicit `["*"]`. The filter clause is the shared
 # B0 gate — see seat_applicability.FOR_AGENT_CLAUSE.
@@ -110,7 +109,26 @@ def _manifest_row(row: dict[str, Any]) -> dict[str, Any]:
 
 
 _VALID_VIEWS = frozenset({"manifest", "boot"})
-_VALID_RENDERS = frozenset({"concise"})
+_VALID_RENDERS = frozenset({"concise", "card"})
+
+
+def _parse_render_modes(render: str | None) -> frozenset[str]:
+    if render is None:
+        return frozenset()
+    modes = {part.strip() for part in render.split(",") if part.strip()}
+    unknown = modes - _VALID_RENDERS
+    if unknown:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "invalid_render",
+                "message": (
+                    f"Unknown render mode(s) {sorted(unknown)!r}; "
+                    f"expected subset of {sorted(_VALID_RENDERS)}."
+                ),
+            },
+        )
+    return frozenset(modes)
 
 
 def _seat_filter_params(
@@ -126,39 +144,6 @@ def _seat_filter_params(
         capability_filter = ""
         seat_params = []
     return for_agent_filter, capability_filter, seat_params
-
-
-def _fetch_boot_skills_view(
-    conn: Any,
-    *,
-    limit: int,
-    layer: str,
-    for_agent_filter: str,
-    capability_filter: str,
-    seat_params: list[Any],
-    entity_types: tuple[str, ...],
-) -> tuple[list[dict[str, Any]], int]:
-    type_placeholders = ", ".join("?" * len(entity_types))
-    params: list[Any] = [
-        *entity_types,
-        DISCOVERABLE_SKILL_LIFECYCLE,
-        *seat_params,
-        limit,
-    ]
-    sql = _BOOT_SKILLS_SQL.format(
-        type_placeholders=type_placeholders,
-        for_agent_filter=for_agent_filter,
-        capability_filter=capability_filter,
-    )
-    rows = db_query(conn, sql, tuple(params))
-    unpartitioned = 0
-    if layer == "skills":
-        unpartitioned_rows = db_query(
-            conn, _UNPARTITIONED_COUNT_SQL, (DISCOVERABLE_SKILL_LIFECYCLE,)
-        )
-        unpartitioned = int(unpartitioned_rows[0]["n"]) if unpartitioned_rows else 0
-    items = [_boot_skill_row(r) for r in rows]
-    return items, unpartitioned
 
 
 def _fetch_manifest_view(
@@ -226,12 +211,13 @@ def get_skills(
                 "message": f"Unknown view {view!r}; expected one of {sorted(_VALID_VIEWS)}.",
             },
         )
-    if render is not None and render not in _VALID_RENDERS:
+    render_modes = _parse_render_modes(render)
+    if "card" in render_modes and view != "boot":
         raise HTTPException(
             status_code=422,
             detail={
-                "code": "invalid_render",
-                "message": f"Unknown render {render!r}; expected one of {sorted(_VALID_RENDERS)}.",
+                "code": "invalid_render_for_view",
+                "message": "render=card is valid only with view=boot.",
             },
         )
 
@@ -241,7 +227,7 @@ def get_skills(
     conn = cortex_conn()
     try:
         if view == "boot":
-            items, unpartitioned = _fetch_boot_skills_view(
+            items, unpartitioned = fetch_boot_skills_view(
                 conn,
                 limit=limit,
                 layer=layer,
@@ -254,8 +240,6 @@ def get_skills(
                 "items": items,
                 "unpartitioned_count": unpartitioned,
                 "layer": layer,
-                "schema_version": "skills.boot.v1",
-                "view": "boot",
             }
         else:
             items = _fetch_manifest_view(
@@ -275,10 +259,18 @@ def get_skills(
     finally:
         conn.close()
 
-    if render == "concise":
-        response["rendered"] = {
-            "concise_markdown": render_concise_skill_index(items),
-        }
+    if render_modes:
+        rendered: dict[str, str] = {}
+        if "concise" in render_modes:
+            rendered["concise_markdown"] = render_concise_skill_index(items)
+        if "card" in render_modes:
+            unpartitioned = (
+                int(response.get("unpartitioned_count", 0) or 0)
+                if view == "boot"
+                else 0
+            )
+            rendered["card_markdown"] = render_skills_card_section(items, unpartitioned)
+        response["rendered"] = rendered
 
     return response
 

@@ -30,6 +30,7 @@ line (`handoff-packet-authoring.md` § Skill load resolution).
 | `friction-review` | `friction-review.md` — friction log vs codified bug ticket; pass zoom-out duty on bus pickup |
 | `handoff-packet-authoring` | `handoff-packet-authoring.md` — stage→densify→wrap lifecycle gates + six-block packet contract · stub: `.cursor/skills/handoff-packet-authoring/SKILL.md` |
 | `agent-guidance-writing` | `agent-guidance-writing.md` — rules/skills/agent-guides authoring · stub: `.cursor/skills/agent-guidance-writing/SKILL.md` |
+| `git-posture` | `git-posture.md` — truth substrate, execution lanes, no-diffs-to-LLMs · stub: `.cursor/skills/git-posture/SKILL.md` · Cursor rule stub: `.cursor/rules/commit-and-git-scope_ws.mdc` |
 
 ## Cortex SOT (boot-indexed — stub in `.cursor/skills/`)
 

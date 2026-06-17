@@ -5,6 +5,7 @@ Remote operations (deploy, restart remotes) live on the Home topology panel.
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -15,6 +16,7 @@ from textual.widgets import Button, Footer, Header, Select, Static
 
 from ...controller.operation_log import tee_with_summary
 from ...controller.restart_drain import run_gated
+from ...controller.restart_intent_store import intent_status_view
 from ...controller.service_config import (
     is_agent_bus_configured,
     is_cloud_proxy_configured,
@@ -526,9 +528,14 @@ class ServicesScreen(Screen):
             self.query_one("#btn-stop-emailbridge", Button).disabled = True
 
         giw = svc.service_state.check_git_integration_worker()
-        self.query_one("#svc-gitworker", Static).update(
-            f"  GitWorker:   {giw.detail or giw.status}"
-        )
+        gitworker_line = f"  GitWorker:   {giw.detail or giw.status}"
+        intent = svc.restart_intent_store.active_for_service("git_integration_worker")
+        if intent is not None:
+            view = intent_status_view(intent, now=datetime.now(UTC))
+            gitworker_line += (
+                f"  [yellow]draining… ({view['status']}, {view['elapsed_s']}s)[/yellow]"
+            )
+        self.query_one("#svc-gitworker", Static).update(gitworker_line)
         # TCP host service: check() never reports ownership=MANAGED, so gate on
         # status (RUNNING/UNHEALTHY ⇒ Stop), mirroring gateway/rag — NOT ownership.
         giw_up = giw.status is not ServiceStatus.STOPPED

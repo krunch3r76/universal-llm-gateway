@@ -401,9 +401,12 @@ _WEB_CONSULT_PRIMING = (
     "Before findings: follow the web-receiver priming checklist in the packet "
     "(handoff-packet-authoring.md § Web-receiver priming checklist): call "
     "skill_suggest at step 1, agent_bus(fetch) each related_thread_ids thread, "
-    "load task-class skills from packet <invariants>. Web has no IDE rule "
-    "auto-load — arch bodies are server-injected on boot; do not re-read "
-    "architecture-invariants/ulg-architecture unless verifying digest drift."
+    "load task-class skills from packet <invariants>. Step-1 skill_suggest is "
+    "confirmatory delta, not primary discovery: load the packet <invariants> "
+    "skills first and do not narrate already-wired skills as fresh discoveries. "
+    "Web has no IDE rule auto-load — arch bodies are server-injected on boot; "
+    "do not re-read architecture-invariants/ulg-architecture unless verifying "
+    "digest drift."
 )
 
 _WEB_RECEIVER_AGENT = "claude-web"

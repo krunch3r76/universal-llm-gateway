@@ -191,19 +191,19 @@ def build_futures_spec(
         f"/boot-recent-mentions?{urlencode({'days': 7, 'limit': 10})}",
     )
     # read-only: boot skill projection via canonical GET /skills?view=boot.
-    # render=concise ships server-side sidecar markdown; card consumes items.
+    # render=concise,card ships server-side sidecar + card section markdown.
     futures_spec["skills"] = (
         wrapped_cx,
         "GET",
-        f"/skills?{urlencode({'limit': 120, 'for_agent': agent, 'view': 'boot', 'render': 'concise'})}",
+        f"/skills?{urlencode({'limit': 120, 'for_agent': agent, 'view': 'boot', 'render': 'concise,card'})}",
     )
     # read-only: rule-layer index (layer=rules) — seat-filtered conduct rules for
-    # the briefing-card Agent Rules section. Same /boot-skills envelope as skills
+    # the briefing-card Agent Rules section. Same boot-view envelope as skills
     # (FOR_AGENT_CLAUSE + CAPABILITY_CLAUSE apply server-side over type='rule').
     futures_spec["rules"] = (
         wrapped_cx,
         "GET",
-        f"/boot-skills?{urlencode({'limit': 80, 'layer': 'rules', 'for_agent': agent})}",
+        f"/skills?{urlencode({'limit': 80, 'layer': 'rules', 'for_agent': agent, 'view': 'boot'})}",
     )
     # read-only: fetch recent plan/todo activity summary
     futures_spec["recent_work"] = (wrapped_cx, "GET", "/boot-recent-work")
@@ -282,12 +282,16 @@ def extract_boot_results(
         else 0
     )
     skills_concise_markdown: str | None = None
+    skills_card_markdown: str | None = None
     if isinstance(skills_raw, dict):
         rendered = skills_raw.get("rendered")
         if isinstance(rendered, dict):
             concise = rendered.get("concise_markdown")
             if isinstance(concise, str) and concise.strip():
                 skills_concise_markdown = concise
+            card = rendered.get("card_markdown")
+            if isinstance(card, str) and card.strip():
+                skills_card_markdown = card
 
     recent_work_raw = raw.get("recent_work", {})
     plan_phases: list[dict[str, Any]] = (
@@ -374,6 +378,7 @@ def extract_boot_results(
         "rules": rules,
         "skills_unpartitioned_count": skills_unpartitioned,
         "skills_concise_markdown": skills_concise_markdown,
+        "skills_card_markdown": skills_card_markdown,
         "plan_phases": plan_phases,
         "in_flight_todos": in_flight_todos,
         "open_arcs": open_arcs,

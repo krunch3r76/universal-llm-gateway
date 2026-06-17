@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from .controller.restart_drain import (
@@ -19,6 +20,7 @@ from .controller.restart_drain import (
     run_gated_deferred,
     run_gated_drain_supervised,
 )
+from .controller.restart_intent_store import intent_status_view
 
 if TYPE_CHECKING:
     from universal_event_bus import EventBus
@@ -251,6 +253,15 @@ async def _busy_status(ctl: ServiceController) -> dict[str, Any]:
     also reflect "the manage host itself is busy".
     """
     report = await ctl.restart_gate.busy_report(sorted(SYNC_RESTART_SERVICES))
+    now = datetime.now(UTC)
+    live_intents = {
+        intent.service: intent for intent in ctl.restart_intent_store.pending_intents()
+    }
+    for service, entry in report.items():
+        intent = live_intents.get(service)
+        entry["restart_intent"] = (
+            intent_status_view(intent, now=now) if intent is not None else None
+        )
     extra = ("build_image",) if ctl.build_running else ()
     snap = ctl.shutdown_gate.snapshot(extra_activities=extra)
     return {

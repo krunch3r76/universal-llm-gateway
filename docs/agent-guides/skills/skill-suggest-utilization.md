@@ -37,6 +37,17 @@ Call at **conversational inflection points**, not every turn:
 **Do not** call when boot-resident skills already cover the turn (e.g. routine `cortex`
 entity_get, session-close with skills loaded).
 
+**Carve-out — web-consult densify pickup.** When picking up a `web-consult` /
+`web-implement` handoff, step-1 `skill_suggest` is **mandatory** and is the one
+exception to the boot-resident rule above. On this path it is **confirmatory
+delta, not primary discovery**: the packet `<invariants>` and bus pointer have
+already *wired* the dispatch-delegation skills (`consult-routing`,
+`dispatch-shape`, `handoff-packet-authoring`). Load the packet `<invariants>`
+skills first; treat `skill_suggest` hits for already-wired slugs as
+confirmation, and do not narrate them as fresh discoveries. The enrich event
+(`frontier.handoff.packet.enriched`) reports `skills_already_wired` vs
+`skills_added` so the overlap is explicit.
+
 ---
 
 ## What to pass

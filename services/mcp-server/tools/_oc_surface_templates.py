@@ -84,7 +84,8 @@ set is auto-derived. See `tasks/discoveries/mcp-tool-definition-context-churn.md
 `git_land`) are intentionally NOT in the Claude primary catalog and are
 **headless / arc-worktree only** (`decision:lead-agent-git-integration`). A Cursor
 IDE session does not use them even if `tool_search` surfaces them — use the
-editor + native apply/review instead. See `commit-and-git-scope_ws.mdc` (git-posture; entity `agent_skill:git-posture`)."""
+editor + native apply/review instead. Load `agent_skill:git-posture` /
+`docs/agent-guides/skills/git-posture.md` for truth-substrate doctrine."""
 
 GROK_WEB_TOOL_SURFACE = """\
 ## Grok.com Tool Surface

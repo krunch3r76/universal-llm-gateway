@@ -116,4 +116,112 @@ def _append_row_lines(
     lines.append("")
 
 
-__all__ = ["render_concise_skill_index"]
+_INVARIANT_SKILL_SLUGS: frozenset[str] = frozenset(
+    {
+        "architecture-invariants",
+        "ulg-architecture",
+        "cortex-orientation",
+        "cortex-provenance-discipline",
+    }
+)
+
+_TIER1_GATE_SLUGS: frozenset[str] = frozenset(
+    {
+        "lead-seat-boot",
+        "dispatch-shape",
+        "consult-routing",
+        "completion-provenance-discipline",
+        "consensus-steelman-posture",
+        "lead-agent-git-integration",
+        "session-close",
+    }
+)
+
+_FOL_OPERATORS = {"∨", "∧", "⇒", "⇔", "¬", "→", "∈", "∉", "∪", "∩", "⊆", "⊂", "|"}
+
+
+def _skill_trigger_display(row: Mapping[str, Any]) -> str:
+    """Listing trigger: trigger_short first; short description fallback only."""
+    ts = (row.get("trigger_short") or "").strip()
+    if ts:
+        return ts
+    dfs = (row.get("description_first_sentence") or "").strip()
+    return dfs[:72] + ("…" if len(dfs) > 72 else "")
+
+
+def _skill_tags_suffix(row: Mapping[str, Any], *, max_tags: int = 3) -> str:
+    """Net-new tags only: trigger_match_terms minus tokens already in trigger_short."""
+    terms = row.get("trigger_match_terms") or []
+    if not terms:
+        return ""
+    shown = {t for t in (row.get("trigger_short") or "").lower().split() if t}
+    net_new = [str(t) for t in terms if str(t).lower() not in shown]
+    if not net_new:
+        return ""
+    return f" [{', '.join(net_new[:max_tags])}]"
+
+
+def _is_gate_skill(row: Mapping[str, Any]) -> bool:
+    return (
+        row.get("boot_importance") == "required_gate"
+        or _row_slug(row) in _TIER1_GATE_SLUGS
+    )
+
+
+def _append_skill_line_flat(
+    lines: list[str], row: Mapping[str, Any], *, is_gate: bool
+) -> None:
+    slug = _row_slug(row)
+    marker = "⚑ " if is_gate else ""
+    trigger = _skill_trigger_display(row)
+    tags = _skill_tags_suffix(row)
+    trigger_part = f" — {trigger}" if trigger else ""
+    lines.append(f"- {marker}`{slug}`{trigger_part}{tags}")
+
+
+def render_skills_card_section(
+    items: Sequence[Mapping[str, Any]],
+    unpartitioned_count: int,
+) -> str:
+    """Render boot-card Agent Skills block (domain-grouped concise manifest)."""
+    gate_ids = {_row_slug(s) for s in items if _is_gate_skill(s)}
+    lines: list[str] = [
+        f"\n## Agent Skills ({len(items)} active — concise manifest)",
+        (
+            "> **Load on demand**: "
+            '`fs(sandbox="cortex", op="md_read", path="agent-skills/<slug>.md")` '
+            "— slug is the backticked id on each line. Web auto-inject bodies "
+            "(`architecture-invariants`, `ulg-architecture`, `cortex-orientation`, "
+            "`cortex-provenance-discipline`) append to the web prompt (`seat_preloaded`)."
+        ),
+        (
+            "> **Discovery (you call it, never the operator)**: at task inflection "
+            "points call `skill_suggest(conversation_context=…)` BEFORE scanning "
+            'this manifest. If unbound: `tool_search("skill_suggest")` first.'
+        ),
+        "> `⚑` = required gate.",
+    ]
+    by_domain: dict[str, list[Mapping[str, Any]]] = {}
+    for row in items:
+        by_domain.setdefault(str(row.get("skill_category") or "uncategorized"), []).append(
+            row
+        )
+    for domain in sorted(by_domain):
+        bucket = by_domain[domain]
+        lines.append(f"\n**{domain} ({len(bucket)})**")
+        for row in sorted(bucket, key=_row_slug):
+            _append_skill_line_flat(
+                lines, row, is_gate=_row_slug(row) in gate_ids
+            )
+
+    if unpartitioned_count:
+        lines.append(
+            f"\n> **Skill partition drift**: {unpartitioned_count} "
+            f"skill(s) missing `applicable_agents` — WITHHELD from all seats "
+            f"(default-deny); run backfill. Audit: `scripts/cortex/"
+            f"backfill_agent_skill_applicability.py --audit`."
+        )
+    return "\n".join(lines)
+
+
+__all__ = ["render_concise_skill_index", "render_skills_card_section"]

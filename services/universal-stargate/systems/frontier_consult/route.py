@@ -683,6 +683,7 @@ async def team_handoff(
                             packet_path=packet_path,
                             to_agent=to_agent,
                             skills_added=enrich_result.skills_added,
+                            skills_already_wired=enrich_result.skills_already_wired,
                             threads_added=enrich_result.threads_added,
                         )
                     )

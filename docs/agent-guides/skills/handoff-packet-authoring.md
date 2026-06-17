@@ -396,6 +396,20 @@ The Cortex-native analog for MCP surface changes is
 **Anti-pattern:** posting skill-ref supplements on agent-bus turn 2 after dispatch — all
 skill load lines belong in the packet file on turn 1.
 
+
+
+### Packet-wired vs session-loaded vs suggested (do not conflate)
+
+| State | Meaning | Where it lives |
+|---|---|---|
+| **Packet-wired** | An fs-line for the skill is authored in the packet `<invariants>` (by the author or by `enrich_web_handoff_packet`). The artifact references it; the receiver session has **not** read the body yet. | packet `<invariants>`; enrich `skills_added` / `skills_already_wired` |
+| **Session-loaded** | The receiver has fetched the body this session (boot auto-inject `seat_preloaded`, or `fs` / `GET /skills/body`). `skill_suggest` excludes these. | skill-server session registry |
+| **Suggested** | `skill_suggest` ranked the slug as a not-yet-loaded delta. | `skill_suggest` response |
+
+∀ web-consult densify pickup: a slug can be **packet-wired but not session-loaded** — so `skill_suggest` will (correctly) surface it. That is confirmatory delta, not a missing-wiring signal. Load the packet `<invariants>` skills, then accept the matching `skill_suggest` hits as confirmation. ¬ treat a packet-wired slug appearing in `skill_suggest` as a fresh discovery or as a packet defect.
+
+Enrich reports the split: `skills_already_wired` (densify slug already present in the packet) vs `skills_added` (newly injected). `handoff-packet-authoring` is now a default densify slug, so the receiver checklist named in the pointer is carried in `<invariants>` rather than learned first from `skill_suggest`.
+
 ## Web-receiver priming checklist (mandatory before `web-consult` / `web-implement`)
 
 **Invariant:** claude-web has full MCP but ¬ IDE rules, ¬ `.cursor/skills` auto-load,

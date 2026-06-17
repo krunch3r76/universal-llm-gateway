@@ -21,7 +21,11 @@ logger = get_logger(__name__)
 
 WEB_RECEIVER_AGENT = "claude-web"
 
-_DEFAULT_DENSIFY_SLUGS: tuple[str, ...] = ("lead-seat-boot", "consult-routing")
+_DEFAULT_DENSIFY_SLUGS: tuple[str, ...] = (
+    "lead-seat-boot",
+    "consult-routing",
+    "handoff-packet-authoring",
+)
 
 _TASK_CLASS_KEYWORDS: tuple[tuple[tuple[str, ...], str], ...] = (
     (("mcp", "routing", "surface", "stargate"), "mcp-surface-change"),
@@ -50,7 +54,9 @@ KNOWN_TASK_CLASS_SLUGS: frozenset[str] = frozenset(
     }
 )
 
-_SKILL_SUGGEST_STEP = 'skill_suggest(conversation_context="<task summary from packet scope>", loaded=[...])'
+_SKILL_SUGGEST_STEP = (
+    'skill_suggest(conversation_context="<task summary from packet scope>")'
+)
 
 
 class CortexEntityReader(Protocol):
@@ -61,6 +67,7 @@ class CortexEntityReader(Protocol):
 class EnrichResult:
     text: str
     skills_added: list[str] = field(default_factory=list)
+    skills_already_wired: list[str] = field(default_factory=list)
     threads_added: list[str] = field(default_factory=list)
     changed: bool = False
 
@@ -223,6 +230,7 @@ def enrich_web_handoff_packet(
     skill_slugs = _collect_skill_slugs(text, cortex)
     invariant_lines: list[str] = []
     skills_added: list[str] = []
+    skills_already_wired: list[str] = []
     for slug in skill_slugs:
         source_uri = _resolve_source_uri(cortex, slug)
         if not source_uri:
@@ -234,6 +242,8 @@ def enrich_web_handoff_packet(
         if line not in text:
             invariant_lines.append(f"- {line}  # agent_skill:{slug}")
             skills_added.append(slug)
+        else:
+            skills_already_wired.append(slug)
 
     text, _ = _merge_block_lines(text, "invariants", invariant_lines)
 
@@ -257,6 +267,7 @@ def enrich_web_handoff_packet(
     return EnrichResult(
         text=text,
         skills_added=skills_added,
+        skills_already_wired=skills_already_wired,
         threads_added=threads_added,
         changed=changed,
     )

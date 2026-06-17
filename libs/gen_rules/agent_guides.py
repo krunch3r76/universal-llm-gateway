@@ -56,10 +56,6 @@ AGENT_GUIDES_RULE_SLUGS: dict[str, RuleManifestEntry | str] = {
         "source": "agent-surface/sources/handoff-pickup.md",
         "applicable_agents": ["*"],
     },
-    "git-posture": {
-        "source": "agent-surface/sources/git-posture.md",
-        "applicable_agents": ["*"],
-    },
     "plan-slug-coherence": {
         "source": "agent-surface/sources/plan-slug-coherence.md",
         "applicable_agents": ["*"],

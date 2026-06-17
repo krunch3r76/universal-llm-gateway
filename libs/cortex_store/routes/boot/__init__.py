@@ -13,7 +13,6 @@ from . import (
     recent_work,
     reflective,
     sections,
-    skills,
     temporal,
     todos,
 )
@@ -30,7 +29,6 @@ router.include_router(principal_context.router)
 router.include_router(recent_mentions.router)
 router.include_router(recent_work.router)
 router.include_router(reflective.router)
-router.include_router(skills.router)
 router.include_router(audit_counters.router)
 
 __all__ = ["router"]

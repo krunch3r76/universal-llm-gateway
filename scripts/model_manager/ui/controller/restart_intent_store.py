@@ -18,7 +18,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 from universal_logging import get_logger
 
@@ -108,6 +108,28 @@ class Intent:
     @property
     def is_terminal(self) -> bool:
         return self.status in _TERMINAL
+
+
+class IntentStatusView(TypedDict):
+    restart_intent_id: str
+    status: str
+    drain_epoch: int | None
+    deadline_at: str | None
+    elapsed_s: int
+
+
+def intent_status_view(intent: Intent, *, now: datetime) -> IntentStatusView:
+    """Five-field live-intent projection shared by busy_status and the TUI."""
+    created = datetime.fromisoformat(intent.created_at)
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=UTC)
+    return {
+        "restart_intent_id": intent.intent_id,
+        "status": intent.status,
+        "drain_epoch": intent.drain_epoch,
+        "deadline_at": intent.deadline_at,
+        "elapsed_s": round((now - created).total_seconds()),
+    }
 
 
 def _row_to_intent(row: sqlite3.Row) -> Intent:

@@ -10,7 +10,6 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from ._skill_bodies import skill_slug
 from ._time import relative_time
 
 # Reflective Journal / Your Notes preview length. Cap is the hard byte ceiling;
@@ -180,168 +179,6 @@ def render_audit_alerts_section(counters: dict[str, int]) -> list[str]:
     ]
 
 
-_INVARIANT_SKILL_SLUGS: frozenset[str] = frozenset(
-    {
-        "architecture-invariants",
-        "ulg-architecture",
-        "cortex-orientation",
-        "cortex-provenance-discipline",
-    }
-)
-
-_TIER1_GATE_SLUGS: frozenset[str] = frozenset(
-    {
-        "lead-seat-boot",
-        "dispatch-shape",
-        "consult-routing",
-        "completion-provenance-discipline",
-        "consensus-steelman-posture",
-        "lead-agent-git-integration",
-        "session-close",
-    }
-)
-# NOTE: gate slugs are ENTITY ids (what skill_slug() returns), NOT file names —
-# verified live: agent_skill:session-close (its file is session-close-kernel.md).
-# A2 projection fallback: some entities carry a legacy `trigger_keywords` array.
-# COALESCE order for the ranker corpus: trigger_match_terms → trigger_keywords →
-# FOL-stripped trigger_short.
-
-_FOL_OPERATORS = {"∨", "∧", "⇒", "⇔", "¬", "→", "∈", "∉", "∪", "∩", "⊆", "⊂", "|"}
-_TIER2_INLINE_MAX = 12
-_SKILLS_BYTE_BUDGET = 8192
-
-
-def _normalize_terms(skill: dict[str, Any]) -> set[str]:
-    terms = skill.get("trigger_match_terms") or []
-    if terms:
-        return {t.lower() for t in terms}
-    raw = skill.get("trigger_short") or skill.get("description_first_sentence") or ""
-    for op in _FOL_OPERATORS:
-        raw = raw.replace(op, " ")
-    return {tok for tok in raw.lower().split() if len(tok) > 2}
-
-
-def _rank_score(skill: dict[str, Any], signals: set[str]) -> int:
-    return len(_normalize_terms(skill) & signals)
-
-
-def _skill_prose_display(skill: dict[str, Any]) -> str:
-    return (
-        skill.get("description_first_sentence") or skill.get("trigger_short") or ""
-    ).strip()
-
-
-def _skill_trigger_display(skill: dict[str, Any]) -> str:
-    """Listing trigger: trigger_short first; short description fallback only."""
-    ts = (skill.get("trigger_short") or "").strip()
-    if ts:
-        return ts
-    dfs = (skill.get("description_first_sentence") or "").strip()
-    return dfs[:72] + ("…" if len(dfs) > 72 else "")
-
-
-def _skill_tags_suffix(skill: dict[str, Any], *, max_tags: int = 3) -> str:
-    """Net-new tags only: trigger_match_terms minus tokens already in trigger_short."""
-    terms = skill.get("trigger_match_terms") or []
-    if not terms:
-        return ""
-    shown = {t for t in (skill.get("trigger_short") or "").lower().split() if t}
-    net_new = [str(t) for t in terms if str(t).lower() not in shown]
-    if not net_new:
-        return ""
-    return f" [{', '.join(net_new[:max_tags])}]"
-
-
-def _is_gate_skill(skill: dict[str, Any]) -> bool:
-    return (
-        skill.get("boot_importance") == "required_gate"
-        or skill_slug(skill) in _TIER1_GATE_SLUGS
-    )
-
-
-def _append_skill_line_flat(
-    lines: list[str], skill: dict[str, Any], *, is_gate: bool
-) -> None:
-    slug = skill_slug(skill)
-    marker = "⚑ " if is_gate else ""
-    trigger = _skill_trigger_display(skill)
-    tags = _skill_tags_suffix(skill)
-    trigger_part = f" — {trigger}" if trigger else ""
-    lines.append(f"- {marker}`{slug}`{trigger_part}{tags}")
-
-
-def _append_skill_index(
-    lines: list[str], bucket: list[dict[str, Any]], names_only: bool = False
-) -> None:
-    """Emit `- **slug** — trigger_short` per skill. No per-line fs() call.
-
-    names_only collapses the trigger (Tier-3 under byte pressure) while keeping
-    every slug present so no skill becomes undiscoverable.
-    """
-    for skill in sorted(bucket, key=skill_slug):
-        slug = skill_slug(skill)
-        if names_only:
-            lines.append(f"- **`{slug}`**")
-            continue
-        trigger = _skill_prose_display(skill)
-        trigger_part = f" — {trigger}" if trigger else ""
-        uri = skill.get("source_uri")
-        if slug in _INVARIANT_SKILL_SLUGS and isinstance(uri, str) and uri.strip():
-            trigger_part = (
-                f"{trigger_part} (`{uri.strip()}`)"
-                if trigger_part
-                else f" (`{uri.strip()}`)"
-            )
-        lines.append(f"- **`{slug}`**{trigger_part}")
-
-
-def render_skills_section(
-    skills: list[dict[str, Any]],
-    skills_unpartitioned_count: int,
-    boot_signals: set[str] | None = None,
-) -> list[str]:
-    """Render skills as a flat domain-grouped concise manifest."""
-    _ = boot_signals  # signature retained; ranking belongs in skill_suggest
-    gate_ids = {skill_slug(s) for s in skills if _is_gate_skill(s)}
-    lines: list[str] = [
-        f"\n## Agent Skills ({len(skills)} active — concise manifest)",
-        (
-            "> **Load on demand**: "
-            '`fs(sandbox="cortex", op="md_read", path="agent-skills/<slug>.md")` '
-            "— slug is the backticked id on each line. Web auto-inject bodies "
-            "(`architecture-invariants`, `ulg-architecture`, `cortex-orientation`, "
-            "`cortex-provenance-discipline`) append to the web prompt (`seat_preloaded`)."
-        ),
-        (
-            "> **Discovery (you call it, never the operator)**: at task inflection "
-            "points call `skill_suggest(conversation_context=…)` BEFORE scanning "
-            'this manifest. If unbound: `tool_search("skill_suggest")` first.'
-        ),
-        "> `⚑` = required gate.",
-    ]
-    by_domain: dict[str, list[dict[str, Any]]] = {}
-    for skill in skills:
-        by_domain.setdefault(str(skill.get("skill_category") or "uncategorized"), []).append(
-            skill
-        )
-    for domain in sorted(by_domain):
-        bucket = by_domain[domain]
-        lines.append(f"\n**{domain} ({len(bucket)})**")
-        for skill in sorted(bucket, key=skill_slug):
-            _append_skill_line_flat(
-                lines, skill, is_gate=skill_slug(skill) in gate_ids
-            )
-
-    if skills_unpartitioned_count:
-        lines.append(
-            f"\n> **Skill partition drift**: {skills_unpartitioned_count} "
-            f"skill(s) missing `applicable_agents` — WITHHELD from all seats "
-            f"(default-deny); run backfill. Audit: `scripts/cortex/"
-            f"backfill_agent_skill_applicability.py --audit`."
-        )
-    return lines
-
-
 def deadline_line(d: dict[str, Any], today: datetime) -> str:
     """Render a single deadline as a compact markdown line."""
     dl_date = d.get("deadline_date", "")
@@ -469,6 +306,5 @@ __all__ = [
     "render_async_dispatch_section",
     "render_audit_alerts_section",
     "render_compact_block",
-    "render_skills_section",
     "render_views_section",
 ]
