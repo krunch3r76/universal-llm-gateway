@@ -42,6 +42,7 @@ async def dispatch_cursor_sdk_generate(
     density_triage: str | None = None,
     review_opt_out_reason_code: str | None = None,
     auto_review_child: bool = False,
+    read_only: bool = False,
 ) -> dict[str, Any]:
     """Execute cursor-sdk generate with to_thread default delivery.
 
@@ -75,6 +76,16 @@ async def dispatch_cursor_sdk_generate(
             request_id=request_id,
             field="packet_path",
             reason="contract=implement requires packet_path",
+            status_code=422,
+        )
+
+    if read_only and contract == "implement":
+        from .admission import FrontierEndpointError
+
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="read_only",
+            reason="read_only=true is incompatible with contract=implement",
             status_code=422,
         )
 
@@ -201,6 +212,7 @@ async def dispatch_cursor_sdk_generate(
             handoff_contract=handoff_contract,
             caller_agent=caller_agent,
             prompt_preamble=prompt_preamble,
+            read_only=read_only,
         )
     else:
         worker_ok, worker_warning = await dispatch_cursor_sdk_worker_message(
@@ -210,6 +222,7 @@ async def dispatch_cursor_sdk_generate(
             message=worker_message or "",
             execution_id=execution_id,
             caller_agent=caller_agent,
+            read_only=read_only,
         )
 
     emit_sdk_worker_outcome(

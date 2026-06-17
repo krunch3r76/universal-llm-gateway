@@ -133,6 +133,15 @@ class CursorDispatchLedger:
                 conn.execute(
                     "ALTER TABLE cursor_sdk_dispatches ADD COLUMN source_repo TEXT"
                 )
+            if "read_only" not in cols:
+                conn.execute(
+                    "ALTER TABLE cursor_sdk_dispatches "
+                    "ADD COLUMN read_only INTEGER NOT NULL DEFAULT 0"
+                )
+            if "worker_instance" not in cols:
+                conn.execute(
+                    "ALTER TABLE cursor_sdk_dispatches ADD COLUMN worker_instance TEXT"
+                )
 
     def _connect(self) -> sqlite3.Connection:
         return _connect(self._db_path)
@@ -152,6 +161,7 @@ class CursorDispatchLedger:
             "execution_id": req.execution_id,
             "packet_path": req.packet_path,
             "message": req.message,
+            "read_only": req.read_only,
         }
         canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(canonical.encode()).hexdigest()
@@ -168,9 +178,11 @@ class CursorDispatchLedger:
         wt_baseline: str | None = None,
         contract: str | None = None,
         source_repo: str | None = None,
+        read_only: bool = False,
+        worker_instance: str | None = None,
     ) -> CursorDispatchResponse | None:
         """Durable idempotency (F2). Returns cached admission on hit, None on first admit.
-        Raises DispatchConflict on fingerprint mismatch."""
+        Raises DispatchConflict on fingerprint mismatch or writer-lease conflict."""
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             existing = conn.execute(
@@ -184,12 +196,25 @@ class CursorDispatchLedger:
                         "different payload fingerprint"
                     )
                 return admission  # idempotent hit (now restart-durable)
+            if not read_only and source_repo:
+                conflict = conn.execute(
+                    "SELECT dispatch_id FROM cursor_sdk_dispatches "
+                    "WHERE source_repo=? AND COALESCE(read_only,0)=0 "
+                    "AND status IN ('admitted','running') AND dispatch_id<>? "
+                    "AND worker_instance=? LIMIT 1",
+                    (source_repo, req.dispatch_id, worker_instance),
+                ).fetchone()
+                if conflict is not None:
+                    raise DispatchConflict(
+                        f"concurrent writer dispatch already active on "
+                        f"{source_repo!r}: {conflict['dispatch_id']!r}"
+                    )
             conn.execute(
                 "INSERT INTO cursor_sdk_dispatches "
                 "(dispatch_id, fingerprint, thread_id, execution_id, caller_agent, "
                 " resolved_model, packet_path, message_present, status, record_json, "
-                " wt_baseline, contract, source_repo) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " wt_baseline, contract, source_repo, read_only, worker_instance) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     req.dispatch_id,
                     fingerprint,
@@ -204,6 +229,8 @@ class CursorDispatchLedger:
                     wt_baseline,
                     contract,
                     source_repo,
+                    1 if read_only else 0,
+                    worker_instance,
                 ),
             )
         return None
@@ -222,27 +249,12 @@ class CursorDispatchLedger:
             return None
         return parsed if isinstance(parsed, dict) else None
 
-    def active_implement_for_repo(
-        self, *, source_repo: str, exclude_dispatch_id: str | None = None
-    ) -> str | None:
-        """Return dispatch_id of an in-flight implement dispatch on the same repo."""
+    def set_wt_baseline(self, *, dispatch_id: str, wt_baseline: str) -> None:
         with self._connect() as conn:
-            rows = conn.execute(
-                "SELECT dispatch_id FROM cursor_sdk_dispatches "
-                "WHERE source_repo=? AND contract='implement' "
-                "AND status IN ('admitted','running')",
-                (source_repo,),
-            ).fetchall()
-        for row in rows:
-            dispatch_id = row["dispatch_id"]
-            if exclude_dispatch_id and dispatch_id == exclude_dispatch_id:
-                continue
-            task = self._tasks.get(dispatch_id)
-            if task is not None and not task.done():
-                return dispatch_id
-            if task is None:
-                return dispatch_id
-        return None
+            conn.execute(
+                "UPDATE cursor_sdk_dispatches SET wt_baseline=? WHERE dispatch_id=?",
+                (wt_baseline, dispatch_id),
+            )
 
     def mark_running(self, *, dispatch_id: str) -> None:
         with self._connect() as conn:

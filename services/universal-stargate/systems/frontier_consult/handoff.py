@@ -51,10 +51,34 @@ _MCP_CAPABILITIES_TAG = "<mcp_capabilities>"
 # backstop at all, so omitting these refs lets a reviewer review blind to the
 # universal invariants + ULG topology/lifecycle. Required unconditionally for
 # every MCP-seat handoff (decision: 2026-06-11 operator).
-_REQUIRED_INVARIANT_SKILL_REFS: tuple[str, ...] = (
-    "agent-skills/architecture-invariants",
-    "agent-skills/ulg-architecture",
+_ARCH_SKILL_SLUGS: tuple[str, ...] = (
+    "architecture-invariants",
+    "ulg-architecture",
 )
+_REQUIRED_INVARIANT_SKILL_REFS: tuple[str, ...] = tuple(
+    f"agent-skills/{slug}" for slug in _ARCH_SKILL_SLUGS
+)
+
+
+def _packet_references_arch_skill_slug(text: str, slug: str) -> bool:
+    if f"agent-skills/{slug}" in text:
+        return True
+    if f"docs/agent-guides/skills/{slug}.md" in text:
+        return True
+    stem_pattern = r"[\s\-\u2013\u2014]+".join(
+        re.escape(part) for part in slug.split("-")
+    )
+    return bool(re.search(stem_pattern, text, flags=re.IGNORECASE))
+
+
+def _missing_arch_skill_refs(text: str) -> list[str]:
+    return [
+        ref
+        for slug, ref in zip(
+            _ARCH_SKILL_SLUGS, _REQUIRED_INVARIANT_SKILL_REFS, strict=True
+        )
+        if not _packet_references_arch_skill_slug(text, slug)
+    ]
 
 
 def _nonconforming_skill_ref_hint(text: str, missing_refs: list[str]) -> str | None:
@@ -227,18 +251,18 @@ def validate_packet(
                     code="handoff_packet_missing_densify_floor",
                 )
         else:
-            missing_refs = [
-                ref for ref in _REQUIRED_INVARIANT_SKILL_REFS if ref not in text
-            ]
+            missing_refs = _missing_arch_skill_refs(text)
             if missing_refs:
                 reason = (
                     f"Packet {packet_path!r} missing required architecture "
                     f"skill-ref(s): {', '.join(missing_refs)}. MCP-seat handoffs "
                     "must reference the universal invariant + ULG architecture "
                     "layers (Block 2 / Block 5) so the reviewer reads them before "
-                    "findings. Each ref must appear verbatim as the on-disk slug "
-                    "(the 'agent-skills/<slug>' basename), not a display-name path "
-                    "with spaces or dashes. Exact strings in details.expected_refs. "
+                    "findings. Acceptable forms: legacy slug substring "
+                    "('agent-skills/<slug>'), workspaces SOT path "
+                    "('docs/agent-guides/skills/<slug>.md'), or a recognizable "
+                    "display-name stem — not a non-resolving display path. "
+                    "Exact legacy strings in details.expected_refs. "
                 )
                 nonconforming = _nonconforming_skill_ref_hint(text, missing_refs)
                 if nonconforming:

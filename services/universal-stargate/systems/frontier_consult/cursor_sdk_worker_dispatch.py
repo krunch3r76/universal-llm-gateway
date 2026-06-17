@@ -52,6 +52,7 @@ async def dispatch_cursor_sdk_worker(
     caller_agent: str | None = None,
     prompt_preamble: str | None = None,
     model_knobs: dict[str, str] | None = None,
+    read_only: bool = False,
 ) -> tuple[bool, str | None]:
     """POST ``/api/v1/cursor/dispatch``; return ``(ok, warning)``."""
     dispatch_id = f"{request_id}-{uuid.uuid4().hex[:8]}"
@@ -68,6 +69,8 @@ async def dispatch_cursor_sdk_worker(
         payload["caller_agent"] = caller_agent
     if model_knobs:
         payload["model_knobs"] = model_knobs
+    if read_only:
+        payload["read_only"] = True
     try:
         async with make_async_client(
             worker_base_url(), timeout=_WORKER_TIMEOUT
@@ -100,6 +103,7 @@ async def dispatch_cursor_sdk_worker_message(
     message: str,
     execution_id: str,
     caller_agent: str | None = None,
+    read_only: bool = False,
 ) -> tuple[bool, str | None]:
     """POST ``/api/v1/cursor/dispatch`` with ``message`` (consult path)."""
     dispatch_id = f"{request_id}-{uuid.uuid4().hex[:8]}"
@@ -112,6 +116,8 @@ async def dispatch_cursor_sdk_worker_message(
     }
     if caller_agent is not None:
         payload["caller_agent"] = caller_agent
+    if read_only:
+        payload["read_only"] = True
     try:
         async with make_async_client(
             worker_base_url(), timeout=_WORKER_TIMEOUT

@@ -779,29 +779,16 @@ async def cursor_dispatch(
         else None
     )
     contract = (req.handoff_contract or inferred_contract or "consult").lower()
-    source_repo_str = str(cfg.source_repo.resolve())
-    if contract == "implement":
-        active = await asyncio.to_thread(
-            ledger.active_implement_for_repo,
-            source_repo=source_repo_str,
-            exclude_dispatch_id=req.dispatch_id,
+    if req.read_only and contract == "implement":
+        return JSONResponse(
+            status_code=422,
+            content=error_envelope(
+                code="CURSOR_READONLY_IMPLEMENT_CONFLICT",
+                message="read_only=true is incompatible with contract=implement",
+                source="gateway",
+            ),
         )
-        if active:
-            return JSONResponse(
-                status_code=409,
-                content=error_envelope(
-                    code="CURSOR_DISPATCH_CONFLICT",
-                    message=(
-                        f"concurrent implement dispatch already active on {source_repo_str!r}: "
-                        f"{active!r}"
-                    ),
-                    source="gateway",
-                ),
-            )
-    wt_baseline = None
-    if contract == "implement":
-        baseline_map = await asyncio.to_thread(capture_wt_baseline, cfg.source_repo)
-        wt_baseline = json.dumps(baseline_map)
+    source_repo_str = str(cfg.source_repo.resolve())
     try:
         cached = await asyncio.to_thread(
             ledger.admit,
@@ -811,9 +798,10 @@ async def cursor_dispatch(
             caller_agent=req.caller_agent,
             resolved_model=config.model_id,
             admission=admission,
-            wt_baseline=wt_baseline,
             contract=contract,
             source_repo=source_repo_str,
+            read_only=req.read_only,
+            worker_instance=controller.worker_id,
         )
     except DispatchConflict as exc:
         return JSONResponse(
@@ -828,6 +816,14 @@ async def cursor_dispatch(
         # Idempotent replay: return the cached admission WITHOUT reserving a new
         # ticket (try_admit runs only on the first-admit path below).
         return cached
+
+    if contract == "implement":
+        baseline_map = await asyncio.to_thread(capture_wt_baseline, cfg.source_repo)
+        await asyncio.to_thread(
+            ledger.set_wt_baseline,
+            dispatch_id=req.dispatch_id,
+            wt_baseline=json.dumps(baseline_map),
+        )
 
     # Reserve the admission ticket synchronously. try_admit re-checks drain with
     # no await between the check and the reservation; if a drain began during the

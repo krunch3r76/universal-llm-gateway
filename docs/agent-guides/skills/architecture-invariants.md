@@ -31,7 +31,7 @@ Cite applicable tags in handoff Block 2; load deferred refs by tag when procedur
 | `[docs]` | Event/API/runtime contract changes ⇒ doc audit; generated catalog regions via `gen-event-catalog --check` | Contract/semantics changes | → `events-docs.md` |
 | `[docker]` | `--no-cache` disables layer reuse + `--pull`; scoped buildx prune only | Docker rebuild/cache decisions | → `quality-gates.md` |
 | `[universal:refs]` | Cross-resident refs use `cortex://` or `workspaces://` URI form; ¬absolute paths in cross-resident artifacts | Packets, specs, handoffs consumed by other residents | grep `/mnt/torus/` in artifacts |
-| `[universal:git-posture]` | Canonical state = working tree + cortex/RAG + live process; git ≠ project index; no standing git workflow; commit optional; ¬ diffs to LLMs — whole files / sections only | Git state inference, canonicality, cursor-sdk substrate, git CLI | → `git-posture.md` (full doctrine) |
+| `[universal:git-posture]` | Canonical state = working tree + cortex/RAG + live process; git ≠ project index; no standing git workflow; commit optional; `git diff` unreliable on master (reliable on arc worktrees); ¬ diffs to LLMs — whole files / sections only | Git state inference, canonicality, cursor-sdk substrate, git CLI | → `git-posture.md` (full doctrine) |
 
 ## Deferred references
 

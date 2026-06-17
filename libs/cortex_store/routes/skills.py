@@ -194,7 +194,9 @@ def get_skills(
     ] = "manifest",
     render: Annotated[
         str | None,
-        Query(description="Optional render mode: concise (server-side markdown)."),
+        Query(
+            description="Optional comma-set render modes: concise, card. card is valid only with view=boot."
+        ),
     ] = None,
 ) -> dict[str, Any]:
     """Seat-filtered skill manifest INDEX over HTTP (bodies pull-on-demand).

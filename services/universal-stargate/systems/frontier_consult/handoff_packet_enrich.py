@@ -13,6 +13,9 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from implement_admission.admission_read import frontmatter_value
+from implement_admission.skill_fs_line import (
+    source_uri_to_fs_line as _canonical_source_uri_to_fs_line,
+)
 from universal_logging import get_logger
 
 from .handoff import _extract_block
@@ -73,18 +76,10 @@ class EnrichResult:
 
 
 def source_uri_to_fs_line(source_uri: str) -> str:
-    """Translate agent_skill.source_uri to a packet fs load line."""
-    uri = source_uri.strip().removeprefix("files://")
-    if uri.startswith("workspaces://"):
-        path = uri.removeprefix("workspaces://")
-        return f'fs(workspaces, op=read, path="{path}")'
-    if uri.startswith(("universal-llm-gateway/", "projects/")):
-        return f'fs(workspaces, op=read, path="{uri}")'
-    if uri.startswith("agent-skills/"):
-        return f'fs(cortex, op=read, path="{uri}")'
-    if "/" not in uri:
-        return f'fs(cortex, op=read, path="agent-skills/{uri}")'
-    raise ValueError(f"unsupported source_uri: {source_uri!r}")
+    """Translate agent_skill.source_uri to a packet fs load line (enrich positional form)."""
+    return _canonical_source_uri_to_fs_line(
+        source_uri, op="read", fs_call_style="positional"
+    )
 
 
 def _parse_related_thread_ids(text: str) -> list[str]:

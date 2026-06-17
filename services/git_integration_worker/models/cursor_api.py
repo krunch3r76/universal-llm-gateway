@@ -20,6 +20,7 @@ class CursorDispatchRequest(BaseModel):
     handoff_contract: str | None = None
     prompt_preamble: str | None = None
     model_knobs: dict[str, str] | None = None
+    read_only: bool = False
 
     @model_validator(mode="after")
     def _packet_xor_message(self) -> CursorDispatchRequest:

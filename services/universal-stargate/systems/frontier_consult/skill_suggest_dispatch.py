@@ -230,6 +230,7 @@ async def dispatch_skill_suggest(
             contract="pure-mechanical",
             packet_path=None,
             message_text=message,
+            read_only=True,
         )
     except FrontierEndpointError:
         result = await run_fallback(
