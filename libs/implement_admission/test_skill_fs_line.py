@@ -10,6 +10,7 @@ import pytest
 
 from implement_admission.materialize import materialize
 from implement_admission.skill_fs_line import (
+    _KNOWN_SKILL_SOURCE_URIS,
     resolve_skill_source_uri,
     skill_slug_to_fs_line,
     source_uri_to_fs_line,
@@ -199,3 +200,25 @@ def test_materialize_packet_sha256_deterministic_offline_vs_online(
     offline = materialize(spec, out_dir=tmp_path / "offline")
 
     assert online.packet_sha256 == offline.packet_sha256
+
+
+@pytest.mark.offline
+def test_known_source_uris_covers_entire_coding_session_bundle() -> None:
+    """Determinism guard (CF2 / C3): every CODING_SESSION_BUNDLE slug must be in
+    _KNOWN_SKILL_SOURCE_URIS so resolve_skill_source_uri is map-first for the whole
+    bundle and packet_sha256 cannot diverge online-vs-offline. A bundle slug absent
+    from the map is the next git-posture consolidation regression."""
+    from agent_seat.body_injection import CODING_SESSION_BUNDLE
+
+    inject = {
+        entity_id.removeprefix("agent_skill:")
+        for entity_id in CODING_SESSION_BUNDLE["inject"]
+    }
+    advertise = set(CODING_SESSION_BUNDLE["advertise"])
+    missing = (inject | advertise) - set(_KNOWN_SKILL_SOURCE_URIS)
+    assert not missing, (
+        "CODING_SESSION_BUNDLE slugs absent from _KNOWN_SKILL_SOURCE_URIS: "
+        f"{sorted(missing)} — add each with its canonical source_uri "
+        "(agent-skills/<slug>.md for cortex-resident) so packet rendering stays "
+        "deterministic offline vs online."
+    )

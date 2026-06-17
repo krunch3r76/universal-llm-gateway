@@ -2,18 +2,17 @@
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 from implement_admission.closeout_helpers import workspaces_root
 from implement_admission.dense_spec_schema import (
+    DENSE_SPEC_RE,
     DenseSpecVerdict,
     dense_spec_hash_uri,
     validate_dense_spec,
 )
 
-_DENSE_SPEC_RE = re.compile(r"tasks/specs/[^/\s#?]+\.md", re.IGNORECASE)
 _REJECTED_SPEC_PREFIXES = ("packet:", "agent-bus:")
 _ULG_DIRNAME = "universal-llm-gateway"
 
@@ -44,7 +43,7 @@ def normalize_dense_spec_path(source_uri: str | None, *, todo_id: str) -> str:
         return canonical
 
     uri = str(source_uri).strip().removeprefix("files://")
-    match = _DENSE_SPEC_RE.search(uri)
+    match = DENSE_SPEC_RE.search(uri)
     if not match:
         return canonical
 

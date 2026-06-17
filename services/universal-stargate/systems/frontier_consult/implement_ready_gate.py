@@ -8,6 +8,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from implement_admission.closeout_helpers import cortex_files_root
+from implement_admission.dense_spec_schema import DENSE_SPEC_RE, spec_basename
 from implement_admission.implement_ready import evaluate_implement_ready
 from implement_admission.source_ref import parse_source_ref
 from implement_admission.spec import SourceKind
@@ -16,7 +18,7 @@ from .admission import FrontierEndpointError
 from .handoff import _resolve_packet_file, _workspaces_root
 from .implement_admission_bridge import StargateCortexReader, _repo_base
 
-_DENSE_SPEC_RE = re.compile(r"tasks/specs/[^/\s#?]+\.md", re.IGNORECASE)
+_SCHEME_RE = re.compile(r"^(?P<scheme>workspaces|cortex|ws):(?://)?", re.IGNORECASE)
 
 
 def _decode_attributes(raw: Any) -> dict[str, Any]:
@@ -126,13 +128,6 @@ def _resolve_fresh_implement_ready(
     return best_key[1], best
 
 
-def _spec_basename(uri: str) -> str | None:
-    match = _DENSE_SPEC_RE.search(uri)
-    if not match:
-        return None
-    return match.group(0).split("/")[-1]
-
-
 def _select_cited_dense_spec_uri(
     evidence_uris: list[str] | None,
     *,
@@ -140,14 +135,14 @@ def _select_cited_dense_spec_uri(
 ) -> str | None:
     if not evidence_uris:
         return None
-    cited = [u for u in evidence_uris if _DENSE_SPEC_RE.search(u)]
+    cited = [u for u in evidence_uris if DENSE_SPEC_RE.search(u)]
     if not cited:
         return None
-    source_base = _spec_basename(source_uri or "")
+    source_base = spec_basename(source_uri or "")
     if source_base is None:
         return cited[0]
     for uri in cited:
-        if _spec_basename(uri) == source_base:
+        if spec_basename(uri) == source_base:
             return uri
     return None
 
@@ -157,15 +152,24 @@ def _read_dense_spec_text(
     *,
     workspaces_root: Path | None = None,
 ) -> str | None:
-    root = (workspaces_root or _workspaces_root()).resolve()
     uri = cited_uri.strip()
-    for prefix in ("workspaces://", "cortex://", "ws://"):
-        if uri.lower().startswith(prefix):
-            uri = uri[len(prefix) :]
-    uri = uri.lstrip("/")
-    candidate = _resolve_packet_file(root, uri)
-    if candidate is None:
-        candidate = _resolve_packet_file(_repo_base(root), uri)
+    scheme_match = _SCHEME_RE.match(uri)
+    if scheme_match:
+        scheme = scheme_match.group("scheme").lower()
+        uri = uri[scheme_match.end() :].lstrip("/")
+        if scheme == "cortex":
+            root = cortex_files_root()
+            candidate = _resolve_packet_file(root, uri)
+        else:
+            root = (workspaces_root or _workspaces_root()).resolve()
+            candidate = _resolve_packet_file(root, uri)
+            if candidate is None:
+                candidate = _resolve_packet_file(_repo_base(root), uri)
+    else:
+        root = (workspaces_root or _workspaces_root()).resolve()
+        candidate = _resolve_packet_file(root, uri)
+        if candidate is None:
+            candidate = _resolve_packet_file(_repo_base(root), uri)
     if candidate is None:
         return None
     try:

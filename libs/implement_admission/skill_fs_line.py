@@ -11,14 +11,23 @@ logger = get_logger(__name__)
 
 _WS = "workspaces://universal-llm-gateway"
 
-# Offline / entity_get-failure fallback for consolidated SOT paths (Track A).
-# Covers every CODING_SESSION_BUNDLE inject+advertise slug whose canonical
-# source_uri is workspaces-resident (entity_get verified 2026-06-17).
+# Deterministic resolution table for resolve_skill_source_uri (CF2 / C3 determinism
+# contract). MUST cover EVERY CODING_SESSION_BUNDLE inject+advertise slug, regardless
+# of substrate, so packet rendering is map-first for the whole bundle and packet_sha256
+# cannot diverge online-vs-offline (the failure git-posture hit when it consolidated to
+# workspaces). entity_get is reached only for NON-bundle slugs. Workspaces-resident slugs
+# carry the SOT path; cortex-resident slugs carry the agent-skills/<slug>.md form (== the
+# offline fallback, so adding them is output-preserving). The guard test
+# test_known_source_uris_covers_entire_coding_session_bundle fails loud if a bundle slug
+# is added without a map entry.
 _KNOWN_SKILL_SOURCE_URIS: dict[str, str] = {
     "architecture-invariants": f"{_WS}/docs/agent-guides/skills/architecture-invariants.md",
     "ulg-architecture": f"{_WS}/docs/agent-guides/skills/ulg-architecture.md",
     "git-posture": f"{_WS}/docs/agent-guides/skills/git-posture.md",
     "service-lifecycle": f"{_WS}/.cursor/skills/service-lifecycle/SKILL.md",
+    "implement-work-item": "agent-skills/implement-work-item.md",
+    "completion-provenance-discipline": "agent-skills/completion-provenance-discipline.md",
+    "fs": "agent-skills/fs.md",
 }
 
 

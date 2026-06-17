@@ -2,16 +2,14 @@
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
-from pathlib import PurePosixPath
 
 from implement_admission.dense_spec_schema import (
+    DENSE_SPEC_RE,
     dense_spec_hash_uri,
+    spec_basename,
     validate_dense_spec,
 )
-
-_DENSE_SPEC_RE = re.compile(r"tasks/specs/[^/\s#?]+\.md", re.IGNORECASE)
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,13 +20,6 @@ class ImplementReadyVerdict:
     assertion_id: int | None = None
 
 
-def _spec_basename(uri: str) -> str | None:
-    match = _DENSE_SPEC_RE.search(uri)
-    if not match:
-        return None
-    return PurePosixPath(match.group(0)).name
-
-
 def _assertion_cites_dense_spec(
     evidence_uris: list[str] | None,
     *,
@@ -36,13 +27,13 @@ def _assertion_cites_dense_spec(
 ) -> bool:
     if not evidence_uris:
         return False
-    cited_matches = [u for u in evidence_uris if _DENSE_SPEC_RE.search(u)]
+    cited_matches = [u for u in evidence_uris if DENSE_SPEC_RE.search(u)]
     if not cited_matches:
         return False
-    source_base = _spec_basename(source_uri or "")
+    source_base = spec_basename(source_uri or "")
     if source_base is None:
         return True
-    return any(_spec_basename(u) == source_base for u in cited_matches)
+    return any(spec_basename(u) == source_base for u in cited_matches)
 
 
 def _assertion_inactive(assertion: dict, *, now_iso: str) -> bool:
@@ -130,8 +121,8 @@ def evaluate_implement_ready(
     if not dense_uri:
         return _reject(
             "implement_not_ready_no_dense_spec",
-            f"{todo_id}: source_uri must point at tasks/specs/{{slug}}.md before "
-            "implement dispatch",
+            f"{todo_id}: source_uri must point at tasks/specs/{{slug}}.md or "
+            "notes/system/specs/{slug}.md before implement dispatch",
         )
 
     evidence = assertion.get("evidence_uris")

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import re
 from dataclasses import dataclass
+from pathlib import PurePosixPath
 
 _REQUIRED_SECTIONS: dict[str, re.Pattern[str]] = {
     "problem": re.compile(r"^#{1,6}\s.*\bproblem\b", re.I | re.M),
@@ -30,6 +31,17 @@ _OPEN_FORK_RE = re.compile(r"\bOPEN\s*:", re.I)
 _ATTESTATION_RE = re.compile(r"no\s+fork\s+remains\s+open", re.I)
 _FENCE_RE = re.compile(r"(```|~~~).*?\1", re.S)
 _INLINE_CODE_RE = re.compile(r"`[^`]*`")
+DENSE_SPEC_RE = re.compile(
+    r"(?:tasks/specs|notes/system/specs)/[^/\s#?]+\.md", re.IGNORECASE
+)
+
+
+def spec_basename(uri: str) -> str | None:
+    """Return the slug filename from a dense-spec URI, or None if uncited."""
+    match = DENSE_SPEC_RE.search(uri)
+    if not match:
+        return None
+    return PurePosixPath(match.group(0)).name
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,8 +101,10 @@ def validate_dense_spec(text: str) -> DenseSpecVerdict:
 
 
 __all__ = [
+    "DENSE_SPEC_RE",
     "DenseSpecVerdict",
     "dense_spec_hash_uri",
     "dense_spec_sha256",
+    "spec_basename",
     "validate_dense_spec",
 ]

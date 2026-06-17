@@ -36,6 +36,8 @@ team_dispatch(op="handoff", role="cursor-implement",
 #               dispatch_thread_id="{arc-id}")
 ```
 
+**`subject` on generate:** accepted but **ignored** on `op=generate` (the result-thread subject is auto-derived); the response carries a `subject_ignored_on_generate` warning. Use `op=to_thread` to set a thread subject (friction 19803).
+
 **Preflight — verify live (mandatory).** Before any `contract=implement` dispatch (or Gate-3 `source_ref` handoff), run `implement-todo` §1 verify-live: `entity_get(todo:{slug})`, confirm `workflow_state ∈ {open, in_progress}` (not `done`/`superseded`/stale — boot-card rows and bus turns go stale; the entity is canonical). Loading `cursor-sdk-instruction-standard` is necessary but not sufficient; it does not check liveness. **Re-versioned / previously-done todo:** `source_ref` can reuse a stale pinned `implement_ready_assertion_id` (silent — the inactive-assertion reject only fires on actual supersession), so refresh first (supersede old assertion → update `implement_ready_assertion_id` → re-distill attrs) or prefer `packet_path` until the pin is verified. Canonical detail: cortex SOT § Implement lane — source_ref.
 
 Introduced `todo:unified-admission-handoff-source-ref` (2026-06-08); arc shipped

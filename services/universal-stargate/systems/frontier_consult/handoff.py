@@ -61,14 +61,13 @@ _REQUIRED_INVARIANT_SKILL_REFS: tuple[str, ...] = tuple(
 
 
 def _packet_references_arch_skill_slug(text: str, slug: str) -> bool:
+    """Canonical-form only: a loadable ref — the legacy cortex slug substring or
+    the workspaces SOT path. A display-name *stem* deliberately does NOT satisfy
+    the gate; it is reported by _nonconforming_skill_ref_hint with the exact
+    rewrite, so the reviewer gets a loadable ref, not an unresolvable mention."""
     if f"agent-skills/{slug}" in text:
         return True
-    if f"docs/agent-guides/skills/{slug}.md" in text:
-        return True
-    stem_pattern = r"[\s\-\u2013\u2014]+".join(
-        re.escape(part) for part in slug.split("-")
-    )
-    return bool(re.search(stem_pattern, text, flags=re.IGNORECASE))
+    return f"docs/agent-guides/skills/{slug}.md" in text
 
 
 def _missing_arch_skill_refs(text: str) -> list[str]:
@@ -260,8 +259,9 @@ def validate_packet(
                     "layers (Block 2 / Block 5) so the reviewer reads them before "
                     "findings. Acceptable forms: legacy slug substring "
                     "('agent-skills/<slug>'), workspaces SOT path "
-                    "('docs/agent-guides/skills/<slug>.md'), or a recognizable "
-                    "display-name stem — not a non-resolving display path. "
+                    "('docs/agent-guides/skills/<slug>.md') — not a non-resolving "
+                    "display path; a recognizable display-name stem is reported "
+                    "below with its exact rewrite. "
                     "Exact legacy strings in details.expected_refs. "
                 )
                 nonconforming = _nonconforming_skill_ref_hint(text, missing_refs)

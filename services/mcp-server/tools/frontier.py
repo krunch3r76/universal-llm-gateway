@@ -344,7 +344,11 @@ def register_frontier_tools(mcp: FastMCP) -> None:
           on-behalf delivery (friction #17396).
           If reasoning effort matters, inspect ``knob_resolution.status/parity/notes``;
           do not infer cross-provider parity.
-          ``thread`` / ``subject`` must be absent when using this op.
+          ``thread`` must be absent when using this op (generate auto-provisions
+          its own result thread). ``subject`` is accepted but IGNORED — it is not
+          persisted (the result-thread subject is auto-derived); the response
+          carries a ``subject_ignored_on_generate`` warning. Use ``op="to_thread"``
+          to actually set a thread subject (friction 19803).
           Manual seats (``claude-web``, ``claude-cursor``) are rejected with 422
           ``web_seat_not_generate_target``. The SDK auto seat ``cursor-sdk`` is
           admitted on ``op=generate`` (``auto_dispatchable`` substrate=sdk). Use API roles with optional
@@ -535,14 +539,27 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         thread_id_err = require_dispatch_thread_id(op, dispatch_thread_id, contract)
         if thread_id_err is not None:
             return thread_id_err
+        subject_ignored_on_generate = False
         if op == "generate":
-            if thread is not None or subject is not None:
+            if thread is not None:
                 return {
                     "error": {
                         "code": "validation_error",
-                        "message": "thread/subject are not allowed when op='generate'",
+                        "message": (
+                            "thread is not allowed when op='generate' "
+                            "(generate auto-provisions its own result thread)"
+                        ),
                     }
                 }
+            # `subject` is harmless filler on generate: the result-thread subject
+            # is auto-derived server-side (api_role_generate.py:
+            # f"{role} generate — {request_id}"), so a caller-supplied subject
+            # cannot be persisted here. Rather than hard-422 a readability label
+            # (friction 19803), accept it, drop it from the forwarded body, and
+            # surface a non-fatal warning on the response envelope. `thread`
+            # stays rejected because it IS structurally invalid for generate.
+            if subject is not None:
+                subject_ignored_on_generate = True
             # cursor-sdk implement path: forward packet_path + contract so the
             # Stargate generate intercept (route.py) can route to the worker.
             # source_ref is ALSO forwarded — the first-class wrap transport
@@ -609,8 +626,22 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             model=model or "",
             reasoning_effort=reasoning_effort or "",
         )
-        return await _relay(
+        result = await _relay(
             endpoint="/api/v1/team/dispatch",
             body=body,
             record_prefix="mcp.team.dispatch",
         )
+        if (
+            subject_ignored_on_generate
+            and isinstance(result, dict)
+            and "error" not in result
+        ):
+            existing = result.get("warnings")
+            warnings = list(existing) if isinstance(existing, list) else []
+            warnings.append(
+                "subject_ignored_on_generate: `subject` is not persisted on "
+                "op='generate' (the result-thread subject is auto-derived). "
+                "Drop it, or use op='to_thread' to set a thread subject."
+            )
+            result["warnings"] = warnings
+        return result

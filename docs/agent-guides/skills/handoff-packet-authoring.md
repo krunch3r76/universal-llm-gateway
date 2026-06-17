@@ -308,7 +308,10 @@ bound implement dispatch (`contract=implement`).
 with explicit instructions pre-staged on the dispatch thread. Composer 2.5 is still a
 mechanical executor, so thread-staged directions must be explicit, detailed,
 restrictive, and bounded. This is a distinct lane from the materialized implement packet,
-**not** a lighter packet. `messages[]` is not on the wire.
+**not** a lighter packet. `messages[]` is not on the wire. On `op=generate`, a
+`subject` argument is accepted but **ignored** (the result-thread subject is auto-derived);
+the response carries a `subject_ignored_on_generate` warning. Use `op=to_thread` to set a
+thread subject (friction 19803).
 
 Canonical lane definition — the three-point spectrum (Dense Implement / Light Bounded
 Execution / Pure Mechanical Write Loop) — lives in the SOT: `agent-skills/consult-routing.md`
