@@ -9,6 +9,7 @@ from .events import (
     FrontierSdkGenerateRequested,
     FrontierSdkWorkerDispatched,
     FrontierSdkWorkerDispatchFailed,
+    FrontierSdkWorkerQueued,
 )
 
 
@@ -62,9 +63,21 @@ def emit_sdk_worker_outcome(
     thread_id: str,
     execution_id: str,
     worker_ok: bool,
-    worker_warning: str | None,
+    worker_detail: dict[str, Any],
 ) -> None:
     if worker_ok:
+        if worker_detail.get("queued"):
+            ticket = worker_detail.get("ticket") or {}
+            publish_frontier_event(
+                FrontierSdkWorkerQueued(
+                    request_id=request_id,
+                    thread_id=thread_id,
+                    execution_id=execution_id,
+                    dispatch_id=str(ticket.get("dispatch_id") or ""),
+                    queue_position=ticket.get("queue_position"),
+                )
+            )
+            return
         publish_frontier_event(
             FrontierSdkWorkerDispatched(
                 request_id=request_id,
@@ -78,6 +91,9 @@ def emit_sdk_worker_outcome(
             request_id=request_id,
             thread_id=thread_id,
             execution_id=execution_id,
-            error=worker_warning or "worker_dispatch: failed",
+            error=str(worker_detail.get("message") or "worker_dispatch: failed"),
+            status_code=worker_detail.get("status_code"),
+            code=worker_detail.get("code"),
+            blocking_dispatch_id=worker_detail.get("blocking_dispatch_id"),
         )
     )

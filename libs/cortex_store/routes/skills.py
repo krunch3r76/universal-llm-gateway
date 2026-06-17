@@ -44,7 +44,11 @@ from ..skill_listing_format import (
     render_concise_skill_index,
     render_skills_card_section,
 )
-from ..skill_suggest_rank import apply_rerank, rerank_enabled_default
+from ..skill_suggest_rank import (
+    apply_rerank,
+    rerank_enabled_default,
+    suggestions_need_description,
+)
 from ._skill_index import (
     body_digest,
     entity_types_for_layer,
@@ -478,20 +482,28 @@ async def post_skill_suggest(
     rank_execution_id: str | None = None
 
     ctx_present = bool((body.conversation_context or "").strip())
-    if (
-        effective_rerank
+    needs_description = suggestions_need_description(result.get("suggestions", []))
+    should_rank = effective_rerank and ctx_present and result.get("suggestions")
+    should_describe = (
+        not effective_rerank
+        and needs_description
         and ctx_present
         and result.get("suggestions")
-        and ranker_status != "skipped_no_context"
-    ):
+    )
+    if (should_rank or should_describe) and ranker_status != "skipped_no_context":
         result, ranker_status, degraded_reason, rank_execution_id = apply_rerank(
             stage_a_result=result,
             stage_a_candidates=stage_a.get("stage_a_candidates", []),
             conversation_context=body.conversation_context or "",
             loaded=body.loaded,
             limit=body.limit,
+            describe_only=should_describe and not effective_rerank,
         )
-    elif not effective_rerank and ranker_status != "skipped_no_context":
+    elif (
+        not effective_rerank
+        and not needs_description
+        and ranker_status != "skipped_no_context"
+    ):
         result["ranker_status"] = "disabled"
         ranker_status = "disabled"
 

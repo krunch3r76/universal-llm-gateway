@@ -178,9 +178,14 @@ def register_skill_suggest_tools(mcp: FastMCP) -> None:
     ) -> dict[str, Any]:
         """Suggest newly relevant, not-yet-loaded skills for the caller seat.
 
-        Returns ranked skill-slug deltas with concise reasons. The server injects
-        the caller seat when ``agent`` is omitted; pass ``agent`` explicitly when
-        seat resolution is unavailable.
+        Returns ranked skill-slug deltas with a ``description`` per skill (from the
+        skill index when available; synthesized by the ranker when missing). The
+        server injects the caller seat when ``agent`` is omitted; pass ``agent``
+        explicitly when seat resolution is unavailable.
+
+        Each suggestion includes: ``id``, ``slug``, ``source_uri``, ``digest``,
+        ``score``, ``description``, ``reason``, ``reason_source``. Tag lists
+        (``trigger_match``) are internal scoring signals and are not returned.
 
         Response — two unreachable-skill channels. Check both for a complete view
         of skills that failed to load:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, model_validator
 
 
@@ -38,3 +40,6 @@ class CursorDispatchResponse(BaseModel):
     dispatch_id: str
     thread_id: str
     model_id: str
+    status: Literal["admitted", "queued"] = "admitted"
+    queue_position: int | None = None
+    since: str | None = None

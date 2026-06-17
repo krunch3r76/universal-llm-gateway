@@ -416,6 +416,11 @@ async def get_active_work(request: Request):
     queued = _GATE.queue_length
     cursor = CursorDispatchLedger.instance().active_snapshot()
     sdk_gate = sdk_dispatch_gate_stats()
+    lease = CursorDispatchLedger.instance().lease_snapshot(
+        source_repo=str(getattr(request.app.state, "worker_config", _CONFIG).source_repo.resolve())
+        if getattr(request.app.state, "worker_config", None) is not None
+        else None
+    )
     active_count = controller.active_count()
     return JSONResponse(
         status_code=200,
@@ -424,6 +429,7 @@ async def get_active_work(request: Request):
             "queued": queued,
             "cursor_dispatches": cursor,
             "cursor_sdk_gate": sdk_gate,
+            "write_lease": lease,
             "active_count": active_count,
             "active_ops": controller.active_ops(),
             "busy": active_count > 0,

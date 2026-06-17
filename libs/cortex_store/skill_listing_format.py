@@ -116,13 +116,11 @@ def _append_row_lines(
     lines.append("")
 
 
-_INVARIANT_SKILL_SLUGS: frozenset[str] = frozenset(
-    {
-        "architecture-invariants",
-        "ulg-architecture",
-        "cortex-orientation",
-        "cortex-provenance-discipline",
-    }
+_INVARIANT_SKILL_SLUGS: tuple[str, ...] = (
+    "architecture-invariants",
+    "ulg-architecture",
+    "cortex-orientation",
+    "cortex-provenance-discipline",
 )
 
 _TIER1_GATE_SLUGS: frozenset[str] = frozenset(
@@ -136,9 +134,6 @@ _TIER1_GATE_SLUGS: frozenset[str] = frozenset(
         "session-close",
     }
 )
-
-_FOL_OPERATORS = {"∨", "∧", "⇒", "⇔", "¬", "→", "∈", "∉", "∪", "∩", "⊆", "⊂", "|"}
-
 
 def _skill_trigger_display(row: Mapping[str, Any]) -> str:
     """Listing trigger: trigger_short first; short description fallback only."""
@@ -191,8 +186,8 @@ def render_skills_card_section(
             "> **Load on demand**: "
             '`fs(sandbox="cortex", op="md_read", path="agent-skills/<slug>.md")` '
             "— slug is the backticked id on each line. Web auto-inject bodies "
-            "(`architecture-invariants`, `ulg-architecture`, `cortex-orientation`, "
-            "`cortex-provenance-discipline`) append to the web prompt (`seat_preloaded`)."
+            f"({', '.join(f'`{slug}`' for slug in _INVARIANT_SKILL_SLUGS)}) "
+            "append to the web prompt (`seat_preloaded`)."
         ),
         (
             "> **Discovery (you call it, never the operator)**: at task inflection "

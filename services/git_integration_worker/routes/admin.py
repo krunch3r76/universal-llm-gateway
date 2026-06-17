@@ -15,10 +15,24 @@ from pydantic import BaseModel
 from universal_logging import get_logger
 
 from services.git_integration_worker.admission import WorkAdmissionController
+from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
 
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/api/v1/git/admin", tags=["git-admin"])
+
+
+@router.get("/lease-snapshot", summary="Write-lease holder and queue depth.")
+async def lease_snapshot(
+    request: Request,
+    source_repo: str | None = None,
+) -> dict[str, object]:
+    """F-3 observability: active write-lease + durable queue depth."""
+    cfg = getattr(request.app.state, "worker_config", None)
+    repo = source_repo
+    if repo is None and cfg is not None:
+        repo = str(cfg.source_repo.resolve())
+    return CursorDispatchLedger.instance().lease_snapshot(source_repo=repo)
 
 
 class BeginDrainRequest(BaseModel):

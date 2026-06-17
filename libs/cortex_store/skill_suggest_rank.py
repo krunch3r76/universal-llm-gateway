@@ -68,8 +68,8 @@ def _candidate_payload(
     return [
         {
             "slug": item["slug"],
+            "description": item.get("description") or "",
             "trigger_short": item.get("trigger_short", ""),
-            "trigger_match_terms": item.get("trigger_match_terms", []),
             "skill_category": item.get("skill_category", ""),
         }
         for item in stage_a_candidates
@@ -97,13 +97,25 @@ def _parse_ranked(
             continue
         slug = item.get("slug")
         reason = item.get("reason")
+        description = item.get("description")
         if not isinstance(slug, str) or not isinstance(reason, str):
             continue
         slug_norm = slug.strip()
         if slug_norm not in allowed_slugs or slug_norm in loaded_set:
             continue
-        out.append({"slug": slug_norm, "reason": reason[:120]})
+        entry: dict[str, str] = {
+            "slug": slug_norm,
+            "reason": reason[:120],
+        }
+        if isinstance(description, str) and description.strip():
+            entry["description"] = description.strip()[:500]
+        out.append(entry)
     return out or None
+
+
+def suggestions_need_description(suggestions: list[dict[str, Any]]) -> bool:
+    """True when any suggestion lacks a stored description (LLM describe pass)."""
+    return any(not str(item.get("description") or "").strip() for item in suggestions)
 
 
 def apply_rerank(
@@ -113,6 +125,7 @@ def apply_rerank(
     conversation_context: str,
     loaded: list[str],
     limit: int,
+    describe_only: bool = False,
 ) -> tuple[dict[str, Any], str, str | None, str | None]:
     """Return (updated_result, ranker_status, degraded_reason, rank_execution_id)."""
     from .routes._skill_suggest import build_loaded_set
@@ -137,6 +150,7 @@ def apply_rerank(
             "context": conversation_context,
             "loaded": sorted(loaded_set),
             "limit": limit,
+            "describe_only": describe_only,
         },
     }
     rank_execution_id: str | None = None
@@ -175,22 +189,42 @@ def apply_rerank(
 
     _record_success()
     by_slug = {item["slug"]: item for item in stage_a_result.get("suggestions", [])}
+    model_by_slug = {item["slug"]: item for item in ranked}
     ordered: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for item in ranked:
-        slug = item["slug"]
-        base = by_slug.get(slug)
-        if base is None:
-            continue
+
+    def _merge_model_fields(
+        base: dict[str, Any], model_item: dict[str, str]
+    ) -> dict[str, Any]:
         updated = dict(base)
-        updated["reason"] = item["reason"]
+        updated["reason"] = model_item["reason"]
         updated["reason_source"] = "model"
-        ordered.append(updated)
-        seen.add(slug)
-    for base in stage_a_result.get("suggestions", []):
-        if base["slug"] not in seen:
-            ordered.append(base)
-    ordered = ordered[:limit]
+        if model_item.get("description"):
+            updated["description"] = model_item["description"]
+        elif not str(updated.get("description") or "").strip():
+            updated["description"] = model_item["reason"]
+        return updated
+
+    if describe_only:
+        for base in stage_a_result.get("suggestions", []):
+            model_item = model_by_slug.get(base["slug"])
+            if model_item is not None:
+                ordered.append(_merge_model_fields(base, model_item))
+            else:
+                ordered.append(dict(base))
+        ordered = ordered[:limit]
+    else:
+        seen: set[str] = set()
+        for item in ranked:
+            slug = item["slug"]
+            base = by_slug.get(slug)
+            if base is None:
+                continue
+            ordered.append(_merge_model_fields(base, item))
+            seen.add(slug)
+        for base in stage_a_result.get("suggestions", []):
+            if base["slug"] not in seen:
+                ordered.append(base)
+        ordered = ordered[:limit]
     result = dict(stage_a_result)
     result["suggestions"] = ordered
     result["count"] = len(ordered)

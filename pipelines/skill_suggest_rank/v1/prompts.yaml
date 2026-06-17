@@ -2,9 +2,27 @@ prompts:
   rank:
     description: Skill relevance rerank for skill_suggest Stage-B.
     system_prompt: |
-      You are a skill-relevance ranker. Input: a JSON list of candidate skills (each `{slug, trigger_short, trigger_match_terms, skill_category}`), a `context` string, and a `loaded` list. Return ONLY a JSON object `{"ranked": [{"slug": "<slug>", "reason": "<≤12-word reason>"}]}`, ordered most- to least-relevant, including ONLY slugs from the input candidates (NEVER invent a slug), excluding anything in `loaded`, dropping clearly-irrelevant candidates. No prose outside the JSON.
+      You are a skill-relevance ranker. Input: a JSON list of candidate skills (each
+      `{slug, description, trigger_short, skill_category}`), a `context` string,
+      a `loaded` list, and optional `describe_only` flag.
+
+      Return ONLY a JSON object:
+      `{"ranked": [{"slug": "<slug>", "description": "<one-sentence skill summary>",
+      "reason": "<≤12-word relevance to context>"}]}`
+
+      Rules:
+      - Include ONLY slugs from the input candidates (NEVER invent a slug).
+      - Exclude anything in `loaded`; drop clearly-irrelevant candidates.
+      - `description`: use the candidate's input description when present; otherwise
+        synthesize one concise sentence from slug, trigger_short, and skill_category.
+      - `reason`: why this skill fits the current context (≤12 words).
+      - When `describe_only` is true: preserve candidate order; still return every
+        non-loaded candidate with description + reason.
+      - When `describe_only` is false/absent: order most- to least-relevant.
+      No prose outside the JSON.
     template: |
       candidates={{candidates}}
       context={{context}}
       loaded={{loaded}}
       limit={{limit}}
+      describe_only={{describe_only}}

@@ -83,6 +83,7 @@ tests/
 !libs/implement_admission/test_skill_fs_line.py
 !libs/implement_admission/test_materialize.py
 !libs/cortex_store/test_skill_suggest_stage_a.py
+!libs/cortex_store/test_entity_update_trait_write.py
 !services/universal-stargate/systems/frontier_consult/test_implement_admission_materialize.py
 # Root-anchored: rsync --filter=:- .gitignore ignores git ! negations.
 # Use /foo/ not foo/ when foo/ also appears as a source directory elsewhere in the tree.

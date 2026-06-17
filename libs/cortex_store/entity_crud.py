@@ -21,10 +21,6 @@ from collections.abc import Callable
 from fastapi import HTTPException, status
 from universal_logging import get_logger
 
-from .assertion_deserialize_telemetry import (
-    assertion_deserialize_skip_reason,
-    emit_assertion_deserialize_skipped,
-)
 from .confidence_field import DISCOVERABLE_SKILL_LIFECYCLE
 from .db import cortex_conn, decode_row, json_encode
 from .db import query as db_query
@@ -34,14 +30,13 @@ from .entity_exhibit_lint import (
     insert_exhibit_belongs_to_relationship,
 )
 from .entity_id_norm import canonicalize_entity_id
+from .entity_read import get_entity_impl
 from .event_publisher import cortex_entity_source_changed
 from .models import (
-    AssertionItem,
     EntityCreate,
     EntityDetail,
     EntitySummary,
 )
-from .routes.assertions import _ASSERTION_COLS
 from .seat_applicability import (
     FOR_AGENT_CLAUSE,
     canonical_seat_or_422,
@@ -136,7 +131,6 @@ def _enforce_role_entity_lint(
         ) from exc
 
 
-ASSERTION_JSON_FIELDS = frozenset({"evidence_uris", "attributes"})
 JSON_COLUMNS = frozenset({"aliases", "attributes"})
 
 # Base columns selectable directly; everything else resolves from the
@@ -557,32 +551,17 @@ def update_entity_impl(
         if source_uri_emit is not None and post_commit_emits is not None:
             post_commit_emits.append(source_uri_emit)
 
-    rows = db_query(conn, "SELECT * FROM entities WHERE id = ?", (entity_id,))
-    assertion_rows = db_query(
-        conn,
-        f"SELECT {_ASSERTION_COLS} FROM assertions WHERE entity_id = ? "
-        "ORDER BY created_at DESC",
-        (entity_id,),
-    )
+    if not commit:
+        # Bulk callers (commit=False) discard the return value; avoid
+        # get_entity_impl — it commits for entity_access_log and would
+        # break the outer transaction.
+        rows = db_query(conn, "SELECT * FROM entities WHERE id = ?", (entity_id,))
+        detail_row = apply_option_c_read_projection(
+            decode_row(rows[0], ENTITY_JSON_FIELDS)
+        )
+        return EntityDetail(**detail_row, assertions=[]).model_dump(mode="json")
 
-    assertions: list[AssertionItem] = []
-    for row in assertion_rows:
-        try:
-            assertions.append(AssertionItem(**decode_row(row, ASSERTION_JSON_FIELDS)))
-        except Exception as exc:
-            logger.error(
-                "Skipping assertion %s for entity %s — deserialization failed",
-                row.get("id"),
-                entity_id,
-                exc_info=True,
-            )
-            emit_assertion_deserialize_skipped(
-                entity_id=entity_id,
-                assertion_id=row.get("id"),
-                reason=assertion_deserialize_skip_reason(exc),
-            )
-    detail_row = apply_option_c_read_projection(decode_row(rows[0], ENTITY_JSON_FIELDS))
-    return EntityDetail(**detail_row, assertions=assertions).model_dump(mode="json")
+    return get_entity_impl(conn, entity_id=entity_id, source="boot")
 
 
 def create_entity_impl(

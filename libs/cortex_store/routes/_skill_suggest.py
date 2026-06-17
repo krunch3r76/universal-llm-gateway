@@ -27,6 +27,7 @@ from ..seat_applicability import (
     seat_capabilities_json,
 )
 from ._skill_index import index_envelope_fields
+from .boot._skill_trigger import skill_description_text
 
 _DISCOVERABLE_SKILL_LIFECYCLE = discoverable_skill_lifecycle_sql_predicate()
 
@@ -233,7 +234,11 @@ def _apply_coding_session_start(
             continue
         trigger_terms = _decode_term_list(row.get("trigger_match_terms_json"))
         envelope = index_envelope_fields(row)
-        reason = f"matches: {_CODING_SESSION_START_TRIGGER}"
+        description = _suggestion_description(row)
+        if description:
+            reason = f"Recommended for coding session: {description}"
+        else:
+            reason = "Recommended for coding session start"
         if slug == "git-posture":
             reason = f"{reason}; {_GIT_POSTURE_CODING_SESSION_NUDGE}"
         filtered.append(
@@ -242,6 +247,7 @@ def _apply_coding_session_start(
                 "slug": slug,
                 **envelope,
                 "score": 100.0,
+                "description": description,
                 "trigger_match": [_CODING_SESSION_START_TRIGGER],
                 "reason": reason,
                 "reason_source": "deterministic",
@@ -257,7 +263,7 @@ def _apply_coding_session_start(
 
 
 _SUGGEST_CANDIDATE_SQL = f"""
-    SELECT id, name, source_uri,
+    SELECT id, name, description, source_uri,
            json_extract(attributes, '$.trigger_short') AS trigger_short,
            json_extract(attributes, '$.trigger_match_terms') AS trigger_match_terms_json,
            json_extract(attributes, '$.skill_category') AS skill_category,
@@ -270,6 +276,19 @@ _SUGGEST_CANDIDATE_SQL = f"""
       AND {_DISCOVERABLE_SKILL_LIFECYCLE}
       {{for_agent_filter}}{{capability_filter}}
 """
+
+_PUBLIC_SUGGESTION_KEYS = frozenset(
+    {
+        "id",
+        "slug",
+        "source_uri",
+        "digest",
+        "score",
+        "description",
+        "reason",
+        "reason_source",
+    }
+)
 
 
 def norm_loaded(value: str) -> str:
@@ -516,6 +535,23 @@ def _passes_precision_gate(score: _CandidateScore) -> bool:
     return len(score.matched_specific_terms) >= 1
 
 
+def _public_suggestion(entry: dict[str, Any]) -> dict[str, Any]:
+    """Agent-facing suggestion shape — descriptions, not tag evidence."""
+    return {k: entry[k] for k in _PUBLIC_SUGGESTION_KEYS if k in entry}
+
+
+def _suggestion_description(row: dict[str, Any]) -> str:
+    return skill_description_text(row)
+
+
+def _deterministic_reason(description: str, *, slug: str, ctx: str) -> str:
+    if description:
+        return description
+    if _matches_coding_session_start(ctx):
+        return f"Recommended for coding session ({slug})"
+    return f"Skill {slug}"
+
+
 def _fetch_candidates(conn: sqlite3.Connection, agent: str) -> list[dict[str, Any]]:
     canonical = canonical_seat_or_422(agent)
     params: list[Any] = [
@@ -664,13 +700,15 @@ def run_stage_a(
         matched = list(scored.matched_terms)
         trigger_terms = _decode_term_list(row.get("trigger_match_terms_json"))
         envelope = index_envelope_fields(row)
+        description = _suggestion_description(row)
         entry = {
             "id": entity_id,
             "slug": slug,
             **envelope,
             "score": scored.score,
+            "description": description,
             "trigger_match": matched[:5],
-            "reason": "matches: " + ", ".join(matched[:5]),
+            "reason": _deterministic_reason(description, slug=slug, ctx=ctx),
             "reason_source": "deterministic",
             "boot_importance": row.get("boot_importance"),
             "delivery_priority": int(row.get("delivery_priority") or 100),
@@ -688,14 +726,7 @@ def run_stage_a(
     loaded_echo = sorted(set(loaded_echo))
     scored_new = _apply_coding_session_start(scored_new, rows, loaded_set, ctx)
     scored_new.sort(key=_sort_key)
-    suggestions = [
-        {
-            k: v
-            for k, v in item.items()
-            if k not in {"boot_importance", "delivery_priority"}
-        }
-        for item in scored_new[:limit]
-    ]
+    suggestions = [_public_suggestion(item) for item in scored_new[:limit]]
     omitted = [
         {"slug": item["slug"], "reason": "already_loaded"}
         for item in sorted(scored_loaded, key=_sort_key)

@@ -29,6 +29,7 @@ steps:
                 type: object
                 properties:
                   slug: {type: string}
+                  description: {type: string}
                   reason: {type: string}
-                required: [slug, reason]
+                required: [slug, description, reason]
           required: [ranked]

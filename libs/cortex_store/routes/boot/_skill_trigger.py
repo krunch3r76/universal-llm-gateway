@@ -103,3 +103,11 @@ def skill_trigger_text(row: dict[str, Any]) -> str:
                 if candidate:
                     return first_sentence(candidate)
     return first_sentence(row.get("description"))
+
+
+def skill_description_text(row: dict[str, Any]) -> str:
+    """Boot-aligned summary for skill_suggest — trigger_short, then L1 first sentence."""
+    trigger_short = str(row.get("trigger_short") or "").strip()
+    if trigger_short:
+        return trigger_short
+    return skill_trigger_text(row)

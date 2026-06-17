@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import subprocess
 import time
 import traceback
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
@@ -32,6 +33,10 @@ from services.git_integration_worker.git_worker_drain_events import (
 from services.git_integration_worker.routes.admin import router as admin_router
 from services.git_integration_worker.routes.cursor_sdk import (
     router as cursor_sdk_router,
+)
+from services.git_integration_worker.routes.cursor_sdk import (
+    stale_lease_sweeper,
+    startup_ledger_reconcile,
 )
 from services.git_integration_worker.routes.health import router as health_router
 from services.git_integration_worker.routes.integrate import router as integrate_router
@@ -84,6 +89,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.worker_config = cfg
     app.state.worker_version = _resolve_version()
     app.state.worker_started_at = time.monotonic()
+    await startup_ledger_reconcile(app)
+    sweeper = asyncio.create_task(stale_lease_sweeper(app))
+    app.state.stale_lease_sweeper = sweeper
     logger.info(
         "git-integration-worker started: version=%s port=%d source_repo=%s "
         "worker_id=%s",
@@ -95,6 +103,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        sweeper_task = getattr(app.state, "stale_lease_sweeper", None)
+        if sweeper_task is not None:
+            sweeper_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await sweeper_task
         # Defense-in-depth cooperative drain on process shutdown: close admission
         # and wait (bounded) for in-flight mutating work to finish before exit.
         # Phase-2 manage drives the PRIMARY drain via the admin route ahead of

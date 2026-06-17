@@ -52,6 +52,8 @@ def _insert(
     boot_importance: str | None = None,
     delivery_priority: int = 100,
     applicable_agents: list[str] | None = None,
+    description: str | None = None,
+    trigger_short: str = "",
 ) -> None:
     agents = applicable_agents if applicable_agents is not None else ["claude-web"]
     attrs: dict[str, object] = {
@@ -61,12 +63,15 @@ def _insert(
     }
     if boot_importance:
         attrs["boot_importance"] = boot_importance
+    if trigger_short:
+        attrs["trigger_short"] = trigger_short
     conn.execute(
-        "INSERT INTO entities (id, type, name, source_uri, lifecycle, attributes) "
-        "VALUES (?, 'agent_skill', ?, ?, 'active', ?)",
+        "INSERT INTO entities (id, type, name, description, source_uri, lifecycle, attributes) "
+        "VALUES (?, 'agent_skill', ?, ?, ?, 'active', ?)",
         (
             entity_id,
             entity_id.removeprefix("agent_skill:"),
+            description,
             source_uri,
             json.dumps(attrs),
         ),
@@ -86,18 +91,21 @@ def _handoff_conn() -> sqlite3.Connection:
             "dispatch",
             "panel",
         ],
+        description="Route consult and handoff requests.",
     )
     _insert(
         conn,
         "agent_skill:handoff-packet-authoring",
         source_uri="agent-skills/handoff-packet-authoring.md",
         trigger_match_terms=["packet", "handoff", "team_dispatch"],
+        description="Author six-block handoff packets for dispatch.",
     )
     _insert(
         conn,
         "agent_skill:consensus-steelman-posture",
         source_uri="agent-skills/consensus-steelman-posture.md",
         trigger_match_terms=["steelman", "panel", "consensus"],
+        description="Run consensus panels with steelman posture.",
     )
     _insert(
         conn,
@@ -171,6 +179,17 @@ def test_stage_a_boosts_do_not_rescue_generic_singleton_matches() -> None:
     result = _run(conn, "consult")
     slugs = {s["slug"] for s in result["suggestions"]}
     assert "advisor-timing" not in slugs
+
+
+@pytest.mark.offline
+def test_suggestions_expose_description_not_tags() -> None:
+    result = _run(_handoff_conn(), _HANDOFF_CONTEXT)
+    assert result["suggestions"]
+    for item in result["suggestions"]:
+        assert item.get("description")
+        assert "trigger_match" not in item
+        assert "trigger_match_terms" not in item
+        assert item["reason"] == item["description"]
 
 
 @pytest.mark.offline
@@ -427,7 +446,8 @@ def test_coding_session_start_returns_bundle_not_session_close() -> None:
     assert set(slugs) == set(advertise_slugs)
     for item in result["suggestions"]:
         assert item["score"] == 100.0
-        assert "coding-session-start" in item.get("trigger_match", [])
+        assert "coding session" in item["reason"].lower()
+        assert "trigger_match" not in item
     preloaded = set(result["seat_preloaded"])
     assert "architecture-invariants" in preloaded
     assert "ulg-architecture" in preloaded
@@ -528,7 +548,7 @@ def test_coding_session_start_git_posture_carries_md_list_nudge() -> None:
         )
     git_posture = next(s for s in result["suggestions"] if s["slug"] == "git-posture")
     reason = git_posture["reason"]
-    assert "coding-session-start" in reason
+    assert "coding session" in reason.lower()
     assert "md_list" in reason
     assert "Execution lanes" in reason
     assert "Commit posture" in reason

@@ -18,12 +18,32 @@ from .cursor_sdk_worker_dispatch import (
     derive_cursor_sdk_prompt_preamble,
     dispatch_cursor_sdk_worker,
     dispatch_cursor_sdk_worker_message,
-    post_worker_failure_turn,
 )
 from .handoff import admit_handoff_dispatch, create_handoff_thread
 from .handoff_response import build_handoff_result, build_sdk_generate_result
 
 CURSOR_SDK_REPLY_SEAT = "cursor-sdk"
+
+
+def _worker_dispatch_error(
+    *,
+    request_id: str,
+    detail: dict[str, Any],
+) -> None:
+    from .admission import FrontierEndpointError
+
+    raise FrontierEndpointError(
+        request_id=request_id,
+        field="worker_dispatch",
+        reason=str(detail.get("message") or "worker dispatch failed"),
+        status_code=int(detail.get("status_code") or 502),
+        code=str(detail.get("code") or "CURSOR_WORKER_DISPATCH_FAILED"),
+        details={
+            k: detail[k]
+            for k in ("status_code", "code", "blocking_dispatch_id")
+            if detail.get(k) is not None
+        },
+    )
 
 
 async def dispatch_cursor_sdk_generate(
@@ -203,7 +223,7 @@ async def dispatch_cursor_sdk_generate(
             handoff_contract=handoff_contract,
             pointer=preamble_pointer,
         )
-        worker_ok, worker_warning = await dispatch_cursor_sdk_worker(
+        worker_ok, worker_detail = await dispatch_cursor_sdk_worker(
             request_id=request_id,
             thread_id=thread_id,
             model=resolved_model,
@@ -215,7 +235,7 @@ async def dispatch_cursor_sdk_generate(
             read_only=read_only,
         )
     else:
-        worker_ok, worker_warning = await dispatch_cursor_sdk_worker_message(
+        worker_ok, worker_detail = await dispatch_cursor_sdk_worker_message(
             request_id=request_id,
             thread_id=thread_id,
             model=resolved_model,
@@ -225,21 +245,24 @@ async def dispatch_cursor_sdk_generate(
             read_only=read_only,
         )
 
+    if not worker_ok:
+        emit_sdk_worker_outcome(
+            request_id=request_id,
+            thread_id=thread_id,
+            execution_id=execution_id,
+            worker_ok=False,
+            worker_detail=worker_detail,
+        )
+        _worker_dispatch_error(request_id=request_id, detail=worker_detail)
+
+    queued = bool(worker_detail.get("queued"))
     emit_sdk_worker_outcome(
         request_id=request_id,
         thread_id=thread_id,
         execution_id=execution_id,
-        worker_ok=worker_ok,
-        worker_warning=worker_warning,
+        worker_ok=True,
+        worker_detail=worker_detail,
     )
-
-    warnings: list[str] = []
-    if not worker_ok:
-        await post_worker_failure_turn(
-            thread_id=thread_id, request_id=request_id, to_agent=to_agent
-        )
-        if worker_warning:
-            warnings.append(worker_warning)
 
     profile = get_profile(family, platform)
     handoff_fields = build_handoff_result(
@@ -247,7 +270,7 @@ async def dispatch_cursor_sdk_generate(
         to_agent=to_agent,
         reply_from_agent=CURSOR_SDK_REPLY_SEAT,
     )
-    return build_sdk_generate_result(
+    result = build_sdk_generate_result(
         role=role,
         profile=profile,
         handoff_fields=handoff_fields,
@@ -256,9 +279,14 @@ async def dispatch_cursor_sdk_generate(
         to_agent=to_agent,
         resolved_model=resolved_model,
         resolved_contract=handoff_contract,
-        warnings=warnings,
+        warnings=[],
         durable=admitted,
         density_triage=density_triage,
         review_opt_out_reason_code=review_opt_out_reason_code,
         auto_review_child=auto_review_child,
     )
+    if queued:
+        ticket = worker_detail.get("ticket") or {}
+        result["status"] = "queued"
+        result["queue_ticket"] = ticket
+    return result

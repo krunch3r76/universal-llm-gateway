@@ -27,9 +27,11 @@ from services.git_integration_worker.models.cursor_api import (
 
 logger = get_logger(__name__)
 
+_STATUS_QUEUED = "queued"
 _STATUS_ADMITTED = "admitted"
 _STATUS_RUNNING = "running"
 _STATUS_TERMINAL = ("completed", "failed")
+_ACTIVE_WRITER_STATUSES = (_STATUS_ADMITTED, _STATUS_RUNNING)
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS cursor_sdk_dispatches (
@@ -37,18 +39,20 @@ CREATE TABLE IF NOT EXISTS cursor_sdk_dispatches (
     fingerprint        TEXT NOT NULL,
     thread_id          TEXT NOT NULL,
     execution_id       TEXT,
+    caller_agent       TEXT,
     resolved_model     TEXT NOT NULL,
     packet_path        TEXT,
     message_present    INTEGER NOT NULL DEFAULT 0,
     state_root         TEXT,
     sdk_agent_id       TEXT,
     sdk_run_id         TEXT,
-    status             TEXT NOT NULL CHECK (status IN ('admitted','running','completed','failed')),
+    status             TEXT NOT NULL CHECK (status IN ('queued','admitted','running','completed','failed')),
     started_at         TEXT,
     last_heartbeat_at  TEXT,
     terminal_status    TEXT CHECK (terminal_status IN ('completed','failed')),
     terminal_at        TEXT,
-    record_json        TEXT NOT NULL DEFAULT '{}'
+    record_json        TEXT NOT NULL DEFAULT '{}',
+    queued_at          TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_sdk_dispatch_running
     ON cursor_sdk_dispatches(status) WHERE status = 'running';
@@ -94,6 +98,122 @@ class LedgerRow:
     status: str
     started_at: str | None
     last_heartbeat_at: str | None
+    source_repo: str | None = None
+    contract: str | None = None
+    read_only: bool = False
+    record_json: str = "{}"
+
+
+@dataclass(frozen=True, slots=True)
+class PromotedDispatch:
+    """FIFO head promoted from queued → admitted."""
+
+    dispatch_id: str
+    thread_id: str
+    execution_id: str | None
+    caller_agent: str | None
+    resolved_model: str
+    source_repo: str | None
+    contract: str | None
+    read_only: bool
+    record_json: str
+
+
+def _dispatch_record_json(req: CursorDispatchRequest) -> str:
+    payload = {
+        "model": req.model,
+        "message": req.message,
+        "packet_path": req.packet_path,
+        "handoff_contract": req.handoff_contract,
+        "prompt_preamble": req.prompt_preamble,
+        "model_knobs": req.model_knobs,
+        "read_only": req.read_only,
+    }
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
+
+
+def _response_from_row(
+    row: sqlite3.Row,
+    *,
+    admission: CursorDispatchResponse,
+    queue_position: int | None = None,
+) -> CursorDispatchResponse:
+    status = row["status"]
+    if status == _STATUS_QUEUED:
+        return CursorDispatchResponse(
+            admitted=False,
+            dispatch_id=row["dispatch_id"],
+            thread_id=row["thread_id"],
+            model_id=row["resolved_model"],
+            status="queued",
+            queue_position=queue_position,
+            since=row["queued_at"],
+        )
+    return CursorDispatchResponse(
+        admitted=True,
+        dispatch_id=row["dispatch_id"],
+        thread_id=row["thread_id"],
+        model_id=row["resolved_model"],
+        status="admitted",
+    )
+
+
+def _migrate_queued_status(conn: sqlite3.Connection) -> None:
+    """Extend the status CHECK to include ``queued`` on pre-v4 databases."""
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='cursor_sdk_dispatches'"
+    ).fetchone()
+    if row is None or row["sql"] is None or "'queued'" in row["sql"]:
+        return
+    conn.executescript(
+        """
+        CREATE TABLE cursor_sdk_dispatches_v4 (
+            dispatch_id        TEXT PRIMARY KEY,
+            fingerprint        TEXT NOT NULL,
+            thread_id          TEXT NOT NULL,
+            execution_id       TEXT,
+            caller_agent       TEXT,
+            resolved_model     TEXT NOT NULL,
+            packet_path        TEXT,
+            message_present    INTEGER NOT NULL DEFAULT 0,
+            state_root         TEXT,
+            sdk_agent_id       TEXT,
+            sdk_run_id         TEXT,
+            status             TEXT NOT NULL CHECK (status IN ('queued','admitted','running','completed','failed')),
+            started_at         TEXT,
+            last_heartbeat_at  TEXT,
+            terminal_status    TEXT CHECK (terminal_status IN ('completed','failed')),
+            terminal_at        TEXT,
+            record_json        TEXT NOT NULL DEFAULT '{}',
+            wt_baseline        TEXT,
+            contract           TEXT,
+            source_repo        TEXT,
+            read_only          INTEGER NOT NULL DEFAULT 0,
+            worker_instance    TEXT,
+            queued_at          TEXT
+        );
+        INSERT INTO cursor_sdk_dispatches_v4 (
+            dispatch_id, fingerprint, thread_id, execution_id, caller_agent,
+            resolved_model, packet_path, message_present, state_root,
+            sdk_agent_id, sdk_run_id, status, started_at, last_heartbeat_at,
+            terminal_status, terminal_at, record_json, wt_baseline, contract,
+            source_repo, read_only, worker_instance, queued_at
+        )
+        SELECT
+            dispatch_id, fingerprint, thread_id, execution_id, caller_agent,
+            resolved_model, packet_path, message_present, state_root,
+            sdk_agent_id, sdk_run_id, status, started_at, last_heartbeat_at,
+            terminal_status, terminal_at, record_json, wt_baseline, contract,
+            source_repo, read_only, worker_instance, NULL
+        FROM cursor_sdk_dispatches;
+        DROP TABLE cursor_sdk_dispatches;
+        ALTER TABLE cursor_sdk_dispatches_v4 RENAME TO cursor_sdk_dispatches;
+        CREATE INDEX IF NOT EXISTS idx_sdk_dispatch_running
+            ON cursor_sdk_dispatches(status) WHERE status = 'running';
+        CREATE INDEX IF NOT EXISTS idx_sdk_dispatch_execution
+            ON cursor_sdk_dispatches(execution_id);
+        """
+    )
 
 
 class CursorDispatchLedger:
@@ -142,6 +262,16 @@ class CursorDispatchLedger:
                 conn.execute(
                     "ALTER TABLE cursor_sdk_dispatches ADD COLUMN worker_instance TEXT"
                 )
+            if "queued_at" not in cols:
+                conn.execute(
+                    "ALTER TABLE cursor_sdk_dispatches ADD COLUMN queued_at TEXT"
+                )
+            _migrate_queued_status(conn)
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_sdk_dispatch_queued "
+                "ON cursor_sdk_dispatches(source_repo, worker_instance, status) "
+                "WHERE status = 'queued'"
+            )
 
     def _connect(self) -> sqlite3.Connection:
         return _connect(self._db_path)
@@ -181,12 +311,15 @@ class CursorDispatchLedger:
         read_only: bool = False,
         worker_instance: str | None = None,
     ) -> CursorDispatchResponse | None:
-        """Durable idempotency (F2). Returns cached admission on hit, None on first admit.
-        Raises DispatchConflict on fingerprint mismatch or writer-lease conflict."""
+        """Durable idempotency (F2). Returns cached admission on hit, None on first
+        admitted insert, or a queued ticket when the write-lease is held.
+        Raises DispatchConflict only on fingerprint mismatch."""
+        record_json = _dispatch_record_json(req)
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             existing = conn.execute(
-                "SELECT fingerprint FROM cursor_sdk_dispatches WHERE dispatch_id = ?",
+                "SELECT dispatch_id, fingerprint, status, thread_id, resolved_model, "
+                "queued_at, source_repo FROM cursor_sdk_dispatches WHERE dispatch_id = ?",
                 (req.dispatch_id,),
             ).fetchone()
             if existing is not None:
@@ -195,7 +328,19 @@ class CursorDispatchLedger:
                         f"dispatch_id {req.dispatch_id!r} already admitted with "
                         "different payload fingerprint"
                     )
-                return admission  # idempotent hit (now restart-durable)
+                if existing["status"] == _STATUS_QUEUED:
+                    pos = self._queue_position_conn(
+                        conn,
+                        dispatch_id=req.dispatch_id,
+                        source_repo=existing["source_repo"],
+                        worker_instance=worker_instance,
+                    )
+                    return _response_from_row(
+                        existing, admission=admission, queue_position=pos
+                    )
+                return _response_from_row(existing, admission=admission)
+            insert_status = _STATUS_ADMITTED
+            queued_at: str | None = None
             if not read_only and source_repo:
                 conflict = conn.execute(
                     "SELECT dispatch_id FROM cursor_sdk_dispatches "
@@ -205,16 +350,15 @@ class CursorDispatchLedger:
                     (source_repo, req.dispatch_id, worker_instance),
                 ).fetchone()
                 if conflict is not None:
-                    raise DispatchConflict(
-                        f"concurrent writer dispatch already active on "
-                        f"{source_repo!r}: {conflict['dispatch_id']!r}"
-                    )
+                    insert_status = _STATUS_QUEUED
+                    queued_at = _now()
             conn.execute(
                 "INSERT INTO cursor_sdk_dispatches "
                 "(dispatch_id, fingerprint, thread_id, execution_id, caller_agent, "
                 " resolved_model, packet_path, message_present, status, record_json, "
-                " wt_baseline, contract, source_repo, read_only, worker_instance) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " wt_baseline, contract, source_repo, read_only, worker_instance, "
+                " queued_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     req.dispatch_id,
                     fingerprint,
@@ -224,16 +368,49 @@ class CursorDispatchLedger:
                     resolved_model,
                     req.packet_path,
                     1 if req.message else 0,
-                    _STATUS_ADMITTED,
-                    "{}",
+                    insert_status,
+                    record_json,
                     wt_baseline,
                     contract,
                     source_repo,
                     1 if read_only else 0,
                     worker_instance,
+                    queued_at,
                 ),
             )
+            if insert_status == _STATUS_QUEUED:
+                pos = self._queue_position_conn(
+                    conn,
+                    dispatch_id=req.dispatch_id,
+                    source_repo=source_repo,
+                    worker_instance=worker_instance,
+                )
+                row = conn.execute(
+                    "SELECT dispatch_id, fingerprint, status, thread_id, resolved_model, "
+                    "queued_at, source_repo FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+                    (req.dispatch_id,),
+                ).fetchone()
+                assert row is not None
+                return _response_from_row(row, admission=admission, queue_position=pos)
         return None
+
+    @staticmethod
+    def _queue_position_conn(
+        conn: sqlite3.Connection,
+        *,
+        dispatch_id: str,
+        source_repo: str | None,
+        worker_instance: str | None,
+    ) -> int:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM cursor_sdk_dispatches "
+            "WHERE source_repo=? AND COALESCE(read_only,0)=0 AND status='queued' "
+            "AND worker_instance=? AND rowid <= ("
+            "  SELECT rowid FROM cursor_sdk_dispatches WHERE dispatch_id=?"
+            ")",
+            (source_repo, worker_instance, dispatch_id),
+        ).fetchone()
+        return int(row["n"]) if row is not None else 1
 
     def read_wt_baseline(self, *, dispatch_id: str) -> dict[str, str] | None:
         with self._connect() as conn:
@@ -289,14 +466,200 @@ class CursorDispatchLedger:
                 (_now(), dispatch_id),
             )
 
-    def mark_terminal(self, *, dispatch_id: str, terminal_status: str) -> None:
+    def mark_terminal(self, *, dispatch_id: str, terminal_status: str) -> str | None:
+        """Mark terminal; return ``source_repo`` when present for promotion."""
         assert terminal_status in _STATUS_TERMINAL
+        source_repo: str | None = None
         with self._connect() as conn:
+            row = conn.execute(
+                "SELECT source_repo FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+                (dispatch_id,),
+            ).fetchone()
+            if row is not None:
+                source_repo = row["source_repo"]
             conn.execute(
                 "UPDATE cursor_sdk_dispatches SET status=?, terminal_status=?, terminal_at=? "
                 "WHERE dispatch_id=?",
                 (terminal_status, terminal_status, _now(), dispatch_id),
             )
+        return source_repo
+
+    def promote_next_queued(
+        self, *, source_repo: str, worker_instance: str | None
+    ) -> PromotedDispatch | None:
+        """Advance the FIFO head ``queued`` row to ``admitted`` when lease is free."""
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            active = conn.execute(
+                "SELECT dispatch_id FROM cursor_sdk_dispatches "
+                "WHERE source_repo=? AND COALESCE(read_only,0)=0 "
+                "AND status IN ('admitted','running') AND worker_instance=? LIMIT 1",
+                (source_repo, worker_instance),
+            ).fetchone()
+            if active is not None:
+                return None
+            head = conn.execute(
+                "SELECT dispatch_id, thread_id, execution_id, caller_agent, "
+                "resolved_model, source_repo, contract, read_only, record_json "
+                "FROM cursor_sdk_dispatches "
+                "WHERE source_repo=? AND COALESCE(read_only,0)=0 AND status='queued' "
+                "AND worker_instance=? ORDER BY rowid ASC LIMIT 1",
+                (source_repo, worker_instance),
+            ).fetchone()
+            if head is None:
+                return None
+            updated = conn.execute(
+                "UPDATE cursor_sdk_dispatches SET status=?, queued_at=NULL "
+                "WHERE dispatch_id=? AND status='queued'",
+                (_STATUS_ADMITTED, head["dispatch_id"]),
+            )
+            if updated.rowcount != 1:
+                return None
+        return PromotedDispatch(
+            dispatch_id=head["dispatch_id"],
+            thread_id=head["thread_id"],
+            execution_id=head["execution_id"],
+            caller_agent=head["caller_agent"],
+            resolved_model=head["resolved_model"],
+            source_repo=head["source_repo"],
+            contract=head["contract"],
+            read_only=bool(head["read_only"]),
+            record_json=head["record_json"] or "{}",
+        )
+
+    def stale_writers(
+        self, *, threshold_s: float, worker_instance: str | None
+    ) -> list[str]:
+        """``admitted``/``running`` rows on this instance past heartbeat staleness."""
+        from datetime import datetime
+
+        cutoff = datetime.now(UTC).timestamp() - threshold_s
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT dispatch_id, last_heartbeat_at, started_at, status "
+                "FROM cursor_sdk_dispatches "
+                "WHERE worker_instance=? AND COALESCE(read_only,0)=0 "
+                "AND status IN ('admitted','running')",
+                (worker_instance,),
+            ).fetchall()
+        stale: list[str] = []
+        for row in rows:
+            if (
+                self._tasks.get(row["dispatch_id"]) is not None
+                and not self._tasks[row["dispatch_id"]].done()
+            ):
+                continue
+            ts = row["last_heartbeat_at"] or row["started_at"]
+            if ts is None:
+                stale.append(row["dispatch_id"])
+                continue
+            try:
+                seen = datetime.fromisoformat(ts).timestamp()
+            except ValueError:
+                stale.append(row["dispatch_id"])
+                continue
+            if seen < cutoff:
+                stale.append(row["dispatch_id"])
+        return stale
+
+    def release_stale_writer(self, *, dispatch_id: str) -> str | None:
+        """Conservatively fail a stale lease holder; return ``source_repo``."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT source_repo, status FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+                (dispatch_id,),
+            ).fetchone()
+            if row is None or row["status"] not in _ACTIVE_WRITER_STATUSES:
+                return None
+            if (
+                self._tasks.get(dispatch_id) is not None
+                and not self._tasks[dispatch_id].done()
+            ):
+                return None
+            conn.execute(
+                "UPDATE cursor_sdk_dispatches SET status=?, terminal_status=?, terminal_at=? "
+                "WHERE dispatch_id=? AND status IN ('admitted','running')",
+                ("failed", "failed", _now(), dispatch_id),
+            )
+            return row["source_repo"]
+
+    def lease_snapshot(self, *, source_repo: str | None = None) -> dict[str, Any]:
+        """Active write-lease holder + queued depth (F-3)."""
+        with self._connect() as conn:
+            if source_repo:
+                holder = conn.execute(
+                    "SELECT dispatch_id, status, queued_at, started_at "
+                    "FROM cursor_sdk_dispatches "
+                    "WHERE source_repo=? AND COALESCE(read_only,0)=0 "
+                    "AND status IN ('admitted','running') LIMIT 1",
+                    (source_repo,),
+                ).fetchone()
+                queued = conn.execute(
+                    "SELECT COUNT(*) AS n FROM cursor_sdk_dispatches "
+                    "WHERE source_repo=? AND COALESCE(read_only,0)=0 AND status='queued'",
+                    (source_repo,),
+                ).fetchone()
+            else:
+                holder = conn.execute(
+                    "SELECT dispatch_id, status, source_repo, started_at "
+                    "FROM cursor_sdk_dispatches "
+                    "WHERE COALESCE(read_only,0)=0 AND status IN ('admitted','running') "
+                    "LIMIT 1"
+                ).fetchone()
+                queued = conn.execute(
+                    "SELECT COUNT(*) AS n FROM cursor_sdk_dispatches "
+                    "WHERE COALESCE(read_only,0)=0 AND status='queued'"
+                ).fetchone()
+        return {
+            "holder_dispatch_id": holder["dispatch_id"] if holder else None,
+            "holder_status": holder["status"] if holder else None,
+            "holder_source_repo": holder["source_repo"] if holder else source_repo,
+            "queue_depth": int(queued["n"]) if queued else 0,
+        }
+
+    def startup_reconcile(self, *, worker_instance: str) -> list[str]:
+        """Mark restart survivors terminal; return repos needing promotion."""
+        repos: set[str] = set()
+        with self._connect() as conn:
+            survivors = conn.execute(
+                "SELECT dispatch_id, source_repo, status, worker_instance "
+                "FROM cursor_sdk_dispatches "
+                "WHERE status IN ('admitted','running') "
+                "AND COALESCE(read_only,0)=0"
+            ).fetchall()
+        for row in survivors:
+            dispatch_id = row["dispatch_id"]
+            live = (
+                self._tasks.get(dispatch_id) is not None
+                and not self._tasks[dispatch_id].done()
+            )
+            if live:
+                continue
+            if row["worker_instance"] != worker_instance or row["status"] == _STATUS_RUNNING:
+                self.mark_terminal(dispatch_id=dispatch_id, terminal_status="failed")
+                if row["source_repo"]:
+                    repos.add(row["source_repo"])
+            elif row["status"] == _STATUS_ADMITTED and row["worker_instance"] == worker_instance:
+                self.mark_terminal(dispatch_id=dispatch_id, terminal_status="failed")
+                if row["source_repo"]:
+                    repos.add(row["source_repo"])
+        return sorted(repos)
+
+    def load_promoted_request(self, promoted: PromotedDispatch) -> CursorDispatchRequest:
+        data = json.loads(promoted.record_json)
+        return CursorDispatchRequest(
+            thread_id=promoted.thread_id,
+            model=str(data.get("model") or promoted.resolved_model),
+            dispatch_id=promoted.dispatch_id,
+            execution_id=promoted.execution_id or promoted.dispatch_id,
+            caller_agent=promoted.caller_agent,
+            packet_path=data.get("packet_path"),
+            message=data.get("message"),
+            handoff_contract=data.get("handoff_contract") or promoted.contract,
+            prompt_preamble=data.get("prompt_preamble"),
+            model_knobs=data.get("model_knobs"),
+            read_only=bool(data.get("read_only", promoted.read_only)),
+        )
 
     def running_orphans(self) -> list[LedgerRow]:
         """status='running' rows with NO live local task (restart survivors)."""

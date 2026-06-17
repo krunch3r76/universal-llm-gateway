@@ -27,7 +27,7 @@ from threading import Event as _ThreadEvent
 from threading import Thread
 
 from cursor_sdk import Client
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import JSONResponse
 from universal_logging import get_logger
 from universal_protocol import error_envelope
@@ -41,6 +41,7 @@ from services.git_integration_worker.cursor_bus import CursorBusClient
 from services.git_integration_worker.cursor_dispatch_ledger import (
     CursorDispatchLedger,
     DispatchConflict,
+    PromotedDispatch,
 )
 from services.git_integration_worker.cursor_home import (
     CursorHomeConfigError,
@@ -79,7 +80,10 @@ from services.git_integration_worker.cursor_sdk_events import (
     emit_sdk_worker_delivery_failed,
     emit_sdk_worker_failed,
     emit_sdk_worker_progress,
+    emit_sdk_worker_queued,
     emit_sdk_worker_timeout,
+    emit_write_lease_promoted,
+    emit_write_lease_released,
 )
 from services.git_integration_worker.cursor_sdk_gate import (
     acquire_sdk_dispatch_slot,
@@ -99,6 +103,13 @@ _SDK_BRIDGE_BIN = os.environ.get("CURSOR_SDK_BRIDGE_BIN", "").strip() or None
 _SDK_TIMEOUT_S = float(os.environ.get("CURSOR_SDK_TIMEOUT", "1800"))
 _SDK_TIMEOUT_BUFFER_S = 120.0
 _SDK_HEARTBEAT_S = float(os.environ.get("CURSOR_SDK_HEARTBEAT", "30"))
+_STALE_LEASE_S = float(
+    os.environ.get(
+        "CURSOR_STALE_LEASE_S",
+        str(_SDK_TIMEOUT_S + _SDK_TIMEOUT_BUFFER_S + 60.0),
+    )
+)
+_STALE_SWEEP_S = float(os.environ.get("CURSOR_STALE_SWEEP_S", "30"))
 # Retry-After hint (seconds) on the 503 returned while draining.
 _DRAIN_RETRY_AFTER_S = int(os.environ.get("GIT_WORKER_DRAIN_RETRY_AFTER", "5"))
 
@@ -392,6 +403,168 @@ def _run_sdk_sync(
         release_sdk_dispatch_slot_sync(gate_loop)
 
 
+async def _mark_terminal_and_promote(
+    *,
+    dispatch_id: str,
+    terminal_status: str,
+    controller: WorkAdmissionController,
+    request: Request | None = None,
+) -> None:
+    """Mark terminal, release lease, and promote the FIFO head when applicable."""
+    ledger = CursorDispatchLedger.instance()
+    source_repo = await asyncio.to_thread(
+        ledger.mark_terminal,
+        dispatch_id=dispatch_id,
+        terminal_status=terminal_status,
+    )
+    emit_write_lease_released(dispatch_id=dispatch_id, source_repo=source_repo)
+    if source_repo:
+        await _promote_queued_for_repo(
+            source_repo=source_repo,
+            controller=controller,
+            request=request,
+        )
+
+
+async def _promote_queued_for_repo(
+    *,
+    source_repo: str,
+    controller: WorkAdmissionController,
+    request: Request | None = None,
+) -> None:
+    ledger = CursorDispatchLedger.instance()
+    promoted = await asyncio.to_thread(
+        ledger.promote_next_queued,
+        source_repo=source_repo,
+        worker_instance=controller.worker_id,
+    )
+    if promoted is None:
+        return
+    emit_write_lease_promoted(
+        dispatch_id=promoted.dispatch_id,
+        source_repo=source_repo,
+    )
+    await _start_promoted_dispatch(
+        promoted=promoted,
+        controller=controller,
+        request=request,
+    )
+
+
+async def _start_promoted_dispatch(
+    *,
+    promoted: PromotedDispatch,
+    controller: WorkAdmissionController,
+    request: Request | None,
+) -> None:
+    ledger = CursorDispatchLedger.instance()
+    req = ledger.load_promoted_request(promoted)
+    cfg = _config(request) if request is not None else _CONFIG
+    contract = (promoted.contract or "consult").lower()
+    if contract == "implement":
+        baseline_map = await asyncio.to_thread(capture_wt_baseline, cfg.source_repo)
+        await asyncio.to_thread(
+            ledger.set_wt_baseline,
+            dispatch_id=promoted.dispatch_id,
+            wt_baseline=json.dumps(baseline_map),
+        )
+    try:
+        ticket = controller.try_admit(
+            "cursor_sdk",
+            op_id=promoted.dispatch_id,
+            route="/api/v1/cursor/dispatch",
+        )
+    except Draining503:
+        await asyncio.to_thread(
+            ledger.mark_terminal,
+            dispatch_id=promoted.dispatch_id,
+            terminal_status="failed",
+        )
+        return
+    bus = CursorBusClient()
+    task = controller.create_tracked_task(
+        _close_ticket_after(
+            _run_sdk_dispatch_gated(
+                req=req,
+                source_repo=cfg.source_repo,
+                dispatch_workspace=cfg.dispatch_workspace,
+                bus=bus,
+                controller=controller,
+            ),
+            controller=controller,
+            op_id=promoted.dispatch_id,
+        ),
+        op_id=promoted.dispatch_id,
+    )
+    ledger.register_task(promoted.dispatch_id, task)
+    ticket.mark_running()
+    await asyncio.to_thread(ledger.mark_running, dispatch_id=promoted.dispatch_id)
+
+
+async def reconcile_stale_leases(controller: WorkAdmissionController) -> None:
+    """Periodic sweeper: release stale lease holders and promote queued writers."""
+    ledger = CursorDispatchLedger.instance()
+    stale_ids = await asyncio.to_thread(
+        ledger.stale_writers,
+        threshold_s=_STALE_LEASE_S,
+        worker_instance=controller.worker_id,
+    )
+    repos: set[str] = set()
+    for dispatch_id in stale_ids:
+        source_repo = await asyncio.to_thread(
+            ledger.release_stale_writer, dispatch_id=dispatch_id
+        )
+        if source_repo:
+            repos.add(source_repo)
+            emit_write_lease_released(
+                dispatch_id=dispatch_id,
+                source_repo=source_repo,
+                stale=True,
+            )
+    for source_repo in repos:
+        await _promote_queued_for_repo(
+            source_repo=source_repo,
+            controller=controller,
+            request=None,
+        )
+
+
+async def stale_lease_sweeper(app: FastAPI) -> None:
+    """Background task started at worker lifespan."""
+    while True:
+        await asyncio.sleep(_STALE_SWEEP_S)
+        controller = getattr(app.state, "admission_controller", None)
+        if controller is None or controller.is_draining():
+            continue
+        try:
+            await reconcile_stale_leases(controller)
+        except Exception as exc:  # sweeper must never kill the worker
+            logger.warning("stale-lease sweeper failed: %s", exc)
+
+
+async def startup_ledger_reconcile(app: FastAPI) -> None:
+    """Reconcile restart survivors and promote any queued heads."""
+    ledger = CursorDispatchLedger.instance()
+    controller = app.state.admission_controller
+    repos = await asyncio.to_thread(
+        ledger.startup_reconcile, worker_instance=controller.worker_id
+    )
+    for orphan in ledger.running_orphans():
+        source_repo = await asyncio.to_thread(
+            ledger.mark_terminal,
+            dispatch_id=orphan.dispatch_id,
+            terminal_status="failed",
+        )
+        if source_repo:
+            repos.append(source_repo)
+    for source_repo in sorted(set(repos)):
+        await _promote_queued_for_repo(
+            source_repo=source_repo,
+            controller=controller,
+            request=None,
+        )
+
+
 async def _terminate_link(
     bus: CursorBusClient, *, thread_id: str, terminal_status: str
 ) -> None:
@@ -415,6 +588,7 @@ async def _deliver_sdk_closeout(
     bus: CursorBusClient,
     reply_to: str,
     work_item_ref: str | None,
+    controller: WorkAdmissionController,
     packet_text: str = "",
 ) -> None:
     baseline = await asyncio.to_thread(
@@ -468,10 +642,10 @@ async def _deliver_sdk_closeout(
             ),
         )
         await _terminate_link(bus, thread_id=req.thread_id, terminal_status="completed")
-        await asyncio.to_thread(
-            CursorDispatchLedger.instance().mark_terminal,
+        await _mark_terminal_and_promote(
             dispatch_id=req.dispatch_id,
             terminal_status="completed",
+            controller=controller,
         )
         return
 
@@ -510,10 +684,10 @@ async def _deliver_sdk_closeout(
         outcome=resolve_completion_outcome(run_outcome=run_outcome, delivery_ok=False),
     )
     await _terminate_link(bus, thread_id=req.thread_id, terminal_status="failed")
-    await asyncio.to_thread(
-        CursorDispatchLedger.instance().mark_terminal,
+    await _mark_terminal_and_promote(
         dispatch_id=req.dispatch_id,
         terminal_status="failed",
+        controller=controller,
     )
 
 
@@ -601,10 +775,10 @@ async def _run_sdk_dispatch_gated(
             body=f"```json\n{json.dumps(env, indent=2)}\n```",
         )
         await _terminate_link(bus, thread_id=req.thread_id, terminal_status="failed")
-        await asyncio.to_thread(
-            CursorDispatchLedger.instance().mark_terminal,
+        await _mark_terminal_and_promote(
             dispatch_id=req.dispatch_id,
             terminal_status="failed",
+            controller=controller,
         )
         return
 
@@ -628,10 +802,10 @@ async def _run_sdk_dispatch_gated(
             body=f"```json\n{json.dumps(env, indent=2)}\n```",
         )
         await _terminate_link(bus, thread_id=req.thread_id, terminal_status="failed")
-        await asyncio.to_thread(
-            CursorDispatchLedger.instance().mark_terminal,
+        await _mark_terminal_and_promote(
             dispatch_id=req.dispatch_id,
             terminal_status="failed",
+            controller=controller,
         )
         return
     except CursorVenvConfigError as exc:
@@ -649,10 +823,10 @@ async def _run_sdk_dispatch_gated(
             body=f"```json\n{json.dumps(env, indent=2)}\n```",
         )
         await _terminate_link(bus, thread_id=req.thread_id, terminal_status="failed")
-        await asyncio.to_thread(
-            CursorDispatchLedger.instance().mark_terminal,
+        await _mark_terminal_and_promote(
             dispatch_id=req.dispatch_id,
             terminal_status="failed",
+            controller=controller,
         )
         return
     except Exception as exc:
@@ -674,10 +848,10 @@ async def _run_sdk_dispatch_gated(
             body=f"```json\n{json.dumps(env, indent=2)}\n```",
         )
         await _terminate_link(bus, thread_id=req.thread_id, terminal_status="failed")
-        await asyncio.to_thread(
-            CursorDispatchLedger.instance().mark_terminal,
+        await _mark_terminal_and_promote(
             dispatch_id=req.dispatch_id,
             terminal_status="failed",
+            controller=controller,
         )
         return
 
@@ -700,6 +874,7 @@ async def _run_sdk_dispatch_gated(
         bus=bus,
         reply_to=reply_to,
         work_item_ref=work_item_ref,
+        controller=controller,
         packet_text=packet_text,
     )
 
@@ -813,9 +988,15 @@ async def cursor_dispatch(
             ),
         )
     if cached is not None:
-        # Idempotent replay: return the cached admission WITHOUT reserving a new
-        # ticket (try_admit runs only on the first-admit path below).
-        return cached
+        status_code = 202 if cached.status == "queued" else 200
+        if cached.status == "queued":
+            emit_sdk_worker_queued(
+                dispatch_id=cached.dispatch_id,
+                thread_id=cached.thread_id,
+                source_repo=source_repo_str,
+                queue_position=cached.queue_position,
+            )
+        return JSONResponse(status_code=status_code, content=cached.model_dump())
 
     if contract == "implement":
         baseline_map = await asyncio.to_thread(capture_wt_baseline, cfg.source_repo)
@@ -861,4 +1042,4 @@ async def cursor_dispatch(
     ledger.register_task(req.dispatch_id, task)
     ticket.mark_running()
     await asyncio.to_thread(ledger.mark_running, dispatch_id=req.dispatch_id)
-    return admission
+    return JSONResponse(status_code=200, content=admission.model_dump())

@@ -193,15 +193,47 @@ def FrontierSdkWorkerDispatchFailed(  # noqa: N802
     thread_id: str,
     execution_id: str,
     error: str,
+    status_code: int | None = None,
+    code: str | None = None,
+    blocking_dispatch_id: str | None = None,
 ) -> Event:
     """SDK worker dispatch rejected or unreachable."""
+    payload: dict[str, object] = {
+        "request_id": request_id,
+        "thread_id": thread_id,
+        "execution_id": execution_id,
+        "error": error,
+    }
+    if status_code is not None:
+        payload["status_code"] = status_code
+    if code is not None:
+        payload["code"] = code
+    if blocking_dispatch_id is not None:
+        payload["blocking_dispatch_id"] = blocking_dispatch_id
     return Event(
         signal="frontier.sdk.worker.failed",
+        payload=payload,
+        scope="node",
+    )
+
+
+@event_factory
+def FrontierSdkWorkerQueued(  # noqa: N802
+    request_id: str,
+    thread_id: str,
+    execution_id: str,
+    dispatch_id: str,
+    queue_position: int | None = None,
+) -> Event:
+    """SDK worker dispatch durably queued awaiting write-lease."""
+    return Event(
+        signal="frontier.sdk.worker.queued",
         payload={
             "request_id": request_id,
             "thread_id": thread_id,
             "execution_id": execution_id,
-            "error": error,
+            "dispatch_id": dispatch_id,
+            "queue_position": queue_position,
         },
         scope="node",
     )

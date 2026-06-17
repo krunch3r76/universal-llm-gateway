@@ -178,6 +178,109 @@ def emit_sdk_worker_completed(
 
 
 @event_factory
+def FrontierSdkWorkerQueued(  # noqa: N802
+    dispatch_id: str,
+    thread_id: str,
+    source_repo: str | None,
+    queue_position: int | None,
+) -> Event:
+    return Event(
+        signal="frontier.sdk.worker.queued",
+        payload={
+            "dispatch_id": dispatch_id,
+            "thread_id": thread_id,
+            "source_repo": source_repo,
+            "queue_position": queue_position,
+        },
+        scope="node",
+    )
+
+
+@event_factory
+def FrontierWriteLeaseAcquired(  # noqa: N802
+    dispatch_id: str,
+    source_repo: str | None,
+) -> Event:
+    return Event(
+        signal="frontier.sdk.worker.lease.acquired",
+        payload={"dispatch_id": dispatch_id, "source_repo": source_repo},
+        scope="node",
+    )
+
+
+@event_factory
+def FrontierWriteLeaseReleased(  # noqa: N802
+    dispatch_id: str,
+    source_repo: str | None,
+    stale: bool = False,
+) -> Event:
+    return Event(
+        signal="frontier.sdk.worker.lease.released",
+        payload={
+            "dispatch_id": dispatch_id,
+            "source_repo": source_repo,
+            "stale": stale,
+        },
+        scope="node",
+    )
+
+
+@event_factory
+def FrontierWriteLeasePromoted(  # noqa: N802
+    dispatch_id: str,
+    source_repo: str | None,
+) -> Event:
+    return Event(
+        signal="frontier.sdk.worker.lease.promoted",
+        payload={"dispatch_id": dispatch_id, "source_repo": source_repo},
+        scope="node",
+    )
+
+
+def emit_sdk_worker_queued(
+    *,
+    dispatch_id: str,
+    thread_id: str,
+    source_repo: str | None,
+    queue_position: int | None,
+) -> None:
+    _emit(
+        FrontierSdkWorkerQueued(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            source_repo=source_repo,
+            queue_position=queue_position,
+        )
+    )
+
+
+def emit_write_lease_released(
+    *,
+    dispatch_id: str,
+    source_repo: str | None,
+    stale: bool = False,
+) -> None:
+    _emit(
+        FrontierWriteLeaseReleased(
+            dispatch_id=dispatch_id,
+            source_repo=source_repo,
+            stale=stale,
+        )
+    )
+
+
+def emit_write_lease_promoted(
+    *, dispatch_id: str, source_repo: str | None
+) -> None:
+    _emit(
+        FrontierWriteLeasePromoted(
+            dispatch_id=dispatch_id,
+            source_repo=source_repo,
+        )
+    )
+
+
+@event_factory
 def FrontierSdkWorkerTimeout(  # noqa: N802
     dispatch_id: str,
     thread_id: str,

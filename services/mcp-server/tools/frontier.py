@@ -171,6 +171,13 @@ async def _relay(
         )
         return detail_obj if isinstance(detail_obj, dict) else {"error": payload}
 
+    if isinstance(payload, dict) and payload.get("status") == "queued":
+        record(
+            f"{record_prefix}.queued",
+            execution_id=payload.get("execution_id", ""),
+        )
+        return payload
+
     record(
         f"{record_prefix}.dispatched",
         execution_id=payload.get("execution_id", "")

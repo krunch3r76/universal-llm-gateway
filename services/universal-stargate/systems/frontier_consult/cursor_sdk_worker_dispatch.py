@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import uuid
+from typing import Any
 
 import httpx
 from transport_utils import DEFAULT_AGENT_BUS_URL, make_async_client
@@ -12,7 +13,6 @@ from universal_logging import get_logger
 logger = get_logger(__name__)
 
 _WORKER_TIMEOUT = httpx.Timeout(connect=5.0, read=10.0, write=10.0, pool=5.0)
-_WORKER_DISPATCH_FAILED = "worker_dispatch: failed"
 
 
 def worker_base_url() -> str:
@@ -41,6 +41,41 @@ def derive_cursor_sdk_prompt_preamble(
     return None
 
 
+def _parse_worker_error(resp: httpx.Response) -> dict[str, Any]:
+    try:
+        body = resp.json()
+    except ValueError:
+        body = {"message": resp.text[:500]}
+    if not isinstance(body, dict):
+        body = {"message": str(body)}
+    code = body.get("code") or "CURSOR_DISPATCH_REJECTED"
+    message = body.get("message") or resp.text[:500]
+    data = body.get("data") if isinstance(body.get("data"), dict) else {}
+    blocking = data.get("blocking_dispatch_id")
+    return {
+        "status_code": resp.status_code,
+        "code": str(code),
+        "message": str(message),
+        "blocking_dispatch_id": blocking,
+    }
+
+
+def _parse_worker_success(resp: httpx.Response) -> dict[str, Any]:
+    try:
+        body = resp.json()
+    except ValueError:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    detail: dict[str, Any] = {
+        "status_code": resp.status_code,
+        "ticket": body,
+    }
+    if resp.status_code == 202 or body.get("status") == "queued":
+        detail["queued"] = True
+    return detail
+
+
 async def dispatch_cursor_sdk_worker(
     *,
     request_id: str,
@@ -53,8 +88,8 @@ async def dispatch_cursor_sdk_worker(
     prompt_preamble: str | None = None,
     model_knobs: dict[str, str] | None = None,
     read_only: bool = False,
-) -> tuple[bool, str | None]:
-    """POST ``/api/v1/cursor/dispatch``; return ``(ok, warning)``."""
+) -> tuple[bool, dict[str, Any]]:
+    """POST ``/api/v1/cursor/dispatch``; return structured ``(ok, detail)``."""
     dispatch_id = f"{request_id}-{uuid.uuid4().hex[:8]}"
     payload: dict[str, object] = {
         "thread_id": thread_id,
@@ -83,16 +118,26 @@ async def dispatch_cursor_sdk_worker(
             thread_id,
             exc,
         )
-        return False, _WORKER_DISPATCH_FAILED
-    if resp.status_code >= 400:
-        logger.warning(
-            "cursor-sdk worker rejected dispatch: request_id=%s status=%s body=%s",
+        return False, {
+            "status_code": 599,
+            "code": "CURSOR_WORKER_UNREACHABLE",
+            "message": str(exc),
+        }
+    if resp.status_code in (200, 202):
+        logger.info(
+            "cursor-sdk worker admit: request_id=%s status=%s body=%s",
             request_id,
             resp.status_code,
-            resp.text[:200],
+            resp.text[:300],
         )
-        return False, _WORKER_DISPATCH_FAILED
-    return True, None
+        return True, _parse_worker_success(resp)
+    logger.warning(
+        "cursor-sdk worker rejected dispatch: request_id=%s status=%s body=%s",
+        request_id,
+        resp.status_code,
+        resp.text[:200],
+    )
+    return False, _parse_worker_error(resp)
 
 
 async def dispatch_cursor_sdk_worker_message(
@@ -104,7 +149,7 @@ async def dispatch_cursor_sdk_worker_message(
     execution_id: str,
     caller_agent: str | None = None,
     read_only: bool = False,
-) -> tuple[bool, str | None]:
+) -> tuple[bool, dict[str, Any]]:
     """POST ``/api/v1/cursor/dispatch`` with ``message`` (consult path)."""
     dispatch_id = f"{request_id}-{uuid.uuid4().hex[:8]}"
     payload = {
@@ -129,15 +174,14 @@ async def dispatch_cursor_sdk_worker_message(
             request_id,
             exc,
         )
-        return False, _WORKER_DISPATCH_FAILED
-    if resp.status_code >= 400:
-        logger.warning(
-            "cursor-sdk worker rejected message dispatch: request_id=%s status=%s",
-            request_id,
-            resp.status_code,
-        )
-        return False, _WORKER_DISPATCH_FAILED
-    return True, None
+        return False, {
+            "status_code": 599,
+            "code": "CURSOR_WORKER_UNREACHABLE",
+            "message": str(exc),
+        }
+    if resp.status_code in (200, 202):
+        return True, _parse_worker_success(resp)
+    return False, _parse_worker_error(resp)
 
 
 async def post_worker_failure_turn(
