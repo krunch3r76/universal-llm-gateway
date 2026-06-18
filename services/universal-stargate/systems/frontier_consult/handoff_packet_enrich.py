@@ -58,7 +58,7 @@ KNOWN_TASK_CLASS_SLUGS: frozenset[str] = frozenset(
 )
 
 _SKILL_SUGGEST_STEP = (
-    'skill_suggest(conversation_context="<task summary from packet scope>")'
+    'skill_suggest(loaded=[…], conversation_context="<task summary from packet scope>")'
 )
 
 

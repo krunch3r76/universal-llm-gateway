@@ -82,6 +82,37 @@ _RAG_QUERY_TOKENS: frozenset[str] = frozenset(
     {"rag", "corpus", "retrieval", "semantic", "research", "scope", "index"}
 )
 
+_FS_PRIMARY_CALL = 'fs(sandbox="cortex", op="md_list", path="agent-skills/<slug>.md")'
+_FS_PRIMARY_HINT = (
+    "fs is a server-primary tool — call directly (e.g. "
+    f"{_FS_PRIMARY_CALL}). Server tool_search indexes overflow only; "
+    "empty/missing tool_search results for 'fs' are expected, not evidence "
+    "that fs is unavailable. Probe with a direct fs call before concluding "
+    "a binding gap."
+)
+_FS_QUERY_TOKENS: frozenset[str] = frozenset(
+    {
+        "fs",
+        "filesystem",
+        "md_list",
+        "md_read",
+        "read_multi",
+        "agent-skills",
+        "agent_skills",
+        "sandbox",
+        "workspaces",
+    }
+)
+
+_DISPATCH_PRIMARY_HINT = (
+    "dispatch is server-primary — call dispatch(tool=..., arguments=...) "
+    "directly when it is connector-bound. Server tool_search returns overflow "
+    "templates only; it does not load deferred primaries. If dispatch is absent "
+    "from your callable set, overflow tools are unreachable — log friction and "
+    "hand off (cursor-consult)."
+)
+_DISPATCH_QUERY_TOKENS: frozenset[str] = frozenset({"dispatch", "overflow"})
+
 # Manifest overrides for overflow tools whose live schema/docstring under-specify
 # the dispatch wire shape (op + nested JSON ``arguments`` string).
 _MANIFEST_OVERRIDES: dict[str, dict[str, Any]] = {
@@ -304,7 +335,7 @@ def _all_manifest_summary(
 def primary_tool_hint_for_search(
     query: str, results: list[ManifestEntry]
 ) -> str | None:
-    """Return a primary-tool redirect when RAG overflow tools would mislead agents."""
+    """Return a primary-tool redirect when overflow search would mislead agents."""
     tokens = set(_tokenize(query))
     rag_query = bool(tokens & _RAG_QUERY_TOKENS) or any(
         t in {"rag", "corpus", "retrieval"} for t in tokens
@@ -312,4 +343,8 @@ def primary_tool_hint_for_search(
     rag_results = any(e.name in _RAG_OVERFLOW_TOOLS for e in results)
     if rag_query or rag_results:
         return _RAG_PRIMARY_HINT
+    if tokens & _FS_QUERY_TOKENS:
+        return _FS_PRIMARY_HINT
+    if tokens & _DISPATCH_QUERY_TOKENS:
+        return _DISPATCH_PRIMARY_HINT
     return None

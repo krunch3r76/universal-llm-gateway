@@ -287,6 +287,8 @@ def _normalize_op_body(
         common["review_opt_out_reason_code"] = body.review_opt_out_reason_code
     if hasattr(body, "auto_review_child"):
         common["auto_review_child"] = body.auto_review_child
+    if hasattr(body, "packet_path"):
+        common["packet_path"] = body.packet_path
 
     if body.op == "generate":
         common["output_contract"] = "inline"

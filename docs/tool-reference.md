@@ -765,25 +765,43 @@ Query model load/busy/loading status across all Stargate nodes.
 
 ## cortex_boot
 
-Unified boot briefing for session start. Persona-scoped: each agent gets tailored content.
+Unified boot briefing for session start. Seat-scoped: each `{family}-{platform}` slug gets tailored content.
 
 ### Args
 
+All parameters optional. **Default seat when nothing is passed:** `family=claude`, `platform=cursor` → **`claude-cursor`**.
+
 | Arg | Default | Description |
 |---|---|---|
-| `agent` | `web` | Agent profile: web, cursor, api, grok, subagent |
+| `agent` | — | Primary seat slug: `claude-web`, `web` (→ `claude-web`), `claude-cursor`, `cursor` (→ `claude-cursor`), … Overrides `family`/`platform` when slug parses as `{family}-{platform}`. |
+| `family` | `claude` | Model family: `claude`, `gpt`, `grok`, `gemini` |
+| `platform` | `cursor` | Surface: `cursor`, `web`, `api` |
+| `role` | — | Functional annotation: `lead`, `reviewer`, `gatherer`, … Does **not** change seat slug or default to `lead`. |
+| `transcript_id` | `""` | Continuation from a **closed** session transcript entity |
+| `views` | — | Entity ids for subgraph manifest entries on the card |
+| `principal` | — | Principal entity id (e.g. `person:…`) for head block |
+| `profile` | — | `"dispatch"` for dispatch-scoped inject |
+| `packet_text` | — | Packet text for `<invariants>` skill parse when `profile="dispatch"` |
+
+**Web lead:** `cortex_boot(agent="claude-web", role="lead")`.
+
+Bound ULG coding sessions may **skip** boot when task + skill preload suffice — see
+`docs/agent-guides/skills/web-boot-lead.md`.
 
 ### Response fields (key selection)
 
 | Field | Description |
 |---|---|
-| `session_id` | Server-minted session ID in format `{agent}-{YYYY-MM-DD}-{HHMMSS}-{3hex}` UTC. Hold in working memory; pass to all `edge_create` calls for the session duration. |
-| `boot_narrative` | Rendered Markdown briefing (salience sections, todos, threads, temporal). |
-| `continuation_state` | Recent decisions, service observations, open todos. |
-| `agent_bus` | Active threads and unread turns. |
-| `temporal` | Active and upcoming temporally-bounded assertions. |
-| `injected_artifacts` | List of `InjectedArtifact` objects — every byte-bearing source that reaches the agent's context. Each carries: `name`, `mode` (`inline`/`written_file`/`manifest_only`/`auto_postfile`), `source` (function or file path), `bytes` (rendered byte count; `0` for `manifest_only` — not yet fetched), `sha256` (raw bytes, no canonicalization), `path` (filesystem path if `mode == "written_file"`; `null` for `mode == "inline"` — including the same `operational_context` artifact name which appears as `written_file` under LIVE boots and `inline` under `boot_inspect`), `fetches` (list of `FetchRecord` provenance entries). `FetchRecord.bytes` is `-1` (`BYTES_UNAVAILABLE`) when the recorder could not serialize the fetch result — means measurement unavailable, not content absent; `mcp.cortex.boot.fetch.failed` event also fires. |
-| `audit_dump_path` | Path to the per-boot audit dump written to `/data/files/notes/system/audit/boots/` on each call; filename uses second-resolution timestamp (`{agent}-YYYY-MM-DD-HHMMSS.md`) decoupled from `session_id` (which adds a 3-hex entropy suffix) for filesystem write-key uniqueness. `null` if the dump write failed (best-effort; boot still succeeds). Indexed under RAG scope `boot_snapshots` for historical drift queries. |
+| `session_id` | Server-minted ID `{family}-{platform}-YYYY-MM-DD-HHMMSS-{3hex}` UTC. Hold for asserts, edges, `session_close`. |
+| `briefing_card` | Compact Markdown briefing (~3–8KB target): deadlines, bus, todos, skills index, … |
+| `sections_available` | Manifest of deeper-pull sections with fetch hints |
+| `operational_context_ref` | Path to operational context file (read on demand via `fs md_read`) |
+| `seat_preloaded` | Slugs merged into `skill_suggest` loaded set (web orientation/inject channels) |
+| `injected_artifacts` | Byte ledger: `name`, `mode`, `source`, `bytes`, `sha256`, `path`, `fetches` |
+| `audit_dump_path` | Per-boot audit dump under cortex sandbox (LIVE mode only); `null` on failure |
+
+Legacy field names in older notes (`boot_narrative`, `agent_bus` as top-level keys) may appear in
+audit dumps; MCP response uses `briefing_card` + `sections_available`.
 
 ## boot_inspect
 
@@ -797,9 +815,11 @@ write, and no `mcp.cortex.boot*` event emission.
 
 | Arg | Default | Description |
 |---|---|---|
-| `agent` | `cursor` | Primary agent profile to inspect |
+| `agent` | — | Seat slug (same semantics as `cortex_boot`); use with `family`/`platform` when omitted |
+| `family` | `claude` | Primary family when `agent` absent |
+| `platform` | `cursor` | Primary platform when `agent` absent |
 | `transcript_id` | `""` | Optional continuation transcript for primary profile |
-| `diff_with` | `""` | Optional secondary agent profile; when provided returns `primary`, `secondary`, and `diff` |
+| `diff_with` | `""` | Optional secondary seat slug (`claude-web`, …) → returns `primary`, `secondary`, `diff` |
 
 ### Response fields (key selection)
 
@@ -811,6 +831,21 @@ write, and no `mcp.cortex.boot*` event emission.
 | `audit_dump_path` | Always `null` in inspect mode |
 | `injected_artifacts` | Same manifest schema as `cortex_boot`; `operational_context` artifact is `mode: inline` in inspect mode |
 | `diff` | Present only when `diff_with` is set. Contains `artifacts_only_in_primary`, `artifacts_only_in_secondary`, and `artifacts_with_delta` (`kind: inline_canonical_text` or `sha256_mismatch`) |
+
+## skill_suggest
+
+In-session skill delta for web/API seats. Ranked slugs **not** already in `loaded[]` ∪ `seat_preloaded`.
+
+### Args
+
+| Arg | Required | Description |
+|---|---|---|
+| `loaded` | **yes** | Slugs fetched this session (maintain list across calls). Server merges `seat_preloaded` for web. |
+| `conversation_context` | no | Task read (≤16k chars). Omit → `insufficient_context`. |
+| `limit` | no | Max suggestions (default 8) |
+| `agent` | no | Seat slug when session resolution fails |
+
+See `docs/agent-guides/skills/skill-suggest-utilization.md` and `web-boot-lead.md`.
 
 ## rag
 

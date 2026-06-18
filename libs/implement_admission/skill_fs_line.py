@@ -12,7 +12,7 @@ logger = get_logger(__name__)
 _WS = "workspaces://universal-llm-gateway"
 
 # Deterministic resolution table for resolve_skill_source_uri (CF2 / C3 determinism
-# contract). MUST cover EVERY CODING_SESSION_BUNDLE inject+advertise slug, regardless
+# contract). MUST cover EVERY coding-scope inject + advertise slug, regardless
 # of substrate, so packet rendering is map-first for the whole bundle and packet_sha256
 # cannot diverge online-vs-offline (the failure git-posture hit when it consolidated to
 # workspaces). entity_get is reached only for NON-bundle slugs. Workspaces-resident slugs

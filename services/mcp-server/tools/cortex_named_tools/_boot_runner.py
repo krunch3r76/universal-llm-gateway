@@ -34,23 +34,31 @@ _CARD_BYTE_CEILINGS = {"web": 19_000, "default": 15_500}
 logger = get_logger(__name__)
 
 
-def _web_auto_inject_skills_md(seat_slug: str) -> str:
-    """Slice F: full skill bodies for web seats (native MCP + audit manifest)."""
-    from agent_seat.body_injection import (
-        build_injected_bodies_md,
-        fetch_web_invariant_entries,
-        is_web_seat_slug,
-    )
+def _web_auto_inject_skills_md(
+    seat_slug: str,
+    *,
+    role: str | None = None,
+    inject_profile: str | None = None,
+    packet_invariant_ids: tuple[str, ...] = (),
+) -> str:
+    """Slice F: registry-resolved skill bodies for web seats."""
+    from agent_seat.body_injection import is_web_seat_slug
+    from agent_seat.inject_registry import resolve_injected_bodies
 
     if not is_web_seat_slug(seat_slug):
         return ""
-    entries = fetch_web_invariant_entries()
-    block, injected, _ = build_injected_bodies_md(
+    parts = seat_slug.split("-", 1)
+    platform = parts[1] if len(parts) == 2 else "web"
+    resolution = resolve_injected_bodies(
         seat_slug,
-        entries,
-        marker_prefix="invariant-skill",
+        role=role,
+        platform=platform,
+        inject_profile=inject_profile,
+        packet_invariant_ids=packet_invariant_ids,
         budget_bytes=None,
     )
+    block = resolution.block_md
+    injected = resolution.injected
     if not block:
         return ""
     normalized = block.replace("\r\n", "\n").replace("\r", "\n")
@@ -59,6 +67,58 @@ def _web_auto_inject_skills_md(seat_slug: str) -> str:
         digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
         block = f"\n\n<!-- cortex:invariant-skills-autoappend sha256={digest} count={count} -->{block}"
     return block.strip()
+
+
+def _gate_only_skills_card(card_md: str | None, skills_index_ref: str | None) -> str | None:
+    """De-dup the on-card Agent Skills enumeration down to its ⚑ required-gates.
+
+    The full ~98-skill concise listing (~14KB) duplicates the materialized skills
+    index (``skills_index_ref`` + the written sidecar). Leaving the full listing
+    on-card was the residual driver of the 128KB web-boot connector overflow after
+    ``skills_index_md`` was de-inlined (thread 2523 /
+    decision:boot-orientation-card-vs-fetch). Keep the header, the blockquote
+    preamble, and every ⚑-gate skill line (required gates stay on-card); drop the
+    category headers and non-gate skill lines; inject a pointer to the full index.
+    NOTE: this trims the skills DIRECTORY only — the operational orientation blocks
+    (operator-posture, model-tier, consult-routing, dispatch) are separate ``##``
+    sections and are NOT touched here (that thinning is the panel-gated P1 work).
+    """
+    if not card_md:
+        return card_md
+    out: list[str] = []
+    pointer_injected = False
+    for line in card_md.split("\n"):
+        stripped = line.strip()
+        if stripped.startswith("## Agent Skills"):
+            out.append(
+                "## Agent Skills (⚑ required gates shown on-card — "
+                "full active index via skills_index_ref)"
+            )
+            continue
+        if stripped.startswith(">"):
+            out.append(line)
+            if not pointer_injected and "Load on demand" in line:
+                ref = skills_index_ref or "notes/system/boot/skills-index-<seat>.md"
+                out.append(
+                    f"> **Full index**: all active skills (concise) live in "
+                    f"`{ref}` (LIVE boot writes it; `skills_index_ref`). Only ⚑ "
+                    f"required-gate skills are enumerated on-card; discover the "
+                    f"rest via `skill_suggest`."
+                )
+                pointer_injected = True
+            continue
+        if stripped.startswith("**") and stripped.endswith("**"):
+            continue  # category header (e.g. **cortex-planning (12)**) — drop
+        if stripped.startswith("- "):
+            if "⚑" in line:
+                out.append(line)  # required gate — keep
+            continue  # non-gate skill line — drop
+        if stripped == "":
+            if out and out[-1].strip() != "":
+                out.append(line)
+            continue
+        out.append(line)
+    return "\n".join(out)
 
 
 def _materialize_skills_index(
@@ -222,6 +282,8 @@ def run_cortex_boot(
     mode: BootMode = BootMode.LIVE,
     views: list[str] | None = None,
     principal: str | None = None,
+    profile: str | None = None,
+    packet_text: str | None = None,
 ) -> dict[str, Any]:
     """Build a Cortex boot briefing for internal callers and MCP.
 
@@ -238,13 +300,28 @@ def run_cortex_boot(
                        When set, fetches GET /boot-principal-context for the compact
                        head block (fields 1+2). Field 1 renders only when
                        attributes.durable_identity is set on the principal entity.
+        profile      — optional inject profile; ``"dispatch"`` enables dispatch-packet
+                       scoped injection. ``views=["dispatch"]`` is a backward-compat alias.
+        packet_text  — optional packet front-matter for ``<invariants>`` skill parsing
+                       when ``profile="dispatch"``.
 
     Returns a slim briefing card (~25-35KB typical) with a section manifest pointing
     to existing MCP tools for deeper pulls. Heavy data is NOT inlined — pull on demand.
     """
     # Resolve (family, platform); defaults to (claude, cursor) when both are None.
     resolved_family, resolved_platform = resolve_seat(family=family, platform=platform)
-    profile = get_profile(resolved_family, resolved_platform)
+    capability_profile = get_profile(resolved_family, resolved_platform)
+
+    inject_profile: str | None = profile
+    if views and "dispatch" in views:
+        inject_profile = "dispatch"
+        views = [v for v in views if v != "dispatch"] or None
+
+    from agent_seat.inject_registry import parse_packet_invariant_skill_ids
+
+    packet_invariant_ids = ()
+    if inject_profile == "dispatch" and packet_text:
+        packet_invariant_ids = parse_packet_invariant_skill_ids(packet_text)
 
     # Seat slug for session IDs, op_ctx paths, and events — new {family}-{platform} format.
     seat_slug = f"{resolved_family}-{resolved_platform}"
@@ -273,10 +350,10 @@ def run_cortex_boot(
     # Build a profile dict compatible with build_futures_spec / extract_boot_results.
     # These helpers still expect a dict with specific keys; map from CapabilityProfile.
     profile_dict: dict[str, Any] = {
-        "include_deadlines": profile.include_deadlines,
-        "include_review_queue": profile.include_review_queue,
-        "session_limit": profile.session_limit,
-        "self_reflections_limit": profile.self_reflections_limit,
+        "include_deadlines": capability_profile.include_deadlines,
+        "include_review_queue": capability_profile.include_review_queue,
+        "session_limit": capability_profile.session_limit,
+        "self_reflections_limit": capability_profile.self_reflections_limit,
         "session_agent_filter": None,
     }
     # Family anchor replaces the old self_entity_id (persona role entity).
@@ -395,7 +472,9 @@ def run_cortex_boot(
         recent_mentions=extracted["recent_mentions"] or None,
         skills=extracted["skills"] or None,
         skills_unpartitioned_count=extracted.get("skills_unpartitioned_count", 0),
-        skills_card_markdown=extracted.get("skills_card_markdown"),
+        skills_card_markdown=_gate_only_skills_card(
+            extracted.get("skills_card_markdown"), skills_index_ref
+        ),
         rules=extracted["rules"] or None,
         plan_phases=extracted["plan_phases"] or None,
         in_flight_todos=extracted["in_flight_todos"] or None,
@@ -435,13 +514,18 @@ def run_cortex_boot(
         recorder=recorder,
     )
 
-    auto_inject_skills_md = _web_auto_inject_skills_md(seat_slug)
+    auto_inject_skills_md = _web_auto_inject_skills_md(
+        seat_slug,
+        role=role,
+        inject_profile=inject_profile,
+        packet_invariant_ids=packet_invariant_ids,
+    )
     if auto_inject_skills_md:
         artifacts.append(
             InjectedArtifact.from_text(
                 name="auto_inject_skills",
                 mode="inline",
-                source="fetch_web_invariant_entries()",
+                source="resolve_injected_bodies()",
                 text=auto_inject_skills_md,
             )
         )
@@ -504,8 +588,17 @@ def run_cortex_boot(
 
     if skills_index_ref:
         result["skills_index_ref"] = skills_index_ref
-    if skills_index_md:
-        result["skills_index_md"] = skills_index_md
+    # skills_index_md is intentionally NOT inlined in the boot result: it is
+    # materialized to disk (skills_index_ref above) and also duplicated on the
+    # briefing card's Agent Skills index. Re-inlining its full ~31KB here was a
+    # primary driver of the 128KB connector store-and-retrieve overflow
+    # (thread 2523 / decision:boot-orientation-card-vs-fetch). Consumers fetch via
+    # skills_index_ref. NOTE: auto_inject_skills_md is deliberately retained above
+    # — it is the web prompt-append delivery channel (Slice F), not a redundant
+    # copy; dropping it would strip seat_preloaded orientation.
+    result["byte_ledger"] = {
+        a.name: a.bytes for a in artifacts if getattr(a, "bytes", -1) >= 0
+    }
 
     if tc_summary:
         result["continuation_transcript"] = {

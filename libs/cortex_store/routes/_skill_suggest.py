@@ -8,12 +8,13 @@ import sqlite3
 from dataclasses import dataclass
 from typing import Any
 
-from agent_seat.body_injection import (
-    CODING_SESSION_BUNDLE,
-    is_web_seat_slug,
-    web_auto_inject_skill_slugs,
-)
+from agent_seat.body_injection import is_web_seat_slug
 from agent_seat.inject_channels import web_seat_injected_skill_slugs
+from agent_seat.inject_registry import (
+    CODING_SESSION_ADVERTISE_SLUGS,
+    coding_scope_inject_entity_ids,
+    injected_skill_slugs,
+)
 
 from ..confidence_field import (
     DISCOVERABLE_SKILL_LIFECYCLE,
@@ -179,9 +180,9 @@ _GIT_POSTURE_CODING_SESSION_NUDGE = (
 def _coding_session_bundle_slugs() -> frozenset[str]:
     inject = tuple(
         entity_id.removeprefix("agent_skill:")
-        for entity_id in CODING_SESSION_BUNDLE["inject"]
+        for entity_id in coding_scope_inject_entity_ids()
     )
-    return frozenset((*inject, *CODING_SESSION_BUNDLE["advertise"]))
+    return frozenset((*inject, *CODING_SESSION_ADVERTISE_SLUGS))
 
 
 def _matches_coding_session_start(ctx: str) -> bool:
@@ -304,6 +305,11 @@ def norm_loaded(value: str) -> str:
 
 def build_loaded_set(loaded: list[str]) -> set[str]:
     return {norm_loaded(x) for x in loaded if isinstance(x, str) and x.strip()}
+
+
+def _seat_platform(agent: str) -> str:
+    parts = agent.split("-", 1)
+    return parts[1] if len(parts) == 2 else "web"
 
 
 def _seat_preloaded_norm_slugs(agent: str) -> frozenset[str]:
@@ -654,7 +660,7 @@ def run_stage_a(
     if not ctx:
         canonical_agent = canonical_seat_or_422(agent)
         seat_preloaded = (
-            list(web_auto_inject_skill_slugs())
+            list(injected_skill_slugs(platform=_seat_platform(canonical_agent)))
             if is_web_seat_slug(canonical_agent)
             else []
         )
@@ -674,7 +680,9 @@ def run_stage_a(
 
     canonical_agent = canonical_seat_or_422(agent)
     seat_preloaded = (
-        list(web_auto_inject_skill_slugs()) if is_web_seat_slug(canonical_agent) else []
+        list(injected_skill_slugs(platform=_seat_platform(canonical_agent)))
+        if is_web_seat_slug(canonical_agent)
+        else []
     )
     loaded_set = build_loaded_set(loaded) | _seat_preloaded_norm_slugs(agent)
     ctx_tokens = tokenize_text(ctx)

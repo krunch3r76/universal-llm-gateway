@@ -412,7 +412,7 @@ def _build_server() -> tuple[
         f"{_fs_standard_ops_doc}\n\n"
         "Markdown section ops (for large docs):\n"
         "  md_list    (path)                    — list sections/TOC (PDFs: embedded outline; others: ATX markdown)\n"
-        "  md_read    (path, section)           — read one section (PDFs: coordinate-clipped region; others: ATX slice)\n"
+        "  md_read    (path, section?)          — read one section; empty/absent section => full document (text/markdown; PDFs still require a section)\n"
         "  md_to_dict (path)                    — nested heading dict (PDFs: outline-driven; others: ATX sections)\n"
         "  md_replace (path, section, content)  — replace section (text files only)\n"
         "  md_append  (path, section, content)  — append to section (text files only)\n"

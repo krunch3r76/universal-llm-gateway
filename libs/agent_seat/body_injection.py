@@ -11,40 +11,16 @@ from typing import Any
 
 from transport_utils import DEFAULT_CORTEX_URL, make_sync_client
 
-INJECTED_BODY_BUDGET_BYTES = int(os.getenv("INJECTED_BODY_BUDGET_BYTES", "24000"))
+INJECTED_BODY_BUDGET_BYTES = int(os.getenv("INJECTED_BODY_BUDGET_BYTES", "50000"))
 INJECTED_INDEX_TIMEOUT_MS = int(os.getenv("INJECTED_INDEX_TIMEOUT_MS", "300"))
 INJECTED_BODY_TIMEOUT_MS = int(os.getenv("INJECTED_BODY_TIMEOUT_MS", "300"))
 INJECTED_TOTAL_DEADLINE_MS = int(os.getenv("INJECTED_TOTAL_DEADLINE_MS", "1500"))
 
-# Web Slice-F auto-inject: appended to system prompt after cortex_boot (proxy path)
-# and treated as loaded by skill_suggest for web seats (cortex pair only).
-WEB_BOOT_INJECT_ENTITY_IDS: tuple[str, ...] = (
-    "agent_skill:cortex-orientation",
-    "agent_skill:cortex-provenance-discipline",
-)
-
-INVARIANT_PAIR_ENTITY_IDS: tuple[str, ...] = (
-    "agent_skill:architecture-invariants",
-    "agent_skill:ulg-architecture",
-)
-
-CODING_SESSION_BUNDLE: dict[str, tuple[str, ...]] = {
-    "inject": INVARIANT_PAIR_ENTITY_IDS,
-    "advertise": (
-        "implement-work-item",
-        "git-posture",
-        "service-lifecycle",
-        "completion-provenance-discipline",
-        "fs",
-    ),
-}
-
-
 def web_auto_inject_skill_slugs() -> tuple[str, ...]:
-    """Bare slugs server-injected on web seats (Slice F + skill_suggest preload)."""
-    return tuple(
-        entity_id.removeprefix("agent_skill:") for entity_id in WEB_BOOT_INJECT_ENTITY_IDS
-    )
+    """Bare slugs server-injected on web seats (registry-derived)."""
+    from agent_seat.inject_registry import injected_skill_slugs
+
+    return injected_skill_slugs(platform="web", inject_profile=None)
 
 
 # Channel-2/3 maps: agent_seat.inject_channels (shared-lib SOT for skill_suggest).
@@ -345,13 +321,22 @@ def _fetch_invariant_entries_for(
 
 
 def fetch_invariant_pair_entries() -> list[dict[str, Any]]:
-    """Resolve the architecture invariant pair for code-touching generate."""
-    return _fetch_invariant_entries_for(INVARIANT_PAIR_ENTITY_IDS)
+    """Thin shim — coding-scope entries from the shared registry."""
+    from agent_seat.inject_registry import coding_scope_inject_entity_ids
+
+    return _fetch_invariant_entries_for(coding_scope_inject_entity_ids())
 
 
 def fetch_web_invariant_entries() -> list[dict[str, Any]]:
-    """Resolve invariant-skill bodies for the web Slice-F path."""
-    return _fetch_invariant_entries_for(WEB_BOOT_INJECT_ENTITY_IDS)
+    """Thin shim — universal-scope entries from the shared registry."""
+    from agent_seat.inject_registry import INJECT_REGISTRY, InjectScope
+
+    entity_ids = tuple(
+        entry.entity_id
+        for entry in INJECT_REGISTRY
+        if entry.scope == InjectScope.UNIVERSAL
+    )
+    return _fetch_invariant_entries_for(entity_ids)
 
 
 def _invariant_presence_sentinel(block: str, injected: list[dict[str, Any]]) -> str:
@@ -371,20 +356,36 @@ def append_invariant_pair_bodies(
     *,
     already_present: str = "",
     entries: list[dict[str, Any]] | None = None,
+    role: str | None = None,
+    platform: str = "*",
+    inject_profile: str | None = None,
+    code_touching: bool = True,
+    packet_invariant_ids: tuple[str, ...] = (),
 ) -> tuple[str, dict[str, Any]]:
-    """Append invariant skill bodies with sentinel; seat-agnostic."""
-    resolved_entries = (
-        entries if entries is not None else fetch_invariant_pair_entries()
-    )
+    """Thin shim over ``resolve_injected_bodies`` with sentinel marker."""
+    from agent_seat.inject_registry import resolve_injected_bodies
+
+    del entries  # legacy kwarg ignored — resolver is authoritative
     present = f"{already_present}{content}"
-    block, injected, dropped = build_injected_bodies_md(
+    resolution = resolve_injected_bodies(
         "",
-        resolved_entries,
+        role=role,
+        platform=platform,
+        inject_profile=inject_profile,
+        code_touching=code_touching,
+        packet_invariant_ids=packet_invariant_ids,
         already_present=present,
-        marker_prefix="invariant-skill",
         budget_bytes=None,
     )
-    meta: dict[str, Any] = {"injected": injected, "dropped": dropped, "block": block}
+    block = resolution.block_md
+    injected = resolution.injected
+    dropped = resolution.dropped
+    meta: dict[str, Any] = {
+        "injected": injected,
+        "dropped": dropped,
+        "block": block,
+        "telemetry": resolution.telemetry,
+    }
     if not block:
         return content, meta
     sentinel = _invariant_presence_sentinel(block, injected)

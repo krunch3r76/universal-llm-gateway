@@ -166,13 +166,16 @@ def test_materialize_packet_sha256_deterministic_offline_vs_online(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from agent_seat.body_injection import CODING_SESSION_BUNDLE
+    from agent_seat.inject_registry import (
+        CODING_SESSION_ADVERTISE_SLUGS,
+        coding_scope_inject_entity_ids,
+    )
 
     inject = [
         entity_id.removeprefix("agent_skill:")
-        for entity_id in CODING_SESSION_BUNDLE["inject"]
+        for entity_id in coding_scope_inject_entity_ids()
     ]
-    advertise = list(CODING_SESSION_BUNDLE["advertise"])
+    advertise = list(CODING_SESSION_ADVERTISE_SLUGS)
     skills = list(dict.fromkeys(inject + advertise))
 
     spec = _sample_spec(
@@ -204,20 +207,20 @@ def test_materialize_packet_sha256_deterministic_offline_vs_online(
 
 @pytest.mark.offline
 def test_known_source_uris_covers_entire_coding_session_bundle() -> None:
-    """Determinism guard (CF2 / C3): every CODING_SESSION_BUNDLE slug must be in
-    _KNOWN_SKILL_SOURCE_URIS so resolve_skill_source_uri is map-first for the whole
-    bundle and packet_sha256 cannot diverge online-vs-offline. A bundle slug absent
-    from the map is the next git-posture consolidation regression."""
-    from agent_seat.body_injection import CODING_SESSION_BUNDLE
+    """Determinism guard (CF2 / C3): every coding-scope inject + advertise slug."""
+    from agent_seat.inject_registry import (
+        CODING_SESSION_ADVERTISE_SLUGS,
+        coding_scope_inject_entity_ids,
+    )
 
     inject = {
         entity_id.removeprefix("agent_skill:")
-        for entity_id in CODING_SESSION_BUNDLE["inject"]
+        for entity_id in coding_scope_inject_entity_ids()
     }
-    advertise = set(CODING_SESSION_BUNDLE["advertise"])
+    advertise = set(CODING_SESSION_ADVERTISE_SLUGS)
     missing = (inject | advertise) - set(_KNOWN_SKILL_SOURCE_URIS)
     assert not missing, (
-        "CODING_SESSION_BUNDLE slugs absent from _KNOWN_SKILL_SOURCE_URIS: "
+        "coding bundle slugs absent from _KNOWN_SKILL_SOURCE_URIS: "
         f"{sorted(missing)} — add each with its canonical source_uri "
         "(agent-skills/<slug>.md for cortex-resident) so packet rendering stays "
         "deterministic offline vs online."

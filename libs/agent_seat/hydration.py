@@ -25,6 +25,9 @@ from transport_utils import (
 )
 from universal_logging import get_logger
 
+from agent_seat.body_injection import RequiredBodyUnresolved
+from agent_seat.inject_registry import resolve_injected_bodies
+
 from ._hydration_render import (
     PROFILES as _PROFILES,
 )
@@ -280,8 +283,11 @@ async def hydrate_agent(
     agent: str,
     transcript_id: str | None = None,
     *,
-    profile: str = "default",
+    fetch_profile: str = "default",
     model: str | None = None,
+    inject_profile: str | None = None,
+    code_touching: bool = False,
+    packet_invariant_ids: tuple[str, ...] = (),
 ) -> HydrationBundle:
     """Fetch the dispatched agent's boot state and render a briefing card.
 
@@ -289,14 +295,14 @@ async def hydrate_agent(
     todos, self-assertions, optional transcript continuation. Any individual
     fetch failure is absorbed — the briefing simply omits that section.
 
-    ``profile`` selects fetch + render shape from ``_PROFILES``:
+    ``fetch_profile`` selects fetch + render shape from ``_PROFILES``:
     - ``"default"`` — full context (deadlines, review queue, 5 reflections, 3 sessions)
     - ``"light"``   — soft boot for team_dispatch and role-envelope HTTP dispatches
                       (drops deadlines + review queue, 3 reflections floor, 1 session)
     Truthiness gates in ``_render_briefing`` collapse empty sections naturally;
     no separate render-shape flag needed.
     """
-    profile_dict = _PROFILES[profile]
+    profile_dict = _PROFILES[fetch_profile]
 
     # Query parameters for per-agent scoping.
     session_qs = urlencode({"limit": profile_dict["session_limit"]})
@@ -417,41 +423,47 @@ async def hydrate_agent(
     injected_bodies_md: str | None = None
     required_body_unresolved = False
     injection_meta: dict[str, Any] = {}
-    if inline_only:
-        from agent_seat.body_injection import (
-            RequiredBodyUnresolved,
-            resolve_inline_only_bodies,
-        )
+    resolve_role = normalized_agent if normalized_agent in load_roles() else None
+    resolve_platform = "*"
+    if resolve_role is not None:
+        role_profile = get_role(resolve_role)
+        resolve_platform = role_profile.default_platform
+    else:
+        parts = normalized_agent.split("-", 1)
+        if len(parts) == 2:
+            resolve_platform = parts[1]
 
-        already_present = (briefing or "") + (continuation_md or "")
-        try:
-            (
-                injected_bodies_md,
-                injected,
-                dropped,
-                metrics,
-            ) = await asyncio.to_thread(
-                resolve_inline_only_bodies,
-                normalized_agent,
-                already_present=already_present,
-            )
-            injection_meta = {
-                "injected": injected,
-                "dropped": dropped,
-                "metrics": metrics,
-            }
-        except RequiredBodyUnresolved as exc:
-            required_body_unresolved = True
-            injection_meta = {
-                "injected": [],
-                "dropped": exc.dropped,
-                "metrics": {
-                    "elapsed_ms": 0,
-                    "cold_fetches": 0,
-                    "cache_hit": False,
-                    "deadline_hit": False,
-                },
-            }
+    already_present = (briefing or "") + (continuation_md or "")
+    try:
+        resolution = await asyncio.to_thread(
+            resolve_injected_bodies,
+            normalized_agent,
+            role=resolve_role,
+            platform=resolve_platform,
+            inject_profile=inject_profile,
+            code_touching=code_touching,
+            packet_invariant_ids=packet_invariant_ids,
+            already_present=already_present,
+        )
+        if resolution.block_md:
+            injected_bodies_md = resolution.block_md
+        injection_meta = {
+            "injected": resolution.injected,
+            "dropped": resolution.dropped,
+            "metrics": resolution.telemetry,
+        }
+    except RequiredBodyUnresolved as exc:
+        required_body_unresolved = True
+        injection_meta = {
+            "injected": [],
+            "dropped": exc.dropped,
+            "metrics": {
+                "elapsed_ms": 0,
+                "cold_fetches": 0,
+                "cache_hit": False,
+                "deadline_hit": False,
+            },
+        }
 
     section_counts = {
         "briefing_bytes": len(briefing),

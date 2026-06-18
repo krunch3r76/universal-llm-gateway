@@ -219,9 +219,16 @@ async def dispatch_cursor_sdk_generate(
         preamble_pointer = pointer_body
         if handoff_contract == "implement" and "Contract:" not in pointer_body:
             preamble_pointer = f"Contract: implement.\n{pointer_body}"
+        packet_text = ""
+        from .handoff import _resolve_packet_file, _workspaces_root
+
+        packet_file = _resolve_packet_file(_workspaces_root().resolve(), worker_packet)
+        if packet_file is not None:
+            packet_text = packet_file.read_text(encoding="utf-8", errors="replace")
         prompt_preamble = derive_cursor_sdk_prompt_preamble(
             handoff_contract=handoff_contract,
             pointer=preamble_pointer,
+            packet_text=packet_text,
         )
         worker_ok, worker_detail = await dispatch_cursor_sdk_worker(
             request_id=request_id,

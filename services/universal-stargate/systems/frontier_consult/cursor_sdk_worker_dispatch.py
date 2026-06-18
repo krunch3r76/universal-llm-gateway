@@ -25,20 +25,47 @@ def derive_cursor_sdk_prompt_preamble(
     *,
     handoff_contract: str,
     pointer: str,
+    packet_text: str = "",
 ) -> str | None:
     """Single imperative paragraph for implement dispatches (1b from pointer)."""
-    if handoff_contract != "implement":
-        return None
-    for line in pointer.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("Contract:"):
-            return (
-                f"{stripped} Execute this task NOW using your tools. Make the "
-                "code/file changes the packet specifies. If you are blocked, "
-                "reply with `status: blocked` and the specific reason. Do NOT "
-                "reply with an acknowledgement-only message."
-            )
-    return None
+    preamble: str | None = None
+    if handoff_contract == "implement":
+        for line in pointer.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("Contract:"):
+                preamble = (
+                    f"{stripped} Execute this task NOW using your tools. Make the "
+                    "code/file changes the packet specifies. If you are blocked, "
+                    "reply with `status: blocked` and the specific reason. Do NOT "
+                    "reply with an acknowledgement-only message."
+                )
+                break
+    if not packet_text:
+        return preamble
+    from agent_seat.inject_registry import (
+        parse_packet_invariant_skill_ids,
+        resolve_injected_bodies,
+    )
+
+    packet_ids = parse_packet_invariant_skill_ids(packet_text)
+    if not packet_ids:
+        return preamble
+    resolution = resolve_injected_bodies(
+        "",
+        role="cursor-sdk",
+        platform="cursor",
+        inject_profile="dispatch",
+        packet_invariant_ids=packet_ids,
+        budget_bytes=None,
+    )
+    if not resolution.block_md:
+        return preamble
+    injected_section = (
+        "## Injected invariant bodies\n" f"{resolution.block_md.strip()}\n"
+    )
+    if preamble:
+        return f"{injected_section}\n{preamble}"
+    return injected_section.strip()
 
 
 def _parse_worker_error(resp: httpx.Response) -> dict[str, Any]:

@@ -29,10 +29,6 @@ from copy import deepcopy
 from typing import Any
 
 import httpx
-from agent_seat.body_injection import (
-    append_invariant_pair_bodies,
-    fetch_web_invariant_entries,
-)
 from llm_adapters._tool_schema import sanitize_tool_parameters
 
 from services.universal_cloud_proxy.boot_directive import (
@@ -100,16 +96,21 @@ def _is_web_seat(seat: str) -> bool:
 
 
 async def _append_web_invariant_bodies(content: str, seat: str) -> str:
-    """Append invariant skill bodies for web seats (marker-deduped)."""
+    """Append registry-resolved invariant skill bodies for web seats."""
     if not _is_web_seat(seat):
         return content
-    entries = await asyncio.to_thread(fetch_web_invariant_entries)
-    updated, _ = append_invariant_pair_bodies(
-        content,
+    from agent_seat.inject_registry import resolve_injected_bodies
+
+    parts = seat.split("-", 1)
+    platform = parts[1] if len(parts) == 2 else "web"
+    resolution = await asyncio.to_thread(
+        resolve_injected_bodies,
+        seat,
+        platform=platform,
+        budget_bytes=None,
         already_present=content,
-        entries=entries,
     )
-    return updated
+    return content + resolution.block_md
 
 
 def _jsonrpc_request(

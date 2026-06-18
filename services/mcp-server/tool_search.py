@@ -141,7 +141,7 @@ def register_tool_search_tool(
         if primary_hint:
             payload["primary_tool_hint"] = primary_hint
             payload["_next"] = (
-                'Use primary_tool_hint — call rag(op="search") directly; '
+                "Use primary_tool_hint — call the named primary tool directly; "
                 "overflow dispatch templates below are secondary."
             )
         else:

@@ -31,6 +31,7 @@ line (`handoff-packet-authoring.md` § Skill load resolution).
 | `handoff-packet-authoring` | `handoff-packet-authoring.md` — stage→densify→wrap lifecycle gates + six-block packet contract · stub: `.cursor/skills/handoff-packet-authoring/SKILL.md` |
 | `agent-guidance-writing` | `agent-guidance-writing.md` — rules/skills/agent-guides authoring · stub: `.cursor/skills/agent-guidance-writing/SKILL.md` |
 | `git-posture` | `git-posture.md` — truth substrate, execution lanes, no-diffs-to-LLMs · stub: `.cursor/skills/git-posture/SKILL.md` · Cursor rule stub: `.cursor/rules/commit-and-git-scope_ws.mdc` |
+| `web-boot-lead` | `web-boot-lead.md` — web session open: `cortex_boot` call shape, skip-boot for bound coding, tiered skill preload |
 
 ## Cortex SOT (boot-indexed — stub in `.cursor/skills/`)
 

@@ -91,6 +91,9 @@ def web_opcontext_inject_skill_slugs(
     return tuple(sorted(slugs))
 
 
+from agent_seat.inject_registry import injected_skill_slugs
+
+
 def web_seat_injected_skill_slugs(
     agent: str,
     *,
@@ -98,17 +101,21 @@ def web_seat_injected_skill_slugs(
     platform: str | None = None,
 ) -> tuple[str, ...]:
     """Union channel-1 (live body inject) + channel-2 + channel-3 slugs."""
-    from agent_seat.body_injection import web_auto_inject_skill_slugs
-
-    slugs: set[str] = set(web_auto_inject_skill_slugs())
-    slugs.update(web_orientation_inject_skill_slugs(agent))
     resolved_family = family
     resolved_platform = platform
     if resolved_family is None or resolved_platform is None:
         parts = agent.split("-", 1)
         if len(parts) != 2:
-            return tuple(sorted(slugs))
-        resolved_family, resolved_platform = parts[0], parts[1]
+            resolved_family, resolved_platform = "", "web"
+        else:
+            resolved_family, resolved_platform = parts[0], parts[1]
+    slugs: set[str] = set(
+        injected_skill_slugs(
+            platform=resolved_platform or "web",
+            inject_profile=None,
+        )
+    )
+    slugs.update(web_orientation_inject_skill_slugs(agent))
     slugs.update(
         web_opcontext_inject_skill_slugs(agent, resolved_family, resolved_platform)
     )

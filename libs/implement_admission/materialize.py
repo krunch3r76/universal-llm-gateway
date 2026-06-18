@@ -6,7 +6,10 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from agent_seat.body_injection import CODING_SESSION_BUNDLE
+from agent_seat.inject_registry import (
+    CODING_SESSION_ADVERTISE_SLUGS,
+    coding_scope_inject_entity_ids,
+)
 
 from implement_admission.admission_read import (
     compute_packet_sha256,
@@ -162,7 +165,7 @@ def _render_task_guidance(spec: ImplementSpec) -> str:
 # Emitted unconditionally; deduped against the spec's own required_skills.
 _REQUIRED_ARCH_SKILLS: tuple[str, ...] = tuple(
     entity_id.removeprefix("agent_skill:")
-    for entity_id in CODING_SESSION_BUNDLE["inject"]
+    for entity_id in coding_scope_inject_entity_ids()
 )
 
 
@@ -170,7 +173,7 @@ def _render_mcp_capabilities(spec: ImplementSpec) -> str:
     skills = list(spec.skills)
     inject_slugs = set(_REQUIRED_ARCH_SKILLS)
     skills.extend(s for s in _REQUIRED_ARCH_SKILLS if s not in skills)
-    for slug in CODING_SESSION_BUNDLE["advertise"]:
+    for slug in CODING_SESSION_ADVERTISE_SLUGS:
         if slug not in skills and slug not in inject_slugs:
             skills.append(slug)
     lines = [_skill_read(s) for s in skills]

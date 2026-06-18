@@ -174,7 +174,8 @@ def register_markdown_tools(mcp: FastMCP) -> None:
         """Section-level markdown: list/read/replace/append/delete/to_dict/from_dict.
 
         Sandboxes: context → tasks/; cortex → /data/files; workspaces → project root.
-        Section path from list_sections; "" = preamble. from_dict: content is JSON.
+        Section path from list_sections; read ops with empty/omitted section return
+        the full document; write ops use "" for the preamble. from_dict: content is JSON.
         Prefer over whole-file context/cortex/workspaces for long structured docs.
         Use workspaces sandbox for tmp/ files (debrief log, phase docs, handoff docs).
 
@@ -228,6 +229,22 @@ def register_markdown_tools(mcp: FastMCP) -> None:
                     "sections": sections,
                 }
             if op == "read_section":
+                if section.strip() == "":
+                    record(
+                        "mcp.tool.markdown.section.read",
+                        path=path,
+                        sandbox=sandbox,
+                        section=None,
+                        chars=len(text),
+                        selection="full_document",
+                    )
+                    return {
+                        "content": text,
+                        "path": path,
+                        "sandbox": sandbox,
+                        "section": None,
+                        "selection": "full_document",
+                    }
                 try:
                     body = md_read_section(text, section)
                 except SectionError as e:

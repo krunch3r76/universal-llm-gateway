@@ -191,7 +191,7 @@ async def resolve_dispatch_tool_set(
         # + 5 self-reflections) via step.boot_profile. team_dispatch /
         # team/frontier HTTP admission paths leave this at "light" — the
         # comment block above on double-hydration explains why.
-        bundle = await hydrate_agent(agent, profile=boot_profile, model=model)
+        bundle = await hydrate_agent(agent, fetch_profile=boot_profile, model=model)
         publish(
             PipelineFrontierDispatchHydrated(
                 agent=agent,

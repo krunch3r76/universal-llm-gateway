@@ -41,8 +41,15 @@ from agent_seat.inject_channels import ORIENTATION_BLOCK_SKILL_MAP
 _MCP_BINDING_LIVENESS_BLOCK = """\
 ## MCP binding — connector-bound callable set (live probe required)
 Three layers — do not conflate: (1) **Server primary** — `_PRIMARY_TOOLS`/`tools/list` (manifest line follows); (2) **Overflow** — reachable via `dispatch(tool=…)` when `dispatch` is bound; (3) **Connector-bound** — what claude.ai loads into your callable set THIS session.
-**Invariant**: server-primary ≠ initial callable set. Two shapes: **pre-bound** (in initial set → call directly) and **deferred** (absent initially but loadable via `tool_search` → one hop, then call by name — a VALID shape; N=0 pre-bound with all primaries deferred is normal, not a drop). **`tool_search` is the bootstrap** — connector-side, always in your system-prompt deferred-tools block. If `team_dispatch`/any primary looks "absent," that means *not pre-bound*, not dropped: call `tool_search(query="<tool>")` FIRST, then call the loaded primary by name (¬ via `dispatch`, which rejects primary names).
-Genuine omission only if a deferred primary neither loads nor emits an `mcp.request.started` after the hop → hand off (cursor-consult); never infer omission for `tool_search` itself (connector-side, emits no server event)."""
+**Invariant**: server-primary ≠ initial callable set. Two connector shapes: **pre-bound** (in initial callable set → call directly) and **deferred** (absent initially but may load on first **direct** call by name — a VALID shape; N=0 pre-bound with all primaries deferred is normal, not a drop).
+
+**Two different `tool_search` mechanisms — do not conflate:**
+1. **Connector deferred-tools block** (Anthropic system prompt) — platform bootstrap for lazy-loading MCP primaries; emits no server event.
+2. **Server `tool_search` MCP tool** — indexes **overflow only** (sql, web_fetch, advisor, …). It does NOT list or load server primaries (`fs`, `rag`, `dispatch`, `team_dispatch`, …).
+
+If `fs`/`rag`/any primary looks absent from your pre-bound set: **call it directly by name first** (e.g. `fs(sandbox="cortex", op="md_list", path="agent-skills/fs.md")`). Do NOT conclude unavailability from an empty server `tool_search` result — that is expected for primaries. ¬ route primary names through `dispatch` (it rejects them).
+
+Genuine omission only if a **direct** primary call fails at the connector (tool unavailable / no `mcp.request.started`) → log friction, refresh connector, or hand off (cursor-consult)."""
 
 # inject-channel block key: dispatch-consult-block
 _DISPATCH_CONSULT_BLOCK_CLAUDE = """\

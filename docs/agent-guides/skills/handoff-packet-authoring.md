@@ -406,7 +406,7 @@ skill load lines belong in the packet file on turn 1.
 | State | Meaning | Where it lives |
 |---|---|---|
 | **Packet-wired** | An fs-line for the skill is authored in the packet `<invariants>` (by the author or by `enrich_web_handoff_packet`). The artifact references it; the receiver session has **not** read the body yet. | packet `<invariants>`; enrich `skills_added` / `skills_already_wired` |
-| **Session-loaded** | The receiver has fetched the body this session (boot auto-inject `seat_preloaded`, or `fs` / `GET /skills/body`). `skill_suggest` excludes these. | skill-server session registry |
+| **Session-loaded** | The receiver has fetched the body (or boot-critical sections) this session and listed the slug in **`loaded[]`** on subsequent `skill_suggest` calls; plus boot auto-inject slugs in `seat_preloaded`. Session auto-registry from `fs` alone is **target**, not landed. | agent `LOADED` ledger + `skill_suggest` response |
 | **Suggested** | `skill_suggest` ranked the slug as a not-yet-loaded delta. | `skill_suggest` response |
 
 ∀ web-consult densify pickup: a slug can be **packet-wired but not session-loaded** — so `skill_suggest` will (correctly) surface it. That is confirmatory delta, not a missing-wiring signal. Load the packet `<invariants>` skills, then accept the matching `skill_suggest` hits as confirmation. ¬ treat a packet-wired slug appearing in `skill_suggest` as a fresh discovery or as a packet defect.
@@ -476,8 +476,8 @@ offline tests for the touched package (`test_*.py`). Label any scaffold as
 
 ### Block 5 `<mcp_capabilities>` — numbered investigation plan (SHOULD be structured; MUST be concrete)
 
-1. **Boot + skills** — `skill_suggest(conversation_context=…)` at the inflection
-   (`skill-suggest-utilization.md` § Web; pass context only — `loaded[]` is server-owned)
+1. **Boot + skills** — `skill_suggest(loaded=[…], conversation_context=…)` at the inflection
+   (`skill-suggest-utilization.md` § Loaded ledger; `web-boot-lead.md` § tiered preload)
    + task-class refs resolved by `source_uri`.
 2. **Bus + cortex** — `agent_bus(fetch, thread=<id>)` for **each** `related_thread_ids`
    (MUST — the gap thread 2229 hit); `cortex(entity_get|search)` for the todo + decisions.

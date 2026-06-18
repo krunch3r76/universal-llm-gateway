@@ -52,13 +52,16 @@ confirmation, and do not narrate them as fresh discoveries. The enrich event
 
 ## What to pass
 
-**Web (claude-web):** pass **`conversation_context` only**. The skill server maintains
-the session loaded set — boot auto-inject (returned as `seat_preloaded`) plus slugs
-whose bodies were fetched this session via `GET /skills/body` or `fs`. Do **not**
-manually build or pass a `loaded[]` ledger.
+### Loaded ledger (current contract)
+
+**Landed today:** web agents **must pass `loaded[]`** on every `skill_suggest` call and
+**maintain the list in working memory** across the session.
 
 ```python
+LOADED = ["architecture-invariants", "ulg-architecture", "fs", …]  # grows as you fetch
+
 skill_suggest(
+    loaded=LOADED,
     conversation_context="Rich task context — any format you prefer (≤16k chars).",
     limit=8,          # optional; default 8
 )
@@ -66,24 +69,37 @@ skill_suggest(
 
 | Field | Rule |
 |---|---|
+| `loaded` | **Required** on MCP wire. Slugs already read this session (full or boot-critical sections). Server **also** merges `seat_preloaded` (boot/orientation inject slugs for web). Without listing a slug in `loaded`, Stage A may re-suggest it even after `fs` read. |
 | `conversation_context` | Encode **your** read of the task: what you're doing, what seems relevant, what you already ruled in/out. Handoff excerpt, bus thread body, todo + ACs, bullets, or prose — any format, up to 16k chars. Do not compress to a one-liner. Omit only when probing empty context (returns `insufficient_context`). |
-| `loaded` | **Server-owned on web** — session registry on the skill server, not agent memory. |
 | `agent` | Omit on MCP when seat resolves from session; pass explicitly when resolution fails. |
 
+**Partial reads count:** after `md_read` of boot-critical sections for a slug, append the
+slug to `LOADED` before the next suggest — whole-body fetch is not required for dedup.
+
+**Target contract (not landed):** `GET/POST /skills/session/…` registry so `fs` /
+`GET /skills/body` fetches auto-register slugs and web agents pass `conversation_context`
+only. Until that ships, **`loaded[]` is agent-maintained**.
+
 **You reason; the tool returns delta.** At inflection points, form a judgment from boot +
-task context, then call `skill_suggest` to surface slugs you may have missed. Accept or
-reject each hit on merits.
+task context + `LOADED`, then call `skill_suggest` to surface slugs you may have missed.
+Accept or reject each hit on merits.
 
 **Dispatch path (claude-web):** worker-hop relay is **Stage-A + agent judgment only**.
 Stage-B rerank (`skill-suggest-rank` pipeline) is **server-env-gated experimental-off**
 (`SKILL_SUGGEST_RERANK_ENABLED`, default false) — not agent-facing; do not attempt to
 toggle it from MCP calls.
 
-**Implementation note:** full session registry (`GET/POST /skills/session/…`) is the
-target contract; today the server merges **web seat preload** into the loaded set
-automatically (`seat_preloaded` in the response). Wire-level `loaded` may still appear
-on the MCP schema until session binding is complete — web agents must not treat it as
-their bookkeeping responsibility.
+### Batch preload (turn 1)
+
+No single MCP tool reads skills **and** registers them. Use tiered `fs`:
+
+| Pattern | When |
+|---|---|
+| `fs(op="read_multi", sandbox=…, paths=[…])` | Small index docs; one call per sandbox |
+| `fs(op="md_list", …)` then `fs(op="md_read", section=…)` | Sectional playbooks (> ~6 KB) |
+| Defer full read | `handoff-packet-authoring`, domain supersuits until trigger |
+
+Full boot-lead patterns: `web-boot-lead.md`.
 
 ---
 
@@ -98,8 +114,8 @@ their bookkeeping responsibility.
 | `workspaces://universal-llm-gateway/...` | `fs(workspaces, op=read, path="<repo-relative path>")` |
 | Other / missing | `GET /skills/body?id=<id>&expected_digest=<digest>` (409 on digest drift) |
 
-3. Fetch the body — the skill server records the slug as loaded for your session when
-   you pull via `GET /skills/body` or `fs` (web agents do not re-pass it on the next suggest).
+3. Fetch the body — append the slug to **`loaded[]`** before the next `skill_suggest`
+   (session auto-registry from `fs` / `GET /skills/body` is **target**, not landed).
 
 **Web / inline-only dispatch:** cortex skill **bodies** (`cortex-orientation`,
 `cortex-provenance-discipline`) are auto-injected server-side (Track B Slice F + G3).
