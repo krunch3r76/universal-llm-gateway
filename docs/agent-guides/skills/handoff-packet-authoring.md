@@ -438,10 +438,22 @@ backstops; it does not replace this checklist.
 
 ### Block 2 `<invariants>` — skill refs (minimum set)
 
-**Do NOT hand-carry `architecture-invariants` / `ulg-architecture` fs-lines on web** —
-their bodies are server-injected on web boot (Track B Slice F + G3); include an fs-line
-ONLY to verify digest drift. (This differs from `claude-cursor` / `cursor-sdk`, where the
-arch layer is description-gated, never injected, and the fs-lines ARE load-bearing — see
+For web handoffs, do **not** assume `architecture-invariants` / `ulg-architecture`
+are server-injected on generic boot. They are CODING-scope bodies and generic web
+boot runs with `code_touching=False`; manual preload is load-bearing for ULG work.
+
+When the consult touches ULG repo code, MCP, events, git-integration, service
+lifecycle, routing, pipelines, or architecture/protocol docs, Block 2 MUST carry
+explicit `fs(workspaces, op=read/read_multi, ...)` lines for both
+`docs/agent-guides/skills/architecture-invariants.md` and
+`docs/agent-guides/skills/ulg-architecture.md`, resolved from
+`agent_skill:<slug>.source_uri`. For non-ULG or pure Cortex/document consults,
+omit them unless the bound work item's `required_skills` names them.
+
+Enrich may auto-add these lines from `todo:`/`task:` `required_skills` or ULG-surface
+heuristics, but packet authors remain responsible for the visible Block 2 contract.
+(This differs from `claude-cursor` / `cursor-sdk`, where the arch layer is
+description-gated, never injected, and the fs-lines ARE load-bearing — see
 `handoff-dispatchers.mdc` § web-claude "Rule/skill surface asymmetry".)
 
 Minimum set for web:
@@ -449,8 +461,8 @@ Minimum set for web:
 - `consult-routing.md` — when the consult may close implement-ready (post-densify lane)
 - **≥1 task-class skill** (see matrix) — resolve via `agent_skill:<slug>.source_uri`,
   never a path guessed from the slug (cortex-native vs `.cursor/skills` differ).
-- Todo `required_skills`: when `todo:{slug}` exists, `cortex(entity_get)` → mirror each
-  as an `fs` line.
+- Bound work item `required_skills`: when `todo:{slug}` or `task:{slug}` exists,
+  `cortex(entity_get)` → mirror each as an `fs` line.
 
 Task-class refs (non-exhaustive decision aid — `skill_suggest` + `required_skills` are
 the real discovery; reuse the slugs already named in `handoff-dispatchers.mdc` § web-claude):
@@ -491,8 +503,9 @@ offline tests for the touched package (`test_*.py`). Label any scaffold as
 
 - [ ] Frontmatter boot-gate fields present
 - [ ] ≥1 task-class skill ref in `<invariants>`, resolved via `source_uri`
-      (¬ redundant arch-invariants/ulg-architecture fs-lines on web)
-- [ ] Todo `required_skills` mirrored (if a todo exists)
+- [ ] ULG-touching consults: arch-pair fs-lines in Block 2 (or bound
+      `required_skills` names them); ¬ assume generic boot injects arch bodies
+- [ ] Bound `todo:`/`task:` `required_skills` mirrored (if a work item exists)
 - [ ] ≥1 `agent_bus(fetch)` per upstream thread in `<mcp_capabilities>`
 - [ ] Every spec touch-point has a numbered `fs(read)`
 - [ ] ≥1 observability probe if the task names a queue/event/live gap
@@ -626,7 +639,8 @@ escalation, ¬ scaffold→densify chaining — unless the draft is explicitly la
 - **Cursor + cursor-sdk arch-layer note** (when target is `claude-cursor` or `cursor-sdk`
   implement via `team_dispatch(op=generate, role=cursor-sdk, …)`): include Block 2
   skill-refs for `architecture-invariants` + `ulg-architecture`, task narrowing, and Block 5
-  item 0 arch-layer reads — **unlike web**, where those bodies are server-injected (§ Web-receiver
+  item 0 arch-layer reads — **unlike web**, where generic boot does not inject CODING-scope
+  arch bodies and ULG-touching consults must wire the arch pair in Block 2 (§ Web-receiver
   priming checklist). Both cursor seats load project rules via `setting_sources=all`, but only
   the engineering-discipline layer (`alwaysApply: true`)
   auto-attaches; the arch layer (`topology_ws`, `mcp-integration_ws`, `event-debugging_ws`, …)

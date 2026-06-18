@@ -423,14 +423,17 @@ _CONSULT_ARCH_READ = (
 
 _WEB_CONSULT_PRIMING = (
     "Before findings: follow the web-receiver priming checklist in the packet "
-    "(handoff-packet-authoring.md § Web-receiver priming checklist): call "
-    "skill_suggest at step 1, agent_bus(fetch) each related_thread_ids thread, "
-    "load task-class skills from packet <invariants>. Step-1 skill_suggest is "
-    "confirmatory delta, not primary discovery: load the packet <invariants> "
-    "skills first and do not narrate already-wired skills as fresh discoveries. "
-    "Web has no IDE rule auto-load — arch bodies are server-injected on boot; "
-    "do not re-read architecture-invariants/ulg-architecture unless verifying "
-    "digest drift."
+    "(handoff-packet-authoring.md § Web-receiver priming checklist): load "
+    "task-class skills from packet <invariants> first; agent_bus(fetch) each "
+    "related_thread_ids thread; skill_suggest is confirmatory delta only. "
+    "Web has no IDE rule auto-load. Generic web boot does NOT inject "
+    "architecture-invariants/ulg-architecture bodies (CODING scope requires "
+    "code_touching=True). For ULG work touching code, MCP, events, "
+    "git-integration, service lifecycle, routing, pipelines, or architecture/"
+    "protocol docs, read architecture-invariants + ulg-architecture via "
+    "fs(read_multi, workspaces, ...) per web-boot-lead.md § Tiered skill "
+    "preload. For non-ULG or pure Cortex/document consults, skip the arch "
+    "preload unless packet required_skills names it."
 )
 
 _WEB_RECEIVER_AGENT = "claude-web"

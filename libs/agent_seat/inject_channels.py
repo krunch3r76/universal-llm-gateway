@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from agent_seat.inject_registry import injected_skill_slugs
+
 # Channel 2 — orientation blocks (``render_orientation_blocks``).
 ORIENTATION_BLOCK_SKILL_MAP: dict[str, tuple[str, ...]] = {
     "operator-posture-block": ("operator-posture",),
@@ -91,32 +93,19 @@ def web_opcontext_inject_skill_slugs(
     return tuple(sorted(slugs))
 
 
-from agent_seat.inject_registry import injected_skill_slugs
-
-
 def web_seat_injected_skill_slugs(
     agent: str,
     *,
     family: str | None = None,
     platform: str | None = None,
 ) -> tuple[str, ...]:
-    """Union channel-1 (live body inject) + channel-2 + channel-3 slugs."""
-    resolved_family = family
+    """Registry-derived slugs for skill_suggest loaded_set accounting."""
     resolved_platform = platform
-    if resolved_family is None or resolved_platform is None:
+    if resolved_platform is None:
         parts = agent.split("-", 1)
-        if len(parts) != 2:
-            resolved_family, resolved_platform = "", "web"
-        else:
-            resolved_family, resolved_platform = parts[0], parts[1]
-    slugs: set[str] = set(
-        injected_skill_slugs(
-            platform=resolved_platform or "web",
-            inject_profile=None,
-        )
+        resolved_platform = parts[1] if len(parts) == 2 else "web"
+    return injected_skill_slugs(
+        platform=resolved_platform or "web",
+        inject_profile=None,
+        include_loaded_set=True,
     )
-    slugs.update(web_orientation_inject_skill_slugs(agent))
-    slugs.update(
-        web_opcontext_inject_skill_slugs(agent, resolved_family, resolved_platform)
-    )
-    return tuple(sorted(slugs))

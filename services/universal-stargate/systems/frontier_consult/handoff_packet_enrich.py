@@ -58,7 +58,7 @@ KNOWN_TASK_CLASS_SLUGS: frozenset[str] = frozenset(
 )
 
 _SKILL_SUGGEST_STEP = (
-    'skill_suggest(loaded=[…], conversation_context="<task summary from packet scope>")'
+    'skill_suggest(conversation_context="<task summary from packet scope>")'
 )
 
 
@@ -76,7 +76,7 @@ class EnrichResult:
 
 
 def source_uri_to_fs_line(source_uri: str) -> str:
-    """Translate agent_skill.source_uri to a packet fs load line (enrich positional form)."""
+    """Map agent_skill.source_uri to a packet fs load line (enrich positional form)."""
     return _canonical_source_uri_to_fs_line(
         source_uri, op="read", fs_call_style="positional"
     )
@@ -100,11 +100,27 @@ def _parse_related_thread_ids(text: str) -> list[str]:
     return []
 
 
+def _canonical_entity_id(raw: str, prefix: str) -> str:
+    return raw if raw.startswith(f"{prefix}:") else f"{prefix}:{raw}"
+
+
+def _bound_entity_ids(text: str) -> list[str]:
+    ids: list[str] = []
+    todo_raw = frontmatter_value(text, "todo")
+    if todo_raw:
+        ids.append(_canonical_entity_id(todo_raw.strip(), "todo"))
+    task_raw = frontmatter_value(text, "task")
+    if task_raw:
+        ids.append(_canonical_entity_id(task_raw.strip(), "task"))
+    return ids
+
+
 def _todo_entity_id(text: str) -> str | None:
-    raw = frontmatter_value(text, "todo")
-    if not raw:
-        return None
-    return raw if raw.startswith("todo:") else f"todo:{raw}"
+    ids = _bound_entity_ids(text)
+    for entity_id in ids:
+        if entity_id.startswith("todo:"):
+            return entity_id
+    return None
 
 
 def _skill_slug_from_entity(entity: dict[str, Any]) -> str | None:
@@ -152,11 +168,11 @@ def _heuristic_task_class_slugs(text: str) -> list[str]:
     return found
 
 
-def _todo_required_skills(cortex: CortexEntityReader, todo_id: str) -> list[str]:
+def _entity_required_skills(cortex: CortexEntityReader, entity_id: str) -> list[str]:
     try:
-        entity = cortex.entity_get(todo_id)
+        entity = cortex.entity_get(entity_id)
     except Exception as exc:
-        logger.warning("enrich todo entity_get failed id=%s error=%s", todo_id, exc)
+        logger.warning("enrich entity_get failed id=%s error=%s", entity_id, exc)
         return []
     attrs = entity.get("attributes") or {}
     if not isinstance(attrs, dict):
@@ -169,9 +185,8 @@ def _todo_required_skills(cortex: CortexEntityReader, todo_id: str) -> list[str]
 
 def _collect_skill_slugs(text: str, cortex: CortexEntityReader) -> list[str]:
     slugs: list[str] = list(_DEFAULT_DENSIFY_SLUGS)
-    todo_id = _todo_entity_id(text)
-    if todo_id:
-        for slug in _todo_required_skills(cortex, todo_id):
+    for entity_id in _bound_entity_ids(text):
+        for slug in _entity_required_skills(cortex, entity_id):
             if slug not in slugs:
                 slugs.append(slug)
     for slug in _heuristic_task_class_slugs(text):
@@ -282,7 +297,7 @@ def _has_task_class_skill_ref(text: str) -> bool:
     for slug in KNOWN_TASK_CLASS_SLUGS - frozenset(_DEFAULT_DENSIFY_SLUGS):
         if slug in text or f"agent_skill:{slug}" in text:
             return True
-    if _todo_entity_id(text) and "required_skills" in text:
+    if _bound_entity_ids(text) and "required_skills" in text:
         return True
     for slug in _DEFAULT_DENSIFY_SLUGS:
         if slug in text:

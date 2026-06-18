@@ -52,6 +52,7 @@ from .handoff import (
     create_handoff_thread,
     validate_packet,
 )
+from .handoff_packet_enrich import WEB_RECEIVER_AGENT, enrich_web_handoff_packet
 from .handoff_response import (
     build_handoff_result,
     build_push_reminder,
@@ -66,7 +67,6 @@ from .implement_admission_bridge import (
     resolve_source_ref_to_packet,
     verify_both_present_hash,
 )
-from .handoff_packet_enrich import WEB_RECEIVER_AGENT, enrich_web_handoff_packet
 from .implement_ready_gate import require_implement_ready
 from .service import (
     FrontierEndpointError,
