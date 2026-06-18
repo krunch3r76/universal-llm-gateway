@@ -28,16 +28,60 @@ def _load_dispatch_enabled() -> bool:
 
 _DISPATCH_ENABLED = _load_dispatch_enabled()
 _DISPATCH_TIMEOUT = 330.0
+_FALLBACK_WORKER_TIMEOUT_SECONDS = max(
+    1,
+    int(os.environ.get("SKILL_SUGGEST_WORKER_TIMEOUT_SECONDS", "20")),
+)
+
+
+def _should_relay_dispatch(agent: str) -> bool:
+    if not _DISPATCH_ENABLED:
+        return False
+    return normalize_agent_slug(agent) in known_seats()
 
 
 def _uses_dispatch_shim(agent: str, *, prefer_worker: bool | None) -> bool:
-    if not _DISPATCH_ENABLED:
+    """Legacy name — dispatch relay is seat-gated; worker hop is Stargate-side."""
+    if not _should_relay_dispatch(agent):
         return False
     if prefer_worker is False:
         return False
     if prefer_worker is True:
         return True
-    return normalize_agent_slug(agent) in known_seats()
+    return True
+
+
+def _is_cursor_origin(*, effective_agent: str, meta: dict[str, Any]) -> bool:
+    profile = str(meta.get("request_profile") or meta.get("profile") or "").strip()
+    if profile == "cursor_safe":
+        return True
+    if normalize_agent_slug(effective_agent) == "claude-cursor":
+        return True
+    caller = str(meta.get("caller_identity") or "").strip()
+    if caller and normalize_agent_slug(caller) == "claude-cursor":
+        return True
+    return False
+
+
+def _resolve_prefer_worker(
+    explicit: bool | None,
+    *,
+    effective_agent: str,
+) -> bool:
+    if explicit is True:
+        return True
+    if explicit is False:
+        return False
+    meta = current_request_metadata()
+    if _is_cursor_origin(effective_agent=effective_agent, meta=meta):
+        return False
+    return True
+
+
+def _cap_worker_timeout_seconds(explicit: int | None) -> int:
+    if explicit is None:
+        return _FALLBACK_WORKER_TIMEOUT_SECONDS
+    return min(explicit, _FALLBACK_WORKER_TIMEOUT_SECONDS)
 
 
 def _route_reason_for_direct(*, agent: str, prefer_worker: bool | None) -> str:
@@ -229,9 +273,15 @@ def register_skill_suggest_tools(mcp: FastMCP) -> None:
         if limit is not None:
             payload["limit"] = limit
 
-        if _uses_dispatch_shim(effective_agent, prefer_worker=prefer_worker):
-            if worker_timeout_seconds is not None:
-                payload["worker_timeout_seconds"] = worker_timeout_seconds
+        resolved_prefer_worker = _resolve_prefer_worker(
+            prefer_worker,
+            effective_agent=effective_agent,
+        )
+        if _should_relay_dispatch(effective_agent):
+            payload["prefer_worker"] = resolved_prefer_worker
+            payload["worker_timeout_seconds"] = _cap_worker_timeout_seconds(
+                worker_timeout_seconds,
+            )
             return _relay_suggest_dispatch(payload)
 
         return _annotate_direct_route(

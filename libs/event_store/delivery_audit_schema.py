@@ -41,8 +41,23 @@ _TOKEN_LOCALITY_COLUMN_DEFS: tuple[tuple[str, str], ...] = (
     ("restated_overlap_tokens", "INTEGER"),
 )
 
+_PROVIDER_AFFORDANCE_COLUMN_DEFS: tuple[tuple[str, str], ...] = (
+    ("capability_key", "TEXT"),
+    ("provider_native_name", "TEXT"),
+    ("capability_class", "TEXT"),
+    ("support_mode", "TEXT"),
+    ("effect_axes", "TEXT"),
+    ("authority_delta", "TEXT"),
+    ("capability_event_type", "TEXT"),
+    ("applicability_basis", "TEXT"),
+)
+
+_ARTIFACT_EXTENSION_COLUMN_DEFS = (
+    _TOKEN_LOCALITY_COLUMN_DEFS + _PROVIDER_AFFORDANCE_COLUMN_DEFS
+)
+
 _TOKEN_LOCALITY_DDL = ",\n    ".join(
-    f"{name} {definition}" for name, definition in _TOKEN_LOCALITY_COLUMN_DEFS
+    f"{name} {definition}" for name, definition in _ARTIFACT_EXTENSION_COLUMN_DEFS
 )
 
 _DDL = f"""
@@ -355,13 +370,13 @@ def _migrate_artifact_class_check(db: sqlite3.Connection) -> None:
     db.execute("DROP TABLE _delivered_artifacts_mig_bak")
 
 
-def _migrate_token_locality_columns(db: sqlite3.Connection) -> None:
-    """Add token-locality columns to an existing B3 ``delivered_artifacts`` table."""
+def _migrate_artifact_extension_columns(db: sqlite3.Connection) -> None:
+    """Add token-locality and provider-affordance columns to ``delivered_artifacts``."""
     existing = {
         row[1]
         for row in db.execute("PRAGMA table_info(delivered_artifacts)").fetchall()
     }
-    for name, definition in _TOKEN_LOCALITY_COLUMN_DEFS:
+    for name, definition in _ARTIFACT_EXTENSION_COLUMN_DEFS:
         if name not in existing:
             db.execute(
                 f"ALTER TABLE delivered_artifacts ADD COLUMN {name} {definition}"
@@ -394,7 +409,7 @@ def ensure_schema(conn: sqlite3.Connection | None = None) -> None:
     try:
         db.executescript(_DDL)
         _migrate_artifact_class_check(db)
-        _migrate_token_locality_columns(db)
+        _migrate_artifact_extension_columns(db)
         if owns:
             db.commit()
     finally:

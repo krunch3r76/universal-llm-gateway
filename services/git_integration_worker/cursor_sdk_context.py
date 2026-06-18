@@ -4,16 +4,15 @@ Loads the same ambient Cursor settings layers as the IDE Composer seat:
 project rules (repo + parent traversal), user rules, team/plugins, and the
 vortex MCP stdio surface used in ``~/.cursor/mcp.json``.
 
-.. note::
-   The stdio proxy (``scripts/mcp-stdio-proxy.py``) is **deprecated** as of
-   2026-06-17. Cursor steady-state is direct HTTPS; SDK dispatches still wire
-   stdio temporarily until ``fastmcp-remote`` replaces the custom proxy
-   (Track 3 follow-on: ``fastmcp-remote`` eval after pin green).
+SDK dispatches use ``scripts/mcp-fastmcp-remote-bridge.py`` — a thin launcher
+around upstream ``fastmcp-remote`` (Track 3). Cursor steady-state remains
+direct HTTPS; stdio is fallback / SDK lane only.
 """
 
 from __future__ import annotations
 
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -25,7 +24,8 @@ from cursor_sdk.types import (
 )
 
 _VORTEX_MCP_SERVER = "user-vortex"
-_STDIO_PROXY_RELPATH = Path("scripts/mcp-stdio-proxy.py")
+_MCP_BRIDGE_RELPATH = Path("scripts/mcp-fastmcp-remote-bridge.py")
+_FASTMCP_REMOTE_CMD = "fastmcp-remote"
 _SETTING_SOURCES: tuple[str, ...] = ("all",)
 _MCP_YAML_REL = Path(".gateway") / "mcp.yaml"
 _CURSOR_XDG_AUTH = Path(".config") / "cursor" / "auth.json"
@@ -87,6 +87,18 @@ def resolve_cursor_auth_source(*, real_home: Path | str | None = None) -> str:
     return ""
 
 
+def resolve_mcp_bridge(source_repo: Path) -> Path:
+    """Return the vortex stdio bridge script; fail closed at parity checks."""
+    bridge = (source_repo / _MCP_BRIDGE_RELPATH).resolve()
+    if not bridge.is_file():
+        raise CursorSdkParityError(f"vortex MCP bridge missing: {bridge}")
+    if not shutil.which(_FASTMCP_REMOTE_CMD):
+        raise CursorSdkParityError(
+            f"{_FASTMCP_REMOTE_CMD} not on PATH — install fastmcp-remote==3.4.2"
+        )
+    return bridge
+
+
 def validate_dispatch_context(
     source_repo: Path,
     *,
@@ -94,9 +106,7 @@ def validate_dispatch_context(
 ) -> dict[str, object]:
     """Verify IDE-parity substrate before admitting a dispatch."""
     home = _operator_home(real_home)
-    proxy = (source_repo / _STDIO_PROXY_RELPATH).resolve()
-    if not proxy.is_file():
-        raise CursorSdkParityError(f"vortex MCP proxy missing: {proxy}")
+    bridge = resolve_mcp_bridge(source_repo)
 
     token, token_source = resolve_mcp_token(real_home=home)
     if not token:
@@ -116,7 +126,8 @@ def validate_dispatch_context(
     return {
         "setting_sources": list(_SETTING_SOURCES),
         "mcp_server": _VORTEX_MCP_SERVER,
-        "mcp_proxy": str(proxy),
+        "mcp_bridge": str(bridge),
+        "mcp_remote_cmd": _FASTMCP_REMOTE_CMD,
         "mcp_token_source": token_source,
         "cursor_auth_source": cursor_auth,
         "user_rules_dir_present": user_rules.is_dir(),
@@ -124,7 +135,7 @@ def validate_dispatch_context(
 
 
 def _resolve_mcp_token_env(*, real_home: Path | str | None = None) -> dict[str, str]:
-    """Env vars for the stdio MCP proxy (HOME may be dispatch-isolated)."""
+    """Env vars for the stdio MCP bridge (HOME may be dispatch-isolated)."""
     env: dict[str, str] = {}
     mcp_url = os.environ.get("MCP_URL", "").strip()
     if mcp_url:
@@ -148,15 +159,13 @@ def build_mcp_servers(
     *,
     real_home: Path | str | None = None,
 ) -> dict[str, StdioMcpServerConfig]:
-    """Stdio vortex MCP — deprecated fallback transport (see module docstring)."""
-    proxy = (source_repo / _STDIO_PROXY_RELPATH).resolve()
-    if not proxy.is_file():
-        raise FileNotFoundError(f"vortex MCP proxy missing: {proxy}")
+    """Stdio vortex MCP via ``fastmcp-remote`` bridge (see module docstring)."""
+    bridge = resolve_mcp_bridge(source_repo)
     env = _resolve_mcp_token_env(real_home=real_home)
     return {
         _VORTEX_MCP_SERVER: StdioMcpServerConfig(
             command=sys.executable,
-            args=[str(proxy)],
+            args=[str(bridge)],
             env=env or None,
             cwd=str(source_repo.resolve()),
         )

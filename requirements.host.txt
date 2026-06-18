@@ -100,3 +100,5 @@ websockets>=11.0
 # Unpinned drift on `pip -U`/rebuild can silently break the bridge launch.
 # See cortex notes/system/threads/cursor-sdk-bridge-token-fix.md.
 cursor-sdk==0.1.7
+# Track 3: stdio bridge for cursor-sdk dispatches (replaces custom mcp-stdio-proxy)
+fastmcp-remote==3.4.2

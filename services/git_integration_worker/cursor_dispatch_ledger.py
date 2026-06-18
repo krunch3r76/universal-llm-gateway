@@ -617,6 +617,24 @@ class CursorDispatchLedger:
             "queue_depth": int(queued["n"]) if queued else 0,
         }
 
+    def dispatch_status_by_thread(self, *, thread_id: str) -> dict[str, Any] | None:
+        """Latest cursor_sdk_dispatches row for a thread → status projection, or None."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT dispatch_id, status, COALESCE(read_only,0) AS read_only, queued_at "
+                "FROM cursor_sdk_dispatches WHERE thread_id=? "
+                "ORDER BY queued_at DESC LIMIT 1",
+                (thread_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "dispatch_id": row["dispatch_id"],
+            "status": row["status"],
+            "read_only": bool(row["read_only"]),
+            "queued_at": row["queued_at"],
+        }
+
     def startup_reconcile(self, *, worker_instance: str) -> list[str]:
         """Mark restart survivors terminal; return repos needing promotion."""
         repos: set[str] = set()

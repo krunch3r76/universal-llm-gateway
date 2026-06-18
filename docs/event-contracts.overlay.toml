@@ -261,7 +261,7 @@
 "mcp.transport.sse.session.aborted" = "SSE stream aborted"
 "mcp.transport.sse.session.ended" = "SSE stream finished cleanly"
 "mcp.transport.sse.session.started" = "SSE worker began streaming"
-"mcp.transport.stdio.started" = "Proxy process initialized"
+"mcp.bridge.stdio.started" = "Bridge launcher initialized before fastmcp-remote exec"
 "mcp.transport.stream.opened" = "Upstream HTTP response opened"
 "model.capacity.overflow.assigned" = "Admission moved to overflow gateway"
 "model.load.completed" = "`correlation_id`"

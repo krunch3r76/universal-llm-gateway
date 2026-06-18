@@ -47,17 +47,53 @@ VALID_ARTIFACT_CLASSES = frozenset(
     }
 )
 
+VALID_CAPABILITY_CLASSES = frozenset(
+    {
+        "provider_native",
+        "provider_declared",
+        "adapter_emulated",
+        "ulg_workflow_wrapper",
+        "unknown",
+    }
+)
+
+VALID_SUPPORT_MODES = frozenset(
+    {
+        "native",
+        "emulated",
+        "unsupported",
+        "withheld",
+        "unknown",
+    }
+)
+
+VALID_CAPABILITY_EVENT_TYPES = frozenset(
+    {
+        "declared_available",
+        "requested",
+        "delivered",
+        "activated",
+        "used",
+        "withheld",
+        "fallback_emulated",
+    }
+)
+
 __all__ = [
     "REGISTRY_SCHEMA_VERSION",
     "VALID_ARTIFACT_CLASSES",
     "VALID_AUDIT_STATUSES",
+    "VALID_CAPABILITY_CLASSES",
+    "VALID_CAPABILITY_EVENT_TYPES",
     "VALID_PROJECTION_SURFACES",
+    "VALID_SUPPORT_MODES",
     "artifact_identity_key",
     "class_qualified_guidance_resource_key",
     "connect",
     "content_digest",
     "delivery_audit_db_path",
     "derive_aggregate_audit_status",
+    "derive_child_audit_status",
     "derive_guidance_resource_key",
     "derive_token_rollups",
     "ensure_schema",
@@ -68,6 +104,7 @@ __all__ = [
     "list_artifacts_for_audit",
     "new_artifact_record_id",
     "new_audit_id",
+    "validate_provider_affordance_surface_fields",
     "validate_whole_doc_reason",
 ]
 
@@ -108,6 +145,80 @@ def content_digest(body: str | bytes) -> str:
     """Return sha256 hex of the delivered body; encodes ``str`` as UTF-8."""
     payload = body.encode("utf-8") if isinstance(body, str) else body
     return hashlib.sha256(payload).hexdigest()
+
+
+def _is_present(value: Any) -> bool:
+    return value is not None and value != ""
+
+
+def validate_provider_affordance_surface_fields(row: dict[str, Any]) -> None:
+    """Validate provider-affordance columns for ``provider_affordance_surface`` rows."""
+    if row.get("artifact_class") != "provider_affordance_surface":
+        return
+
+    for field, valid in (
+        ("capability_class", VALID_CAPABILITY_CLASSES),
+        ("support_mode", VALID_SUPPORT_MODES),
+        ("capability_event_type", VALID_CAPABILITY_EVENT_TYPES),
+    ):
+        value = row.get(field)
+        if value is not None and value not in valid:
+            raise ValueError(f"unknown {field}: {value!r}")
+
+    authority_delta = row.get("authority_delta")
+    if authority_delta is not None and authority_delta == "":
+        raise ValueError("authority_delta must be non-empty when present")
+
+
+def _provider_affordance_clean_evidence_complete(
+    row: dict[str, Any],
+    *,
+    audit_policy_version: str | None,
+) -> bool:
+    recipient_ok = (
+        _is_present(row.get("recipient_agent"))
+        or row.get("recipient_scope") == "global"
+    )
+    identity_ok = _is_present(row.get("affordance_kind")) or _is_present(
+        row.get("capability_key")
+    )
+    required = (
+        row.get("provider"),
+        row.get("model"),
+        recipient_ok,
+        row.get("artifact_id"),
+        identity_ok,
+        row.get("capability_class"),
+        row.get("support_mode"),
+        row.get("effect_axes"),
+        row.get("rendered_content_hash"),
+        row.get("audit_checker"),
+        row.get("audit_checker_version"),
+        audit_policy_version,
+        row.get("audit_evidence_uris"),
+    )
+    return all(
+        value if isinstance(value, bool) else _is_present(value) for value in required
+    )
+
+
+def derive_child_audit_status(
+    row: dict[str, Any],
+    *,
+    audit_policy_version: str | None = None,
+) -> str:
+    """Derive per-row audit status for aggregate rollup."""
+    stored = row.get("audit_status", "unaudited")
+    if stored in ("write-failed", "audit-divergent"):
+        return stored
+    if row.get("artifact_class") != "provider_affordance_surface":
+        return stored
+    if _provider_affordance_clean_evidence_complete(
+        row,
+        audit_policy_version=audit_policy_version,
+    ):
+        return "audited-clean"
+    return "unaudited"
 
 
 def validate_whole_doc_reason(rows: list[dict]) -> list[str]:

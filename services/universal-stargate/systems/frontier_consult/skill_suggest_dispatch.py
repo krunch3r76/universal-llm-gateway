@@ -18,6 +18,7 @@ from universal_logging import get_logger
 
 from .admission import FrontierEndpointError
 from .cursor_sdk_generate import CURSOR_SDK_REPLY_SEAT, dispatch_cursor_sdk_generate
+from .cursor_sdk_worker_dispatch import worker_base_url
 from .events import (
     FrontierSkillSuggestDispatchCompleted,
     FrontierSkillSuggestDispatchDegraded,
@@ -35,6 +36,8 @@ skills_router = APIRouter(prefix="/api/v1/skills", tags=["skills"])
 _CONTEXT_MAX = 16384
 _WAIT_CHUNK_SECONDS = 60.0
 _CORTEX_TIMEOUT = 30.0
+_ACK_WINDOW_SECONDS = 3.0
+_ACK_POLL_INTERVAL = 0.5
 
 
 class SkillSuggestDispatchRequest(BaseModel):
@@ -44,7 +47,8 @@ class SkillSuggestDispatchRequest(BaseModel):
     loaded: list[str]
     conversation_context: str | None = None
     limit: int = Field(default=8, ge=1, le=25)
-    worker_timeout_seconds: int = Field(default=120, ge=1, le=300)
+    prefer_worker: bool = Field(default=True)
+    worker_timeout_seconds: int = Field(default=20, ge=1, le=300)
 
 
 class SkillSuggestDispatchResponse(BaseModel):
@@ -161,6 +165,40 @@ async def await_worker_reply(
     return None
 
 
+async def await_worker_ack(
+    *,
+    thread_id: str,
+    ack_window_seconds: float = _ACK_WINDOW_SECONDS,
+) -> bool:
+    """True if a worker claims the dispatch within the window (status leaves 'queued'),
+    False if it stays 'queued'/absent. Fail-SAFE: any probe transport/HTTP error
+    returns True (assume present; fall through to the normal capped await — the probe
+    must never become a new way to lose worker output)."""
+    deadline = time.monotonic() + ack_window_seconds
+    probe_url = f"{worker_base_url()}/api/v1/git/admin/dispatch-status"
+    async with make_async_client(worker_base_url(), timeout=10.0) as client:
+        while time.monotonic() < deadline:
+            try:
+                resp = await client.get(probe_url, params={"thread_id": thread_id})
+            except httpx.HTTPError as exc:
+                logger.warning(
+                    "skill_suggest_dispatch ack probe transport error: %s", exc
+                )
+                return True
+            if resp.status_code != 200:
+                logger.warning(
+                    "skill_suggest_dispatch ack probe rejected: status=%s body=%s",
+                    resp.status_code,
+                    resp.text[:200],
+                )
+                return True
+            status = resp.json().get("status")
+            if status in {"admitted", "running", "completed"}:
+                return True
+            await asyncio.sleep(_ACK_POLL_INTERVAL)
+    return False
+
+
 async def run_fallback(
     *,
     agent: str,
@@ -211,6 +249,24 @@ async def dispatch_skill_suggest(
             },
         )
     canonical_agent = _canonicalize_agent(body.agent)
+    if not body.prefer_worker:
+        t0 = time.monotonic()
+        result = await run_fallback(
+            agent=canonical_agent,
+            loaded=body.loaded,
+            conversation_context=body.conversation_context,
+            limit=body.limit,
+        )
+        _publish_event(
+            FrontierSkillSuggestDispatchCompleted(
+                request_id=request_id,
+                agent=canonical_agent,
+                route="fallback",
+                latency_ms=int((time.monotonic() - t0) * 1000),
+            )
+        )
+        return result
+
     workspaces_root = _workspaces_root().resolve()
     message = build_worker_message(
         loaded=body.loaded,
@@ -275,6 +331,26 @@ async def dispatch_skill_suggest(
             )
         )
         return result
+
+    if str(dispatch_result.get("status") or "") == "queued":
+        acked = await await_worker_ack(thread_id=thread_id)
+        if not acked:
+            result = await run_fallback(
+                agent=canonical_agent,
+                loaded=body.loaded,
+                conversation_context=body.conversation_context,
+                limit=body.limit,
+            )
+            _publish_event(
+                FrontierSkillSuggestDispatchDegraded(
+                    request_id=request_id,
+                    agent=canonical_agent,
+                    route="fallback",
+                    reason="no_worker_ack",
+                    latency_ms=int((time.monotonic() - t0) * 1000),
+                )
+            )
+            return result
 
     closeout_body = await await_worker_reply(
         thread_id=thread_id,

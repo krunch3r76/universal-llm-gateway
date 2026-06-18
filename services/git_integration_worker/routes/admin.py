@@ -35,6 +35,12 @@ async def lease_snapshot(
     return CursorDispatchLedger.instance().lease_snapshot(source_repo=repo)
 
 
+@router.get("/dispatch-status", summary="Status of the latest dispatch on a thread.")
+async def dispatch_status(request: Request, thread_id: str) -> dict[str, object]:
+    row = CursorDispatchLedger.instance().dispatch_status_by_thread(thread_id=thread_id)
+    return row if row is not None else {"thread_id": thread_id, "status": None}
+
+
 class BeginDrainRequest(BaseModel):
     reason: str
     intent_id: str
