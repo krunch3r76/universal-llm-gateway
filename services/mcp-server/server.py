@@ -45,6 +45,7 @@ from tool_access import dispatch_denial_reason, is_dispatch_tool_allowed
 from tool_error_enricher import register_tool_error_enricher
 from tool_search import capture_overflow_metadata, register_tool_search_tool
 from tools._agent_bus_read import register_agent_bus_read_tool
+from tools._agent_tools import JsonArgStr
 from tools.advisor import register_advisor_tools
 from tools.agent_bus import register_agent_bus_tools
 from tools.browse import register_browse_tool
@@ -581,7 +582,7 @@ def _build_server() -> tuple[
     }
 
     @mcp.tool(title="RAG Knowledge Retrieval")
-    async def rag(op: str, arguments: str = "{}") -> Any:
+    async def rag(op: str, arguments: JsonArgStr = "{}") -> Any:
         """RAG knowledge retrieval and index management — dispatch by op name.
 
         op: operation name (see table below)
@@ -644,7 +645,7 @@ def _build_server() -> tuple[
             toolprogress_end(t_prog, prog_timer, "rag", error=err, op=op)
 
     @mcp.tool(title="Tool Dispatcher")
-    async def dispatch(tool: str, arguments: str = "{}") -> Any:
+    async def dispatch(tool: str, arguments: JsonArgStr = "{}") -> Any:
         """Invoke a non-primary tool by name. Discover candidates via tool_search first.
 
         arguments: JSON-encoded object string (e.g. '{"key": "value"}').

@@ -19,8 +19,6 @@ from agent_seat import (
 )
 from pydantic.functional_validators import BeforeValidator
 
-from ._cortex_relay import cx
-
 SYSTEM_PROMPT = """\
 You are an advisory agent with access to a structured knowledge system (Cortex).
 
@@ -109,7 +107,42 @@ _DISPATCH_ARGS_OFFLOAD_HINT = (
 )
 
 
-def dispatch_arguments_error(raw: object, *, example: str) -> dict[str, str]:
+def classify_dispatch_args_raw(raw: object) -> str:
+    """Classify a failed dispatch-args payload for instrumentation.
+
+    Two classes, pinned by spec §9 (mcp-dispatch-args-parity-sf1-sf2-sf7):
+      ``whole_object_literal`` — caller passed an object/dict. ``JsonArgStr``
+        coercion handles this at the MCP boundary, so this class should trend
+        to ~zero once every dispatch tool uses ``JsonArgStr``.
+      ``malformed_string`` — caller hand-built a JSON string that did not parse
+        (the mis-escape failure mode ``JsonArgStr`` cannot fix). This is the
+        gate signal for the deferred client-serialization helper
+        (todo:dispatch-args-client-serialization-helper): build it only if
+        ``malformed_string`` dominates the failure distribution over time.
+    """
+    return "whole_object_literal" if isinstance(raw, dict) else "malformed_string"
+
+
+def _record_dispatch_args_invalid(*, raw_kind: str, tool: str | None) -> None:
+    """Emit a structured dispatch-args parse-failure event (best-effort).
+
+    The shared error builder is the single choke point for every dispatch-style
+    parse failure, so it is the natural place to instrument the deferred
+    client-serialization decision. The import is lazy + guarded so non-MCP
+    direct callers (and any context without the event bus) never break on the
+    instrumentation. See spec §9 / decision:dispatch-arguments-string-wire-form.
+    """
+    try:
+        from mcp_events import record
+
+        record("mcp.dispatch.arguments.invalid", raw_kind=raw_kind, tool=tool or "")
+    except Exception:  # noqa: BLE001 — instrumentation must never break the error path
+        pass
+
+
+def dispatch_arguments_error(
+    raw: object, *, example: str, tool: str | None = None
+) -> dict[str, str]:
     """Build the standard dispatch-style "arguments did not parse" error.
 
     Single source of truth for the message emitted when
@@ -117,8 +150,11 @@ def dispatch_arguments_error(raw: object, *, example: str) -> dict[str, str]:
     surfaces (cortex/agent_bus/agent_bus_read/rag/dispatch). When ``raw`` is a
     ``str`` (the canonical wire form) the message appends an offload hint, since a
     failed string parse is almost always an escaping failure on a large
-    quote-heavy payload. See decision:dispatch-arguments-string-wire-form.
+    quote-heavy payload. Emits a structured ``raw_kind`` event so the deferred
+    client-serialization decision is measurable. See
+    decision:dispatch-arguments-string-wire-form.
     """
+    _record_dispatch_args_invalid(raw_kind=classify_dispatch_args_raw(raw), tool=tool)
     message = (
         f"arguments must be a JSON-encoded object string (e.g. '{example}'); "
         f"got {type(raw).__name__} that did not parse as a JSON object"
@@ -126,50 +162,3 @@ def dispatch_arguments_error(raw: object, *, example: str) -> dict[str, str]:
     if isinstance(raw, str):
         message += _DISPATCH_ARGS_OFFLOAD_HINT
     return {"error": message}
-
-
-def _execute_cortex_dispatch(args: dict[str, Any]) -> str:
-    """Execute the unified cortex dispatch tool via cortex-api POST /dispatch."""
-    tool = args.get("tool", "")
-    if not tool:
-        return json.dumps({"error": "cortex: 'tool' is required"})
-
-    parsed = parse_dispatch_arguments(args.get("arguments", "{}"))
-    if parsed is None:
-        return json.dumps({"error": f"Invalid arguments JSON for cortex {tool!r}"})
-
-    result = cx("POST", "/dispatch", {"tool": tool, "arguments": parsed})
-    return json.dumps(result)
-
-
-def _execute_agent_bus_dispatch(args: dict[str, Any]) -> str:
-    """Execute the unified agent_bus dispatch tool via the agent-bus ops table."""
-    from .agent_bus import AGENT_BUS_OPS
-
-    tool = args.get("tool", "")
-    handler = AGENT_BUS_OPS.get(tool)
-    if handler is None:
-        return json.dumps(
-            {
-                "error": f"Unknown agent_bus tool {tool!r}. "
-                f"Available: {sorted(AGENT_BUS_OPS)}"
-            }
-        )
-
-    parsed = parse_dispatch_arguments(args.get("arguments", "{}"))
-    if parsed is None:
-        return json.dumps({"error": f"Invalid arguments JSON for agent_bus {tool!r}"})
-
-    result = handler(**parsed)
-    return json.dumps(result)
-
-
-def execute_tool(name: str, args: dict[str, Any]) -> str:
-    """Execute a tool call against local REST endpoints. Returns JSON string."""
-    if name == "cortex":
-        return _execute_cortex_dispatch(args)
-
-    if name == "agent_bus":
-        return _execute_agent_bus_dispatch(args)
-
-    return json.dumps({"error": f"Unknown tool: {name}"})

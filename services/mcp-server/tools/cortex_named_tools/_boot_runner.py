@@ -37,7 +37,6 @@ logger = get_logger(__name__)
 def _web_auto_inject_skills_md(
     seat_slug: str,
     *,
-    role: str | None = None,
     inject_profile: str | None = None,
     packet_invariant_ids: tuple[str, ...] = (),
 ) -> str:
@@ -51,7 +50,12 @@ def _web_auto_inject_skills_md(
     platform = parts[1] if len(parts) == 2 else "web"
     resolution = resolve_injected_bodies(
         seat_slug,
-        role=role,
+        # LEAD-scope activation is `is_lead_agent(role)` (spec §scopes), and
+        # is_lead_agent resolves SEAT membership (agents.yaml lead_seats) — so the
+        # lead-determination input is the seat slug, NOT the functional role label.
+        # Forwarding role="lead" here silently skipped LEAD-scope skills such as
+        # agent_skill:orchestrator-workflow (step-4 wiring).
+        role=seat_slug,
         platform=platform,
         inject_profile=inject_profile,
         packet_invariant_ids=packet_invariant_ids,
@@ -516,7 +520,6 @@ def run_cortex_boot(
 
     auto_inject_skills_md = _web_auto_inject_skills_md(
         seat_slug,
-        role=role,
         inject_profile=inject_profile,
         packet_invariant_ids=packet_invariant_ids,
     )

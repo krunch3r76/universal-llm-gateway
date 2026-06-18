@@ -9,7 +9,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from ._agent_tools import JsonArgStr
+from ._agent_tools import (
+    JsonArgStr,
+    dispatch_arguments_error,
+    parse_dispatch_arguments,
+)
 from ._cortex_relay import cx
 
 if TYPE_CHECKING:
@@ -24,7 +28,11 @@ def register_cortex_tools(mcp: FastMCP) -> None:
         """Cortex knowledge system — entities, assertions, relationships, edges, journals.
 
                 tool: operation name (see table below)
-                arguments: JSON-encoded object string (e.g. '{"entity_id": "type:slug"}')
+                arguments: JSON-encoded object string (e.g. '{"entity_id": "type:slug"}').
+                  Large/quote-heavy payloads (session_close transcript_md / handoff_prompt):
+                  do NOT hand-build the JSON string — write the payload to a file and pass a
+                  file-path param (transcript_jsonl_path / handoff_source_path / source_ref),
+                  or use the /agent-bus CLI, which bypasses MCP shape validation.
 
                 Operations:
                   entities          (type?, workflow_state?, limit?, query?, for_agent?)         — list entities (workflow_state filters the typed column; use todo_candidates for routine TODO retrieval). `query` is a case-insensitive literal substring filter on entity `id` and `name` (LIKE wildcards `%` and `_` are escaped); composes with `type`, `workflow_state`, and `for_agent`. `for_agent` filters to entities whose `applicable_agents` JSON-list attribute contains either `*` (universal) or the given agent slug; entities without the attribute are treated as universal.
@@ -107,5 +115,10 @@ def register_cortex_tools(mcp: FastMCP) -> None:
                 Example:
                   cortex(tool="todo_candidates", arguments='{"query": "cortex retrieval", "limit": 5}')
                   cortex(tool="assert", arguments='{"entity_id": "person:foo", "claim": "...", "confidence": "confirmed", "evidence": "..."}')
+                  cortex(tool="search", arguments='{"query": "embedding \\"recall\\" tradeoffs"}')  # embedded quotes JSON-escaped; for big payloads use a file-path param
         """
+        if parse_dispatch_arguments(arguments) is None:
+            return dispatch_arguments_error(
+                arguments, example='{"entity_id": "type:slug"}', tool="cortex"
+            )
         return cx("POST", "/dispatch", {"tool": tool, "arguments": arguments})

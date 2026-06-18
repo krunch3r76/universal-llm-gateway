@@ -22,6 +22,8 @@ from typing import Any, Literal, TypedDict
 
 from agent_seat.registry import normalize_agent_slug
 
+from .close_on_read import CLOSE_ON_READ_TAG
+from .disposition import resolve_bus_lifecycle
 from .turns_models import ThreadStatus
 
 WaitStatus = Literal["awaiting_first_reply", "complete"]
@@ -64,6 +66,7 @@ def build_suggested_next(
     completion: Completion,
     qualifying_reply_turn: int | None,
     after_turn: int,
+    turns: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any] | None:
     """Advisory payload after ``first_reply_from`` — consult *bus turn* landed.
 
@@ -71,6 +74,11 @@ def build_suggested_next(
     short pointer to a sidecar), NOT that findings are applied or the handoff
     arc is finished. Wording avoids overloaded "reply" (turn 1 is the packet
     pointer from dispatch; turn 2+ is the consult deliverable).
+
+    Lifecycle branches (F5):
+    - Ephemeral or already-closed: no manual-close guidance (auto-close path).
+    - Persistent + ``dispatch:close_on_read`` + unread result turn: mark-read only.
+    - Persistent without close-on-read (or caller-owned): manual close advised.
     """
     if not complete or thread_row["status"] == ThreadStatus.CLOSED:
         return None
@@ -78,10 +86,62 @@ def build_suggested_next(
         return None
     if qualifying_reply_turn is None:
         return None
-    return {
+
+    tags = thread_row.get("tags") or []
+    lifecycle = resolve_bus_lifecycle(tags)
+    if lifecycle == "ephemeral":
+        return None
+
+    effective_turns = turns or []
+    result_turn = next(
+        (t for t in effective_turns if t["turn_number"] == qualifying_reply_turn),
+        None,
+    )
+    result_unread = result_turn is not None and result_turn.get("read_at") is None
+
+    base = {
         "phase": "consult_turn_posted",
         "pointer_turn": after_turn,
         "consult_turn": qualifying_reply_turn,
+    }
+
+    if CLOSE_ON_READ_TAG in tags and result_unread:
+        return {
+            **base,
+            "message": (
+                f"Consult posted agent-bus turn {qualifying_reply_turn} "
+                f"(turn {after_turn} was the packet pointer only). "
+                "Mark that turn read to auto-close this persistent dispatch thread."
+            ),
+            "steps": [
+                {
+                    "action": "mark_result_read",
+                    "tool": "agent_bus",
+                    "op": "mark_read",
+                    "note": (
+                        f"Mark turn {qualifying_reply_turn} read — "
+                        "persistent dispatch closes on read."
+                    ),
+                },
+                {
+                    "action": "fetch_consult_turn",
+                    "tool": "agent_bus",
+                    "op": "fetch",
+                    "note": "Turn body is often a sidecar pointer, not full findings.",
+                },
+                {
+                    "action": "apply_findings",
+                    "tool": "fs",
+                    "note": "Load workspace/cortex artifact referenced on the bus.",
+                },
+            ],
+        }
+
+    if CLOSE_ON_READ_TAG in tags and not result_unread:
+        return None
+
+    return {
+        **base,
         "message": (
             f"Consult posted agent-bus turn {qualifying_reply_turn} "
             f"(turn {after_turn} was the packet pointer only). "

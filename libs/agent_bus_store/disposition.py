@@ -15,6 +15,23 @@ _LIFECYCLE_EPHEMERAL = "bus_lifecycle:ephemeral"
 _LIFECYCLE_PERSISTENT = "bus_lifecycle:persistent"
 
 
+def _dispatch_base_seat(agent: str) -> str:
+    """Strip per-dispatch scope suffix (``cursor-sdk:dispatch:{uuid}`` → ``cursor-sdk``)."""
+    if ":dispatch:" in agent:
+        return agent.split(":dispatch:", 1)[0]
+    return agent
+
+
+def agents_match(left: str | None, right: str | None) -> bool:
+    if not left or not right:
+        return False
+    if left == right:
+        return True
+    left_base = _dispatch_base_seat(str(left))
+    right_base = _dispatch_base_seat(str(right))
+    return normalize_agent_slug(left_base) == normalize_agent_slug(right_base)
+
+
 def resolve_bus_lifecycle(
     tags: list[str] | None,
     *,
@@ -46,6 +63,27 @@ def append_bus_lifecycle_tags(
     return effective
 
 
+def _has_delivered_result_turn(turns: list[dict[str, Any]]) -> bool:
+    """True when a closeout/result turn exists after the pointer (turn >= 2)."""
+    if len(turns) < 2:
+        return False
+    pointer = turns[0]
+    role = pointer.get("to_agent")
+    caller = pointer.get("from_agent")
+    if not role or not caller:
+        return False
+    expected_role = str(role)
+    expected_caller = str(caller)
+    for turn in turns[1:]:
+        if int(turn.get("turn_number") or 0) < 2:
+            continue
+        if agents_match(str(turn.get("from_agent")), expected_role) and agents_match(
+            str(turn.get("to_agent")), expected_caller
+        ):
+            return True
+    return False
+
+
 def maybe_auto_close_after_dispatch_terminate(
     thread_id: str,
     *,
@@ -61,6 +99,9 @@ def maybe_auto_close_after_dispatch_terminate(
         resolve_bus_lifecycle(thread.get("tags"), explicit=explicit_bus_lifecycle)
         == "persistent"
     ):
+        return None
+    turns = get_thread_turns_asc(thread_id)
+    if not _has_delivered_result_turn(turns):
         return None
     summary = f"Dispatch {terminal_status} — auto-closed (ephemeral default)."
     # Leave the closeout turn unread so wait()->fetch_unread consumers still

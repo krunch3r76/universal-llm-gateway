@@ -4,11 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from agent_seat.registry import normalize_agent_slug
-
 from .db.threads import get_thread, get_thread_turns_asc
 from .db.threads_atomic import close_thread
-from .disposition import resolve_bus_lifecycle
+from .disposition import agents_match, resolve_bus_lifecycle
 from .turns_models import ThreadStatus
 
 CLOSE_ON_READ_TAG = "dispatch:close_on_read"
@@ -36,11 +34,7 @@ def append_close_on_read_marker(
 
 
 def _agents_match(left: str | None, right: str | None) -> bool:
-    if not left or not right:
-        return False
-    if left == right:
-        return True
-    return normalize_agent_slug(left) == normalize_agent_slug(right)
+    return agents_match(left, right)
 
 
 def _find_on_behalf_result_turn(turns: list[dict[str, Any]]) -> dict[str, Any] | None:

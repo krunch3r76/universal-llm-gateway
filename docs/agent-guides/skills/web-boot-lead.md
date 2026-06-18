@@ -34,6 +34,80 @@ Companion: `skill-suggest-utilization.md` (delta discovery), `web-agent-orientat
 
 ---
 
+## Dispatch boot profile — `cortex_boot(profile="dispatch")`
+
+A **lean boot for fork / dispatch sessions**. Trims orientation to the dispatch
+essentials and injects the packet-named task-class skill **bodies**, so a fork boots
+ready to execute one bounded deliverable without re-spending the lead's context.
+Mechanism: the unified scoped inject registry (`libs/agent_seat/inject_registry.py`,
+`decision:dispatch-boot-profile-shape`) — one declarative registry, one resolver
+(`resolve_injected_bodies`) feeding every server inject path.
+
+**When to use**
+
+- Booting a fork/sub-agent against a handoff packet (exactly one bounded deliverable).
+- NOT the open-ended lead arc — that uses the full boot (`role="lead"`, no profile).
+
+**Call shape** (`packet_text` carries the packet front-matter + `<invariants>` block)
+
+```
+cortex_boot(agent="claude-web", role="lead", profile="dispatch", packet_text="<packet…>")
+# views=["dispatch"] is a backward-compat alias for profile="dispatch"
+```
+
+**What gets injected** (registry scopes; deduped; must-inline ordered first)
+
+| Scope | Activates when | Bodies |
+|---|---|---|
+| `UNIVERSAL` | always | `cortex-orientation`, `cortex-provenance-discipline` |
+| `LEAD` | seat ∈ `lead_seats` (`is_lead_agent(seat)`) | `orchestrator-workflow` |
+| `DISPATCH_PACKET` | `profile="dispatch"` | each `agent_skill:` id in the packet `<invariants>` block |
+| `CODING` | `code_touching=True` (generate path, **not** standard boot) | `architecture-invariants`, `ulg-architecture` |
+
+Notes:
+
+- **LEAD-scope is a seat property** (`agents.yaml lead_seats`), resolved via
+  `is_lead_agent(seat)` — NOT the `role` label. A lead seat auto-injects
+  `orchestrator-workflow` on every boot, dispatch or not. (Passing the role label
+  `"lead"` here silently injected nothing — fixed 2026-06-18.)
+- `packet_text` is parsed for `<invariants>` skill ids **only** when
+  `profile="dispatch"`. Front-matter `boot_profile: dispatch` + the packet path is
+  the dispatch carrier.
+- `CODING` bodies do **not** inject on a normal boot (`code_touching=False`); they
+  ride the code-touching generate path. Manual preload (§ Tiered preload) stays
+  load-bearing for coding regardless.
+- Budget: on budgeted paths (hydrated generate) post-dedupe bodies cap at
+  `INJECTED_BODY_BUDGET_BYTES` — `critical` tier fails closed, `must_inline` emits a
+  `inject:FAIL_CLOSED` marker, `normal` degrades to an index pointer. Web boot passes
+  no budget (`budget_bytes=None`), so bodies inline in full.
+
+**Lean dispatch-boot prompt — fork template**
+
+```
+cortex_boot(agent="<seat>", profile="dispatch", packet_text="""
+---
+boot_profile: dispatch
+contract: <consult|implement|…>
+---
+<scope> … </scope>
+<invariants>
+- agent_skill:<task-class-skill-1>
+- agent_skill:<task-class-skill-2>
+</invariants>
+<task_guidance> … </task_guidance>
+<corpus> … </corpus>
+<mcp_capabilities> … </mcp_capabilities>
+<output_format> … </output_format>
+""")
+# then: priming checklist — skill_suggest → fetch related threads → load the packet
+# <invariants> bodies → execute the ONE deliverable → verify → write the cortex
+# sidecar → close back to the dispatch thread (the orchestrator adjudicates/closes).
+```
+
+---
+
+
+
 ## When to boot vs skip
 
 ### Full boot — call `cortex_boot`

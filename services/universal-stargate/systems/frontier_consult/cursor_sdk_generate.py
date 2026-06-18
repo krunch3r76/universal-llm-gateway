@@ -142,10 +142,10 @@ async def dispatch_cursor_sdk_generate(
         worker_message = last_user
 
     handoff_contract = contract
-    # Prong-1 close-on-read parity with API-role generate: persistent + type:generate
-    # so spawned worker threads stay readable until the result turn is consumed.
+    # Default ephemeral so dispatch-terminate auto-closes after closeout delivery;
+    # explicit bus_lifecycle=persistent opts into close-on-read instead.
     effective_bus_lifecycle: Literal["persistent", "ephemeral"] = (
-        bus_lifecycle if bus_lifecycle is not None else "persistent"
+        bus_lifecycle if bus_lifecycle is not None else "ephemeral"
     )
     coord_recipient = caller_agent or "dispatch"
 

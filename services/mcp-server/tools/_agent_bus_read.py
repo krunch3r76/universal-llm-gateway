@@ -23,6 +23,7 @@ from mcp.types import ToolAnnotations
 from mcp_events import record
 from mcp_toolprogress import toolprogress_begin, toolprogress_end
 
+from ._agent_tools import JsonArgStr
 from .agent_bus import (
     _fetch_dispatch,
     _fetch_unread_dispatch,
@@ -55,7 +56,7 @@ def register_agent_bus_read_tool(mcp: FastMCP) -> None:
         title="Agent Bus (read-only)",
         annotations=ToolAnnotations(readOnlyHint=True),
     )
-    def agent_bus_read(tool: str, arguments: str = "{}") -> Any:
+    def agent_bus_read(tool: str, arguments: JsonArgStr = "{}") -> Any:
         """Read-only agent-bus ops — auto-approvable companion to agent_bus.
 
         Same calling convention as agent_bus: tool=<op>, arguments=<json>.

@@ -317,3 +317,45 @@ async def test_sentinel_in_dispatch_boot_and_hydrate_paths(
     assert sentinel_body in hydrate_system, (
         "sentinel missing from hydrate_agent generate-path assembled system string"
     )
+
+
+@pytest.mark.asyncio
+async def test_lead_web_boot_injects_orchestrator_workflow(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """role=lead web boot must inject the LEAD-scope orchestrator-workflow body.
+
+    Regression (step 4): the boot forwarded the functional role label "lead" into
+    the resolver, but LEAD-scope activation is ``is_lead_agent(seat)`` — seat
+    membership (agents.yaml lead_seats), not the label — so LEAD-scope skills were
+    silently skipped. With the wiring fixed, the seat slug drives lead-determination.
+    """
+    orch_marker = "ORCHESTRATOR_WORKFLOW_LEAD_INJECT_MARKER"
+    bodies = {
+        "agent_skill:cortex-orientation": "orientation",
+        "agent_skill:cortex-provenance-discipline": "provenance",
+        "agent_skill:orchestrator-workflow": orch_marker,
+    }
+    _body_map(monkeypatch, bodies)
+    # Lead-ness is seat membership; pin claude-web as a lead seat deterministically
+    # (independent of the agents.yaml in the test environment).
+    monkeypatch.setattr(
+        "agent_seat.inject_registry.is_lead_agent",
+        lambda slug: slug == "claude-web",
+    )
+
+    _stub_boot_runner(monkeypatch, tmp_path)
+    from tools.cortex_named_tools._boot_runner import BootMode, run_cortex_boot
+
+    boot_result = run_cortex_boot(
+        family="claude",
+        platform="web",
+        role="lead",
+        mode=BootMode.INSPECT,
+    )
+    rendered = boot_result.get("auto_inject_skills_md") or ""
+    assert orch_marker in rendered, (
+        "orchestrator-workflow (LEAD scope) missing from role=lead web boot "
+        "auto_inject block — lead-scope activation regressed"
+    )

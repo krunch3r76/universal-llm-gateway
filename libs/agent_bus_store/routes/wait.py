@@ -20,10 +20,10 @@ from ..auth import require_token
 from ..db import get_thread, get_thread_turns_asc, normalize_thread_id
 from ..wait_status import (
     Completion,
+    build_suggested_next,
     derive_status,
     is_complete,
     qualifying_reply,
-    build_suggested_next,
 )
 
 router = APIRouter(dependencies=[Depends(require_token)])
@@ -65,6 +65,7 @@ def _snapshot(
         completion=completion,
         qualifying_reply_turn=reply_turn,
         after_turn=after_turn,
+        turns=turns,
     )
     return {
         "thread_id": thread_id,
