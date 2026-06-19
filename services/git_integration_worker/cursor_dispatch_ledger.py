@@ -540,12 +540,21 @@ class CursorDispatchLedger:
         )
 
     def stale_writers(
-        self, *, threshold_s: float, worker_instance: str | None
+        self,
+        *,
+        threshold_s: float,
+        dead_run_grace_s: float,
+        worker_instance: str | None,
     ) -> list[str]:
-        """``admitted``/``running`` rows on this instance past heartbeat staleness."""
+        """``admitted``/``running`` rows on this instance past heartbeat staleness.
+
+        Live asyncio tasks use ``threshold_s`` (long lease timeout). Rows whose task
+        is missing or already done use ``dead_run_grace_s`` so finalize orphans reap
+        quickly without waiting for the full lease horizon.
+        """
         from datetime import datetime
 
-        cutoff = datetime.now(UTC).timestamp() - threshold_s
+        now = datetime.now(UTC).timestamp()
         with self._connect() as conn:
             rows = conn.execute(
                 "SELECT dispatch_id, last_heartbeat_at, started_at, status "
@@ -556,11 +565,10 @@ class CursorDispatchLedger:
             ).fetchall()
         stale: list[str] = []
         for row in rows:
-            if (
-                self._tasks.get(row["dispatch_id"]) is not None
-                and not self._tasks[row["dispatch_id"]].done()
-            ):
-                continue
+            task = self._tasks.get(row["dispatch_id"])
+            task_live = task is not None and not task.done()
+            grace_s = threshold_s if task_live else dead_run_grace_s
+            cutoff = now - grace_s
             ts = row["last_heartbeat_at"] or row["started_at"]
             if ts is None:
                 stale.append(row["dispatch_id"])
@@ -665,11 +673,17 @@ class CursorDispatchLedger:
             )
             if live:
                 continue
-            if row["worker_instance"] != worker_instance or row["status"] == _STATUS_RUNNING:
+            if (
+                row["worker_instance"] != worker_instance
+                or row["status"] == _STATUS_RUNNING
+            ):
                 self.mark_terminal(dispatch_id=dispatch_id, terminal_status="failed")
                 if row["source_repo"]:
                     repos.add(row["source_repo"])
-            elif row["status"] == _STATUS_ADMITTED and row["worker_instance"] == worker_instance:
+            elif (
+                row["status"] == _STATUS_ADMITTED
+                and row["worker_instance"] == worker_instance
+            ):
                 self.mark_terminal(dispatch_id=dispatch_id, terminal_status="failed")
                 if row["source_repo"]:
                     repos.add(row["source_repo"])
@@ -682,7 +696,9 @@ class CursorDispatchLedger:
                 repos.add(row["source_repo"])
         return sorted(repos)
 
-    def load_promoted_request(self, promoted: PromotedDispatch) -> CursorDispatchRequest:
+    def load_promoted_request(
+        self, promoted: PromotedDispatch
+    ) -> CursorDispatchRequest:
         data = json.loads(promoted.record_json)
         return CursorDispatchRequest(
             thread_id=promoted.thread_id,

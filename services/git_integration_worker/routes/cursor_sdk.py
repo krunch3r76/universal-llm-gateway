@@ -118,6 +118,9 @@ _STALE_LEASE_S = float(
     )
 )
 _STALE_SWEEP_S = float(os.environ.get("CURSOR_STALE_SWEEP_S", "30"))
+_DEAD_RUN_GRACE_S = float(
+    os.environ.get("CURSOR_DEAD_RUN_GRACE_S", str(2.0 * _SDK_HEARTBEAT_S))
+)
 # Retry-After hint (seconds) on the 503 returned while draining.
 _DRAIN_RETRY_AFTER_S = int(os.environ.get("GIT_WORKER_DRAIN_RETRY_AFTER", "5"))
 
@@ -526,6 +529,7 @@ async def reconcile_stale_leases(controller: WorkAdmissionController) -> None:
     stale_ids = await asyncio.to_thread(
         ledger.stale_writers,
         threshold_s=_STALE_LEASE_S,
+        dead_run_grace_s=_DEAD_RUN_GRACE_S,
         worker_instance=controller.worker_id,
     )
     repos: set[str] = set()
