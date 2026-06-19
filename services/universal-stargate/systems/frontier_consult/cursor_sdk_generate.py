@@ -19,7 +19,13 @@ from .cursor_sdk_worker_dispatch import (
     dispatch_cursor_sdk_worker,
     dispatch_cursor_sdk_worker_message,
 )
-from .handoff import admit_handoff_dispatch, create_handoff_thread
+from .handoff import (
+    PendingShellContention,
+    admit_handoff_dispatch,
+    claim_and_post_pointer_turn,
+    create_handoff_thread,
+    post_pointer_turn,
+)
 from .handoff_response import build_handoff_result, build_sdk_generate_result
 
 CURSOR_SDK_REPLY_SEAT = "cursor-sdk"
@@ -59,6 +65,7 @@ async def dispatch_cursor_sdk_generate(
     reuse_thread: str | None = None,
     bus_lifecycle: Literal["persistent", "ephemeral"] | None = None,
     parent_dispatch_thread_id: str | None = None,
+    is_auto_consolidation: bool = False,
     density_triage: str | None = None,
     review_opt_out_reason_code: str | None = None,
     auto_review_child: bool = False,
@@ -157,24 +164,68 @@ async def dispatch_cursor_sdk_generate(
         resolved_model=resolved_model,
     )
 
-    if reuse_thread is not None:
-        from .handoff import post_pointer_turn
+    claimed_via_atomic = False
 
+    if reuse_thread is not None:
         thread_id = reuse_thread
-        await post_pointer_turn(
-            request_id=request_id,
-            thread_id=thread_id,
-            to_agent=to_agent,
-            subject=thread_subject,
-            pointer_body=pointer_body,
-            caller_agent=caller_agent,
-        )
-        emit_sdk_thread_created(
-            request_id=request_id,
-            to_agent=to_agent,
-            thread_id=thread_id,
-            reused=True,
-        )
+        if is_auto_consolidation:
+            try:
+                await claim_and_post_pointer_turn(
+                    request_id=request_id,
+                    thread_id=thread_id,
+                    to_agent=to_agent,
+                    subject=thread_subject,
+                    pointer_body=pointer_body,
+                    caller_agent=caller_agent,
+                    execution_id=execution_id,
+                    pipeline_id="cursor-sdk-generate",
+                )
+                claimed_via_atomic = True
+                emit_sdk_thread_created(
+                    request_id=request_id,
+                    to_agent=to_agent,
+                    thread_id=thread_id,
+                    reused=True,
+                )
+            except PendingShellContention:
+                # Concurrent dispatch claimed the shell; mint a new worker thread.
+                thread_id = await create_handoff_thread(
+                    request_id=request_id,
+                    to_agent=to_agent,
+                    tag_agent="cursor-sdk",
+                    subject=thread_subject,
+                    pointer_body=pointer_body,
+                    caller_agent=caller_agent,
+                    tags=[
+                        "cursor-sdk-generate",
+                        "type:generate",
+                        f"contract:{handoff_contract}",
+                    ],
+                    handoff_contract=handoff_contract,
+                    lifecycle_state="pending",
+                    bus_lifecycle=effective_bus_lifecycle,
+                )
+                emit_sdk_thread_created(
+                    request_id=request_id,
+                    to_agent=to_agent,
+                    thread_id=thread_id,
+                    reused=False,
+                )
+        else:
+            await post_pointer_turn(
+                request_id=request_id,
+                thread_id=thread_id,
+                to_agent=to_agent,
+                subject=thread_subject,
+                pointer_body=pointer_body,
+                caller_agent=caller_agent,
+            )
+            emit_sdk_thread_created(
+                request_id=request_id,
+                to_agent=to_agent,
+                thread_id=thread_id,
+                reused=True,
+            )
     else:
         thread_id = await create_handoff_thread(
             request_id=request_id,
@@ -207,13 +258,16 @@ async def dispatch_cursor_sdk_generate(
         contract=handoff_contract,
     )
 
-    admitted = await admit_handoff_dispatch(
-        request_id=request_id,
-        thread_id=thread_id,
-        execution_id=execution_id,
-        pipeline_id="cursor-sdk-generate",
-        caller_agent=caller_agent,
-    )
+    if claimed_via_atomic:
+        admitted = True
+    else:
+        admitted = await admit_handoff_dispatch(
+            request_id=request_id,
+            thread_id=thread_id,
+            execution_id=execution_id,
+            pipeline_id="cursor-sdk-generate",
+            caller_agent=caller_agent,
+        )
 
     if worker_packet is not None:
         preamble_pointer = pointer_body

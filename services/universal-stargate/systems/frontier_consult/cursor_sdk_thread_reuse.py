@@ -53,8 +53,8 @@ async def resolve_cursor_sdk_thread_targets(
     *,
     reuse_thread: str | None,
     dispatch_thread_id: str | None,
-) -> tuple[str | None, str | None]:
-    """Return ``(reuse_thread, parent_dispatch_thread_id)`` for SDK generate.
+) -> tuple[str | None, str | None, bool]:
+    """Return ``(reuse_thread, parent_dispatch_thread_id, is_auto_consolidation)``.
 
     Single-thread Q/R: when the worker thread is also the query surface, omit the
     parent coord pointer (``parent_dispatch_thread_id=None``).
@@ -77,14 +77,14 @@ async def resolve_cursor_sdk_thread_targets(
 
     if explicit_reuse is not None:
         if arc_id is not None and explicit_reuse == arc_id:
-            return explicit_reuse, None
-        return explicit_reuse, arc_id
+            return explicit_reuse, None, False
+        return explicit_reuse, arc_id, False
 
     if arc_id is not None and arc_id.isdigit():
         if await is_pending_empty_worker_thread(arc_id):
-            return arc_id, None
+            return arc_id, None, True
 
-    return None, arc_id
+    return None, arc_id, False
 
 
 def consolidation_split_warning(

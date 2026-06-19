@@ -70,6 +70,7 @@ class FifoCapacityGate:
         self._limit_source = limit
         self._gate_id = gate_id
         self._active_count = 0
+        self._holders: set[str] = set()
         self._waiters: deque[_GateWaiter] = deque()
         self._lock = asyncio.Lock()
 
@@ -106,6 +107,11 @@ class FifoCapacityGate:
         """Number of requests waiting."""
         return len(self._waiters)
 
+    @property
+    def holders(self) -> frozenset[str]:
+        """Request IDs currently holding slots (read-only)."""
+        return frozenset(self._holders)
+
     def try_acquire(self, request_id: str) -> bool:
         """
         Try to acquire slot without waiting (atomic).
@@ -127,6 +133,7 @@ class FifoCapacityGate:
 
         if self._active_count < limit:
             self._active_count += 1
+            self._holders.add(request_id)
             self._total_acquired += 1
 
             if self._gate_id is not None:
@@ -172,6 +179,7 @@ class FifoCapacityGate:
 
             if self._active_count < limit:
                 self._active_count += 1
+                self._holders.add(request_id)
                 self._total_acquired += 1
 
                 if self._gate_id is not None:
@@ -314,22 +322,32 @@ class FifoCapacityGate:
                 # Already removed (by release() or cancel())
                 pass
 
-    async def release(self) -> None:
+    async def release(self, request_id: str | None = None) -> None:
         """
         Release slot — transfer FIFO or decrement.
 
         Must be called exactly once per successful acquire().
 
+        Args:
+            request_id: When provided, removes this holder before disposition.
+
         Raises:
             OverReleaseError: If called when active_count is 0.
         """
         async with self._lock:
+            if request_id is not None and request_id not in self._holders:
+                # Idempotent: force_release or a prior release already reclaimed.
+                return
+
             # Invariant check FIRST: must have a slot to release
             if self._active_count == 0:
                 raise OverReleaseError(
                     f"[GATE:{self._gate_id}] release() called but active_count=0. "
                     "This indicates a bug: release() called without matching acquire()."
                 )
+
+            if request_id is not None:
+                self._holders.discard(request_id)
 
             self._total_released += 1
 
@@ -339,6 +357,7 @@ class FifoCapacityGate:
                 if not waiter.future.done():
                     # Transfer ownership — don't decrement active_count
                     waiter.future.set_result(None)
+                    self._holders.add(waiter.request_id)
                     self._total_acquired += 1  # Count as new acquisition
 
                     if self._gate_id is not None:
@@ -364,6 +383,44 @@ class FifoCapacityGate:
                     self._active_count,
                     limit,
                 )
+
+    async def force_release(self, request_id: str) -> bool:
+        """Reclaim a holder's slot without a matching release() from that holder.
+
+        Idempotent: returns False when ``request_id`` is not a current holder.
+        Never raises ``OverReleaseError``.
+        """
+        async with self._lock:
+            if request_id not in self._holders:
+                return False
+
+            self._holders.discard(request_id)
+            self._total_released += 1
+
+            while self._waiters:
+                waiter = self._waiters.popleft()
+                if not waiter.future.done():
+                    waiter.future.set_result(None)
+                    self._holders.add(waiter.request_id)
+                    self._total_acquired += 1
+                    if self._gate_id is not None:
+                        logger.debug(
+                            "🔄 [GATE:%s] force_release transferred to %s",
+                            self._gate_id,
+                            waiter.request_id[:8],
+                        )
+                    return True
+
+            if self._active_count > 0:
+                self._active_count -= 1
+                if self._gate_id is not None:
+                    logger.info(
+                        "🔓 [GATE:%s] force_release reclaimed %s (active=%d)",
+                        self._gate_id,
+                        request_id[:8],
+                        self._active_count,
+                    )
+            return True
 
     def set_limit(self, new_limit: int) -> None:
         """

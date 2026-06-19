@@ -88,6 +88,7 @@ from services.git_integration_worker.cursor_sdk_events import (
 )
 from services.git_integration_worker.cursor_sdk_gate import (
     acquire_sdk_dispatch_slot,
+    force_release_sdk_dispatch_slot,
     release_sdk_dispatch_slot_sync,
 )
 from services.git_integration_worker.cursor_sdk_packet import (
@@ -417,7 +418,7 @@ def _run_sdk_sync(
     finally:
         # Release the capacity slot from this thread — not from the async
         # coroutine — so a timed-out orphan thread holds the slot until exit.
-        release_sdk_dispatch_slot_sync(gate_loop)
+        release_sdk_dispatch_slot_sync(gate_loop, dispatch_id=dispatch_id)
 
 
 async def _mark_terminal_and_promote(
@@ -428,6 +429,7 @@ async def _mark_terminal_and_promote(
     request: Request | None = None,
 ) -> None:
     """Mark terminal, release lease, and promote the FIFO head when applicable."""
+    await force_release_sdk_dispatch_slot(dispatch_id=dispatch_id)
     ledger = CursorDispatchLedger.instance()
     source_repo = await asyncio.to_thread(
         ledger.mark_terminal,
@@ -528,6 +530,7 @@ async def reconcile_stale_leases(controller: WorkAdmissionController) -> None:
     )
     repos: set[str] = set()
     for dispatch_id in stale_ids:
+        await force_release_sdk_dispatch_slot(dispatch_id=dispatch_id)
         source_repo = await asyncio.to_thread(
             ledger.release_stale_writer, dispatch_id=dispatch_id
         )
@@ -567,6 +570,7 @@ async def startup_ledger_reconcile(app: FastAPI) -> None:
         ledger.startup_reconcile, worker_instance=controller.worker_id
     )
     for orphan in ledger.running_orphans():
+        await force_release_sdk_dispatch_slot(dispatch_id=orphan.dispatch_id)
         source_repo = await asyncio.to_thread(
             ledger.mark_terminal,
             dispatch_id=orphan.dispatch_id,

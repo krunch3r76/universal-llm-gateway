@@ -9,9 +9,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from ..auth import require_token
 from ..db import (
+    PendingShellContention,
     SlugExists,
     ThreadHasReadTurns,
     admit_dispatch,
+    claim_and_post_turn,
     close_thread,
     create_thread,
     create_thread_with_turn,
@@ -30,6 +32,7 @@ from ..db import (
 from ..db.turns import UnreadTurnsExist
 from ..turns_models import (
     DispatchAdmit,
+    DispatchClaimAndPost,
     DispatchLinkByExecution,
     DispatchLinkSummary,
     DispatchTerminate,
@@ -569,6 +572,45 @@ async def dispatch_admit_route(thread_id: str, body: DispatchAdmit) -> ThreadDet
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
     if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Thread {thread_id} not found",
+        )
+    return _thread_detail(row)
+
+
+@router.post(
+    "/threads/{thread_id}/dispatch-claim-and-post",
+    response_model=ThreadDetail,
+)
+async def dispatch_claim_and_post_route(
+    thread_id: str, body: DispatchClaimAndPost
+) -> ThreadDetail:
+    """Atomically claim a pending-empty shell and post the first pointer turn.
+
+    Checks pending+turn_count==0, admits, inserts the pointer turn, and
+    transitions admitted->active in one SQLite write transaction.
+
+    Returns 409 with code=pending_shell_contention when the CAS guard fails.
+    """
+    thread_id = normalize_thread_id(thread_id)
+    try:
+        row = claim_and_post_turn(
+            thread_id=thread_id,
+            execution_id=body.execution_id,
+            pipeline_id=body.pipeline_id,
+            caller_agent=body.caller_agent,
+            from_agent=body.from_agent,
+            to_agent=body.to_agent,
+            subject=body.subject,
+            body=body.body,
+        )
+    except PendingShellContention as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"error": "pending_shell_contention", "message": str(exc)},
+        )
+    except ValueError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Thread {thread_id} not found",

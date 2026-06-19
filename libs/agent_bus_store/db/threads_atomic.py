@@ -9,6 +9,19 @@ from .lifecycle import TERMINAL_STATES, _transition_lifecycle_state
 from .threads import _next_auto_id, get_thread_with_links, set_thread_tags
 
 
+class PendingShellContention(Exception):  # noqa: N818
+    """Raised by claim_and_post_turn when the pending-empty CAS guard fails."""
+
+    def __init__(self, thread_id: str, lifecycle: str | None, turn_count: int) -> None:
+        self.thread_id = thread_id
+        self.lifecycle = lifecycle
+        self.turn_count = turn_count
+        super().__init__(
+            f"Thread {thread_id!r} pending-empty CAS failed: "
+            f"lifecycle={lifecycle!r}, turn_count={turn_count}"
+        )
+
+
 def create_thread_with_turn(
     *,
     slug: str,
@@ -224,3 +237,75 @@ def terminate_dispatch(
             )
 
     return get_thread_with_links(thread_id)
+
+
+def claim_and_post_turn(
+    *,
+    thread_id: str,
+    execution_id: str,
+    pipeline_id: str,
+    caller_agent: str | None = None,
+    from_agent: str,
+    to_agent: str,
+    subject: str,
+    body: str,
+) -> dict[str, Any]:
+    """Atomically claim a pending-empty shell and post the first pointer turn.
+
+    In one SQLite write transaction:
+    1. Verify bus_lifecycle_state == 'pending' AND turn_count == 0; raise
+       PendingShellContention on failure.
+    2. Transition pending -> admitted.
+    3. Insert the pointer turn (turn_number=1).
+    4. Transition admitted -> active.
+    5. Insert the dispatch_link row.
+
+    Returns the updated thread detail with dispatch_links populated.
+    Raises ValueError when the thread is not found.
+    Raises PendingShellContention when the CAS guard fails.
+    """
+    ts = now()
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT bus_lifecycle_state, "
+            "(SELECT COUNT(*) FROM turns WHERE thread = ?) AS turn_count "
+            "FROM threads WHERE id = ?",
+            (thread_id, thread_id),
+        ).fetchone()
+        if row is None:
+            raise ValueError(f"Thread {thread_id!r} not found")
+
+        lifecycle: str | None = row["bus_lifecycle_state"]
+        turn_count: int = int(row["turn_count"] or 0)
+
+        if lifecycle != "pending" or turn_count != 0:
+            raise PendingShellContention(thread_id, lifecycle, turn_count)
+
+        # CAS passed: admit the thread.
+        _transition_lifecycle_state(conn, thread_id, "admitted", "claim_and_post")
+
+        # Insert the pointer turn (turn_number=1; turn_count==0 verified above).
+        cur = conn.execute(
+            "INSERT INTO turns "
+            "(thread, turn_number, from_agent, to_agent, subject, body, "
+            "status, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (thread_id, 1, from_agent, to_agent, subject, body, "open", ts),
+        )
+        if cur.lastrowid is None:
+            raise RuntimeError("claim_and_post_turn: sqlite returned no row id")
+
+        # Transition admitted -> active (first delivery/pointer turn posted).
+        _transition_lifecycle_state(conn, thread_id, "active", "claim_and_post")
+
+        # Register the dispatch link.
+        conn.execute(
+            "INSERT OR IGNORE INTO thread_dispatch_links "
+            "(thread_id, execution_id, pipeline_id, caller_agent, linked_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (thread_id, execution_id, pipeline_id, caller_agent, ts),
+        )
+
+    result = get_thread_with_links(thread_id)
+    assert result is not None
+    return result

@@ -385,3 +385,15 @@ class DispatchTerminate(BaseModel):
     terminal_status: Literal["completed", "failed"]
     execution_id: str | None = None
     bus_lifecycle: Literal["persistent", "ephemeral"] | None = None
+
+
+class DispatchClaimAndPost(BaseModel):
+    """Payload for POST /threads/{id}/dispatch-claim-and-post."""
+
+    execution_id: str
+    pipeline_id: str
+    caller_agent: str | None = None
+    from_agent: str
+    to_agent: str
+    subject: str
+    body: str

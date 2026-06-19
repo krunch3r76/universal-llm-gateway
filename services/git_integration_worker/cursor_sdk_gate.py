@@ -27,14 +27,31 @@ async def acquire_sdk_dispatch_slot(*, dispatch_id: str | None = None) -> str:
     return req_id
 
 
-async def release_sdk_dispatch_slot() -> None:
-    await _GATE.release()
+async def release_sdk_dispatch_slot(*, dispatch_id: str) -> None:
+    await _GATE.release(dispatch_id)
 
 
-def release_sdk_dispatch_slot_sync(loop: asyncio.AbstractEventLoop) -> None:
+def release_sdk_dispatch_slot_sync(
+    loop: asyncio.AbstractEventLoop, *, dispatch_id: str
+) -> None:
     """Release the slot from a worker thread via the owning event loop."""
-    fut = asyncio.run_coroutine_threadsafe(release_sdk_dispatch_slot(), loop)
+    fut = asyncio.run_coroutine_threadsafe(
+        release_sdk_dispatch_slot(dispatch_id=dispatch_id), loop
+    )
     fut.result(timeout=30.0)
+
+
+async def force_release_sdk_dispatch_slot(*, dispatch_id: str) -> bool:
+    return await _GATE.force_release(dispatch_id)
+
+
+def force_release_sdk_dispatch_slot_sync(
+    loop: asyncio.AbstractEventLoop, *, dispatch_id: str
+) -> bool:
+    fut = asyncio.run_coroutine_threadsafe(
+        force_release_sdk_dispatch_slot(dispatch_id=dispatch_id), loop
+    )
+    return fut.result(timeout=30.0)
 
 
 def sdk_dispatch_gate_stats() -> dict[str, int]:

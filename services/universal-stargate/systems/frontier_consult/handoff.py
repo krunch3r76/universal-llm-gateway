@@ -21,6 +21,12 @@ from .admission import FrontierEndpointError
 
 logger = get_logger(__name__)
 
+
+class PendingShellContention(Exception):  # noqa: N818
+    """Raised by claim_and_post_pointer_turn when the agent-bus returns 409
+    pending_shell_contention — another dispatch already claimed the pending shell."""
+
+
 _POINTER_MAX_LINES = 25
 
 
@@ -631,6 +637,87 @@ async def post_pointer_turn(
             field="thread",
             reason=(
                 f"Agent-bus turn post failed: "
+                f"HTTP {resp.status_code} — {resp.text[:200]}"
+            ),
+            status_code=502,
+        )
+
+
+async def claim_and_post_pointer_turn(
+    *,
+    request_id: str,
+    thread_id: str,
+    to_agent: str,
+    subject: str,
+    pointer_body: str,
+    caller_agent: str | None,
+    execution_id: str,
+    pipeline_id: str,
+) -> None:
+    """POST /threads/{id}/dispatch-claim-and-post — atomic claim + pointer turn.
+
+    Raises PendingShellContention when the agent-bus returns 409
+    pending_shell_contention. Raises FrontierEndpointError on transport or
+    other HTTP errors.
+    """
+    token = os.getenv("AGENT_BUS_TOKEN", "").strip()
+    allow_unset = os.getenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    if not token and not allow_unset:
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="thread",
+            reason=(
+                "AGENT_BUS_TOKEN not configured; "
+                "claim_and_post_pointer_turn requires agent-bus access."
+            ),
+            status_code=503,
+        )
+    payload: dict[str, Any] = {
+        "execution_id": execution_id,
+        "pipeline_id": pipeline_id,
+        "caller_agent": caller_agent,
+        "from_agent": caller_agent or "dispatch",
+        "to_agent": to_agent,
+        "subject": subject,
+        "body": pointer_body,
+    }
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    try:
+        async with make_async_client(DEFAULT_AGENT_BUS_URL, timeout=10.0) as client:
+            resp = await client.post(
+                f"/threads/{thread_id}/dispatch-claim-and-post",
+                headers=headers,
+                json=payload,
+            )
+    except httpx.HTTPError as exc:
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="thread",
+            reason=f"Agent-bus unreachable: {exc}",
+            status_code=503,
+        ) from exc
+    if resp.status_code == 409:
+        detail = resp.json().get("detail", {})
+        if isinstance(detail, dict) and detail.get("error") == (
+            "pending_shell_contention"
+        ):
+            raise PendingShellContention(str(detail.get("message", "")))
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="thread",
+            reason=f"Agent-bus claim conflict: {resp.text[:200]}",
+            status_code=409,
+        )
+    if resp.status_code >= 400:
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="thread",
+            reason=(
+                f"Agent-bus claim-and-post failed: "
                 f"HTTP {resp.status_code} — {resp.text[:200]}"
             ),
             status_code=502,

@@ -268,6 +268,7 @@ async def dispatch_cursor_sdk_generate_route(
         (
             reuse_thread,
             parent_dispatch_thread_id,
+            is_auto_consolidation,
         ) = await resolve_cursor_sdk_thread_targets(
             reuse_thread=getattr(body, "reuse_thread", None),
             dispatch_thread_id=body.dispatch_thread_id,
@@ -284,6 +285,7 @@ async def dispatch_cursor_sdk_generate_route(
             reuse_thread=reuse_thread,
             bus_lifecycle=getattr(body, "bus_lifecycle", None),
             parent_dispatch_thread_id=parent_dispatch_thread_id,
+            is_auto_consolidation=is_auto_consolidation,
             density_triage=getattr(body, "density_triage", None),
             review_opt_out_reason_code=getattr(
                 body, "review_opt_out_reason_code", None
