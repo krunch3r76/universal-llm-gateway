@@ -428,6 +428,8 @@ _ACCEPTANCE_HEADING = re.compile(
 )
 _ACCEPTANCE_PHRASE = re.compile(r"\bacceptance criteria\b", re.IGNORECASE)
 _FILE_PATH_SUFFIXES = (".py", ".md", ".yaml", ".yml", ".json", ".toml", ".mdc")
+_MAX_FILE_PATH_LEN = 200
+_FENCE_RE = re.compile(r"```.*?```", re.DOTALL)
 
 
 def _packet_has_acceptance(text: str) -> bool:
@@ -443,7 +445,20 @@ def _packet_has_acceptance(text: str) -> bool:
 
 
 def _looks_like_file_path(path: str) -> bool:
-    return "/" in path or path.endswith(_FILE_PATH_SUFFIXES)
+    candidate = path.strip()
+    # Whitespace/overlength reject non-path captures (e.g. multi-line code-fence
+    # bodies the inline-backtick scan over-captures). Without this, slash-bearing
+    # prose like "worker/coord" inside a docstring becomes a bogus files_expected
+    # entry and crashes closeout with OSError ENAMETOOLONG (errno 36).
+    if not candidate or len(candidate) > _MAX_FILE_PATH_LEN:
+        return False
+    if any(ch.isspace() for ch in candidate):
+        return False
+    return "/" in candidate or candidate.endswith(_FILE_PATH_SUFFIXES)
+
+
+def _strip_fenced_blocks(text: str) -> str:
+    return _FENCE_RE.sub(" ", text)
 
 
 def _files_from_packet(text: str) -> list[str]:
@@ -454,10 +469,11 @@ def _files_from_packet(text: str) -> list[str]:
         if candidate not in seen:
             seen.add(candidate)
             files.append(candidate)
-    for path in re.findall(r"`([^`]+)`", text):
-        if _looks_like_file_path(path) and path not in seen:
-            seen.add(path)
-            files.append(path)
+    for raw in re.findall(r"`([^`]+)`", _strip_fenced_blocks(text)):
+        candidate = raw.strip()
+        if _looks_like_file_path(candidate) and candidate not in seen:
+            seen.add(candidate)
+            files.append(candidate)
     return files
 
 
@@ -475,7 +491,7 @@ def _files_from_entity(attrs: dict[str, Any]) -> list[str]:
 
 def _files_from_scope(scope_text: str) -> list[str]:
     paths = re.findall(r"`([^`]+)`", scope_text)
-    return [p for p in paths if _looks_like_file_path(p)]
+    return [p.strip() for p in paths if _looks_like_file_path(p)]
 
 
 def _acceptance_from_packet(text: str) -> list[str]:

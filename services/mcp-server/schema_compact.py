@@ -7,13 +7,23 @@ FastMCP generates verbose JSON Schema from Python type hints:
 - ``_meta: {fastmcp: {tags: []}}`` metadata
 - ``default: false`` / ``default: ""`` / ``default: 0`` for obvious defaults
 
-This module patches ``FunctionTool.to_mcp_tool`` to strip that bloat before
-the schema reaches the wire.  ~30-40% reduction on typical tool sets.
+A server-level ``Transform`` wraps each tool at ``tools/list`` time so
+``to_mcp_tool()`` emits compact schemas on the wire.  ~30-40% reduction on
+typical tool sets.  Underlying ``Tool.parameters`` are untouched so overflow
+metadata capture (pre-prune) stays consistent.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, Any
+
+from fastmcp.server.transforms import GetToolNext, Transform
+from fastmcp.utilities.versions import VersionSpec
+
+if TYPE_CHECKING:
+    from fastmcp import FastMCP
+    from fastmcp.tools.base import Tool
 
 _TRIVIAL_DEFAULTS: set[type] = {type(None), bool, int, float, str}
 
@@ -119,24 +129,47 @@ def minify_schema(schema: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def patch_fastmcp_tool_serialization() -> None:
-    """Monkey-patch FunctionTool.to_mcp_tool to emit compact schemas.
+def _compact_mcp_tool(mcp_tool: Any) -> Any:
+    """Apply the three wire-schema mutations in order (matches legacy patch)."""
+    if isinstance(mcp_tool.inputSchema, dict):
+        mcp_tool.inputSchema = minify_schema(mcp_tool.inputSchema)
+    mcp_tool.outputSchema = None
+    mcp_tool.meta = None
+    return mcp_tool
 
-    Must be called once at import time, before any tools/list requests.
+
+class _CompactToolProxy:
+    """Delegate to a Tool but emit compact schemas from ``to_mcp_tool``."""
+
+    __slots__ = ("_tool",)
+
+    def __init__(self, tool: Tool) -> None:
+        self._tool = tool
+
+    def to_mcp_tool(self, **overrides: Any) -> Any:
+        return _compact_mcp_tool(self._tool.to_mcp_tool(**overrides))
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._tool, name)
+
+
+class CompactSchemaTransform(Transform):
+    """FastMCP list-tools transform — compact schemas at serialization time."""
+
+    async def list_tools(self, tools: Sequence[Tool]) -> Sequence[Tool]:
+        return [_CompactToolProxy(t) for t in tools]
+
+    async def get_tool(
+        self, name: str, call_next: GetToolNext, *, version: VersionSpec | None = None
+    ) -> Tool | None:
+        tool = await call_next(name, version=version)
+        return _CompactToolProxy(tool) if tool else None
+
+
+def register_compact_schema_transform(mcp: FastMCP) -> None:
+    """Register compact-schema transform on the FastMCP server instance.
+
+    Must run after all tools are registered and before any ``tools/list``
+    response is served.
     """
-    from fastmcp.tools.function_tool import FunctionTool
-
-    _orig = FunctionTool.to_mcp_tool
-
-    def _compact_to_mcp(self: FunctionTool, **overrides: Any) -> Any:
-        mcp_tool = _orig(self, **overrides)
-        if isinstance(mcp_tool.inputSchema, dict):
-            mcp_tool.inputSchema = minify_schema(mcp_tool.inputSchema)
-        mcp_tool.outputSchema = None
-        mcp_tool.meta = None
-        return mcp_tool
-
-    FunctionTool.to_mcp_tool = _compact_to_mcp  # type: ignore[assignment]
-    if FunctionTool.to_mcp_tool is not _compact_to_mcp:
-        msg = "schema_compact patch failed to bind FunctionTool.to_mcp_tool"
-        raise RuntimeError(msg)
+    mcp.add_transform(CompactSchemaTransform())

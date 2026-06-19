@@ -106,6 +106,8 @@ async def _append_web_invariant_bodies(content: str, seat: str) -> str:
     resolution = await asyncio.to_thread(
         resolve_injected_bodies,
         seat,
+        # LEAD-scope activation is is_lead_agent(seat) — seat slug, not role label.
+        role=seat,
         platform=platform,
         budget_bytes=None,
         already_present=content,

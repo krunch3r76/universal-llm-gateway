@@ -1,4 +1,4 @@
-"""Coordination-thread pointers for cursor-sdk generate (result-thread split)."""
+"""Coordination-thread admit pointers when worker ≠ parent dispatch thread."""
 
 from __future__ import annotations
 

@@ -165,17 +165,15 @@ def _session_close_orientation_for_agent(agent: str | None) -> str | None:
 
 # Web seats have NO always-applied rule mechanism (Cursor carries
 # model-tier-stub.mdc, which fires the tier-fit check at every session start).
-# This boot block is the web analog of that stub: it makes tier-fit awareness a
-# natural part of every web session. Derived home for the full protocol is the
-# cortex skill named below — edit that first. Web tuple is 3-axis (family /
-# effort / thinking); the context axis is Cursor-only. (todo: web tier-awareness)
+# This boot block is the card-level reminder; the full protocol body auto-injects
+# via `agent_skill:model-tier-awareness-web` (UNIVERSAL/web, MUST_INLINE).
 # inject-channel block key: tier-selection-block
 _TIER_SELECTION_BLOCK = """\
 ## Model tier — declare your config; fit-check every session
 No reliable runtime self-identifier for your active model/tier → the mechanism is operator-in-the-middle. Config is a 3-axis tuple: **family × effort × thinking** (context is a fixed per-family property on web, not a knob).
 When the operator prefixes a request with identity (`you are running {family} {effort} thinking={on|off}`): emit the **tier-check verdict** BEFORE other work — SUITABLE ⇒ proceed same turn; NOT SUITABLE ⇒ halt and wait. Absent a declared identity: surface a one-line non-blocking advisory only when a task-class trigger fires (cross-agent protocol, multi-subsystem review, schema/vocab design, adversarial work, 2 consecutive failures).
 **Mid-session pivot**: on a task-class pivot, DEFAULT to dispatching the sub-task OUT (`team_dispatch`) to hold context + stay lean; switch the resident tier only when the work is inseparable from the live thread. Picking up an agent-bus thread from a `team_dispatch`: the executor is pre-specified — accept it on turn 1.
-Reasoning-ceiling order, recommended-config table, escalate/downgrade triggers (derived home — edit first): `fs(cortex, agent-skills/model-tier-awareness-web.md)`."""
+Full protocol: `agent_skill:model-tier-awareness-web` auto-injects on web boot (`auto_inject_skills_md` / `seat_preloaded`). Derived home — edit `agent-skills/model-tier-awareness-web.md` first."""
 
 
 def _tier_selection_orientation_for_agent(agent: str | None) -> str | None:

@@ -346,10 +346,16 @@ class CursorDispatchLedger:
                     "SELECT dispatch_id FROM cursor_sdk_dispatches "
                     "WHERE source_repo=? AND COALESCE(read_only,0)=0 "
                     "AND status IN ('admitted','running') AND dispatch_id<>? "
-                    "AND worker_instance=? LIMIT 1",
-                    (source_repo, req.dispatch_id, worker_instance),
+                    "LIMIT 1",
+                    (source_repo, req.dispatch_id),
                 ).fetchone()
-                if conflict is not None:
+                prior_queued = conn.execute(
+                    "SELECT dispatch_id FROM cursor_sdk_dispatches "
+                    "WHERE source_repo=? AND COALESCE(read_only,0)=0 "
+                    "AND status='queued' AND dispatch_id<>? LIMIT 1",
+                    (source_repo, req.dispatch_id),
+                ).fetchone()
+                if conflict is not None or prior_queued is not None:
                     insert_status = _STATUS_QUEUED
                     queued_at = _now()
             conn.execute(
@@ -405,10 +411,10 @@ class CursorDispatchLedger:
         row = conn.execute(
             "SELECT COUNT(*) AS n FROM cursor_sdk_dispatches "
             "WHERE source_repo=? AND COALESCE(read_only,0)=0 AND status='queued' "
-            "AND worker_instance=? AND rowid <= ("
+            "AND rowid <= ("
             "  SELECT rowid FROM cursor_sdk_dispatches WHERE dispatch_id=?"
             ")",
-            (source_repo, worker_instance, dispatch_id),
+            (source_repo, dispatch_id),
         ).fetchone()
         return int(row["n"]) if row is not None else 1
 
@@ -487,14 +493,19 @@ class CursorDispatchLedger:
     def promote_next_queued(
         self, *, source_repo: str, worker_instance: str | None
     ) -> PromotedDispatch | None:
-        """Advance the FIFO head ``queued`` row to ``admitted`` when lease is free."""
+        """Advance the FIFO head ``queued`` row to ``admitted`` when lease is free.
+
+        Queued rows from a prior worker restart remain in the durable ledger;
+        promotion is repo-global (not scoped to ``worker_instance``) and
+        re-homes the head row onto the live worker.
+        """
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             active = conn.execute(
                 "SELECT dispatch_id FROM cursor_sdk_dispatches "
                 "WHERE source_repo=? AND COALESCE(read_only,0)=0 "
-                "AND status IN ('admitted','running') AND worker_instance=? LIMIT 1",
-                (source_repo, worker_instance),
+                "AND status IN ('admitted','running') LIMIT 1",
+                (source_repo,),
             ).fetchone()
             if active is not None:
                 return None
@@ -503,15 +514,16 @@ class CursorDispatchLedger:
                 "resolved_model, source_repo, contract, read_only, record_json "
                 "FROM cursor_sdk_dispatches "
                 "WHERE source_repo=? AND COALESCE(read_only,0)=0 AND status='queued' "
-                "AND worker_instance=? ORDER BY rowid ASC LIMIT 1",
-                (source_repo, worker_instance),
+                "ORDER BY rowid ASC LIMIT 1",
+                (source_repo,),
             ).fetchone()
             if head is None:
                 return None
             updated = conn.execute(
-                "UPDATE cursor_sdk_dispatches SET status=?, queued_at=NULL "
+                "UPDATE cursor_sdk_dispatches SET status=?, queued_at=NULL, "
+                "worker_instance=? "
                 "WHERE dispatch_id=? AND status='queued'",
-                (_STATUS_ADMITTED, head["dispatch_id"]),
+                (_STATUS_ADMITTED, worker_instance, head["dispatch_id"]),
             )
             if updated.rowcount != 1:
                 return None
@@ -588,7 +600,7 @@ class CursorDispatchLedger:
         with self._connect() as conn:
             if source_repo:
                 holder = conn.execute(
-                    "SELECT dispatch_id, status, queued_at, started_at "
+                    "SELECT dispatch_id, status, queued_at, started_at, source_repo "
                     "FROM cursor_sdk_dispatches "
                     "WHERE source_repo=? AND COALESCE(read_only,0)=0 "
                     "AND status IN ('admitted','running') LIMIT 1",
@@ -661,6 +673,13 @@ class CursorDispatchLedger:
                 self.mark_terminal(dispatch_id=dispatch_id, terminal_status="failed")
                 if row["source_repo"]:
                     repos.add(row["source_repo"])
+        with self._connect() as conn:
+            for row in conn.execute(
+                "SELECT DISTINCT source_repo FROM cursor_sdk_dispatches "
+                "WHERE status='queued' AND COALESCE(read_only,0)=0 "
+                "AND source_repo IS NOT NULL"
+            ):
+                repos.add(row["source_repo"])
         return sorted(repos)
 
     def load_promoted_request(self, promoted: PromotedDispatch) -> CursorDispatchRequest:

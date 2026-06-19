@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import json
-import re
 import subprocess
-from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -19,33 +17,21 @@ from implement_admission.deliverable_verification import (
 )
 from implement_admission.normalize import _files_from_packet
 from implement_admission.spec import CloseoutStatus, ImplementSpec
-from transport_utils import DEFAULT_STARGATE_URL, make_async_client
 from universal_logging import get_logger
+
+from services.git_integration_worker.cursor_sdk_deliverables import (
+    artifact_paths_for_closeout,
+    cortex_expected_rels,
+    full_result_text,
+    resolve_cortex_pinned_deliverables,
+    sidecar_workspaces_ref,
+    write_repo_sidecar,
+)
 
 logger = get_logger(__name__)
 
 # Must stay aligned with ``libs/agent_bus_store/turns_models`` bus invariants.
 MAX_TURN_BODY_CHARS = 8_000
-_WORKSPACES_REPO = "universal-llm-gateway"
-_SIDECAR_DIR = "tmp/reviews/closeouts"
-
-_IMPLEMENT_PREAMBLE = (
-    "Execute this task NOW using your tools. Make the code/file changes the packet "
-    "specifies. If you are blocked, reply with `status: blocked` and the specific "
-    "reason. Do NOT reply with an acknowledgement-only message.\n\n"
-    "Before any fs write: read fs(cortex, agent-skills/architecture-invariants.md) and "
-    "fs(cortex, agent-skills/ulg-architecture.md); also load any additional cortex "
-    "skills named in <invariants>. Engineering-discipline rules (SLOC, scope, logging) "
-    "auto-load via setting_sources; the architecture layer (topology_ws, event contracts, "
-    "domain routing) is description-gated and does NOT reliably attach without these reads.\n\n"
-    "Do NOT post your result to the agent-bus yourself — the worker delivers your "
-    "closeout automatically. Produce your result as your final message only."
-)
-
-_CONTRACT_FRONTMATTER_RE = re.compile(
-    r"^contract:\s*(\S+)\s*$",
-    re.IGNORECASE | re.MULTILINE,
-)
 
 
 @dataclass(frozen=True)
@@ -227,191 +213,6 @@ def empty_output_degraded_reason(outcome: SdkRunOutcome) -> str | None:
     return None
 
 
-def _tool_call_section(message: Mapping) -> str | None:
-    """Render a ``toolCall`` step (raw cursor_sdk message dict) as transcript text.
-
-    cursor_sdk leaves the toolCall ``message`` unparsed (types.py:1961-1962), so we
-    read wire keys defensively: ``type`` (tool kind), ``args`` (inputs, incl. shell
-    ``command``), and ``result`` (output). For shell tools, stdout/stderr/exitCode
-    live under ``result.value`` on success or ``result.error`` on failure.
-    """
-    tool = str(message.get("type") or "tool")
-    args = message.get("args") if isinstance(message.get("args"), Mapping) else {}
-    command = args.get("command") if isinstance(args, Mapping) else None
-    if isinstance(command, str) and command.strip():
-        header = f"$ [{tool}] {command.strip()}"
-    elif isinstance(args, Mapping) and args:
-        header = f"$ [{tool}] {json.dumps(args, separators=(',', ':'))[:500]}"
-    else:
-        header = f"$ [{tool}]"
-
-    output = _tool_result_text(message.get("result"))
-    return f"{header}\n{output}" if output else header
-
-
-def _tool_result_text(result: object) -> str | None:
-    """Best-effort extraction of tool output (stdout/stderr/error) from a result dict."""
-    if not isinstance(result, Mapping):
-        return None
-    if result.get("status") == "error":
-        return f"[error] {result.get('error')}"
-    value = result.get("value")
-    if isinstance(value, Mapping):
-        parts: list[str] = []
-        for key in ("stdout", "stderr"):
-            text = value.get(key)
-            if isinstance(text, str) and text.strip():
-                parts.append(f"[{key}]\n{text.rstrip()}")
-        exit_code = value.get("exitCode")
-        if exit_code is not None:
-            parts.append(f"[exitCode] {exit_code}")
-        if parts:
-            return "\n".join(parts)
-        return json.dumps(value, separators=(",", ":"))[:2000]
-    if value is not None:
-        return str(value)[:2000]
-    return None
-
-
-def _conversation_step_section(step: object) -> str | None:
-    """Render one agent-turn conversation step, or None to skip (thinking/unknown)."""
-    step_type = getattr(step, "type", None)
-    message = getattr(step, "message", None)
-    if step_type == "assistantMessage":
-        text = getattr(message, "text", None)
-        return text if isinstance(text, str) and text.strip() else None
-    if step_type == "toolCall" and isinstance(message, Mapping):
-        return _tool_call_section(message)
-    return None
-
-
-def _shell_turn_section(inner: object) -> str | None:
-    """Render a shellConversationTurn (stdout/stderr exposed on the turn itself)."""
-    shell_cmd = getattr(inner, "shell_command", None)
-    shell_out = getattr(inner, "shell_output", None)
-    bits: list[str] = []
-    command = getattr(shell_cmd, "command", None)
-    if isinstance(command, str) and command.strip():
-        bits.append(f"$ {command.strip()}")
-    for attr in ("stdout", "stderr"):
-        text = getattr(shell_out, attr, None)
-        if isinstance(text, str) and text.strip():
-            bits.append(f"[{attr}]\n{text.rstrip()}")
-    exit_code = getattr(shell_out, "exit_code", None)
-    if exit_code is not None:
-        bits.append(f"[exitCode] {exit_code}")
-    return "\n".join(bits) if bits else None
-
-
-def reconstruct_run_transcript(turns: Iterable) -> str:
-    """Rebuild a readable transcript (assistant text + tool I/O) from run.conversation().
-
-    Used as the closeout sidecar body when ``RunResult.result`` is empty so the
-    captured tool output — which IS the deliverable for run/verify dispatches — is
-    not silently lost (friction 19819). ``RunResult`` carries no tool/stdout channel
-    (cursor_sdk types.py RunResult), so the conversation is the only source. Tolerant
-    of partially-parsed turns: never raises on an unexpected shape.
-    """
-    sections: list[str] = []
-    for turn in turns or ():
-        inner = getattr(turn, "turn", None)
-        steps = getattr(inner, "steps", None)
-        if steps:
-            for step in steps:
-                section = _conversation_step_section(step)
-                if section:
-                    sections.append(section)
-            continue
-        shell_section = _shell_turn_section(inner)
-        if shell_section:
-            sections.append(shell_section)
-    return "\n\n".join(sections).strip()
-
-
-def resolve_run_body(result_text: str, turns: Iterable) -> str:
-    """Closeout body: the SDK terminal text when present, else a transcript
-    reconstructed from the conversation so captured tool output is not lost
-    (friction 19819). When neither is available the body is empty and
-    ``empty_output_degraded_reason`` flags it PARTIAL.
-    """
-    if result_text and result_text.strip():
-        return result_text
-    return reconstruct_run_transcript(turns)
-
-
-def infer_contract_from_text(text: str) -> str | None:
-    match = _CONTRACT_FRONTMATTER_RE.search(text)
-    if not match:
-        return None
-    return match.group(1).strip().lower()
-
-
-_SOURCE_REF_FRONTMATTER_RE = re.compile(
-    r"^source_ref:\s*(\S+)\s*$", re.IGNORECASE | re.MULTILINE
-)
-_WORK_ITEM_KEY_RE = re.compile(
-    r"^(?:todo|plan|plan_phase|packet):\s*(\S+)\s*$", re.IGNORECASE | re.MULTILINE
-)
-_WORK_ITEM_SCHEMES = ("todo:", "plan:", "plan_phase:", "packet:", "agent-bus:")
-
-
-def extract_source_ref_from_packet(text: str) -> str | None:
-    """Canonical work-item source_ref from packet frontmatter, or None.
-
-    Prefers an explicit ``source_ref:`` line; else a ``todo:``/``plan:``/
-    ``plan_phase:``/``packet:`` frontmatter line (value is already
-    scheme-qualified, e.g. ``todo: todo:x``). Returns None when no
-    scheme-qualified work-item ref is present (e.g. message dispatch).
-    """
-    for pattern in (_SOURCE_REF_FRONTMATTER_RE, _WORK_ITEM_KEY_RE):
-        match = pattern.search(text)
-        if match:
-            ref = match.group(1).strip()
-            if ref.startswith(_WORK_ITEM_SCHEMES):
-                return ref
-    return None
-
-
-def resolve_prompt_preamble(
-    *,
-    handoff_contract: str | None,
-    prompt_preamble: str | None,
-    inferred_contract: str | None,
-) -> str:
-    contract = (handoff_contract or inferred_contract or "consult").lower()
-    if prompt_preamble:
-        preamble = prompt_preamble.strip()
-    elif contract == "implement":
-        preamble = _IMPLEMENT_PREAMBLE
-    else:
-        preamble = ""
-
-    if preamble:
-        return f"{preamble}\n\n"
-    return ""
-
-
-def _sidecar_rel_path(dispatch_id: str) -> str:
-    return f"{_SIDECAR_DIR}/{dispatch_id}.md"
-
-
-def sidecar_workspaces_ref(dispatch_id: str) -> str:
-    return f"workspaces://{_WORKSPACES_REPO}/{_sidecar_rel_path(dispatch_id)}"
-
-
-def _full_result_text(outcome: SdkRunOutcome, degraded_reason: str | None) -> str:
-    if degraded_reason:
-        return f"status: degraded\nreason: {degraded_reason}\n\n{outcome.body}"
-    return outcome.body
-
-
-def _write_sidecar(source_repo: Path, dispatch_id: str, content: str) -> Path:
-    path = source_repo / _sidecar_rel_path(dispatch_id)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8")
-    return path
-
-
 def _map_closeout_status(degraded_reason: str | None) -> CloseoutStatus:
     """Map the worker's degraded_reason to an ImplementCloseout status.
 
@@ -437,6 +238,7 @@ def build_implement_closeout_body(
     work_item_ref: str | None,
     change_set: ChangeSet | None = None,
     verification: list[Verification] | None = None,
+    cortex_artifact_paths: list[str] | None = None,
 ) -> str:
     """Build a compact, valid ImplementCloseout JSON turn body.
 
@@ -469,74 +271,20 @@ def build_implement_closeout_body(
         files_deleted=list(change_set.deleted) if change_set else [],
         verification=verification or [],
         evidence_uris=EvidenceUris(
-            artifact_paths=[sidecar_ref],
+            artifact_paths=artifact_paths_for_closeout(
+                sidecar_ref,
+                cortex_artifact_paths or [],
+            ),
             bus_threads=[thread_id],
             dispatch_ids=[dispatch_id],
         ),
     )
     body = json.dumps(closeout.model_dump(mode="json"), separators=(",", ":"))
-    # Unreachable invariant guard: a minimal closeout is always well under the cap.
     assert len(body) <= MAX_TURN_BODY_CHARS, (
         f"structured closeout body exceeded {MAX_TURN_BODY_CHARS} chars "
         f"(len={len(body)}); dispatch_id={dispatch_id}"
     )
     return body
-
-
-def build_closeout_idempotency_key(
-    *, execution_id: str, thread_id: str, turn_number: int | None
-) -> str:
-    return f"implement-closeout:{execution_id}:{thread_id}:{turn_number}"
-
-
-def build_closeout_trigger_payload(
-    *, body_json: str, source_ref: str, idempotency_key: str
-) -> dict:
-    return {
-        "closeout": json.loads(body_json),
-        "source_ref": source_ref,
-        "idempotency_key": idempotency_key,
-    }
-
-
-async def emit_implement_closeout_trigger(
-    *, body_json: str, source_ref: str, idempotency_key: str
-) -> None:
-    """Fire-and-forget POST of the closeout to Stargate's /closeout ingress.
-
-    Never raises: bus-delivery success is decoupled from trigger success.
-    """
-    payload = build_closeout_trigger_payload(
-        body_json=body_json, source_ref=source_ref, idempotency_key=idempotency_key
-    )
-    try:
-        async with make_async_client(DEFAULT_STARGATE_URL, timeout=10.0) as client:
-            resp = await client.post("/api/v1/implement/closeout", json=payload)
-        if resp.status_code >= 400:
-            logger.warning(
-                "implement-closeout trigger rejected: status=%s key=%s body=%s",
-                resp.status_code,
-                idempotency_key,
-                resp.text[:300],
-            )
-        else:
-            logger.info("implement-closeout trigger accepted: key=%s", idempotency_key)
-    except Exception as exc:  # never propagate
-        logger.warning(
-            "implement-closeout trigger transport error: key=%s err=%s",
-            idempotency_key,
-            exc,
-        )
-
-
-def _extract_turn_number(body: object) -> int | None:
-    if isinstance(body, dict):
-        if isinstance(body.get("turn_number"), int):
-            return body["turn_number"]
-        turn = body.get("turn")
-        if isinstance(turn, dict) and isinstance(turn.get("turn_number"), int):
-            return turn["turn_number"]
-    return None
 
 
 def prepare_closeout_delivery(
@@ -549,27 +297,102 @@ def prepare_closeout_delivery(
     work_item_ref: str | None,
     baseline: dict[str, str] | None = None,
     packet_text: str | None = None,
+    cortex_artifact_paths: list[str] | None = None,
+    gate_d_created_rels: tuple[str, ...] = (),
 ) -> CloseoutDelivery:
-    """Write the full Composer result to a sidecar and return a structured closeout body.
+    """Sync closeout assembly (tests). Production uses ``prepare_closeout_delivery_async``."""
+    return _assemble_closeout_delivery(
+        source_repo=source_repo,
+        dispatch_id=dispatch_id,
+        outcome=outcome,
+        degraded_reason=degraded_reason,
+        thread_id=thread_id,
+        work_item_ref=work_item_ref,
+        baseline=baseline,
+        packet_text=packet_text,
+        cortex_artifact_paths=cortex_artifact_paths or [],
+        gate_d_created_rels=gate_d_created_rels,
+    )
 
-    The turn body is a compact ImplementCloseout JSON object (schema_version 1) so that
-    Stargate's trigger_closeout_from_turn can fire pipeline:implement-closeout. The full
-    result text is written only to the sidecar (bounded-body invariant from friction-17390).
-    """
-    full_text = _full_result_text(outcome, degraded_reason)
-    sidecar_path = _write_sidecar(source_repo, dispatch_id, full_text)
+
+async def prepare_closeout_delivery_async(
+    *,
+    source_repo: Path,
+    dispatch_id: str,
+    outcome: SdkRunOutcome,
+    degraded_reason: str | None,
+    thread_id: str,
+    work_item_ref: str | None,
+    baseline: dict[str, str] | None = None,
+    packet_text: str | None = None,
+) -> CloseoutDelivery:
+    """Write sidecar, resolve pinned cortex deliverables, build closeout JSON."""
+    files_expected = _files_expected_from_packet(packet_text)
+    text = full_result_text(outcome.body, degraded_reason)
+    cortex_uris, gate_d_created = await resolve_cortex_pinned_deliverables(
+        files_expected=files_expected,
+        full_text=text,
+        source_repo=source_repo,
+        dispatch_id=dispatch_id,
+        thread_id=thread_id,
+    )
+    expected_rels = cortex_expected_rels(files_expected)
+    if len(gate_d_created) < len(expected_rels):
+        missing = [r for r in expected_rels if r not in gate_d_created]
+        shown = ",".join(missing[:3])
+        if len(missing) > 3:
+            shown = f"{shown},+{len(missing) - 3}"
+        pin_reason = f"pinned_deliverable_write_failed:{shown}"
+        degraded_reason = degraded_reason or pin_reason
+    return _assemble_closeout_delivery(
+        source_repo=source_repo,
+        dispatch_id=dispatch_id,
+        outcome=outcome,
+        degraded_reason=degraded_reason,
+        thread_id=thread_id,
+        work_item_ref=work_item_ref,
+        baseline=baseline,
+        packet_text=packet_text,
+        files_expected=files_expected,
+        cortex_artifact_paths=cortex_uris,
+        gate_d_created_rels=gate_d_created,
+    )
+
+
+def _assemble_closeout_delivery(
+    *,
+    source_repo: Path,
+    dispatch_id: str,
+    outcome: SdkRunOutcome,
+    degraded_reason: str | None,
+    thread_id: str,
+    work_item_ref: str | None,
+    baseline: dict[str, str] | None,
+    packet_text: str | None,
+    files_expected: list[str] | None = None,
+    cortex_artifact_paths: list[str],
+    gate_d_created_rels: tuple[str, ...],
+) -> CloseoutDelivery:
+    text = full_result_text(outcome.body, degraded_reason)
+    sidecar_path = write_repo_sidecar(source_repo, dispatch_id, text)
     sidecar_ref = sidecar_workspaces_ref(dispatch_id)
-    result_bytes = len(full_text.encode("utf-8"))
+    result_bytes = len(text.encode("utf-8"))
+    files_expected = (
+        files_expected
+        if files_expected is not None
+        else _files_expected_from_packet(packet_text)
+    )
     if baseline is None:
-        # No admit-time baseline (non-implement dispatch): a whole-repo git
-        # diff would attribute peer/stale uncommitted edits to this dispatch
-        # (bug 2116 / friction 19602). files_* is undefined for these
-        # dispatches — emit empty and skip change-set-derived verification.
         change_set = ChangeSet(created=(), modified=(), deleted=())
         verification = []
     else:
         change_set = changed_paths(source_repo, baseline)
-        files_expected = _files_expected_from_packet(packet_text)
+        if gate_d_created_rels:
+            change_set = ChangeSet(
+                created=change_set.created + gate_d_created_rels,
+                modified=change_set.modified,
+                deleted=change_set.deleted,
+            )
         verification = verify_deliverables(
             spec=None,
             change_set=change_set,
@@ -588,6 +411,7 @@ def prepare_closeout_delivery(
         work_item_ref=work_item_ref,
         change_set=change_set,
         verification=verification,
+        cortex_artifact_paths=cortex_artifact_paths,
     )
     parsed = json.loads(body)
     return CloseoutDelivery(

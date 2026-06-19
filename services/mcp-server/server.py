@@ -39,7 +39,7 @@ from oauth_service import OAuthService
 from oauth_store import OAuthStore
 from request_profile import current_profile
 from response_size_guard import register_response_guard
-from schema_compact import patch_fastmcp_tool_serialization
+from schema_compact import register_compact_schema_transform
 from starlette.middleware.gzip import GZipMiddleware
 from tool_access import dispatch_denial_reason, is_dispatch_tool_allowed
 from tool_error_enricher import register_tool_error_enricher
@@ -136,9 +136,6 @@ def _env_truthy(name: str, default: bool) -> bool:
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
-
-
-patch_fastmcp_tool_serialization()
 
 
 def _require_env(name: str) -> str:
@@ -334,6 +331,8 @@ def _build_server() -> tuple[
             "Failed to initialize response size guard — proceeding without it"
         )
         record("mcp.response.guard.init.failed", error="see server logs")
+
+    register_compact_schema_transform(mcp)
 
     # Capture descriptions BEFORE pruning — _prune_to_primary removes the
     # underlying Tool objects, so post-prune metadata reads return empty.

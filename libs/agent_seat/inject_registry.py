@@ -104,6 +104,14 @@ INJECT_REGISTRY: tuple[InjectEntry, ...] = (
         inline_tier=InlineTier.MUST_INLINE,
     ),
     InjectEntry(
+        entity_id="agent_skill:model-tier-awareness-web",
+        scope=InjectScope.UNIVERSAL,
+        platform_predicate="web",
+        profile_applicability=frozenset({"*"}),
+        priority=25,
+        inline_tier=InlineTier.MUST_INLINE,
+    ),
+    InjectEntry(
         entity_id="agent_skill:orchestrator-workflow",
         scope=InjectScope.LEAD,
         platform_predicate="*",
@@ -391,7 +399,10 @@ def _sort_for_pack(
 
     def sort_key(entry: InjectEntry) -> tuple[int, int, int, int, str]:
         tier = _tier_rank(entry.inline_tier)
-        if entry.scope == InjectScope.DISPATCH_PACKET and entry.entity_id in packet_order:
+        if (
+            entry.scope == InjectScope.DISPATCH_PACKET
+            and entry.entity_id in packet_order
+        ):
             group = 1
             packet_idx = packet_order[entry.entity_id]
         elif tier <= _TIER_RANK["must_inline"]:
@@ -485,8 +496,5 @@ def injected_skill_slugs(
     )
     deduped, _ = _dedupe_entries(candidates)
     return tuple(
-        sorted(
-            entry.entity_id.removeprefix("agent_skill:")
-            for entry in deduped
-        )
+        sorted(entry.entity_id.removeprefix("agent_skill:") for entry in deduped)
     )

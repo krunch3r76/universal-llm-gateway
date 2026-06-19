@@ -18,6 +18,10 @@ from implement_admission.preflight import (
 from implement_admission.source_ref import SourceRefError
 
 from .cursor_sdk_generate import dispatch_cursor_sdk_generate
+from .cursor_sdk_thread_reuse import (
+    consolidation_split_warning,
+    resolve_cursor_sdk_thread_targets,
+)
 from .dispatch_thread_context import read_latest_dispatch_thread_body
 from .handoff import _resolve_packet_file, _workspaces_root
 from .implement_admission_bridge import (
@@ -261,6 +265,13 @@ async def dispatch_cursor_sdk_generate_route(
                 dispatch_thread_id=body.dispatch_thread_id,
             )
         )
+        (
+            reuse_thread,
+            parent_dispatch_thread_id,
+        ) = await resolve_cursor_sdk_thread_targets(
+            reuse_thread=getattr(body, "reuse_thread", None),
+            dispatch_thread_id=body.dispatch_thread_id,
+        )
         result = await dispatch_cursor_sdk_generate(
             request_id=request_id,
             role=role,
@@ -270,15 +281,24 @@ async def dispatch_cursor_sdk_generate_route(
             contract=body.contract,
             packet_path=wrap.packet_path,
             message_text=source_text,
-            reuse_thread=getattr(body, "reuse_thread", None),
+            reuse_thread=reuse_thread,
             bus_lifecycle=getattr(body, "bus_lifecycle", None),
-            parent_dispatch_thread_id=body.dispatch_thread_id,
+            parent_dispatch_thread_id=parent_dispatch_thread_id,
             density_triage=getattr(body, "density_triage", None),
             review_opt_out_reason_code=getattr(
                 body, "review_opt_out_reason_code", None
             ),
             auto_review_child=getattr(body, "auto_review_child", False),
         )
+        if isinstance(result, dict):
+            split_warning = consolidation_split_warning(
+                reuse_thread=reuse_thread,
+                parent_dispatch_thread_id=parent_dispatch_thread_id,
+            )
+            if split_warning:
+                result["warnings"] = list(result.get("warnings") or []) + [
+                    split_warning
+                ]
         if isinstance(result, dict) and wrap.materialized:
             result["materialization_mode"] = "auto"
             if wrap.warnings:

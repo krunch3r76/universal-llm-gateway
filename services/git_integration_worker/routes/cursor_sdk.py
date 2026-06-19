@@ -57,21 +57,19 @@ from services.git_integration_worker.cursor_models import (
 )
 from services.git_integration_worker.cursor_sdk_closeout import (
     SdkRunOutcome,
-    _extract_turn_number,
-    build_closeout_idempotency_key,
     capture_wt_baseline,
     count_tool_calls,
     degraded_implement_reason,
-    emit_implement_closeout_trigger,
     empty_output_degraded_reason,
-    extract_source_ref_from_packet,
     format_delivery_fallback_body,
-    infer_contract_from_text,
-    prepare_closeout_delivery,
+    prepare_closeout_delivery_async,
     resolve_completion_outcome,
-    resolve_prompt_preamble,
-    resolve_run_body,
     resolve_run_outcome_label,
+)
+from services.git_integration_worker.cursor_sdk_closeout_trigger import (
+    build_closeout_idempotency_key,
+    emit_implement_closeout_trigger,
+    extract_turn_number,
 )
 from services.git_integration_worker.cursor_sdk_context import (
     CursorSdkParityError,
@@ -92,6 +90,12 @@ from services.git_integration_worker.cursor_sdk_gate import (
     acquire_sdk_dispatch_slot,
     release_sdk_dispatch_slot_sync,
 )
+from services.git_integration_worker.cursor_sdk_packet import (
+    extract_source_ref_from_packet,
+    infer_contract_from_text,
+    resolve_prompt_preamble,
+)
+from services.git_integration_worker.cursor_sdk_transcript import resolve_run_body
 from services.git_integration_worker.models.cursor_api import (
     CursorDispatchRequest,
     CursorDispatchResponse,
@@ -608,7 +612,7 @@ async def _deliver_sdk_closeout(
         CursorDispatchLedger.instance().read_wt_baseline,
         dispatch_id=req.dispatch_id,
     )
-    delivery = prepare_closeout_delivery(
+    delivery = await prepare_closeout_delivery_async(
         source_repo=source_repo,
         dispatch_id=req.dispatch_id,
         outcome=outcome,
@@ -644,7 +648,7 @@ async def _deliver_sdk_closeout(
                 run_outcome=run_outcome, delivery_ok=True
             ),
         )
-        turn_number = _extract_turn_number(bus_result.body)
+        turn_number = extract_turn_number(bus_result.body)
         await emit_implement_closeout_trigger(
             body_json=delivery.body,
             source_ref=work_item_ref or delivery.sidecar_ref,
@@ -719,6 +723,12 @@ async def _close_ticket_after(
     """
     try:
         await coro
+    except BaseException:  # noqa: BLE001
+        # Defense in depth: the gated coro finalizes its own failures; anything
+        # escaping here would otherwise be swallowed by the tracked task with no
+        # log (especially CancelledError), reproducing the silent-orphan signature.
+        logger.exception("cursor sdk dispatch coro escaped finalize: op_id=%s", op_id)
+        raise
     finally:
         controller.close_ticket(op_id, terminal_status="closed")
 
@@ -842,32 +852,98 @@ async def _run_sdk_dispatch_gated(
             controller=controller,
         )
         return
-    except Exception as exc:
+    except BaseException as exc:  # noqa: BLE001
+        # BaseException (not just Exception): a dying SDK/fastmcp bridge can
+        # surface as BaseException/BaseExceptionGroup. A narrow ``except
+        # Exception`` would let it escape — leaving the row stuck ``running``
+        # with zero delivery (the orphaned-dispatch failure mode). Finalize on
+        # ANY worker outcome so there is no silent path.
         logger.exception("cursor sdk dispatch failed: dispatch_id=%s", req.dispatch_id)
+        await _finalize_failed(
+            req=req,
+            bus=bus,
+            reply_to=reply_to,
+            controller=controller,
+            code="CURSOR_SDK_DISPATCH",
+            message=str(exc),
+            subject_suffix="FAILED",
+            error=f"{type(exc).__name__}: {exc}",
+        )
+        return
+
+    try:
+        await _finalize_success(
+            req=req,
+            source_repo=source_repo,
+            outcome=outcome,
+            bus=bus,
+            reply_to=reply_to,
+            controller=controller,
+        )
+    except BaseException as exc:  # noqa: BLE001
+        # The run succeeded but finalize (sidecar/cortex/bus) raised. Without
+        # this guard the row would be stuck ``running`` despite a finished run.
+        logger.exception(
+            "cursor sdk closeout/delivery failed: dispatch_id=%s", req.dispatch_id
+        )
+        await _finalize_failed(
+            req=req,
+            bus=bus,
+            reply_to=reply_to,
+            controller=controller,
+            code="CURSOR_SDK_CLOSEOUT",
+            message=str(exc),
+            subject_suffix="FAILED (closeout)",
+            error=f"closeout {type(exc).__name__}: {exc}",
+        )
+
+
+async def _finalize_failed(
+    *,
+    req: CursorDispatchRequest,
+    bus: CursorBusClient,
+    reply_to: str,
+    controller: WorkAdmissionController,
+    code: str,
+    message: str,
+    subject_suffix: str,
+    error: str | None = None,
+) -> None:
+    """Single failure-finalize path: emit, deliver an error envelope, terminate,
+    and mark terminal ``failed`` + promote. Guarantees no silent orphan.
+    """
+    if error is not None:
         emit_sdk_worker_failed(
             dispatch_id=req.dispatch_id,
             thread_id=req.thread_id,
             execution_id=req.execution_id,
-            error=str(exc),
+            error=error,
         )
-        env = error_envelope(
-            code="CURSOR_SDK_DISPATCH", message=str(exc), source="gateway"
-        )
-        await bus.reply(
-            thread_id=req.thread_id,
-            to_agent=reply_to,
-            from_agent="cursor-sdk",
-            subject=f"cursor-sdk dispatch {req.dispatch_id} FAILED",
-            body=f"```json\n{json.dumps(env, indent=2)}\n```",
-        )
-        await _terminate_link(bus, thread_id=req.thread_id, terminal_status="failed")
-        await _mark_terminal_and_promote(
-            dispatch_id=req.dispatch_id,
-            terminal_status="failed",
-            controller=controller,
-        )
-        return
+    env = error_envelope(code=code, message=message, source="gateway")
+    await bus.reply(
+        thread_id=req.thread_id,
+        to_agent=reply_to,
+        from_agent="cursor-sdk",
+        subject=f"cursor-sdk dispatch {req.dispatch_id} {subject_suffix}",
+        body=f"```json\n{json.dumps(env, indent=2)}\n```",
+    )
+    await _terminate_link(bus, thread_id=req.thread_id, terminal_status="failed")
+    await _mark_terminal_and_promote(
+        dispatch_id=req.dispatch_id,
+        terminal_status="failed",
+        controller=controller,
+    )
 
+
+async def _finalize_success(
+    *,
+    req: CursorDispatchRequest,
+    source_repo: Path,
+    outcome: SdkRunOutcome,
+    bus: CursorBusClient,
+    reply_to: str,
+    controller: WorkAdmissionController,
+) -> None:
     packet_text = _read_packet_text(req, source_repo) if req.packet_path else ""
     inferred_contract = (
         infer_contract_from_text(packet_text)

@@ -63,6 +63,7 @@ from .ops_misc import (
     _op_tag_list,
     _op_tag_resolve,
     _op_thread_sidecar_write,
+    _op_pinned_deliverable_write,
 )
 from .ops_reflective import (
     _op_rj_consolidate,
@@ -158,6 +159,7 @@ _OPS: dict[str, Any] = {
     "todo_candidates": _op_todo_candidates,
     "todo_audit": _op_todo_audit,
     "thread_sidecar_write": _op_thread_sidecar_write,
+    "pinned_deliverable_write": _op_pinned_deliverable_write,
     "todo_close_sidecar": _op_todo_close_sidecar,
     "todo_distill_implement_gate": _op_todo_distill_implement_gate,
     "register_skill_substrate": _op_register_skill_substrate,

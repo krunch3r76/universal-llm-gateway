@@ -336,6 +336,7 @@ def test_web_seat_preloaded_tracks_auto_inject_skills_as_loaded() -> None:
     assert result["seat_preloaded"] == [
         "cortex-orientation",
         "cortex-provenance-discipline",
+        "model-tier-awareness-web",
     ]
     omitted = {item["slug"] for item in result["omitted"]}
     assert "cortex-orientation" in omitted
@@ -535,7 +536,11 @@ def test_coding_session_start_returns_bundle_not_session_close() -> None:
         assert "coding session" in item["reason"].lower()
         assert "trigger_match" not in item
     preloaded = set(result["seat_preloaded"])
-    assert preloaded == {"cortex-orientation", "cortex-provenance-discipline"}
+    assert preloaded == {
+        "cortex-orientation",
+        "cortex-provenance-discipline",
+        "model-tier-awareness-web",
+    }
 
 
 @pytest.mark.offline

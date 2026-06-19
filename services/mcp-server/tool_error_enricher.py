@@ -197,7 +197,7 @@ class ToolErrorEnricher(Middleware):
                 error_types=sorted({e.get("type", "") for e in errors}),
                 first_invocation_this_session=first_invocation,
             )
-            return ToolResult(structured_content=envelope)
+            return ToolResult(structured_content=envelope, is_error=True)
 
 
 def register_tool_error_enricher(mcp: FastMCP) -> None:

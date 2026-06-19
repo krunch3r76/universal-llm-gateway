@@ -30,9 +30,7 @@ def _clear_cache() -> None:
     clear_payload_cache_for_tests()
 
 
-def _body_map(
-    monkeypatch: pytest.MonkeyPatch, bodies: dict[str, str]
-) -> None:
+def _body_map(monkeypatch: pytest.MonkeyPatch, bodies: dict[str, str]) -> None:
     def fake_fetch(
         entity_id: str,
         _digest: str | None,
@@ -74,10 +72,31 @@ def test_active_scopes_lead_dispatch_union() -> None:
     }
 
 
+def test_web_boot_injects_model_tier_awareness_web(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tier_marker = "MODEL_TIER_AWARENESS_WEB_MUST_INLINE_MARKER"
+    bodies = {
+        "agent_skill:cortex-orientation": "orientation",
+        "agent_skill:cortex-provenance-discipline": "provenance",
+        "agent_skill:model-tier-awareness-web": tier_marker,
+    }
+    _body_map(monkeypatch, bodies)
+    resolution = resolve_injected_bodies(
+        "claude-web",
+        platform="web",
+        budget_bytes=None,
+    )
+    injected_ids = [item["id"] for item in resolution.injected]
+    assert "agent_skill:model-tier-awareness-web" in injected_ids
+    assert tier_marker in resolution.block_md
+
+
 def test_union_matrix_no_duplicates(monkeypatch: pytest.MonkeyPatch) -> None:
     bodies = {
         "agent_skill:cortex-orientation": "orientation",
         "agent_skill:cortex-provenance-discipline": "provenance",
+        "agent_skill:model-tier-awareness-web": "tier-web",
         "agent_skill:orchestrator-workflow": "orchestrator",
         "agent_skill:architecture-invariants": "arch",
         "agent_skill:ulg-architecture": "ulg",
@@ -182,8 +201,7 @@ def test_lifecycle_required_withheld(monkeypatch: pytest.MonkeyPatch) -> None:
         budget_bytes=None,
     )
     assert any(
-        d.get("reason") == "inactive_lifecycle_withheld"
-        for d in resolution.dropped
+        d.get("reason") == "inactive_lifecycle_withheld" for d in resolution.dropped
     )
 
 
@@ -332,9 +350,11 @@ async def test_lead_web_boot_injects_orchestrator_workflow(
     silently skipped. With the wiring fixed, the seat slug drives lead-determination.
     """
     orch_marker = "ORCHESTRATOR_WORKFLOW_LEAD_INJECT_MARKER"
+    tier_marker = "MODEL_TIER_AWARENESS_WEB_LEAD_BOOT_MARKER"
     bodies = {
         "agent_skill:cortex-orientation": "orientation",
         "agent_skill:cortex-provenance-discipline": "provenance",
+        "agent_skill:model-tier-awareness-web": tier_marker,
         "agent_skill:orchestrator-workflow": orch_marker,
     }
     _body_map(monkeypatch, bodies)
@@ -358,4 +378,7 @@ async def test_lead_web_boot_injects_orchestrator_workflow(
     assert orch_marker in rendered, (
         "orchestrator-workflow (LEAD scope) missing from role=lead web boot "
         "auto_inject block — lead-scope activation regressed"
+    )
+    assert tier_marker in rendered, (
+        "model-tier-awareness-web missing from role=lead web boot auto_inject block"
     )

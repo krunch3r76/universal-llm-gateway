@@ -231,6 +231,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             | None
         ) = None,
         auto_review_child: bool = False,
+        reuse_thread: str | None = None,
         executor_override: str | None = None,
         executor_override_reason_code: str | None = None,
         executor_override_reason: str | None = None,
@@ -345,7 +346,11 @@ def register_frontier_tools(mcp: FastMCP) -> None:
           If reasoning effort matters, inspect ``knob_resolution.status/parity/notes``;
           do not infer cross-provider parity.
           ``thread`` must be absent when using this op (generate auto-provisions
-          its own result thread). ``subject`` is accepted but IGNORED — it is not
+          its own result thread unless ``reuse_thread`` names an existing pending
+          worker thread for cursor-sdk consolidation). ``reuse_thread`` reuses a
+          ``create_thread(lifecycle_state=pending)`` shell so dispatch pointer and
+          closeout land on one thread; ``dispatch_thread_id`` stays the arc
+          coordination thread when it differs. ``subject`` is accepted but IGNORED — it is not
           persisted (the result-thread subject is auto-derived); the response
           carries a ``subject_ignored_on_generate`` warning. Use ``op="to_thread"``
           to actually set a thread subject (friction 19803).
@@ -579,6 +584,8 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                 body["review_opt_out_reason_code"] = review_opt_out_reason_code
             if auto_review_child:
                 body["auto_review_child"] = auto_review_child
+            if reuse_thread is not None:
+                body["reuse_thread"] = reuse_thread
         else:
             if contract in ("implement", "wrap"):
                 return {

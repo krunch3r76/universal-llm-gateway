@@ -28,6 +28,10 @@ from .admission import (
     resolve_handoff_target,
 )
 from .closeout_reply import parse_closeout_payload, run_implement_closeout_pipeline
+from .pinned_deliverable_ingress import (
+    PinnedDeliverableBody,
+    write_pinned_deliverable_via_cortex,
+)
 from .contract_derivation import derive_contract
 from .cursor_sdk_generate import dispatch_cursor_sdk_generate
 from .dispatch_thread_context import as_user_message, read_latest_dispatch_thread_body
@@ -1011,5 +1015,19 @@ async def implement_closeout(
             ).to_dict(),
         )
     if not result.get("ok", True) and result.get("error"):
+        return JSONResponse(status_code=502, content=result)
+    return result
+
+
+@implement_router.post("/pinned-deliverable", status_code=200, response_model=None)
+async def implement_pinned_deliverable(
+    body: PinnedDeliverableBody,
+) -> dict[str, Any] | JSONResponse:
+    """Write a packet-pinned deliverable to cortex via cortex-api (friction 19916)."""
+    result = await write_pinned_deliverable_via_cortex(body)
+    if "error" in result:
+        status = result.get("status_code") or 502
+        if isinstance(status, int) and status >= 400:
+            return JSONResponse(status_code=status, content=result)
         return JSONResponse(status_code=502, content=result)
     return result

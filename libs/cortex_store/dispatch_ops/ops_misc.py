@@ -15,6 +15,7 @@ from ..routes.stats import _get_stats_impl
 from ..routes.surface_forms import _list_surface_forms_impl
 from ..routes.tags import _assign_tag_impl, _list_tags_impl
 from ._shared import record
+from ._pinned_deliverable import write_pinned_deliverable_impl
 from ._thread_sidecar import (
     _slugify,
     content_sha256,
@@ -54,6 +55,32 @@ def _op_thread_sidecar_write(
         "sha256": digest,
         "body_chars": len(content),
     }
+
+
+def _op_pinned_deliverable_write(
+    rel_path: str,
+    content: str,
+    write_if_absent: bool | None = None,
+    dispatch_id: str | None = None,
+    thread_id: str | None = None,
+    **_: object,
+) -> dict[str, Any]:
+    if not rel_path:
+        return {"error": "rel_path is required"}
+    result = write_pinned_deliverable_impl(
+        rel_path,
+        content,
+        write_if_absent=bool(write_if_absent),
+    )
+    if "error" not in result:
+        record(
+            "cortex.pinned_deliverable.written",
+            rel_path=rel_path,
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            skipped=result.get("skipped"),
+        )
+    return result
 
 
 def _op_stats(**_: object) -> dict[str, Any]:
