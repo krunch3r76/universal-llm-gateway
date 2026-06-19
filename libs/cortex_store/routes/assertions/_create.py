@@ -117,6 +117,8 @@ def create_assertion(
     brevity_warnings = check_claim_brevity(
         claim=body.claim,
         evidence_uris=body.evidence_uris,
+        entity_id=body.entity_id,
+        acknowledge_audit_gaps=body.acknowledge_audit_gaps,
     )
     if brevity_warnings:
         if validation_warnings is None:

@@ -473,3 +473,26 @@ def cortex_skill_suggest_failed(
     )
     record(ev.signal, **ev.payload)
     return ev
+
+
+@event_factory
+def cortex_pinned_deliverable_written(
+    rel_path: str,
+    dispatch_id: str | None = None,
+    thread_id: str | None = None,
+    skipped: bool | None = None,
+) -> Event:
+    """cortex.pinned_deliverable.written — emitted when a packet-pinned deliverable is written to cortex (friction 19916)."""
+    ev = Event(
+        signal="cortex.pinned_deliverable.written",
+        role="observation",
+        scope="global",
+        payload={
+            "rel_path": rel_path,
+            "dispatch_id": dispatch_id,
+            "thread_id": thread_id,
+            "skipped": skipped,
+        },
+    )
+    record(ev.signal, **ev.payload)
+    return ev

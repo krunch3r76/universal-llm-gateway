@@ -30,29 +30,50 @@ def build_worker_message(
     conversation_context: str | None,
     agent: str,
     limit: int,
+    all_candidates: list[dict[str, Any]],
 ) -> str:
-    """D1/D2/D3 worker instruction for pure-mechanical skill_suggest relay."""
+    """Light-bounded worker instruction for LLM skill relevance ranking."""
     ctx_literal = json.dumps(conversation_context, ensure_ascii=False)
-    call = (
-        f"skill_suggest(loaded={json.dumps(loaded, ensure_ascii=False)}, "
-        f"conversation_context={ctx_literal}, agent={json.dumps(agent)}, "
-        f"limit={limit}, prefer_worker=false)"
-    )
+    candidates_payload = [
+        {
+            "slug": item.get("slug"),
+            "description": item.get("description") or "",
+            "trigger_short": item.get("trigger_short") or "",
+            "stage_a_score": item.get("score", 0),
+        }
+        for item in all_candidates
+        if isinstance(item, dict) and item.get("slug")
+    ]
+    candidates_json = json.dumps(candidates_payload, ensure_ascii=False, indent=2)
     output_contract = (
-        "Emit ONLY one fenced ```json block containing the verbatim skill_suggest "
-        "tool result — no prose before or after the fence."
+        "Emit ONLY one fenced ```json block containing a native skill_suggest "
+        "envelope — no prose before or after the fence."
     )
     self_check = (
         "SELF-CHECK — mandatory before reporting done:\n"
         "1. Confirm exactly one ```json fence exists and parses as the native "
         "skill_suggest envelope.\n"
         "2. Confirm agent equals the requesting seat and count == len(suggestions).\n"
+        "3. Confirm every suggestion slug appears in the provided candidates list.\n"
+        "4. Confirm ranker_status is \"llm\" and each suggestion has "
+        "reason_source=\"model\".\n"
         "Report each: PASS / FAIL + one-line evidence."
     )
     return (
-        f"Contract: pure-mechanical. Call MCP tool {call} exactly once.\n\n"
-        f"OUTPUT CONTRACT: {output_contract}\n\n"
-        f"Deliver ONLY the fenced json block as your final answer.\n\n"
+        "Contract: light-bounded. Reason about skill relevance from the "
+        "candidate set and conversation context; return a ranked native "
+        "skill_suggest envelope.\n\n"
+        f"REQUESTING SEAT: {json.dumps(agent)}\n"
+        f"LOADED (exclude from suggestions): {json.dumps(loaded, ensure_ascii=False)}\n"
+        f"CONVERSATION CONTEXT: {ctx_literal}\n"
+        f"LIMIT: {limit}\n\n"
+        f"CANDIDATES (slug must match exactly — do not invent slugs):\n"
+        f"{candidates_json}\n\n"
+        f"OUTPUT CONTRACT: {output_contract}\n"
+        "Required envelope fields: agent, suggestions, count, omitted, "
+        "degraded_skills, loaded_echo, seat_preloaded, ranker_status, degraded.\n"
+        "Set ranker_status=\"llm\". For each suggestion set reason_source=\"model\" "
+        "and a concise reason.\n\n"
         f"{self_check}"
     )
 

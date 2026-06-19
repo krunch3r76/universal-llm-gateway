@@ -183,7 +183,7 @@ Section titles must match live `md_list` output — bind to TOC, not guessed hea
 
 ## skill_suggest after preload
 
-See `skill-suggest-utilization.md` § **Loaded ledger (current contract)**.
+See `skill-suggest-utilization.md` § **Loaded ledger (current contract)** and § **What to pass** (dispatch path: claude-web uses LLM reasoning via worker-hop, Stage-A is the fallback). **Web-consult handoff pickup:** when receiving a `web-consult` / `web-implement` handoff, step-1 `skill_suggest` is mandatory (exception to the boot-resident rule) — see `skill-suggest-utilization.md` § Web → Carve-out.
 
 After preload, call `skill_suggest(loaded=LOADED, conversation_context=…)` and **maintain
 `LOADED`** across the session (append each newly fetched slug before the next suggest).

@@ -407,15 +407,20 @@ def _context_digest(context: str | None) -> tuple[int, str]:
     return len(text), digest
 
 
-def _public_stage_a_result(result: dict[str, Any]) -> dict[str, Any]:
-    out = {k: v for k, v in result.items() if k != "stage_a_candidates"}
-    return out
+def _public_stage_a_result(
+    result: dict[str, Any], *, include_extended: bool = False
+) -> dict[str, Any]:
+    omit = {"stage_a_candidates"}
+    if not include_extended:
+        omit.add("stage_a_extended_candidates")
+    return {k: v for k, v in result.items() if k not in omit}
 
 
 @router.post("/suggest")
 async def post_skill_suggest(
     request: Request,
     x_cortex_transport: Annotated[str | None, Header()] = None,
+    x_skill_include_all: Annotated[str | None, Header()] = None,
 ) -> dict[str, Any]:
     """Seat-gated deterministic skill delta suggestions with optional rerank."""
     data = await request.json()
@@ -460,12 +465,17 @@ async def post_skill_suggest(
         rerank_requested=bool(effective_rerank),
     )
 
+    include_all_candidates = (
+        str(x_skill_include_all or "").strip().lower() == "true"
+    )
+
     try:
         stage_a = run_stage_a(
             agent=body.agent,
             loaded=body.loaded,
             conversation_context=body.conversation_context,
             limit=body.limit,
+            return_all_candidates=include_all_candidates,
         )
     except HTTPException:
         raise
@@ -477,8 +487,8 @@ async def post_skill_suggest(
         )
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-    result = _public_stage_a_result(stage_a)
-    ranker_status = str(result.get("ranker_status") or "disabled")
+    result = _public_stage_a_result(stage_a, include_extended=include_all_candidates)
+    ranker_status = str(result.get("ranker_status") or "deterministic_fallback")
     degraded_reason: str | None = None
     rank_execution_id: str | None = None
 
@@ -506,11 +516,26 @@ async def post_skill_suggest(
         and not needs_description
         and ranker_status != "skipped_no_context"
     ):
-        result["ranker_status"] = "disabled"
-        ranker_status = "disabled"
+        result["ranker_status"] = "deterministic_fallback"
+        ranker_status = "deterministic_fallback"
 
     result["ranker_status"] = ranker_status
     result["degraded_reason"] = degraded_reason
+
+    # #20154 — surface degradation as a first-class warnings list so callers
+    # can detect/compensate without inspecting multiple internal fields.
+    if degraded_reason and not result.get("warnings"):
+        result["warnings"] = [
+            {
+                "code": "ranker_degraded",
+                "reason": degraded_reason,
+                "message": (
+                    f"LLM ranker did not complete ({degraded_reason}); "
+                    "results reflect deterministic Stage-A scoring only. "
+                    "Callers requiring LLM-ranked suggestions may retry."
+                ),
+            }
+        ]
 
     latency_ms = int((time.monotonic() - t0) * 1000)
     if degraded_reason:

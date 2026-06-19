@@ -32,24 +32,6 @@ CODING_SESSION_ADVERTISE_SLUGS: tuple[str, ...] = (
 _DISPATCH_PACKET_PRIORITY_BASE = 60
 _TIER_RANK = {"critical": 0, "must_inline": 1, "normal": 2}
 
-# Orientation + opcontext channel slugs folded into registry for skill_suggest
-# loaded-set accounting (no parallel union in web_seat_injected_skill_slugs).
-_CHANNEL_ACCOUNTING_SLUGS: tuple[tuple[str, str], ...] = (
-    ("operator-posture", "*"),
-    ("lead-seat-boot", "*"),
-    ("consult-routing", "*"),
-    ("dispatch-shape", "*"),
-    ("git-posture", "*"),
-    ("entity-lifecycle-discipline", "*"),
-    ("session-close", "web"),
-    ("session-close-audit", "web"),
-    ("web-transcript-preprocessing", "web"),
-    ("model-tier-awareness-web", "web"),
-    ("frontier-reasoning-discipline", "*"),
-    ("prose-discipline", "*"),
-)
-_CHANNEL_ACCOUNTING_PRIORITY_BASE = 100
-
 _AGENT_SKILL_TOKEN_RE = re.compile(r"agent_skill:([a-z0-9][-a-z0-9_]*)", re.IGNORECASE)
 _SKILL_PATH_RE = re.compile(
     r"(?:agent-skills|agent_skills)/([a-z0-9][-a-z0-9_]*)\.md",
@@ -135,17 +117,6 @@ INJECT_REGISTRY: tuple[InjectEntry, ...] = (
         profile_applicability=frozenset({"code_touching"}),
         priority=50,
         inline_tier=InlineTier.NORMAL,
-    ),
-    *(
-        InjectEntry(
-            entity_id=f"agent_skill:{slug}",
-            scope=InjectScope.LOADED_SET,
-            platform_predicate=platform,
-            profile_applicability=frozenset({"*"}),
-            priority=_CHANNEL_ACCOUNTING_PRIORITY_BASE + idx,
-            inline_tier=InlineTier.NORMAL,
-        )
-        for idx, (slug, platform) in enumerate(_CHANNEL_ACCOUNTING_SLUGS)
     ),
 )
 

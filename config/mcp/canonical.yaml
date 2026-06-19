@@ -506,6 +506,39 @@ tools:
   cache_priority: always_loaded
   introduced: 2026-06-05
 
+- canonical_name: cortex_implement_ready_preflight
+  domain: cortex
+  operation: implement_ready_preflight
+  dispatcher_call_shape:
+    tool: cortex
+    dispatch_key: op
+    dispatch_value: implement_ready_preflight
+  flat_call_shape:
+    tool: cortex_implement_ready_preflight
+    substrate_qualified: user-vortex__cortex_implement_ready_preflight
+  fol_descriptor: |
+    ∀ source_ref ∈ str starting with "todo:":
+      implement_ready_preflight(source_ref) ⟹
+        ok ∈ bool ∧ admitted ∈ bool ∧ gates ∈ List[GateReport]
+        ∧ (admitted ⟹ ∀ g ∈ gates: g.status ∈ {passed, not_applicable})
+        ∧ (¬admitted ⟹ ∃ g ∈ gates: g.status = failed ∧ first_failure ≠ ∅).
+    Read-only. ¬side-effects. ¬writes. ¬distillation. ¬restamping.
+    Run BEFORE implement dispatch to see ALL unmet gates at once.
+    Non-todo source_refs return admitted=true immediately (gate does not apply).
+    See agent_skill:implement-todo.
+  json_schema:
+    type: object
+    properties:
+      source_ref:
+        type: string
+        description: "Required. todo:{slug} or any source_ref. Non-todo refs return admitted=true."
+    required: [source_ref]
+  skill_uri: agent_skill:implement-todo
+  seat_visibility: [mcp, mcp_claude]
+  mandate_safety: read_only
+  cache_priority: on_demand
+  introduced: 2026-06-18
+
 - canonical_name: cortex_session_handoff_upsert
   domain: cortex
   operation: session_handoff_upsert
@@ -2365,8 +2398,9 @@ tools:
   introduced: 2026-05-22
 
   # ─── domain: skill_suggest ───────────────────────────────────────────────────
-  # In-session skill relevance delta — deterministic Stage-A (agent judgment primary).
-  # Stage-B rerank is server-env-gated experimental-off; not an agent-facing param.
+  # In-session skill relevance delta — LLM reasoning primary (light-bounded worker);
+  # Stage-A trigger_match_terms matching is exploratory fallback. Stage-B rerank is
+  # server-env-gated (SKILL_SUGGEST_RERANK_ENABLED); not an agent-facing param.
 
 - canonical_name: skill_suggest_suggest
   domain: skill_suggest
@@ -2382,7 +2416,8 @@ tools:
     ∀ seat ∈ SeatSlug ∧ loaded ∈ List[str] ∧ context ∈ str:
       skill_suggest(loaded, conversation_context=context, agent=seat) ⟹
         suggestions ⊆ ApplicableSkills(seat) \ loaded
-        ∧ suggestions determined by literal trigger_match_terms overlap.
+        ∧ suggestions determined by LLM reasoning (primary) or
+        trigger_match_terms overlap (fallback).
     claude-web routes via Stargate POST /api/v1/skills/suggest-dispatch (worker-hop
     primary, Stage-A fallback); other seats use direct POST /skills/suggest unless
     prefer_worker=true. Read-only. Seat required (relay injects caller seat).

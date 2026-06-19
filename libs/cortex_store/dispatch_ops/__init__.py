@@ -79,6 +79,7 @@ from .ops_relationships import (
     _op_relationships,
 )
 from .ops_review import _op_case_audit, _op_fill_gaps, _op_session_audit
+from .ops_implement_ready_preflight import _op_implement_ready_preflight
 from .ops_session_close import (
     _op_session_close,
     _op_session_close_preflight,
@@ -140,6 +141,7 @@ _OPS: dict[str, Any] = {
     "journal_write": _op_journal_write,
     "session_close": _op_session_close,
     "session_close_preflight": _op_session_close_preflight,
+    "implement_ready_preflight": _op_implement_ready_preflight,
     "session_handoff_upsert": _op_session_handoff_upsert,
     "assemble_transcript": _op_assemble_transcript,
     "review_queue": _op_review_queue,

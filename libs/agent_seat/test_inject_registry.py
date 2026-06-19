@@ -130,6 +130,32 @@ def test_injected_skill_slugs_matches_resolver_filter() -> None:
     assert "architecture-invariants" in slugs
 
 
+_FORMER_CHANNEL_ACCOUNTING_SLUGS = (
+    "operator-posture",
+    "lead-seat-boot",
+    "consult-routing",
+    "dispatch-shape",
+    "git-posture",
+    "entity-lifecycle-discipline",
+    "session-close",
+    "session-close-audit",
+    "web-transcript-preprocessing",
+    "frontier-reasoning-discipline",
+    "prose-discipline",
+)
+
+
+def test_loaded_set_no_longer_suppresses_channel_accounting_slugs() -> None:
+    """Regression: LOADED_SET registry entries for inject channels were removed."""
+    slugs = injected_skill_slugs(
+        role="lead",
+        platform="web",
+        include_loaded_set=True,
+    )
+    for slug in _FORMER_CHANNEL_ACCOUNTING_SLUGS:
+        assert slug not in slugs
+
+
 def test_fail_closed_critical_budget(monkeypatch: pytest.MonkeyPatch) -> None:
     bodies = {
         "agent_skill:cortex-orientation": "x" * 60_000,

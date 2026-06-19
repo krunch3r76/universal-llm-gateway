@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from typing import TYPE_CHECKING, Any
 
@@ -30,7 +31,7 @@ _DISPATCH_ENABLED = _load_dispatch_enabled()
 _DISPATCH_TIMEOUT = 330.0
 _FALLBACK_WORKER_TIMEOUT_SECONDS = max(
     1,
-    int(os.environ.get("SKILL_SUGGEST_WORKER_TIMEOUT_SECONDS", "20")),
+    int(os.environ.get("SKILL_SUGGEST_WORKER_TIMEOUT_SECONDS", "45")),
 )
 
 
@@ -208,6 +209,32 @@ def _resolve_effective_agent(agent: str | None) -> str | None:
     return None
 
 
+def _coerce_str_to_list(value: list[str] | str | None) -> list[str] | None:
+    """Coerce a JSON-serialised array string to a native list.
+
+    The claude.ai MCP bridge occasionally serialises array parameters as a
+    JSON string instead of a native JSON array (Friction 20137).  Accepting
+    ``str | list[str]`` and normalising here keeps ``SkillSuggestDispatchRequest``
+    on the Stargate side clean (its ``list[str]`` validator would reject a
+    raw string with a Pydantic ValidationError).
+    """
+    if value is None or isinstance(value, list):
+        return value
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.startswith("["):
+            try:
+                parsed = json.loads(stripped)
+                if isinstance(parsed, list):
+                    return [str(item) for item in parsed]
+            except (ValueError, TypeError):
+                pass
+        # Non-JSON-array string: treat as a single-element list so the caller
+        # gets *something* useful rather than a hard failure.
+        return [value]
+    return None  # unexpected type — drop silently, let Stargate validate
+
+
 def register_skill_suggest_tools(mcp: FastMCP) -> None:
     """Register the skill_suggest thin relay tool."""
 
@@ -217,6 +244,7 @@ def register_skill_suggest_tools(mcp: FastMCP) -> None:
         conversation_context: str | None = None,
         limit: int | None = None,
         agent: str | None = None,
+        entity_ids: list[str] | str | None = None,
         prefer_worker: bool | None = None,
         worker_timeout_seconds: int | None = None,
     ) -> dict[str, Any]:
@@ -249,6 +277,7 @@ def register_skill_suggest_tools(mcp: FastMCP) -> None:
             broken = degraded_skills + [s for s in suggestions if not s["digest"]]
         """
         effective_agent = _resolve_effective_agent(agent)
+        entity_ids = _coerce_str_to_list(entity_ids)
         if not effective_agent:
             if agent and str(agent).strip():
                 return {
@@ -268,6 +297,8 @@ def register_skill_suggest_tools(mcp: FastMCP) -> None:
             "agent": effective_agent,
             "loaded": loaded,
         }
+        if entity_ids is not None:
+            payload["entity_ids"] = entity_ids
         if conversation_context is not None:
             payload["conversation_context"] = conversation_context
         if limit is not None:

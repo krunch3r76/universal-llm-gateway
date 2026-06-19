@@ -347,6 +347,8 @@ def supersede_assertion(body: SupersedeRequest) -> SupersedeResponse:
     brevity_warnings = check_claim_brevity(
         claim=body.claim,
         evidence_uris=eff_evidence_uris,
+        entity_id=body.entity_id,
+        acknowledge_audit_gaps=body.acknowledge_audit_gaps,
     )
     combined_warnings = (auditor_warnings or []) + brevity_warnings
 

@@ -25,6 +25,12 @@ from implement_admission.implement_ready import (
     ImplementReadyVerdict,
     evaluate_implement_ready,
 )
+from implement_admission.implement_ready_preflight import (
+    GateReport,
+    GateStatus,
+    PreflightReport,
+    preflight_implement_ready,
+)
 from implement_admission.materialize import MaterializedPacket, materialize
 from implement_admission.normalize import normalize
 from implement_admission.preflight import (
@@ -56,8 +62,12 @@ __all__ = [
     "prepare_gate_distillation",
     "read_dense_spec_text",
     "todo_slug",
+    "GateReport",
+    "GateStatus",
+    "PreflightReport",
     "evaluate_implement_ready",
     "implement_spec_hash",
+    "preflight_implement_ready",
     "materialize",
     "normalize",
     "parse_source_ref",

@@ -9,13 +9,14 @@ from universal_logging import get_logger
 
 from ..db import cortex_conn
 from ..entity_aliases import resolve_entity_reference
+from ..event_publisher import cortex_pinned_deliverable_written
 from ..rag_resolver import ChunkIdMismatchError, resolve_assertion_chunk
 from ..routes.resolve import _resolve_cortex_uri_impl
 from ..routes.stats import _get_stats_impl
 from ..routes.surface_forms import _list_surface_forms_impl
 from ..routes.tags import _assign_tag_impl, _list_tags_impl
-from ._shared import record
 from ._pinned_deliverable import write_pinned_deliverable_impl
+from ._shared import record
 from ._thread_sidecar import (
     _slugify,
     content_sha256,
@@ -73,8 +74,7 @@ def _op_pinned_deliverable_write(
         write_if_absent=bool(write_if_absent),
     )
     if "error" not in result:
-        record(
-            "cortex.pinned_deliverable.written",
+        cortex_pinned_deliverable_written(
             rel_path=rel_path,
             dispatch_id=dispatch_id,
             thread_id=thread_id,

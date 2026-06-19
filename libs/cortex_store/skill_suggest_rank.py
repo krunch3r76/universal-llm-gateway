@@ -19,7 +19,7 @@ logger = get_logger("cortex-api.skill_suggest_rank")
 
 STARGATE_URL = os.environ.get("STARGATE_URL", "http://localhost:9999")
 _PIPELINE_ID = "skill-suggest-rank"
-_TIMEOUT_S = float(os.environ.get("SKILL_SUGGEST_RERANK_TIMEOUT_S", "2.5"))
+_TIMEOUT_S = float(os.environ.get("SKILL_SUGGEST_RERANK_TIMEOUT_S", "25.0"))
 _MAX_INFLIGHT = int(os.environ.get("SKILL_SUGGEST_RERANK_MAX_INFLIGHT", "4"))
 _CIRCUIT_FAILURE_THRESHOLD = int(
     os.environ.get("SKILL_SUGGEST_RERANK_CIRCUIT_FAILURES", "5")
@@ -150,11 +150,33 @@ def apply_rerank(
     if _circuit_open():
         result = dict(stage_a_result)
         result["degraded"] = True
+        result["warnings"] = [
+            {
+                "code": "ranker_degraded",
+                "reason": "circuit_open",
+                "message": (
+                    "LLM ranker unavailable (circuit breaker open after repeated failures); "
+                    "results reflect deterministic Stage-A scoring only. "
+                    "Callers requiring LLM-ranked suggestions may retry after the cooldown window."
+                ),
+            }
+        ]
         return result, "error", "circuit_open", None
 
     if not _semaphore.acquire(blocking=False):
         result = dict(stage_a_result)
         result["degraded"] = True
+        result["warnings"] = [
+            {
+                "code": "ranker_degraded",
+                "reason": "concurrency_cap",
+                "message": (
+                    "LLM ranker at concurrency limit; "
+                    "results reflect deterministic Stage-A scoring only. "
+                    "Callers requiring LLM-ranked suggestions may retry."
+                ),
+            }
+        ]
         return result, "error", "concurrency_cap", None
 
     allowed = {item["slug"] for item in stage_a_candidates}
@@ -189,17 +211,50 @@ def apply_rerank(
                 _record_failure()
                 result = dict(stage_a_result)
                 result["degraded"] = True
+                result["warnings"] = [
+                    {
+                        "code": "ranker_degraded",
+                        "reason": "invalid_output",
+                        "message": (
+                            "LLM ranker returned unparseable output; "
+                            "results reflect deterministic Stage-A scoring only. "
+                            "Callers requiring LLM-ranked suggestions may retry."
+                        ),
+                    }
+                ]
                 return result, "invalid_output", "invalid_output", rank_execution_id
     except httpx.TimeoutException:
         _record_failure()
         result = dict(stage_a_result)
         result["degraded"] = True
+        result["warnings"] = [
+            {
+                "code": "ranker_degraded",
+                "reason": "timeout",
+                "message": (
+                    "LLM ranker did not complete within the timeout budget; "
+                    "results reflect deterministic Stage-A scoring only. "
+                    "Callers requiring LLM-ranked suggestions may retry."
+                ),
+            }
+        ]
         return result, "timeout", "timeout", rank_execution_id
     except Exception:
         logger.warning("skill_suggest rerank failed", exc_info=True)
         _record_failure()
         result = dict(stage_a_result)
         result["degraded"] = True
+        result["warnings"] = [
+            {
+                "code": "ranker_degraded",
+                "reason": "error",
+                "message": (
+                    "LLM ranker encountered an error; "
+                    "results reflect deterministic Stage-A scoring only. "
+                    "Callers requiring LLM-ranked suggestions may retry."
+                ),
+            }
+        ]
         return result, "error", "error", rank_execution_id
     finally:
         _semaphore.release()

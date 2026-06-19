@@ -84,10 +84,7 @@ only. Until that ships, **`loaded[]` is agent-maintained**.
 task context + `LOADED`, then call `skill_suggest` to surface slugs you may have missed.
 Accept or reject each hit on merits.
 
-**Dispatch path (claude-web):** worker-hop relay is **Stage-A + agent judgment only**.
-Stage-B rerank (`skill-suggest-rank` pipeline) is **server-env-gated experimental-off**
-(`SKILL_SUGGEST_RERANK_ENABLED`, default false) — not agent-facing; do not attempt to
-toggle it from MCP calls.
+**Dispatch path (claude-web):** worker-hop relay uses **LLM reasoning over an extended candidate set** — Stargate `contract="light-bounded"` worker receives the full Stage-A candidate pool (`all_candidates`, score ≥ 0) and reorders/prunes via judgment. On timeout or error the relay falls back to Stage-A with `ranker_status="deterministic_fallback"`. Stage-B pipeline rerank (`skill-suggest-rank`, `SKILL_SUGGEST_RERANK_ENABLED`, default false) is a separate, server-env-gated experimental feature on the **direct** (non-worker) path — not agent-facing; do not attempt to toggle it from MCP calls.
 
 ### Batch preload (turn 1)
 

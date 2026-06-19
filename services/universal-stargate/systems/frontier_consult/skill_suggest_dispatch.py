@@ -9,6 +9,14 @@ import uuid
 from typing import Any, Literal
 
 import httpx
+from cortex_store.routes._skill_index import index_envelope_fields
+from cortex_store.routes._skill_suggest import (
+    _humanize_slug,
+    _is_loaded,
+    build_loaded_set,
+    norm_loaded,
+    slug_from_source_uri,
+)
 from cortex_store.seat_applicability import canonical_seat_or_422
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
@@ -38,6 +46,7 @@ _WAIT_CHUNK_SECONDS = 60.0
 _CORTEX_TIMEOUT = 30.0
 _ACK_WINDOW_SECONDS = 3.0
 _ACK_POLL_INTERVAL = 0.5
+_BACKSTOP_SCORE = 10.0
 
 
 class SkillSuggestDispatchRequest(BaseModel):
@@ -45,6 +54,7 @@ class SkillSuggestDispatchRequest(BaseModel):
 
     agent: str
     loaded: list[str]
+    entity_ids: list[str] | None = None
     conversation_context: str | None = None
     limit: int = Field(default=8, ge=1, le=25)
     prefer_worker: bool = Field(default=True)
@@ -199,6 +209,233 @@ async def await_worker_ack(
     return False
 
 
+def _skill_source_uri(entity: dict[str, Any]) -> str | None:
+    top = entity.get("source_uri")
+    if top and str(top).strip():
+        return str(top).strip()
+    attrs = entity.get("attributes") or {}
+    if isinstance(attrs, dict):
+        raw = attrs.get("source_uri")
+        if raw and str(raw).strip():
+            return str(raw).strip()
+    return None
+
+
+def _entity_required_skills(entity: dict[str, Any]) -> list[str]:
+    attrs = entity.get("attributes") or {}
+    if not isinstance(attrs, dict):
+        return []
+    raw = attrs.get("required_skills")
+    if not isinstance(raw, list):
+        return []
+    return [str(s).strip() for s in raw if str(s).strip()]
+
+
+async def _cortex_entity_get(
+    client: httpx.AsyncClient, entity_id: str
+) -> dict[str, Any] | None:
+    try:
+        resp = await client.post(
+            "/dispatch",
+            json={"tool": "entity_get", "arguments": {"entity_id": entity_id}},
+        )
+    except httpx.HTTPError as exc:
+        logger.warning(
+            "skill_suggest backstop entity_get transport error id=%s error=%s",
+            entity_id,
+            exc,
+        )
+        return None
+    if resp.status_code >= 400:
+        logger.warning(
+            "skill_suggest backstop entity_get rejected id=%s status=%s body=%s",
+            entity_id,
+            resp.status_code,
+            resp.text[:200],
+        )
+        return None
+    data = resp.json()
+    return data if isinstance(data, dict) else None
+
+
+async def _collect_required_skill_slugs(
+    entity_ids: list[str], client: httpx.AsyncClient
+) -> list[str]:
+    slugs: list[str] = []
+    for entity_id in entity_ids:
+        entity = await _cortex_entity_get(client, entity_id)
+        if entity is None:
+            continue
+        for slug in _entity_required_skills(entity):
+            if slug not in slugs:
+                slugs.append(slug)
+    return slugs
+
+
+def _backstop_suggestion(
+    *,
+    skill_entity: dict[str, Any],
+    slug: str,
+    source_uri: str,
+) -> dict[str, Any]:
+    entity_id = str(skill_entity.get("id") or f"agent_skill:{slug}")
+    row = {
+        "id": entity_id,
+        "name": skill_entity.get("name") or slug,
+        "source_uri": source_uri,
+        "description": skill_entity.get("description"),
+    }
+    envelope = index_envelope_fields(row)
+    parsed_slug = slug_from_source_uri(source_uri) or slug
+    raw_description = str(row.get("description") or "").strip()
+    description = raw_description or _humanize_slug(parsed_slug)
+    return {
+        "id": entity_id,
+        "slug": parsed_slug,
+        "source_uri": envelope.get("source_uri"),
+        "digest": envelope.get("digest"),
+        "score": _BACKSTOP_SCORE,
+        "description": description,
+        "reason": "required_skills_backstop",
+        "reason_source": "deterministic",
+    }
+
+
+async def apply_required_skills_backstop(
+    result: dict[str, Any],
+    *,
+    entity_ids: list[str] | None,
+    loaded: list[str],
+) -> dict[str, Any]:
+    """Pin bound-entity required_skills into suggestions (todo backstop)."""
+    if not entity_ids:
+        return result
+
+    loaded_set = build_loaded_set(loaded)
+    suggestions = list(result.get("suggestions") or [])
+    degraded_skills = list(result.get("degraded_skills") or [])
+    present_slugs = {
+        norm_loaded(str(item.get("slug") or ""))
+        for item in suggestions
+        if isinstance(item, dict)
+    }
+    present_degraded_ids = {
+        str(item.get("id") or "")
+        for item in degraded_skills
+        if isinstance(item, dict)
+    }
+
+    async with make_async_client(DEFAULT_CORTEX_URL, timeout=_CORTEX_TIMEOUT) as client:
+        required_slugs = await _collect_required_skill_slugs(entity_ids, client)
+        for slug in required_slugs:
+            entity_id = f"agent_skill:{slug}"
+            if _is_loaded(slug, entity_id, loaded_set):
+                continue
+            slug_norm = norm_loaded(slug)
+            if slug_norm in present_slugs:
+                continue
+
+            skill_entity = await _cortex_entity_get(client, entity_id)
+            if skill_entity is None:
+                continue
+
+            source_uri = _skill_source_uri(skill_entity)
+            if not source_uri:
+                if entity_id not in present_degraded_ids:
+                    attrs = skill_entity.get("attributes") or {}
+                    skill_category = ""
+                    if isinstance(attrs, dict):
+                        skill_category = str(attrs.get("skill_category") or "")
+                    degraded_skills.append(
+                        {
+                            "id": entity_id,
+                            "name": str(skill_entity.get("name") or slug),
+                            "source_uri": source_uri,
+                            "skill_category": skill_category,
+                            "degraded": True,
+                            "reason": "source_uri_null",
+                        }
+                    )
+                    present_degraded_ids.add(entity_id)
+                continue
+
+            suggestions.append(
+                _backstop_suggestion(
+                    skill_entity=skill_entity,
+                    slug=slug,
+                    source_uri=source_uri,
+                )
+            )
+            present_slugs.add(slug_norm)
+
+    def _suggestion_sort_key(item: dict[str, Any]) -> tuple[float, str]:
+        return (-float(item.get("score") or 0), str(item.get("slug") or ""))
+
+    suggestions.sort(key=_suggestion_sort_key)
+    out = dict(result)
+    out["suggestions"] = suggestions
+    out["degraded_skills"] = degraded_skills
+    out["count"] = len(suggestions)
+    if degraded_skills:
+        out["degraded"] = True
+    return out
+
+
+async def _finalize_dispatch_result(
+    result: dict[str, Any], body: SkillSuggestDispatchRequest
+) -> dict[str, Any]:
+    return await apply_required_skills_backstop(
+        result,
+        entity_ids=body.entity_ids,
+        loaded=body.loaded,
+    )
+
+
+async def _fetch_extended_candidates(
+    *,
+    agent: str,
+    loaded: list[str],
+    conversation_context: str | None,
+) -> tuple[list[dict[str, Any]], list[str], list[str]]:
+    """Pre-fetch full seat-applicable candidate set for light-bounded worker."""
+    payload: dict[str, Any] = {
+        "agent": agent,
+        "loaded": loaded,
+        "limit": 25,
+    }
+    if conversation_context is not None:
+        payload["conversation_context"] = conversation_context
+    async with make_async_client(DEFAULT_CORTEX_URL, timeout=_CORTEX_TIMEOUT) as client:
+        resp = await client.post(
+            "/skills/suggest",
+            json=payload,
+            headers={
+                "X-Cortex-Transport": "stargate",
+                "X-Skill-Include-All": "true",
+            },
+        )
+    if resp.status_code >= 400:
+        logger.warning(
+            "skill_suggest extended candidates rejected: status=%s body=%s",
+            resp.status_code,
+            resp.text[:200],
+        )
+        return [], [], []
+    data = resp.json()
+    if not isinstance(data, dict):
+        return [], [], []
+    candidates = data.get("stage_a_extended_candidates")
+    if not isinstance(candidates, list):
+        return [], [], []
+    loaded_echo = data.get("loaded_echo")
+    seat_preloaded = data.get("seat_preloaded")
+    return (
+        [item for item in candidates if isinstance(item, dict)],
+        loaded_echo if isinstance(loaded_echo, list) else [],
+        seat_preloaded if isinstance(seat_preloaded, list) else [],
+    )
+
+
 async def run_fallback(
     *,
     agent: str,
@@ -229,6 +466,41 @@ async def run_fallback(
     result["route"] = "fallback"
     result["dispatch_execution_id"] = None
     return result
+
+
+async def _run_fallback_degraded(
+    *,
+    agent: str,
+    loaded: list[str],
+    conversation_context: str | None,
+    limit: int,
+    degraded_reason: str,
+) -> dict[str, Any]:
+    result = await run_fallback(
+        agent=agent,
+        loaded=loaded,
+        conversation_context=conversation_context,
+        limit=limit,
+    )
+    result["degraded"] = True
+    result["degraded_reason"] = degraded_reason
+    return result
+
+
+def _hallucinated_suggestion_slugs(
+    envelope: dict[str, Any], all_candidates: list[dict[str, Any]]
+) -> set[str]:
+    allowed = {
+        str(item.get("slug") or "")
+        for item in all_candidates
+        if isinstance(item, dict) and item.get("slug")
+    }
+    suggestion_slugs = {
+        str(item.get("slug") or "")
+        for item in envelope.get("suggestions") or []
+        if isinstance(item, dict) and item.get("slug")
+    }
+    return suggestion_slugs - allowed
 
 
 async def dispatch_skill_suggest(
@@ -265,14 +537,20 @@ async def dispatch_skill_suggest(
                 latency_ms=int((time.monotonic() - t0) * 1000),
             )
         )
-        return result
+        return await _finalize_dispatch_result(result, body)
 
     workspaces_root = _workspaces_root().resolve()
+    all_candidates, _, _ = await _fetch_extended_candidates(
+        agent=canonical_agent,
+        loaded=body.loaded,
+        conversation_context=body.conversation_context,
+    )
     message = build_worker_message(
         loaded=body.loaded,
         conversation_context=body.conversation_context,
         agent=canonical_agent,
         limit=body.limit,
+        all_candidates=all_candidates,
     )
     t0 = time.monotonic()
     execution_id: str | None = None
@@ -283,7 +561,7 @@ async def dispatch_skill_suggest(
             model=None,
             subject=f"skill-suggest dispatch — {request_id[:8]}",
             caller_agent=canonical_agent,
-            contract="pure-mechanical",
+            contract="light-bounded",
             packet_path=None,
             message_text=message,
             read_only=True,
@@ -304,7 +582,7 @@ async def dispatch_skill_suggest(
                 latency_ms=int((time.monotonic() - t0) * 1000),
             )
         )
-        return result
+        return await _finalize_dispatch_result(result, body)
 
     execution_id = str(dispatch_result.get("execution_id") or "")
     thread_id = str(dispatch_result.get("thread_id") or "")
@@ -330,7 +608,7 @@ async def dispatch_skill_suggest(
                 latency_ms=int((time.monotonic() - t0) * 1000),
             )
         )
-        return result
+        return await _finalize_dispatch_result(result, body)
 
     if str(dispatch_result.get("status") or "") == "queued":
         acked = await await_worker_ack(thread_id=thread_id)
@@ -350,30 +628,20 @@ async def dispatch_skill_suggest(
                     latency_ms=int((time.monotonic() - t0) * 1000),
                 )
             )
-            return result
+            return await _finalize_dispatch_result(result, body)
 
     closeout_body = await await_worker_reply(
         thread_id=thread_id,
         worker_timeout_seconds=body.worker_timeout_seconds,
     )
-    degraded_reason: str | None = None
-    envelope: dict[str, Any] | None = None
-    if closeout_body:
-        envelope = parse_envelope_from_closeout(
-            closeout_body,
-            canonical_agent=canonical_agent,
-            workspaces_root=workspaces_root,
-        )
-    if envelope is None:
-        if closeout_body is None:
-            degraded_reason = "worker_timeout"
-        else:
-            degraded_reason = "parse_or_sidecar_failure"
-        result = await run_fallback(
+    if closeout_body is None:
+        degraded_reason = "worker_timeout"
+        result = await _run_fallback_degraded(
             agent=canonical_agent,
             loaded=body.loaded,
             conversation_context=body.conversation_context,
             limit=body.limit,
+            degraded_reason=degraded_reason,
         )
         _publish_event(
             FrontierSkillSuggestDispatchDegraded(
@@ -384,7 +652,52 @@ async def dispatch_skill_suggest(
                 latency_ms=int((time.monotonic() - t0) * 1000),
             )
         )
-        return result
+        return await _finalize_dispatch_result(result, body)
+
+    envelope = parse_envelope_from_closeout(
+        closeout_body,
+        canonical_agent=canonical_agent,
+        workspaces_root=workspaces_root,
+    )
+    if envelope is None:
+        degraded_reason = "parse_or_sidecar_failure"
+        result = await _run_fallback_degraded(
+            agent=canonical_agent,
+            loaded=body.loaded,
+            conversation_context=body.conversation_context,
+            limit=body.limit,
+            degraded_reason=degraded_reason,
+        )
+        _publish_event(
+            FrontierSkillSuggestDispatchDegraded(
+                request_id=request_id,
+                agent=canonical_agent,
+                route="fallback",
+                reason=degraded_reason,
+                latency_ms=int((time.monotonic() - t0) * 1000),
+            )
+        )
+        return await _finalize_dispatch_result(result, body)
+
+    if _hallucinated_suggestion_slugs(envelope, all_candidates):
+        degraded_reason = "hallucinated_slugs"
+        result = await _run_fallback_degraded(
+            agent=canonical_agent,
+            loaded=body.loaded,
+            conversation_context=body.conversation_context,
+            limit=body.limit,
+            degraded_reason=degraded_reason,
+        )
+        _publish_event(
+            FrontierSkillSuggestDispatchDegraded(
+                request_id=request_id,
+                agent=canonical_agent,
+                route="fallback",
+                reason=degraded_reason,
+                latency_ms=int((time.monotonic() - t0) * 1000),
+            )
+        )
+        return await _finalize_dispatch_result(result, body)
 
     envelope["route"] = "worker"
     envelope["dispatch_execution_id"] = execution_id or None
@@ -397,7 +710,7 @@ async def dispatch_skill_suggest(
             latency_ms=int((time.monotonic() - t0) * 1000),
         )
     )
-    return envelope
+    return await _finalize_dispatch_result(envelope, body)
 
 
 @skills_router.post(

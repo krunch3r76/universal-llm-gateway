@@ -210,9 +210,9 @@ def test_suggestions_expose_description_not_tags() -> None:
 
 
 @pytest.mark.offline
-def test_skill_suggest_rerank_status_remains_disabled_by_default() -> None:
+def test_skill_suggest_rerank_status_remains_deterministic_fallback_by_default() -> None:
     result = _run(_handoff_conn(), _HANDOFF_CONTEXT)
-    assert result["ranker_status"] == "disabled"
+    assert result["ranker_status"] == "deterministic_fallback"
 
 
 def _generic_phrase_conn() -> sqlite3.Connection:

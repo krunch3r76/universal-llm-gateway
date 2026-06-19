@@ -362,6 +362,8 @@ _CLAIM_BREVITY_THRESHOLD = 300
 def check_claim_brevity(
     claim: str,
     evidence_uris: list[str] | None,
+    entity_id: str | None = None,
+    acknowledge_audit_gaps: list[str] | None = None,
 ) -> list[dict[str, str]]:
     """Advisory check: long inline claim with no sidecar (friction 16982).
 
@@ -371,6 +373,15 @@ def check_claim_brevity(
     evidence_uris point at a sidecar: a long claim that already references a
     sidecar via evidence_uris is the desired shape, not a violation.
 
+    Suppressed for ``service:`` entities whose claims begin with ``[`` (friction
+    observation pattern) — these entities are consumed by LLM ranking pipelines
+    (skill_suggest, etc.) that use the full claim text for matching. Shortening
+    those claims would degrade ranking quality rather than improve it (#20155).
+
+    Per-assert opt-out: pass ``acknowledge_audit_gaps=['long_claim_beneficial']``
+    when the caller has a documented reason to keep the claim verbose (e.g. the
+    claim body directly feeds an LLM ranking or retrieval pipeline).
+
     The brief-claim + sidecar pattern (analogous to the agent-bus brief-body
     convention): keep the claim to a one/two-sentence index entry; move prose,
     code blocks, and numbered detail into a Cortex sidecar referenced by
@@ -378,6 +389,20 @@ def check_claim_brevity(
     and boot-card surface permanently. See agent_skill:cortex-orientation.
     """
     if len(claim) <= _CLAIM_BREVITY_THRESHOLD or evidence_uris:
+        return []
+
+    # Context-sensitive suppression: service: entities with friction-style claims
+    # feed LLM ranking pipelines where claim verbosity improves matching quality.
+    if (
+        entity_id
+        and entity_id.startswith("service:")
+        and claim.lstrip().startswith("[")
+    ):
+        return []
+
+    # Per-assert opt-out via acknowledge_audit_gaps.
+    ack = set(acknowledge_audit_gaps or [])
+    if "long_claim_beneficial" in ack:
         return []
 
     return [
@@ -390,7 +415,9 @@ def check_claim_brevity(
                 "entity_get, search hit, and boot-card surface permanently. "
                 "Shorten the claim to a one/two-sentence summary, move the detail "
                 "to a Cortex sidecar, and set evidence_uris to point at it "
-                "(brief-claim + sidecar pattern). See agent_skill:cortex-orientation."
+                "(brief-claim + sidecar pattern). To suppress when verbosity is "
+                "intentional, pass acknowledge_audit_gaps=['long_claim_beneficial']. "
+                "See agent_skill:cortex-orientation."
             ),
         }
     ]
