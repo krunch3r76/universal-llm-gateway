@@ -4,12 +4,14 @@
 # Ensure we use bash
 SHELL := /usr/bin/env bash
 
-.PHONY: help verify-uml status
+.PHONY: help verify-uml status skill-graph-check skill-graph-reconcile
 
 help:
 	@echo "Available targets:"
 	@echo "  verify-uml    - Verify PlantUML SVG files for syntax errors"
 	@echo "  status        - Show git status"
+	@echo "  skill-graph-check     - Read-only skill graph drift check (JSON report)"
+	@echo "  skill-graph-reconcile - Explicit add+prune skill graph reconcile"
 	@echo ""
 	@echo "Git Workflow:"
 	@echo "  This is a simple monorepo. Use standard git commands:"
@@ -31,3 +33,9 @@ verify-uml:
 		echo ">>> verify-plantuml-svg.sh ."; \
 		verify-plantuml-svg.sh .; \
 	fi
+
+skill-graph-check:
+	python scripts/cortex/ingest_skills.py --check --report
+
+skill-graph-reconcile:
+	python scripts/cortex/ingest_skills.py

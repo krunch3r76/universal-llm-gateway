@@ -496,3 +496,72 @@ def cortex_pinned_deliverable_written(
     )
     record(ev.signal, **ev.payload)
     return ev
+
+
+@event_factory
+def cortex_skill_graph_drift_checked(
+    *,
+    drift_count: int,
+    stale_edges: int,
+    missing_edges: int,
+    last_clean_ts: str | None,
+    clean: bool,
+    exit_code: int,
+    consecutive_dirty_runs: int,
+) -> Event:
+    """cortex.skill_graph.drift.checked — periodic read-only drift metrics."""
+    ev = Event(
+        signal="cortex.skill_graph.drift.checked",
+        role="observation",
+        scope="global",
+        payload={
+            "drift_count": drift_count,
+            "stale_edges": stale_edges,
+            "missing_edges": missing_edges,
+            "last_clean_ts": last_clean_ts,
+            "clean": clean,
+            "exit_code": exit_code,
+            "consecutive_dirty_runs": consecutive_dirty_runs,
+        },
+    )
+    record(ev.signal, **ev.payload)
+    return ev
+
+
+@event_factory
+def cortex_skill_graph_drift_alert(
+    *,
+    drift_count: int,
+    stale_edges: int,
+    missing_edges: int,
+    consecutive_dirty_runs: int,
+    thread: str,
+) -> Event:
+    """cortex.skill_graph.drift.alert — hysteresis threshold breach."""
+    ev = Event(
+        signal="cortex.skill_graph.drift.alert",
+        role="coordination",
+        scope="global",
+        payload={
+            "drift_count": drift_count,
+            "stale_edges": stale_edges,
+            "missing_edges": missing_edges,
+            "consecutive_dirty_runs": consecutive_dirty_runs,
+            "thread": thread,
+        },
+    )
+    record(ev.signal, **ev.payload)
+    return ev
+
+
+@event_factory
+def cortex_skill_graph_drift_sweep_failed(*, error: str) -> Event:
+    """cortex.skill_graph.drift.sweep.failed — monitor sweep exception."""
+    ev = Event(
+        signal="cortex.skill_graph.drift.sweep.failed",
+        role="observation",
+        scope="global",
+        payload={"error": error},
+    )
+    record(ev.signal, **ev.payload)
+    return ev

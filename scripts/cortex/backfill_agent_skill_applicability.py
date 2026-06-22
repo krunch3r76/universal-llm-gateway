@@ -131,6 +131,7 @@ PARTITION: dict[str, list[str]] = {
         "agent_skill:add-mcp-tool",
         "agent_skill:agent-bus-multitask",
         "agent_skill:agent-guidance-writing",
+        "agent_skill:handoff-prompt-authoring",
         "agent_skill:build-pipeline",
         "agent_skill:cursor-rule-authoring",
         "agent_skill:debug-with-events",

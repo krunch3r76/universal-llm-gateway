@@ -57,7 +57,7 @@ from services.git_integration_worker.cursor_models import (
 )
 from services.git_integration_worker.cursor_sdk_closeout import (
     SdkRunOutcome,
-    capture_wt_baseline,
+    capture_wt_baseline_with_hashes,
     count_tool_calls,
     degraded_implement_reason,
     empty_output_degraded_reason,
@@ -90,6 +90,10 @@ from services.git_integration_worker.cursor_sdk_gate import (
     acquire_sdk_dispatch_slot,
     force_release_sdk_dispatch_slot,
     release_sdk_dispatch_slot_sync,
+)
+from services.git_integration_worker.cursor_sdk_manifest import (
+    build_effects_manifest,
+    classify_mcp_capture_branch,
 )
 from services.git_integration_worker.cursor_sdk_packet import (
     extract_source_ref_from_packet,
@@ -408,11 +412,20 @@ def _run_sdk_sync(
                 )
                 result = run.wait()
                 turns = run.conversation()
+                capture_branch = classify_mcp_capture_branch(turns)
+                effects_manifest = build_effects_manifest(
+                    dispatch_id=dispatch_id,
+                    thread_id=thread_id,
+                    turns=turns,
+                    capture_branch=capture_branch,
+                )
                 return SdkRunOutcome(
                     body=resolve_run_body(result.result, turns),
                     status=str(result.status),
                     duration_ms=result.duration_ms,
                     tool_call_count=count_tool_calls(turns),
+                    effects_manifest=effects_manifest,
+                    capture_branch=capture_branch,
                 )
             finally:
                 hb_stop.set()
@@ -484,12 +497,13 @@ async def _start_promoted_dispatch(
     cfg = _config(request) if request is not None else _CONFIG
     contract = (promoted.contract or "consult").lower()
     if contract == "implement":
-        baseline_map = await asyncio.to_thread(capture_wt_baseline, cfg.source_repo)
-        await asyncio.to_thread(
-            ledger.set_wt_baseline,
-            dispatch_id=promoted.dispatch_id,
-            wt_baseline=json.dumps(baseline_map),
-        )
+        baseline_map = await asyncio.to_thread(capture_wt_baseline_with_hashes, cfg.source_repo)
+        if baseline_map is not None:
+            await asyncio.to_thread(
+                ledger.set_wt_baseline,
+                dispatch_id=promoted.dispatch_id,
+                wt_baseline=json.dumps(baseline_map),
+            )
     try:
         ticket = controller.try_admit(
             "cursor_sdk",
@@ -615,6 +629,7 @@ async def _deliver_sdk_closeout(
     work_item_ref: str | None,
     controller: WorkAdmissionController,
     packet_text: str = "",
+    deliverables_expected: bool = False,
 ) -> None:
     baseline = await asyncio.to_thread(
         CursorDispatchLedger.instance().read_wt_baseline,
@@ -629,6 +644,7 @@ async def _deliver_sdk_closeout(
         work_item_ref=work_item_ref,
         baseline=baseline,
         packet_text=packet_text or None,
+        deliverables_expected=deliverables_expected,
     )
     run_outcome = resolve_run_outcome_label(degraded_reason)
     if delivery.closeout_status.value == "partial":
@@ -979,6 +995,7 @@ async def _finalize_success(
         work_item_ref=work_item_ref,
         controller=controller,
         packet_text=packet_text,
+        deliverables_expected=contract == "implement",
     )
 
 
@@ -1102,12 +1119,13 @@ async def cursor_dispatch(
         return JSONResponse(status_code=status_code, content=cached.model_dump())
 
     if contract == "implement":
-        baseline_map = await asyncio.to_thread(capture_wt_baseline, cfg.source_repo)
-        await asyncio.to_thread(
-            ledger.set_wt_baseline,
-            dispatch_id=req.dispatch_id,
-            wt_baseline=json.dumps(baseline_map),
-        )
+        baseline_map = await asyncio.to_thread(capture_wt_baseline_with_hashes, cfg.source_repo)
+        if baseline_map is not None:
+            await asyncio.to_thread(
+                ledger.set_wt_baseline,
+                dispatch_id=req.dispatch_id,
+                wt_baseline=json.dumps(baseline_map),
+            )
 
     # Reserve the admission ticket synchronously. try_admit re-checks drain with
     # no await between the check and the reservation; if a drain began during the

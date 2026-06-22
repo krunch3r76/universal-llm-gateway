@@ -6,6 +6,8 @@ module or directly by uvicorn (``cortex_store.main:create_app``).
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -47,6 +49,7 @@ from .routes import (
     todo_retrieval,
 )
 from .scoring import compact_access_log
+from .skill_graph_drift_monitor import run_skill_graph_drift_monitor
 
 logger = get_logger("cortex-api")
 
@@ -114,8 +117,22 @@ def create_app(*, db_path: str | None = None) -> FastAPI:
         else:
             logger.warning("cortex.db not found — skipping migrations")
 
+        monitor_enabled = os.environ.get(
+            "CORTEX_SKILL_GRAPH_DRIFT_MONITOR", "true"
+        ).lower() in ("true", "1", "yes")
+        monitor_task: asyncio.Task[None] | None = None
+        if monitor_enabled:
+            monitor_task = asyncio.create_task(run_skill_graph_drift_monitor())
+            logger.info("skill-graph drift monitor started")
+
         logger.info("cortex-api started")
-        yield
+        try:
+            yield
+        finally:
+            if monitor_task is not None:
+                monitor_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await monitor_task
 
     app = FastAPI(
         title="cortex-api",

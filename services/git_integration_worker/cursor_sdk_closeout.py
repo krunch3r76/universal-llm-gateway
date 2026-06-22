@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
+from implement_admission.closeout_helpers import cortex_files_root
 from implement_admission.closeout_models import (
+    EffectsManifest,
     EvidenceUris,
     ImplementCloseout,
     Verification,
@@ -19,6 +23,13 @@ from implement_admission.normalize import _files_from_packet
 from implement_admission.spec import CloseoutStatus, ImplementSpec
 from universal_logging import get_logger
 
+from services.git_integration_worker.cursor_sdk_capture_status import (
+    ChangeSet,
+    baseline_dirty_in_expected,
+    degrade_status_for_capture,
+    normalize_wt_baseline,
+    resolve_closeout_capture_fields,
+)
 from services.git_integration_worker.cursor_sdk_deliverables import (
     artifact_paths_for_closeout,
     cortex_expected_rels,
@@ -26,6 +37,17 @@ from services.git_integration_worker.cursor_sdk_deliverables import (
     resolve_cortex_pinned_deliverables,
     sidecar_workspaces_ref,
     write_repo_sidecar,
+)
+from services.git_integration_worker.cursor_sdk_manifest import (
+    CaptureBranch,
+    compact_manifest_for_body,
+    merge_wrapper_manifest,
+    no_capture_degraded_reason,
+    resolve_repo_change_set,
+    serialize_effects_manifest_for_body,
+)
+from services.git_integration_worker.cursor_sdk_manifest import (
+    verification_change_set as build_verification_change_set,
 )
 
 logger = get_logger(__name__)
@@ -40,13 +62,8 @@ class SdkRunOutcome:
     status: str
     duration_ms: int
     tool_call_count: int
-
-
-@dataclass(frozen=True)
-class ChangeSet:
-    created: tuple[str, ...]
-    modified: tuple[str, ...]
-    deleted: tuple[str, ...]
+    effects_manifest: EffectsManifest | None = None
+    capture_branch: CaptureBranch | None = None
 
 
 @dataclass(frozen=True)
@@ -81,7 +98,15 @@ def _parse_porcelain_z(raw: bytes) -> dict[str, str]:
     return entries
 
 
-def capture_wt_baseline(source_repo: Path) -> dict[str, str]:
+def _hash_worktree_file(source_repo: Path, path: str) -> str | None:
+    try:
+        data = (source_repo / path).read_bytes()
+    except OSError:
+        return None
+    return hashlib.sha256(data).hexdigest()
+
+
+def capture_wt_baseline(source_repo: Path) -> dict[str, str] | None:
     """Snapshot working-tree paths at admit for later delta isolation."""
     try:
         proc = subprocess.run(
@@ -100,21 +125,44 @@ def capture_wt_baseline(source_repo: Path) -> dict[str, str]:
         )
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as exc:
         logger.warning("wt baseline capture failed for repo=%s: %s", source_repo, exc)
-        return {}
+        return None
     return _parse_porcelain_z(proc.stdout)
 
 
-def changed_paths(source_repo: Path, baseline: dict[str, str] | None) -> ChangeSet:
+def capture_wt_baseline_with_hashes(source_repo: Path) -> dict[str, Any] | None:
+    """Porcelain codes plus content hashes for paths dirty at admit."""
+    codes = capture_wt_baseline(source_repo)
+    if codes is None:
+        return None
+    hashes: dict[str, str] = {}
+    for path in codes:
+        digest = _hash_worktree_file(source_repo, path)
+        if digest is not None:
+            hashes[path] = digest
+    return {"codes": codes, "hashes": hashes}
+
+
+def _split_baseline(
+    baseline: dict[str, Any] | None,
+) -> tuple[dict[str, str], dict[str, str]]:
+    return normalize_wt_baseline(baseline)
+
+
+def changed_paths(
+    source_repo: Path, baseline: dict[str, Any] | None
+) -> ChangeSet:
     """Derive created/modified/deleted paths vs an admit-time baseline."""
     current = capture_wt_baseline(source_repo)
-    base = baseline or {}
+    if current is None:
+        return ChangeSet(created=(), modified=(), deleted=())
+    codes, hashes = _split_baseline(baseline)
     created: list[str] = []
     modified: list[str] = []
     deleted: list[str] = []
-    all_paths = set(current) | set(base)
+    all_paths = set(current) | set(codes)
     for path in sorted(all_paths):
         cur = current.get(path)
-        prev = base.get(path)
+        prev = codes.get(path)
         if cur is None and prev is not None:
             deleted.append(path)
         elif cur is not None and prev is None:
@@ -124,6 +172,13 @@ def changed_paths(source_repo: Path, baseline: dict[str, str] | None) -> ChangeS
                 modified.append(path)
         elif cur is not None and prev is not None and cur != prev:
             modified.append(path)
+        elif cur is not None and prev is not None and cur == prev and path in hashes:
+            current_hash = _hash_worktree_file(source_repo, path)
+            if current_hash is not None and current_hash != hashes[path]:
+                if prev.startswith("?"):
+                    created.append(path)
+                else:
+                    modified.append(path)
     return ChangeSet(
         created=tuple(created),
         modified=tuple(modified),
@@ -132,18 +187,9 @@ def changed_paths(source_repo: Path, baseline: dict[str, str] | None) -> ChangeS
 
 
 def _baseline_dirty_in_expected(
-    baseline: dict[str, str] | None, files_expected: list[str]
+    baseline: dict[str, Any] | None, files_expected: list[str]
 ) -> bool:
-    if not baseline or not files_expected:
-        return False
-    from implement_admission.deliverable_verification import _normalize_expected_path
-
-    expected = {_normalize_expected_path(p) for p in files_expected}
-    for path in baseline:
-        norm = path.lstrip("/")
-        if norm in expected or any(norm.endswith(f"/{exp}") for exp in expected):
-            return True
-    return False
+    return baseline_dirty_in_expected(baseline, files_expected)
 
 
 def _files_expected_from_packet(packet_text: str | None) -> list[str]:
@@ -159,8 +205,14 @@ def verify_deliverables(
     outcome: SdkRunOutcome,
     sidecar_path: Path | None,
     files_expected: list[str] | None = None,
-    baseline: dict[str, str] | None = None,
+    baseline: dict[str, Any] | None = None,
+    source_repo: Path | None = None,
 ) -> list[Verification]:
+    """Gate-D probe; ``source_repo`` enables on-disk backstop for uncaptured repo paths.
+
+    See ``classify_capture_status`` for the repo capture trust boundary (porcelain +
+    manifest fold vs shell side effects).
+    """
     expected = files_expected or (spec.scope.files_expected if spec else [])
     closeout_probe = ImplementCloseout(
         status=CloseoutStatus.COMPLETE,
@@ -179,6 +231,7 @@ def verify_deliverables(
         tool_call_count=outcome.tool_call_count,
         baseline_dirty_in_expected=_baseline_dirty_in_expected(baseline, expected),
         files_expected=expected,
+        source_repo=source_repo,
     )
 
 
@@ -196,6 +249,10 @@ def degraded_implement_reason(outcome: SdkRunOutcome) -> str | None:
         return f"run_status={outcome.status}"
     if outcome.tool_call_count == 0:
         return "zero_tool_calls"
+    if outcome.capture_branch:
+        no_capture = no_capture_degraded_reason(outcome.capture_branch)
+        if no_capture:
+            return no_capture
     return None
 
 
@@ -239,6 +296,11 @@ def build_implement_closeout_body(
     change_set: ChangeSet | None = None,
     verification: list[Verification] | None = None,
     cortex_artifact_paths: list[str] | None = None,
+    capture_status: str | None = None,
+    divergence_reason: str | None = None,
+    deviations: list[str] | None = None,
+    effects_manifest: EffectsManifest | None = None,
+    sidecar_appendix: list[str] | None = None,
 ) -> str:
     """Build a compact, valid ImplementCloseout JSON turn body.
 
@@ -262,24 +324,54 @@ def build_implement_closeout_body(
     status = _map_closeout_status(degraded_reason)
     if verification and any(v.exit_code for v in verification):
         status = CloseoutStatus.PARTIAL
-    closeout = ImplementCloseout(
-        status=status,
-        summary=summary,
-        source_ref=work_item_ref or sidecar_ref,
-        files_created=list(change_set.created) if change_set else [],
-        files_modified=list(change_set.modified) if change_set else [],
-        files_deleted=list(change_set.deleted) if change_set else [],
-        verification=verification or [],
-        evidence_uris=EvidenceUris(
-            artifact_paths=artifact_paths_for_closeout(
-                sidecar_ref,
-                cortex_artifact_paths or [],
-            ),
-            bus_threads=[thread_id],
-            dispatch_ids=[dispatch_id],
-        ),
+    status = degrade_status_for_capture(status, capture_status, divergence_reason)
+    manifest_source = effects_manifest or outcome.effects_manifest
+    manifest_payload = serialize_effects_manifest_for_body(
+        manifest_source,
+        sidecar_appendix=sidecar_appendix,
     )
-    body = json.dumps(closeout.model_dump(mode="json"), separators=(",", ":"))
+    repo_files = change_set or ChangeSet(created=(), modified=(), deleted=())
+
+    def _render_body(
+        manifest_value: EffectsManifest | dict[str, Any] | None,
+    ) -> str:
+        closeout = ImplementCloseout(
+            status=status,
+            summary=summary,
+            source_ref=work_item_ref or sidecar_ref,
+            files_created=list(repo_files.created),
+            files_modified=list(repo_files.modified),
+            files_deleted=list(repo_files.deleted),
+            capture_status=capture_status,
+            effects_manifest=manifest_value
+            if isinstance(manifest_value, EffectsManifest)
+            else None,
+            deviations=deviations or [],
+            verification=verification or [],
+            evidence_uris=EvidenceUris(
+                artifact_paths=artifact_paths_for_closeout(
+                    sidecar_ref,
+                    cortex_artifact_paths or [],
+                ),
+                bus_threads=[thread_id],
+                dispatch_ids=[dispatch_id],
+            ),
+        )
+        payload = closeout.model_dump(mode="json")
+        if manifest_value is not None and not isinstance(manifest_value, EffectsManifest):
+            payload["effects_manifest"] = manifest_value
+        return json.dumps(payload, separators=(",", ":"))
+
+    body = _render_body(manifest_payload)
+    if len(body) > MAX_TURN_BODY_CHARS and manifest_source is not None:
+        compact_payload = compact_manifest_for_body(manifest_source)
+        if sidecar_appendix is not None and not any(
+            line.startswith("{") for line in sidecar_appendix
+        ):
+            sidecar_appendix.append(
+                json.dumps(manifest_source.model_dump(mode="json"), indent=2)
+            )
+        body = _render_body(compact_payload)
     assert len(body) <= MAX_TURN_BODY_CHARS, (
         f"structured closeout body exceeded {MAX_TURN_BODY_CHARS} chars "
         f"(len={len(body)}); dispatch_id={dispatch_id}"
@@ -295,10 +387,12 @@ def prepare_closeout_delivery(
     degraded_reason: str | None,
     thread_id: str,
     work_item_ref: str | None,
-    baseline: dict[str, str] | None = None,
+    baseline: dict[str, Any] | None = None,
     packet_text: str | None = None,
     cortex_artifact_paths: list[str] | None = None,
     gate_d_created_rels: tuple[str, ...] = (),
+    deliverables_expected: bool = False,
+    divergent_rels: tuple[str, ...] = (),
 ) -> CloseoutDelivery:
     """Sync closeout assembly (tests). Production uses ``prepare_closeout_delivery_async``."""
     return _assemble_closeout_delivery(
@@ -312,6 +406,8 @@ def prepare_closeout_delivery(
         packet_text=packet_text,
         cortex_artifact_paths=cortex_artifact_paths or [],
         gate_d_created_rels=gate_d_created_rels,
+        deliverables_expected=deliverables_expected,
+        divergent_rels=divergent_rels,
     )
 
 
@@ -323,13 +419,14 @@ async def prepare_closeout_delivery_async(
     degraded_reason: str | None,
     thread_id: str,
     work_item_ref: str | None,
-    baseline: dict[str, str] | None = None,
+    baseline: dict[str, Any] | None = None,
     packet_text: str | None = None,
+    deliverables_expected: bool = False,
 ) -> CloseoutDelivery:
     """Write sidecar, resolve pinned cortex deliverables, build closeout JSON."""
     files_expected = _files_expected_from_packet(packet_text)
     text = full_result_text(outcome.body, degraded_reason)
-    cortex_uris, gate_d_created = await resolve_cortex_pinned_deliverables(
+    pinned = await resolve_cortex_pinned_deliverables(
         files_expected=files_expected,
         full_text=text,
         source_repo=source_repo,
@@ -337,6 +434,7 @@ async def prepare_closeout_delivery_async(
         thread_id=thread_id,
     )
     expected_rels = cortex_expected_rels(files_expected)
+    gate_d_created = pinned.satisfied_rels
     if len(gate_d_created) < len(expected_rels):
         missing = [r for r in expected_rels if r not in gate_d_created]
         shown = ",".join(missing[:3])
@@ -354,8 +452,10 @@ async def prepare_closeout_delivery_async(
         baseline=baseline,
         packet_text=packet_text,
         files_expected=files_expected,
-        cortex_artifact_paths=cortex_uris,
+        cortex_artifact_paths=pinned.uris,
         gate_d_created_rels=gate_d_created,
+        deliverables_expected=deliverables_expected,
+        divergent_rels=pinned.divergent_rels,
     )
 
 
@@ -367,13 +467,16 @@ def _assemble_closeout_delivery(
     degraded_reason: str | None,
     thread_id: str,
     work_item_ref: str | None,
-    baseline: dict[str, str] | None,
+    baseline: dict[str, Any] | None,
     packet_text: str | None,
     files_expected: list[str] | None = None,
     cortex_artifact_paths: list[str],
     gate_d_created_rels: tuple[str, ...],
+    deliverables_expected: bool = False,
+    divergent_rels: tuple[str, ...] = (),
 ) -> CloseoutDelivery:
     text = full_result_text(outcome.body, degraded_reason)
+    sidecar_appendix: list[str] = []
     sidecar_path = write_repo_sidecar(source_repo, dispatch_id, text)
     sidecar_ref = sidecar_workspaces_ref(dispatch_id)
     result_bytes = len(text.encode("utf-8"))
@@ -382,25 +485,49 @@ def _assemble_closeout_delivery(
         if files_expected is not None
         else _files_expected_from_packet(packet_text)
     )
+    git_change_set = (
+        ChangeSet(created=(), modified=(), deleted=())
+        if baseline is None
+        else changed_paths(source_repo, baseline)
+    )
+    manifest = merge_wrapper_manifest(
+        dispatch_id=dispatch_id,
+        thread_id=thread_id,
+        base=outcome.effects_manifest,
+        cortex_artifact_paths=cortex_artifact_paths,
+    )
+    repo_change_set = resolve_repo_change_set(
+        manifest=manifest,
+        git_change_set=git_change_set,
+    )
+    verification_cs = build_verification_change_set(
+        repo_change_set, gate_d_created_rels
+    )
     if baseline is None:
-        change_set = ChangeSet(created=(), modified=(), deleted=())
         verification = []
     else:
-        change_set = changed_paths(source_repo, baseline)
-        if gate_d_created_rels:
-            change_set = ChangeSet(
-                created=change_set.created + gate_d_created_rels,
-                modified=change_set.modified,
-                deleted=change_set.deleted,
-            )
         verification = verify_deliverables(
             spec=None,
-            change_set=change_set,
+            change_set=verification_cs,
             outcome=outcome,
             sidecar_path=sidecar_path,
             files_expected=files_expected,
             baseline=baseline,
+            source_repo=source_repo,
         )
+    capture_status, divergence_reason, deviations, manifest = (
+        resolve_closeout_capture_fields(
+            deliverables_expected=deliverables_expected,
+            baseline=baseline,
+            files_expected=files_expected,
+            degraded_reason=degraded_reason,
+            change_set=git_change_set,
+            divergent_rels=divergent_rels,
+            source_repo=source_repo,
+            cortex_root=cortex_files_root(),
+            manifest=manifest,
+        )
+    )
     body = build_implement_closeout_body(
         dispatch_id=dispatch_id,
         outcome=outcome,
@@ -409,10 +536,22 @@ def _assemble_closeout_delivery(
         result_bytes=result_bytes,
         thread_id=thread_id,
         work_item_ref=work_item_ref,
-        change_set=change_set,
+        change_set=repo_change_set,
         verification=verification,
         cortex_artifact_paths=cortex_artifact_paths,
+        capture_status=capture_status,
+        divergence_reason=divergence_reason,
+        deviations=deviations,
+        effects_manifest=manifest,
+        sidecar_appendix=sidecar_appendix,
     )
+    if sidecar_appendix:
+        appendix = "\n\n--- effects_manifest ---\n" + "\n".join(sidecar_appendix)
+        sidecar_path.write_text(
+            sidecar_path.read_text(encoding="utf-8") + appendix,
+            encoding="utf-8",
+        )
+        result_bytes = len(sidecar_path.read_text(encoding="utf-8").encode("utf-8"))
     parsed = json.loads(body)
     return CloseoutDelivery(
         body=body,

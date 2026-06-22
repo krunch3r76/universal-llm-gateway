@@ -25,6 +25,7 @@ from typing import Any
 
 from ..db import cortex_conn
 from ._detectors._shared import SEVERITY
+from ._detectors.agent_skill import detect_agent_skill_related_skills_no_relationship
 from ._detectors.auditor import (
     detect_confirmed_attribute_no_assertion,
     detect_confirmed_entity_no_assertions,
@@ -46,6 +47,7 @@ from ._detectors.entity import (
 from ._detectors.fk_orphan import detect_foreign_key_orphan
 from ._detectors.forbidden_surfaces import detect_forbidden_surfaces
 from ._detectors.git_reconcile import detect_landed_claim_not_on_master
+from ._detectors.implement_ready_spec import detect_implement_ready_spec_unvalidated
 from ._detectors.markdown_render import (
     detect_markdown_section_drift,
     detect_marker_nesting_violation,
@@ -56,7 +58,6 @@ from ._detectors.panel_disposition import (
     detect_panel_falsifier_phase3_metric,
 )
 from ._detectors.predicate_form import detect_unresolved_bare_token_in_predicate_form
-from ._detectors.agent_skill import detect_agent_skill_related_skills_no_relationship
 from ._detectors.project import detect_project_required_skills_no_relationship
 from ._detectors.relationship import detect_dangling_relationship_target
 from ._detectors.session import detect_prior_session_id_omitted
@@ -174,6 +175,7 @@ def get_all_detectors() -> dict[str, Any]:
         "todo_dense_spec_attributes_unpopulated": detect_todo_dense_spec_attributes_unpopulated,
         "todo_implement_readiness_risk": detect_todo_implement_readiness_risk,
         "landed_claim_not_on_master": detect_landed_claim_not_on_master,
+        "implement_ready_spec_unvalidated": lambda c, s=None: [],  # DISABLED 2026-06-20: cortex_api audit context cannot read repo tasks/specs directly, so this false-positived every implement_ready (incl. the valid 20197). Template landed_claim_not_on_master routes repo reads via the git-worker; this read fs directly. Code + tests retained; needs repo-aware redesign (friction 20198 follow-up).
     }
 
 
@@ -250,6 +252,7 @@ __all__ = [
     "detect_entity_source_uri_missing",
     "detect_entity_source_uri_unresolved",
     "detect_forbidden_surfaces",
+    "detect_implement_ready_spec_unvalidated",
     "detect_landed_claim_not_on_master",
     "detect_markdown_section_drift",
     "detect_marker_nesting_violation",

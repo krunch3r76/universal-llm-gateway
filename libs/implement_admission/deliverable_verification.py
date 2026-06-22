@@ -53,6 +53,24 @@ def _paths_intersect(expected: list[str], changed: set[str]) -> bool:
     return False
 
 
+def _is_cortex_expected_path(raw: str) -> bool:
+    path = raw.strip().lower()
+    return path.startswith("cortex://") or path.startswith("cortex:")
+
+
+def _repo_expected_paths(files_expected: list[str]) -> list[str]:
+    return [p for p in files_expected if not _is_cortex_expected_path(p)]
+
+
+def _expected_repo_path_on_disk(source_repo: Path, raw: str) -> bool:
+    """Mirror cortex pinned-deliverable resolver: ``Path.is_file()`` only."""
+    rel = _normalize_expected_path(raw)
+    try:
+        return (source_repo / rel).is_file()
+    except OSError:
+        return False
+
+
 def gate_d_passed(closeout: ImplementCloseout) -> bool:
     """True when no Gate-D verification entry failed (missing entries => pass)."""
     entries = [v for v in closeout.verification if v.command.startswith(GATE_D_PREFIX)]
@@ -79,6 +97,7 @@ def evaluate_deliverable_verification(
     tool_call_count: int = 0,
     baseline_dirty_in_expected: bool = False,
     files_expected: list[str] | None = None,
+    source_repo: Path | None = None,
 ) -> list[Verification]:
     """Mechanical deliverable checks for Gate D (fail-soft; always records entries)."""
     entries: list[Verification] = []
@@ -105,10 +124,27 @@ def evaluate_deliverable_verification(
         return entries
 
     changed = _changed_path_set(closeout)
-    if files_expected and not _paths_intersect(files_expected, changed):
-        entries.append(
-            build_gate_d_verification(reason="no_expected_files_touched", passed=False)
+    if expected and not _paths_intersect(expected, changed):
+        repo_expected = _repo_expected_paths(expected)
+        uncaptured_on_disk = (
+            source_repo is not None
+            and repo_expected
+            and any(
+                _expected_repo_path_on_disk(source_repo, path) for path in repo_expected
+            )
         )
+        if uncaptured_on_disk:
+            entries.append(
+                build_gate_d_verification(
+                    reason="expected_present_on_disk_uncaptured", passed=False
+                )
+            )
+        else:
+            entries.append(
+                build_gate_d_verification(
+                    reason="no_expected_files_touched", passed=False
+                )
+            )
         return entries
 
     note = (

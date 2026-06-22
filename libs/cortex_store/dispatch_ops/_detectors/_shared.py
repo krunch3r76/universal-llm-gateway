@@ -77,6 +77,9 @@ SEVERITY = {
     # falsehood in the graph — the top (critical) tier, not hygiene. The spec's
     # "severity high" maps to this enum's "critical" (no separate high tier).
     "landed_claim_not_on_master": "critical",
+    # Implement-ready assertion vs on-disk dense-spec ground truth (friction 20198).
+    # Advisory — never blocks session close.
+    "implement_ready_spec_unvalidated": "warning",
 }
 
 # Identifier-shaped attribute value: alphanumerics + ``-._:/`` only. Used by

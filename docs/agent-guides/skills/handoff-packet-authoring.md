@@ -9,6 +9,12 @@ of ephemeral `tmp/reviews/_handoff-packet-template.md` so it cannot go missing u
 pressure (incident threads 1296/1297). Authority for the block contract: project
 `.cursor/rules/architecture-handoff-protocol.mdc` § "The Six Required Blocks".
 
+**Lightweight complement (different artifact, different audience):** this skill governs the
+heavyweight machine-dispatch packet (6 XML blocks, `team_dispatch`). The lightweight,
+human-pasteable **fresh-session kickoff/pickup prompt** an operator pastes into a new chat
+to start an orchestrator session is governed by `agent-skills/handoff-prompt-authoring.md`
+(7-part imperative template). Use that for cold-session kickoffs, this for machine dispatch.
+
 ## Spec vs packet — two different artifacts (read first)
 
 A **spec** is the durable *design* (the cargo). A **packet** is an ephemeral
@@ -300,6 +306,53 @@ transport for materialize-only (no Composer spawn):
 **Server materialization via `source_ref=todo:{slug}` is the documented Gate-3 default** for
 bound implement dispatch (`contract=implement`).
 
+## CONFORM — loose-intent → conforming-todo (the stage before Gate 3 / wrap)
+
+**Status: provisional · instrumented recipe** — ratified-with-conditions via consensus-steelman panel (thread 2831; `decision:conform-lane` / assertion 20242). Design SOT: `cortex:notes/system/specs/limb-conformance-from-intent.md`. Routing form: `consult-routing.md` § CONFORM lane.
+
+CONFORM is the transform **one stage before** Gate 3 / wrap. Where wrap (W1–W4) turns a *conforming todo* into a *materialized implement packet*, CONFORM turns *loose intent* into the **conforming todo** that wrap then consumes — its output is exactly wrap's admissible input (an implement-ready `todo:` with zero OPEN forks). The two compose:
+
+```
+loose intent → [CONFORM] → conforming todo → [Gate 3 / wrap] → materialized implement packet → [implement]
+```
+
+It is the **order-reversed mirror** of the scaffold→densify transform (`Preliminary scaffold (Composer) → densification (reasoner)`, below): there the reasoner *densifies* a worker's scaffold (worker first, judgment second — anchoring risk carried by the reasoner); in CONFORM the reasoner closes every judgment fork **first** in an intent envelope, then the worker derives only structure (judgment first, worker second). Reversing the order dissolves the anchoring hazard, leaving **conformance fidelity** as the sole residual risk.
+
+**Split of labour.** The reasoner authors a fork-free **intent envelope** (semantics): `objective` · `touch_points` · `acceptance_criteria_known` · `judgment_settled` (explicit fork-closure attestation) · `required_skills_hint?`. The `cursor-sdk` worker derives the **G1–G6 admission gates** (structure) into a conforming `todo:`. Recipe-now form is a `light-bounded` generate against a frozen envelope schema (¬ a bespoke contract yet): `team_dispatch(op=generate, role=cursor-sdk, contract=light-bounded, packet_path=<frozen-envelope instance>)`.
+
+**Antipattern distinction (vs the wrap-step-dispatch antipattern above).** The threads 1781/1785 antipattern is dispatching the *one-write wrap step* (inline W1 packetization) — disproportionate ceremony for a single write. CONFORM is **not** that: it dispatches the *heavyweight G1–G6 admission derivation*, genuinely multi-step conformance work that clears the inline-vs-dispatch threshold (`consult-routing.md`). ∀ admission (C1): judgment-settled AND above-threshold. Dispatching the bare wrap step still fails; dispatching G1–G6 derivation passes. ∀ new-protocol codification: **inadmissible** — protocol content is judgment-bearing, authored inline (this section was, dogfooding C1).
+
+**Two-layer verify-back.** Layer-1 = the wrap **precondition gate** run materialize-only — the automated half: does the conforming-todo carry an active implement-ready assertion with zero OPEN forks (the same Gate-3 precondition above)? Layer-2 = a bounded semantic diff of the 3 judgment-bearing fields only (`objective`, `acceptance_criteria_known`, `judgment_settled` attestation) — the reasoner confirms the worker did not silently re-open a closed fork.
+
+**Conditions (binding).**
+- **C2 — telemetry every run:** envelope hash, target `todo` + `spec_sha256`, Layer-1 result, Layer-2 verdict, lead active-time, worker closeout, fidelity corrections.
+- **C3 — promotion gate:** a first-class `contract=conform` with a `prepare_conforming_todo` server materializer (the W3 `prepare_implement_packet` analogue, mirroring the W3→W4 path) is **BLOCKED** until the decisive falsifier (assertion 20242) clears over N ≥ 5 real (non-dogfood) runs.
+
+## CONVERSE — clarification-dialogue → fork-free intent envelope (the stage before CONFORM)
+
+**Status: provisional · instrumented harness** — ratified-with-conditions via consensus-steelman panel (thread 2846; `decision:converse-lane` / assertion 20260). Design SOT: `cortex:notes/system/specs/limb-clarification-dialogue.md`. Adjudication: `cortex:notes/system/threads/2846-converse-ratification-adjudication.md`. Routing form: `consult-routing.md` § CONVERSE lane. What is canonized is the **harness, not the economic claim** — lead-run only; autonomous `contract=converse` stays blocked until the falsifier clears (C3).
+
+CONVERSE is the transform **one stage before CONFORM** (B feeds A). Where CONFORM assumes the lead has already closed every fork in the intent envelope, CONVERSE is what the lead runs when the intent still carries **latent forks** they have not surfaced: a reasoning-tier worker conducts a **bounded clarification dialogue** with the lead and emits exactly the same fork-free **intent envelope** as output. The stages compose:
+
+```
+loose intent (latent forks) → [CONVERSE] → fork-free intent envelope → [CONFORM] → conforming todo → [Gate 3 / wrap] → implement packet
+```
+
+Where CONFORM **transcribes** settled judgment into structure, CONVERSE **manufactures** the settlement — which is why its canonicalization is narrowed to the harness only, lead-run only, with policy authorship excluded (C1) and autonomy blocked (C3).
+
+**This is NOT a packet dispatch.** A clarification dialogue is multi-turn, so CONVERSE does **not** author a packet and fire `team_dispatch(op=generate)` (one-shot, no back-and-forth). The worker runs on the **`agent_bus`** (`reply` + server-side `wait`); the only durable artifact is the **emitted intent envelope** that becomes CONFORM's input. Worker tier floor = **reasoning-capable**.
+
+**Budget + termination (structurally enforced).** HARD **3-question-round** budget, enforced by the **harness**, never by worker self-count (assertion 20188). Termination paths: **T1 converge** → emit the fork-free envelope; **T2 budget-exhausted** → halt and emit with `residual_open_forks` (escalate, do not guess); **T3 lead-abort** → no envelope, lead reclaims authoring.
+
+**Attribution discipline (C1).** Forks are surfaced on **lead-decided content only**, never worker policy/protocol authorship. The emitted envelope **distinguishes lead-decided fields from worker-inferred restatements**; any policy choice not explicitly lead-selected stays in `residual_open_forks`; guard against policy **smuggled into the question frame**. ∀ new-protocol codification: inadmissible — same as CONFORM.
+
+**Verify-back is inherited.** CONVERSE emits CONFORM's envelope, so the two-layer verify-back (Layer-1 wrap-gate + Layer-2 bounded semantic diff) applies unchanged — no new surface.
+
+**Conditions (binding).**
+- **C2 — telemetry every episode (total cost):** dialogue thread id, rounds used (of 3), `residual_open_forks`, envelope hash, worker tier/model, CONFORM-admissible-unmodified?, **total** lead active-time (setup + reading + answering + adjudicating + post-CONFORM rework + downstream repair — omitting any component is laundering), lead fork-value score.
+- **C2-control — randomized control arm (NEW vs CONFORM):** route a ~30–50% control fraction of eligible real tasks to **unaided** authoring, with a pre-routing intake rubric recorded **before** routing. (The spec's original "vs unaided counterfactual" falsifier was rejected by both panel families as unobservable; the control arm makes the baseline real.)
+- **C3 — promotion gate:** a first-class `contract=converse` (+ harness turn-cap enforcement) is **BLOCKED** until the revised falsifier (assertion 20260) clears over **N ≥ 8** real episodes with the control arm.
+
 ## General execution without packet (contract-based)
 
 **Schema-free is NOT direction-free.** A `cursor-sdk` dispatch for a fully
@@ -547,6 +600,39 @@ executor_override_reason: "short required text when reason_code demands it"
 
 Silence → `recommended_executor=composer`. See `agent-skills/consult-routing.md`
 § Executor tier for R1/R2 policy (reference, do not hand-copy).
+
+### Block 6 `<output_format>` — worker closeout shape by capability tier (every-packet default)
+
+Every dispatch packet's `<output_format>` states the dispatched worker's closeout
+**shape**, chosen by the worker's **capability tier** (read from the dispatch
+role/seat):
+
+- **MCP-capable worker** (writes its own bus turn) → write a structured cortex
+  sidecar at `notes/system/threads/{thread}-{subject}.md`, then post a **brief bus
+  pointer** carrying the sidecar URI + content_hash/sha256 + a one-line summary.
+  Discipline target ≤ ~2 KB; the body must stay under the server briefing limit of
+  **8,000 chars** (`allow_long_body` not needed).
+- **Inline-only / no-MCP worker** (`role=cursor-sdk`, API generate roles) → emit the
+  full closeout **inline**. Stargate's on-behalf delivery
+  (`async_tracker_delivery/on_behalf.py`) automatically writes a durable cortex
+  sidecar first and sets `allow_long_body` as needed. Do **not** instruct an
+  inline-only worker to "write a sidecar" — it relies on the on-behalf auto-sidecar
+  (best-effort under the body limit; mandatory/terminal only when content is
+  oversized, > 64,000 chars). That auto-sidecar guarantee is a property of the
+  on-behalf `op=to_thread` path, **not** a blanket guarantee for a worker posting
+  its own turn.
+
+**Bus limits (server-enforced, `libs/agent_bus_store/turns_models.py`):** **8,000**
+chars without `allow_long_body`, **64,000** with it. "≤2 KB pointer" is a
+**discipline target** (keep pointers far under the limit), NOT the enforced
+threshold. `allow_long_body=true` is the sanctioned exception only when a recipient
+genuinely needs inline long-form > 8K **and** a sidecar would break the
+communication contract; the default stays brief body + sidecar.
+
+This per-packet author default is distinct from the packet-level "≤25-line pointer,
+packet stays on disk" delivery discipline (§ Naming + delivery). Guidance only — no
+admission-lint enforcement (the inline-only sidecar is already enforced in the
+delivery layer).
 
 ## Skeleton
 

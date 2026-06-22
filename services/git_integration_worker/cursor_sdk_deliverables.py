@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Coroutine
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from implement_admission.closeout_helpers import cortex_files_root
 from transport_utils import DEFAULT_STARGATE_URL, make_async_client
 from universal_logging import get_logger
 
@@ -16,6 +18,13 @@ _SIDECAR_DIR = "tmp/reviews/closeouts"
 
 PinnedWriteResult = dict[str, Any]
 PinnedWriteFn = Callable[..., Coroutine[Any, Any, PinnedWriteResult | None]]
+
+
+@dataclass(frozen=True)
+class PinnedResolution:
+    uris: list[str]
+    satisfied_rels: tuple[str, ...]
+    divergent_rels: tuple[str, ...]
 
 
 def _sidecar_rel_path(dispatch_id: str) -> str:
@@ -121,25 +130,37 @@ async def resolve_cortex_pinned_deliverables(
     dispatch_id: str,
     thread_id: str,
     post_pinned: PinnedWriteFn | None = None,
-) -> tuple[list[str], tuple[str, ...]]:
-    """Ensure pinned cortex deliverables exist; return (uris, gate_d_created_rels)."""
+    cortex_root: Path | None = None,
+) -> PinnedResolution:
+    """Ensure pinned cortex deliverables exist; return resolution metadata."""
     writer = post_pinned or default_post_pinned_deliverable
+    root = cortex_root or cortex_files_root()
     uris: list[str] = []
     satisfied: list[str] = []
+    divergent: list[str] = []
     for rel in cortex_expected_rels(files_expected):
-        # A malformed rel (e.g. a multi-KB blob the packet parser over-captured)
-        # must degrade gracefully, not crash the closeout envelope: Path.is_file()
-        # surfaces OSError ENAMETOOLONG (errno 36) rather than returning False.
         try:
+            cortex_path = root / rel
             repo_path = source_repo / rel
-            is_file = repo_path.is_file()
+            cortex_is_file = cortex_path.is_file()
+            repo_is_file = repo_path.is_file()
         except OSError as exc:
             logger.warning(
                 "skipping malformed deliverable rel (len=%d): %s", len(rel), exc
             )
             continue
-        if is_file:
+        if cortex_is_file:
+            content = cortex_path.read_text(encoding="utf-8")
+            result = await writer(
+                rel_path=rel,
+                content=content,
+                write_if_absent=False,
+                dispatch_id=dispatch_id,
+                thread_id=thread_id,
+            )
+        elif repo_is_file:
             content = repo_path.read_text(encoding="utf-8")
+            divergent.append(f"pinned_deliverable_wrong_sandbox:{rel}")
             result = await writer(
                 rel_path=rel,
                 content=content,
@@ -156,9 +177,15 @@ async def resolve_cortex_pinned_deliverables(
                 thread_id=thread_id,
             )
         if not result or "error" in result:
+            divergent.append(f"pinned_deliverable_write_failed:{rel}")
             continue
         uri = result.get("uri")
         if isinstance(uri, str) and uri.startswith("cortex://"):
             uris.append(uri)
-            satisfied.append(rel)
-    return uris, tuple(satisfied)
+            if f"pinned_deliverable_wrong_sandbox:{rel}" not in divergent:
+                satisfied.append(rel)
+    return PinnedResolution(
+        uris=uris,
+        satisfied_rels=tuple(satisfied),
+        divergent_rels=tuple(divergent),
+    )

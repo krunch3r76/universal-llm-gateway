@@ -9,8 +9,10 @@ canonical: workspaces://universal-llm-gateway/docs/agent-guides/skills/cursor-sd
 
 # Cursor-SDK Instruction Standard
 
-Composer 2.5 is a low-tier mechanical executor. It optimises for appearing done.
-Default: explicit, determinate, repeating instructions + mandatory self-verification.
+Composer 2.5 is a capable mechanical executor; its self-reports have generally been reliable in practice.
+Verification is retained as cheap defense-in-depth — the lead's independent check is the verification of record
+for canonical/destructive (irreversible) writes, not a presumption that the worker misreports.
+Default: explicit, determinate, repeating instructions + a worker self-check, with lead-seat verification on irreversible writes.
 
 Every cursor-sdk dispatch turn — regardless of contract — must satisfy four disciplines.
 
@@ -101,4 +103,4 @@ A `light-bounded` Phase-1 dispatch (exec `655f7d9a`) wrote the deliverable to
 `tmp/reviews/` instead of the named cortex sidecar, and its machine-summary reported
 `cortex_assertions:[]` despite having bound assertion 19188. Root cause: no explicit
 delivery location in the instruction, no self-check clause, constraint stated once in
-preamble only. Self-reported "complete" required lead-seat verification to trust.
+preamble only. Self-reported "complete" is treated as advisory: this was a rare divergence with a likely-benign tooling cause (cf. assertion 20188), not evidence that Composer routinely misreports — and it is why lead-seat verification is retained on canonical/destructive writes as defense-in-depth.

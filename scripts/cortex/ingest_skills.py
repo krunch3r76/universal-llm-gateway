@@ -15,6 +15,7 @@ declare them in the SOT ``related_skills`` list, then re-run this script.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import sys
@@ -33,6 +34,7 @@ from _skill_related_parse import (  # noqa: E402
     declared_related_skills,
     parse_frontmatter,
 )
+from _skill_graph_report import build_drift_report  # noqa: E402
 from _skill_related_sync import (  # noqa: E402
     list_outgoing_reference_edges,
     patch_sot_skill_attrs,
@@ -522,6 +524,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--check", action="store_true")
+    parser.add_argument(
+        "--report",
+        action="store_true",
+        help="With --check, emit structured drift metrics as JSON on stdout",
+    )
     parser.add_argument("--audit", action="store_true")
     parser.add_argument(
         "--audit-terms",
@@ -566,6 +573,10 @@ def main(argv: list[str] | None = None) -> int:
     if not slug_filter and not scanned:
         return 2
 
+    if args.report and not args.check:
+        print("ERROR: --report requires --check", file=sys.stderr)
+        return 2
+
     if args.audit:
         return _audit(client, scanned, args.root.resolve())
 
@@ -587,6 +598,9 @@ def main(argv: list[str] | None = None) -> int:
                             [str(v) for v in declared],
                         )
                     )
+        report = build_drift_report(drifted)
+        if args.report:
+            print(json.dumps(report, sort_keys=True))
         if drifted:
             for line in drifted:
                 print(f"DRIFT: {line}", file=sys.stderr)

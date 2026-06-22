@@ -2,11 +2,37 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 from implement_admission.spec import CloseoutStatus
+
+CoverageStatus = Literal["complete", "partial", "unavailable"]
+
+
+class EffectEntry(BaseModel):
+    op: str
+    target: str | None = None
+    detail: dict[str, Any] | None = None
+    identity: str | None = None
+
+
+class SurfaceSection(BaseModel):
+    surface: str
+    source: str
+    entries: list[EffectEntry] = Field(default_factory=list)
+    cross_check: str | None = None
+
+
+class EffectsManifest(BaseModel):
+    schema_version: int = 1
+    dispatch_id: str
+    thread_id: str
+    capture_sources: list[str] = Field(default_factory=list)
+    surfaces: dict[str, SurfaceSection] = Field(default_factory=dict)
+    coverage: dict[str, CoverageStatus] = Field(default_factory=dict)
+    external_effects: Literal["scoped_out"] = "scoped_out"
 
 
 class Verification(BaseModel):
@@ -37,6 +63,8 @@ class ImplementCloseout(BaseModel):
     files_created: list[str] = Field(default_factory=list)
     files_modified: list[str] = Field(default_factory=list)
     files_deleted: list[str] = Field(default_factory=list)
+    capture_status: Literal["complete", "partial", "unavailable"] | None = None
+    effects_manifest: EffectsManifest | None = None
     public_api_changed: bool = False
     verification: list[Verification] = Field(default_factory=list)
     evidence_uris: EvidenceUris = Field(default_factory=EvidenceUris)

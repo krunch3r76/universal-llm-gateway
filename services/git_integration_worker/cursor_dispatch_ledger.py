@@ -418,7 +418,7 @@ class CursorDispatchLedger:
         ).fetchone()
         return int(row["n"]) if row is not None else 1
 
-    def read_wt_baseline(self, *, dispatch_id: str) -> dict[str, str] | None:
+    def read_wt_baseline(self, *, dispatch_id: str) -> dict[str, Any] | None:
         with self._connect() as conn:
             row = conn.execute(
                 "SELECT wt_baseline FROM cursor_sdk_dispatches WHERE dispatch_id=?",
