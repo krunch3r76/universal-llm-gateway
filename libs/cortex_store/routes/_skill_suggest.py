@@ -257,7 +257,12 @@ def run_stage_a(
     if not ctx:
         canonical_agent = canonical_seat_or_422(agent)
         seat_preloaded = (
-            list(injected_skill_slugs(platform=_seat_platform(canonical_agent)))
+            list(
+                injected_skill_slugs(
+                    role=canonical_agent,
+                    platform=_seat_platform(canonical_agent),
+                )
+            )
             if is_web_seat_slug(canonical_agent)
             else []
         )
@@ -277,7 +282,12 @@ def run_stage_a(
 
     canonical_agent = canonical_seat_or_422(agent)
     seat_preloaded = (
-        list(injected_skill_slugs(platform=_seat_platform(canonical_agent)))
+        list(
+            injected_skill_slugs(
+                role=canonical_agent,
+                platform=_seat_platform(canonical_agent),
+            )
+        )
         if is_web_seat_slug(canonical_agent)
         else []
     )

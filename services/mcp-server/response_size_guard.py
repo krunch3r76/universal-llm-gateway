@@ -60,6 +60,10 @@ _DISABLED: bool = os.getenv("MCP_RESPONSE_SIZE_GUARD_DISABLE", "").strip().lower
     "true",
     "yes",
 }
+_CONTENT_LEAN_TOOLS: frozenset[str] = frozenset({"cortex", "agent_bus", "fs", "rag"})
+_CONTENT_LEAN_FLOOR_BYTES: int = int(
+    os.getenv("MCP_CONTENT_LEAN_FLOOR_BYTES", str(2 * 1024))
+)
 
 
 @dataclass(slots=True)
@@ -861,6 +865,69 @@ def _replacement_result(
 _SEMANTIC_GUARD_TOOLS: frozenset[str] = frozenset({"agent_bus", "cortex"})
 
 
+def _is_single_json_mirror_text(result: ToolResult) -> tuple[str, Any] | None:
+    """Return (text, structured_content) when content is one JSON mirror of structured_content."""
+    content = result.content
+    if not isinstance(content, list) or len(content) != 1:
+        return None
+    block = content[0]
+    if getattr(block, "type", None) != "text":
+        return None
+    text = getattr(block, "text", None)
+    if not isinstance(text, str):
+        return None
+    structured = result.structured_content
+    if structured is None:
+        return None
+    try:
+        parsed = json.loads(text)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return None
+    if parsed != structured:
+        return None
+    return text, structured
+
+
+def _lean_content(result: ToolResult, *, tool_name: str) -> ToolResult:
+    """Minify JSON-mirror content.text on passthrough for gated read tools."""
+    if tool_name not in _CONTENT_LEAN_TOOLS:
+        return result
+    try:
+        mirror = _is_single_json_mirror_text(result)
+        if mirror is None:
+            return result
+        text, _structured = mirror
+        old_bytes = len(text.encode("utf-8"))
+        if old_bytes <= _CONTENT_LEAN_FLOOR_BYTES:
+            return result
+        parsed = json.loads(text)
+        candidate = json.dumps(parsed, ensure_ascii=False, separators=(",", ":"))
+        new_bytes = len(candidate.encode("utf-8"))
+        if new_bytes >= old_bytes:
+            return result
+        from mcp.types import TextContent
+
+        leaned = result.model_copy(
+            update={"content": [TextContent(type="text", text=candidate)]}
+        )
+        record(
+            "mcp.response.leaned",
+            tool=tool_name,
+            old_bytes=old_bytes,
+            new_bytes=new_bytes,
+            reduction_ratio=round(1 - new_bytes / old_bytes, 4),
+        )
+        return leaned
+    except Exception:
+        logger.warning(
+            "Content lean failed for %s — passing through",
+            tool_name,
+            exc_info=True,
+        )
+        record("mcp.response.lean.error", tool=tool_name, reason="exception")
+        return result
+
+
 class ResponseSizeGuard(Middleware):
     """FastMCP middleware that intercepts oversized tool responses.
 
@@ -911,11 +978,11 @@ class ResponseSizeGuard(Middleware):
         try:
             size = self._estimate_size(result, threshold, needs_semantic_guard)
             if size is None:
-                return result
+                return _lean_content(result, tool_name=tool_name)
 
             effective_limit = reasoning_target if needs_semantic_guard else threshold
             if size <= effective_limit:
-                return result
+                return _lean_content(result, tool_name=tool_name)
         except Exception:
             logger.warning(
                 "Guard measurement failed for %s — passing through",
@@ -927,7 +994,7 @@ class ResponseSizeGuard(Middleware):
                 tool_name=tool_name,
                 phase="measure",
             )
-            return result
+            return _lean_content(result, tool_name=tool_name)
 
         try:
             ref_id = _store_result(tool_name, result, size)
@@ -942,7 +1009,7 @@ class ResponseSizeGuard(Middleware):
                 tool_name=tool_name,
                 phase="store",
             )
-            return result
+            return _lean_content(result, tool_name=tool_name)
 
         record(
             "mcp.response.guarded",

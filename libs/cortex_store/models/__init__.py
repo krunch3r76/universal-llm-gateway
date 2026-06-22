@@ -56,7 +56,7 @@ from .assertions import (
     TouchedAssertionItem,
 )
 from .deadlines import DeadlineItem, DeadlineList
-from .edges import EdgeCreate, EdgeItem, EdgeList, EdgeRetire
+from .edges import EdgeCreate, EdgeItem, EdgeList, EdgeRetire, EdgeUpdate
 from .entities import (
     CardAssertion,
     CardDebug,
@@ -169,6 +169,7 @@ __all__ = [
     "EdgeItem",
     "EdgeList",
     "EdgeRetire",
+    "EdgeUpdate",
     # entities
     "CardAssertion",
     "CardDebug",

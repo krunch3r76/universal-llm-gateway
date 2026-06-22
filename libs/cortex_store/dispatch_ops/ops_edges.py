@@ -10,6 +10,7 @@ from ..routes.edges import (
     _list_edges_impl,
     _retire_edge_impl,
     _traverse_edges_impl,
+    _update_edge_impl,
 )
 from ..routes.graph import impact_analysis
 from ._shared import record
@@ -117,6 +118,28 @@ def _op_edge_retire(
     if valid_until is not None:
         body["valid_until"] = valid_until
     return _retire_edge_impl(edge_id, body)
+
+
+def _op_edge_update(
+    edge_id: int | None = None,
+    strength: float | None = None,
+    context: str | None = None,
+    prompt: str | None = None,
+    metadata: str | None = None,
+    **_: object,
+) -> dict[str, Any]:
+    if edge_id is None:
+        return {"error": "edge_id is required"}
+    body: dict[str, Any] = {}
+    for key, val in (
+        ("strength", strength),
+        ("context", context),
+        ("prompt", prompt),
+        ("metadata", metadata),
+    ):
+        if val is not None:
+            body[key] = val
+    return _update_edge_impl(edge_id, body)
 
 
 def _op_edge_types(**_: object) -> Any:

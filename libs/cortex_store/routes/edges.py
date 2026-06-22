@@ -13,7 +13,7 @@ from typing import Any
 from fastapi import APIRouter, Body, HTTPException, Query, status
 
 from ..db import cortex_conn, query
-from ..models import EdgeCreate, EdgeItem, EdgeList, EdgeRetire
+from ..models import EdgeCreate, EdgeItem, EdgeList, EdgeRetire, EdgeUpdate
 
 router = APIRouter(prefix="/edges", tags=["edges"])
 
@@ -260,6 +260,40 @@ def retire_edge(
     return EdgeItem(**rows[0])
 
 
+@router.patch("/{edge_id}", response_model=EdgeItem)
+def update_edge(edge_id: int, body: EdgeUpdate = Body(...)) -> EdgeItem:
+    """Patch mutable scalar fields of an ACTIVE session-edge in place.
+
+    Mirrors relationship_update (non-null-only), narrowed to {strength, context,
+    prompt, metadata}. Provenance (session_id/agent/seeded_by) and valid_until are
+    NOT patchable. Active-only: WHERE valid_until IS NULL → a patch on a retired
+    edge is a silent no-op returning 200 unchanged. 404 only on a missing id.
+    """
+    conn = cortex_conn()
+    updates = {
+        col: val
+        for col, val in (
+            ("strength", body.strength),
+            ("context", body.context),
+            ("prompt", body.prompt),
+            ("metadata", body.metadata),
+        )
+        if val is not None
+    }
+    if not updates:
+        raise HTTPException(status_code=422, detail="No fields to update")
+    set_clause = ", ".join(f"{col} = ?" for col in updates)
+    conn.execute(
+        f"UPDATE session_edges SET {set_clause} WHERE id = ? AND valid_until IS NULL",
+        (*updates.values(), edge_id),
+    )
+    conn.commit()
+    rows = query(conn, f"SELECT {_EDGE_COLS} FROM session_edges WHERE id = ?", (edge_id,))
+    if not rows:
+        raise HTTPException(status_code=404, detail=f"Edge {edge_id} not found")
+    return EdgeItem(**rows[0])
+
+
 @router.get("/types")
 def list_edge_types() -> list[dict[str, Any]]:
     """Return the registered session edge taxonomy and directionality flags."""
@@ -284,6 +318,10 @@ def _traverse_edges_impl(**kwargs: object) -> dict[str, Any]:
 def _retire_edge_impl(edge_id: int, payload: dict[str, Any]) -> dict[str, Any]:
     body = EdgeRetire.model_validate(payload) if payload else None
     return retire_edge(edge_id, body).model_dump(mode="json")
+
+
+def _update_edge_impl(edge_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+    return update_edge(edge_id, EdgeUpdate.model_validate(payload)).model_dump(mode="json")
 
 
 def _list_edge_types_impl() -> list[dict[str, Any]]:

@@ -43,3 +43,16 @@ class EdgeList(BaseModel):
 
 class EdgeRetire(BaseModel):
     valid_until: str | None = None  # None = now()
+
+
+class EdgeUpdate(BaseModel):
+    """Mutable scalar fields of an active session-edge. At least one must be supplied.
+
+    Identity (from_node/to_node/edge_type), provenance (session_id/agent/seeded_by),
+    and retirement (valid_until — owned by edge_retire) are NOT patchable here.
+    """
+
+    strength: float | None = None
+    context: str | None = None
+    prompt: str | None = None
+    metadata: str | None = None

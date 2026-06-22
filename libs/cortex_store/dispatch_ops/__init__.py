@@ -36,6 +36,7 @@ from .ops_edges import (
     _op_edge_retire,
     _op_edge_traverse,
     _op_edge_types,
+    _op_edge_update,
     _op_edges,
     _op_impact,
 )
@@ -48,6 +49,7 @@ from .ops_entities import (
     _op_entity_rekey,
     _op_entity_update,
 )
+from .ops_implement_ready_preflight import _op_implement_ready_preflight
 from .ops_journals import (
     _op_deadline_resolve,
     _op_deadlines,
@@ -55,6 +57,7 @@ from .ops_journals import (
     _op_journal_write,
 )
 from .ops_misc import (
+    _op_pinned_deliverable_write,
     _op_resolve,
     _op_resolve_assertion_chunk,
     _op_stats,
@@ -63,7 +66,6 @@ from .ops_misc import (
     _op_tag_list,
     _op_tag_resolve,
     _op_thread_sidecar_write,
-    _op_pinned_deliverable_write,
 )
 from .ops_reflective import (
     _op_rj_consolidate,
@@ -79,7 +81,6 @@ from .ops_relationships import (
     _op_relationships,
 )
 from .ops_review import _op_case_audit, _op_fill_gaps, _op_session_audit
-from .ops_implement_ready_preflight import _op_implement_ready_preflight
 from .ops_session_close import (
     _op_session_close,
     _op_session_close_preflight,
@@ -149,6 +150,7 @@ _OPS: dict[str, Any] = {
     "edges": _op_edges,
     "edge_traverse": _op_edge_traverse,
     "edge_retire": _op_edge_retire,
+    "edge_update": _op_edge_update,
     "edge_types": _op_edge_types,
     "impact": _op_impact,
     "activate": _op_activate,

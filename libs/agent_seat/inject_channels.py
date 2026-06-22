@@ -105,6 +105,7 @@ def web_seat_injected_skill_slugs(
         parts = agent.split("-", 1)
         resolved_platform = parts[1] if len(parts) == 2 else "web"
     return injected_skill_slugs(
+        role=agent,
         platform=resolved_platform or "web",
         inject_profile=None,
         include_loaded_set=True,
