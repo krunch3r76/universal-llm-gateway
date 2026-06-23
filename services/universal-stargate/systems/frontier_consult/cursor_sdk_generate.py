@@ -392,4 +392,9 @@ async def dispatch_cursor_sdk_generate(
         ticket = worker_detail.get("ticket") or {}
         result["status"] = "queued"
         result["queue_ticket"] = ticket
+    dispatch_id = worker_detail.get("dispatch_id")
+    if not dispatch_id and isinstance(worker_detail.get("ticket"), dict):
+        dispatch_id = worker_detail["ticket"].get("dispatch_id")
+    if dispatch_id:
+        result["dispatch_id"] = str(dispatch_id)
     return result

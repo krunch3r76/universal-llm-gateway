@@ -10,6 +10,25 @@ output: rank
 options:
   timeout_seconds: 5
 
+dispatch:
+  idle:
+    timeout_seconds: 120
+  liveness:
+    ack_window_seconds: 3
+    idle_poll_interval_seconds: 2
+  cortex:
+    timeout_seconds: 30
+  transport:
+    mcp_relay_timeout_seconds: 330
+    agent_bus_wait_chunk_seconds: 60
+    agent_bus_client_timeout_seconds: 70
+    agent_bus_max_wait_seconds: 60
+    worker_probe_timeout_seconds: 10
+    worker_dispatch_http_timeout_seconds: 10
+    wait_retry_backoff_seconds: 1
+  worker:
+    outer_timeout_seconds: 1920
+
 steps:
   - name: rank
     type: generate

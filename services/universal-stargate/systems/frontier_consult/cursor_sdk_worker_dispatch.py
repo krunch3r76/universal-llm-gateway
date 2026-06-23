@@ -140,6 +140,8 @@ def _parse_worker_success(resp: httpx.Response) -> dict[str, Any]:
         "status_code": resp.status_code,
         "ticket": body,
     }
+    if isinstance(body, dict) and body.get("dispatch_id"):
+        detail["dispatch_id"] = str(body["dispatch_id"])
     if resp.status_code == 202 or body.get("status") == "queued":
         detail["queued"] = True
     return detail

@@ -546,7 +546,7 @@ def _assemble_closeout_delivery(
         sidecar_appendix=sidecar_appendix,
     )
     if sidecar_appendix:
-        appendix = "\n\n--- effects_manifest ---\n" + "\n".join(sidecar_appendix)
+        appendix = "\n\n## effects_manifest\n\n" + "\n".join(sidecar_appendix)
         sidecar_path.write_text(
             sidecar_path.read_text(encoding="utf-8") + appendix,
             encoding="utf-8",

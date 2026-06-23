@@ -28,11 +28,27 @@ def _load_dispatch_enabled() -> bool:
 
 
 _DISPATCH_ENABLED = _load_dispatch_enabled()
-_DISPATCH_TIMEOUT = 330.0
-_FALLBACK_WORKER_TIMEOUT_SECONDS = max(
-    1,
-    int(os.environ.get("SKILL_SUGGEST_WORKER_TIMEOUT_SECONDS", "45")),
-)
+
+
+def _dispatch_relay_timeout_seconds() -> float:
+    from pathlib import Path
+
+    import yaml
+
+    root = Path(os.environ.get("PROJECT_ROOT") or "/mnt/torus/projects")
+    for candidate in (
+        root / "pipelines/skill_suggest_rank/v1/skill-suggest-rank.yaml",
+        root / "universal-llm-gateway/pipelines/skill_suggest_rank/v1/skill-suggest-rank.yaml",
+    ):
+        if candidate.is_file():
+            data = yaml.safe_load(candidate.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                dispatch = data.get("dispatch")
+                if isinstance(dispatch, dict):
+                    transport = dispatch.get("transport")
+                    if isinstance(transport, dict) and "mcp_relay_timeout_seconds" in transport:
+                        return float(transport["mcp_relay_timeout_seconds"])
+    raise RuntimeError("skill-suggest dispatch transport config missing from pipeline yaml")
 
 
 def _should_relay_dispatch(agent: str) -> bool:
@@ -79,12 +95,6 @@ def _resolve_prefer_worker(
     return True
 
 
-def _cap_worker_timeout_seconds(explicit: int | None) -> int:
-    if explicit is None:
-        return _FALLBACK_WORKER_TIMEOUT_SECONDS
-    return min(explicit, _FALLBACK_WORKER_TIMEOUT_SECONDS)
-
-
 def _route_reason_for_direct(*, agent: str, prefer_worker: bool | None) -> str:
     if not _DISPATCH_ENABLED:
         return "dispatch_disabled"
@@ -115,14 +125,15 @@ def _annotate_direct_route(
 def _relay_suggest_dispatch(payload: dict[str, Any]) -> dict[str, Any]:
     """Thin relay to Stargate worker-hop endpoint (orchestration stays on Stargate)."""
     t0 = monotonic_now()
+    relay_timeout = _dispatch_relay_timeout_seconds()
     record(
         "mcp.skill_suggest.dispatch_relay.called",
         agent=str(payload.get("agent") or ""),
-        timeout_s=_DISPATCH_TIMEOUT,
+        timeout_s=relay_timeout,
     )
     try:
         with make_sync_client(
-            DEFAULT_STARGATE_URL, timeout=_DISPATCH_TIMEOUT
+            DEFAULT_STARGATE_URL, timeout=relay_timeout
         ) as client:
             response = client.post("/api/v1/skills/suggest-dispatch", json=payload)
     except httpx.RequestError as exc:
@@ -246,7 +257,6 @@ def register_skill_suggest_tools(mcp: FastMCP) -> None:
         agent: str | None = None,
         entity_ids: list[str] | str | None = None,
         prefer_worker: bool | None = None,
-        worker_timeout_seconds: int | None = None,
     ) -> dict[str, Any]:
         """Suggest newly relevant, not-yet-loaded skills for the caller seat.
 
@@ -316,9 +326,6 @@ def register_skill_suggest_tools(mcp: FastMCP) -> None:
         )
         if _should_relay_dispatch(effective_agent):
             payload["prefer_worker"] = resolved_prefer_worker
-            payload["worker_timeout_seconds"] = _cap_worker_timeout_seconds(
-                worker_timeout_seconds,
-            )
             return _relay_suggest_dispatch(payload)
 
         return _annotate_direct_route(

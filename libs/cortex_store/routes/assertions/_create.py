@@ -13,8 +13,10 @@ from pydantic import ValidationError
 
 from ...assertion_quality import (
     DERIVATION_TYPE_TAXONOMY,
+    check_chunk_locality,
     check_claim_brevity,
     check_confirmed_validatability,
+    check_derived_extract_primary,
     validate_assertion,
 )
 from ...belief_guard import guard_assertion_write
@@ -124,6 +126,20 @@ def create_assertion(
         if validation_warnings is None:
             validation_warnings = []
         validation_warnings.extend(brevity_warnings)
+
+    provenance_warnings = (
+        check_derived_extract_primary(body.evidence_uris)
+        + check_chunk_locality(
+            derivation_type=body.derivation_type,
+            claim=body.claim,
+            evidence_uris=body.evidence_uris,
+            chunk_id=body.chunk_id,
+        )
+    )
+    if provenance_warnings:
+        if validation_warnings is None:
+            validation_warnings = []
+        validation_warnings.extend(provenance_warnings)
 
     # Protocol guard: supersedes_id chains lineage ONLY when force=true. The CAS
     # UPDATE that writes the target's superseded_by (below) is gated on

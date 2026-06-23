@@ -80,6 +80,8 @@ SEVERITY = {
     # Implement-ready assertion vs on-disk dense-spec ground truth (friction 20198).
     # Advisory — never blocks session close.
     "implement_ready_spec_unvalidated": "warning",
+    # Staging paths in durable docs / entity provenance attrs (friction 20345).
+    "provenance_cites_staging": "warning",
 }
 
 # Identifier-shaped attribute value: alphanumerics + ``-._:/`` only. Used by

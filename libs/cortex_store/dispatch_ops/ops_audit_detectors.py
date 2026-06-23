@@ -58,7 +58,7 @@ from ._detectors.panel_disposition import (
     detect_panel_falsifier_phase3_metric,
 )
 from ._detectors.predicate_form import detect_unresolved_bare_token_in_predicate_form
-from ._detectors.project import detect_project_required_skills_no_relationship
+from ._detectors.provenance_staging import detect_provenance_cites_staging
 from ._detectors.relationship import detect_dangling_relationship_target
 from ._detectors.session import detect_prior_session_id_omitted
 from ._detectors.skill_binding import (
@@ -128,6 +128,8 @@ FS_TOUCHING_KINDS = {
     # repo via the git-integration-worker route, so it runs in the opt-in
     # include_filesystem pass, off the <100ms graph-only session_audit budget.
     "landed_claim_not_on_master",
+    # Staging provenance in durable docs / entity attrs (friction 20345).
+    "provenance_cites_staging",
 }
 
 INFO_KINDS = {
@@ -175,6 +177,7 @@ def get_all_detectors() -> dict[str, Any]:
         "todo_dense_spec_attributes_unpopulated": detect_todo_dense_spec_attributes_unpopulated,
         "todo_implement_readiness_risk": detect_todo_implement_readiness_risk,
         "landed_claim_not_on_master": detect_landed_claim_not_on_master,
+        "provenance_cites_staging": detect_provenance_cites_staging,
         "implement_ready_spec_unvalidated": lambda c, s=None: [],  # DISABLED 2026-06-20: cortex_api audit context cannot read repo tasks/specs directly, so this false-positived every implement_ready (incl. the valid 20197). Template landed_claim_not_on_master routes repo reads via the git-worker; this read fs directly. Code + tests retained; needs repo-aware redesign (friction 20198 follow-up).
     }
 
@@ -257,6 +260,7 @@ __all__ = [
     "detect_markdown_section_drift",
     "detect_marker_nesting_violation",
     "detect_prior_session_id_omitted",
+    "detect_provenance_cites_staging",
     "detect_agent_skill_related_skills_no_relationship",
     "detect_project_required_skills_no_relationship",
     "detect_skill_binding_missing",

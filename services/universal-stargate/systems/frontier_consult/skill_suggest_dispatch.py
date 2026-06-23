@@ -21,11 +21,25 @@ from cortex_store.seat_applicability import canonical_seat_or_422
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, ValidationError
-from transport_utils import DEFAULT_AGENT_BUS_URL, DEFAULT_CORTEX_URL, make_async_client
+from transport_utils import DEFAULT_CORTEX_URL, make_async_client
 from universal_logging import get_logger
 
 from .admission import FrontierEndpointError
-from .cursor_sdk_generate import CURSOR_SDK_REPLY_SEAT, dispatch_cursor_sdk_generate
+from .skill_suggest_dispatch_closeout import (
+    fetch_worker_closeout_body,
+    load_ledger_snapshot,
+    map_wait_outcome_to_degraded_reason,
+)
+from .skill_suggest_dispatch_config import (
+    SkillSuggestDispatchConfig,
+    load_skill_suggest_dispatch_config,
+)
+from .skill_suggest_durable_state import (
+    find_durable_terminal_event,
+    read_ledger_dispatch_row,
+)
+from .skill_suggest_worker_waiter import await_worker_completion
+from .cursor_sdk_generate import dispatch_cursor_sdk_generate
 from .cursor_sdk_worker_dispatch import worker_base_url
 from .events import (
     FrontierSkillSuggestDispatchCompleted,
@@ -42,10 +56,6 @@ logger = get_logger(__name__)
 skills_router = APIRouter(prefix="/api/v1/skills", tags=["skills"])
 
 _CONTEXT_MAX = 16384
-_WAIT_CHUNK_SECONDS = 60.0
-_CORTEX_TIMEOUT = 30.0
-_ACK_WINDOW_SECONDS = 3.0
-_ACK_POLL_INTERVAL = 0.5
 _BACKSTOP_SCORE = 10.0
 
 
@@ -58,7 +68,6 @@ class SkillSuggestDispatchRequest(BaseModel):
     conversation_context: str | None = None
     limit: int = Field(default=8, ge=1, le=25)
     prefer_worker: bool = Field(default=True)
-    worker_timeout_seconds: int = Field(default=20, ge=1, le=300)
 
 
 class SkillSuggestDispatchResponse(BaseModel):
@@ -120,92 +129,97 @@ def _canonicalize_agent(agent: str) -> str:
     return canonical_seat_or_422(str(agent).strip())
 
 
-async def await_worker_reply(
+def _dispatch_config() -> SkillSuggestDispatchConfig:
+    return load_skill_suggest_dispatch_config()
+
+
+def _publish_degraded_event(
     *,
-    thread_id: str,
-    worker_timeout_seconds: int,
-    after_turn: int = 1,
-) -> str | None:
-    """Poll agent-bus wait until a cursor-sdk closeout turn appears or budget spent."""
-    headers = _agent_bus_headers()
-    deadline = time.monotonic() + worker_timeout_seconds
-    async with make_async_client(DEFAULT_AGENT_BUS_URL, timeout=70.0) as client:
-        while time.monotonic() < deadline:
-            remaining = max(0.0, deadline - time.monotonic())
-            wait_s = min(_WAIT_CHUNK_SECONDS, remaining)
-            if wait_s <= 0:
-                break
-            try:
-                resp = await client.get(
-                    f"/threads/{thread_id}/wait",
-                    params={
-                        "after_turn": after_turn,
-                        "wait": wait_s,
-                        "completion": "first_reply_from",
-                        "from_agent": CURSOR_SDK_REPLY_SEAT,
-                    },
-                    headers=headers,
-                )
-            except httpx.HTTPError as exc:
-                logger.warning("skill_suggest_dispatch wait transport error: %s", exc)
-                await asyncio.sleep(1.0)
-                continue
-            if resp.status_code >= 400:
-                logger.warning(
-                    "skill_suggest_dispatch wait rejected: status=%s body=%s",
-                    resp.status_code,
-                    resp.text[:200],
-                )
-                return None
-            snap = resp.json()
-            if not snap.get("complete"):
-                continue
-            reply_turn = snap.get("qualifying_reply_turn")
-            if not isinstance(reply_turn, int):
-                return None
-            turn_resp = await client.get(
-                "/turns/by-number",
-                params={"thread": thread_id, "turn_number": reply_turn},
-                headers=headers,
-            )
-            if turn_resp.status_code >= 400:
-                return None
-            body = turn_resp.json().get("body")
-            return body if isinstance(body, str) else None
-    return None
+    request_id: str,
+    agent: str,
+    route: str,
+    reason: str,
+    latency_ms: int,
+    execution_id: str | None = None,
+    thread_id: str | None = None,
+    dispatch_id: str | None = None,
+    last_worker_status: str | None = None,
+    last_heartbeat_at: str | None = None,
+) -> None:
+    _publish_event(
+        FrontierSkillSuggestDispatchDegraded(
+            request_id=request_id,
+            agent=agent,
+            route=route,
+            reason=reason,
+            latency_ms=latency_ms,
+            execution_id=execution_id,
+            thread_id=thread_id,
+            dispatch_id=dispatch_id,
+            last_worker_status=last_worker_status,
+            last_heartbeat_at=last_heartbeat_at,
+        )
+    )
 
 
 async def await_worker_ack(
     *,
     thread_id: str,
-    ack_window_seconds: float = _ACK_WINDOW_SECONDS,
+    execution_id: str,
+    dispatch_id: str | None,
+    config: SkillSuggestDispatchConfig | None = None,
 ) -> bool:
-    """True if a worker claims the dispatch within the window (status leaves 'queued'),
-    False if it stays 'queued'/absent. Fail-SAFE: any probe transport/HTTP error
-    returns True (assume present; fall through to the normal capped await — the probe
-    must never become a new way to lose worker output)."""
-    deadline = time.monotonic() + ack_window_seconds
+    """True when ledger/lifecycle shows worker liveness; fail-fast on unreachable."""
+    cfg = config or _dispatch_config()
+    deadline = time.monotonic() + cfg.ack_window_seconds
     probe_url = f"{worker_base_url()}/api/v1/git/admin/dispatch-status"
-    async with make_async_client(worker_base_url(), timeout=10.0) as client:
+    poll_s = min(cfg.idle_poll_interval_seconds, cfg.ack_window_seconds)
+    async with make_async_client(
+        worker_base_url(), timeout=cfg.worker_probe_timeout_seconds
+    ) as client:
         while time.monotonic() < deadline:
+            ledger = read_ledger_dispatch_row(
+                dispatch_id=dispatch_id,
+                execution_id=execution_id,
+                thread_id=thread_id,
+            )
+            if ledger is not None and ledger.status in {
+                "admitted",
+                "running",
+                "completed",
+                "failed",
+            }:
+                return True
+            if find_durable_terminal_event(
+                execution_id=execution_id,
+                thread_id=thread_id,
+                dispatch_id=dispatch_id,
+            ):
+                return True
             try:
                 resp = await client.get(probe_url, params={"thread_id": thread_id})
             except httpx.HTTPError as exc:
                 logger.warning(
                     "skill_suggest_dispatch ack probe transport error: %s", exc
                 )
-                return True
+                if ledger is None:
+                    return False
+                await asyncio.sleep(poll_s)
+                continue
             if resp.status_code != 200:
                 logger.warning(
                     "skill_suggest_dispatch ack probe rejected: status=%s body=%s",
                     resp.status_code,
                     resp.text[:200],
                 )
-                return True
+                if ledger is None:
+                    return False
+                await asyncio.sleep(poll_s)
+                continue
             status = resp.json().get("status")
-            if status in {"admitted", "running", "completed"}:
+            if status in {"admitted", "running", "completed", "failed"}:
                 return True
-            await asyncio.sleep(_ACK_POLL_INTERVAL)
+            await asyncio.sleep(poll_s)
     return False
 
 
@@ -325,7 +339,9 @@ async def apply_required_skills_backstop(
         if isinstance(item, dict)
     }
 
-    async with make_async_client(DEFAULT_CORTEX_URL, timeout=_CORTEX_TIMEOUT) as client:
+    async with make_async_client(
+        DEFAULT_CORTEX_URL, timeout=_dispatch_config().cortex_timeout_seconds
+    ) as client:
         required_slugs = await _collect_required_skill_slugs(entity_ids, client)
         for slug in required_slugs:
             entity_id = f"agent_skill:{slug}"
@@ -405,7 +421,9 @@ async def _fetch_extended_candidates(
     }
     if conversation_context is not None:
         payload["conversation_context"] = conversation_context
-    async with make_async_client(DEFAULT_CORTEX_URL, timeout=_CORTEX_TIMEOUT) as client:
+    async with make_async_client(
+        DEFAULT_CORTEX_URL, timeout=_dispatch_config().cortex_timeout_seconds
+    ) as client:
         resp = await client.post(
             "/skills/suggest",
             json=payload,
@@ -450,7 +468,9 @@ async def run_fallback(
     }
     if conversation_context is not None:
         payload["conversation_context"] = conversation_context
-    async with make_async_client(DEFAULT_CORTEX_URL, timeout=_CORTEX_TIMEOUT) as client:
+    async with make_async_client(
+        DEFAULT_CORTEX_URL, timeout=_dispatch_config().cortex_timeout_seconds
+    ) as client:
         resp = await client.post(
             "/skills/suggest",
             json=payload,
@@ -610,57 +630,72 @@ async def dispatch_skill_suggest(
         )
         return await _finalize_dispatch_result(result, body)
 
-    if str(dispatch_result.get("status") or "") == "queued":
-        acked = await await_worker_ack(thread_id=thread_id)
-        if not acked:
-            result = await run_fallback(
-                agent=canonical_agent,
-                loaded=body.loaded,
-                conversation_context=body.conversation_context,
-                limit=body.limit,
-            )
-            _publish_event(
-                FrontierSkillSuggestDispatchDegraded(
-                    request_id=request_id,
-                    agent=canonical_agent,
-                    route="fallback",
-                    reason="no_worker_ack",
-                    latency_ms=int((time.monotonic() - t0) * 1000),
-                )
-            )
-            return await _finalize_dispatch_result(result, body)
-
-    closeout_body = await await_worker_reply(
+    dispatch_id = str(dispatch_result.get("dispatch_id") or "") or None
+    dispatch_cfg = _dispatch_config()
+    ledger = load_ledger_snapshot(
+        dispatch_id=dispatch_id,
+        execution_id=execution_id,
         thread_id=thread_id,
-        worker_timeout_seconds=body.worker_timeout_seconds,
     )
-    if closeout_body is None:
-        degraded_reason = "worker_timeout"
+
+    acked = await await_worker_ack(
+        thread_id=thread_id,
+        execution_id=execution_id,
+        dispatch_id=dispatch_id,
+        config=dispatch_cfg,
+    )
+    if not acked:
         result = await _run_fallback_degraded(
             agent=canonical_agent,
             loaded=body.loaded,
             conversation_context=body.conversation_context,
             limit=body.limit,
-            degraded_reason=degraded_reason,
+            degraded_reason="worker_unreachable",
         )
-        _publish_event(
-            FrontierSkillSuggestDispatchDegraded(
-                request_id=request_id,
-                agent=canonical_agent,
-                route="fallback",
-                reason=degraded_reason,
-                latency_ms=int((time.monotonic() - t0) * 1000),
-            )
+        _publish_degraded_event(
+            request_id=request_id,
+            agent=canonical_agent,
+            route="fallback",
+            reason="worker_unreachable",
+            latency_ms=int((time.monotonic() - t0) * 1000),
+            execution_id=execution_id or None,
+            thread_id=thread_id,
+            dispatch_id=dispatch_id,
+            last_worker_status=ledger.status if ledger else None,
+            last_heartbeat_at=ledger.last_heartbeat_at if ledger else None,
         )
         return await _finalize_dispatch_result(result, body)
 
-    envelope = parse_envelope_from_closeout(
-        closeout_body,
-        canonical_agent=canonical_agent,
-        workspaces_root=workspaces_root,
+    wait_outcome = await await_worker_completion(
+        execution_id=execution_id,
+        dispatch_id=dispatch_id,
+        thread_id=thread_id,
+        config=dispatch_cfg,
     )
-    if envelope is None:
-        degraded_reason = "parse_or_sidecar_failure"
+    ledger = load_ledger_snapshot(
+        dispatch_id=dispatch_id,
+        execution_id=execution_id,
+        thread_id=thread_id,
+    )
+    closeout_body = await fetch_worker_closeout_body(
+        thread_id=thread_id,
+        headers=_agent_bus_headers(),
+        config=dispatch_cfg,
+    )
+    envelope = None
+    if closeout_body is not None:
+        envelope = parse_envelope_from_closeout(
+            closeout_body,
+            canonical_agent=canonical_agent,
+            workspaces_root=workspaces_root,
+        )
+    degraded_reason = map_wait_outcome_to_degraded_reason(
+        wait_outcome,
+        ledger=ledger,
+        closeout_body=closeout_body,
+        envelope_ok=envelope is not None,
+    )
+    if degraded_reason is not None:
         result = await _run_fallback_degraded(
             agent=canonical_agent,
             loaded=body.loaded,
@@ -668,16 +703,21 @@ async def dispatch_skill_suggest(
             limit=body.limit,
             degraded_reason=degraded_reason,
         )
-        _publish_event(
-            FrontierSkillSuggestDispatchDegraded(
-                request_id=request_id,
-                agent=canonical_agent,
-                route="fallback",
-                reason=degraded_reason,
-                latency_ms=int((time.monotonic() - t0) * 1000),
-            )
+        _publish_degraded_event(
+            request_id=request_id,
+            agent=canonical_agent,
+            route="fallback",
+            reason=degraded_reason,
+            latency_ms=int((time.monotonic() - t0) * 1000),
+            execution_id=execution_id or None,
+            thread_id=thread_id,
+            dispatch_id=dispatch_id,
+            last_worker_status=ledger.status if ledger else None,
+            last_heartbeat_at=ledger.last_heartbeat_at if ledger else None,
         )
         return await _finalize_dispatch_result(result, body)
+
+    assert envelope is not None
 
     if _hallucinated_suggestion_slugs(envelope, all_candidates):
         degraded_reason = "hallucinated_slugs"

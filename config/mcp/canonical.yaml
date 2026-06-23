@@ -2429,7 +2429,6 @@ tools:
       limit: {type: integer}
       agent: {type: string}
       prefer_worker: {type: boolean}
-      worker_timeout_seconds: {type: integer}
     required: [loaded]
   skill_uri: agent_skill:cortex
   seat_visibility: [mcp, mcp_claude]

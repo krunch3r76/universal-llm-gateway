@@ -12,7 +12,16 @@ from fastapi import HTTPException, status
 from pydantic import ValidationError
 
 from ... import vector_store
-from ...assertion_quality import check_claim_brevity, check_confirmed_validatability
+from ...assertion_quality import (
+    DERIVATION_TYPE_TAXONOMY,
+    ValidationDiagnostic,
+    check_chunk_locality,
+    check_claim_brevity,
+    check_confirmed_validatability,
+    check_derived_extract_primary,
+    validate_assertion,
+)
+from ...config import supersede_validation_mode
 from ...belief_guard import analyze_assertion_impact
 from ...db import WRITE_LOCK, cortex_conn, decode_row, json_encode, query
 from ...enrichment import (
@@ -22,6 +31,7 @@ from ...enrichment import (
 )
 from ...entrenchment import compute_entrenchment
 from ...models import (
+    AssertionCreate,
     AssertionItem,
     SupersedeRequest,
     SupersedeResponse,
@@ -38,6 +48,37 @@ from ._shared import (
     logger,
     router,
 )
+
+
+def _hard_reject_rule_ids(diagnostics: list[ValidationDiagnostic]) -> list[str]:
+    rule_ids: list[str] = []
+    for diag in diagnostics:
+        if diag.field == "derivation_type":
+            rule_ids.append("R1")
+        elif diag.field == "evidence_uris" and "thread_compression" in diag.message:
+            rule_ids.append("R2a")
+        elif diag.field == "chunk_id" and "thread_compression" in diag.message:
+            rule_ids.append("R2b")
+        elif diag.field in {"chunk_id", "evidence_uris"}:
+            rule_ids.append("R3")
+        elif diag.field == "valid_from":
+            rule_ids.append("R4")
+        elif diag.field == "observed_at":
+            rule_ids.append("R5")
+        else:
+            rule_ids.append(diag.field)
+    return rule_ids
+
+
+def _staging_rule_ids(
+    validation_warnings: list[ValidationDiagnostic], quality_score: float
+) -> list[str]:
+    rule_ids: list[str] = []
+    if any(d.field == "reasoning_summary" for d in validation_warnings):
+        rule_ids.append("R6")
+    if quality_score < 0.7:
+        rule_ids.append("R7")
+    return rule_ids
 
 
 @router.post(
@@ -160,6 +201,79 @@ def supersede_assertion(body: SupersedeRequest) -> SupersedeResponse:
                 detail=f"Entity not found: {body.entity_id}",
             )
 
+        synthetic = AssertionCreate.model_validate(
+            {
+                "entity_id": body.entity_id,
+                "claim": body.claim,
+                "confidence": body.confidence,
+                "evidence": body.evidence,
+                "derivation_type": eff_derivation_type,
+                "chunk_id": eff_chunk_id,
+                "evidence_uris": eff_evidence_uris,
+                "valid_from": eff_valid_from,
+                "observed_at": now,
+                "reasoning_summary": eff_reasoning_summary,
+                "confidence_score": eff_confidence_score,
+            }
+        )
+        validation = validate_assertion(synthetic)
+        quality_validation_warnings: list[dict[str, str]] = []
+
+        if validation.rejected:
+            reject_rule_ids = _hard_reject_rule_ids(validation.hard_reject)
+            mode = supersede_validation_mode()
+            if mode == "hard_422":
+                diagnostics = [
+                    {"field": d.field, "message": d.message}
+                    for d in validation.hard_reject
+                ]
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail={
+                        "error": "assertion_quality_rejected",
+                        "quality_score": validation.quality_score,
+                        "diagnostics": diagnostics,
+                        "valid_derivation_types": DERIVATION_TYPE_TAXONOMY,
+                    },
+                )
+            logger.info(
+                "supersede would_reject rule_ids=%s derivation_type=%s force=%s "
+                "valid_from_inherited=%s parent_had_valid_from=%s",
+                reject_rule_ids,
+                eff_derivation_type,
+                body.force,
+                "valid_from" not in specified,
+                old_data.get("valid_from") is not None,
+            )
+            quality_validation_warnings.append(
+                {
+                    "field": "assertion_quality",
+                    "category": "would_reject",
+                    "message": (
+                        "would_reject: quality rules "
+                        f"{', '.join(reject_rule_ids)} would block in hard_422 mode"
+                    ),
+                }
+            )
+
+        if validation.route_to_staging:
+            staging_rule_ids = _staging_rule_ids(
+                validation.warnings, validation.quality_score
+            )
+            logger.info(
+                "supersede_route_to_staging_suppressed rule_ids=%s quality_score=%.2f",
+                staging_rule_ids,
+                validation.quality_score,
+            )
+            quality_validation_warnings.extend(
+                {
+                    "field": d.field,
+                    "category": d.category,
+                    "message": d.message,
+                }
+                for d in validation.warnings
+            )
+
         # C1: Validate supersession target against semantic impact
         impact = analyze_assertion_impact(
             conn, body.entity_id, body.claim, body.confidence
@@ -194,9 +308,9 @@ def supersede_assertion(body: SupersedeRequest) -> SupersedeResponse:
                 "  entity_id, claim, confidence, evidence, evidence_uris,"
                 "  derivation_type, observed_at, valid_from, entrenchment_score,"
                 "  reasoning_summary, seeded_by, chunk_id, confidence_score,"
-                "  predicate_form, raw_predicate_form, normalization_decision,"
+                "  quality_score, predicate_form, raw_predicate_form, normalization_decision,"
                 "  candidate_set_fingerprint, normalizer_version"
-                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     body.entity_id,
                     body.claim,
@@ -211,6 +325,7 @@ def supersede_assertion(body: SupersedeRequest) -> SupersedeResponse:
                     eff_seeded_by,
                     eff_chunk_id,
                     eff_confidence_score,
+                    validation.quality_score,
                     eff_predicate_form,
                     raw_pf,
                     norm_dec,
@@ -350,7 +465,21 @@ def supersede_assertion(body: SupersedeRequest) -> SupersedeResponse:
         entity_id=body.entity_id,
         acknowledge_audit_gaps=body.acknowledge_audit_gaps,
     )
-    combined_warnings = (auditor_warnings or []) + brevity_warnings
+    provenance_warnings = (
+        check_derived_extract_primary(eff_evidence_uris)
+        + check_chunk_locality(
+            derivation_type=eff_derivation_type,
+            claim=body.claim,
+            evidence_uris=eff_evidence_uris,
+            chunk_id=eff_chunk_id,
+        )
+    )
+    combined_warnings = (
+        (quality_validation_warnings or [])
+        + (auditor_warnings or [])
+        + (brevity_warnings or [])
+        + (provenance_warnings or [])
+    )
 
     return SupersedeResponse(
         old=AssertionItem(**decode_row(old_result[0], _JSON_FIELDS)),

@@ -13,6 +13,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .models import AssertionCreate
 
+from .models._shared import STAGING_PREFIXES, uri_first_segment_is_staging
+
 _DATE_PATTERN = re.compile(
     r"\b\d{4}[-/]\d{1,2}[-/]\d{1,2}\b"
     r"|\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\w*\s+\d{1,2},?\s+\d{4}\b"
@@ -220,17 +222,6 @@ def validate_assertion(body: AssertionCreate) -> ValidationResult:
         )
         result.route_to_staging = True
 
-    if body.evidence_uris and body.chunk_id is None:
-        result.warnings.append(
-            ValidationDiagnostic(
-                field="chunk_id",
-                message="evidence_uris present but chunk_id null — sourced but unchunked; "
-                "supply chunk_id (RAG-deterministic '{content_hash_prefix}-{i}') "
-                "when the source has been indexed by RAG",
-            )
-        )
-        result.route_to_staging = True
-
     if score < 0.7:
         result.route_to_staging = True
 
@@ -421,3 +412,220 @@ def check_claim_brevity(
             ),
         }
     ]
+
+
+# ---------------------------------------------------------------------------
+# Provenance detectors B, C-attrs, D2 (frictions 20334/20345; arc 20559)
+# ---------------------------------------------------------------------------
+
+_PROVENANCE_ATTR_KEYS = frozenset(
+    {
+        "moved_from",
+        "source_ref",
+        "source_path",
+        "original_path",
+        "imported_from",
+        "artifact_uri",
+        "evidence_uri",
+        "evidence_uris",
+        "derived_from",
+        "packet_path",
+        "provenance",
+        "source_uri",
+    }
+)
+
+_CHUNK_LOCALITY_TYPES = frozenset({"direct_observation", "other"})
+
+_BLOCKQUOTE_RE = re.compile(r"^>\s*(.+)$", re.MULTILINE)
+
+_PATH_URI_IN_QUOTE_RE = re.compile(r"[/\\]|://")
+_SLUG_OR_CONFIG_KEY_RE = re.compile(r"^[a-z][a-z0-9_.-]*$")
+_TITLE_CASE_LABEL_RE = re.compile(r"^[A-Z][a-z]+(?: [A-Z][a-z]+){0,4}$")
+
+
+def _uri_path(uri: str) -> str:
+    path = uri.strip()
+    lower = path.lower()
+    for prefix in ("files://", "cortex://", "ws://", "workspaces://"):
+        if lower.startswith(prefix):
+            path = path[len(prefix) :]
+            break
+    return path.split("?", 1)[0].lstrip("/").lower()
+
+
+def _path_stem(path: str) -> str:
+    base = path.rsplit("/", 1)[-1]
+    if "." in base:
+        return base.rsplit(".", 1)[0]
+    return base
+
+
+def _is_extract_shaped_uri(uri: str, all_uris: list[str]) -> bool:
+    path = _uri_path(uri)
+    if not path:
+        return False
+    if path.endswith((".md", ".txt")) or ".extract." in path:
+        return True
+    stem = _path_stem(path)
+    for other in all_uris:
+        if other == uri:
+            continue
+        other_path = _uri_path(other)
+        if other_path.endswith(".pdf") and _path_stem(other_path) == stem:
+            return True
+    return False
+
+
+def _is_primary_shaped_uri(uri: str) -> bool:
+    raw = uri.strip()
+    if raw.lower().startswith(("http://", "https://")):
+        return True
+    path = _uri_path(uri)
+    if path.endswith(".pdf"):
+        return True
+    if path.startswith("documents/") and not path.endswith((".md", ".txt")):
+        if ".extract." not in path:
+            return True
+    return False
+
+
+def check_derived_extract_primary(
+    evidence_uris: list[str] | None,
+) -> list[dict[str, str]]:
+    """Advisory B: derived-extract URI precedes a primary-shaped URI in evidence_uris."""
+    if not evidence_uris or len(evidence_uris) < 2:
+        return []
+
+    for index, uri in enumerate(evidence_uris):
+        if not _is_extract_shaped_uri(uri, evidence_uris):
+            continue
+        for later in evidence_uris[index + 1 :]:
+            if _is_primary_shaped_uri(later):
+                return [
+                    {
+                        "field": "evidence_uris",
+                        "category": "provenance",
+                        "message": (
+                            "possible ordering inversion: a derived-extract-shaped "
+                            f"evidence URI ({uri!r}) precedes a primary-shaped URI "
+                            f"({later!r}). If the primary source supports the claim, "
+                            "cite it first or mark the extract as secondary provenance."
+                        ),
+                    }
+                ]
+    return []
+
+
+def _quote_span_inner(span: str) -> str:
+    inner = span.strip()
+    for delim in ('"', "'", "\u201c", "\u201d", "\u2018", "\u2019", "«", "»"):
+        inner = inner.strip(delim)
+    return inner.strip()
+
+
+def _substantive_quotes_in_claim(claim: str) -> list[str]:
+    spans: list[str] = []
+    for match in _VERBATIM_RE.finditer(claim):
+        spans.append(match.group())
+    for match in _BLOCKQUOTE_RE.finditer(claim):
+        content = match.group(1).strip()
+        if len(content) >= 15:
+            spans.append(content)
+    return spans
+
+
+def _suppress_chunk_locality_quote(span: str) -> bool:
+    inner = _quote_span_inner(span)
+    if len(inner) < 15:
+        return True
+    if _PATH_URI_IN_QUOTE_RE.search(inner):
+        return True
+    if _SLUG_OR_CONFIG_KEY_RE.match(inner):
+        return True
+    if _TITLE_CASE_LABEL_RE.match(inner) and len(inner) < 80:
+        return True
+    return False
+
+
+def _is_ingestable_doc_uri(uri: str) -> bool:
+    lower = uri.strip().lower()
+    if lower.startswith("cortex://chunk/"):
+        return True
+    path = _uri_path(uri)
+    if path.endswith(".pdf"):
+        return True
+    return path.startswith("documents/")
+
+
+def check_chunk_locality(
+    derivation_type: str | None,
+    claim: str,
+    evidence_uris: list[str] | None,
+    chunk_id: str | None,
+) -> list[dict[str, str]]:
+    """Advisory D2: likely document quote without chunk_id on non-chunk derivation."""
+    if chunk_id is not None:
+        return []
+    if derivation_type not in _CHUNK_LOCALITY_TYPES:
+        return []
+    if not evidence_uris:
+        return []
+    if not any(_is_ingestable_doc_uri(uri) for uri in evidence_uris):
+        return []
+
+    quotes = _substantive_quotes_in_claim(claim)
+    if not quotes:
+        return []
+    if all(_suppress_chunk_locality_quote(q) for q in quotes):
+        return []
+
+    return [
+        {
+            "field": "chunk_id",
+            "category": "provenance",
+            "message": (
+                "chunk_locality_missing: claim contains a substantial quoted span and "
+                "cites an ingestable document, but has no chunk_id. If the quote "
+                "comes from that document, use derivation_type=quotation and attach a "
+                "chunk locator; if the quote was observed elsewhere, clarify provenance."
+            ),
+        }
+    ]
+
+
+def _value_cites_staging(value: object) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, list):
+        return any(_value_cites_staging(item) for item in value)
+    if isinstance(value, dict):
+        return any(_value_cites_staging(item) for item in value.values())
+    if not isinstance(value, str):
+        value = str(value)
+    return uri_first_segment_is_staging(value)
+
+
+def check_provenance_staging_attrs(
+    attributes: dict[str, object] | None,
+) -> list[dict[str, str]]:
+    """Advisory C-attrs: targeted provenance attribute keys cite staging paths."""
+    if not attributes:
+        return []
+
+    warnings: list[dict[str, str]] = []
+    for key in _PROVENANCE_ATTR_KEYS:
+        if key not in attributes:
+            continue
+        if _value_cites_staging(attributes[key]):
+            warnings.append(
+                {
+                    "field": key,
+                    "category": "provenance",
+                    "message": (
+                        f"attribute {key!r} cites a staging path ({', '.join(sorted(STAGING_PREFIXES))}) "
+                        "— move content to permanent storage and update provenance."
+                    ),
+                }
+            )
+    return warnings

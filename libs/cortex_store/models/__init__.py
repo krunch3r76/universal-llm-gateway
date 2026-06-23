@@ -17,6 +17,7 @@ Submodule layout:
   ``extraction``    — extraction-run lifecycle
   ``surface_forms`` — surface-form resolution cache
   ``reflective``    — reflective journal entries
+  ``staging``       — extraction-staging proposals
 
 Schema migration to structured types (list[str], etc.) was deferred as
 intentional debt. API contract is string-passthrough at the boundary;
@@ -115,6 +116,16 @@ from .search import (
     AssertionSearchItem,
     AssertionSearchResult,
     AssertionSearchSummaryItem,
+)
+from .staging import (
+    ProposalAction,
+    ProposalType,
+    StagingApproval,
+    StagingBatchCreate,
+    StagingItem,
+    StagingList,
+    StagingProposalCreate,
+    StagingStatus,
 )
 from .surface_forms import (
     SurfaceFormCacheResult,
@@ -218,6 +229,15 @@ __all__ = [
     "RelationshipItem",
     "RelationshipList",
     "RelationshipUpdate",
+    # staging
+    "ProposalAction",
+    "ProposalType",
+    "StagingApproval",
+    "StagingBatchCreate",
+    "StagingItem",
+    "StagingList",
+    "StagingProposalCreate",
+    "StagingStatus",
     # surface_forms
     "SurfaceFormCacheResult",
     "SurfaceFormCreate",

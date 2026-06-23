@@ -553,16 +553,32 @@ def FrontierSkillSuggestDispatchDegraded(  # noqa: N802
     route: str,
     reason: str,
     latency_ms: int,
+    execution_id: str | None = None,
+    thread_id: str | None = None,
+    dispatch_id: str | None = None,
+    last_worker_status: str | None = None,
+    last_heartbeat_at: str | None = None,
 ) -> Event:
     """Skill-suggest dispatch fell back to direct POST /skills/suggest."""
+    payload: dict[str, object] = {
+        "request_id": request_id,
+        "agent": agent,
+        "route": route,
+        "reason": reason,
+        "latency_ms": latency_ms,
+    }
+    if execution_id is not None:
+        payload["execution_id"] = execution_id
+    if thread_id is not None:
+        payload["thread_id"] = thread_id
+    if dispatch_id is not None:
+        payload["dispatch_id"] = dispatch_id
+    if last_worker_status is not None:
+        payload["last_worker_status"] = last_worker_status
+    if last_heartbeat_at is not None:
+        payload["last_heartbeat_at"] = last_heartbeat_at
     return Event(
         signal="frontier.skill_suggest_dispatch.degraded",
-        payload={
-            "request_id": request_id,
-            "agent": agent,
-            "route": route,
-            "reason": reason,
-            "latency_ms": latency_ms,
-        },
+        payload=payload,
         scope="node",
     )
