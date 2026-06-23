@@ -58,6 +58,7 @@ from ._detectors.panel_disposition import (
     detect_panel_falsifier_phase3_metric,
 )
 from ._detectors.predicate_form import detect_unresolved_bare_token_in_predicate_form
+from ._detectors.project import detect_project_required_skills_no_relationship
 from ._detectors.provenance_staging import detect_provenance_cites_staging
 from ._detectors.relationship import detect_dangling_relationship_target
 from ._detectors.session import detect_prior_session_id_omitted
