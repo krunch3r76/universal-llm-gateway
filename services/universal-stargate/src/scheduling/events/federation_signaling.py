@@ -28,6 +28,8 @@ Signals:
     federation.gateway.degraded — gateway crossed consecutive-timeout threshold
     federation.gateway.unhealthy — gateway crossed consecutive-disconnect threshold
     federation.gateway.recovered — previously degraded or unhealthy gateway recovered
+    federation.gateway.liveness.stale — passive heartbeat staleness alert (read-only)
+    federation.edge.container.exited — relay-detected local edge container UDS failure
     federation.link.timeout — native WS ping/pong keepalive timed out (discriminated)
 """
 
@@ -126,14 +128,39 @@ Payload: {
 # Gateway-wide health: recovery
 FEDERATION_GATEWAY_RECOVERED = "federation.gateway.recovered"
 """
-Emitted when a previously DEGRADED or UNHEALTHY gateway recovers.
+Emitted when a previously DEGRADED, UNHEALTHY, or liveness-stale gateway recovers.
 
 Payload: {
     "gateway_id": str,
-    "kind": str,    # "degradation" | "reachability"
-    "reason": str,  # "first_success" | "probe_succeeded"
+    "kind": str,    # "degradation" | "reachability" | "liveness"
+    "reason": str,  # "first_success" | "probe_succeeded" | "heartbeat_resumed"
+    "downtime_ms": int | omitted,  # present when kind="liveness"
 }
 """
+
+# Passive heartbeat staleness (traffic-independent; read-only w.r.t. routing)
+FEDERATION_GATEWAY_LIVENESS_STALE = "federation.gateway.liveness.stale"
+"""
+Emitted when a non-cloud federated gateway exceeds the liveness alert threshold
+(``ULG_FEDERATION_LIVENESS_ALERT_THRESHOLD_MS``, default 300s) without any
+inbound signal. Distinct from ``federation.gateway.unhealthy``, which is
+request-outcome-driven and excludes routing. This signal is observation-only:
+the node is already routing-excluded via ``is_unreachable`` (>60s).
+
+Cleared by ``federation.gateway.recovered`` with ``kind="liveness"`` when
+heartbeat resumes (``not is_unreachable``).
+
+Payload: {
+    "gateway_id": str,
+    "heartbeat_age_ms": int,
+    "threshold_ms": int,
+    "last_heartbeat_iso": str,
+    "backend_type": str,
+}
+"""
+
+# Relay-side edge container outage (UDS link failure)
+FEDERATION_EDGE_CONTAINER_EXITED = "federation.edge.container.exited"
 
 # Transport keepalive (websockets ping_interval / ping_timeout)
 FEDERATION_LINK_TIMEOUT = "federation.link.timeout"
@@ -512,15 +539,62 @@ def FederationGatewayRecovered(
     gateway_id: str,
     kind: str,
     reason: str,
+    downtime_ms: int | None = None,
 ) -> Event:
-    """Previously DEGRADED or UNHEALTHY gateway recovered."""
+    """Previously DEGRADED, UNHEALTHY, or liveness-stale gateway recovered."""
+    payload: dict[str, Any] = {
+        "gateway_id": gateway_id,
+        "kind": kind,
+        "reason": reason,
+    }
+    if downtime_ms is not None:
+        payload["downtime_ms"] = downtime_ms
     return Event(
         signal=FEDERATION_GATEWAY_RECOVERED,
-        role="coordination",
+        role="coordination" if kind != "liveness" else "observation",
+        payload=payload,
+    )
+
+
+@event_factory
+def FederationGatewayLivenessStale(
+    gateway_id: str,
+    heartbeat_age_ms: int,
+    threshold_ms: int,
+    last_heartbeat_iso: str,
+    backend_type: str,
+) -> Event:
+    """Passive heartbeat staleness alert — no routing side effects."""
+    return Event(
+        signal=FEDERATION_GATEWAY_LIVENESS_STALE,
+        role="observation",
         payload={
             "gateway_id": gateway_id,
-            "kind": kind,
-            "reason": reason,
+            "heartbeat_age_ms": heartbeat_age_ms,
+            "threshold_ms": threshold_ms,
+            "last_heartbeat_iso": last_heartbeat_iso,
+            "backend_type": backend_type,
+        },
+    )
+
+
+@event_factory
+def FederationEdgeContainerExited(
+    node_id: str,
+    relay_stargate_id: str,
+    error_type: str,
+    socket_path: str,
+) -> Event:
+    """Relay detected local edge container UDS link failure."""
+    return Event(
+        signal=FEDERATION_EDGE_CONTAINER_EXITED,
+        role="observation",
+        scope="node",
+        payload={
+            "node_id": node_id,
+            "relay_stargate_id": relay_stargate_id,
+            "error_type": error_type,
+            "socket_path": socket_path,
         },
     )
 

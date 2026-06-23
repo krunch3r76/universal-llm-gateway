@@ -496,6 +496,7 @@ class FederationCircuitBreaker:
         gateway_id: str,
         kind: str,
         reason: str,
+        downtime_ms: int | None = None,
     ) -> None:
         if self._event_bus is None:
             return
@@ -508,7 +509,46 @@ class FederationCircuitBreaker:
                 gateway_id=gateway_id,
                 kind=kind,
                 reason=reason,
+                downtime_ms=downtime_ms,
             )
+        )
+
+    async def emit_gateway_liveness_stale(
+        self,
+        gateway_id: str,
+        heartbeat_age_ms: int,
+        threshold_ms: int,
+        last_heartbeat_iso: str,
+        backend_type: str,
+    ) -> None:
+        """Publish passive liveness staleness alert (no routing mutation)."""
+        if self._event_bus is None:
+            return
+        from src.scheduling.events.federation_signaling import (
+            FederationGatewayLivenessStale,
+        )
+
+        await self._event_bus.publish_nowait(
+            FederationGatewayLivenessStale(
+                gateway_id=gateway_id,
+                heartbeat_age_ms=heartbeat_age_ms,
+                threshold_ms=threshold_ms,
+                last_heartbeat_iso=last_heartbeat_iso,
+                backend_type=backend_type,
+            )
+        )
+
+    async def emit_gateway_liveness_recovered(
+        self,
+        gateway_id: str,
+        downtime_ms: int,
+    ) -> None:
+        """Publish liveness recovery (heartbeat resumed under 60s)."""
+        await self._emit_gateway_recovered(
+            gateway_id=gateway_id,
+            kind="liveness",
+            reason="heartbeat_resumed",
+            downtime_ms=downtime_ms,
         )
 
     def get_all_states(self) -> dict[str, Any]:

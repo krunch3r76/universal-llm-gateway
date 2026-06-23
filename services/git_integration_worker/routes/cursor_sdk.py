@@ -101,6 +101,12 @@ from services.git_integration_worker.cursor_sdk_packet import (
     resolve_prompt_preamble,
 )
 from services.git_integration_worker.cursor_sdk_transcript import resolve_run_body
+from services.git_integration_worker.git_worker_lifecycle_events import (
+    FailureLayer,
+    build_dispatch_error_envelope,
+    emit_git_worker_dispatch_rejected,
+    log_dispatch_rejection,
+)
 from services.git_integration_worker.models.cursor_api import (
     CursorDispatchRequest,
     CursorDispatchResponse,
@@ -179,6 +185,47 @@ def _draining_response(exc: Draining503) -> JSONResponse:
             data={"retry_after_s": _DRAIN_RETRY_AFTER_S},
         ),
         headers={"Retry-After": str(_DRAIN_RETRY_AFTER_S)},
+    )
+
+
+_DISPATCH_ROUTE = "/api/v1/cursor/dispatch"
+
+
+def _reject_pre_admission(
+    req: CursorDispatchRequest,
+    *,
+    worker_error_code: str,
+    failure_layer: FailureLayer,
+    http_status: int,
+    detail_summary: str,
+    invalid_fields: list[str] | None = None,
+    retryable: bool | None = None,
+    validation_stage: str = "pre_admission",
+) -> JSONResponse:
+    envelope = build_dispatch_error_envelope(
+        execution_id=req.execution_id,
+        thread_id=req.thread_id,
+        dispatch_id=req.dispatch_id,
+        failure_layer=failure_layer,
+        http_status=http_status,
+        worker_error_code=worker_error_code,
+        route=_DISPATCH_ROUTE,
+        method="POST",
+        detail_summary=detail_summary,
+        invalid_fields=invalid_fields,
+        retryable=retryable,
+        validation_stage=validation_stage,
+    )
+    emit_git_worker_dispatch_rejected(envelope)
+    log_dispatch_rejection(envelope)
+    return JSONResponse(
+        status_code=http_status,
+        content=error_envelope(
+            code=worker_error_code,
+            message=detail_summary,
+            source="gateway",
+            retryable=retryable,
+        ),
     )
 
 
@@ -1007,35 +1054,35 @@ async def cursor_dispatch(
     try:
         config = resolve_cursor(req.model)
     except ValueError as exc:
-        return JSONResponse(
-            status_code=422,
-            content=error_envelope(
-                code="CURSOR_MODEL_UNTRUSTED",
-                message=str(exc),
-                source="gateway",
-            ),
+        return _reject_pre_admission(
+            req,
+            worker_error_code="CURSOR_MODEL_UNTRUSTED",
+            failure_layer="validation",
+            http_status=422,
+            detail_summary=str(exc),
+            invalid_fields=["model"],
+            validation_stage="model_resolution",
         )
     try:
         _resolve_prompt(req, cfg.source_repo)
     except ValueError as exc:
-        return JSONResponse(
-            status_code=422,
-            content=error_envelope(
-                code="CURSOR_PACKET_INVALID",
-                message=str(exc),
-                source="gateway",
-            ),
+        return _reject_pre_admission(
+            req,
+            worker_error_code="CURSOR_PACKET_INVALID",
+            failure_layer="validation",
+            http_status=422,
+            detail_summary=str(exc),
+            invalid_fields=["packet_path"] if req.packet_path else ["message"],
         )
     try:
         parity = validate_dispatch_context(cfg.source_repo)
     except CursorSdkParityError as exc:
-        return JSONResponse(
-            status_code=422,
-            content=error_envelope(
-                code="CURSOR_SDK_PARITY",
-                message=str(exc),
-                source="gateway",
-            ),
+        return _reject_pre_admission(
+            req,
+            worker_error_code="CURSOR_SDK_PARITY",
+            failure_layer="validation",
+            http_status=422,
+            detail_summary=str(exc),
         )
     logger.info(
         "cursor sdk dispatch admitted: dispatch_id=%s thread_id=%s parity=%s",
@@ -1075,13 +1122,13 @@ async def cursor_dispatch(
     )
     contract = (req.handoff_contract or inferred_contract or "consult").lower()
     if req.read_only and contract == "implement":
-        return JSONResponse(
-            status_code=422,
-            content=error_envelope(
-                code="CURSOR_READONLY_IMPLEMENT_CONFLICT",
-                message="read_only=true is incompatible with contract=implement",
-                source="gateway",
-            ),
+        return _reject_pre_admission(
+            req,
+            worker_error_code="CURSOR_READONLY_IMPLEMENT_CONFLICT",
+            failure_layer="validation",
+            http_status=422,
+            detail_summary="read_only=true is incompatible with contract=implement",
+            invalid_fields=["read_only"],
         )
     source_repo_str = str(cfg.source_repo.resolve())
     try:
@@ -1099,13 +1146,14 @@ async def cursor_dispatch(
             worker_instance=controller.worker_id,
         )
     except DispatchConflict as exc:
-        return JSONResponse(
-            status_code=409,
-            content=error_envelope(
-                code="CURSOR_DISPATCH_CONFLICT",
-                message=str(exc),
-                source="gateway",
-            ),
+        return _reject_pre_admission(
+            req,
+            worker_error_code="CURSOR_DISPATCH_CONFLICT",
+            failure_layer="admission",
+            http_status=409,
+            detail_summary=str(exc),
+            retryable=False,
+            validation_stage="ledger_dedup",
         )
     if cached is not None:
         status_code = 202 if cached.status == "queued" else 200

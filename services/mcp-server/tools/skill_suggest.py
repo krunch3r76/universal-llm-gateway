@@ -240,7 +240,7 @@ def register_skill_suggest_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(title="Skill Suggest")
     def skill_suggest(
-        loaded: list[str],
+        loaded: list[str] | str,
         conversation_context: str | None = None,
         limit: int | None = None,
         agent: str | None = None,
@@ -276,6 +276,12 @@ def register_skill_suggest_tools(mcp: FastMCP) -> None:
         These channels are mutually exclusive by design. Triage pattern:
             broken = degraded_skills + [s for s in suggestions if not s["digest"]]
         """
+        coerced_loaded = _coerce_str_to_list(loaded)
+        if coerced_loaded is None:
+            return {
+                "error": "loaded must be a list or JSON-encoded array string",
+            }
+        loaded = coerced_loaded
         effective_agent = _resolve_effective_agent(agent)
         entity_ids = _coerce_str_to_list(entity_ids)
         if not effective_agent:

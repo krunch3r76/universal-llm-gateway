@@ -32,6 +32,7 @@ Cite applicable tags in handoff Block 2; load deferred refs by tag when procedur
 | `[docker]` | `--no-cache` disables layer reuse + `--pull`; scoped buildx prune only | Docker rebuild/cache decisions | → `quality-gates.md` |
 | `[universal:refs]` | Cross-resident refs use `cortex://` or `workspaces://` URI form; ¬absolute paths in cross-resident artifacts | Packets, specs, handoffs consumed by other residents | grep `/mnt/torus/` in artifacts |
 | `[universal:git-posture]` | Canonical state = working tree + cortex/RAG + live process; git ≠ project index; no standing git workflow; commit optional; `git diff` unreliable on master (reliable on arc worktrees); ¬ diffs to LLMs — whole files / sections only | Git state inference, canonicality, cursor-sdk substrate, git CLI | → `git-posture.md` (full doctrine) |
+| `[universal:executor-rec]` | Executor-recommendation surfaces (op=handoff, API-role generate) emit an always-present advisory container naming model, thinking, effort as INDEPENDENT axes; transport preserves no-recommendation / unsupported / partial states and never collapses effort into thinking; additive + versioned beside any legacy coarse field (e.g. `recommended_executor`) | Executor advisory wire surfaces | Review for collapsed axes / omitted container / mutated legacy field |
 
 ## Deferred references
 

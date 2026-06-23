@@ -59,6 +59,7 @@ class MasterIntegration:
         self._edge_ws_clients: MasterEdgeWSClients | None = None
         self._forwarder: FederatedRequestForwarder | None = None
         self._circuit_breaker: FederationCircuitBreaker | None = None
+        self._liveness_alert_bridge: object | None = None
         self._load_orchestrator: FederatedLoadOrchestrator | None = None
         self._orchestration_metrics: OrchestrationMetrics | None = None
         self._local_edge_client: LocalEdgeClient | None = None
@@ -97,6 +98,9 @@ class MasterIntegration:
         self._register_remotes()
         await self._start_local_edge_client()
         self._circuit_breaker = self._create_circuit_breaker()
+        if self._federated_manager is not None:
+            self._federated_manager.set_circuit_breaker(self._circuit_breaker)
+        self._wire_liveness_alert_bridge()
         await self._start_master_connections(
             app, on_peer_connected, on_peer_disconnected
         )
@@ -321,6 +325,16 @@ class MasterIntegration:
             half_open_max_requests=cb_config.half_open_max_requests,
             event_bus=self._event_bus,
         )
+
+    def _wire_liveness_alert_bridge(self) -> None:
+        if self._event_bus is None:
+            return
+        from src.scheduling.events.consumers.liveness_alert_bridge import (
+            LivenessAlertBridge,
+        )
+
+        self._liveness_alert_bridge = LivenessAlertBridge(self._event_bus)
+        self._liveness_alert_bridge.start()
 
     async def _start_master_connections(
         self,

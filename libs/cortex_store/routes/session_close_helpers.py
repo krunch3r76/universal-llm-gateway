@@ -6,21 +6,11 @@ import json
 import re
 from datetime import UTC, datetime
 
+from agent_seat.session_id import derive_session_id_from_timestamp
 from fastapi import HTTPException, status
 
-from ..db import cortex_conn, json_encode
-from ..dispatch_ops._shared import (
-    _AGENT_SLUG_EXAMPLES,
-    _AGENT_SLUG_RE,
-    _AGENT_SLUG_RE_SOURCE,
-    _FILES_ROOT,
-    _SESSION_ID_EXAMPLES,
-    _SESSION_ID_RE,
-    _SESSION_ID_RE_SOURCE,
-)
-from agent_seat.session_id import derive_session_id_from_timestamp
-
-from ..session_close_validation import _emit_rejected, build_validation_error
+from ..db import json_encode
+from ..session_close_validation import _emit_rejected
 from ..status_trait_read import entity_has_trait_columns
 from ..status_trait_write import trait_insert_extras, transcript_birth_traits
 

@@ -85,6 +85,29 @@ def build_recommended_executor(
     )
 
 
+def build_executor_recommendation_field(
+    *,
+    handoff_contract: str,
+    target_surface: str,
+    target_model: str,
+) -> dict[str, Any]:
+    """Additive ``executor_recommendation`` field for the handoff response.
+
+    Wraps the shared surface-agnostic builder. Does NOT read or mutate the legacy
+    ``recommended_executor`` advisory fields.
+    """
+    from dispatch_knob_policy import build_executor_recommendation
+
+    return {
+        "executor_recommendation": build_executor_recommendation(
+            contract=handoff_contract,
+            target_surface=target_surface,
+            target_model=target_model,
+            classification_source="packet_contract",
+        )
+    }
+
+
 def build_recommended_review(*, handoff_contract: str) -> dict[str, Any]:
     """Consult adversarial-pass advisory (Q-sibling dual)."""
     from .executor_resolution import derive_recommended_review
@@ -169,10 +192,16 @@ def build_handoff_result(
     ``to_agent`` is the bus recipient address for the dispatch turn.
     ``reply_from_agent`` is the predicted closeout author for ``poll_hint``;
     defaults to ``to_agent`` when omitted (manual handoff / API-role generate).
+
+    The returned dict includes a top-level ``reply_from_agent`` scalar
+    (``reply_from_agent or to_agent``) that exactly matches
+    ``poll_hint.arguments.from_agent`` — the canonical value to pass to
+    ``agent_bus(tool="wait", from_agent=...)``. Resolves friction 20435.
     """
     return {
         "result_handle": build_result_handle(thread_id=thread_id),
         "handoff_status": _INITIAL_HANDOFF_STATUS,
+        "reply_from_agent": reply_from_agent or to_agent,
         "poll_hint": build_poll_hint_wait(
             thread_id=thread_id,
             from_agent=reply_from_agent or to_agent,
@@ -244,7 +273,7 @@ def build_sdk_generate_result(
     to_agent: str,
     resolved_model: str,
     resolved_contract: str,
-    warnings: list[str],
+    warnings: list[Any],
     durable: bool = False,
     density_triage: str | None = None,
     review_opt_out_reason_code: str | None = None,

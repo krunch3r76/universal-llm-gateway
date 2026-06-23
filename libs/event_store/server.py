@@ -134,6 +134,7 @@ async def run_service(
     ingest: IngestServer | None = None
     uds_server: uvicorn.Server | None = None
     tcp_server: uvicorn.Server | None = None
+    bridge: Any = None
     serve_tasks: list[asyncio.Task[None]] = []
     retention_task: asyncio.Task[None] | None = None
     started = False
@@ -246,7 +247,6 @@ async def run_service(
             )
 
         # Event bridge: forward scope=global events to upstream
-        bridge: Any = None
         if bridge_upstream_sock and bridge_origin_node:
             from .bridge import EventBridge
 

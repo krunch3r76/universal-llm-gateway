@@ -530,6 +530,7 @@ the real discovery; reuse the slugs already named in `handoff-dispatchers.mdc` �
 | Observability / queue forensics | `debug-with-events.md` |
 | Re-enable / smoke after change | `service-lifecycle.md` |
 | Dispatch / poll handles | `dispatch-shape.md` |
+| Executor advisory wire surface (op=handoff / generate `executor_recommendation`) | `architecture-invariants.md` `[universal:executor-rec]` — additive/versioned advisory container; model/thinking/effort independent axes, never collapse effort into thinking |
 
 ### Block 4 `<corpus>` — repo pointers (minimum set)
 

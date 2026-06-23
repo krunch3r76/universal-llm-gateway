@@ -1,99 +1,27 @@
 """Cortex dispatch op registry — single source of truth.
 
 Exports:
-  _OPS          — dict[op_name -> handler callable]
+  _OPS          — Mapping[op_name -> handler callable]. Handlers are imported
+                  and memoized on first lookup (see ``_LazyOpRegistry``) so that
+                  importing this package does NOT eagerly import every ``ops_*``
+                  submodule. The eager imports formed an import cycle:
+                  ``session_close_validation`` -> ``dispatch_ops._shared`` ->
+                  (``dispatch_ops`` package __init__) -> ``ops_journals`` /
+                  ``ops_session_close`` -> ... -> ``session_close_validation``
+                  (partially initialized) -> ImportError. Resolving handlers on
+                  demand keeps package import leaf-safe.
   execute_op    — dispatch entry: (tool, arguments) -> result dict
 """
 
 from __future__ import annotations
 
+import importlib
+from collections.abc import Callable, Iterator, Mapping
 from typing import Any
 
 from universal_logging import get_logger
 
 from ._shared import record
-from .ops_assertions import (
-    _op_activate,
-    _op_analyze_impact,
-    _op_assert,
-    _op_assertion_get,
-    _op_assertion_state,
-    _op_assertion_update,
-    _op_assertions,
-    _op_friction,
-    _op_friction_close,
-    _op_frictions,
-    _op_observe,
-    _op_review_queue,
-    _op_search,
-    _op_supersede,
-)
-from .ops_audit import _op_audit
-from .ops_bulk import _op_entities_bulk_upsert, _op_relationships_bulk_upsert
-from .ops_composites import _op_register_skill_substrate
-from .ops_edges import (
-    _op_edge_create,
-    _op_edge_retire,
-    _op_edge_traverse,
-    _op_edge_types,
-    _op_edge_update,
-    _op_edges,
-    _op_impact,
-)
-from .ops_entities import (
-    _op_entities,
-    _op_entities_by_content_hash,
-    _op_entity_create,
-    _op_entity_get,
-    _op_entity_merge,
-    _op_entity_rekey,
-    _op_entity_update,
-)
-from .ops_implement_ready_preflight import _op_implement_ready_preflight
-from .ops_journals import (
-    _op_deadline_resolve,
-    _op_deadlines,
-    _op_journal_read,
-    _op_journal_write,
-)
-from .ops_misc import (
-    _op_pinned_deliverable_write,
-    _op_resolve,
-    _op_resolve_assertion_chunk,
-    _op_stats,
-    _op_surface_forms,
-    _op_tag_assign,
-    _op_tag_list,
-    _op_tag_resolve,
-    _op_thread_sidecar_write,
-)
-from .ops_reflective import (
-    _op_rj_consolidate,
-    _op_rj_link,
-    _op_rj_list,
-    _op_rj_read,
-    _op_rj_write,
-)
-from .ops_relationships import (
-    _op_relationship_create,
-    _op_relationship_delete,
-    _op_relationship_update,
-    _op_relationships,
-)
-from .ops_review import _op_case_audit, _op_fill_gaps, _op_session_audit
-from .ops_session_close import (
-    _op_session_close,
-    _op_session_close_preflight,
-    _op_session_handoff_upsert,
-)
-from .ops_subgraph import _op_render_subgraph, _op_walk_subgraph
-from .ops_todos import (
-    _op_todo_audit,
-    _op_todo_candidates,
-    _op_todo_close_sidecar,
-    _op_todo_distill_implement_gate,
-)
-from .ops_transcript_assembly import _op_assemble_transcript
 from .workflow_hints import (
     _CORTEX_FORMAT_HINT,
     _CORTEX_HALLUCINATED_TOOLS,
@@ -108,77 +36,129 @@ from .workflow_hints import (
 
 logger = get_logger("cortex-api.dispatch_ops")
 
+_PKG = __name__  # "cortex_store.dispatch_ops" — base for lazy submodule import
 
-_OPS: dict[str, Any] = {
-    "entities": _op_entities,
-    "entities_by_content_hash": _op_entities_by_content_hash,
-    "entity_get": _op_entity_get,
-    "entity_create": _op_entity_create,
-    "entities_bulk_upsert": _op_entities_bulk_upsert,
-    "entity_update": _op_entity_update,
-    "entity_rekey": _op_entity_rekey,
-    "entity_merge": _op_entity_merge,
-    "assertion_state": _op_assertion_state,
-    "assertions": _op_assertions,
-    "assert": _op_assert,
-    "observe": _op_observe,
-    "friction": _op_friction,
-    "friction_close": _op_friction_close,
-    "frictions": _op_frictions,
-    "assertion_get": _op_assertion_get,
-    "assertion_update": _op_assertion_update,
-    "supersede": _op_supersede,
-    "resolve_assertion_chunk": _op_resolve_assertion_chunk,
-    "relationships": _op_relationships,
-    "relationship_create": _op_relationship_create,
-    "relationships_bulk_upsert": _op_relationships_bulk_upsert,
-    "relationship_delete": _op_relationship_delete,
-    "relationship_update": _op_relationship_update,
-    "stats": _op_stats,
-    "surface_forms": _op_surface_forms,
-    "deadlines": _op_deadlines,
-    "deadline_resolve": _op_deadline_resolve,
-    "journal_read": _op_journal_read,
-    "journal_write": _op_journal_write,
-    "session_close": _op_session_close,
-    "session_close_preflight": _op_session_close_preflight,
-    "implement_ready_preflight": _op_implement_ready_preflight,
-    "session_handoff_upsert": _op_session_handoff_upsert,
-    "assemble_transcript": _op_assemble_transcript,
-    "review_queue": _op_review_queue,
-    "edge_create": _op_edge_create,
-    "edges": _op_edges,
-    "edge_traverse": _op_edge_traverse,
-    "edge_retire": _op_edge_retire,
-    "edge_update": _op_edge_update,
-    "edge_types": _op_edge_types,
-    "impact": _op_impact,
-    "activate": _op_activate,
-    "resolve": _op_resolve,
-    "search": _op_search,
-    "analyze_impact": _op_analyze_impact,
-    "tag_assign": _op_tag_assign,
-    "tag_list": _op_tag_list,
-    "tag_resolve": _op_tag_resolve,
-    "todo_candidates": _op_todo_candidates,
-    "todo_audit": _op_todo_audit,
-    "thread_sidecar_write": _op_thread_sidecar_write,
-    "pinned_deliverable_write": _op_pinned_deliverable_write,
-    "todo_close_sidecar": _op_todo_close_sidecar,
-    "todo_distill_implement_gate": _op_todo_distill_implement_gate,
-    "register_skill_substrate": _op_register_skill_substrate,
-    "audit": _op_audit,
-    "session_audit": _op_session_audit,
-    "case_audit": _op_case_audit,
-    "fill_gaps": _op_fill_gaps,
-    "rj_write": _op_rj_write,
-    "rj_read": _op_rj_read,
-    "rj_list": _op_rj_list,
-    "rj_link": _op_rj_link,
-    "rj_consolidate": _op_rj_consolidate,
-    "render_subgraph": _op_render_subgraph,
-    "walk_subgraph": _op_walk_subgraph,
+
+# op-name -> "ops_submodule:attribute". The handler callable is resolved with
+# importlib on first lookup and memoized (see ``_LazyOpRegistry``). Keep this in
+# sync with the ``ops_*`` modules; every value is "<module>:_op_<name>".
+_OP_SPECS: dict[str, str] = {
+    "entities": "ops_entities:_op_entities",
+    "entities_by_content_hash": "ops_entities:_op_entities_by_content_hash",
+    "entity_get": "ops_entities:_op_entity_get",
+    "entity_create": "ops_entities:_op_entity_create",
+    "entities_bulk_upsert": "ops_bulk:_op_entities_bulk_upsert",
+    "entity_update": "ops_entities:_op_entity_update",
+    "entity_rekey": "ops_entities:_op_entity_rekey",
+    "entity_merge": "ops_entities:_op_entity_merge",
+    "assertion_state": "ops_assertions:_op_assertion_state",
+    "assertions": "ops_assertions:_op_assertions",
+    "assert": "ops_assertions:_op_assert",
+    "observe": "ops_assertions:_op_observe",
+    "friction": "ops_assertions:_op_friction",
+    "friction_close": "ops_assertions:_op_friction_close",
+    "frictions": "ops_assertions:_op_frictions",
+    "assertion_get": "ops_assertions:_op_assertion_get",
+    "assertion_update": "ops_assertions:_op_assertion_update",
+    "supersede": "ops_assertions:_op_supersede",
+    "resolve_assertion_chunk": "ops_misc:_op_resolve_assertion_chunk",
+    "relationships": "ops_relationships:_op_relationships",
+    "relationship_create": "ops_relationships:_op_relationship_create",
+    "relationships_bulk_upsert": "ops_bulk:_op_relationships_bulk_upsert",
+    "relationship_delete": "ops_relationships:_op_relationship_delete",
+    "relationship_update": "ops_relationships:_op_relationship_update",
+    "stats": "ops_misc:_op_stats",
+    "surface_forms": "ops_misc:_op_surface_forms",
+    "deadlines": "ops_journals:_op_deadlines",
+    "deadline_resolve": "ops_journals:_op_deadline_resolve",
+    "journal_read": "ops_journals:_op_journal_read",
+    "journal_write": "ops_journals:_op_journal_write",
+    "session_close": "ops_session_close:_op_session_close",
+    "session_close_preflight": "ops_session_close:_op_session_close_preflight",
+    "implement_ready_preflight": (
+        "ops_implement_ready_preflight:_op_implement_ready_preflight"
+    ),
+    "session_handoff_upsert": "ops_session_close:_op_session_handoff_upsert",
+    "assemble_transcript": "ops_transcript_assembly:_op_assemble_transcript",
+    "review_queue": "ops_assertions:_op_review_queue",
+    "edge_create": "ops_edges:_op_edge_create",
+    "edges": "ops_edges:_op_edges",
+    "edge_traverse": "ops_edges:_op_edge_traverse",
+    "edge_retire": "ops_edges:_op_edge_retire",
+    "edge_update": "ops_edges:_op_edge_update",
+    "edge_types": "ops_edges:_op_edge_types",
+    "impact": "ops_edges:_op_impact",
+    "activate": "ops_assertions:_op_activate",
+    "resolve": "ops_misc:_op_resolve",
+    "search": "ops_assertions:_op_search",
+    "analyze_impact": "ops_assertions:_op_analyze_impact",
+    "tag_assign": "ops_misc:_op_tag_assign",
+    "tag_list": "ops_misc:_op_tag_list",
+    "tag_resolve": "ops_misc:_op_tag_resolve",
+    "todo_candidates": "ops_todos:_op_todo_candidates",
+    "todo_audit": "ops_todos:_op_todo_audit",
+    "thread_sidecar_write": "ops_misc:_op_thread_sidecar_write",
+    "pinned_deliverable_write": "ops_misc:_op_pinned_deliverable_write",
+    "todo_close_sidecar": "ops_todos:_op_todo_close_sidecar",
+    "todo_distill_implement_gate": "ops_todos:_op_todo_distill_implement_gate",
+    "register_skill_substrate": "ops_composites:_op_register_skill_substrate",
+    "audit": "ops_audit:_op_audit",
+    "session_audit": "ops_review:_op_session_audit",
+    "case_audit": "ops_review:_op_case_audit",
+    "fill_gaps": "ops_review:_op_fill_gaps",
+    "rj_write": "ops_reflective:_op_rj_write",
+    "rj_read": "ops_reflective:_op_rj_read",
+    "rj_list": "ops_reflective:_op_rj_list",
+    "rj_link": "ops_reflective:_op_rj_link",
+    "rj_consolidate": "ops_reflective:_op_rj_consolidate",
+    "render_subgraph": "ops_subgraph:_op_render_subgraph",
+    "walk_subgraph": "ops_subgraph:_op_walk_subgraph",
 }
+
+
+class _LazyOpRegistry(Mapping[str, Callable[..., Any]]):
+    """op-name -> handler mapping that imports handlers lazily on first use.
+
+    Preserves the historical ``dict`` contract relied on by ``execute_op`` and
+    the regression suite: ``in`` membership and ``sorted()`` never trigger an
+    import, ``.get()`` returns the handler or ``None``, and indexing is
+    identity-stable (a given op always resolves to the one module-level function
+    object, so ``_OPS["assertion_state"] is _op_assertion_state``).
+    """
+
+    __slots__ = ("_specs", "_cache")
+
+    def __init__(self, specs: dict[str, str]) -> None:
+        self._specs = specs
+        self._cache: dict[str, Callable[..., Any]] = {}
+
+    def __getitem__(self, key: str) -> Callable[..., Any]:
+        cached = self._cache.get(key)
+        if cached is not None:
+            return cached
+        try:
+            spec = self._specs[key]
+        except KeyError:
+            raise KeyError(key) from None
+        module_name, _, attr = spec.partition(":")
+        handler: Callable[..., Any] = getattr(
+            importlib.import_module(f"{_PKG}.{module_name}"), attr
+        )
+        self._cache[key] = handler
+        return handler
+
+    def __contains__(self, key: object) -> bool:
+        # Membership is answered from the spec table — never imports a handler.
+        return key in self._specs
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._specs)
+
+    def __len__(self) -> int:
+        return len(self._specs)
+
+
+_OPS: Mapping[str, Callable[..., Any]] = _LazyOpRegistry(_OP_SPECS)
 
 
 def execute_op(tool: str, arguments: object) -> Any:

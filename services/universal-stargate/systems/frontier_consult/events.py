@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from universal_event_bus import Event, event_factory
 
 
@@ -196,13 +198,28 @@ def FrontierSdkWorkerDispatchFailed(  # noqa: N802
     status_code: int | None = None,
     code: str | None = None,
     blocking_dispatch_id: str | None = None,
+    origin_service: str = "stargate",
+    schema_version: str = "1",
+    failure_layer: str | None = None,
+    transport_error_kind: str | None = None,
+    dispatch_id: str | None = None,
+    detail_summary: str | None = None,
+    retryable: bool | None = None,
+    http_status: int | None = None,
+    worker_error_code: str | None = None,
 ) -> Event:
     """SDK worker dispatch rejected or unreachable."""
+    resolved_http_status = http_status if http_status is not None else status_code
+    resolved_worker_code = (
+        worker_error_code if worker_error_code is not None else code
+    )
     payload: dict[str, object] = {
         "request_id": request_id,
         "thread_id": thread_id,
         "execution_id": execution_id,
         "error": error,
+        "origin_service": origin_service,
+        "schema_version": schema_version,
     }
     if status_code is not None:
         payload["status_code"] = status_code
@@ -210,6 +227,20 @@ def FrontierSdkWorkerDispatchFailed(  # noqa: N802
         payload["code"] = code
     if blocking_dispatch_id is not None:
         payload["blocking_dispatch_id"] = blocking_dispatch_id
+    if failure_layer is not None:
+        payload["failure_layer"] = failure_layer
+    if transport_error_kind is not None:
+        payload["transport_error_kind"] = transport_error_kind
+    if dispatch_id is not None:
+        payload["dispatch_id"] = dispatch_id
+    if detail_summary is not None:
+        payload["detail_summary"] = detail_summary
+    if retryable is not None:
+        payload["retryable"] = retryable
+    if resolved_http_status is not None:
+        payload["http_status"] = resolved_http_status
+    if resolved_worker_code is not None:
+        payload["worker_error_code"] = resolved_worker_code
     return Event(
         signal="frontier.sdk.worker.failed",
         payload=payload,
@@ -279,6 +310,42 @@ def FrontierHandoffMaterializationIncomplete(  # noqa: N802
             "probe_root": probe_root,
             "source_ref": source_ref,
         },
+        scope="node",
+    )
+
+
+@event_factory
+def FrontierSdkMaterializationIncomplete(  # noqa: N802
+    request_id: str,
+    packet_path: str,
+    probe_root: str,
+    source_ref: str,
+    execution_id: str | None = None,
+    thread_id: str | None = None,
+    route: str | None = None,
+    origin_service: str = "stargate",
+    schema_version: str = "1",
+    failure_layer: str = "materialization",
+) -> Event:
+    """Materialized packet absent at executor workspaces root (SDK generate path)."""
+    payload: dict[str, str] = {
+        "request_id": request_id,
+        "packet_path": packet_path,
+        "probe_root": probe_root,
+        "source_ref": source_ref,
+        "origin_service": origin_service,
+        "schema_version": schema_version,
+        "failure_layer": failure_layer,
+    }
+    if execution_id is not None:
+        payload["execution_id"] = execution_id
+    if thread_id is not None:
+        payload["thread_id"] = thread_id
+    if route is not None:
+        payload["route"] = route
+    return Event(
+        signal="frontier.sdk.materialization.incomplete",
+        payload=payload,
         scope="node",
     )
 
@@ -417,6 +484,63 @@ def FrontierSkillSuggestDispatchCompleted(  # noqa: N802
             "agent": agent,
             "route": route,
             "latency_ms": latency_ms,
+        },
+        scope="node",
+    )
+
+
+@event_factory
+def FrontierSdkCostRiskWarning(  # noqa: N802
+    request_id: str | None,
+    execution_id: str | None,
+    model_id: str,
+    contract: str,
+    suppressed: bool,
+    suppression_reason: str | None = None,
+    cost_intent_reason: str | None = None,
+    suggested_knobs: dict[str, str] | None = None,
+    suggested_model: str | None = None,
+) -> Event:
+    """Cost-risk alignment warning emitted for mechanical opus/sonnet dispatches."""
+    payload: dict[str, object] = {
+        "model_id": model_id,
+        "contract": contract,
+        "suppressed": suppressed,
+    }
+    if request_id is not None:
+        payload["request_id"] = request_id
+    if execution_id is not None:
+        payload["execution_id"] = execution_id
+    if suppression_reason is not None:
+        payload["suppression_reason"] = suppression_reason
+    if cost_intent_reason is not None:
+        payload["cost_intent_reason"] = cost_intent_reason
+    if suggested_knobs is not None:
+        payload["suggested_knobs"] = suggested_knobs
+    if suggested_model is not None:
+        payload["suggested_model"] = suggested_model
+    return Event(
+        signal="frontier.sdk.cost_risk.warning",
+        payload=payload,
+        scope="node",
+    )
+
+
+@event_factory
+def FrontierSdkKnobDropped(  # noqa: N802
+    model_id: str,
+    knob: str,
+    requested: str,
+    reason: Literal["unsupported", "invalid_value"],
+) -> Event:
+    """Unsupported or invalid cursor-sdk knob dropped at alignment."""
+    return Event(
+        signal="frontier.sdk.knob.dropped",
+        payload={
+            "model_id": model_id,
+            "knob": knob,
+            "requested": requested,
+            "reason": reason,
         },
         scope="node",
     )

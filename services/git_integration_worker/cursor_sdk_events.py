@@ -89,15 +89,35 @@ def FrontierSdkWorkerFailed(  # noqa: N802
     thread_id: str,
     execution_id: str,
     error: str,
+    origin_service: str = "git_worker",
+    schema_version: str = "1",
+    failure_layer: str | None = None,
+    http_status: int | None = None,
+    worker_error_code: str | None = None,
+    transport_error_kind: str | None = None,
+    detail_summary: str | None = None,
 ) -> Event:
+    payload: dict[str, object] = {
+        "dispatch_id": dispatch_id,
+        "thread_id": thread_id,
+        "execution_id": execution_id,
+        "error": error,
+        "origin_service": origin_service,
+        "schema_version": schema_version,
+    }
+    if failure_layer is not None:
+        payload["failure_layer"] = failure_layer
+    if http_status is not None:
+        payload["http_status"] = http_status
+    if worker_error_code is not None:
+        payload["worker_error_code"] = worker_error_code
+    if transport_error_kind is not None:
+        payload["transport_error_kind"] = transport_error_kind
+    if detail_summary is not None:
+        payload["detail_summary"] = detail_summary
     return Event(
         signal="frontier.sdk.worker.failed",
-        payload={
-            "dispatch_id": dispatch_id,
-            "thread_id": thread_id,
-            "execution_id": execution_id,
-            "error": error,
-        },
+        payload=payload,
         scope="node",
     )
 
@@ -333,6 +353,9 @@ def emit_sdk_worker_failed(
     thread_id: str,
     execution_id: str,
     error: str,
+    failure_layer: str = "worker_runtime",
+    worker_error_code: str | None = None,
+    detail_summary: str | None = None,
 ) -> None:
     _emit(
         FrontierSdkWorkerFailed(
@@ -340,6 +363,9 @@ def emit_sdk_worker_failed(
             thread_id=thread_id,
             execution_id=execution_id,
             error=error,
+            failure_layer=failure_layer,
+            worker_error_code=worker_error_code,
+            detail_summary=detail_summary or error,
         )
     )
 

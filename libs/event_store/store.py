@@ -91,6 +91,64 @@ _INSERT_SNAPSHOT = (
 
 _MAX_PAYLOAD_BYTES = 64 * 1024
 
+_CORRELATION_TAXONOMY_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("thread_id", "TEXT GENERATED ALWAYS AS (json_extract(payload, '$.thread_id')) VIRTUAL"),
+    (
+        "dispatch_id",
+        "TEXT GENERATED ALWAYS AS (json_extract(payload, '$.dispatch_id')) VIRTUAL",
+    ),
+    (
+        "failure_layer",
+        "TEXT GENERATED ALWAYS AS (json_extract(payload, '$.failure_layer')) VIRTUAL",
+    ),
+    (
+        "transport_error_kind",
+        "TEXT GENERATED ALWAYS AS (json_extract(payload, '$.transport_error_kind')) VIRTUAL",
+    ),
+    (
+        "http_status",
+        "INTEGER GENERATED ALWAYS AS (json_extract(payload, '$.http_status')) VIRTUAL",
+    ),
+    (
+        "worker_error_code",
+        "TEXT GENERATED ALWAYS AS (json_extract(payload, '$.worker_error_code')) VIRTUAL",
+    ),
+)
+
+_CORRELATION_TAXONOMY_INDEXES: tuple[str, ...] = (
+    "CREATE INDEX IF NOT EXISTS idx_thread_id ON events(thread_id) WHERE thread_id IS NOT NULL",
+    "CREATE INDEX IF NOT EXISTS idx_dispatch_id ON events(dispatch_id) WHERE dispatch_id IS NOT NULL",
+    "CREATE INDEX IF NOT EXISTS idx_failure_layer_ts ON events(failure_layer, ts_unix_ms)",
+    "CREATE INDEX IF NOT EXISTS idx_transport_error_kind_ts ON events(transport_error_kind, ts_unix_ms)",
+    "CREATE INDEX IF NOT EXISTS idx_http_status_ts ON events(http_status, ts_unix_ms)",
+    "CREATE INDEX IF NOT EXISTS idx_worker_error_code_ts ON events(worker_error_code, ts_unix_ms)",
+)
+
+
+def _events_column_names(db: sqlite3.Connection) -> set[str]:
+    for pragma in ("table_xinfo", "table_info"):
+        try:
+            rows = db.execute(f"PRAGMA {pragma}(events)").fetchall()
+        except sqlite3.OperationalError:
+            continue
+        if rows:
+            return {str(row[1]) for row in rows}
+    return set()
+
+
+def _migrate_correlation_taxonomy_columns(db: sqlite3.Connection) -> None:
+    existing = _events_column_names(db)
+    for name, definition in _CORRELATION_TAXONOMY_COLUMNS:
+        if name in existing:
+            continue
+        try:
+            db.execute(f"ALTER TABLE events ADD COLUMN {name} {definition}")
+        except sqlite3.OperationalError as exc:
+            if "duplicate column name" not in str(exc).lower():
+                raise
+    for ddl in _CORRELATION_TAXONOMY_INDEXES:
+        db.execute(ddl)
+
 
 def _ts_ms_from_iso(iso: str) -> int:
     """Convert ISO 8601 timestamp to Unix epoch milliseconds.
@@ -127,6 +185,7 @@ class EventStore:
             self._db.execute("PRAGMA auto_vacuum=INCREMENTAL")
             self._db.execute("PRAGMA busy_timeout=5000")
             self._db.executescript(_SCHEMA_SQL)
+            _migrate_correlation_taxonomy_columns(self._db)
             self._db.commit()
         except Exception:
             self._db.rollback()

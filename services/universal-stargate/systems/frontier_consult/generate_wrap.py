@@ -291,6 +291,11 @@ async def dispatch_cursor_sdk_generate_route(
                 body, "review_opt_out_reason_code", None
             ),
             auto_review_child=getattr(body, "auto_review_child", False),
+            model_knobs=getattr(body, "model_knobs", None),
+            cost_intent=getattr(body, "cost_intent", None),
+            suppress_cost_warning=getattr(body, "suppress_cost_warning", False),
+            cost_intent_reason=getattr(body, "cost_intent_reason", None),
+            reasoning_effort=getattr(body, "reasoning_effort", None),
         )
         if isinstance(result, dict):
             split_warning = consolidation_split_warning(

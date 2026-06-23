@@ -1,6 +1,7 @@
 """Headless relay CLI: start/stop relay+edge on a remote host via ./manage relay."""
 
 import argparse
+import asyncio
 import logging
 import os
 import re
@@ -9,6 +10,9 @@ import sys
 import time
 from pathlib import Path
 
+from universal_event_bus.events.debug import emit_debug_event
+
+from scripts.model_manager import relay_state
 from scripts.model_manager.ui.controller.service_config import (
     ensure_relay_dirs,
     load_env_file,
@@ -123,6 +127,11 @@ def _run_stop(node_id: str) -> int:
     node_env = load_env_file(_node_env_path(node_id))
     compose_env = _build_env(node_env)
     compose_env["COMPOSE_PROJECT_NAME"] = f"edge-{node_id}"
+    subprocess.run(
+        ["docker", "update", "--restart=no", f"edge-{node_id}"],
+        capture_output=True,
+        text=True,
+    )
     result = subprocess.run(
         [
             "docker",
@@ -280,6 +289,59 @@ def _launch_stargate(node_id: str, stargate_env: dict[str, str]) -> int:
     return proc.returncode
 
 
+def _run_edge_only(node_id: str, node_env: dict[str, str]) -> int:
+    """Bring up only the edge container; leave the host relay Stargate untouched."""
+    model_path = Path(
+        node_env.get("MODEL_PATH", str(Path.home() / ".models"))
+    ).expanduser()
+    err = ensure_relay_dirs(_ROOT, node_id, model_path)
+    if err:
+        print("ERROR:", err, file=sys.stderr)
+        return 1
+    if not _COMPOSE_PATH.exists():
+        print("ERROR: Compose file not found:", _COMPOSE_PATH, file=sys.stderr)
+        return 1
+    env = _build_env(node_env)
+    env["COMPOSE_PROJECT_NAME"] = f"edge-{node_id}"
+    _stop_existing_container(node_id, env)
+    result = subprocess.run(
+        [
+            "docker",
+            "compose",
+            "-f",
+            str(_COMPOSE_PATH),
+            "-p",
+            f"edge-{node_id}",
+            "up",
+            "-d",
+            "--force-recreate",
+        ],
+        env=env,
+        cwd=str(_ROOT),
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        print("Edge container failed:", result.stdout or result.stderr, file=sys.stderr)
+        return 1
+    print(f"Edge container edge-{node_id} started (host Stargate untouched)")
+    return 0
+
+
+def _emit_managed_down_skip(node_id: str) -> None:
+    asyncio.run(
+        emit_debug_event(
+            "debug.federation.restore",
+            {
+                "step": "skipped",
+                "reason": "managed_down",
+                "node_id": node_id,
+            },
+            source="relay",
+        )
+    )
+
+
 def main() -> int:
     """Parse CLI args and dispatch relay stop/restart/start operations."""
     parser = argparse.ArgumentParser(
@@ -312,6 +374,11 @@ def main() -> int:
     parser.add_argument(
         "--stop", action="store_true", help="Stop relay stargate and edge container"
     )
+    parser.add_argument(
+        "--edge-only",
+        action="store_true",
+        help="Start only the edge container (no host relay Stargate)",
+    )
     args = parser.parse_args()
     node_id = (args.node_id or "").strip() or __import__("socket").gethostname()
     if args.restart:
@@ -319,7 +386,36 @@ def main() -> int:
         if code != 0:
             logger.warning("Stop returned %d, continuing with start", code)
     elif args.stop:
+        relay_state.write_desired_state(
+            node_id, "managed_down", "manual stop", "relay.py"
+        )
         return _run_stop(node_id)
+    if args.edge_only:
+        node_path = _node_env_path(node_id)
+        if not node_path.exists():
+            print(
+                "ERROR: Node env not found:",
+                node_path,
+                "\nRun 'Add Remote' on master, then scp the node env to this host.",
+                file=sys.stderr,
+            )
+            return 1
+        node_env = load_env_file(node_path)
+        missing = _validate_node_env(node_env)
+        if missing:
+            print(
+                "ERROR: Node env missing required keys:",
+                ", ".join(missing),
+                file=sys.stderr,
+            )
+            return 1
+        if relay_state.read_desired_state(node_id) == "managed_down":
+            _emit_managed_down_skip(node_id)
+            return 0
+        relay_state.write_desired_state(
+            node_id, "managed_up", "edge-only start", "relay.py"
+        )
+        return _run_edge_only(node_id, node_env)
     node_path = _node_env_path(node_id)
     if not node_path.exists():
         print(
@@ -338,6 +434,7 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
+    relay_state.write_desired_state(node_id, "managed_up", "manual start", "relay.py")
     return _run_start(node_id, node_env, args.build, scope=args.scope)
 
 

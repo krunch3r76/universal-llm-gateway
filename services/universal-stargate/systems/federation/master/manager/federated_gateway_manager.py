@@ -11,8 +11,10 @@ CRITICAL: Uses @sequential decorator for lock-free sequential execution.
 """
 
 import asyncio
+import os
 import time
 from dataclasses import replace
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, TypedDict
 
 from model_id import ModelId
@@ -35,6 +37,7 @@ if TYPE_CHECKING:
     from systems.routing.capacity.pool import CapacityPool
 
     from ...common.config.schema import RemoteStargateConfig
+    from ..circuit_breaker import FederationCircuitBreaker
 
 logger = get_logger(__name__)
 
@@ -86,10 +89,12 @@ class FederatedGatewayManager(Sequential):
         self,
         event_bus: "EventBus",
         capacity_pool: "CapacityPool | None" = None,
+        circuit_breaker: "FederationCircuitBreaker | None" = None,
     ):
         super().__init__()
         self._event_bus = event_bus
         self._capacity_pool = capacity_pool
+        self._circuit_breaker = circuit_breaker
 
         # Gateway state by gateway_id
         self._gateways: dict[str, FederatedGateway] = {}
@@ -120,6 +125,84 @@ class FederatedGatewayManager(Sequential):
 
         # Startup timestamp for startup-queue window calculation
         self._started_at: float = time.monotonic()
+
+        # Passive liveness alerting (read-only; distinct from is_unreachable routing)
+        self._liveness_threshold_ms = int(
+            os.getenv("ULG_FEDERATION_LIVENESS_ALERT_THRESHOLD_MS", "300000")
+        )
+        self._liveness_sweep_interval_s = (
+            int(os.getenv("ULG_FEDERATION_LIVENESS_SWEEP_INTERVAL_MS", "60000"))
+            / 1000
+        )
+        self._liveness_alerted: set[str] = set()
+        self._liveness_alerted_at: dict[str, float] = {}
+        self._liveness_task: asyncio.Task[None] | None = None
+        self._executor_started = False
+
+    def set_circuit_breaker(self, circuit_breaker: "FederationCircuitBreaker") -> None:
+        """Wire circuit breaker for liveness emit helpers and start watchdog."""
+        self._circuit_breaker = circuit_breaker
+        self._ensure_liveness_task_started()
+
+    def _ensure_liveness_task_started(self) -> None:
+        if not self._executor_started or self._circuit_breaker is None:
+            return
+        if self._liveness_task is not None and not self._liveness_task.done():
+            return
+        self._liveness_task = asyncio.create_task(
+            self._liveness_watchdog_loop(),
+            name="federation-liveness-watchdog",
+        )
+
+    async def _liveness_watchdog_loop(self) -> None:
+        while True:
+            await asyncio.sleep(self._liveness_sweep_interval_s)
+            try:
+                self._sweep_liveness()
+            except Exception:
+                logger.exception("Liveness sweep failed; continuing watchdog loop")
+
+    def _sweep_liveness(self) -> None:
+        if self._circuit_breaker is None:
+            return
+
+        now = time.time()
+        for gateway_id, gw in list(self._gateways.items()):
+            gw = self._coerce_gateway_if_stale(gateway_id, gw)
+            if gw.is_cloud:
+                continue
+
+            age = gw.heartbeat_age_ms
+            if (
+                age > self._liveness_threshold_ms
+                and gateway_id not in self._liveness_alerted
+            ):
+                self._liveness_alerted.add(gateway_id)
+                self._liveness_alerted_at[gateway_id] = now
+                last_hb_iso = datetime.fromtimestamp(
+                    gw.last_heartbeat, tz=UTC
+                ).isoformat()
+                asyncio.create_task(
+                    self._circuit_breaker.emit_gateway_liveness_stale(
+                        gateway_id,
+                        age,
+                        self._liveness_threshold_ms,
+                        last_hb_iso,
+                        gw.backend_type,
+                    ),
+                    name=f"emit-liveness-stale-{gateway_id}",
+                )
+            elif gateway_id in self._liveness_alerted and not gw.is_unreachable:
+                alerted_at = self._liveness_alerted_at.pop(gateway_id, now)
+                self._liveness_alerted.discard(gateway_id)
+                downtime_ms = int((now - alerted_at) * 1000)
+                asyncio.create_task(
+                    self._circuit_breaker.emit_gateway_liveness_recovered(
+                        gateway_id,
+                        downtime_ms,
+                    ),
+                    name=f"emit-liveness-recovered-{gateway_id}",
+                )
 
     def get_state_version(self) -> int:
         """Return the monotonic state generation used by waiters for ordering."""
@@ -183,10 +266,20 @@ class FederatedGatewayManager(Sequential):
         """
 
         await self._start_executor()
+        self._executor_started = True
+        self._ensure_liveness_task_started()
         logger.info("FederatedGatewayManager started")
 
     async def stop(self) -> None:
         """Stop the sequential executor."""
+        if self._liveness_task is not None:
+            self._liveness_task.cancel()
+            try:
+                await self._liveness_task
+            except asyncio.CancelledError:
+                pass
+            self._liveness_task = None
+        self._executor_started = False
         await self._stop_executor()
         logger.info("FederatedGatewayManager stopped")
 

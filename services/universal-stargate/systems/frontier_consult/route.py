@@ -28,10 +28,6 @@ from .admission import (
     resolve_handoff_target,
 )
 from .closeout_reply import parse_closeout_payload, run_implement_closeout_pipeline
-from .pinned_deliverable_ingress import (
-    PinnedDeliverableBody,
-    write_pinned_deliverable_via_cortex,
-)
 from .contract_derivation import derive_contract
 from .cursor_sdk_generate import dispatch_cursor_sdk_generate
 from .dispatch_thread_context import as_user_message, read_latest_dispatch_thread_body
@@ -58,6 +54,7 @@ from .handoff import (
 )
 from .handoff_packet_enrich import WEB_RECEIVER_AGENT, enrich_web_handoff_packet
 from .handoff_response import (
+    build_executor_recommendation_field,
     build_handoff_result,
     build_push_reminder,
     build_recommended_executor,
@@ -72,6 +69,10 @@ from .implement_admission_bridge import (
     verify_both_present_hash,
 )
 from .implement_ready_gate import require_implement_ready
+from .pinned_deliverable_ingress import (
+    PinnedDeliverableBody,
+    write_pinned_deliverable_via_cortex,
+)
 from .service import (
     FrontierEndpointError,
     FrontierGenerateRequest,
@@ -151,6 +152,10 @@ class TeamDispatchGenerateBody(_DispatchCommon):
         | None
     ) = None
     auto_review_child: bool = False
+    model_knobs: dict[str, str] | None = None
+    cost_intent: Literal["deliberate_high_cost"] | None = None
+    suppress_cost_warning: bool = False
+    cost_intent_reason: str | None = None
     # thread / subject MUST NOT appear — extra="forbid" rejects any caller that
     # supplies them (schema-level enforcement per Phase 0 contract).
 
@@ -857,6 +862,11 @@ async def team_handoff(
         ),
         **build_handoff_result(thread_id=thread_id, to_agent=to_agent),
         **executor_fields,
+        **build_executor_recommendation_field(
+            handoff_contract=handoff_contract,
+            target_surface=to_agent,
+            target_model=resolved_model,
+        ),
         **review_fields,
         **build_seat_capability(
             profile=get_profile(family, platform),

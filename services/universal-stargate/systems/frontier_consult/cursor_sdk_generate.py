@@ -11,6 +11,7 @@ from .admission import resolve_cursor_sdk_generate_target
 from .cursor_sdk_coord_notify import post_coord_admit_pointer
 from .cursor_sdk_generate_signals import (
     emit_sdk_generate_requested,
+    emit_sdk_materialization_incomplete,
     emit_sdk_thread_created,
     emit_sdk_worker_outcome,
 )
@@ -70,6 +71,11 @@ async def dispatch_cursor_sdk_generate(
     review_opt_out_reason_code: str | None = None,
     auto_review_child: bool = False,
     read_only: bool = False,
+    model_knobs: dict[str, str] | None = None,
+    cost_intent: Literal["deliberate_high_cost"] | None = None,
+    suppress_cost_warning: bool = False,
+    cost_intent_reason: str | None = None,
+    reasoning_effort: str | None = None,
 ) -> dict[str, Any]:
     """Execute cursor-sdk generate with to_thread default delivery.
 
@@ -89,6 +95,20 @@ async def dispatch_cursor_sdk_generate(
         role, model=model, request_id=request_id
     )
     execution_id = str(uuid.uuid4())
+    from .cursor_sdk_alignment import align_cursor_knobs
+
+    alignment = align_cursor_knobs(
+        resolved_model=resolved_model,
+        contract=contract,
+        model_knobs=model_knobs,
+        cost_intent=cost_intent,
+        suppress_cost_warning=suppress_cost_warning,
+        cost_intent_reason=cost_intent_reason,
+        reasoning_effort=reasoning_effort,
+        request_id=request_id,
+        execution_id=execution_id,
+    )
+    aligned_knobs = alignment.aligned_knobs or None
     # Scope the bus recipient to this dispatch so `fetch-unread --to cursor-sdk`
     # returns empty and sibling dispatches cannot contaminate each other's inbox
     # (structurally safe at CURSOR_SDK_DISPATCH_CONCURRENCY>1).
@@ -277,6 +297,25 @@ async def dispatch_cursor_sdk_generate(
         from .handoff import _resolve_packet_file, _workspaces_root
 
         packet_file = _resolve_packet_file(_workspaces_root().resolve(), worker_packet)
+        if worker_packet is not None and packet_file is None:
+            from .admission import FrontierEndpointError
+
+            probe_root = str(_workspaces_root().resolve())
+            emit_sdk_materialization_incomplete(
+                request_id=request_id,
+                packet_path=worker_packet,
+                probe_root=probe_root,
+                source_ref=worker_packet,
+                execution_id=execution_id,
+                thread_id=thread_id,
+            )
+            raise FrontierEndpointError(
+                request_id=request_id,
+                field="packet_path",
+                reason="materialized packet absent at executor root",
+                status_code=422,
+                code="CURSOR_MATERIALIZATION_INCOMPLETE",
+            )
         if packet_file is not None:
             packet_text = packet_file.read_text(encoding="utf-8", errors="replace")
         prompt_preamble = derive_cursor_sdk_prompt_preamble(
@@ -293,6 +332,7 @@ async def dispatch_cursor_sdk_generate(
             handoff_contract=handoff_contract,
             caller_agent=caller_agent,
             prompt_preamble=prompt_preamble,
+            model_knobs=aligned_knobs,
             read_only=read_only,
         )
     else:
@@ -303,6 +343,7 @@ async def dispatch_cursor_sdk_generate(
             message=worker_message or "",
             execution_id=execution_id,
             caller_agent=caller_agent,
+            model_knobs=aligned_knobs,
             read_only=read_only,
         )
 
@@ -340,12 +381,13 @@ async def dispatch_cursor_sdk_generate(
         to_agent=to_agent,
         resolved_model=resolved_model,
         resolved_contract=handoff_contract,
-        warnings=[],
+        warnings=alignment.warnings_as_dicts(),
         durable=admitted,
         density_triage=density_triage,
         review_opt_out_reason_code=review_opt_out_reason_code,
         auto_review_child=auto_review_child,
     )
+    result["knob_resolution"] = alignment.knob_resolution_as_dicts()
     if queued:
         ticket = worker_detail.get("ticket") or {}
         result["status"] = "queued"

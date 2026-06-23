@@ -30,6 +30,10 @@ from services.git_integration_worker.events import publish_lib_signal
 from services.git_integration_worker.git_worker_drain_events import (
     register_git_worker_drain_event_publisher,
 )
+from services.git_integration_worker.git_worker_lifecycle_events import (
+    emit_git_worker_started,
+    register_git_worker_lifecycle_event_publisher,
+)
 from services.git_integration_worker.routes.admin import router as admin_router
 from services.git_integration_worker.routes.cursor_sdk import (
     router as cursor_sdk_router,
@@ -68,6 +72,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     register_uds_publisher(publish_lib_signal)
     register_cursor_sdk_event_publisher(publish_lib_signal)
     register_git_worker_drain_event_publisher(publish_lib_signal)
+    register_git_worker_lifecycle_event_publisher(publish_lib_signal)
     # Construct the dispatch ledger at startup, under the real worker HOME and
     # before any per-dispatch HOME swap, so the cursor_sdk_dispatches table
     # exists regardless of which dispatch op touches the ledger first.
@@ -100,6 +105,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         cfg.source_repo,
         app.state.worker_id,
     )
+    try:
+        emit_git_worker_started(
+            worker_id=app.state.worker_id,
+            pid=os.getpid(),
+            port=cfg.port,
+            version=app.state.worker_version,
+            started_at=worker_boot_ts,
+            source_repo=str(cfg.source_repo),
+            bind_host=cfg.host,
+            build_sha=app.state.worker_version,
+            health_url=f"http://{cfg.host}:{cfg.port}/health",
+        )
+    except Exception as exc:
+        logger.warning("git_worker.started emission failed: %s", exc)
     try:
         yield
     finally:

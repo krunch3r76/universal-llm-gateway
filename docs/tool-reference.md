@@ -798,7 +798,7 @@ Bound ULG coding sessions may **skip** boot when task + skill preload suffice â€
 | `operational_context_ref` | Path to operational context file (read on demand via `fs md_read`) |
 | `seat_preloaded` | Slugs merged into `skill_suggest` loaded set (web orientation/inject channels) |
 | `injected_artifacts` | Byte ledger: `name`, `mode`, `source`, `bytes`, `sha256`, `path`, `fetches` |
-| `audit_dump_path` | Per-boot audit dump under cortex sandbox (LIVE mode only); `null` on failure |
+| `audit_dump_path` | Per-boot audit sidecar (`{agent}-YYYY-MM-DD-HHMMSS.md`); filename decoupled from `session_id` (which adds a 3-hex suffix for uniqueness); LIVE mode only; `null` on failure |
 
 Legacy field names in older notes (`boot_narrative`, `agent_bus` as top-level keys) may appear in
 audit dumps; MCP response uses `briefing_card` + `sections_available`.
