@@ -42,7 +42,37 @@ _SERVICE_TOOLS = frozenset(
         "dispatch",
     }
 )
+_PLUMBING_SURFACES = frozenset({"cortex", "agent_bus", "service"})
 _SURFACE_ORDER = ("repo", "cortex", "agent_bus", "fs", "rag", "service")
+
+
+def _git_change_set_empty(change_set: ChangeSet) -> bool:
+    return not (change_set.created or change_set.modified or change_set.deleted)
+
+
+def _manifest_declares_runtime_surface(base: EffectsManifest | None) -> bool:
+    if base is None:
+        return False
+    repo_paths = manifest_repo_paths(base)
+    if repo_paths:
+        return True
+    for name, section in base.surfaces.items():
+        if name in _PLUMBING_SURFACES:
+            continue
+        if section.entries:
+            return True
+    return False
+
+
+def is_genuinely_no_code_change(
+    *,
+    git_change_set: ChangeSet,
+    base: EffectsManifest | None,
+) -> bool:
+    """True when baseline diff is empty and effects are cortex/bus/service plumbing only."""
+    if not _git_change_set_empty(git_change_set):
+        return False
+    return not _manifest_declares_runtime_surface(base)
 
 
 def classify_mcp_capture_branch(turns: Iterable) -> CaptureBranch:
@@ -187,7 +217,7 @@ def compact_manifest_for_body(
     manifest: EffectsManifest,
 ) -> EffectsManifest | dict[str, Any]:
     """Digest stub when the full manifest would exceed turn-body budget."""
-    return {
+    compact: dict[str, Any] = {
         "schema_version": manifest.schema_version,
         "dispatch_id": manifest.dispatch_id,
         "thread_id": manifest.thread_id,
@@ -196,6 +226,9 @@ def compact_manifest_for_body(
         "capture_sources": manifest.capture_sources,
         "external_effects": manifest.external_effects,
     }
+    if not manifest.surfaces:
+        compact["surfaces"] = {}
+    return compact
 
 
 def wrapper_effects_for_closeout(
@@ -234,7 +267,20 @@ def merge_wrapper_manifest(
     thread_id: str,
     base: EffectsManifest | None,
     cortex_artifact_paths: list[str],
+    git_change_set: ChangeSet | None = None,
 ) -> EffectsManifest:
+    empty_git = ChangeSet(created=(), modified=(), deleted=())
+    resolved_git = git_change_set if git_change_set is not None else empty_git
+    if is_genuinely_no_code_change(git_change_set=resolved_git, base=base):
+        sources = list(base.capture_sources) if base else []
+        sources = list(dict.fromkeys([*sources, "wrapper"]))
+        return EffectsManifest(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            capture_sources=sources,
+            surfaces={},
+            coverage={},
+        )
     wrapper = build_effects_manifest(
         dispatch_id=dispatch_id,
         thread_id=thread_id,

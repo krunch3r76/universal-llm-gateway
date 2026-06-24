@@ -143,7 +143,15 @@ def supersede_assertion(body: SupersedeRequest) -> SupersedeResponse:
             )
 
         eff_evidence_uris: list[str] | None = _resolve("evidence_uris")  # type: ignore[assignment]
-        eff_derivation_type: str = _resolve("derivation_type") or "inference"  # type: ignore[assignment]
+        _raw_derivation_type = _resolve("derivation_type")
+        eff_derivation_type: str = _raw_derivation_type or "inference"  # type: ignore[assignment]
+        if not _raw_derivation_type:
+            logger.info(
+                "supersede_default_to_inference entity_id=%s force=%s derivation_type_supplied=%s",
+                body.entity_id,
+                body.force,
+                "derivation_type" in specified,
+            )
         eff_valid_from: str | None = _resolve("valid_from")  # type: ignore[assignment]
         eff_reasoning_summary: str | None = _resolve("reasoning_summary")  # type: ignore[assignment]
         eff_seeded_by: str | None = _resolve("seeded_by")  # type: ignore[assignment]
@@ -236,14 +244,25 @@ def supersede_assertion(body: SupersedeRequest) -> SupersedeResponse:
                         "valid_derivation_types": DERIVATION_TYPE_TAXONOMY,
                     },
                 )
+            _GOVERNING_FIELDS = {
+                "R2": ("derivation_type", "evidence_uris", "chunk_id"),
+                "R3": ("derivation_type", "chunk_id", "evidence_uris"),
+                "R4": ("claim", "valid_from"),
+            }
+            reject_field_origins = {
+                f: ("caller" if f in specified else "inherited")
+                for rid in reject_rule_ids
+                for f in _GOVERNING_FIELDS.get(rid, ())
+            }
             logger.info(
                 "supersede would_reject rule_ids=%s derivation_type=%s force=%s "
-                "valid_from_inherited=%s parent_had_valid_from=%s",
+                "valid_from_inherited=%s parent_had_valid_from=%s reject_field_origins=%s",
                 reject_rule_ids,
                 eff_derivation_type,
                 body.force,
                 "valid_from" not in specified,
                 old_data.get("valid_from") is not None,
+                reject_field_origins,
             )
             quality_validation_warnings.append(
                 {

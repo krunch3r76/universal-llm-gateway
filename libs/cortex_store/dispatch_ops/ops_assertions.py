@@ -161,10 +161,12 @@ def _op_frictions(
     seeded_by: str | None = None,
     superseded: bool | None = None,
     limit: int | None = None,
+    intent: str | None = None,
     include_compaction_pointers: bool = False,
     **_: object,
 ) -> dict[str, Any]:
     """List open friction assertions (service:* entities, bracketed category claims)."""
+    resolved_intent = intent if intent in ("summary", "full") else "summary"
     entity_id = service_entity_id(service) if service else None
     claim_filter = f"[{category}]" if category else None
     result = _list_assertions_impl(
@@ -173,12 +175,12 @@ def _op_frictions(
         claim_filter=claim_filter,
         seeded_by=seeded_by,
         superseded=False if superseded is None else superseded,
-        limit=limit or 30,
-        intent="full",
+        limit=limit or 7,
+        intent=resolved_intent,
         include_compaction_pointers=include_compaction_pointers,
     )
     if not result.get("error"):
-        result["_next"] = (
+        fix_cycle = (
             "Actionable row → codified bug ticket, investigate→execute fix cycle: investigate "
             "(cursor: role=cursor-consult; web: role=web-consult) → dense spec; "
             "execute (cursor: role=cursor-implement against spec; web: inline). "
@@ -187,6 +189,13 @@ def _op_frictions(
             "Close via friction_close (agent_skill:|workflow:|todo:|superseded|wontfix). "
             "Skill: docs/agent-guides/skills/friction-review.md or consult-routing § Codified bug reports."
         )
+        if resolved_intent == "summary":
+            result["_next"] = (
+                "Deepen one row: cortex(tool=assertion_get, assertion_id=<id>). "
+                "Full rows: re-call with intent=full. " + fix_cycle
+            )
+        else:
+            result["_next"] = fix_cycle
     return result
 
 

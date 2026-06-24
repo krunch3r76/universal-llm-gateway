@@ -495,6 +495,7 @@ def _assemble_closeout_delivery(
         thread_id=thread_id,
         base=outcome.effects_manifest,
         cortex_artifact_paths=cortex_artifact_paths,
+        git_change_set=git_change_set,
     )
     repo_change_set = resolve_repo_change_set(
         manifest=manifest,

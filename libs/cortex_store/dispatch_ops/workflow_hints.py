@@ -168,7 +168,8 @@ _WORKFLOW_HINTS["friction"] = (
 )
 
 _WORKFLOW_HINTS["frictions"] = (
-    "tip: defaults to open assertions on service:* entities. "
+    "tip: defaults to open assertions on service:* entities (limit=7, intent=summary). "
+    "Deepen one row via assertion_get; full rows via intent=full. "
     "Narrow with service, category (tool_error, schema_gap, …), or seeded_by. "
     "Per-service lookup: assertions(entity_id='service:mcp-server', filter='tool_error'). "
     "Close via friction_close after fix. " + _FRICTION_TICKET_NEXT

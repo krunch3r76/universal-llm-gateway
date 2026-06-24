@@ -30,6 +30,7 @@ from .admission import (
 from .closeout_reply import parse_closeout_payload, run_implement_closeout_pipeline
 from .contract_derivation import derive_contract
 from .cursor_sdk_generate import dispatch_cursor_sdk_generate
+from .deploy_state_gate import require_deploy_state
 from .dispatch_thread_context import as_user_message, read_latest_dispatch_thread_body
 from .events import (
     FrontierHandoffCreated,
@@ -899,22 +900,19 @@ _closeout_dedupe: dict[
 ] = {}  # TODO(durable-dedupe): todo:wire-closeout-trigger-consumer
 
 
-def _closeout_dedupe_seen(key: str) -> bool:
-    """Return True iff key already seen within TTL; otherwise record and return False.
-
-    Synchronous (no await) so check-and-set is atomic on the event loop. In-memory
-    only — markers are lost on restart (v1 trade-off, see
-    todo:wire-closeout-trigger-consumer).
-    """
+def _closeout_dedupe_peek(key: str) -> bool:
+    """Return True iff key already seen within TTL (does not record)."""
     now = time.monotonic()
     for k in [
         k for k, ts in _closeout_dedupe.items() if now - ts > _CLOSEOUT_DEDUPE_TTL_S
     ]:
         _closeout_dedupe.pop(k, None)
-    if key in _closeout_dedupe:
-        return True
-    _closeout_dedupe[key] = now
-    return False
+    return key in _closeout_dedupe
+
+
+def _closeout_dedupe_record(key: str) -> None:
+    """Record idempotency key after closeout pipeline accepts (non-poisoning)."""
+    _closeout_dedupe[key] = time.monotonic()
 
 
 class ImplementCloseoutBody(BaseModel):
@@ -946,8 +944,8 @@ async def implement_closeout(
             ).to_dict(),
         )
 
-    # Idempotency dedupe (producer path only; manual callers omit the key).
-    if body.idempotency_key and _closeout_dedupe_seen(body.idempotency_key):
+    # Idempotency peek (producer path only; record after gate + pipeline pass).
+    if body.idempotency_key and _closeout_dedupe_peek(body.idempotency_key):
         logger.info("closeout deduped: key=%s", body.idempotency_key)
         return {"ok": True, "deduped": True, "idempotency_key": body.idempotency_key}
 
@@ -1000,6 +998,28 @@ async def implement_closeout(
             )
 
     loop = asyncio.get_running_loop()
+    admin_override = bool(payload.get("deploy_state_admin_override"))
+    try:
+        await loop.run_in_executor(
+            None,
+            partial(
+                require_deploy_state,
+                request_id=request_id,
+                source_ref=effective_source_ref,
+                closeout=payload,
+                cortex=StargateCortexReader(),
+                admin_override=admin_override,
+            ),
+        )
+    except FrontierEndpointError as exc:
+        logger.warning(
+            "closeout deploy_state_gate reject: key=%s ref=%s code=%s",
+            body.idempotency_key,
+            effective_source_ref,
+            exc.code,
+        )
+        return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
+
     logger.info(
         "closeout accepted: key=%s ref=%s",
         body.idempotency_key,
@@ -1026,6 +1046,8 @@ async def implement_closeout(
         )
     if not result.get("ok", True) and result.get("error"):
         return JSONResponse(status_code=502, content=result)
+    if body.idempotency_key:
+        _closeout_dedupe_record(body.idempotency_key)
     return result
 
 

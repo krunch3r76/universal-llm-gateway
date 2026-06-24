@@ -9,8 +9,10 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
+import subprocess
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -55,6 +57,68 @@ from .skill_graph_drift_monitor import run_skill_graph_drift_monitor
 logger = get_logger("cortex-api")
 
 _DEFAULT_EMBEDDING_MODEL = "qwen3-embedding-8b-q8-0-8192"
+_SOURCE_SYNC_STAMP = Path.home() / ".gateway" / "cortex-api.source_sync_stamp"
+
+
+def _resolve_workspace_root() -> Path | None:
+    for raw in (
+        os.environ.get("ULG_WORKSPACE_ROOT"),
+        os.environ.get("WORKSPACE_ROOT"),
+    ):
+        if raw:
+            candidate = Path(raw).expanduser()
+            if candidate.is_dir():
+                return candidate.resolve()
+    return None
+
+
+def _read_deploy_identity() -> dict[str, str | None]:
+    """P1b source-identity fields exposed on GET /health for deploy-state gate."""
+    deploy_mode = "source_synced"
+    source_synced_at: str | None = None
+    source_sync_generation: str | None = None
+    if _SOURCE_SYNC_STAMP.is_file():
+        lines = _SOURCE_SYNC_STAMP.read_text(encoding="utf-8").strip().splitlines()
+        if lines:
+            source_synced_at = lines[0].strip() or None
+        if len(lines) > 1:
+            source_sync_generation = lines[1].strip() or None
+    if source_synced_at is None:
+        source_synced_at = datetime.now(UTC).isoformat()
+
+    source_ref: str | None = None
+    source_tree_hash: str | None = None
+    workspace = _resolve_workspace_root()
+    if workspace is not None and (workspace / ".git").is_dir():
+        try:
+            head = subprocess.run(
+                ["git", "-C", str(workspace), "rev-parse", "HEAD"],
+                capture_output=True,
+                text=True,
+                timeout=2,
+                check=False,
+            )
+            if head.returncode == 0:
+                source_ref = f"git:{head.stdout.strip()}"
+            tree = subprocess.run(
+                ["git", "-C", str(workspace), "rev-parse", "HEAD^{tree}"],
+                capture_output=True,
+                text=True,
+                timeout=2,
+                check=False,
+            )
+            if tree.returncode == 0:
+                source_tree_hash = tree.stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            logger.debug("deploy identity git probe failed", exc_info=True)
+
+    return {
+        "deploy_mode": deploy_mode,
+        "source_synced_at": source_synced_at,
+        "source_ref": source_ref,
+        "source_tree_hash": source_tree_hash,
+        "source_sync_generation": source_sync_generation or "0",
+    }
 
 
 def _init_vector_subsystem() -> None:
@@ -208,10 +272,11 @@ def create_app(*, db_path: str | None = None) -> FastAPI:
         )
 
     @app.get("/health")
-    def health() -> dict[str, str]:
+    def health() -> dict[str, str | None]:
         return {
             "status": "ok",
             "cortex_db": "found" if check_cortex_db() else "missing",
+            **_read_deploy_identity(),
         }
 
     return app
