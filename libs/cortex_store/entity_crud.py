@@ -55,7 +55,7 @@ from .status_trait_write import (
     trait_insert_extras,
 )
 from .trait_vocabulary import NON_LIVE_LIFECYCLE
-from .type_schemas import validate_distilled_attributes, validate_required_attributes
+from .type_schemas import validate_distilled_attributes, validate_required_attributes, validate_surface_visibility
 from .workflow_state import (
     emit_todo_closure_gap_if_needed,
     validate_workflow_state,
@@ -438,6 +438,10 @@ def update_entity_impl(
         validate_workflow_state(
             conn, str(prior["type"]), str(updates["workflow_state"])
         )
+        # Condition entities have no terminal/closure state. Reject any attempt
+        # to move them to done/resolved/closed.
+        if str(prior.get("type")) == "condition":
+            _reject_condition_closure_attempt(str(updates["workflow_state"]))
 
     if "attributes" in updates:
         attrs = merged.get("attributes")
@@ -564,6 +568,93 @@ def update_entity_impl(
     return get_entity_impl(conn, entity_id=entity_id, source="boot")
 
 
+_CONDITION_FORBIDDEN_STATES = frozenset({"done", "resolved", "closed", "cancelled", "completed"})
+
+
+def _reject_condition_closure_attempt(new_state: str) -> None:
+    if new_state in _CONDITION_FORBIDDEN_STATES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "error": "condition_closure_forbidden",
+                "message": (
+                    f"Condition entities cannot be moved to terminal state {new_state!r}. "
+                    "To acknowledge integration use lifecycle=integrated; "
+                    "to retire, use lifecycle=historical."
+                ),
+                "forbidden_states": sorted(_CONDITION_FORBIDDEN_STATES),
+            },
+        )
+
+
+def _gate_condition_admission(
+    conn: sqlite3.Connection, body: "EntityCreate"
+) -> None:
+    """Invoke the condition admission rubric; raise 422 on reject/route_to_todo.
+
+    On admit_with_children the condition entity is created first (by the caller)
+    and the ``child_intent`` is stored in attributes for downstream trigger
+    processing. entity_merge instructs the caller to use the existing entity.
+    """
+    from .condition_admission import AdmissionInput, classify
+
+    attrs = body.attributes or {}
+    intent_category = str(attrs.get("intent_category", "enduring_fact"))
+    try:
+        inp = AdmissionInput(
+            slug=body.id,
+            intent_category=intent_category,
+            temporality=str(attrs.get("temporality", "ongoing")),
+            is_false_admission=bool(attrs.get("is_false_admission", False)),
+            is_duplicate_of=str(attrs["is_duplicate_of"]) if attrs.get("is_duplicate_of") else None,
+            is_obsolete_ref=bool(attrs.get("is_obsolete_ref", False)),
+            has_recurrent_maintenance=bool(attrs.get("has_recurrent_maintenance", False)),
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"error": "condition_admission_input_invalid", "message": str(exc)},
+        ) from exc
+
+    result = classify(inp)
+    if result.disposition in ("reject",):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "error": "condition_admission_rejected",
+                "category": result.category,
+                "reason": result.reason,
+                "disposition": result.disposition,
+            },
+        )
+    if result.disposition == "entity_merge":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "error": "condition_admission_entity_merge",
+                "category": result.category,
+                "reason": result.reason,
+                "disposition": result.disposition,
+                "merge_target": inp.is_duplicate_of,
+            },
+        )
+    if result.disposition == "route_to_todo":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "error": "condition_admission_route_to_todo",
+                "category": result.category,
+                "reason": result.reason,
+                "disposition": result.disposition,
+            },
+        )
+    # admit or admit_with_children: store child_intent hint for downstream spawn
+    if result.disposition == "admit_with_children" and result.child_intent:
+        existing_attrs = dict(body.attributes or {})
+        existing_attrs["_admission_child_intent"] = result.child_intent
+        body = body.model_copy(update={"attributes": existing_attrs})
+
+
 def create_entity_impl(
     conn: sqlite3.Connection, payload: dict[str, object], commit: bool = True
 ) -> dict[str, object]:
@@ -582,6 +673,10 @@ def create_entity_impl(
 
     validate_required_attributes(conn, body.type, body.attributes)
     validate_distilled_attributes(conn, body.type, body.attributes)
+    validate_surface_visibility(conn, body.type, body.attributes)
+
+    if body.type == "condition":
+        _gate_condition_admission(conn, body)
 
     if body.type == "agent_skill":
         validate_applicable_agents(

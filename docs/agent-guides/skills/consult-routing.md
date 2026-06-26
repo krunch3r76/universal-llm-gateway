@@ -86,6 +86,14 @@ cortex(tool="entity_update", arguments={
 Once both schemas pass with zero open forks, Gate-3 closeout hands off to direct
 `source_ref` implement dispatch — wrap is not on the happy path.
 
+
+
+**Three entity-level preconditions the materializer also enforces** (beyond the two schemas above) — full checklist, 422 codes, gate order, and the dense-spec section list live in `cursor-sdk-instruction-standard.md` § Materializer preconditions (SOT — do not re-derive here):
+
+- `density_triage` (entity attr) must be `judgment_required` (full gate) or `mechanical` (bypass); every other value (incl. `cross_cutting` / `dispatch_surface` / `admission_path` / `trivial`) → 422 `implement_triage_unknown`.
+- the todo **entity** `source_uri` (NOT `attributes.spec_path`) must point at `tasks/specs/{slug}.md` or `notes/system/specs/{slug}.md` → else 422 `implement_not_ready_no_dense_spec`.
+- `validate_dense_spec` requires EIGHT headed sections (problem · non-goals · provenance · touch-points · forks · implementation · acceptance · verification) + a non-empty `<reasoning_trace>` containing `no fork remains open` + zero `OPEN:` markers → else 422 `implement_spec_not_dense`.
+
 ## Codified bug reports
 
 **Entity scope vs dispatch lane:** Friction/todo subsumption (`do NOT open a standalone

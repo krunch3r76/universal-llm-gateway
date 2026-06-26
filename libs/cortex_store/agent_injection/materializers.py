@@ -3,6 +3,11 @@
 Fetches via existing cortex_store.routes.assertions._shared surfaces
 (_ASSERTION_COLS, _JSON_FIELDS) and cortex_store.db (cortex_conn, decode_row, query).
 No duplication of column lists or decode logic.
+
+Condition dispatch sanitization (migration 060): sub-agent payloads that include
+condition entities must pass through ``sanitize_conditions_for_dispatch`` before
+being sent. Conditions are redacted per condition_redaction.py; CONFLICT sentinels
+cause the dispatch to escalate rather than proceed.
 """
 
 from __future__ import annotations
@@ -13,6 +18,7 @@ import re
 from datetime import datetime
 from typing import Any
 
+from ..condition_redaction import CONFLICT, apply_condition_to_payload, redact
 from ..db import cortex_conn, decode_row, query
 from ..routes.assertions._shared import _ASSERTION_COLS, _JSON_FIELDS
 from .errors import AgentInjectionAdmissionError, ViolationDetail
@@ -311,3 +317,72 @@ def materialize_d4(assertion_id: int) -> dict[str, Any]:
         "assertion_id": row["id"],
         "grade": "belief",
     }
+
+
+def sanitize_conditions_for_dispatch(
+    payload: dict[str, Any],
+    *,
+    audience: str = "sub_agent",
+    surface: str = "dispatch",
+) -> dict[str, Any]:
+    """Redact condition entities in *payload* for sub-agent dispatch.
+
+    Iterates over any ``conditions`` list in the payload and applies
+    condition_redaction per condition's reveal_default + safety_invariant.
+
+    CONFLICT return from the redactor causes the payload to carry a
+    ``dispatch_blocked_by_conflict`` flag — callers MUST NOT send the payload
+    to the sub-agent; they must escalate to the orchestrator/lead.
+
+    Returns a new dict (does not mutate *payload*).
+    """
+    out = dict(payload)
+    raw_conditions = out.pop("conditions", None)
+    if not raw_conditions or not isinstance(raw_conditions, list):
+        return out
+
+    aud: Any = audience if audience in ("orchestrator_lead", "sub_agent", "log_sink") else "sub_agent"
+    sanitized: list[dict[str, Any]] = []
+    has_conflict = False
+
+    for cond_attrs in raw_conditions:
+        if not isinstance(cond_attrs, dict):
+            continue
+        reveal_default = str(cond_attrs.get("reveal_default", "open"))
+        sv = cond_attrs.get("surface_visibility")
+        sv_map = sv if isinstance(sv, dict) else None
+        safety_invariant = bool(cond_attrs.get("safety_invariant", False))
+
+        level = redact(
+            reveal_default=reveal_default,
+            surface_visibility=sv_map,
+            safety_invariant=safety_invariant,
+            surface=surface,
+            audience=aud,
+        )
+        if level == CONFLICT:
+            has_conflict = True
+            out["dispatch_blocked_by_conflict"] = {
+                "reason": "CONFLICT: safety-invariant condition cannot be safely hidden for this dispatch. Escalate to orchestrator/lead.",
+                "condition_id": cond_attrs.get("entity_id") or cond_attrs.get("id"),
+            }
+            break
+        if level == "hidden":
+            continue
+        if level == "sanitized":
+            narrative = str(cond_attrs.get("narrative", ""))
+            sanitized.append(
+                {
+                    "lifecycle": cond_attrs.get("lifecycle"),
+                    "reveal_default": reveal_default,
+                    "safety_invariant": safety_invariant,
+                    "narrative_head": narrative.split("\n")[0][:200] if narrative else "",
+                    "redaction_level": "sanitized",
+                }
+            )
+        else:  # full — only reached for orchestrator_lead
+            sanitized.append(dict(cond_attrs))
+
+    if not has_conflict and sanitized:
+        out["conditions"] = sanitized
+    return out

@@ -80,6 +80,33 @@ def validate_workflow_state(
         )
 
 
+def closure_audit_exempt(conn: sqlite3.Connection, entity_type: str) -> bool:
+    """Return True if *entity_type* is registered as closure-audit-exempt.
+
+    Exempt types (e.g. ``condition``) must never appear in open-debt or
+    closure audits. The flag is seeded by migration 060 via the
+    ``closure_audit_exempt`` column on ``workflow_schemas``. Absent rows,
+    absent tables, and types without a schema all return False — free-form
+    types retain prior (non-exempt) behaviour.
+    """
+    if not _table_exists(conn, "workflow_schemas"):
+        return False
+    has_col = any(
+        row[1] == "closure_audit_exempt"
+        for row in conn.execute("PRAGMA table_info(workflow_schemas)").fetchall()
+    )
+    if not has_col:
+        return False
+    rows = query(
+        conn,
+        "SELECT closure_audit_exempt FROM workflow_schemas WHERE entity_type = ?",
+        (entity_type,),
+    )
+    if not rows:
+        return False
+    return bool(rows[0]["closure_audit_exempt"])
+
+
 def emit_todo_closure_gap_if_needed(
     conn: sqlite3.Connection,
     *,

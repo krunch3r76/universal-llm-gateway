@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from .base import BaseCardAdapter, CardAdapterCounts
 from .case import CaseAdapter
+from .condition import ConditionAdapter
 from .decision import DecisionAdapter
 from .default import DefaultAdapter
 from .document import DocumentAdapter
@@ -22,6 +23,7 @@ _REGISTRY: dict[str, BaseCardAdapter] = {
     "service": ServiceAdapter(),
     "case": CaseAdapter(),
     "person": PersonAdapter(),
+    "condition": ConditionAdapter(),
 }
 
 _DEFAULT_ADAPTER: BaseCardAdapter = DefaultAdapter()
@@ -36,6 +38,7 @@ __all__ = [
     "BaseCardAdapter",
     "CardAdapterCounts",
     "CaseAdapter",
+    "ConditionAdapter",
     "DecisionAdapter",
     "DefaultAdapter",
     "DocumentAdapter",

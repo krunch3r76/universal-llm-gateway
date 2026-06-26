@@ -74,7 +74,21 @@ def cortex_expected_rels(files_expected: list[str]) -> list[str]:
 def artifact_paths_for_closeout(
     sidecar_ref: str,
     cortex_uris: list[str],
+    *,
+    cortex_first: bool = False,
 ) -> list[str]:
+    if cortex_first and cortex_uris:
+        paths: list[str] = []
+        seen: set[str] = set()
+        for uri in cortex_uris:
+            if uri == sidecar_ref:
+                continue
+            if uri not in seen:
+                paths.append(uri)
+                seen.add(uri)
+        if sidecar_ref not in seen:
+            paths.append(sidecar_ref)
+        return paths
     paths = [sidecar_ref]
     seen = {sidecar_ref}
     for uri in cortex_uris:

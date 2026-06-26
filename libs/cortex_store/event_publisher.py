@@ -565,3 +565,42 @@ def cortex_skill_graph_drift_sweep_failed(*, error: str) -> Event:
     )
     record(ev.signal, **ev.payload)
     return ev
+
+
+@event_factory
+def cortex_supersede_would_reject(
+    *,
+    rule_ids: list[str],
+    derivation_type: str,
+    force: bool,
+    valid_from_inherited: bool,
+    parent_had_valid_from: bool,
+    reject_field_origins: dict[str, str],
+    mode: str,
+    entity_id: str,
+) -> Event:
+    """cortex.supersede.would_reject — durable shadow/hard_422 reject telemetry.
+
+    Emitted from _supersede.py whenever a supersede payload fails quality
+    validation, on BOTH the shadow path (write still succeeds) and the
+    hard_422 reject path (422 raised AFTER emit). Mirrors the preserved
+    logger.info field set so the flip audit window survives cortex-api
+    restarts (the prior /tmp log sink was truncated on restart).
+    """
+    ev = Event(
+        signal="cortex.supersede.would_reject",
+        role="observation",
+        scope="global",
+        payload={
+            "rule_ids": rule_ids,
+            "derivation_type": derivation_type,
+            "force": force,
+            "valid_from_inherited": valid_from_inherited,
+            "parent_had_valid_from": parent_had_valid_from,
+            "reject_field_origins": reject_field_origins,
+            "mode": mode,
+            "entity_id": entity_id,
+        },
+    )
+    record(ev.signal, **ev.payload)
+    return ev

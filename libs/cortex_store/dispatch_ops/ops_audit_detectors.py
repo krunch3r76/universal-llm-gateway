@@ -66,6 +66,12 @@ from ._detectors.skill_binding import (
     detect_skill_binding_missing,
     detect_skill_binding_tool_unknown,
 )
+from ._detectors.condition import (
+    detect_advice_failure_recurrence,
+    detect_stale_reveal_level,
+    detect_suppressed_actionable_edge,
+    detect_unresolved_safety_conflict,
+)
 from ._detectors.todo import (
     detect_todo_dense_spec_attributes_unpopulated,
     detect_todo_implementation_seed_incomplete,
@@ -114,6 +120,13 @@ GRAPH_ONLY_KINDS = {
     "todo_implementation_seed_incomplete",
     "todo_dense_spec_attributes_unpopulated",
     "todo_implement_readiness_risk",
+    # Condition stewardship detectors (migration 060 / thread 3279).
+    # Conditions are closure_audit_exempt — never in open-debt output.
+    # Stewardship fires on suppressed edges, stale reveal, conflict, recurrence.
+    "suppressed_actionable_edge",
+    "stale_reveal_level",
+    "unresolved_safety_conflict",
+    "advice_failure_recurrence",
     # missing_handoff retired — handoffs are optional artifacts for manual
     # copy-paste at end of chat; absence is not a gap (assertion 8384,
     # session web-2026-05-04-1057).
@@ -125,6 +138,7 @@ FS_TOUCHING_KINDS = {
     "unregistered_document_in_markdown",
     "markdown_section_drift",
     "forbidden_surfaces",
+    "implement_ready_spec_unvalidated",
     # Landed-claim-vs-master-ref reconciliation (thread 1153) — touches the
     # repo via the git-integration-worker route, so it runs in the opt-in
     # include_filesystem pass, off the <100ms graph-only session_audit budget.
@@ -180,6 +194,12 @@ def get_all_detectors() -> dict[str, Any]:
         "landed_claim_not_on_master": detect_landed_claim_not_on_master,
         "provenance_cites_staging": detect_provenance_cites_staging,
         "implement_ready_spec_unvalidated": lambda c, s=None: [],  # DISABLED 2026-06-20: cortex_api audit context cannot read repo tasks/specs directly, so this false-positived every implement_ready (incl. the valid 20197). Template landed_claim_not_on_master routes repo reads via the git-worker; this read fs directly. Code + tests retained; needs repo-aware redesign (friction 20198 follow-up).
+        # Condition stewardship (migration 060 / thread 3279); closure_audit_exempt
+        # types are excluded from open-debt detectors upstream.
+        "suppressed_actionable_edge": detect_suppressed_actionable_edge,
+        "stale_reveal_level": detect_stale_reveal_level,
+        "unresolved_safety_conflict": detect_unresolved_safety_conflict,
+        "advice_failure_recurrence": detect_advice_failure_recurrence,
     }
 
 
@@ -272,4 +292,9 @@ __all__ = [
     "detect_unregistered_document_in_markdown",
     "get_all_detectors",
     "run_detectors",
+    # Condition stewardship
+    "detect_advice_failure_recurrence",
+    "detect_stale_reveal_level",
+    "detect_suppressed_actionable_edge",
+    "detect_unresolved_safety_conflict",
 ]

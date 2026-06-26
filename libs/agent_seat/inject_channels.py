@@ -100,13 +100,23 @@ def web_seat_injected_skill_slugs(
     platform: str | None = None,
 ) -> tuple[str, ...]:
     """Registry-derived slugs for skill_suggest loaded_set accounting."""
+    parts = agent.split("-", 1)
+    resolved_family = family if family is not None else (parts[0] if parts else agent)
     resolved_platform = platform
     if resolved_platform is None:
-        parts = agent.split("-", 1)
         resolved_platform = parts[1] if len(parts) == 2 else "web"
-    return injected_skill_slugs(
-        role=agent,
-        platform=resolved_platform or "web",
-        inject_profile=None,
-        include_loaded_set=True,
+    slugs = set(
+        injected_skill_slugs(
+            role=agent,
+            platform=resolved_platform or "web",
+            inject_profile=None,
+            include_loaded_set=True,
+        )
     )
+    slugs.update(web_orientation_inject_skill_slugs(agent))
+    slugs.update(
+        web_opcontext_inject_skill_slugs(
+            agent, resolved_family, resolved_platform or "web"
+        )
+    )
+    return tuple(sorted(slugs))

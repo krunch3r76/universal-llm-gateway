@@ -301,6 +301,7 @@ def build_implement_closeout_body(
     deviations: list[str] | None = None,
     effects_manifest: EffectsManifest | None = None,
     sidecar_appendix: list[str] | None = None,
+    cortex_first: bool = False,
 ) -> str:
     """Build a compact, valid ImplementCloseout JSON turn body.
 
@@ -352,6 +353,7 @@ def build_implement_closeout_body(
                 artifact_paths=artifact_paths_for_closeout(
                     sidecar_ref,
                     cortex_artifact_paths or [],
+                    cortex_first=cortex_first,
                 ),
                 bus_threads=[thread_id],
                 dispatch_ids=[dispatch_id],
@@ -529,6 +531,7 @@ def _assemble_closeout_delivery(
             manifest=manifest,
         )
     )
+    cortex_authoritative = bool(gate_d_created_rels)
     body = build_implement_closeout_body(
         dispatch_id=dispatch_id,
         outcome=outcome,
@@ -545,6 +548,7 @@ def _assemble_closeout_delivery(
         deviations=deviations,
         effects_manifest=manifest,
         sidecar_appendix=sidecar_appendix,
+        cortex_first=cortex_authoritative,
     )
     if sidecar_appendix:
         appendix = "\n\n## effects_manifest\n\n" + "\n".join(sidecar_appendix)

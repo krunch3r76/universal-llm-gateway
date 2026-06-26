@@ -279,6 +279,11 @@ def reconcile_open_items(
     (boot keeps them for audit). When True, matched items are dropped entirely
     (control tower display). Already-prefixed items are preserved on tag mode
     and dropped on omit mode.
+
+    Note: Entities of ``closure_audit_exempt`` types (e.g. ``condition``) must
+    never be passed as open_items. Callers that generate the open_items list
+    from a database query MUST filter closure_audit_exempt entity types
+    upstream using ``filter_closure_exempt_items`` below.
     """
     items = [str(i) for i in (open_items or [])]
     if not items:

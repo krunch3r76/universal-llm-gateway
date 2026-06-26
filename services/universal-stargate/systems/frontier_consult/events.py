@@ -210,9 +210,7 @@ def FrontierSdkWorkerDispatchFailed(  # noqa: N802
 ) -> Event:
     """SDK worker dispatch rejected or unreachable."""
     resolved_http_status = http_status if http_status is not None else status_code
-    resolved_worker_code = (
-        worker_error_code if worker_error_code is not None else code
-    )
+    resolved_worker_code = worker_error_code if worker_error_code is not None else code
     payload: dict[str, object] = {
         "request_id": request_id,
         "thread_id": thread_id,

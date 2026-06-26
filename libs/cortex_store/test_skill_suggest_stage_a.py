@@ -514,7 +514,9 @@ def test_coding_session_start_returns_bundle_not_session_close() -> None:
             else [slug],
             boot_importance="required_gate" if slug == "session-close" else None,
             delivery_priority=0 if slug == "session-close" else 100,
-            applicable_agents=["*"],
+            applicable_agents=["claude-cursor"]
+            if slug == "git-posture"
+            else ["*"],
         )
     conn.commit()
     with patch("cortex_store.routes._skill_suggest.cortex_conn", return_value=conn):

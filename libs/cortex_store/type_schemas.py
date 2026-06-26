@@ -118,7 +118,60 @@ def validate_required_attributes(
         )
 
 
+_SURFACE_KEYS = frozenset({"boot", "retrieval", "dispatch", "advice", "session_close", "logs"})
+_SURFACE_VISIBILITY_VALUES = frozenset({"full", "sanitized", "hidden"})
+
+
+def validate_surface_visibility(
+    conn: sqlite3.Connection,
+    entity_type: str,
+    attributes: dict[str, object] | None,
+) -> None:
+    """Validate per-surface visibility map for condition entities.
+
+    ``surface_visibility`` is an optional dict whose keys must be a subset of
+    the six surface keys and whose values must be in {full, sanitized, hidden}.
+    Only enforced when the entity_type is ``condition`` and the attribute is
+    present; other types pass through.
+    """
+    if entity_type != "condition":
+        return
+    attrs = attributes or {}
+    sv = attrs.get("surface_visibility")
+    if sv is None:
+        return
+    if not isinstance(sv, dict):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "error": "condition_surface_visibility_shape_invalid",
+                "entity_type": entity_type,
+                "message": "surface_visibility must be a dict",
+            },
+        )
+    bad_keys = [k for k in sv if k not in _SURFACE_KEYS]
+    bad_vals = [
+        {"surface": k, "value": v}
+        for k, v in sv.items()
+        if v not in _SURFACE_VISIBILITY_VALUES
+    ]
+    if bad_keys or bad_vals:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "error": "condition_surface_visibility_invalid",
+                "entity_type": entity_type,
+                "unknown_keys": bad_keys,
+                "invalid_values": bad_vals,
+                "allowed_keys": sorted(_SURFACE_KEYS),
+                "allowed_values": sorted(_SURFACE_VISIBILITY_VALUES),
+            },
+        )
+
+
+
 _IMPLEMENT_LANE_KEYS = ("files_expected", "acceptance_criteria", "required_skills")
+
 _DEPRECATED_IMPLEMENT_ALIASES = {
     "files_modified": "files_expected",
     "acceptance": "acceptance_criteria",
@@ -192,4 +245,5 @@ __all__ = [
     "type_attribute_schema",
     "validate_distilled_attributes",
     "validate_required_attributes",
+    "validate_surface_visibility",
 ]

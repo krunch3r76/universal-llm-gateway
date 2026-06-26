@@ -15,6 +15,7 @@ from ..confidence_field import (
 from ..db import query as db_query
 from ..seat_applicability import (
     CAPABILITY_CLAUSE,
+    UNIVERSAL,
     canonical_seat_or_422,
     for_agent_filter_clause,
     seat_capabilities_json,
@@ -151,6 +152,7 @@ _SUGGEST_CANDIDATE_SQL = f"""
            json_extract(attributes, '$.skill_category') AS skill_category,
            json_extract(attributes, '$.boot_importance') AS boot_importance,
            json_extract(attributes, '$.related_skills') AS related_skills_json,
+           json_extract(attributes, '$.applicable_agents') AS applicable_agents_json,
            COALESCE(CAST(json_extract(attributes, '$.delivery_priority') AS INTEGER), 100)
                AS delivery_priority
     FROM entities
@@ -322,6 +324,26 @@ def passes_precision_gate(score: CandidateScore) -> bool:
     if score.has_phrase_match:
         return True
     return len(score.matched_specific_terms) >= 1
+
+
+def _decode_applicable_agents(row: dict[str, Any]) -> list[str]:
+    raw = row.get("applicable_agents_json")
+    if not raw:
+        return []
+    try:
+        values = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return []
+    if not isinstance(values, list):
+        return []
+    return [str(v).strip() for v in values if str(v).strip()]
+
+
+def row_applies_to_seat(row: dict[str, Any], canonical_seat: str) -> bool:
+    agents = _decode_applicable_agents(row)
+    if not agents:
+        return False
+    return UNIVERSAL in agents or canonical_seat in agents
 
 
 def fetch_candidates(conn: sqlite3.Connection, agent: str) -> list[dict[str, Any]]:

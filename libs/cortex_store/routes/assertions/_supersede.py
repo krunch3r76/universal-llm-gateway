@@ -22,6 +22,7 @@ from ...assertion_quality import (
     validate_assertion,
 )
 from ...config import supersede_validation_mode
+from ...event_publisher import cortex_supersede_would_reject
 from ...belief_guard import analyze_assertion_impact
 from ...db import WRITE_LOCK, cortex_conn, decode_row, json_encode, query
 from ...enrichment import (
@@ -230,6 +231,40 @@ def supersede_assertion(body: SupersedeRequest) -> SupersedeResponse:
         if validation.rejected:
             reject_rule_ids = _hard_reject_rule_ids(validation.hard_reject)
             mode = supersede_validation_mode()
+            _GOVERNING_FIELDS = {
+                "R2": ("derivation_type", "evidence_uris", "chunk_id"),
+                "R3": ("derivation_type", "chunk_id", "evidence_uris"),
+                "R4": ("claim", "valid_from"),
+            }
+            reject_field_origins = {
+                f: ("caller" if f in specified else "inherited")
+                for rid in reject_rule_ids
+                for f in _GOVERNING_FIELDS.get(rid, ())
+            }
+            # Preserved verbatim (no shadow-logging regression). Now also
+            # reached on the hard_422 path because it sits above the raise below.
+            logger.info(
+                "supersede would_reject rule_ids=%s derivation_type=%s force=%s "
+                "valid_from_inherited=%s parent_had_valid_from=%s reject_field_origins=%s",
+                reject_rule_ids,
+                eff_derivation_type,
+                body.force,
+                "valid_from" not in specified,
+                old_data.get("valid_from") is not None,
+                reject_field_origins,
+            )
+            # Durable Event-Service signal — fires on BOTH shadow and hard_422
+            # paths (emitted before the 422 raise). Fire-and-forget; never blocks.
+            cortex_supersede_would_reject(
+                rule_ids=reject_rule_ids,
+                derivation_type=eff_derivation_type,
+                force=body.force,
+                valid_from_inherited="valid_from" not in specified,
+                parent_had_valid_from=old_data.get("valid_from") is not None,
+                reject_field_origins=reject_field_origins,
+                mode=mode,
+                entity_id=body.entity_id,
+            )
             if mode == "hard_422":
                 diagnostics = [
                     {"field": d.field, "message": d.message}
@@ -244,26 +279,6 @@ def supersede_assertion(body: SupersedeRequest) -> SupersedeResponse:
                         "valid_derivation_types": DERIVATION_TYPE_TAXONOMY,
                     },
                 )
-            _GOVERNING_FIELDS = {
-                "R2": ("derivation_type", "evidence_uris", "chunk_id"),
-                "R3": ("derivation_type", "chunk_id", "evidence_uris"),
-                "R4": ("claim", "valid_from"),
-            }
-            reject_field_origins = {
-                f: ("caller" if f in specified else "inherited")
-                for rid in reject_rule_ids
-                for f in _GOVERNING_FIELDS.get(rid, ())
-            }
-            logger.info(
-                "supersede would_reject rule_ids=%s derivation_type=%s force=%s "
-                "valid_from_inherited=%s parent_had_valid_from=%s reject_field_origins=%s",
-                reject_rule_ids,
-                eff_derivation_type,
-                body.force,
-                "valid_from" not in specified,
-                old_data.get("valid_from") is not None,
-                reject_field_origins,
-            )
             quality_validation_warnings.append(
                 {
                     "field": "assertion_quality",

@@ -90,7 +90,7 @@ Mandatory preflight before ANY handoff packet or `team_dispatch(op=handoff)` (im
   fs(cortex, agent-skills/consult-routing.md)
   fs(workspaces, .cursor/rules/architecture-handoff-protocol.mdc)   # § Six Blocks
   fs(workspaces, .cursor/rules/handoff-dispatchers.mdc)             # § target seat
-Executor-tier policy (R1/R2/R3), the codified-bug investigate→execute fix cycle + pass zoom-out duty, and the three round-trip traps all live in consult-routing.md — read it, don't restate from memory. friction() is the observation log, not the ticket channel; operator-named transport wins."""
+Codified bug ticket = TWO phases (investigate→dense spec, then execute); a filed bug defaults to the INVESTIGATION tier (friction 13571 → thread 1377). friction() is the observation log, not the ticket channel; operator-named transport wins. Full model: consult-routing.md § Codified bug reports."""
 
 _RAG_SCOPE_AWARENESS_BLOCK = """\
 ## RAG corpus retrieval — primary tool (call directly; ¬ dispatch overflow)

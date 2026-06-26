@@ -82,6 +82,13 @@ SEVERITY = {
     "implement_ready_spec_unvalidated": "warning",
     # Staging paths in durable docs / entity provenance attrs (friction 20345).
     "provenance_cites_staging": "warning",
+    # Condition stewardship (migration 060 / thread 3279; F6/R5).
+    # Closure/open-debt detectors skip closure_audit_exempt types (conditions).
+    # These stewardship detectors fire on pathology within conditions.
+    "suppressed_actionable_edge": "warning",
+    "stale_reveal_level": "warning",
+    "unresolved_safety_conflict": "critical",
+    "advice_failure_recurrence": "warning",
 }
 
 # Identifier-shaped attribute value: alphanumerics + ``-._:/`` only. Used by
