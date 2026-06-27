@@ -5,9 +5,12 @@ boot?' Each InjectedArtifact carries mode, source, bytes, sha256, and
 per-fetch provenance.
 
 sha256 hashes raw bytes as actually produced (no canonicalization). This
-keeps the manifest a faithful audit record. Phase 4's diff layer is
-responsible for canonicalizing inline content (stripping known
-boot-timestamp patterns) before comparison — see phase4.md.
+keeps the manifest a faithful audit record. stable_sha256 carries the
+Phase 4 normalization: time-derived tokens (ISO header timestamp,
+relative-age spans, day-countdown tokens, expiry tags) are replaced with
+fixed placeholders before hashing. The gate uses stable_sha256 to
+suppress wall-clock false-drift while preserving real content-change
+signal. stable_sha256 is "" for manifest_only entries.
 
 Concurrency: FetchRecorder.records is appended to from
 ThreadPoolExecutor workers in boot_runner.py. Append is guarded by an
@@ -19,6 +22,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import threading
 import time
 from dataclasses import asdict, dataclass, field
@@ -56,6 +60,33 @@ class FetchRecord:
     duration_ms: int
 
 
+# ---------------------------------------------------------------------------
+# Stable-hash normalization (Phase 4 diff layer, friction 20729)
+# ---------------------------------------------------------------------------
+
+_HEADER_TS_RE = re.compile(
+    r"(# Boot Briefing — )\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{4}"
+)
+_RELATIVE_AGE_RE = re.compile(r"\b\d+[mhd] ago\b")
+# Matches "(80d)" and "(**2d OVERDUE**)" — deadline_line() uses ** for overdue
+_DAY_COUNT_RE = re.compile(r"\((?:\*\*)?\d+d(?:\s+OVERDUE)?(?:\*\*)?\)")
+_EXPIRES_RE = re.compile(r"expires (?:today|in \d+d)")
+
+
+def _normalize_for_stable_hash(text: str) -> str:
+    """Return a wall-clock-normalized copy of *text* for stable hashing.
+
+    Replaces time-derived tokens (ISO header timestamp, relative-age spans,
+    day-countdown tokens, expiry tags) with fixed placeholders so the hash
+    is stable across time ticks when no substantive content changes.
+    """
+    text = _HEADER_TS_RE.sub(r"\g<1><TIMESTAMP>", text)
+    text = _RELATIVE_AGE_RE.sub("<AGE>", text)
+    text = _DAY_COUNT_RE.sub("(<DAYS>d)", text)
+    text = _EXPIRES_RE.sub("expires <WHEN>", text)
+    return text
+
+
 @dataclass
 class InjectedArtifact:
     name: str
@@ -63,6 +94,7 @@ class InjectedArtifact:
     source: str
     bytes: int
     sha256: str
+    stable_sha256: str = ""  # sha256 of time-normalized text; "" for non-text artifacts
     path: str | None = None
     fetches: list[FetchRecord] = field(default_factory=list)
     sections: list[dict[str, Any]] | None = None
@@ -79,12 +111,14 @@ class InjectedArtifact:
         sections: list[dict[str, Any]] | None = None,
     ) -> InjectedArtifact:
         encoded = text.encode("utf-8")
+        stable = _normalize_for_stable_hash(text).encode("utf-8")
         return cls(
             name=name,
             mode=mode,
             source=source,
             bytes=len(encoded),
             sha256=hashlib.sha256(encoded).hexdigest(),
+            stable_sha256=hashlib.sha256(stable).hexdigest(),
             path=path,
             fetches=fetches or [],
             sections=sections,

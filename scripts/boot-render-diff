@@ -105,12 +105,16 @@ def _canonical_manifest(agent: str, result: dict[str, Any]) -> dict[str, Any]:
     """
     artifacts_out: list[dict[str, Any]] = []
     for art in result.get("injected_artifacts", []) or []:
+        # Prefer stable_sha256 (time-normalized) over raw sha256 when the
+        # renderer provides it. Suppresses wall-clock false-drift on
+        # briefing_card (Phase 4 normalization — friction 20729).
+        sha = art.get("stable_sha256") or art.get("sha256") or ""
         artifacts_out.append(
             {
                 "name": art.get("name"),
                 "mode": art.get("mode"),
                 "bytes": art.get("bytes"),
-                "sha256": art.get("sha256"),
+                "sha256": sha,
                 "sections": art.get("sections"),
             }
         )
