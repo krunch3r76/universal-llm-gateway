@@ -40,5 +40,6 @@ line (`handoff-packet-authoring.md` § Skill load resolution).
 | `consult-routing` | `agent-skills/consult-routing.md` | `.cursor/skills/consult-routing/SKILL.md` |
 | `skill-document-writing` | `agent-skills/skill-document-writing.md` | — (no Cursor stub yet; read from boot index) |
 | `dispatch-workflow` | `agent-skills/dispatch-workflow.md` | — (read from boot index on first dispatch) |
+| `orchestrator-core` | `agent-skills/orchestrator-core.md` — Domain-neutral lead orchestration core — decompose→fan-out→adjudicate→close-back, context-conservation, delegation grammar, composition-seam binding table (6 fork-classes), 5-mode vocabulary (execute/conform/converse/coordinate/monitor). Auto-injects on every lead boot. | — (boot-indexed; no Cursor stub yet) |
 
 Do not hand-maintain duplicate long-form copies in cortex or `.cursor/skills`.

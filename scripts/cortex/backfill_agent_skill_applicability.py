@@ -115,6 +115,7 @@ PARTITION: dict[str, list[str]] = {
         "agent_skill:modularize-discipline",
         "agent_skill:operator-posture",
         "agent_skill:orchestrator-workflow",
+        "agent_skill:orchestrator-core",
         "agent_skill:provenance-granularity",
         # Partitioned here for backfill membership; OVERRIDDEN below to its true
         # multi-agent value ['claude-cursor', 'claude-web'] (not universal).

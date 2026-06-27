@@ -60,15 +60,15 @@ cortex_boot(agent="claude-web", role="lead", profile="dispatch", packet_text="<p
 | Scope | Activates when | Bodies |
 |---|---|---|
 | `UNIVERSAL` | always | `cortex-orientation`, `cortex-provenance-discipline` |
-| `LEAD` | seat ∈ `lead_seats` (`is_lead_agent(seat)`) | `orchestrator-workflow` |
+| `LEAD` | seat ∈ `lead_seats` (`is_lead_agent(seat)`) | `orchestrator-core` |
 | `DISPATCH_PACKET` | `profile="dispatch"` | each `agent_skill:` id in the packet `<invariants>` block |
-| `CODING` | `code_touching=True` (generate path, **not** standard boot) | `architecture-invariants`, `ulg-architecture` |
+| `CODING` | `code_touching=True` (generate path, **not** standard boot) | `orchestrator-workflow`, `architecture-invariants`, `ulg-architecture` |
 
 Notes:
 
 - **LEAD-scope is a seat property** (`agents.yaml lead_seats`), resolved via
   `is_lead_agent(seat)` — NOT the `role` label. A lead seat auto-injects
-  `orchestrator-workflow` on every boot, dispatch or not. (Passing the role label
+  `orchestrator-core` on every boot, dispatch or not. (Passing the role label
   `"lead"` here silently injected nothing — fixed 2026-06-18.)
 - `packet_text` is parsed for `<invariants>` skill ids **only** when
   `profile="dispatch"`. Front-matter `boot_profile: dispatch` + the packet path is

@@ -29,6 +29,7 @@ def append_assertion_list_filters(
     valid_at: str | None = None,
     known_at: str | None = None,
     entity_type: str | None = None,
+    entity_type_in: list[str] | None = None,
     entity_type_exclude: str | None = None,
 ) -> bool:
     """Append SQL filters on alias ``a``. Returns whether entities join is required."""
@@ -68,6 +69,13 @@ def append_assertion_list_filters(
         clauses.append("e.type = ?")
         params.append(entity_type)
         needs_join = True
+    if entity_type_in:
+        included = [t.strip() for t in entity_type_in if t.strip()]
+        if included:
+            placeholders = ",".join("?" for _ in included)
+            clauses.append(f"e.type IN ({placeholders})")
+            params.extend(included)
+            needs_join = True
     if entity_type_exclude:
         excluded = [t.strip() for t in entity_type_exclude.split(",") if t.strip()]
         placeholders = ",".join("?" for _ in excluded)

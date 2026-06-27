@@ -124,6 +124,27 @@ def service_entity_id(service: str) -> str:
     return f"service:{normalize_service_slug(service)}"
 
 
+_FRICTION_OWNER_TYPES = ("service", "agent_skill", "ai_agent")
+
+
+def owner_entity_id(owner: str) -> str:
+    """Canonical friction-owner entity_id. Known prefixes pass through; a bare
+    slug defaults to service:{slug} (legacy default). Unknown prefixes are NOT
+    wrapped — the caller rejects them via owner_type_of()."""
+    for t in _FRICTION_OWNER_TYPES:
+        if owner.startswith(f"{t}:"):
+            return owner
+    return f"service:{owner}"
+
+
+def owner_type_of(entity_id: str) -> str | None:
+    """Owner type for a value carrying a known friction-owner prefix, else None."""
+    for t in _FRICTION_OWNER_TYPES:
+        if entity_id.startswith(f"{t}:"):
+            return t
+    return None
+
+
 try:
     from mcp_events import record as _record
 except (

@@ -26,9 +26,9 @@ from ._shared import (
     _DEFAULT_USER_ENTITY,
     _FRICTION_CATEGORIES,
     _VALID_CONFIDENCE,
-    normalize_service_slug,
+    owner_entity_id,
+    owner_type_of,
     record,
-    service_entity_id,
 )
 
 logger = get_logger("cortex-api.dispatch_ops.assertions")
@@ -272,6 +272,7 @@ def _op_observe(
 
 
 def _op_friction(
+    owner: str | None = None,
     service: str | None = None,
     category: str | None = None,
     note: str | None = None,
@@ -279,9 +280,18 @@ def _op_friction(
     agent: str | None = None,
     **_: object,
 ) -> dict[str, Any]:
-    if not service:
+    if (
+        owner is not None
+        and service is not None
+        and owner_entity_id(owner) != owner_entity_id(service)
+    ):
         return {
-            "error": "service is required (bare slug or service: entity ID, e.g. mcp-server)"
+            "error": "Supply either owner= or service= (back-compat alias), not both with different values."
+        }
+    owner_arg = owner if owner is not None else service
+    if not owner_arg:
+        return {
+            "error": "owner is required (service:/agent_skill:/ai_agent: entity ID, or bare slug -> service:)"
         }
     if not note:
         return {"error": "note is required — describe what went wrong"}
@@ -289,12 +299,26 @@ def _op_friction(
         return {
             "error": f"Invalid category {category!r}. Must be one of: {sorted(_FRICTION_CATEGORIES)}"
         }
+    if ":" in owner_arg and owner_type_of(owner_arg) is None:
+        return {
+            "error": f"Unsupported owner namespace in {owner_arg!r}. Allowed prefixes: service:, agent_skill:, ai_agent: (or a bare slug -> service:)."
+        }
+    entity_id = owner_entity_id(owner_arg)
+    if owner_type_of(entity_id) != "service":
+        with cortex_conn() as conn:
+            try:
+                resolved = resolve_entity_reference(conn, entity_id, label="owner")
+            except HTTPException as exc:
+                return {
+                    "error": f"owner {entity_id} not found ({exc.detail}); create the entity before logging friction against it.",
+                    "status_code": exc.status_code,
+                }
+        entity_id = resolved.entity_id
     claim = f"[{category or 'unclassified'}] {note}"
     if suggestion:
         claim += f" — Suggestion: {suggestion}"
-    normalized_service = normalize_service_slug(service)
     body: dict[str, Any] = {
-        "entity_id": service_entity_id(service),
+        "entity_id": entity_id,
         "claim": claim,
         "confidence": "hypothesized",
         "evidence": f"Friction observed by {agent or 'unknown'} during session",
@@ -306,12 +330,11 @@ def _op_friction(
         body["seeded_by"] = agent
     result = _create_assertion_impl(body)
     if "error" not in result:
-        logger.info(
-            "cortex friction: %s/%s — %s", normalized_service, category, note[:60]
-        )
+        logger.info("cortex friction: %s/%s — %s", entity_id, category, note[:60])
         record(
             "mcp.cortex.friction.logged",
-            service=normalized_service,
+            owner=entity_id,
+            owner_type=owner_type_of(entity_id),
             category=category or "unclassified",
             agent=agent,
         )

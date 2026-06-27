@@ -778,19 +778,21 @@ tools:
     tool: cortex_friction
     substrate_qualified: user-vortex__cortex_friction
   fol_descriptor: |
-    ∀ service, category, note, suggestion?, agent?:
+    ∀ owner, category, note, suggestion?, agent?:
       friction(...) ⟹ durable friction record for schema/boot/tool gaps.
+    owner ∈ {service:,agent_skill:,ai_agent:} (bare slug -> service:); service= is the back-compat alias; exactly one of owner/service required.
     Write. Used for agent self-diagnosis. See agent_skill:cortex and operational-context-*.md.
   json_schema:
     type: object
     properties:
+      owner: {type: string}
       service: {type: string}
-      category: {type: string, enum: [tool_mismatch, schema_gap, boot_drift, lesson_gap, lesson_conflict, stale_context, tool_absent]}
+      category: {type: string, enum: [tool_mismatch, tool_absent, tool_error, schema_gap, boot_drift, lesson_gap, lesson_conflict, stale_context, doc_drift, protocol]}
       note: {type: string}
       suggestion: {type: string}
       agent: {type: string}
       session_id: {type: string}
-    required: [service, category, note, agent]
+    required: [category, note, agent]
   skill_uri: agent_skill:cortex
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: write

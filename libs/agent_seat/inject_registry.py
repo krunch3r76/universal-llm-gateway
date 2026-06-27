@@ -94,13 +94,21 @@ INJECT_REGISTRY: tuple[InjectEntry, ...] = (
         inline_tier=InlineTier.MUST_INLINE,
     ),
     InjectEntry(
-        entity_id="agent_skill:orchestrator-workflow",
+        entity_id="agent_skill:orchestrator-core",
         scope=InjectScope.LEAD,
         platform_predicate="*",
         profile_applicability=frozenset({"*"}),
         priority=30,
         lifecycle_required=True,
         inline_tier=InlineTier.MUST_INLINE,
+    ),
+    InjectEntry(
+        entity_id="agent_skill:orchestrator-workflow",
+        scope=InjectScope.CODING,
+        platform_predicate="*",
+        profile_applicability=frozenset({"code_touching"}),
+        priority=35,
+        inline_tier=InlineTier.NORMAL,
     ),
     InjectEntry(
         entity_id="agent_skill:architecture-invariants",

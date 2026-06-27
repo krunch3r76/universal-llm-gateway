@@ -1,6 +1,6 @@
 # Friction review
 
-Friction rows are **assertions** on `service:{name}` with claims like `[tool_error] …`.
+Friction rows are **assertions** on an allowed friction-owner entity (`service:`/`agent_skill:`/`ai_agent:`) with claims like `[tool_error] …`.
 They record tool/schema/boot gaps (F5 funnel).
 
 **Critical split:** `friction()` = **observation log**. A fix cycle = **codified bug ticket**
@@ -150,12 +150,12 @@ packet claims vs live cortex (16724 on `service:universal-stargate`, task alread
 
 Before firing `team_dispatch(op=handoff)` on a friction arc:
 
-1. **Resolve the ID** — friction rows are assertions on `service:{name}` with `[category]` claims.
+1. **Resolve the ID** — friction rows are assertions on an allowed friction-owner entity (`service:`/`agent_skill:`/`ai_agent:`) with `[category]` claims.
    An assertion on `task:`/`decision:` is **not** a friction ID even if the number matches.
    ```
    cortex(tool="assertions", arguments='{"entity_id_prefix":"service:","filter":"[{category}]","limit":50}')
    ```
-   Or direct lookup: confirm `entity_id` starts with `service:` and claim starts with `[`.
+   Or direct lookup: confirm `entity_id` starts with an allowed owner prefix (`service:`/`agent_skill:`/`ai_agent:`) and claim starts with `[` (omit the prefix filter, or pass `owner_type=`, to span all owner types).
 
 2. **Check disposition** — if the bound task is `workflow_state: done` or a resolution assertion
    already exists (`[resolved:…] Friction #N closed`), do **not** dispatch investigate;

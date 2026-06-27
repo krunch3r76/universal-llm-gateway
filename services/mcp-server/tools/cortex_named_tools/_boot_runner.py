@@ -54,7 +54,7 @@ def _web_auto_inject_skills_md(
         # is_lead_agent resolves SEAT membership (agents.yaml lead_seats) — so the
         # lead-determination input is the seat slug, NOT the functional role label.
         # Forwarding role="lead" here silently skipped LEAD-scope skills such as
-        # agent_skill:orchestrator-workflow (step-4 wiring).
+        # agent_skill:orchestrator-core (step-4 wiring).
         role=seat_slug,
         platform=platform,
         inject_profile=inject_profile,

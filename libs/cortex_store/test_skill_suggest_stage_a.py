@@ -337,7 +337,7 @@ def test_web_seat_preloaded_tracks_auto_inject_skills_as_loaded() -> None:
         "cortex-orientation",
         "cortex-provenance-discipline",
         "model-tier-awareness-web",
-        "orchestrator-workflow",
+        "orchestrator-core",
     ]
     omitted = {item["slug"] for item in result["omitted"]}
     assert "cortex-orientation" in omitted
@@ -543,7 +543,7 @@ def test_coding_session_start_returns_bundle_not_session_close() -> None:
         "cortex-orientation",
         "cortex-provenance-discipline",
         "model-tier-awareness-web",
-        "orchestrator-workflow",
+        "orchestrator-core",
     }
 
 

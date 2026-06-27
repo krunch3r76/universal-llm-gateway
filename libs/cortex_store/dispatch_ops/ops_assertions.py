@@ -26,7 +26,7 @@ from ..routes.assertions import (
 from ..routes.graph import activate, analyze_impact_semantic
 from ..routes.triage import AgeStagedRequest, age_staged
 from ..status_trait_read import effective_confidence_band
-from ._shared import _VALID_CONFIDENCE, service_entity_id
+from ._shared import _FRICTION_OWNER_TYPES, _VALID_CONFIDENCE, owner_entity_id
 from .ops_assertions_update import (
     _op_assertion_get,
     _op_assertion_update,
@@ -156,6 +156,8 @@ def _op_assertions(
 
 
 def _op_frictions(
+    owner: str | None = None,
+    owner_type: str | None = None,
     service: str | None = None,
     category: str | None = None,
     seeded_by: str | None = None,
@@ -165,13 +167,25 @@ def _op_frictions(
     include_compaction_pointers: bool = False,
     **_: object,
 ) -> dict[str, Any]:
-    """List open friction assertions (service:* entities, bracketed category claims)."""
+    """List open friction assertions across friction-owning entities
+    (service:/agent_skill:/ai_agent:), bracketed [category] claims."""
     resolved_intent = intent if intent in ("summary", "full") else "summary"
-    entity_id = service_entity_id(service) if service else None
+    if owner_type is not None and owner_type not in _FRICTION_OWNER_TYPES:
+        return {
+            "error": f"Invalid owner_type {owner_type!r}. Must be one of: {list(_FRICTION_OWNER_TYPES)}"
+        }
+    owner_arg = owner if owner is not None else service
+    entity_id = owner_entity_id(owner_arg) if owner_arg else None
+    entity_type = owner_type if (owner_type and entity_id is None) else None
+    entity_type_in = (
+        list(_FRICTION_OWNER_TYPES) if (entity_id is None and owner_type is None) else None
+    )
     claim_filter = f"[{category}]" if category else None
     result = _list_assertions_impl(
         entity_id=entity_id,
-        entity_id_prefix=None if entity_id else "service:",
+        entity_id_prefix=None,
+        entity_type=entity_type,
+        entity_type_in=entity_type_in,
         claim_filter=claim_filter,
         seeded_by=seeded_by,
         superseded=False if superseded is None else superseded,

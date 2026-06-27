@@ -97,7 +97,8 @@ def test_union_matrix_no_duplicates(monkeypatch: pytest.MonkeyPatch) -> None:
         "agent_skill:cortex-orientation": "orientation",
         "agent_skill:cortex-provenance-discipline": "provenance",
         "agent_skill:model-tier-awareness-web": "tier-web",
-        "agent_skill:orchestrator-workflow": "orchestrator",
+        "agent_skill:orchestrator-core": "orchestrator-core",
+        "agent_skill:orchestrator-workflow": "orchestrator-workflow",
         "agent_skill:architecture-invariants": "arch",
         "agent_skill:ulg-architecture": "ulg",
         "agent_skill:sentinel-dispatch-inject-19887": "sentinel-body",
@@ -211,7 +212,7 @@ def test_lifecycle_required_withheld(monkeypatch: pytest.MonkeyPatch) -> None:
         timeout_ms: int = 300,
     ) -> tuple[dict[str, Any] | None, str | None]:
         del timeout_ms
-        if entity_id == "agent_skill:orchestrator-workflow" and not include_non_active:
+        if entity_id == "agent_skill:orchestrator-core" and not include_non_active:
             return None, "body_missing"
         if entity_id == "agent_skill:cortex-orientation":
             return {"digest": "sha256:o", "body": "orientation"}, None
@@ -364,24 +365,24 @@ async def test_sentinel_in_dispatch_boot_and_hydrate_paths(
 
 
 @pytest.mark.asyncio
-async def test_lead_web_boot_injects_orchestrator_workflow(
+async def test_lead_web_boot_injects_orchestrator_core(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """role=lead web boot must inject the LEAD-scope orchestrator-workflow body.
+    """role=lead web boot must inject the LEAD-scope orchestrator-core body.
 
     Regression (step 4): the boot forwarded the functional role label "lead" into
     the resolver, but LEAD-scope activation is ``is_lead_agent(seat)`` — seat
     membership (agents.yaml lead_seats), not the label — so LEAD-scope skills were
     silently skipped. With the wiring fixed, the seat slug drives lead-determination.
     """
-    orch_marker = "ORCHESTRATOR_WORKFLOW_LEAD_INJECT_MARKER"
+    orch_marker = "ORCHESTRATOR_CORE_LEAD_INJECT_MARKER"
     tier_marker = "MODEL_TIER_AWARENESS_WEB_LEAD_BOOT_MARKER"
     bodies = {
         "agent_skill:cortex-orientation": "orientation",
         "agent_skill:cortex-provenance-discipline": "provenance",
         "agent_skill:model-tier-awareness-web": tier_marker,
-        "agent_skill:orchestrator-workflow": orch_marker,
+        "agent_skill:orchestrator-core": orch_marker,
     }
     _body_map(monkeypatch, bodies)
     # Lead-ness is seat membership; pin claude-web as a lead seat deterministically
@@ -402,7 +403,7 @@ async def test_lead_web_boot_injects_orchestrator_workflow(
     )
     rendered = boot_result.get("auto_inject_skills_md") or ""
     assert orch_marker in rendered, (
-        "orchestrator-workflow (LEAD scope) missing from role=lead web boot "
+        "orchestrator-core (LEAD scope) missing from role=lead web boot "
         "auto_inject block — lead-scope activation regressed"
     )
     assert tier_marker in rendered, (

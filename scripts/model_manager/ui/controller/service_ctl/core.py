@@ -22,6 +22,7 @@ from scripts.model_manager.observation_event import (
 from ...model.build_state import BuildState, BuildStatus, ImageInfo
 from ...model.service_state import ServiceState
 from ..git_worker_drain_supervisor import build_git_worker_drain_supervisor
+from ..gpu_docker_preflight import check_gpu_docker_prerequisites
 from ..restart_drain import (
     GIT_INTEGRATION_WORKER_URL,
     RestartDrainGate,
@@ -82,7 +83,9 @@ _GIT_WORKER_SHUTDOWN_BUFFER_S = 2.0
 # Intent deadline for the drain supervisor — a true last resort (~10 min) that
 # should essentially never fire; observability (manage.restart.draining) is the
 # mechanism, not the timer. Env-overridable for tests / tuning.
-_GIT_WORKER_DRAIN_DEADLINE_S = float(os.environ.get("GIT_WORKER_DRAIN_DEADLINE_S", "600"))
+_GIT_WORKER_DRAIN_DEADLINE_S = float(
+    os.environ.get("GIT_WORKER_DRAIN_DEADLINE_S", "600")
+)
 
 
 async def _pump_build_log(
@@ -350,6 +353,10 @@ class ServiceController:
         compose_path = self._root / "docker" / "compose" / "gpu-edge.yml"
         if not compose_path.exists():
             return f"Compose file not found: {compose_path}"
+
+        gpu_preflight_error = await asyncio.to_thread(check_gpu_docker_prerequisites)
+        if gpu_preflight_error is not None:
+            return f"Gateway GPU preflight failed.\n{gpu_preflight_error}"
 
         socket_dir_error = ensure_socket_dir()
         if socket_dir_error:
@@ -778,18 +785,26 @@ class ServiceController:
             "docker",
             "inspect",
             "--format",
-            "{{.State.Status}}",
+            "{{.State.Status}}|{{.State.Error}}",
             container_name,
             stdin=_DETACHED_STDIN,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
         output = await inspect.communicate()
-        status = output[0].decode(errors="replace").strip().lower()
+        raw = output[0].decode(errors="replace").strip()
         if inspect.returncode != 0:
             return f"{container_name} not found after start."
+        status, _, state_error = raw.partition("|")
+        status = status.lower()
+        state_error = state_error.strip()
         if status in {"exited", "dead"}:
-            return f"{container_name} exited within {wait_s:.0f}s (state: {status})."
+            msg = f"{container_name} exited within {wait_s:.0f}s (state: {status})."
+            if state_error:
+                msg += f"\n{state_error}"
+            return msg
+        if status == "created" and state_error:
+            return f"{container_name} failed to start (state: created).\n{state_error}"
         return None
 
     async def _wait_container_healthy(

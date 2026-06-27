@@ -48,6 +48,7 @@ def _list_assertions_compact(
     review_status: str | None,
     superseded: bool | None,
     entity_type: str | None,
+    entity_type_in: list[str] | None,
     entity_type_exclude: str | None,
     valid_at: str | None,
     known_at: str | None,
@@ -71,6 +72,7 @@ def _list_assertions_compact(
         review_status=review_status,
         superseded=superseded,
         entity_type=entity_type,
+        entity_type_in=entity_type_in,
         entity_type_exclude=entity_type_exclude,
         valid_at=valid_at,
         known_at=known_at,
@@ -122,6 +124,7 @@ def _list_assertions_summary(
     review_status: str | None,
     superseded: bool | None,
     entity_type: str | None,
+    entity_type_in: list[str] | None,
     entity_type_exclude: str | None,
     valid_at: str | None,
     known_at: str | None,
@@ -142,6 +145,7 @@ def _list_assertions_summary(
         review_status=review_status,
         superseded=superseded,
         entity_type=entity_type,
+        entity_type_in=entity_type_in,
         entity_type_exclude=entity_type_exclude,
         valid_at=valid_at,
         known_at=known_at,
@@ -230,6 +234,15 @@ def list_assertions(
         str | None,
         Query(description="Filter to assertions on entities of this type"),
     ] = None,
+    entity_type_in: Annotated[
+        list[str] | None,
+        Query(
+            description=(
+                "Filter to assertions on entities whose type is in this set "
+                "(positive IN; e.g. friction owner types)"
+            ),
+        ),
+    ] = None,
     entity_type_exclude: Annotated[
         str | None,
         Query(
@@ -298,6 +311,7 @@ def list_assertions(
             review_status=review_status,
             superseded=superseded,
             entity_type=entity_type,
+            entity_type_in=entity_type_in,
             entity_type_exclude=entity_type_exclude,
             valid_at=valid_at,
             known_at=known_at,
@@ -313,6 +327,7 @@ def list_assertions(
             review_status=review_status,
             superseded=superseded,
             entity_type=entity_type,
+            entity_type_in=entity_type_in,
             entity_type_exclude=entity_type_exclude,
             valid_at=valid_at,
             known_at=known_at,
@@ -332,6 +347,7 @@ def list_assertions(
         review_status=review_status,
         superseded=superseded,
         entity_type=entity_type,
+        entity_type_in=entity_type_in,
         entity_type_exclude=entity_type_exclude,
         valid_at=valid_at,
         known_at=known_at,
