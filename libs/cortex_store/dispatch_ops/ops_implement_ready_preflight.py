@@ -6,7 +6,7 @@ import json
 from datetime import UTC, datetime
 from typing import Any
 
-from implement_admission.dense_spec_schema import DENSE_SPEC_RE, spec_basename
+from implement_admission.dense_spec_schema import DENSE_SPEC_RE, dense_spec_hash_uri, spec_basename
 from implement_admission.gate_distillation import read_dense_spec_text
 from implement_admission.implement_ready_preflight import preflight_implement_ready
 from implement_admission.source_ref import parse_source_ref
@@ -121,6 +121,47 @@ def _select_cited_spec_uri(
     return cited[0]
 
 
+def _resolve_skeptic_outcome(
+    *,
+    todo_id: str,
+    spec_hash_uri: str | None,
+    now_iso: str,
+) -> bool:
+    """Check for active confirmed skeptic-ratified assertion citing current spec sha."""
+    if not spec_hash_uri:
+        return False
+
+    listed = _op_assertions(
+        entity_id=todo_id,
+        confidence="confirmed",
+        superseded=False,
+        intent="full",
+        limit=50,
+    )
+    items = listed.get("items") if isinstance(listed, dict) else None
+    if not isinstance(items, list):
+        return False
+
+    target_pf = _normalize_predicate(f"status({todo_id}, skeptic_ratified, current)")
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        if item.get("entity_id") != todo_id:
+            continue
+        if _assertion_is_inactive(item, now_iso):
+            continue
+        pf = item.get("predicate_form") or ""
+        by_pf = _normalize_predicate(pf) == target_pf
+        claim_prefix = _normalize_predicate((item.get("claim") or "")[:90])
+        by_claim = claim_prefix.startswith(target_pf)
+        if not (by_pf or by_claim):
+            continue
+        evidence = item.get("evidence_uris")
+        if isinstance(evidence, list) and spec_hash_uri in evidence:
+            return True
+    return False
+
+
 def _spec_path_from_uri(uri: str) -> str | None:
     match = DENSE_SPEC_RE.search(uri)
     return match.group(0) if match else None
@@ -202,6 +243,18 @@ def _op_implement_ready_preflight(
     raw_acs = attrs.get("acceptance_criteria")
     acceptance_criteria = raw_acs if isinstance(raw_acs, list) else []
 
+    spec_hash_uri = dense_spec_hash_uri(spec_text) if spec_text else None
+    skeptic_ratified = False
+    if triage == "judgment_required":
+        skeptic_ratified = _resolve_skeptic_outcome(
+            todo_id=todo_id,
+            spec_hash_uri=spec_hash_uri,
+            now_iso=now_iso,
+        )
+
+    raw_waived = attrs.get("recon_waived")
+    recon_waived = isinstance(raw_waived, str) and bool(raw_waived.strip())
+
     report = preflight_implement_ready(
         todo_id=todo_id,
         density_triage=attrs.get("density_triage"),
@@ -215,6 +268,8 @@ def _op_implement_ready_preflight(
         acceptance_criteria=acceptance_criteria,
         entity_name=entity.get("name"),
         resolution=resolution,
+        skeptic_ratified=skeptic_ratified,
+        recon_waived=recon_waived,
     )
     return report.to_dict()
 

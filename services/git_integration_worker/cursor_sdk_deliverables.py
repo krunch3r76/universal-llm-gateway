@@ -60,10 +60,17 @@ def normalize_cortex_rel(raw: str) -> str | None:
     return path
 
 
+def _has_cortex_scheme(raw: str) -> bool:
+    s = raw.strip().lower()
+    return s.startswith("cortex://") or s.startswith("cortex:")
+
+
 def cortex_expected_rels(files_expected: list[str]) -> list[str]:
     seen: set[str] = set()
     rels: list[str] = []
     for raw in files_expected:
+        if not _has_cortex_scheme(raw):
+            continue
         rel = normalize_cortex_rel(raw)
         if rel and rel not in seen:
             seen.add(rel)

@@ -17,7 +17,10 @@ from implement_admission.implement_ready import (
     assertion_active,
     evaluate_implement_ready,
 )
-from implement_admission.scheme_resolve import resolve_schemed_packet_file
+from implement_admission.scheme_resolve import (
+    parse_schemed_path,
+    resolve_schemed_packet_file,
+)
 from implement_admission.source_ref import parse_source_ref
 from implement_admission.spec import SourceKind
 
@@ -225,6 +228,18 @@ def _read_dense_spec_text(
         cited_uri.strip(),
         workspaces_root_override=workspaces_root,
     )
+    if candidate is None:
+        # Dense specs live in the workspaces sandbox, not the cortex store.
+        # A cortex:// evidence URI routes scheme_resolve to /data/files (cortex
+        # store root) where specs do not live, returning None.  Retry with the
+        # bare relative path so cortex://tasks/specs/foo.md resolves the same
+        # file as workspaces://tasks/specs/foo.md (friction 21175).
+        parsed = parse_schemed_path(cited_uri.strip())
+        if parsed.scheme == "cortex" and parsed.rel_path:
+            candidate = resolve_schemed_packet_file(
+                parsed.rel_path,
+                workspaces_root_override=workspaces_root,
+            )
     if candidate is None:
         return None
     try:

@@ -465,9 +465,7 @@ async def post_skill_suggest(
         rerank_requested=bool(effective_rerank),
     )
 
-    include_all_candidates = (
-        str(x_skill_include_all or "").strip().lower() == "true"
-    )
+    include_all_candidates = str(x_skill_include_all or "").strip().lower() == "true"
 
     try:
         stage_a = run_stage_a(
@@ -488,7 +486,7 @@ async def post_skill_suggest(
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     result = _public_stage_a_result(stage_a, include_extended=include_all_candidates)
-    ranker_status = str(result.get("ranker_status") or "deterministic_fallback")
+    ranker_status = str(result.get("ranker_status") or "pending")
     degraded_reason: str | None = None
     rank_execution_id: str | None = None
 
@@ -511,14 +509,6 @@ async def post_skill_suggest(
             limit=body.limit,
             describe_only=should_describe,
         )
-    elif (
-        not effective_rerank
-        and not needs_description
-        and ranker_status != "skipped_no_context"
-    ):
-        result["ranker_status"] = "deterministic_fallback"
-        ranker_status = "deterministic_fallback"
-
     result["ranker_status"] = ranker_status
     result["degraded_reason"] = degraded_reason
 
@@ -531,8 +521,7 @@ async def post_skill_suggest(
                 "reason": degraded_reason,
                 "message": (
                     f"LLM ranker did not complete ({degraded_reason}); "
-                    "results reflect deterministic Stage-A scoring only. "
-                    "Callers requiring LLM-ranked suggestions may retry."
+                    "no suggestions returned (deterministic fallback disabled); callers may retry."
                 ),
             }
         ]

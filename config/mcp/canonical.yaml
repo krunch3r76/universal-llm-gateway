@@ -1688,7 +1688,10 @@ tools:
     ∀ sandbox ∈ {"cortex","workspaces"} ∧ path ∈ str ∧ section ∈ Headings(path):
       fs_md_replace(sandbox, path, section, content) ⟹
         section.body ← content.
-    Mutating. Text files only. See agent_skill:fs.
+    Mutating. Text files only. Content must be heading-less (body only); the op
+    owns the section heading. If content opens with an ATX heading matching
+    section on level and text, the op strips it and returns normalized_heading: true.
+    See agent_skill:fs.
   json_schema:
     type: object
     properties:
@@ -1717,7 +1720,10 @@ tools:
     ∀ sandbox ∈ {"cortex","workspaces"} ∧ path ∈ str ∧ section ∈ Headings(path):
       fs_md_append(sandbox, path, section, content) ⟹
         section.end += content.
-    Mutating. Text files only. See agent_skill:fs.
+    Mutating. Text files only. Content must be heading-less (body only); the op
+    owns the section heading. If content opens with an ATX heading matching
+    section on level and text, the op strips it and returns normalized_heading: true.
+    See agent_skill:fs.
   json_schema:
     type: object
     properties:
@@ -1731,6 +1737,43 @@ tools:
   mandate_safety: write
   cache_priority: on_demand
   introduced: 2026-05-22
+
+- canonical_name: fs_md_insert
+  domain: fs
+  operation: md_insert
+  dispatcher_call_shape:
+    tool: fs
+    dispatch_key: op
+    dispatch_value: md_insert
+  flat_call_shape:
+    tool: fs_md_insert
+    substrate_qualified: user-vortex__fs_md_insert
+  fol_descriptor: |
+    ∀ sandbox ∈ {"cortex","workspaces"} ∧ path ∈ str ∧ heading ∈ str ∧ level ∈ {1..6}
+      ∧ position ∈ {"end","after","before"}:
+      fs_md_insert(sandbox, path, heading, level, position, section?, content?) ⟹
+        a new ATX section with heading at level is inserted at position.
+    Mutating. Text files only. Content must be heading-less (body only); the op
+    owns the section heading. If content opens with an ATX heading matching
+    heading on level and text, the op strips it and returns normalized_heading: true.
+    position=end appends at document end; position=after|before require section
+    as anchor. See agent_skill:fs.
+  json_schema:
+    type: object
+    properties:
+      sandbox: {type: string}
+      path: {type: string}
+      heading: {type: string}
+      level: {type: integer}
+      position: {type: string}
+      section: {type: string}
+      content: {type: string}
+    required: [sandbox, path, heading, level, position]
+  skill_uri: agent_skill:fs
+  seat_visibility: [mcp, mcp_claude]
+  mandate_safety: write
+  cache_priority: on_demand
+  introduced: 2026-06-29
 
 - canonical_name: fs_md_delete
   domain: fs

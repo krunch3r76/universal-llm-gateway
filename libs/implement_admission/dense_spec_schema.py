@@ -31,6 +31,33 @@ _OPEN_FORK_RE = re.compile(r"\bOPEN\s*:", re.I)
 _ATTESTATION_RE = re.compile(r"no\s+fork\s+remains\s+open", re.I)
 _FENCE_RE = re.compile(r"(```|~~~).*?\1", re.S)
 _INLINE_CODE_RE = re.compile(r"`[^`]*`")
+_LINE_ANCHORED_FENCE_RE = re.compile(r"^(?:```|~~~)", re.MULTILINE)
+
+# Per-section accepted-pattern hints for diagnostic messages.  The validator
+# matches keyword-anchored regexes (above), NOT the literal key names, so the
+# canonical section key alone is insufficient for an author to know what heading
+# text will pass.  Emit these alongside the missing-key list (friction 21176).
+_SECTION_ACCEPTED_PATTERNS: dict[str, str] = {
+    "problem": "heading containing 'problem'",
+    "non_goals": "heading containing 'non-goal' or 'scope exclusion'",
+    "provenance": "heading containing 'source-of-truth' or 'provenance'",
+    "touch_points": "heading containing 'touch-point' or 'touchpoint'",
+    "forks": (
+        "heading containing one of: 'bound design', 'fork table', "
+        "'design decision', 'resolved fork'"
+    ),
+    "implementation": (
+        "heading containing 'implementation guidance' or 'implementation steps'"
+    ),
+    "acceptance": "heading containing 'acceptance'",
+    "verification": "heading containing 'verification' or 'quality gate'",
+    "reasoning_trace": (
+        "<reasoning_trace>…</reasoning_trace> tag block (not a heading)"
+    ),
+    "reasoning_trace_attestation": (
+        "<reasoning_trace> body must contain 'no fork remains open'"
+    ),
+}
 DENSE_SPEC_RE = re.compile(
     r"(?:tasks/specs|notes/system/specs)/[^/\s#?]+\.md", re.IGNORECASE
 )
@@ -58,6 +85,18 @@ def _strip_code(text: str) -> str:
     return _INLINE_CODE_RE.sub("", _FENCE_RE.sub("", text))
 
 
+def _has_stray_fence(text: str) -> bool:
+    """True when ``` or ~~~ appears inside a line (not only at line start).
+
+    _FENCE_RE uses re.S (DOTALL), so a mid-line triple-backtick sequence can
+    act as a fence opener and swallow subsequent headings.  An uneven count
+    between all occurrences and line-anchored occurrences is a reliable signal.
+    """
+    all_count = len(re.findall(r"```|~~~", text))
+    anchored_count = len(_LINE_ANCHORED_FENCE_RE.findall(text))
+    return all_count > anchored_count
+
+
 def dense_spec_sha256(text: str) -> str:
     """Bare lowercase hex digest of the spec bytes (no prefix)."""
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
@@ -82,10 +121,26 @@ def validate_dense_spec(text: str) -> DenseSpecVerdict:
         missing = (*missing, "reasoning_trace_attestation")
     open_markers = len(_OPEN_FORK_RE.findall(visible))
     if missing:
+        hints = "; ".join(
+            f"{k}: {_SECTION_ACCEPTED_PATTERNS[k]}"
+            for k in missing
+            if k in _SECTION_ACCEPTED_PATTERNS
+        )
+        stray_hint = (
+            " — note: stray non-line-start ``` or ~~~ may have caused headers"
+            " to be misread as inside a code block"
+            if _has_stray_fence(text)
+            else ""
+        )
+        reason = (
+            f"missing required sections: {', '.join(missing)}"
+            + (f" — accepted patterns: {hints}" if hints else "")
+            + stray_hint
+        )
         return DenseSpecVerdict(
             False,
             "dense_spec_sections_missing",
-            f"missing required sections: {', '.join(missing)}",
+            reason,
             missing,
             open_markers,
         )

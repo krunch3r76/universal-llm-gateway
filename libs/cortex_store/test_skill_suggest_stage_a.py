@@ -210,9 +210,18 @@ def test_suggestions_expose_description_not_tags() -> None:
 
 
 @pytest.mark.offline
-def test_skill_suggest_rerank_status_remains_deterministic_fallback_by_default() -> None:
-    result = _run(_handoff_conn(), _HANDOFF_CONTEXT)
-    assert result["ranker_status"] == "deterministic_fallback"
+def test_rerank_enabled_by_default() -> None:
+    import os
+
+    from cortex_store.skill_suggest_rank import rerank_enabled_default
+
+    key = "SKILL_SUGGEST_RERANK_ENABLED"
+    old = os.environ.pop(key, None)
+    try:
+        assert rerank_enabled_default() is True
+    finally:
+        if old is not None:
+            os.environ[key] = old
 
 
 def _generic_phrase_conn() -> sqlite3.Connection:
@@ -514,9 +523,7 @@ def test_coding_session_start_returns_bundle_not_session_close() -> None:
             else [slug],
             boot_importance="required_gate" if slug == "session-close" else None,
             delivery_priority=0 if slug == "session-close" else 100,
-            applicable_agents=["claude-cursor"]
-            if slug == "git-posture"
-            else ["*"],
+            applicable_agents=["claude-cursor"] if slug == "git-posture" else ["*"],
         )
     conn.commit()
     with patch("cortex_store.routes._skill_suggest.cortex_conn", return_value=conn):

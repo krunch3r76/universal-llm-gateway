@@ -58,7 +58,11 @@ from tools.extract_directory import register_extract_directory_tools
 from tools.extract_document import register_extract_document_tools
 from tools.filesystem import register_filesystem_tools
 from tools.filesystem._cross_sandbox import copy_between_sandboxes_impl
-from tools.filesystem._fs_dispatch import dispatch_workspaces_op, sandbox_op_doc
+from tools.filesystem._fs_dispatch import (
+    dispatch_workspaces_op,
+    md_section_op_doc,
+    sandbox_op_doc,
+)
 from tools.filesystem._paths import FS_WORKFLOW_HINTS
 from tools.frontier import register_frontier_tools
 from tools.frontier_imagine import register_imagine_tools
@@ -360,6 +364,7 @@ def _build_server() -> tuple[
         "md_to_dict": "to_dict",
         "md_replace": "replace_section",
         "md_append": "append_section",
+        "md_insert": "insert_section",
         "md_delete": "delete_section",
     }
 
@@ -410,16 +415,7 @@ def _build_server() -> tuple[
         "prefixes when citing hashes on assertions — the field itself has no prefix.\n"
         "Read-only ops do not return ``written_sha256``.\n\n"
         f"{_fs_standard_ops_doc}\n\n"
-        "Markdown section ops (for large docs):\n"
-        "  md_list    (path)                    — list sections/TOC (PDFs: embedded outline; others: ATX markdown)\n"
-        "  md_read    (path, section?)          — read one section; empty/absent section => full document (text/markdown; PDFs still require a section)\n"
-        "  md_to_dict (path)                    — nested heading dict (PDFs: outline-driven; others: ATX sections)\n"
-        "  md_replace (path, section, content)  — replace section (text files only)\n"
-        "  md_append  (path, section, content)  — append to section (text files only)\n"
-        "  md_delete  (path, section)           — delete section (text files only)\n"
-        "Converted formats such as PDF are read-only for markdown section ops:\n"
-        "use ``md_list`` / ``md_read`` to inspect them, not ``md_replace`` /\n"
-        "``md_append`` / ``md_delete``."
+        f"{md_section_op_doc()}"
     )
 
     @mcp.tool(title="File I/O (Sandboxed)", description=_fs_tool_description)
@@ -442,6 +438,9 @@ def _build_server() -> tuple[
         limit: int = 0,
         expected_sha256: str = "",
         if_absent: bool = False,
+        heading: str = "",
+        level: int = 0,
+        position: str = "",
     ) -> dict[str, Any]:
         """Sandboxed file I/O (cortex, workspaces). Full catalog in tool description."""
         try:
@@ -463,6 +462,9 @@ def _build_server() -> tuple[
                 limit,
                 expected_sha256,
                 if_absent,
+                heading,
+                level,
+                position,
             )
         except Exception as exc:
             return _tool_error_envelope("fs", op, exc)
@@ -485,6 +487,9 @@ def _build_server() -> tuple[
         limit: int,
         expected_sha256: str,
         if_absent: bool,
+        heading: str = "",
+        level: int = 0,
+        position: str = "",
     ) -> dict[str, Any]:
         if not op:
             return {"error": "'op' is required"}
@@ -507,7 +512,14 @@ def _build_server() -> tuple[
                 valid = ", ".join(sorted(md_op_map))
                 return {"error": f"Unknown markdown op: {op!r}. Available: {valid}"}
             return md_fn(
-                op=md_op, path=path, sandbox=sandbox, section=section, content=content
+                op=md_op,
+                path=path,
+                sandbox=sandbox,
+                section=section,
+                content=content,
+                heading=heading,
+                level=level,
+                position=position,
             )
 
         if op == "copy" and target_sandbox and target_sandbox != sandbox:

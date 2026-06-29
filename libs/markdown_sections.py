@@ -182,23 +182,131 @@ def read_section(text: str, section_path: str) -> str:
     return text[sec.start : sec.end]
 
 
-def replace_section(text: str, section_path: str, new_content: str) -> str:
-    """Replace body only; trailing newline + blank line before following content if needed."""
-    sec = resolve_section(text, section_path)
-    if new_content and not new_content.endswith("\n"):
-        new_content += "\n"
+def _strip_leading_heading(content: str, level: int, heading: str) -> tuple[str, bool]:
+    """Strip a leading ATX heading from *content* when it matches *level* + *heading*."""
+    secs = parse_sections(content)
+    headings = [s for s in secs if s.level > 0]
+    if not headings:
+        return content, False
+    first = headings[0]
+    lines = content.splitlines(keepends=True)
+    h0 = _char_upto(lines, first.line - 1)
+    if content[:h0].strip():
+        return content, False
+    if first.level == level and first.heading == heading:
+        return content[first.start :], True
+    return content, False
+
+
+def strip_redundant_leading_heading(content: str, section: Section) -> tuple[str, bool]:
+    """Strip a leading ATX heading from *content* when it duplicates *section*."""
+    return _strip_leading_heading(content, section.level, section.heading)
+
+
+def _doc_eol(text: str) -> str:
+    return "\r\n" if "\r\n" in text else "\n"
+
+
+def _ensure_blank_before(prefix: str, eol: str) -> str:
+    if not prefix:
+        return prefix
+    if not prefix.endswith(eol):
+        prefix += eol
+    if not prefix.endswith(eol * 2):
+        prefix += eol
+    return prefix
+
+
+def _ensure_blank_after(block: str, suffix: str, eol: str) -> str:
+    if suffix and not block.endswith(eol * 2):
+        block += eol
+    return block
+
+
+def find_duplicate_section_headings(text: str) -> list[dict[str, str | int]]:
+    """Detect ghost duplicate headings (empty first, identical sibling follows)."""
+    sections = [s for s in parse_sections(text) if s.level > 0]
+    findings: list[dict[str, str | int]] = []
+    for i in range(len(sections) - 1):
+        cur, nxt = sections[i], sections[i + 1]
+        if cur.level != nxt.level or cur.heading != nxt.heading:
+            continue
+        if text[cur.start : cur.end].strip():
+            continue
+        findings.append({"heading": cur.heading, "level": cur.level, "line": cur.line})
+    return findings
+
+
+def _set_section_body(text: str, sec: Section, body: str) -> str:
+    if body and not body.endswith("\n"):
+        body += "\n"
     after = text[sec.end :]
-    if after and new_content and not new_content.endswith("\n\n"):
-        new_content += "\n"
-    return text[: sec.start] + new_content + after
+    if after and body and not body.endswith("\n\n"):
+        body += "\n"
+    return text[: sec.start] + body + after
 
 
-def append_section(text: str, section_path: str, added_content: str) -> str:
+def replace_section(text: str, section_path: str, new_content: str) -> tuple[str, bool]:
+    """Replace body only; returns (updated_text, heading_was_normalized)."""
     sec = resolve_section(text, section_path)
+    body, normd = strip_redundant_leading_heading(new_content, sec)
+    return _set_section_body(text, sec, body), normd
+
+
+def append_section(text: str, section_path: str, added_content: str) -> tuple[str, bool]:
+    """Append to section body; normalizes only *added_content*, not existing body."""
+    sec = resolve_section(text, section_path)
+    frag, normd = strip_redundant_leading_heading(added_content, sec)
     cur = text[sec.start : sec.end]
     if cur and not cur.endswith("\n"):
         cur += "\n"
-    return replace_section(text, section_path, cur + added_content)
+    return _set_section_body(text, sec, cur + frag), normd
+
+
+def insert_section(
+    text: str,
+    heading: str,
+    level: int,
+    position: str,
+    anchor: str | None = None,
+    body: str = "",
+) -> tuple[str, bool]:
+    """Insert a new ATX section; returns (updated_text, heading_was_normalized)."""
+    if not (1 <= level <= 6):
+        raise SectionError(f"Invalid level {level}: must be 1-6")
+    if position not in ("end", "after", "before"):
+        raise SectionError(
+            f"Invalid position {position!r}: must be 'end', 'after', or 'before'"
+        )
+    if position in ("after", "before") and not anchor:
+        raise SectionError("anchor section required for position before/after")
+
+    body_n, normalized = _strip_leading_heading(body, level, heading)
+    eol = _doc_eol(text)
+
+    block = f"{'#' * level} {heading}{eol}"
+    if body_n:
+        if eol == "\r\n" and "\r\n" not in body_n and "\n" in body_n:
+            body_n = body_n.replace("\n", "\r\n")
+        if not body_n.endswith(eol):
+            body_n += eol
+        block += body_n
+
+    if position == "end":
+        offset = len(text)
+    elif position == "after":
+        sec = resolve_section(text, anchor)
+        offset = sec.end
+    else:
+        sec = resolve_section(text, anchor)
+        lines = text.splitlines(keepends=True)
+        offset = _char_upto(lines, sec.line - 1)
+
+    prefix = _ensure_blank_before(text[:offset], eol)
+    block = _ensure_blank_after(block, text[offset:], eol)
+    if not block.endswith(eol):
+        block += eol
+    return prefix + block + text[offset:], normalized
 
 
 def delete_section(text: str, section_path: str) -> str:

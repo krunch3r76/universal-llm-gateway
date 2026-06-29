@@ -47,7 +47,9 @@ def register_files_tool(mcp: FastMCP) -> None:
 
         For large markdown documents (>5k chars), prefer the `markdown` tool
         (with sandbox="cortex") which provides section-level read/write/delete
-        without ingesting the entire file.
+        without ingesting the entire file. For md_replace/md_append via the
+        unified `fs` tool, pass heading-less body content only; matching
+        leading headings are stripped with normalized_heading: true in the response.
 
         Text-format conversion: PDF, DOCX, ODT, EML, and HTML files are
         automatically converted to readable text/markdown in `read` mode — no

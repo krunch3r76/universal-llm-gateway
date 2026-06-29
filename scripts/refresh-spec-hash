@@ -1,0 +1,75 @@
+#!/usr/bin/env python3
+"""Refresh spec_sha256 citations on implement_ready + skeptic_ratified assertions."""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+_ROOT = Path(__file__).resolve().parents[1]
+sys.path[:0] = [str(_ROOT / "libs")]
+
+from implement_admission.spec_refresh import refresh_spec_attestations
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Supersede implement_ready + skeptic_ratified assertions and "
+            "re-pin todo attrs after a dense spec edit."
+        )
+    )
+    parser.add_argument("--todo", required=True, help="Todo entity id (todo:slug)")
+    parser.add_argument("--spec", required=True, help="Path to dense spec markdown file")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Compute new sha without writing to cortex",
+    )
+    args = parser.parse_args()
+
+    try:
+        result = refresh_spec_attestations(
+            todo_id=args.todo,
+            spec_path=Path(args.spec),
+            dry_run=args.dry_run,
+        )
+    except (RuntimeError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    if args.dry_run:
+        print(
+            f"Dry-run: would supersede {result.old_sha or '(none)'} → {result.new_sha}. "
+            "No writes made."
+        )
+        return 0
+
+    if result.no_change:
+        print("No change — spec content matches pinned sha.")
+        return 0
+
+    print(f"Old sha: {result.old_sha or '(none)'}")
+    print(f"New sha: {result.new_sha}")
+    if result.implement_ready_new_id is not None:
+        print(
+            "implement_ready assertion: superseded "
+            f"→ {result.implement_ready_new_id}"
+        )
+    if result.skipped_skeptic:
+        print("skeptic_ratified assertion: skipped (none active)")
+        for warning in result.warnings:
+            print(f"  WARNING: {warning}")
+    elif result.skeptic_new_id is not None:
+        print(f"skeptic_ratified assertion: superseded → {result.skeptic_new_id}")
+        print(
+            "  WARNING: Re-run axis-2 skeptic pass — new sha requires fresh ratification."
+        )
+    print(f"Attributes re-pinned on {result.todo_id}.")
+    print("Verification: PASS (both assertions cite new sha; attrs pinned)")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

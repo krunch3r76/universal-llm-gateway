@@ -35,7 +35,7 @@ _circuit_open_until = 0.0
 
 
 def rerank_enabled_default() -> bool:
-    return os.environ.get("SKILL_SUGGEST_RERANK_ENABLED", "false").strip().lower() in {
+    return os.environ.get("SKILL_SUGGEST_RERANK_ENABLED", "true").strip().lower() in {
         "1",
         "true",
         "yes",
@@ -150,14 +150,16 @@ def apply_rerank(
     if _circuit_open():
         result = dict(stage_a_result)
         result["degraded"] = True
+        result["suggestions"] = []
+        result["count"] = 0
         result["warnings"] = [
             {
                 "code": "ranker_degraded",
                 "reason": "circuit_open",
                 "message": (
                     "LLM ranker unavailable (circuit breaker open after repeated failures); "
-                    "results reflect deterministic Stage-A scoring only. "
-                    "Callers requiring LLM-ranked suggestions may retry after the cooldown window."
+                    "no suggestions returned (deterministic fallback disabled); callers may retry "
+                    "after the cooldown window."
                 ),
             }
         ]
@@ -166,14 +168,15 @@ def apply_rerank(
     if not _semaphore.acquire(blocking=False):
         result = dict(stage_a_result)
         result["degraded"] = True
+        result["suggestions"] = []
+        result["count"] = 0
         result["warnings"] = [
             {
                 "code": "ranker_degraded",
                 "reason": "concurrency_cap",
                 "message": (
                     "LLM ranker at concurrency limit; "
-                    "results reflect deterministic Stage-A scoring only. "
-                    "Callers requiring LLM-ranked suggestions may retry."
+                    "no suggestions returned (deterministic fallback disabled); callers may retry."
                 ),
             }
         ]
@@ -211,14 +214,16 @@ def apply_rerank(
                 _record_failure()
                 result = dict(stage_a_result)
                 result["degraded"] = True
+                result["suggestions"] = []
+                result["count"] = 0
                 result["warnings"] = [
                     {
                         "code": "ranker_degraded",
                         "reason": "invalid_output",
                         "message": (
                             "LLM ranker returned unparseable output; "
-                            "results reflect deterministic Stage-A scoring only. "
-                            "Callers requiring LLM-ranked suggestions may retry."
+                            "no suggestions returned (deterministic fallback disabled); "
+                            "callers may retry."
                         ),
                     }
                 ]
@@ -227,14 +232,15 @@ def apply_rerank(
         _record_failure()
         result = dict(stage_a_result)
         result["degraded"] = True
+        result["suggestions"] = []
+        result["count"] = 0
         result["warnings"] = [
             {
                 "code": "ranker_degraded",
                 "reason": "timeout",
                 "message": (
                     "LLM ranker did not complete within the timeout budget; "
-                    "results reflect deterministic Stage-A scoring only. "
-                    "Callers requiring LLM-ranked suggestions may retry."
+                    "no suggestions returned (deterministic fallback disabled); callers may retry."
                 ),
             }
         ]
@@ -244,14 +250,15 @@ def apply_rerank(
         _record_failure()
         result = dict(stage_a_result)
         result["degraded"] = True
+        result["suggestions"] = []
+        result["count"] = 0
         result["warnings"] = [
             {
                 "code": "ranker_degraded",
                 "reason": "error",
                 "message": (
                     "LLM ranker encountered an error; "
-                    "results reflect deterministic Stage-A scoring only. "
-                    "Callers requiring LLM-ranked suggestions may retry."
+                    "no suggestions returned (deterministic fallback disabled); callers may retry."
                 ),
             }
         ]

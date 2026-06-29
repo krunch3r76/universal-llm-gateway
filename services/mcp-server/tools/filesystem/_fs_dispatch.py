@@ -93,6 +93,23 @@ def sandbox_op_doc() -> str:
     return "\n".join(lines)
 
 
+def md_section_op_doc() -> str:
+    """Build the fs tool docstring 'Markdown section ops' section."""
+    return (
+        "Markdown section ops (for large docs):\n"
+        "  md_list    (path)                    — list sections/TOC (PDFs: embedded outline; others: ATX markdown)\n"
+        "  md_read    (path, section?)          — read one section; empty/absent section => full document (text/markdown; PDFs still require a section)\n"
+        "  md_to_dict (path)                    — nested heading dict (PDFs: outline-driven; others: ATX sections)\n"
+        "  md_replace (path, section, content)  — replace section body (text files only); content must NOT include the section heading — if it opens with a matching ATX heading, the op strips it and sets normalized_heading: true\n"
+        "  md_append  (path, section, content)  — append to section body (text files only); same heading-less-content contract as md_replace\n"
+        "  md_insert  (path, heading, level, position, section?, content?) — insert a new section (text files only); position: end|after|before; section is anchor for after/before; same heading-less-content contract as md_replace\n"
+        "  md_delete  (path, section)           — delete section (text files only)\n"
+        "Converted formats such as PDF are read-only for markdown section ops:\n"
+        "use ``md_list`` / ``md_read`` to inspect them, not ``md_replace`` /\n"
+        "``md_append`` / ``md_insert`` / ``md_delete``."
+    )
+
+
 def advertised_standard_ops() -> frozenset[str]:
     """Ops in the fs tool Standard ops section — derived from OP_SANDBOXES."""
     return frozenset(OP_SANDBOXES)

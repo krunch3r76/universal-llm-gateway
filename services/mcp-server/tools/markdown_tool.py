@@ -20,6 +20,9 @@ from markdown_sections import (
     delete_section as md_delete_section,
 )
 from markdown_sections import (
+    insert_section as md_insert_section,
+)
+from markdown_sections import (
     list_sections as md_list_sections,
 )
 from markdown_sections import (
@@ -83,24 +86,31 @@ def _write_file(resolved: Path, text: str) -> None:
     resolved.write_text(text, encoding="utf-8")
 
 
-def _mutate_document(resolved: Path, transform: Callable[[str], str]) -> str | None:
+def _mutate_document(
+    resolved: Path, transform: Callable[[str], str | tuple[str, bool]]
+) -> tuple[str | None, bool]:
     if is_converted_format(resolved):
         return (
             f"Cannot modify {resolved.suffix} files via section ops — "
-            "converted formats are read-only (use md_list / md_read)"
+            "converted formats are read-only (use md_list / md_read)",
+            False,
         )
     text, err = _load_text(resolved)
     if err:
-        return err
+        return err, False
     try:
-        updated = transform(text)
+        result = transform(text)
     except SectionError as e:
-        return str(e)
+        return str(e), False
+    if isinstance(result, tuple):
+        updated, normalized = result
+    else:
+        updated, normalized = result, False
     try:
         _write_file(resolved, updated)
     except OSError as e:
-        return f"Failed to write {resolved}: {e}"
-    return None
+        return f"Failed to write {resolved}: {e}", False
+    return None, normalized
 
 
 def _section_write_result(
@@ -110,13 +120,16 @@ def _section_write_result(
     section: str,
     signal: str,
     status: str,
-    transform: Callable[[str], str],
+    transform: Callable[[str], tuple[str, bool]],
 ) -> dict[str, Any]:
-    err = _mutate_document(resolved, transform)
+    err, normalized = _mutate_document(resolved, transform)
     if err:
         return {"error": err}
     record(signal, path=path, sandbox=sandbox, section=section)
-    return {"status": status, "path": path, "section": section}
+    result: dict[str, Any] = {"status": status, "path": path, "section": section}
+    if normalized:
+        result["normalized_heading"] = True
+    return result
 
 
 def _pdf_section_op(
@@ -170,8 +183,11 @@ def register_markdown_tools(mcp: FastMCP) -> None:
         sandbox: str = "context",
         section: str = "",
         content: str = "",
+        heading: str = "",
+        level: int = 0,
+        position: str = "",
     ) -> dict[str, Any]:
-        """Section-level markdown: list/read/replace/append/delete/to_dict/from_dict.
+        """Section-level markdown: list/read/replace/append/insert/delete/to_dict/from_dict.
 
         Sandboxes: context → tasks/; cortex → /data/files; workspaces → project root.
         Section path from list_sections; read ops with empty/omitted section return
@@ -296,6 +312,20 @@ def register_markdown_tools(mcp: FastMCP) -> None:
                 "appended",
                 lambda t: md_append_section(t, section, content),
             )
+        if op == "insert_section":
+            if not heading:
+                return {"error": "'heading' is required for insert_section"}
+            return _section_write_result(
+                resolved,
+                path,
+                sandbox,
+                section or heading,
+                "mcp.tool.markdown.section.inserted",
+                "inserted",
+                lambda t: md_insert_section(
+                    t, heading, level, position, section or None, content
+                ),
+            )
         if op == "delete_section":
             return _section_write_result(
                 resolved,
@@ -304,7 +334,7 @@ def register_markdown_tools(mcp: FastMCP) -> None:
                 section,
                 "mcp.tool.markdown.section.deleted",
                 "deleted",
-                lambda t: md_delete_section(t, section),
+                lambda t: (md_delete_section(t, section), False),
             )
         if op == "from_dict":
             if is_converted_format(resolved):
@@ -333,6 +363,7 @@ def register_markdown_tools(mcp: FastMCP) -> None:
         return {
             "error": (
                 f"Unknown op: {op!r}. Use: list_sections, read_section, "
-                "replace_section, append_section, delete_section, to_dict, from_dict"
+                "replace_section, append_section, insert_section, delete_section, "
+                "to_dict, from_dict"
             )
         }

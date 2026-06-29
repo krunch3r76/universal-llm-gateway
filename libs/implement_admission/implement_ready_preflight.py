@@ -27,6 +27,7 @@ _GATE_NAMES: dict[int, str] = {
     10: "content_hash_attested",
     11: "files_expected_distilled",
     12: "acceptance_criteria_distilled",
+    13: "skeptic_pass",
 }
 
 
@@ -109,6 +110,8 @@ def preflight_implement_ready(
     acceptance_criteria: list[str] | None = None,
     entity_name: str | None = None,
     resolution: dict[str, Any] | None = None,
+    skeptic_ratified: bool = False,
+    recon_waived: bool = False,
 ) -> PreflightReport:
     """Non-writing preflight: evaluate ALL implement-ready gates and return full gate report."""
     gates: list[GateReport] = []
@@ -158,16 +161,32 @@ def preflight_implement_ready(
 
     if triage == "mechanical":
         _na(0, "mechanical_bypass")
-        for i in range(1, 13):
+        for i in range(1, 14):
             _na(i, _GATE_NAMES[i])
         return PreflightReport(
             admitted=True,
-            summary={"failed": 0, "blocked": 0, "not_applicable": 13},
+            summary={"failed": 0, "blocked": 0, "not_applicable": 14},
             first_failure=None,
             resolution=resolution,
             gates=gates,
         )
     _pass(0, "mechanical_bypass")
+
+    if triage == "recon_pending":
+        code = "implement_blocked_recon_pending"
+        reason = (
+            f"{todo_id}: recon not complete — run the two-axis recon and "
+            "re-triage to judgment_required or mechanical before implement dispatch"
+        )
+        _fail(1, "triage_known", code, reason, also_block=tuple(range(2, 14)))
+        for i in range(2, 14):
+            _block(i, _GATE_NAMES[i], blocked_by=(1,))
+        return _make_report(
+            admitted=False,
+            gates=gates,
+            first_failure=first_failure,
+            resolution=resolution,
+        )
 
     if triage != "judgment_required":
         code = "implement_triage_unknown"
@@ -175,8 +194,8 @@ def preflight_implement_ready(
             f"{todo_id}: density_triage is unset or unknown — densify via a "
             "reasoning tier before implement dispatch"
         )
-        _fail(1, "triage_known", code, reason, also_block=tuple(range(2, 13)))
-        for i in range(2, 13):
+        _fail(1, "triage_known", code, reason, also_block=tuple(range(2, 14)))
+        for i in range(2, 14):
             _block(i, _GATE_NAMES[i], blocked_by=(1,))
         return _make_report(
             admitted=False,
@@ -348,6 +367,19 @@ def preflight_implement_ready(
         _fail(12, "acceptance_criteria_distilled", code, reason)
     else:
         _pass(12, "acceptance_criteria_distilled")
+
+    if not skeptic_ratified and not recon_waived:
+        code = "skeptic_pass_missing"
+        reason = (
+            f"{todo_id}: judgment_required (material) decision needs a skeptic "
+            f"ratification before implement — record a confirmed "
+            f"status({todo_id}, skeptic_ratified, current) assertion citing the "
+            "skeptic/panel thread (run the axis-2 skeptic pass per "
+            "cheap-recon-before-escalation)."
+        )
+        _fail(13, "skeptic_pass", code, reason)
+    else:
+        _pass(13, "skeptic_pass")
 
     return _make_report(
         admitted=first_failure is None,

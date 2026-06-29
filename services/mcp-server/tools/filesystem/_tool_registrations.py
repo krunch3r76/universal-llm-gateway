@@ -1,4 +1,10 @@
-"""Individual @mcp.tool registrations — thin wrappers calling impl functions."""
+"""Individual @mcp.tool registrations — thin wrappers calling impl functions.
+
+Markdown section write ops (md_replace, md_append) are registered on the unified
+``fs`` tool in server.py and delegate to the markdown overflow tool. Those ops
+require heading-less content; redundant leading headings matching the target
+section are stripped with normalized_heading: true in the response.
+"""
 
 from __future__ import annotations
 

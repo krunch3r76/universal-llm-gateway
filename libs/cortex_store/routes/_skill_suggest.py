@@ -378,7 +378,7 @@ def run_stage_a(
         "loaded_echo": loaded_echo,
         "omitted": omitted,
         "seat_preloaded": seat_preloaded,
-        "ranker_status": "deterministic_fallback",
+        "ranker_status": "pending",
         "degraded": bool(degraded_skills),
         "agent": canonical_agent,
         "count": len(suggestions),
