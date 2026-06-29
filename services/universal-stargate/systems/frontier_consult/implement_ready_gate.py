@@ -3,26 +3,25 @@
 from __future__ import annotations
 
 import json
-import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from implement_admission.closeout_helpers import cortex_files_root
 from implement_admission.dense_spec_schema import (
     DENSE_SPEC_RE,
     dense_spec_hash_uri,
     spec_basename,
 )
-from implement_admission.implement_ready import evaluate_implement_ready
+from implement_admission.implement_ready import (
+    assertion_active,
+    evaluate_implement_ready,
+)
+from implement_admission.scheme_resolve import resolve_schemed_packet_file
 from implement_admission.source_ref import parse_source_ref
 from implement_admission.spec import SourceKind
 
 from .admission import FrontierEndpointError
-from .handoff import _resolve_packet_file, _workspaces_root
-from .implement_admission_bridge import StargateCortexReader, _repo_base
-
-_SCHEME_RE = re.compile(r"^(?P<scheme>workspaces|cortex|ws):(?://)?", re.IGNORECASE)
+from .implement_admission_bridge import StargateCortexReader
 
 
 def _decode_attributes(raw: Any) -> dict[str, Any]:
@@ -59,13 +58,6 @@ def _normalize_predicate(raw: Any) -> str:
     return "".join(raw.split()).lower()
 
 
-def _is_active_assertion(assertion: dict[str, Any], *, now_iso: str) -> bool:
-    if assertion.get("superseded_by"):
-        return False
-    valid_until = assertion.get("valid_until")
-    return not (valid_until and str(valid_until) <= now_iso)
-
-
 def _pin_needs_resolution(
     assertion: dict[str, Any] | None,
     *,
@@ -77,7 +69,7 @@ def _pin_needs_resolution(
         return True
     if assertion.get("entity_id") != todo_id:
         return True
-    return not _is_active_assertion(assertion, now_iso=now_iso)
+    return not assertion_active(assertion, now_iso=now_iso)
 
 
 def _resolve_fresh_implement_ready(
@@ -119,7 +111,7 @@ def _resolve_fresh_implement_ready(
             continue
         if _normalize_predicate(item.get("predicate_form")) != target:
             continue
-        if not _is_active_assertion(item, now_iso=now_iso):
+        if not assertion_active(item, now_iso=now_iso):
             continue
         aid = _coerce_assertion_id(item.get("id"))
         if aid is None:
@@ -175,7 +167,7 @@ def _resolve_skeptic_ratification(
             continue
         if _normalize_predicate(item.get("predicate_form")) != target:
             continue
-        if not _is_active_assertion(item, now_iso=now_iso):
+        if not assertion_active(item, now_iso=now_iso):
             continue
         evidence = item.get("evidence_uris")
         if isinstance(evidence, list) and spec_hash_uri in evidence:
@@ -207,24 +199,10 @@ def _read_dense_spec_text(
     *,
     workspaces_root: Path | None = None,
 ) -> str | None:
-    uri = cited_uri.strip()
-    scheme_match = _SCHEME_RE.match(uri)
-    if scheme_match:
-        scheme = scheme_match.group("scheme").lower()
-        uri = uri[scheme_match.end() :].lstrip("/")
-        if scheme == "cortex":
-            root = cortex_files_root()
-            candidate = _resolve_packet_file(root, uri)
-        else:
-            root = (workspaces_root or _workspaces_root()).resolve()
-            candidate = _resolve_packet_file(root, uri)
-            if candidate is None:
-                candidate = _resolve_packet_file(_repo_base(root), uri)
-    else:
-        root = (workspaces_root or _workspaces_root()).resolve()
-        candidate = _resolve_packet_file(root, uri)
-        if candidate is None:
-            candidate = _resolve_packet_file(_repo_base(root), uri)
+    candidate = resolve_schemed_packet_file(
+        cited_uri.strip(),
+        workspaces_root_override=workspaces_root,
+    )
     if candidate is None:
         return None
     try:

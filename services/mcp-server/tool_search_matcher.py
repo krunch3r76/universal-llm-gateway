@@ -113,6 +113,30 @@ _DISPATCH_PRIMARY_HINT = (
 )
 _DISPATCH_QUERY_TOKENS: frozenset[str] = frozenset({"dispatch", "overflow"})
 
+_SKILL_SUGGEST_PRIMARY_CALL = (
+    'skill_suggest(loaded=["<slug>", ...], conversation_context="<task context>")'
+)
+_SKILL_SUGGEST_PRIMARY_HINT = (
+    "skill_suggest is a server-primary tool — call directly (e.g. "
+    f"{_SKILL_SUGGEST_PRIMARY_CALL}). Server tool_search indexes overflow only; "
+    'the bare query tool_search("skill_suggest") returns 0 overflow matches — '
+    "that is expected, not evidence skill_suggest is unavailable. "
+    "If unbound from your connector, use broad keywords "
+    'tool_search("skill suggest skills loaded delta") to surface the bind path, '
+    "then call skill_suggest directly."
+)
+_SKILL_SUGGEST_QUERY_TOKENS: frozenset[str] = frozenset(
+    {
+        "skill_suggest",
+        "skill",
+        "suggest",
+        "skills",
+        "loaded",
+        "delta",
+        "discovery",
+    }
+)
+
 # Manifest overrides for overflow tools whose live schema/docstring under-specify
 # the dispatch wire shape (op + nested JSON ``arguments`` string).
 _MANIFEST_OVERRIDES: dict[str, dict[str, Any]] = {
@@ -365,4 +389,6 @@ def primary_tool_hint_for_search(
         return _FS_PRIMARY_HINT
     if tokens & _DISPATCH_QUERY_TOKENS:
         return _DISPATCH_PRIMARY_HINT
+    if tokens & _SKILL_SUGGEST_QUERY_TOKENS:
+        return _SKILL_SUGGEST_PRIMARY_HINT
     return None

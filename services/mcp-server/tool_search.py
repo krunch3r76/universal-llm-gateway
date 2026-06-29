@@ -81,17 +81,27 @@ def execute_tool_search(query: str, limit: int = 5) -> dict[str, Any]:
     if not results:
         record("mcp.tool.search.miss", query=query)
         primary_note = server_primary_empty_search_note()
-        return {
+        primary_hint = primary_tool_hint_for_search(query, results)
+        payload: dict[str, Any] = {
             "query": query,
             "results": [],
             "total_matches": 0,
             "available_tools_summary": _all_manifest_summary(_MANIFEST),
             "server_primary_note": primary_note,
-            "_next": (
+        }
+        if primary_hint:
+            payload["primary_tool_hint"] = primary_hint
+            payload["_next"] = (
+                "Use primary_tool_hint — call the named primary tool directly. "
+                "Overflow index returned 0 matches for this query; that is expected "
+                "for deferred server-primary names."
+            )
+        else:
+            payload["_next"] = (
                 "No overflow matches. See available_tools_summary above; refine "
                 f"query keywords. {primary_note}"
-            ),
-        }
+            )
+        return payload
     primary_hint = primary_tool_hint_for_search(query, results)
     payload: dict[str, Any] = {
         "query": query,

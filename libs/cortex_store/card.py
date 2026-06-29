@@ -40,6 +40,11 @@ from .models import (
 )
 from .predicate_summary import aggregate_predicate_summary
 
+try:
+    from .routes.assertions import _truncate_claim
+except ImportError:
+    from .routes.assertions._shared import _truncate_claim
+
 logger = get_logger("cortex-api.card")
 
 CARD_TOP_K_DEFAULT = 7
@@ -337,7 +342,7 @@ def get_entity_card(
 def _card_assertion(r: dict[str, object]) -> CardAssertion:
     return CardAssertion(
         id=int(r["id"]),  # type: ignore[arg-type]
-        claim=str(r["claim"]),
+        claim=_truncate_claim(str(r["claim"])),
         confidence=r["confidence"],  # type: ignore[arg-type]
         derivation_type=r.get("derivation_type"),  # type: ignore[arg-type]
         valid_from=r.get("valid_from"),  # type: ignore[arg-type]

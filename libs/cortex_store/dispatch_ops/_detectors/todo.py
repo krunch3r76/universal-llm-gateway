@@ -16,7 +16,8 @@ Suppressed when:
   * workflow_state ∈ {done, deferred, cancelled, blocked} — not implementation-intent
   * attributes.backlog = true — author explicitly marked this as backlog-only
   * attributes.seed_contract_ack present (any value) — documented-intent escape hatch
-  * attributes.density_triage = recon_pending — stub is legitimately not-yet-dense
+  * attributes.density_triage in TODO_SEED_INCOMPLETE_SUPPRESSED_DENSITY — stub is
+    legitimately not-yet-dense
 
 Grounded in: decision:todo-creation-rich-seed-contract (thread 1144);
 tasks/specs/implement-input-schema.md §3 (registry convergence).
@@ -29,7 +30,7 @@ from typing import Any
 
 from ...db import query
 from ...type_schemas import type_attribute_schema
-from ._shared import _finding
+from ._shared import TODO_SEED_INCOMPLETE_SUPPRESSED_DENSITY, _finding
 
 _IMPL_INTENT_STATES = ("open", "in_progress")
 
@@ -71,7 +72,7 @@ def detect_todo_implementation_seed_incomplete(
         if (
             attrs.get("backlog") is True
             or attrs.get("seed_contract_ack") is not None
-            or attrs.get("density_triage") == "recon_pending"
+            or attrs.get("density_triage") in TODO_SEED_INCOMPLETE_SUPPRESSED_DENSITY
         ):
             continue
 

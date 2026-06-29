@@ -14,6 +14,15 @@ from typing import Any, Literal
 
 import httpx
 from agent_seat.profiles import load_profiles
+from implement_admission.scheme_resolve import (
+    parse_schemed_path,
+    path_escapes_sandbox,
+    resolve_schemed_packet,
+    resolve_schemed_packet_file,
+)
+from implement_admission.scheme_resolve import (
+    workspaces_root as _scheme_workspaces_root,
+)
 from transport_utils import DEFAULT_AGENT_BUS_URL, make_async_client
 from universal_logging import get_logger
 
@@ -129,9 +138,6 @@ _PROTOCOL_HINT = (
     "§ The Six Required Blocks (skeleton: "
     "docs/agent-guides/skills/handoff-packet-authoring.md)."
 )
-# MCP ``fs(workspaces)`` paths are workspaces-relative; Stargate may set
-# ``PROJECT_ROOT`` to either ``/mnt/torus/projects`` or the ULG repo root.
-_ULG_REPO_DIRNAME = "universal-llm-gateway"
 
 
 def _workspaces_root() -> Path:
@@ -140,36 +146,15 @@ def _workspaces_root() -> Path:
     ``PROJECT_ROOT`` on Stargate is often the ULG repo checkout, while callers
     still pass MCP-style paths prefixed with ``universal-llm-gateway/``.
     """
-    return Path(os.environ.get("PROJECT_ROOT") or "/mnt/torus/projects")
-
-
-def _path_contained_in(candidate: Path, root: Path) -> bool:
-    try:
-        candidate.resolve().relative_to(root.resolve())
-    except ValueError:
-        return False
-    return True
-
-
-def _packet_path_variants(packet_path: str) -> tuple[str, ...]:
-    """Workspaces-relative and repo-relative spellings of the same packet."""
-    rel = packet_path.lstrip("/")
-    prefix = f"{_ULG_REPO_DIRNAME}/"
-    if rel.startswith(prefix):
-        return (rel, rel[len(prefix) :])
-    return (rel,)
+    return _scheme_workspaces_root(None)
 
 
 def _resolve_packet_file(root: Path, packet_path: str) -> Path | None:
-    """Resolve *packet_path* to an on-disk file under *root*, or None."""
-    root = root.resolve()
-    for variant in _packet_path_variants(packet_path):
-        candidate = (root / variant).resolve()
-        if not _path_contained_in(candidate, root):
-            continue
-        if candidate.is_file():
-            return candidate
-    return None
+    """Resolve *packet_path* to an on-disk file under the scheme sandbox, or None."""
+    return resolve_schemed_packet_file(
+        packet_path,
+        workspaces_root_override=root,
+    )
 
 
 def validate_packet(
@@ -194,21 +179,22 @@ def validate_packet(
     """
     warnings: list[str] = []
     root = (workspaces_root or _workspaces_root()).resolve()
-    for variant in _packet_path_variants(packet_path):
-        probe = (root / variant).resolve()
-        if not _path_contained_in(probe, root):
-            raise FrontierEndpointError(
-                request_id=request_id,
-                field="packet_path",
-                reason=(
-                    f"packet_path {packet_path!r} resolves outside the workspaces "
-                    "sandbox; traversal rejected"
-                ),
-                status_code=422,
-                code="handoff_packet_invalid",
-            )
+    parsed = parse_schemed_path(packet_path)
+    resolution = resolve_schemed_packet(packet_path, workspaces_root_override=root)
+    if path_escapes_sandbox(parsed, sandbox_root=resolution.sandbox_root):
+        sandbox = "cortex" if parsed.scheme == "cortex" else "workspaces"
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="packet_path",
+            reason=(
+                f"packet_path {packet_path!r} resolves outside the {sandbox} "
+                "sandbox; traversal rejected"
+            ),
+            status_code=422,
+            code="handoff_packet_invalid",
+        )
 
-    candidate = _resolve_packet_file(root, packet_path)
+    candidate = resolution.resolved_file
     if candidate is None:
         raise FrontierEndpointError(
             request_id=request_id,

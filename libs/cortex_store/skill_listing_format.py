@@ -189,7 +189,8 @@ def render_skills_card_section(
         (
             "> **Discovery (you call it, never the operator)**: at task inflection "
             "points call `skill_suggest(conversation_context=…)` BEFORE scanning "
-            'this manifest. If unbound: `tool_search("skill_suggest")` first.'
+            'this manifest. If unbound: `tool_search("skill suggest skills loaded delta")` '
+            "— not the bare tool name (overflow index only)."
         ),
         "> `⚑` = required gate.",
     ]

@@ -28,9 +28,6 @@ VALID_DENSITY_TRIAGE = frozenset(
     }
 )
 
-# recon_pending stubs are legitimately not-yet-dense; suppress seed-contract audit.
-TODO_SEED_INCOMPLETE_SUPPRESSED_DENSITY = frozenset({"recon_pending"})
-
 DENSIFY_DEFAULT_ON = frozenset(
     {
         "judgment_required",

@@ -96,6 +96,8 @@ SEVERITY = {
 # values (free-text values are skipped — too noisy for substring detection).
 _IDENT_SHAPED_VALUE_RE = re.compile(r"^[\w\-.:/]+$")
 
+TODO_SEED_INCOMPLETE_SUPPRESSED_DENSITY: frozenset[str] = frozenset({"recon_pending"})
+
 
 def _finding(
     kind: str, subject: str, detail: str, audit_id: str | None = None
@@ -113,4 +115,9 @@ def _finding(
     }
 
 
-__all__ = ["SEVERITY", "_IDENT_SHAPED_VALUE_RE", "_finding"]
+__all__ = [
+    "SEVERITY",
+    "TODO_SEED_INCOMPLETE_SUPPRESSED_DENSITY",
+    "_IDENT_SHAPED_VALUE_RE",
+    "_finding",
+]

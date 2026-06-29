@@ -194,7 +194,11 @@ def execute_op(tool: str, arguments: object) -> Any:
             ),
         }
 
-    record("mcp.cortex.dispatch", tool=tool)
+    record(
+        "mcp.cortex.dispatch",
+        tool=tool,
+        **({"intent": (parsed.get("intent") or "full")} if tool == "entity_get" else {}),
+    )
     result = handler(**parsed)
     if not isinstance(result, dict):
         return result
@@ -213,6 +217,25 @@ def execute_op(tool: str, arguments: object) -> Any:
         # section_manifest); the EntityDetail-shaped completeness hint
         # would misreport "no assertions" against the projection.
         _enrich_entity_completeness(result)
+    if tool == "entity_get" and isinstance(result, dict):
+        try:
+            _intent = result.get("intent") or (parsed.get("intent") or "full")
+            if "assertions" in result:
+                _active = len(result.get("assertions") or [])
+            else:
+                _active = (result.get("assertion_counts") or {}).get("active")
+            _superseded = (result.get("superseded_breadcrumb") or {}).get("count")
+            if _superseded is None:
+                _superseded = (result.get("assertion_counts") or {}).get("superseded")
+            record(
+                "mcp.cortex.entity_get.served",
+                intent=_intent,
+                entity_id=result.get("id"),
+                active_count=_active,
+                superseded_count=_superseded,
+            )
+        except Exception:
+            pass
     return result
 
 

@@ -148,6 +148,7 @@ def _op_entity_get(
     edge_limit: int = 20,
     include_compaction_pointers: bool = False,
     intent: str = "full",
+    include_superseded: bool = False,
     debug: bool = False,
     top_k: int = _CARD_TOP_K_DEFAULT,
     resolve_aliases: bool = True,
@@ -156,16 +157,34 @@ def _op_entity_get(
 ) -> dict[str, Any]:
     """Dispatch surface for entity_get (v2.4 §6.1).
 
-    intent="full" — legacy EntityDetail (default; compatibility).
+    intent="full" — EntityDetail with active assertions + superseded breadcrumb.
+    intent="full-historical" — all rows with full enrichment (audit path).
     intent="card" — Card v0 via projection-aware fetch (§6.3).
     intent in {"cluster","impact"} — reserved; rejected until later phases.
     """
     if not entity_id:
         return {"error": "entity_id is required"}
-    if intent not in {"full", "card", "cluster", "impact"}:
+    if intent not in {"full", "full-historical", "card", "cluster", "impact"}:
         return {
-            "error": f"Unknown intent {intent!r}. Supported: full, card "
+            "error": f"Unknown intent {intent!r}. Supported: full, full-historical, card "
             "(cluster, impact reserved for later phases).",
+        }
+    if intent == "full-historical" and include_superseded:
+        return {
+            "error": (
+                "Invalid combo: intent='full-historical' with include_superseded=true "
+                "— use intent='full-historical' alone or intent='full' with "
+                "include_superseded=true."
+            ),
+            "status_code": 400,
+        }
+    if include_superseded and intent in {"card", "cluster", "impact"}:
+        return {
+            "error": (
+                f"Invalid combo: intent={intent!r} with include_superseded=true "
+                "— include_superseded applies only to intent='full'."
+            ),
+            "status_code": 400,
         }
     if intent in _CARD_INTENTS_DEFERRED:
         return {
@@ -199,6 +218,9 @@ def _op_entity_get(
             include_edges=include_edges,
             edge_limit=edge_limit,
             include_compaction_pointers=include_compaction_pointers,
+            include_superseded=(
+                intent == "full-historical" or (intent == "full" and include_superseded)
+            ),
         )
 
 

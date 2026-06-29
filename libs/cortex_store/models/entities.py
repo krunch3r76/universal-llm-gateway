@@ -98,6 +98,8 @@ class EntityDetail(_EntityCommon):
     reasoning_edges: list[EdgeItem] = Field(default_factory=list)
     action_hints: list[ActionHint] | None = None
     compaction_projection: CompactionProjection | None = None
+    superseded_breadcrumb: SupersededBreadcrumb | None = None
+    superseded_corrections: list[SupersededCorrection] | None = None
     collision_warning: EntityCollisionWarning | None = None
 
 
@@ -125,7 +127,30 @@ class EntityList(BaseModel):
 
 # --- v2.4 read model: intent-shaped projections ---
 
-EntityIntent = Literal["full", "card", "cluster", "impact"]
+EntityIntent = Literal["full", "full-historical", "card", "cluster", "impact"]
+
+
+class SupersededBreadcrumb(BaseModel):
+    """Aggregate pointer for superseded assertion rows on default ``intent=full``."""
+
+    count: int
+    ids: list[int] = Field(default_factory=list)
+    by_revision_type: dict[str, int] = Field(default_factory=dict)
+    deepen_template: str = Field(
+        default="entity_get(intent=full-historical) | assertion_get(id)",
+        alias="_deepen_template",
+    )
+
+
+class SupersededCorrection(BaseModel):
+    """Bounded one-line diff for correction or material legacy_unclassified rows."""
+
+    id: int
+    revision_type: str
+    prior_claim_trunc: str
+    new_claim_trunc: str | None = None
+    superseded_by: int
+    deepen: str = Field(default="assertion_get(id)", alias="_deepen")
 
 
 class CardAssertion(BaseModel):
@@ -176,9 +201,7 @@ class EntityCard(BaseModel):
     summary_row: str | None = None
     status_summary: dict[str, Any] | None = None
     top_k_assertions: list[CardAssertion] = Field(default_factory=list)
-    assertion_counts: CardAssertionCounts = Field(
-        default_factory=CardAssertionCounts
-    )
+    assertion_counts: CardAssertionCounts = Field(default_factory=CardAssertionCounts)
     edge_type_summary: list[CardEdgeTypeCount] = Field(default_factory=list)
     archives_to_count: int = 0
     section_manifest: list[CardSection] = Field(default_factory=list)

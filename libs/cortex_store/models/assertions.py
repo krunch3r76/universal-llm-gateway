@@ -195,6 +195,9 @@ class AssertionUpdate(BaseModel):
         return v
 
 
+RevisionType = Literal["restatement", "correction", "status_update"]
+
+
 class SupersedeRequest(BaseModel):
     old_assertion_id: int
     entity_id: str
@@ -225,6 +228,8 @@ class SupersedeRequest(BaseModel):
     # silent lineage clobber from concurrent or duplicated supersession
     # passes. See todo:cortex-superseded-by-overwrite-guards / friction 9824.
     force: bool = False
+    revision_type: RevisionType | None = None
+    attributes: dict[str, Any] | None = None
     # Auditor-validatability opt-outs (same semantics as AssertionCreate).
     acknowledge_audit_gaps: list[str] | None = Field(
         None,

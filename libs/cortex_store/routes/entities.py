@@ -41,6 +41,33 @@ logger = get_logger("cortex-api.entities")
 router = APIRouter(prefix="/entities", tags=["entities"])
 
 
+def _resolve_entity_get_historical(
+    *,
+    intent: EntityIntent,
+    include_superseded: bool,
+    include_superseded_present: bool,
+) -> bool:
+    if intent == "full-historical" and include_superseded_present:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Invalid combo: intent='full-historical' with include_superseded "
+                "— use intent='full-historical' alone (canonical audit path) or "
+                "intent='full' with include_superseded=true (legacy alias)."
+            ),
+        )
+    if include_superseded and intent in {"card", "cluster", "impact"}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Invalid combo: intent={intent!r} with include_superseded=true "
+                "— include_superseded applies only to intent='full' or "
+                "intent='full-historical'."
+            ),
+        )
+    return intent == "full-historical" or (intent == "full" and include_superseded)
+
+
 class EntityRekeyRequest(BaseModel):
     new_id: str
 
@@ -182,11 +209,20 @@ def get_entity(
     intent: EntityIntent = Query(
         "full",
         description=(
-            "v2.4 §6.1 read intent. `full` (default) preserves the existing "
-            "EntityDetail payload. `card` returns Card v0 (§6.3) via a "
-            "projection-aware fetch plan. `cluster` and `impact` are "
-            "reserved in the surface but not implemented yet — calls "
-            "return 501."
+            "v2.4 §6.1 read intent. `full` (default) returns EntityDetail with "
+            "active assertions plus superseded breadcrumb/corrections. "
+            "`full-historical` returns all superseded rows with full enrichment "
+            "(audit escape hatch). `card` returns Card v0 (§6.3). `cluster` and "
+            "`impact` are reserved — calls return 501."
+        ),
+    ),
+    include_superseded: bool = Query(
+        False,
+        description=(
+            "Legacy alias: when intent='full', set true to inline all superseded "
+            "rows with full enrichment (same as intent='full-historical'). "
+            "Prefer intent='full-historical'. Invalid with intent='full-historical' "
+            "or intent in {card, cluster, impact}."
         ),
     ),
     include_edges: bool = Query(
@@ -224,6 +260,12 @@ def get_entity(
     source = request.headers.get("x-cortex-source", "agent")
     agent = request.headers.get("x-cortex-agent", "web")
     session_id = request.headers.get("x-cortex-session")
+    include_superseded_present = "include_superseded" in request.query_params
+    historical = _resolve_entity_get_historical(
+        intent=intent,
+        include_superseded=include_superseded,
+        include_superseded_present=include_superseded_present,
+    )
     if intent in CARD_INTENTS_DEFERRED:
         raise HTTPException(
             status_code=status.HTTP_501_NOT_IMPLEMENTED,
@@ -253,6 +295,7 @@ def get_entity(
             agent=agent,
             session_id=session_id,
             include_compaction_pointers=include_compaction_pointers,
+            include_superseded=historical,
         )
 
 

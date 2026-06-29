@@ -21,9 +21,8 @@ from ...assertion_quality import (
     check_derived_extract_primary,
     validate_assertion,
 )
-from ...config import supersede_validation_mode
-from ...event_publisher import cortex_supersede_would_reject
 from ...belief_guard import analyze_assertion_impact
+from ...config import supersede_validation_mode
 from ...db import WRITE_LOCK, cortex_conn, decode_row, json_encode, query
 from ...enrichment import (
     enrich_background,
@@ -31,6 +30,7 @@ from ...enrichment import (
     reindex_assertion_fts,
 )
 from ...entrenchment import compute_entrenchment
+from ...event_publisher import cortex_supersede_would_reject
 from ...models import (
     AssertionCreate,
     AssertionItem,
@@ -231,7 +231,7 @@ def supersede_assertion(body: SupersedeRequest) -> SupersedeResponse:
         if validation.rejected:
             reject_rule_ids = _hard_reject_rule_ids(validation.hard_reject)
             mode = supersede_validation_mode()
-            _GOVERNING_FIELDS = {
+            governing_fields = {
                 "R2": ("derivation_type", "evidence_uris", "chunk_id"),
                 "R3": ("derivation_type", "chunk_id", "evidence_uris"),
                 "R4": ("claim", "valid_from"),
@@ -239,7 +239,7 @@ def supersede_assertion(body: SupersedeRequest) -> SupersedeResponse:
             reject_field_origins = {
                 f: ("caller" if f in specified else "inherited")
                 for rid in reject_rule_ids
-                for f in _GOVERNING_FIELDS.get(rid, ())
+                for f in governing_fields.get(rid, ())
             }
             # Preserved verbatim (no shadow-logging regression). Now also
             # reached on the hard_422 path because it sits above the raise below.
@@ -336,6 +336,9 @@ def supersede_assertion(body: SupersedeRequest) -> SupersedeResponse:
             conn=conn,
         )
 
+        eff_revision_type = body.revision_type or "restatement"
+        eff_attributes = {**(body.attributes or {}), "revision_type": eff_revision_type}
+
         with WRITE_LOCK:
             cur = conn.execute(
                 "INSERT INTO assertions ("
@@ -343,8 +346,8 @@ def supersede_assertion(body: SupersedeRequest) -> SupersedeResponse:
                 "  derivation_type, observed_at, valid_from, entrenchment_score,"
                 "  reasoning_summary, seeded_by, chunk_id, confidence_score,"
                 "  quality_score, predicate_form, raw_predicate_form, normalization_decision,"
-                "  candidate_set_fingerprint, normalizer_version"
-                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "  candidate_set_fingerprint, normalizer_version, attributes"
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     body.entity_id,
                     body.claim,
@@ -365,6 +368,7 @@ def supersede_assertion(body: SupersedeRequest) -> SupersedeResponse:
                     norm_dec,
                     cand_fp,
                     norm_ver,
+                    json_encode(eff_attributes),
                 ),
             )
             new_id = cur.lastrowid
@@ -499,14 +503,13 @@ def supersede_assertion(body: SupersedeRequest) -> SupersedeResponse:
         entity_id=body.entity_id,
         acknowledge_audit_gaps=body.acknowledge_audit_gaps,
     )
-    provenance_warnings = (
-        check_derived_extract_primary(eff_evidence_uris)
-        + check_chunk_locality(
-            derivation_type=eff_derivation_type,
-            claim=body.claim,
-            evidence_uris=eff_evidence_uris,
-            chunk_id=eff_chunk_id,
-        )
+    provenance_warnings = check_derived_extract_primary(
+        eff_evidence_uris
+    ) + check_chunk_locality(
+        derivation_type=eff_derivation_type,
+        claim=body.claim,
+        evidence_uris=eff_evidence_uris,
+        chunk_id=eff_chunk_id,
     )
     combined_warnings = (
         (quality_validation_warnings or [])

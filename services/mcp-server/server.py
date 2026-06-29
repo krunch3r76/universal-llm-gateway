@@ -42,7 +42,7 @@ from response_size_guard import register_response_guard
 from schema_compact import register_compact_schema_transform
 from starlette.middleware.gzip import GZipMiddleware
 from tool_access import dispatch_denial_reason, is_dispatch_tool_allowed
-from tool_error_enricher import register_tool_error_enricher
+from tool_error_enricher import fs_missing_sandbox_hint, register_tool_error_enricher
 from tool_search import capture_overflow_metadata, register_tool_search_tool
 from tools._agent_bus_read import register_agent_bus_read_tool
 from tools._agent_tools import JsonArgStr
@@ -489,9 +489,7 @@ def _build_server() -> tuple[
         if not op:
             return {"error": "'op' is required"}
         if sandbox not in valid_sandboxes:
-            return {
-                "error": f"sandbox must be 'cortex' or 'workspaces', got {sandbox!r}"
-            }
+            return {"error": fs_missing_sandbox_hint(path)}
         if target_sandbox and target_sandbox not in valid_sandboxes:
             return {
                 "error": (

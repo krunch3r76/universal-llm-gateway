@@ -614,7 +614,14 @@ observability(operation="pipeline-trace", params={"execution_id": "abc123"})
 
 Unified file operations across sandboxes: `cortex` (/data/files), `workspaces` (repo root at /mnt/torus/projects/). `workspaces` paths MUST include the repo name prefix (e.g. `universal-llm-gateway/…`). Use `op="list"` for directories.
 
-Both `sandbox` and `op` are REQUIRED.
+Both `sandbox` and `op` are REQUIRED — there is no default or path-based inference.
+Omitting `sandbox` returns a structured recoverable error naming both roots:
+`cortex` (/data/files — notes, agent-skills, threads, dropbox) and
+`workspaces` (repo source under `/mnt/torus/projects`, paths must include the
+repo prefix). Path shapes such as `notes/…`, `tasks/…`, `tmp/…`,
+`agent-skills/…`, and `services/…` exist under **both** stores; disambiguate
+explicitly. Repo-prefixed paths (e.g. `universal-llm-gateway/…`) are advisory
+workspaces hints only — you must still pass `sandbox`.
 
 For project navigation, `list` returns both `files` and `directories`. Read the
 `directories` field when you need directory-aware navigation, including empty or

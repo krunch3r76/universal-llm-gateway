@@ -144,3 +144,18 @@ def test_recon_waived_does_not_bypass_attrs() -> None:
     )
     assert not verdict.admitted
     assert verdict.code == "implement_attrs_unpopulated"
+
+
+@pytest.mark.offline
+def test_recon_waived_does_not_bypass_recon_pending() -> None:
+    # recon_pending is a stub block that precedes the skeptic gate; the
+    # skeptic-only waiver must NOT admit a not-yet-densified todo (INV-5).
+    verdict = evaluate_implement_ready(
+        **_ready_kwargs(
+            density_triage="recon_pending",
+            skeptic_ratified=False,
+            recon_waived=True,
+        )
+    )
+    assert not verdict.admitted
+    assert verdict.code == "implement_blocked_recon_pending"

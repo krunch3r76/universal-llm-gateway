@@ -37,6 +37,7 @@ from .session_close_enrichment_telemetry import (
     emit_entity_get_archives_to_lookup_failed,
 )
 from .status_trait_read import apply_option_c_read_projection
+from .superseded_projection import build_superseded_projection
 
 logger = get_logger("cortex-api.entity_read")
 
@@ -54,6 +55,7 @@ def get_entity_impl(
     agent: str = "web",
     session_id: str | None = None,
     include_compaction_pointers: bool = False,
+    include_superseded: bool = False,
 ) -> dict[str, object]:
     entities = query(conn, "SELECT * FROM entities WHERE id = ?", (entity_id,))
     if not entities:
@@ -103,7 +105,9 @@ def get_entity_impl(
             emit_entity_get_access_log_failed(entity_id=entity_id, agent=agent)
 
     assertions: list[AssertionItem] = []
-    for row in assertion_rows:
+    active_rows = [r for r in assertion_rows if r.get("superseded_by") is None]
+    projection_rows = assertion_rows if include_superseded else active_rows
+    for row in projection_rows:
         try:
             assertions.append(AssertionItem(**decode_row(row, ASSERTION_JSON_FIELDS)))
         except Exception as exc:
@@ -118,6 +122,13 @@ def get_entity_impl(
                 assertion_id=row.get("id"),
                 reason=assertion_deserialize_skip_reason(exc),
             )
+
+    superseded_breadcrumb = None
+    superseded_corrections = None
+    if not include_superseded:
+        superseded_breadcrumb, superseded_corrections = build_superseded_projection(
+            assertion_rows
+        )
 
     # §6.10 compaction-aware projection (Tier 0 — deterministic, no model)
     compaction_projection: CompactionProjection | None = None
@@ -158,6 +169,8 @@ def get_entity_impl(
         reasoning_edges=edges,
         action_hints=hints,
         compaction_projection=compaction_projection,
+        superseded_breadcrumb=superseded_breadcrumb,
+        superseded_corrections=superseded_corrections or None,
     ).model_dump(mode="json")
     if detail_row.get("type") == "agent_skill":
         payload["discoverable"] = agent_skill_is_discoverable(

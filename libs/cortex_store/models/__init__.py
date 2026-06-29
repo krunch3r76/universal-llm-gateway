@@ -73,6 +73,8 @@ from .entities import (
     EntitySummary,
     EntityUpdate,
     RetentionPolicy,
+    SupersededBreadcrumb,
+    SupersededCorrection,
 )
 from .extraction import (
     ExtractionCheckRequest,

@@ -75,8 +75,16 @@ def promote_session_objectives(
             agent=agent,
             session_id=session_id,
         )
-        if result is not None:
+        # result is None → dedup (todo already exists), neither promoted nor
+        # dropped. A {"error": ...} seed failure is a drop, NOT a promotion:
+        # appending it to `out` would over-count cortex.session.objective.promoted
+        # (thread 3478 F2). Only {"todo_created": ...} counts as a promotion.
+        if isinstance(result, dict) and "todo_created" in result:
             out.append(result)
+        elif isinstance(result, dict) and "error" in result:
+            dropped.append(
+                {"index": index, "reason": "seed_failed", "error": result["error"]}
+            )
     if out:
         record(
             "cortex.session.objective.promoted",

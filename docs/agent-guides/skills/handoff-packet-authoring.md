@@ -119,6 +119,8 @@ implementation-ready; ¬ author a Gate 3 materialized implement packet. If the n
 design judgment, write a minimal consult brief with the unresolved forks/questions and
 dispatch.
 
+**Implement-authority boundary (mandatory at the recon→implement transition — frictions 21028/21030).** For `density_triage=judgment_required`, do NOT treat `implement_ready_preflight.admitted=true` or a recon-authored dense spec as authority to implement — admission only confirms the declared state is internally consistent. The `implement_ready` assertion must be authored by a **reasoning-tier seat at the Gate-2 densify close**, never by the recon/mechanical (Composer) seat that drafted the spec or set `density_triage`. **Load-order condition:** if you are about to self-stamp `implement_ready`, author an implement packet, or move a `judgment_required` item recon→implement, load `consult-routing` (§ Densify lane → Implement-authority boundary — the SOT) even if this session entered through packet authoring. A reasoning-tier seat that ran the recon may author `implement_ready` only after explicitly completing the Gate-2 densify close (authority boundary, not separate-session ceremony). The densify-authority *code* gate (`seeded_by` provenance check) is tracked at `todo:implement-ready-triage-writer-trust-boundary` — scheduled, not yet landed.
+
 **Triage precondition (declared-state, ¬ inferred).** Whether a sparse todo is densified
 by a reasoning tier or staged mechanically is an **escalation** decision — and the tier
 that would need to escalate (Composer at staging) is the one empirically least reliable at

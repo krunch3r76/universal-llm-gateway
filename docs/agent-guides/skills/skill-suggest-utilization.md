@@ -24,6 +24,15 @@ Todo `required_skills` + `entity_get` → `source_uri` still applies when the sk
 
 ## Web — when to call `skill_suggest`
 
+**Bind precondition (deferred server-primary).** On web/API seats `skill_suggest`
+is a deferred MCP server-primary: it is advertised in `tools/list` but its schema
+may not be in the connector's initial callable set. If it is not yet callable,
+surface it with a **broad-keyword** `tool_search` (e.g.
+`tool_search("skill suggest skills loaded delta")`) — **not** the bare exact-name
+query `tool_search("skill_suggest")`, which matches the overflow-only index,
+returns 0 results, and does not bind it. Once surfaced, call `skill_suggest`
+directly.
+
 Call at **conversational inflection points**, not every turn:
 
 | Trigger | Example context snippet |

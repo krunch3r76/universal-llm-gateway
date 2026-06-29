@@ -45,6 +45,10 @@ def _assertion_inactive(assertion: dict, *, now_iso: str) -> bool:
     return False
 
 
+def assertion_active(assertion: dict, *, now_iso: str) -> bool:
+    return not _assertion_inactive(assertion, now_iso=now_iso)
+
+
 def _reject(code: str, reason: str) -> ImplementReadyVerdict:
     return ImplementReadyVerdict(admitted=False, code=code, reason=reason)
 
@@ -202,4 +206,4 @@ def evaluate_implement_ready(
     )
 
 
-__all__ = ["ImplementReadyVerdict", "evaluate_implement_ready"]
+__all__ = ["ImplementReadyVerdict", "assertion_active", "evaluate_implement_ready"]

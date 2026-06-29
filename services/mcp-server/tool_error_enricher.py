@@ -28,6 +28,52 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+_FS_AMBIGUOUS_PREFIXES = frozenset({"notes", "tasks", "tmp", "agent-skills", "services"})
+
+_FS_SANDBOX_ROOTS_MSG = (
+    "sandbox is required. cortex = /data/files (notes, agent-skills, threads, dropbox); "
+    "workspaces = repo source under /mnt/torus/projects (must include repo prefix, "
+    "e.g. universal-llm-gateway/...)."
+)
+
+
+def _known_workspaces_repo_names() -> set[str]:
+    try:
+        from tools._project_paths import project_root, repo_roots
+
+        return {repo.name for repo in repo_roots(project_root())}
+    except Exception:
+        return set()
+
+
+def _call_payload_path(payload: Any) -> str:
+    if isinstance(payload, dict):
+        raw = payload.get("path")
+        if raw is not None:
+            return str(raw).strip()
+    return ""
+
+
+def fs_missing_sandbox_hint(path: str = "") -> str:
+    """Advisory hint when fs is called without sandbox (no inference)."""
+    parts = [part for part in path.strip().strip("/").split("/") if part]
+    if parts:
+        first = parts[0]
+        if first in _known_workspaces_repo_names():
+            return (
+                f"{_FS_SANDBOX_ROOTS_MSG} Path advisory: looks like workspaces; "
+                "pass sandbox=workspaces."
+            )
+        if first in _FS_AMBIGUOUS_PREFIXES:
+            return (
+                f"{_FS_SANDBOX_ROOTS_MSG} Path advisory: ambiguous — this path shape "
+                "exists under BOTH stores; disambiguate explicitly."
+            )
+    return (
+        f"{_FS_SANDBOX_ROOTS_MSG} Pass sandbox=cortex or sandbox=workspaces."
+    )
+
+
 # Per-session invocation tracker for Signal 5 (first_invocation_this_session).
 # Maps (session_id, tool_name) → True once we've seen a call for that pair.
 # Bounded LRU to avoid unbounded memory growth across many sessions.
@@ -169,7 +215,14 @@ class ToolErrorEnricher(Middleware):
                     if exp_type:
                         entry["expected_type"] = exp_type
                     type_hint = exp_type or "valid input"
-                    entry["hint"] = f"'{param}' is required (expects {type_hint})."
+                    if tool_name == "fs" and param == "sandbox":
+                        entry["hint"] = fs_missing_sandbox_hint(
+                            _call_payload_path(err.get("input"))
+                        )
+                    else:
+                        entry["hint"] = (
+                            f"'{param}' is required (expects {type_hint})."
+                        )
                 else:
                     prop_schema_raw = schema_props.get(param, {})
                     prop_schema = (

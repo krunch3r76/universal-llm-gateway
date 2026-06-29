@@ -632,14 +632,21 @@ def _cortex_manifest(
         selective_options: list[str] = []
         if entity_id:
             selective_options.append(
-                f'cortex(tool="assertions", arguments=\'{{"entity_id":"{entity_id}","limit":10}}\')'
+                f'cortex(tool="entity_get", arguments=\'{{"entity_id":"{entity_id}","intent":"card"}}\')'
             )
             selective_options.append(
-                f'cortex(tool="relationships", arguments=\'{{"entity_id":"{entity_id}","limit":10}}\')'
+                f'cortex(tool="assertions", arguments=\'{{"entity_id":"{entity_id}","intent":"summary","limit":10}}\')'
             )
-            selective_options.append(
-                f'cortex(tool="entity_get", arguments=\'{{"entity_id":"{entity_id}"}}\')'
-            )
+            first_assertion_id: int | None = None
+            if isinstance(assertions, list):
+                for row in assertions:
+                    if isinstance(row, dict) and row.get("id") is not None:
+                        first_assertion_id = int(row["id"])
+                        break
+            if first_assertion_id is not None:
+                selective_options.append(
+                    f'cortex(tool="assertion_get", arguments=\'{{"assertion_id":{first_assertion_id}}}\')'
+                )
         manifest["selective_options"] = selective_options or [
             f'retrieve(id="{ref_id}")'
         ]
