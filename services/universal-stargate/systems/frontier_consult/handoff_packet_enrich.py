@@ -24,10 +24,16 @@ logger = get_logger(__name__)
 
 WEB_RECEIVER_AGENT = "claude-web"
 
+# Always-wired densify floor for MCP-seat handoffs (claude-web + claude-cursor).
+# architecture-invariants + ulg-architecture are injected unconditionally so the
+# cursor arch-ref floor (_missing_arch_skill_refs) is satisfied by enrich rather
+# than by author hand-wiring — parity with the generate lane's required_skills.
 _DEFAULT_DENSIFY_SLUGS: tuple[str, ...] = (
     "lead-seat-boot",
     "consult-routing",
     "handoff-packet-authoring",
+    "architecture-invariants",
+    "ulg-architecture",
 )
 
 _TASK_CLASS_KEYWORDS: tuple[tuple[tuple[str, ...], str], ...] = (
@@ -231,12 +237,12 @@ def _next_mcp_step_number(mcp_block: str) -> int:
     return max(numbers, default=0) + 1
 
 
-def enrich_web_handoff_packet(
+def enrich_handoff_packet(
     text: str,
     *,
     cortex: CortexEntityReader,
 ) -> EnrichResult:
-    """Non-destructively enrich a claude-web handoff packet in memory."""
+    """Non-destructively enrich an MCP-seat handoff packet (web or cursor) in memory."""
     skill_slugs = _collect_skill_slugs(text, cortex)
     invariant_lines: list[str] = []
     skills_added: list[str] = []

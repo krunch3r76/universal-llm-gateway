@@ -11,7 +11,7 @@ from .admission import FrontierEndpointError
 from .handoff import build_pointer_body, validate_packet
 from .handoff_packet_enrich import (
     EnrichResult,
-    enrich_web_handoff_packet,
+    enrich_handoff_packet,
     has_densify_floor,
     source_uri_to_fs_line,
 )
@@ -114,7 +114,7 @@ def test_resolve_source_uri_top_level_shape() -> None:
 
 def test_enrich_adds_skills_and_thread_fetch() -> None:
     cortex = _StubCortex(todo_skills=["mcp-surface-change"])
-    result = enrich_web_handoff_packet(_THIN_WEB_PACKET, cortex=cortex)
+    result = enrich_handoff_packet(_THIN_WEB_PACKET, cortex=cortex)
     assert isinstance(result, EnrichResult)
     assert result.changed
     assert "mcp-surface-change" in result.skills_added
@@ -139,7 +139,7 @@ contract: consult
 <output_format>Reply on thread.</output_format>
 """
     cortex = _StubCortex(task_skills=["architecture-invariants", "ulg-architecture"])
-    result = enrich_web_handoff_packet(packet, cortex=cortex)
+    result = enrich_handoff_packet(packet, cortex=cortex)
     assert "architecture-invariants" in result.skills_added
     assert "ulg-architecture" in result.skills_added
     assert "architecture-invariants.md" in result.text
@@ -147,15 +147,15 @@ contract: consult
 
 def test_enrich_idempotent() -> None:
     cortex = _StubCortex()
-    first = enrich_web_handoff_packet(_THIN_WEB_PACKET, cortex=cortex)
-    second = enrich_web_handoff_packet(first.text, cortex=cortex)
+    first = enrich_handoff_packet(_THIN_WEB_PACKET, cortex=cortex)
+    second = enrich_handoff_packet(first.text, cortex=cortex)
     assert not second.changed
 
 
 def test_enrich_injects_handoff_packet_authoring_by_default() -> None:
     """AC1/AC8: handoff-packet-authoring is a default densify slug."""
     cortex = _StubCortex()
-    result = enrich_web_handoff_packet(_THIN_WEB_PACKET, cortex=cortex)
+    result = enrich_handoff_packet(_THIN_WEB_PACKET, cortex=cortex)
     assert "handoff-packet-authoring" in result.skills_added
     assert "handoff-packet-authoring" in result.text
 
@@ -163,8 +163,8 @@ def test_enrich_injects_handoff_packet_authoring_by_default() -> None:
 def test_enrich_reports_already_wired_not_readded() -> None:
     """AC2/AC8: pre-existing fs-lines land in skills_already_wired, not skills_added."""
     cortex = _StubCortex()
-    first = enrich_web_handoff_packet(_THIN_WEB_PACKET, cortex=cortex)
-    second = enrich_web_handoff_packet(first.text, cortex=cortex)
+    first = enrich_handoff_packet(_THIN_WEB_PACKET, cortex=cortex)
+    second = enrich_handoff_packet(first.text, cortex=cortex)
     # Second pass: the default slugs are now present and must not be re-added.
     for slug in ("lead-seat-boot", "consult-routing", "handoff-packet-authoring"):
         assert slug in second.skills_already_wired
@@ -175,7 +175,7 @@ def test_enrich_reports_already_wired_not_readded() -> None:
 def test_injected_skill_suggest_step_omits_loaded() -> None:
     """AC5/AC8: injected skill_suggest step passes conversation_context only."""
     cortex = _StubCortex()
-    result = enrich_web_handoff_packet(_THIN_WEB_PACKET, cortex=cortex)
+    result = enrich_handoff_packet(_THIN_WEB_PACKET, cortex=cortex)
     assert "skill_suggest" in result.text
     assert "loaded=[" not in result.text
 
@@ -266,3 +266,16 @@ def test_build_pointer_cursor_consult_keeps_arch_read() -> None:
         to_agent="claude-cursor",
     )
     assert "architecture-invariants.md" in body
+
+
+def test_enrich_injects_arch_refs_for_cursor_parity() -> None:
+    """Phase 1: enrich wires architecture-invariants + ulg-architecture by default.
+
+    Cursor handoff packets satisfy the arch-ref floor via enrich (friction 20979).
+    """
+    cortex = _StubCortex()
+    result = enrich_handoff_packet(_THIN_WEB_PACKET, cortex=cortex)
+    assert "architecture-invariants" in result.skills_added
+    assert "ulg-architecture" in result.skills_added
+    assert "architecture-invariants.md" in result.text
+    assert "ulg-architecture.md" in result.text

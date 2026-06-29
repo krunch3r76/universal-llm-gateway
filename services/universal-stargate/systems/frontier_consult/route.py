@@ -46,6 +46,7 @@ from .executor_resolution import (
 )
 from .generate_wrap import dispatch_cursor_sdk_generate_route
 from .handoff import (
+    _mcp_packet_seats,
     _resolve_packet_file,
     _workspaces_root,
     build_pointer_body,
@@ -53,7 +54,7 @@ from .handoff import (
     create_handoff_thread,
     validate_packet,
 )
-from .handoff_packet_enrich import WEB_RECEIVER_AGENT, enrich_web_handoff_packet
+from .handoff_packet_enrich import enrich_handoff_packet
 from .handoff_response import (
     build_executor_recommendation_field,
     build_handoff_result,
@@ -679,11 +680,11 @@ async def team_handoff(
             workspaces_root=workspaces_root,
         )
 
-        if to_agent == WEB_RECEIVER_AGENT:
+        if to_agent in _mcp_packet_seats():
             packet_file = _resolve_packet_file(workspaces_root.resolve(), packet_path)
             if packet_file is not None:
                 original = packet_file.read_text(encoding="utf-8", errors="replace")
-                enrich_result = enrich_web_handoff_packet(
+                enrich_result = enrich_handoff_packet(
                     original,
                     cortex=reader,
                 )
