@@ -12,7 +12,69 @@ from _skill_scan import _scan_cortex_sot_declared, cortex_sot_slugs
 
 # intended-single-surface skills (cortex-only domain/web skills or stub-only);
 # add slugs here to suppress steady-state parity warnings.
-_PARITY_ALLOWLIST: frozenset[str] = frozenset()
+_PARITY_ALLOWLIST: frozenset[str] = frozenset(
+    {
+        # Bucket B — web/dispatch-substrate single-surface
+        "claude-web-boot",  # web-only boot sequence
+        "claudeburst-shadow-ops",  # web-only shadow ops
+        "grok-build-dispatch",  # grok-build harness (retired)
+        "grokbuild-v1",  # grokbuild v1 (retired harness)
+        "grokbuild-v2",  # grokbuild v2 (retired harness)
+        "grok-web-dispatch",  # grok web dispatch (web-only)
+        "jupiter-browser-via-mcp",  # browser automation via web MCP
+        "lead-agent-git-integration",  # arc worktree Lane B (web/API only)
+        "mode-b-web-orchestrator",  # web orchestrator (web-only)
+        "model-tier-awareness-web",  # web-seat tier awareness (cursor has own rule)
+        "web-transcript-preprocessing",  # web-only transcript pre-processing
+        "xai-mcp-calling-shape",  # xAI-specific MCP calling shape (web/grok only)
+        # Bucket B — retired
+        "agent-build",  # RETIRED 2026-06-16 (grok-build/cursor-build removed)
+        # Bucket C — domain skills (legal / finance / tax / document)
+        "boe19p-appeal-discipline",
+        "case-evidence-retrieval",
+        "chase-escrow-discipline",
+        "chase-escrow-statement-ingestion",
+        "crypto-trading-research",
+        "document-ingestion",
+        "document-lifecycle-tracking",
+        "document-review-timeline-linkage-audit",
+        "docx_ingestion",
+        "email-bridge-mailbox",
+        "email-tool-dispatch",
+        "engagement-stance",
+        "financial-reasoning",
+        "flintridge-case-navigation",
+        "lawyer-stance",
+        "legal-opinion-corpus-ingestion",
+        "named-entity-verification-gate",  # legal/regulatory artifact gate
+        "review-protocol-mandatory-chronology-verification",  # legal document review
+        "srm",  # legal document section rewrite
+        "tax",
+        "w2-ingestion",
+        # Bucket C — project arc (historical working notebook, not canonical)
+        "cortex-v24-implementation-arc",  # temporary working notebook, sunset when Phase 3 ships
+        # Bucket C — deprecated (superseded by skill-document-writing v3.0)
+        "skill-authoring",
+        # Bucket D — workspace-only stubs (source_uri = workspaces://; no cortex SOT file)
+        "add-mcp-tool",
+        "agent-bus-multitask",
+        "agent-guidance-writing",
+        "build-pipeline",
+        "delegate-to-grok",  # RETIRED — stub preserved for historical context
+        "git-posture",
+        "handoff-packet-authoring",
+        "multi-model-review",
+        "produce-uml",
+        "refine-pipeline",
+        "required-skills-pickup",
+        "research-article-ingest",
+        "research-article-search",
+        "review-task-guidance",
+        "service-lifecycle",
+        "skill-suggest-utilization",
+        "web-generate-substrate",
+    }
+)
 
 
 def _audit_parity(scanned: dict[str, dict[str, object]]) -> list[str]:

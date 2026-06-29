@@ -130,7 +130,6 @@ Cortex is a graph-native knowledge system for persistent, formally-structured be
 - Spreading activation over reasoning edges with hub suppression
 - Impact analysis (transitive dependency cascade) and write-path contradiction detection
 - Safety-hardened Dream State consolidation with circuit breakers and dry-run default
-- `cortex://` URI addressing with tag and revision pinning
 
 **Human and agent context share the same structure**: entities, confidence taxonomy, and supersession mechanics apply equally to a human's life context and an agent's observations. Provenance distinguishes contributions, not structural privilege.
 
