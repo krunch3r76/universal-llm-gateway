@@ -46,6 +46,7 @@ def _coerce_assertion_id(raw: Any) -> int | None:
 
 
 _IMPLEMENT_READY_STATUS = "implement_ready"
+_SKEPTIC_RATIFIED_STATUS = "skeptic_ratified"
 
 
 def _normalize_predicate(raw: Any) -> str:
@@ -126,6 +127,42 @@ def _resolve_fresh_implement_ready(
     if best is None:
         return None
     return best_key[1], best
+
+
+def _resolve_skeptic_ratification(
+    *,
+    todo_id: str,
+    cortex: StargateCortexReader,
+    now_iso: str,
+) -> bool:
+    """True iff an active confirmed status({todo}, skeptic_ratified, current) exists.
+
+    Mirrors _resolve_fresh_implement_ready selection: keys off predicate_form so
+    only a skeptic-ratification row (never an implemented/other-status row) counts.
+    """
+    listed = cortex.assertions(
+        todo_id,
+        confidence="confirmed",
+        superseded=False,
+        intent="full",
+        limit=50,
+    )
+    items = listed.get("items") if isinstance(listed, dict) else None
+    if not isinstance(items, list):
+        return False
+    target = _normalize_predicate(
+        f"status({todo_id}, {_SKEPTIC_RATIFIED_STATUS}, current)"
+    )
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        if item.get("entity_id") != todo_id:
+            continue
+        if _normalize_predicate(item.get("predicate_form")) != target:
+            continue
+        if _is_active_assertion(item, now_iso=now_iso):
+            return True
+    return False
 
 
 def _select_cited_dense_spec_uri(
@@ -238,6 +275,12 @@ def require_implement_ready(
     raw_acs = attrs.get("acceptance_criteria")
     acceptance_criteria = raw_acs if isinstance(raw_acs, list) else []
 
+    skeptic_ratified = False
+    if triage == "judgment_required":
+        skeptic_ratified = _resolve_skeptic_ratification(
+            todo_id=ref.canonical_ref, cortex=cortex, now_iso=now_iso
+        )
+
     verdict = evaluate_implement_ready(
         todo_id=ref.canonical_ref,
         density_triage=attrs.get("density_triage"),
@@ -250,6 +293,7 @@ def require_implement_ready(
         files_expected=files_expected,
         acceptance_criteria=acceptance_criteria,
         entity_name=entity.get("name"),
+        skeptic_ratified=skeptic_ratified,
     )
     if not verdict.admitted:
         raise FrontierEndpointError(

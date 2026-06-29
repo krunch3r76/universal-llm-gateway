@@ -76,6 +76,7 @@ def evaluate_implement_ready(
     files_expected: list[str] | None = None,
     acceptance_criteria: list[str] | None = None,
     entity_name: str | None = None,
+    skeptic_ratified: bool = False,
 ) -> ImplementReadyVerdict:
     """Deterministic implement-readiness verdict over declared todo state."""
     triage = (density_triage or "").strip() or None
@@ -173,6 +174,18 @@ def evaluate_implement_ready(
             f"{todo_id}: attrs.acceptance_criteria is empty or the default "
             "placeholder — distill acceptance_criteria from the dense spec at "
             "Gate-2 close.",
+        )
+
+    # Recon axis-2 hard gate: a material (judgment_required) decision cannot reach
+    # implement on a reviewer-tightened spec alone — the skeptic must have run
+    # (a20966; consensus-steelman-posture). Mechanical todos returned admitted above.
+    if not skeptic_ratified:
+        return _reject(
+            "skeptic_pass_missing",
+            f"{todo_id}: judgment_required (material) decision needs a skeptic "
+            f"ratification before implement — record a confirmed status({todo_id}, "
+            "skeptic_ratified, current) assertion citing the skeptic/panel thread "
+            "(run the axis-2 skeptic pass per cheap-recon-before-escalation).",
         )
 
     return ImplementReadyVerdict(
