@@ -44,6 +44,8 @@ from starlette.middleware.gzip import GZipMiddleware
 from tool_access import dispatch_denial_reason, is_dispatch_tool_allowed
 from tool_error_enricher import fs_missing_sandbox_hint, register_tool_error_enricher
 from tool_search import capture_overflow_metadata, register_tool_search_tool
+from universal_logging import get_logger
+
 from tools._agent_bus_read import register_agent_bus_read_tool
 from tools._agent_tools import JsonArgStr
 from tools.advisor import register_advisor_tools
@@ -62,6 +64,7 @@ from tools.filesystem._fs_dispatch import (
     dispatch_workspaces_op,
     md_section_op_doc,
     sandbox_op_doc,
+    validate_op_params,
 )
 from tools.filesystem._paths import FS_WORKFLOW_HINTS
 from tools.frontier import register_frontier_tools
@@ -88,7 +91,6 @@ from tools.sqlite import register_sqlite_tools
 from tools.topology import register_topology_tools
 from tools.web import register_web_tools
 from tools.x_dm import register_x_dm_tools
-from universal_logging import get_logger
 
 if TYPE_CHECKING:
     from asyncio.transports import BaseTransport
@@ -502,6 +504,25 @@ def _build_server() -> tuple[
                     f"got {target_sandbox!r}"
                 )
             }
+
+        # Uniform param-contract guard (todo:fs-dispatch-param-contract-audit):
+        # reject confusable selector params an op does not consume, and missing
+        # destructive-default selectors, at the single fs chokepoint — before any
+        # of the three dispatch paths. Generalizes the assertion-21250 fix.
+        contract_error = validate_op_params(
+            op,
+            {
+                "target": target,
+                "section": section,
+                "line": line,
+                "heading": heading,
+                "level": level,
+                "position": position,
+                "all_occurrences": all_occurrences,
+            },
+        )
+        if contract_error is not None:
+            return contract_error
 
         if op.startswith("md_"):
             md_fn = overflow_registry.get("markdown")

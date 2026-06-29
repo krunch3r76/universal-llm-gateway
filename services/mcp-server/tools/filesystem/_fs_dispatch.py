@@ -70,6 +70,155 @@ OP_DOC: dict[str, tuple[str, str]] = {
 }
 
 
+# Uniform param-contract (todo:fs-dispatch-param-contract-audit).
+# Single source of truth for which of the confusable selector params each
+# unified `fs` op actually consumes, and which it requires. Enforced once at
+# the `_fs_impl` chokepoint so all three dispatch paths (md_* tool, cortex
+# `files`, workspaces) share one contract instead of per-dispatcher ad-hoc
+# guards. Generalizes the assertion-21250 fix (md_* + target / empty section).
+#
+# Only the confusable subset is policed — params that are broadly applicable
+# (path, content) or inert (offset, limit, binary, max_depth, include_untracked,
+# description, paths) are never rejected.
+CONTRACT_PARAMS: tuple[str, ...] = (
+    "target",
+    "section",
+    "line",
+    "heading",
+    "level",
+    "position",
+    "all_occurrences",
+)
+
+PARAM_PURPOSE: dict[str, str] = {
+    "target": "text anchor for replace / destination for move·copy",
+    "section": "named ATX section for the markdown (md_*) ops",
+    "line": "1-indexed insertion point for insert_at_line",
+    "heading": "new section heading for md_insert",
+    "level": "new section depth for md_insert",
+    "position": "placement (end|after|before) for md_insert",
+    "all_occurrences": "replace-all flag for replace",
+}
+
+# unified op -> confusable params it actually consumes
+OP_CONSUMES: dict[str, frozenset[str]] = {
+    "read": frozenset(),
+    "read_multi": frozenset(),
+    "write": frozenset(),
+    "write_binary": frozenset(),
+    "append_binary": frozenset(),
+    "append": frozenset(),
+    "prepend": frozenset(),
+    "replace": frozenset({"target", "all_occurrences"}),
+    "insert_at_line": frozenset({"line"}),
+    "list": frozenset(),
+    "find": frozenset(),
+    "search": frozenset(),
+    "move": frozenset({"target"}),
+    "copy": frozenset({"target"}),
+    "delete": frozenset(),
+    "md_list": frozenset(),
+    "md_read": frozenset({"section"}),
+    "md_to_dict": frozenset(),
+    "md_replace": frozenset({"section"}),
+    "md_append": frozenset({"section"}),
+    "md_delete": frozenset({"section"}),
+    "md_insert": frozenset({"heading", "level", "position", "section"}),
+}
+
+# unified op -> selectors that MUST be non-default (else a destructive default
+# target is hit silently): replace/move/copy → target, insert_at_line → line,
+# md_replace/md_append/md_delete → section (empty section == file preamble).
+OP_REQUIRES: dict[str, frozenset[str]] = {
+    "replace": frozenset({"target"}),
+    "insert_at_line": frozenset({"line"}),
+    "move": frozenset({"target"}),
+    "copy": frozenset({"target"}),
+    "md_replace": frozenset({"section"}),
+    "md_append": frozenset({"section"}),
+    "md_delete": frozenset({"section"}),
+}
+
+# Tailored guidance for the destructive-default required-selector violations.
+REQUIRED_HINTS: dict[tuple[str, str], str] = {
+    ("replace", "target"): (
+        "an empty target would have no anchor to find. Pass target=<old text>."
+    ),
+    ("insert_at_line", "line"): (
+        "line defaults to 0; pass a 1-indexed line number for the insertion point."
+    ),
+    ("move", "target"): (
+        "an empty target resolves to the sandbox root and would relocate the "
+        "file there silently. Pass target=<destination path>."
+    ),
+    ("copy", "target"): (
+        "an empty target resolves to the sandbox root and would copy the file "
+        "there silently. Pass target=<destination path>."
+    ),
+    ("md_replace", "section"): (
+        "an empty section targets the file preamble (YAML frontmatter / "
+        "pre-heading body) and would silently overwrite it. Pass "
+        "section=<heading> (from md_list), or use op='write' for the whole file."
+    ),
+    ("md_append", "section"): (
+        "an empty section targets the file preamble (YAML frontmatter / "
+        "pre-heading body) and would silently append into it. Pass "
+        "section=<heading> (from md_list)."
+    ),
+    ("md_delete", "section"): (
+        "an empty section targets the file preamble (YAML frontmatter / "
+        "pre-heading body) and would silently delete it. Pass "
+        "section=<heading> (from md_list)."
+    ),
+}
+
+
+def _param_provided(name: str, value: Any) -> bool:
+    """True when a contract param carries a non-default (caller-supplied) value."""
+    if name in ("line", "level"):
+        return bool(value)  # int sentinel is 0
+    if name == "all_occurrences":
+        return value is True
+    if name == "section":
+        return bool(str(value).strip())
+    return bool(value)
+
+
+def _ops_consuming(param: str) -> str:
+    return (
+        ", ".join(sorted(op for op, c in OP_CONSUMES.items() if param in c)) or "(none)"
+    )
+
+
+def validate_op_params(op: str, values: dict[str, Any]) -> dict[str, str] | None:
+    """Enforce the uniform (op -> consumed/required param) contract.
+
+    Returns a self-describing ``{"error": ...}`` dict on the first violation, or
+    ``None`` when *op* is unknown (left to the dispatcher) or fully compliant.
+    Required-selector checks run first so a destructive-default omission is
+    reported before an unrelated stray param.
+    """
+    consumes = OP_CONSUMES.get(op)
+    if consumes is None:
+        return None
+    for param in OP_REQUIRES.get(op, frozenset()):
+        if not _param_provided(param, values.get(param)):
+            hint = REQUIRED_HINTS.get((op, param), f"{param!r} is required for {op}.")
+            return {"error": f"'{param}' is required for {op}: {hint}"}
+    for param in CONTRACT_PARAMS:
+        if param in consumes:
+            continue
+        if _param_provided(param, values.get(param)):
+            return {
+                "error": (
+                    f"'{param}' ({PARAM_PURPOSE[param]}) is not used by op={op!r} "
+                    f"and would be silently ignored. It applies to: "
+                    f"{_ops_consuming(param)}."
+                )
+            }
+    return None
+
+
 def _sandbox_only_note(sandboxes: frozenset[str]) -> str:
     if sandboxes == frozenset({"workspaces"}):
         return " (workspaces sandbox only)"
@@ -104,6 +253,12 @@ def md_section_op_doc() -> str:
         "  md_append  (path, section, content)  — append to section body (text files only); same heading-less-content contract as md_replace\n"
         "  md_insert  (path, heading, level, position, section?, content?) — insert a new section (text files only); position: end|after|before; section is anchor for after/before; same heading-less-content contract as md_replace\n"
         "  md_delete  (path, section)           — delete section (text files only)\n"
+        "md_replace/md_delete REQUIRE a non-empty section — these ops replace/delete "
+        "the ENTIRE named-section body, and an empty section means the file preamble "
+        "(YAML frontmatter / pre-heading body), so omitting it is rejected (422) to "
+        "prevent silent preamble clobbering. The markdown ops are section-addressed, "
+        "NOT text-anchored: `target` is rejected (use op='replace' for "
+        "text-anchored find/replace).\n"
         "Converted formats such as PDF are read-only for markdown section ops:\n"
         "use ``md_list`` / ``md_read`` to inspect them, not ``md_replace`` /\n"
         "``md_append`` / ``md_insert`` / ``md_delete``."
