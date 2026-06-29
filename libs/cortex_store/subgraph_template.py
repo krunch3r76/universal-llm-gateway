@@ -13,6 +13,7 @@ Reference: cortex://notes/system/threads/cortex-subgraph-render-v1.5-dedup.md
 
 from __future__ import annotations
 
+import sqlite3
 from typing import TYPE_CHECKING, Any
 
 from .subgraph_neighbor_fidelity import NeighborFidelity
@@ -127,6 +128,48 @@ def build_subgraph_markdown(
     return "\n\n".join(parts) + "\n"
 
 
+def render_root_card_markdown(
+    conn: sqlite3.Connection,
+    entity_id: str,
+    *,
+    top_k: int = 7,
+    source: str = "agent",
+    agent: str = "web",
+    session_id: str | None = None,
+) -> str:
+    """Root-only card markdown for ``entity_get(intent='card-md')``.
+
+    Reuses ``_render_root`` + ``_render_root_assertions`` on a single
+    ``get_entity_card`` projection. Never invokes ``_render_related`` or
+    ``render_subgraph`` — neighbor content is structurally absent.
+    """
+    from .card import get_entity_card
+    from .subgraph_cards import augment_entity_columns
+
+    root_card = get_entity_card(
+        conn,
+        entity_id=entity_id,
+        top_k=top_k,
+        source=source,
+        agent=agent,
+        session_id=session_id,
+    )
+    descriptions, statuses = augment_entity_columns(conn, [entity_id])
+    cards = {entity_id: root_card}
+    parts: list[str] = []
+    parts.extend(_render_root(entity_id, cards, descriptions, statuses))
+    parts.extend(
+        _render_root_assertions(
+            root_card,
+            top_k,
+            include_observed=False,
+            include_assertion_id=True,
+        )
+    )
+    parts.extend(_render_sections_footer(root_card.get("section_manifest") or []))
+    return "\n\n".join(parts) + "\n"
+
+
 def _render_root(
     root_id: str,
     cards: dict[str, dict[str, Any]],
@@ -157,7 +200,11 @@ def _render_root(
 
 
 def _render_root_assertions(
-    root_card: dict[str, Any], top_k_assertions: int, *, include_observed: bool = True
+    root_card: dict[str, Any],
+    top_k_assertions: int,
+    *,
+    include_observed: bool = True,
+    include_assertion_id: bool = False,
 ) -> list[str]:
     parts: list[str] = [f"## Active Assertions (top {top_k_assertions})"]
     assertions = root_card.get("top_k_assertions") or []
@@ -170,11 +217,31 @@ def _render_root_assertions(
         conf = a.get("confidence", "")
         observed = a.get("observed_at") or ""
         flag = _provenance_flag(a)
-        assertion_lines.append(f"- **[{conf}]**{flag} {claim}")
+        id_suffix = ""
+        if include_assertion_id and a.get("id") is not None:
+            id_suffix = f" (id: {a['id']})"
+        assertion_lines.append(f"- **[{conf}]**{flag} {claim}{id_suffix}")
         if include_observed and observed:
             assertion_lines.append(f"  - *Observed:* {observed}")
     parts.append("\n".join(assertion_lines))
     return parts
+
+
+def _render_sections_footer(section_manifest: list[Any]) -> list[str]:
+    """Navigation footer from Card v0 ``section_manifest`` (labels + counts)."""
+    rows: list[str] = []
+    for section in section_manifest:
+        if isinstance(section, dict):
+            label = str(section.get("label") or "")
+            count = int(section.get("count") or 0)
+        else:
+            label = str(getattr(section, "label", "") or "")
+            count = int(getattr(section, "count", 0) or 0)
+        if label and count:
+            rows.append(f"- {label}: {count}")
+    if not rows:
+        return []
+    return ["## Sections", "\n".join(rows)]
 
 
 def _render_related(

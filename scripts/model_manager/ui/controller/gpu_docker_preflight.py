@@ -11,6 +11,7 @@ from universal_logging import get_logger
 logger = get_logger(__name__)
 
 _PERSISTENCED_SOCKET = Path("/run/nvidia-persistenced/socket")
+_TUI_WARNING_TITLE = "GPU host check — Gateway / Sync+Restart blocked until fixed"
 
 
 def check_gpu_docker_prerequisites() -> str | None:
@@ -27,6 +28,12 @@ def check_gpu_docker_prerequisites() -> str | None:
         return driver_err
 
     return None
+
+
+def format_gpu_warning_for_tui(message: str) -> str:
+    """Rich markup for the home-screen GPU warning banner."""
+    body = "\n".join(f"  {line}" for line in message.strip().splitlines())
+    return f"[bold red]⚠ {_TUI_WARNING_TITLE}[/]\n{body}"
 
 
 def _check_nvidia_persistenced() -> str | None:

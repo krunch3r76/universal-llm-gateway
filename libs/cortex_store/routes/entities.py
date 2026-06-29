@@ -56,7 +56,7 @@ def _resolve_entity_get_historical(
                 "intent='full' with include_superseded=true (legacy alias)."
             ),
         )
-    if include_superseded and intent in {"card", "cluster", "impact"}:
+    if include_superseded and intent in {"card", "card-md", "cluster", "impact"}:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
@@ -212,8 +212,9 @@ def get_entity(
             "v2.4 §6.1 read intent. `full` (default) returns EntityDetail with "
             "active assertions plus superseded breadcrumb/corrections. "
             "`full-historical` returns all superseded rows with full enrichment "
-            "(audit escape hatch). `card` returns Card v0 (§6.3). `cluster` and "
-            "`impact` are reserved — calls return 501."
+            "(audit escape hatch). `card` returns Card v0 (§6.3). `card-md` "
+            "returns a comprehension-first markdown render (root-only). "
+            "`cluster` and `impact` are reserved — calls return 501."
         ),
     ),
     include_superseded: bool = Query(
@@ -222,7 +223,7 @@ def get_entity(
             "Legacy alias: when intent='full', set true to inline all superseded "
             "rows with full enrichment (same as intent='full-historical'). "
             "Prefer intent='full-historical'. Invalid with intent='full-historical' "
-            "or intent in {card, cluster, impact}."
+            "or intent in {card, card-md, cluster, impact}."
         ),
     ),
     include_edges: bool = Query(
@@ -252,10 +253,10 @@ def get_entity(
         le=50,
         description=(
             "v2.4 §6.3: number of top-K active assertions in Card v0 payload. "
-            "Tunable; default 7. Applies to intent=card only."
+            "Tunable; default 7. Applies to intent=card and intent=card-md."
         ),
     ),
-) -> dict[str, object]:
+) -> dict[str, object] | str:
     """Fetch one entity at the requested intent."""
     source = request.headers.get("x-cortex-source", "agent")
     agent = request.headers.get("x-cortex-agent", "web")
@@ -276,6 +277,17 @@ def get_entity(
             },
         )
     with cortex_conn() as conn:
+        if intent == "card-md":
+            from ..subgraph_template import render_root_card_markdown
+
+            return render_root_card_markdown(
+                conn,
+                entity_id=entity_id,
+                top_k=top_k,
+                source=source,
+                agent=agent,
+                session_id=session_id,
+            )
         if intent == "card":
             return get_entity_card(
                 conn,

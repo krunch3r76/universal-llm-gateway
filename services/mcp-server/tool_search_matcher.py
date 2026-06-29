@@ -374,6 +374,42 @@ def server_primary_empty_search_note() -> str:
     )
 
 
+# Overflow flat names that mirror a primary dispatcher — dispatch() must reject
+# with the same steerage hints as tool_search primary_tool_hint_for_search.
+_OVERFLOW_PRIMARY_ALIASES: dict[str, str] = {
+    "rag_search": _RAG_PRIMARY_HINT,
+    "rag_search_preview": _RAG_PRIMARY_HINT,
+}
+
+
+def dispatch_rejection_for_primary_tool(
+    tool: str,
+    *,
+    primary_tools: set[str] | frozenset[str],
+) -> str | None:
+    """Return a self-describing rejection when ``dispatch(tool=...)`` targets a primary.
+
+    Point-of-use doctrine (todo:dispatch-rejection-self-describe-server-primary):
+    the rejection body carries the server-primary caveat instead of a generic
+    unknown-tool error.
+    """
+    if tool in _OVERFLOW_PRIMARY_ALIASES:
+        return _OVERFLOW_PRIMARY_ALIASES[tool]
+    if tool == "fs":
+        return _FS_PRIMARY_HINT
+    if tool == "skill_suggest":
+        return _SKILL_SUGGEST_PRIMARY_HINT
+    if tool == "dispatch":
+        return _DISPATCH_PRIMARY_HINT
+    if tool in primary_tools:
+        return (
+            f"{tool!r} is a server-primary tool — call it directly by name; "
+            "do NOT route it through dispatch(tool=...). "
+            "Server tool_search indexes overflow only; empty tool_search ≠ tool absent."
+        )
+    return None
+
+
 def primary_tool_hint_for_search(
     query: str, results: list[ManifestEntry]
 ) -> str | None:

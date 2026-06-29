@@ -43,7 +43,7 @@ from services.git_integration_worker.cursor_sdk_manifest import (
     compact_manifest_for_body,
     merge_wrapper_manifest,
     no_capture_degraded_reason,
-    resolve_repo_change_set,
+    repo_change_set_from_manifest,
     serialize_effects_manifest_for_body,
 )
 from services.git_integration_worker.cursor_sdk_manifest import (
@@ -499,10 +499,11 @@ def _assemble_closeout_delivery(
         cortex_artifact_paths=cortex_artifact_paths,
         git_change_set=git_change_set,
     )
-    repo_change_set = resolve_repo_change_set(
-        manifest=manifest,
-        git_change_set=git_change_set,
-    )
+    # files_modified SOT = manifest edit-op projection (friction 21239); not a worktree diff. See notes/system/specs/friction-21239-closeout-capture-fix.md
+    repo_change_set = repo_change_set_from_manifest(
+        manifest,
+        source_repo=source_repo,
+    ) or ChangeSet(created=(), modified=(), deleted=())
     verification_cs = build_verification_change_set(
         repo_change_set, gate_d_created_rels
     )

@@ -1,5 +1,6 @@
 """Home screen - topology command center with onboarding steps."""
 
+import asyncio
 import logging
 import os
 from typing import TYPE_CHECKING
@@ -13,6 +14,10 @@ from textual.widgets import Collapsible, Footer, Header, Label, Static
 
 from scripts.model_manager.topology import build_snapshot
 
+from ...controller.gpu_docker_preflight import (
+    check_gpu_docker_prerequisites,
+    format_gpu_warning_for_tui,
+)
 from ..widgets.topology_panel import TopologyPanel
 
 if TYPE_CHECKING:
@@ -81,6 +86,15 @@ class HomeScreen(Screen):
         padding: 1 2;
         text-align: center;
         text-style: bold;
+    }
+    #gpu-warning {
+        display: none;
+        width: 100%;
+        height: auto;
+        padding: 0 2 1 2;
+        border: heavy red;
+        background: $error-darken-3;
+        color: $text;
     }
     #steps-row {
         width: 100%;
@@ -173,6 +187,7 @@ class HomeScreen(Screen):
             "Universal LLM Gateway — Model Manager",
             id="welcome",
         )
+        yield Static("", id="gpu-warning", markup=True)
         with Horizontal(id="steps-row"):
             steps = list(self.STEP_LABELS.items())
             for i, (step_id, label) in enumerate(steps):
@@ -234,6 +249,9 @@ class HomeScreen(Screen):
         gw = services[0]
         sg = services[1]
 
+        gpu_error = await asyncio.to_thread(check_gpu_docker_prerequisites)
+        self._update_gpu_warning(gpu_error)
+
         workspace_root: Path = app._workspace_root
         try:
             snapshot = build_snapshot(workspace_root, services=services)
@@ -260,6 +278,16 @@ class HomeScreen(Screen):
 
         catalog = app.catalog  # type: ignore[attr-defined]
         self._update_steps(gw, sg, build, catalog)
+
+    def _update_gpu_warning(self, error: str | None) -> None:
+        """Show or hide the persistent GPU preflight banner on the home screen."""
+        widget = self.query_one("#gpu-warning", Static)
+        if error is None:
+            widget.display = False
+            widget.update("")
+            return
+        widget.display = True
+        widget.update(format_gpu_warning_for_tui(error))
 
     def _update_topo_title(self, snapshot: object) -> None:
         statuses = [snapshot.master.status]

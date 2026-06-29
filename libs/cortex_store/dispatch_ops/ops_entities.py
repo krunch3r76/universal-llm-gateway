@@ -160,14 +160,22 @@ def _op_entity_get(
     intent="full" — EntityDetail with active assertions + superseded breadcrumb.
     intent="full-historical" — all rows with full enrichment (audit path).
     intent="card" — Card v0 via projection-aware fetch (§6.3).
+    intent="card-md" — comprehension-first markdown render (root-only).
     intent in {"cluster","impact"} — reserved; rejected until later phases.
     """
     if not entity_id:
         return {"error": "entity_id is required"}
-    if intent not in {"full", "full-historical", "card", "cluster", "impact"}:
+    if intent not in {
+        "full",
+        "full-historical",
+        "card",
+        "card-md",
+        "cluster",
+        "impact",
+    }:
         return {
-            "error": f"Unknown intent {intent!r}. Supported: full, full-historical, card "
-            "(cluster, impact reserved for later phases).",
+            "error": f"Unknown intent {intent!r}. Supported: full, full-historical, card, "
+            "card-md (cluster, impact reserved for later phases).",
         }
     if intent == "full-historical" and include_superseded:
         return {
@@ -178,7 +186,7 @@ def _op_entity_get(
             ),
             "status_code": 400,
         }
-    if include_superseded and intent in {"card", "cluster", "impact"}:
+    if include_superseded and intent in {"card", "card-md", "cluster", "impact"}:
         return {
             "error": (
                 f"Invalid combo: intent={intent!r} with include_superseded=true "
@@ -192,7 +200,9 @@ def _op_entity_get(
             "supported_intents": ["full", "card"],
             "reference": "cortex-v2.4 §6.1, §7.1, §7.3",
         }
-    if intent == "card" and (not isinstance(top_k, int) or top_k < 1 or top_k > 50):
+    if intent in {"card", "card-md"} and (
+        not isinstance(top_k, int) or top_k < 1 or top_k > 50
+    ):
         return {"error": "top_k must be int in [1, 50]"}
     _, _get_entity_card_impl, _get_entity_impl, _, _ = _impls()
     with cortex_conn() as conn:
@@ -205,10 +215,22 @@ def _op_entity_get(
             )
         except HTTPException as exc:
             return _http_error_dict(exc)
+        resolved_id = canonical_id if not raw_id else entity_id
+        if intent == "card-md":
+            from ..subgraph_template import render_root_card_markdown
+
+            try:
+                return render_root_card_markdown(
+                    conn,
+                    entity_id=resolved_id,
+                    top_k=top_k,
+                )
+            except HTTPException as exc:
+                return _http_error_dict(exc)
         if intent == "card":
             return _get_entity_card_impl(
                 conn,
-                entity_id=canonical_id if not raw_id else entity_id,
+                entity_id=resolved_id,
                 top_k=top_k,
                 debug=debug,
             )

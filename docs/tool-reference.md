@@ -753,16 +753,56 @@ unchanged — converted ≠ truly-binary, narrowing decision:mcp-list-include-bi
 ### Markdown section ops (for large docs >5k chars)
 
 PDF, DOCX, ODT, and EML files are auto-converted to markdown for read ops
-(`md_list`, `md_read`). Write ops (`md_replace`, `md_append`, `md_delete`)
-work only on natively text files — converted formats are rejected.
+(`md_list`, `md_read`). Write ops (`md_replace`, `md_append`, `md_insert`,
+`md_delete`) work only on natively text files — converted formats are rejected.
 
-| Op | Required args | Description |
-|---|---|---|
-| `md_list` | path | List sections (works on PDF/DOCX/ODT/EML too) |
-| `md_read` | path, section | Read section (works on PDF/DOCX/ODT/EML too) |
-| `md_replace` | path, section, content | Replace section (text files only) |
-| `md_append` | path, section, content | Append to section (text files only) |
-| `md_delete` | path, section | Delete section (text files only) |
+| Op | Required args | Optional | Description |
+|---|---|---|---|
+| `md_list` | path | — | List sections (works on PDF/DOCX/ODT/EML too) |
+| `md_read` | path, section | — | Read section (works on PDF/DOCX/ODT/EML too) |
+| `md_replace` | path, section, content | — | Replace section **body** (text files only) |
+| `md_append` | path, section, content | — | Append to section **body** (text files only) |
+| `md_insert` | path, heading, level, position | section (anchor), content | Create a **new** section (text files only) |
+| `md_delete` | path, section | — | Delete section (text files only) |
+
+#### Heading-less-content contract (`md_replace` / `md_append` / `md_insert`)
+
+These ops **own the section heading** — `content` is the section *body* only. If
+`content` opens with an ATX heading that matches the target section on both level
+and text, the op strips that redundant heading and returns `normalized_heading:
+true` (instead of silently producing a duplicate heading, the old failure mode).
+Non-matching content is left byte-for-byte unchanged.
+
+```text
+FOL — ∀ op ∈ {md_replace, md_append, md_insert}, ∀ content c, target section s:
+  leading_atx(c)=h ∧ level(h)=level(s) ∧ text(h)=text(s)
+      ⟹ strip(h, c) ∧ response.normalized_heading = true
+  ¬∃ such h                  ⟹ c unchanged ∧ normalized_heading absent
+  (fence-aware: a heading inside a code fence or after real content is never stripped)
+```
+
+#### `md_insert` — create a new section
+
+Unlike `md_replace` / `md_append` (which require an existing section), `md_insert`
+creates a brand-new section, so callers no longer overload append/replace (or
+rewrite the whole file) to add one.
+
+- `heading` (str) + `level` (1–6) define the new ATX heading; `content` is its body.
+- `position` ∈ {`end`, `after`, `before`}:
+  - `end` — append the new section at document end.
+  - `after` — place it immediately **after** the `section` anchor's *entire subtree*
+    (before the next same-or-higher-level heading), not nested inside it.
+  - `before` — place it immediately **before** the `section` anchor's heading line.
+- `after` / `before` require `section` (the anchor). Invalid `level` (outside 1–6),
+  unknown `position`, a missing anchor for `before`/`after`, or an unresolved/ambiguous
+  anchor each return a clear error. The body obeys the heading-less-content contract above.
+
+```text
+fs(op="md_insert", sandbox="cortex", path="notes/plan.md",
+   heading="Risks", level=2, position="after", section="Overview",
+   content="- latency under load\n")
+# → "## Risks" inserted after the Overview subtree; {status: inserted, ...}
+```
 
 ## pipeline
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Iterable, Mapping
+from pathlib import Path
 from typing import Any, Literal
 
 from implement_admission.closeout_models import (
@@ -160,7 +161,11 @@ def build_effects_manifest(
     )
 
 
-def manifest_repo_paths(manifest: EffectsManifest | None) -> set[str]:
+def manifest_repo_paths(
+    manifest: EffectsManifest | None,
+    *,
+    source_repo: Path | None = None,
+) -> set[str]:
     if manifest is None:
         return set()
     section = manifest.surfaces.get("repo")
@@ -170,14 +175,18 @@ def manifest_repo_paths(manifest: EffectsManifest | None) -> set[str]:
     for entry in section.entries:
         if entry.op not in _REPO_FILE_OPS:
             continue
-        path = _normalize_repo_path(entry.target)
+        path = _normalize_repo_path(entry.target, repo_root=source_repo)
         if path:
             paths.add(path)
     return paths
 
 
-def repo_change_set_from_manifest(manifest: EffectsManifest | None) -> ChangeSet | None:
-    """Manifest op-intent projection — not authoritative for legacy files_* categories."""
+def repo_change_set_from_manifest(
+    manifest: EffectsManifest | None,
+    *,
+    source_repo: Path | None = None,
+) -> ChangeSet | None:
+    """Manifest op-intent projection — authoritative for closeout files_* categories."""
     if manifest is None:
         return None
     section = manifest.surfaces.get("repo")
@@ -187,7 +196,7 @@ def repo_change_set_from_manifest(manifest: EffectsManifest | None) -> ChangeSet
     modified: list[str] = []
     deleted: list[str] = []
     for entry in section.entries:
-        path = _normalize_repo_path(entry.target)
+        path = _normalize_repo_path(entry.target, repo_root=source_repo)
         if not path:
             continue
         if entry.op == "write":
@@ -570,7 +579,28 @@ def _string_arg(args: Mapping[str, Any], *keys: str) -> str | None:
     return None
 
 
-def _normalize_repo_path(raw: str | None) -> str | None:
+def _normalize_repo_path(
+    raw: str | None,
+    repo_root: Path | str | None = None,
+) -> str | None:
     if not raw:
         return None
-    return raw.strip().lstrip("/")
+    if repo_root is None:
+        return raw.strip().lstrip("/")
+    path = raw.strip()
+    root = str(repo_root).rstrip("/")
+    for prefix in (f"{root}/", f"{root.lstrip('/')}/"):
+        if path.startswith(prefix):
+            path = path[len(prefix) :]
+            break
+        stripped = path.lstrip("/")
+        bare_prefix = prefix.lstrip("/")
+        if stripped.startswith(bare_prefix):
+            path = stripped[len(bare_prefix) :]
+            break
+    bare_repo = "universal-llm-gateway/"
+    if path.startswith(bare_repo):
+        path = path[len(bare_repo) :]
+    elif path.lstrip("/").startswith(bare_repo):
+        path = path.lstrip("/")[len(bare_repo) :]
+    return path.lstrip("/")

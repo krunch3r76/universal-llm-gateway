@@ -152,6 +152,10 @@ _SCOPE_NOTE_DEFAULT = (
     "Before concluding absence-of-evidence, call rag(op='list_scopes') and "
     "re-search with an explicit scope= over relevant domains."
 )
+_ZERO_RESULT_UNSCOPED_CAVEAT = (
+    "Auto-scoped ≠ corpus-wide. Before concluding absence-of-evidence, "
+    "call rag(op='list_scopes') and re-search with an explicit scope=."
+)
 
 
 def _unscoped_scope_note(retrieval_fields: dict[str, Any]) -> str | None:
@@ -521,8 +525,13 @@ def register_rag_tools(mcp: FastMCP) -> None:
                 scope=scope,
                 prefix=prefixes,
             )
+            zero_note = _ZERO_RESULT_UNSCOPED_CAVEAT if unscoped else None
+            error = "Pipeline returned empty results."
+            if zero_note:
+                error = f"{error} {zero_note}"
             return {
-                "error": "Pipeline returned empty results.",
+                "error": error,
+                **({"zero_result_caveat": zero_note} if zero_note else {}),
                 **({"scope_note": scope_note} if scope_note else {}),
                 **retrieval_fields,
             }

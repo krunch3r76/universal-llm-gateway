@@ -110,12 +110,15 @@ def classify_capture_status(
     return "complete"
 
 
-def _changed_path_set(change_set: ChangeSet) -> set[str]:
-    paths: set[str] = set()
-    for group in (change_set.created, change_set.modified, change_set.deleted):
-        for path in group:
-            paths.add(path.lstrip("/"))
-    return paths
+def _normalize_repo_path_for_compare(
+    raw: str,
+    *,
+    source_repo: Path | None,
+) -> str:
+    from services.git_integration_worker.cursor_sdk_manifest import _normalize_repo_path
+
+    normalized = _normalize_repo_path(raw, repo_root=source_repo)
+    return normalized or raw.lstrip("/")
 
 
 def _path_exists_in_sandboxes(path: str, source_repo: Path, cortex_root: Path) -> bool:
@@ -133,7 +136,23 @@ def _divergence_from_divergent_rel(rel_entry: str) -> str | None:
     return None
 
 
-def _repo_manifest_paths(manifest: EffectsManifest | None) -> set[str]:
+def _changed_path_set(
+    change_set: ChangeSet,
+    *,
+    source_repo: Path | None = None,
+) -> set[str]:
+    paths: set[str] = set()
+    for group in (change_set.created, change_set.modified, change_set.deleted):
+        for path in group:
+            paths.add(_normalize_repo_path_for_compare(path, source_repo=source_repo))
+    return paths
+
+
+def _repo_manifest_paths(
+    manifest: EffectsManifest | None,
+    *,
+    source_repo: Path | None = None,
+) -> set[str]:
     section = manifest.surfaces.get("repo") if manifest else None
     if section is None:
         return set()
@@ -142,7 +161,9 @@ def _repo_manifest_paths(manifest: EffectsManifest | None) -> set[str]:
         if entry.op not in {"write", "edit", "delete"}:
             continue
         if entry.target:
-            paths.add(entry.target.lstrip("/"))
+            paths.add(
+                _normalize_repo_path_for_compare(entry.target, source_repo=source_repo)
+            )
     return paths
 
 
@@ -154,18 +175,18 @@ def _repo_has_shell_entry(manifest: EffectsManifest | None) -> bool:
 
 
 def _repo_diff_mismatch(
-    manifest: EffectsManifest | None, git_changed: set[str]
+    manifest: EffectsManifest | None,
+    git_changed: set[str],
+    *,
+    source_repo: Path | None = None,
 ) -> str | None:
-    manifest_paths = _repo_manifest_paths(manifest)
+    manifest_paths = _repo_manifest_paths(manifest, source_repo=source_repo)
     has_shell = _repo_has_shell_entry(manifest)
     if not manifest_paths and not has_shell:
         return None
     missing = sorted(path for path in manifest_paths if path not in git_changed)
     if missing:
         return f"divergence:repo_diff_mismatch:{missing[0]}"
-    extra = sorted(path for path in git_changed if path not in manifest_paths)
-    if extra and manifest_paths:
-        return f"divergence:repo_diff_mismatch:{extra[0]}"
     return None
 
 
@@ -216,7 +237,7 @@ def apply_surface_cross_checks(
 ) -> EffectsManifest | None:
     if manifest is None:
         return None
-    git_changed = _changed_path_set(change_set)
+    git_changed = _changed_path_set(change_set, source_repo=source_repo)
     updated: dict[str, object] = {}
     coverage = dict(manifest.coverage)
     for name, section in manifest.surfaces.items():
@@ -267,7 +288,7 @@ def _repo_surface_cross_check(
     for path in (*change_set.created, *change_set.modified):
         if not _path_exists_in_sandboxes(path, source_repo, cortex_root):
             return f"divergence:emitted_path_absent:{path}"
-    return _repo_diff_mismatch(manifest, git_changed)
+    return _repo_diff_mismatch(manifest, git_changed, source_repo=source_repo)
 
 
 def closeout_divergence_reason(
@@ -294,7 +315,7 @@ def closeout_divergence_reason(
         degraded_reason=degraded_reason,
     )
     if checked is None:
-        changed = _changed_path_set(change_set)
+        changed = _changed_path_set(change_set, source_repo=source_repo)
         if files_expected and not _paths_intersect(files_expected, changed):
             return "divergence:no_expected_files_touched"
         for rel_entry in divergent_rels:

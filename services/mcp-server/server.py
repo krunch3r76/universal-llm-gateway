@@ -681,6 +681,17 @@ def _build_server() -> tuple[
 
         fn = overflow_registry.get(tool)
         if fn is None:
+            from tool_search_matcher import dispatch_rejection_for_primary_tool
+
+            primary_rejection = dispatch_rejection_for_primary_tool(
+                tool, primary_tools=_PRIMARY_TOOLS
+            )
+            if primary_rejection is not None:
+                record(
+                    "mcp.tool.dispatch.primary_rejected",
+                    tool=tool,
+                )
+                return {"tool": tool, "result": {"error": primary_rejection}}
             record("mcp.tool.dispatch.unknown", tool=tool)
             return {
                 "tool": tool,

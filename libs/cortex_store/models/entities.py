@@ -127,7 +127,9 @@ class EntityList(BaseModel):
 
 # --- v2.4 read model: intent-shaped projections ---
 
-EntityIntent = Literal["full", "full-historical", "card", "cluster", "impact"]
+EntityIntent = Literal[
+    "full", "full-historical", "card", "card-md", "cluster", "impact"
+]
 
 
 class SupersededBreadcrumb(BaseModel):

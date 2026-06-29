@@ -54,7 +54,7 @@ def normalize(
     # task: is provenance-only — it is not a materialisable dispatch source
     if ref.source_kind == SourceKind.TASK.value:
         raise SourceRefError(
-            code="source_ref_unparseable",
+            code="source_ref_not_dispatchable",
             source_ref=raw_source_ref,
             rule="task: refs are provenance-only; dispatch requires todo:|plan:|plan_phase:|packet:|agent-bus:",
         )
