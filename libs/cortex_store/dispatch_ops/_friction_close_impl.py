@@ -30,6 +30,48 @@ def validate_resolution_kind(resolution_kind: str) -> str | None:
     )
 
 
+def _promote_friction_to_todo(
+    *,
+    resolution_kind: str,
+    friction_entity_id: str,
+    friction_assertion_id: int,
+    friction_claim: str,
+    agent: str,
+    session_id: str,
+) -> dict[str, Any] | None:
+    """Promote a closed friction into a recon-pending todo when it does not exist."""
+    from ._recon_seed import seed_recon_todo
+
+    slug = resolution_kind.removeprefix("todo:")
+    required_skills: list[str] = []
+    if friction_entity_id.startswith("agent_skill:"):
+        required_skills = [friction_entity_id.removeprefix("agent_skill:")]
+
+    result = seed_recon_todo(
+        todo_id=resolution_kind,
+        name=friction_claim or f"Promoted from friction #{friction_assertion_id}",
+        source_uri=f"tasks/specs/{slug}.md",
+        required_skills=required_skills,
+        seed_ack=(
+            f"auto-promoted from friction #{friction_assertion_id}; "
+            "recon pending (density_triage unset)"
+        ),
+        context_target_id=friction_entity_id,
+        extra_attrs={"promoted_from_friction": friction_assertion_id},
+        agent=agent,
+        session_id=session_id,
+    )
+    if result and "todo_created" in result:
+        record(
+            "cortex.friction.promoted_to_todo",
+            assertion_id=friction_assertion_id,
+            todo_id=resolution_kind,
+            friction_entity_id=friction_entity_id,
+            agent=agent,
+        )
+    return result
+
+
 def close_friction_assertion(
     assertion_id: int,
     resolution_kind: str,
@@ -109,10 +151,22 @@ def close_friction_assertion(
         agent=agent,
     )
 
+    promotion: dict[str, Any] | None = None
+    if resolution_kind.startswith("todo:"):
+        promotion = _promote_friction_to_todo(
+            resolution_kind=resolution_kind,
+            friction_entity_id=entity_id,
+            friction_assertion_id=assertion_id,
+            friction_claim=str(existing.get("claim") or ""),
+            agent=agent,
+            session_id=session_id,
+        )
+
     return {
         "status": "closed",
         "assertion_id": assertion_id,
         "fulfillment_assertion_id": fulfillment_id,
         "resolution_kind": resolution_kind,
         "item": new_item,
+        **({"promotion": promotion} if promotion else {}),
     }
