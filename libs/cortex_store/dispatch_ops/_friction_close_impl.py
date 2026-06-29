@@ -54,7 +54,7 @@ def _promote_friction_to_todo(
         required_skills=required_skills,
         seed_ack=(
             f"auto-promoted from friction #{friction_assertion_id}; "
-            "recon pending (density_triage unset)"
+            "recon pending (density_triage=recon_pending)"
         ),
         context_target_id=friction_entity_id,
         extra_attrs={"promoted_from_friction": friction_assertion_id},
@@ -63,7 +63,7 @@ def _promote_friction_to_todo(
     )
     if result and "todo_created" in result:
         record(
-            "cortex.friction.promoted_to_todo",
+            "cortex.friction.todo.promoted",
             assertion_id=friction_assertion_id,
             todo_id=resolution_kind,
             friction_entity_id=friction_entity_id,
@@ -101,6 +101,29 @@ def close_friction_assertion(
     entity_id = existing.get("entity_id")
     if not entity_id:
         return {"error": f"Friction assertion {assertion_id} has no entity_id"}
+
+    # Promote BEFORE superseding the friction. Promotion can fail (e.g. schema
+    # reject) and superseding is irreversible-by-early-return: a closed friction
+    # short-circuits at the superseded_by guard above, so a post-supersede
+    # promotion failure permanently drops the todo: intent with no recovery
+    # path. Running promotion first lets a failure return an error while the
+    # friction is still open and the close is replayable.
+    promotion: dict[str, Any] | None = None
+    if resolution_kind.startswith("todo:"):
+        promotion = _promote_friction_to_todo(
+            resolution_kind=resolution_kind,
+            friction_entity_id=entity_id,
+            friction_assertion_id=assertion_id,
+            friction_claim=str(existing.get("claim") or ""),
+            agent=agent,
+            session_id=session_id,
+        )
+        if isinstance(promotion, dict) and "error" in promotion:
+            return {
+                "error": f"friction_close promotion failed: {promotion['error']}",
+                "assertion_id": assertion_id,
+                "resolution_kind": resolution_kind,
+            }
 
     claim = f"[resolved:{resolution_kind}] Friction #{assertion_id} closed."
     if resolution_note:
@@ -150,17 +173,6 @@ def close_friction_assertion(
         resolution_kind=resolution_kind,
         agent=agent,
     )
-
-    promotion: dict[str, Any] | None = None
-    if resolution_kind.startswith("todo:"):
-        promotion = _promote_friction_to_todo(
-            resolution_kind=resolution_kind,
-            friction_entity_id=entity_id,
-            friction_assertion_id=assertion_id,
-            friction_claim=str(existing.get("claim") or ""),
-            agent=agent,
-            session_id=session_id,
-        )
 
     return {
         "status": "closed",

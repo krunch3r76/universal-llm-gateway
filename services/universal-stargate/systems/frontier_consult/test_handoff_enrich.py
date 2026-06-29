@@ -224,9 +224,15 @@ def test_validate_web_skips_arch_refs_with_densify_floor(tmp_path: Path) -> None
 
 def test_validate_cursor_still_requires_arch_refs(tmp_path: Path) -> None:
     rel = "universal-llm-gateway/tmp/reviews/cursor-thin.md"
+    # Densify floor satisfied (task-class skill refs + per-thread fetch steps) so
+    # the packet reaches the arch-ref check; arch refs (Block 2/5) still absent.
     packet = _THIN_WEB_PACKET.replace(
         "<invariants>[scope] traces to task.</invariants>",
         f"<invariants>[scope] traces to task.\n{_DENSIFY_INVARIANTS}</invariants>",
+    ).replace(
+        "<mcp_capabilities>1. fs(read) primary file</mcp_capabilities>",
+        "<mcp_capabilities>1. agent_bus(fetch, thread=2235, last=3)\n"
+        "2. agent_bus(fetch, thread=2229, last=3)</mcp_capabilities>",
     )
     dest = tmp_path / rel
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -240,6 +246,25 @@ def test_validate_cursor_still_requires_arch_refs(tmp_path: Path) -> None:
             workspaces_root=tmp_path,
         )
     assert exc_info.value.code == "handoff_packet_missing_arch_skillrefs"
+
+
+def test_validate_cursor_requires_densify_floor(tmp_path: Path) -> None:
+    """P1: the densify floor binds non-web MCP seats too, not just claude-web."""
+    rel = "universal-llm-gateway/tmp/reviews/cursor-no-floor.md"
+    # related_thread_ids set but no per-thread agent_bus(fetch) step → floor unmet.
+    packet = _THIN_WEB_PACKET
+    dest = tmp_path / rel
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(packet, encoding="utf-8")
+    with pytest.raises(FrontierEndpointError) as exc_info:
+        validate_packet(
+            request_id="req-cursor-floor",
+            packet_path=rel,
+            to_agent="claude-cursor",
+            handoff_contract="consult",
+            workspaces_root=tmp_path,
+        )
+    assert exc_info.value.code == "handoff_packet_missing_densify_floor"
 
 
 def test_build_pointer_web_consult_uses_checklist_not_arch_read() -> None:

@@ -16,6 +16,7 @@ Suppressed when:
   * workflow_state ∈ {done, deferred, cancelled, blocked} — not implementation-intent
   * attributes.backlog = true — author explicitly marked this as backlog-only
   * attributes.seed_contract_ack present (any value) — documented-intent escape hatch
+  * attributes.density_triage = recon_pending — stub is legitimately not-yet-dense
 
 Grounded in: decision:todo-creation-rich-seed-contract (thread 1144);
 tasks/specs/implement-input-schema.md §3 (registry convergence).
@@ -67,7 +68,11 @@ def detect_todo_implementation_seed_incomplete(
         if not isinstance(attrs, dict):
             attrs = {}
 
-        if attrs.get("backlog") is True or attrs.get("seed_contract_ack") is not None:
+        if (
+            attrs.get("backlog") is True
+            or attrs.get("seed_contract_ack") is not None
+            or attrs.get("density_triage") == "recon_pending"
+        ):
             continue
 
         impl_rows.append({**r, "_attrs": attrs})

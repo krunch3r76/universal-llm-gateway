@@ -54,7 +54,7 @@ def test_promote_objective_returns_created(objective_db: None) -> None:
 
 @pytest.mark.offline
 def test_promoted_todo_attributes(objective_db: None) -> None:
-    """Auto-created todo has correct source_uri, required_skills, seed_contract_ack, no density_triage."""
+    """Auto-created todo has correct source_uri, required_skills, seed_contract_ack, density_triage."""
     _promote_session_objectives(
         [
             {
@@ -74,7 +74,7 @@ def test_promoted_todo_attributes(objective_db: None) -> None:
     attrs = entity.get("attributes") or {}
     assert attrs.get("required_skills") == ["ulg-architecture"]
     assert attrs.get("seed_contract_ack")
-    assert "density_triage" not in attrs
+    assert attrs.get("density_triage") == "recon_pending"
 
 
 @pytest.mark.offline
@@ -85,15 +85,26 @@ def test_promote_none_and_empty_are_noop(objective_db: None) -> None:
 
 
 @pytest.mark.offline
-def test_malformed_spec_skipped(objective_db: None) -> None:
-    """A spec missing 'name' is skipped silently; valid specs in the same list still run."""
+def test_malformed_spec_reports_drop(objective_db: None) -> None:
+    """A spec missing 'name' yields an explicit drop diagnostic, not a silent skip.
+
+    P4: a casing typo ("Name" vs "name") would otherwise evaporate the objective
+    on a success-reporting close. The valid spec still promotes.
+    """
     result = _promote_session_objectives(
         [
             {"slug": "no-name-spec"},
-            {"slug": "obj-sample", "name": "Capture X", "required_skills": ["ulg-architecture"]},
+            {"slug": "typo-spec", "Name": "Wrong Case"},
+            {
+                "slug": "obj-sample",
+                "name": "Capture X",
+                "required_skills": ["ulg-architecture"],
+            },
         ],
         session_id=_SESSION_ID,
         agent=_AGENT,
     )
-    # only the valid spec is promoted
-    assert result == [{"todo_created": _TODO_ID}]
+    assert {"todo_created": _TODO_ID} in result
+    drops = [r["dropped"] for r in result if "dropped" in r]
+    assert len(drops) == 2
+    assert all("name" in d.get("missing", []) for d in drops)

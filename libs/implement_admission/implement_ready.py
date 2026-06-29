@@ -77,11 +77,19 @@ def evaluate_implement_ready(
     acceptance_criteria: list[str] | None = None,
     entity_name: str | None = None,
     skeptic_ratified: bool = False,
+    recon_waived: bool = False,
 ) -> ImplementReadyVerdict:
     """Deterministic implement-readiness verdict over declared todo state."""
     triage = (density_triage or "").strip() or None
     if triage == "mechanical":
         return ImplementReadyVerdict(admitted=True)
+
+    if triage == "recon_pending":
+        return _reject(
+            "implement_blocked_recon_pending",
+            f"{todo_id}: recon not complete — run the two-axis recon and "
+            "re-triage to judgment_required or mechanical before implement dispatch",
+        )
 
     if triage != "judgment_required":
         return _reject(
@@ -179,7 +187,7 @@ def evaluate_implement_ready(
     # Recon axis-2 hard gate: a material (judgment_required) decision cannot reach
     # implement on a reviewer-tightened spec alone — the skeptic must have run
     # (a20966; consensus-steelman-posture). Mechanical todos returned admitted above.
-    if not skeptic_ratified:
+    if not skeptic_ratified and not recon_waived:
         return _reject(
             "skeptic_pass_missing",
             f"{todo_id}: judgment_required (material) decision needs a skeptic "

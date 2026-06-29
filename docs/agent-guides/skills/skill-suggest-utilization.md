@@ -6,7 +6,7 @@
 
 | Seat | Discovery path |
 |---|---|
-| **Cursor IDE** | Native `<available_skills>` index + Read `.cursor/skills/<slug>/SKILL.md` stubs (defer to canonical/cortex). Rules (`.mdc`) carry always vs description-gated invariants. **¬** MCP `skill_suggest`. Resident: `skill-suggest-utilization_ws.mdc` (~10 lines). |
+| **Cursor IDE** | Native `<available_skills>` index + Read `.cursor/skills/<slug>/SKILL.md` stubs (defer to canonical/cortex). Rules (`.mdc`) carry always vs description-gated invariants. MCP `skill_suggest` **callable** at inflection points for delta discovery. Resident: `skill-suggest-utilization_ws.mdc` (~10 lines, binding domain-shift invariant). |
 | **claude-web / API** | MCP `skill_suggest` at inflection points (§ Web below). Boot index: `GET /boot-skills`. |
 
 ---
@@ -16,7 +16,7 @@
 1. Match task to a skill in `<available_skills>` by `description`.
 2. Read `.cursor/skills/<slug>/SKILL.md` (stub → `fs` deferral to shared SOT).
 3. Load description-gated **rules** when the task matches their `description` (e.g. dispatch/handoff rules — load one `##` section via md_read, not whole file).
-4. **Do not** call `skill_suggest` — adds MCP latency; Cursor already indexes registered skills.
+4. `skill_suggest` is **callable** at inflection points (domain shift, before consult / handoff / implement, after friction triage) for delta discovery beyond the resident index — the binding trigger lives in `skill-suggest-utilization_ws.mdc`. The native index covers routine turns; reach for `skill_suggest` when entering a new domain or tool surface. If unbound: `tool_search("skill_suggest")` first.
 
 Todo `required_skills` + `entity_get` → `source_uri` still applies when the skill set is known upfront.
 

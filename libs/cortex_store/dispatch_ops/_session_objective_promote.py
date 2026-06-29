@@ -28,12 +28,31 @@ def promote_session_objectives(
     from ._recon_seed import seed_recon_todo
 
     out: list[dict[str, Any]] = []
-    for spec in promote_todos:
+    dropped: list[dict[str, Any]] = []
+    for index, spec in enumerate(promote_todos):
+        # Pre-commit validation with explicit diagnostics. A malformed spec
+        # (non-dict, or empty slug/name — e.g. a "Name" vs "name" casing typo)
+        # must NOT silently `continue`: a success-reporting session close would
+        # then evaporate the objective with no signal. Record the drop instead so
+        # it surfaces in the result and emits telemetry
+        # (decision:recon-lifecycle-phase-review §P4).
         if not isinstance(spec, dict):
+            dropped.append({"index": index, "reason": "spec_not_a_mapping"})
             continue
         slug = str(spec.get("slug") or "").strip()
         name = str(spec.get("name") or "").strip()
         if not slug or not name:
+            missing = [
+                k for k in ("slug", "name") if not str(spec.get(k) or "").strip()
+            ]
+            dropped.append(
+                {
+                    "index": index,
+                    "reason": "missing_required_field",
+                    "missing": missing,
+                    "keys_present": sorted(str(k) for k in spec),
+                }
+            )
             continue
         todo_id = slug if slug.startswith("todo:") else f"todo:{slug}"
         bare = todo_id.removeprefix("todo:")
@@ -49,7 +68,7 @@ def promote_session_objectives(
             required_skills=required_skills,
             seed_ack=(
                 f"promoted from session objective ({session_id}); "
-                "recon pending (density_triage unset)"
+                "recon pending (density_triage=recon_pending)"
             ),
             context_target_id=f"transcript:{session_id}",
             extra_attrs={"promoted_from_session": session_id},
@@ -65,6 +84,14 @@ def promote_session_objectives(
             agent=agent,
             promoted_count=len(out),
         )
+    if dropped:
+        record(
+            "cortex.session.objective.dropped",
+            session_id=session_id,
+            agent=agent,
+            dropped_count=len(dropped),
+        )
+        out.extend({"dropped": d} for d in dropped)
     return out
 
 

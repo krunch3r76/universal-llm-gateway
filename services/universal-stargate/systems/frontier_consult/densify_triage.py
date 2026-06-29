@@ -12,6 +12,7 @@ DensityTriage = Literal[
     "dispatch_surface",
     "admission_path",
     "trivial",
+    "recon_pending",
 ]
 
 DraftAdequacy = Literal["blank", "partial", "adequate"]
@@ -23,8 +24,12 @@ VALID_DENSITY_TRIAGE = frozenset(
         "dispatch_surface",
         "admission_path",
         "trivial",
+        "recon_pending",
     }
 )
+
+# recon_pending stubs are legitimately not-yet-dense; suppress seed-contract audit.
+TODO_SEED_INCOMPLETE_SUPPRESSED_DENSITY = frozenset({"recon_pending"})
 
 DENSIFY_DEFAULT_ON = frozenset(
     {

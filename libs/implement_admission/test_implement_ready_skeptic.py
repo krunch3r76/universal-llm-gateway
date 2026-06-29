@@ -101,3 +101,46 @@ def test_material_without_skeptic_is_refused() -> None:
 def test_material_with_skeptic_is_admitted() -> None:
     verdict = evaluate_implement_ready(**_ready_kwargs(skeptic_ratified=True))
     assert verdict.admitted
+
+
+@pytest.mark.offline
+def test_recon_pending_is_blocked() -> None:
+    verdict = evaluate_implement_ready(
+        **_ready_kwargs(density_triage="recon_pending", skeptic_ratified=False)
+    )
+    assert not verdict.admitted
+    assert verdict.code == "implement_blocked_recon_pending"
+
+
+@pytest.mark.offline
+def test_recon_waived_admits_without_skeptic() -> None:
+    verdict = evaluate_implement_ready(
+        **_ready_kwargs(skeptic_ratified=False, recon_waived=True)
+    )
+    assert verdict.admitted
+
+
+@pytest.mark.offline
+def test_recon_waived_does_not_bypass_dense_spec() -> None:
+    verdict = evaluate_implement_ready(
+        **_ready_kwargs(
+            skeptic_ratified=False,
+            recon_waived=True,
+            dense_spec_text="# Sparse\n\n## Problem\n\nOnly one section.\n",
+        )
+    )
+    assert not verdict.admitted
+    assert verdict.code == "implement_spec_not_dense"
+
+
+@pytest.mark.offline
+def test_recon_waived_does_not_bypass_attrs() -> None:
+    verdict = evaluate_implement_ready(
+        **_ready_kwargs(
+            skeptic_ratified=False,
+            recon_waived=True,
+            files_expected=[],
+        )
+    )
+    assert not verdict.admitted
+    assert verdict.code == "implement_attrs_unpopulated"

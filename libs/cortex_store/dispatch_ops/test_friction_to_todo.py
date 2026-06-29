@@ -122,7 +122,7 @@ def test_promoted_todo_attributes(friction_db: int) -> None:
     attrs = entity.get("attributes") or {}
     assert "test-promoted" in attrs.get("required_skills", [])
     assert attrs.get("seed_contract_ack")
-    assert "density_triage" not in attrs
+    assert attrs.get("density_triage") == "recon_pending"
 
 
 @pytest.mark.offline
@@ -138,7 +138,51 @@ def test_friction_close_todo_dedup(friction_db: int) -> None:
     with cortex_db.cortex_conn() as conn:
         friction2_id = _insert_friction(conn, "second friction for dedup")
 
-    result2 = close_friction_assertion(friction2_id, _TODO_ID, agent="t", session_id="t")
+    result2 = close_friction_assertion(
+        friction2_id, _TODO_ID, agent="t", session_id="t"
+    )
     assert result2.get("status") == "closed"
     # dedup: todo already exists → promotion absent
     assert result2.get("promotion") is None
+
+
+@pytest.mark.offline
+def test_non_skill_owner_promotion_succeeds(
+    migrated_db_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A service:/ai_agent: friction owner promotes without a required_skills reject.
+
+    Regression for the P3 data-loss class: non-agent_skill owners passed
+    required_skills=[], which the implement-lane schema rejected, dropping the
+    todo: intent after the friction was already superseded.
+    """
+    from cortex_store import db as cortex_db
+
+    monkeypatch.setattr(cortex_db, "_CORTEX_DB", migrated_db_path)
+    _patch_supersede_side_effects(monkeypatch)
+
+    owner = "service:cortex-api"
+    todo_id = "todo:non-skill-owner-sample"
+    with cortex_db.cortex_conn() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO entities (id, type, name) VALUES (?, 'service', ?)",
+            (owner, "cortex-api"),
+        )
+        cur = conn.execute(
+            "INSERT INTO assertions (entity_id, claim, confidence, derivation_type)"
+            " VALUES (?, ?, 'hypothesized', 'agent_observation')",
+            (owner, "[tool_error] non-skill owner friction"),
+        )
+        conn.commit()
+        friction_id = cur.lastrowid
+
+    result = close_friction_assertion(friction_id, todo_id, agent="t", session_id="t")
+    assert result.get("status") == "closed"
+    assert result.get("promotion") == {"todo_created": todo_id}
+
+    entity = _op_entity_get(entity_id=todo_id)
+    assert "error" not in entity, f"todo not found: {entity}"
+    attrs = entity.get("attributes") or {}
+    # required_skills omitted (not an empty list) for non-skill owners
+    assert "required_skills" not in attrs
+    assert attrs.get("density_triage") == "recon_pending"

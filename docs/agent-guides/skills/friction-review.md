@@ -47,9 +47,12 @@ Examples: "report this as a friction, the boot card is stale" → `friction(boot
 
 ## Codified bug ticket (investigate→execute fix cycle)
 
-A codified bug ticket follows the **investigate→execute fix cycle** — investigate first, execute second.
-**Default heuristic:** a friction/bug filed → **assume the investigate stage**
-unless the operator says mechanical-only or a dense implement spec already exists.
+A codified bug ticket follows the **recon → investigate → execute fix cycle** — recon first, investigate second, execute third.
+**Recon is the named default first hop** for feature/bug frictions: before routing to investigate transport, load `cheap-recon-before-escalation` and run the axis-1 cost ladder (cheap Composer recon → GPT-5.5 cross-family filter → Opus/Fable for hard residual). Axis-2 skeptic is binding on material (`judgment_required`) decisions — `skeptic_ratified` attestation required before `implement_ready` on non-mechanical todos.
+
+**Skip recon when:** `density_triage == "mechanical"` or `"trivial"`, a dense implement spec already exists (`files_expected` + `acceptance_criteria` distilled), or explicit `recon_waived="<reason>"` attribute on the todo (waives axis-2 skeptic only — dense-spec checks still apply).
+
+**Default heuristic:** a friction/bug filed → **assume the recon+investigate stage** unless the operator says mechanical-only or a dense implement spec already exists.
 
 **Entity scope vs dispatch lane (do not conflate):** Friction subsumption
 (`do NOT open a standalone fix arc`; fold under an existing `todo:`/`task:`) governs

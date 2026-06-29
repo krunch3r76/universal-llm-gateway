@@ -466,6 +466,21 @@ tools:
       transcript_md: {type: string}
       session_summary_md: {type: string}
       summary: {type: string}
+      promote_todos:
+        type: array
+        description: >
+          Opt-in recon-pending todo promotions seeded from named session
+          objectives at close. Each item: {slug, name, required_skills?,
+          source_uri?}. Malformed items (missing slug/name) are reported as
+          explicit drop diagnostics, not silently skipped.
+        items:
+          type: object
+          properties:
+            slug: {type: string}
+            name: {type: string}
+            required_skills: {type: array, items: {type: string}}
+            source_uri: {type: string}
+          required: [slug, name]
     required: [session_id, agent, session_summary_md, summary]
   skill_uri: agent_skill:session-close
   seat_visibility: [mcp, mcp_claude]

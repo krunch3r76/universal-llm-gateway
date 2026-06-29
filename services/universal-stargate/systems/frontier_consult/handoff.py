@@ -239,23 +239,27 @@ def validate_packet(
         )
 
     if to_agent in _mcp_packet_seats():
-        if to_agent == _WEB_RECEIVER_AGENT:
-            from .handoff_packet_enrich import has_densify_floor
+        from .handoff_packet_enrich import has_densify_floor
 
-            if not has_densify_floor(text):
-                raise FrontierEndpointError(
-                    request_id=request_id,
-                    field="packet_path",
-                    reason=(
-                        f"Packet {packet_path!r} missing web densify floor: "
-                        "require ≥1 task-class skill ref (via source_uri) and, "
-                        "when related_thread_ids is set, ≥1 agent_bus(fetch) "
-                        f"step per upstream thread. {_PROTOCOL_HINT}"
-                    ),
-                    status_code=422,
-                    code="handoff_packet_missing_densify_floor",
-                )
-        else:
+        # P1: the densify floor binds ALL MCP seats, not just web. Validating it
+        # only for the web receiver let cursor / future MCP packets bypass the
+        # floor in validate_packet — currently masked because route-enrich runs
+        # first, but the validator must enforce the contract independently rather
+        # than rely on enrich ordering (decision:recon-lifecycle-phase-review §P1).
+        if not has_densify_floor(text):
+            raise FrontierEndpointError(
+                request_id=request_id,
+                field="packet_path",
+                reason=(
+                    f"Packet {packet_path!r} missing densify floor: "
+                    "require ≥1 task-class skill ref (via source_uri) and, "
+                    "when related_thread_ids is set, ≥1 agent_bus(fetch) "
+                    f"step per upstream thread. {_PROTOCOL_HINT}"
+                ),
+                status_code=422,
+                code="handoff_packet_missing_densify_floor",
+            )
+        if to_agent != _WEB_RECEIVER_AGENT:
             missing_refs = _missing_arch_skill_refs(text)
             if missing_refs:
                 reason = (

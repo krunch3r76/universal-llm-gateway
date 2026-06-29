@@ -9,7 +9,11 @@ from pathlib import Path
 from typing import Any
 
 from implement_admission.closeout_helpers import cortex_files_root
-from implement_admission.dense_spec_schema import DENSE_SPEC_RE, spec_basename
+from implement_admission.dense_spec_schema import (
+    DENSE_SPEC_RE,
+    dense_spec_hash_uri,
+    spec_basename,
+)
 from implement_admission.implement_ready import evaluate_implement_ready
 from implement_admission.source_ref import parse_source_ref
 from implement_admission.spec import SourceKind
@@ -134,12 +138,23 @@ def _resolve_skeptic_ratification(
     todo_id: str,
     cortex: StargateCortexReader,
     now_iso: str,
+    spec_hash_uri: str | None,
 ) -> bool:
-    """True iff an active confirmed status({todo}, skeptic_ratified, current) exists.
+    """True iff an active confirmed skeptic-ratification pinned to the current spec.
 
     Mirrors _resolve_fresh_implement_ready selection: keys off predicate_form so
     only a skeptic-ratification row (never an implemented/other-status row) counts.
+
+    P2 hash-pin: the ratification must additionally cite the current dense-spec
+    content hash (``spec_hash_uri``) in evidence_uris. Without this, a prior
+    spec's still-active skeptic pass is reusable after a material spec increment —
+    a stale-attestation bypass of the very gate whose job is to force a fresh
+    skeptic pass for material todos (decision:recon-lifecycle-phase-review §P2).
+    When the spec hash cannot be computed (unreadable spec), no ratification can
+    be pinned — the evaluator already rejects unreadable specs upstream.
     """
+    if not spec_hash_uri:
+        return False
     listed = cortex.assertions(
         todo_id,
         confidence="confirmed",
@@ -160,7 +175,10 @@ def _resolve_skeptic_ratification(
             continue
         if _normalize_predicate(item.get("predicate_form")) != target:
             continue
-        if _is_active_assertion(item, now_iso=now_iso):
+        if not _is_active_assertion(item, now_iso=now_iso):
+            continue
+        evidence = item.get("evidence_uris")
+        if isinstance(evidence, list) and spec_hash_uri in evidence:
             return True
     return False
 
@@ -275,11 +293,21 @@ def require_implement_ready(
     raw_acs = attrs.get("acceptance_criteria")
     acceptance_criteria = raw_acs if isinstance(raw_acs, list) else []
 
+    spec_hash_uri = dense_spec_hash_uri(dense_spec_text) if dense_spec_text else None
     skeptic_ratified = False
     if triage == "judgment_required":
         skeptic_ratified = _resolve_skeptic_ratification(
-            todo_id=ref.canonical_ref, cortex=cortex, now_iso=now_iso
+            todo_id=ref.canonical_ref,
+            cortex=cortex,
+            now_iso=now_iso,
+            spec_hash_uri=spec_hash_uri,
         )
+
+    # P2: recon_waived must be a non-empty string reason, not a bare truthy flag —
+    # a documented waiver (recon-default rule: recon_waived="<reason>"), so a
+    # casually-written boolean cannot silently defeat the material skeptic gate.
+    raw_waived = attrs.get("recon_waived")
+    recon_waived = isinstance(raw_waived, str) and bool(raw_waived.strip())
 
     verdict = evaluate_implement_ready(
         todo_id=ref.canonical_ref,
@@ -294,6 +322,7 @@ def require_implement_ready(
         acceptance_criteria=acceptance_criteria,
         entity_name=entity.get("name"),
         skeptic_ratified=skeptic_ratified,
+        recon_waived=recon_waived,
     )
     if not verdict.admitted:
         raise FrontierEndpointError(

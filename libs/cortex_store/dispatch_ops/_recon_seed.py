@@ -2,8 +2,8 @@
 
 Both friction_close (Phase 3) and session_close (Phase 4) promote work into the
 recon front-half at the rich-seed floor (decision:todo-creation-rich-seed-contract).
-density_triage is left UNSET — recon-pending per verdict A
-(decision:recon-locus-attribute-not-state).
+density_triage defaults to ``recon_pending`` per verdict A
+(decision:recon-locus-attribute-not-state); callers may override.
 """
 
 from __future__ import annotations
@@ -24,6 +24,7 @@ def seed_recon_todo(
     seed_ack: str,
     context_target_id: str,
     extra_attrs: dict[str, Any] | None = None,
+    density_triage: str = "recon_pending",
     context_type_id: str = "references",
     agent: str = "unknown",
     session_id: str = "recon-seed",
@@ -44,9 +45,15 @@ def seed_recon_todo(
         return None
 
     attributes: dict[str, Any] = {
-        "required_skills": required_skills,
         "seed_contract_ack": seed_ack,
+        "density_triage": density_triage,
     }
+    # required_skills is an implement-lane key: an empty list is a schema reject
+    # (type_schemas._implement_lane_shape_invalid). recon-pending stubs predate
+    # densification, so omit the key entirely when no skills are known yet — it
+    # is distilled at Gate-2 close, not at the rich-seed floor.
+    if required_skills:
+        attributes["required_skills"] = required_skills
     if extra_attrs:
         attributes.update(extra_attrs)
 
@@ -59,7 +66,15 @@ def seed_recon_todo(
         attributes=attributes,
     )
     if isinstance(created, dict) and "error" in created:
-        logger.warning("seed_recon_todo create failed for %s: %s", todo_id, created["error"])
+        # Concurrent-create dedup: a racing close may have created the todo
+        # between our preflight-get and this create. Treat post-conflict
+        # existence as the dedup path (None), not a hard failure.
+        post = _op_entity_get(entity_id=todo_id)
+        if isinstance(post, dict) and "error" not in post:
+            return None
+        logger.warning(
+            "seed_recon_todo create failed for %s: %s", todo_id, created["error"]
+        )
         return created
 
     try:
