@@ -26,6 +26,7 @@ from ..transcript_assembly import (
     resolve_jsonl_path,
     session_id_timing_hint,
 )
+from ._session_objective_promote import promote_session_objectives
 from ._session_todo_reconciliation import todo_reconciliation_preflight_fields
 from ._shared import _FILES_ROOT, record
 from .ops_audit_detectors import run_detectors
@@ -343,6 +344,7 @@ def _op_session_close(
     source_ref: str | None = None,
     source_ref_derivation: str | None = None,
     defer_gaps: dict[str, str] | None = None,
+    promote_todos: list[dict[str, Any]] | None = None,
     dry_run: bool = False,
     **_: object,
 ) -> dict[str, Any]:
@@ -555,6 +557,12 @@ def _op_session_close(
             transcript_warnings,
         )
     result["transcript_warnings"] = transcript_warnings
+
+    promoted = promote_session_objectives(
+        promote_todos, session_id=session_id, agent=agent
+    )
+    if promoted:
+        result["promoted_todos"] = promoted
 
     return result
 
