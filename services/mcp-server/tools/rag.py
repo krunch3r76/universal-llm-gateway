@@ -884,3 +884,25 @@ def register_rag_tools(mcp: FastMCP) -> None:
             scopes_updated=payload.get("scopes_updated", []),
         )
         return payload
+
+    @mcp.tool(title="RAG: Recon")
+    def rag_recon(
+        label: str,
+        themes: list[dict[str, Any]],
+        top_k: int = 20,
+        durable_sink: str | None = None,
+    ) -> dict[str, Any]:
+        """Run labeled per-theme RAG recon and persist durable sidecars.
+
+        Executes scoped searches per theme, writes markdown sidecars via the
+        configured DurableSink (cortex default, filesystem/null fallback), and
+        returns backend selection metadata plus resolvable URIs for successful writes.
+        """
+        from ._rag_recon import execute_rag_recon
+
+        return execute_rag_recon(
+            label,
+            themes,
+            top_k=top_k,
+            durable_sink=durable_sink,
+        )

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -110,6 +111,28 @@ def path_write_lock(resolved: Path) -> Iterator[None]:
         lock = _PATH_LOCKS.setdefault(key, threading.Lock())
     with lock:
         yield
+
+
+_TEMPLATE_TOKEN_RE = re.compile(r"\{[a-zA-Z_][a-zA-Z0-9_]*\}")
+
+
+def find_template_token(relative: str) -> str | None:
+    """Return the first unsubstituted ``{identifier}`` token in *relative*, if any."""
+    match = _TEMPLATE_TOKEN_RE.search(relative)
+    return match.group(0) if match else None
+
+
+def reject_template_tokens(relative: str) -> None:
+    """Reject write targets that still contain sidecar template placeholders.
+
+    Read/list/search paths are intentionally unchecked — this guard is write-only.
+    """
+    token = find_template_token(relative)
+    if token is not None:
+        raise ValueError(
+            f"Refusing write: path contains unsubstituted template token "
+            f"{token}: {relative!r}"
+        )
 
 
 def safe_path(relative: str) -> Path:

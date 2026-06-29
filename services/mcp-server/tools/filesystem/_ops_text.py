@@ -24,6 +24,7 @@ from ._paths import (
     SANDBOX_ROOT,
     SHARED_IMAGE_DIR,
     path_write_lock,
+    reject_template_tokens,
     safe_path,
     sha256_hex_of_file,
     sha256_of_file,
@@ -108,6 +109,7 @@ def write_file_impl(
     if expected_sha256 is not None and if_absent:
         raise ValueError("expected_sha256 and if_absent are mutually exclusive")
 
+    reject_template_tokens(path)
     dest = safe_path(path)
     with path_write_lock(dest):
         actual_sha256 = sha256_of_file(dest)
@@ -225,6 +227,7 @@ def edit_file_impl(
     all_occurrences: bool = False,
 ) -> dict[str, str | int]:
     """Atomically edit a text file in the sandboxed files directory."""
+    reject_template_tokens(path)
     dest = safe_path(path)
     if dest.suffix.lower() not in EDITABLE_SUFFIXES:
         raise ValueError(

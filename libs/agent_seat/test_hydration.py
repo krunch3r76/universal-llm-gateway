@@ -68,6 +68,133 @@ async def test_hydrate_reviewer_with_explicit_gemini_is_mcp_enabled(
 
 
 @pytest.mark.asyncio
+async def test_hydrate_skeptic_with_explicit_gemini_clears_capability_tier(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """skeptic + explicit gemini must clear stale grok/api-multi inline-only."""
+    monkeypatch.setattr(_hyd, "_cortex_get", _Scripted({"/": {}}))
+    monkeypatch.setattr(_hyd, "_bus_get", _Scripted({}))
+
+    bundle = await hydrate_agent("skeptic", model="google/gemini-3.1-pro-preview")
+
+    assert bundle.inline_only is False
+    assert bundle.agent_meta.capability_tier != "inline-only"
+    assert bundle.agent_meta.capability_tier is None
+
+
+@pytest.mark.asyncio
+async def test_hydrate_skeptic_default_grok_multi_agent_is_inline_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """skeptic default grok multi-agent remains inline-only."""
+    monkeypatch.setattr(_hyd, "_cortex_get", _Scripted({"/": {}}))
+    monkeypatch.setattr(_hyd, "_bus_get", _Scripted({}))
+
+    bundle = await hydrate_agent("skeptic")
+
+    assert bundle.inline_only is True
+    assert bundle.agent_meta.capability_tier == "inline-only"
+
+
+@pytest.mark.asyncio
+async def test_hydrate_reviewer_with_xai_multi_agent_is_inline_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """reviewer + xai multi-agent must recompute inline-only (security catch)."""
+    monkeypatch.setattr(_hyd, "_cortex_get", _Scripted({"/": {}}))
+    monkeypatch.setattr(_hyd, "_bus_get", _Scripted({}))
+
+    bundle = await hydrate_agent(
+        "reviewer", model="xai/grok-4.20-multi-agent-0309"
+    )
+
+    assert bundle.inline_only is True
+    assert bundle.agent_meta.capability_tier == "inline-only"
+
+
+@pytest.mark.asyncio
+async def test_hydrate_skeptic_gemini_capability_vs_mcp_authorization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Capability (inline_only) and MCP authorization diverge when mcp=False."""
+    from agent_seat.profiles import client_side_mcp_tool_loop_admitted
+
+    monkeypatch.setattr(_hyd, "_cortex_get", _Scripted({"/": {}}))
+    monkeypatch.setattr(_hyd, "_bus_get", _Scripted({}))
+
+    model = "google/gemini-3.1-pro-preview"
+    bundle = await hydrate_agent("skeptic", model=model)
+    caller_mcp = False
+
+    assert bundle.inline_only is False
+    assert client_side_mcp_tool_loop_admitted(model) is True
+    tool_loop = bool(caller_mcp) and client_side_mcp_tool_loop_admitted(model)
+    assert tool_loop is False
+
+
+@pytest.mark.asyncio
+async def test_hydrate_skeptic_no_explicit_model_uses_default_multi_agent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """skeptic without model= uses role default xai multi-agent → inline-only."""
+    monkeypatch.setattr(_hyd, "_cortex_get", _Scripted({"/": {}}))
+    monkeypatch.setattr(_hyd, "_bus_get", _Scripted({}))
+
+    bundle = await hydrate_agent("skeptic")
+
+    assert bundle.agent_meta.default_model == "xai/grok-4.20-multi-agent-0309"
+    assert bundle.inline_only is True
+
+
+@pytest.mark.asyncio
+async def test_hydrate_effective_none_boot_role_default_fallback_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When effective model resolves from role default, inline-only follows it."""
+    monkeypatch.setattr(_hyd, "_cortex_get", _Scripted({"/": {}}))
+    monkeypatch.setattr(_hyd, "_bus_get", _Scripted({}))
+
+    bundle = await hydrate_agent("skeptic", model=None)
+
+    assert bundle.agent_meta.default_model == "xai/grok-4.20-multi-agent-0309"
+    assert bundle.inline_only is True
+    assert bundle.agent_meta.capability_tier == "inline-only"
+
+
+@pytest.mark.parametrize(
+    ("role", "model"),
+    [
+        ("skeptic", "google/gemini-3.1-pro-preview"),
+        ("skeptic", "xai/grok-4.20-multi-agent-0309"),
+        ("skeptic", None),
+        ("reviewer", "google/gemini-2.5-pro"),
+        ("reviewer", "xai/grok-4.20-multi-agent-0309"),
+        ("gatherer", "openai/gpt-5.5"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_inline_only_matches_client_side_mcp_admitted(
+    role: str,
+    model: str | None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """inline_only == not client_side_mcp_tool_loop_admitted(effective)."""
+    from agent_seat.profiles import client_side_mcp_tool_loop_admitted
+
+    monkeypatch.setattr(_hyd, "_cortex_get", _Scripted({"/": {}}))
+    monkeypatch.setattr(_hyd, "_bus_get", _Scripted({}))
+
+    bundle = await hydrate_agent(role, model=model)
+    effective = model if model is not None else bundle.agent_meta.default_model
+    if effective is not None:
+        expected = not client_side_mcp_tool_loop_admitted(effective)
+    else:
+        expected = bundle.agent_meta.capability_tier == "inline-only"
+
+    assert bundle.inline_only is expected
+
+
+@pytest.mark.asyncio
 async def test_hydrate_agent_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
     cortex_fake = _Scripted(
         {

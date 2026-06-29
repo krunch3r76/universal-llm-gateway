@@ -15,7 +15,7 @@ from .._durable_write import (
     verify_persisted,
     write_verify_error_dict,
 )
-from ._paths import BINARY_MAX_BYTES, safe_path
+from ._paths import BINARY_MAX_BYTES, reject_template_tokens, safe_path
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +26,7 @@ def write_binary_impl(rel_path: str, content_base64: str) -> dict[str, Any]:
     No extension restrictions — the container sandbox is the security
     boundary. Any file type is accepted.
     """
+    reject_template_tokens(rel_path)
     dest = safe_path(rel_path)
     try:
         raw = base64.b64decode(content_base64, validate=True)
@@ -71,6 +72,7 @@ def append_binary_impl(rel_path: str, content_base64: str) -> dict[str, Any]:
     Creates the file if it doesn't exist. Each chunk must be independently
     valid base64. The total file size is capped at BINARY_MAX_BYTES.
     """
+    reject_template_tokens(rel_path)
     dest = safe_path(rel_path)
     try:
         raw = base64.b64decode(content_base64, validate=True)

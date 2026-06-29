@@ -16,6 +16,15 @@ from ..routes.stats import _get_stats_impl
 from ..routes.surface_forms import _list_surface_forms_impl
 from ..routes.tags import _assign_tag_impl, _list_tags_impl
 from ._pinned_deliverable import write_pinned_deliverable_impl
+from ._recon_sidecar import (
+    content_sha256 as recon_content_sha256,
+)
+from ._recon_sidecar import (
+    recon_sidecar_uri,
+    render_recon_sidecar_markdown,
+    resolve_recon_target,
+    write_recon_sidecar_file,
+)
 from ._shared import record
 from ._thread_sidecar import (
     _slugify,
@@ -26,6 +35,41 @@ from ._thread_sidecar import (
 )
 
 logger = get_logger("cortex-api.dispatch_ops.misc")
+
+
+def _op_recon_sidecar_write(
+    label: str,
+    theme: str,
+    body: str,
+    scopes: list[str] | None = None,
+    queries: list[str] | None = None,
+    sink_backend: str | None = None,
+    **_: object,
+) -> dict[str, Any]:
+    resolved = resolve_recon_target(label, theme)
+    if resolved is None:
+        return {"error": "unsafe recon sidecar path"}
+    label_slug, theme_slug, _path = resolved
+    digest = recon_content_sha256(body)
+    md = render_recon_sidecar_markdown(
+        label=label,
+        theme=theme,
+        body=body,
+        scopes=scopes,
+        queries=queries,
+        sink_backend=sink_backend or "cortex",
+        sha256=digest,
+    )
+    try:
+        path = write_recon_sidecar_file(label, theme, md)
+    except ValueError as exc:
+        return {"error": str(exc)}
+    return {
+        "uri": recon_sidecar_uri(label_slug, theme_slug),
+        "path": path,
+        "sha256": digest,
+        "body_chars": len(body),
+    }
 
 
 def _op_thread_sidecar_write(

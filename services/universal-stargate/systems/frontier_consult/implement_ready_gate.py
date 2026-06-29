@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,7 @@ from implement_admission.spec import SourceKind
 
 from .admission import FrontierEndpointError
 from .implement_admission_bridge import StargateCortexReader
+from .skeptic_evidence_grounding import evaluate_skeptic_evidence_grounding
 
 
 def _decode_attributes(raw: Any) -> dict[str, Any]:
@@ -125,13 +127,22 @@ def _resolve_fresh_implement_ready(
     return best_key[1], best
 
 
+@dataclass(frozen=True, slots=True)
+class _SkepticRatificationOutcome:
+    ratified: bool
+    evidence_grounded: bool | None = None
+    evidence_unresolved: list[str] | None = None
+    evidence_mode: str | None = None
+
+
 def _resolve_skeptic_ratification(
     *,
     todo_id: str,
     cortex: StargateCortexReader,
     now_iso: str,
     spec_hash_uri: str | None,
-) -> bool:
+    workspaces_root: Path | None = None,
+) -> _SkepticRatificationOutcome:
     """True iff an active confirmed skeptic-ratification pinned to the current spec.
 
     Mirrors _resolve_fresh_implement_ready selection: keys off predicate_form so
@@ -146,7 +157,7 @@ def _resolve_skeptic_ratification(
     be pinned — the evaluator already rejects unreadable specs upstream.
     """
     if not spec_hash_uri:
-        return False
+        return _SkepticRatificationOutcome(ratified=False)
     listed = cortex.assertions(
         todo_id,
         confidence="confirmed",
@@ -156,7 +167,7 @@ def _resolve_skeptic_ratification(
     )
     items = listed.get("items") if isinstance(listed, dict) else None
     if not isinstance(items, list):
-        return False
+        return _SkepticRatificationOutcome(ratified=False)
     target = _normalize_predicate(
         f"status({todo_id}, {_SKEPTIC_RATIFIED_STATUS}, current)"
     )
@@ -170,9 +181,20 @@ def _resolve_skeptic_ratification(
         if not assertion_active(item, now_iso=now_iso):
             continue
         evidence = item.get("evidence_uris")
-        if isinstance(evidence, list) and spec_hash_uri in evidence:
-            return True
-    return False
+        if not (isinstance(evidence, list) and spec_hash_uri in evidence):
+            continue
+        outcome = evaluate_skeptic_evidence_grounding(
+            reader=cortex,
+            assertion=item,
+            workspaces_root=workspaces_root,
+        )
+        return _SkepticRatificationOutcome(
+            ratified=True,
+            evidence_grounded=outcome.grounded,
+            evidence_unresolved=outcome.unresolved,
+            evidence_mode=outcome.mode,
+        )
+    return _SkepticRatificationOutcome(ratified=False)
 
 
 def _select_cited_dense_spec_uri(
@@ -272,9 +294,9 @@ def require_implement_ready(
     acceptance_criteria = raw_acs if isinstance(raw_acs, list) else []
 
     spec_hash_uri = dense_spec_hash_uri(dense_spec_text) if dense_spec_text else None
-    skeptic_ratified = False
+    skeptic_outcome = _SkepticRatificationOutcome(ratified=False)
     if triage == "judgment_required":
-        skeptic_ratified = _resolve_skeptic_ratification(
+        skeptic_outcome = _resolve_skeptic_ratification(
             todo_id=ref.canonical_ref,
             cortex=cortex,
             now_iso=now_iso,
@@ -299,8 +321,11 @@ def require_implement_ready(
         files_expected=files_expected,
         acceptance_criteria=acceptance_criteria,
         entity_name=entity.get("name"),
-        skeptic_ratified=skeptic_ratified,
+        skeptic_ratified=skeptic_outcome.ratified,
         recon_waived=recon_waived,
+        skeptic_evidence_grounded=skeptic_outcome.evidence_grounded,
+        skeptic_evidence_unresolved=skeptic_outcome.evidence_unresolved,
+        skeptic_evidence_mode=skeptic_outcome.evidence_mode,
     )
     if not verdict.admitted:
         raise FrontierEndpointError(

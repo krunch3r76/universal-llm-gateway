@@ -159,3 +159,42 @@ def test_recon_waived_does_not_bypass_recon_pending() -> None:
     )
     assert not verdict.admitted
     assert verdict.code == "implement_blocked_recon_pending"
+
+
+@pytest.mark.offline
+def test_grounded_skeptic_evidence_admits() -> None:
+    verdict = evaluate_implement_ready(
+        **_ready_kwargs(
+            skeptic_ratified=True,
+            skeptic_evidence_grounded=True,
+        )
+    )
+    assert verdict.admitted
+
+
+@pytest.mark.offline
+@pytest.mark.parametrize(
+    ("mode", "unresolved", "code"),
+    [
+        ("stamp_missing", None, "skeptic_evidence_stamp_missing"),
+        ("malformed", None, "skeptic_evidence_malformed"),
+        (None, ["workspaces://missing.md"], "skeptic_evidence_unresolved"),
+        (None, None, "skeptic_evidence_missing"),
+        ("reasoning_only", None, "skeptic_evidence_missing"),
+    ],
+)
+def test_skeptic_evidence_reject_codes(
+    mode: str | None,
+    unresolved: list[str] | None,
+    code: str,
+) -> None:
+    verdict = evaluate_implement_ready(
+        **_ready_kwargs(
+            skeptic_ratified=True,
+            skeptic_evidence_grounded=False,
+            skeptic_evidence_unresolved=unresolved,
+            skeptic_evidence_mode=mode,
+        )
+    )
+    assert not verdict.admitted
+    assert verdict.code == code

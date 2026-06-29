@@ -25,7 +25,7 @@ from implement_admission.preflight import (
 )
 from implement_admission.source_ref import parse_source_ref
 from implement_admission.spec import ReadinessState, SourceKind, implement_spec_hash
-from transport_utils import DEFAULT_CORTEX_URL, make_sync_client
+from transport_utils import DEFAULT_AGENT_BUS_URL, DEFAULT_CORTEX_URL, make_sync_client
 
 from .admission import FrontierEndpointError
 from .handoff import _resolve_packet_file, _workspaces_root
@@ -106,6 +106,40 @@ class StargateCortexReader:
             resp.raise_for_status()
             data: dict[str, Any] = resp.json()
         return data
+
+    def bus_turn_get(self, thread: str, turn_number: int) -> dict[str, Any] | None:
+        """Read-only agent-bus turn lookup by thread + turn_number."""
+        from urllib.parse import urlencode
+
+        token = os.environ.get("AGENT_BUS_TOKEN", "").strip()
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
+        qs = urlencode({"thread": str(thread), "turn_number": int(turn_number)})
+        with make_sync_client(DEFAULT_AGENT_BUS_URL, timeout=_CORTEX_TIMEOUT) as client:
+            resp = client.get(f"/turns/by-number?{qs}", headers=headers)
+            if resp.status_code >= 400:
+                return None
+            data = resp.json()
+        return data if isinstance(data, dict) else None
+
+    def bus_thread_last_turn(self, thread: str) -> dict[str, Any] | None:
+        """Read-only fetch of the latest turn on an agent-bus thread."""
+        from urllib.parse import urlencode
+
+        token = os.environ.get("AGENT_BUS_TOKEN", "").strip()
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
+        qs = urlencode({"thread": str(thread), "last": 1})
+        with make_sync_client(DEFAULT_AGENT_BUS_URL, timeout=_CORTEX_TIMEOUT) as client:
+            resp = client.get(f"/turns?{qs}", headers=headers)
+            if resp.status_code >= 400:
+                return None
+            payload = resp.json()
+        if not isinstance(payload, dict):
+            return None
+        turns = payload.get("turns")
+        if not isinstance(turns, list) or not turns:
+            return None
+        first = turns[0]
+        return first if isinstance(first, dict) else None
 
 
 def _repo_base(workspaces_root: Path) -> Path:

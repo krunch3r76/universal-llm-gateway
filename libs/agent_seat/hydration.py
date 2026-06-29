@@ -38,11 +38,10 @@ from ._hydration_render import (
     _safe_list,
 )
 from .profiles import (
-    derive_inline_only,
+    client_side_mcp_tool_loop_admitted,
     family_anchor,
     get_profile,
     get_role,
-    inline_only_for_model,
     load_roles,
     role_anchor,
     seat_to_family,
@@ -378,33 +377,26 @@ async def hydrate_agent(
     self_reflections = _safe_list(raw.get("self_reflections"))
     skills = _safe_list(raw.get("skills"))
     agent_meta = raw["agent_meta"]
-    if normalized_agent in load_roles():
-        role_profile = get_role(normalized_agent)
-        dispatch_profile = get_profile(
-            role_profile.default_family,
-            role_profile.default_platform,
-        )
-        # Capability tier binds to the EFFECTIVE model, not just the role
-        # default: an explicit model= override (e.g. reviewer + model=gemini)
-        # that resolves to an inline-only family must still revoke the tool
-        # surface so a write-hallucinating model cannot touch shared cortex.
-        effective = model if model is not None else agent_meta.default_model
-        if derive_inline_only(dispatch_profile) or (
-            effective is not None and inline_only_for_model(effective)
-        ):
+    effective_model = model if model is not None else agent_meta.default_model
+    if normalized_agent in load_roles() and effective_model is not None:
+        # Capability tier binds to the EFFECTIVE model, not the role default
+        # profile: an explicit model= override (e.g. skeptic + model=gemini)
+        # must clear stale inline-only from grok/api-multi so MCP-capable
+        # models get the tool surface; conversely reviewer + xai multi-agent
+        # must recompute inline-only even when the role default is MCP-capable.
+        if client_side_mcp_tool_loop_admitted(effective_model):
+            agent_meta = replace(agent_meta, capability_tier=None)
+        else:
             agent_meta = replace(agent_meta, capability_tier="inline-only")
 
     unread_threads = [
         t for t in threads if isinstance(t, dict) and t.get("unread_count", 0) > 0
     ]
 
-    effective_model = model if model is not None else agent_meta.default_model
-    # Inline-only gate: capability_tier override OR xAI multi-agent (rejects client-side tools)
-    inline_only = agent_meta.capability_tier == "inline-only" or (
-        agent_meta.frontier_kind == "xai"
-        and effective_model is not None
-        and "multi-agent" in effective_model
-    )
+    if effective_model is not None:
+        inline_only = not client_side_mcp_tool_loop_admitted(effective_model)
+    else:
+        inline_only = agent_meta.capability_tier == "inline-only"
 
     briefing = _render_briefing(
         agent,

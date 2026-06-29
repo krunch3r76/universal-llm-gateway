@@ -541,7 +541,7 @@ For subsystem-specific investigation, reference these paths directly:
 | Vocabulary classification | `scripts/rag/classify_vocabulary.py` | LLM-based taxonomy classification (configurable categories) |
 | Enrichment runbook | `tasks/runbooks/rag-post-index-refresh.md` | Operator post-index workflow |
 | RAG config | `services/rag/config.py` | `RagConfig` dataclass, YAML parsing |
-| MCP RAG tools | `services/mcp-server/tools/rag.py` | `rag(op="search")`, `rag(op="list_scopes")`, prefix passthrough |
+| MCP RAG tools | `services/mcp-server/tools/rag.py` | `rag(op="search")`, `rag(op="recon")`, `rag(op="list_scopes")`, prefix passthrough |
 
 ## Known Gaps
 

@@ -98,6 +98,7 @@ _OP_SPECS: dict[str, str] = {
     "todo_candidates": "ops_todos:_op_todo_candidates",
     "todo_audit": "ops_todos:_op_todo_audit",
     "thread_sidecar_write": "ops_misc:_op_thread_sidecar_write",
+    "recon_sidecar_write": "ops_misc:_op_recon_sidecar_write",
     "pinned_deliverable_write": "ops_misc:_op_pinned_deliverable_write",
     "todo_close_sidecar": "ops_todos:_op_todo_close_sidecar",
     "todo_distill_implement_gate": "ops_todos:_op_todo_distill_implement_gate",

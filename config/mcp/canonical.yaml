@@ -1901,6 +1901,47 @@ tools:
   cache_priority: on_demand
   introduced: 2026-05-22
 
+- canonical_name: rag_recon
+  domain: rag
+  operation: recon
+  dispatcher_call_shape:
+    tool: rag
+    dispatch_key: op
+    dispatch_value: recon
+  flat_call_shape:
+    tool: rag_recon
+    substrate_qualified: user-vortex__rag_recon
+  fol_descriptor: |
+    ∀ label ∈ str ∧ themes ∈ List[Theme], Theme = {name, scopes, queries}:
+      rag_recon(label, themes, durable_sink) ⟹
+        ∀ t ∈ themes: sidecar(t) ∈ DurableSink ∧
+        evidence_uris ⊆ {cortex://notes/system/recon/<label>/<theme>.md}.
+    Mutating (writes sidecars). durable_sink ∈ {auto, cortex, filesystem, null};
+    auto = cortex→filesystem→null fallback; cortex = error if unreachable
+    (¬silent NullSink). Multi-theme recon front-end; rag_search is single-query.
+    See agent_skill:rag.
+  json_schema:
+    type: object
+    properties:
+      label: {type: string}
+      themes:
+        type: array
+        items:
+          type: object
+          properties:
+            name: {type: string}
+            scopes: {type: array, items: {type: string}}
+            queries: {type: array, items: {type: string}}
+          required: [name, scopes, queries]
+      top_k: {type: integer}
+      durable_sink: {type: string, enum: ["auto", "cortex", "filesystem", "null"]}
+    required: [label, themes]
+  skill_uri: agent_skill:rag
+  seat_visibility: [mcp, mcp_claude]
+  mandate_safety: write
+  cache_priority: on_demand
+  introduced: 2026-06-29
+
 - canonical_name: rag_upsert_article
   domain: rag
   operation: upsert_article

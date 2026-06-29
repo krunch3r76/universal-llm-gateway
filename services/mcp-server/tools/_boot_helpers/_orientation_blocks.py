@@ -110,8 +110,10 @@ Semantic corpus search from any seat (incl. Cursor): call the **primary** `rag` 
 rag(op="search", arguments='{"query": "<natural language>", "scope": "<scope>", "limit": 20}')
 rag(op="list_scopes")   # enumerate scopes before any absence claim
 rag(op="coverage")      # per-scope indexed file counts
+rag(op="recon", arguments='{"label": "todo:<slug>", "themes": [{"name": "<theme>", "scopes": ["<scope>"], "queries": ["<q1>", "<q2>"]}]}')
 ```
-Default search is AUTO-SCOPED (LLM scope-classifier → predicted scope only), not corpus-wide. Before concluding "no prior art / not in the corpus": `list_scopes` then re-search with an explicit `scope=`. `pipeline_consult` is overflow + needs a prior `execution_id` (not ad-hoc lookup); `search_project_files` is regex/literal file search (`pattern=`)."""
+Default search is AUTO-SCOPED (LLM scope-classifier → predicted scope only), not corpus-wide. Before concluding "no prior art / not in the corpus": `list_scopes` then re-search with an explicit `scope=`. `pipeline_consult` is overflow + needs a prior `execution_id` (not ad-hoc lookup); `search_project_files` is regex/literal file search (`pattern=`).
+`recon` is the **multi-theme** front-end (recon arc / cheap-recon ladder): runs labeled per-theme scoped searches and persists a durable markdown sidecar per theme via DurableSink (`durable_sink=auto` default: cortex→filesystem→null). Returns `evidence_uris` (`cortex://notes/system/recon/{label}/{theme}.md`), `selected_backend`, `fallback_used`. `durable_sink="cortex"` errors rather than silently dropping evidence if cortex is unreachable. Use single `search` for one-off lookups; `recon` when the output must be durable evidence for a todo/skeptic gate."""
 
 
 def _render_server_primary_manifest_line() -> str:

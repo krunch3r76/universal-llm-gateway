@@ -53,6 +53,41 @@ def _reject(code: str, reason: str) -> ImplementReadyVerdict:
     return ImplementReadyVerdict(admitted=False, code=code, reason=reason)
 
 
+def _skeptic_evidence_reject(
+    *,
+    todo_id: str,
+    evidence_grounded: bool | None,
+    evidence_unresolved: list[str] | None,
+    evidence_mode: str | None,
+) -> ImplementReadyVerdict | None:
+    if evidence_grounded is not False:
+        return None
+    if evidence_mode == "stamp_missing":
+        return _reject(
+            "skeptic_evidence_stamp_missing",
+            f"{todo_id}: skeptic ratification cites an agent-bus turn that "
+            "could not be read — re-run the axis-2 skeptic pass",
+        )
+    if evidence_mode == "malformed":
+        return _reject(
+            "skeptic_evidence_malformed",
+            f"{todo_id}: skeptic FILE_EVIDENCE_PATHS contains a malformed "
+            "file-schemed entry — fix the typo and re-ratify",
+        )
+    if evidence_unresolved:
+        joined = ", ".join(evidence_unresolved)
+        return _reject(
+            "skeptic_evidence_unresolved",
+            f"{todo_id}: skeptic cited path(s) do not resolve: {joined}",
+        )
+    return _reject(
+        "skeptic_evidence_missing",
+        f"{todo_id}: skeptic reply lacks FILE_EVIDENCE_PATHS on a "
+        "file-grounding-required workflow — cite resolved artifacts or "
+        "re-run the axis-2 skeptic pass",
+    )
+
+
 def _acceptance_unpopulated_or_default(
     acs: list[str] | None,
     *,
@@ -82,6 +117,9 @@ def evaluate_implement_ready(
     entity_name: str | None = None,
     skeptic_ratified: bool = False,
     recon_waived: bool = False,
+    skeptic_evidence_grounded: bool | None = None,
+    skeptic_evidence_unresolved: list[str] | None = None,
+    skeptic_evidence_mode: str | None = None,
 ) -> ImplementReadyVerdict:
     """Deterministic implement-readiness verdict over declared todo state."""
     triage = (density_triage or "").strip() or None
@@ -199,6 +237,16 @@ def evaluate_implement_ready(
             "skeptic_ratified, current) assertion citing the skeptic/panel thread "
             "(run the axis-2 skeptic pass per cheap-recon-before-escalation).",
         )
+
+    if skeptic_ratified and not recon_waived:
+        evidence_reject = _skeptic_evidence_reject(
+            todo_id=todo_id,
+            evidence_grounded=skeptic_evidence_grounded,
+            evidence_unresolved=skeptic_evidence_unresolved,
+            evidence_mode=skeptic_evidence_mode,
+        )
+        if evidence_reject is not None:
+            return evidence_reject
 
     return ImplementReadyVerdict(
         admitted=True,

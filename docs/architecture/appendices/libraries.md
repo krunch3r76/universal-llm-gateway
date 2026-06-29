@@ -44,6 +44,22 @@ pipeline (`/overhaul` command). No runtime service dependency.
 
 ---
 
+## `libs/durable_sink`
+
+Cortex-optional durable persistence for RAG recon and session-close sidecars.
+Provides the `DurableSink` protocol and three backends — `CortexSink` (dispatches
+`recon_sidecar_write` into the cortex store), `FilesystemSink` (writes `file://`
+sidecars under a configured root), and `NullSink` (no-op) — plus
+`resolve_durable_sink(...)`, the sole cortex-availability branch. Backend is
+selected from `durable_sink` arg → `DURABLE_SINK` env → `~/.gateway/stargate.yaml`
+`durable_sink:` → `auto` (cortex → filesystem → null fallback). `auto`/`filesystem`
+degrade gracefully; explicit `cortex` raises rather than silently dropping evidence
+when cortex is unreachable. Consumed by the MCP server's `rag(op="recon")`
+(`_rag_recon.py`) and exposes `write_session_rag_query_sidecar(...)` for the
+session-close RAG-query appendix.
+
+---
+
 ## `libs/event_store`
 
 Embeddable Event Service library. Can run standalone

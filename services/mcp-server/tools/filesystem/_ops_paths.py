@@ -7,13 +7,20 @@ import shutil
 
 from mcp_events import record
 
-from ._paths import SANDBOX_ROOT, TRASH_ROOT, safe_path, trash_destination
+from ._paths import (
+    SANDBOX_ROOT,
+    TRASH_ROOT,
+    reject_template_tokens,
+    safe_path,
+    trash_destination,
+)
 
 logger = logging.getLogger(__name__)
 
 
 def move_file_impl(source: str, destination: str) -> dict[str, str]:
     """Move or rename a file within the sandbox."""
+    reject_template_tokens(destination)
     src = safe_path(source)
     dst = safe_path(destination)
     if not src.exists():
@@ -30,6 +37,7 @@ def move_file_impl(source: str, destination: str) -> dict[str, str]:
 
 def copy_file_impl(source: str, destination: str) -> dict[str, str]:
     """Copy a file within the sandbox."""
+    reject_template_tokens(destination)
     src = safe_path(source)
     dst = safe_path(destination)
     if not src.exists():

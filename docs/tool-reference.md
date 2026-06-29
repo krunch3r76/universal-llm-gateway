@@ -510,6 +510,83 @@ with grounded text in `answer` instead of raw `context`:
  "duration_s": <float>, "answer": "<grounded answer>", "retrieval": {...}}
 ```
 
+## rag_recon
+
+`rag(op="recon")` — labeled, **multi-theme** corpus recon that persists durable
+markdown sidecars. The multi-theme front-end for a recon arc (cheap-recon ladder):
+where `rag_search` is a single one-off query, `rag_recon` runs scoped searches for
+N themes, renders one sidecar per theme, and writes them through a `DurableSink` so
+the results become resolvable evidence URIs (citeable in `evidence_uris`, e.g. on a
+skeptic-ratification or implement-ready assertion).
+
+### Args
+
+| Arg | Type | Description |
+|---|---|---|
+| `label` | str | Recon label — slugified into the sidecar path. REQUIRED (e.g. `todo:<slug>`). |
+| `themes` | list[dict] | One or more theme objects. REQUIRED, non-empty. |
+| `top_k` | int | Max chunks per theme query after RRF merge (default 20). |
+| `durable_sink` | str\|None | Backend override: `auto` (default), `cortex`, `filesystem`, `null`. |
+
+Each **theme object**:
+
+| Key | Type | Description |
+|---|---|---|
+| `name` (or `theme`) | str | Theme name — slugified into the sidecar filename. REQUIRED. |
+| `scopes` | list[str] | Named RAG scopes to search (`rag_list_scopes` for valid names). REQUIRED. |
+| `queries` | list[str] | Natural-language queries run against the theme's scopes. REQUIRED. |
+
+### Durable sink selection
+
+The backend is resolved once per call (`durable_sink` arg → `DURABLE_SINK` env →
+`~/.gateway/stargate.yaml` `durable_sink:` → `auto`):
+
+- **`auto`** — probe cortex; if reachable use cortex, else fall back to filesystem
+  (if `DURABLE_SINK_FS_ROOT` / config root is set), else `null`. `fallback_used=true`
+  and a `warning` are surfaced when it degrades to null.
+- **`cortex`** — explicit; **errors** (`refusing silent NullSink`) if cortex is
+  unreachable rather than silently dropping evidence.
+- **`filesystem`** — requires a configured root (`DURABLE_SINK_FS_ROOT` env or
+  `durable_sink.filesystem_root` in `stargate.yaml`); writes `file://` sidecars.
+- **`null`** — recon runs, no sidecar is written, no evidence URI returned.
+
+### Returns
+
+```
+{"status": "ok", "label": "<label>",
+ "themes": [{"theme": "<name>", "query_count": <int>, "chunks_found": <int>,
+             "uri": "cortex://notes/system/recon/<label>/<theme>.md",
+             "sha256": "<hex>", "location": "cortex|filesystem"}],
+ "selected_backend": "cortex|filesystem|null",
+ "selection_reason": "explicit_config|auto_probe_ok|auto_probe_failed_fallback",
+ "cortex_probe_status": "ok|unreachable|not_probed",
+ "fallback_used": <bool>, "duration_s": <float>,
+ "evidence_uris": ["cortex://notes/system/recon/<label>/<theme>.md", ...]}
+```
+
+`evidence_uris` is present only when ≥1 sidecar was written. On null fallback a
+`warning` field explains the missing `cortex://` URIs. Per-theme failures carry an
+`error` key on that theme entry without aborting the other themes. Top-level
+`{"error": ...}` is returned only for input/precondition failures (empty `label`,
+empty `themes`, or `durable_sink="cortex"` while unreachable).
+
+### Example
+
+```
+rag(op="recon", arguments='{
+  "label": "todo:cortex-full-breadcrumb-revision-type",
+  "themes": [
+    {"name": "entity-get-intent",
+     "scopes": ["docs/architecture"],
+     "queries": ["how does entity_get intent=full assemble superseded rows?"]},
+    {"name": "supersede-write-path",
+     "scopes": ["docs/architecture"],
+     "queries": ["where are supersede writes stamped with metadata?"]}
+  ],
+  "durable_sink": "auto"
+}')
+```
+
 ## cortex
 
 Cortex knowledge system — entities, assertions, relationships, edges, journals.
