@@ -19,6 +19,10 @@ _REQUEST_METADATA: ContextVar[dict[str, Any]] = ContextVar(
     "mcp_request_metadata",
     default={},
 )
+_REQUEST_STRUCTURED_CAPABLE: ContextVar[bool] = ContextVar(
+    "mcp_request_structured_capable",
+    default=False,
+)
 
 
 def current_profile() -> str:
@@ -26,8 +30,18 @@ def current_profile() -> str:
     return _REQUEST_PROFILE.get()
 
 
+def current_structured_capable() -> bool:
+    """Return whether the active consumer reads structuredContent on the wire."""
+    return _REQUEST_STRUCTURED_CAPABLE.get()
+
+
 @contextmanager
-def bind_request(profile: str, **metadata: Any) -> Iterator[None]:
+def bind_request(
+    profile: str,
+    *,
+    structured_capable: bool = False,
+    **metadata: Any,
+) -> Iterator[None]:
     """Bind request profile plus stable correlation metadata for one dispatch scope."""
     token = _REQUEST_PROFILE.set(profile or "default")
     meta_token = _REQUEST_METADATA.set(
@@ -37,9 +51,11 @@ def bind_request(profile: str, **metadata: Any) -> Iterator[None]:
             if value is not None and value != ""
         }
     )
+    cap_token = _REQUEST_STRUCTURED_CAPABLE.set(bool(structured_capable))
     try:
         yield
     finally:
+        _REQUEST_STRUCTURED_CAPABLE.reset(cap_token)
         _REQUEST_METADATA.reset(meta_token)
         _REQUEST_PROFILE.reset(token)
 

@@ -254,6 +254,7 @@ tools:
     type: object
     properties:
       entity_id: {type: string}
+      intent: {type: string, enum: [full, card], default: full, description: "Post-update read-back shape. full (default) returns legacy EntityDetail echo; card returns bounded Card v0 (opt-in)."}
       name: {type: string}
       description: {type: string}
       workflow_state: {type: string}

@@ -60,6 +60,7 @@ from .deadlines import DeadlineItem, DeadlineList
 from .edges import EdgeCreate, EdgeItem, EdgeList, EdgeRetire, EdgeUpdate
 from .entities import (
     CardAssertion,
+    CardAssertionCounts,
     CardDebug,
     CardEdgeTypeCount,
     CardSection,
@@ -183,6 +184,7 @@ __all__ = [
     "EdgeUpdate",
     # entities
     "CardAssertion",
+    "CardAssertionCounts",
     "CardDebug",
     "CardEdgeTypeCount",
     "CardSection",

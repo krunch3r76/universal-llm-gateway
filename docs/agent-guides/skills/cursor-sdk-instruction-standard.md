@@ -14,7 +14,7 @@ Verification is retained as cheap defense-in-depth — the lead's independent ch
 for canonical/destructive (irreversible) writes, not a presumption that the worker misreports.
 Default: explicit, determinate, repeating instructions + a worker self-check, with lead-seat verification on irreversible writes.
 
-Every cursor-sdk dispatch turn — regardless of contract — must satisfy four disciplines.
+Every cursor-sdk dispatch turn — regardless of contract — must satisfy five disciplines (D0–D4).
 
 **Light execution:** `op=generate`, `role=cursor-sdk` invokes **Composer without IDE handoff**
 (no `cursor-implement` pickup). Prefer **`contract=implement`** when implement-ready;
@@ -22,6 +22,29 @@ narrower contracts when appropriate. Load this skill before authoring the dispat
 On `op=generate`, a `subject` arg is accepted but **ignored** (result-thread subject is
 auto-derived; response carries a `subject_ignored_on_generate` warning) — use `op=to_thread`
 to set a thread subject (friction 19803).
+
+## D0 — Default `<mcp_capabilities>` block (durable-output routing)
+
+**Operator directive (Kaywan, 2026-06-28): an explicit `<mcp_capabilities>` block is the DEFAULT on _any_ `team_dispatch` to a cursor-sdk model** — every contract (`light-bounded`, `pure-mechanical`, `implement`, `wrap`), every task class (recon, review, implement), not just consult packets.
+
+**Why it is the default, not an option.** cursor-sdk (Composer) writes deliverables into the **project checkout `tmp/`** by default — the SDK wrapper always drops a closeout receipt at `tmp/reviews/closeouts/<dispatch_id>.md`, and absent explicit routing the worker tends to co-locate its real output there too. Durable output reaches Cortex **only** when the packet names the cortex sandbox write path explicitly. Omitting the block is the root cause of the friction-19196 class (deliverable written to `tmp/reviews/` instead of the named cortex sidecar).
+
+The block MUST:
+
+- Enumerate the MCP tools the worker should use (`rag`, `fs`, `cortex`, …) with the `arguments`-shape reminder — **JSON string** for `rag` / `cortex` / `agent_bus` / `dispatch`; **typed top-level object** for `fs`.
+- Name the **exact sandbox + path** for every durable write — `fs(sandbox="cortex", op="write", path="notes/system/threads/<file>.md")` — never "an appropriate location." (Cortex paths are relative to `/data/files`, no leading slash.)
+- Instruct the worker to cite each tool call inline.
+
+```
+<mcp_capabilities>
+You have MCP tools. Use them; do not limit yourself to this packet.
+0. rag(op="search", arguments='{"query":"...","scope":"..."}')  — arguments is a JSON STRING.
+1. fs(sandbox="cortex", op="write", path="notes/system/threads/<file>.md", content="...")  — durable deliverable lands HERE, not in tmp/.
+Cite each tool call inline.
+</mcp_capabilities>
+```
+
+Validated 2026-06-29: a `light-bounded` recon (dispatch `8f54761d…`, thread 3422) with an explicit cortex-sandbox `<mcp_capabilities>` block wrote all five deliverables to `cortex:notes/system/threads/` correctly; only the automatic SDK closeout receipt landed in project `tmp/`.
 
 ## D1 — Determinate steps
 
@@ -68,6 +91,7 @@ precondition assertion in the instruction — never left to implicit assumption.
 
 ## Pre-dispatch checklist
 
+- [ ] **`<mcp_capabilities>` block present (D0)** — every cursor-sdk dispatch; names exact cortex sandbox + path for each durable write (deliverables go to Cortex, not project `tmp/`)
 - [ ] **Verify live** (implement contract) — `implement-todo` §1: `entity_get(todo:{slug})`, confirm `workflow_state ∈ {open, in_progress}` (not `done`/`superseded`/stale; the entity is canonical, boot-card/bus rows go stale)
 - [ ] All file / cortex paths named explicitly — no glob-implied, no "appropriate location"
 - [ ] Output contract stated in preamble AND repeated at the delivery step

@@ -30,6 +30,7 @@ from .entity_exhibit_lint import (
     insert_exhibit_belongs_to_relationship,
 )
 from .entity_id_norm import canonicalize_entity_id
+from .card import get_entity_card
 from .entity_read import get_entity_impl
 from .event_publisher import cortex_entity_source_changed
 from .models import (
@@ -346,6 +347,7 @@ def update_entity_impl(
     updates: dict[str, object],
     commit: bool = True,
     post_commit_emits: list[Callable[[], None]] | None = None,
+    intent: str = "full",
 ) -> dict[str, object]:
     """Update an entity in place.
 
@@ -565,6 +567,8 @@ def update_entity_impl(
         )
         return EntityDetail(**detail_row, assertions=[]).model_dump(mode="json")
 
+    if intent == "card":
+        return get_entity_card(conn, entity_id=entity_id, source="boot")
     return get_entity_impl(conn, entity_id=entity_id, source="boot")
 
 

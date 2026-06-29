@@ -16,7 +16,7 @@ _AGENT_BUS = re.compile(
     re.IGNORECASE,
 )
 _ENTITY_REF = re.compile(
-    r"^(?P<kind>todo|plan|plan_phase):(?P<rest>.+)$",
+    r"^(?P<kind>todo|plan|plan_phase|task):(?P<rest>.+)$",
     re.IGNORECASE,
 )
 
@@ -110,6 +110,8 @@ def parse_source_ref(raw: str) -> SourceRef:
             kind = SourceKind.PLAN.value
         elif kind == "todo":
             kind = SourceKind.TODO.value
+        elif kind == "task":
+            kind = SourceKind.TASK.value
         else:
             kind = entity_match.group("kind").lower()
         rest = entity_match.group("rest")
@@ -137,5 +139,5 @@ def parse_source_ref(raw: str) -> SourceRef:
     raise SourceRefError(
         code="source_ref_unparseable",
         source_ref=raw,
-        rule="must match todo:|plan:|plan_phase:|plan:{slug}/phase-N|agent-bus:|packet:",
+        rule="must match todo:|plan:|plan_phase:|task:|plan:{slug}/phase-N|agent-bus:|packet:",
     )

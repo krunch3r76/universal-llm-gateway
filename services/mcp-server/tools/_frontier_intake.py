@@ -171,3 +171,61 @@ def reject_unsupported_packet_inputs(
             field="source_ref",
         )
     return None
+
+
+# Manual-handoff alias table for claude-cursor (mirrors admission.py resolve_handoff_seat).
+# Do NOT import Stargate modules into MCP intake.
+_CLAUDE_CURSOR_SEAT_ALIASES: frozenset[str] = frozenset(
+    {"claude-cursor", "cursor", "cursor-claude"}
+)
+
+# Role shortcuts that route to claude-cursor when no explicit seat= is present.
+_CURSOR_ROLES: frozenset[str] = frozenset({"cursor-consult", "cursor-implement"})
+
+
+def require_explicit_cursor_seat_for_handoff(
+    op: str,
+    seat: str | None,
+    role: str | None,
+) -> dict[str, Any] | None:
+    """Reject op=handoff that routes to claude-cursor without explicit seat=.
+
+    Returns None (clean) or an error-envelope dict (caller returns verbatim).
+    Policy: decision:handoff-default-seat-claude-web (#19925).
+    """
+    if op != "handoff":
+        return None
+
+    seat_norm = (seat or "").strip().lower()
+    if seat_norm in _CLAUDE_CURSOR_SEAT_ALIASES:
+        return (
+            None  # explicit seat present — guard satisfied (F3 compat bridge allowed)
+        )
+
+    role_norm = (role or "").strip().lower()
+    if role_norm not in _CURSOR_ROLES:
+        return None  # role does not target claude-cursor — not our concern
+
+    if seat_norm and seat_norm not in _CURSOR_ROLES:
+        return None  # explicit non-cursor seat wins over cursor role shorthand (AC5)
+
+    return {
+        "error": {
+            "code": "handoff_claude_cursor_requires_explicit_seat",
+            "message": (
+                "op=handoff to claude-cursor requires explicit seat selection via "
+                "seat='claude-cursor' (or alias 'cursor'). "
+                "role='cursor-consult' and role='cursor-implement' route to the Cursor IDE "
+                "seat, which requires the operator to explicitly pick it "
+                "(decision:handoff-default-seat-claude-web). "
+                "Default handoffs use role='web-consult' (claude-web). "
+                "For Cursor IDE implement: pass seat='claude-cursor', contract='implement'."
+            ),
+        },
+        "field": "seat",
+        "details": {
+            "blocked_role": role_norm,
+            "required_seat": "claude-cursor",
+            "policy": "decision:handoff-default-seat-claude-web",
+        },
+    }

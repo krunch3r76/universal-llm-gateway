@@ -66,6 +66,7 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
         principal: str | None = None,
         profile: str | None = None,
         packet_text: str | None = None,
+        domain: str | None = None,
     ) -> dict[str, Any]:
         """Slim boot briefing for session start. Returns a compact briefing card
         (soft target ≤ ~8KB inline) with priority signals and a section manifest for on-demand pulls.
@@ -118,6 +119,8 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
                           scoped injection. ``views=["dispatch"]`` is a backward-compat alias.
           packet_text   — optional packet text for ``<invariants>`` skill parsing when
                           ``profile="dispatch"``.
+          domain        — optional boot axis: ``coding`` | ``life`` | ``mixed-minimal``
+                          (default when omitted). Soft-reorders card STATE.
 
         Key response fields:
           session_id             — server-minted ID; hold for entire session
@@ -137,6 +140,7 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
             principal=principal,
             profile=profile,
             packet_text=packet_text,
+            domain=domain,
         )
 
     @mcp.tool(title="Boot Inspect")

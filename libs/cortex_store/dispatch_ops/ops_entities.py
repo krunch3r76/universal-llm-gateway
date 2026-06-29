@@ -330,10 +330,22 @@ def _op_entity_update(
     entity_id: str | None = None,
     resolve_aliases: bool = True,
     raw_id: bool = False,
+    intent: str = "full",
     **kwargs: object,
 ) -> dict[str, Any]:
     if not entity_id:
         return {"error": "entity_id is required"}
+    if intent not in {"full", "card", "cluster", "impact"}:
+        return {
+            "error": f"Unknown intent {intent!r}. Supported: full, card "
+            "(cluster, impact reserved for later phases).",
+        }
+    if intent in _CARD_INTENTS_DEFERRED:
+        return {
+            "error": f"intent={intent!r} reserved but not implemented in Slice 1",
+            "supported_intents": ["full", "card"],
+            "reference": "cortex-v2.4 §6.1, §7.1, §7.3",
+        }
     updates: dict[str, object] = {
         k: v for k, v in kwargs.items() if k in _ENTITY_MUTABLE
     }
@@ -368,7 +380,10 @@ def _op_entity_update(
         except HTTPException as exc:
             return _http_error_dict(exc)
         result = _update_entity_impl(
-            conn, entity_id=canonical_id if not raw_id else entity_id, updates=updates
+            conn,
+            entity_id=canonical_id if not raw_id else entity_id,
+            updates=updates,
+            intent=intent,
         )
     if "error" not in result:
         logger.info("cortex entity_update: %s", entity_id)

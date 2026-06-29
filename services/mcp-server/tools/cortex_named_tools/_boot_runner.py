@@ -16,6 +16,7 @@ from mcp_events import record
 from universal_logging import get_logger
 
 from .._boot_helpers import render_briefing_card, render_operational_context
+from .._boot_helpers._manifest import build_auto_inject_skills_ref
 from ..filesystem._ops_text import list_files_impl as _list_files
 from ._boot_audit_dump import write_audit_dump
 from ._boot_data_fetch import build_futures_spec, extract_boot_results
@@ -34,18 +35,18 @@ _CARD_BYTE_CEILINGS = {"web": 19_000, "default": 15_500}
 logger = get_logger(__name__)
 
 
-def _web_auto_inject_skills_md(
+def _resolve_web_auto_inject_skills(
     seat_slug: str,
     *,
     inject_profile: str | None = None,
     packet_invariant_ids: tuple[str, ...] = (),
-) -> str:
-    """Slice F: registry-resolved skill bodies for web seats."""
+) -> tuple[str, list[dict[str, Any]]] | None:
+    """Registry-resolved auto-inject block for web/lead seats (out-of-band delivery)."""
     from agent_seat.body_injection import is_web_seat_slug
     from agent_seat.inject_registry import resolve_injected_bodies
 
     if not is_web_seat_slug(seat_slug):
-        return ""
+        return None
     parts = seat_slug.split("-", 1)
     platform = parts[1] if len(parts) == 2 else "web"
     resolution = resolve_injected_bodies(
@@ -64,13 +65,13 @@ def _web_auto_inject_skills_md(
     block = resolution.block_md
     injected = resolution.injected
     if not block:
-        return ""
+        return None
     normalized = block.replace("\r\n", "\n").replace("\r", "\n")
     count = len([i for i in injected if str(i.get("id") or "").strip()])
     if count and "cortex:invariant-skills-autoappend" not in block:
         digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
         block = f"\n\n<!-- cortex:invariant-skills-autoappend sha256={digest} count={count} -->{block}"
-    return block.strip()
+    return block.strip(), injected
 
 
 def _gate_only_skills_card(card_md: str | None, skills_index_ref: str | None) -> str | None:
@@ -288,6 +289,7 @@ def run_cortex_boot(
     principal: str | None = None,
     profile: str | None = None,
     packet_text: str | None = None,
+    domain: str | None = None,
 ) -> dict[str, Any]:
     """Build a Cortex boot briefing for internal callers and MCP.
 
@@ -308,6 +310,9 @@ def run_cortex_boot(
                        scoped injection. ``views=["dispatch"]`` is a backward-compat alias.
         packet_text  — optional packet front-matter for ``<invariants>`` skill parsing
                        when ``profile="dispatch"``.
+        domain       — optional boot axis: ``coding`` | ``life`` | ``mixed-minimal``
+                       (default when omitted). Soft-reorders STATE; never on
+                       CapabilityProfile.
 
     Returns a slim briefing card (~25-35KB typical) with a section manifest pointing
     to existing MCP tools for deeper pulls. Heavy data is NOT inlined — pull on demand.
@@ -322,6 +327,8 @@ def run_cortex_boot(
         views = [v for v in views if v != "dispatch"] or None
 
     from agent_seat.inject_registry import parse_packet_invariant_skill_ids
+
+    from ._boot_domain import normalize_boot_domain
 
     packet_invariant_ids = ()
     if inject_profile == "dispatch" and packet_text:
@@ -359,6 +366,7 @@ def run_cortex_boot(
         "session_limit": capability_profile.session_limit,
         "self_reflections_limit": capability_profile.self_reflections_limit,
         "session_agent_filter": None,
+        "domain": normalize_boot_domain(domain),
     }
     # Family anchor replaces the old self_entity_id (persona role entity).
     # The boot data fetch uses this to scope self-reflection assertions.
@@ -491,7 +499,9 @@ def run_cortex_boot(
         # → dispatch-route (OVERFLOW). See _orientation_blocks (thread 1167).
         family=resolved_family,
         agent=seat_slug,
+        domain=profile_dict.get("domain"),
         principal_context=extracted.get("principal_context") or None,
+        cross_domain_sentinel=extracted.get("cross_domain_sentinel"),
     )
 
     card_bytes = len(card.encode("utf-8"))
@@ -518,18 +528,23 @@ def run_cortex_boot(
         recorder=recorder,
     )
 
-    auto_inject_skills_md = _web_auto_inject_skills_md(
+    auto_inject_skills_ref: dict[str, Any] | None = None
+    auto_inject_resolution = _resolve_web_auto_inject_skills(
         seat_slug,
         inject_profile=inject_profile,
         packet_invariant_ids=packet_invariant_ids,
     )
-    if auto_inject_skills_md:
+    if auto_inject_resolution:
+        auto_inject_body, auto_inject_injected = auto_inject_resolution
+        auto_inject_skills_ref = build_auto_inject_skills_ref(
+            auto_inject_body, auto_inject_injected
+        )
         artifacts.append(
             InjectedArtifact.from_text(
                 name="auto_inject_skills",
-                mode="inline",
+                mode="ref",
                 source="resolve_injected_bodies()",
-                text=auto_inject_skills_md,
+                text=auto_inject_body,
             )
         )
 
@@ -586,8 +601,8 @@ def run_cortex_boot(
         "injected_artifacts": serialize_manifest(artifacts),
         "audit_dump_path": audit_dump_path,
     }
-    if auto_inject_skills_md:
-        result["auto_inject_skills_md"] = auto_inject_skills_md
+    if auto_inject_skills_ref:
+        result["auto_inject_skills_ref"] = auto_inject_skills_ref
 
     if skills_index_ref:
         result["skills_index_ref"] = skills_index_ref
@@ -596,9 +611,9 @@ def run_cortex_boot(
     # briefing card's Agent Skills index. Re-inlining its full ~31KB here was a
     # primary driver of the 128KB connector store-and-retrieve overflow
     # (thread 2523 / decision:boot-orientation-card-vs-fetch). Consumers fetch via
-    # skills_index_ref. NOTE: auto_inject_skills_md is deliberately retained above
-    # — it is the web prompt-append delivery channel (Slice F), not a redundant
-    # copy; dropping it would strip seat_preloaded orientation.
+    # skills_index_ref. auto_inject_skills bodies are likewise ref-only in the
+    # structured result (auto_inject_skills_ref); the web proxy delivers them
+    # out-of-band via mcp_executor._append_web_invariant_bodies.
     result["byte_ledger"] = {
         a.name: a.bytes for a in artifacts if getattr(a, "bytes", -1) >= 0
     }

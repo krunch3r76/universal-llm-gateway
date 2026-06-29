@@ -33,6 +33,7 @@ from .confidence_field import agent_skill_is_discoverable
 from .db import json_decode, query
 from .models import (
     CardAssertion,
+    CardAssertionCounts,
     CardDebug,
     CardEdgeTypeCount,
     EntityCard,
@@ -310,6 +311,10 @@ def get_entity_card(
         summary_row=adapter.summary_row(dict(e)),
         status_summary=adapter.status_summary(dict(e)),
         top_k_assertions=top_k_for_card,
+        assertion_counts=CardAssertionCounts(
+            active=active_n,
+            superseded=superseded_n,
+        ),
         edge_type_summary=[
             CardEdgeTypeCount(type_id=str(r["type_id"]), count=int(r["n"]))
             for r in et_rows

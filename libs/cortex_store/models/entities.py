@@ -159,6 +159,13 @@ class CardDebug(BaseModel):
     prospective_summaries: list[str | None] | None = None
 
 
+class CardAssertionCounts(BaseModel):
+    """First-class active/superseded assertion totals on Card v0."""
+
+    active: int = 0
+    superseded: int = 0
+
+
 class EntityCard(BaseModel):
     """Card v0 payload (v2.4 §6.3)."""
 
@@ -169,6 +176,9 @@ class EntityCard(BaseModel):
     summary_row: str | None = None
     status_summary: dict[str, Any] | None = None
     top_k_assertions: list[CardAssertion] = Field(default_factory=list)
+    assertion_counts: CardAssertionCounts = Field(
+        default_factory=CardAssertionCounts
+    )
     edge_type_summary: list[CardEdgeTypeCount] = Field(default_factory=list)
     archives_to_count: int = 0
     section_manifest: list[CardSection] = Field(default_factory=list)

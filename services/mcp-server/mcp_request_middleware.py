@@ -191,6 +191,9 @@ class McpRequestEventsMiddleware:
         # Mcp-Session-Id: client-side session token (stable across tool calls
         # within one session even in stateless_http=True mode).
         mcp_session_id = (request.headers.get("mcp-session-id", "") or "").strip()
+        structured_capable = (
+            request.headers.get("x-mcp-structured-capable", "") or ""
+        ).strip().lower() in {"1", "true", "yes"}
         t0 = monotonic_now()
         mcp_method = ""
         tool_name = ""
@@ -280,6 +283,7 @@ class McpRequestEventsMiddleware:
 
         with bind_request(
             profile,
+            structured_capable=structured_capable,
             request_profile=profile,
             client_ip=client_ip,
             auth_mode=auth_mode,

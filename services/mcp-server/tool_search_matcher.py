@@ -332,6 +332,24 @@ def _all_manifest_summary(
     return [{"name": e.name, "purpose": e.purpose} for e in manifest.values()]
 
 
+def server_primary_tool_names() -> tuple[str, ...]:
+    """Sorted server-primary tool names (same source as overflow-vs-primary hints)."""
+    from _derive import get_claude_manifest  # noqa: PLC0415
+
+    return tuple(sorted(e["tool_name"] for e in get_claude_manifest()))
+
+
+def server_primary_empty_search_note() -> str:
+    """Caveat for empty/miss tool_search paths — overflow index only."""
+    names = ", ".join(server_primary_tool_names())
+    return (
+        "This index covers OVERFLOW tools only. Server-primary tools "
+        f"({names}) are advertised via tools/list and are NOT searchable here. "
+        "Empty/no-match ≠ tool absent; if you sought a primary, call it directly "
+        "by name (deferred primaries load with one connector hop)."
+    )
+
+
 def primary_tool_hint_for_search(
     query: str, results: list[ManifestEntry]
 ) -> str | None:

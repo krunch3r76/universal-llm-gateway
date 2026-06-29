@@ -37,6 +37,17 @@ from agent_seat.inject_channels import ORIENTATION_BLOCK_SKILL_MAP
 # (_PRIMARY_TOOLS / tools/list) ≠ connector-bound callable set on claude-web.
 # Dispatch shapes below apply only to tools bound THIS session — probe first.
 
+# inject-channel block key: gates-strip
+_GATES_STRIP = """\
+## GATES — fire BEFORE any tool call
+1. **MCP binding** — server-primary ≠ connector-bound callable set. Call primaries **by name first**; empty server `tool_search` ≠ absent. ¬ route primary names through `dispatch`.
+2. **Consult routing** — on ANY consult / review / handoff / dispatch outside this seat: `fs(cortex, agent-skills/consult-routing.md)` BEFORE choosing transport (mandatory preflight for handoff packets)."""
+
+_GATES_CAPABILITY_VERIFY_LINE = (
+    "3. **Capability verify (web)** — before ANY \"this seat cannot run Y\" claim: "
+    "`tool_search(\"Y\")` then `quality_gate`; lead seats close-verify on-seat."
+)
+
 # inject-channel block key: mcp-binding-block
 _MCP_BINDING_LIVENESS_BLOCK = """\
 ## MCP binding — connector-bound callable set (live probe required)
@@ -168,18 +179,22 @@ def _session_close_orientation_for_agent(agent: str | None) -> str | None:
 # This boot block is the card-level reminder; the full protocol body auto-injects
 # via `agent_skill:model-tier-awareness-web` (UNIVERSAL/web, MUST_INLINE).
 # inject-channel block key: tier-selection-block
-_TIER_SELECTION_BLOCK = """\
-## Model tier — declare your config; fit-check every session
-No reliable runtime self-identifier for your active model/tier → the mechanism is operator-in-the-middle. Config is a 3-axis tuple: **family × effort × thinking** (context is a fixed per-family property on web, not a knob).
-When the operator prefixes a request with identity (`you are running {family} {effort} thinking={on|off}`): emit the **tier-check verdict** BEFORE other work — SUITABLE ⇒ proceed same turn; NOT SUITABLE ⇒ halt and wait. Absent a declared identity: surface a one-line non-blocking advisory only when a task-class trigger fires (cross-agent protocol, multi-subsystem review, schema/vocab design, adversarial work, 2 consecutive failures).
-**Mid-session pivot**: on a task-class pivot, DEFAULT to dispatching the sub-task OUT (`team_dispatch`) to hold context + stay lean; switch the resident tier only when the work is inseparable from the live thread. Picking up an agent-bus thread from a `team_dispatch`: the executor is pre-specified — accept it on turn 1.
-Full protocol: `agent_skill:model-tier-awareness-web` auto-injects on web boot (`auto_inject_skills_md` / `seat_preloaded`). Derived home — edit `agent-skills/model-tier-awareness-web.md` first."""
+_TIER_SELECTION_POINTER = """\
+## Model tier — full protocol auto-injects
+`agent_skill:model-tier-awareness-web` auto-injects on web boot (INJECT_REGISTRY / seat_preloaded). When the operator declares model identity or a task-class trigger fires, follow the **auto-injected** full protocol — do NOT re-derive tier rules from this pointer. Derived home: `agent-skills/model-tier-awareness-web.md`."""
 
 
 def _tier_selection_orientation_for_agent(agent: str | None) -> str | None:
     if agent and agent.endswith("-web"):
-        return f"\n{_TIER_SELECTION_BLOCK}"
+        return f"\n{_TIER_SELECTION_POINTER}"
     return None
+
+
+def _render_gates_strip(agent: str | None) -> str:
+    body = _GATES_STRIP
+    if agent and agent.endswith("-web"):
+        body = f"{body}\n{_GATES_CAPABILITY_VERIFY_LINE}"
+    return f"\n{body}"
 
 
 # inject-channel block key: capability-verify-block
@@ -212,6 +227,7 @@ Full register + anti-patterns (derived home — edit agent-skills/operator-postu
 def render_orientation_blocks(
     family: str | None = None,
     agent: str | None = None,
+    domain: str | None = None,
 ) -> list[str]:
     """Return the capability-axis + liveness orientation blocks as card parts.
 
@@ -222,6 +238,9 @@ def render_orientation_blocks(
     Default (``family is None``) renders the same form, matching the default
     ``(claude, cursor)`` seat.
 
+    ``domain`` soft-reorders blocks (coding | life | mixed-minimal); bodies are
+    never hard-suppressed except model-tier (pointer-only on web).
+
     Emitted above the skills list by ``render_briefing_card()``. Each element
     carries a leading newline so the card's ``"\\n".join(parts)`` produces a
     blank-line separator consistent with the other sections.
@@ -229,7 +248,8 @@ def render_orientation_blocks(
     session_close_block = _session_close_orientation_for_agent(agent)
     tier_selection_block = _tier_selection_orientation_for_agent(agent)
     capability_verify_block = _seat_capability_verify_orientation_for_agent(agent)
-    blocks = [
+    domain_key = (domain or "mixed-minimal").strip().lower()
+    core_blocks = [
         f"\n{_OPERATOR_POSTURE_BLOCK}",
         f"\n{_MCP_BINDING_LIVENESS_BLOCK}",
         _render_server_primary_manifest_line(),
@@ -239,8 +259,16 @@ def render_orientation_blocks(
         f"\n{_LIVENESS_BLOCK}",
         f"\n{_ENTITY_HIERARCHY_BLOCK}",
     ]
+    if domain_key == "coding":
+        order = [1, 3, 4, 0, 2, 5, 6, 7]
+    elif domain_key == "life":
+        order = [0, 4, 1, 2, 3, 5, 6, 7]
+    else:
+        order = list(range(len(core_blocks)))
+    blocks = [_render_gates_strip(agent)] + [core_blocks[i] for i in order]
     if session_close_block:
-        blocks.insert(3, session_close_block)
+        insert_at = 4 if domain_key == "life" else 3
+        blocks.insert(insert_at, session_close_block)
     if tier_selection_block:
         blocks.insert(1, tier_selection_block)
     if capability_verify_block:

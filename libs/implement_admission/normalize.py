@@ -50,6 +50,15 @@ def normalize(
 ) -> ImplementSpec:
     """Parse, resolve (read-only), derive routing, and return ImplementSpec."""
     ref = parse_source_ref(raw_source_ref)
+
+    # task: is provenance-only — it is not a materialisable dispatch source
+    if ref.source_kind == SourceKind.TASK.value:
+        raise SourceRefError(
+            code="source_ref_unparseable",
+            source_ref=raw_source_ref,
+            rule="task: refs are provenance-only; dispatch requires todo:|plan:|plan_phase:|packet:|agent-bus:",
+        )
+
     now = datetime.now(UTC)
     route_kwargs = {
         "contract": contract,
@@ -413,6 +422,9 @@ def _adapter_for_kind(kind: str) -> CloseoutAdapterKind:
         SourceKind.PLAN_PHASE.value: CloseoutAdapterKind.PLAN_PHASE,
         SourceKind.PACKET.value: CloseoutAdapterKind.PACKET,
         SourceKind.AGENT_BUS.value: CloseoutAdapterKind.AGENT_BUS,
+        # SourceKind.TASK is deliberately absent: task: refs are provenance-only
+        # and are rejected by the normalize() guard before this mapping is reached.
+        # Do not add a TASK → CloseoutAdapterKind entry here.
     }
     return mapping.get(kind, CloseoutAdapterKind.MIXED)
 

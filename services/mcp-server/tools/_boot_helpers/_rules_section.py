@@ -51,13 +51,7 @@ def _append_rule_index(
             rule.get("trigger_short") or rule.get("description_first_sentence") or ""
         ).strip()
         trigger_part = f" — {trigger}" if trigger else ""
-        meta_bits = [
-            b
-            for b in (rule.get("source_uri"), rule.get("digest"))
-            if isinstance(b, str) and b.strip()
-        ]
-        meta_part = f" ({' · '.join(meta_bits)})" if meta_bits else ""
-        lines.append(f"- **`{slug}`**{trigger_part}{meta_part}")
+        lines.append(f"- **`{slug}`**{trigger_part}")
 
 
 def render_rules_section(
@@ -75,9 +69,9 @@ def render_rules_section(
     lines: list[str] = [
         f"\n## Agent Rules ({len(rules)} on this seat — manifest only)",
         (
-            "> Seat-filtered conduct/rule layer. Bodies pull-on-demand: "
-            "`GET /skills/body?id=<entity_id>&expected_digest=<digest>` "
-            "(or fs read the source_uri). Ranked by current session signals."
+            "> Seat-filtered conduct/rule layer. Bodies pull-on-demand via "
+            "`GET /skills/body?id=<entity_id>` or fs read of source_uri. "
+            "Ranked by current session signals."
         ),
     ]
     ranked = sorted(

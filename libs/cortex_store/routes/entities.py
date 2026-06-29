@@ -256,17 +256,38 @@ def get_entity(
         )
 
 
-@router.patch("/{entity_id}", response_model=EntityDetail)
-def update_entity(entity_id: str, body: EntityUpdate) -> EntityDetail:
+@router.patch("/{entity_id}", response_model=None)
+def update_entity(
+    entity_id: str,
+    body: EntityUpdate,
+    intent: EntityIntent = Query(
+        "full",
+        description=(
+            "Post-update read-back shape. `full` (default) returns the legacy "
+            "EntityDetail echo. `card` returns bounded Card v0 (opt-in)."
+        ),
+    ),
+) -> dict[str, object]:
     """Update mutable fields on an entity.
 
     Uses ``model_fields_set`` so omitted keys are untouched while explicitly
     sending ``null`` clears the field (sets it to SQL NULL).
     """
+    if intent in CARD_INTENTS_DEFERRED:
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail={
+                "error": f"intent={intent!r} reserved but not implemented yet",
+                "supported_intents": ["full", "card"],
+                "reference": "cortex-v2.4 §6.1, §7.1, §7.3",
+            },
+        )
     updates = {field: getattr(body, field) for field in body.model_fields_set}
     with cortex_conn() as conn:
-        result = update_entity_impl(conn, entity_id=entity_id, updates=updates)
-    return EntityDetail(**result)
+        result = update_entity_impl(
+            conn, entity_id=entity_id, updates=updates, intent=intent
+        )
+    return result
 
 
 @router.post("/merge")

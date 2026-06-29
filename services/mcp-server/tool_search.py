@@ -49,6 +49,7 @@ from tool_search_matcher import (
     _entry_to_response,
     primary_tool_hint_for_search,
     search_manifest,
+    server_primary_empty_search_note,
 )
 
 PRIMARY_TOOLS_FROZEN: frozenset[str] = frozenset(
@@ -58,12 +59,66 @@ PRIMARY_TOOLS_FROZEN: frozenset[str] = frozenset(
 _MANIFEST: dict[str, ManifestEntry] = {}
 
 
+def execute_tool_search(query: str, limit: int = 5) -> dict[str, Any]:
+    """Core tool_search response builder (uses module ``_MANIFEST`` cache)."""
+    record("mcp.tool.search.called", query=query, limit=limit)
+    if not query or not query.strip():
+        record("mcp.tool.search.empty")
+        primary_note = server_primary_empty_search_note()
+        return {
+            "query": query,
+            "results": [],
+            "total_matches": 0,
+            "available_tools_summary": _all_manifest_summary(_MANIFEST),
+            "server_primary_note": primary_note,
+            "_next": (
+                "Empty query. See available_tools_summary for overflow tools; "
+                "pass keywords matching the operation you want. "
+                f"{primary_note}"
+            ),
+        }
+    results = search_manifest(_MANIFEST, query, limit=limit)
+    if not results:
+        record("mcp.tool.search.miss", query=query)
+        primary_note = server_primary_empty_search_note()
+        return {
+            "query": query,
+            "results": [],
+            "total_matches": 0,
+            "available_tools_summary": _all_manifest_summary(_MANIFEST),
+            "server_primary_note": primary_note,
+            "_next": (
+                "No overflow matches. See available_tools_summary above; refine "
+                f"query keywords. {primary_note}"
+            ),
+        }
+    primary_hint = primary_tool_hint_for_search(query, results)
+    payload: dict[str, Any] = {
+        "query": query,
+        "results": [_entry_to_response(e) for e in results],
+        "total_matches": len(results),
+    }
+    if primary_hint:
+        payload["primary_tool_hint"] = primary_hint
+        payload["_next"] = (
+            "Use primary_tool_hint — call the named primary tool directly; "
+            "overflow dispatch templates below are secondary."
+        )
+    else:
+        payload["_next"] = (
+            "Call dispatch with the template — do not re-search unless "
+            "the result is clearly wrong."
+        )
+    return payload
+
+
 __all__ = [
     "ManifestEntry",
     "PRIMARY_TOOLS_FROZEN",
     "build_manifest",
     "build_manifest_from_metadata",
     "capture_overflow_metadata",
+    "execute_tool_search",
     "register_tool_search_tool",
     "search_manifest",
 ]
@@ -106,47 +161,4 @@ def register_tool_search_tool(
           tool_search(query="raw sql")
           tool_search(query="query events")
         """
-        record("mcp.tool.search.called", query=query, limit=limit)
-        if not query or not query.strip():
-            record("mcp.tool.search.empty")
-            return {
-                "query": query,
-                "results": [],
-                "total_matches": 0,
-                "available_tools_summary": _all_manifest_summary(_MANIFEST),
-                "_next": (
-                    "Empty query. See available_tools_summary for the full "
-                    "list; pass keywords matching the operation you want."
-                ),
-            }
-        results = search_manifest(_MANIFEST, query, limit=limit)
-        if not results:
-            record("mcp.tool.search.miss", query=query)
-            return {
-                "query": query,
-                "results": [],
-                "total_matches": 0,
-                "available_tools_summary": _all_manifest_summary(_MANIFEST),
-                "_next": (
-                    "No matches. See available_tools_summary above; refine "
-                    "query keywords."
-                ),
-            }
-        primary_hint = primary_tool_hint_for_search(query, results)
-        payload: dict[str, Any] = {
-            "query": query,
-            "results": [_entry_to_response(e) for e in results],
-            "total_matches": len(results),
-        }
-        if primary_hint:
-            payload["primary_tool_hint"] = primary_hint
-            payload["_next"] = (
-                "Use primary_tool_hint — call the named primary tool directly; "
-                "overflow dispatch templates below are secondary."
-            )
-        else:
-            payload["_next"] = (
-                "Call dispatch with the template — do not re-search unless "
-                "the result is clearly wrong."
-            )
-        return payload
+        return execute_tool_search(query, limit=limit)

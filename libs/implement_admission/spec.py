@@ -17,6 +17,7 @@ class SourceKind(StrEnum):
     PLAN_PHASE = "plan_phase"
     PACKET = "packet"
     AGENT_BUS = "agent-bus"
+    TASK = "task"  # provenance-only; non-gating; not a materialisable dispatch source
 
 
 class ReadinessState(StrEnum):

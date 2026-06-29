@@ -45,6 +45,7 @@ from ._frontier_intake import (
     normalize_dispatch_model,
     reject_unsupported_packet_inputs,
     require_dispatch_thread_id,
+    require_explicit_cursor_seat_for_handoff,
     validate_wrap_inputs,
 )
 
@@ -444,6 +445,11 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                         ),
                     }
                 }
+            _cursor_seat_err = require_explicit_cursor_seat_for_handoff(
+                op=op, seat=seat, role=role
+            )
+            if _cursor_seat_err is not None:
+                return _cursor_seat_err
             if model is not None:
                 return {
                     "error": {

@@ -30,7 +30,7 @@ from typing import Any, Literal
 
 from mcp_events import record
 
-InjectionMode = Literal["inline", "written_file", "manifest_only", "auto_postfile"]
+InjectionMode = Literal["inline", "written_file", "manifest_only", "auto_postfile", "ref"]
 
 # Sentinel returned by _byte_count when JSON serialization fails. Distinct
 # from 0 (which legitimately means "empty result").

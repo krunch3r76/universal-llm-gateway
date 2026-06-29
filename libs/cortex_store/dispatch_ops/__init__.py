@@ -113,6 +113,7 @@ _OP_SPECS: dict[str, str] = {
     "rj_consolidate": "ops_reflective:_op_rj_consolidate",
     "render_subgraph": "ops_subgraph:_op_render_subgraph",
     "walk_subgraph": "ops_subgraph:_op_walk_subgraph",
+    "prose_fact_scan": "ops_prose_fact_scan:_op_prose_fact_scan",
 }
 
 

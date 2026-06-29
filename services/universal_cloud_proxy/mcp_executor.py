@@ -317,6 +317,9 @@ class McpToolExecutor:
                 resp.raise_for_status()
                 body = _parse_sse_json(resp.text)
                 result = body.get("result", {})
+                structured = result.get("structuredContent")
+                if isinstance(structured, dict):
+                    return json.dumps(structured)
                 content_blocks = result.get("content", [])
                 parts = [
                     str(b.get("text", ""))
@@ -454,6 +457,7 @@ class McpToolExecutor:
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
+            "X-MCP-Structured-Capable": "1",
         }
         if self._auth_token:
             headers["Authorization"] = f"Bearer {self._auth_token}"

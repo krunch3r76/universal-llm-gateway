@@ -29,7 +29,11 @@ from fastmcp.tools.tool import ToolResult
 from markdown_sections import SectionError
 from markdown_sections import list_sections as md_list_sections
 from mcp_events import record
-from request_profile import current_profile, current_request_metadata
+from request_profile import (
+    current_profile,
+    current_request_metadata,
+    current_structured_capable,
+)
 from tool_access import CURSOR_SAFE_PROFILE
 
 if TYPE_CHECKING:
@@ -63,6 +67,14 @@ _DISABLED: bool = os.getenv("MCP_RESPONSE_SIZE_GUARD_DISABLE", "").strip().lower
 _CONTENT_LEAN_TOOLS: frozenset[str] = frozenset({"cortex", "agent_bus", "fs", "rag"})
 _CONTENT_LEAN_FLOOR_BYTES: int = int(
     os.getenv("MCP_CONTENT_LEAN_FLOOR_BYTES", str(2 * 1024))
+)
+_MIRROR_PLACEHOLDER: str = '{"_mirror":"suppressed","read":"structuredContent"}'
+_MIRROR_SUPPRESS_TOOLS: frozenset[str] = frozenset(
+    t.strip()
+    for t in os.getenv("MCP_MIRROR_SUPPRESS_TOOLS", "cortex,agent_bus,fs,rag").split(
+        ","
+    )
+    if t.strip()
 )
 
 
@@ -900,6 +912,31 @@ def _lean_content(result: ToolResult, *, tool_name: str) -> ToolResult:
         old_bytes = len(text.encode("utf-8"))
         if old_bytes <= _CONTENT_LEAN_FLOOR_BYTES:
             return result
+        if tool_name in _MIRROR_SUPPRESS_TOOLS and current_structured_capable():
+            from mcp.types import TextContent
+
+            candidate = result.model_copy(
+                update={
+                    "content": [TextContent(type="text", text=_MIRROR_PLACEHOLDER)]
+                }
+            )
+            threshold = _threshold_for_profile()
+            target = (
+                _reasoning_target_bytes(threshold)
+                if tool_name in _SEMANTIC_GUARD_TOOLS
+                else threshold
+            )
+            pre_bytes = _measure_result(result)
+            cand_bytes = _measure_result(candidate)
+            if cand_bytes < target and cand_bytes < pre_bytes:
+                record(
+                    "mcp.response.mirror_suppressed",
+                    tool=tool_name,
+                    old_bytes=old_bytes,
+                    new_bytes=len(_MIRROR_PLACEHOLDER.encode("utf-8")),
+                    wire_bytes=cand_bytes,
+                )
+                return candidate
         parsed = json.loads(text)
         candidate = json.dumps(parsed, ensure_ascii=False, separators=(",", ":"))
         new_bytes = len(candidate.encode("utf-8"))

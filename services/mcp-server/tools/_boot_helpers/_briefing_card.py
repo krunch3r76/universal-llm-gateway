@@ -114,6 +114,8 @@ def render_briefing_card(
     principal_context: dict[str, Any] | None = None,
     family: str | None = None,
     agent: str | None = None,
+    domain: str | None = None,
+    cross_domain_sentinel: str | None = None,
 ) -> tuple[str, list[dict[str, Any]]]:
     """Render a compact briefing card and section manifest.
 
@@ -124,8 +126,8 @@ def render_briefing_card(
 
     Per-seat delivered-card byte ceilings are enforced by the caller
     (_boot_runner: on-card breach line + mcp.cortex.boot.card.overbudget
-    event); a per-block byte ledger lands in every boot audit dump. Content
-    that is session-stable, reference-only, or recoverable on demand belongs
+    event); per-block byte ledger is audit-dump only. Content that is
+    session-stable, reference-only, or recoverable on demand belongs
     in the manifest or a fetchable skill/doc, not inline.
     """
     now = datetime.now(UTC)
@@ -215,7 +217,7 @@ def render_briefing_card(
     # ABOVE the skills list (A2). Source: _orientation_blocks (durable home, 2a).
     # Surface-aware: grok seats get the flat direct-call form; claude/gpt/gemini
     # get the dispatch-route (OVERFLOW) form (thread 1167, 2026-06-01).
-    parts.extend(render_orientation_blocks(family=family, agent=agent))
+    parts.extend(render_orientation_blocks(family=family, agent=agent, domain=domain))
 
     # Arc digest — been → are → going (directive 3 / assertion 13717). Absorbs
     # the former Last Session + Continuity + Open arcs + Recent Work blocks;
@@ -369,6 +371,8 @@ def render_briefing_card(
                 f"- *…{todo_total - 5} more — "
                 "`cortex(tool='todo_candidates', arguments='{\"query\": \"<intent>\"}')`*"
             )
+        if cross_domain_sentinel:
+            parts.append(f"- *{cross_domain_sentinel}*")
 
     if recent_mentions:
         parts.append(

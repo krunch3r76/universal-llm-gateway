@@ -256,13 +256,13 @@ agent_bus(tool="wait", arguments='{"thread": "<thread_id>", "after_turn": 1,
   "wait_seconds": 60, "completion": "first_reply_from", "from_agent": "claude-web"}')
 
 # Handoff mode — dedicated Cursor thread (e.g. Opus); attend in IDE — no web push
-team_dispatch(op="handoff", role="cursor-consult",
+team_dispatch(op="handoff", seat="claude-cursor",
               packet_path="universal-llm-gateway/tmp/reviews/<task>-cursor-packet.md",
               subject="<Task> handoff — <subject>")
 # → {to_agent: "claude-cursor", push_reminder mentions Cursor / agent-bus}
 
 # Bound implement (→ Cursor) — open IDE thread; PREFER source_ref (Stargate materializes the packet)
-team_dispatch(op="handoff", role="cursor-implement",
+team_dispatch(op="handoff", seat="claude-cursor", contract="implement",
               source_ref="todo:<slug>",   # primary; Stargate normalize→materialize from the todo spec
               subject="Implement <task>")
 # → {to_agent: "claude-cursor", handoff_contract: "implement", push_reminder mentions Cursor}

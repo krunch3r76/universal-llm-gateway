@@ -150,9 +150,13 @@ def build_futures_spec(
     # projection (id, title, priority, domain) instead of the full description /
     # source_uri payload that the renderer drops.
     todo_qs_parts: dict[str, Any] = {"limit": 15, "compact": "true"}
-    _seat_parts = agent.split("-", 1)
-    if len(_seat_parts) == 2 and _seat_parts[1] == "web":
-        todo_qs_parts["domain_exclude"] = "infra,rag,pipeline,mcp,model_id"
+    from ._boot_domain import extend_todo_fetch_params, normalize_boot_domain
+
+    extend_todo_fetch_params(
+        agent,
+        todo_qs_parts,
+        domain=normalize_boot_domain(profile.get("domain")),
+    )
     # read-only: fetch todo index for briefing card prioritization
     futures_spec["todos"] = (
         wrapped_cx,
@@ -257,6 +261,9 @@ def extract_boot_results(
 ) -> dict[str, Any]:
     """Unpack the raw parallel-fetch results into typed lists."""
     from .._boot_helpers import filter_stale_open_items
+    from ._boot_domain import apply_domain_todo_state, normalize_boot_domain
+
+    boot_domain = normalize_boot_domain(profile.get("domain"))
 
     sessions: list[dict[str, Any]] = safe_list(raw["sessions"])
     deadlines: list[dict[str, Any]] = safe_list(raw.get("deadlines", []))
@@ -310,13 +317,12 @@ def extract_boot_results(
         else []
     )
 
-    # Web seats (claude-web, grok-web) get a domain-filtered todo list —
-    # operator-facing role; infra/pipeline noise is irrelevant.
-    _agent_parts = agent.split("-", 1)
-    _agent_platform = _agent_parts[1] if len(_agent_parts) == 2 else ""
-    if _agent_platform == "web":
-        _web_domain_exclude = {"infra", "rag", "pipeline", "mcp", "model_id"}
-        todos = [t for t in todos if t.get("domain") not in _web_domain_exclude]
+    todos, cross_domain_sentinel = apply_domain_todo_state(
+        todos,
+        domain=boot_domain,
+        agent=agent,
+        deadlines=deadlines,
+    )
 
     temporal_raw = raw.get("temporal", {})
     temporal_active: list[dict[str, Any]] = safe_list(
@@ -388,4 +394,6 @@ def extract_boot_results(
         "audit_counters": audit_counters,
         "async_dispatches": async_dispatches,
         "principal_context": principal_context,
+        "cross_domain_sentinel": cross_domain_sentinel,
+        "boot_domain": boot_domain,
     }

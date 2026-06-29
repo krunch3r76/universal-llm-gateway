@@ -109,6 +109,25 @@ def resolve_section(text: str, section_path: str) -> Section:
             f"Multiple sections match path {section_path!r}: "
             + ", ".join(repr(s.path) for s in exact)
         )
+    # Strategy 1.5: display-path comparison (handles callers passing unescaped full paths)
+    display_lookup = normalized.replace("\\/", "/")
+    if "/" in display_lookup:
+        first_seg = display_lookup.split("/", 1)[0]
+        if any(s.heading == first_seg for s in sections if s.level > 0):
+            display_matches = [
+                s
+                for s in sections
+                if s.path.replace("\\/", "/") == display_lookup
+                or s.path.replace("\\/", "/").endswith(f"/{display_lookup}")
+            ]
+            if len(display_matches) == 1:
+                return display_matches[0]
+            if len(display_matches) > 1:
+                candidates = ", ".join(repr(s.path) for s in display_matches)
+                raise SectionError(
+                    f"Ambiguous section — {len(display_matches)} sections match display path"
+                    f" {display_lookup!r}: {candidates}"
+                )
     # Heading-name match against the UNescaped heading text. Attempted
     # unconditionally (not gated on absence of "/") so a caller may pass the
     # natural heading verbatim — including one that contains a literal slash

@@ -2,7 +2,54 @@
 
 from __future__ import annotations
 
+import hashlib
 from typing import Any
+
+
+def build_auto_inject_skills_ref(
+    body_md: str,
+    injected: list[dict[str, Any]],
+    *,
+    delivery: str = "web_system_prompt_append",
+    ref: str = "mcp_executor._append_web_invariant_bodies",
+) -> dict[str, Any]:
+    """Compact ref manifest for web/lead auto-inject (body delivered out-of-band)."""
+    normalized = body_md.replace("\r\n", "\n").replace("\r", "\n").strip()
+    encoded = normalized.encode("utf-8")
+    slugs: list[str] = []
+    for item in injected:
+        entity_id = str(item.get("id") or "").strip()
+        if not entity_id:
+            continue
+        slugs.append(entity_id.split(":", 1)[-1] if ":" in entity_id else entity_id)
+    return {
+        "inline": False,
+        "byte_count": len(encoded),
+        "sha256": hashlib.sha256(encoded).hexdigest(),
+        "skills": slugs,
+        "delivery": delivery,
+        "ref": ref,
+    }
+
+
+def _sparse_manifest_keep(row: dict[str, Any]) -> bool:
+    """Omit manifest rows whose numeric fields are all zero (P4 sparse JSON)."""
+    if row.get("items") == []:
+        return False
+    numeric_keys = (
+        "count",
+        "unread",
+        "plan_phases",
+        "in_flight_todos",
+        "open_arcs",
+        "criticals",
+        "warnings",
+        "infos",
+    )
+    present = [row[k] for k in numeric_keys if k in row]
+    if present and all(int(v or 0) == 0 for v in present):
+        return False
+    return True
 
 
 def build_manifest(
@@ -197,4 +244,4 @@ def build_manifest(
             }
         )
 
-    return manifest
+    return [row for row in manifest if _sparse_manifest_keep(row)]
