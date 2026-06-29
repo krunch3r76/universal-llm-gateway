@@ -1,10 +1,12 @@
 # Universal LLM Gateway
 
-Run models on your own hardware. Nothing phones home, nothing leaks out. Models sit in network-isolated containers (`network_mode: "none"`), there's one client-facing port (`:9999`), and the whole stack is structurally air-gapped by default.
+> **Active development — not ready for public use.** This repository is under major, daily overhauls as scope expands into frontier agent capabilities (multi-agent coordination, belief revision, MCP tool surfaces, and cloud-augmented pipelines). APIs, docs, and layout change frequently. Public release is the goal; today this is a working research-and-production codebase, not a polished product.
 
-That's the starting point — a private, self-hosted gateway to local models and pipelines.
+Run models on your own hardware so **intellectual property, proprietary data, client materials, and other protected information stay on infrastructure you control**. Inference runs in **network-isolated sandboxes** (`network_mode: "none"`) with a single audited client path (`:9999`) — the same defense-in-depth pattern used when AI workloads touch confidential or regulated data: models get compute, not unrestricted network or filesystem access. Your corpora, session state, and operational context remain local unless you deliberately route specific requests elsewhere.
 
-When local isn't enough, flip on the cloud proxy. Now your pipelines can reach out to cloud models for the heavy lifting while everything else stays on your machine. The proxy is the single path to the internet. Kill it and you're air-gapped again.
+That's the starting point — a self-hosted gateway for teams that need **serious information security** alongside capable local and cloud-augmented inference.
+
+When local isn't enough, enable the cloud proxy. Pipelines can use cloud models for heavier reasoning while your corpora, Cortex graph, and operational context stay on your machine. The proxy is the only outbound path; disable it to restore full on-prem isolation.
 
 Take it further: bring in frontier models through MCP and they can drive your local pipelines, query your RAG corpora, use your tools — all grounded in Cortex, a shared substrate where humans and AI agents build on each other's work across sessions.
 
@@ -49,9 +51,9 @@ Client → Master Stargate:9999 (sole client-facing endpoint)
          └─ UDS → Cortex API, RAG, Agent Bus, Event Service (cognitive services)
 ```
 
-## Status: Alpha
+## Status
 
-Production-used on single-GPU and multi-node federated deployments. Under active development.
+**Alpha — internal evolution, not a release candidate.** The stack is production-used on single-GPU and multi-node federated deployments, but the project is expanding fast: new subsystems land often, interfaces shift, and documentation lags code. Treat this repo as an early look at where the project is headed, not as stable open-source software ready for adoption. Issues and contributions are welcome; expect breakage between pulls.
 
 ## Quick Start
 
@@ -148,7 +150,9 @@ scripts/query-events --op noise-profile --minutes 5
 
 ## Design Philosophy
 
-**Privacy by construction.** Data stays on your hardware unless you explicitly run the cloud proxy. No telemetry, no phoning home. Container policy enforces network isolation, not application logic.
+**Protected information, by design.** Trade secrets, legal files, client deliverables, internal research, and other confidential material stay on hardware you operate. Optional cloud inference sends only the prompts and context you route through the proxy — not your full corpus or knowledge graph. Network boundaries are enforced by container policy and explicit egress controls, not vendor promises.
+
+**Sandboxed inference.** Local models run in hardened containers: no direct network access, dropped capabilities, non-root execution. This is deliberate isolation — models can reason over your data through controlled APIs, but cannot independently reach the open internet or wander outside the paths you configure (Stargate routing, optional cloud proxy, MCP tool permissions).
 
 **Agents as co-participants.** Agents do not merely execute instructions — they contribute observations, revise beliefs, seed reasoning edges, and improve the boot that initializes future sessions. The knowledge graph is a shared epistemic workspace where human and AI contributions are structurally equal, distinguished only by provenance.
 
