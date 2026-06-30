@@ -207,12 +207,13 @@ def get_entity(
     entity_id: str,
     request: Request,
     intent: EntityIntent = Query(
-        "full",
+        "card",
         description=(
-            "v2.4 §6.1 read intent. `full` (default) returns EntityDetail with "
-            "active assertions plus superseded breadcrumb/corrections. "
+            "v2.4 §6.1 read intent. `card` (default) returns Card v0 (§6.3). "
+            "`full` returns EntityDetail with active assertions plus "
+            "superseded breadcrumb/corrections. "
             "`full-historical` returns all superseded rows with full enrichment "
-            "(audit escape hatch). `card` returns Card v0 (§6.3). `card-md` "
+            "(audit escape hatch). `card-md` "
             "returns a comprehension-first markdown render (root-only). "
             "`cluster` and `impact` are reserved — calls return 501."
         ),

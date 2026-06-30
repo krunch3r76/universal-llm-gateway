@@ -15,7 +15,7 @@ __all__ = [
     "supported_knobs",
 ]
 
-DESCRIPTOR_VERSION: Final[str] = "2026-06-23"
+DESCRIPTOR_VERSION: Final[str] = "2026-06-30"
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,6 +45,7 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
             "fast": KnobSpec(accepted=("false", "true")),
         },
         default_variant={
+            "cyber": "false",
             "thinking": "true",
             "context": "1m",
             "effort": "high",
@@ -62,6 +63,30 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
             "context": "1m",
             "effort": "medium",
         },
+    ),
+    # Routed-but-untrusted consult models (team_dispatch reviewer/skeptic/cheap-recon
+    # targets) promoted into the trusted dispatch allowlist. Allowlist = trust/route
+    # boundary, not a catalog mirror — narrow set wins on reversibility + trust hygiene
+    # (thread 3765 Task B; decision:cursor-sdk-018-feature-uptake).
+    "gpt-5.5": ModelCapability(
+        knobs={
+            "context": KnobSpec(accepted=("272k", "1m")),
+            "reasoning": KnobSpec(
+                accepted=("none", "low", "medium", "high", "extra-high")
+            ),
+            "fast": KnobSpec(accepted=("false", "true")),
+        },
+        default_variant={"context": "1m", "reasoning": "medium", "fast": "false"},
+    ),
+    "grok-4.3": ModelCapability(
+        knobs={
+            "context": KnobSpec(accepted=("200k", "1m")),
+        },
+        default_variant={"context": "1m"},
+    ),
+    "gemini-3.5-flash": ModelCapability(
+        knobs={},
+        default_variant={},
     ),
 }
 

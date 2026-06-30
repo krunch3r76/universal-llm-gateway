@@ -27,6 +27,7 @@ from services.git_integration_worker.cursor_sdk_capture_status import (
     ChangeSet,
     baseline_dirty_in_expected,
     degrade_status_for_capture,
+    gitignored_manifest_paths,
     normalize_wt_baseline,
     resolve_closeout_capture_fields,
 )
@@ -43,8 +44,11 @@ from services.git_integration_worker.cursor_sdk_manifest import (
     compact_manifest_for_body,
     merge_wrapper_manifest,
     no_capture_degraded_reason,
+    registered_repo_roots,
     repo_change_set_from_manifest,
+    resolve_mount_root,
     serialize_effects_manifest_for_body,
+    snapshot_outside_repo_paths,
 )
 from services.git_integration_worker.cursor_sdk_manifest import (
     verification_change_set as build_verification_change_set,
@@ -186,6 +190,55 @@ def changed_paths(
     )
 
 
+def _baseline_outside_repo_paths(baseline: dict[str, Any] | None) -> frozenset[str]:
+    if baseline is None:
+        return frozenset()
+    raw = baseline.get("outside_repo")
+    if not isinstance(raw, list):
+        return frozenset()
+    return frozenset(str(path) for path in raw)
+
+
+def reconcile_workspace_changes(
+    *,
+    source_repo: Path,
+    baseline: dict[str, Any] | None,
+    manifest: EffectsManifest | None = None,
+    mount_root: Path | None = None,
+) -> tuple[ChangeSet, tuple[str, ...], tuple[str, ...]]:
+    """Multi-root disk reconciliation: git diff + outside-repo paths + gitignored."""
+    from services.git_integration_worker.cursor_sdk_manifest import resolve_mount_root
+
+    mount = (mount_root or resolve_mount_root(source_repo)).resolve()
+    repos = registered_repo_roots(mount)
+    git_change = (
+        ChangeSet(created=(), modified=(), deleted=())
+        if baseline is None
+        else changed_paths(source_repo, baseline)
+    )
+    git_changed = set(git_change.created) | set(git_change.modified) | set(git_change.deleted)
+    gitignored = gitignored_manifest_paths(
+        manifest,
+        source_repo=source_repo,
+        git_changed=git_changed,
+    )
+    baseline_outside = _baseline_outside_repo_paths(baseline)
+    current_outside = snapshot_outside_repo_paths(mount, repos)
+    new_outside = tuple(sorted(current_outside - baseline_outside))
+    merged_modified = tuple(
+        dict.fromkeys([*git_change.modified, *new_outside])
+    )
+    return (
+        ChangeSet(
+            created=git_change.created,
+            modified=merged_modified,
+            deleted=git_change.deleted,
+        ),
+        gitignored,
+        new_outside,
+    )
+
+
 def _baseline_dirty_in_expected(
     baseline: dict[str, Any] | None, files_expected: list[str]
 ) -> bool:
@@ -302,6 +355,7 @@ def build_implement_closeout_body(
     effects_manifest: EffectsManifest | None = None,
     sidecar_appendix: list[str] | None = None,
     cortex_first: bool = False,
+    files_untracked_or_ignored: list[str] | None = None,
 ) -> str:
     """Build a compact, valid ImplementCloseout JSON turn body.
 
@@ -360,6 +414,8 @@ def build_implement_closeout_body(
             ),
         )
         payload = closeout.model_dump(mode="json")
+        if files_untracked_or_ignored:
+            payload["files_untracked_or_ignored"] = files_untracked_or_ignored
         if manifest_value is not None and not isinstance(manifest_value, EffectsManifest):
             payload["effects_manifest"] = manifest_value
         return json.dumps(payload, separators=(",", ":"))
@@ -487,11 +543,18 @@ def _assemble_closeout_delivery(
         if files_expected is not None
         else _files_expected_from_packet(packet_text)
     )
-    git_change_set = (
-        ChangeSet(created=(), modified=(), deleted=())
-        if baseline is None
-        else changed_paths(source_repo, baseline)
-    )
+    if baseline is None:
+        git_change_set = ChangeSet(created=(), modified=(), deleted=())
+        files_untracked_or_ignored: tuple[str, ...] = ()
+        outside_repo_paths: tuple[str, ...] = ()
+    else:
+        git_change_set, files_untracked_or_ignored, outside_repo_paths = (
+            reconcile_workspace_changes(
+                source_repo=source_repo,
+                baseline=baseline,
+                manifest=outcome.effects_manifest,
+            )
+        )
     manifest = merge_wrapper_manifest(
         dispatch_id=dispatch_id,
         thread_id=thread_id,
@@ -499,11 +562,24 @@ def _assemble_closeout_delivery(
         cortex_artifact_paths=cortex_artifact_paths,
         git_change_set=git_change_set,
     )
-    # files_modified SOT = manifest edit-op projection (friction 21239); not a worktree diff. See notes/system/specs/friction-21239-closeout-capture-fix.md
-    repo_change_set = repo_change_set_from_manifest(
+    # Manifest projection for in-repo paths; outside-repo + gitignored split per spec A1/A3.
+    manifest_cs = repo_change_set_from_manifest(
         manifest,
         source_repo=source_repo,
     ) or ChangeSet(created=(), modified=(), deleted=())
+    ignored_set = set(files_untracked_or_ignored)
+    repo_change_set = ChangeSet(
+        created=tuple(p for p in manifest_cs.created if p not in ignored_set),
+        modified=tuple(
+            dict.fromkeys(
+                [
+                    *(p for p in manifest_cs.modified if p not in ignored_set),
+                    *outside_repo_paths,
+                ]
+            )
+        ),
+        deleted=manifest_cs.deleted,
+    )
     verification_cs = build_verification_change_set(
         repo_change_set, gate_d_created_rels
     )
@@ -530,6 +606,9 @@ def _assemble_closeout_delivery(
             source_repo=source_repo,
             cortex_root=cortex_files_root(),
             manifest=manifest,
+            outside_repo_paths=outside_repo_paths,
+            files_untracked_or_ignored=files_untracked_or_ignored,
+            mount_root=resolve_mount_root(source_repo),
         )
     )
     cortex_authoritative = bool(gate_d_created_rels)
@@ -550,6 +629,7 @@ def _assemble_closeout_delivery(
         effects_manifest=manifest,
         sidecar_appendix=sidecar_appendix,
         cortex_first=cortex_authoritative,
+        files_untracked_or_ignored=list(files_untracked_or_ignored),
     )
     if sidecar_appendix:
         appendix = "\n\n## effects_manifest\n\n" + "\n".join(sidecar_appendix)

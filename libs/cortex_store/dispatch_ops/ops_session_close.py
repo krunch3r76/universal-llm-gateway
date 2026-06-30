@@ -26,6 +26,7 @@ from ..transcript_assembly import (
     resolve_jsonl_path,
     session_id_timing_hint,
 )
+from ._session_close_doc_type import check_session_close_validate_attestation
 from ._session_objective_promote import promote_session_objectives
 from ._session_todo_reconciliation import todo_reconciliation_preflight_fields
 from ._shared import _FILES_ROOT, record
@@ -345,6 +346,7 @@ def _op_session_close(
     source_ref_derivation: str | None = None,
     defer_gaps: dict[str, str] | None = None,
     promote_todos: list[dict[str, Any]] | None = None,
+    validate_attestation: list[str] | None = None,
     dry_run: bool = False,
     **_: object,
 ) -> dict[str, Any]:
@@ -472,6 +474,13 @@ def _op_session_close(
                 todo_recon["todo_reconciliation_warning"],
             ]
         return dry_payload
+
+    attestation_error = check_session_close_validate_attestation(
+        session_id=session_id,
+        validate_attestation=validate_attestation,
+    )
+    if attestation_error is not None:
+        return attestation_error
 
     body: dict[str, Any] = {
         "session_id": session_id,

@@ -144,6 +144,8 @@ class StargateCortexReader:
 
 def _repo_base(workspaces_root: Path) -> Path:
     root = workspaces_root.resolve()
+    if root.name == _ULG_REPO_DIRNAME:
+        return root
     nested = root / _ULG_REPO_DIRNAME
     return nested if nested.is_dir() else root
 

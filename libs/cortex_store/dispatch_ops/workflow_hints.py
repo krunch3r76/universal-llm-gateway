@@ -64,9 +64,11 @@ _WORKFLOW_HINTS: dict[str, str] = {
         "next: entity_get on representative source/target IDs to verify links; "
         "check resolved_aliases in items when aliases were used"
     ),
-    "entity_update": "next: entity_get to confirm the updated state is reflected",
+    "entity_update": (
+        "next: entity_get(intent=card) to confirm the updated state is reflected"
+    ),
     "supersede": (
-        "next: entity_get to confirm the new assertion is visible "
+        "next: entity_get(intent=card) to confirm the new assertion is visible "
         "and the old one is marked superseded; "
         "tag_assign to pin the new assertion as 'current' if it is the canonical state"
     ),
@@ -110,6 +112,20 @@ _WORKFLOW_HINTS: dict[str, str] = {
         "tip: pass include_edges=true to also see reasoning edges "
         "(session-attributed cognitive connections). "
         "Relationships are structural links; edges are reasoning links."
+    ),
+    "doc_template": (
+        "next: fill every required section using the accepted-pattern hints; "
+        "run doc_validate(text=…) or doc_validate(path=…) until status=pass; "
+        "record attestation_tokens from the PASS response on the todo's "
+        "implement-ready assertion before implement dispatch. "
+        "Load: fs(cortex, op=md_read, path=agent-skills/implement-todo.md)"
+    ),
+    "doc_validate": (
+        "on status=pass: cite attestation_tokens (doc_validate:pass, "
+        "template_version, spec_sha256, skill_digest) on the implement-ready "
+        "assertion; then distill files_expected + acceptance_criteria at Gate-2. "
+        "on drifted_since_ready: refresh spec_sha256 on the assertion after spec edit. "
+        "Read-only — does not trigger implement side-effect guard."
     ),
     "edges": (
         "tip: to see edges in entity context, use entity_get with include_edges=true. "

@@ -233,6 +233,7 @@ def summarize_audit_outcome(
 
 
 __all__ = [
+    "_PRE_CLOSE_GATE_KINDS",
     "_run_session_audit_graph_only",
     "_run_session_audit_or_block",
     "summarize_audit_outcome",

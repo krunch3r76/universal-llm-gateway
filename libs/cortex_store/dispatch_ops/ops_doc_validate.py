@@ -6,13 +6,11 @@ from datetime import UTC, datetime
 from typing import Any
 
 from implement_admission.closeout_helpers import workspaces_root
-from implement_admission.dense_spec_schema import (
-    dense_spec_hash_uri,
-    validate_dense_spec,
-)
+from implement_admission.dense_spec_schema import dense_spec_hash_uri
 from implement_admission.gate_distillation import read_dense_spec_text
-from implement_admission.implement_ready_preflight import preflight_implement_ready
+from implement_admission.implement_ready_gate import doc_validate_attestation_tokens
 
+from ._doc_type_resolve import resolve_doc_type
 from ._doc_validate_skeptic import evaluate_skeptic_grounding, find_skeptic_assertion
 from ._doc_validate_support import (
     authoring_preflight_kwargs,
@@ -22,27 +20,28 @@ from ._doc_validate_support import (
     extract_spec_sha256_token,
     resolve_todo_preflight_kwargs,
 )
-from .ops_doc_template import _SUPPORTED_DOC_TYPES
+from ._session_close_validate import (
+    extract_session_close_payload,
+    session_close_validate_attestation_tokens,
+    validate_session_close_payload,
+)
+from .ops_doc_template import _DOC_TYPE_REGISTRY
 
 
-def _op_doc_validate(
-    doc_type: str = "implement_dense_spec",
-    text: str | None = None,
-    path: str | None = None,
-    source_ref: str | None = None,
+def _validate_dense_spec_doc(
+    *,
+    record: Any,
+    requested_doc_type: str,
+    text: str | None,
+    path: str | None,
+    source_ref: str | None,
+    now_iso: str,
     **_: object,
 ) -> dict[str, Any]:
-    """Aggregate implement-ready gate report over resolved dense-spec bytes."""
-    normalized = (doc_type or "").strip()
-    if normalized not in _SUPPORTED_DOC_TYPES:
-        supported = ", ".join(sorted(_SUPPORTED_DOC_TYPES))
-        return err422(f"unknown doc_type {doc_type!r}; supported: {supported}")
-
     provided = sum(1 for value in (text, path, source_ref) if value)
     if provided != 1:
         return err422("exactly one of text, path, or source_ref is required")
 
-    now_iso = datetime.now(UTC).isoformat()
     has_todo_context = source_ref is not None
     todo_id: str | None = None
     preflight_kwargs: dict[str, Any]
@@ -74,8 +73,10 @@ def _op_doc_validate(
         preflight_kwargs = {**resolved, "now_iso": now_iso}
 
     spec_sha256 = dense_spec_hash_uri(spec_text)
-    schema = validate_dense_spec(spec_text)
+    schema = record.validator(spec_text)
     preflight_kwargs["now_iso"] = now_iso
+    from implement_admission.implement_ready_preflight import preflight_implement_ready
+
     report = preflight_implement_ready(**preflight_kwargs)
     gates = enrich_gates([g.to_dict() for g in report.gates], spec_text)
 
@@ -130,10 +131,10 @@ def _op_doc_validate(
         skeptic=skeptic,
     )
 
-    return {
+    payload: dict[str, Any] = {
         "ok": status == "pass",
         "status": status,
-        "doc_type": normalized,
+        "doc_type": requested_doc_type,
         "spec_sha256": spec_sha256,
         "attested": attested,
         "pinned_sha256": pinned_sha256,
@@ -141,6 +142,7 @@ def _op_doc_validate(
         "skeptic": skeptic,
         "admitted": report.admitted,
         "summary": report.summary,
+        "template_version": record.template_version,
         **({"first_failure": report.first_failure} if report.first_failure else {}),
         **(
             {"resolution": preflight_kwargs.get("resolution")}
@@ -148,6 +150,86 @@ def _op_doc_validate(
             else {}
         ),
     }
+    if status == "pass":
+        payload["attestation_tokens"] = doc_validate_attestation_tokens(
+            doc_type="implement_dense_spec",
+            spec_text=spec_text,
+        )
+    return payload
+
+
+def _validate_session_close_doc(
+    *,
+    record: Any,
+    resolved: Any,
+    kwargs: dict[str, Any],
+) -> dict[str, Any]:
+    payload = extract_session_close_payload(kwargs)
+    missing = [
+        field
+        for field in ("session_id", "agent", "session_summary_md", "summary")
+        if not payload.get(field)
+    ]
+    if missing:
+        return err422(
+            f"session_close doc_validate requires close payload fields: {missing}"
+        )
+
+    verdict = validate_session_close_payload(payload)
+    status = "pass" if verdict.passed else "preflight_failed"
+    result: dict[str, Any] = {
+        "ok": verdict.passed,
+        "status": status,
+        "doc_type": resolved.requested,
+        "gates": verdict.gates,
+        "audit": verdict.preflight.get("audit"),
+        "warnings": verdict.preflight.get("warnings") or [],
+        "preflight": {
+            key: verdict.preflight.get(key)
+            for key in ("turn_count", "byte_count", "transcript_depth")
+            if key in verdict.preflight
+        },
+        "template_version": record.template_version,
+        **({"reason": verdict.reason} if verdict.reason else {}),
+        **({"variant": resolved.variant} if resolved.variant else {}),
+    }
+    if verdict.passed:
+        result["attestation_tokens"] = session_close_validate_attestation_tokens(
+            payload=payload
+        )
+    return result
+
+
+def _op_doc_validate(
+    doc_type: str = "implement_dense_spec",
+    text: str | None = None,
+    path: str | None = None,
+    source_ref: str | None = None,
+    **kwargs: object,
+) -> dict[str, Any]:
+    """Aggregate implement-ready gate report over resolved dense-spec bytes."""
+    resolved = resolve_doc_type(doc_type, _DOC_TYPE_REGISTRY)
+    if resolved is None:
+        supported = ", ".join(sorted(_DOC_TYPE_REGISTRY))
+        return err422(f"unknown doc_type {doc_type!r}; supported: {supported}")
+
+    record = resolved.record
+    if record.side_effect_binding == "session_close":
+        return _validate_session_close_doc(
+            record=record,
+            resolved=resolved,
+            kwargs=dict(kwargs),
+        )
+
+    now_iso = datetime.now(UTC).isoformat()
+    return _validate_dense_spec_doc(
+        record=record,
+        requested_doc_type=resolved.requested,
+        text=text,
+        path=path,
+        source_ref=source_ref,
+        now_iso=now_iso,
+    )
 
 
 __all__ = ["_op_doc_validate"]

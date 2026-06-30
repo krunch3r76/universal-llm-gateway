@@ -455,6 +455,7 @@ tools:
       session_close(...) ⟹
         transcript_entity_id ∈ Cortex ∧ journal_row_id ∈ ℕ ∧ content_hash ∈ sha256.
     Atomic. Mutating. Idempotent by session_id (second close → 422 session.already_closed).
+    Requires validate_attestation from doc_validate(session_close) PASS before atomic write.
     BEFORE close: load agent-skills/session-close-kernel.md (+ session-close-audit.md for web/API).
     Cursor: session-close.mdc. See agent_skill:session-close.
   json_schema:
@@ -481,6 +482,12 @@ tools:
             required_skills: {type: array, items: {type: string}}
             source_uri: {type: string}
           required: [slug, name]
+      validate_attestation:
+        type: array
+        description: >
+          Attestation tokens from doc_validate(doc_type=session_close) PASS —
+          must include session_close_validate:pass and session_id:{id}.
+        items: {type: string}
     required: [session_id, agent, session_summary_md, summary]
   skill_uri: agent_skill:session-close
   seat_visibility: [mcp, mcp_claude]
@@ -566,15 +573,18 @@ tools:
     tool: cortex_doc_template
     substrate_qualified: user-vortex__cortex_doc_template
   fol_descriptor: |
-    ∀ doc_type ∈ {"implement_dense_spec"}:
-      doc_template(doc_type) ⟹ ok ∧ template ∈ str ∧ required_sections ⊆ List[str].
-    Read-only. ¬writes. Returns dense-spec skeleton with section hints for validate_dense_spec round-trip.
+    ∀ doc_type ∈ {"implement_dense_spec", "session_close", "session_close:web", "session_close:cursor"}:
+      doc_template(doc_type) ⟹ ok ∧ template ∈ str ∧ required_sections ⊆ List[str]
+        ∧ template_version ∈ str ∧ template_sha256 ∈ str ∧ skill_digest ∈ str (additive).
+    session_close templates inline required+optional fields, 13 audit codes, transcript_depth rules,
+    and hybrid pointer+digest to session-close skills; variants differ only by overlay.
+    Read-only. ¬writes. Returns dense-spec skeleton with hybrid pedagogy for validate_dense_spec round-trip.
   json_schema:
     type: object
     properties:
       doc_type:
         type: string
-        description: "Dense spec template kind. Default implement_dense_spec."
+        description: "Template kind. Default implement_dense_spec. session_close[:web|:cursor] for close payload contract."
     required: []
   skill_uri: agent_skill:implement-todo
   seat_visibility: [mcp, mcp_claude]
@@ -595,14 +605,18 @@ tools:
   fol_descriptor: |
     ∀ doc_type ∈ {"implement_dense_spec"} ∧ exactly_one(text, path, source_ref):
       doc_validate(...) ⟹ status ∈ {pass, not_attested, drifted_since_ready, skeptic_hash_missing, schema_failed}
-        ∧ gates[] aggregates gates 0–13 ∧ spec_sha256 = dense_spec_hash_uri(bytes) ∧ attested ∈ bool.
+        ∧ gates[] aggregates gates 0–13 ∧ spec_sha256 = dense_spec_hash_uri(bytes) ∧ attested ∈ bool
+        ∧ template_version ∈ str; on pass, attestation_tokens[] is additive.
+    ∀ doc_type ∈ {"session_close", "session_close:web", "session_close:cursor"}:
+      doc_validate(...) ⟹ delegates to session_close_preflight ∧ surfaces audit/warnings as gates
+        ∧ status=pass emits session_close_validate attestation_tokens (session-keyed).
     Read-only. ¬writes. Thin wrapper over preflight_implement_ready + skeptic evidence grounding.
   json_schema:
     type: object
     properties:
       doc_type:
         type: string
-        description: "Dense spec kind. Default implement_dense_spec."
+        description: "Doc kind. Default implement_dense_spec. session_close consumes close payload fields."
       text:
         type: string
         description: "Inline dense-spec bytes to validate."

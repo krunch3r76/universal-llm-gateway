@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -121,6 +122,37 @@ def _normalize_repo_path_for_compare(
     return normalized or raw.lstrip("/")
 
 
+def _path_gitignored(source_repo: Path, rel_path: str) -> bool:
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(source_repo), "check-ignore", "-q", rel_path],
+            capture_output=True,
+            timeout=5,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+    return proc.returncode == 0
+
+
+def gitignored_manifest_paths(
+    manifest: EffectsManifest | None,
+    *,
+    source_repo: Path,
+    git_changed: set[str],
+) -> tuple[str, ...]:
+    """Manifest repo paths present on disk but ignored by git."""
+    manifest_paths = _repo_manifest_paths(manifest, source_repo=source_repo)
+    ignored: list[str] = []
+    for path in sorted(manifest_paths):
+        if path in git_changed:
+            continue
+        if not (source_repo / path).is_file():
+            continue
+        if _path_gitignored(source_repo, path):
+            ignored.append(path)
+    return tuple(ignored)
+
+
 def _path_exists_in_sandboxes(path: str, source_repo: Path, cortex_root: Path) -> bool:
     rel = path.lstrip("/")
     return (source_repo / rel).exists() or (cortex_root / rel).exists()
@@ -185,9 +217,15 @@ def _repo_diff_mismatch(
     if not manifest_paths and not has_shell:
         return None
     missing = sorted(path for path in manifest_paths if path not in git_changed)
-    if missing:
-        return f"divergence:repo_diff_mismatch:{missing[0]}"
-    return None
+    if not missing:
+        return None
+    if source_repo is not None:
+        for path in missing:
+            if (source_repo / path).is_file() and _path_gitignored(source_repo, path):
+                continue
+            return f"divergence:repo_diff_mismatch:{path}"
+        return None
+    return f"divergence:repo_diff_mismatch:{missing[0]}"
 
 
 def _cortex_target_absent(
@@ -224,6 +262,49 @@ def _agent_bus_turn_absent(manifest: EffectsManifest | None) -> str | None:
     return None
 
 
+def _fs_surface_cross_check(
+    manifest: EffectsManifest,
+    *,
+    source_repo: Path,
+    cortex_root: Path,
+    mount_root: Path,
+) -> str | None:
+    from services.git_integration_worker.cursor_sdk_manifest import (
+        classify_mount_path,
+        manifest_fs_targets,
+        mount_relative_path,
+        registered_repo_roots,
+        resolve_fs_target_absolute,
+    )
+
+    repo_roots = registered_repo_roots(mount_root)
+    for target in manifest_fs_targets(manifest):
+        abs_path = resolve_fs_target_absolute(
+            target,
+            mount_root=mount_root,
+            cortex_root=cortex_root,
+        )
+        if abs_path is None:
+            continue
+        kind = classify_mount_path(
+            abs_path,
+            source_repo=source_repo,
+            mount_root=mount_root,
+            repo_roots=repo_roots,
+        )
+        if kind == "source_repo":
+            continue
+        if kind == "other_repo":
+            rel = mount_relative_path(mount_root, abs_path) or target
+            return f"divergence:other_repo_root:{rel}"
+        if kind == "shared_cursor":
+            rel = mount_relative_path(mount_root, abs_path) or target
+            return f"divergence:shared_cursor_parent:{rel}"
+        rel = mount_relative_path(mount_root, abs_path) or target
+        return f"divergence:unknown_root_child:{rel}"
+    return None
+
+
 def apply_surface_cross_checks(
     manifest: EffectsManifest | None,
     *,
@@ -234,9 +315,14 @@ def apply_surface_cross_checks(
     divergent_rels: tuple[str, ...],
     deliverables_expected: bool,
     degraded_reason: str | None,
+    mount_root: Path | None = None,
+    outside_repo_paths: tuple[str, ...] = (),
 ) -> EffectsManifest | None:
     if manifest is None:
         return None
+    from services.git_integration_worker.cursor_sdk_manifest import resolve_mount_root
+
+    mount = (mount_root or resolve_mount_root(source_repo)).resolve()
     git_changed = _changed_path_set(change_set, source_repo=source_repo)
     updated: dict[str, object] = {}
     coverage = dict(manifest.coverage)
@@ -251,6 +337,14 @@ def apply_surface_cross_checks(
                 source_repo=source_repo,
                 cortex_root=cortex_root,
                 change_set=change_set,
+                outside_repo_paths=outside_repo_paths,
+            )
+        elif name == "fs" and deliverables_expected and degraded_reason is None:
+            cross_check = cross_check or _fs_surface_cross_check(
+                manifest,
+                source_repo=source_repo,
+                cortex_root=cortex_root,
+                mount_root=mount,
             )
         elif name == "cortex" and deliverables_expected and degraded_reason is None:
             cross_check = cross_check or _cortex_target_absent(manifest, cortex_root)
@@ -278,7 +372,10 @@ def _repo_surface_cross_check(
     source_repo: Path,
     cortex_root: Path,
     change_set: ChangeSet,
+    outside_repo_paths: tuple[str, ...] = (),
 ) -> str | None:
+    if outside_repo_paths:
+        return f"divergence:unknown_root_child:{outside_repo_paths[0]}"
     if files_expected and not _paths_intersect(files_expected, git_changed):
         return "divergence:no_expected_files_touched"
     for rel_entry in divergent_rels:
@@ -301,9 +398,14 @@ def closeout_divergence_reason(
     source_repo: Path,
     cortex_root: Path,
     manifest: EffectsManifest | None = None,
+    mount_root: Path | None = None,
+    outside_repo_paths: tuple[str, ...] = (),
+    files_untracked_or_ignored: tuple[str, ...] = (),
 ) -> str | None:
     if not deliverables_expected or degraded_reason is not None:
         return None
+    if files_untracked_or_ignored:
+        return "divergence:repo_diff_gitignored_present"
     checked = apply_surface_cross_checks(
         manifest,
         change_set=change_set,
@@ -313,9 +415,13 @@ def closeout_divergence_reason(
         divergent_rels=divergent_rels,
         deliverables_expected=deliverables_expected,
         degraded_reason=degraded_reason,
+        mount_root=mount_root,
+        outside_repo_paths=outside_repo_paths,
     )
     if checked is None:
         changed = _changed_path_set(change_set, source_repo=source_repo)
+        if outside_repo_paths:
+            return f"divergence:unknown_root_child:{outside_repo_paths[0]}"
         if files_expected and not _paths_intersect(files_expected, changed):
             return "divergence:no_expected_files_touched"
         for rel_entry in divergent_rels:
@@ -356,6 +462,9 @@ def resolve_closeout_capture_fields(
     source_repo: Path,
     cortex_root: Path,
     manifest: EffectsManifest | None = None,
+    mount_root: Path | None = None,
+    outside_repo_paths: tuple[str, ...] = (),
+    files_untracked_or_ignored: tuple[str, ...] = (),
 ) -> tuple[CaptureStatus | None, str | None, list[str], EffectsManifest | None]:
     baseline_has_hashes = dirty_expected_hashes_available(baseline, files_expected)
     manifest = apply_surface_cross_checks(
@@ -367,6 +476,8 @@ def resolve_closeout_capture_fields(
         divergent_rels=divergent_rels,
         deliverables_expected=deliverables_expected,
         degraded_reason=degraded_reason,
+        mount_root=mount_root,
+        outside_repo_paths=outside_repo_paths,
     )
     capture_status = classify_capture_status(
         deliverables_expected=deliverables_expected,
@@ -384,6 +495,9 @@ def resolve_closeout_capture_fields(
         source_repo=source_repo,
         cortex_root=cortex_root,
         manifest=manifest,
+        mount_root=mount_root,
+        outside_repo_paths=outside_repo_paths,
+        files_untracked_or_ignored=files_untracked_or_ignored,
     )
     if divergence_reason and capture_status == "complete":
         capture_status = "partial"
@@ -397,6 +511,8 @@ def resolve_closeout_capture_fields(
         deviations.append("capture:dirty_baseline_under_capture")
     if deliverables_expected and manifest and _repo_has_shell_entry(manifest):
         deviations.append("capture:shell_repo_writes_unverified")
+    if files_untracked_or_ignored:
+        deviations.append("capture:gitignored_present_unattributed")
     if divergence_reason:
         deviations.append(divergence_reason)
     return capture_status, divergence_reason, deviations, manifest

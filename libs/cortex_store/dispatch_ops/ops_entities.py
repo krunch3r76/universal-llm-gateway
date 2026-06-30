@@ -147,7 +147,7 @@ def _op_entity_get(
     include_edges: bool = False,
     edge_limit: int = 20,
     include_compaction_pointers: bool = False,
-    intent: str = "full",
+    intent: str = "card",
     include_superseded: bool = False,
     debug: bool = False,
     top_k: int = _CARD_TOP_K_DEFAULT,

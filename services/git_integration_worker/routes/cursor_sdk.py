@@ -6,7 +6,7 @@ Phase 2 HOME isolation (T2b 2026-06-11, thread 1559): each dispatch seeds a
 private HOME with copied ``cli-config.json`` (identity), XDG ``auth.json``
 (credential), and user-layer Cursor settings for ``setting_sources=all``.
 ``Client.launch_bridge`` snapshots ``os.environ`` at ``Popen`` (no ``env=``
-kwarg in cursor-sdk 0.1.7). Each dispatch records its HOME/venv override in
+kwarg in cursor-sdk 0.1.8). Each dispatch records its HOME/venv override in
 thread-local storage; a monkeypatch on ``_bridge_subprocess_env`` overlays it
 into the bridge subprocess env at ``Popen`` time. The override is confined to
 the dispatch's own worker thread, so concurrent and timed-out (orphan)
@@ -268,7 +268,7 @@ def _dispatch_env_overlay() -> dict[str, str] | None:
 def _install_bridge_env_patch() -> None:
     """Overlay the per-dispatch HOME/venv onto the bridge subprocess env.
 
-    cursor-sdk 0.1.7 ``Bridge.launch`` builds the subprocess env from
+    cursor-sdk 0.1.8 ``Bridge.launch`` builds the subprocess env from
     ``_bridge_subprocess_env()`` (``dict(os.environ)`` + SDK setdefaults)
     synchronously on the caller thread before ``Popen``. We wrap that function
     so it overlays the calling thread's dispatch override (HOME, VIRTUAL_ENV,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any, Literal
@@ -577,6 +578,147 @@ def _string_arg(args: Mapping[str, Any], *keys: str) -> str | None:
         if isinstance(value, int) and not isinstance(value, bool):
             return str(value)
     return None
+
+
+def workspaces_mount_root() -> Path:
+    """WORKSPACES_ROOT mount — mirrors MCP ``project_root()`` for repo enumeration."""
+    return Path(os.environ.get("WORKSPACES_ROOT", "/mnt/torus/projects")).resolve()
+
+
+def resolve_mount_root(source_repo: Path) -> Path:
+    """Prefer configured WORKSPACES_ROOT when *source_repo* lives under it."""
+    repo = source_repo.resolve()
+    configured = workspaces_mount_root()
+    try:
+        repo.relative_to(configured)
+        return configured
+    except ValueError:
+        if repo.name == "universal-llm-gateway":
+            return repo.parent
+        return repo
+
+
+def registered_repo_roots(mount_root: Path | None = None) -> list[Path]:
+    """Mirror ``_project_paths.repo_roots`` without importing mcp-server."""
+    root = (mount_root or workspaces_mount_root()).resolve()
+    if (root / ".git").exists():
+        return [root]
+    try:
+        children = [child for child in sorted(root.iterdir()) if child.is_dir()]
+    except FileNotFoundError:
+        return [root]
+    repos = [child for child in children if (child / ".git").exists()]
+    if not repos:
+        repos = [child for child in children if not child.name.startswith(".")]
+    return [child.resolve() for child in (repos or [root])]
+
+
+def mount_relative_path(mount_root: Path, path: Path) -> str | None:
+    try:
+        return str(path.resolve().relative_to(mount_root.resolve()))
+    except ValueError:
+        return None
+
+
+def parse_fs_manifest_target(target: str | None) -> tuple[str, str] | None:
+    if not target or ":" not in target:
+        return None
+    sandbox, rel = target.split(":", 1)
+    sandbox = sandbox.strip()
+    rel = rel.strip().lstrip("/")
+    if sandbox and rel:
+        return sandbox, rel
+    return None
+
+
+def resolve_fs_target_absolute(
+    target: str | None,
+    *,
+    mount_root: Path,
+    cortex_root: Path,
+) -> Path | None:
+    if not target:
+        return None
+    parsed = parse_fs_manifest_target(target)
+    if parsed is not None:
+        sandbox, rel = parsed
+        if sandbox == "workspaces":
+            return (mount_root / rel).resolve()
+        if sandbox == "cortex":
+            return (cortex_root / rel).resolve()
+        return (mount_root / rel).resolve()
+    return (mount_root / target.lstrip("/")).resolve()
+
+
+def classify_mount_path(
+    path: Path,
+    *,
+    source_repo: Path,
+    mount_root: Path,
+    repo_roots: list[Path] | None = None,
+) -> Literal["source_repo", "other_repo", "shared_cursor", "unknown_root_child", "outside_mount"]:
+    resolved = path.resolve()
+    rel = mount_relative_path(mount_root, resolved)
+    if rel is None:
+        return "outside_mount"
+    if rel == ".cursor" or rel.startswith(".cursor/"):
+        return "shared_cursor"
+    roots = repo_roots or registered_repo_roots(mount_root)
+    source_resolved = source_repo.resolve()
+    for repo in roots:
+        try:
+            resolved.relative_to(repo.resolve())
+        except ValueError:
+            continue
+        if repo.resolve() == source_resolved:
+            return "source_repo"
+        return "other_repo"
+    return "unknown_root_child"
+
+
+def manifest_fs_targets(manifest: EffectsManifest | None) -> list[str]:
+    if manifest is None:
+        return []
+    section = manifest.surfaces.get("fs")
+    if section is None:
+        return []
+    targets: list[str] = []
+    for entry in section.entries:
+        target = entry.target or entry.identity
+        if target:
+            targets.append(target)
+    return targets
+
+
+def snapshot_outside_repo_paths(
+    mount_root: Path,
+    repo_roots: list[Path] | None = None,
+) -> frozenset[str]:
+    """Workspaces-relative paths under *mount_root* but outside every registered repo."""
+    roots = repo_roots or registered_repo_roots(mount_root)
+    roots_resolved = {repo.resolve() for repo in roots}
+
+    def _under_repo(candidate: Path) -> bool:
+        resolved = candidate.resolve()
+        for repo in roots_resolved:
+            try:
+                resolved.relative_to(repo)
+                return True
+            except ValueError:
+                continue
+        return False
+
+    found: set[str] = set()
+    mount_resolved = mount_root.resolve()
+    if not mount_resolved.is_dir():
+        return frozenset()
+    for path in mount_resolved.rglob("*"):
+        if not path.is_file() or _under_repo(path):
+            continue
+        rel = mount_relative_path(mount_resolved, path)
+        if rel is not None:
+            found.add(rel)
+    return frozenset(found)
 
 
 def _normalize_repo_path(
