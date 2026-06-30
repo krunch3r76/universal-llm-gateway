@@ -110,9 +110,11 @@ Runs as a containerized FastAPI service on `:443` with TLS and bearer auth. Each
 
 ### RAG (Retrieval-Augmented Generation)
 
-Local search across your indexed documents, backed by ChromaDB. Query rewriting validates every candidate term against the actually-indexed vocabulary before any LLM call. Two retrieval paths run in parallel and merge: one combining vector similarity and keyword search (semantic retrieval, for finding documents by meaning); one using keyword matching only (lexical retrieval, for exact technical terms and identifiers that semantic search can blur). Results are merged and ranked by a local model pass before answer generation.
+When the gateway indexes a document, it does more than chunk and embed it. An LLM extracts entities, topics, and relations from the content, building a structured vocabulary alongside the vector and full-text indexes. This is where the useful work happens: search time is fast and cheap because the hard analysis ran at ingest.
 
-Indexes Markdown, PDF, EPUB, HTML, and plain text. Code indexing (Python via tree-sitter AST) is built but not yet active. Knowledge extraction produces entities, topics, and relations to improve search quality. File watching auto-indexes changes.
+Querying draws on that index in two parallel paths. The semantic path uses vector similarity and keyword search to match documents by meaning. The lexical path matches exact terms against the extracted vocabulary, retrieving identifiers and technical terms that semantic search can blur. Search terms are validated against the index vocabulary before any LLM call, so queries never run on words that aren't actually there. Results from both paths merge and pass through a local reranker before answer generation.
+
+Supported formats: Markdown, PDF, EPUB, HTML, and plain text. The gateway watches for file changes and re-indexes automatically. Python code indexing via tree-sitter is implemented but not yet active.
 
 ### Cortex (Persistent Memory)
 
