@@ -78,12 +78,14 @@ def _projection_for(root: Path, slug: str) -> dict[str, object] | None:
     }
 
 
-def _fetch_entity(client: object, entity_id: str) -> tuple[int, dict]:
-    return _request(
-        client,
-        "GET",
-        f"/entities/{urllib.parse.quote(entity_id, safe=':')}",
-    )
+def _fetch_entity(
+    client: object, entity_id: str, *, intent: str | None = None
+) -> tuple[int, dict]:
+    q = urllib.parse.quote(entity_id, safe=":")
+    path = f"/entities/{q}"
+    if intent:
+        path += f"?intent={intent}"
+    return _request(client, "GET", path)
 
 
 def _upsert(client: object, projection: dict[str, object], *, dry_run: bool) -> bool:
@@ -159,7 +161,7 @@ def _check(client: object, root: Path) -> int:
             failures += 1
             continue
         entity_id = str(projection["id"])
-        status, live = _fetch_entity(client, entity_id)
+        status, live = _fetch_entity(client, entity_id, intent="full")
         if status == 404:
             print(f"DRIFT: {entity_id} missing from cortex", file=sys.stderr)
             failures += 1
@@ -190,7 +192,7 @@ def _audit(client: object, root: Path) -> int:
         if projection is None:
             continue
         entity_id = str(projection["id"])
-        st, live = _fetch_entity(client, entity_id)
+        st, live = _fetch_entity(client, entity_id, intent="full")
         if st != 200:
             continue
         ok, reason = _projection_matches_live(live, projection)

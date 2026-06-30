@@ -25,7 +25,7 @@ def resolve_transcript(
     clean_id = transcript_id.removeprefix("transcript:")
     entity_key = f"transcript:{clean_id}"
 
-    entity_raw = cx("GET", f"/entities/{quote(entity_key, safe=':')}")
+    entity_raw = cx("GET", f"/entities/{quote(entity_key, safe=':')}?intent=full")
     if "error" in entity_raw:
         return {
             "error": "transcript_not_found",

@@ -133,7 +133,7 @@ async def load_all_assertions(anchor_id: str) -> list[dict[str, Any]]:
     Returns raw list suitable for summary detection + turn filtering in one
     cortex round-trip. Callers filter by predicate/superseded as needed.
     """
-    res = await cx_async("entity_get", {"entity_id": anchor_id})
+    res = await cx_async("entity_get", {"entity_id": anchor_id, "intent": "full"})
     if res.get("status_code") == 404:
         return []
     if "error" in res:
@@ -145,7 +145,7 @@ async def load_all_assertions(anchor_id: str) -> list[dict[str, Any]]:
 
 async def load_turn_assertions(anchor_id: str) -> list[dict[str, Any]]:
     """Load all non-superseded turn assertions on a thread anchor."""
-    res = await cx_async("entity_get", {"entity_id": anchor_id})
+    res = await cx_async("entity_get", {"entity_id": anchor_id, "intent": "full"})
     if res.get("status_code") == 404:
         return []
     if "error" in res:

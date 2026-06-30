@@ -76,7 +76,7 @@ def resolve_todo_preflight_kwargs(source_ref: str, *, now_iso: str) -> dict[str,
         return err422(f"doc_validate source_ref must be todo:…; got {source_ref!r}")
 
     todo_id = ref.canonical_ref
-    entity = _op_entity_get(entity_id=todo_id)
+    entity = _op_entity_get(entity_id=todo_id, intent="full")
     if not entity or "error" in entity:
         return err422(f"todo not found: {todo_id}")
 

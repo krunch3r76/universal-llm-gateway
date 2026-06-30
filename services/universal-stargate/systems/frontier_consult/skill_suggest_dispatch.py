@@ -25,6 +25,13 @@ from transport_utils import DEFAULT_CORTEX_URL, make_async_client
 from universal_logging import get_logger
 
 from .admission import FrontierEndpointError
+from .cursor_sdk_generate import dispatch_cursor_sdk_generate
+from .cursor_sdk_worker_dispatch import worker_base_url
+from .events import (
+    FrontierSkillSuggestDispatchCompleted,
+    FrontierSkillSuggestDispatchDegraded,
+)
+from .handoff import _workspaces_root
 from .skill_suggest_dispatch_closeout import (
     fetch_worker_closeout_body,
     load_ledger_snapshot,
@@ -34,22 +41,15 @@ from .skill_suggest_dispatch_config import (
     SkillSuggestDispatchConfig,
     load_skill_suggest_dispatch_config,
 )
+from .skill_suggest_dispatch_helpers import (
+    build_worker_message,
+    parse_envelope_from_closeout,
+)
 from .skill_suggest_durable_state import (
     find_durable_terminal_event,
     read_ledger_dispatch_row,
 )
 from .skill_suggest_worker_waiter import await_worker_completion
-from .cursor_sdk_generate import dispatch_cursor_sdk_generate
-from .cursor_sdk_worker_dispatch import worker_base_url
-from .events import (
-    FrontierSkillSuggestDispatchCompleted,
-    FrontierSkillSuggestDispatchDegraded,
-)
-from .handoff import _workspaces_root
-from .skill_suggest_dispatch_helpers import (
-    build_worker_message,
-    parse_envelope_from_closeout,
-)
 
 logger = get_logger(__name__)
 
@@ -251,7 +251,10 @@ async def _cortex_entity_get(
     try:
         resp = await client.post(
             "/dispatch",
-            json={"tool": "entity_get", "arguments": {"entity_id": entity_id}},
+            json={
+                "tool": "entity_get",
+                "arguments": {"entity_id": entity_id, "intent": "full"},
+            },
         )
     except httpx.HTTPError as exc:
         logger.warning(
@@ -334,9 +337,7 @@ async def apply_required_skills_backstop(
         if isinstance(item, dict)
     }
     present_degraded_ids = {
-        str(item.get("id") or "")
-        for item in degraded_skills
-        if isinstance(item, dict)
+        str(item.get("id") or "") for item in degraded_skills if isinstance(item, dict)
     }
 
     async with make_async_client(

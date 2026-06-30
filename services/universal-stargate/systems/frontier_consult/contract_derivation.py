@@ -9,9 +9,10 @@ from typing import Any, Protocol
 from agent_seat.profiles import load_roles
 from agent_seat.registry import normalize_agent_slug
 
+from .executor_resolution import (
+    derive_recommended_executor,  # noqa: F401 — packet surface
+)
 from .handoff import _resolve_packet_file
-
-from .executor_resolution import derive_recommended_executor  # noqa: F401 — packet surface
 
 # F6 — explicit map; do not substring-match "implement" on lane names.
 _DISPATCH_LANE_TO_CONTRACT: dict[str, str] = {
@@ -87,7 +88,7 @@ def derive_contract(
 
     if source_ref:
         try:
-            entity = cortex.entity_get(source_ref)
+            entity = cortex.entity_get(source_ref, intent="full")
         except Exception:
             entity = None
         if entity:

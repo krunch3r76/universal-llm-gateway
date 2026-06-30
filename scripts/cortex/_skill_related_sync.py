@@ -29,7 +29,7 @@ def patch_sot_skill_attrs(
         return True
     entity_id = f"agent_skill:{slug}"
     q = urllib.parse.quote(entity_id, safe=":")
-    resp = client.request("GET", f"/entities/{q}")
+    resp = client.request("GET", f"/entities/{q}?intent=full")
     if resp.status_code != 200:
         print(f"  FAIL  {entity_id:40s}  [GET {resp.status_code}]", file=sys.stderr)
         return False
@@ -68,7 +68,7 @@ def patch_related_skills(
 ) -> bool:
     entity_id = f"agent_skill:{source_slug}"
     q = urllib.parse.quote(entity_id, safe=":")
-    resp = client.request("GET", f"/entities/{q}")
+    resp = client.request("GET", f"/entities/{q}?intent=full")
     if resp.status_code != 200:
         print(f"  FAIL  {entity_id:40s}  [GET {resp.status_code}]", file=sys.stderr)
         return False

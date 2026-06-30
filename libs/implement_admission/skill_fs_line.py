@@ -97,7 +97,8 @@ def resolve_skill_source_uri(slug: str) -> str:
         return f"agent-skills/{slug}.md"
     try:
         resp = get_runtime().dispatch(
-            "entity_get", {"entity_id": f"agent_skill:{slug}"}
+            "entity_get",
+            {"entity_id": f"agent_skill:{slug}", "intent": "full"},
         )
         if isinstance(resp, dict) and "error" not in resp:
             resolved = _entity_source_uri(resp)

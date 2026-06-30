@@ -157,9 +157,7 @@ async def _load_skill_vocabulary_rows(
             " FROM skill_vocabulary"
             " ORDER BY slug ASC, score DESC, term ASC"
         ).fetchall()
-        return [
-            (str(r[0]), str(r[1]), str(r[2]), float(r[3]), int(r[4])) for r in rows
-        ]
+        return [(str(r[0]), str(r[1]), str(r[2]), float(r[3]), int(r[4])) for r in rows]
     finally:
         await idx.stop()
 
@@ -256,7 +254,7 @@ def _request(
 
 def _entity_get(client: object, entity_id: str) -> tuple[int, dict]:
     q = urllib.parse.quote(entity_id, safe=":")
-    return _request(client, "GET", f"/entities/{q}")
+    return _request(client, "GET", f"/entities/{q}?intent=full")
 
 
 def _fetch_active_skills(client: object) -> list[dict]:
@@ -402,7 +400,9 @@ def main(argv: list[str] | None = None) -> int:
         else:
             pending_entities.append((slug, terms, entity_id))
 
-    print(f"Backfill trigger_match_terms: {len(pending_files)} file(s), {len(pending_entities)} entity PATCH")
+    print(
+        f"Backfill trigger_match_terms: {len(pending_files)} file(s), {len(pending_entities)} entity PATCH"
+    )
     print(f"  preserve-set skip: {skipped_preserve}")
     print(f"  frontmatter-already-set skip: {skipped_frontmatter}")
     failures = 0

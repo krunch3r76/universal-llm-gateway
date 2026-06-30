@@ -25,7 +25,7 @@ def entity_get(entity_id: str) -> dict[str, Any] | None:
     result = cx(
         "POST",
         "/dispatch",
-        {"tool": "entity_get", "arguments": {"entity_id": entity_id}},
+        {"tool": "entity_get", "arguments": {"entity_id": entity_id, "intent": "full"}},
     )
     if result.get("error"):
         if result.get("status_code") == 404:

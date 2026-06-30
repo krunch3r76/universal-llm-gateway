@@ -303,7 +303,7 @@ def _resolve_summarize_margin(step: StepConfig) -> int:
 
 async def _load_all_assertions(step: StepConfig, anchor_id: str) -> list[dict]:
     """Load all assertions on the anchor for idempotency + collapse set selection."""
-    res = await cx_async("entity_get", {"entity_id": anchor_id})
+    res = await cx_async("entity_get", {"entity_id": anchor_id, "intent": "full"})
     if "error" in res:
         raise RuntimeError(
             f"Step '{step.id}': failed to load anchor {anchor_id}: {res['error']}"  # type: ignore[attr-defined]

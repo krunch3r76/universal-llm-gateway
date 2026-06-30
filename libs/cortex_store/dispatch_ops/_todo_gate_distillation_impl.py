@@ -140,7 +140,7 @@ def _evaluate_from_persisted(
     entity_id: str,
     prepared: GateDistillationInputs,
 ) -> ImplementReadyVerdict:
-    entity = _op_entity_get(entity_id=entity_id)
+    entity = _op_entity_get(entity_id=entity_id, intent="full")
     if "error" in entity:
         return ImplementReadyVerdict(
             admitted=False,

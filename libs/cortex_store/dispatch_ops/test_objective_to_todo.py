@@ -67,7 +67,7 @@ def test_promoted_todo_attributes(objective_db: None) -> None:
         agent=_AGENT,
     )
 
-    entity = _op_entity_get(entity_id=_TODO_ID)
+    entity = _op_entity_get(entity_id=_TODO_ID, intent="full")
     assert "error" not in entity, f"todo not found: {entity}"
     assert entity["source_uri"] == "tasks/specs/obj-sample.md"
 

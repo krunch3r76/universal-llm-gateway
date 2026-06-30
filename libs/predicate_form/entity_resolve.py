@@ -187,7 +187,7 @@ class CortexEntityResolver:
             for prefix in self._type_prefixes:
                 candidate = f"{prefix}:{slug}"
                 try:
-                    resp = client.get(f"/entities/{candidate}")
+                    resp = client.get(f"/entities/{candidate}?intent=full")
                 except httpx.HTTPError:
                     continue
                 if resp.status_code == 200 and _response_is_live(resp):
@@ -205,7 +205,7 @@ class CortexEntityResolver:
             for prefix in self._type_prefixes:
                 candidate = f"{prefix}:{slug}"
                 try:
-                    resp = client.get(f"/entities/{candidate}")
+                    resp = client.get(f"/entities/{candidate}?intent=full")
                 except httpx.HTTPError:
                     continue
                 if resp.status_code == 200 and _response_is_live(resp):

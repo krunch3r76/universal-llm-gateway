@@ -23,7 +23,7 @@ def _request(
 
 def _entity_get(client: object, entity_id: str) -> tuple[int, dict]:
     q = urllib.parse.quote(entity_id, safe=":")
-    return _request(client, "GET", f"/entities/{q}")
+    return _request(client, "GET", f"/entities/{q}?intent=full")
 
 
 def _projection(

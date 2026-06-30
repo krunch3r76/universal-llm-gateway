@@ -6,7 +6,11 @@ import json
 from datetime import UTC, datetime
 from typing import Any
 
-from implement_admission.dense_spec_schema import DENSE_SPEC_RE, dense_spec_hash_uri, spec_basename
+from implement_admission.dense_spec_schema import (
+    DENSE_SPEC_RE,
+    dense_spec_hash_uri,
+    spec_basename,
+)
 from implement_admission.gate_distillation import read_dense_spec_text
 from implement_admission.implement_ready_preflight import preflight_implement_ready
 from implement_admission.source_ref import parse_source_ref
@@ -173,7 +177,11 @@ def _op_implement_ready_preflight(
 ) -> dict[str, Any]:
     """Non-writing preflight for todo-sourced implement dispatch."""
     if not source_ref:
-        return {"ok": True, "admitted": True, "note": "source_ref is required; pass todo:{slug}"}
+        return {
+            "ok": True,
+            "admitted": True,
+            "note": "source_ref is required; pass todo:{slug}",
+        }
 
     ref = parse_source_ref(source_ref)
     if ref.source_kind != SourceKind.TODO.value:
@@ -189,7 +197,7 @@ def _op_implement_ready_preflight(
     todo_id = ref.canonical_ref
     now_iso = datetime.now(UTC).isoformat()
 
-    entity = _op_entity_get(entity_id=todo_id)
+    entity = _op_entity_get(entity_id=todo_id, intent="full")
     if not entity or "error" in entity:
         return {"ok": False, "admitted": False, "error": f"todo not found: {todo_id}"}
 

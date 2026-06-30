@@ -143,7 +143,7 @@ def _skill_slug_from_entity(entity: dict[str, Any]) -> str | None:
 
 def _resolve_source_uri(cortex: CortexEntityReader, slug: str) -> str | None:
     try:
-        entity = cortex.entity_get(f"agent_skill:{slug}")
+        entity = cortex.entity_get(f"agent_skill:{slug}", intent="full")
     except Exception as exc:
         logger.warning("enrich entity_get failed slug=%s error=%s", slug, exc)
         return None
@@ -176,7 +176,7 @@ def _heuristic_task_class_slugs(text: str) -> list[str]:
 
 def _entity_required_skills(cortex: CortexEntityReader, entity_id: str) -> list[str]:
     try:
-        entity = cortex.entity_get(entity_id)
+        entity = cortex.entity_get(entity_id, intent="full")
     except Exception as exc:
         logger.warning("enrich entity_get failed id=%s error=%s", entity_id, exc)
         return []

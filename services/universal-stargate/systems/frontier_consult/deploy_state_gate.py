@@ -283,9 +283,7 @@ def _change_ts_for_source(
     return _git_latest_landing_ts(repo, gate_files)
 
 
-def _expected_tree_hash(
-    source_ref: str | None, *, gate_files: set[str]
-) -> str | None:
+def _expected_tree_hash(source_ref: str | None, *, gate_files: set[str]) -> str | None:
     repo = _git_repo_root()
     if repo is None:
         return None
@@ -434,7 +432,7 @@ def _changed_files_from_source_ref(
         SourceKind.PLAN_PHASE.value,
     ):
         try:
-            entity = cortex.entity_get(ref.canonical_ref)
+            entity = cortex.entity_get(ref.canonical_ref, intent="full")
         except Exception:
             return set()
         attrs = entity.get("attributes") if isinstance(entity, dict) else None

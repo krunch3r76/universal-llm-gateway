@@ -239,7 +239,7 @@ async def _fetch_agent_meta(agent: str) -> AgentMeta:
     """
     anchors = _normalize_slug_to_anchors(agent)
     entity_id = _execution_meta_entity_id(anchors)
-    raw = await _cortex_get(f"/entities/{quote(entity_id, safe=':')}")
+    raw = await _cortex_get(f"/entities/{quote(entity_id, safe=':')}?intent=full")
     if isinstance(raw, dict) and "error" in raw:
         return _registry_meta_fallback(agent, AgentMeta())
     return _registry_meta_fallback(agent, _parse_agent_meta(raw))
@@ -256,7 +256,7 @@ async def _resolve_continuation(
         return None, None
     clean_id = transcript_id.removeprefix("transcript:")
     entity_key = f"transcript:{clean_id}"
-    data = await _cortex_get(f"/entities/{quote(entity_key, safe=':')}")
+    data = await _cortex_get(f"/entities/{quote(entity_key, safe=':')}?intent=full")
     if not isinstance(data, dict) or "error" in data:
         logger.warning(
             "agent_seat.hydrate: transcript %s not found — continuation skipped",

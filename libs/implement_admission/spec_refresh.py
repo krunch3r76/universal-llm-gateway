@@ -154,7 +154,9 @@ def _verify_refresh(
         if new_sha_uri not in (found[1].get("evidence_uris") or []):
             raise RuntimeError(f"{todo_id}: {slug} assertion missing new sha")
     pinned = _decode_attributes(
-        _dispatch("entity_get", {"entity_id": todo_id}).get("attributes")
+        _dispatch("entity_get", {"entity_id": todo_id, "intent": "full"}).get(
+            "attributes"
+        )
     )
     if pinned.get("implement_ready_assertion_id") != impl_new_id:
         raise RuntimeError(f"{todo_id}: implement_ready_assertion_id attr mismatch")
@@ -198,7 +200,7 @@ def refresh_spec_attestations(
     new_sha = dense_spec_hash_uri(spec_path.read_text(encoding="utf-8"))
     now_iso = datetime.now(UTC).isoformat()
     session_id = f"refresh-spec-hash-{now_iso}"
-    entity = _dispatch("entity_get", {"entity_id": todo_id})
+    entity = _dispatch("entity_get", {"entity_id": todo_id, "intent": "full"})
     if "error" in entity:
         raise ValueError(f"{todo_id}: entity not found — {entity['error']}")
     attrs = _decode_attributes(entity.get("attributes"))

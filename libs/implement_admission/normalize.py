@@ -126,7 +126,7 @@ def _normalize_entity(
 ) -> ImplementSpec:
     entity_id = ref.canonical_ref
     try:
-        entity = cortex.entity_get(entity_id)
+        entity = cortex.entity_get(entity_id, intent="full")
     except Exception as exc:
         raise SourceRefError(
             code="source_not_found",

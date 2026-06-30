@@ -114,7 +114,7 @@ def test_promoted_todo_attributes(friction_db: int) -> None:
     """Auto-created todo has correct workflow_state, source_uri, and attributes."""
     close_friction_assertion(friction_db, _TODO_ID, agent="t", session_id="t")
 
-    entity = _op_entity_get(entity_id=_TODO_ID)
+    entity = _op_entity_get(entity_id=_TODO_ID, intent="full")
     assert "error" not in entity, f"todo not found: {entity}"
     assert entity["workflow_state"] == "open"
     assert entity["source_uri"] == "tasks/specs/promoted-sample.md"
@@ -180,7 +180,7 @@ def test_non_skill_owner_promotion_succeeds(
     assert result.get("status") == "closed"
     assert result.get("promotion") == {"todo_created": todo_id}
 
-    entity = _op_entity_get(entity_id=todo_id)
+    entity = _op_entity_get(entity_id=todo_id, intent="full")
     assert "error" not in entity, f"todo not found: {entity}"
     attrs = entity.get("attributes") or {}
     # required_skills omitted (not an empty list) for non-skill owners

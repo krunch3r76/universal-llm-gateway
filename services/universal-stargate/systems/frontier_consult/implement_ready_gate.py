@@ -262,7 +262,7 @@ def require_implement_ready(
     if ref.source_kind != SourceKind.TODO.value:
         return
 
-    entity = cortex.entity_get(ref.canonical_ref)
+    entity = cortex.entity_get(ref.canonical_ref, intent="full")
     attrs = _decode_attributes(entity.get("attributes"))
     triage = (attrs.get("density_triage") or "").strip()
     now_iso = datetime.now(UTC).isoformat()

@@ -97,7 +97,9 @@ def _load_config_values() -> dict[str, str]:
     values: dict[str, str] = {}
     try:
         rt = get_runtime()
-        resp = rt.dispatch("entity_get", {"entity_id": _CONFIG_ENTITY})
+        resp = rt.dispatch(
+            "entity_get", {"entity_id": _CONFIG_ENTITY, "intent": "full"}
+        )
         attrs = resp.get("attributes") if isinstance(resp, dict) else None
         if isinstance(attrs, dict):
             for gate_id, attr in _GATE_ATTR.items():

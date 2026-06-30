@@ -307,7 +307,9 @@ def _audit(client: object) -> int:
     for entity_id in sorted(partitioned & live_ids):
         expected, _label = _applicable_for(entity_id)
         status, body = _request(
-            client, "GET", f"/entities/{urllib.parse.quote(entity_id, safe=':')}"
+            client,
+            "GET",
+            f"/entities/{urllib.parse.quote(entity_id, safe=':')}?intent=full",
         )
         if status != 200:
             continue
@@ -346,7 +348,7 @@ def _deprecate_retired(client: object, *, dry_run: bool) -> int:
         status, body = _request(
             client,
             "GET",
-            f"/entities/{urllib.parse.quote(entity_id, safe=':')}",
+            f"/entities/{urllib.parse.quote(entity_id, safe=':')}?intent=full",
         )
         if status == 404:
             print(f"  SKIP  {entity_id:60s}  [not found]")
@@ -364,7 +366,7 @@ def _deprecate_retired(client: object, *, dry_run: bool) -> int:
         status, body = _request(
             client,
             "PATCH",
-            f"/entities/{urllib.parse.quote(entity_id, safe=':')}",
+            f"/entities/{urllib.parse.quote(entity_id, safe=':')}?intent=full",
             body={"lifecycle": "deprecated"},
         )
         if status != 200:
@@ -425,7 +427,7 @@ def main() -> int:
         status, body = _request(
             client,
             "GET",
-            f"/entities/{urllib.parse.quote(entity_id, safe=':')}",
+            f"/entities/{urllib.parse.quote(entity_id, safe=':')}?intent=full",
         )
         if status != 200:
             print(f"  SKIP  {entity_id:60s}  [GET {status}]")
@@ -456,7 +458,7 @@ def main() -> int:
         status, body = _request(
             client,
             "PATCH",
-            f"/entities/{urllib.parse.quote(entity_id, safe=':')}",
+            f"/entities/{urllib.parse.quote(entity_id, safe=':')}?intent=full",
             body={"attributes": merged},
         )
         if status != 200:

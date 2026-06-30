@@ -151,7 +151,7 @@ def _request(
 
 def _entity_get(client: object, entity_id: str) -> tuple[int, dict]:
     q = urllib.parse.quote(entity_id, safe=":")
-    return _request(client, "GET", f"/entities/{q}")
+    return _request(client, "GET", f"/entities/{q}?intent=full")
 
 
 def _patch_related_skills(
@@ -250,7 +250,9 @@ def _self_check_workspace_skills(root_slugs: set[str]) -> bool:
             f"{sorted(root_slugs - outbound_sources - skipped_sources - expected_no_outbound)}"
         )
     if expected_no_outbound - no_outbound:
-        print(f"  Missing no-outbound      : {sorted(expected_no_outbound - no_outbound)}")
+        print(
+            f"  Missing no-outbound      : {sorted(expected_no_outbound - no_outbound)}"
+        )
     if len(root_slugs) != 21:
         print(f"  Expected 21 workspace skills, got {len(root_slugs)}")
     return ok

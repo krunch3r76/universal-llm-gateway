@@ -28,7 +28,7 @@ async def resolve_or_create_anchor(
     """
     anchor_id = f"thread:{thread_kind}:{thread_key}"
 
-    get_res = await cx_async("entity_get", {"entity_id": anchor_id})
+    get_res = await cx_async("entity_get", {"entity_id": anchor_id, "intent": "full"})
     if get_res.get("status_code") == 404:
         create_res = await cx_async(
             "entity_create",

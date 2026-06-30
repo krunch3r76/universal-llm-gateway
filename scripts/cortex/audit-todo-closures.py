@@ -41,7 +41,7 @@ def _list_done_todos(client: Any) -> list[dict[str, Any]]:
 
 
 def _entity_assertion_count(client: Any, entity_id: str) -> int:
-    resp = client.get(f"/entities/{entity_id}")
+    resp = client.get(f"/entities/{entity_id}?intent=full")
     if resp.status_code == 404:
         return -1
     resp.raise_for_status()
