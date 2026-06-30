@@ -258,3 +258,65 @@ class _PropertyIndexPart03:
                 raise
 
         await self._seq.run(_write())
+
+    async def replace_skill_vocabulary(
+        self, rows: list[tuple[str, str, str, float, int]]
+    ) -> None:
+        """Atomically replace all skill_vocabulary rows (idempotent full-replace)."""
+
+        async def _write() -> None:
+            conn = self._ensure_conn()
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                conn.execute("DELETE FROM skill_vocabulary")
+                if rows:
+                    conn.executemany(
+                        "INSERT INTO skill_vocabulary"
+                        " (slug, register, term, score, chunk_count)"
+                        " VALUES (?, ?, ?, ?, ?)",
+                        rows,
+                    )
+                conn.execute("COMMIT")
+            except sqlite3.Error as e:
+                conn.execute("ROLLBACK")
+                logger.exception("replace_skill_vocabulary failed: %s", e)
+                raise
+
+        await self._seq.run(_write())
+
+    def load_skill_vocabulary(self, slug: str | None = None) -> list[tuple[str, str]]:
+        """Return (register, term) rows for *slug*, or all rows when slug is None."""
+        conn = self._ensure_conn()
+        if slug is not None:
+            rows = conn.execute(
+                "SELECT register, term FROM skill_vocabulary"
+                " WHERE slug = ?"
+                " ORDER BY score DESC, register ASC, term ASC",
+                (slug,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT register, term FROM skill_vocabulary"
+                " ORDER BY slug ASC, score DESC, register ASC, term ASC"
+            ).fetchall()
+        return [(str(r[0]), str(r[1])) for r in rows]
+
+    def load_scope_vocabulary_for_scope(self, scope: str) -> list[tuple[str, str]]:
+        """Return (register, term) rows for one scope from scope_vocabulary."""
+        conn = self._ensure_conn()
+        rows = conn.execute(
+            "SELECT register, term FROM scope_vocabulary"
+            " WHERE scope = ?"
+            " ORDER BY register ASC, term ASC",
+            (scope,),
+        ).fetchall()
+        return [(str(r[0]), str(r[1])) for r in rows]
+
+    def load_corpus_hint_scores(self, scope: str) -> dict[str, float]:
+        """Return term → score for one scope from corpus_hints."""
+        conn = self._ensure_conn()
+        rows = conn.execute(
+            "SELECT term, score FROM corpus_hints WHERE scope = ?",
+            (scope,),
+        ).fetchall()
+        return {str(r[0]): float(r[1]) for r in rows}

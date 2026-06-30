@@ -174,6 +174,33 @@ class _PropertyIndexPart05:
         ).fetchall()
         return [(r[0], r[1], r[2]) for r in rows]
 
+    def get_term_counts_by_source(
+        self, key_prefix: str, source_prefixes: list[str]
+    ) -> list[tuple[str, str, int, int]]:
+        """Return (source, term, chunk_count, doc_count) grouped by source and term.
+
+        Like ``get_term_counts_for_source_prefixes`` but retains per-source
+        attribution instead of aggregating across sources.
+        """
+        if not source_prefixes:
+            return []
+        conn = self._ensure_conn()
+        prefix_len = len(key_prefix) + 1
+        like_pattern = f"{key_prefix}%"
+        source_clauses = " OR ".join("source LIKE ?" for _ in source_prefixes)
+        source_params = [f"{p}%" for p in source_prefixes]
+        rows = conn.execute(
+            f"SELECT source, substr(key, ?),"
+            f" COUNT(DISTINCT chunk_id),"
+            f" COUNT(DISTINCT CASE WHEN source != '' THEN source END)"
+            f" FROM properties"
+            f" WHERE key LIKE ? AND source != '' AND ({source_clauses})"
+            f" GROUP BY source, substr(key, ?)"
+            f" ORDER BY COUNT(DISTINCT chunk_id) DESC",
+            (prefix_len, like_pattern, *source_params, prefix_len),
+        ).fetchall()
+        return [(r[0], r[1], r[2], r[3]) for r in rows]
+
     def count_docs_for_prefixes(self, source_prefixes: list[str]) -> int:
         """Count distinct source documents matching any source prefix."""
         if not source_prefixes:

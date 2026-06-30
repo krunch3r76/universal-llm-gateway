@@ -11,7 +11,9 @@ _TRIAGE_EFFECTS: tuple[tuple[str, str], ...] = (
     ("recon_pending", "blocked until re-triage after two-axis recon"),
 )
 
-IMPLEMENT_GATE_TRIAGE = frozenset(name for name, _ in _TRIAGE_EFFECTS)
+MECHANICAL, JUDGMENT_REQUIRED, RECON_PENDING = tuple(name for name, _ in _TRIAGE_EFFECTS)
+
+IMPLEMENT_GATE_TRIAGE = frozenset({MECHANICAL, JUDGMENT_REQUIRED, RECON_PENDING})
 
 
 def format_implement_gate_triage_catalog() -> str:

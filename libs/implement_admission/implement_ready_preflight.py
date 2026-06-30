@@ -6,8 +6,16 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
-from implement_admission.dense_spec_schema import dense_spec_hash_uri, validate_dense_spec
-from implement_admission.density_triage_gate import format_implement_triage_unknown_reason
+from implement_admission.dense_spec_schema import (
+    dense_spec_hash_uri,
+    validate_dense_spec,
+)
+from implement_admission.density_triage_gate import (
+    JUDGMENT_REQUIRED,
+    MECHANICAL,
+    RECON_PENDING,
+    format_implement_triage_unknown_reason,
+)
 from implement_admission.implement_ready import (
     _acceptance_unpopulated_or_default,
     _assertion_cites_dense_spec,
@@ -109,7 +117,11 @@ def _make_report(
     na_count = sum(1 for g in gates if g.status == GateStatus.NOT_APPLICABLE)
     return PreflightReport(
         admitted=admitted,
-        summary={"failed": failed, "blocked": blocked_count, "not_applicable": na_count},
+        summary={
+            "failed": failed,
+            "blocked": blocked_count,
+            "not_applicable": na_count,
+        },
         first_failure=first_failure,
         resolution=resolution,
         gates=gates,
@@ -202,20 +214,20 @@ def preflight_implement_ready(
 
     triage = (density_triage or "").strip() or None
 
-    if triage == "mechanical":
-        _na(0, "mechanical_bypass")
+    if triage == MECHANICAL:
+        _pass(0, "mechanical_bypass")
         for i in range(1, 14):
             _na(i, _GATE_NAMES[i])
         return PreflightReport(
             admitted=True,
-            summary={"failed": 0, "blocked": 0, "not_applicable": 14},
+            summary={"failed": 0, "blocked": 0, "not_applicable": 13},
             first_failure=None,
             resolution=resolution,
             gates=gates,
         )
-    _pass(0, "mechanical_bypass")
+    _na(0, "mechanical_bypass")
 
-    if triage == "recon_pending":
+    if triage == RECON_PENDING:
         code = "implement_blocked_recon_pending"
         reason = (
             f"{todo_id}: recon not complete — run the two-axis recon and "
@@ -231,7 +243,7 @@ def preflight_implement_ready(
             resolution=resolution,
         )
 
-    if triage != "judgment_required":
+    if triage != JUDGMENT_REQUIRED:
         code = "implement_triage_unknown"
         reason = format_implement_triage_unknown_reason(todo_id, density_triage)
         _fail(1, "triage_known", code, reason, also_block=tuple(range(2, 14)))
@@ -308,9 +320,7 @@ def preflight_implement_ready(
 
     if 7 in blocked:
         parents = tuple(
-            p
-            for p in (3, 6)
-            if p in blocked or gates[p].status != GateStatus.PASSED
+            p for p in (3, 6) if p in blocked or gates[p].status != GateStatus.PASSED
         )
         _block(7, "spec_cited_in_evidence", blocked_by=parents or (6,))
     else:
@@ -422,7 +432,8 @@ def preflight_implement_ready(
         _pass(13, "skeptic_pass", deferred_subchecks=_GATE_13_DEFERRED_SUBCHECKS)
 
     return _make_report(
-        admitted=first_failure is None,  # gates 0-13 declared-state only; ¬ full evaluator
+        admitted=first_failure
+        is None,  # gates 0-13 declared-state only; ¬ full evaluator
         gates=gates,
         first_failure=first_failure,
         resolution=resolution,

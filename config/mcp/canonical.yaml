@@ -555,6 +555,70 @@ tools:
   cache_priority: on_demand
   introduced: 2026-06-18
 
+- canonical_name: cortex_doc_template
+  domain: cortex
+  operation: doc_template
+  dispatcher_call_shape:
+    tool: cortex
+    dispatch_key: op
+    dispatch_value: doc_template
+  flat_call_shape:
+    tool: cortex_doc_template
+    substrate_qualified: user-vortex__cortex_doc_template
+  fol_descriptor: |
+    ∀ doc_type ∈ {"implement_dense_spec"}:
+      doc_template(doc_type) ⟹ ok ∧ template ∈ str ∧ required_sections ⊆ List[str].
+    Read-only. ¬writes. Returns dense-spec skeleton with section hints for validate_dense_spec round-trip.
+  json_schema:
+    type: object
+    properties:
+      doc_type:
+        type: string
+        description: "Dense spec template kind. Default implement_dense_spec."
+    required: []
+  skill_uri: agent_skill:implement-todo
+  seat_visibility: [mcp, mcp_claude]
+  mandate_safety: read_only
+  cache_priority: on_demand
+  introduced: 2026-06-29
+
+- canonical_name: cortex_doc_validate
+  domain: cortex
+  operation: doc_validate
+  dispatcher_call_shape:
+    tool: cortex
+    dispatch_key: op
+    dispatch_value: doc_validate
+  flat_call_shape:
+    tool: cortex_doc_validate
+    substrate_qualified: user-vortex__cortex_doc_validate
+  fol_descriptor: |
+    ∀ doc_type ∈ {"implement_dense_spec"} ∧ exactly_one(text, path, source_ref):
+      doc_validate(...) ⟹ status ∈ {pass, not_attested, drifted_since_ready, skeptic_hash_missing, schema_failed}
+        ∧ gates[] aggregates gates 0–13 ∧ spec_sha256 = dense_spec_hash_uri(bytes) ∧ attested ∈ bool.
+    Read-only. ¬writes. Thin wrapper over preflight_implement_ready + skeptic evidence grounding.
+  json_schema:
+    type: object
+    properties:
+      doc_type:
+        type: string
+        description: "Dense spec kind. Default implement_dense_spec."
+      text:
+        type: string
+        description: "Inline dense-spec bytes to validate."
+      path:
+        type: string
+        description: "Workspaces-relative path; server reads bytes."
+      source_ref:
+        type: string
+        description: "todo:{slug} — resolve pinned spec + live attestation."
+    required: []
+  skill_uri: agent_skill:implement-todo
+  seat_visibility: [mcp, mcp_claude]
+  mandate_safety: read_only
+  cache_priority: on_demand
+  introduced: 2026-06-29
+
 - canonical_name: cortex_session_handoff_upsert
   domain: cortex
   operation: session_handoff_upsert

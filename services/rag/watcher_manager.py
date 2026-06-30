@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
@@ -38,6 +39,7 @@ from services.rag.events.lifecycle import (
     rag_watch_stopped,
     rag_watchers_registered,
 )
+from services.rag.indexing_failure_classifier import classify_indexing_failure
 
 if TYPE_CHECKING:
     from universal_event_bus import Event, EventBus
@@ -55,6 +57,9 @@ _RECONCILE_INTERVAL_S = 300.0
 # When a reconcile sweep recovers files, use a shorter interval before re-sweeping
 # since more outstanding work likely remains (e.g. extraction failures retrying).
 _RECONCILE_BUSY_INTERVAL_S = 30.0
+
+# Bounded transient-only retry budget for initial reindex workers (embed layer owns rewarm).
+_INITIAL_REINDEX_MAX_ATTEMPTS = 3
 
 
 def _normalize_extensions(extensions: Sequence[str]) -> tuple[str, ...]:
@@ -674,40 +679,63 @@ class WatcherManager:
                     queue.task_done()
                     return
                 try:
-                    result = await self._index_fn(
-                        fp,
-                        chunk_tokens,
-                        emit_skip_event=False,
-                    )
-                    self._note_index_mutation(fp, result)
-                    async with progress_lock:
-                        if result.unchanged:
-                            unchanged_total += 1
-                        else:
-                            reindexed_total += 1
-                        snap = (
-                            reindexed_total + unchanged_total + error_total,
-                            reindexed_total,
-                            unchanged_total,
-                            error_total,
-                        )
-                    await _maybe_emit_progress(*snap)
-                except Exception as exc:
-                    logger.warning(
-                        "Initial reindex skipped for %s: %s", fp, exc, exc_info=True
-                    )
-                    await self._emit(
-                        rag_file_indexing_failed(file=str(fp), error=str(exc))
-                    )
-                    async with progress_lock:
-                        error_total += 1
-                        snap = (
-                            reindexed_total + unchanged_total + error_total,
-                            reindexed_total,
-                            unchanged_total,
-                            error_total,
-                        )
-                    await _maybe_emit_progress(*snap)
+                    for attempt in range(_INITIAL_REINDEX_MAX_ATTEMPTS):
+                        try:
+                            result = await self._index_fn(
+                                fp,
+                                chunk_tokens,
+                                emit_skip_event=False,
+                            )
+                            self._note_index_mutation(fp, result)
+                            async with progress_lock:
+                                if result.unchanged:
+                                    unchanged_total += 1
+                                else:
+                                    reindexed_total += 1
+                                snap = (
+                                    reindexed_total + unchanged_total + error_total,
+                                    reindexed_total,
+                                    unchanged_total,
+                                    error_total,
+                                )
+                            await _maybe_emit_progress(*snap)
+                            break
+                        except Exception as exc:
+                            category, _ = classify_indexing_failure(
+                                exc, chunk_count=0
+                            )
+                            if (
+                                category == "transient"
+                                and attempt < _INITIAL_REINDEX_MAX_ATTEMPTS - 1
+                            ):
+                                delay = (
+                                    1.0
+                                    * (2**attempt)
+                                    * random.uniform(0.75, 1.25)
+                                )
+                                await asyncio.sleep(delay)
+                                continue
+                            logger.warning(
+                                "Initial reindex skipped for %s: %s",
+                                fp,
+                                exc,
+                                exc_info=True,
+                            )
+                            await self._emit(
+                                rag_file_indexing_failed(
+                                    file=str(fp), error=str(exc)
+                                )
+                            )
+                            async with progress_lock:
+                                error_total += 1
+                                snap = (
+                                    reindexed_total + unchanged_total + error_total,
+                                    reindexed_total,
+                                    unchanged_total,
+                                    error_total,
+                                )
+                            await _maybe_emit_progress(*snap)
+                            break
                 finally:
                     queue.task_done()
 

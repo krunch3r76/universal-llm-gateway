@@ -78,6 +78,8 @@ _OP_SPECS: dict[str, str] = {
     "implement_ready_preflight": (
         "ops_implement_ready_preflight:_op_implement_ready_preflight"
     ),
+    "doc_template": "ops_doc_template:_op_doc_template",
+    "doc_validate": "ops_doc_validate:_op_doc_validate",
     "session_handoff_upsert": "ops_session_close:_op_session_handoff_upsert",
     "assemble_transcript": "ops_transcript_assembly:_op_assemble_transcript",
     "review_queue": "ops_assertions:_op_review_queue",

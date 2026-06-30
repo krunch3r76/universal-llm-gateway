@@ -9,6 +9,7 @@ then syncs via ``ingest_skills.py``.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import os
 import re
@@ -19,6 +20,8 @@ from pathlib import Path
 
 _REPO = Path(__file__).resolve().parent.parent.parent
 _SCRIPTS_CORTEX = Path(__file__).resolve().parent
+if str(_REPO) not in sys.path:
+    sys.path.insert(0, str(_REPO))
 if str(_REPO / "libs") not in sys.path:
     sys.path.insert(0, str(_REPO / "libs"))
 if str(_SCRIPTS_CORTEX) not in sys.path:
@@ -116,6 +119,49 @@ def derive_trigger_match_terms(
         add(tok)
 
     return terms[:_MAX_TERMS]
+
+
+def derive_trigger_match_terms_from_vocab(
+    slug: str,
+    *,
+    vocab_rows: list[tuple[str, str, str, float, int]],
+    top_n: int = _MAX_TERMS,
+) -> list[str]:
+    """Top-N terms by score from skill_vocabulary rows for one slug."""
+    slug_rows = [row for row in vocab_rows if row[0] == slug]
+    slug_rows.sort(key=lambda row: (-row[3], row[2]))
+    terms: list[str] = []
+    seen: set[str] = set()
+    for _slug, _register, term, _score, _chunks in slug_rows:
+        key = term.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        terms.append(term)
+        if len(terms) >= top_n:
+            break
+    return terms
+
+
+async def _load_skill_vocabulary_rows(
+    db_path: Path | None = None,
+) -> list[tuple[str, str, str, float, int]]:
+    from services.rag.property_index import PropertyIndex
+
+    idx = PropertyIndex(db_path=db_path) if db_path else PropertyIndex()
+    await idx.start()
+    try:
+        conn = idx._ensure_conn()
+        rows = conn.execute(
+            "SELECT slug, register, term, score, chunk_count"
+            " FROM skill_vocabulary"
+            " ORDER BY slug ASC, score DESC, term ASC"
+        ).fetchall()
+        return [
+            (str(r[0]), str(r[1]), str(r[2]), float(r[3]), int(r[4])) for r in rows
+        ]
+    finally:
+        await idx.stop()
 
 
 def _cortex_files_root() -> Path:
@@ -286,6 +332,18 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Skip post-write ingest_skills.py sync",
     )
+    parser.add_argument(
+        "--source",
+        choices=("deterministic", "vocab"),
+        default="deterministic",
+        help="Term derivation source: slug/description heuristics or skill_vocabulary",
+    )
+    parser.add_argument(
+        "--db-path",
+        type=Path,
+        default=None,
+        help="Metadata DB path for --source vocab (default: ~/.rag/store/rag_metadata.db)",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -298,6 +356,17 @@ def main(argv: list[str] | None = None) -> int:
         return audit(client)
 
     rows = _fetch_active_skills(client)
+    vocab_rows: list[tuple[str, str, str, float, int]] = []
+    if args.source == "vocab":
+        vocab_rows = asyncio.run(_load_skill_vocabulary_rows(args.db_path))
+        if not vocab_rows:
+            print(
+                "ERROR: --source vocab requires populated skill_vocabulary"
+                " (run scripts/rag/attribute_skill_vocabulary.py first)",
+                file=sys.stderr,
+            )
+            return 2
+
     pending_files: list[tuple[str, list[str], Path]] = []
     pending_entities: list[tuple[str, list[str], str]] = []
     skipped_preserve = 0
@@ -318,11 +387,15 @@ def main(argv: list[str] | None = None) -> int:
             if existing:
                 skipped_frontmatter += 1
                 continue
-        terms = derive_trigger_match_terms(
-            slug,
-            trigger_short=trigger_short,
-            skill_category=skill_category,
-            description=description,
+        terms = (
+            derive_trigger_match_terms_from_vocab(slug, vocab_rows=vocab_rows)
+            if args.source == "vocab"
+            else derive_trigger_match_terms(
+                slug,
+                trigger_short=trigger_short,
+                skill_category=skill_category,
+                description=description,
+            )
         )
         if target is not None:
             pending_files.append((slug, terms, target))

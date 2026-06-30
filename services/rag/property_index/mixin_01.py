@@ -15,6 +15,7 @@ from ._spec import (
     _V10_CONTEXTUALIZED_CHUNKS_SQL,
     _V12_CONTEXTUALIZATION_EXCEPTIONS_SQL,
     _V14_EXTRACTION_QUEUE_EXECUTION_ID_SQL,
+    _V15_SKILL_VOCABULARY_SQL,
     Callable,
     FtsIndex,
     Path,
@@ -277,6 +278,11 @@ class _PropertyIndexPart01:
                 14,
                 "extraction_queue.active_execution_id: track in-flight Stargate execution",
                 self._migration_v14_extraction_queue_execution_id,
+            ),
+            (
+                15,
+                "skill_vocabulary: per-skill term attribution",
+                lambda conn: conn.executescript(_V15_SKILL_VOCABULARY_SQL),
             ),
         ]
         for version, description, fn in migrations:

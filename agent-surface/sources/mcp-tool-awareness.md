@@ -54,6 +54,22 @@ For large markdown files, prefer section-level access over full reads:
 
 `workspaces` paths MUST include repo name prefix. `context` paths are relative to `tasks/`.
 <!-- /target:* -->
+<!-- target:* -->
+## Descriptor Reads — Stub-First (context discipline)
+
+**Do NOT full-`Read` `mcps/**/tools/*.json` to learn an op/param.** A descriptor is one
+giant `description` blob (cortex.json ≈ 15.7k chars); one read pulls ~40 ops' worth of
+prose. Cached descriptors can also be STALE (e.g. `team_dispatch.json` lacks `handoff`/
+`contract`/`source_ref` the server ships) — **live `mcp_get_tools`/catalog is authoritative**.
+
+Order (stop at the first that answers):
+1. **Stub/SOT** — `cortex-essentials`, `handoff-dispatchers`+`dispatch-workflow`, `fs`/this rule, `agent-bus-discipline`, `tool-reference` §rag.
+2. **`mcp_get_tools` / grep** the targeted field (`Grep -C 3-5`) — never full-read for one field.
+3. **Cached descriptor — with a freshness check** (cross-check the live catalog before trusting an absence).
+4. **Full read — once per novel tool per session**, and note why.
+
+Full discipline + "already covered" map: `mcp-descriptor-read-discipline-stub.mdc`.
+<!-- /target:* -->
 <!-- target:cursor -->
 ## Continue Mode (Transcript Pickup)
 

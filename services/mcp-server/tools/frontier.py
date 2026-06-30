@@ -286,6 +286,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             | None
         ) = None,
         auto_review_child: bool = False,
+        model_knobs: dict[str, str] | None = None,
         reuse_thread: str | None = None,
         executor_override: str | None = None,
         executor_override_reason_code: str | None = None,
@@ -360,8 +361,8 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         **Contract (REQUIRED — generate/to_thread):** ``contract`` is REQUIRED
         on ``op="generate"`` and ``op="to_thread"``; there is NO derivation on
         these paths.         ``op="generate"`` accepts
-        ``light-bounded | pure-mechanical | implement`` (``implement`` is
-        generate-only — the ``cursor-sdk`` packet lane); ``contract=wrap`` is
+        ``light-bounded | pure-mechanical | implement | wrap`` (``implement`` and
+        ``wrap`` are generate-only — the ``cursor-sdk`` packet lane); ``contract=wrap`` is
         also generate-only on ``role=cursor-sdk`` — server-side gate-then-
         materialize via ``prepare_implement_packet``, returns HTTP 200 with
         ``packet_path`` + provenance (no SDK worker); requires ``source_ref``,
@@ -457,7 +458,18 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         sees it.
 
         ``reasoning_effort`` — requested reasoning knob; actual resolution is
-        reported in ``knob_resolution``. No parity claim by default.
+        reported in ``knob_resolution``. No parity claim by default. NOTE:
+        ``reasoning_effort`` is NOT forwarded on ``role="cursor-sdk"`` dispatches
+        (it is dropped with a ``reasoning_effort_ignored`` warning) — use
+        ``model_knobs`` instead.
+
+        ``model_knobs`` — cursor-sdk model-variant knobs (``op="generate"``,
+        ``role="cursor-sdk"``) aligned against the resolved Cursor model's
+        capability descriptor (``libs/cursor_capabilities``). E.g. on
+        ``model="cursor/claude-opus-4-8"`` pass
+        ``model_knobs={"effort": "low", "thinking": "false"}``. Unsupported or
+        invalid knob values are dropped with a ``knob_dropped`` warning; the
+        per-knob outcome is echoed in ``knob_resolution``. Ignored on API roles.
         """
         if op == "handoff":
             if contract == "wrap":
@@ -677,6 +689,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             ("mcp", mcp),
             ("reasoning_effort", reasoning_effort),
             ("generation_options", generation_options),
+            ("model_knobs", model_knobs),
             ("max_tool_turns", max_tool_turns),
             ("transcript_id", transcript_id),
             ("caller_agent", caller_agent),

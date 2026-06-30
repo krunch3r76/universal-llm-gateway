@@ -10,7 +10,12 @@ from implement_admission.dense_spec_schema import (
     spec_basename,
     validate_dense_spec,
 )
-from implement_admission.density_triage_gate import format_implement_triage_unknown_reason
+from implement_admission.density_triage_gate import (
+    JUDGMENT_REQUIRED,
+    MECHANICAL,
+    RECON_PENDING,
+    format_implement_triage_unknown_reason,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,17 +129,17 @@ def evaluate_implement_ready(
 ) -> ImplementReadyVerdict:
     """Deterministic implement-readiness verdict over declared todo state."""
     triage = (density_triage or "").strip() or None
-    if triage == "mechanical":
+    if triage == MECHANICAL:
         return ImplementReadyVerdict(admitted=True)
 
-    if triage == "recon_pending":
+    if triage == RECON_PENDING:
         return _reject(
             "implement_blocked_recon_pending",
             f"{todo_id}: recon not complete — run the two-axis recon and "
             "re-triage to judgment_required or mechanical before implement dispatch",
         )
 
-    if triage != "judgment_required":
+    if triage != JUDGMENT_REQUIRED:
         return _reject(
             "implement_triage_unknown",
             format_implement_triage_unknown_reason(todo_id, density_triage),

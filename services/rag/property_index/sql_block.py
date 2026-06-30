@@ -138,6 +138,19 @@ _V14_EXTRACTION_QUEUE_EXECUTION_ID_SQL = """
 ALTER TABLE extraction_queue ADD COLUMN active_execution_id TEXT;
 """
 
+_V15_SKILL_VOCABULARY_SQL = """
+CREATE TABLE IF NOT EXISTS skill_vocabulary (
+    slug TEXT NOT NULL,
+    register TEXT NOT NULL,
+    term TEXT NOT NULL,
+    score REAL NOT NULL,
+    chunk_count INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (slug, register, term)
+);
+CREATE INDEX IF NOT EXISTS idx_skill_vocabulary_slug ON skill_vocabulary(slug);
+"""
+
 _V12_CONTEXTUALIZATION_EXCEPTIONS_SQL = """
 CREATE TABLE IF NOT EXISTS contextualization_exceptions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -189,6 +202,7 @@ __all__ = [
     "_V10_CONTEXTUALIZED_CHUNKS_SQL",
     "_V12_CONTEXTUALIZATION_EXCEPTIONS_SQL",
     "_V14_EXTRACTION_QUEUE_EXECUTION_ID_SQL",
+    "_V15_SKILL_VOCABULARY_SQL",
     "_V5_SCOPE_FRESHNESS_SQL",
     "_CREATE_SCHEMA_VERSION_SQL",
 ]
