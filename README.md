@@ -19,16 +19,16 @@ Four layers, each building on the one below:
 ```
 Layer 3: Coordination    Agent bus, boot system, MCP (Model Context Protocol) tool surface
                          Multiple agents share state, hand off work,
-                         and improve the boot that initializes them.
+                         and improve the initial context provided to future sessions.
                          ┌─────────────────────────────────────────┐
-Layer 2: Belief Revision │ AGM-compliant belief revision —          │
-                         │ entrenchment ordering, supersession,     │
-                         │ contradiction detection, spreading       │
-                         │ activation, Dream State consolidation.   │
+Layer 2: Belief Revision │ Fact updates with full history tracking, │
+                         │ contradiction detection, context         │
+                         │ traversal, and automated cleanup of      │
+                         │ outdated information.                    │
                          └─────────────────────────────────────────┘
 Layer 1: Persistent      Cortex knowledge graph — entities,
          Memory          assertions, temporal bounds, hybrid search,
-                         session edges, enrichment. Agents remember
+                         reasoning links. Agents remember
                          across sessions.
                          ┌─────────────────────────────────────────┐
 Layer 0: Inference       │ Stargate — route to local (llama.cpp,   │
@@ -47,8 +47,8 @@ Layer 0 alone is a fully functional model gateway — no cloud credentials, no f
 Client → Master Stargate:9999 (sole client-facing endpoint)
          ├─ Unix socket → Edge container (network_mode: "none") → Gateway → Worker (local inference)
          ├─ TCP (remote) → Relay Stargate → Edge container → Gateway (federated inference)
-         ├─ UDS → Cloud Proxy → Anthropic/xAI/OpenAI/Google/OpenRouter (cloud inference)
-         └─ UDS → Cortex API, RAG, Agent Bus, Event Service (cognitive services)
+         ├─ Unix socket → Cloud Proxy → Anthropic/xAI/OpenAI/Google/OpenRouter (cloud inference)
+         └─ Unix socket → Cortex API, RAG, Agent Bus, Event Service (cognitive services)
 ```
 
 ## Status
@@ -82,9 +82,9 @@ The sole client-facing endpoint, Stargate routes requests to local models, feder
 | Health                                                  | `GET /health`                           |
 
 
-**Pipelines** are virtual models that orchestrate multiple real models behind a single `model` name. They support graph execution with automatic parallelization, loops, conditional branching, retry, and hot-reload. Shipped pipelines include consensus (multi-model verification with veto gates), RAG answer (corpus-grounded retrieval + generation), consultation (domain-specialized assistants), and code review.
+**Pipelines** are virtual models that orchestrate multiple real models behind a single `model` name. They support graph execution with automatic parallelization, loops, conditional branching, retry, and hot-reload. Shipped pipelines include consensus (multi-model verification where any model can flag an error), RAG answer (corpus-grounded retrieval + generation), consultation (domain-specialized assistants), and code review.
 
-**Federation** distributes inference across multiple GPU nodes. It provides WebSocket telemetry, single-flight model loading, and automatic routing based on GPU capacity and queue depth. The client experience remains unchanged — all requests go to `:9999`.
+**Federation** distributes inference across multiple GPU nodes. It provides WebSocket telemetry, efficient model loading to prevent memory spikes, and automatic routing based on GPU capacity and queue depth. The client experience remains unchanged — all requests go to `:9999`.
 
 **Hardening**: Edge containers run with `network_mode: "none"`, non-root, capability-dropped, and memory-limited. The Gateway (inference engine) is never exposed to any network. Pipeline tool execution runs in a separate hardened sidecar.
 
@@ -104,13 +104,13 @@ Runs as a containerized FastAPI service on `:443` with TLS and bearer auth. Each
 | Cortex          | Entity/assertion CRUD, search, activate, supersede, impact, tags, edges, journal                                                                |
 | File I/O        | Read/write across `cortex` and `workspaces` sandboxes with markdown section ops                                                                 |
 | RAG             | Semantic search, answer generation, article upsert, scope routing                                                                               |
-| Frontier models | `team_dispatch(op=generate|to_thread|handoff, role=..., dispatch_thread_id=..., ...)` — sole MCP dispatch door for API roles and manual-seat handoffs |
+| Frontier models | Delegate sub-tasks to other specialized AI roles or hand off work back to the human operator |
 | Infrastructure  | Service lifecycle (`manage`), observability queries, pipeline execution                                                                         |
 
 
 ### RAG (Retrieval)
 
-Local semantic search backed by ChromaDB with corpus-grounded multi-stage retrieval. Query rewriting validates every candidate term against the actually-indexed vocabulary before any LLM call. Two-pool hybrid retrieval (dense+sparse Pool A, named-entity OR-query Pool B) with RRF (Reciprocal Rank Fusion) merge and facet-guided LLM reranking.
+Local semantic search backed by ChromaDB with corpus-grounded multi-stage retrieval. Query rewriting validates every candidate term against the actually-indexed vocabulary before any LLM call. Combines keyword and vector searches using Reciprocal Rank Fusion, followed by a local model pass to rank the final results by relevance.
 
 Indexes Markdown, PDF, EPUB, HTML, and plain text. Code indexing (Python via tree-sitter AST) is built but not yet active. Knowledge extraction produces entities, topics, and relations for hybrid structured+vector search. File watching auto-indexes changes.
 
@@ -120,22 +120,22 @@ Indexes Markdown, PDF, EPUB, HTML, and plain text. Code indexing (Python via tre
 
 Cortex is a graph-native knowledge system for persistent, formally-structured belief revision. It stores what agents and humans know — and tracks what changes, when, and why.
 
-**Knowledge graph**: Entities (people, decisions, documents, legal matters, services) connected by typed edges. Assertions carry confidence levels (`confirmed` / `believed` / `suspected` / `hypothesized`), temporal bounds, derivation provenance, and entrenchment scores.
+**Knowledge graph**: Entities (people, decisions, documents, legal matters, services) connected by typed edges. Assertions carry confidence levels (`confirmed` / `believed` / `suspected` / `hypothesized`), temporal bounds, derivation provenance, and priority scores based on reliability and usage.
 
 **Belief revision** — AGM (Alchourrón-Gärdenfors-Makinson) compliant (25/25 postulate tests, see [compliance report](docs/agm-compliance-report.md)):
 
-- Immutable revisions with atomic supersession — old belief closes, new belief opens, supersession chain preserved
+- Immutable history — updating a fact creates a new record and links the old one to it, rather than overwriting data
 - Mutable tag pointers for named belief states (`current`, `approved`, `disputed`)
-- Hybrid retrieval: FTS5 (SQLite Full-Text Search 5) + vector search with CombMAX score fusion
-- Spreading activation over reasoning edges with hub suppression
-- Impact analysis (transitive dependency cascade) and write-path contradiction detection
-- Safety-hardened Dream State consolidation with circuit breakers and dry-run default
+- Hybrid search combining keyword matching (SQLite FTS5) with vector similarity scoring
+- Context retrieval that finds related information by traversing links between facts, automatically ignoring overly connected hub topics
+- Contradiction detection that warns when a new fact contradicts existing ones or breaks downstream dependencies
+- Automated cleanup processes that prune outdated or low-confidence facts safely
 
-**Human and agent context share the same structure**: entities, confidence taxonomy, and supersession mechanics apply equally to a human's life context and an agent's observations. Provenance distinguishes contributions, not structural privilege.
+**Humans and agents write to the same graph.** There is no separate "AI memory" — agents add entities and assertions using the same schema as human-authored knowledge. Who contributed what is tracked through provenance; neither side gets structural preference.
 
-**Operational note**: The full cognitive stack — enrichment, belief revision, Dream State consolidation, boot narrative synthesis — currently requires frontier-quality reasoning. This is served by the optional cloud proxy or high-end local hardware. The graph never moves; only the inference call does.
+**Operational note**: The heavier cognitive operations — enrichment, belief revision, automated fact cleanup — currently work best with frontier-quality reasoning, served by the optional cloud proxy or high-end local hardware. Your knowledge graph stays on your machine either way; only the prompt for that specific operation goes out.
 
-Agents access Cortex through MCP tools, which relay to the Cortex REST API over UDS.
+Agents access Cortex through MCP tools, which relay to the Cortex REST API over Unix sockets.
 
 ### Event Observability
 
@@ -153,11 +153,11 @@ scripts/query-events --op noise-profile --minutes 5
 
 **Sandboxed inference.** Local models run in hardened containers: no direct network access, dropped capabilities, non-root execution. This is deliberate isolation — models can reason over your data through controlled APIs, but cannot independently reach the open internet or wander outside the paths you configure (Stargate routing, optional cloud proxy, MCP tool permissions).
 
-**Agents as co-participants.** Agents do not merely execute instructions — they contribute observations, revise beliefs, seed reasoning edges, and improve the boot that initializes future sessions. The knowledge graph is a shared epistemic workspace where human and AI contributions are structurally equal, distinguished only by provenance.
+**Agents as co-participants.** Agents do not merely execute instructions — they record observations, update facts, link related ideas, and improve the initial context provided to future sessions. The knowledge graph is a shared workspace where human and AI contributions are tracked equally, distinguished only by who made them.
 
-**Self-evolving boot.** Each session's agent-seeded observations accumulate entrenchment and surface in future boots when contextually relevant. The system improves through use rather than manual maintenance. Salience scoring, spreading activation, and hybrid search ensure the most relevant context surfaces first.
+**Self-evolving context.** Each session's agent-authored observations gain priority over time and surface in future sessions when relevant. The system improves through use rather than manual maintenance. Context is ranked by relevance and recent usage so the most useful information surfaces first.
 
-**Belief revision as first-class primitive.** Supersession, not deletion. Entrenchment ordering, not FIFO. Contradiction detection at write time. AGM compliance. When evidence changes, the system revises beliefs formally — lower-entrenchment beliefs contract first, revisions make minimal changes, and the full dependency cascade remains traceable.
+**Belief revision as first-class primitive.** History is preserved, not overwritten. When evidence changes, the system formally updates facts: less reliable claims are pruned first, changes are kept minimal, and the entire history of why a fact changed remains traceable.
 
 ## Components
 
@@ -166,10 +166,10 @@ scripts/query-events --op noise-profile --minutes 5
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
 | **Stargate** (`:9999`) | Client endpoint, routing, federation orchestration                                                                                                                                                | Host process                       |
 | **Gateway**            | Inference engine, worker lifecycle, model loading                                                                                                                                                 | Container (`network_mode: "none"`) |
-| **Cortex API**         | AGM-compliant knowledge graph — entities, assertions, belief revision, session edges. REST gateway over UDS; sole access path for agents. See [compliance report](docs/agm-compliance-report.md). | Host subprocess (UDS)              |
-| **Agent Bus**          | Inter-agent messaging                                                                                                                                                                             | Host subprocess (UDS)              |
-| **RAG Service**        | Semantic search, indexing, knowledge extraction                                                                                                                                                   | Host process (UDS)                 |
-| **Cloud Proxy**        | Cloud API relay (optional)                                                                                                                                                                        | Container (UDS)                    |
+| **Cortex API**         | AGM-compliant knowledge graph — entities, assertions, belief revision, session edges. REST gateway over Unix socket; sole access path for agents. See [compliance report](docs/agm-compliance-report.md). | Host subprocess (Unix socket)      |
+| **Agent Bus**          | Inter-agent messaging                                                                                                                                                                             | Host subprocess (Unix socket)      |
+| **RAG Service**        | Semantic search, indexing, knowledge extraction                                                                                                                                                   | Host process (Unix socket)         |
+| **Cloud Proxy**        | Cloud API relay (optional)                                                                                                                                                                        | Container (Unix socket)            |
 | **MCP Server**         | Tool server for agents                                                                                                                                                                            | Container (`:443`, TLS)            |
 | **Event Service**      | Centralized event store                                                                                                                                                                           | Host subprocess (UDS)              |
 
@@ -209,8 +209,8 @@ universal-llm-gateway/
 │   ├── _universal-llm-gateway/       # Gateway (container-internal inference)
 │   ├── universal-stargate/           # Stargate (port 9999, routing + orchestration)
 │   │   └── systems/                  # Subsystems: pipeline, federation, routing
-│   ├── rag/                          # RAG service (UDS)
-│   ├── universal_cloud_proxy/        # Cloud proxy (UDS, optional)
+│   ├── rag/                          # RAG service (Unix socket)
+│   ├── universal_cloud_proxy/        # Cloud proxy (Unix socket, optional)
 │   ├── mcp-server/                   # MCP tool server (port 443, TLS)
 │   ├── event-service/                # Event service entry point
 │   └── agent-bus/                    # Agent bus entry point
