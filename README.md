@@ -6,9 +6,9 @@ Run models on your own hardware so **intellectual property, proprietary data, cl
 
 That's the starting point — a self-hosted gateway for teams that need **serious information security** alongside capable local and cloud-augmented inference.
 
-When local isn't enough, enable the cloud proxy. Pipelines can use cloud models for heavier reasoning while your corpora, Cortex graph, and operational context stay on your machine. The proxy is the only outbound path; disable it to restore full on-prem isolation.
+When local isn't enough, enable the cloud proxy. Pipelines can use cloud models for heavier reasoning while your documents, knowledge graph, and session history stay on your machine. The proxy is the only outbound path; disable it to restore full on-prem isolation.
 
-Take it further: bring in frontier models through MCP and they can drive your local pipelines, query your RAG corpora, use your tools — all grounded in Cortex, a shared substrate where humans and AI agents build on each other's work across sessions.
+Take it further: bring in frontier models through MCP and they can drive your local pipelines, search your document corpus, use your tools — all grounded in a persistent knowledge graph (Cortex) where humans and AI agents build on each other's work across sessions.
 
 ---
 
@@ -17,7 +17,7 @@ Take it further: bring in frontier models through MCP and they can drive your lo
 Four layers, each building on the one below:
 
 ```
-Layer 3: Coordination    Agent bus, boot system, MCP (Model Context Protocol) tool surface
+Layer 3: Coordination    Agent bus, session initialization, MCP (Model Context Protocol) tool surface
                          Multiple agents share state, hand off work,
                          and improve the initial context provided to future sessions.
                          ┌─────────────────────────────────────────┐
@@ -63,7 +63,7 @@ cd universal-llm-gateway
 ./manage
 ```
 
-`./manage` bootstraps the Python venv, installs dependencies, and launches the TUI. All services — inference, memory, and coordination — start and stop through `./manage`.
+`./manage` bootstraps the Python venv, installs dependencies, and launches the terminal management interface. All services — inference, memory, and coordination — start and stop through `./manage`.
 
 ## Subsystems
 
@@ -90,11 +90,11 @@ The sole client-facing endpoint, Stargate routes requests to local models, feder
 
 ### Agent Bus (Coordination — Layer 3)
 
-Structured inter-agent messaging with threads, turns, read/unread tracking, and thread lifecycle management. Agents post directives, review specifications, hand off work, and close threads with summaries. Session identity and provenance are tracked across all coordination activity.
+Structured inter-agent messaging with threads, turns, read/unread tracking, and thread lifecycle management. Agents post directives, review specifications, hand off work, and close threads with summaries. Authorship and session identity are tracked across all coordination activity.
 
 ### MCP Server (Tool Surface)
 
-The entry point for outside agents to connect into the stack. Frontier models and external agents initiate an MCP connection and get access to 30+ tools spanning Cortex, file I/O (two sandboxes), RAG, local pipelines, service lifecycle, observability, agent bus, browser automation, and web search.
+The entry point for outside agents to connect into the stack. Frontier models and external agents initiate an MCP connection and get access to 30+ tools spanning Cortex, file read/write (two isolated storage areas: knowledge graph files and project files), RAG, local pipelines, service lifecycle, observability, agent bus, browser automation, and web search.
 
 Runs as a containerized FastAPI service on `:443` with TLS and bearer auth. Each tool category has a distinct security policy.
 
@@ -108,7 +108,7 @@ Runs as a containerized FastAPI service on `:443` with TLS and bearer auth. Each
 | Infrastructure  | Service lifecycle (`manage`), observability queries, pipeline execution                                                                         |
 
 
-### RAG (Retrieval)
+### RAG (Retrieval-Augmented Generation)
 
 Local semantic search backed by ChromaDB with corpus-grounded multi-stage retrieval. Query rewriting validates every candidate term against the actually-indexed vocabulary before any LLM call. Combines keyword and vector searches using Reciprocal Rank Fusion, followed by a local model pass to rank the final results by relevance.
 
@@ -120,12 +120,12 @@ Indexes Markdown, PDF, EPUB, HTML, and plain text. Code indexing (Python via tre
 
 Cortex is a graph-native knowledge system for persistent, formally-structured belief revision. It stores what agents and humans know — and tracks what changes, when, and why.
 
-**Knowledge graph**: Entities (people, decisions, documents, legal matters, services) connected by typed edges. Assertions carry confidence levels (`confirmed` / `believed` / `suspected` / `hypothesized`), temporal bounds, derivation provenance, and priority scores based on reliability and usage.
+**Knowledge graph**: Entities (people, decisions, documents, legal matters, services) connected by typed edges. Assertions carry confidence levels (`confirmed` / `believed` / `suspected` / `hypothesized`), temporal bounds, source traceability, and priority scores based on reliability and usage.
 
 **Belief revision** — AGM (Alchourrón-Gärdenfors-Makinson) compliant (25/25 postulate tests, see [compliance report](docs/agm-compliance-report.md)):
 
 - Immutable history — updating a fact creates a new record and links the old one to it, rather than overwriting data
-- Mutable tag pointers for named belief states (`current`, `approved`, `disputed`)
+- Named labels that can be moved between fact states (`current`, `approved`, `disputed`)
 - Hybrid search combining keyword matching (SQLite FTS5) with vector similarity scoring
 - Context retrieval that finds related information by traversing links between facts, automatically ignoring overly connected hub topics
 - Contradiction detection that warns when a new fact contradicts existing ones or breaks downstream dependencies
@@ -166,15 +166,15 @@ scripts/query-events --op noise-profile --minutes 5
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
 | **Stargate** (`:9999`) | Client endpoint, routing, federation orchestration                                                                                                                                                | Host process                       |
 | **Gateway**            | Inference engine, worker lifecycle, model loading                                                                                                                                                 | Container (`network_mode: "none"`) |
-| **Cortex API**         | AGM-compliant knowledge graph — entities, assertions, belief revision, session edges. REST gateway over Unix socket; sole access path for agents. See [compliance report](docs/agm-compliance-report.md). | Host subprocess (Unix socket)      |
+| **Cortex API**         | Knowledge graph — entities, assertions, belief revision, session history. REST gateway over Unix socket; sole access path for agents. See [compliance report](docs/agm-compliance-report.md). | Host subprocess (Unix socket)      |
 | **Agent Bus**          | Inter-agent messaging                                                                                                                                                                             | Host subprocess (Unix socket)      |
 | **RAG Service**        | Semantic search, indexing, knowledge extraction                                                                                                                                                   | Host process (Unix socket)         |
 | **Cloud Proxy**        | Cloud API relay (optional)                                                                                                                                                                        | Container (Unix socket)            |
 | **MCP Server**         | Tool server for agents                                                                                                                                                                            | Container (`:443`, TLS)            |
-| **Event Service**      | Centralized event store                                                                                                                                                                           | Host subprocess (UDS)              |
+| **Event Service**      | Centralized event store                                                                                                                                                                           | Host subprocess (Unix socket)      |
 
 
-Managed via `./manage` (TUI). Config at `~/.gateway/stargate.yaml`.
+Managed via `./manage` (terminal management interface). Config at `~/.gateway/stargate.yaml`.
 
 ## Model Support
 
