@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 import urllib.parse
 
-from _skill_constants import _SUPPRESSED
+from _skill_constants import _SUPPRESSED, slug_to_name
 from _skill_scan import _create_lifecycle
 
 
@@ -54,7 +54,7 @@ def _projection(
     result: dict[str, object] = {
         "id": f"agent_skill:{slug}",
         "type": "agent_skill",
-        "name": " ".join(p.capitalize() for p in slug.split("-")),
+        "name": slug_to_name(slug),
         "description": scanned["description"],
         "source_uri": scanned["source_uri"],
         "attributes": attrs,

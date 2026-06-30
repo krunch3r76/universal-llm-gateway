@@ -82,6 +82,7 @@ tests/
 # Lane-A contract tests (todo:track-implement-admission-tests-ci)
 !libs/implement_admission/test_skill_fs_line.py
 !libs/implement_admission/test_materialize.py
+!libs/implement_admission/test_density_triage_gate.py
 !libs/cortex_store/test_skill_suggest_stage_a.py
 !libs/cortex_store/test_entity_update_trait_write.py
 !services/universal-stargate/systems/frontier_consult/test_implement_admission_materialize.py

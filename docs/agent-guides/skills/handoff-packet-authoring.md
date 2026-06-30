@@ -565,6 +565,7 @@ offline tests for the touched package (`test_*.py`). Label any scaffold as
 - [ ] ≥1 `agent_bus(fetch)` per upstream thread in `<mcp_capabilities>`
 - [ ] Every spec touch-point has a numbered `fs(read)`
 - [ ] ≥1 observability probe if the task names a queue/event/live gap
+- [ ] Behavior-touching spec: event vocabulary section present — new/changed states named OR explicit "none needed" decision; `[universal:events]` (→ `architecture-invariants.md` § Spec / design authoring — mandatory event check)
 - [ ] Scaffold blocks carry no design judgment (Composer-scaffold stubs only)
 
 Failure → complete the checklist first; ¬ dispatch-then-supplement on thread 2.

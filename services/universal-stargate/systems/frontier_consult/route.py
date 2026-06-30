@@ -29,6 +29,7 @@ from .admission import (
 )
 from .closeout_reply import parse_closeout_payload, run_implement_closeout_pipeline
 from .contract_derivation import derive_contract
+from .densify_triage import DensityTriage
 from .cursor_sdk_generate import dispatch_cursor_sdk_generate
 from .deploy_state_gate import require_deploy_state
 from .dispatch_thread_context import as_user_message, read_latest_dispatch_thread_body
@@ -135,18 +136,7 @@ class TeamDispatchGenerateBody(_DispatchCommon):
     # (first-class wrap). Grammar: todo:/plan:/plan_phase:/agent-bus:/packet:.
     contract: Literal["light-bounded", "pure-mechanical", "implement", "wrap"]
     reuse_thread: str | None = None
-    density_triage: (
-        Literal[
-            "mechanical",
-            "judgment_required",
-            "recon_pending",
-            "cross_cutting",
-            "dispatch_surface",
-            "admission_path",
-            "trivial",
-        ]
-        | None
-    ) = None
+    density_triage: DensityTriage | None = None
     review_opt_out_reason_code: (
         Literal[
             "routine_single_subsystem",

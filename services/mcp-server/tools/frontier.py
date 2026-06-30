@@ -34,7 +34,7 @@ pipeline composition only — not exposed as an MCP tool.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, get_args
 
 import httpx
 from mcp_events import record
@@ -62,6 +62,69 @@ _HANDOFF_SEAT_ROSTER = "claude-web, claude-cursor"
 # Relay only handles admission (role contract + model admission at Stargate).
 # Long-poll blocking is the caller's responsibility via pipeline(op="result").
 _RELAY_TIMEOUT = 20.0
+
+
+# --- density_triage cross-process drift guard (spec A1/A3; thread 3642 arc) ---
+# This MCP tool surface advertises a density_triage Literal that MUST stay equal to
+# the canonical accepted set in config/mcp/canonical.yaml. frontier.py cannot import
+# Stargate, so it reads the canonical config directly. Enforced loudly at import;
+# goes live at the next operator-approved MCP rebuild.
+_DENSITY_TRIAGE_LITERAL = Literal[
+    "mechanical",
+    "judgment_required",
+    "recon_pending",
+    "cross_cutting",
+    "dispatch_surface",
+    "admission_path",
+    "trivial",
+]
+
+
+def _assert_density_triage_canonical() -> None:
+    """Fail loudly at import if the advertised density_triage Literal diverges from
+    the canonical accepted set (or the canonical config is missing/malformed)."""
+    from pathlib import Path
+
+    import yaml  # local import: keep module import cheap and import-safe
+
+    canonical_path = (
+        Path(__file__).resolve().parents[3] / "config" / "mcp" / "canonical.yaml"
+    )
+    if not canonical_path.is_file():
+        raise RuntimeError(
+            "density_triage drift guard: canonical config not found at "
+            f"{canonical_path}. config/mcp/canonical.yaml is the MCP tool-contract "
+            "surface and must be present."
+        )
+    try:
+        data = yaml.safe_load(canonical_path.read_text(encoding="utf-8")) or {}
+    except Exception as exc:  # noqa: BLE001 - surface any parse failure loudly
+        raise RuntimeError(
+            f"density_triage drift guard: failed to parse {canonical_path}: {exc}"
+        ) from exc
+    try:
+        accepted = data["contract_vocabulary"]["density_triage"]["accepted_values"]
+    except (KeyError, TypeError) as exc:
+        raise RuntimeError(
+            "density_triage drift guard: key "
+            "contract_vocabulary.density_triage.accepted_values missing from "
+            f"{canonical_path}."
+        ) from exc
+    canonical_set = set(accepted)
+    literal_set = set(get_args(_DENSITY_TRIAGE_LITERAL))
+    if literal_set != canonical_set:
+        raise RuntimeError(
+            "density_triage drift guard: frontier.py Literal diverges from the "
+            f"canonical set in {canonical_path}.\n"
+            f"  frontier.py Literal : {sorted(literal_set)}\n"
+            f"  canonical accepted  : {sorted(canonical_set)}\n"
+            f"  only in Literal     : {sorted(literal_set - canonical_set)}\n"
+            f"  only in canonical   : {sorted(canonical_set - literal_set)}"
+        )
+
+
+_assert_density_triage_canonical()
+# --- end density_triage drift guard ---
 
 
 async def _relay(
@@ -213,18 +276,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         source_ref: str | None = None,
         contract: Literal["light-bounded", "pure-mechanical", "implement", "wrap"]
         | None = None,
-        density_triage: (
-            Literal[
-                "mechanical",
-                "judgment_required",
-                "recon_pending",
-                "cross_cutting",
-                "dispatch_surface",
-                "admission_path",
-                "trivial",
-            ]
-            | None
-        ) = None,
+        density_triage: _DENSITY_TRIAGE_LITERAL | None = None,
         review_opt_out_reason_code: (
             Literal[
                 "routine_single_subsystem",

@@ -31,6 +31,12 @@ _GATE_NAMES: dict[int, str] = {
     13: "skeptic_pass",
 }
 
+_GATE_13_DEFERRED_SUBCHECKS: tuple[str, ...] = (
+    "skeptic_evidence_grounded",
+    "skeptic_evidence_unresolved",
+    "skeptic_evidence_mode",
+)
+
 
 class GateStatus(str, Enum):
     PASSED = "passed"
@@ -47,6 +53,7 @@ class GateReport:
     code: str | None = None
     reason: str | None = None
     blocked_by: tuple[int, ...] = ()
+    deferred_subchecks: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -56,11 +63,23 @@ class GateReport:
             **({"code": self.code} if self.code else {}),
             **({"reason": self.reason} if self.reason else {}),
             **({"blocked_by": list(self.blocked_by)} if self.blocked_by else {}),
+            **(
+                {"deferred_subchecks": list(self.deferred_subchecks)}
+                if self.deferred_subchecks
+                else {}
+            ),
         }
 
 
 @dataclass
 class PreflightReport:
+    """Preflight admission over declared-state gates 0-13 only.
+
+    ``admitted`` does NOT imply ``evaluate_implement_ready`` would admit —
+    skeptic evidence-grounding is evaluator-only (see gate-13
+    ``deferred_subchecks``).
+    """
+
     admitted: bool
     summary: dict[str, int]
     first_failure: dict[str, str] | None
@@ -114,13 +133,36 @@ def preflight_implement_ready(
     skeptic_ratified: bool = False,
     recon_waived: bool = False,
 ) -> PreflightReport:
-    """Non-writing preflight: evaluate ALL implement-ready gates and return full gate report."""
+    """Non-writing preflight over the declared-state gates (0-13).
+
+    NOTE: gate 13 (skeptic_pass) reports only on skeptic ratification /
+    recon waiver. The skeptic-evidence-grounding sub-checks enforced by
+    evaluate_implement_ready (_skeptic_evidence_reject) are intentionally NOT
+    evaluated here -- preflight lacks those inputs -- so a PASSED gate 13 does
+    not guarantee the full gate admits. See
+    test_gate14_intentionally_stargate_only_preflight_admits.
+
+    ``admitted`` is true over preflight-available declared-state gates 0-13
+    only; it does NOT imply ``evaluate_implement_ready`` would admit.
+    """
     gates: list[GateReport] = []
     blocked: set[int] = set()
     first_failure: dict[str, str] | None = None
 
-    def _pass(gate_id: int, name: str) -> None:
-        gates.append(GateReport(gate=gate_id, name=name, status=GateStatus.PASSED))
+    def _pass(
+        gate_id: int,
+        name: str,
+        *,
+        deferred_subchecks: tuple[str, ...] = (),
+    ) -> None:
+        gates.append(
+            GateReport(
+                gate=gate_id,
+                name=name,
+                status=GateStatus.PASSED,
+                deferred_subchecks=deferred_subchecks,
+            )
+        )
 
     def _fail(
         gate_id: int,
@@ -377,10 +419,10 @@ def preflight_implement_ready(
         )
         _fail(13, "skeptic_pass", code, reason)
     else:
-        _pass(13, "skeptic_pass")
+        _pass(13, "skeptic_pass", deferred_subchecks=_GATE_13_DEFERRED_SUBCHECKS)
 
     return _make_report(
-        admitted=first_failure is None,
+        admitted=first_failure is None,  # gates 0-13 declared-state only; ¬ full evaluator
         gates=gates,
         first_failure=first_failure,
         resolution=resolution,

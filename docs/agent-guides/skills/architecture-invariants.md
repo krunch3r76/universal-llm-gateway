@@ -35,6 +35,28 @@ Cite applicable tags in handoff Block 2; load deferred refs by tag when procedur
 | `[universal:git-posture]` | Canonical state = working tree + cortex/RAG + live process; git ≠ project index; no standing git workflow; commit optional; `git diff` unreliable on master (reliable on arc worktrees); ¬ diffs to LLMs — whole files / sections only | Git state inference, canonicality, cursor-sdk substrate, git CLI | → `git-posture.md` (full doctrine) |
 | `[universal:executor-rec]` | Executor-recommendation surfaces (op=handoff, API-role generate) emit an always-present advisory container naming model, thinking, effort as INDEPENDENT axes; transport preserves no-recommendation / unsupported / partial states and never collapses effort into thinking; additive + versioned beside any legacy coarse field (e.g. `recommended_executor`) | Executor advisory wire surfaces | Review for collapsed axes / omitted container / mutated legacy field |
 
+## Spec / design authoring — mandatory event check
+
+∀ spec, consult packet, or dense spec whose task covers new or changed behavior:
+
+- [ ] State from events (¬manual polling or wall-clock completion deadlines) — `[universal:obs-over-timeouts]`
+- [ ] New/changed behavior → event vocabulary named (new signals, updated payloads) — `[universal:events]`
+- [ ] ∀ state transitions, decision points, failure modes: observable via events
+
+Include in the spec or each phase doc:
+
+```markdown
+## Event Vocabulary
+| Behavioral change | Signal | Action |
+|---|---|---|
+| {new flow / state transition} | `{signal.name}` | add / modify / none needed |
+```
+
+"None needed" is a valid answer — the point is the author must decide, not skip.  
+Signal format: `^[a-z]+(\.[a-z]+){1,4}$` — no underscores, hyphens, or digits.  
+Factory rule: `@event_factory` only; ¬ `Event(...)` direct construction.  
+Full procedure: `architecture-invariants/events-docs.md`.
+
 ## Deferred references
 
 - `architecture-invariants/events-docs.md` — `[universal:events]`, `[docs]` event-catalog detail, admission payload, sibling-family audit

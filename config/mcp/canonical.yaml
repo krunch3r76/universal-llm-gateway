@@ -2769,3 +2769,26 @@ tools:
   mandate_safety: read_only
   cache_priority: always_loaded
   introduced: '2026-06-02'
+
+# ─── contract vocabulary (canonical accepted sets — data only) ───────────────
+# Cross-process contract record for density_triage. Stargate in-process source is
+# densify_triage.DensityTriage; MCP frontier.py deferred arm will assert against
+# this set at import/startup (F9 rebuild). NOT loaded at Stargate import time.
+# IMPLEMENT_GATE_TRIAGE (implement-lane todo attrs) is a strict subset — see
+# libs/implement_admission/density_triage_gate.py.
+
+contract_vocabulary:
+  density_triage:
+    fol_descriptor: |
+      ∀ v ∈ density_triage: v ∈ {mechanical, judgment_required, cross_cutting,
+      dispatch_surface, admission_path, trivial, recon_pending}.
+      IMPLEMENT_GATE_TRIAGE ⊂ density_triage — implement-lane todo attrs only.
+    accepted_values:
+      - mechanical
+      - judgment_required
+      - cross_cutting
+      - dispatch_surface
+      - admission_path
+      - trivial
+      - recon_pending
+    introduced: '2026-06-29'

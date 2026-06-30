@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 
 from .admission import FrontierEndpointError
 
@@ -18,17 +18,7 @@ DensityTriage = Literal[
 
 DraftAdequacy = Literal["blank", "partial", "adequate"]
 
-VALID_DENSITY_TRIAGE = frozenset(
-    {
-        "mechanical",
-        "judgment_required",
-        "cross_cutting",
-        "dispatch_surface",
-        "admission_path",
-        "trivial",
-        "recon_pending",
-    }
-)
+VALID_DENSITY_TRIAGE = frozenset(get_args(DensityTriage))
 
 DENSIFY_DEFAULT_ON = frozenset(
     {
@@ -133,8 +123,8 @@ def validate_generate_density_intake(
             request_id=request_id,
             field="density_triage",
             reason=(
-                "implement lane never default-reviews; "
-                "density_triage must be trivial or unset"
+                "implement lane never default-reviews; density_triage must be "
+                "mechanical, recon_pending, trivial, or unset"
             ),
             status_code=422,
             code="density_triage_implement_conflict",

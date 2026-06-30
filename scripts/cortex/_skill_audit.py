@@ -3,85 +3,246 @@
 from __future__ import annotations
 
 import sys
+from datetime import UTC, date, datetime
 from pathlib import Path
+from typing import Literal
 
-from _skill_constants import _SUPPRESSED, _WS
+from _skill_constants import (
+    _SUPPRESSED,
+    _WS,
+    ALLOWLIST_METADATA_KEYS,
+    paired_rule_exists,
+)
 from _skill_drift import _drifts
 from _skill_projection import _entity_get, _request
-from _skill_scan import _scan_cortex_sot_declared, cortex_sot_slugs
+from _skill_render import extract_renderer_fields
+from _skill_scan import _scan_cortex_sot_declared, _scan_skills, cortex_sot_slugs
 
-# intended-single-surface skills (cortex-only domain/web skills or stub-only);
-# add slugs here to suppress steady-state parity warnings.
-_PARITY_ALLOWLIST: frozenset[str] = frozenset(
-    {
-        # Bucket B — web/dispatch-substrate single-surface
-        "claude-web-boot",  # web-only boot sequence
-        "claudeburst-shadow-ops",  # web-only shadow ops
-        "grok-build-dispatch",  # grok-build harness (retired)
-        "grokbuild-v1",  # grokbuild v1 (retired harness)
-        "grokbuild-v2",  # grokbuild v2 (retired harness)
-        "grok-web-dispatch",  # grok web dispatch (web-only)
-        "jupiter-browser-via-mcp",  # browser automation via web MCP
-        "lead-agent-git-integration",  # arc worktree Lane B (web/API only)
-        "mode-b-web-orchestrator",  # web orchestrator (web-only)
-        "model-tier-awareness-web",  # web-seat tier awareness (cursor has own rule)
-        "web-transcript-preprocessing",  # web-only transcript pre-processing
-        "xai-mcp-calling-shape",  # xAI-specific MCP calling shape (web/grok only)
-        # Bucket B — retired
-        "agent-build",  # RETIRED 2026-06-16 (grok-build/cursor-build removed)
-        # Bucket C — domain skills (legal / finance / tax / document)
-        "boe19p-appeal-discipline",
-        "case-evidence-retrieval",
-        "chase-escrow-discipline",
-        "chase-escrow-statement-ingestion",
-        "crypto-trading-research",
-        "document-ingestion",
-        "document-lifecycle-tracking",
-        "document-review-timeline-linkage-audit",
-        "docx_ingestion",
-        "email-bridge-mailbox",
-        "email-tool-dispatch",
-        "engagement-stance",
-        "financial-reasoning",
-        "flintridge-case-navigation",
-        "lawyer-stance",
-        "legal-opinion-corpus-ingestion",
-        "named-entity-verification-gate",  # legal/regulatory artifact gate
-        "review-protocol-mandatory-chronology-verification",  # legal document review
-        "srm",  # legal document section rewrite
-        "tax",
-        "w2-ingestion",
-        # Bucket C — project arc (historical working notebook, not canonical)
-        "cortex-v24-implementation-arc",  # temporary working notebook, sunset when Phase 3 ships
-        # Bucket C — deprecated (superseded by skill-document-writing v3.0)
-        "skill-authoring",
-        # Bucket D — workspace-only stubs (source_uri = workspaces://; no cortex SOT file)
-        "add-mcp-tool",
-        "agent-bus-multitask",
-        "agent-guidance-writing",
-        "build-pipeline",
-        "delegate-to-grok",  # RETIRED — stub preserved for historical context
-        "git-posture",
-        "handoff-packet-authoring",
-        "multi-model-review",
-        "produce-uml",
-        "refine-pipeline",
-        "required-skills-pickup",
-        "research-article-ingest",
-        "research-article-search",
-        "review-task-guidance",
-        "service-lifecycle",
-        "skill-suggest-utilization",
-        "web-generate-substrate",
+VerdictStatus = Literal["clean", "dirty", "error", "warnings"]
+
+
+def _meta(
+    reason: str,
+    *,
+    owner: str = "platform",
+    expiry: str = "2099-12-31",
+    directionality: str = "cortex-only",
+    temporary: str = "structural",
+) -> dict[str, str]:
+    return {
+        "reason": reason,
+        "owner": owner,
+        "expiry_or_assertion_ref": expiry,
+        "directionality": directionality,
+        "temporary_or_structural": temporary,
     }
-)
+
+
+# intended-single-surface skills (cortex-only domain/web skills or stub-only).
+_PARITY_ALLOWLIST: dict[str, dict[str, str]] = {
+    "claude-web-boot": _meta("web-only boot sequence"),
+    "claudeburst-shadow-ops": _meta("web-only shadow ops"),
+    "grok-build-dispatch": _meta("grok-build harness (retired)", temporary="temporary"),
+    "grokbuild-v1": _meta("grokbuild v1 (retired harness)", temporary="temporary"),
+    "grokbuild-v2": _meta("grokbuild v2 (retired harness)", temporary="temporary"),
+    "grok-web-dispatch": _meta("grok web dispatch (web-only)"),
+    "jupiter-browser-via-mcp": _meta("browser automation via web MCP"),
+    "lead-agent-git-integration": _meta("arc worktree Lane B (web/API only)"),
+    "mode-b-web-orchestrator": _meta("web orchestrator (web-only)"),
+    "model-tier-awareness-web": _meta(
+        "web-seat tier awareness (cursor has own rule)"
+    ),
+    "web-transcript-preprocessing": _meta("web-only transcript pre-processing"),
+    "xai-mcp-calling-shape": _meta("xAI-specific MCP calling shape (web/grok only)"),
+    "agent-build": _meta(
+        "RETIRED 2026-06-16 (grok-build/cursor-build removed)",
+        temporary="temporary",
+    ),
+    "boe19p-appeal-discipline": _meta("legal domain skill"),
+    "case-evidence-retrieval": _meta("legal domain skill"),
+    "chase-escrow-discipline": _meta("finance domain skill"),
+    "chase-escrow-statement-ingestion": _meta("finance domain skill"),
+    "crypto-trading-research": _meta("finance domain skill"),
+    "document-ingestion": _meta("document domain skill"),
+    "document-lifecycle-tracking": _meta("document domain skill"),
+    "document-review-timeline-linkage-audit": _meta("legal domain skill"),
+    "docx_ingestion": _meta("document domain skill"),
+    "email-bridge-mailbox": _meta("email bridge domain skill"),
+    "email-tool-dispatch": _meta("email bridge domain skill"),
+    "engagement-stance": _meta("legal domain skill"),
+    "financial-reasoning": _meta("finance domain skill"),
+    "flintridge-case-navigation": _meta("legal domain skill"),
+    "lawyer-stance": _meta("legal domain skill"),
+    "legal-opinion-corpus-ingestion": _meta("legal domain skill"),
+    "named-entity-verification-gate": _meta("legal/regulatory artifact gate"),
+    "review-protocol-mandatory-chronology-verification": _meta(
+        "legal document review"
+    ),
+    "srm": _meta("legal document section rewrite"),
+    "tax": _meta("tax domain skill"),
+    "w2-ingestion": _meta("tax domain skill"),
+    "cortex-v24-implementation-arc": _meta(
+        "temporary working notebook, sunset when Phase 3 ships",
+        temporary="temporary",
+    ),
+    "skill-authoring": _meta(
+        "deprecated (superseded by skill-document-writing v3.0)",
+        temporary="temporary",
+    ),
+    "add-mcp-tool": _meta(
+        "workspace-only stub (no cortex SOT file)", directionality="stub-only"
+    ),
+    "agent-bus-multitask": _meta(
+        "workspace-only stub (no cortex SOT file)", directionality="stub-only"
+    ),
+    "agent-guidance-writing": _meta(
+        "workspace-only stub (no cortex SOT file)", directionality="stub-only"
+    ),
+    "build-pipeline": _meta(
+        "workspace-only stub (no cortex SOT file)", directionality="stub-only"
+    ),
+    "delegate-to-grok": _meta(
+        "RETIRED — stub preserved for historical context", temporary="temporary"
+    ),
+    "git-posture": _meta(
+        "workspace-only stub (no cortex SOT file)", directionality="stub-only"
+    ),
+    "handoff-packet-authoring": _meta(
+        "workspace-only stub (no cortex SOT file)", directionality="stub-only"
+    ),
+    "multi-model-review": _meta(
+        "workspace-only stub (no cortex SOT file)", directionality="stub-only"
+    ),
+    "produce-uml": _meta(
+        "workspace-only stub (no cortex SOT file)", directionality="stub-only"
+    ),
+    "refine-pipeline": _meta(
+        "workspace-only stub (no cortex SOT file)", directionality="stub-only"
+    ),
+    "required-skills-pickup": _meta(
+        "workspace-only stub (no cortex SOT file)", directionality="stub-only"
+    ),
+    "research-article-ingest": _meta(
+        "workspace-only stub (no cortex SOT file)", directionality="stub-only"
+    ),
+    "research-article-search": _meta(
+        "workspace-only stub (no cortex SOT file)", directionality="stub-only"
+    ),
+    "review-task-guidance": _meta(
+        "workspace-only stub (no cortex SOT file)", directionality="stub-only"
+    ),
+    "service-lifecycle": _meta(
+        "workspace-only stub (no cortex SOT file)", directionality="stub-only"
+    ),
+    "skill-suggest-utilization": _meta(
+        "workspace-only stub (no cortex SOT file)", directionality="stub-only"
+    ),
+    "web-generate-substrate": _meta(
+        "workspace-only stub (no cortex SOT file)", directionality="stub-only"
+    ),
+}
+
+
+def _allowlist_keys() -> set[str]:
+    return set(_PARITY_ALLOWLIST)
+
+
+def _parse_expiry(raw: str) -> date | None:
+    text = raw.strip()
+    if not text or text.startswith("assertion:"):
+        return None
+    try:
+        return date.fromisoformat(text[:10])
+    except ValueError:
+        return None
+
+
+def allowlist_verdict() -> tuple[VerdictStatus, list[str]]:
+    warnings: list[str] = []
+    errors: list[str] = []
+    today = datetime.now(UTC).date()
+    for slug, meta in sorted(_PARITY_ALLOWLIST.items()):
+        missing = [
+            key
+            for key in ALLOWLIST_METADATA_KEYS
+            if not str(meta.get(key) or "").strip()
+        ]
+        if missing:
+            warnings.append(f"{slug}: missing metadata {missing}")
+        expiry = _parse_expiry(str(meta.get("expiry_or_assertion_ref") or ""))
+        if expiry is not None and expiry < today:
+            errors.append(f"{slug}: allowlist entry expired ({expiry.isoformat()})")
+    if errors:
+        return "error", errors
+    if warnings:
+        return "dirty", warnings
+    return "clean", []
+
+
+def _missing_stub_critical(
+    slug: str,
+    fields: dict[str, object],
+    *,
+    repo_root: Path,
+) -> list[str]:
+    missing: list[str] = []
+    for key in ("description", "trigger_match_terms", "source_uri"):
+        value = fields.get(key)
+        if key == "trigger_match_terms":
+            if not isinstance(value, list) or not value:
+                missing.append(key)
+            continue
+        if not str(value or "").strip():
+            missing.append(key)
+    if paired_rule_exists(slug, repo_root) and not str(
+        fields.get("paired_rule_pointer") or ""
+    ).strip():
+        missing.append("paired_rule_pointer")
+    return missing
+
+
+def stub_critical_field_verdict(
+    client: object,
+    repo_root: Path,
+) -> tuple[VerdictStatus, list[str], set[str]]:
+    """Return verdict, problem lines, and slugs blocked from stub generation."""
+    from _skill_manifest import fetch_discoverable_entities
+
+    blocked: set[str] = set()
+    problems: list[str] = []
+    try:
+        entities = fetch_discoverable_entities(client)
+    except RuntimeError as exc:
+        return "error", [str(exc)], blocked
+    allowlist = _allowlist_keys()
+    for slug, entity in sorted(entities.items()):
+        if slug in allowlist:
+            continue
+        fields = extract_renderer_fields(entity, slug)
+        missing = _missing_stub_critical(slug, fields, repo_root=repo_root)
+        if missing:
+            blocked.add(slug)
+            problems.append(
+                f"agent_skill:{slug} missing stub-critical field(s): {missing}"
+            )
+    if problems:
+        return "error", problems, blocked
+    return "clean", [], blocked
+
+
+def parity_verdict(scanned: dict[str, dict[str, object]]) -> tuple[VerdictStatus, list[str]]:
+    lines = _audit_parity(scanned)
+    if lines:
+        return "dirty", lines
+    return "clean", []
 
 
 def _audit_parity(scanned: dict[str, dict[str, object]]) -> list[str]:
     cortex_slugs = cortex_sot_slugs()
     stub_slugs = set(scanned)
-    cortex_only = sorted(cortex_slugs - stub_slugs - _PARITY_ALLOWLIST)
-    stub_only = sorted(stub_slugs - cortex_slugs - _PARITY_ALLOWLIST)
+    allowlist = _allowlist_keys()
+    cortex_only = sorted(cortex_slugs - stub_slugs - allowlist)
+    stub_only = sorted(stub_slugs - cortex_slugs - allowlist)
     out: list[str] = []
     for slug in cortex_only:
         out.append(f"parity: agent_skill:{slug} cortex-SOT-only (no .cursor stub)")
@@ -154,3 +315,7 @@ def _audit(client: object, scanned: dict[str, dict[str, object]], root: Path) ->
     for line in parity:
         print(f"    - {line}")
     return 0 if not drifted else 1
+
+
+def scan_workspace_stubs(root: Path) -> dict[str, dict[str, object]]:
+    return _scan_skills(root.resolve())

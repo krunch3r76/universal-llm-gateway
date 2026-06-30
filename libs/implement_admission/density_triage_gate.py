@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-IMPLEMENT_GATE_TRIAGE = frozenset({"mechanical", "judgment_required", "recon_pending"})
-
 _TRIAGE_EFFECTS: tuple[tuple[str, str], ...] = (
     ("mechanical", "bypass implement-ready gates"),
     (
@@ -12,6 +10,8 @@ _TRIAGE_EFFECTS: tuple[tuple[str, str], ...] = (
     ),
     ("recon_pending", "blocked until re-triage after two-axis recon"),
 )
+
+IMPLEMENT_GATE_TRIAGE = frozenset(name for name, _ in _TRIAGE_EFFECTS)
 
 
 def format_implement_gate_triage_catalog() -> str:

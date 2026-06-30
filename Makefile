@@ -35,7 +35,7 @@ verify-uml:
 	fi
 
 skill-graph-check:
-	python scripts/cortex/ingest_skills.py --check --report
+	python scripts/cortex/gen_skill_stubs.py --check
 
 skill-graph-reconcile:
-	python scripts/cortex/ingest_skills.py
+	python scripts/cortex/ingest_skills.py && python scripts/cortex/gen_skill_stubs.py --generate
