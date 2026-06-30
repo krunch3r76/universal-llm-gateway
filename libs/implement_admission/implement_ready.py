@@ -10,6 +10,7 @@ from implement_admission.dense_spec_schema import (
     spec_basename,
     validate_dense_spec,
 )
+from implement_admission.density_triage_gate import format_implement_triage_unknown_reason
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,8 +137,7 @@ def evaluate_implement_ready(
     if triage != "judgment_required":
         return _reject(
             "implement_triage_unknown",
-            f"{todo_id}: density_triage is unset or unknown — densify via a "
-            "reasoning tier before implement dispatch",
+            format_implement_triage_unknown_reason(todo_id, density_triage),
         )
 
     if implement_ready_assertion_id is None:

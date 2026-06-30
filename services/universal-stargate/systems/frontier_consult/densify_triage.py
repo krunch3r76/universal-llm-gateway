@@ -7,6 +7,7 @@ from typing import Any, Literal
 from .admission import FrontierEndpointError
 
 DensityTriage = Literal[
+    "mechanical",
     "judgment_required",
     "cross_cutting",
     "dispatch_surface",
@@ -19,6 +20,7 @@ DraftAdequacy = Literal["blank", "partial", "adequate"]
 
 VALID_DENSITY_TRIAGE = frozenset(
     {
+        "mechanical",
         "judgment_required",
         "cross_cutting",
         "dispatch_surface",
@@ -64,10 +66,14 @@ def validate_density_triage_value(
     if density_triage is None:
         return
     if density_triage not in VALID_DENSITY_TRIAGE:
+        accepted = ", ".join(sorted(VALID_DENSITY_TRIAGE))
         raise FrontierEndpointError(
             request_id=request_id,
             field="density_triage",
-            reason=f"unknown density_triage value: {density_triage!r}",
+            reason=(
+                f"unknown density_triage value: {density_triage!r} — "
+                f"accepted: {accepted}"
+            ),
             status_code=422,
             code="density_triage_unknown",
         )

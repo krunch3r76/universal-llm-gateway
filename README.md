@@ -110,9 +110,9 @@ Runs as a containerized FastAPI service on `:443` with TLS and bearer auth. Each
 
 ### RAG (Retrieval-Augmented Generation)
 
-Local semantic search backed by ChromaDB with corpus-grounded multi-stage retrieval. Query rewriting validates every candidate term against the actually-indexed vocabulary before any LLM call. Combines keyword and vector searches using Reciprocal Rank Fusion, followed by a local model pass to rank the final results by relevance.
+Local search across your indexed documents, backed by ChromaDB. Query rewriting validates every candidate term against the actually-indexed vocabulary before any LLM call. Two retrieval paths run in parallel and merge: one combining vector similarity and keyword search (semantic retrieval, for finding documents by meaning); one using keyword matching only (lexical retrieval, for exact technical terms and identifiers that semantic search can blur). Results are merged and ranked by a local model pass before answer generation.
 
-Indexes Markdown, PDF, EPUB, HTML, and plain text. Code indexing (Python via tree-sitter AST) is built but not yet active. Knowledge extraction produces entities, topics, and relations for hybrid structured+vector search. File watching auto-indexes changes.
+Indexes Markdown, PDF, EPUB, HTML, and plain text. Code indexing (Python via tree-sitter AST) is built but not yet active. Knowledge extraction produces entities, topics, and relations to improve search quality. File watching auto-indexes changes.
 
 ### Cortex (Persistent Memory)
 

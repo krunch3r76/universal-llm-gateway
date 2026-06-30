@@ -215,7 +215,9 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         | None = None,
         density_triage: (
             Literal[
+                "mechanical",
                 "judgment_required",
+                "recon_pending",
                 "cross_cutting",
                 "dispatch_surface",
                 "admission_path",

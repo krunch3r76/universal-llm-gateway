@@ -137,7 +137,9 @@ class TeamDispatchGenerateBody(_DispatchCommon):
     reuse_thread: str | None = None
     density_triage: (
         Literal[
+            "mechanical",
             "judgment_required",
+            "recon_pending",
             "cross_cutting",
             "dispatch_surface",
             "admission_path",

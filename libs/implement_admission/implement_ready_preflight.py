@@ -7,6 +7,7 @@ from enum import Enum
 from typing import Any
 
 from implement_admission.dense_spec_schema import dense_spec_hash_uri, validate_dense_spec
+from implement_admission.density_triage_gate import format_implement_triage_unknown_reason
 from implement_admission.implement_ready import (
     _acceptance_unpopulated_or_default,
     _assertion_cites_dense_spec,
@@ -190,10 +191,7 @@ def preflight_implement_ready(
 
     if triage != "judgment_required":
         code = "implement_triage_unknown"
-        reason = (
-            f"{todo_id}: density_triage is unset or unknown — densify via a "
-            "reasoning tier before implement dispatch"
-        )
+        reason = format_implement_triage_unknown_reason(todo_id, density_triage)
         _fail(1, "triage_known", code, reason, also_block=tuple(range(2, 14)))
         for i in range(2, 14):
             _block(i, _GATE_NAMES[i], blocked_by=(1,))
