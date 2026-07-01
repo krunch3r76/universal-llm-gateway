@@ -30,7 +30,8 @@ Companion: `skill-suggest-utilization.md` (delta discovery), `web-agent-orientat
 **Hold `session_id`** from the response for asserts, edges, and `session_close`.
 
 **Cloud proxy:** system prompts may embed `cortex_boot(…)`; the proxy pre-executes and substitutes
-`briefing_card` (+ web invariant bodies). Do not assume that ran unless the directive is present.
+`briefing_card` only. Invariant skill bodies are **operator-attached in the claude.ai UI** — the
+proxy no longer appends registry bodies. Do not assume boot ran unless the directive is present.
 
 ---
 
@@ -59,17 +60,16 @@ cortex_boot(agent="claude-web", role="lead", profile="dispatch", packet_text="<p
 
 | Scope | Activates when | Bodies |
 |---|---|---|
-| `UNIVERSAL` | always | `cortex-orientation`, `cortex-provenance-discipline` |
-| `LEAD` | seat ∈ `lead_seats` (`is_lead_agent(seat)`) | `orchestrator-core` |
 | `DISPATCH_PACKET` | `profile="dispatch"` | each `agent_skill:` id in the packet `<invariants>` block |
 | `CODING` | `code_touching=True` (generate path, **not** standard boot) | `orchestrator-workflow`, `architecture-invariants`, `ulg-architecture` |
 
+Standard web lead boot (`profile` omitted): **no** server-side UNIVERSAL/LEAD body inject — attach
+required skills in the claude.ai project UI (`cortex-orientation`, `orchestrator-core`, etc.).
+
 Notes:
 
-- **LEAD-scope is a seat property** (`agents.yaml lead_seats`), resolved via
-  `is_lead_agent(seat)` — NOT the `role` label. A lead seat auto-injects
-  `orchestrator-core` on every boot, dispatch or not. (Passing the role label
-  `"lead"` here silently injected nothing — fixed 2026-06-18.)
+- **LEAD-scope static inject retired on web/cursor** (2026-07-01): `orchestrator-core` and peers
+  are UI-attached, not boot-injected.
 - `packet_text` is parsed for `<invariants>` skill ids **only** when
   `profile="dispatch"`. Front-matter `boot_profile: dispatch` + the packet path is
   the dispatch carrier.

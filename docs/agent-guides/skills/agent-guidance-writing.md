@@ -1,61 +1,57 @@
 ---
 name: agent-guidance-writing
-description: Use when authoring or reviewing any agent guidance document in this workspace (.cursor/rules/*.mdc, .cursor/skills/*/SKILL.md, or docs/agent-guides/).
+description: Use when authoring or reviewing agent guidance in this workspace: `.cursor/rules/*.mdc`, `.cursor/skills/*/SKILL.md`, or `docs/agent-guides/` canonical docs.
 ---
 
 # Agent Guidance Writing
 
-## Vocabulary
+`agent_guidance ⇒ durable instruction for agents, not human-facing documentation`.
 
-Three forms, one purpose — give agents durable instructions:
+## Forms
 
-| Form | Location | Load trigger | Use for |
+| Form | Location | Load trigger | Use |
 |---|---|---|---|
-| Always rule | `.cursor/rules/*.mdc` (`alwaysApply: true`) | Injected every turn | Invariants that must never be violated |
-| Description-gated rule | `.cursor/rules/*.mdc` (`alwaysApply: false`) | Injected when description matches | Contextual discipline for specific task types |
-| Skill | `.cursor/skills/*/SKILL.md` | Agent reads explicitly | Multi-step procedural playbooks |
-| Canonical doc | `docs/agent-guides/skills/*.md` | `fs(workspaces, ...)` by any agent | Authoritative content; Cursor forms defer here |
+| Always rule | `.cursor/rules/*.mdc` (`alwaysApply: true`) | Every turn | Never-violate invariants |
+| Description-gated rule | `.cursor/rules/*.mdc` (`alwaysApply: false`) | Description match | Contextual discipline |
+| Skill | `.cursor/skills/*/SKILL.md` | Explicit read | Multi-step playbooks |
+| Canonical doc | `docs/agent-guides/skills/*.md` | `fs(workspaces, read, ...)` | Authoritative SOT; Cursor forms defer here |
 
-∀ alwaysApply rule linking to a canonical doc: inline ONLY the invariant lines required every turn; defer bulk content to the canonical doc.
+`alwaysApply ∧ canonical_doc_exists ⇒ inline_only(required_invariants) ∧ defer_bulk_to_canonical`.
 
-## Structure (all forms)
+## Required shape
 
-**Frontmatter** (required on all `.mdc` / `SKILL.md` files):
-- `name`: slug matching the filename
-- `description`: trigger terms — the agent uses this to decide whether to load
-- `applicable_agents` (optional on `SKILL.md` only): JSON list of seat slugs (e.g.
-  `["claude-cursor"]`, `["claude-web","claude-cursor"]`) or `["*"]` for universal
-  visibility. Default `["*"]` when absent. Read by `scripts/cortex/ingest_skills.py` on
-  registration; omitted on PATCH preserves the live partition value.
+Frontmatter on all `.mdc` / `SKILL.md`:
+- `name`: slug matching filename.
+- `description`: precise trigger terms.
+- `applicable_agents` optional on `SKILL.md`; JSON list (`["claude-cursor"]`, `["claude-web","claude-cursor"]`, `["*"]`). Default `["*"]`. `ingest_skills.py` reads it; omitted PATCH preserves live partition.
 
-**Body discipline**:
-- First line of body: actionable content — no motivational opener, no name restatement
-- Tables > prose for decision matrices ≥3 rows
-- Invariants as `∀`/`¬` single-line clauses
-- ¬ "This skill helps you…" openers
-- ¬ overview paragraphs before actionable content
+Body:
+- First line actionable; no motivational opener or name restatement.
+- Tables for decision matrices ≥3 rows.
+- Invariants as single-line `∀` / `¬` clauses.
+- No "This skill helps you..." or overview paragraph before instructions.
 
-## Line-Count Targets
+## Line-count targets
 
 | Guidance type | Target |
 |---|---|
-| Thin stub (Cursor trigger, defers to canonical) | ≤15 lines |
-| Simple routing/invariant rule | ≤30 lines |
+| Thin stub | ≤15 lines |
+| Simple routing/invariant | ≤30 lines |
 | Medium procedural skill/rule | ≤80 lines |
-| Complex multi-step with reference tables | ≤150 lines |
-| Over 200 | Always split or defer to supporting file |
+| Complex multi-step/reference tables | ≤150 lines |
+| >200 lines | Split or defer to supporting file |
 
-## Token Economy
+## Token economy
 
-- alwaysApply rules: inline only the invariant lines; defer bulk via `fs(workspaces, ...)`
-- Skills: trigger line + `fs(...)` deferral, OR inline if ≤40 lines total
-- Progressive disclosure: canonical doc → supporting `.md` files for large reference corpora
+- Always rules: inline only invariant lines; defer bulk with `fs(workspaces, read, ...)`.
+- Skills: use trigger line + SOT deferral, OR inline only if ≤40 lines total.
+- Large reference content ⇒ canonical doc + supporting `.md` files.
 
-## Thin-Stub Pattern
+## Thin-stub pattern
 
-When a canonical doc exists in `docs/agent-guides/skills/`, the Cursor trigger should be:
+When `docs/agent-guides/skills/<slug>.md` exists, Cursor trigger content should be ≤10 lines:
 
-```
+```markdown
 ---
 name: <slug>
 description: <trigger terms>
@@ -63,29 +59,22 @@ description: <trigger terms>
 fs(sandbox="workspaces", op="read", path="universal-llm-gateway/docs/agent-guides/skills/<slug>.md")
 ```
 
-≤10 lines. ¬ duplicate canonical content.
+`cursor_stub.lines > 15 ⇒ convert_to_thin_stub`; never duplicate canonical content.
 
-## Compact vs Verbose
+## Correct vs anti-pattern
 
-| | Compact (correct) | Verbose (anti-pattern) |
+| Concern | Correct | Anti-pattern |
 |---|---|---|
-| Opener | Frontmatter → table immediately | Paragraph explaining what the skill does |
-| Lists | Table per concern | Bullet lists ≥3 items |
-| Cursor stub | SOT pointer + `fs(...)` deferral, ≤15 lines | Full playbook inline in `.cursor/skills/` |
-| Exemplar | `dispatch-shape/SKILL.md` (35 lines): SOT pointer + quick-rule table + escape hatch | `service-lifecycle/SKILL.md` (84 lines inline in `.cursor/skills/`): full routing tables baked into the stub instead of deferred to a canonical doc |
+| Opener | Frontmatter → actionable table/rule | Paragraph explaining purpose |
+| Lists | Table per concern | Bullet lists ≥3 items where table fits |
+| Cursor stub | SOT pointer + `fs(...)` | Full playbook inline |
+| Registration | Cortex `agent_skill` entity verified | Filesystem-only `SKILL.md` |
 
-**Key signal**: if a `.cursor/skills/` file exceeds 15 lines, it should defer its bulk to `docs/agent-guides/skills/<slug>.md` and become a thin stub.
+## Conformance checklist
 
-## Conformance Checklist
-
-For any guidance doc before shipping:
-
-1. Has a trigger line (`description:` frontmatter or explicit "Use when" sentence)?
-2. Body starts with actionable content (not motivational prose)?
-3. Within line-count target for its complexity tier?
-4. Tables used where prose would exceed 3 lines?
-5. No duplication of content already injected by an alwaysApply rule?
-6. Registered as a cortex `agent_skill` entity? A local `SKILL.md` alone is NOT done — run
-   `scripts/cortex/ingest_skills.py` and verify `cortex(entity_get agent_skill:<slug>)`
-   resolves with the correct `source_uri` and the skill appears in `GET /boot-skills`.
-   Filesystem-only skills are invisible to `skill_suggest` / boot-skills / web + dispatch seats.
+1. Trigger exists (`description:` or explicit "Use when").
+2. Body starts actionable.
+3. Line count fits tier.
+4. Tables replace prose where ≥3 comparable items.
+5. No duplication of alwaysApply content.
+6. Registered: run `scripts/cortex/ingest_skills.py`; verify `cortex(entity_get agent_skill:<slug>)` resolves with correct `source_uri` and appears in `GET /boot-skills`. Filesystem-only skills are invisible to `skill_suggest`, boot-skills, web, and dispatch seats.

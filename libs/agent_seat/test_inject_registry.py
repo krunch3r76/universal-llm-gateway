@@ -31,6 +31,20 @@ def _clear_cache() -> None:
 
 
 def _body_map(monkeypatch: pytest.MonkeyPatch, bodies: dict[str, str]) -> None:
+    expanded: dict[str, str] = dict(bodies)
+    for key, value in list(bodies.items()):
+        if key.startswith("agent_skill:"):
+            slug = key.split(":", 1)[1]
+            expanded.setdefault(f"rule:{slug}", value)
+        elif key.startswith("rule:"):
+            slug = key.split(":", 1)[1]
+            expanded.setdefault(f"agent_skill:{slug}", value)
+    # Registry ulg entry uses a distinct slug suffix.
+    if "agent_skill:ulg-architecture" in expanded:
+        expanded.setdefault(
+            "rule:ulg-architecture_ulg", expanded["agent_skill:ulg-architecture"]
+        )
+
     def fake_fetch(
         entity_id: str,
         _digest: str | None,
@@ -39,10 +53,10 @@ def _body_map(monkeypatch: pytest.MonkeyPatch, bodies: dict[str, str]) -> None:
         timeout_ms: int = 300,
     ) -> tuple[dict[str, Any] | None, str | None]:
         del include_non_active, timeout_ms
-        if entity_id not in bodies:
+        if entity_id not in expanded:
             return None, "body_missing"
         digest = f"sha256:{entity_id.split(':')[-1]}"
-        return {"digest": digest, "body": bodies[entity_id]}, None
+        return {"digest": digest, "body": expanded[entity_id]}, None
 
     monkeypatch.setattr(
         "agent_seat.inject_registry._fetch_body_sync",
@@ -64,15 +78,41 @@ def test_parse_packet_invariant_skill_ids() -> None:
 
 
 def test_active_scopes_lead_dispatch_union() -> None:
-    scopes = active_scopes("claude-web", "dispatch")
+    scopes = active_scopes("claude-web", "dispatch", platform="web")
+    assert scopes == {InjectScope.DISPATCH_PACKET}
+
+
+def test_active_scopes_non_web_dispatch_includes_universal() -> None:
+    scopes = active_scopes("claude-api", "dispatch", platform="api")
     assert scopes == {
         InjectScope.UNIVERSAL,
-        InjectScope.LEAD,
         InjectScope.DISPATCH_PACKET,
     }
 
 
-def test_web_boot_injects_model_tier_awareness_web(
+def test_active_scopes_web_standard_empty() -> None:
+    assert active_scopes("claude-web", None, platform="web") == set()
+
+
+def test_api_boot_injects_universal_static(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bodies = {
+        "agent_skill:cortex-orientation": "orientation-body",
+        "agent_skill:cortex-provenance-discipline": "provenance",
+    }
+    _body_map(monkeypatch, bodies)
+    resolution = resolve_injected_bodies(
+        "claude-api",
+        platform="api",
+        budget_bytes=None,
+    )
+    injected_ids = [item["id"] for item in resolution.injected]
+    assert "rule:cortex-orientation" in injected_ids
+    assert "orientation-body" in resolution.block_md
+
+
+def test_web_boot_skips_static_registry_inject(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     tier_marker = "MODEL_TIER_AWARENESS_WEB_MUST_INLINE_MARKER"
@@ -80,16 +120,17 @@ def test_web_boot_injects_model_tier_awareness_web(
         "agent_skill:cortex-orientation": "orientation",
         "agent_skill:cortex-provenance-discipline": "provenance",
         "agent_skill:model-tier-awareness-web": tier_marker,
+        "agent_skill:orchestrator-core": "orch",
     }
     _body_map(monkeypatch, bodies)
     resolution = resolve_injected_bodies(
         "claude-web",
+        role="claude-web",
         platform="web",
         budget_bytes=None,
     )
-    injected_ids = [item["id"] for item in resolution.injected]
-    assert "agent_skill:model-tier-awareness-web" in injected_ids
-    assert tier_marker in resolution.block_md
+    assert resolution.injected == []
+    assert resolution.block_md == ""
 
 
 def test_union_matrix_no_duplicates(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -116,7 +157,12 @@ def test_union_matrix_no_duplicates(monkeypatch: pytest.MonkeyPatch) -> None:
     injected_ids = [item["id"] for item in resolution.injected]
     assert len(injected_ids) == len(set(injected_ids))
     assert resolution.telemetry["dedupe_collisions"] == 0
-    assert set(injected_ids) == set(bodies)
+    assert set(injected_ids) == {
+        "rule:orchestrator-workflow",
+        "rule:architecture-invariants",
+        "rule:ulg-architecture_ulg",
+        SENTINEL_DISPATCH_INJECT_ENTITY_ID,
+    }
 
 
 def test_injected_skill_slugs_matches_resolver_filter() -> None:
@@ -165,8 +211,8 @@ def test_fail_closed_critical_budget(monkeypatch: pytest.MonkeyPatch) -> None:
     _body_map(monkeypatch, bodies)
     with pytest.raises(RequiredBodyUnresolved):
         resolve_injected_bodies(
-            "claude-web",
-            platform="web",
+            "claude-api",
+            platform="api",
             budget_bytes=1000,
         )
 
@@ -178,8 +224,8 @@ def test_must_inline_emits_fail_closed_marker(monkeypatch: pytest.MonkeyPatch) -
     }
     _body_map(monkeypatch, bodies)
     resolution = resolve_injected_bodies(
-        "claude-web",
-        platform="web",
+        "claude-api",
+        platform="api",
         budget_bytes=500,
     )
     assert "inject:FAIL_CLOSED" in resolution.block_md
@@ -212,19 +258,23 @@ def test_lifecycle_required_withheld(monkeypatch: pytest.MonkeyPatch) -> None:
         timeout_ms: int = 300,
     ) -> tuple[dict[str, Any] | None, str | None]:
         del timeout_ms
-        if entity_id == "agent_skill:orchestrator-core" and not include_non_active:
+        if entity_id == "rule:orchestrator-core" and not include_non_active:
             return None, "body_missing"
-        if entity_id == "agent_skill:cortex-orientation":
+        if entity_id == "rule:cortex-orientation":
             return {"digest": "sha256:o", "body": "orientation"}, None
-        if entity_id == "agent_skill:cortex-provenance-discipline":
+        if entity_id == "rule:cortex-provenance-discipline":
             return {"digest": "sha256:p", "body": "provenance"}, None
         return None, "body_missing"
 
     monkeypatch.setattr("agent_seat.inject_registry._fetch_body_sync", fake_fetch)
+    monkeypatch.setattr(
+        "agent_seat.inject_registry.is_lead_agent",
+        lambda slug: slug == "claude-api",
+    )
     resolution = resolve_injected_bodies(
-        "claude-web",
-        role="claude-web",
-        platform="web",
+        "claude-api",
+        role="claude-api",
+        platform="api",
         budget_bytes=None,
     )
     assert any(
@@ -331,10 +381,17 @@ async def test_sentinel_in_dispatch_boot_and_hydrate_paths(
         profile="dispatch",
         packet_text=packet,
     )
-    boot_rendered = boot_result.get("auto_inject_skills_md") or ""
-    assert sentinel_body in boot_rendered, (
-        "sentinel missing from run_cortex_boot(profile=dispatch) rendered inject block"
+    resolution = resolve_injected_bodies(
+        "claude-web",
+        role="claude-web",
+        platform="web",
+        inject_profile="dispatch",
+        packet_invariant_ids=packet_ids,
+        budget_bytes=None,
     )
+    assert sentinel_body in resolution.block_md
+    injected_artifacts = boot_result.get("injected_artifacts") or []
+    assert any(a.get("name") == "auto_inject_skills" for a in injected_artifacts)
 
     from agent_seat import hydration as _hyd
 
@@ -365,17 +422,11 @@ async def test_sentinel_in_dispatch_boot_and_hydrate_paths(
 
 
 @pytest.mark.asyncio
-async def test_lead_web_boot_injects_orchestrator_core(
+async def test_lead_web_boot_skips_static_auto_inject(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """role=lead web boot must inject the LEAD-scope orchestrator-core body.
-
-    Regression (step 4): the boot forwarded the functional role label "lead" into
-    the resolver, but LEAD-scope activation is ``is_lead_agent(seat)`` — seat
-    membership (agents.yaml lead_seats), not the label — so LEAD-scope skills were
-    silently skipped. With the wiring fixed, the seat slug drives lead-determination.
-    """
+    """Standard web lead boot: skills operator-attached in claude.ai UI."""
     orch_marker = "ORCHESTRATOR_CORE_LEAD_INJECT_MARKER"
     tier_marker = "MODEL_TIER_AWARENESS_WEB_LEAD_BOOT_MARKER"
     bodies = {
@@ -385,8 +436,6 @@ async def test_lead_web_boot_injects_orchestrator_core(
         "agent_skill:orchestrator-core": orch_marker,
     }
     _body_map(monkeypatch, bodies)
-    # Lead-ness is seat membership; pin claude-web as a lead seat deterministically
-    # (independent of the agents.yaml in the test environment).
     monkeypatch.setattr(
         "agent_seat.inject_registry.is_lead_agent",
         lambda slug: slug == "claude-web",
@@ -401,11 +450,9 @@ async def test_lead_web_boot_injects_orchestrator_core(
         role="lead",
         mode=BootMode.INSPECT,
     )
-    rendered = boot_result.get("auto_inject_skills_md") or ""
-    assert orch_marker in rendered, (
-        "orchestrator-core (LEAD scope) missing from role=lead web boot "
-        "auto_inject block — lead-scope activation regressed"
-    )
-    assert tier_marker in rendered, (
-        "model-tier-awareness-web missing from role=lead web boot auto_inject block"
+    assert "auto_inject_skills_ref" not in boot_result
+    assert "auto_inject_skills_md" not in boot_result
+    assert not any(
+        a.get("name") == "auto_inject_skills"
+        for a in boot_result.get("injected_artifacts") or []
     )

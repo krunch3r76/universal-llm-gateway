@@ -147,10 +147,23 @@ class InjectResolution:
     telemetry: dict[str, Any] = field(default_factory=dict)
 
 
-def active_scopes(role: str | None, inject_profile: str | None) -> set[InjectScope]:
-    scopes = {InjectScope.UNIVERSAL}
-    if role and is_lead_agent(role):
-        scopes.add(InjectScope.LEAD)
+def active_scopes(
+    role: str | None,
+    inject_profile: str | None,
+    *,
+    platform: str = "*",
+) -> set[InjectScope]:
+    """Return registry scopes eligible for server-side body inject.
+
+    Web (claude.ai UI) and cursor (rules + stubs) no longer receive UNIVERSAL/LEAD
+    static inject — operator attaches skills there. Dispatch packet invariants and
+    coding-session bundles remain server-injected.
+    """
+    scopes: set[InjectScope] = set()
+    if platform not in {"web", "cursor"}:
+        scopes.add(InjectScope.UNIVERSAL)
+        if role and is_lead_agent(role):
+            scopes.add(InjectScope.LEAD)
     if inject_profile == "dispatch":
         scopes.add(InjectScope.DISPATCH_PACKET)
     return scopes
@@ -340,7 +353,7 @@ def _candidate_entries(
     packet_invariant_ids: tuple[str, ...],
     include_loaded_set: bool = False,
 ) -> list[InjectEntry]:
-    scopes = active_scopes(role, inject_profile)
+    scopes = active_scopes(role, inject_profile, platform=platform)
     if include_loaded_set:
         scopes = set(scopes) | {InjectScope.LOADED_SET}
     static = [
@@ -420,7 +433,7 @@ def resolve_injected_bodies(
         packet_invariant_ids=packet_invariant_ids,
     )
     deduped, dedupe_collisions = _dedupe_entries(candidates)
-    scopes = active_scopes(role, inject_profile)
+    scopes = active_scopes(role, inject_profile, platform=platform)
     ordered_entries = _sort_for_pack(deduped, packet_invariant_ids)
 
     resolved_rows: list[tuple[InjectEntry, dict[str, Any]]] = []

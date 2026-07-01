@@ -21,7 +21,9 @@ from ...confidence_field import (
 from ...db import query
 from ._shared import _finding
 
-_SUPPRESSED_LIFECYCLE_EXCLUDE = lifecycle_not_in_sql_predicate(SUPPRESSED_SKILL_LIFECYCLES)
+_SUPPRESSED_LIFECYCLE_EXCLUDE = lifecycle_not_in_sql_predicate(
+    SUPPRESSED_SKILL_LIFECYCLES
+)
 
 logger = get_logger(__name__)
 
@@ -166,9 +168,12 @@ def detect_skill_binding_tool_unknown(
     conn, subject: str | None = None
 ) -> list[dict[str, Any]]:
     """tool_manual skill_binding rows whose bound_tools fail registry checks."""
+    # arc 3924: guidance types (agent_skill, rule, skill) — the WHERE requires a
+    # tool_binding to be present, so retyped entities carrying one stay validated
+    # without flooding the sparse rule/skill tracking nodes that have no binding.
     sql = """
         SELECT id, attributes FROM entities
-        WHERE type = 'agent_skill'
+        WHERE type IN ('agent_skill', 'rule', 'skill')
           AND json_extract(attributes, '$.skill_binding.skill_class') = 'tool_manual'
           AND json_extract(attributes, '$.skill_binding.tool_binding') IS NOT NULL
     """

@@ -98,8 +98,17 @@ def detect_entity_source_uri_unresolved(
 def detect_agent_skill_not_in_canonical_sandbox(
     conn, subject: str | None = None
 ) -> list[dict[str, Any]]:
-    """agent_skill: with source_uri not resolving inside agent-skills/ canonical dir."""
-    sql = "SELECT id, source_uri FROM entities WHERE type = 'agent_skill'"
+    """agent_skill/rule/skill with source_uri not resolving inside agent-skills/.
+
+    arc 3924: widened to guidance types. Migrated entities keep their
+    ``agent-skills/*.md`` SOT (no file move this arc), so the canonical check
+    still holds; the ``if r["source_uri"]`` guard skips the null-source_uri
+    rule/skill tracking nodes so no false positives are raised.
+    """
+    sql = (
+        "SELECT id, source_uri FROM entities "
+        "WHERE type IN ('agent_skill', 'rule', 'skill')"
+    )
     params: tuple = ()
     if subject:
         sql += " AND id = ?"

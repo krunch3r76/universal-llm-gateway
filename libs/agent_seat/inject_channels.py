@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from agent_seat.inject_registry import injected_skill_slugs
-
 # Channel 2 — orientation blocks (``render_orientation_blocks``).
 ORIENTATION_BLOCK_SKILL_MAP: dict[str, tuple[str, ...]] = {
     "operator-posture-block": ("operator-posture",),
@@ -99,20 +97,13 @@ def web_seat_injected_skill_slugs(
     family: str | None = None,
     platform: str | None = None,
 ) -> tuple[str, ...]:
-    """Registry-derived slugs for skill_suggest loaded_set accounting."""
+    """Boot-card channel slugs for skill_suggest loaded_set accounting."""
     parts = agent.split("-", 1)
     resolved_family = family if family is not None else (parts[0] if parts else agent)
     resolved_platform = platform
     if resolved_platform is None:
         resolved_platform = parts[1] if len(parts) == 2 else "web"
-    slugs = set(
-        injected_skill_slugs(
-            role=agent,
-            platform=resolved_platform or "web",
-            inject_profile=None,
-            include_loaded_set=True,
-        )
-    )
+    slugs: set[str] = set()
     slugs.update(web_orientation_inject_skill_slugs(agent))
     slugs.update(
         web_opcontext_inject_skill_slugs(

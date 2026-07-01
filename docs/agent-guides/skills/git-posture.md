@@ -6,116 +6,88 @@ description: On coding sessions — file existence, canonicality, authorship, do
 
 ## When to read
 
-- Any question: does X exist / is X canonical / is this mine / is this done?
-- Before git CLI or `git_*` MCP on the shared checkout
-- Before inferring service failure from uncommitted or dirty git state
-- Before cursor-sdk implement dispatch or git-integration-worker diagnostics
-- When building handoffs, consults, reviews, or packets that touch repo state
+Read on:
+- "does X exist / is X canonical / is this mine / is this done?"
+- before git CLI or `git_*` MCP on the shared checkout;
+- before inferring service failure from uncommitted or dirty git state;
+- before cursor-sdk implement dispatch or git-integration-worker diagnostics;
+- when handoffs, consults, reviews, or packets touch repo state.
 
-**Default substrate:** attended **Cursor IDE** editing and **cursor-sdk** implement
-both land on the **live shared checkout** (default `universal-llm-gateway`). The
-execution-lane rules below bind that path unless the operator directs otherwise.
+Default substrate: attended Cursor IDE editing and cursor-sdk implement both land on the live shared checkout (default `universal-llm-gateway`). These lane rules bind unless the operator directs otherwise.
 
-**¬ worktrees in the default path.** Cursor-sdk does **not** create git worktrees
-today (planned future). Arc worktrees are optional — web-claude / API (grokbuild)
-may use them; Lane B (`git_integrate` / `git_land`) merges an arc worktree when
-the operator explicitly runs integrate/land. Neither is implied by a cursor-sdk
-dispatch.
+`default_path ⇒ ¬worktree`. Cursor-sdk does not create git worktrees today. Arc worktrees are optional for web-claude/API/grokbuild or Lane B integrate/land; they are not implied by cursor-sdk dispatch.
 
-## Invariant — canonical state is the working tree + cortex, not git
+## Invariant — truth substrate is working tree + Cortex + live process, not git
 
-The on-disk working tree is the source of truth for *what exists* and *what it
-says*; cortex/RAG for *provenance* and *decisions*; the running process for
-*what is live*. Git is a checkpoint/transport layer over the tree — **NOT** the
-project index. This repo is gitignore-heavy by design: `tasks/` and most of
-`docs/` are intentionally untracked (local, RAG-indexed). "Not git-tracked" says
-nothing about whether a file is real, canonical, or done.
+- What exists / what file says: on-disk working tree.
+- Provenance / decisions: Cortex/RAG.
+- What is live: running process, verified by load-event + probe.
+- Git: checkpoint/transport layer, not project index.
 
-∀ question "does X exist / is X canonical / is this mine / is this done": answer
-from the tree (read the file), cortex (read the entity), or a live probe —
-**never** from `git ls-files` / `status` / `log`. Inferring existence or
-canonicality from git state is a category error, and **no established git
-workflow** is the default, not an omission to patch.
+This repo is gitignore-heavy by design: `tasks/` and most `docs/` are intentionally untracked. `not_git_tracked ⇏ unreal ∨ noncanonical ∨ undone`.
+
+`question ∈ {exists, canonical, mine, done} ⇒ answer_from(tree_read ∨ cortex_read ∨ live_probe) ∧ ¬answer_from(git ls-files/status/log)`.
+
+Inferring existence/canonicality from git state is a category error. No established git workflow is the default; this is not an omission to patch.
 
 ## Positive corollaries
 
-- **Commit = optional bookkeeping, never a gate.** On-disk ⟺ done for handoff
-  purposes; commit is load-bearing only for rebuild-persistence of a *git-tracked
-  config file*. ¬ a liveness / completion / finality gate — never gate, wait, or
-  hand back "to commit". Liveness = loaded in the running process (verify via
-  load-event + probe, not the tree).
-- **Probe by reading, never by mutating.** Decide "mine vs pre-existing" from the
-  file / traceback — never `git stash` / `checkout` / `reset` the shared tree.
-- **Revert is scoped + explicit.** One owned path per call (`git checkout -- <file>`);
-  never `checkout -- .` / `restore .` / `reset --hard` in the shared checkout.
-  Attended editor → prefer undo / revert UI over git CLI.
+- Commit = optional bookkeeping, never a gate. On-disk is done for handoff; commit is load-bearing only for rebuild-persistence of a git-tracked config/source file. `¬gate ∧ ¬wait ∧ ¬handoff_to_commit`.
+- Liveness = loaded in running process. Verify with load-event + probe, not tree or commit.
+- Probe by reading, never mutating. Decide "mine vs pre-existing" from file/traceback, not `git stash` / `checkout` / `reset`.
+- Revert is scoped + explicit. One owned path per call; never `checkout -- .`, `restore .`, or `reset --hard` in shared checkout. Attended editor ⇒ prefer undo/revert UI.
 
 ## Execution lanes
 
 | Lane | Surface | Where work lands | Git protocol |
 |---|---|---|---|
-| **A — default implement** | `cursor-sdk` + attended Cursor IDE | Live shared checkout (`GIT_INTEGRATION_SOURCE_REPO`, default `universal-llm-gateway`) | **No standing workflow.** On-disk tree = truth. **No git worktree.** Commits sporadic (operator or agent discretion) — **`git diff` unreliable** (see below). |
-| **B — arc integrate** | `git_integrate` / `git_land` MCP (headless) | Optional arc worktree → master merge | Operator-gated approval fingerprints (`diff_sha256`, `paths_sha256`). See `agent_skill:lead-agent-git-integration`. |
-| **C — optional arc dev** | web-claude, API / grokbuild (operator choice); future cursor-sdk | Arc worktree under `ulg-arc-worktrees` | **Not** cursor-sdk today. Separate from Lane A; **`git diff` vs merge-base reliable**; may feed Lane B when integrate/land is requested. |
+| A — default implement | cursor-sdk + attended Cursor IDE | Live shared checkout (`GIT_INTEGRATION_SOURCE_REPO`, default `universal-llm-gateway`) | No standing workflow. On-disk tree = truth. No git worktree. Commits sporadic; `git diff` unreliable. |
+| B — arc integrate | `git_integrate` / `git_land` MCP | Optional arc worktree → master merge | Operator-gated approval fingerprints (`diff_sha256`, `paths_sha256`); see `agent_skill:lead-agent-git-integration`. |
+| C — optional arc dev | web-claude, API/grokbuild, future cursor-sdk | Arc worktree under `ulg-arc-worktrees` | Not cursor-sdk today. Diff vs merge-base reliable; may feed Lane B when requested. |
 
-Lane A is the default mechanical implement path. Lanes B and C are **not** implied
-by a cursor-sdk dispatch and **not** required before re-dispatch.
+Lane A is default. Lanes B/C are not implied by cursor-sdk and are not required before re-dispatch.
 
 ## Commit posture
 
-Commits happen when the **operator** asks, when an **agent** chooses to commit
-(sporadic, uncoordinated with task boundaries), or when a **named workflow**
-explicitly defines a commit/merge/release step. Absence of a commit does not mean
-work is incomplete, undeployed, or unsafe to build on — and sporadic commits on
-master are why `git diff` is an unreliable change summary (see **Git diff
-reliability**).
+Commits happen only when operator asks, an agent chooses to checkpoint, or a named workflow defines commit/merge/release. Absence of commit does not mean incomplete, undeployed, or unsafe to build on. Sporadic master commits make `git diff` unreliable as a task/session summary.
 
 ## What not to infer
 
-- ¬ uncommitted code ⇒ broken deploy or dead HTTP listener
+- ¬ uncommitted code ⇒ broken deploy or dead listener
 - ¬ must commit before re-dispatch
-- ¬ git-tracked ⇒ canonical (`tasks/`, most `docs/` intentionally untracked)
-- ¬ dirty `git status` ⇒ reload failed because of pending edits (read tree +
-  logs + events instead)
-- ¬ `git diff` on master ⇒ accurate scope of a task or session (sporadic commits
-  break the baseline; read files + cortex instead)
+- ¬ git-tracked ⇒ canonical
+- ¬ dirty `git status` ⇒ reload failed because of pending edits
+- ¬ `git diff` on master ⇒ accurate task/session scope
+
+Use tree reads + Cortex + logs/events/live probes instead.
 
 ## Git diff reliability
 
 | Substrate | `git diff` reliable? | Why |
 |---|---|---|
-| **Lane A — live master checkout** | **No** | Commits are sporadic — operator-initiated or at agent discretion — so there is no stable arc boundary. Uncommitted edits, recent commits, and older `HEAD` mix in ways `git diff` vs `HEAD` cannot disambiguate. |
-| **Arc worktree (Lanes B/C; future cursor-sdk)** | **Yes** | Diff vs merge-base is well-defined; Lane B `diff_sha256` / `paths_sha256` gates depend on this. Cursor-sdk will adopt worktrees in the future — until then, treat cursor-sdk as Lane A. |
+| Lane A — live master checkout | No | No stable arc boundary; uncommitted edits, recent commits, and older `HEAD` mix. |
+| Arc worktree (B/C; future cursor-sdk) | Yes | Diff vs merge-base is defined; Lane B fingerprints depend on it. |
 
-On the default substrate, answer "what changed?" by **reading files** and **cortex
-provenance** — not `git diff`.
+On default substrate, answer "what changed?" by reading files and Cortex provenance, not `git diff`.
 
 ## LLM context — no diffs
 
-**Never submit git diffs, unified patches, or `git diff` output to LLMs** —
-handoffs, consults, reviews, implement packets, or dispatch context. On Lane A
-master this is especially wrong: diffs are unreliable even as a rough summary
-(see above).
+Never submit git diffs, unified patches, or `git diff` output to LLMs for handoffs, consults, reviews, implement packets, or dispatch context. Lane A diffs are especially unreliable.
 
-Provide **whole files** (when bounded) or **relevant sections** via:
+Provide whole files when bounded or relevant sections:
 
-```
+```text
 fs(sandbox="workspaces", op="read", path="universal-llm-gateway/…")
 fs(sandbox="workspaces", op="md_read", path="universal-llm-gateway/…", section="…")
 ```
 
-`git_diff` MCP exists for **operator approval binding** on arc worktrees
-(`diff_sha256` → integrate/land gates), not model context and not for
-reconstructing change scope on master. Use `include_full_diff=false` when only
-fingerprints are needed.
+`git_diff` MCP exists for operator approval binding on arc worktrees (`diff_sha256` → integrate/land gates), not model context or master change-scope reconstruction. Use `include_full_diff=false` when only fingerprints are needed.
 
-## Git CLI is warranted only when
+## Git CLI allowed only when
 
-operator asks to commit/branch/PR · a named workflow defines a commit/merge/
-release step · staging a deliberate tracked-config change for rebuild-persistence.
-Otherwise, don't reach for git.
+operator asks to commit/branch/PR; a named workflow defines commit/merge/release; or staging deliberate tracked-config/source change for rebuild-persistence. Otherwise do not reach for git.
 
 ## Related skills
 
 - `lead-agent-git-integration` — arc `git_*` MCP tools (Lane B only)
-- `architecture-invariants` — `[universal:git-posture]` tag one-liner in handoff Block 2
+- `architecture-invariants` — `[universal:git-posture]` one-liner in handoff Block 2

@@ -10,7 +10,6 @@ from agent_seat.inject_channels import web_seat_injected_skill_slugs
 from agent_seat.inject_registry import (
     CODING_SESSION_ADVERTISE_SLUGS,
     coding_scope_inject_entity_ids,
-    injected_skill_slugs,
 )
 
 from ..db import cortex_conn
@@ -102,11 +101,6 @@ def _suppress_session_close_false_positive(ctx: str, slug: str) -> bool:
 
 def build_loaded_set(loaded: list[str]) -> set[str]:
     return {norm_loaded(x) for x in loaded if isinstance(x, str) and x.strip()}
-
-
-def _seat_platform(agent: str) -> str:
-    parts = agent.split("-", 1)
-    return parts[1] if len(parts) == 2 else "web"
 
 
 def _seat_preloaded_norm_slugs(agent: str) -> frozenset[str]:
@@ -262,16 +256,17 @@ def run_stage_a(
     ctx = (conversation_context or "").strip()
     if not ctx:
         canonical_agent = canonical_seat_or_422(agent)
-        seat_preloaded = (
-            list(
-                injected_skill_slugs(
-                    role=canonical_agent,
-                    platform=_seat_platform(canonical_agent),
+        if is_web_seat_slug(canonical_agent):
+            parts = canonical_agent.split("-", 1)
+            family = parts[0] if parts else canonical_agent
+            platform = parts[1] if len(parts) == 2 else "web"
+            seat_preloaded = list(
+                web_seat_injected_skill_slugs(
+                    canonical_agent, family=family, platform=platform
                 )
             )
-            if is_web_seat_slug(canonical_agent)
-            else []
-        )
+        else:
+            seat_preloaded = []
         return {
             "suggestions": [],
             "loaded_echo": [],
@@ -287,16 +282,17 @@ def run_stage_a(
         }
 
     canonical_agent = canonical_seat_or_422(agent)
-    seat_preloaded = (
-        list(
-            injected_skill_slugs(
-                role=canonical_agent,
-                platform=_seat_platform(canonical_agent),
+    if is_web_seat_slug(canonical_agent):
+        parts = canonical_agent.split("-", 1)
+        family = parts[0] if parts else canonical_agent
+        platform = parts[1] if len(parts) == 2 else "web"
+        seat_preloaded = list(
+            web_seat_injected_skill_slugs(
+                canonical_agent, family=family, platform=platform
             )
         )
-        if is_web_seat_slug(canonical_agent)
-        else []
-    )
+    else:
+        seat_preloaded = []
     explicit_loaded_set = build_loaded_set(loaded)
     loaded_set = explicit_loaded_set | _seat_preloaded_norm_slugs(agent)
     ctx_tokens = tokenize_text(ctx)

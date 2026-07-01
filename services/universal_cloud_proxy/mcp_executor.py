@@ -96,23 +96,9 @@ def _is_web_seat(seat: str) -> bool:
 
 
 async def _append_web_invariant_bodies(content: str, seat: str) -> str:
-    """Append registry-resolved invariant skill bodies for web seats."""
-    if not _is_web_seat(seat):
-        return content
-    from agent_seat.inject_registry import resolve_injected_bodies
-
-    parts = seat.split("-", 1)
-    platform = parts[1] if len(parts) == 2 else "web"
-    resolution = await asyncio.to_thread(
-        resolve_injected_bodies,
-        seat,
-        # LEAD-scope activation is is_lead_agent(seat) — seat slug, not role label.
-        role=seat,
-        platform=platform,
-        budget_bytes=None,
-        already_present=content,
-    )
-    return content + resolution.block_md
+    """Web invariant append retired — skills operator-attached in claude.ai UI."""
+    del seat
+    return content
 
 
 def _jsonrpc_request(

@@ -21,6 +21,7 @@ import re
 from typing import Any
 
 from ...db import query
+from ...guidance_entity import GUIDANCE_ID_PREFIXES, entity_slug_from_id
 from ._shared import _finding
 
 _INGEST_RELATED_REMEDIATION = (
@@ -32,15 +33,23 @@ _BARE_SLUG_RE = re.compile(r"^[a-z0-9-]+$")
 _SKILL_EDGE_TYPES = ("references", "related_to")
 
 
+def _is_guidance_id(entity_id: str) -> bool:
+    return any(entity_id.startswith(prefix) for prefix in GUIDANCE_ID_PREFIXES)
+
+
 def _normalize_related_slug(entry: object) -> str | None:
+    """Bare slug for a related_skills entry (prefix-agnostic).
+
+    arc 3924: related_skills targets may be typed under any guidance prefix
+    (agent_skill:/rule:/skill:) after the corpus migration; edge matching is done
+    on the bare slug so a retyped companion is not reported as missing.
+    """
     if not isinstance(entry, str):
         return None
-    slug = entry.split("#", 1)[0].strip()
-    if slug.startswith("agent_skill:"):
-        slug = slug.removeprefix("agent_skill:")
+    slug = entity_slug_from_id(entry.split("#", 1)[0].strip())
     if not _BARE_SLUG_RE.match(slug):
         return None
-    return f"agent_skill:{slug}"
+    return slug
 
 
 def _edge_key(from_entity: str, to_entity: str, rel_type: str) -> tuple[str, str, str]:
@@ -65,7 +74,7 @@ def detect_agent_skill_related_skills_no_relationship(
     mirrored by matching ``references`` or ``related_to`` relationships."""
     sql = (
         "SELECT id, type, name, attributes FROM entities "
-        "WHERE type = 'agent_skill' AND attributes IS NOT NULL"
+        "WHERE type IN ('agent_skill', 'rule', 'skill') AND attributes IS NOT NULL"
     )
     params: tuple = ()
     if subject:
@@ -100,7 +109,7 @@ def detect_agent_skill_related_skills_no_relationship(
                 _finding(
                     "agent_skill_related_skills_no_relationship",
                     r["id"],
-                    f"agent_skill '{r['name']}' has related_skills attribute of "
+                    f"{r['type']} '{r['name']}' has related_skills attribute of "
                     f"non-list type {type(manifest).__name__} — expected list of "
                     "bare skill slugs.",
                 )
@@ -115,8 +124,8 @@ def detect_agent_skill_related_skills_no_relationship(
                     _finding(
                         "agent_skill_related_skills_no_relationship",
                         r["id"],
-                        f"agent_skill '{r['name']}' related_skills entry "
-                        f"{entry!r} does not resolve to an agent_skill slug "
+                        f"{r['type']} '{r['name']}' related_skills entry "
+                        f"{entry!r} does not resolve to a guidance skill slug "
                         "(expected bare `<slug>` matching `^[a-z0-9-]+$`).",
                     )
                 )
@@ -143,45 +152,51 @@ def detect_agent_skill_related_skills_no_relationship(
         f")",
         (*entity_ids, *entity_ids, *entity_ids),
     )
+    # arc 3924: match on bare slugs. entity_retype rewrites relationship
+    # endpoints to the migrated prefix, so a companion retyped agent_skill→rule
+    # must still match its related_skills bare slug. The reverse-drift check
+    # only considers guidance-typed targets (skill companions).
     wired: set[tuple[str, str, str]] = set()
     wired_by_source: dict[str, set[str]] = {}
     for rel in rel_rows:
-        key = _edge_key(rel["from_entity"], rel["to_entity"], rel["type"])
-        wired.add(key)
+        from_slug = entity_slug_from_id(rel["from_entity"])
+        to_slug = entity_slug_from_id(rel["to_entity"])
+        wired.add(_edge_key(from_slug, to_slug, rel["type"]))
         if rel["type"] == "references":
-            wired_by_source.setdefault(rel["from_entity"], set()).add(rel["to_entity"])
+            if _is_guidance_id(rel["to_entity"]):
+                wired_by_source.setdefault(from_slug, set()).add(to_slug)
         elif rel["type"] == "related_to":
-            lo, hi = sorted((rel["from_entity"], rel["to_entity"]))
-            wired_by_source.setdefault(lo, set()).add(hi)
-            wired_by_source.setdefault(hi, set()).add(lo)
+            if _is_guidance_id(rel["to_entity"]):
+                wired_by_source.setdefault(from_slug, set()).add(to_slug)
+            if _is_guidance_id(rel["from_entity"]):
+                wired_by_source.setdefault(to_slug, set()).add(from_slug)
 
     for r, manifest in row_skills:
         source_id = r["id"]
+        source_slug = entity_slug_from_id(source_id)
         manifest_set = set(manifest)
-        for skill_id in manifest:
-            if not _edge_covers(source_id, skill_id, wired):
+        for skill_slug in manifest:
+            if not _edge_covers(source_slug, skill_slug, wired):
                 findings.append(
                     _finding(
                         "agent_skill_related_skills_no_relationship",
                         source_id,
-                        f"agent_skill '{r['name']}' related_skills lists "
-                        f"{skill_id.removeprefix('agent_skill:')} but no active "
-                        f"`references` or `related_to` relationship from "
-                        f"{source_id} → {skill_id} exists. Wire via "
-                        f"{_INGEST_RELATED_REMEDIATION}",
+                        f"{r['type']} '{r['name']}' related_skills lists "
+                        f"{skill_slug} but no active `references` or `related_to` "
+                        f"relationship from {source_id} → {skill_slug} exists. "
+                        f"Wire via {_INGEST_RELATED_REMEDIATION}",
                     )
                 )
-        wired_targets = wired_by_source.get(source_id, set())
-        for skill_id in sorted(wired_targets):
-            if skill_id.startswith("agent_skill:") and skill_id not in manifest_set:
+        wired_targets = wired_by_source.get(source_slug, set())
+        for skill_slug in sorted(wired_targets):
+            if skill_slug not in manifest_set:
                 findings.append(
                     _finding(
                         "agent_skill_related_skills_no_relationship",
                         source_id,
-                        f"agent_skill '{r['name']}' has an active skill-link "
-                        f"relationship to {skill_id} but "
-                        f"{skill_id.removeprefix('agent_skill:')} is absent from "
-                        "its related_skills attribute — attribute⟷edge drift. "
+                        f"{r['type']} '{r['name']}' has an active skill-link "
+                        f"relationship to {skill_slug} but it is absent from its "
+                        "related_skills attribute — attribute⟷edge drift. "
                         f"{_INGEST_RELATED_REMEDIATION}",
                     )
                 )

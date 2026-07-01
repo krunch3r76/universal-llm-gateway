@@ -314,7 +314,7 @@ def test_stage_a_advisor_timing_labeled_corpus(
 
 
 @pytest.mark.offline
-def test_web_seat_preloaded_tracks_auto_inject_skills_as_loaded() -> None:
+def test_web_seat_preloaded_uses_boot_card_channels_not_registry() -> None:
     conn = _conn()
     _insert(
         conn,
@@ -342,18 +342,13 @@ def test_web_seat_preloaded_tracks_auto_inject_skills_as_loaded() -> None:
             conversation_context="walk kaywan cortex graph for job fit",
             limit=8,
         )
-    assert result["seat_preloaded"] == [
-        "cortex-orientation",
-        "cortex-provenance-discipline",
-        "model-tier-awareness-web",
-        "orchestrator-core",
-    ]
-    omitted = {item["slug"] for item in result["omitted"]}
-    assert "cortex-orientation" in omitted
-    assert "cortex-provenance-discipline" in omitted
+    preloaded = set(result["seat_preloaded"])
+    assert "cortex-orientation" not in preloaded
+    assert "cortex-provenance-discipline" not in preloaded
+    assert "orchestrator-core" not in preloaded
+    assert "operator-posture" in preloaded
     suggested = {s["slug"] for s in result["suggestions"]}
-    assert "cortex-orientation" not in suggested
-    assert "cortex-provenance-discipline" not in suggested
+    assert "cortex-orientation" in suggested or "cortex-provenance-discipline" in suggested
 
 
 @pytest.mark.offline
@@ -512,7 +507,8 @@ def test_coding_session_start_returns_bundle_not_session_close() -> None:
         "session-close",
         *advertise_slugs,
         "architecture-invariants",
-        "ulg-architecture",
+        "ulg-architecture_ulg",
+        "orchestrator-workflow",
     ):
         _insert(
             conn,
@@ -538,7 +534,8 @@ def test_coding_session_start_returns_bundle_not_session_close() -> None:
     web_advertise = [slug for slug in advertise_slugs if slug != "git-posture"]
     assert set(slugs) == set(web_advertise) | {
         "architecture-invariants",
-        "ulg-architecture",
+        "ulg-architecture_ulg",
+        "orchestrator-workflow",
     }
     assert "git-posture" not in slugs
     for item in result["suggestions"]:
@@ -546,12 +543,9 @@ def test_coding_session_start_returns_bundle_not_session_close() -> None:
         assert "coding session" in item["reason"].lower()
         assert "trigger_match" not in item
     preloaded = set(result["seat_preloaded"])
-    assert preloaded == {
-        "cortex-orientation",
-        "cortex-provenance-discipline",
-        "model-tier-awareness-web",
-        "orchestrator-core",
-    }
+    assert "cortex-orientation" not in preloaded
+    assert "orchestrator-core" not in preloaded
+    assert "operator-posture" in preloaded
 
 
 @pytest.mark.offline

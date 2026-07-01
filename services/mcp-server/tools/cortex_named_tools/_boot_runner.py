@@ -41,11 +41,16 @@ def _resolve_web_auto_inject_skills(
     inject_profile: str | None = None,
     packet_invariant_ids: tuple[str, ...] = (),
 ) -> tuple[str, list[dict[str, Any]]] | None:
-    """Registry-resolved auto-inject block for web/lead seats (out-of-band delivery)."""
+    """Registry-resolved auto-inject block for web dispatch boot only.
+
+    Standard web lead boot: skills operator-attached in claude.ai UI — no inject.
+    """
     from agent_seat.body_injection import is_web_seat_slug
     from agent_seat.inject_registry import resolve_injected_bodies
 
     if not is_web_seat_slug(seat_slug):
+        return None
+    if inject_profile is None and not packet_invariant_ids:
         return None
     parts = seat_slug.split("-", 1)
     platform = parts[1] if len(parts) == 2 else "web"

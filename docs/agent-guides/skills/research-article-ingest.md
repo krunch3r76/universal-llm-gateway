@@ -3,84 +3,68 @@ name: research-article-ingest
 description: Download research papers, RFCs, and primary sources; register with RAG and index. Use when ingesting any primary source into the research corpus.
 ---
 
-**Tool**: `scripts/ingest-article` (host-side CLI — outbound internet access).
-Services make no outbound connections; downloads run on the host. RAG and Stargate are always running — if either is not responding, use the `service-lifecycle` skill to start it before proceeding.
+# Research Article Ingest
 
-## Primary Source vs Derivative (HARD)
+**Tool:** host CLI `scripts/ingest-article`. Services do not make outbound downloads. If RAG/Stargate is down, use `service-lifecycle` before proceeding.
 
-∀ ingestion: committed artifact = raw served bytes — actual PDF, or HTML when no PDF exists. RAG extracts text at index time (`pymupdf4llm.to_markdown()` for PDFs, HTML reader for HTML).
-¬ hand-curated summaries, extracted abstracts, or paraphrased entries — that is transcription, not ingestion.
-∀ agent-authored content (memos, summaries, argument integration): belongs in Cortex as assertions, not in `docs/research/`.
+## Hard invariants
 
-Default: save served bytes as-is. arXiv → PDF; HTML-only source → HTML.
-Paywall stub / abstract-only / preview → **STOP**, do not synthesize a substitute.
-Cloudflare challenge → use `curl_cffi` path (§ below). Multiple authoritative formats → prefer arXiv (stable, versioned).
+`∀ ingestion: committed_artifact = raw_served_bytes` — PDF when available; HTML only when no PDF exists. RAG extracts text at index time.
+
+Forbidden: hand-curated summaries, extracted abstracts, paraphrased entries, WebFetch transcription, or agent-authored memos in `docs/research/`. Agent-authored synthesis belongs in Cortex assertions/notes.
+
+`paywall_stub ∨ abstract_only ∨ preview ⇒ STOP`; do not synthesize a substitute.
+
+Default source preference: arXiv PDF when available; HTML-only source → HTML; multiple authoritative formats → prefer stable/versioned arXiv.
 
 ## Workflow
 
-### 1. Locate
-Search the web. Prefer arXiv (direct PDF URL). Collect: URL, title, authors, date.
+1. **Locate.** Search web; collect URL, title, authors, date. Prefer direct arXiv PDF.
+2. **Choose subdir/scope.** Use table below. New subdir requires: create dir; update `scripts/backfill_article_metadata.py::SUBDIRECTORY_TO_SCOPE`; add scope block to `~/.gateway/rag.yaml`; add prefix to `all_corpus` and `research` composite scopes.
+3. **Download/register.** Run `scripts/ingest-article`.
+4. **Integrity gate before indexing.** Read disk file via `fs`; verify ≥2 identity tokens from author/title/date/citation. `<2 tokens ∨ multi_doc ∨ stub ⇒ STOP` with URL, expected metadata, first ~500 chars.
+5. **Index.** Run `rag(op="coverage")`; confirm relevant scope `indexed_files` and fresh `last_indexed` before declaring done.
 
-### 2. Choose subdir and scope
+## Subdir → scope
 
-| Subdirectory | Scope | Content |
+| Subdir | Scope | Content |
 |---|---|---|
-| `rag-systems` | `rag_systems` | RAG architecture, evaluation, benchmarks |
+| `rag-systems` | `rag_systems` | RAG architecture/eval/benchmarks |
 | `software-agents` | `software_agents` | Agent workflows, tool registries, multi-agent SE |
 | `agent-substrate` | `agent_substrate` | HTTP/MCP substrate, protocol primitives, web architecture |
-| `workflows` | `workflows` | Pipeline architecture, agent orchestration |
-| `knowledge-management` | `knowledge_systems` | PKM, second brain, agent memory |
+| `workflows` | `workflows` | Pipeline architecture, orchestration |
+| `knowledge-management` | `knowledge_systems` | PKM, second brain, memory |
 | `graph-modeling` | `graph_modeling` | Property graphs, RDF/OWL, KG construction |
-| `temporal-provenance` | `temporal_provenance` | Bitemporal, versioning, provenance |
-| `belief-consistency` | `belief_consistency` | Belief revision, contradiction handling |
+| `temporal-provenance` | `temporal_provenance` | Bitemporal/versioning/provenance |
+| `belief-consistency` | `belief_consistency` | Belief revision/contradictions |
 | `information-extraction` | `information_extraction` | NER, relation extraction, structured output |
 | `code-retrieval` | `code_retrieval` | Code embeddings, AST chunking, dependency retrieval |
-| `code-transformation` | `code_transformation` | LLM code review, refactoring, hallucination mitigation |
-| `documentation` | `code_documentation` | Code doc generation, doc-code alignment |
-| `prompting` | `small_llm_prompting` | Prompt engineering for small/local models |
-| `llm/prompting` | `llm_prompting` | Prompt engineering for large/cloud models |
+| `code-transformation` | `code_transformation` | LLM code review/refactor/hallucination mitigation |
+| `documentation` | `code_documentation` | Code doc generation/alignment |
+| `prompting` | `small_llm_prompting` | Small/local model prompting |
+| `llm/prompting` | `llm_prompting` | Large/cloud model prompting |
 
-New subdir: (1) create dir; (2) add subdir→scope to `scripts/backfill_article_metadata.py` (`SUBDIRECTORY_TO_SCOPE`); (3) add scope block to `~/.gateway/rag.yaml` under `scopes:`; (4) add prefix to composite scopes (`all_corpus`, `research`).
-
-### 3. Download and register
+## Commands
 
 ```bash
 # arXiv
 scripts/ingest-article --arxiv <ID> --subdir <subdir> --filename <slug>.pdf \
-    --title "<title>" --authors "<authors>" --date <YYYY-MM-DD> --scope <scope>
+  --title "<title>" --authors "<authors>" --date <YYYY-MM-DD> --scope <scope>
 
-# Non-arXiv (PDF or HTML)
+# Non-arXiv PDF/HTML
 scripts/ingest-article --url <url> --subdir <subdir> --filename <slug>.<ext> \
-    --title "<title>" --authors "<authors>" --date <YYYY-MM-DD> --scope <scope>
+  --title "<title>" --authors "<authors>" --date <YYYY-MM-DD> --scope <scope>
 ```
 
-### 4. Content-integrity check (HARD — gates step 5)
-
-1. Read the file: `fs(sandbox="workspaces", op="read", path="universal-llm-gateway/docs/research/<subdir>/<file>")`
-2. Verify **≥2** identity tokens present: author name · title word · date · citation.
-3. < 2 tokens → **STOP**: do not index; surface URL, expected metadata, and first ~500 chars.
-
-Multi-document or stub file → treat as content mismatch regardless of token count.
-
-### 5. Index
-
-```
-rag(op="coverage")
-```
-
-Calling coverage scans all registered files and indexes any not yet indexed. Confirm the file appears in the relevant scope's `indexed_files` count with a fresh `last_indexed` timestamp before declaring done.
-
-## Filename conventions
-
-Lowercase hyphenated slug capturing the key contribution. Extension matches served format: `.pdf` for PDFs, `.html` for HTML-only sources.
+Filenames: lowercase hyphenated contribution slug; extension matches served format.
 
 ## Batch ingestion
 
-Write a download script following `scripts/download-doc-research-corpus.py` (async httpx + semaphore), then run `scripts/backfill_article_metadata.py`. Content-integrity MUST run per-file — one bad ID poisons downstream trust until detected.
+Use a script shaped like `scripts/download-doc-research-corpus.py` (async `httpx` + semaphore), then `scripts/backfill_article_metadata.py`. Run the integrity gate per file; one bad ID poisons downstream trust.
 
-## Cloudflare / bot-protected sources
+## Bot-protected sources
 
-Some hosts (FINRA, SEC, institutional) block on TLS fingerprint (JA3), not User-Agent. Try normal `httpx` first; on 403+`text/html` where a PDF was expected:
+Try normal `httpx` first. On `403 + text/html` where PDF expected, use `curl_cffi` impersonation:
 
 ```python
 from curl_cffi import requests as cffi_requests
@@ -90,33 +74,26 @@ if r.status_code == 200 and (b"%PDF-" in r.content[:10] or "pdf" in r.headers.ge
     open(dest, "wb").write(r.content)
 ```
 
-Install: `~/.venvs/universal/bin/pip install curl_cffi`.
+Install only if needed: `~/.venvs/universal/bin/pip install curl_cffi`.
 
-## Anti-Transcription Invariant (HARD)
+## Reading downloaded sources
 
-∀ corpus entry: text MUST derive from a downloaded file on disk. ¬ transcribe from WebFetch responses — those are read artefacts, not provenance artefacts. Correct sequence: (1) download to disk; (2) read via `fs` MCP; (3) build entry from that disk read.
-
-## Reading downloaded sources (fs MCP)
-
-```
-fs(sandbox="workspaces", op="read",    path="universal-llm-gateway/docs/research/<subdir>/<file>")
-fs(sandbox="workspaces", op="md_list", path="universal-llm-gateway/docs/research/<subdir>/<file>.pdf")
-fs(sandbox="workspaces", op="md_read", path="...<file>.pdf", section="<Heading>")
+```text
+fs(workspaces, read,    universal-llm-gateway/docs/research/<subdir>/<file>)
+fs(workspaces, md_list, universal-llm-gateway/docs/research/<subdir>/<file>.pdf)
+fs(workspaces, md_read, ...<file>.pdf, section=<Heading>)
 ```
 
-PDFs auto-convert via `pymupdf4llm.to_markdown()`. For tabular/columnar PDFs, use `finance_extract_pdf(path=...)` via MCP (pdfplumber, preserves table structure).
+PDFs convert with `pymupdf4llm`. For tabular/columnar PDFs, use the finance/pdfplumber extraction path.
 
-## What NOT to do
+## Do not
 
-- ¬ add download logic to any service (no outbound access)
-- ¬ manually insert into `rag_metadata.db` when the API is available
-- ¬ skip content_hash — it's the join key for query-time enrichment
-- ¬ write a hand-curated summary in place of the source
-- ¬ index before content-integrity passes
+- add download logic to services;
+- manually insert into `rag_metadata.db` when API works;
+- skip `content_hash` (query-time enrichment join key);
+- write a summary in place of the source;
+- index before integrity passes.
 
 ## Related
 
-- `cortex:agent-skills/legal-opinion-corpus-ingestion.md` — case-law/statute primary sources; same invariants
-- `cortex:agent-skills/thirdparty-api-mirror.md` — vendor API doc primary-source pattern
-- `cortex:agent-skills/corpus-cross-reference-discipline.md` — intake + writing-side identifier surfacing
-- `service-lifecycle` skill — start/restart RAG or Stargate if not responding
+`legal-opinion-corpus-ingestion`, `thirdparty-api-mirror`, `corpus-cross-reference-discipline`, `service-lifecycle`.

@@ -40,6 +40,12 @@ from ._pdf_sections import (
     pdf_to_dict,
     read_pdf_section,
 )
+from ._section_mutation import (
+    delete_mutation_summary,
+    delete_warning,
+    section_mutation_summary,
+    shrink_warning,
+)
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -130,14 +136,99 @@ def _section_write_result(
     signal: str,
     status: str,
     transform: Callable[[str], tuple[str, bool]],
+    *,
+    mutation_op: str | None = None,
+    warn_on_shrink: bool = False,
 ) -> dict[str, Any]:
-    err, normalized = _mutate_document(resolved, transform)
+    if is_converted_format(resolved):
+        return {
+            "error": (
+                f"Cannot modify {resolved.suffix} files via section ops — "
+                "converted formats are read-only (use md_list / md_read)"
+            )
+        }
+    text, err = _load_text(resolved)
     if err:
         return {"error": err}
+    try:
+        prior_body = md_read_section(text, section)
+    except SectionError as exc:
+        return {"error": str(exc)}
+    try:
+        raw = transform(text)
+    except SectionError as exc:
+        return {"error": str(exc)}
+    if isinstance(raw, tuple):
+        updated, normalized = raw
+    else:
+        updated, normalized = raw, False
+    try:
+        new_body = md_read_section(updated, section)
+    except SectionError as exc:
+        return {"error": str(exc)}
+    try:
+        _write_file(resolved, updated)
+    except OSError as exc:
+        return {"error": f"Failed to write {resolved}: {exc}"}
     record(signal, path=path, sandbox=sandbox, section=section)
-    result: dict[str, Any] = {"status": status, "path": path, "section": section}
+    result: dict[str, Any] = {
+        "status": status,
+        "path": path,
+        "section": section,
+        "mutation": section_mutation_summary(prior_body, new_body),
+    }
     if normalized:
         result["normalized_heading"] = True
+    if warn_on_shrink and mutation_op:
+        warning = shrink_warning(prior_body, new_body, op=mutation_op)
+        if warning:
+            result["_warning"] = warning
+    return result
+
+
+def _section_delete_result(
+    resolved: Path,
+    path: str,
+    sandbox: str,
+    section: str,
+) -> dict[str, Any]:
+    if is_converted_format(resolved):
+        return {
+            "error": (
+                f"Cannot modify {resolved.suffix} files via section ops — "
+                "converted formats are read-only (use md_list / md_read)"
+            )
+        }
+    text, err = _load_text(resolved)
+    if err:
+        return {"error": err}
+    try:
+        prior_body = md_read_section(text, section)
+    except SectionError as exc:
+        return {"error": str(exc)}
+    try:
+        updated = md_delete_section(text, section)
+    except SectionError as exc:
+        return {"error": str(exc)}
+    try:
+        _write_file(resolved, updated)
+    except OSError as exc:
+        return {"error": f"Failed to write {resolved}: {exc}"}
+    record(
+        "mcp.tool.markdown.section.deleted",
+        path=path,
+        sandbox=sandbox,
+        section=section,
+    )
+    result: dict[str, Any] = {
+        "status": "deleted",
+        "path": path,
+        "section": section,
+        "mutation": delete_mutation_summary(prior_body),
+    }
+    warning = delete_warning(prior_body)
+    if warning:
+        result["_warning"] = warning
     return result
 
 
@@ -308,6 +399,8 @@ def register_markdown_tools(mcp: FastMCP) -> None:
                 "mcp.tool.markdown.section.replaced",
                 "replaced",
                 lambda t: md_replace_section(t, section, content),
+                mutation_op="md_replace",
+                warn_on_shrink=True,
             )
         if op == "append_section":
             if not content:
@@ -336,15 +429,7 @@ def register_markdown_tools(mcp: FastMCP) -> None:
                 ),
             )
         if op == "delete_section":
-            return _section_write_result(
-                resolved,
-                path,
-                sandbox,
-                section,
-                "mcp.tool.markdown.section.deleted",
-                "deleted",
-                lambda t: (md_delete_section(t, section), False),
-            )
+            return _section_delete_result(resolved, path, sandbox, section)
         if op == "from_dict":
             if is_converted_format(resolved):
                 return {

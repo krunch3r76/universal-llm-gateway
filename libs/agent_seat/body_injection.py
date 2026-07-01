@@ -19,10 +19,8 @@ INJECTED_TOTAL_DEADLINE_MS = int(os.getenv("INJECTED_TOTAL_DEADLINE_MS", "1500")
 
 
 def web_auto_inject_skill_slugs() -> tuple[str, ...]:
-    """Bare slugs server-injected on web seats (registry-derived)."""
-    from agent_seat.inject_registry import injected_skill_slugs
-
-    return injected_skill_slugs(platform="web", inject_profile=None)
+    """Registry auto-inject slugs for web seats — empty since claude.ai UI attach."""
+    return ()
 
 
 # Channel-2/3 maps: agent_seat.inject_channels (shared-lib SOT for skill_suggest).

@@ -7,6 +7,7 @@ from typing import Any
 
 from universal_logging import get_logger
 
+from ..guidance_entity import GUIDANCE_ID_PREFIXES, entity_slug_from_id
 from ..routes.assertions import _supersede_assertion_impl
 from ._shared import record
 from .ops_assertions_update import _op_assertion_get
@@ -14,7 +15,9 @@ from .ops_assertions_update import _op_assertion_get
 logger = get_logger("cortex-api.dispatch_ops.assertions")
 
 _RESOLUTION_KIND_EXACT = frozenset({"superseded", "wontfix"})
-_RESOLUTION_KIND_PREFIXES = ("agent_skill:", "workflow:", "todo:")
+# arc 3924: rule:/skill: join agent_skill: as valid resolution kinds after the
+# rules/skills corpus migration (workflow: retained for pre-migration back-compat).
+_RESOLUTION_KIND_PREFIXES = ("agent_skill:", "rule:", "skill:", "workflow:", "todo:")
 
 
 def validate_resolution_kind(resolution_kind: str) -> str | None:
@@ -26,7 +29,8 @@ def validate_resolution_kind(resolution_kind: str) -> str | None:
             return None
     return (
         f"Invalid resolution_kind={resolution_kind!r}. Must be one of: "
-        "agent_skill:{slug}, workflow:{slug}, todo:{slug}, superseded, wontfix"
+        "agent_skill:{slug}, rule:{slug}, skill:{slug}, workflow:{slug}, "
+        "todo:{slug}, superseded, wontfix"
     )
 
 
@@ -44,8 +48,8 @@ def _promote_friction_to_todo(
 
     slug = resolution_kind.removeprefix("todo:")
     required_skills: list[str] = []
-    if friction_entity_id.startswith("agent_skill:"):
-        required_skills = [friction_entity_id.removeprefix("agent_skill:")]
+    if any(friction_entity_id.startswith(p) for p in GUIDANCE_ID_PREFIXES):
+        required_skills = [entity_slug_from_id(friction_entity_id)]
 
     result = seed_recon_todo(
         todo_id=resolution_kind,

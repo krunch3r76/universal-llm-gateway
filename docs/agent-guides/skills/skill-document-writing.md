@@ -1,6 +1,6 @@
 ---
 name: skill-document-writing
-description: On any task to decide whether to author, revise, or retire a SKILL.md, write or critique a skill document, draft an agent_skill entity description, respond to a skill_binding audit-gate finding, or resolve trigger overlap between two skills, read frontier-model-instructions first for the universal prose discipline, then read this skill.
+description: On any task to author, revise, retire, or compress a SKILL.md; run a SkillReducer-shaped compression pass; draft/critique an agent_skill entity; respond to skill_binding audit; or resolve trigger overlap — read frontier-model-instructions, then this skill (cortex SOT), then cortex://notes/system/references/skill-compression-workflow-map.md when compressing.
 ---
 
 # Skill Document Writing
