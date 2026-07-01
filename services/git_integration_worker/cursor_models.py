@@ -5,7 +5,12 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
-from cursor_capabilities import CURSOR_MODEL_CAPABILITIES
+from cursor_capabilities import (
+    CURSOR_MODEL_CAPABILITIES,
+    canonical_cursor_bare_id,
+    catalog_divergences,
+    is_cursor_model_denied,
+)
 from cursor_sdk.types import ModelParameterValue, ModelSelection, SDKModel
 from model_id import ModelId
 from universal_logging import get_logger
@@ -71,50 +76,15 @@ def project_live_catalog(models: Sequence[SDKModel]) -> dict[str, dict[str, obje
     return projected
 
 
-def catalog_divergences(
-    live_catalog: Mapping[str, Mapping[str, object]],
-) -> list[str]:
-    """Compare a projected live catalog against ``CURSOR_MODEL_CAPABILITIES``."""
-    errors: list[str] = []
-    for model_id, capability in CURSOR_MODEL_CAPABILITIES.items():
-        live = live_catalog.get(model_id)
-        if live is None:
-            errors.append(f"missing model {model_id!r} in live catalog")
-            continue
-        live_knobs = live.get("knobs")
-        if not isinstance(live_knobs, Mapping):
-            errors.append(f"model {model_id!r}: live knobs not a mapping")
-            continue
-        for knob_name, spec in capability.knobs.items():
-            live_values = live_knobs.get(knob_name)
-            if live_values is None:
-                errors.append(f"model {model_id!r}: missing knob {knob_name!r}")
-                continue
-            if tuple(live_values) != spec.accepted:
-                errors.append(
-                    f"model {model_id!r}: knob {knob_name!r} accepted "
-                    f"{tuple(live_values)!r} != descriptor {spec.accepted!r}"
-                )
-        live_default = live.get("default_variant")
-        if not isinstance(live_default, Mapping):
-            errors.append(f"model {model_id!r}: live default_variant not a mapping")
-            continue
-        if dict(live_default) != dict(capability.default_variant):
-            errors.append(
-                f"model {model_id!r}: default_variant "
-                f"{dict(live_default)!r} != descriptor "
-                f"{dict(capability.default_variant)!r}"
-            )
-    return errors
-
-
 def assert_capability_descriptor_fresh(
     *,
     list_models: Callable[[], Sequence[SDKModel]] | None = None,
 ) -> None:
     """Raise ``CapabilityDescriptorDrift`` when the live catalog diverges."""
     if list_models is None:
-        from cursor_sdk import Client  # Verified: Client exposes list_models(); Cursor does not.
+        from cursor_sdk import (
+            Client,  # Verified: Client exposes list_models(); Cursor does not.
+        )
 
         models = Client().list_models()
     else:
@@ -126,20 +96,13 @@ def assert_capability_descriptor_fresh(
 
 def resolve_cursor(model: str | ModelId) -> CursorSdkModelConfig:
     """Resolve a bare or ``cursor/``-prefixed model id to a trusted config."""
-    parsed = ModelId.parse(model)
-    if parsed.provider is not None and parsed.provider != "cursor":
-        raise ValueError(
-            f"model {parsed.original!r} has provider {parsed.provider!r}; "
-            f"cursor executor accepts bare ids or 'cursor/' prefix only"
-        )
-    bare = parsed.api_model_id
+    bare = canonical_cursor_bare_id(str(model))
+    if is_cursor_model_denied(bare):
+        raise ValueError(f"cursor model {bare!r} is denied")
     cfg = _TRUSTED_CURSOR_MODELS.get(bare)
-    if cfg is None:
-        raise ValueError(
-            f"cursor model {bare!r} not in trusted allowlist; "
-            f"valid: {sorted(_TRUSTED_CURSOR_MODELS)}"
-        )
-    return cfg
+    if cfg is not None:
+        return cfg
+    return CursorSdkModelConfig(model_id=bare, params=())
 
 
 def validate_knobs(config: CursorSdkModelConfig, overrides: Mapping[str, str]) -> None:

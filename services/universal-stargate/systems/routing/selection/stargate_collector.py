@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from universal_logging import get_logger
 
+from .collector import is_gateway_dispatchable
 from .types import Stargate  # Stargate uses ModelId in its type annotations
 
 if TYPE_CHECKING:
@@ -103,6 +104,8 @@ def federated_gateways_to_routing_candidates(
 
     gateways = []
     for fg in federated_gateways:
+        if not is_gateway_dispatchable(fg):
+            continue
         model_details = _map_model_resources_to_details(fg.model_resources)
 
         gateways.append(

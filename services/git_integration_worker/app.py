@@ -35,6 +35,9 @@ from services.git_integration_worker.git_worker_lifecycle_events import (
     register_git_worker_lifecycle_event_publisher,
 )
 from services.git_integration_worker.routes.admin import router as admin_router
+from services.git_integration_worker.routes.cursor_catalog import (
+    router as cursor_catalog_router,
+)
 from services.git_integration_worker.routes.cursor_sdk import (
     router as cursor_sdk_router,
 )
@@ -175,6 +178,7 @@ def create_app() -> FastAPI:
     app.include_router(health_router)
     app.include_router(integrate_router)
     app.include_router(cursor_sdk_router)
+    app.include_router(cursor_catalog_router)
     app.include_router(admin_router)
     return app
 

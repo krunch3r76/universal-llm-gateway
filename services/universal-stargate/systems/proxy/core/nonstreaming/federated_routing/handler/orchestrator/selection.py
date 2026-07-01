@@ -220,7 +220,9 @@ async def run_initial_selection(
             if recovered:
                 federated_gateways = federated_manager.get_healthy_gateways()
 
-    gateways_for_routing = federated_gateways_to_routing_candidates(federated_gateways)
+    gateways_for_routing = federated_gateways_to_routing_candidates(
+        [g for g in federated_gateways if g.dispatchable]
+    )
 
     if context.excluded_gateway_ids:
         kept = [

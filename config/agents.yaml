@@ -242,11 +242,7 @@ profiles:
     confirm_and_proceed: false
     addenda: []
     auto_dispatchable: true
-    allowed_models:
-      - cursor/composer-2.5
-      - cursor/claude-sonnet-4-6
-      - cursor/claude-opus-4-8
-      - cursor/claude-sonnet-5
+    allowed_models: []
 
   subagent/subagent:
     provider: anthropic

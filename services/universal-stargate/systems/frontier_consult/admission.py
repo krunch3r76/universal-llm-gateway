@@ -427,12 +427,23 @@ def resolve_cursor_sdk_generate_target(
             status_code=422,
             code="sdk_generate_model_invalid",
         )
-    if profile.allowed_models and resolved_model not in profile.allowed_models:
+    from cursor_capabilities import is_cursor_model_denied
+
+    if profile.family == "cursor" and profile.platform == "sdk":
+        if is_cursor_model_denied(resolved_model):
+            raise FrontierEndpointError(
+                request_id=request_id,
+                field="model",
+                reason=f"model {resolved_model!r} is denied for cursor/sdk substrate",
+                status_code=422,
+                code="sdk_generate_model_invalid",
+            )
+    elif profile.allowed_models and resolved_model not in profile.allowed_models:
         raise FrontierEndpointError(
             request_id=request_id,
             field="model",
             reason=(
-                f"model {resolved_model!r} not in cursor/sdk allowed_models: "
+                f"model {resolved_model!r} not in allowed_models: "
                 f"{sorted(profile.allowed_models)}"
             ),
             status_code=422,

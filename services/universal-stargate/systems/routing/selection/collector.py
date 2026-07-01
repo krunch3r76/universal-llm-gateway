@@ -33,6 +33,11 @@ except Exception:
 GATEWAY_STATUS_TIMEOUT_S = 2.0
 
 
+def is_gateway_dispatchable(gateway_ref: object) -> bool:
+    """True when gateway may be selected as a live forwarding target."""
+    return getattr(gateway_ref, "dispatchable", True) is not False
+
+
 def _validate_model_requirements(
     vram_usage: int | None,
     ram_usage: int | None,

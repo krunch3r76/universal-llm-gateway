@@ -299,7 +299,11 @@ async def _wait_and_retry_selection(
 
             state_version = federated_manager.get_state_version()
 
-            fresh_gateways = federated_manager.get_all_gateways()
+            fresh_gateways = [
+                g
+                for g in federated_manager.get_all_gateways()
+                if g.dispatchable
+            ]
             gateways_for_retry = [
                 g
                 for g in federated_gateways_to_routing_candidates(fresh_gateways)

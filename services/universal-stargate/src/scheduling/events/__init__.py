@@ -45,6 +45,18 @@ from .cloud import (
     CloudProxyCatalogUpdated,
     CloudProxyUnavailable,
 )
+from .cursor_catalog import (
+    CURSOR_CATALOG_AVAILABLE,
+    CURSOR_CATALOG_DRIFT_DETECTED,
+    CURSOR_CATALOG_FETCH_FAILED,
+    CURSOR_CATALOG_UNAVAILABLE,
+    CURSOR_CATALOG_UPDATED,
+    CursorCatalogAvailable,
+    CursorCatalogDriftDetected,
+    CursorCatalogFetchFailed,
+    CursorCatalogUnavailable,
+    CursorCatalogUpdated,
+)
 from .federation_load import (
     FEDERATION_CATALOG_VRAM_DRIFT,
     FEDERATION_GATEWAY_CATALOG_CHANGED,
@@ -493,6 +505,17 @@ __all__ = [
     "CloudProxyUnavailable",
     "CloudProxyCatalogUpdated",
     "CloudProxyCatalogFetchFailed",
+    # ── cursor catalog ───────────────────────────────────────────────────────
+    "CURSOR_CATALOG_AVAILABLE",
+    "CURSOR_CATALOG_UNAVAILABLE",
+    "CURSOR_CATALOG_UPDATED",
+    "CURSOR_CATALOG_FETCH_FAILED",
+    "CURSOR_CATALOG_DRIFT_DETECTED",
+    "CursorCatalogAvailable",
+    "CursorCatalogUnavailable",
+    "CursorCatalogUpdated",
+    "CursorCatalogFetchFailed",
+    "CursorCatalogDriftDetected",
     # ── proxy ────────────────────────────────────────────────────────────────
     "FEDERATED_REQUEST_PROMPT_TRANSFORMATION_APPLIED",
     "FEDERATED_REQUEST_PROMPT_TRANSFORMATION_FAILED",

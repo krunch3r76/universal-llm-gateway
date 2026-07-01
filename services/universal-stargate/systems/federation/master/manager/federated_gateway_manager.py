@@ -519,6 +519,36 @@ class FederatedGatewayManager(Sequential):
         )
         await self.notify_state_change()
 
+    @sequential
+    async def register_cursor_gateway(self, gateway: FederatedGateway) -> None:
+        """Register a cursor-sdk catalog gateway (virtual, non-forwarding)."""
+        old = self._gateways.get(gateway.gateway_id)
+        old_catalog = old.available_models if old else frozenset()
+
+        self._gateways[gateway.gateway_id] = gateway
+
+        new_catalog = gateway.available_models
+        if old_catalog != new_catalog and self._event_bus:
+            from src.scheduling.events import FederationGatewayCatalogChanged
+
+            asyncio.create_task(
+                self._event_bus.publish_nowait(
+                    FederationGatewayCatalogChanged(
+                        gateway_id=gateway.gateway_id,
+                        old_model_count=len(old_catalog),
+                        new_model_count=len(new_catalog),
+                    )
+                )
+            )
+
+        logger.info(
+            "Cursor catalog gateway registered: %s (%d models, dispatchable=%s)",
+            gateway.gateway_id,
+            len(new_catalog),
+            gateway.dispatchable,
+        )
+        await self.notify_state_change()
+
     def register_remote(
         self,
         remote_stargate_id: str,

@@ -136,6 +136,10 @@ class FederatedGateway:
     # HTTP polling flag (for Golem/disable_websocket remotes)
     is_http_polling: bool = False
 
+    # When False, gateway contributes catalog visibility but is excluded from
+    # chat/completions candidate selection (cursor-sdk catalog poller).
+    dispatchable: bool = True
+
     # Eviction hysteresis: monotonic timestamp when each model was loaded.
     # Populated by gateway manager from MODEL_LOADED telemetry.
     model_loaded_at: dict[ModelId, float] = field(default_factory=dict)

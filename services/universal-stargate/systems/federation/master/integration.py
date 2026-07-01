@@ -71,6 +71,8 @@ class MasterIntegration:
         # Cloud backend integration
         self._cloud_registry: object | None = None
         self._cloud_forwarder: object | None = None
+        # Cursor SDK catalog poller
+        self._cursor_catalog: object | None = None
 
     async def setup(
         self,
@@ -107,6 +109,7 @@ class MasterIntegration:
         await self._start_master_initiated_edge_ws_clients()
         await self._start_http_telemetry_poller_if_needed()
         await self._start_cloud_providers()
+        await self._start_cursor_catalog_poller()
         self._setup_master_forwarding_and_orchestration(app)
 
         # Validate tracker was created
@@ -475,12 +478,36 @@ class MasterIntegration:
 
         logger.info("Cloud proxy client initialized: %s", proxy_config.url)
 
+    async def _start_cursor_catalog_poller(self) -> None:
+        """Poll git_integration_worker for live cursor SDK catalog."""
+        if self._federated_manager is None:
+            return
+
+        from systems.cursor_catalog.config import parse_cursor_catalog_config
+        from systems.cursor_catalog.registry import CursorSdkCatalogPoller
+
+        catalog_config = parse_cursor_catalog_config()
+        self._cursor_catalog = CursorSdkCatalogPoller(
+            catalog_config=catalog_config,
+            gateway_manager=self._federated_manager,
+            event_bus=self._event_bus,
+        )
+        await self._cursor_catalog.startup()
+        logger.info(
+            "Cursor SDK catalog poller initialized: %s",
+            catalog_config.worker_url,
+        )
+
     async def shutdown(self) -> None:
         """Shutdown Master mode components.
 
         _cloud_registry is shut down directly; _cloud_forwarder (client) is
         closed via forwarder.close().
         """
+        if self._cursor_catalog:
+            await self._cursor_catalog.shutdown()
+            self._cursor_catalog = None
+
         if self._cloud_registry:
             await self._cloud_registry.shutdown()
             self._cloud_registry = None

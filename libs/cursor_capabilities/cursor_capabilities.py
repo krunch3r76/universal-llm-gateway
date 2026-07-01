@@ -7,16 +7,24 @@ from dataclasses import dataclass, field
 from typing import Any, Final
 
 __all__ = [
+    "CURSOR_DENIED_MODELS",
     "CURSOR_MODEL_CAPABILITIES",
     "DESCRIPTOR_VERSION",
     "KnobSpec",
     "ModelCapability",
+    "canonical_cursor_bare_id",
+    "catalog_divergences",
     "default_variant",
+    "is_cursor_model_denied",
     "supported_knobs",
     "to_model_card_dict",
 ]
 
 DESCRIPTOR_VERSION: Final[str] = "2026-06-30"
+
+# Emergency denylist for cursor-sdk substrate admission. Entries are bare wire ids
+# (no cursor/ prefix); membership is checked after prefix strip + lowercase.
+CURSOR_DENIED_MODELS: Final[frozenset[str]] = frozenset()
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +57,43 @@ def to_model_card_dict(cap: ModelCapability) -> dict[str, Any]:
         "knobs": {name: _knob_card_entry(spec) for name, spec in cap.knobs.items()},
         "fixed_params": dict(cap.fixed_params),
     }
+
+
+def catalog_divergences(
+    live_catalog: Mapping[str, Mapping[str, object]],
+) -> list[str]:
+    """Compare a projected live catalog against ``CURSOR_MODEL_CAPABILITIES``."""
+    errors: list[str] = []
+    for model_id, capability in CURSOR_MODEL_CAPABILITIES.items():
+        live = live_catalog.get(model_id)
+        if live is None:
+            errors.append(f"missing model {model_id!r} in live catalog")
+            continue
+        live_knobs = live.get("knobs")
+        if not isinstance(live_knobs, Mapping):
+            errors.append(f"model {model_id!r}: live knobs not a mapping")
+            continue
+        for knob_name, spec in capability.knobs.items():
+            live_values = live_knobs.get(knob_name)
+            if live_values is None:
+                errors.append(f"model {model_id!r}: missing knob {knob_name!r}")
+                continue
+            if tuple(live_values) != spec.accepted:
+                errors.append(
+                    f"model {model_id!r}: knob {knob_name!r} accepted "
+                    f"{tuple(live_values)!r} != descriptor {spec.accepted!r}"
+                )
+        live_default = live.get("default_variant")
+        if not isinstance(live_default, Mapping):
+            errors.append(f"model {model_id!r}: live default_variant not a mapping")
+            continue
+        if dict(live_default) != dict(capability.default_variant):
+            errors.append(
+                f"model {model_id!r}: default_variant "
+                f"{dict(live_default)!r} != descriptor "
+                f"{dict(capability.default_variant)!r}"
+            )
+    return errors
 
 
 CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
@@ -122,6 +167,25 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
         default_variant={},
     ),
 }
+
+
+def canonical_cursor_bare_id(model: str) -> str:
+    """Normalize a bare or ``cursor/``-prefixed id to lowercase bare wire id."""
+    from model_id import ModelId
+
+    parsed = ModelId.parse(model)
+    if parsed.provider is not None and parsed.provider != "cursor":
+        raise ValueError(
+            f"model {parsed.original!r} has provider {parsed.provider!r}; "
+            f"cursor canonicalization accepts bare ids or 'cursor/' prefix only"
+        )
+    return parsed.api_model_id.lower()
+
+
+def is_cursor_model_denied(model: str) -> bool:
+    """True when *model* canonicalizes to a member of ``CURSOR_DENIED_MODELS``."""
+    bare = canonical_cursor_bare_id(model)
+    return bare in {denied.lower() for denied in CURSOR_DENIED_MODELS}
 
 
 def supported_knobs(model_id: str) -> Mapping[str, KnobSpec]:
