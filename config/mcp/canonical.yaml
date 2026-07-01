@@ -172,7 +172,7 @@ tools:
       entity_id: {type: string}
       intent: {type: string, enum: [full, card, body]}
       section: {type: string, description: "body intent: md_read one section by heading/path"}
-      full_body: {type: boolean, description: "body intent: true=whole body; false=manifest; omit=size-aware default (5000 chars)"}
+      full_body: {type: boolean, description: "body intent: false=section manifest only; omit or true=whole body (default)"}
       include_edges: {type: boolean}
     required: [entity_id]
   skill_uri: agent_skill:cortex

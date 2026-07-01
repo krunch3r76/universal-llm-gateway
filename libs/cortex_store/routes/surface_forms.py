@@ -26,6 +26,7 @@ def list_surface_forms(
     mention: str | None = None,
     entity_id: str | None = None,
     chunk_id: int | None = None,
+    mention_type: str | None = None,
     limit: int = Query(50, ge=1, le=500),
 ) -> SurfaceFormList:
     """List surface forms with optional mention/entity/chunk filters."""
@@ -41,6 +42,9 @@ def list_surface_forms(
     if chunk_id is not None:
         clauses.append("chunk_id = ?")
         params.append(chunk_id)
+    if mention_type:
+        clauses.append("mention_type = ?")
+        params.append(mention_type)
 
     where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
     sql = f"SELECT {_COLS} FROM surface_forms{where} ORDER BY created_at DESC LIMIT ?"

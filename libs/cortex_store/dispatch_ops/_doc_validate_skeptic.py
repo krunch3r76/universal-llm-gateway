@@ -8,8 +8,8 @@ from typing import Any
 
 from transport_utils import DEFAULT_AGENT_BUS_URL, make_sync_client
 
+from .adapters._implement_ready_preflight import _normalize_predicate
 from .ops_assertions import _op_assertions
-from .ops_implement_ready_preflight import _normalize_predicate
 
 _AGENT_BUS_TIMEOUT = 15.0
 

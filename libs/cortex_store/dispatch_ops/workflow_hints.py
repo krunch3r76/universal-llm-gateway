@@ -127,6 +127,13 @@ _WORKFLOW_HINTS: dict[str, str] = {
         "on drifted_since_ready: refresh spec_sha256 on the assertion after spec edit. "
         "Read-only — does not trigger implement side-effect guard."
     ),
+    "implement_ready_preflight": (
+        "next: doc_template(doc_type=implement_dense_spec) to author the spec skeleton; "
+        "fill required sections; run doc_validate(text=…) or doc_validate(path=…) until "
+        "status=pass; record attestation_tokens on the todo's implement-ready assertion; "
+        "then todo_distill_implement_gate at Gate-2 close before implement dispatch. "
+        "Load: fs(cortex, op=md_read, path=agent-skills/implement-todo.md)"
+    ),
     "edges": (
         "tip: to see edges in entity context, use entity_get with include_edges=true. "
         "To traverse multi-hop, use edge_traverse."
@@ -149,6 +156,22 @@ _WORKFLOW_HINTS: dict[str, str] = {
     "activate": (
         "next: review the spreading activation results for structurally connected "
         "assertions the original search wouldn't find directly"
+    ),
+    "graph_reach": (
+        "structural blast-radius via relationships/session_edges — for semantic "
+        "contradiction search use claim_alignment (or analyze_impact alias)"
+    ),
+    "impact": (
+        "structural blast-radius via relationships/session_edges — for semantic "
+        "contradiction search use claim_alignment (or analyze_impact alias)"
+    ),
+    "claim_alignment": (
+        "semantic claim↔entity alignment / contradiction search — for structural "
+        "graph reach use graph_reach (or impact alias)"
+    ),
+    "analyze_impact": (
+        "semantic claim↔entity alignment / contradiction search — for structural "
+        "graph reach use graph_reach (or impact alias)"
     ),
     "assertion_state": (
         "drill down: assertions(entity_id=…, confidence=confirmed) "
@@ -248,6 +271,14 @@ _CORTEX_HALLUCINATED_TOOLS: dict[str, str] = {
     "list_edge_types": "edge_types",
     "get_edge_types": "edge_types",
     "decision_status": "assertion_state",
+    "get_impact": "graph_reach",
+    "impact_analysis": "graph_reach",
+    "relationship_impact": "graph_reach",
+    "check_impact": "claim_alignment",
+    "semantic_impact": "claim_alignment",
+    "assertion_align": "claim_alignment",
+    "resolve_chunk": "resolve_assertion_chunk",
+    "chunk_resolve": "resolve_assertion_chunk",
 }
 
 

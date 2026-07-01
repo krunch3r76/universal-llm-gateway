@@ -76,7 +76,7 @@ def doc_validate_attestation_tokens(
     spec_text: str,
 ) -> list[str]:
     """Evidence tokens to cite after doc_validate PASS (Gate-2 / implement-ready)."""
-    from cortex_store.dispatch_ops.ops_doc_template import (  # noqa: PLC0415
+    from cortex_store.dispatch_ops.adapters._doc_template import (  # noqa: PLC0415
         current_skill_digest,
         current_template_version,
     )
@@ -165,7 +165,7 @@ def evaluate_doc_validate_attestation(
             ),
         )
 
-    from cortex_store.dispatch_ops.ops_doc_template import (  # noqa: PLC0415
+    from cortex_store.dispatch_ops.adapters._doc_template import (  # noqa: PLC0415
         current_skill_digest,
         current_template_version,
     )

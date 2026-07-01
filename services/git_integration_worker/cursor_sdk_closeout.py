@@ -458,6 +458,7 @@ def prepare_closeout_delivery(
     gate_d_created_rels: tuple[str, ...] = (),
     deliverables_expected: bool = False,
     divergent_rels: tuple[str, ...] = (),
+    light_bounded_expected_paths: tuple[str, ...] = (),
 ) -> CloseoutDelivery:
     """Sync closeout assembly (tests). Production uses ``prepare_closeout_delivery_async``."""
     return _assemble_closeout_delivery(
@@ -473,6 +474,7 @@ def prepare_closeout_delivery(
         gate_d_created_rels=gate_d_created_rels,
         deliverables_expected=deliverables_expected,
         divergent_rels=divergent_rels,
+        light_bounded_expected_paths=light_bounded_expected_paths,
     )
 
 
@@ -487,6 +489,7 @@ async def prepare_closeout_delivery_async(
     baseline: dict[str, Any] | None = None,
     packet_text: str | None = None,
     deliverables_expected: bool = False,
+    light_bounded_expected_paths: tuple[str, ...] = (),
 ) -> CloseoutDelivery:
     """Write sidecar, resolve pinned cortex deliverables, build closeout JSON."""
     files_expected = _files_expected_from_packet(packet_text)
@@ -521,6 +524,7 @@ async def prepare_closeout_delivery_async(
         gate_d_created_rels=gate_d_created,
         deliverables_expected=deliverables_expected,
         divergent_rels=pinned.divergent_rels,
+        light_bounded_expected_paths=light_bounded_expected_paths,
     )
 
 
@@ -539,6 +543,7 @@ def _assemble_closeout_delivery(
     gate_d_created_rels: tuple[str, ...],
     deliverables_expected: bool = False,
     divergent_rels: tuple[str, ...] = (),
+    light_bounded_expected_paths: tuple[str, ...] = (),
 ) -> CloseoutDelivery:
     text = full_result_text(outcome.body, degraded_reason)
     sidecar_appendix: list[str] = []
@@ -616,6 +621,7 @@ def _assemble_closeout_delivery(
             outside_repo_paths=outside_repo_paths,
             files_untracked_or_ignored=files_untracked_or_ignored,
             mount_root=resolve_mount_root(source_repo),
+            light_bounded_expected_paths=light_bounded_expected_paths,
         )
     )
     cortex_authoritative = bool(gate_d_created_rels)

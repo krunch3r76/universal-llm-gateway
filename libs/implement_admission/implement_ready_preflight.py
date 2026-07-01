@@ -144,8 +144,16 @@ def preflight_implement_ready(
     resolution: dict[str, Any] | None = None,
     skeptic_ratified: bool = False,
     recon_waived: bool = False,
+    authoring_mode: bool = False,
 ) -> PreflightReport:
     """Non-writing preflight over the declared-state gates (0-13).
+
+    ``authoring_mode`` marks a bare-spec validation with no real todo behind
+    it (doc_validate called with ``text=``/``path=`` instead of
+    ``source_ref=``). Todo-linkage gates (2-5, 7, 10-13) report
+    ``not_applicable`` in this mode rather than evaluating fabricated
+    stand-in values — those gates test facts about a todo entity that does
+    not exist here. Spec-content gates (6, 8, 9) still evaluate for real.
 
     NOTE: gate 13 (skeptic_pass) reports only on skeptic ratification /
     recon waiver. The skeptic-evidence-grounding sub-checks enforced by
@@ -257,7 +265,9 @@ def preflight_implement_ready(
         )
     _pass(1, "triage_known")
 
-    if implement_ready_assertion_id is None:
+    if authoring_mode:
+        _na(2, "assertion_pin_present")
+    elif implement_ready_assertion_id is None:
         code = "implement_not_ready_judgment_required"
         reason = (
             f"{todo_id}: judgment_required but implement_ready_assertion_id is "
@@ -268,7 +278,9 @@ def preflight_implement_ready(
     else:
         _pass(2, "assertion_pin_present")
 
-    if 3 in blocked:
+    if authoring_mode:
+        _na(3, "assertion_row_exists")
+    elif 3 in blocked:
         _block(3, "assertion_row_exists", blocked_by=(2,))
         blocked.update({4, 5, 7})
     elif assertion is None:
@@ -282,7 +294,9 @@ def preflight_implement_ready(
     else:
         _pass(3, "assertion_row_exists")
 
-    if 4 in blocked:
+    if authoring_mode:
+        _na(4, "assertion_entity_bind")
+    elif 4 in blocked:
         _block(4, "assertion_entity_bind", blocked_by=(2, 3))
     elif assertion.get("entity_id") != todo_id:
         code = "implement_ready_assertion_entity_mismatch"
@@ -294,7 +308,9 @@ def preflight_implement_ready(
     else:
         _pass(4, "assertion_entity_bind")
 
-    if 5 in blocked:
+    if authoring_mode:
+        _na(5, "assertion_active")
+    elif 5 in blocked:
         _block(5, "assertion_active", blocked_by=(2, 3))
     elif _assertion_inactive(assertion, now_iso=now_iso):
         code = "implement_ready_assertion_inactive"
@@ -318,7 +334,9 @@ def preflight_implement_ready(
     else:
         _pass(6, "dense_spec_path")
 
-    if 7 in blocked:
+    if authoring_mode:
+        _na(7, "spec_cited_in_evidence")
+    elif 7 in blocked:
         parents = tuple(
             p for p in (3, 6) if p in blocked or gates[p].status != GateStatus.PASSED
         )
@@ -366,7 +384,9 @@ def preflight_implement_ready(
         else:
             _pass(9, "dense_spec_schema")
 
-    if 10 in blocked:
+    if authoring_mode:
+        _na(10, "content_hash_attested")
+    elif 10 in blocked:
         parents = tuple(
             p
             for p in (8, 9)
@@ -389,7 +409,9 @@ def preflight_implement_ready(
         else:
             _pass(10, "content_hash_attested")
 
-    if 11 in blocked:
+    if authoring_mode:
+        _na(11, "files_expected_distilled")
+    elif 11 in blocked:
         _block(11, "files_expected_distilled", blocked_by=(1,))
     elif not files_expected:
         code = "implement_attrs_unpopulated"
@@ -401,7 +423,9 @@ def preflight_implement_ready(
     else:
         _pass(11, "files_expected_distilled")
 
-    if 12 in blocked:
+    if authoring_mode:
+        _na(12, "acceptance_criteria_distilled")
+    elif 12 in blocked:
         _block(12, "acceptance_criteria_distilled", blocked_by=(1,))
     elif _acceptance_unpopulated_or_default(
         acceptance_criteria,
@@ -418,7 +442,9 @@ def preflight_implement_ready(
     else:
         _pass(12, "acceptance_criteria_distilled")
 
-    if not skeptic_ratified and not recon_waived:
+    if authoring_mode:
+        _na(13, "skeptic_pass")
+    elif not skeptic_ratified and not recon_waived:
         code = "skeptic_pass_missing"
         reason = (
             f"{todo_id}: judgment_required (material) decision needs a skeptic "

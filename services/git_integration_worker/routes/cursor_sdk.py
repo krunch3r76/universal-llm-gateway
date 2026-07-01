@@ -77,6 +77,7 @@ from services.git_integration_worker.cursor_sdk_context import (
     validate_dispatch_context,
 )
 from services.git_integration_worker.cursor_sdk_deliverable_truth import (
+    LIGHT_BOUNDED_CONTRACT,
     light_bounded_deliverable_reason,
 )
 from services.git_integration_worker.cursor_sdk_events import (
@@ -93,6 +94,9 @@ from services.git_integration_worker.cursor_sdk_gate import (
     acquire_sdk_dispatch_slot,
     force_release_sdk_dispatch_slot,
     release_sdk_dispatch_slot_sync,
+)
+from services.git_integration_worker.cursor_sdk_light_bounded_capture import (
+    extract_named_paths,
 )
 from services.git_integration_worker.cursor_sdk_manifest import (
     build_effects_manifest,
@@ -712,6 +716,7 @@ async def _deliver_sdk_closeout(
     controller: WorkAdmissionController,
     packet_text: str = "",
     deliverables_expected: bool = False,
+    light_bounded_expected_paths: tuple[str, ...] = (),
 ) -> None:
     baseline = await asyncio.to_thread(
         CursorDispatchLedger.instance().read_wt_baseline,
@@ -727,6 +732,7 @@ async def _deliver_sdk_closeout(
         baseline=baseline,
         packet_text=packet_text or None,
         deliverables_expected=deliverables_expected,
+        light_bounded_expected_paths=light_bounded_expected_paths,
     )
     run_outcome = resolve_run_outcome_label(degraded_reason)
     if delivery.closeout_status.value == "partial":
@@ -1076,6 +1082,15 @@ async def _finalize_success(
             tool_calls=outcome.tool_calls,
             contract=contract,
         )
+    # deliverables_expected gate (todo:cursor-sdk-deliverables-expected-light-bounded):
+    # a light-bounded packet that names a durable output path in prose (almost
+    # never a structured files_expected: field) gates the same as implement, but
+    # via disk/cortex existence rather than the implement-only baseline-diff
+    # machinery — see light_bounded_expected_paths threading into
+    # resolve_closeout_capture_fields.
+    light_bounded_expected_paths = (
+        extract_named_paths(packet_text) if contract == LIGHT_BOUNDED_CONTRACT else ()
+    )
     await _deliver_sdk_closeout(
         req=req,
         source_repo=source_repo,
@@ -1086,7 +1101,9 @@ async def _finalize_success(
         work_item_ref=work_item_ref,
         controller=controller,
         packet_text=packet_text,
-        deliverables_expected=contract == "implement",
+        deliverables_expected=contract == "implement"
+        or bool(light_bounded_expected_paths),
+        light_bounded_expected_paths=light_bounded_expected_paths,
     )
 
 

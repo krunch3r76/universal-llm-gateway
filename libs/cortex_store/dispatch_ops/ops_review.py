@@ -48,8 +48,8 @@ _GAP_FILL_ADVICE: dict[str, dict[str, str]] = {
         "remedy": "Create a relationship linking this case to a related entity.",
     },
     "case_no_documents": {
-        "op": "register_evidence",
-        "remedy": "Register a document as evidence for this case.",
+        "op": "relationship_create",
+        "remedy": "Create an evidence_for relationship linking a document entity to this case.",
     },
     "document_not_wired_to_case": {
         "op": "relationship_create",
@@ -80,16 +80,16 @@ _GAP_FILL_ADVICE: dict[str, dict[str, str]] = {
         "remedy": "Remove nested CORTEX_GENERATED markers from the document.",
     },
     "unregistered_document_in_markdown": {
-        "op": "register_evidence",
-        "remedy": "Register the document entity and wire it to the case.",
+        "op": "relationship_create",
+        "remedy": "Create a document entity and wire it to the case via relationship_create.",
     },
     "markdown_section_drift": {
-        "op": "render_into",
-        "remedy": "Re-run render_into to sync the CORTEX_GENERATED block.",
+        "op": "fs",
+        "remedy": "Use fs MCP to edit the document and sync the CORTEX_GENERATED block manually.",
     },
     "case_marker_absent": {
-        "op": "render_into",
-        "remedy": "Run render_into with evidence_inventory view to add marker block.",
+        "op": "fs",
+        "remedy": "Use fs MCP to add the CORTEX_GENERATED marker block to the case document.",
     },
 }
 

@@ -13,10 +13,22 @@ from ...confidence_field import (
 )
 from ...db import cortex_conn
 from ...db import query as db_query
+from ...dispatch_ops._shared import _FRICTION_CATEGORIES
 
-_SUPPRESSED_LIFECYCLE_EXCLUDE = lifecycle_not_in_sql_predicate(SUPPRESSED_SKILL_LIFECYCLES, "e")
+_SUPPRESSED_LIFECYCLE_EXCLUDE = lifecycle_not_in_sql_predicate(
+    SUPPRESSED_SKILL_LIFECYCLES, "e"
+)
 
 router = APIRouter(tags=["boot"])
+
+# Friction assertions use `[category] note` claim prefix (see _op_friction).
+_FRICTION_CLAIM_PREFIXES: tuple[str, ...] = tuple(
+    f"[{cat}]%" for cat in sorted(_FRICTION_CATEGORIES)
+) + ("[unclassified]%",)
+_FRICTION_CLAIM_LIKE_OR = " OR ".join(
+    "a.claim LIKE ?" for _ in _FRICTION_CLAIM_PREFIXES
+)
+_DECISION_FRICTION_ID_LIKE = "decision:friction-%"
 
 # Recent mentions: entities with new assertions OR newly-created entities within
 # trailing window. Surfaces names that came up in session work so boot agents
@@ -42,13 +54,18 @@ _RECENT_MENTIONS_DEFAULT_EXCLUDE = (
 # Compaction-pointer assertions are pure bookkeeping noise on the boot card —
 # an entity that just received N pointer-writes appears as "N new" while no
 # actual session activity occurred (todo:cortex-aggregate-compaction-filter §1).
-# Default behaviour: strict-exclude pointers from `recent_mention_count` and
-# from the inclusion criterion (entities whose only recent activity was pointer
-# writes drop off the list). The pointer count is reported as a sibling field
-# so the prior unfiltered total is reconstructable on demand (§4 dual-count).
+# Friction-category assertions and decision:friction-* entities are likewise
+# excluded by default (todo:boot-recent-mentions-friction-exclude); pass
+# include_frictions=true to restore prior behaviour for audit/incident sessions.
+#
+# Default behaviour: strict-exclude pointers and friction from
+# `recent_mention_count` and from the inclusion criterion (entities whose only
+# recent activity was pointer or friction writes drop off the list). Dual-count
+# sibling fields preserve reconstructability on demand.
 # §projection-fidelity split (agent-bus thread 908):
 # `active_insert_count`  — assertions with created_at in window (genuine INSERTs)
 # `pointer_insert_count` — same, compaction-pointer subset
+# `friction_insert_count` — same, friction-category subset
 # `enriched_count`       — assertions with updated_at in window but created_at before
 #                          window (predicate_form backfill / Tier-1 writeback / etc.)
 #
@@ -58,16 +75,18 @@ _RECENT_MENTIONS_DEFAULT_EXCLUDE = (
 #
 # Param order (positional ?):
 #   [0] POINTER_SQL_LIKE — active_insert_count CASE (NOT LIKE)
-#   [1] POINTER_SQL_LIKE — pointer_insert_count CASE (LIKE)
-#   [2] days_arg         — enriched_count subquery: updated_at > window
-#   [3] days_arg         — enriched_count subquery: created_at <= window boundary
-#   [4] days_arg         — LEFT JOIN: created_at > window
-#   [5] days_arg         — WHERE: entity created_at > window
-#   [6..9] SUPPRESSED_SKILL_LIFECYCLES — _SUPPRESSED_LIFECYCLE_EXCLUDE (4 binds: deprecated, draft, retired, merged)
-#   [10..M] excluded types (variable)
-#   [M+1] days_arg       — HAVING: entity created_at > window
-#   [M+2] include_flag
-#   [M+3] limit
+#   [1..F] friction claim prefixes — active_insert_count NOT (friction OR)
+#   [F+1] POINTER_SQL_LIKE — pointer_insert_count CASE (LIKE)
+#   [F+2..2F+1] friction claim prefixes — friction_insert_count CASE
+#   [2F+2..2F+3] days_arg — enriched_count subquery
+#   [2F+4..2F+5] days_arg — LEFT JOIN + WHERE entity created_at
+#   [2F+6] include_frictions_flag — WHERE decision:friction-* gate
+#   [2F+7..2F+10] SUPPRESSED_SKILL_LIFECYCLES (4 binds)
+#   [2F+11..M] excluded types (variable)
+#   [M+1] days_arg — HAVING entity created_at
+#   [M+2] include_compaction_pointers_flag
+#   [M+3] include_frictions_flag — HAVING bypass
+#   [M+4] limit
 _RECENT_MENTIONS_SQL = f"""
     SELECT
         e.id AS entity_id,
@@ -75,11 +94,16 @@ _RECENT_MENTIONS_SQL = f"""
         e.type AS entity_type,
         e.created_at AS entity_created_at,
         SUM(CASE
-            WHEN a.id IS NOT NULL AND a.claim NOT LIKE ? THEN 1 ELSE 0
+            WHEN a.id IS NOT NULL
+                 AND a.claim NOT LIKE ?
+                 AND NOT ({_FRICTION_CLAIM_LIKE_OR}) THEN 1 ELSE 0
         END) AS active_insert_count,
         SUM(CASE
             WHEN a.id IS NOT NULL AND a.claim LIKE ? THEN 1 ELSE 0
         END) AS pointer_insert_count,
+        SUM(CASE
+            WHEN a.id IS NOT NULL AND ({_FRICTION_CLAIM_LIKE_OR}) THEN 1 ELSE 0
+        END) AS friction_insert_count,
         MAX(COALESCE(a.created_at, e.created_at)) AS last_mentioned_at,
         (SELECT COUNT(*) FROM assertions a2
             WHERE a2.entity_id = e.id
@@ -95,11 +119,13 @@ _RECENT_MENTIONS_SQL = f"""
             e.created_at > datetime('now', ?)
             OR a.id IS NOT NULL
           )
+      AND (? = 1 OR e.id NOT LIKE '{_DECISION_FRICTION_ID_LIKE}')
       AND {_SUPPRESSED_LIFECYCLE_EXCLUDE}
       {{type_filter}}
     GROUP BY e.id
     HAVING (
         e.created_at > datetime('now', ?)
+        OR ? = 1
         OR ? = 1
         OR active_insert_count > 0
     )
@@ -131,6 +157,16 @@ def get_boot_recent_mentions(
             "Pointer counts are always reported separately as `pointer_count`."
         ),
     ),
+    include_frictions: bool = Query(
+        False,
+        description=(
+            "When true, count friction-category assertions as recent activity, "
+            "surface entities whose only recent activity was friction logging, "
+            "and include decision:friction-* entities. Default false — boot card "
+            "focuses on substantive session work. Friction counts are always "
+            "reported separately as `friction_count`."
+        ),
+    ),
 ) -> dict[str, Any]:
     """Entities recently mentioned via new assertions or new entity creation.
 
@@ -152,7 +188,10 @@ def get_boot_recent_mentions(
     assertions are excluded from the recent-activity criterion by default
     (todo:cortex-aggregate-compaction-filter); pass
     ``include_compaction_pointers=true`` to restore the prior pre-filter
-    behaviour for structural-audit consumers.
+    behaviour for structural-audit consumers. Friction assertions and
+    ``decision:friction-*`` entities are excluded by default
+    (todo:boot-recent-mentions-friction-exclude); pass
+    ``include_frictions=true`` for audit/incident sessions.
     """
     if type_exclude is None:
         excluded = list(_RECENT_MENTIONS_DEFAULT_EXCLUDE)
@@ -161,22 +200,34 @@ def get_boot_recent_mentions(
 
     type_filter = ""
     days_arg = f"-{days} days"
-    include_flag = 1 if include_compaction_pointers else 0
+    include_compaction_flag = 1 if include_compaction_pointers else 0
+    include_frictions_flag = 1 if include_frictions else 0
+    friction_prefix_params = list(_FRICTION_CLAIM_PREFIXES)
     # Param order matches _RECENT_MENTIONS_SQL (see comment on that constant).
     params: list[Any] = [
-        POINTER_SQL_LIKE,  # active_insert_count CASE
+        POINTER_SQL_LIKE,  # active_insert_count CASE: NOT pointer
+        *friction_prefix_params,  # active_insert_count CASE: NOT friction
         POINTER_SQL_LIKE,  # pointer_insert_count CASE
+        *friction_prefix_params,  # friction_insert_count CASE
         days_arg,  # enriched_count subquery: updated_at > window
         days_arg,  # enriched_count subquery: created_at <= window
         days_arg,  # LEFT JOIN: created_at > window
         days_arg,  # WHERE: entity created_at > window
-        *SUPPRESSED_SKILL_LIFECYCLES,  # lifecycle_not_in predicate (4 binds: deprecated, draft, retired, merged)
+        include_frictions_flag,  # WHERE: decision:friction-* gate
+        *SUPPRESSED_SKILL_LIFECYCLES,  # lifecycle_not_in predicate
     ]
     if excluded:
         placeholders = ",".join("?" * len(excluded))
         type_filter = f"AND e.type NOT IN ({placeholders})"
         params.extend(excluded)
-    params.extend([days_arg, include_flag, limit])
+    params.extend(
+        [
+            days_arg,  # HAVING: entity created_at > window
+            include_compaction_flag,
+            include_frictions_flag,
+            limit,
+        ]
+    )
 
     sql = _RECENT_MENTIONS_SQL.format(type_filter=type_filter)
     conn = cortex_conn()
@@ -189,10 +240,14 @@ def get_boot_recent_mentions(
     for r in rows:
         active = r["active_insert_count"] or 0
         pointer = r["pointer_insert_count"] or 0
+        friction = r["friction_insert_count"] or 0
         # inserted_count: genuine new assertions (created_at in window).
-        # When include_compaction_pointers, pointer inserts are included — they
-        # ARE real inserts, just bookkeeping-class ones.
-        inserted = active + pointer if include_compaction_pointers else active
+        # Optional flags restore bookkeeping/friction-class inserts on demand.
+        inserted = active
+        if include_compaction_pointers:
+            inserted += pointer
+        if include_frictions:
+            inserted += friction
         enriched = r["enriched_count"] or 0
         items.append(
             {
@@ -202,6 +257,7 @@ def get_boot_recent_mentions(
                 "inserted_count": inserted,
                 "enriched_count": enriched,
                 "pointer_count": pointer,
+                "friction_count": friction,
                 "last_mentioned_at": r["last_mentioned_at"],
                 "entity_created_at": r["entity_created_at"],
             }
@@ -211,4 +267,5 @@ def get_boot_recent_mentions(
         "window_days": days,
         "excluded_types": excluded,
         "include_compaction_pointers": include_compaction_pointers,
+        "include_frictions": include_frictions,
     }

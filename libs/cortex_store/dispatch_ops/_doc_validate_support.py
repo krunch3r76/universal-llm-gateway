@@ -13,9 +13,7 @@ from implement_admission.gate_distillation import read_dense_spec_text
 from implement_admission.source_ref import parse_source_ref
 from implement_admission.spec import SourceKind
 
-from .ops_assertions import _op_assertion_get
-from .ops_entities import _op_entity_get
-from .ops_implement_ready_preflight import (
+from .adapters._implement_ready_preflight import (
     _coerce_assertion_id,
     _decode_attributes,
     _pin_needs_resolution,
@@ -24,6 +22,8 @@ from .ops_implement_ready_preflight import (
     _select_cited_spec_uri,
     _spec_path_from_uri,
 )
+from .ops_assertions import _op_assertion_get
+from .ops_entities import _op_entity_get
 
 _AUTHORING_TODO = "todo:__doc_validate_authoring__"
 
@@ -46,27 +46,28 @@ def authoring_preflight_kwargs(
     spec_text: str,
     spec_uri: str | None,
 ) -> dict[str, Any]:
+    """Bare-spec (no todo) validation context — text=/path= callers.
+
+    No real todo backs this call, so the todo-linkage gates (2-5, 7, 10-13)
+    must not be evaluated against fabricated stand-ins; ``authoring_mode``
+    tells ``preflight_implement_ready`` to report them ``not_applicable``
+    instead. Only the spec-content gates (6, 8, 9) are meaningful here.
+    """
     uri = spec_uri or "tasks/specs/__authoring__.md"
-    token = dense_spec_hash_uri(spec_text)
     return {
         "todo_id": _AUTHORING_TODO,
         "density_triage": "judgment_required",
         "source_uri": uri,
-        "implement_ready_assertion_id": 1,
-        "assertion": {
-            "id": 1,
-            "entity_id": _AUTHORING_TODO,
-            "superseded_by": None,
-            "valid_until": None,
-            "evidence_uris": [uri, token],
-        },
+        "implement_ready_assertion_id": None,
+        "assertion": None,
         "dense_spec_uri": uri,
         "dense_spec_text": spec_text,
-        "files_expected": ["libs/example/module.py"],
-        "acceptance_criteria": ["Acceptance criteria met"],
+        "files_expected": [],
+        "acceptance_criteria": [],
         "entity_name": "Authoring validation",
-        "skeptic_ratified": True,
+        "skeptic_ratified": False,
         "recon_waived": False,
+        "authoring_mode": True,
     }
 
 

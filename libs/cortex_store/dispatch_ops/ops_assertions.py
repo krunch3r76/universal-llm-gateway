@@ -24,7 +24,6 @@ from ..routes.assertions import (
     _search_assertions_impl,
 )
 from ..routes.graph import activate, analyze_impact_semantic
-from ..routes.triage import AgeStagedRequest, age_staged
 from ..status_trait_read import effective_confidence_band
 from ._shared import _FRICTION_OWNER_TYPES, _VALID_CONFIDENCE, owner_entity_id
 from .ops_assertions_update import (
@@ -41,24 +40,6 @@ from .ops_assertions_write import (
 from .ops_entities import _op_entities, _resolve_read_entity_id
 
 logger = get_logger("cortex-api.dispatch_ops.assertions")
-
-
-def _op_age_staged(
-    dry_run: bool = True,
-    commit_days: int = 30,
-    reject_days: int = 90,
-    limit: int = 100,
-    **_: object,
-) -> dict[str, Any]:
-    """F3 age-staged op — thin relay to the triage route implementation."""
-    return age_staged(
-        AgeStagedRequest(
-            dry_run=dry_run,
-            commit_days=commit_days,
-            reject_days=reject_days,
-            limit=limit,
-        )
-    )
 
 
 def _op_assertion_state(
@@ -385,7 +366,6 @@ __all__ = [
     "_op_supersede",
     # read-path (defined here)
     "_op_activate",
-    "_op_age_staged",
     "_op_analyze_impact",
     "_op_assertion_state",
     "_op_assertions",

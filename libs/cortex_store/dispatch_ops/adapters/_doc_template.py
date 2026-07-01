@@ -9,8 +9,8 @@ from implement_admission import dense_spec_schema as _schema
 from implement_admission.dense_spec_schema import validate_dense_spec
 from implement_admission.skill_fs_line import skill_slug_to_fs_line
 
-from ._doc_type_resolve import DocTypeRecord, resolve_doc_type
-from ._session_close_doc_type import (
+from .._doc_type_resolve import DocTypeRecord, resolve_doc_type
+from .._session_close_doc_type import (
     _SESSION_CLOSE_REQUIRED_FIELDS,
     _SESSION_CLOSE_SKILLS,
     _SESSION_CLOSE_VERSION,
@@ -19,10 +19,10 @@ from ._session_close_doc_type import (
     build_session_close_template_web,
     session_close_pedagogy_digest,
 )
-from ._session_close_doc_type import (
+from .._session_close_doc_type import (
     skill_digest as _session_close_skill_digest,
 )
-from ._session_close_validate import validate_session_close_payload
+from .._session_close_validate import validate_session_close_payload
 
 # Drift policy (Q3): attestation pins semantic template_version; skill_digest is
 # tracked independently; template_sha256 is exact-drift detection only — a

@@ -10,9 +10,9 @@ from implement_admission.dense_spec_schema import dense_spec_hash_uri
 from implement_admission.gate_distillation import read_dense_spec_text
 from implement_admission.implement_ready_gate import doc_validate_attestation_tokens
 
-from ._doc_type_resolve import resolve_doc_type
-from ._doc_validate_skeptic import evaluate_skeptic_grounding, find_skeptic_assertion
-from ._doc_validate_support import (
+from .._doc_type_resolve import resolve_doc_type
+from .._doc_validate_skeptic import evaluate_skeptic_grounding, find_skeptic_assertion
+from .._doc_validate_support import (
     authoring_preflight_kwargs,
     derive_status,
     enrich_gates,
@@ -20,12 +20,12 @@ from ._doc_validate_support import (
     extract_spec_sha256_token,
     resolve_todo_preflight_kwargs,
 )
-from ._session_close_validate import (
+from .._session_close_validate import (
     extract_session_close_payload,
     session_close_validate_attestation_tokens,
     validate_session_close_payload,
 )
-from .ops_doc_template import _DOC_TYPE_REGISTRY
+from ._doc_template import _DOC_TYPE_REGISTRY
 
 
 def _validate_dense_spec_doc(

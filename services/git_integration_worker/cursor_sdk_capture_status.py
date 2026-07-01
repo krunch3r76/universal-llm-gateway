@@ -12,6 +12,10 @@ from implement_admission.closeout_models import EffectsManifest
 from implement_admission.deliverable_verification import _paths_intersect
 from implement_admission.spec import CloseoutStatus
 
+from services.git_integration_worker.cursor_sdk_light_bounded_capture import (
+    light_bounded_capture_status,
+)
+
 CaptureStatus = Literal["complete", "partial", "unavailable"]
 
 _CORTEX_ENTITY_ID_RE = re.compile(r"^[a-z][a-z0-9_]*:[^/]+$")
@@ -465,7 +469,20 @@ def resolve_closeout_capture_fields(
     mount_root: Path | None = None,
     outside_repo_paths: tuple[str, ...] = (),
     files_untracked_or_ignored: tuple[str, ...] = (),
+    light_bounded_expected_paths: tuple[str, ...] = (),
 ) -> tuple[CaptureStatus | None, str | None, list[str], EffectsManifest | None]:
+    if baseline is None and light_bounded_expected_paths:
+        # Light-bounded has no admit-time git baseline to diff against (that
+        # capture is implement-only) — disk/cortex existence is the
+        # independent completeness signal instead of the baseline-diff
+        # machinery below.
+        capture_status, divergence_reason = light_bounded_capture_status(
+            light_bounded_expected_paths,
+            source_repo=source_repo,
+            cortex_root=cortex_root,
+        )
+        deviations = [divergence_reason] if divergence_reason else []
+        return capture_status, divergence_reason, deviations, manifest
     baseline_has_hashes = dirty_expected_hashes_available(baseline, files_expected)
     manifest = apply_surface_cross_checks(
         manifest,

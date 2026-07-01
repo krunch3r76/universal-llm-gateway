@@ -16,8 +16,8 @@ from implement_admission.implement_ready_preflight import preflight_implement_re
 from implement_admission.source_ref import parse_source_ref
 from implement_admission.spec import SourceKind
 
-from .ops_assertions import _op_assertion_get, _op_assertions
-from .ops_entities import _op_entity_get
+from ..ops_assertions import _op_assertion_get, _op_assertions
+from ..ops_entities import _op_entity_get
 
 
 def _decode_attributes(raw: Any) -> dict[str, Any]:

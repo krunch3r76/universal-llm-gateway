@@ -10,7 +10,6 @@ from universal_logging import get_logger
 from ..db import cortex_conn
 from ..entity_aliases import resolve_entity_reference
 from ..event_publisher import cortex_pinned_deliverable_written
-from ..rag_resolver import ChunkIdMismatchError, resolve_assertion_chunk
 from ..routes.resolve import _resolve_cortex_uri_impl
 from ..routes.stats import _get_stats_impl
 from ..routes.surface_forms import _list_surface_forms_impl
@@ -141,6 +140,7 @@ def _op_surface_forms(
     return _list_surface_forms_impl(
         entity_id=entity_id,
         mention=mention,
+        mention_type=mention_type,
         limit=limit or 50,
     )
 
@@ -257,43 +257,3 @@ def _op_tag_resolve(
         }
     uri = f"cortex://{parts[0]}/{parts[1]}"
     return _resolve_cortex_uri_impl(uri=uri, tag=tag_name)
-
-
-def _op_resolve_assertion_chunk(
-    assertion_id: int | None = None,
-    **_: object,
-) -> dict[str, Any]:
-    """Resolve an assertion's chunk_id to RAG chunk text.
-
-    Looks up the assertion's chunk_id and evidence_uris[0], normalizes the
-    URI to a RAG source path, calls POST /chunks_by_index, and verifies
-    round-trip fidelity. Raises ChunkIdMismatch (logged as error) if the
-    returned chunk_id differs from the stored one.
-
-    Returns: ChunkByIndexItem dict (chunk_id, source, chunk_index, text,
-    metadata) or error dict.
-    """
-    if assertion_id is None:
-        return {"error": "assertion_id is required (integer)"}
-    try:
-        chunk = resolve_assertion_chunk(int(assertion_id))
-        record("mcp.cortex.resolve_assertion_chunk", assertion_id=assertion_id)
-        return {
-            "assertion_id": assertion_id,
-            "chunk": chunk,
-        }
-    except ChunkIdMismatchError as exc:
-        logger.error("resolve_assertion_chunk mismatch: %s", exc)
-        return {
-            "error": "chunk_id_mismatch",
-            "detail": str(exc),
-            "assertion_id": assertion_id,
-        }
-    except ValueError as exc:
-        return {"error": str(exc), "assertion_id": assertion_id}
-    except Exception as exc:
-        logger.error("resolve_assertion_chunk failed: %s", exc)
-        return {
-            "error": f"RAG lookup failed: {exc}",
-            "assertion_id": assertion_id,
-        }

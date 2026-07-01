@@ -71,9 +71,6 @@ def _impls() -> tuple:
 
 logger = get_logger("cortex-api.dispatch_ops.entities")
 
-# agent_skill:markdown-navigation cutoff — size-aware body default.
-_BODY_SIZE_AWARE_THRESHOLD = 5000
-
 
 def _entity_get_body_response(
     conn: sqlite3.Connection,
@@ -145,9 +142,6 @@ def _entity_get_body_response(
             "body": section_text,
         }
 
-    if full_body is True:
-        return {**base, "render_mode": "full", "body": body_text}
-
     if full_body is False:
         return {
             **base,
@@ -155,14 +149,7 @@ def _entity_get_body_response(
             "sections": list_sections(body_text),
         }
 
-    if len(body_text) <= _BODY_SIZE_AWARE_THRESHOLD:
-        return {**base, "render_mode": "full", "body": body_text}
-
-    return {
-        **base,
-        "render_mode": "manifest",
-        "sections": list_sections(body_text),
-    }
+    return {**base, "render_mode": "full", "body": body_text}
 
 
 def _resolve_read_entity_id(
@@ -257,9 +244,8 @@ def _op_entity_get(
     intent="card" — Card v0 via projection-aware fetch (§6.3).
     intent="card-md" — comprehension-first markdown render (root-only).
     intent="body" — source_uri markdown (not the KG card). Params: ``section``
-    (md_read one heading), ``full_body`` (``true``=whole body, ``false``=manifest).
-    Default (no section, ``full_body`` unset): size-aware at 5000 chars —
-    whole body when ``len <= 5000``, else section manifest. Response includes
+    (md_read one heading), ``full_body`` (``false``=section manifest only).
+    Default (no section, ``full_body`` unset): whole body. Response includes
     ``render_mode`` (``"full"`` | ``"manifest"``).
     intent in {"cluster","impact"} — reserved; rejected until later phases.
     """
