@@ -172,7 +172,7 @@ def get_entity_impl(
         superseded_breadcrumb=superseded_breadcrumb,
         superseded_corrections=superseded_corrections or None,
     ).model_dump(mode="json")
-    if detail_row.get("type") == "agent_skill":
+    if detail_row.get("type") in ("agent_skill", "skill"):
         payload["discoverable"] = agent_skill_is_discoverable(
             detail_row.get("lifecycle")  # type: ignore[arg-type]
         )

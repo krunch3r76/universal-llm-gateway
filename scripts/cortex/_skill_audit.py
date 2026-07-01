@@ -49,9 +49,7 @@ _PARITY_ALLOWLIST: dict[str, dict[str, str]] = {
     "jupiter-browser-via-mcp": _meta("browser automation via web MCP"),
     "lead-agent-git-integration": _meta("arc worktree Lane B (web/API only)"),
     "mode-b-web-orchestrator": _meta("web orchestrator (web-only)"),
-    "model-tier-awareness-web": _meta(
-        "web-seat tier awareness (cursor has own rule)"
-    ),
+    "model-tier-awareness-web": _meta("web-seat tier awareness (cursor has own rule)"),
     "web-transcript-preprocessing": _meta("web-only transcript pre-processing"),
     "xai-mcp-calling-shape": _meta("xAI-specific MCP calling shape (web/grok only)"),
     "agent-build": _meta(
@@ -75,9 +73,7 @@ _PARITY_ALLOWLIST: dict[str, dict[str, str]] = {
     "lawyer-stance": _meta("legal domain skill"),
     "legal-opinion-corpus-ingestion": _meta("legal domain skill"),
     "named-entity-verification-gate": _meta("legal/regulatory artifact gate"),
-    "review-protocol-mandatory-chronology-verification": _meta(
-        "legal document review"
-    ),
+    "review-protocol-mandatory-chronology-verification": _meta("legal document review"),
     "srm": _meta("legal document section rewrite"),
     "tax": _meta("tax domain skill"),
     "w2-ingestion": _meta("tax domain skill"),
@@ -194,9 +190,10 @@ def _missing_stub_critical(
             continue
         if not str(value or "").strip():
             missing.append(key)
-    if paired_rule_exists(slug, repo_root) and not str(
-        fields.get("paired_rule_pointer") or ""
-    ).strip():
+    if (
+        paired_rule_exists(slug, repo_root)
+        and not str(fields.get("paired_rule_pointer") or "").strip()
+    ):
         missing.append("paired_rule_pointer")
     return missing
 
@@ -230,7 +227,9 @@ def stub_critical_field_verdict(
     return "clean", [], blocked
 
 
-def parity_verdict(scanned: dict[str, dict[str, object]]) -> tuple[VerdictStatus, list[str]]:
+def parity_verdict(
+    scanned: dict[str, dict[str, object]],
+) -> tuple[VerdictStatus, list[str]]:
     lines = _audit_parity(scanned)
     if lines:
         return "dirty", lines
@@ -251,19 +250,32 @@ def _audit_parity(scanned: dict[str, dict[str, object]]) -> list[str]:
     return out
 
 
+def _fetch_guidance_entity_stubs(client: object) -> tuple[int, list[dict[str, object]]]:
+    """List entity stubs across agent_skill + rule + skill."""
+    merged: list[dict[str, object]] = []
+    for entity_type in ("agent_skill", "rule", "skill"):
+        status, body = _request(
+            client, "GET", f"/entities?type={entity_type}&limit=500"
+        )
+        if status != 200:
+            return status, []
+        merged.extend(body.get("items", []))
+    return 200, merged
+
+
 def _audit_terms(client: object, scanned: dict[str, dict[str, object]]) -> int:
     _ = scanned
-    status, body = _request(client, "GET", "/entities?type=agent_skill&limit=500")
+    status, stubs = _fetch_guidance_entity_stubs(client)
     if status != 200:
         print(
-            f"AUDIT-TERMS FAIL: GET /entities?type=agent_skill {status}",
+            f"AUDIT-TERMS FAIL: GET /entities guidance types {status}",
             file=sys.stderr,
         )
         return 2
     empty: list[str] = []
-    for stub in body.get("items", []):
+    for stub in stubs:
         entity_id = str(stub.get("id") or "")
-        if not entity_id.startswith("agent_skill:"):
+        if ":" not in entity_id:
             continue
         get_status, live = _entity_get(client, entity_id)
         if get_status != 200:
@@ -287,11 +299,11 @@ def _audit_terms(client: object, scanned: dict[str, dict[str, object]]) -> int:
 
 
 def _audit(client: object, scanned: dict[str, dict[str, object]], root: Path) -> int:
-    status, body = _request(client, "GET", "/entities?type=agent_skill&limit=500")
+    status, stubs = _fetch_guidance_entity_stubs(client)
     if status != 200:
-        print(f"AUDIT FAIL: GET /entities?type=agent_skill {status}", file=sys.stderr)
+        print(f"AUDIT FAIL: GET /entities guidance types {status}", file=sys.stderr)
         return 2
-    live_by_id = {row["id"]: row for row in body.get("items", [])}
+    live_by_id = {row["id"]: row for row in stubs}
     cortex_declared = _scan_cortex_sot_declared()
     drifted = _drifts(client, scanned, live_by_id, cortex_declared=cortex_declared)
     file_gone = [

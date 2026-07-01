@@ -21,6 +21,7 @@ from collections.abc import Callable
 from fastapi import HTTPException, status
 from universal_logging import get_logger
 
+from .card import get_entity_card
 from .confidence_field import DISCOVERABLE_SKILL_LIFECYCLE
 from .db import cortex_conn, decode_row, json_encode
 from .db import query as db_query
@@ -30,7 +31,6 @@ from .entity_exhibit_lint import (
     insert_exhibit_belongs_to_relationship,
 )
 from .entity_id_norm import canonicalize_entity_id
-from .card import get_entity_card
 from .entity_read import get_entity_impl
 from .event_publisher import cortex_entity_source_changed
 from .models import (
@@ -43,6 +43,7 @@ from .seat_applicability import (
     canonical_seat_or_422,
     validate_applicable_agents,
     validate_capabilities_required,
+    validate_scope,
 )
 from .status_trait_read import (
     apply_option_c_read_projection,
@@ -56,7 +57,11 @@ from .status_trait_write import (
     trait_insert_extras,
 )
 from .trait_vocabulary import NON_LIVE_LIFECYCLE
-from .type_schemas import validate_distilled_attributes, validate_required_attributes, validate_surface_visibility
+from .type_schemas import (
+    validate_distilled_attributes,
+    validate_required_attributes,
+    validate_surface_visibility,
+)
 from .workflow_state import (
     emit_todo_closure_gap_if_needed,
     validate_workflow_state,
@@ -255,7 +260,7 @@ def list_entities_impl(
         # Slice-D audit: agent_skill and todo set applicable_agents; todos may
         # rely on fail-open NULL → universal. Deny-flip is scoped to agent_skill
         # only (F4-scope ELSE branch); other types keep the prior COALESCE gate.
-        if entity_type == "agent_skill":
+        if entity_type in ("agent_skill", "skill"):
             agent_skill_gate = FOR_AGENT_CLAUSE.strip()
             if agent_skill_gate.upper().startswith("AND "):
                 agent_skill_gate = agent_skill_gate[4:].strip()
@@ -271,13 +276,13 @@ def list_entities_impl(
         else:
             clauses.append(
                 "("
-                "(type = 'agent_skill' "
+                "(type IN ('agent_skill', 'skill') "
                 "AND json_extract(attributes, '$.applicable_agents') IS NOT NULL "
                 "AND EXISTS ("
                 "SELECT 1 FROM json_each(json_extract(attributes, '$.applicable_agents')) "
                 "WHERE value IN ('*', ?))) "
                 "OR "
-                "(type != 'agent_skill' AND EXISTS ("
+                "(type NOT IN ('agent_skill', 'skill') AND EXISTS ("
                 "SELECT 1 FROM json_each("
                 "COALESCE(json_extract(attributes, '$.applicable_agents'), "
                 "json_array('*'))) WHERE value IN ('*', ?)))"
@@ -313,7 +318,7 @@ def list_entities_impl(
             params.append(pattern)
 
     if not include_non_active:
-        clauses.append("(type != 'agent_skill' OR lifecycle = ?)")
+        clauses.append("(type NOT IN ('agent_skill', 'skill') OR lifecycle = ?)")
         params.append(DISCOVERABLE_SKILL_LIFECYCLE)
 
     where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
@@ -458,11 +463,12 @@ def update_entity_impl(
             attrs if isinstance(attrs, dict) else None,
         )
 
-    if str(prior.get("type")) == "agent_skill":
+    if str(prior.get("type")) in ("agent_skill", "rule", "skill"):
         attrs = merged.get("attributes")
         if isinstance(attrs, dict):
             validate_applicable_agents(attrs)
             validate_capabilities_required(attrs)
+            validate_scope(attrs)
 
     sets: list[str] = []
     params: list[object] = []
@@ -572,7 +578,9 @@ def update_entity_impl(
     return get_entity_impl(conn, entity_id=entity_id, source="boot")
 
 
-_CONDITION_FORBIDDEN_STATES = frozenset({"done", "resolved", "closed", "cancelled", "completed"})
+_CONDITION_FORBIDDEN_STATES = frozenset(
+    {"done", "resolved", "closed", "cancelled", "completed"}
+)
 
 
 def _reject_condition_closure_attempt(new_state: str) -> None:
@@ -591,9 +599,7 @@ def _reject_condition_closure_attempt(new_state: str) -> None:
         )
 
 
-def _gate_condition_admission(
-    conn: sqlite3.Connection, body: EntityCreate
-) -> None:
+def _gate_condition_admission(conn: sqlite3.Connection, body: EntityCreate) -> None:
     """Invoke the condition admission rubric; raise 422 on reject/route_to_todo.
 
     On admit_with_children the condition entity is created first (by the caller)
@@ -610,9 +616,13 @@ def _gate_condition_admission(
             intent_category=intent_category,
             temporality=str(attrs.get("temporality", "ongoing")),
             is_false_admission=bool(attrs.get("is_false_admission", False)),
-            is_duplicate_of=str(attrs["is_duplicate_of"]) if attrs.get("is_duplicate_of") else None,
+            is_duplicate_of=str(attrs["is_duplicate_of"])
+            if attrs.get("is_duplicate_of")
+            else None,
             is_obsolete_ref=bool(attrs.get("is_obsolete_ref", False)),
-            has_recurrent_maintenance=bool(attrs.get("has_recurrent_maintenance", False)),
+            has_recurrent_maintenance=bool(
+                attrs.get("has_recurrent_maintenance", False)
+            ),
         )
     except ValueError as exc:
         raise HTTPException(
@@ -682,13 +692,14 @@ def create_entity_impl(
     if body.type == "condition":
         _gate_condition_admission(conn, body)
 
-    if body.type == "agent_skill":
+    if body.type in ("agent_skill", "rule", "skill"):
         validate_applicable_agents(
             dict(body.attributes) if body.attributes is not None else None
         )
         validate_capabilities_required(
             dict(body.attributes) if body.attributes is not None else None
         )
+        validate_scope(dict(body.attributes) if body.attributes is not None else None)
 
     # Spec § 1.3 — exhibit entities require a `belongs_to (case:<slug>)`
     # relationship at write time. The hook validates the ID grammar and

@@ -6,6 +6,7 @@ import time
 from typing import Any
 
 from .db import cortex_conn, query
+from .guidance_entity import GUIDANCE_ID_PREFIXES, entity_slug_from_id
 from .relationship_sql import FROM_CLAUSE, SELECT_COLUMNS
 
 _CACHE_TTL_S = 30.0
@@ -44,10 +45,10 @@ def _load_projection_values() -> dict[str, str]:
             target_id = str(row.get("target_id") or "")
             if not source_id.startswith("error_code:"):
                 continue
-            if not target_id.startswith("agent_skill:"):
+            if not any(target_id.startswith(prefix) for prefix in GUIDANCE_ID_PREFIXES):
                 continue
             code = _slug_to_code(source_id.removeprefix("error_code:"))
-            skill_slug = target_id.removeprefix("agent_skill:")
+            skill_slug = entity_slug_from_id(target_id)
             if code and skill_slug:
                 values.setdefault(code, skill_slug)
     except Exception:

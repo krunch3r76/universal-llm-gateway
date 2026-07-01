@@ -13,14 +13,15 @@ from ..confidence_field import (
     discoverable_skill_lifecycle_sql_predicate,
 )
 from ..db import query as db_query
+from ..guidance_entity import strip_guidance_id_prefix
 from .boot._skill_trigger import skill_trigger_text
 
 _DISCOVERABLE_SKILL_LIFECYCLE = discoverable_skill_lifecycle_sql_predicate()
 
 LAYER_ENTITY_TYPES: dict[str, tuple[str, ...]] = {
-    "skills": ("agent_skill",),
+    "skills": ("agent_skill", "skill"),
     "rules": ("rule",),
-    "all": ("agent_skill", "rule"),
+    "all": ("agent_skill", "rule", "skill"),
 }
 
 BOOT_SKILLS_SQL = f"""
@@ -33,7 +34,7 @@ BOOT_SKILLS_SQL = f"""
            json_extract(attributes, '$.related_skills') AS related_skills_json
     FROM entities
     WHERE type IN ({{type_placeholders}})
-      AND (type != 'agent_skill' OR {_DISCOVERABLE_SKILL_LIFECYCLE})
+      AND (type NOT IN ('agent_skill', 'skill') OR {_DISCOVERABLE_SKILL_LIFECYCLE})
       {{for_agent_filter}}{{capability_filter}}
     ORDER BY name ASC
     LIMIT ?
@@ -42,7 +43,7 @@ BOOT_SKILLS_SQL = f"""
 UNPARTITIONED_COUNT_SQL = f"""
     SELECT COUNT(*) AS n
     FROM entities
-    WHERE type = 'agent_skill'
+    WHERE type IN ('agent_skill', 'skill')
       AND {_DISCOVERABLE_SKILL_LIFECYCLE}
       AND json_extract(attributes, '$.applicable_agents') IS NULL
 """
@@ -151,9 +152,7 @@ def _decode_related_skills(raw: str | None) -> list[str]:
         return []
     slugs: list[str] = []
     for entry in values:
-        slug = str(entry).strip()
-        if slug.startswith("agent_skill:"):
-            slug = slug.removeprefix("agent_skill:")
+        slug = strip_guidance_id_prefix(str(entry).strip())
         if slug.split("#", 1)[0] and slug not in slugs:
             slugs.append(slug.split("#", 1)[0])
     return slugs

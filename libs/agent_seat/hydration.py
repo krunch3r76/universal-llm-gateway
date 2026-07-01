@@ -130,6 +130,16 @@ class HydrationBundle:
     injection_meta: dict[str, Any] = field(default_factory=dict)
 
 
+async def _fetch_guidance_entities(limit: int = 50) -> dict[str, list[dict[str, Any]]]:
+    """Widened boot skills fetch: agent_skill + rule + skill (never drop agent_skill)."""
+    merged: list[dict[str, Any]] = []
+    for entity_type in ("agent_skill", "rule", "skill"):
+        qs = urlencode({"type": entity_type, "limit": limit})
+        raw = await _cortex_get(f"/entities?{qs}")
+        merged.extend(_safe_list(raw))
+    return {"items": merged}
+
+
 async def _cortex_get(path: str) -> Any:
     """Single GET to Cortex UDS; returns parsed JSON or ``{"error": ...}``."""
     try:
@@ -310,7 +320,6 @@ async def hydrate_agent(
         {"to": normalized_agent, "unread": "true", "last": 10, "compact": "true"},
     )
     todo_qs = urlencode({"limit": 15})
-    skills_qs = urlencode({"type": "agent_skill", "limit": 50})
 
     continuity_qs = urlencode({"agent": normalized_agent})
     tasks: dict[str, asyncio.Task[Any]] = {
@@ -322,7 +331,7 @@ async def hydrate_agent(
         "unread_turns": asyncio.create_task(_bus_get(f"/turns?{unread_qs}")),
         "todos": asyncio.create_task(_cortex_get(f"/boot-todos?{todo_qs}")),
         "agent_meta": asyncio.create_task(_fetch_agent_meta(normalized_agent)),
-        "skills": asyncio.create_task(_cortex_get(f"/entities?{skills_qs}")),
+        "skills": asyncio.create_task(_fetch_guidance_entities(limit=50)),
     }
     if profile_dict["include_deadlines"]:
         tasks["deadlines"] = asyncio.create_task(_cortex_get("/deadlines"))

@@ -334,7 +334,7 @@ def get_entity_card(
         debug=debug_payload,
     )
     payload = card.model_dump(mode="json")
-    if str(e["type"]) == "agent_skill":
+    if str(e["type"]) in ("agent_skill", "skill"):
         payload["discoverable"] = agent_skill_is_discoverable(e.get("lifecycle"))  # type: ignore[arg-type]
     return payload
 

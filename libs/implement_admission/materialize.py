@@ -10,6 +10,7 @@ from agent_seat.inject_registry import (
     CODING_SESSION_ADVERTISE_SLUGS,
     coding_scope_inject_entity_ids,
 )
+from cortex_store.guidance_entity import entity_slug_from_id
 
 from implement_admission.admission_read import (
     compute_packet_sha256,
@@ -164,8 +165,7 @@ def _render_task_guidance(spec: ImplementSpec) -> str:
 # findings (handoff.py validate_packet § handoff_packet_missing_arch_skillrefs).
 # Emitted unconditionally; deduped against the spec's own required_skills.
 _REQUIRED_ARCH_SKILLS: tuple[str, ...] = tuple(
-    entity_id.removeprefix("agent_skill:")
-    for entity_id in coding_scope_inject_entity_ids()
+    entity_slug_from_id(entity_id) for entity_id in coding_scope_inject_entity_ids()
 )
 
 

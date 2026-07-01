@@ -154,7 +154,7 @@ def _aggregate(conn: Any) -> dict[str, Any]:
         "FROM entities e JOIN assertions a ON a.entity_id = e.id "
         "WHERE a.created_at > datetime('now', '-7 days') AND a.superseded_by IS NULL "
         "AND e.type NOT IN ('transcript','todo','journal','assertion','plan_phase',"
-        "'agent_skill','boot_session') "
+        "'agent_skill','skill','rule','boot_session') "
         "GROUP BY e.id ORDER BY last DESC LIMIT 10",
     )
 

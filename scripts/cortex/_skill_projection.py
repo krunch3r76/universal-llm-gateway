@@ -1,4 +1,9 @@
-"""Cortex entity projection, comparison, and upsert helpers."""
+"""Cortex entity projection, comparison, and upsert helpers.
+
+HAZARD (arc 3924): upserting ``agent_skill:<slug>`` clobbers entities already
+retyped to ``rule:``/``skill:``. The enforced skip guard below is mandatory;
+role-aware ingest is deferred to todo:skills-ingest-role-aware.
+"""
 
 from __future__ import annotations
 
@@ -86,6 +91,11 @@ def _matches(live: dict, expected: dict[str, object]) -> tuple[bool, str]:
     return True, ""
 
 
+def _is_already_migrated(live: dict) -> bool:
+    """True when the live row is already retyped off agent_skill."""
+    return str(live.get("type") or "") in ("rule", "skill")
+
+
 def _upsert(
     client: object,
     projection: dict[str, object],
@@ -104,6 +114,10 @@ def _upsert(
         status = 200
     if status == 200 and live.get("lifecycle") in _SUPPRESSED:
         print(f"  SKIP  {entity_id:40s}  (lifecycle={live.get('lifecycle')})")
+        return True
+    if status == 200 and _is_already_migrated(live):
+        live_type = str(live.get("type") or "")
+        print(f"  SKIP  {entity_id:40s}  (skipped: already-migrated ({live_type}))")
         return True
     if dry_run:
         print(f"  {'WOULD PATCH' if status == 200 else 'WOULD CREATE'}  {entity_id}")

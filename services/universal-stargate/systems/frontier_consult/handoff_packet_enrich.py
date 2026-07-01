@@ -12,6 +12,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from cortex_store.guidance_entity import entity_slug_from_id
 from implement_admission.admission_read import frontmatter_value
 from implement_admission.skill_fs_line import (
     source_uri_to_fs_line as _canonical_source_uri_to_fs_line,
@@ -136,9 +137,8 @@ def _skill_slug_from_entity(entity: dict[str, Any]) -> str | None:
         if source_uri:
             return None
     entity_id = str(entity.get("id") or entity.get("entity_id") or "")
-    if entity_id.startswith("agent_skill:"):
-        return entity_id.removeprefix("agent_skill:")
-    return None
+    slug = entity_slug_from_id(entity_id) if entity_id else None
+    return slug or None
 
 
 def _resolve_source_uri(cortex: CortexEntityReader, slug: str) -> str | None:
@@ -301,7 +301,9 @@ def has_densify_floor(text: str) -> bool:
 
 def _has_task_class_skill_ref(text: str) -> bool:
     for slug in KNOWN_TASK_CLASS_SLUGS - frozenset(_DEFAULT_DENSIFY_SLUGS):
-        if slug in text or f"agent_skill:{slug}" in text:
+        if slug in text or any(
+            f"{prefix}{slug}" in text for prefix in ("agent_skill:", "rule:", "skill:")
+        ):
             return True
     if _bound_entity_ids(text) and "required_skills" in text:
         return True

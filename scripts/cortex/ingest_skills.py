@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """Upsert agent_skill projections from workspace + cortex SOT declared fields.
 
+HAZARD (arc 3924): do not run routine ingest after the rules/skills corpus
+retype — ``_skill_projection._upsert`` skips slugs already migrated to
+``rule:``/``skill:`` but new slugs still upsert as ``agent_skill:``.
+Role-aware ingest: todo:skills-ingest-role-aware.
+
 Workspace: ``.cursor/skills/*/SKILL.md`` (description, applicable_agents, …).
 Cortex SOT: ``$CORTEX_FILES_ROOT/agent-skills/*.md`` declared ``related_skills`` only.
 

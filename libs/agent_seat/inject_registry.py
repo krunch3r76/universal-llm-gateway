@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
+from cortex_store.guidance_entity import entity_slug_from_id
+
 from agent_seat.registry import is_lead_agent
 
 from .body_injection import (
@@ -70,7 +72,7 @@ class InjectEntry:
 
 INJECT_REGISTRY: tuple[InjectEntry, ...] = (
     InjectEntry(
-        entity_id="agent_skill:cortex-orientation",
+        entity_id="rule:cortex-orientation",
         scope=InjectScope.UNIVERSAL,
         platform_predicate="*",
         profile_applicability=frozenset({"*"}),
@@ -78,7 +80,7 @@ INJECT_REGISTRY: tuple[InjectEntry, ...] = (
         inline_tier=InlineTier.CRITICAL,
     ),
     InjectEntry(
-        entity_id="agent_skill:cortex-provenance-discipline",
+        entity_id="rule:cortex-provenance-discipline",
         scope=InjectScope.UNIVERSAL,
         platform_predicate="*",
         profile_applicability=frozenset({"*"}),
@@ -86,7 +88,7 @@ INJECT_REGISTRY: tuple[InjectEntry, ...] = (
         inline_tier=InlineTier.MUST_INLINE,
     ),
     InjectEntry(
-        entity_id="agent_skill:model-tier-awareness-web",
+        entity_id="rule:model-tier-awareness-web",
         scope=InjectScope.UNIVERSAL,
         platform_predicate="web",
         profile_applicability=frozenset({"*"}),
@@ -94,7 +96,7 @@ INJECT_REGISTRY: tuple[InjectEntry, ...] = (
         inline_tier=InlineTier.MUST_INLINE,
     ),
     InjectEntry(
-        entity_id="agent_skill:orchestrator-core",
+        entity_id="rule:orchestrator-core",
         scope=InjectScope.LEAD,
         platform_predicate="*",
         profile_applicability=frozenset({"*"}),
@@ -103,7 +105,7 @@ INJECT_REGISTRY: tuple[InjectEntry, ...] = (
         inline_tier=InlineTier.MUST_INLINE,
     ),
     InjectEntry(
-        entity_id="agent_skill:orchestrator-workflow",
+        entity_id="rule:orchestrator-workflow",
         scope=InjectScope.CODING,
         platform_predicate="*",
         profile_applicability=frozenset({"code_touching"}),
@@ -111,7 +113,7 @@ INJECT_REGISTRY: tuple[InjectEntry, ...] = (
         inline_tier=InlineTier.NORMAL,
     ),
     InjectEntry(
-        entity_id="agent_skill:architecture-invariants",
+        entity_id="rule:architecture-invariants",
         scope=InjectScope.CODING,
         platform_predicate="*",
         profile_applicability=frozenset({"code_touching"}),
@@ -119,7 +121,7 @@ INJECT_REGISTRY: tuple[InjectEntry, ...] = (
         inline_tier=InlineTier.NORMAL,
     ),
     InjectEntry(
-        entity_id="agent_skill:ulg-architecture",
+        entity_id="rule:ulg-architecture_ulg",
         scope=InjectScope.CODING,
         platform_predicate="*",
         profile_applicability=frozenset({"code_touching"}),
@@ -240,7 +242,7 @@ def _fetch_registry_entry(
             return None, "inactive_lifecycle_withheld"
         return None, "body_missing"
     metrics["cold_fetches"] = int(metrics.get("cold_fetches", 0)) + 1
-    slug = entry.entity_id.removeprefix("agent_skill:")
+    slug = entity_slug_from_id(entry.entity_id)
     return {
         "id": entry.entity_id,
         "name": slug,
@@ -474,6 +476,4 @@ def injected_skill_slugs(
         include_loaded_set=include_loaded_set,
     )
     deduped, _ = _dedupe_entries(candidates)
-    return tuple(
-        sorted(entry.entity_id.removeprefix("agent_skill:") for entry in deduped)
-    )
+    return tuple(sorted(entity_slug_from_id(entry.entity_id) for entry in deduped))

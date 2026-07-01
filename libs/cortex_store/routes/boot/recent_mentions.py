@@ -48,6 +48,8 @@ _RECENT_MENTIONS_DEFAULT_EXCLUDE = (
     "assertion",
     "plan_phase",
     "agent_skill",
+    "skill",
+    "rule",
     "boot_session",
 )
 

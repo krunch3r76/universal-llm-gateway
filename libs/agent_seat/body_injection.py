@@ -9,12 +9,14 @@ from collections import OrderedDict
 from threading import Lock
 from typing import Any
 
+from cortex_store.guidance_entity import entity_slug_from_id
 from transport_utils import DEFAULT_CORTEX_URL, make_sync_client
 
 INJECTED_BODY_BUDGET_BYTES = int(os.getenv("INJECTED_BODY_BUDGET_BYTES", "50000"))
 INJECTED_INDEX_TIMEOUT_MS = int(os.getenv("INJECTED_INDEX_TIMEOUT_MS", "300"))
 INJECTED_BODY_TIMEOUT_MS = int(os.getenv("INJECTED_BODY_TIMEOUT_MS", "300"))
 INJECTED_TOTAL_DEADLINE_MS = int(os.getenv("INJECTED_TOTAL_DEADLINE_MS", "1500"))
+
 
 def web_auto_inject_skill_slugs() -> tuple[str, ...]:
     """Bare slugs server-injected on web seats (registry-derived)."""
@@ -35,6 +37,7 @@ def is_web_seat_slug(seat: str) -> bool:
         return False
     profile = load_profiles().get((parts[0], parts[1]))
     return profile is not None and profile.platform == "web"
+
 
 _PAYLOAD_CACHE: OrderedDict[tuple[str, str], str] = OrderedDict()
 _PAYLOAD_CACHE_LOCK = Lock()
@@ -300,9 +303,7 @@ def _fetch_invariant_entries_for(
 ) -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
     for entity_id in entity_ids:
-        payload, _reason = _fetch_body_sync(
-            entity_id, None, include_non_active=True
-        )
+        payload, _reason = _fetch_body_sync(entity_id, None, include_non_active=True)
         if not payload:
             continue
         digest = str(payload.get("digest") or "")
@@ -312,7 +313,7 @@ def _fetch_invariant_entries_for(
         entries.append(
             {
                 "id": entity_id,
-                "name": entity_id.removeprefix("agent_skill:"),
+                "name": entity_slug_from_id(entity_id),
                 "digest": digest,
                 "body": body,
             }
@@ -346,9 +347,7 @@ def _invariant_presence_sentinel(block: str, injected: list[dict[str, Any]]) -> 
         return ""
     normalized = block.replace("\r\n", "\n").replace("\r", "\n")
     digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
-    return (
-        f"<!-- cortex:invariant-skills-autoappend sha256={digest} count={count} -->"
-    )
+    return f"<!-- cortex:invariant-skills-autoappend sha256={digest} count={count} -->"
 
 
 def append_invariant_pair_bodies(

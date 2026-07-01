@@ -78,7 +78,7 @@ _SKILLS_MANIFEST_SQL = f"""
            json_extract(attributes, '$.delivery_criticality') AS delivery_criticality
     FROM entities
     WHERE type IN ({{type_placeholders}})
-      AND (type != 'agent_skill' OR {_DISCOVERABLE_SKILL_LIFECYCLE})
+      AND (type NOT IN ('agent_skill', 'skill') OR {_DISCOVERABLE_SKILL_LIFECYCLE})
       {{for_agent_filter}}{{capability_filter}}
     ORDER BY name ASC
     LIMIT ?
@@ -304,7 +304,7 @@ def get_skill_body(
         rows = db_query(
             conn,
             "SELECT id, name, source_uri, type, lifecycle FROM entities WHERE id = ? "
-            "AND type IN ('agent_skill', 'rule')",
+            "AND type IN ('agent_skill', 'rule', 'skill')",
             (id,),
         )
     finally:
@@ -316,7 +316,7 @@ def get_skill_body(
     slug = slug_from_row(row)
     source_uri = row.get("source_uri")
     lifecycle = row.get("lifecycle")
-    is_skill = row.get("type") == "agent_skill"
+    is_skill = row.get("type") in ("agent_skill", "skill")
     discoverable = (not is_skill) or (lifecycle == DISCOVERABLE_SKILL_LIFECYCLE)
     if is_skill and not discoverable and not include_non_active:
         return {

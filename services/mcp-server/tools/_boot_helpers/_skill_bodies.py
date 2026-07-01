@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from cortex_store.guidance_entity import entity_slug_from_id
+
 _SKILL_PREFIX = "agent-skills/"
 
 
@@ -20,7 +22,7 @@ def skill_slug(skill: dict[str, Any]) -> str:
     """
     entity_id = skill.get("id") or skill.get("entity_id")
     if isinstance(entity_id, str) and entity_id.strip():
-        slug = entity_id.strip().removeprefix("agent_skill:")
+        slug = entity_slug_from_id(entity_id.strip())
         if slug:
             return slug
     name = skill.get("name")

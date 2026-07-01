@@ -13,6 +13,7 @@ from ..confidence_field import (
     discoverable_skill_lifecycle_sql_predicate,
 )
 from ..db import query as db_query
+from ..guidance_entity import strip_guidance_id_prefix
 from ..seat_applicability import (
     CAPABILITY_CLAUSE,
     UNIVERSAL,
@@ -156,7 +157,7 @@ _SUGGEST_CANDIDATE_SQL = f"""
            COALESCE(CAST(json_extract(attributes, '$.delivery_priority') AS INTEGER), 100)
                AS delivery_priority
     FROM entities
-    WHERE type = 'agent_skill'
+    WHERE type IN ('agent_skill', 'rule', 'skill')
       AND {_DISCOVERABLE_SKILL_LIFECYCLE}
       {{for_agent_filter}}{{capability_filter}}
 """
@@ -164,9 +165,7 @@ _SUGGEST_CANDIDATE_SQL = f"""
 
 def norm_loaded(value: str) -> str:
     """Normalize a loaded slug/id for set membership (§3.2)."""
-    s = value.strip().lower()
-    if s.startswith("agent_skill:"):
-        s = s.removeprefix("agent_skill:")
+    s = strip_guidance_id_prefix(value).lower()
     if s.endswith(".md"):
         s = s[:-3]
     return s
@@ -217,9 +216,7 @@ def _decode_related_slugs(raw: str | None) -> list[str]:
         return []
     slugs: list[str] = []
     for entry in values:
-        slug = str(entry).strip().lower()
-        if slug.startswith("agent_skill:"):
-            slug = slug.removeprefix("agent_skill:")
+        slug = strip_guidance_id_prefix(str(entry).strip()).lower()
         slug = slug.split("#", 1)[0]
         if slug and slug not in slugs:
             slugs.append(slug)
@@ -416,7 +413,9 @@ def suggestion_description(row: dict[str, Any]) -> str:
     return humanize_slug(slug)
 
 
-def build_extended_candidate(row: dict[str, Any], scored: CandidateScore | None) -> dict[str, Any] | None:
+def build_extended_candidate(
+    row: dict[str, Any], scored: CandidateScore | None
+) -> dict[str, Any] | None:
     slug = slug_from_source_uri(row.get("source_uri"))
     if not slug:
         return None

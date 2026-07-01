@@ -14,6 +14,7 @@ from agent_seat.inject_registry import (
 )
 
 from ..db import cortex_conn
+from ..guidance_entity import entity_slug_from_id
 from ..seat_applicability import canonical_seat_or_422
 from ._skill_index import index_envelope_fields
 from ._skill_suggest_candidates import (
@@ -76,8 +77,7 @@ _PUBLIC_SUGGESTION_KEYS = frozenset(
 
 def _coding_session_bundle_slugs() -> frozenset[str]:
     inject = tuple(
-        entity_id.removeprefix("agent_skill:")
-        for entity_id in coding_scope_inject_entity_ids()
+        entity_slug_from_id(entity_id) for entity_id in coding_scope_inject_entity_ids()
     )
     return frozenset((*inject, *CODING_SESSION_ADVERTISE_SLUGS))
 

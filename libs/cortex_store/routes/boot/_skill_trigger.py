@@ -9,6 +9,8 @@ from typing import Any
 
 from universal_logging import get_logger
 
+from cortex_store.guidance_entity import entity_slug_from_id
+
 from ...dispatch_ops._shared import _FILES_ROOT
 
 logger = get_logger("cortex-api.boot._skill_trigger")
@@ -110,7 +112,7 @@ def canonical_skill_summary(
 def skill_trigger_text(row: dict[str, Any]) -> str:
     """Project manifest trigger from file frontmatter / Trigger line, else entity description."""
     entity_id = str(row.get("id") or "")
-    slug = str(row.get("name") or "").strip() or entity_id.removeprefix("agent_skill:")
+    slug = str(row.get("name") or "").strip() or entity_slug_from_id(entity_id)
     path = _resolve_skill_file(row.get("source_uri"), slug)
     if path is not None:
         try:

@@ -304,3 +304,23 @@ def test_enrich_injects_arch_refs_for_cursor_parity() -> None:
     assert "ulg-architecture" in result.skills_added
     assert "architecture-invariants.md" in result.text
     assert "ulg-architecture.md" in result.text
+
+
+def test_skill_slug_from_entity_accepts_rule_prefix() -> None:
+    from .handoff_packet_enrich import _skill_slug_from_entity
+
+    assert (
+        _skill_slug_from_entity({"id": "rule:architecture-invariants"})
+        == "architecture-invariants"
+    )
+    assert (
+        _skill_slug_from_entity({"id": "skill:implement-work-item"})
+        == "implement-work-item"
+    )
+
+
+def test_has_task_class_skill_ref_accepts_rule_entity_id() -> None:
+    from .handoff_packet_enrich import _has_task_class_skill_ref
+
+    text = "<mcp_capabilities>rule:mcp-surface-change</mcp_capabilities>"
+    assert _has_task_class_skill_ref(text) is True

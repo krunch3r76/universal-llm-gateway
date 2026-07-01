@@ -21,6 +21,25 @@ from fastapi import HTTPException
 
 UNIVERSAL = "*"
 
+SCOPE_TOKENS = frozenset({"universal", "ecosystem", "ulg"})
+
+
+def validate_scope(attributes: dict[str, object] | None) -> None:
+    """Reject an entity write whose scope holds an unknown token."""
+    if not attributes:
+        return
+    scope = attributes.get("scope")
+    if scope is None:
+        return
+    if not isinstance(scope, str) or scope not in SCOPE_TOKENS:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Unknown scope {scope!r}; expected one of {sorted(SCOPE_TOKENS)}."
+            ),
+        )
+
+
 # Default-DENY: a skill with no `applicable_agents` attribute matches NO seat. Universal
 # visibility requires an explicit ['*']. The IS NOT NULL guard makes the deny explicit and
 # avoids relying on json_each(NULL) behaviour (implementation-defined; can raise on bad JSON).

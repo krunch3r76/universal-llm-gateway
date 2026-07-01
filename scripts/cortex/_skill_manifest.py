@@ -22,6 +22,10 @@ from _skill_scan import _scan_skills
 VerdictStatus = Literal["clean", "dirty", "error", "warnings"]
 
 
+def _entity_slug(entity_id: str) -> str:
+    return entity_id.split(":", 1)[1] if ":" in entity_id else entity_id
+
+
 def manifest_path(repo_root: Path) -> Path:
     return repo_root / ".cursor" / "skills" / MANIFEST_FILENAME
 
@@ -71,19 +75,22 @@ def _discoverable(entity: dict[str, Any]) -> bool:
 
 
 def fetch_discoverable_entities(client: object) -> dict[str, dict[str, Any]]:
-    status, body = _request(client, "GET", "/entities?type=agent_skill&limit=500")
-    if status != 200:
-        raise RuntimeError(f"GET /entities?type=agent_skill failed: {status}")
     out: dict[str, dict[str, Any]] = {}
-    for row in body.get("items", []):
-        entity_id = str(row.get("id") or "")
-        if not entity_id.startswith("agent_skill:"):
-            continue
-        slug = normalize_slug(entity_id.removeprefix("agent_skill:"))
-        get_status, live = _entity_get(client, entity_id)
-        if get_status != 200 or not _discoverable(live):
-            continue
-        out[slug] = live
+    for entity_type in ("agent_skill", "rule", "skill"):
+        status, body = _request(
+            client, "GET", f"/entities?type={entity_type}&limit=500"
+        )
+        if status != 200:
+            raise RuntimeError(f"GET /entities?type={entity_type} failed: {status}")
+        for row in body.get("items", []):
+            entity_id = str(row.get("id") or "")
+            if ":" not in entity_id:
+                continue
+            slug = normalize_slug(_entity_slug(entity_id))
+            get_status, live = _entity_get(client, entity_id)
+            if get_status != 200 or not _discoverable(live):
+                continue
+            out[slug] = live
     return out
 
 

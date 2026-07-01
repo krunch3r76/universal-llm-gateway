@@ -71,7 +71,7 @@ tools:
       for_agent: {type: string}
       content_hash: {type: string, description: "Exact-match on content_hash column. Accepts raw hex or sha256:<hex> form."}
       fields: {type: array, items: {type: string}, description: "Project only these fields. Base columns pass through; other names resolve from attributes JSON (e.g. applicable_agents). Collapses an N+1 attribute audit to one query."}
-  skill_uri: agent_skill:cortex
+  skill_uri: rule:cortex
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only
   cache_priority: always_loaded
@@ -99,7 +99,7 @@ tools:
       type: {type: string, description: "Optional entity type filter (e.g. \"document\")."}
       limit: {type: integer, description: "Result cap (default 5)."}
     required: [content_hash]
-  skill_uri: agent_skill:cortex
+  skill_uri: rule:cortex
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only
   cache_priority: on_demand
@@ -124,7 +124,7 @@ tools:
     properties:
       entity_id: {type: string, description: "Required. Entity to project (alias-resolved, like entity_get)."}
     required: [entity_id]
-  skill_uri: agent_skill:cortex
+  skill_uri: rule:cortex
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only
   cache_priority: on_demand
@@ -147,7 +147,7 @@ tools:
     properties:
       assertion_id: {type: integer, description: "Required. Assertion id from a summary list row."}
     required: [assertion_id]
-  skill_uri: agent_skill:cortex
+  skill_uri: rule:cortex
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only
   cache_priority: on_demand
@@ -175,7 +175,7 @@ tools:
       full_body: {type: boolean, description: "body intent: false=section manifest only; omit or true=whole body (default)"}
       include_edges: {type: boolean}
     required: [entity_id]
-  skill_uri: agent_skill:cortex
+  skill_uri: rule:cortex
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only
   cache_priority: always_loaded
@@ -203,7 +203,7 @@ tools:
       status: {type: string}
       workflow_state: {type: string}
     required: [id, type, name]
-  skill_uri: agent_skill:cortex
+  skill_uri: rule:cortex
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: write
   cache_priority: always_loaded
@@ -231,7 +231,7 @@ tools:
       workflow_state: {type: string}
       attributes: {type: object, description: "Shallow top-level merge into existing attributes; omitted keys are preserved. Cannot delete attribute keys via PATCH — use explicit null only where the API documents field clearing."}
     required: [entity_id]
-  skill_uri: agent_skill:cortex
+  skill_uri: rule:cortex
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: write
   cache_priority: always_loaded
@@ -255,7 +255,7 @@ tools:
       entities: {type: array}
       if_exists: {type: string, enum: [fail, update, skip]}
     required: [entities]
-  skill_uri: agent_skill:cortex
+  skill_uri: rule:cortex
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: write
   cache_priority: on_demand
@@ -283,7 +283,7 @@ tools:
       evidence: {type: string}
       derivation_type: {type: string}
     required: [entity_id, claim, confidence, evidence, derivation_type]
-  skill_uri: agent_skill:cortex
+  skill_uri: rule:cortex
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: write
   cache_priority: always_loaded
@@ -310,7 +310,7 @@ tools:
       superseded: {type: boolean}
       limit: {type: integer}
       intent: {type: string, enum: [summary, full], description: "summary (default): sparse hooks; full: enrichment rows."}
-  skill_uri: agent_skill:cortex
+  skill_uri: rule:cortex
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only
   cache_priority: on_demand
@@ -340,7 +340,7 @@ tools:
       agent: {type: string}
     required: [old_assertion_id, entity_id, claim, confidence, evidence, 
         session_id, agent]
-  skill_uri: agent_skill:cortex
+  skill_uri: rule:cortex
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: write
   cache_priority: always_loaded
@@ -365,7 +365,7 @@ tools:
       superseded_by: {type: integer}
       review_status: {type: string}
     required: [assertion_id]
-  skill_uri: agent_skill:cortex
+  skill_uri: rule:cortex
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: write
   cache_priority: on_demand
@@ -388,7 +388,7 @@ tools:
     type: object
     properties:
       limit: {type: integer}
-  skill_uri: agent_skill:cortex
+  skill_uri: rule:cortex
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only
   cache_priority: always_loaded
@@ -443,7 +443,7 @@ tools:
           must include session_close_validate:pass and session_id:{id}.
         items: {type: string}
     required: [session_id, agent, session_summary_md, summary]
-  skill_uri: agent_skill:session-close
+  skill_uri: rule:session-close
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: write
   cache_priority: always_loaded
@@ -477,7 +477,7 @@ tools:
       summary: {type: string}
       transcript_depth: {type: string}
     required: [session_id, agent, session_summary_md, summary]
-  skill_uri: agent_skill:session-close-audit
+  skill_uri: rule:session-close-audit
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only
   cache_priority: always_loaded
@@ -505,7 +505,7 @@ tools:
         type: string
         description: "Required. todo:{slug} or any source_ref. Non-todo refs return admitted=true."
     required: [source_ref]
-  skill_uri: agent_skill:implement-todo
+  skill_uri: rule:implement-todo
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only
   cache_priority: on_demand
@@ -532,7 +532,7 @@ tools:
         type: string
         description: "Template kind. Default implement_dense_spec. session_close[:web|:cursor] for close payload contract."
     required: []
-  skill_uri: agent_skill:implement-todo
+  skill_uri: rule:implement-todo
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only
   cache_priority: on_demand
@@ -570,7 +570,7 @@ tools:
         type: string
         description: "todo:{slug} — resolve pinned spec + live attestation."
     required: []
-  skill_uri: agent_skill:implement-todo
+  skill_uri: rule:implement-todo
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only
   cache_priority: on_demand
@@ -598,7 +598,7 @@ tools:
       handoff_prompt: {type: string}
       handoff_source_path: {type: string}
     required: [session_id, handoff_prompt]
-  skill_uri: agent_skill:cortex
+  skill_uri: rule:cortex
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: write
   cache_priority: always_loaded
@@ -624,7 +624,7 @@ tools:
       limit: {type: integer}
       entity_type: {type: string}
     required: [query]
-  skill_uri: agent_skill:cortex
+  skill_uri: rule:cortex
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only
   cache_priority: always_loaded
@@ -649,7 +649,7 @@ tools:
       query: {type: string}
       limit: {type: integer}
       workflow_state: {type: string}
-  skill_uri: agent_skill:cortex
+  skill_uri: rule:cortex
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only
   cache_priority: always_loaded
@@ -676,7 +676,7 @@ tools:
       to_node: {type: string}
       edge_type: {type: string}
     required: [session_id, agent, from_node, to_node, edge_type]
-  skill_uri: agent_skill:cortex
+  skill_uri: rule:cortex
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: write
   cache_priority: on_demand
@@ -701,7 +701,7 @@ tools:
       to_node: {type: string}
       edge_type: {type: string}
       limit: {type: integer}
-  skill_uri: agent_skill:cortex
+  skill_uri: rule:cortex
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only
   cache_priority: on_demand
@@ -727,7 +727,7 @@ tools:
       edge_type: {type: string}
       min_strength: {type: number}
     required: [node]
-  skill_uri: agent_skill:cortex
+  skill_uri: rule:cortex
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only
   cache_priority: on_demand
@@ -751,7 +751,7 @@ tools:
       entity_id: {type: string}
       type_id: {type: string}
       limit: {type: integer}
-  skill_uri: agent_skill:cortex
+  skill_uri: rule:cortex
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only
   cache_priority: on_demand
@@ -778,7 +778,7 @@ tools:
       role: {type: string}
       strength: {type: number}
     required: [source_id, target_id, type_id]
-  skill_uri: agent_skill:cortex
+  skill_uri: rule:cortex
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: write
   cache_priority: on_demand
@@ -813,7 +813,7 @@ tools:
       agent: {type: string}
       session_id: {type: string}
     required: [category, note, agent]
-  skill_uri: agent_skill:cortex
+  skill_uri: rule:cortex
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: write
   cache_priority: on_demand
@@ -839,7 +839,7 @@ tools:
       agent: {type: string}
       session_id: {type: string}
     required: [claim, agent]
-  skill_uri: agent_skill:cortex
+  skill_uri: rule:cortex
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: write
   cache_priority: on_demand
@@ -869,7 +869,7 @@ tools:
       links: {type: array, items: {type: object}}
       consolidation_data: {type: object}
     required: [agent, register, entry]
-  skill_uri: agent_skill:cortex
+  skill_uri: rule:cortex
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: write
   cache_priority: on_demand
@@ -892,7 +892,7 @@ tools:
     properties:
       entry_id: {type: integer}
     required: [entry_id]
-  skill_uri: agent_skill:cortex
+  skill_uri: rule:cortex
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only
   cache_priority: on_demand
@@ -917,7 +917,7 @@ tools:
       kind: {type: string}
       limit: {type: integer}
       offset: {type: integer}
-  skill_uri: agent_skill:cortex
+  skill_uri: rule:cortex
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only
   cache_priority: on_demand
@@ -943,7 +943,7 @@ tools:
       to_entity: {type: string}
       link_type: {type: string, default: "related"}
     required: [entry_id]
-  skill_uri: agent_skill:cortex
+  skill_uri: rule:cortex
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: write
   cache_priority: on_demand
@@ -978,7 +978,7 @@ tools:
       confidence: {type: string}
       source_entry_ids: {type: array, items: {type: integer}}
     required: [agent, register, entry, throughline, before, now]
-  skill_uri: agent_skill:cortex
+  skill_uri: rule:cortex
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: write
   cache_priority: on_demand
@@ -1361,7 +1361,7 @@ tools:
       sandbox: {type: string, enum: [cortex, workspaces]}
       path: {type: string}
     required: [sandbox, path]
-  skill_uri: agent_skill:fs
+  skill_uri: rule:fs
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only
   cache_priority: always_loaded
@@ -1388,7 +1388,7 @@ tools:
       path: {type: string}
       content: {type: string}
     required: [sandbox, path, content]
-  skill_uri: agent_skill:fs
+  skill_uri: rule:fs
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: write
   cache_priority: always_loaded
@@ -1414,7 +1414,7 @@ tools:
       sandbox: {type: string}
       path: {type: string}
     required: [sandbox]
-  skill_uri: agent_skill:fs
+  skill_uri: rule:fs
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only
   cache_priority: always_loaded
@@ -1440,7 +1440,7 @@ tools:
       sandbox: {type: string}
       path: {type: string}
     required: [sandbox, path]
-  skill_uri: agent_skill:fs
+  skill_uri: rule:fs
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: destructive
   cache_priority: on_demand
@@ -1467,7 +1467,7 @@ tools:
       path: {type: string}
       content: {type: string}
     required: [sandbox, path, content]
-  skill_uri: agent_skill:fs
+  skill_uri: rule:fs
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: write
   cache_priority: on_demand
@@ -1497,7 +1497,7 @@ tools:
       content: {type: string}
       all_occurrences: {type: boolean}
     required: [sandbox, path, target, content]
-  skill_uri: agent_skill:fs
+  skill_uri: rule:fs
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: write
   cache_priority: on_demand
@@ -1524,7 +1524,7 @@ tools:
       path: {type: string}
       target: {type: string}
     required: [sandbox, path, target]
-  skill_uri: agent_skill:fs
+  skill_uri: rule:fs
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: write
   cache_priority: on_demand
@@ -1552,7 +1552,7 @@ tools:
       target: {type: string}
       target_sandbox: {type: string}
     required: [sandbox, path, target]
-  skill_uri: agent_skill:fs
+  skill_uri: rule:fs
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: write
   cache_priority: on_demand
@@ -1580,7 +1580,7 @@ tools:
       path: {type: string}
       content: {type: string}
     required: [sandbox, path, content]
-  skill_uri: agent_skill:fs
+  skill_uri: rule:fs
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only
   cache_priority: on_demand
@@ -1607,7 +1607,7 @@ tools:
       sandbox: {type: string}
       paths: {type: array, items: {type: string}}
     required: [sandbox, paths]
-  skill_uri: agent_skill:fs
+  skill_uri: rule:fs
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only
   cache_priority: on_demand
@@ -1634,7 +1634,7 @@ tools:
       path: {type: string}
       section: {type: string}
     required: [sandbox, path, section]
-  skill_uri: agent_skill:fs
+  skill_uri: rule:fs
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only
   cache_priority: always_loaded
@@ -1660,7 +1660,7 @@ tools:
       sandbox: {type: string}
       path: {type: string}
     required: [sandbox, path]
-  skill_uri: agent_skill:fs
+  skill_uri: rule:fs
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only
   cache_priority: on_demand
@@ -1692,7 +1692,7 @@ tools:
       section: {type: string}
       content: {type: string}
     required: [sandbox, path, section, content]
-  skill_uri: agent_skill:fs
+  skill_uri: rule:fs
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: write
   cache_priority: on_demand
@@ -1724,7 +1724,7 @@ tools:
       section: {type: string}
       content: {type: string}
     required: [sandbox, path, section, content]
-  skill_uri: agent_skill:fs
+  skill_uri: rule:fs
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: write
   cache_priority: on_demand
@@ -1761,7 +1761,7 @@ tools:
       section: {type: string}
       content: {type: string}
     required: [sandbox, path, heading, level, position]
-  skill_uri: agent_skill:fs
+  skill_uri: rule:fs
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: write
   cache_priority: on_demand
@@ -1789,7 +1789,7 @@ tools:
       path: {type: string}
       section: {type: string}
     required: [sandbox, path, section]
-  skill_uri: agent_skill:fs
+  skill_uri: rule:fs
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: destructive
   cache_priority: on_demand
@@ -1816,7 +1816,7 @@ tools:
       path: {type: string}
       content: {type: string}
     required: [sandbox, path, content]
-  skill_uri: agent_skill:fs
+  skill_uri: rule:fs
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: write
   cache_priority: on_demand
@@ -2084,7 +2084,7 @@ tools:
   # headless/arc-only: git relays to git-integration-worker (decision:lead-agent-git-integration).
   # Not a Cursor-IDE concern — demoted off mcp_claude → overflow for Claude seats.
   seat_visibility: [mcp]
-  skill_uri: agent_skill:lead-agent-git-integration
+  skill_uri: rule:lead-agent-git-integration_ulg
   mandate_safety: write
   cache_priority: on_demand
   introduced: 2026-05-29
@@ -2119,7 +2119,7 @@ tools:
     required: [arc, phase, worktree_path, approval, expected_diff_sha256]
   # headless/arc-only (see git_integrate note). Off mcp_claude → overflow for Claude.
   seat_visibility: [mcp]
-  skill_uri: agent_skill:lead-agent-git-integration
+  skill_uri: rule:lead-agent-git-integration_ulg
   mandate_safety: write
   cache_priority: on_demand
   introduced: 2026-05-31
@@ -2146,7 +2146,7 @@ tools:
     required: [worktree_path]
   # headless/arc-only (see git_integrate note). Off mcp_claude → overflow for Claude.
   seat_visibility: [mcp]
-  skill_uri: agent_skill:lead-agent-git-integration
+  skill_uri: rule:lead-agent-git-integration_ulg
   mandate_safety: read_only
   cache_priority: on_demand
   introduced: 2026-05-29
@@ -2177,7 +2177,7 @@ tools:
     required: [worktree_path]
   # headless/arc-only (see git_integrate note). Off mcp_claude → overflow for Claude.
   seat_visibility: [mcp]
-  skill_uri: agent_skill:lead-agent-git-integration
+  skill_uri: rule:lead-agent-git-integration_ulg
   mandate_safety: read_only
   cache_priority: on_demand
   introduced: 2026-05-29
@@ -2213,7 +2213,7 @@ tools:
     required: [worktree_path, expected_branch, paths]
   # headless/arc-only (see git_integrate note). Off mcp_claude → overflow for Claude.
   seat_visibility: [mcp]
-  skill_uri: agent_skill:lead-agent-git-integration
+  skill_uri: rule:lead-agent-git-integration_ulg
   mandate_safety: write
   cache_priority: on_demand
   introduced: 2026-05-31
@@ -2524,7 +2524,7 @@ tools:
       agent: {type: string}
       prefer_worker: {type: boolean}
     required: [loaded]
-  skill_uri: agent_skill:cortex
+  skill_uri: rule:cortex
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only
   cache_priority: on_demand
@@ -2721,7 +2721,7 @@ tools:
       transcript_id: {type: string}
       timeout_seconds: {type: integer}
     required: [messages, dispatch_thread_id]
-  skill_uri: agent_skill:consensus-steelman-posture
+  skill_uri: rule:consensus-steelman-posture
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: write
   cache_priority: always_loaded
@@ -2756,7 +2756,7 @@ tools:
       role: {type: string}
       transcript_id: {type: string}
       views: {type: array, items: {type: string}}
-  skill_uri: agent_skill:cortex
+  skill_uri: rule:cortex
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only
   cache_priority: always_loaded

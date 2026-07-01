@@ -11,6 +11,8 @@ from datetime import UTC, datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from cortex_store.guidance_entity import entity_slug_from_id
+
 _LA = ZoneInfo("America/Los_Angeles")
 
 # Boot profiles for dispatched-agent hydration. Mirrors _BOOT_PROFILES in
@@ -116,7 +118,7 @@ def _render_briefing(
                 "path='agent-skills/<NAME>.md')`)",
             )
         for s in skills:
-            slug = s.get("name") or (s.get("id") or "?").removeprefix("agent_skill:")
+            slug = s.get("name") or entity_slug_from_id(str(s.get("id") or "?"))
             trigger = (s.get("description") or "").strip()
             parts.append(f"- **{slug}** — {trigger}")
 
