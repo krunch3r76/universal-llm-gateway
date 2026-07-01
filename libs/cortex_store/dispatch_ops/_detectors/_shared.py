@@ -89,6 +89,10 @@ SEVERITY = {
     "stale_reveal_level": "warning",
     "unresolved_safety_conflict": "critical",
     "advice_failure_recurrence": "warning",
+    # Entity-lifecycle grammar / structural anti-patterns (Wave-3 mechanical bin;
+    # todo:entity-lifecycle-structural-validators). Graph-only WARNING advisory.
+    "entity_vocabulary_grammar": "warning",
+    "entity_structural_antipattern": "warning",
 }
 
 # Identifier-shaped attribute value: alphanumerics + ``-._:/`` only. Used by

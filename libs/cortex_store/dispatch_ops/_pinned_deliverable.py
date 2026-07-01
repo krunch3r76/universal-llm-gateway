@@ -5,31 +5,46 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from implement_admission.scheme_resolve import resolve_fs_ingress
+from implement_admission.share_uri_emit import to_share_uri
+
 from ._shared import _FILES_ROOT
 from ._thread_sidecar import content_sha256
 
 
-def normalize_cortex_rel(raw: str) -> str | None:
+def normalize_share_rel(raw: str, *, sandbox: str = "cortex") -> str | None:
     path = raw.strip()
-    for prefix in ("cortex://", "cortex:"):
-        if path.lower().startswith(prefix):
-            path = path[len(prefix) :]
-            break
-    path = path.lstrip("/")
-    if not path or ".." in Path(path).parts:
+    try:
+        ingress = resolve_fs_ingress(path, sandbox=sandbox)
+    except ValueError:
+        for prefix in ("cortex://", "cortex:", "workspaces://", "workspaces:"):
+            if path.lower().startswith(prefix):
+                path = path.split(":", 2)[-1].lstrip("/")
+                break
+        path = path.lstrip("/")
+        if not path or ".." in Path(path).parts:
+            return None
+        return path
+    rel = ingress.rel_path.lstrip("/")
+    if not rel or ".." in Path(rel).parts:
         return None
-    return path
+    return rel
 
 
-def pinned_deliverable_uri(rel: str) -> str:
-    return f"cortex://{rel.lstrip('/')}"
+def normalize_cortex_rel(raw: str) -> str | None:
+    return normalize_share_rel(raw, sandbox="cortex")
 
 
-def _resolved_target(rel_path: str) -> tuple[str, Path] | None:
-    rel = normalize_cortex_rel(rel_path)
+def pinned_deliverable_uri(rel: str, *, sandbox: str = "cortex") -> str:
+    return to_share_uri(sandbox, rel.lstrip("/"))
+
+
+def _resolved_target(rel_path: str, *, sandbox: str = "cortex") -> tuple[str, Path] | None:
+    rel = normalize_share_rel(rel_path, sandbox=sandbox)
     if rel is None:
         return None
-    target = (_FILES_ROOT / rel).resolve()
+    root = _FILES_ROOT if sandbox == "cortex" else _FILES_ROOT
+    target = (root / rel).resolve()
     try:
         target.relative_to(_FILES_ROOT.resolve())
     except ValueError:
@@ -51,6 +66,7 @@ def write_pinned_deliverable_impl(
         existing = target.read_text(encoding="utf-8")
         return {
             "uri": pinned_deliverable_uri(rel),
+            "path": rel,
             "sha256": content_sha256(existing),
             "body_chars": len(existing),
             "skipped": True,
@@ -59,7 +75,7 @@ def write_pinned_deliverable_impl(
     target.write_text(content, encoding="utf-8")
     return {
         "uri": pinned_deliverable_uri(rel),
-        "path": str(target),
+        "path": rel,
         "sha256": content_sha256(content),
         "body_chars": len(content),
         "skipped": False,

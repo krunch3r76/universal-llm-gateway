@@ -12,8 +12,8 @@ from fastapi import HTTPException, status
 from .db import json_encode, query
 from .enrichment import reindex_assertions_fts_batch
 from .entity_aliases import sync_entity_aliases
-from .entity_id_registry import _ENTITY_ID_REFERENCES
 from .entity_id_norm import canonicalize_entity_id
+from .entity_id_registry import _ENTITY_ID_REFERENCES
 from .salience import compute_all_salience
 
 _NOW_FMT = "%Y-%m-%dT%H:%M:%SZ"
@@ -279,17 +279,7 @@ def entity_rekey_impl(
         assertion_ids = rekey_child_surfaces(conn, old_id, canonical_new)
         drop_salience_cache(conn, old_id)
 
-        aliases_raw = old_row.get("aliases")
-        alias_list: list[str] = []
-        if aliases_raw:
-            try:
-                parsed_aliases = json.loads(str(aliases_raw))
-                if isinstance(parsed_aliases, list):
-                    alias_list = [str(a) for a in parsed_aliases]
-            except (json.JSONDecodeError, TypeError):
-                alias_list = []
-        if old_id not in alias_list:
-            alias_list.append(old_id)
+        alias_list = _existing_alias_list(old_row, old_id)
 
         conn.execute(
             "UPDATE entities SET id = ?, aliases = ?, updated_at = ? WHERE id = ?",
@@ -324,3 +314,136 @@ def _emit_rekeyed(*, old_id: str, new_id: str) -> None:
     from .dispatch_ops._shared import record
 
     record("cortex.entity.rekeyed", old_id=old_id, new_id=new_id)
+
+
+def _existing_alias_list(old_row: dict[str, Any], old_id: str) -> list[str]:
+    """Parse the entity's stored alias list and ensure old_id is retained."""
+    aliases_raw = old_row.get("aliases")
+    alias_list: list[str] = []
+    if aliases_raw:
+        try:
+            parsed_aliases = json.loads(str(aliases_raw))
+            if isinstance(parsed_aliases, list):
+                alias_list = [str(a) for a in parsed_aliases]
+        except (json.JSONDecodeError, TypeError):
+            alias_list = []
+    if old_id not in alias_list:
+        alias_list.append(old_id)
+    return alias_list
+
+
+def _register_cross_type_alias(
+    conn: sqlite3.Connection, entity_id: str, old_type: str, old_id: str
+) -> None:
+    """Register the pre-retype compound id as an alias under its original type.
+
+    ``sync_entity_aliases`` already inserted this alias under the NEW type (the
+    UNIQUE key is ``(entity_id, alias)``); replace that row so the alias is
+    registered under the OLD type, which is the prefix resolve_entity_reference
+    scopes on. Idempotent across re-runs.
+    """
+    try:
+        conn.execute(
+            "DELETE FROM entity_aliases WHERE entity_id = ? AND alias = ?",
+            (entity_id, old_id),
+        )
+        conn.execute(
+            "INSERT INTO entity_aliases (entity_id, entity_type, alias) "
+            "VALUES (?, ?, ?)",
+            (entity_id, old_type, old_id),
+        )
+    except sqlite3.OperationalError as exc:
+        if "no such table: entity_aliases" in str(exc):
+            return
+        raise
+
+
+def entity_retype_impl(
+    conn: sqlite3.Connection,
+    entity_id: str,
+    new_type: str,
+) -> dict[str, Any]:
+    """Change an entity's type, re-prefixing its id under the new type.
+
+    Mirrors ``entity_rekey_impl`` but also rewrites the ``type`` column. The
+    slug is preserved (``agent_skill:foo`` -> ``rule:foo``); the prior compound
+    id is retained as a cross-type alias so existing references still resolve.
+    """
+    old_row = _load_entity(conn, entity_id)
+    old_type = str(old_row["type"])
+    if not new_type:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, "new_type is required"
+        )
+    if new_type == old_type:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            {
+                "detail": f"Entity {entity_id!r} is already type {new_type!r}",
+                "hint": "entity_retype changes the type; use entity_rekey for a "
+                "same-type slug change.",
+            },
+        )
+    old_id = str(old_row["id"])
+    slug = old_id.split(":", 1)[-1] if ":" in old_id else old_id
+    canonical_new = canonicalize_entity_id(slug, new_type)
+    _preflight_new_id_available(conn, canonical_new, new_type, old_id)
+
+    now = _utc_now()
+
+    begin_identity_txn(conn)
+    try:
+        assertion_ids = rekey_child_surfaces(conn, old_id, canonical_new)
+        drop_salience_cache(conn, old_id)
+
+        alias_list = _existing_alias_list(old_row, old_id)
+
+        conn.execute(
+            "UPDATE entities SET id = ?, type = ?, aliases = ?, updated_at = ? "
+            "WHERE id = ?",
+            (canonical_new, new_type, json_encode(alias_list), now, old_id),
+        )
+        seed_alias_and_sync(
+            conn,
+            entity_id=canonical_new,
+            entity_type=new_type,
+            aliases=alias_list,
+            lifecycle=old_row.get("lifecycle"),
+        )
+        # sync_entity_aliases registers aliases under the NEW type only; the
+        # prior compound id carries the OLD type prefix and resolve_entity_reference
+        # scopes alias lookups by that prefix, so register the old id as a
+        # cross-type alias under the old type as well.
+        _register_cross_type_alias(conn, canonical_new, old_type, old_id)
+        if assertion_ids:
+            reindex_assertions_fts_batch(conn, assertion_ids)
+        check_foreign_keys(conn)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+    recompute_salience_after_commit(conn, canonical_new)
+    _emit_retyped(
+        old_id=old_id, new_id=canonical_new, old_type=old_type, new_type=new_type
+    )
+
+    return {
+        "old_id": old_id,
+        "new_id": canonical_new,
+        "old_type": old_type,
+        "new_type": new_type,
+        "assertion_ids_reindexed": assertion_ids,
+    }
+
+
+def _emit_retyped(*, old_id: str, new_id: str, old_type: str, new_type: str) -> None:
+    from .dispatch_ops._shared import record
+
+    record(
+        "cortex.entity.retyped",
+        old_id=old_id,
+        new_id=new_id,
+        old_type=old_type,
+        new_type=new_type,
+    )

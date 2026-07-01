@@ -19,9 +19,9 @@ from implement_admission.dense_spec_schema import (
     validate_dense_spec,
 )
 from implement_admission.implement_ready import _assertion_inactive
+from implement_admission.scheme_resolve import resolve_schemed_packet_file
 
 from ...db import query
-from .._shared import _FILES_ROOT
 from ._shared import _finding
 
 _KIND = "implement_ready_spec_unvalidated"
@@ -82,18 +82,7 @@ def _resolve_spec_path(attrs: dict[str, Any], evidence_uris: list[str]) -> str |
 
 
 def _resolve_spec_file(spec_path: str) -> Path | None:
-    uri = spec_path.strip()
-    for prefix in ("workspaces://", "cortex://", "ws://", "files://"):
-        if uri.lower().startswith(prefix):
-            uri = uri[len(prefix) :]
-    uri = uri.lstrip("/")
-    if not uri:
-        return None
-    candidate = (_FILES_ROOT / uri).resolve()
-    root = _FILES_ROOT.resolve()
-    if not str(candidate).startswith(str(root) + "/") and candidate != root:
-        return None
-    return candidate if candidate.is_file() else None
+    return resolve_schemed_packet_file(spec_path.strip())
 
 
 def _read_spec_text(spec_path: str) -> str | None:

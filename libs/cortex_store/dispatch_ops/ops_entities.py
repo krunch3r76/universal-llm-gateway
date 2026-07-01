@@ -13,7 +13,7 @@ from ..card import CARD_TOP_K_DEFAULT as _CARD_TOP_K_DEFAULT
 from ..db import WRITE_LOCK, cortex_conn
 from ..entity_aliases import resolve_entity_reference
 from ..entity_collision import attach_collision_warning, check_entity_collision
-from ..entity_rekey import entity_merge_impl, entity_rekey_impl
+from ..entity_rekey import entity_merge_impl, entity_rekey_impl, entity_retype_impl
 from ..trait_vocabulary import (
     ADOPTION_VALUES,
     CONFIDENCE_BAND_VALUES,
@@ -70,6 +70,9 @@ def _impls() -> tuple:
 
 
 logger = get_logger("cortex-api.dispatch_ops.entities")
+
+MAX_ENTITY_GET_BATCH_IDS = 50
+_BATCH_SUPPORTED_INTENTS = frozenset({"body", "card"})
 
 
 def _entity_get_body_response(
@@ -177,6 +180,156 @@ def _http_error_dict(exc: HTTPException) -> dict[str, Any]:
     return {"error": exc.detail, "status_code": exc.status_code}
 
 
+def _entity_get_single(
+    conn: sqlite3.Connection,
+    *,
+    entity_id: str,
+    intent: str,
+    include_edges: bool = False,
+    edge_limit: int = 20,
+    include_compaction_pointers: bool = False,
+    include_superseded: bool = False,
+    debug: bool = False,
+    top_k: int = _CARD_TOP_K_DEFAULT,
+    resolve_aliases: bool = True,
+    raw_id: bool = False,
+    section: str | None = None,
+    full_body: bool | None = None,
+) -> dict[str, Any]:
+    try:
+        canonical_id = _resolve_read_entity_id(
+            conn,
+            entity_id,
+            resolve_aliases=resolve_aliases,
+            raw_id=raw_id,
+        )
+    except HTTPException as exc:
+        return _http_error_dict(exc)
+    resolved_id = canonical_id if not raw_id else entity_id
+    if intent == "body":
+        return _entity_get_body_response(
+            conn,
+            resolved_id=resolved_id,
+            section=section,
+            full_body=full_body,
+        )
+    _, _get_entity_card_impl, _get_entity_impl, _, _ = _impls()
+    if intent == "card-md":
+        from ..subgraph_template import render_root_card_markdown
+
+        try:
+            return render_root_card_markdown(
+                conn,
+                entity_id=resolved_id,
+                top_k=top_k,
+            )
+        except HTTPException as exc:
+            return _http_error_dict(exc)
+    if intent == "card":
+        return _get_entity_card_impl(
+            conn,
+            entity_id=resolved_id,
+            top_k=top_k,
+            debug=debug,
+        )
+    return _get_entity_impl(
+        conn,
+        entity_id=canonical_id if not raw_id else entity_id,
+        include_edges=include_edges,
+        edge_limit=edge_limit,
+        include_compaction_pointers=include_compaction_pointers,
+        include_superseded=(
+            intent == "full-historical" or (intent == "full" and include_superseded)
+        ),
+    )
+
+
+def _batch_item_from_result(
+    input_entity_id: str,
+    result: dict[str, Any],
+) -> dict[str, Any]:
+    if "error" in result:
+        item: dict[str, Any] = {
+            "input_entity_id": input_entity_id,
+            "ok": False,
+            "error": result["error"],
+        }
+        if "status_code" in result:
+            item["status_code"] = result["status_code"]
+        elif isinstance(result["error"], str) and "Entity not found" in result["error"]:
+            item["status_code"] = 404
+        return item
+    resolved_entity_id = result.get("entity_id") or result.get("id") or input_entity_id
+    return {
+        "input_entity_id": input_entity_id,
+        "ok": True,
+        "resolved_entity_id": resolved_entity_id,
+        **result,
+    }
+
+
+def _entity_get_batch(
+    entity_ids: list[str],
+    *,
+    intent: str,
+    include_edges: bool = False,
+    edge_limit: int = 20,
+    include_compaction_pointers: bool = False,
+    include_superseded: bool = False,
+    debug: bool = False,
+    top_k: int = _CARD_TOP_K_DEFAULT,
+    resolve_aliases: bool = True,
+    raw_id: bool = False,
+    section: str | None = None,
+    full_body: bool | None = None,
+) -> dict[str, Any]:
+    if not isinstance(entity_ids, list):
+        return {"error": "entity_ids must be a list", "status_code": 400}
+    if not entity_ids:
+        return {"error": "entity_ids must not be empty", "status_code": 400}
+    received = len(entity_ids)
+    if received > MAX_ENTITY_GET_BATCH_IDS:
+        return {
+            "error": "batch_over_cap",
+            "received": received,
+            "max": MAX_ENTITY_GET_BATCH_IDS,
+            "status_code": 400,
+        }
+    if intent not in _BATCH_SUPPORTED_INTENTS:
+        return {
+            "error": "batch_intent_unsupported",
+            "supported": sorted(_BATCH_SUPPORTED_INTENTS),
+            "status_code": 400,
+        }
+    if intent in {"card", "card-md"} and (
+        not isinstance(top_k, int) or top_k < 1 or top_k > 50
+    ):
+        return {"error": "top_k must be int in [1, 50]"}
+    items: list[dict[str, Any]] = []
+    with cortex_conn() as conn:
+        for eid in entity_ids:
+            try:
+                result = _entity_get_single(
+                    conn,
+                    entity_id=eid,
+                    intent=intent,
+                    include_edges=include_edges,
+                    edge_limit=edge_limit,
+                    include_compaction_pointers=include_compaction_pointers,
+                    include_superseded=include_superseded,
+                    debug=debug,
+                    top_k=top_k,
+                    resolve_aliases=resolve_aliases,
+                    raw_id=raw_id,
+                    section=section,
+                    full_body=full_body,
+                )
+            except HTTPException as exc:
+                result = _http_error_dict(exc)
+            items.append(_batch_item_from_result(eid, result))
+    return {"items": items, "count": len(items)}
+
+
 def _op_entities(
     type: str | None = None,
     workflow_state: str | None = None,
@@ -224,6 +377,7 @@ def _op_entities_by_content_hash(
 
 def _op_entity_get(
     entity_id: str | None = None,
+    entity_ids: list[str] | None = None,
     include_edges: bool = False,
     edge_limit: int = 20,
     include_compaction_pointers: bool = False,
@@ -248,7 +402,26 @@ def _op_entity_get(
     Default (no section, ``full_body`` unset): whole body. Response includes
     ``render_mode`` (``"full"`` | ``"manifest"``).
     intent in {"cluster","impact"} — reserved; rejected until later phases.
+    ``entity_ids`` — batch read; same ``intent``/options for every id; returns
+    ``{"items": [...], "count": N}`` (batch mode supports ``body`` and ``card`` only).
     """
+    if entity_ids is not None and entity_id is not None:
+        return {"error": "both_entity_id_and_entity_ids", "status_code": 400}
+    if entity_ids is not None:
+        return _entity_get_batch(
+            entity_ids,
+            intent=intent,
+            include_edges=include_edges,
+            edge_limit=edge_limit,
+            include_compaction_pointers=include_compaction_pointers,
+            include_superseded=include_superseded,
+            debug=debug,
+            top_k=top_k,
+            resolve_aliases=resolve_aliases,
+            raw_id=raw_id,
+            section=section,
+            full_body=full_body,
+        )
     if not entity_id:
         return {"error": "entity_id is required"}
     if intent not in {
@@ -297,52 +470,21 @@ def _op_entity_get(
         not isinstance(top_k, int) or top_k < 1 or top_k > 50
     ):
         return {"error": "top_k must be int in [1, 50]"}
-    _, _get_entity_card_impl, _get_entity_impl, _, _ = _impls()
     with cortex_conn() as conn:
-        try:
-            canonical_id = _resolve_read_entity_id(
-                conn,
-                entity_id,
-                resolve_aliases=resolve_aliases,
-                raw_id=raw_id,
-            )
-        except HTTPException as exc:
-            return _http_error_dict(exc)
-        resolved_id = canonical_id if not raw_id else entity_id
-        if intent == "body":
-            return _entity_get_body_response(
-                conn,
-                resolved_id=resolved_id,
-                section=section,
-                full_body=full_body,
-            )
-        if intent == "card-md":
-            from ..subgraph_template import render_root_card_markdown
-
-            try:
-                return render_root_card_markdown(
-                    conn,
-                    entity_id=resolved_id,
-                    top_k=top_k,
-                )
-            except HTTPException as exc:
-                return _http_error_dict(exc)
-        if intent == "card":
-            return _get_entity_card_impl(
-                conn,
-                entity_id=resolved_id,
-                top_k=top_k,
-                debug=debug,
-            )
-        return _get_entity_impl(
+        return _entity_get_single(
             conn,
-            entity_id=canonical_id if not raw_id else entity_id,
+            entity_id=entity_id,
+            intent=intent,
             include_edges=include_edges,
             edge_limit=edge_limit,
             include_compaction_pointers=include_compaction_pointers,
-            include_superseded=(
-                intent == "full-historical" or (intent == "full" and include_superseded)
-            ),
+            include_superseded=include_superseded,
+            debug=debug,
+            top_k=top_k,
+            resolve_aliases=resolve_aliases,
+            raw_id=raw_id,
+            section=section,
+            full_body=full_body,
         )
 
 
@@ -549,6 +691,24 @@ def _op_entity_rekey(
     except HTTPException as exc:
         return _http_error_dict(exc)
     logger.info("cortex entity_rekey: %s -> %s", old_id, result["new_id"])
+    return result
+
+
+def _op_entity_retype(
+    entity_id: str | None = None,
+    new_type: str | None = None,
+    **_: object,
+) -> dict[str, Any]:
+    if not entity_id:
+        return {"error": "entity_id is required"}
+    if not new_type:
+        return {"error": "new_type is required"}
+    try:
+        with WRITE_LOCK, cortex_conn() as conn:
+            result = entity_retype_impl(conn, entity_id, new_type)
+    except HTTPException as exc:
+        return _http_error_dict(exc)
+    logger.info("cortex entity_retype: %s -> %s", entity_id, result["new_id"])
     return result
 
 

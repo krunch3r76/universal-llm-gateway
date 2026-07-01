@@ -30,10 +30,10 @@ logger = get_logger(__name__)
 
 _FS_AMBIGUOUS_PREFIXES = frozenset({"notes", "tasks", "tmp", "agent-skills", "services"})
 
-_FS_SANDBOX_ROOTS_MSG = (
-    "sandbox is required. cortex = /data/files (notes, agent-skills, threads, dropbox); "
-    "workspaces = repo source under /mnt/torus/projects (must include repo prefix, "
-    "e.g. universal-llm-gateway/...)."
+_FS_SANDBOX_HINT = (
+    "sandbox is required when path has no Share URI scheme. "
+    "Use workspaces://{repo}/{rel} or cortex://{rel}, "
+    "or pass sandbox=cortex|workspaces explicitly."
 )
 
 
@@ -61,17 +61,15 @@ def fs_missing_sandbox_hint(path: str = "") -> str:
         first = parts[0]
         if first in _known_workspaces_repo_names():
             return (
-                f"{_FS_SANDBOX_ROOTS_MSG} Path advisory: looks like workspaces; "
-                "pass sandbox=workspaces."
+                f"{_FS_SANDBOX_HINT} Path advisory: looks like workspaces; "
+                "pass sandbox=workspaces or use workspaces://{repo}/..."
             )
         if first in _FS_AMBIGUOUS_PREFIXES:
             return (
-                f"{_FS_SANDBOX_ROOTS_MSG} Path advisory: ambiguous — this path shape "
-                "exists under BOTH stores; disambiguate explicitly."
+                f"{_FS_SANDBOX_HINT} Path advisory: ambiguous — this path shape "
+                "exists under BOTH stores; use cortex:// or workspaces:// scheme."
             )
-    return (
-        f"{_FS_SANDBOX_ROOTS_MSG} Pass sandbox=cortex or sandbox=workspaces."
-    )
+    return f"{_FS_SANDBOX_HINT}"
 
 
 # Per-session invocation tracker for Signal 5 (first_invocation_this_session).

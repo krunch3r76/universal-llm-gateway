@@ -16,6 +16,8 @@ from __future__ import annotations
 import sqlite3
 from typing import TYPE_CHECKING, Any
 
+from implement_admission.evidence_uri_project import project_evidence_uri_for_display
+
 from .subgraph_neighbor_fidelity import NeighborFidelity
 
 if TYPE_CHECKING:
@@ -77,7 +79,9 @@ def _provenance_flag(assertion: dict[str, Any]) -> str:
     if dtype == "quotation":
         return " [verbatim-quote]"
     uris = assertion.get("evidence_uris") or []
-    if isinstance(uris, list) and any(_is_uri_shaped(u) for u in uris):
+    if isinstance(uris, list) and any(
+        _is_uri_shaped(project_evidence_uri_for_display(str(u))) for u in uris if u
+    ):
         return " [primary-source-backed]"
     if dtype == "inference":
         return " [derived]"

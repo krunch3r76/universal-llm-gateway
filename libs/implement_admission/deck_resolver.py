@@ -82,13 +82,18 @@ def _path_contained_in(candidate: Path, root: Path) -> bool:
 
 
 def _rel_to_workspaces(full_path: Path, workspaces_root: Path) -> str:
+    from implement_admission.share_uri_emit import to_share_uri
+
     root = workspaces_root.resolve()
     resolved = full_path.resolve()
+    repo = _repo_base(root)
     try:
-        return resolved.relative_to(root).as_posix()
+        rel = resolved.relative_to(repo.resolve()).as_posix()
     except ValueError:
-        repo = _repo_base(root)
-        return f"{_ULG_REPO_DIRNAME}/{resolved.relative_to(repo).as_posix()}"
+        rel = resolved.relative_to(root).as_posix()
+    if repo != root:
+        rel = f"{repo.name}/{rel}"
+    return to_share_uri("workspaces", rel)
 
 
 def _disambiguate(candidates: list[Path], attrs: dict) -> Path | None:

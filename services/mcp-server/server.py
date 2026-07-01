@@ -44,8 +44,6 @@ from starlette.middleware.gzip import GZipMiddleware
 from tool_access import dispatch_denial_reason, is_dispatch_tool_allowed
 from tool_error_enricher import fs_missing_sandbox_hint, register_tool_error_enricher
 from tool_search import capture_overflow_metadata, register_tool_search_tool
-from universal_logging import get_logger
-
 from tools._agent_bus_read import register_agent_bus_read_tool
 from tools._agent_tools import JsonArgStr
 from tools.advisor import register_advisor_tools
@@ -91,6 +89,7 @@ from tools.sqlite import register_sqlite_tools
 from tools.topology import register_topology_tools
 from tools.web import register_web_tools
 from tools.x_dm import register_x_dm_tools
+from universal_logging import get_logger
 
 if TYPE_CHECKING:
     from asyncio.transports import BaseTransport
@@ -372,7 +371,15 @@ def _build_server() -> tuple[
 
     _fs_standard_ops_doc = sandbox_op_doc()
     _fs_tool_description = (
-        "File I/O across sandboxes (cortex, workspaces). Both sandbox and op are REQUIRED.\n\n"
+        "File I/O across sandboxes (cortex, workspaces). `op` is REQUIRED; "
+        "`sandbox` is optional when `path` carries a Share URI scheme.\n\n"
+        "Share URI grammar (canonical cross-resident refs):\n"
+        "  workspaces://{repo}/{rel}  — repository source, tasks, docs\n"
+        "  cortex://{rel}             — notes, agent-skills, dropbox, uploads\n\n"
+        "Examples:\n"
+        '  fs(op="read", path="workspaces://universal-llm-gateway/tasks/specs/foo.md")\n'
+        '  fs(op="read", path="cortex://notes/system/specs/foo.md")\n'
+        '  fs(sandbox="workspaces", op="read", path="universal-llm-gateway/libs/foo.py")\n\n'
         "`read` is unified across sandboxes: source files plus text-oriented\n"
         "document formats such as PDF, DOCX, ODT, EML, and HTML can be read in\n"
         "text mode from `cortex` or `workspaces`. Optional `offset` (0-based lines\n"
@@ -396,18 +403,10 @@ def _build_server() -> tuple[
         'preserves table structure, or ``dispatch(tool="extract_document", ...)``\n'
         "for scanned documents needing OCR sidecars. PDF reads include an\n"
         "``extraction`` field with method info and alternative suggestions.\n\n"
-        "Sandboxes:\n"
-        "  cortex     — /data/files — user documents, notes, uploads, exports\n"
-        "  workspaces — /mnt/torus/projects/ — repository source, config, tasks, docs\n\n"
-        "workspaces paths MUST include the repo name prefix:\n"
-        '  fs(sandbox="workspaces", op="read", path="universal-llm-gateway/tasks/specs/foo.md")\n'
-        '  fs(sandbox="workspaces", op="list", path="universal-llm-gateway/config")\n'
-        '  fs(sandbox="workspaces", op="list", path="universal-llm-gateway")  ← repo root\n\n'
+        "Responses dual-carry `path` (sandbox-relative) and `uri` (canonical Share URI).\n"
+        "Host mount paths are accepted at ingress and normalized with an advisory;\n"
+        "egress never returns absolute mount paths.\n\n"
         'Use op="list" for directories; op="read" on a directory path returns an error.\n\n'
-        "Repo-relative code refs (``routes/foo.py``) auto-resolve under the matching\n"
-        "git repo when PROJECT_ROOT is multi-repo (``/mnt/torus/projects``). Prefer\n"
-        "fully-qualified workspaces paths in agent-bus messages:\n"
-        "``universal-llm-gateway/libs/.../routes/foo.py``.\n\n"
         "``find`` (workspaces only): locate files by name/glob — use instead of\n"
         "``search`` for filenames. ``search`` scans file *contents* with a regex.\n\n"
         "Write responses (``write``, ``replace``, ``append``, ``prepend``,\n"
@@ -423,7 +422,7 @@ def _build_server() -> tuple[
     @mcp.tool(title="File I/O (Sandboxed)", description=_fs_tool_description)
     def fs(
         op: str,
-        sandbox: str,
+        sandbox: str = "",
         description: str = "",
         path: str = "",
         paths: list[str] | None = None,
@@ -495,7 +494,28 @@ def _build_server() -> tuple[
     ) -> dict[str, Any]:
         if not op:
             return {"error": "'op' is required"}
-        if sandbox not in valid_sandboxes:
+
+        ingress_meta: dict[str, Any] = {}
+        effective_sandbox = sandbox.strip()
+        effective_path = path
+        if path.strip():
+            from implement_admission.scheme_resolve import resolve_fs_ingress
+
+            try:
+                ingress = resolve_fs_ingress(
+                    path,
+                    sandbox=effective_sandbox or None,
+                )
+            except ValueError as exc:
+                return {"error": str(exc)}
+            effective_sandbox = ingress.sandbox
+            effective_path = ingress.rel_path
+            if ingress.path_input_normalized:
+                ingress_meta["path_input_normalized"] = True
+            if ingress.normalization_advisory:
+                ingress_meta["normalization_advisory"] = ingress.normalization_advisory
+
+        if effective_sandbox not in valid_sandboxes:
             return {"error": fs_missing_sandbox_hint(path)}
         if target_sandbox and target_sandbox not in valid_sandboxes:
             return {
@@ -532,35 +552,39 @@ def _build_server() -> tuple[
             if md_op is None:
                 valid = ", ".join(sorted(md_op_map))
                 return {"error": f"Unknown markdown op: {op!r}. Available: {valid}"}
-            return md_fn(
+            result = md_fn(
                 op=md_op,
-                path=path,
-                sandbox=sandbox,
+                path=effective_path,
+                sandbox=effective_sandbox,
                 section=section,
                 content=content,
                 heading=heading,
                 level=level,
                 position=position,
             )
+            if isinstance(result, dict) and "error" not in result:
+                result.update(ingress_meta)
+            return result
 
-        if op == "copy" and target_sandbox and target_sandbox != sandbox:
-            if not path:
+        if op == "copy" and target_sandbox and target_sandbox != effective_sandbox:
+            if not effective_path:
                 return {"error": "'path' is required for copy"}
             if not target:
                 return {"error": "'target' is required for copy"}
             result = copy_between_sandboxes_impl(
-                sandbox,
-                path,
+                effective_sandbox,
+                effective_path,
                 target_sandbox,
                 target,
             )
             result["_next"] = FS_WORKFLOW_HINTS["copy"]
+            result.update(ingress_meta)
             return result
 
-        if sandbox == "workspaces":
-            return dispatch_workspaces_op(
+        if effective_sandbox == "workspaces":
+            result = dispatch_workspaces_op(
                 op,
-                path,
+                effective_path,
                 paths,
                 content,
                 target,
@@ -574,8 +598,11 @@ def _build_server() -> tuple[
                 overflow_registry,
                 FS_WORKFLOW_HINTS,
             )
+            if isinstance(result, dict) and "error" not in result:
+                result.update(ingress_meta)
+            return result
 
-        tool_name = sandbox_tool[sandbox]
+        tool_name = sandbox_tool[effective_sandbox]
         fn = overflow_registry.get(tool_name)
         if fn is None:
             return {"error": f"{tool_name} tool not available"}
@@ -583,9 +610,9 @@ def _build_server() -> tuple[
         # missing params) so both sandbox paths return uniform {error: str} dicts.
         # ∀ non-ValueError (I/O, etc.) still propagates to the outer envelope.
         try:
-            return fn(
+            result = fn(
                 op=op,
-                path=path,
+                path=effective_path,
                 paths=paths or [],
                 content=content,
                 target=target,
@@ -597,6 +624,9 @@ def _build_server() -> tuple[
                 expected_sha256=expected_sha256,
                 if_absent=if_absent,
             )
+            if isinstance(result, dict) and "error" not in result:
+                result.update(ingress_meta)
+            return result
         except ValueError as exc:
             return {"error": str(exc)}
 

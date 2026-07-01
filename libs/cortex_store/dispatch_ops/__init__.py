@@ -39,6 +39,14 @@ logger = get_logger("cortex-api.dispatch_ops")
 
 _PKG = __name__  # "cortex_store.dispatch_ops" — base for lazy submodule import
 
+# Params hidden from MCP doc surfaces (generator deny-set). raw_id/resolve_aliases
+# are intentionally agent-facing and must NOT appear here — panel adjudication
+# agent-bus:3903/3904/3905, assertion 21735.
+_INTERNAL_PARAMS: frozenset[str] = frozenset(
+    {"include_compaction_pointers", "content_hash", "status", "emit"}
+)
+_DEPRECATED_PARAM_NAMES: frozenset[str] = frozenset({"service"})
+
 
 # op-name -> "ops_submodule:attribute". The handler callable is resolved with
 # importlib on first lookup and memoized (see ``_LazyOpRegistry``). Keep this in
@@ -51,6 +59,7 @@ _OP_SPECS: dict[str, str] = {
     "entities_bulk_upsert": "ops_bulk:_op_entities_bulk_upsert",
     "entity_update": "ops_entities:_op_entity_update",
     "entity_rekey": "ops_entities:_op_entity_rekey",
+    "entity_retype": "ops_entities:_op_entity_retype",
     "entity_merge": "ops_entities:_op_entity_merge",
     "assertion_state": "ops_assertions:_op_assertion_state",
     "assertions": "ops_assertions:_op_assertions",
@@ -217,18 +226,19 @@ def execute_op(tool: str, arguments: object) -> Any:
             if skill_hint is not None:
                 result["skill_hint"] = skill_hint
         return result
+    is_batch_entity_get = tool == "entity_get" and "items" in result
     # Handler-set _next takes precedence — it carries per-call detail
     # (which warning categories fired, which suggestion is most relevant).
     # Static workflow hints apply only when the handler didn't write one.
     hint = _WORKFLOW_HINTS.get(tool)
     if hint and "_next" not in result:
         result["_next"] = hint
-    if tool == "entity_get" and result.get("intent") != "card":
+    if tool == "entity_get" and not is_batch_entity_get and result.get("intent") != "card":
         # Card v0 (§6.3) has its own bounded shape (top_k_assertions /
         # section_manifest); the EntityDetail-shaped completeness hint
         # would misreport "no assertions" against the projection.
         _enrich_entity_completeness(result)
-    if tool == "entity_get" and isinstance(result, dict):
+    if tool == "entity_get" and isinstance(result, dict) and not is_batch_entity_get:
         try:
             _intent = result.get("intent") or (parsed.get("intent") or "full")
             if "assertions" in result:
@@ -250,4 +260,10 @@ def execute_op(tool: str, arguments: object) -> Any:
     return result
 
 
-__all__ = ["_OPS", "execute_op"]
+__all__ = [
+    "_DEPRECATED_PARAM_NAMES",
+    "_INTERNAL_PARAMS",
+    "_OP_SPECS",
+    "_OPS",
+    "execute_op",
+]

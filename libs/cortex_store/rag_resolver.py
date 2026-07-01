@@ -21,10 +21,11 @@ the immutability contract documented in services/rag/README.md
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 from typing import Any
 
+from implement_admission.closeout_helpers import cortex_files_root
+from implement_admission.closeout_helpers import workspaces_root as _ws_root
 from transport_utils import DEFAULT_STARGATE_URL, make_sync_client
 from universal_logging import get_logger
 
@@ -32,9 +33,19 @@ logger = get_logger(__name__)
 
 _RAG_TIMEOUT = 15.0
 
-# Sandbox root paths — mirrors mcp-tool-awareness routing table.
-_WORKSPACES_ROOT = os.environ.get("WORKSPACES_ROOT", "/mnt/torus/projects")
-_FILES_ROOT = os.environ.get("CORTEX_FILES_ROOT", "/mnt/torus/mcp-data/files")
+# Sandbox root paths — env-driven; output stays absolute for the RAG indexer.
+
+
+def _workspaces_root_str() -> str:
+    return str(_ws_root())
+
+
+def _files_root_str() -> str:
+    return str(cortex_files_root())
+
+
+_WORKSPACES_ROOT = _workspaces_root_str()
+_FILES_ROOT = _files_root_str()
 
 
 class ChunkIdMismatchError(RuntimeError):

@@ -60,6 +60,152 @@ AGENT_GUIDES_RULE_SLUGS: dict[str, RuleManifestEntry | str] = {
         "source": "agent-surface/sources/plan-slug-coherence.md",
         "applicable_agents": ["*"],
     },
+    # Wave 5b.2 unit (c) additions — see notes/system/recon/rules-skills-mcp-reframe/
+    # unitc-applicability-curation.md for the locked disposition of each slug.
+    "modularization": {
+        "source": "agent-surface/sources/modularization.md",
+        "applicable_agents": ["*"],
+    },
+    "python312": {
+        "source": "agent-surface/sources/python312.md",
+        "applicable_agents": ["*"],
+    },
+    "javascript-modern": {
+        "source": "agent-surface/sources/javascript-modern.md",
+        "applicable_agents": ["*"],
+    },
+    "php-modern": {
+        "source": "agent-surface/sources/php-modern.md",
+        "applicable_agents": ["*"],
+    },
+    "php-api": {
+        "source": "agent-surface/sources/php-api.md",
+        "applicable_agents": ["*"],
+    },
+    "pwa-patterns": {
+        "source": "agent-surface/sources/pwa-patterns.md",
+        "applicable_agents": ["*"],
+    },
+    "testing-discipline": {
+        "source": "agent-surface/sources/testing-discipline.md",
+        "applicable_agents": ["*"],
+    },
+    "doc-patterns": {
+        "source": "agent-surface/sources/doc-patterns.md",
+        "applicable_agents": ["*"],
+    },
+    "session-transcript-fidelity": {
+        "source": "agent-surface/sources/session-transcript-fidelity.md",
+        "applicable_agents": ["*"],
+    },
+    "phase-vocabulary": {
+        "source": "agent-surface/sources/phase-vocabulary.md",
+        "applicable_agents": ["*"],
+    },
+    "lessons": {
+        "source": "agent-surface/sources/lessons.md",
+        "applicable_agents": ["*"],
+    },
+    "phase-policy": {
+        "source": "agent-surface/sources/phase-policy.md",
+        "applicable_agents": ["*"],
+    },
+    "todo-lifecycle": {
+        "source": "agent-surface/sources/todo-lifecycle.md",
+        "applicable_agents": ["*"],
+    },
+    "deployment-topology": {
+        "source": "agent-surface/sources/deployment-topology.md",
+        "applicable_agents": ["*"],
+    },
+    "docs-write-guard": {
+        "source": "agent-surface/sources/docs-write-guard.md",
+        "applicable_agents": ["*"],
+    },
+    "cortex-workbench": {
+        "source": "agent-surface/sources/cortex-workbench.md",
+        "applicable_agents": ["*"],
+    },
+    "request-routing": {
+        "source": "agent-surface/sources/request-routing.md",
+        "applicable_agents": ["*"],
+    },
+    "federation-architecture": {
+        "source": "agent-surface/sources/federation-architecture.md",
+        "applicable_agents": ["*"],
+    },
+    "pipeline-development": {
+        "source": "agent-surface/sources/pipeline-development.md",
+        "applicable_agents": ["*"],
+    },
+    "rag-architecture": {
+        "source": "agent-surface/sources/rag-architecture.md",
+        "applicable_agents": ["*"],
+    },
+    "stargate-live-state": {
+        "source": "agent-surface/sources/stargate-live-state.md",
+        "applicable_agents": ["*"],
+    },
+    "cortex-feature-registry": {
+        "source": "agent-surface/sources/cortex-feature-registry.md",
+        "applicable_agents": ["*"],
+    },
+    "model-catalog-ids": {
+        "source": "agent-surface/sources/model-catalog-ids.md",
+        "applicable_agents": ["*"],
+    },
+    "cloud-model-routing": {
+        "source": "agent-surface/sources/cloud-model-routing.md",
+        "applicable_agents": ["*"],
+    },
+    "event-system-reference": {
+        "source": "agent-surface/sources/event-system-reference.md",
+        "applicable_agents": ["*"],
+    },
+    "pipeline-consensus-patterns": {
+        "source": "agent-surface/sources/pipeline-consensus-patterns.md",
+        "applicable_agents": ["*"],
+    },
+    "pipeline-viewer-conventions": {
+        "source": "agent-surface/sources/pipeline-viewer-conventions.md",
+        "applicable_agents": ["*"],
+    },
+    "pipeline-testing": {
+        "source": "agent-surface/sources/pipeline-testing.md",
+        "applicable_agents": ["*"],
+    },
+    "frontier-model-context-policy": {
+        "source": "agent-surface/sources/frontier-model-context-policy.md",
+        "applicable_agents": ["*"],
+    },
+    "mcp-selector-naming": {
+        "source": "agent-surface/sources/mcp-selector-naming.md",
+        "applicable_agents": ["*"],
+    },
+    "mcp-tool-param-types": {
+        "source": "agent-surface/sources/mcp-tool-param-types.md",
+        "applicable_agents": ["*"],
+    },
+    "consensus-metrics-debugging": {
+        "source": "agent-surface/sources/consensus-metrics-debugging.md",
+        "applicable_agents": ["*"],
+    },
+    "yaml-field-naming": {
+        "source": "agent-surface/sources/yaml-field-naming.md",
+        "applicable_agents": ["*"],
+    },
+    "json-schema-gguf": {
+        "source": "agent-surface/sources/json-schema-gguf.md",
+        "applicable_agents": ["*"],
+    },
+    "vision-extensions": {
+        "source": "agent-surface/sources/vision-extensions.md",
+        "applicable_agents": ["*"],
+    },
+    "engineering-conduct": {
+        "source": "agent-surface/sources/engineering-conduct.md",
+        "applicable_agents": ["*"],
+    },
 }
 
 

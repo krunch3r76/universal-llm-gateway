@@ -140,7 +140,12 @@ def safe_path(relative: str) -> Path:
 
     Raises ValueError if the resolved path escapes the sandbox root.
     """
-    clean = relative.lstrip("/")
+    from implement_admission.scheme_resolve import resolve_fs_ingress
+
+    ingress = resolve_fs_ingress(relative, sandbox="cortex")
+    if ingress.resolved is not None:
+        return ingress.resolved
+    clean = ingress.rel_path.lstrip("/")
     candidate = (SANDBOX_ROOT / clean).resolve()
     try:
         candidate.relative_to(SANDBOX_ROOT)

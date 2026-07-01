@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from implement_admission.scheme_resolve import resolve_schemed_packet_file
+from implement_admission.share_uri_emit import to_share_uri
 from reconstruct_constants import FILES_ROOT, PATH_RE, WORKSPACES_ROOT
 from reconstruct_models import Candidate
 
@@ -29,17 +31,23 @@ def normalize_uri_typos(uri: str) -> str:
 
 
 def path_exists_for_uri(uri: str) -> tuple[bool, str | None]:
-    """Return (exists, canonical_uri_for_attach)."""
+    """Return (exists, canonical Share URI for attach)."""
     uri = normalize_uri_typos(uri)
     if uri.startswith(("agent-bus:", "email-bridge:")):
         return False, None
     if uri.startswith("http://") or uri.startswith("https://"):
         return True, uri
+    candidate = resolve_schemed_packet_file(uri)
+    if candidate is not None and candidate.is_file():
+        if uri.startswith("workspaces://"):
+            return True, uri
+        if uri.startswith("cortex://"):
+            return True, uri
+        if uri.startswith("files://"):
+            rel = candidate.relative_to(FILES_ROOT.resolve()).as_posix()
+            return True, to_share_uri("cortex", rel)
+        return True, uri
     if uri.startswith("cortex://"):
-        rest = uri[len("cortex://") :]
-        notes_path = FILES_ROOT / rest
-        if notes_path.is_file():
-            return True, f"files://{notes_path}"
         try:
             from cortex_store.rag_resolver import normalize_evidence_uri
 
@@ -56,10 +64,14 @@ def path_exists_for_uri(uri: str) -> tuple[bool, str | None]:
         if not p.is_absolute():
             p = FILES_ROOT / p
         exists = p.is_file()
-        return exists, uri if exists else None
+        if exists:
+            rel = p.relative_to(FILES_ROOT.resolve()).as_posix()
+            return True, to_share_uri("cortex", rel)
+        return False, None
     p = FILES_ROOT / uri
     if p.is_file():
-        return True, uri
+        rel = p.relative_to(FILES_ROOT.resolve()).as_posix()
+        return True, to_share_uri("cortex", rel)
     return False, None
 
 

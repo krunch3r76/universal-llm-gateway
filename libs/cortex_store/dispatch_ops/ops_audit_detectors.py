@@ -38,11 +38,21 @@ from ._detectors.cases import (
     detect_case_no_relationships,
     detect_document_not_wired_to_case,
 )
+from ._detectors.condition import (
+    detect_advice_failure_recurrence,
+    detect_stale_reveal_level,
+    detect_suppressed_actionable_edge,
+    detect_unresolved_safety_conflict,
+)
 from ._detectors.entity import (
     detect_agent_skill_not_in_canonical_sandbox,
     detect_entity_empty_description,
     detect_entity_source_uri_missing,
     detect_entity_source_uri_unresolved,
+)
+from ._detectors.entity_grammar import (
+    detect_entity_structural_antipattern,
+    detect_entity_vocabulary_grammar,
 )
 from ._detectors.fk_orphan import detect_foreign_key_orphan
 from ._detectors.forbidden_surfaces import detect_forbidden_surfaces
@@ -65,12 +75,6 @@ from ._detectors.session import detect_prior_session_id_omitted
 from ._detectors.skill_binding import (
     detect_skill_binding_missing,
     detect_skill_binding_tool_unknown,
-)
-from ._detectors.condition import (
-    detect_advice_failure_recurrence,
-    detect_stale_reveal_level,
-    detect_suppressed_actionable_edge,
-    detect_unresolved_safety_conflict,
 )
 from ._detectors.todo import (
     detect_todo_dense_spec_attributes_unpopulated,
@@ -127,6 +131,9 @@ GRAPH_ONLY_KINDS = {
     "stale_reveal_level",
     "unresolved_safety_conflict",
     "advice_failure_recurrence",
+    # Entity-lifecycle grammar / structural anti-patterns (Wave-3).
+    "entity_vocabulary_grammar",
+    "entity_structural_antipattern",
     # missing_handoff retired — handoffs are optional artifacts for manual
     # copy-paste at end of chat; absence is not a gap (assertion 8384,
     # session web-2026-05-04-1057).
@@ -200,6 +207,8 @@ def get_all_detectors() -> dict[str, Any]:
         "stale_reveal_level": detect_stale_reveal_level,
         "unresolved_safety_conflict": detect_unresolved_safety_conflict,
         "advice_failure_recurrence": detect_advice_failure_recurrence,
+        "entity_vocabulary_grammar": detect_entity_vocabulary_grammar,
+        "entity_structural_antipattern": detect_entity_structural_antipattern,
     }
 
 
@@ -273,6 +282,8 @@ __all__ = [
     "detect_decision_workflow_state_incoherent",
     "detect_document_not_wired_to_case",
     "detect_entity_empty_description",
+    "detect_entity_structural_antipattern",
+    "detect_entity_vocabulary_grammar",
     "detect_entity_source_uri_missing",
     "detect_entity_source_uri_unresolved",
     "detect_forbidden_surfaces",

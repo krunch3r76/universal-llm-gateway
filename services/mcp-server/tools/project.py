@@ -42,6 +42,7 @@ from ._project_paths import (
     normalize_directory_arg,
     resolve_existing_file,
     workspaces_relative,
+    workspaces_share_uri,
 )
 from ._search_helpers import (
     SEARCH_BINARY_SUFFIXES,
@@ -108,7 +109,16 @@ def _safe_project_path(relative: str) -> Path:
 
 
 def _resolve_project_file_path(relative: str) -> tuple[Path, str]:
-    """Resolve a readable file, including repo-relative refs without repo prefix."""
+    """Resolve a readable file via shared ingress, including Share URIs."""
+    from implement_admission.scheme_resolve import resolve_fs_ingress
+
+    try:
+        ingress = resolve_fs_ingress(relative, sandbox="workspaces")
+    except ValueError:
+        ingress = None
+    if ingress is not None and ingress.resolved is not None:
+        rel = ingress.rel_path
+        return ingress.resolved, rel
     resolved = resolve_existing_file(relative, root=_PROJECT_ROOT.resolve())
     if resolved is not None:
         rel = workspaces_relative(resolved, _PROJECT_ROOT.resolve())
@@ -358,6 +368,7 @@ def register_project_tools(mcp: FastMCP) -> None:
             rel_path, root=_PROJECT_ROOT, binary=binary, offset=offset, limit=limit
         )
         result["path"] = rel_path
+        result["uri"] = workspaces_share_uri(src, _PROJECT_ROOT.resolve())
         if rel_path != path.lstrip("/"):
             result["resolved_from"] = path
         auto_binary = bool(result.get("auto_binary"))
@@ -794,12 +805,13 @@ def register_project_tools(mcp: FastMCP) -> None:
             verify_persisted(target, written_sha256)
         except WriteVerifyError as exc:
             return cast("dict[str, str]", write_verify_error_dict(exc))
-        rel = str(target.relative_to(_PROJECT_ROOT.resolve()))
+        rel = workspaces_relative(target, _PROJECT_ROOT.resolve())
         logger.info("write_project_file: %s (%d chars)", rel, len(content))
         record("mcp.project.file.written", path=rel, size=len(content))
         return {
             "status": "written",
             "path": rel,
+            "uri": workspaces_share_uri(target, _PROJECT_ROOT.resolve()),
             "written_sha256": written_sha256,
         }
 

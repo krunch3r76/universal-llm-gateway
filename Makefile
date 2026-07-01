@@ -4,7 +4,7 @@
 # Ensure we use bash
 SHELL := /usr/bin/env bash
 
-.PHONY: help verify-uml status skill-graph-check skill-graph-reconcile
+.PHONY: help verify-uml status skill-graph-check skill-graph-reconcile claude-bundles
 
 help:
 	@echo "Available targets:"
@@ -39,3 +39,6 @@ skill-graph-check:
 
 skill-graph-reconcile:
 	python scripts/cortex/ingest_skills.py && python scripts/cortex/gen_skill_stubs.py --generate && python scripts/rag/attribute_skill_vocabulary.py
+
+claude-bundles:
+	python scripts/cortex/gen_claude_bundles.py

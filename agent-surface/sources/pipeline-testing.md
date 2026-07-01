@@ -1,0 +1,433 @@
+<!-- target:* -->
+# Pipeline Testing
+
+## Tool: `tools/pipeline_test/`
+
+Pipeline testing infrastructure for snapshot, inspect, replay, compare, consult.
+`consult` defaults to chained mode (sequential multi-model analysis);
+use `--parallel` to opt out. Use this instead of asking the user to re-run full pipelines.
+
+For free-form research questions (not tied to a pipeline step), use a
+research-scoped consult script instead.
+
+## When to Use
+
+- Prompt refinement: snapshot once, replay individual steps after editing prompts.yaml
+- Model selection: sandbox the pipeline, change `model_ref` in step YAML, replay to compare
+- Generation parameter tuning: edit `generation_parameters` in sandbox YAML, replay picks them up
+- Debugging: inspect full (untruncated) inputs and prompts for any step
+- A/B testing: compare original vs replay output with unified diff
+- Second opinion: consult other models for prompt improvement suggestions
+
+## MCP-Assisted Pipeline Iteration
+
+When MCP tools are available, use them for the run-observe-adjust loop.
+
+```
+# Run a pipeline and get execution_id
+pipeline(pipeline="rag-context", messages=[{"role":"user","content":"query text"}])
+
+# Get step-by-step trace
+observability(operation="pipeline-trace", params={"execution_id": "<id>"})
+
+# Compare two runs (before/after a change)
+observability(operation="compare-runs", params={"run_a": "<id1>", "run_b": "<id2>"})
+
+# Check what signals fired recently
+observability(operation="noise-profile", params={"minutes": 5})
+```
+
+MCP `pipeline` returns `execution_id` directly — no need for ID pinning or
+`--latest` when using MCP. For prompt refinement (replay, consult, inspect),
+use the CLI tools below with the execution ID from the MCP response.
+
+## Execution ID Pinning (CLI — CRITICAL)
+
+**∀ use of `--latest` in a thread: immediately capture the execution ID and use it for all subsequent calls.**
+
+The user may run pipelines independently between agent turns. `--latest` resolves at call time — if a new execution completes between two agent tool calls, they silently target different snapshots.
+
+```bash
+# Step 1: capture execution ID immediately after --latest
+EXEC_ID=$(python -m tools.pipeline_test list consensus-chain-v7 | head -3 | grep -oP '\b[0-9a-f]{8}\b' | head -1)
+echo "Pinned to: $EXEC_ID"
+
+# Step 2: all subsequent calls use the fixture, not --latest
+python -m tools.pipeline_test snapshot --latest consensus-chain-v7  # or: snapshot consensus-chain-v7
+python -m tools.pipeline_test replay fixtures/<pipeline>_<id>.json -s <step> ...
+python -m tools.pipeline_test refine-context fixtures/<pipeline>_<id>.json -s <step> ...
+```
+
+Or read execution ID from the Event Service:
+```bash
+scripts/query-events --sql "SELECT execution_id FROM events WHERE signal='pipeline.completed' ORDER BY seq DESC LIMIT 1"
+```
+
+**❌ DO NOT**: use `--latest` for step 2, 3, 4... of any multi-step analysis
+**✅ DO**: pin to the specific execution ID on the first access, use fixture path thereafter
+
+## Scope Discipline (CRITICAL)
+
+**∀ prompt refinement: start narrow, expand only when justified.**
+
+1. Focus on the **single problem step** — edit its prompt, replay, compare
+2. Do NOT preemptively modify downstream steps based on expected output changes
+3. Expand to downstream steps only when:
+   - The prompt change **reshapes the output structure** (e.g., new JSON fields, different section layout)
+   - Replay confirms the output has changed in ways that break downstream expectations
+4. When expanding: inspect each downstream step's inputs to verify they actually
+   receive the reshaped output, then adjust prompts as needed
+
+Narrow scope is the default. The agent is permitted to expand when evidence
+(replay output) shows downstream impact — not speculatively.
+
+## Prompt-First Attribution (CRITICAL)
+
+**∀ output quality issue: the prompt is the problem until proven otherwise.**
+
+The cheapest, fastest lever is prompt edits. Exhaust prompt variations before
+considering model changes.
+
+### Experimentation mindset
+
+- **Try shorter prompts** — verbosity ≠ clarity; small models follow terse
+  instructions more reliably than long ones
+- **Try more direct language** — imperative verbs, bullet constraints, no hedging
+- **Use NLP/linguistics terminology** when appropriate — "coreference resolution",
+  "discourse coherence", "anaphora", "topic sentence", "semantic overlap" can be
+  more precise than natural-language descriptions
+- **Restructure, don't just edit** — reorder sections, split multi-objective
+  prompts into single-objective ones, remove examples that might anchor bad patterns
+- **Vary framing** — role-play ("You are an editor"), constraint-first ("Rules:
+  ... Text to edit:"), few-shot, zero-shot
+- Each replay is cheap; prefer 3 novel prompt variants over 1 carefully
+  hand-tuned revision
+
+### Before attributing to model limitation
+
+**∀ suspected model issue: try at least two substantively different prompt
+approaches via replay, or confirm with `--model` comparison.**
+
+Only attribute to model limitation when ALL of:
+
+1. At least **two substantively different** prompt approaches have been replayed
+   with no improvement
+2. The same prompt replayed on a **different model** (via `--model` or `consult`)
+   produces clearly better output — proving the prompt was adequate
+3. The failure mode is a known class limitation (e.g., 7B models struggling with
+   multi-step JSON reasoning)
+
+When suspecting model limitation, use `consult` to get a second opinion from
+larger models. If they confirm the prompt is fine, then recommend a model change
+with evidence.
+
+### Recording model limitations as discoveries
+
+When evidence confirms a genuine model limitation (criteria above met), suggest
+capturing it as a discovery so it persists across sessions. The discovery should
+include:
+
+- Which model and parameter count
+- The task class that failed (e.g., "multi-step JSON reasoning", "long-context
+  deduplication", "cross-section coherence tracking")
+- What prompt approaches were tried and failed
+- Which model succeeded on the same prompt (the control)
+
+This builds a **model capability map** over time — preventing future agents from
+re-discovering the same limitations and guiding model selection for new steps.
+
+## Progressive Context (CRITICAL)
+
+**∀ step inspection: start with `--summary`, narrow in as needed.**
+
+The agent MUST NOT dump full step content into context. Instead:
+
+1. **Start with `--summary`** — structural overview (~10-20 lines, zero full text)
+2. **Read selectively** — use `--prompt`, `--input KEY`, or `--output` for the
+   specific piece needed
+3. **Full view only when necessary** — omit all flags only when you need everything
+
+This prevents 20K+ chars of irrelevant input/prompt/output from filling context
+when only one piece is needed.
+
+```bash
+# Step 1: structural overview (ALWAYS start here)
+python -m tools.pipeline_test refine-context --latest consensus-chain-v7 -s review_redundancy --summary
+
+# Step 2: read what you need
+python -m tools.pipeline_test refine-context --latest consensus-chain-v7 -s review_redundancy --prompt -c assess_0
+python -m tools.pipeline_test refine-context --latest consensus-chain-v7 -s review_redundancy --input artifact
+python -m tools.pipeline_test refine-context --latest consensus-chain-v7 -s review_redundancy --output
+
+# Step 3 (only if needed): full view
+python -m tools.pipeline_test refine-context --latest consensus-chain-v7 -s review_redundancy
+```
+
+## Quick Reference
+
+```bash
+# Requires venv
+source ~/.venvs/universal/bin/activate
+
+# List/snapshot
+python -m tools.pipeline_test list consensus-chain-v7
+python -m tools.pipeline_test snapshot --latest consensus-chain-v7
+
+# Refine-context (progressive: summary → targeted → full)
+python -m tools.pipeline_test refine-context --latest consensus-chain-v7 -s <step> --summary
+python -m tools.pipeline_test refine-context --latest consensus-chain-v7 -s <step> --prompt [-c call]
+python -m tools.pipeline_test refine-context --latest consensus-chain-v7 -s <step> --input <key>
+python -m tools.pipeline_test refine-context --latest consensus-chain-v7 -s <step> --output [-c call]
+python -m tools.pipeline_test refine-context --latest consensus-chain-v7 -s <step> [-c call]
+
+# From fixture (when pinning a specific execution)
+python -m tools.pipeline_test refine-context fixtures/FILE.json -s <step> --summary
+
+# Inspect (full metadata — for debugging timing/tokens, not prompt work)
+python -m tools.pipeline_test inspect fixtures/FILE.json
+
+# Replay (--latest or fixture; pipeline aliases resolved via --pipeline-dir)
+python -m tools.pipeline_test replay --latest consensus-chain-v7 -s <step> -c <call> --recorded -o replay.json
+python -m tools.pipeline_test replay --latest consensus-chain-v7 -s <step> -c <call> --pipeline-dir pipelines/consensus/v7 -o replay.json
+python -m tools.pipeline_test replay --latest consensus-chain-v7 -s <step> --model phi4 --pipeline-dir pipelines/consensus/v7 -o replay.json
+
+# Compare (--latest or fixture)
+python -m tools.pipeline_test compare --latest consensus-chain-v7 replay.json -s <step> -c <call>
+
+# Consult (chained by default, scope auto-detected from model tier)
+python -m tools.pipeline_test consult --latest consensus-chain-v7 -s <step> [-c <call>] -p "problem description"
+python -m tools.pipeline_test consult --latest consensus-chain-v7 -s <step> -p "problem" --models model1 model2
+python -m tools.pipeline_test consult --latest consensus-chain-v7 -s <step> -p "problem" --scope prompting
+
+# Parallel consult (independent perspectives, opt-in)
+python -m tools.pipeline_test consult --latest consensus-chain-v7 -s <step> -p "problem" --parallel
+
+# Ingest prompt-engineering PDFs for RAG-augmented consult
+python -m tools.pipeline_test ingest-papers docs/research/small_llm/prompting
+
+# Sandbox (experiment with model/param changes without touching repo)
+python -m tools.pipeline_test sandbox create pipelines/consensus/v8.0
+python -m tools.pipeline_test sandbox list
+python -m tools.pipeline_test sandbox apply consensus-v8.0 pipelines/consensus/v8.0
+python -m tools.pipeline_test sandbox clean consensus-v8.0
+```
+
+## Model Aliases
+
+`--model` accepts pipeline aliases (e.g., `phi4`, `qwen`) when `--pipeline-dir` is provided.
+The tool resolves aliases via `models.yaml` (searches from pipeline dir upward).
+Without `--pipeline-dir`, pass the full model ID (e.g., `phi-4-q4-k-m-16384`).
+
+## Model Consultation
+
+### Dynamic model selection
+
+`consult` calls the consult library's execute function with `role=prompt_engineer`.
+When `--models` is omitted, models are selected via intelligence profiles
+or cloud proxy selection matching `prompt_engineer_select` criteria
+(tags: code, reasoning; min_context: 32K).
+
+When stuck on a prompt issue, query other models for suggestions:
+
+```bash
+# Default: cloud proxy selects models, RAG on by default
+python -m tools.pipeline_test consult --latest consensus-chain-v7 \
+  -s synthesize_from_outline \
+  -p "output has redundant paragraphs between sections"
+
+# Specific call within an assess_loop step
+python -m tools.pipeline_test consult --latest consensus-chain-v7 \
+  -s review_redundancy -c assess_0 \
+  -p "critique misses within-paragraph duplication"
+
+# Override with specific models
+python -m tools.pipeline_test consult --latest consensus-chain-v7 \
+  -s synthesize_from_outline \
+  -p "weak section boundaries" \
+  --models openai/o3 google/gemini-2.5-pro
+```
+
+Use after inspecting the step (`--summary` → `--prompt`/`--output`) and
+forming a problem description. The consultant sees: system prompt, user prompt,
+model output, and your problem statement. It suggests specific prompt edits.
+
+### Chained consultation (default for `consult`)
+
+`consult` chains by default. Model 1 receives the standard prompt, model 2+
+receives the same prompt **plus** all prior models' full responses and a
+reviewer directive. RAG runs once and is shared across all chain steps. Use
+`--parallel` to opt out.
+
+```bash
+# Default: chained (auto-selected models, scope auto-detected from model tier)
+python -m tools.pipeline_test consult --latest consensus-chain-v7 \
+  -s review_coherence -c assess_0 \
+  -p "C1 false positive on deontic passive constructions"
+
+# Explicit models
+python -m tools.pipeline_test consult --latest consensus-chain-v7 \
+  -s review_coherence -c assess_0 \
+  -p "C1 false positive on deontic passive constructions" \
+  --models google/gemini-2.5-pro openai/gpt-5.2
+
+# Parallel mode (independent perspectives, simpler questions)
+python -m tools.pipeline_test consult --latest consensus-chain-v7 \
+  -s review_coherence -c assess_0 \
+  -p "minor formatting issue" --parallel
+```
+
+**When to use `--parallel`:**
+- Simpler questions where convergence/divergence across models is the signal
+- When you want truly independent perspectives without cross-contamination
+
+Chained mode produces ~40-75% more actionable changes than either model alone.
+
+**Invariant**: ∀ chained consultation: use different vendors or architectures.
+Same model twice produces diminishing returns.
+
+### Scope auto-detection
+
+`consult` auto-detects the RAG scope from the step's model tier:
+- Cloud model (`/` in ID) → `llm_prompting`
+- Local model → `small_llm_prompting`
+- Override with `--scope prompting` (tier-agnostic union)
+
+RAG is managed automatically — no manual RAG flags needed.
+`--no-rag` disables retrieval entirely. RAG degrades gracefully if unavailable.
+
+## Research Corpus Directory
+
+Prompt-engineering research PDFs live in a dedicated corpus directory. The RAG
+service converts PDFs to markdown in-memory during indexing —
+no intermediate `.md` files on disk. Each PDF's SHA-256 hash is stored in chunk
+metadata for cross-file dedup.
+
+To add papers: copy PDFs to the corpus dir, then index via the RAG `/index` endpoint
+with optional metadata overrides (e.g., `published_date` for recency scoring).
+Or use the CLI: `python -m tools.pipeline_test ingest-papers <pdf_or_dir> [--published YYYY-MM-DD]`
+
+The RAG watcher must include this directory in its config for automatic updates.
+
+## YAML Config Override (Model + Generation Parameters)
+
+When `--pipeline-dir` is provided, replay reads the step's YAML config to
+extract `model_ref` and `generation_parameters` — not just `prompts.yaml`.
+
+**Override precedence** (highest wins):
+1. CLI flags (`--model`, `--temperature`, `--max-tokens`)
+2. Step YAML config from `--pipeline-dir` (`model_ref`, `generation_parameters`)
+3. Snapshot recorded values
+
+This works in **both** recorded and re-render replay modes.
+
+`model_ref` values with `optionsNs.*` prefixes (e.g., `optionsNs.question_classify_model`)
+are resolved through the chain YAML's `options:` block before alias lookup via `models.yaml`.
+
+```bash
+# Edit model_ref in sandbox YAML, replay picks it up automatically
+python -m tools.pipeline_test replay --latest consensus-chain-v8.0 \
+  -s analyze_question \
+  --pipeline-dir /tmp/pipeline_sandboxes/consensus-v8.0 \
+  -o replay.json
+
+# CLI --model still overrides YAML config
+python -m tools.pipeline_test replay --latest consensus-chain-v8.0 \
+  -s analyze_question --model phi4 \
+  --pipeline-dir /tmp/pipeline_sandboxes/consensus-v8.0 \
+  -o replay.json
+```
+
+## Sandbox Workflow
+
+Use sandboxes to experiment with model assignments, generation parameters,
+and prompts without modifying the repo. All changes stay in `/tmp` until
+explicitly applied back.
+
+```bash
+# Create sandbox from production pipeline
+python -m tools.pipeline_test sandbox create pipelines/consensus/v8.0
+#  → Created sandbox 'consensus-v8.0' at /tmp/pipeline_sandboxes/consensus-v8.0/
+
+# Edit YAML in sandbox (model_ref, generation_parameters, prompts)
+# Then replay reads from sandbox:
+python -m tools.pipeline_test replay --latest consensus-chain-v8.0 \
+  -s analyze_question \
+  --pipeline-dir /tmp/pipeline_sandboxes/consensus-v8.0 \
+  -o replay.json
+
+# Compare original vs sandbox replay
+python -m tools.pipeline_test compare --latest consensus-chain-v8.0 \
+  replay.json -s analyze_question
+
+# When satisfied, apply changed files back to repo
+python -m tools.pipeline_test sandbox apply consensus-v8.0 pipelines/consensus/v8.0
+
+# List active sandboxes
+python -m tools.pipeline_test sandbox list
+
+# Clean up
+python -m tools.pipeline_test sandbox clean consensus-v8.0
+```
+
+**Sandbox location**: `/tmp/pipeline_sandboxes/` by default.
+Override via `PIPELINE_SANDBOX_ROOT` env var.
+
+**Invariant**: sandbox only or repo only. Do not mix edits across both
+locations during the same iteration cycle. Edit in sandbox, test via replay,
+apply back to repo when done.
+
+## Applying Changes
+
+Snapshots and replays are a **sandbox**. The source of truth is the pipeline's
+config YAMLs and `prompts.yaml`. After confirming a prompt or model change
+improves output via replay/compare, apply the change to the source files
+before the user runs a full pipeline execution.
+
+Editable pipeline files (per pipeline version, e.g., `pipelines/consensus/v7/`):
+
+| File | Contains |
+|---|---|
+| `prompts.yaml` | Prompt templates (system + user) |
+| `chain-v7.yaml` | Top-level step sequence, model refs |
+| `synthesize/synthesize.yaml` | Synthesize sub-pipeline steps, model refs, params |
+| `verify/verify.yaml` | Verify sub-pipeline steps |
+| `veto/veto.yaml` | Veto sub-pipeline steps |
+| `models.yaml` | Model alias → full model ID mapping |
+
+## Fixtures
+
+- Location: `tools/pipeline_test/fixtures/` (gitignored)
+- Self-contained: survive Stargate restarts
+- Input resolution: truncated values recovered from prior step outputs
+
+## Workflow
+
+The pipeline-refine workflow structures the process into four phases:
+
+1. **Orient** — inspect steps, pin to fixture, read summary then narrow in
+2. **Sandbox** — `sandbox create` copies the pipeline to `/tmp`; all edits happen there
+3. **Iterate** — edit sandbox YAML (prompts, model_ref, generation_parameters),
+   replay with `--pipeline-dir`, compare, consult, repeat
+4. **Apply** — `sandbox apply` copies only changed files back to the repo
+
+The sandbox ensures the repo pipeline is untouched during experimentation.
+Replay reads model and generation parameter changes from sandbox YAML automatically —
+no need to pass `--model` or `--temperature` on every invocation.
+
+### MCP + CLI Combined Workflow
+
+With MCP tools available, the optimal workflow combines both:
+
+| Phase | MCP | CLI |
+|---|---|---|
+| Run pipeline | `pipeline` | `curl` to `:9999/v1/chat/completions` |
+| Get trace | `observability(operation="pipeline-trace")` | `scripts/query-events --op pipeline-trace` |
+| Inspect steps | — | `refine-context --summary`, `--prompt`, `--output` |
+| Replay step | — | `replay -s <step> --pipeline-dir ...` |
+| Compare | `observability(operation="compare-runs")` | `compare fixture replay.json` |
+| Validate | `validate_pipeline` | `python scripts/validate-pipeline.py` |
+| Quality check | `dispatch("quality_gate")` | `ruff check && compileall` |
+
+MCP handles the outer loop (run, observe, compare). CLI handles the inner loop
+(inspect, replay, consult). Use MCP `execution_id` to bridge between them.
+<!-- /target:* -->

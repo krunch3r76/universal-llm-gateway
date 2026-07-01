@@ -10,10 +10,9 @@ _DELIVERABLE_ROUTING_PREAMBLE = (
     "DURABLE DELIVERABLE ROUTING (mandatory): Write task deliverables — sidecars, "
     "reviews, specs — to one of the two durable shares, using the exact path from "
     "your packet <mcp_capabilities> or files_expected:\n"
-    '  - cortex share via fs(sandbox="cortex", op="write", path="...") — '
-    "backed by /mnt/torus/mcp-data ($HOME/mcp-data); cortex:// scheme.\n"
-    '  - workspaces share via fs(sandbox="workspaces", op="write", path="...") — '
-    "backed by /mnt/torus/projects; workspaces:// scheme.\n"
+    '  - cortex share via fs(op="write", path="cortex://...") — cortex:// scheme.\n'
+    '  - workspaces share via fs(op="write", path="workspaces://{repo}/...") — '
+    "workspaces:// scheme.\n"
     "NEVER write deliverables to /tmp/summaries/, tmp/summaries/, or tmp/reviews/ "
     "(the worker auto-writes the closeout receipt at "
     "tmp/reviews/closeouts/<dispatch_id>.md — you do not author that). "

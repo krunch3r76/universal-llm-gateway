@@ -5,13 +5,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
-from implement_admission.closeout_helpers import workspaces_root
 from implement_admission.dense_spec_schema import (
     DENSE_SPEC_RE,
     DenseSpecVerdict,
     dense_spec_hash_uri,
     validate_dense_spec,
 )
+from implement_admission.scheme_resolve import resolve_schemed_packet_file
+from implement_admission.share_uri_emit import to_share_uri
 
 _REJECTED_SPEC_PREFIXES = ("packet:", "agent-bus:")
 _ULG_DIRNAME = "universal-llm-gateway"
@@ -33,24 +34,22 @@ def _rejected_spec_source(source_uri: str) -> bool:
 
 
 def normalize_dense_spec_path(source_uri: str | None, *, todo_id: str) -> str:
-    """Resolve canonical ``tasks/specs/{slug}.md``.
-
-    Honors ``source_uri`` only when it cites the same basename as the todo slug;
-    non-matching dense paths fall back to the canonical default.
-    """
+    """Resolve canonical Share URI for ``tasks/specs/{slug}.md``."""
     canonical = default_dense_spec_uri(todo_id)
     if not source_uri or not str(source_uri).strip():
-        return canonical
+        return to_share_uri("workspaces", canonical)
 
     uri = str(source_uri).strip().removeprefix("files://")
     match = DENSE_SPEC_RE.search(uri)
     if not match:
-        return canonical
+        return to_share_uri("workspaces", canonical)
 
     cited = match.group(0)
     if PurePosixPath(cited).name == PurePosixPath(canonical).name:
-        return cited
-    return canonical
+        if "://" in uri:
+            return uri if uri.startswith("workspaces://") else to_share_uri("workspaces", cited)
+        return to_share_uri("workspaces", cited)
+    return to_share_uri("workspaces", canonical)
 
 
 def _repo_candidates(root: Path) -> tuple[Path, ...]:
@@ -66,20 +65,16 @@ def read_dense_spec_text(
     *,
     workspaces_root_path: Path | None = None,
 ) -> str | None:
-    """Read dense-spec prose from the workspace sandbox."""
-    rel = spec_path.lstrip("/")
-    for base in _repo_candidates(workspaces_root_path or workspaces_root()):
-        candidate = (base / rel).resolve()
-        try:
-            candidate.relative_to(base.resolve())
-        except ValueError:
-            continue
-        if candidate.is_file():
-            try:
-                return candidate.read_text(encoding="utf-8")
-            except OSError:
-                return None
-    return None
+    """Read dense-spec prose via shared scheme resolver."""
+    candidate = resolve_schemed_packet_file(
+        spec_path, workspaces_root_override=workspaces_root_path
+    )
+    if candidate is None:
+        return None
+    try:
+        return candidate.read_text(encoding="utf-8")
+    except OSError:
+        return None
 
 
 def build_implement_ready_evidence_uris(spec_path: str, spec_text: str) -> list[str]:

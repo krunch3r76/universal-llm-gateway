@@ -11,6 +11,8 @@ import os
 from collections.abc import Callable
 from pathlib import Path
 
+from implement_admission.share_uri_emit import project_share_uri_for_abs
+
 _PROJECT_ROOT = Path(os.environ.get("PROJECT_ROOT", "/data/project"))
 
 
@@ -79,9 +81,26 @@ def resolve_existing_files(files: list[str], root: Path | None = None) -> list[s
 
 
 def workspaces_relative(path: Path, root: Path | None = None) -> str:
-    """Return path relative to PROJECT_ROOT for fs read/list responses."""
+    """Return sandbox-relative path for fs read/list responses."""
     root = (root or project_root()).resolve()
-    return str(path.resolve().relative_to(root))
+    resolved = path.resolve()
+    try:
+        return str(resolved.relative_to(root))
+    except ValueError:
+        for repo in repo_roots(root):
+            try:
+                rel = resolved.relative_to(repo.resolve())
+                if repo.name != root.name:
+                    return f"{repo.name}/{rel.as_posix()}"
+                return rel.as_posix()
+            except ValueError:
+                continue
+        raise
+
+
+def workspaces_share_uri(path: Path, root: Path | None = None) -> str:
+    """Return canonical workspaces:// URI for an absolute path."""
+    return project_share_uri_for_abs(path, workspaces_root_override=root or project_root())
 
 
 def repo_roots(root: Path) -> list[Path]:

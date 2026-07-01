@@ -49,16 +49,25 @@ _PROJECT_ROOT = Path(os.environ.get("PROJECT_ROOT", "/data/project"))
 
 
 def _resolve_sandbox(sandbox: str, path: str) -> Path:
+    from implement_admission.scheme_resolve import resolve_fs_ingress
+
+    try:
+        ingress = resolve_fs_ingress(path, sandbox=sandbox)
+        if ingress.resolved is not None:
+            return ingress.resolved
+        rel = ingress.rel_path.lstrip("/")
+    except ValueError:
+        rel = path.lstrip("/")
     if sandbox == "cortex":
         root = _FILES_ROOT.resolve()
     elif sandbox == "workspaces":
         root = _PROJECT_ROOT.resolve()
     else:
         raise ValueError(
-            f"Unknown sandbox {sandbox!r}. Use 'cortex' (/data/files) "
-            "or 'workspaces' (project root)"
+            f"Unknown sandbox {sandbox!r}. Use 'cortex' or 'workspaces' "
+            "with Share URI paths (cortex:// / workspaces://)."
         )
-    candidate = (root / path.lstrip("/")).resolve()
+    candidate = (root / rel).resolve()
     try:
         candidate.relative_to(root)
     except ValueError:

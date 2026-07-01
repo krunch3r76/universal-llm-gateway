@@ -14,6 +14,7 @@ from ._paths import (
     safe_path,
     trash_destination,
 )
+from ._share_uri_response import attach_dual_carry
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +33,13 @@ def move_file_impl(source: str, destination: str) -> dict[str, str]:
     shutil.move(str(src), str(dst))
     record("mcp.tool.file.moved", source=source, destination=destination)
     logger.info("move_file: %s → %s", src, dst)
-    return {"status": "moved", "from": str(src), "to": str(dst)}
+    src_rel = source.lstrip("/")
+    dst_rel = destination.lstrip("/")
+    return attach_dual_carry(
+        {"status": "moved", "from": src_rel, "to": dst_rel},
+        sandbox="cortex",
+        rel_path=dst_rel,
+    )
 
 
 def copy_file_impl(source: str, destination: str) -> dict[str, str]:
@@ -49,7 +56,13 @@ def copy_file_impl(source: str, destination: str) -> dict[str, str]:
     shutil.copy2(str(src), str(dst))
     record("mcp.tool.file.copied", source=source, destination=destination)
     logger.info("copy_file: %s → %s", src, dst)
-    return {"status": "copied", "from": str(src), "to": str(dst)}
+    src_rel = source.lstrip("/")
+    dst_rel = destination.lstrip("/")
+    return attach_dual_carry(
+        {"status": "copied", "from": src_rel, "to": dst_rel},
+        sandbox="cortex",
+        rel_path=dst_rel,
+    )
 
 
 def remove_directory_impl(directory: str) -> dict[str, str]:

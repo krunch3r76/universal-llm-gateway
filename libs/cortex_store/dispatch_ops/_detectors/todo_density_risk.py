@@ -8,9 +8,9 @@ from pathlib import Path
 from typing import Any
 
 from implement_admission.dense_spec_schema import validate_dense_spec
+from implement_admission.scheme_resolve import resolve_schemed_packet_file
 
 from ...db import query
-from .._shared import _FILES_ROOT
 from ._shared import _finding
 
 _IMPL_INTENT_STATES = ("open", "in_progress")
@@ -54,18 +54,7 @@ def _decode_attributes(raw: Any) -> dict[str, Any]:
 
 
 def _resolve_spec_path(source_uri: str) -> Path | None:
-    uri = source_uri.strip()
-    for prefix in ("workspaces://", "cortex://", "ws://"):
-        if uri.lower().startswith(prefix):
-            uri = uri[len(prefix) :]
-    uri = uri.lstrip("/")
-    if not uri:
-        return None
-    candidate = (_FILES_ROOT / uri).resolve()
-    root = _FILES_ROOT.resolve()
-    if not str(candidate).startswith(str(root) + "/") and candidate != root:
-        return None
-    return candidate if candidate.is_file() else None
+    return resolve_schemed_packet_file(source_uri.strip())
 
 
 def _read_spec_text(source_uri: str | None) -> str | None:

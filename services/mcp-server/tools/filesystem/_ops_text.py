@@ -29,6 +29,7 @@ from ._paths import (
     sha256_hex_of_file,
     sha256_of_file,
 )
+from ._share_uri_response import attach_dual_carry
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +54,7 @@ def _write_rejection(
     payload: dict[str, Any] = {
         "error": message,
         "reason": reason,
-        "path": str(resolved),
+        "path": path.lstrip("/"),
     }
     if expected_sha256 is not None:
         payload["expected_sha256"] = expected_sha256
@@ -150,11 +151,15 @@ def write_file_impl(
 
     record("mcp.tool.file.written", path=path, resolved=str(dest), chars=len(content))
     logger.debug("write_file: wrote %s (%d chars)", dest, len(content))
-    return {
-        "status": "written",
-        "path": str(dest),
-        "written_sha256": written_sha256,
-    }
+    rel = path.lstrip("/")
+    return attach_dual_carry(
+        {
+            "status": "written",
+            "written_sha256": written_sha256,
+        },
+        sandbox="cortex",
+        rel_path=rel,
+    )
 
 
 def read_file_impl(
@@ -181,12 +186,16 @@ def read_file_impl(
     record("mcp.tool.file.read", **event_payload)
     logger.debug(
         "read_file: read %s (%s)",
-        result["path"],
+        result.get("path", path),
         f"{result.get('bytes', 0)} bytes"
         if (binary or auto_binary)
-        else f"{len(result['content'])} chars",
+        else f"{len(result.get('content', ''))} chars",
     )
-    return result
+    rel = path.lstrip("/")
+    out = dict(result)
+    if isinstance(out.get("path"), str) and out["path"].startswith("/"):
+        out["path"] = rel
+    return attach_dual_carry(out, sandbox="cortex", rel_path=rel)
 
 
 def read_files_batch_impl(paths: list[str], binary: bool = False) -> dict[str, Any]:

@@ -621,7 +621,16 @@ def mount_relative_path(mount_root: Path, path: Path) -> str | None:
 
 
 def parse_fs_manifest_target(target: str | None) -> tuple[str, str] | None:
-    if not target or ":" not in target:
+    if not target:
+        return None
+    from implement_admission.scheme_resolve import resolve_fs_ingress
+
+    try:
+        ingress = resolve_fs_ingress(target)
+        return ingress.sandbox, ingress.rel_path.lstrip("/")
+    except ValueError:
+        pass
+    if ":" not in target:
         return None
     sandbox, rel = target.split(":", 1)
     sandbox = sandbox.strip()

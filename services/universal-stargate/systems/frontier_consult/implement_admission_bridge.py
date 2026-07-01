@@ -168,13 +168,16 @@ def _materialized_out_dir(workspaces_root: Path) -> Path:
 def _path_relative_to_workspaces(full_path: Path, workspaces_root: Path) -> str:
     root = workspaces_root.resolve()
     resolved = full_path.resolve()
+    repo = _repo_base(root)
     try:
-        rel = resolved.relative_to(root)
+        rel = resolved.relative_to(repo.resolve()).as_posix()
     except ValueError:
-        repo = _repo_base(root)
-        rel = resolved.relative_to(repo)
-        return f"{_ULG_REPO_DIRNAME}/{rel.as_posix()}"
-    return rel.as_posix()
+        rel = resolved.relative_to(root).as_posix()
+    if repo != root and repo.name == _ULG_REPO_DIRNAME:
+        return f"{_ULG_REPO_DIRNAME}/{rel}"
+    if repo != root:
+        return f"{repo.name}/{rel}"
+    return rel
 
 
 def _read_frontmatter_implement_spec_hash(text: str) -> str | None:

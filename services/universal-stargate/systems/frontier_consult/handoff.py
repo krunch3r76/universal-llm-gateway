@@ -196,11 +196,18 @@ def validate_packet(
 
     candidate = resolution.resolved_file
     if candidate is None:
+        from implement_admission.share_uri_emit import to_share_uri
+
+        tried = to_share_uri(
+            "workspaces" if parsed.scheme != "cortex" else "cortex",
+            parsed.rel_path or packet_path,
+        )
         raise FrontierEndpointError(
             request_id=request_id,
             field="packet_path",
             reason=(
-                f"Packet file not found at workspaces path {packet_path!r}. "
+                f"Packet file not found at Share URI {tried!r} "
+                f"(input {packet_path!r}). "
                 f"Write the six-block packet before calling handoff. {_PROTOCOL_HINT}"
             ),
             status_code=422,
