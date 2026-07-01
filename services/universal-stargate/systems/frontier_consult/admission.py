@@ -452,6 +452,20 @@ def is_cursor_sdk_generate_role(role: str, *, request_id: str) -> bool:
     return is_sdk_substrate_profile(profile)
 
 
+def is_cursor_sdk_generate_admission(
+    role: str,
+    *,
+    model: str | None,
+    request_id: str,
+) -> bool:
+    """True when ``op=generate`` should enter the cursor-sdk handler branch."""
+    if is_cursor_sdk_generate_role(role, request_id=request_id):
+        return True
+    if model:
+        return ModelId.parse(model).backend_type == "cursor_sdk"
+    return False
+
+
 async def verify_thread_writable(
     thread: str,
     *,

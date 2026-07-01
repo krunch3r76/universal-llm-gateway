@@ -592,7 +592,7 @@ def _reject_condition_closure_attempt(new_state: str) -> None:
 
 
 def _gate_condition_admission(
-    conn: sqlite3.Connection, body: "EntityCreate"
+    conn: sqlite3.Connection, body: EntityCreate
 ) -> None:
     """Invoke the condition admission rubric; raise 422 on reject/route_to_todo.
 

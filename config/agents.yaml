@@ -246,6 +246,7 @@ profiles:
       - cursor/composer-2.5
       - cursor/claude-sonnet-4-6
       - cursor/claude-opus-4-8
+      - cursor/claude-sonnet-5
 
   subagent/subagent:
     provider: anthropic

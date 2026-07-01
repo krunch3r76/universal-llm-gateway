@@ -8,7 +8,7 @@ description: >
 output: rank
 
 options:
-  timeout_seconds: 5
+  timeout_seconds: 30
 
 dispatch:
   idle:
@@ -36,7 +36,11 @@ steps:
     prompt_ref: skill_suggest_rank.v1.rank
     generation_parameters:
       temperature: 0.0
-      max_tokens: 512
+      # Gemini 2.5 shares maxOutputTokens between thinking + visible output;
+      # 512 caused finish_reason=length after ~9 completion tokens on large
+      # candidate sets (28+ slugs). Classification JSON needs headroom, not depth.
+      max_tokens: 8192
+      reasoning_effort: none
       response_format:
         type: json_object
         schema:

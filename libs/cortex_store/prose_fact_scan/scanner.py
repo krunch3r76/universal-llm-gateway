@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
 from ..dispatch_ops._shared import _FILES_ROOT
 from .cross_ref import cross_reference_candidate

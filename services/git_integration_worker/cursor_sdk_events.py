@@ -34,6 +34,16 @@ def _emit(event: Event) -> None:
     record(event.signal, **event.payload)
 
 
+def emit_frontier_event(event: Event) -> None:
+    """Publish an ``Event`` via the registered publisher.
+
+    Public counterpart to ``_emit`` for ``@event_factory`` functions defined
+    in sibling modules (e.g. ``cursor_sdk_stream_capture``) that still need
+    the same registered-publisher wiring this module owns.
+    """
+    _emit(event)
+
+
 @event_factory
 def FrontierSdkWorkerCompleted(  # noqa: N802
     dispatch_id: str,
@@ -289,9 +299,7 @@ def emit_write_lease_released(
     )
 
 
-def emit_write_lease_promoted(
-    *, dispatch_id: str, source_repo: str | None
-) -> None:
+def emit_write_lease_promoted(*, dispatch_id: str, source_repo: str | None) -> None:
     _emit(
         FrontierWriteLeasePromoted(
             dispatch_id=dispatch_id,

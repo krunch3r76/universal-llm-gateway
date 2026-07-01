@@ -58,15 +58,8 @@ tools:
     tool: cortex_entities
     substrate_qualified: user-vortex__cortex_entities
   fol_descriptor: |
-    ∀ args ∈ EntitiesArgs: entities(args) ⟹
-      (args.fields = ∅ ⟹ result ∈ List[EntitySummary]
-       ∧ args.fields ≠ ∅ ⟹ result ∈ List[ProjectedRow]
-       ∧ ∀ k ∈ keys(result[0]): k ∈ {id} ∪ args.fields)
-      ∧ args.type ≠ ∅ ⟹ ∀ e ∈ result: e.type = args.type
-      ∧ args.workflow_state ≠ ∅ ⟹ ∀ e ∈ result: e.workflow_state = args.workflow_state
-      ∧ args.content_hash ≠ ∅ ⟹ ∀ e ∈ result: e.content_hash = args.content_hash.
     ProjectedRow: id always present; base columns pass through; other names
-    resolve via json_extract(attributes,'$.<name>'). Read-only. ¬side-effects.
+    resolve via json_extract(attributes,'$.<name>').
     See agent_skill:cortex.
   json_schema:
     type: object
@@ -95,14 +88,10 @@ tools:
     tool: cortex_entities_by_content_hash
     substrate_qualified: user-vortex__cortex_entities_by_content_hash
   fol_descriptor: |
-    ∀ content_hash ∈ str ∧ content_hash ≠ ∅:
-      entities_by_content_hash(content_hash) ⟹
-        result ∈ List[Entity]
-        ∧ ∀ e ∈ result: e.content_hash = content_hash.removeprefix("sha256:")
-        ∧ |result| ≤ (limit ∨ 5).
-    ∀ content_hash = ∅ ⟹ error("content_hash is required").
-    Read-only. Dedicated lookup op for duplicate-detection callers
-    (default limit=5, no full-list semantics). See agent_skill:cortex.
+    Strips `sha256:` prefix from content_hash before column match.
+    Default limit=5 when limit omitted.
+    Dedicated duplicate-detection lookup; no full-list semantics.
+    See agent_skill:cortex.
   json_schema:
     type: object
     properties:
@@ -127,15 +116,7 @@ tools:
     tool: cortex_assertion_state
     substrate_qualified: user-vortex__cortex_assertion_state
   fol_descriptor: |
-    ∀ entity_id ∈ str ∧ entity_id ≠ ∅:
-      assertion_state(entity_id) ⟹
-        result = {entity_id, ratified, confirmed_count, latest_confirmed_assertion_id}
-        ∧ confirmed_count = |{a : a.entity_id = resolve(entity_id)
-            ∧ a.confidence = 'confirmed' ∧ a.superseded_by IS NULL}|
-        ∧ ratified = (confirmed_count ≥ 1)
-        ∧ latest_confirmed_assertion_id = argmax_{created_at}(that set) ∨ null.
-    ∀ entity_id = ∅ ⟹ error("entity_id is required").
-    Read-only. Lightweight ratification/count projection; mirrors
+    Lightweight ratification/count projection; mirrors
     preflight.py::require_decision_asserted (no review_status filter).
     See agent_skill:cortex.
   json_schema:
@@ -160,10 +141,7 @@ tools:
     tool: cortex_assertion_get
     substrate_qualified: user-vortex__cortex_assertion_get
   fol_descriptor: |
-    ∀ assertion_id ∈ int: assertion_get(assertion_id) ⟹
-      (row ∈ assertions ∧ result = full AssertionItem incl. predicate_form)
-      ∨ error("Assertion not found").
-    Read-only. Deepen target for assertions(intent=summary). See agent_skill:cortex.
+    Deepen target for assertions(intent=summary). See agent_skill:cortex.
   json_schema:
     type: object
     properties:
@@ -186,15 +164,15 @@ tools:
     tool: cortex_entity_get
     substrate_qualified: user-vortex__cortex_entity_get
   fol_descriptor: |
-    ∀ entity_id ∈ str: entity_get(entity_id) ⟹
-      (entity ∈ Cortex ∨ raises NotFound).
     ∀ intent ∈ {"full","card"}: response shape differs by projection depth.
-    Read-only. ¬side-effects. Idempotent. See agent_skill:cortex.
+    Idempotent. See agent_skill:cortex.
   json_schema:
     type: object
     properties:
       entity_id: {type: string}
-      intent: {type: string, enum: [full, card]}
+      intent: {type: string, enum: [full, card, body]}
+      section: {type: string, description: "body intent: md_read one section by heading/path"}
+      full_body: {type: boolean, description: "body intent: true=whole body; false=manifest; omit=size-aware default (5000 chars)"}
       include_edges: {type: boolean}
     required: [entity_id]
   skill_uri: agent_skill:cortex
@@ -214,10 +192,7 @@ tools:
     tool: cortex_entity_create
     substrate_qualified: user-vortex__cortex_entity_create
   fol_descriptor: |
-    ∀ id ∈ str ∧ type ∈ EntityType ∧ name ∈ str:
-      entity_create(id, type, name) ⟹
-        (entity_created ∧ id ∈ Cortex) ∨ raises Conflict.
-    ¬idempotent (duplicate id → 409). Mutating. See agent_skill:cortex.
+    ¬idempotent (duplicate id → 409). See agent_skill:cortex.
   json_schema:
     type: object
     properties:
@@ -245,11 +220,7 @@ tools:
     tool: cortex_entity_update
     substrate_qualified: user-vortex__cortex_entity_update
   fol_descriptor: |
-    ∀ entity_id ∈ Cortex: entity_update(entity_id, Δ) ⟹
-      entity.fields ← entity.fields ∪ Δ
-      ∧ Δ.attributes ≠ ∅ ⟹ attributes' = attributes ⊎ Δ.attributes
-        (shallow top-level merge; ¬deletes keys by omission).
-    ¬creates. Partial-patch semantics. Mutating. See agent_skill:cortex.
+    ¬creates. Partial-patch semantics. See agent_skill:cortex.
   json_schema:
     type: object
     properties:
@@ -277,10 +248,7 @@ tools:
     tool: cortex_entities_bulk_upsert
     substrate_qualified: user-vortex__cortex_entities_bulk_upsert
   fol_descriptor: |
-    ∀ entities ∈ List[EntitySpec]:
-      bulk_upsert(entities, if_exists) ⟹
-        ∀ e ∈ entities: (create ∨ update ∨ skip) per if_exists policy.
-    Atomic. Mutating. See agent_skill:cortex.
+    Atomic. See agent_skill:cortex.
   json_schema:
     type: object
     properties:
@@ -304,10 +272,7 @@ tools:
     tool: cortex_assert
     substrate_qualified: user-vortex__cortex_assert
   fol_descriptor: |
-    ∀ entity_id ∈ Cortex ∧ claim ∈ str ∧ confidence ∈ ConfidenceLevel:
-      assert(entity_id, claim, confidence, evidence) ⟹
-        assertion_id ∈ ℕ ∧ assertion ∈ Cortex.
-    Mutating. ¬idempotent (each call mints a new assertion row). See agent_skill:cortex.
+    ¬idempotent (each call mints a new assertion row). See agent_skill:cortex.
   json_schema:
     type: object
     properties:
@@ -335,10 +300,7 @@ tools:
     tool: cortex_assertions
     substrate_qualified: user-vortex__cortex_assertions
   fol_descriptor: |
-    ∀ args ∈ AssertionsArgs: assertions(args) ⟹
-      result ∈ List[Assertion]
-      ∧ args.superseded = false ⟹ ∀ a ∈ result: a.superseded = false.
-    Read-only. ¬side-effects. See agent_skill:cortex.
+    See agent_skill:cortex.
   json_schema:
     type: object
     properties:
@@ -365,10 +327,7 @@ tools:
     tool: cortex_supersede
     substrate_qualified: user-vortex__cortex_supersede
   fol_descriptor: |
-    ∀ old_id ∈ Assertions ∧ entity_id ∈ Cortex:
-      supersede(old_id, entity_id, claim, ...) ⟹
-        old_id.superseded = true ∧ ∃ new_id ∈ Assertions: new_id.supersedes = old_id.
-    Atomic close-and-create. Mutating. See agent_skill:cortex.
+    Atomic close-and-create. See agent_skill:cortex.
   json_schema:
     type: object
     properties:
@@ -398,10 +357,7 @@ tools:
     tool: cortex_assertion_update
     substrate_qualified: user-vortex__cortex_assertion_update
   fol_descriptor: |
-    ∀ assertion_id ∈ Assertions:
-      assertion_update(assertion_id, Δ) ⟹
-        assertion.mutable_fields ← Δ.
-    Partial-patch. ¬changes claim/entity. Mutating. See agent_skill:cortex.
+    Partial-patch. ¬changes claim/entity. See agent_skill:cortex.
   json_schema:
     type: object
     properties:
@@ -426,10 +382,8 @@ tools:
     tool: cortex_journal_read
     substrate_qualified: user-vortex__cortex_journal_read
   fol_descriptor: |
-    ∀ limit ∈ ℕ: journal_read(limit) ⟹
-      result ∈ List[JournalEntry]
-      ∧ |result| ≤ limit ∧ ordered by timestamp DESC.
-    Read-only. ¬side-effects. See agent_skill:cortex.
+    Default limit=3 when limit omitted. Results ordered by id DESC (insertion order).
+    See agent_skill:cortex.
   json_schema:
     type: object
     properties:
@@ -540,12 +494,7 @@ tools:
     tool: cortex_implement_ready_preflight
     substrate_qualified: user-vortex__cortex_implement_ready_preflight
   fol_descriptor: |
-    ∀ source_ref ∈ str starting with "todo:":
-      implement_ready_preflight(source_ref) ⟹
-        ok ∈ bool ∧ admitted ∈ bool ∧ gates ∈ List[GateReport]
-        ∧ (admitted ⟹ ∀ g ∈ gates: g.status ∈ {passed, not_applicable})
-        ∧ (¬admitted ⟹ ∃ g ∈ gates: g.status = failed ∧ first_failure ≠ ∅).
-    Read-only. ¬side-effects. ¬writes. ¬distillation. ¬restamping.
+    ¬distillation. ¬restamping.
     Run BEFORE implement dispatch to see ALL unmet gates at once.
     Non-todo source_refs return admitted=true immediately (gate does not apply).
     See agent_skill:implement-todo.
@@ -573,12 +522,9 @@ tools:
     tool: cortex_doc_template
     substrate_qualified: user-vortex__cortex_doc_template
   fol_descriptor: |
-    ∀ doc_type ∈ {"implement_dense_spec", "session_close", "session_close:web", "session_close:cursor"}:
-      doc_template(doc_type) ⟹ ok ∧ template ∈ str ∧ required_sections ⊆ List[str]
-        ∧ template_version ∈ str ∧ template_sha256 ∈ str ∧ skill_digest ∈ str (additive).
     session_close templates inline required+optional fields, 13 audit codes, transcript_depth rules,
     and hybrid pointer+digest to session-close skills; variants differ only by overlay.
-    Read-only. ¬writes. Returns dense-spec skeleton with hybrid pedagogy for validate_dense_spec round-trip.
+    Returns dense-spec skeleton with hybrid pedagogy for validate_dense_spec round-trip.
   json_schema:
     type: object
     properties:
@@ -603,14 +549,11 @@ tools:
     tool: cortex_doc_validate
     substrate_qualified: user-vortex__cortex_doc_validate
   fol_descriptor: |
-    ∀ doc_type ∈ {"implement_dense_spec"} ∧ exactly_one(text, path, source_ref):
-      doc_validate(...) ⟹ status ∈ {pass, not_attested, drifted_since_ready, skeptic_hash_missing, schema_failed}
-        ∧ gates[] aggregates gates 0–13 ∧ spec_sha256 = dense_spec_hash_uri(bytes) ∧ attested ∈ bool
-        ∧ template_version ∈ str; on pass, attestation_tokens[] is additive.
-    ∀ doc_type ∈ {"session_close", "session_close:web", "session_close:cursor"}:
-      doc_validate(...) ⟹ delegates to session_close_preflight ∧ surfaces audit/warnings as gates
-        ∧ status=pass emits session_close_validate attestation_tokens (session-keyed).
-    Read-only. ¬writes. Thin wrapper over preflight_implement_ready + skeptic evidence grounding.
+    implement_dense_spec: exactly one of text, path, or source_ref required.
+    Delegates to preflight_implement_ready; evaluates skeptic evidence grounding (status skeptic_hash_missing when ungrounded).
+    On pass, attestation_tokens[] additive (doc_validate:pass, template_version, spec_sha256, skill_digest).
+    session_close variants: delegates to session_close_preflight; pass emits session-keyed session_close_validate tokens.
+    See agent_skill:implement-todo.
   json_schema:
     type: object
     properties:
@@ -644,10 +587,9 @@ tools:
     tool: cortex_session_handoff_upsert
     substrate_qualified: user-vortex__cortex_session_handoff_upsert
   fol_descriptor: |
-    ∀ session_id ∈ closed(session_journals) ∧ handoff_prompt ≠ ∅:
-      session_handoff_upsert(session_id, handoff_prompt) ⟹
-        journal_row.handoff_prompt updated ∧ transcript entity mirrored when present.
-    Mutating. Upsert (replaces prior). Boot omits handoffs — explicit retrieval only.
+    Precondition: session must be CLOSED (journal row exists).
+    Mirrors handoff_prompt to transcript entity when present.
+    Upsert replaces prior. Boot omits handoffs — explicit retrieval only.
     See decision:transcript-scoped-handoff-explicit-load.
   json_schema:
     type: object
@@ -673,10 +615,8 @@ tools:
     tool: cortex_search
     substrate_qualified: user-vortex__cortex_search
   fol_descriptor: |
-    ∀ query ∈ str: search(query) ⟹
-      result ∈ List[SearchHit]
-      ∧ ∀ h ∈ result: h.text ∋ query (FTS5 match).
-    Read-only. ¬side-effects. See agent_skill:cortex.
+    Hybrid search: FTS5 fulltext + vector similarity, CombMAX score fusion; search_mode in response.
+    See agent_skill:cortex.
   json_schema:
     type: object
     properties:
@@ -701,10 +641,7 @@ tools:
     tool: cortex_todo_candidates
     substrate_qualified: user-vortex__cortex_todo_candidates
   fol_descriptor: |
-    ∀ q ∈ str: todo_candidates(q) ⟹
-      result ∈ List[Todo]
-      ∧ ∀ t ∈ result: t.workflow_state ∈ {"open","in_progress","blocked"}.
-    Read-only. Ranked retrieval. ¬side-effects. See agent_skill:cortex.
+    Ranked retrieval. See agent_skill:cortex.
   json_schema:
     type: object
     properties:
@@ -729,9 +666,7 @@ tools:
     tool: cortex_edge_create
     substrate_qualified: user-vortex__cortex_edge_create
   fol_descriptor: |
-    ∀ from_node ∈ Cortex ∧ to_node ∈ Cortex ∧ edge_type ∈ EdgeTypes:
-      edge_create(from_node, to_node, edge_type) ⟹ edge_id ∈ ℕ.
-    Mutating. See agent_skill:cortex.
+    See agent_skill:cortex.
   json_schema:
     type: object
     properties:
@@ -758,8 +693,7 @@ tools:
     tool: cortex_edges
     substrate_qualified: user-vortex__cortex_edges
   fol_descriptor: |
-    ∀ args ∈ EdgesArgs: edges(args) ⟹ result ∈ List[Edge].
-    Read-only. ¬side-effects. See agent_skill:cortex.
+    See agent_skill:cortex.
   json_schema:
     type: object
     properties:
@@ -784,9 +718,7 @@ tools:
     tool: cortex_edge_traverse
     substrate_qualified: user-vortex__cortex_edge_traverse
   fol_descriptor: |
-    ∀ node ∈ Cortex ∧ hops ∈ {1,2}:
-      edge_traverse(node, hops) ⟹ subgraph ∈ List[Node].
-    BFS expansion. Read-only. ¬side-effects. See agent_skill:cortex.
+    BFS expansion. See agent_skill:cortex.
   json_schema:
     type: object
     properties:
@@ -812,9 +744,7 @@ tools:
     tool: cortex_relationships
     substrate_qualified: user-vortex__cortex_relationships
   fol_descriptor: |
-    ∀ entity_id ∈ Cortex: relationships(entity_id) ⟹
-      result ∈ List[Relationship].
-    Read-only. ¬side-effects. See agent_skill:cortex.
+    See agent_skill:cortex.
   json_schema:
     type: object
     properties:
@@ -838,9 +768,7 @@ tools:
     tool: cortex_relationship_create
     substrate_qualified: user-vortex__cortex_relationship_create
   fol_descriptor: |
-    ∀ source_id ∈ Cortex ∧ target_id ∈ Cortex ∧ type_id ∈ str:
-      relationship_create(source_id, target_id, type_id) ⟹ rel_id ∈ ℕ.
-    Mutating. See agent_skill:cortex.
+    See agent_skill:cortex.
   json_schema:
     type: object
     properties:
@@ -872,10 +800,8 @@ tools:
     tool: cortex_friction
     substrate_qualified: user-vortex__cortex_friction
   fol_descriptor: |
-    ∀ owner, category, note, suggestion?, agent?:
-      friction(...) ⟹ durable friction record for schema/boot/tool gaps.
     owner ∈ {service:,agent_skill:,ai_agent:} (bare slug -> service:); service= is the back-compat alias; exactly one of owner/service required.
-    Write. Used for agent self-diagnosis. See agent_skill:cortex and operational-context-*.md.
+    Used for agent self-diagnosis. See agent_skill:cortex and operational-context-*.md.
   json_schema:
     type: object
     properties:
@@ -904,9 +830,7 @@ tools:
     tool: cortex_observe
     substrate_qualified: user-vortex__cortex_observe
   fol_descriptor: |
-    ∀ claim, entity_id?, agent?:
-      observe(...) ⟹ lightweight working-memory assertion / inline note.
-    Write. Preferred for session-local observations. See agent_skill:cortex.
+    Preferred for session-local observations. See agent_skill:cortex.
   json_schema:
     type: object
     properties:
@@ -932,9 +856,7 @@ tools:
     tool: cortex_rj_write
     substrate_qualified: user-vortex__cortex_rj_write
   fol_descriptor: |
-    ∀ agent, register, entry, kind?, session_id?, revises?, links?, consolidation_data?:
-      rj_write(...) ⟹ reflective journal entry (kind="entry" | "consolidation").
-    Write. Primary surface for agent self-reflection and consolidation. See agent_skill:cortex.
+    Primary surface for agent self-reflection and consolidation. See agent_skill:cortex.
   json_schema:
     type: object
     properties:
@@ -964,9 +886,7 @@ tools:
     tool: cortex_rj_read
     substrate_qualified: user-vortex__cortex_rj_read
   fol_descriptor: |
-    ∀ entry_id:
-      rj_read(entry_id) ⟹ reflective journal entry with links.
-    Read-only. See agent_skill:cortex.
+    See agent_skill:cortex.
   json_schema:
     type: object
     properties:
@@ -989,9 +909,7 @@ tools:
     tool: cortex_rj_list
     substrate_qualified: user-vortex__cortex_rj_list
   fol_descriptor: |
-    ∀ agent?, kind?, limit?, offset?:
-      rj_list(...) ⟹ list of reflective journal entries.
-    Read-only. Defaults: limit=20, offset=0. See agent_skill:cortex.
+    Defaults: limit=20, offset=0. See agent_skill:cortex.
   json_schema:
     type: object
     properties:
@@ -1016,9 +934,7 @@ tools:
     tool: cortex_rj_link
     substrate_qualified: user-vortex__cortex_rj_link
   fol_descriptor: |
-    ∀ entry_id, to_entry?, to_entity?, link_type?:
-      rj_link(...) ⟹ link between reflective journal entries or to entities.
-    Write. See agent_skill:cortex.
+    See agent_skill:cortex.
   json_schema:
     type: object
     properties:
@@ -1044,9 +960,7 @@ tools:
     tool: cortex_rj_consolidate
     substrate_qualified: user-vortex__cortex_rj_consolidate
   fol_descriptor: |
-    ∀ agent, register, entry, throughline, before, now, tension_points?, contradiction_set?, falsifier?, rendered_shift?, confidence?, source_entry_ids?:
-      rj_consolidate(...) ⟹ high-quality consolidation entry (kind="consolidation").
-    Write. Structured synthesis of prior reflective entries. See agent_skill:cortex.
+    Structured synthesis of prior reflective entries. See agent_skill:cortex.
   json_schema:
     type: object
     properties:

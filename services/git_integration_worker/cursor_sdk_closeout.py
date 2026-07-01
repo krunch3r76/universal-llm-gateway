@@ -53,6 +53,9 @@ from services.git_integration_worker.cursor_sdk_manifest import (
 from services.git_integration_worker.cursor_sdk_manifest import (
     verification_change_set as build_verification_change_set,
 )
+from services.git_integration_worker.cursor_sdk_stream_capture import (
+    ToolCallObservation,
+)
 
 logger = get_logger(__name__)
 
@@ -68,6 +71,10 @@ class SdkRunOutcome:
     tool_call_count: int
     effects_manifest: EffectsManifest | None = None
     capture_branch: CaptureBranch | None = None
+    # Per-call detail from the live stream (friction 21654) — the channel that
+    # can see a tool call the runtime truncates/rejects before it reaches
+    # run.conversation(). Populated by observe_run_stream in the drive path.
+    tool_calls: tuple[ToolCallObservation, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -152,9 +159,7 @@ def _split_baseline(
     return normalize_wt_baseline(baseline)
 
 
-def changed_paths(
-    source_repo: Path, baseline: dict[str, Any] | None
-) -> ChangeSet:
+def changed_paths(source_repo: Path, baseline: dict[str, Any] | None) -> ChangeSet:
     """Derive created/modified/deleted paths vs an admit-time baseline."""
     current = capture_wt_baseline(source_repo)
     if current is None:
@@ -216,7 +221,9 @@ def reconcile_workspace_changes(
         if baseline is None
         else changed_paths(source_repo, baseline)
     )
-    git_changed = set(git_change.created) | set(git_change.modified) | set(git_change.deleted)
+    git_changed = (
+        set(git_change.created) | set(git_change.modified) | set(git_change.deleted)
+    )
     gitignored = gitignored_manifest_paths(
         manifest,
         source_repo=source_repo,
@@ -225,9 +232,7 @@ def reconcile_workspace_changes(
     baseline_outside = _baseline_outside_repo_paths(baseline)
     current_outside = snapshot_outside_repo_paths(mount, repos)
     new_outside = tuple(sorted(current_outside - baseline_outside))
-    merged_modified = tuple(
-        dict.fromkeys([*git_change.modified, *new_outside])
-    )
+    merged_modified = tuple(dict.fromkeys([*git_change.modified, *new_outside]))
     return (
         ChangeSet(
             created=git_change.created,
@@ -416,7 +421,9 @@ def build_implement_closeout_body(
         payload = closeout.model_dump(mode="json")
         if files_untracked_or_ignored:
             payload["files_untracked_or_ignored"] = files_untracked_or_ignored
-        if manifest_value is not None and not isinstance(manifest_value, EffectsManifest):
+        if manifest_value is not None and not isinstance(
+            manifest_value, EffectsManifest
+        ):
             payload["effects_manifest"] = manifest_value
         return json.dumps(payload, separators=(",", ":"))
 

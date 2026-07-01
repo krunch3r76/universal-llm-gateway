@@ -7,6 +7,7 @@ from .cursor_capabilities import (
     ModelCapability,
     default_variant,
     supported_knobs,
+    to_model_card_dict,
 )
 
 __all__ = [
@@ -16,4 +17,5 @@ __all__ = [
     "ModelCapability",
     "default_variant",
     "supported_knobs",
+    "to_model_card_dict",
 ]

@@ -4,6 +4,31 @@ from __future__ import annotations
 
 import re
 
+_LARGE_CONTENT_CHUNK_CHARS = 40_000
+
+_DELIVERABLE_ROUTING_PREAMBLE = (
+    "DURABLE DELIVERABLE ROUTING (mandatory): Write task deliverables — sidecars, "
+    "reviews, specs — to one of the two durable shares, using the exact path from "
+    "your packet <mcp_capabilities> or files_expected:\n"
+    '  - cortex share via fs(sandbox="cortex", op="write", path="...") — '
+    "backed by /mnt/torus/mcp-data ($HOME/mcp-data); cortex:// scheme.\n"
+    '  - workspaces share via fs(sandbox="workspaces", op="write", path="...") — '
+    "backed by /mnt/torus/projects; workspaces:// scheme.\n"
+    "NEVER write deliverables to /tmp/summaries/, tmp/summaries/, or tmp/reviews/ "
+    "(the worker auto-writes the closeout receipt at "
+    "tmp/reviews/closeouts/<dispatch_id>.md — you do not author that). "
+    "Project tmp/ and /tmp/summaries/ are ephemeral scratch only, never durable output.\n\n"
+    "LARGE CONTENT — CHUNK, NEVER INLINE ONE GIANT WRITE (mandatory, friction 21654): "
+    f"if the content you are about to write exceeds {_LARGE_CONTENT_CHUNK_CHARS:,} "
+    "characters, do NOT pass it all as one write call's content argument — a single "
+    "oversized content argument can silently fail to transmit its real payload (the "
+    "call reports success but the file ends up empty or truncated, with no error). "
+    f"Instead split it into chunks of at most {_LARGE_CONTENT_CHUNK_CHARS:,} characters "
+    'each: write the first chunk with op="write", then write each remaining chunk in '
+    'order with op="append" to the same path. Verify the final file size afterward '
+    "(fs read or list) before reporting the deliverable done."
+)
+
 _IMPLEMENT_PREAMBLE = (
     "Execute this task NOW using your tools. Make the code/file changes the packet "
     "specifies. If you are blocked, reply with `status: blocked` and the specific "
@@ -70,6 +95,7 @@ def resolve_prompt_preamble(
     else:
         preamble = ""
 
+    parts = [_DELIVERABLE_ROUTING_PREAMBLE]
     if preamble:
-        return f"{preamble}\n\n"
-    return ""
+        parts.append(preamble.strip())
+    return "\n\n".join(parts) + "\n\n"

@@ -71,6 +71,99 @@ def _impls() -> tuple:
 
 logger = get_logger("cortex-api.dispatch_ops.entities")
 
+# agent_skill:markdown-navigation cutoff — size-aware body default.
+_BODY_SIZE_AWARE_THRESHOLD = 5000
+
+
+def _entity_get_body_response(
+    conn: sqlite3.Connection,
+    *,
+    resolved_id: str,
+    section: str | None,
+    full_body: bool | None,
+) -> dict[str, Any]:
+    """Load source_uri markdown via the /skills/body file resolver.
+
+    ``GET /skills/body`` applies skill-only SQL + lifecycle filters; this path
+    reuses ``_resolve_skill_file`` for any entity carrying ``source_uri``.
+    """
+    from markdown_sections import SectionError, list_sections, read_section
+
+    from ..db import query as db_query
+    from ..routes._skill_index import slug_from_row
+    from ..routes.boot._skill_trigger import _resolve_skill_file
+
+    rows = db_query(
+        conn,
+        "SELECT id, name, source_uri FROM entities WHERE id = ?",
+        (resolved_id,),
+    )
+    if not rows:
+        return {"error": f"Entity not found: {resolved_id}"}
+    row = rows[0]
+    source_uri = row.get("source_uri")
+    if not source_uri or not str(source_uri).strip():
+        return {"error": "entity_has_no_source_uri", "entity_id": resolved_id}
+
+    slug = slug_from_row(row)
+    path = _resolve_skill_file(source_uri, slug)
+    if path is None:
+        return {
+            "error": "entity_body_not_resolvable",
+            "entity_id": resolved_id,
+            "source_uri": source_uri,
+        }
+    try:
+        body_text = path.read_text(encoding="utf-8")
+    except OSError:
+        return {
+            "error": "entity_body_not_readable",
+            "entity_id": resolved_id,
+            "source_uri": source_uri,
+        }
+
+    base: dict[str, Any] = {
+        "entity_id": resolved_id,
+        "source_uri": source_uri,
+    }
+
+    if section is not None:
+        try:
+            section_text = read_section(body_text, section)
+        except SectionError:
+            available = [s["path"] for s in list_sections(body_text)]
+            return {
+                "error": "section_not_found",
+                "section": section,
+                "available": available,
+                "entity_id": resolved_id,
+            }
+        return {
+            **base,
+            "render_mode": "full",
+            "section": section,
+            "body": section_text,
+        }
+
+    if full_body is True:
+        return {**base, "render_mode": "full", "body": body_text}
+
+    if full_body is False:
+        return {
+            **base,
+            "render_mode": "manifest",
+            "sections": list_sections(body_text),
+        }
+
+    if len(body_text) <= _BODY_SIZE_AWARE_THRESHOLD:
+        return {**base, "render_mode": "full", "body": body_text}
+
+    return {
+        **base,
+        "render_mode": "manifest",
+        "sections": list_sections(body_text),
+    }
+
 
 def _resolve_read_entity_id(
     conn: sqlite3.Connection,
@@ -153,6 +246,8 @@ def _op_entity_get(
     top_k: int = _CARD_TOP_K_DEFAULT,
     resolve_aliases: bool = True,
     raw_id: bool = False,
+    section: str | None = None,
+    full_body: bool | None = None,
     **_: object,
 ) -> dict[str, Any]:
     """Dispatch surface for entity_get (v2.4 §6.1).
@@ -161,6 +256,11 @@ def _op_entity_get(
     intent="full-historical" — all rows with full enrichment (audit path).
     intent="card" — Card v0 via projection-aware fetch (§6.3).
     intent="card-md" — comprehension-first markdown render (root-only).
+    intent="body" — source_uri markdown (not the KG card). Params: ``section``
+    (md_read one heading), ``full_body`` (``true``=whole body, ``false``=manifest).
+    Default (no section, ``full_body`` unset): size-aware at 5000 chars —
+    whole body when ``len <= 5000``, else section manifest. Response includes
+    ``render_mode`` (``"full"`` | ``"manifest"``).
     intent in {"cluster","impact"} — reserved; rejected until later phases.
     """
     if not entity_id:
@@ -170,12 +270,13 @@ def _op_entity_get(
         "full-historical",
         "card",
         "card-md",
+        "body",
         "cluster",
         "impact",
     }:
         return {
             "error": f"Unknown intent {intent!r}. Supported: full, full-historical, card, "
-            "card-md (cluster, impact reserved for later phases).",
+            "card-md, body (cluster, impact reserved for later phases).",
         }
     if intent == "full-historical" and include_superseded:
         return {
@@ -186,7 +287,13 @@ def _op_entity_get(
             ),
             "status_code": 400,
         }
-    if include_superseded and intent in {"card", "card-md", "cluster", "impact"}:
+    if include_superseded and intent in {
+        "card",
+        "card-md",
+        "body",
+        "cluster",
+        "impact",
+    }:
         return {
             "error": (
                 f"Invalid combo: intent={intent!r} with include_superseded=true "
@@ -216,6 +323,13 @@ def _op_entity_get(
         except HTTPException as exc:
             return _http_error_dict(exc)
         resolved_id = canonical_id if not raw_id else entity_id
+        if intent == "body":
+            return _entity_get_body_response(
+                conn,
+                resolved_id=resolved_id,
+                section=section,
+                full_body=full_body,
+            )
         if intent == "card-md":
             from ..subgraph_template import render_root_card_markdown
 

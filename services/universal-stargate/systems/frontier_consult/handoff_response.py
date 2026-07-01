@@ -20,6 +20,8 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any, Literal
 
+from .mcp_capability import mcp_capability_fields
+
 if TYPE_CHECKING:
     from agent_seat.profiles import CapabilityProfile
 
@@ -27,6 +29,31 @@ if TYPE_CHECKING:
 HandoffStatus = Literal["awaiting_first_reply"]
 
 _INITIAL_HANDOFF_STATUS: HandoffStatus = "awaiting_first_reply"
+
+
+def _apply_mcp_capability_fields(
+    caps: dict[str, Any],
+    *,
+    substrate: str,
+    model: str,
+    mcp_enabled: bool | None = None,
+    remote_mcp: bool | None = None,
+) -> dict[str, Any]:
+    effective_mcp = (
+        mcp_enabled
+        if mcp_enabled is not None
+        else not bool(caps.get("inline_only", False))
+    )
+    caps.update(
+        mcp_capability_fields(
+            substrate=substrate,
+            model=model,
+            mcp_enabled=bool(effective_mcp),
+            remote_mcp=remote_mcp,
+        )
+    )
+    caps.pop("mcp_connector_active", None)
+    return caps
 
 
 def build_result_handle(*, thread_id: str) -> dict[str, Any]:
@@ -260,6 +287,13 @@ def build_api_generate_result(
             "tool_surface": profile.tool_surface,
             "substrate": "api",
         }
+    caps = result.get("capabilities")
+    if isinstance(caps, dict):
+        _apply_mcp_capability_fields(
+            caps,
+            substrate="api",
+            model=resolved_model or str(caps.get("resolved_model") or ""),
+        )
     return result
 
 
@@ -301,10 +335,14 @@ def build_sdk_generate_result(
         "capabilities": {
             "role": role,
             "inline_only": False,
-            "mcp_connector_active": False,
             "tool_surface": profile.tool_surface,
             "resolved_model": resolved_model,
             "substrate": "sdk",
+            **_apply_mcp_capability_fields(
+                {},
+                substrate="sdk",
+                model=resolved_model,
+            ),
         },
         "poll_hint": handoff_fields["poll_hint"],
         "result_handle": {

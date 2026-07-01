@@ -23,14 +23,14 @@ from transport_utils import DEFAULT_STARGATE_URL, make_async_client
 from universal_logging import get_logger
 
 from .admission import (
-    is_cursor_sdk_generate_role,
+    is_cursor_sdk_generate_admission,
     resolve_handoff_seat,
     resolve_handoff_target,
 )
 from .closeout_reply import parse_closeout_payload, run_implement_closeout_pipeline
 from .contract_derivation import derive_contract
-from .densify_triage import DensityTriage
 from .cursor_sdk_generate import dispatch_cursor_sdk_generate
+from .densify_triage import DensityTriage
 from .deploy_state_gate import require_deploy_state
 from .dispatch_thread_context import as_user_message, read_latest_dispatch_thread_body
 from .events import (
@@ -385,10 +385,11 @@ async def team_dispatch(
     """
     request_id = uuid.uuid4().hex[:12]
     role = getattr(body, "role", None)
+    model = getattr(body, "model", None)
     if (
         body.op == "generate"
         and role is not None
-        and is_cursor_sdk_generate_role(role, request_id=request_id)
+        and is_cursor_sdk_generate_admission(role, model=model, request_id=request_id)
     ):
         return await dispatch_cursor_sdk_generate_route(
             request_id=request_id,
@@ -401,7 +402,9 @@ async def team_dispatch(
         body.op == "generate"
         and getattr(body, "contract", None) == "wrap"
         and role is not None
-        and not is_cursor_sdk_generate_role(role, request_id=request_id)
+        and not is_cursor_sdk_generate_admission(
+            role, model=model, request_id=request_id
+        )
     ):
         return JSONResponse(
             status_code=422,

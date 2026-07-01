@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
-from typing import Final
+from dataclasses import dataclass, field
+from typing import Any, Final
 
 __all__ = [
     "CURSOR_MODEL_CAPABILITIES",
@@ -13,6 +13,7 @@ __all__ = [
     "ModelCapability",
     "default_variant",
     "supported_knobs",
+    "to_model_card_dict",
 ]
 
 DESCRIPTOR_VERSION: Final[str] = "2026-06-30"
@@ -28,6 +29,26 @@ class KnobSpec:
 class ModelCapability:
     knobs: Mapping[str, KnobSpec]
     default_variant: Mapping[str, str]
+    fixed_params: Mapping[str, str] = field(default_factory=dict)
+
+
+def _knob_card_entry(spec: KnobSpec) -> dict[str, Any]:
+    entry: dict[str, Any] = {"accepted": list(spec.accepted)}
+    if spec.default is not None:
+        entry["default"] = spec.default
+    return entry
+
+
+def to_model_card_dict(cap: ModelCapability) -> dict[str, Any]:
+    """Neutral model-card projection for the cursor-sdk substrate.
+
+    Shared key vocabulary: ``knobs``, ``fixed_params``, and ``api_surface`` only
+    on the cloud side. Distinct from provider wire-body projection.
+    """
+    return {
+        "knobs": {name: _knob_card_entry(spec) for name, spec in cap.knobs.items()},
+        "fixed_params": dict(cap.fixed_params),
+    }
 
 
 CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
@@ -44,8 +65,8 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
             "effort": KnobSpec(accepted=("low", "medium", "high", "xhigh", "max")),
             "fast": KnobSpec(accepted=("false", "true")),
         },
+        fixed_params={"cyber": "false"},
         default_variant={
-            "cyber": "false",
             "thinking": "true",
             "context": "1m",
             "effort": "high",
@@ -62,6 +83,18 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
             "thinking": "true",
             "context": "1m",
             "effort": "medium",
+        },
+    ),
+    "claude-sonnet-5": ModelCapability(
+        knobs={
+            "thinking": KnobSpec(accepted=("false", "true")),
+            "context": KnobSpec(accepted=("300k", "1m")),
+            "effort": KnobSpec(accepted=("low", "medium", "high", "xhigh", "max")),
+        },
+        default_variant={
+            "thinking": "true",
+            "context": "1m",
+            "effort": "high",
         },
     ),
     # Routed-but-untrusted consult models (team_dispatch reviewer/skeptic/cheap-recon

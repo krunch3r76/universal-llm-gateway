@@ -32,6 +32,8 @@ line (`handoff-packet-authoring.md` § Skill load resolution).
 | `agent-guidance-writing` | `agent-guidance-writing.md` — rules/skills/agent-guides authoring · stub: `.cursor/skills/agent-guidance-writing/SKILL.md` |
 | `git-posture` | `git-posture.md` — truth substrate, execution lanes, no-diffs-to-LLMs · stub: `.cursor/skills/git-posture/SKILL.md` · Cursor rule stub: `.cursor/rules/commit-and-git-scope_ws.mdc` |
 | `web-boot-lead` | `web-boot-lead.md` — web session open: `cortex_boot` call shape, skip-boot for bound coding, tiered skill preload |
+| `descriptor-authoring-discipline` | `descriptor-authoring-discipline.md` — MCP descriptor slim/distill discipline: Tier-1 contract in-band vs Tier-2 depth→populated skill+pointer, descriptor budget, EXTRACT-BEFORE-DROP, drop/keep tag lists, per-tool skill-pointer convention, runtime-ALIGN drift review |
+| `cortex` | `cortex.md` — Tier-2 depth home for the `cortex(...)` MCP tool: full op catalog, derivation/relationship/edge taxonomies, intent/projection semantics, workflow chains, write-path gotchas, known doc-vs-runtime drifts. Basics stay in `cortex-orientation`. The descriptor-slim pointer target (`See agent_skill:cortex`) |
 
 ## Cortex SOT (boot-indexed — stub in `.cursor/skills/`)
 

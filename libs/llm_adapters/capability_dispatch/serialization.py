@@ -90,3 +90,28 @@ def to_wire_dict(dispatch: CapabilityDispatch) -> dict[str, Any]:
         wire["specializations"] = specializations
 
     return wire
+
+
+def _knob_card_entry(spec: KnobSpec) -> dict[str, Any]:
+    entry: dict[str, Any] = {"name": spec.name}
+    if spec.accepted is not None:
+        entry["accepted"] = list(spec.accepted)
+    if spec.default is not OMIT and spec.default is not None:
+        entry["default"] = spec.default
+    return entry
+
+
+def to_model_card_dict(dispatch: CapabilityDispatch) -> dict[str, Any]:
+    """Neutral model-card projection for the cloud-api substrate.
+
+    Shared key vocabulary: ``knobs``, ``fixed_params``, and ``api_surface`` only
+    where genuinely cross-substrate. Distinct from ``to_wire_dict`` which stays
+    scoped to provider HTTP request body projection.
+    """
+    return {
+        "api_surface": dispatch.api_surface,
+        "knobs": {
+            name: _knob_card_entry(spec) for name, spec in dispatch.params.items()
+        },
+        "fixed_params": {},
+    }

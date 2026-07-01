@@ -30,7 +30,7 @@
 |---------|------|
 | Docs | `docs/` |
 | Changelog | `changelog/` |
-| Summaries | `/tmp/summaries/` |
+| Summaries | `/tmp/summaries/` — lead-seat ephemeral scratch only; ¬ cursor-sdk dispatch deliverables (durable output → `cortex://` or `workspaces://` shares per packet) |
 | Proposed | `/tmp/proposed-docs/` |
 | Prompts | `tmp/prompts/` |
 <!-- /target:* -->

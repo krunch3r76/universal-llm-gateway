@@ -76,6 +76,9 @@ from services.git_integration_worker.cursor_sdk_context import (
     build_agent_options,
     validate_dispatch_context,
 )
+from services.git_integration_worker.cursor_sdk_deliverable_truth import (
+    light_bounded_deliverable_reason,
+)
 from services.git_integration_worker.cursor_sdk_events import (
     emit_sdk_worker_completed,
     emit_sdk_worker_delivery_failed,
@@ -99,6 +102,9 @@ from services.git_integration_worker.cursor_sdk_packet import (
     extract_source_ref_from_packet,
     infer_contract_from_text,
     resolve_prompt_preamble,
+)
+from services.git_integration_worker.cursor_sdk_stream_capture import (
+    observe_run_stream,
 )
 from services.git_integration_worker.cursor_sdk_transcript import resolve_run_body
 from services.git_integration_worker.git_worker_lifecycle_events import (
@@ -457,6 +463,17 @@ def _run_sdk_sync(
                     agent_id=getattr(agent, "id", None),
                     run_id=getattr(run, "id", None),
                 )
+                # Drain the live stream BEFORE wait() — safe/additive: a fully
+                # consumed stream leaves Run._terminal_result cached, so wait()
+                # below returns it directly instead of issuing a second RPC.
+                # This is the ONLY channel that can see a tool call the runtime
+                # truncates/rejects upstream of conversation() (friction 21654).
+                stream_capture = observe_run_stream(
+                    run,
+                    dispatch_id=dispatch_id,
+                    thread_id=thread_id,
+                    resolved_model=resolved_model,
+                )
                 result = run.wait()
                 turns = run.conversation()
                 capture_branch = classify_mcp_capture_branch(turns)
@@ -466,13 +483,29 @@ def _run_sdk_sync(
                     turns=turns,
                     capture_branch=capture_branch,
                 )
+                conversation_tool_call_count = count_tool_calls(turns)
+                tool_call_count = (
+                    stream_capture.tool_call_count or conversation_tool_call_count
+                )
+                if stream_capture.tool_call_count != conversation_tool_call_count:
+                    logger.info(
+                        "cursor sdk stream/conversation tool-call count delta: "
+                        "dispatch_id=%s stream=%d conversation=%d delta=%d "
+                        "truncated_calls=%d",
+                        dispatch_id,
+                        stream_capture.tool_call_count,
+                        conversation_tool_call_count,
+                        stream_capture.tool_call_count - conversation_tool_call_count,
+                        len(stream_capture.truncated_tool_calls),
+                    )
                 return SdkRunOutcome(
                     body=resolve_run_body(result.result, turns),
                     status=str(result.status),
                     duration_ms=result.duration_ms,
-                    tool_call_count=count_tool_calls(turns),
+                    tool_call_count=tool_call_count,
                     effects_manifest=effects_manifest,
                     capture_branch=capture_branch,
+                    tool_calls=stream_capture.tool_calls,
                 )
             finally:
                 hb_stop.set()
@@ -544,7 +577,9 @@ async def _start_promoted_dispatch(
     cfg = _config(request) if request is not None else _CONFIG
     contract = (promoted.contract or "consult").lower()
     if contract == "implement":
-        baseline_map = await asyncio.to_thread(capture_wt_baseline_with_hashes, cfg.source_repo)
+        baseline_map = await asyncio.to_thread(
+            capture_wt_baseline_with_hashes, cfg.source_repo
+        )
         if baseline_map is not None:
             await asyncio.to_thread(
                 ledger.set_wt_baseline,
@@ -1030,8 +1065,17 @@ async def _finalize_success(
     # run whose captured body (after transcript reconstruction in resolve_run_body)
     # is empty must never report status:complete + 0B. Implement-specific reasons
     # (run_status / zero_tool_calls) take precedence when present.
+    # Closeout-truth backstop (friction 21654 fix #3): a light-bounded dispatch
+    # must not claim complete when a named deliverable never landed. Holds
+    # regardless of whether the #1/#2 write-path instrumentation saw the choke.
     if degraded_reason is None:
-        degraded_reason = empty_output_degraded_reason(outcome)
+        degraded_reason = empty_output_degraded_reason(
+            outcome
+        ) or light_bounded_deliverable_reason(
+            body=outcome.body,
+            tool_calls=outcome.tool_calls,
+            contract=contract,
+        )
     await _deliver_sdk_closeout(
         req=req,
         source_repo=source_repo,
@@ -1167,7 +1211,9 @@ async def cursor_dispatch(
         return JSONResponse(status_code=status_code, content=cached.model_dump())
 
     if contract == "implement":
-        baseline_map = await asyncio.to_thread(capture_wt_baseline_with_hashes, cfg.source_repo)
+        baseline_map = await asyncio.to_thread(
+            capture_wt_baseline_with_hashes, cfg.source_repo
+        )
         if baseline_map is not None:
             await asyncio.to_thread(
                 ledger.set_wt_baseline,

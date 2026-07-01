@@ -27,7 +27,7 @@ to set a thread subject (friction 19803).
 
 **Operator directive (Kaywan, 2026-06-28): an explicit `<mcp_capabilities>` block is the DEFAULT on _any_ `team_dispatch` to a cursor-sdk model** — every contract (`light-bounded`, `pure-mechanical`, `implement`, `wrap`), every task class (recon, review, implement), not just consult packets.
 
-**Why it is the default, not an option.** cursor-sdk (Composer) writes deliverables into the **project checkout `tmp/`** by default — the SDK wrapper always drops a closeout receipt at `tmp/reviews/closeouts/<dispatch_id>.md`, and absent explicit routing the worker tends to co-locate its real output there too. Durable output reaches Cortex **only** when the packet names the cortex sandbox write path explicitly. Omitting the block is the root cause of the friction-19196 class (deliverable written to `tmp/reviews/` instead of the named cortex sidecar).
+**Why it is the default, not an option.** cursor-sdk (Composer) writes deliverables into the **project checkout `tmp/`** by default — the SDK wrapper always drops a closeout receipt at `tmp/reviews/closeouts/<dispatch_id>.md`, and absent explicit routing the worker tends to co-locate its real output there too. Without explicit cortex routing, Composer also gravitates to **`/tmp/summaries/`** (from the always-applied `system.mdc` Locations table). Durable output reaches Cortex **only** when the packet names the cortex sandbox write path explicitly. Omitting the block is the root cause of the friction-19196 class (deliverable written to `tmp/reviews/` instead of the named cortex sidecar).
 
 The block MUST:
 

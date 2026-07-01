@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import Callable
+from collections.abc import Callable
 
 from .constants import (
     BIND_ADMIT_THRESHOLD,

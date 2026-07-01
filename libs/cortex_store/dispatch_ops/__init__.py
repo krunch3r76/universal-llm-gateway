@@ -21,6 +21,7 @@ from typing import Any
 
 from universal_logging import get_logger
 
+from ..skill_hint_projection import get_skill_hint
 from ._shared import record
 from .workflow_hints import (
     _CORTEX_FORMAT_HINT,
@@ -208,6 +209,11 @@ def execute_op(tool: str, arguments: object) -> Any:
     attach_session_close_protocol(result, tool)
     if "error" in result:
         result["_hint"] = _FRICTION_HINT
+        code = result.get("code")
+        if isinstance(code, str) and code.strip():
+            skill_hint = get_skill_hint(code.strip())
+            if skill_hint is not None:
+                result["skill_hint"] = skill_hint
         return result
     # Handler-set _next takes precedence — it carries per-call detail
     # (which warning categories fired, which suggestion is most relevant).

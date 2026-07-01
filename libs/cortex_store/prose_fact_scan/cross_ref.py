@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
 from .constants import ANTONYM_PAIRS
 from .fp_controls import extract_status_tokens, parse_events_json
