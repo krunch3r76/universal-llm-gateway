@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from functools import lru_cache
 from pathlib import Path
 
 from claude_bundles.bundle_description import (
@@ -131,24 +132,6 @@ CURSOR_INDEXED_SLUGS: list[str] = list(
     dict.fromkeys([*CLAUDE_BUNDLE_SLUGS, *CURSOR_ONLY_SLUGS])
 )
 
-# SOT must live under cortex (not git-whitelisted docs) — personal/domain skills.
-CORTEX_SOT_ONLY_SLUGS: frozenset[str] = frozenset(
-    {
-        "case-evidence-retrieval",
-        "crypto-trading-research",
-        "document-ingestion",
-        "document-lifecycle-tracking",
-        "email-tool-dispatch",
-        "engagement-stance",
-        "financial-reasoning",
-        "lawyer-stance",
-        "legal-opinion-corpus-ingestion",
-        "srm",
-        "tax",
-        "w2-ingestion",
-    }
-)
-
 CORTEX_SOT_ROOT = Path("/mnt/torus/mcp-data/files/agent-skills")
 
 _SOT_LINE_RE = re.compile(r"^\*\*SOT")
@@ -170,7 +153,6 @@ def _frontmatter_sot_cortex(text: str) -> bool:
 
 
 def _docs_defers_to_cortex(docs_text: str) -> bool:
-    """True when docs/agent-guides/skills is a pointer stub, not authoritative body."""
     if _frontmatter_sot_cortex(docs_text):
         return True
     if "agent-skills/" not in docs_text:
@@ -183,22 +165,50 @@ def _docs_defers_to_cortex(docs_text: str) -> bool:
     return any(marker in docs_text for marker in defer_markers)
 
 
+def docs_defers_to_cortex(docs_text: str) -> bool:
+    """True when docs/agent-guides/skills is a pointer stub, not authoritative body."""
+    return _docs_defers_to_cortex(docs_text)
+
+
+def is_cortex_sot_frontmatter(text: str) -> bool:
+    """True when YAML frontmatter declares ``sot: cortex`` (roadmap 2.3)."""
+    return _frontmatter_sot_cortex(text)
+
+
+@lru_cache(maxsize=1)
+def cortex_sot_only_slugs() -> frozenset[str]:
+    """Slugs whose authoritative SOT is cortex-mount only (``sot: cortex`` frontmatter)."""
+    if _cortex_mount_missing():
+        return frozenset()
+    slugs: set[str] = set()
+    for path in CORTEX_SOT_ROOT.glob("*.md"):
+        if path.stem == "README":
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if is_cortex_sot_frontmatter(text):
+            slugs.add(path.stem)
+    return frozenset(slugs)
+
+
 def _cortex_mount_missing() -> bool:
     return not CORTEX_SOT_ROOT.is_dir()
 
 
 def resolve_sot(slug: str, repo_root: Path) -> tuple[Path, str]:
     """Return the first existing SOT path and a short root label for reporting."""
-    if _cortex_mount_missing() and slug in CORTEX_SOT_ONLY_SLUGS:
-        raise FileNotFoundError(
-            f"cortex SOT mount missing ({CORTEX_SOT_ROOT}) — cannot resolve {slug!r}"
-        )
     docs_skills = repo_root / "docs/agent-guides/skills" / f"{slug}.md"
     cortex_sot = CORTEX_SOT_ROOT / f"{slug}.md"
     docs_defer_cortex = (
         docs_skills.is_file()
         and _docs_defers_to_cortex(docs_skills.read_text(encoding="utf-8"))
     )
+    if _cortex_mount_missing() and (docs_defer_cortex or (slug in CURSOR_INDEXED_SLUGS and not docs_skills.is_file())):
+        raise FileNotFoundError(
+            f"cortex SOT mount missing ({CORTEX_SOT_ROOT}) — cannot resolve {slug!r}"
+        )
     if docs_skills.is_file() and cortex_sot.is_file() and docs_defer_cortex:
         return cortex_sot, "cortex/agent-skills"
     if docs_defer_cortex and not cortex_sot.is_file():

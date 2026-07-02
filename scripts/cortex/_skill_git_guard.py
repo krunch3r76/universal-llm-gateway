@@ -6,9 +6,11 @@ import subprocess
 from pathlib import Path
 
 from claude_bundles.resolver import (
-    CORTEX_SOT_ONLY_SLUGS,
     CORTEX_SOT_ROOT,
     CURSOR_INDEXED_SLUGS,
+    cortex_sot_only_slugs,
+    docs_defers_to_cortex,
+    is_cortex_sot_frontmatter,
     resolve_sot,
 )
 
@@ -48,16 +50,16 @@ def check_cursor_skills_gitignored(repo_root: Path) -> list[str]:
 
 
 def check_cortex_sot_only_slugs(repo_root: Path) -> list[str]:
-    """Personal/domain slugs must resolve SOT under cortex root, not tracked docs."""
+    """Cortex-mount SOT slugs (``sot: cortex``) must resolve under cortex root, not tracked docs."""
     problems: list[str] = []
     if not CORTEX_SOT_ROOT.is_dir():
         problems.append(
             f"cortex SOT mount missing ({CORTEX_SOT_ROOT}) — "
-            "cannot verify CORTEX_SOT_ONLY slugs"
+            "cannot verify cortex SOT slugs"
         )
         return problems
     cortex_root = CORTEX_SOT_ROOT.resolve()
-    for slug in sorted(CORTEX_SOT_ONLY_SLUGS):
+    for slug in sorted(cortex_sot_only_slugs()):
         try:
             sot_path, label = resolve_sot(slug, repo_root)
         except FileNotFoundError as exc:
@@ -69,7 +71,7 @@ def check_cortex_sot_only_slugs(repo_root: Path) -> list[str]:
         resolved = sot_path.resolve()
         if not resolved.is_relative_to(cortex_root):
             problems.append(
-                f"{slug}: CORTEX_SOT_ONLY but resolved={label} ({resolved})"
+                f"{slug}: cortex SOT-only but resolved={label} ({resolved})"
             )
             continue
         try:
@@ -83,9 +85,31 @@ def check_cortex_sot_only_slugs(repo_root: Path) -> list[str]:
     return problems
 
 
+def check_docs_defer_sot_frontmatter(repo_root: Path) -> list[str]:
+    """Docs defer stubs must declare ``sot: cortex`` (roadmap 2.3), not prose-only markers."""
+    problems: list[str] = []
+    skills_dir = repo_root / "docs/agent-guides/skills"
+    if not skills_dir.is_dir():
+        return problems
+    for path in sorted(skills_dir.glob("*.md")):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            problems.append(f"{path.stem}: unreadable docs stub ({exc})")
+            continue
+        if not docs_defers_to_cortex(text):
+            continue
+        if not is_cortex_sot_frontmatter(text):
+            problems.append(
+                f"{path.stem}: docs defer stub missing frontmatter sot: cortex"
+            )
+    return problems
+
+
 def run_skill_git_guard(repo_root: Path) -> int:
     problems = check_cursor_skills_gitignored(repo_root)
     problems.extend(check_cortex_sot_only_slugs(repo_root))
+    problems.extend(check_docs_defer_sot_frontmatter(repo_root))
     if not problems:
         return 0
     for line in problems:
