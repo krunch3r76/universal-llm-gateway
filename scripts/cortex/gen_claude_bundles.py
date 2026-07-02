@@ -16,6 +16,13 @@ if str(_REPO / "libs") not in sys.path:
 if str(_SCRIPTS_CORTEX) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_CORTEX))
 
+from _skill_entity_reconcile import run_entity_reconcile_check  # noqa: E402
+from _skill_git_guard import run_skill_git_guard  # noqa: E402
+from claude_bundles.bundle_description import (  # noqa: E402
+    MAX_CLAUDE_AI_DESCRIPTION_LEN,
+    MIN_BUNDLE_DESCRIPTION_LEN,
+    extract_rendered_description,
+)
 from claude_bundles.resolver import (  # noqa: E402
     CLAUDE_BUNDLE_SLUGS,
     CURSOR_INDEXED_SLUGS,
@@ -23,8 +30,6 @@ from claude_bundles.resolver import (  # noqa: E402
     render_bundle,
     resolve_sot,
 )
-from _skill_git_guard import run_skill_git_guard  # noqa: E402
-from _skill_entity_reconcile import run_entity_reconcile_check  # noqa: E402
 from gen_rules.check import diff_against  # noqa: E402
 
 
@@ -101,9 +106,50 @@ def run_check_cursor_sot(root: Path) -> int:
     return fail
 
 
-def _load_rendered(slug: str, root: Path) -> tuple[Path, str, str]:
+def _fetch_entity_descriptions(client: object | None) -> dict[str, str]:
+    if client is None:
+        return {}
+    from _skill_projection import _request
+
+    status, body = _request(
+        client,
+        "GET",
+        "/entities?type=agent_skill&limit=500&include_non_active=false",
+    )
+    if status != 200:
+        return {}
+    items = body.get("items") or body.get("entities") or []
+    out: dict[str, str] = {}
+    for row in items:
+        eid = str(row.get("id") or "")
+        if not eid.startswith("agent_skill:"):
+            continue
+        slug = eid.removeprefix("agent_skill:")
+        out[slug] = str(row.get("description") or "").strip()
+    return out
+
+
+def _cortex_client() -> object | None:
+    try:
+        from transport_utils import DEFAULT_CORTEX_URL, make_sync_client
+
+        return make_sync_client(DEFAULT_CORTEX_URL)
+    except Exception:
+        return None
+
+
+def _load_rendered(
+    slug: str,
+    root: Path,
+    *,
+    entity_descriptions: dict[str, str] | None = None,
+) -> tuple[Path, str, str]:
     sot_path, root_label = resolve_sot(slug, root)
-    rendered = render_bundle(slug, sot_path.read_text(encoding="utf-8"))
+    rendered = render_bundle(
+        slug,
+        sot_path.read_text(encoding="utf-8"),
+        entity_description=(entity_descriptions or {}).get(slug),
+    )
     return sot_path, root_label, rendered
 
 
@@ -111,9 +157,12 @@ def run_dry_run(root: Path) -> int:
     print("DRY RUN — no writes will be issued")
     print()
     fail = 0
+    entity_descriptions = _fetch_entity_descriptions(_cortex_client())
     for slug in CLAUDE_BUNDLE_SLUGS:
         try:
-            sot_path, root_label, _ = _load_rendered(slug, root)
+            sot_path, root_label, _ = _load_rendered(
+                slug, root, entity_descriptions=entity_descriptions
+            )
         except FileNotFoundError as exc:
             print(f"ERROR  {slug:32s}  {exc}", file=sys.stderr)
             fail = 1
@@ -143,11 +192,46 @@ def run_dry_run(root: Path) -> int:
     return fail
 
 
-def run_check(root: Path) -> int:
+def _check_bundle_descriptions(
+    root: Path, entity_descriptions: dict[str, str]
+) -> int:
     fail = 0
     for slug in CLAUDE_BUNDLE_SLUGS:
         try:
-            _, _, rendered = _load_rendered(slug, root)
+            _, _, rendered = _load_rendered(
+                slug, root, entity_descriptions=entity_descriptions
+            )
+        except FileNotFoundError:
+            continue
+        desc = extract_rendered_description(rendered)
+        if len(desc) < MIN_BUNDLE_DESCRIPTION_LEN:
+            print(
+                f"DESCRIPTION: {slug} too short ({len(desc)} < "
+                f"{MIN_BUNDLE_DESCRIPTION_LEN}): {desc!r}",
+                file=sys.stderr,
+            )
+            fail = 1
+        elif len(desc) > MAX_CLAUDE_AI_DESCRIPTION_LEN:
+            print(
+                f"DESCRIPTION: {slug} too long ({len(desc)} > "
+                f"{MAX_CLAUDE_AI_DESCRIPTION_LEN}): {desc!r}",
+                file=sys.stderr,
+            )
+            fail = 1
+    if fail == 0:
+        print("OK bundle-descriptions", flush=True)
+    return fail
+
+
+def run_check(root: Path) -> int:
+    fail = 0
+    client = _cortex_client()
+    entity_descriptions = _fetch_entity_descriptions(client) if client else {}
+    for slug in CLAUDE_BUNDLE_SLUGS:
+        try:
+            _, _, rendered = _load_rendered(
+                slug, root, entity_descriptions=entity_descriptions
+            )
         except FileNotFoundError as exc:
             print(f"ERROR: {slug}: {exc}", file=sys.stderr)
             fail = 1
@@ -168,10 +252,11 @@ def run_check(root: Path) -> int:
             fail = 1
     fail |= run_check_cursor_sot(root)
     fail |= run_skill_git_guard(root)
+    fail |= _check_bundle_descriptions(root, entity_descriptions)
     try:
         from transport_utils import DEFAULT_CORTEX_URL, make_sync_client
 
-        client = make_sync_client(DEFAULT_CORTEX_URL)
+        client = client or make_sync_client(DEFAULT_CORTEX_URL)
         fail |= run_entity_reconcile_check(client=client)
     except Exception as exc:
         print(f"INFO entity-reconcile skipped: {exc}", flush=True)
@@ -182,9 +267,12 @@ def run_check(root: Path) -> int:
 
 def run_generate(root: Path) -> int:
     fail = 0
+    entity_descriptions = _fetch_entity_descriptions(_cortex_client())
     for slug in CLAUDE_BUNDLE_SLUGS:
         try:
-            sot_path, _, rendered = _load_rendered(slug, root)
+            sot_path, _, rendered = _load_rendered(
+                slug, root, entity_descriptions=entity_descriptions
+            )
         except FileNotFoundError as exc:
             print(f"ERROR: {slug}: {exc}", file=sys.stderr)
             fail = 1

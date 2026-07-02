@@ -6,6 +6,11 @@ import json
 import re
 from pathlib import Path
 
+from claude_bundles.bundle_description import (
+    parse_frontmatter,
+    resolve_bundle_description,
+)
+
 # claude.ai bundle = all CURSOR_INDEXED skills except matter playbooks pending retirement
 # (see CURSOR_ONLY_SLUGS). Cursor hardlinks cover full CURSOR_INDEXED union.
 _CLAUDE_BUNDLE_U: list[str] = [
@@ -59,7 +64,6 @@ _CLAUDE_BUNDLE_E: list[str] = [
     "skill-document-writing",
     "commit-and-git-scope",
     "git-posture",
-    "xai-mcp-calling-shape",
     "session-close-kernel",
     "session-close-transcript",
     "session-close-handoff",
@@ -154,7 +158,6 @@ CORTEX_SOT_ONLY_SLUGS: frozenset[str] = frozenset(
 
 CORTEX_SOT_ROOT = Path("/mnt/torus/mcp-data/files/agent-skills")
 
-_FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---", re.DOTALL)
 _SOT_LINE_RE = re.compile(r"^\*\*SOT")
 _SOURCE_LINE_RE = re.compile(r"^\*\*Source:\*\*")
 _GENERATED_COMMENT_RE = re.compile(r"GENERATED\s*[—-]\s*DO NOT EDIT")
@@ -222,27 +225,6 @@ def resolve_sot(slug: str, repo_root: Path) -> tuple[Path, str]:
     raise FileNotFoundError(f"no SOT for {slug!r} — searched: {searched}")
 
 
-def _split_frontmatter(text: str) -> tuple[dict[str, str], str]:
-    match = _FRONTMATTER_RE.match(text)
-    if not match:
-        return {}, text
-    fm: dict[str, str] = {}
-    for line in match.group(1).splitlines():
-        if ":" not in line:
-            continue
-        key, raw = line.split(":", 1)
-        key, raw = key.strip(), raw.strip()
-        if key not in {"name", "description"}:
-            continue
-        if (raw.startswith('"') and raw.endswith('"')) or (
-            raw.startswith("'") and raw.endswith("'")
-        ):
-            raw = raw[1:-1]
-        fm[key] = raw
-    body = text[match.end() :].lstrip("\n")
-    return fm, body
-
-
 def _strip_pointer_fences(body: str) -> str:
     lines = body.splitlines()
     out: list[str] = []
@@ -269,21 +251,6 @@ def _strip_pointer_fences(body: str) -> str:
     return f"{cleaned}\n" if cleaned else ""
 
 
-def _first_prose_line(body: str) -> str:
-    for line in body.splitlines():
-        stripped = line.strip()
-        if not stripped:
-            continue
-        if stripped.startswith("#"):
-            stripped = stripped.lstrip("#").strip()
-        if stripped.startswith(("<!--", "```", "|", "- ", "* ")):
-            continue
-        if _SOT_LINE_RE.match(stripped) or _SOURCE_LINE_RE.match(stripped):
-            continue
-        return stripped
-    return ""
-
-
 def _yaml_scalar(value: str) -> str:
     if not value:
         return '""'
@@ -292,11 +259,21 @@ def _yaml_scalar(value: str) -> str:
     return json.dumps(value)
 
 
-def render_bundle(slug: str, raw: str) -> str:
+def render_bundle(
+    slug: str,
+    raw: str,
+    *,
+    entity_description: str | None = None,
+) -> str:
     """Inline SOT into a self-contained SKILL.md for claude.ai consumption."""
-    fm, body = _split_frontmatter(raw)
+    fm, body = parse_frontmatter(raw)
     cleaned = _strip_pointer_fences(body)
-    name = fm.get("name") or slug
-    description = fm.get("description") or _first_prose_line(cleaned)
+    name = str(fm.get("name") or slug)
+    description = resolve_bundle_description(
+        slug,
+        frontmatter=fm,
+        body=cleaned,
+        entity_description=entity_description,
+    )
     header = f"---\nname: {name}\ndescription: {_yaml_scalar(description)}\n---\n\n"
     return header + cleaned if cleaned else header

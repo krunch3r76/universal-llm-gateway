@@ -93,7 +93,6 @@ PARTITION: dict[str, list[str]] = {
         "agent_skill:hei-application-discipline",
         "agent_skill:tax",
         "agent_skill:w2-ingestion",
-        "agent_skill:xai-mcp-calling-shape",
         # Reconciled 2026-05-29 (todo:agent-skill-applicability-partition-
         # reconciliation): active, seat-agnostic skills previously unpartitioned.
         "agent_skill:implementation-plan-workflow",
@@ -193,11 +192,6 @@ OVERRIDES: dict[str, list[str]] = {
         "subagent-subagent",
     ],
     "agent_skill:grok-web-dispatch": ["grok-web", "claude-web", "claude-cursor"],
-    "agent_skill:xai-mcp-calling-shape": [
-        "grok-web",
-        "claude-web",
-        "claude-cursor",
-    ],
     # Lead-seat posture (thread 1189) — agents.yaml lead_seats; not universal.
     "agent_skill:consensus-steelman-posture": sorted(load_lead_agent_slugs()),
     "agent_skill:handoff-packet-authoring": ["claude-web", "claude-cursor"],
