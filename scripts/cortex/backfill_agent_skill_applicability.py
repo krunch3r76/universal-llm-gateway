@@ -152,9 +152,7 @@ PARTITION: dict[str, list[str]] = {
         "agent_skill:task-grouping-discipline",
     ],
     "claude-cursor": [
-        # Reconciled 2026-05-29 (direct-verify caught it): cursor-workspace skill
-        # (.cursor/skills/); live applicable_agents=['claude-cursor'], not universal.
-        "agent_skill:delegate-to-grok",
+        # delegate-to-grok removed 2026-07-02 (retired; dir eliminated)
     ],
     "claude-web": [
         "agent_skill:implement-todo",
@@ -165,6 +163,8 @@ PARTITION: dict[str, list[str]] = {
 # Harness/archived skills — excluded from boot via lifecycle=deprecated (boot SQL
 # uses lifecycle_not_value_sql_predicate). Run with --deprecate-retired to apply.
 RETIRED_BOOT_SKILLS: tuple[str, ...] = (
+    "agent_skill:delegate-to-grok",
+    "agent_skill:superheavy-dispatch",
     "agent_skill:grokbuild",
     "agent_skill:grokbuild-v1",
     "agent_skill:grokbuild-v2",

@@ -14,12 +14,15 @@ if str(_REPO / "libs") not in sys.path:
 if str(_SCRIPTS_CORTEX) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_CORTEX))
 
+from claude_bundles.resolver import CLAUDE_BUNDLE_SLUGS, CURSOR_INDEXED_SLUGS  # noqa: E402
 from _skill_audit import (  # noqa: E402
     _PARITY_ALLOWLIST,
     allowlist_verdict,
     parity_verdict,
     stub_critical_field_verdict,
 )
+
+_CURSOR_PRIMARY_SLUGS = set(CURSOR_INDEXED_SLUGS)
 from _skill_constants import REMEDIATION_CMD  # noqa: E402
 from _skill_drift import _drifts  # noqa: E402
 from _skill_manifest import (  # noqa: E402
@@ -120,7 +123,7 @@ def run_generate(client: object, repo_root: Path) -> int:
     skipped_allowlist = sorted(allowlist)
     changed = False
     for slug in sorted(entities):
-        if slug in allowlist or slug in blocked:
+        if slug in allowlist or slug in blocked or slug in _CURSOR_PRIMARY_SLUGS:
             continue
         fields = extract_renderer_fields(entities[slug], slug)
         content = render_stub(slug, fields)

@@ -6,9 +6,8 @@ import json
 import re
 from pathlib import Path
 
-# claude.ai is always MCP-connected (vortex → cortex). Bundle = U + E tiers from
-# scope-classification.md (ratified arc 3924). Excludes: produce-uml (local
-# PlantUML affordance), L-tier (gateway services), M-tier (matter/domain).
+# claude.ai bundle = all CURSOR_INDEXED skills except matter playbooks pending retirement
+# (see CURSOR_ONLY_SLUGS). Cursor hardlinks cover full CURSOR_INDEXED union.
 _CLAUDE_BUNDLE_U: list[str] = [
     "orchestrator-core",
     "markdown-navigation",
@@ -85,9 +84,73 @@ _CLAUDE_BUNDLE_E: list[str] = [
     "email-tool-dispatch",
     "document-lifecycle-tracking",
     "architecture-invariants",
+    "corpus-map-authoring",
+    "corpus-grounded-skill-authoring",
+    "todo-lifecycle",
+    # Repo / operational SOT — rendered to .claude for parity (cursor hardlink unchanged)
+    "build-pipeline",
+    "corpus-cross-reference-discipline",
+    "cursor-rule-authoring",
+    "debug-with-events",
+    "mcp-surface-change",
+    "mcp-tool-loop-trace-matrix",
+    "orchestrator-workflow",
+    "pipeline-substrate-capabilities",
+    "pre-deploy-gate-discipline",
+    "provenance-granularity",
+    "refine-pipeline",
+    "service-lifecycle",
+    "ulg-architecture",
+    # IDE-authored SOT under .cursor/skills/ (no separate docs/cortex body)
+    "add-mcp-tool",
+    "produce-uml",
 ]
 
 CLAUDE_BUNDLE_SLUGS: list[str] = _CLAUDE_BUNDLE_U + _CLAUDE_BUNDLE_E
+
+# IDE-authored SOT under .cursor/skills/ (authoritative body, not a defer stub).
+WORKSPACE_SOT_SLUGS: frozenset[str] = frozenset(
+    {
+        "add-mcp-tool",
+        "produce-uml",
+    }
+)
+
+# Indexed for cursor hardlink but excluded from .claude render (matter playbook — retiring).
+CURSOR_ONLY_SLUGS: list[str] = [
+    "hei-application-discipline",
+]
+
+# Back-compat alias (removed next commit window).
+CURSOR_SOT_DIRECT_SLUGS: list[str] = CURSOR_ONLY_SLUGS
+
+# Single rule: every indexed cursor skill hardlinks to authoritative SOT.
+CURSOR_INDEXED_SLUGS: list[str] = list(
+    dict.fromkeys([*CLAUDE_BUNDLE_SLUGS, *CURSOR_ONLY_SLUGS])
+)
+
+# SOT must live under cortex (not git-whitelisted docs) — personal/domain skills.
+CORTEX_SOT_ONLY_SLUGS: frozenset[str] = frozenset(
+    {
+        "hei-application-discipline",
+        "chase-escrow-discipline",
+        "chase-escrow-statement-ingestion",
+        "boe19p-appeal-discipline",
+        "case-evidence-retrieval",
+        "crypto-trading-research",
+        "document-ingestion",
+        "document-lifecycle-tracking",
+        "email-tool-dispatch",
+        "engagement-stance",
+        "financial-reasoning",
+        "flintridge-case-navigation",
+        "lawyer-stance",
+        "legal-opinion-corpus-ingestion",
+        "srm",
+        "tax",
+        "w2-ingestion",
+    }
+)
 
 CORTEX_SOT_ROOT = Path("/mnt/torus/mcp-data/files/agent-skills")
 
@@ -109,25 +172,49 @@ def _docs_defers_to_cortex(docs_text: str) -> bool:
     return any(marker in docs_text for marker in defer_markers)
 
 
+def _cortex_mount_missing() -> bool:
+    return not CORTEX_SOT_ROOT.is_dir()
+
+
 def resolve_sot(slug: str, repo_root: Path) -> tuple[Path, str]:
     """Return the first existing SOT path and a short root label for reporting."""
+    if _cortex_mount_missing() and slug in CORTEX_SOT_ONLY_SLUGS:
+        raise FileNotFoundError(
+            f"cortex SOT mount missing ({CORTEX_SOT_ROOT}) — cannot resolve {slug!r}"
+        )
     docs_skills = repo_root / "docs/agent-guides/skills" / f"{slug}.md"
     cortex_sot = CORTEX_SOT_ROOT / f"{slug}.md"
-    if docs_skills.is_file() and cortex_sot.is_file():
-        if _docs_defers_to_cortex(docs_skills.read_text(encoding="utf-8")):
-            return cortex_sot, "cortex/agent-skills"
+    docs_defer_cortex = (
+        docs_skills.is_file()
+        and _docs_defers_to_cortex(docs_skills.read_text(encoding="utf-8"))
+    )
+    if docs_skills.is_file() and cortex_sot.is_file() and docs_defer_cortex:
+        return cortex_sot, "cortex/agent-skills"
+    if docs_defer_cortex and not cortex_sot.is_file():
+        raise FileNotFoundError(
+            f"no SOT for {slug!r} — docs stub defers to missing {cortex_sot}"
+        )
     candidates: list[tuple[str, Path]] = [
         ("docs/agent-guides/skills", docs_skills),
+        (
+            "docs/agent-guides/skills",
+            repo_root / "docs/agent-guides/skills" / slug / "SKILL.md",
+        ),
         (
             "docs/agent-guides/rules",
             repo_root / "docs/agent-guides/rules" / f"{slug}.md",
         ),
         ("cortex/agent-skills", cortex_sot),
-        (
-            ".cursor/skills",
-            repo_root / ".cursor" / "skills" / slug / "SKILL.md",
-        ),
     ]
+    if slug in WORKSPACE_SOT_SLUGS or slug not in CURSOR_INDEXED_SLUGS:
+        candidates.append(
+            (
+                ".cursor/skills",
+                repo_root / ".cursor" / "skills" / slug / "SKILL.md",
+            )
+        )
+    if docs_defer_cortex:
+        candidates = [c for c in candidates if c[0] != "docs/agent-guides/rules"]
     for label, path in candidates:
         if path.is_file():
             return path, label

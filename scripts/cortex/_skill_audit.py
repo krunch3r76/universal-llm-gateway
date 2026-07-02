@@ -97,9 +97,6 @@ _PARITY_ALLOWLIST: dict[str, dict[str, str]] = {
     "build-pipeline": _meta(
         "workspace-only stub (no cortex SOT file)", directionality="stub-only"
     ),
-    "delegate-to-grok": _meta(
-        "RETIRED — stub preserved for historical context", temporary="temporary"
-    ),
     "git-posture": _meta(
         "workspace-only stub (no cortex SOT file)", directionality="stub-only"
     ),

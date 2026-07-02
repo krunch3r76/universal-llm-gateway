@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any
 
@@ -30,6 +31,24 @@ def extract_session_close_payload(kwargs: dict[str, Any]) -> dict[str, Any]:
         for key in _SESSION_CLOSE_PAYLOAD_KEYS
         if key in kwargs and kwargs[key] is not None
     }
+
+
+def merge_session_close_payload(kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Flat kwargs first; optional ``text`` JSON object fills missing close fields."""
+    payload = extract_session_close_payload(kwargs)
+    text = kwargs.get("text")
+    if not isinstance(text, str) or not text.strip():
+        return payload
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        return payload
+    if not isinstance(parsed, dict):
+        return payload
+    for key in _SESSION_CLOSE_PAYLOAD_KEYS:
+        if key not in payload and key in parsed and parsed[key] is not None:
+            payload[key] = parsed[key]
+    return payload
 
 
 def _gate(
@@ -152,6 +171,7 @@ def session_close_validate_attestation_tokens(*, payload: dict[str, Any]) -> lis
 __all__ = [
     "SessionCloseValidateVerdict",
     "extract_session_close_payload",
+    "merge_session_close_payload",
     "session_close_validate_attestation_tokens",
     "validate_session_close_payload",
 ]

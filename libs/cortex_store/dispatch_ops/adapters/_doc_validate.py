@@ -21,7 +21,7 @@ from .._doc_validate_support import (
     resolve_todo_preflight_kwargs,
 )
 from .._session_close_validate import (
-    extract_session_close_payload,
+    merge_session_close_payload,
     session_close_validate_attestation_tokens,
     validate_session_close_payload,
 )
@@ -164,7 +164,7 @@ def _validate_session_close_doc(
     resolved: Any,
     kwargs: dict[str, Any],
 ) -> dict[str, Any]:
-    payload = extract_session_close_payload(kwargs)
+    payload = merge_session_close_payload(kwargs)
     missing = [
         field
         for field in ("session_id", "agent", "session_summary_md", "summary")
@@ -172,7 +172,11 @@ def _validate_session_close_doc(
     ]
     if missing:
         return err422(
-            f"session_close doc_validate requires close payload fields: {missing}"
+            f"session_close doc_validate requires close payload fields: {missing} — "
+            "pass them as flat top-level kwargs alongside doc_type "
+            "(session_id, agent, session_summary_md, summary, …); "
+            "text/path/source_ref apply only to implement_dense_spec; "
+            "for session_close, text may be a JSON object with the same keys"
         )
 
     verdict = validate_session_close_payload(payload)
