@@ -1,11 +1,14 @@
+---
+sot: cortex
+---
+
 # Consult Routing
 
-**SOT:** `cortex://agent-skills/consult-routing.md` — full playbook (R1/R2/R3, executor tier,
-dispatch shapes, implement-lane `source_ref`). Read via `fs(sandbox="cortex", op="read", path="agent-skills/consult-routing.md")`
+Read via `fs(sandbox="cortex", op="read", path="agent-skills/consult-routing.md")`
 before dispatching. Boot skill; briefing card emits the compact index.
 Cursor-indexed entry: `.cursor/skills/consult-routing/SKILL.md`.
 
-Do not duplicate the cortex playbook body here — load the SOT section you need:
+Load the SOT section you need:
 
 | Topic | Cortex section |
 |---|---|

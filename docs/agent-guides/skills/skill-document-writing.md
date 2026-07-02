@@ -1,19 +1,18 @@
 ---
 name: skill-document-writing
 description: On any task to author, revise, retire, or compress a SKILL.md; run a SkillReducer-shaped compression pass; draft/critique an agent_skill entity; respond to skill_binding audit; or resolve trigger overlap — read frontier-model-instructions, then this skill (cortex SOT), then cortex://notes/system/references/skill-compression-workflow-map.md when compressing.
+sot: cortex
 ---
 
 # Skill Document Writing
-
-**SOT (canonical):** `cortex://agent-skills/skill-document-writing.md`
 
 ```
 fs(sandbox="cortex", op="md_read", path="agent-skills/skill-document-writing.md")
 ```
 
-Do not maintain a second long-form copy here — the cortex file owns the full
-authoring lifecycle (decision gate, L1/L2/L3 disclosure, skill_binding,
-registration ritual, versioning, supersession, critique checklist).
+Authoring lifecycle (decision gate, L1/L2/L3 disclosure, skill_binding,
+registration ritual, versioning, supersession, critique checklist) lives in the
+cortex SOT file above.
 
 ## Related skills (declared companion list)
 

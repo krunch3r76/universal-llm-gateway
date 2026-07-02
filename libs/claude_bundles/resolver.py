@@ -154,10 +154,25 @@ CORTEX_SOT_ROOT = Path("/mnt/torus/mcp-data/files/agent-skills")
 _SOT_LINE_RE = re.compile(r"^\*\*SOT")
 _SOURCE_LINE_RE = re.compile(r"^\*\*Source:\*\*")
 _GENERATED_COMMENT_RE = re.compile(r"GENERATED\s*[—-]\s*DO NOT EDIT")
+_FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---", re.DOTALL)
+
+
+def _frontmatter_sot_cortex(text: str) -> bool:
+    match = _FRONTMATTER_RE.match(text)
+    if not match:
+        return False
+    for line in match.group(1).splitlines():
+        if not line.strip().startswith("sot:"):
+            continue
+        value = line.split(":", 1)[1].strip().strip("\"'")
+        return value == "cortex"
+    return False
 
 
 def _docs_defers_to_cortex(docs_text: str) -> bool:
     """True when docs/agent-guides/skills is a pointer stub, not authoritative body."""
+    if _frontmatter_sot_cortex(docs_text):
+        return True
     if "agent-skills/" not in docs_text:
         return False
     defer_markers = (
