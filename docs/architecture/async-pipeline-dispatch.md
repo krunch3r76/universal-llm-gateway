@@ -426,7 +426,7 @@ Both callers depend on `libs/agent_seat/native_loop.run_native_tool_loop`
 
 ### Usage
 
-See the agent skill `agent-skills/frontier-dispatch.md` (cortex sandbox) for invocation
+See `agent-skills/consult-routing.md` and `agent-skills/dispatch-shape.md` for invocation
 patterns (`pipeline(op="async", pipeline_id="…")`), polling via
 `pipeline(op="result", execution_id="…")`, and per-provider reasoning
 surfacing.

@@ -313,9 +313,14 @@ def list_entities_impl(
                 stripped.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
             )
             pattern = f"%{escaped}%"
-            clauses.append("(id LIKE ? ESCAPE '\\' OR name LIKE ? ESCAPE '\\')")
+            lower_pattern = pattern.lower()
+            clauses.append(
+                "(id LIKE ? ESCAPE '\\' OR name LIKE ? ESCAPE '\\' "
+                "OR lower(coalesce(description, '')) LIKE ? ESCAPE '\\')"
+            )
             params.append(pattern)
             params.append(pattern)
+            params.append(lower_pattern)
 
     if not include_non_active:
         clauses.append("(type NOT IN ('agent_skill', 'skill') OR lifecycle = ?)")

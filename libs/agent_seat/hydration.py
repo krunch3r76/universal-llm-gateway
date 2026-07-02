@@ -445,6 +445,7 @@ async def hydrate_agent(
             code_touching=code_touching,
             packet_invariant_ids=packet_invariant_ids,
             already_present=already_present,
+            inline_only_dispatch=inline_only and inject_profile == "dispatch",
         )
         if resolution.block_md:
             injected_bodies_md = resolution.block_md

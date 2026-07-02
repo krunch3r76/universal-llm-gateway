@@ -71,40 +71,56 @@ def _related_skills_drift(
     return None
 
 
+def _drift_projection_row(
+    client: object,
+    slug: str,
+    row: dict[str, object],
+    live_by_id: dict[str, dict] | None,
+    out: list[str],
+) -> None:
+    eid = f"agent_skill:{slug}"
+    if live_by_id is None:
+        status, live = _entity_get(client, eid)
+        if status == 404:
+            out.append(f"{eid} missing from cortex")
+            return
+        if status != 200:
+            out.append(f"{eid} GET {status}")
+            return
+    else:
+        live = live_by_id.get(eid)
+        if live is None:
+            out.append(f"{eid} missing from cortex")
+            return
+    if live.get("lifecycle") in _SUPPRESSED:
+        return
+    ok, reason = _matches(live, _projection(row, live=live))
+    if not ok:
+        out.append(f"{eid} {reason}")
+    expected = _expected_declared_related(row, live)
+    if expected is not None:
+        out.extend(_reference_edge_drift(client, slug, expected))
+
+
 def _drifts(
     client: object,
     scanned: dict[str, dict[str, object]],
     live_by_id: dict[str, dict] | None = None,
     *,
     cortex_declared: dict[str, list[str]] | None = None,
+    cortex_sot: dict[str, dict[str, object]] | None = None,
 ) -> list[str]:
     out: list[str] = []
     for slug in sorted(scanned):
-        eid = f"agent_skill:{slug}"
-        if live_by_id is None:
-            status, live = _entity_get(client, eid)
-            if status == 404:
-                out.append(f"{eid} missing from cortex")
+        _drift_projection_row(client, slug, scanned[slug], live_by_id, out)
+    if cortex_sot:
+        for slug in sorted(cortex_sot):
+            if slug in scanned:
                 continue
-            if status != 200:
-                out.append(f"{eid} GET {status}")
-                continue
-        else:
-            live = live_by_id.get(eid)
-            if live is None:
-                out.append(f"{eid} missing from cortex")
-                continue
-        if live.get("lifecycle") in _SUPPRESSED:
-            continue
-        ok, reason = _matches(live, _projection(scanned[slug], live=live))
-        if not ok:
-            out.append(f"{eid} {reason}")
-        expected = _expected_declared_related(scanned[slug], live)
-        if expected is not None:
-            out.extend(_reference_edge_drift(client, slug, expected))
+            _drift_projection_row(client, slug, cortex_sot[slug], live_by_id, out)
     if cortex_declared:
         for slug in sorted(cortex_declared):
-            if slug in scanned:
+            if slug in scanned or (cortex_sot and slug in cortex_sot):
                 continue
             drift = _related_skills_drift(
                 client, slug, cortex_declared[slug], live_by_id

@@ -12,6 +12,7 @@ from .db import json_encode, query
 from .dispatch_ops._shared import record
 from .enrichment import reindex_assertions_fts_batch
 from .entity_aliases import sync_entity_aliases
+from .guidance_entity import entity_slug_from_id
 from .entity_rekey_core import (
     _load_entity,
     _parse_attributes,
@@ -274,10 +275,12 @@ def _tombstone_source(
     )
 
 
-def entity_merge_impl(
-    conn: sqlite3.Connection, source_id: str, target_id: str
+def _execute_entity_merge(
+    conn: sqlite3.Connection,
+    source_id: str,
+    target_id: str,
+    source: dict[str, Any],
 ) -> dict[str, Any]:
-    source, target = _preflight_merge(conn, source_id, target_id)
     now = _utc_now()
 
     begin_identity_txn(conn)
@@ -322,3 +325,43 @@ def entity_merge_impl(
         "target_id": target_id,
         "assertion_ids_reindexed": sorted(affected_assertions),
     }
+
+
+def entity_merge_impl(
+    conn: sqlite3.Connection, source_id: str, target_id: str
+) -> dict[str, Any]:
+    source, target = _preflight_merge(conn, source_id, target_id)
+    _ = target
+    return _execute_entity_merge(conn, source_id, target_id, source)
+
+
+def guidance_skill_fold_impl(
+    conn: sqlite3.Connection, source_id: str, target_id: str
+) -> dict[str, Any]:
+    """Fold legacy ``skill:`` into canonical ``agent_skill:`` (same slug)."""
+    source = _load_entity(conn, source_id)
+    target = _load_entity(conn, target_id)
+    if str(source["type"]) != "skill" or str(target["type"]) != "agent_skill":
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            {
+                "detail": "guidance_skill_fold requires skill: source and agent_skill: target",
+                "source_type": source["type"],
+                "target_type": target["type"],
+            },
+        )
+    if entity_slug_from_id(source_id) != entity_slug_from_id(target_id):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            {
+                "detail": "guidance_skill_fold requires matching slugs",
+                "source_id": source_id,
+                "target_id": target_id,
+            },
+        )
+    if str(source.get("lifecycle") or "") == "merged":
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            f"Source already merged: {source_id}",
+        )
+    return _execute_entity_merge(conn, source_id, target_id, source)

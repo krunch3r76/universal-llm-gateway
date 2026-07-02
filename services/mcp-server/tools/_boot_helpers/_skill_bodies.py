@@ -4,22 +4,15 @@ from __future__ import annotations
 
 from typing import Any
 
-from cortex_store.guidance_entity import entity_slug_from_id
-
-_SKILL_PREFIX = "agent-skills/"
+from agent_seat.guidance_entity import entity_slug_from_id
+from implement_admission.skill_source_table import (
+    SkillSourceResolveError,
+    resolve_canonical_source_uri,
+)
 
 
 def skill_slug(skill: dict[str, Any]) -> str:
-    """Return the on-disk filesystem slug for a boot-view skill/rule row.
-
-    The slug is the basename of ``agent-skills/<slug>.md`` and is the canonical
-    reference form agents must type in skill-refs (handoff packets, ``md_read``
-    hints, etc.). It derives from the entity id (``agent_skill:<slug>``), NOT
-    the display ``name``: the name carries spaces / em-dashes and does not
-    resolve on disk. Returning the name here produced non-resolving boot-card
-    ``md_read`` hints and trained agents to write display-name skill-refs that
-    404 on read and fail the handoff arch-skillref validator (friction 16958).
-    """
+    """Return the on-disk filesystem slug for a boot-view skill/rule row."""
     entity_id = skill.get("id") or skill.get("entity_id")
     if isinstance(entity_id, str) and entity_id.strip():
         slug = entity_slug_from_id(entity_id.strip())
@@ -31,5 +24,22 @@ def skill_slug(skill: dict[str, Any]) -> str:
     return "?"
 
 
+def _source_uri_for_skill(skill: dict[str, Any]) -> str:
+    raw = skill.get("source_uri")
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip()
+    slug = skill_slug(skill)
+    return resolve_canonical_source_uri(slug)
+
+
 def skill_relpath(skill: dict[str, Any]) -> str:
-    return f"{_SKILL_PREFIX}{skill_slug(skill)}.md"
+    """Resolve boot-card skill pointer via entity ``source_uri`` (D1), not phantom paths."""
+    uri = _source_uri_for_skill(skill)
+    if uri.startswith("workspaces://"):
+        rel = uri.split("universal-llm-gateway/", 1)[-1]
+        return rel
+    if uri.startswith("agent-skills/"):
+        return uri
+    if uri.startswith(".cursor/skills/"):
+        return f"universal-llm-gateway/{uri}"
+    raise SkillSourceResolveError(f"unsupported boot source_uri: {uri!r}")

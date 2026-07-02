@@ -220,7 +220,7 @@ def test_fail_closed_critical_budget(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_must_inline_emits_fail_closed_marker(monkeypatch: pytest.MonkeyPatch) -> None:
     bodies = {
         "agent_skill:cortex-orientation": "critical-small",
-        "agent_skill:cortex-provenance-discipline": "y" * 20_000,
+        "agent_skill:cortex-provenance-discipline": "y" * 4000,
     }
     _body_map(monkeypatch, bodies)
     resolution = resolve_injected_bodies(

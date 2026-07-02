@@ -152,6 +152,8 @@ async def build_dispatch_body(
                 _packet_text_for_invariants(req)
             ),
         )
+        # Layer-C body-inject for no-fs generate roles (e.g. openai/gpt-5.5) is enforced
+        # inside hydrate_agent → resolve_injected_bodies(inline_only_dispatch=True).
         meta = bundle.agent_meta
         if event_publisher is not None:
             event_publisher(

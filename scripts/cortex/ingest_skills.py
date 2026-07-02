@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Upsert agent_skill projections from workspace + cortex SOT declared fields.
 
-HAZARD (arc 3924): do not run routine ingest after the rules/skills corpus
+HAZARD (arc 3924): do not run routine ingest after the rules corpus
 retype — ``_skill_projection._upsert`` skips slugs already migrated to
-``rule:``/``skill:`` but new slugs still upsert as ``agent_skill:``.
-Role-aware ingest: todo:skills-ingest-role-aware.
+``rule:`` only. Legacy ``skill:`` rows: run
+``scripts/cortex/consolidate_skill_to_agent_skill.py``. Role-aware ingest:
+todo:skills-ingest-role-aware.
 
 Workspace: ``.cursor/skills/*/SKILL.md`` (description, applicable_agents, …).
-Cortex SOT: ``$CORTEX_FILES_ROOT/agent-skills/*.md`` declared ``related_skills`` only.
+Cortex SOT: ``$CORTEX_FILES_ROOT/agent-skills/*.md`` (description, declared attrs, …).
 
 Steady-state companion graph sync (attribute + ``references`` edges) is **always**
 ``python scripts/cortex/ingest_skills.py`` after editing a declared companion list.
@@ -46,6 +47,7 @@ from _skill_related_sync import (  # noqa: E402
 from _skill_scan import (  # noqa: E402
     _scan_cortex_sot_declared,
     _scan_cortex_sot_metadata,
+    _scan_cortex_sot_skills,
     _scan_skills,
 )
 from transport_utils import DEFAULT_CORTEX_URL, make_sync_client  # noqa: E402
@@ -69,10 +71,54 @@ def _filter_for_slug(
     slug: str,
     scanned: dict[str, dict[str, object]],
     cortex_meta: dict[str, dict[str, object]],
-) -> tuple[dict[str, dict[str, object]], dict[str, dict[str, object]]]:
+    cortex_sot: dict[str, dict[str, object]],
+) -> tuple[
+    dict[str, dict[str, object]],
+    dict[str, dict[str, object]],
+    dict[str, dict[str, object]],
+]:
     ws = {slug: scanned[slug]} if slug in scanned else {}
     cortex = {slug: cortex_meta[slug]} if slug in cortex_meta else {}
-    return ws, cortex
+    sot = {slug: cortex_sot[slug]} if slug in cortex_sot else {}
+    return ws, cortex, sot
+
+
+def _upsert_projection_entry(
+    client: object,
+    slug: str,
+    entry: dict[str, object],
+    *,
+    dry_run: bool,
+) -> bool:
+    eid = f"agent_skill:{slug}"
+    status, live = _entity_get(client, eid)
+    if status not in (200, 404):
+        print(f"  FAIL  {eid:40s}  [GET {status}]", file=sys.stderr)
+        return False
+    live_body = live if status == 200 else None
+    if not _upsert(
+        client,
+        _projection(entry, live=live_body),
+        dry_run=dry_run,
+        live=live_body,
+    ):
+        return False
+    declared = entry.get("related_skills")
+    fm = entry["frontmatter"]
+    assert isinstance(fm, dict)
+    if isinstance(declared, list) and (
+        declared or isinstance(fm.get("related_skills"), list)
+    ):
+        sync_list = [str(v) for v in declared]
+        if not sync_reference_edges_only(
+            client,
+            slug,
+            sync_list,
+            dry_run=dry_run,
+            source_uri=_SYNC_SOURCE_URI,
+        ):
+            return False
+    return True
 
 
 def _sync_live_only_skill(
@@ -140,6 +186,7 @@ def main(argv: list[str] | None = None) -> int:
     scanned = _scan_skills(args.root.resolve())
     cortex_meta = _scan_cortex_sot_metadata()
     cortex_declared = _scan_cortex_sot_declared()
+    cortex_sot = _scan_cortex_sot_skills()
 
     try:
         client = make_sync_client(DEFAULT_CORTEX_URL)
@@ -152,7 +199,9 @@ def main(argv: list[str] | None = None) -> int:
         if _resolve_slug(client, slug_filter, scanned, cortex_meta) is None:
             print(f"ERROR: unknown skill slug {slug_filter!r}", file=sys.stderr)
             return 2
-        scanned, cortex_meta = _filter_for_slug(slug_filter, scanned, cortex_meta)
+        scanned, cortex_meta, cortex_sot = _filter_for_slug(
+            slug_filter, scanned, cortex_meta, cortex_sot
+        )
         cortex_declared = (
             {slug_filter: cortex_declared[slug_filter]}
             if slug_filter in cortex_declared
@@ -180,7 +229,12 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.check:
-        drifted = _drifts(client, scanned, cortex_declared=cortex_declared)
+        drifted = _drifts(
+            client,
+            scanned,
+            cortex_declared=cortex_declared,
+            cortex_sot=cortex_sot,
+        )
         if slug_filter and not scanned and slug_filter not in cortex_declared:
             status, live = _entity_get(client, f"agent_skill:{slug_filter}")
             if status == 200 and live.get("lifecycle") not in _SUPPRESSED:
@@ -213,8 +267,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Ingesting skill slug: {slug_filter}")
     else:
         print(f"Ingesting {len(scanned)} workspace skills")
-    if cortex_declared:
-        print(f"Cortex SOT declared related_skills: {len(cortex_declared)} skill(s)")
+    if cortex_sot:
+        print(f"Cortex SOT projection rows: {len(cortex_sot)} skill(s)")
     if cortex_meta:
         print(f"Cortex SOT metadata sync: {len(cortex_meta)} skill(s)")
     if args.dry_run:
@@ -222,41 +276,21 @@ def main(argv: list[str] | None = None) -> int:
     print()
     failures = 0
     for slug in sorted(scanned):
-        eid = f"agent_skill:{slug}"
-        status, live = _entity_get(client, eid)
-        if status not in (200, 404):
-            print(f"  FAIL  {eid:40s}  [GET {status}]", file=sys.stderr)
-            failures += 1
-            continue
-        live_body = live if status == 200 else None
-        entry = scanned[slug]
-        if not _upsert(
-            client,
-            _projection(entry, live=live_body),
-            dry_run=args.dry_run,
-            live=live_body,
+        if not _upsert_projection_entry(
+            client, slug, scanned[slug], dry_run=args.dry_run
         ):
             failures += 1
+    for slug in sorted(cortex_sot):
+        if slug in scanned:
             continue
-        declared = entry.get("related_skills")
-        fm = entry["frontmatter"]
-        assert isinstance(fm, dict)
-        if isinstance(declared, list) and (
-            declared or isinstance(fm.get("related_skills"), list)
+        if not _upsert_projection_entry(
+            client, slug, cortex_sot[slug], dry_run=args.dry_run
         ):
-            sync_list = [str(v) for v in declared]
-            if not sync_reference_edges_only(
-                client,
-                slug,
-                sync_list,
-                dry_run=args.dry_run,
-                source_uri=_SYNC_SOURCE_URI,
-            ):
-                failures += 1
+            failures += 1
     for slug in sorted(cortex_meta):
         meta = cortex_meta[slug]
         declared = meta.get("related_skills")
-        if slug not in scanned and isinstance(declared, list):
+        if slug not in scanned and slug not in cortex_sot and isinstance(declared, list):
             if not sync_declared_related(
                 client,
                 slug,
@@ -274,7 +308,7 @@ def main(argv: list[str] | None = None) -> int:
             client, slug, attr_patch, dry_run=args.dry_run
         ):
             failures += 1
-    if slug_filter and not scanned and not cortex_meta:
+    if slug_filter and not scanned and not cortex_meta and not cortex_sot:
         if not _sync_live_only_skill(client, slug_filter, dry_run=args.dry_run):
             failures += 1
     return 1 if failures else 0

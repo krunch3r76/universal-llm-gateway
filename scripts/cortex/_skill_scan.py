@@ -73,6 +73,37 @@ def _scan_cortex_sot_declared() -> dict[str, list[str]]:
     }
 
 
+def _scan_cortex_sot_skills() -> dict[str, dict[str, object]]:
+    """Projection-ready rows for cortex ``agent-skills/*.md`` (not workspace stubs).
+
+    Empty or missing frontmatter ``description:`` still yields a row — that state
+    is SOT drift surfaced via ``_matches`` downstream, not a scan skip.
+    """
+    skills_dir = _cortex_files_root() / "agent-skills"
+    if not skills_dir.is_dir():
+        return {}
+    found: dict[str, dict[str, object]] = {}
+    for path in sorted(skills_dir.glob("*.md")):
+        slug = path.stem
+        if slug in _SKIP_CORTEX_SOT:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            print(f"ERROR: unreadable {path}", file=sys.stderr)
+            continue
+        fm = parse_frontmatter(text)
+        description = str(fm.get("description") or "").strip()
+        found[slug] = {
+            "slug": slug,
+            "frontmatter": fm,
+            "description": description,
+            "source_uri": f"agent-skills/{slug}.md",
+            "related_skills": declared_related_skills(text, fm),
+        }
+    return found
+
+
 def _create_lifecycle(fm: dict[str, object]) -> str:
     """Default discoverable lifecycle on CREATE when source frontmatter is non-suppressed."""
     raw = fm.get("lifecycle")

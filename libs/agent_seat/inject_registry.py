@@ -7,12 +7,11 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
-from cortex_store.guidance_entity import entity_slug_from_id
-
+from agent_seat.guidance_entity import entity_slug_from_id
+from agent_seat.inject_budget import INJECTED_BODY_BUDGET_BYTES
 from agent_seat.registry import is_lead_agent
 
 from .body_injection import (
-    INJECTED_BODY_BUDGET_BYTES,
     RequiredBodyUnresolved,
     _fetch_body_sync,
     _slug_from_entry,
@@ -33,6 +32,52 @@ CODING_SESSION_ADVERTISE_SLUGS: tuple[str, ...] = (
 
 _DISPATCH_PACKET_PRIORITY_BASE = 60
 _TIER_RANK = {"critical": 0, "must_inline": 1, "normal": 2}
+
+# F4 — explicit must_inline allowlist with per-entry byte ceiling + justification.
+# CODING-bundle slugs MUST NOT appear here (regression guard below).
+@dataclass(frozen=True, slots=True)
+class MustInlinePolicy:
+    entity_id: str
+    max_bytes: int
+    justification: str
+
+
+MUST_INLINE_POLICIES: tuple[MustInlinePolicy, ...] = (
+    MustInlinePolicy(
+        entity_id="rule:cortex-provenance-discipline",
+        max_bytes=12_000,
+        justification="Universal provenance gate — required before completion claims",
+    ),
+    MustInlinePolicy(
+        entity_id="rule:model-tier-awareness-web",
+        max_bytes=8_000,
+        justification="Web seat has no model-tier-stub.mdc auto-load",
+    ),
+    MustInlinePolicy(
+        entity_id="rule:orchestrator-core",
+        max_bytes=10_000,
+        justification="Lead orchestrator core — lifecycle gate for dispatch fan-out",
+    ),
+)
+
+_MUST_INLINE_BY_ENTITY: dict[str, MustInlinePolicy] = {
+    p.entity_id: p for p in MUST_INLINE_POLICIES
+}
+
+
+def _coding_bundle_slugs() -> frozenset[str]:
+    return frozenset(entity_slug_from_id(eid) for eid in coding_scope_inject_entity_ids())
+
+
+def assert_must_inline_allowlist_valid() -> None:
+    """Regression guard (F4): CODING-bundle entries forbidden in must_inline."""
+    overlap = _coding_bundle_slugs() & {
+        entity_slug_from_id(p.entity_id) for p in MUST_INLINE_POLICIES
+    }
+    if overlap:
+        raise RuntimeError(
+            f"CODING-bundle slugs in must_inline allowlist (forbidden): {sorted(overlap)}"
+        )
 
 _AGENT_SKILL_TOKEN_RE = re.compile(r"agent_skill:([a-z0-9][-a-z0-9_]*)", re.IGNORECASE)
 _SKILL_PATH_RE = re.compile(
@@ -268,9 +313,14 @@ def _fetch_registry_entry(
 
 
 def _index_entry(slug: str, entity_id: str) -> str:
+    from implement_admission.skill_fs_line import source_uri_to_fs_line
+    from implement_admission.skill_source_table import resolve_canonical_source_uri
+
+    uri = resolve_canonical_source_uri(slug)
+    fs_line = source_uri_to_fs_line(uri)
     return (
         f"\n\n<!-- injected-index:{slug} entity_id={entity_id} -->"
-        f"\n- `{slug}` — fs(cortex, md_read agent-skills/{slug}.md)"
+        f"\n- `{slug}` — {fs_line}"
     )
 
 
@@ -280,6 +330,7 @@ def _pack_tiered_bodies(
     budget_bytes: int | None,
     already_present: str,
     marker_prefix: str,
+    mandatory_body_slugs: frozenset[str] = frozenset(),
 ) -> tuple[str, list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
     blocks: list[str] = []
     injected: list[dict[str, Any]] = []
@@ -304,8 +355,23 @@ def _pack_tiered_bodies(
         block = f"\n\n{marker}\n```markdown\n{body}\n```"
         block_size = len(block.encode("utf-8"))
         tier = entry.inline_tier
+        policy = _MUST_INLINE_BY_ENTITY.get(entity_id)
+        if policy is not None and block_size > policy.max_bytes:
+            raise RequiredBodyUnresolved(
+                [
+                    {
+                        "id": entity_id,
+                        "reason": "must_inline_byte_ceiling",
+                        "max_bytes": policy.max_bytes,
+                    }
+                ]
+            )
 
         if budget_bytes is not None and block_size > (remaining or 0):
+            if slug in mandatory_body_slugs:
+                raise RequiredBodyUnresolved(
+                    [{"id": entity_id, "reason": "layer_c_budget", "slug": slug}]
+                )
             if tier == InlineTier.CRITICAL:
                 raise RequiredBodyUnresolved(
                     [{"id": entity_id, "reason": "budget", "tier": tier.value}]
@@ -421,9 +487,14 @@ def resolve_injected_bodies(
     budget_bytes: int | None = INJECTED_BODY_BUDGET_BYTES,
     already_present: str = "",
     marker_prefix: str = "invariant-skill",
+    mandatory_body_slugs: frozenset[str] = frozenset(),
+    inline_only_dispatch: bool = False,
 ) -> InjectResolution:
     """Single registry-driven resolver for all server inject paths."""
     del seat  # reserved for future seat-specific policy
+    assert_must_inline_allowlist_valid()
+    if inline_only_dispatch and code_touching and inject_profile == "dispatch":
+        mandatory_body_slugs = mandatory_body_slugs | _coding_bundle_slugs()
     metrics: dict[str, Any] = {"cold_fetches": 0, "cache_hit": False}
     candidates = _candidate_entries(
         role=role,
@@ -452,6 +523,7 @@ def resolve_injected_bodies(
         budget_bytes=budget_bytes,
         already_present=already_present,
         marker_prefix=marker_prefix,
+        mandatory_body_slugs=mandatory_body_slugs,
     )
     dropped.extend(pack_dropped)
     injected_ids = [str(i.get("id") or "") for i in injected if i.get("id")]

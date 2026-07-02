@@ -21,6 +21,13 @@ Skill→skill companions are **declared**, not scraped from prose. The graph
 layer mirrors this list; `scripts/cortex/ingest_skills.py` syncs it to the
 `agent_skill` entity on re-ingest.
 
+### L1 description SOT
+
+Frontmatter `description:` on the skill file is authoritative. After editing,
+run `python scripts/cortex/ingest_skills.py` to mirror into `entity.description`;
+`ingest_skills.py --check` enforces drift. `entities(type=agent_skill, query=…)`
+matches description substrings globally across entity types.
+
 ### Authoring convention
 
 Add **one** of:

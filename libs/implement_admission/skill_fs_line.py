@@ -2,33 +2,12 @@
 
 from __future__ import annotations
 
-import functools
-from typing import Any, Literal
+from typing import Literal
 
-from universal_logging import get_logger
-
-logger = get_logger(__name__)
-
-_WS = "workspaces://universal-llm-gateway"
-
-# Deterministic resolution table for resolve_skill_source_uri (CF2 / C3 determinism
-# contract). MUST cover EVERY coding-scope inject + advertise slug, regardless
-# of substrate, so packet rendering is map-first for the whole bundle and packet_sha256
-# cannot diverge online-vs-offline (the failure git-posture hit when it consolidated to
-# workspaces). entity_get is reached only for NON-bundle slugs. Workspaces-resident slugs
-# carry the SOT path; cortex-resident slugs carry the agent-skills/<slug>.md form (== the
-# offline fallback, so adding them is output-preserving). The guard test
-# test_known_source_uris_covers_entire_coding_session_bundle fails loud if a bundle slug
-# is added without a map entry.
-_KNOWN_SKILL_SOURCE_URIS: dict[str, str] = {
-    "architecture-invariants": f"{_WS}/docs/agent-guides/skills/architecture-invariants.md",
-    "ulg-architecture": f"{_WS}/docs/agent-guides/skills/ulg-architecture.md",
-    "git-posture": f"{_WS}/docs/agent-guides/skills/git-posture.md",
-    "service-lifecycle": f"{_WS}/.cursor/skills/service-lifecycle/SKILL.md",
-    "implement-work-item": "agent-skills/implement-work-item.md",
-    "completion-provenance-discipline": "agent-skills/completion-provenance-discipline.md",
-    "fs": "agent-skills/fs.md",
-}
+from implement_admission.skill_source_table import (
+    SkillSourceResolveError,
+    resolve_canonical_source_uri,
+)
 
 
 def _normalize_source_uri(source_uri: str) -> str:
@@ -67,47 +46,26 @@ def source_uri_to_fs_line(
         return _workspaces_line(uri)
     if uri.startswith("agent-skills/"):
         return _cortex_line(uri)
+    if uri.startswith(".cursor/skills/"):
+        return _workspaces_line(f"universal-llm-gateway/{uri}")
     if "/" not in uri:
         stem = uri[:-3] if uri.endswith(".md") else uri
         return _cortex_line(f"agent-skills/{stem}.md")
     raise ValueError(f"unsupported source_uri: {source_uri!r}")
 
 
-def _entity_source_uri(entity: dict[str, Any]) -> str | None:
-    top = entity.get("source_uri")
-    if top and str(top).strip():
-        return str(top).strip()
-    attrs = entity.get("attributes") or {}
-    if not isinstance(attrs, dict):
-        return None
-    raw = attrs.get("source_uri")
-    return str(raw).strip() if raw else None
+def resolve_skill_source_uri(slug_or_entity_id: str) -> str:
+    """Resolve slug/entity id → source_uri via committed D1 table (fail-loud)."""
+    return resolve_canonical_source_uri(slug_or_entity_id)
 
 
-@functools.lru_cache(maxsize=None)  # noqa: UP033 — contract requires lru_cache form
-def resolve_skill_source_uri(slug: str) -> str:
-    """Resolve slug → source_uri. Static map is the deterministic SOT; entity_get is a
-    discovery fallback only for slugs absent from the map (never on the render hot path
-    for mapped/bundle slugs)."""
-    if slug in _KNOWN_SKILL_SOURCE_URIS:
-        return _KNOWN_SKILL_SOURCE_URIS[slug]
-    try:
-        from implement_admission.closeout_runtime import get_runtime
-    except ImportError:
-        return f"agent-skills/{slug}.md"
-    try:
-        resp = get_runtime().dispatch(
-            "entity_get",
-            {"entity_id": f"agent_skill:{slug}", "intent": "full"},
-        )
-        if isinstance(resp, dict) and "error" not in resp:
-            resolved = _entity_source_uri(resp)
-            if resolved:
-                return resolved
-    except Exception as exc:
-        logger.warning("skill source_uri entity_get failed slug=%s error=%s", slug, exc)
-    return f"agent-skills/{slug}.md"
+def skill_slug_to_fs_line(slug_or_entity_id: str, *, op: str = "md_read") -> str:
+    return source_uri_to_fs_line(resolve_skill_source_uri(slug_or_entity_id), op=op)
 
 
-def skill_slug_to_fs_line(slug: str, *, op: str = "md_read") -> str:
-    return source_uri_to_fs_line(resolve_skill_source_uri(slug), op=op)
+__all__ = [
+    "SkillSourceResolveError",
+    "resolve_skill_source_uri",
+    "skill_slug_to_fs_line",
+    "source_uri_to_fs_line",
+]

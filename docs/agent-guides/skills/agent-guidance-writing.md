@@ -78,3 +78,17 @@ fs(sandbox="workspaces", op="read", path="universal-llm-gateway/docs/agent-guide
 4. Tables replace prose where ≥3 comparable items.
 5. No duplication of alwaysApply content.
 6. Registered: run `scripts/cortex/ingest_skills.py`; verify `cortex(entity_get agent_skill:<slug>)` resolves with correct `source_uri` and appears in `GET /boot-skills`. Filesystem-only skills are invisible to `skill_suggest`, boot-skills, web, and dispatch seats.
+
+## Universal procedure only (binding)
+
+Skills and rules carry **universal procedure** — not personal or matter-specific facts.
+
+**Split test:** *Would this sentence still be true for a different operator's unrelated matter?* If **no**, it does not belong in a skill or rule. Put it on a case-scoped `document:` entity (matter playbook), not in the guidance index.
+
+| Belongs in skill/rule | Does NOT belong |
+|---|---|
+| Tool dispatch shapes, session protocols, verification gates (generic) | Contacts, dollar amounts, case IDs, property addresses |
+| Posture and method usable on any task | Steps that only make sense for one active case |
+| Invariants about how agents work here | Operator-specific financial or legal state |
+
+Matter playbooks → `document:` on `case:` entities, discovered via `has_playbook` edges — not `agent_skill` rows with exclusion attributes. Full policy: `fs(sandbox="cortex", op="read", path="notes/system/specs/skill-guidance-policy.md")`.

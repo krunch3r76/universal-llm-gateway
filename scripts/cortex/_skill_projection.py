@@ -1,8 +1,9 @@
 """Cortex entity projection, comparison, and upsert helpers.
 
 HAZARD (arc 3924): upserting ``agent_skill:<slug>`` clobbers entities already
-retyped to ``rule:``/``skill:``. The enforced skip guard below is mandatory;
-role-aware ingest is deferred to todo:skills-ingest-role-aware.
+retyped to ``rule:``. Legacy ``skill:`` rows are folded by
+``scripts/cortex/consolidate_skill_to_agent_skill.py`` — do not skip ingest for
+``skill:`` type. Role-aware ingest is deferred to todo:skills-ingest-role-aware.
 """
 
 from __future__ import annotations
@@ -92,8 +93,8 @@ def _matches(live: dict, expected: dict[str, object]) -> tuple[bool, str]:
 
 
 def _is_already_migrated(live: dict) -> bool:
-    """True when the live row is already retyped off agent_skill."""
-    return str(live.get("type") or "") in ("rule", "skill")
+    """True when the live row is a rule retype (arc 3924); skill: is legacy — fold via consolidate script."""
+    return str(live.get("type") or "") == "rule"
 
 
 def _upsert(

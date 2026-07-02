@@ -75,7 +75,7 @@ For `team_dispatch(op="handoff")` only: returns synchronously with
   role's reply on its behalf after dispatch completes.
 - `"handoff"` (**team_dispatch only**) — manual-seat handoff (`web-consult` → `claude-web`, `web-implement` → `claude-web` (bound implement), `cursor-consult` / `cursor-implement` → `claude-cursor`). Creates an agent-bus thread with a packet pointer synchronously. Returns `{thread_id, subject, to_agent, resolved_handoff_seat, handoff_contract, handoff_contract_source, push_reminder, result_handle, handoff_status, poll_hint}`. No model dispatch; web seats need operator push; Cursor seats need opening the thread in the IDE.
 
-See `agent-skills/frontier-dispatch.md` § "Choosing direct vs bus mode" for decision rules.
+See `agent-skills/consult-routing.md` § team_dispatch / direct vs bus mode for decision rules.
 
 ### `team_dispatch`
 
@@ -910,7 +910,7 @@ All parameters optional. **Default seat when nothing is passed:** `family=claude
 **Web lead:** `cortex_boot(agent="claude-web", role="lead")`.
 
 Bound ULG coding sessions may **skip** boot when task + skill preload suffice — see
-`docs/agent-guides/skills/web-boot-lead.md`.
+`agent-skills/consult-routing.md` (doc-only guidance; no backing `agent_skill` entity for `web-boot-lead`).
 
 ### Response fields (key selection)
 
@@ -969,7 +969,7 @@ In-session skill delta for web/API seats. Ranked slugs **not** already in `loade
 | `limit` | no | Max suggestions (default 8) |
 | `agent` | no | Seat slug when session resolution fails |
 
-See `docs/agent-guides/skills/skill-suggest-utilization.md` and `web-boot-lead.md`.
+See `docs/agent-guides/skills/skill-suggest-utilization.md` and `agent-skills/consult-routing.md`.
 
 ## rag
 

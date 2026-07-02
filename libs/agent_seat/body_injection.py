@@ -3,19 +3,107 @@
 from __future__ import annotations
 
 import hashlib
-import os
 import time
 from collections import OrderedDict
+from dataclasses import dataclass
+from enum import StrEnum
 from threading import Lock
 from typing import Any
 
-from cortex_store.guidance_entity import entity_slug_from_id
 from transport_utils import DEFAULT_CORTEX_URL, make_sync_client
 
-INJECTED_BODY_BUDGET_BYTES = int(os.getenv("INJECTED_BODY_BUDGET_BYTES", "50000"))
-INJECTED_INDEX_TIMEOUT_MS = int(os.getenv("INJECTED_INDEX_TIMEOUT_MS", "300"))
-INJECTED_BODY_TIMEOUT_MS = int(os.getenv("INJECTED_BODY_TIMEOUT_MS", "300"))
-INJECTED_TOTAL_DEADLINE_MS = int(os.getenv("INJECTED_TOTAL_DEADLINE_MS", "1500"))
+from agent_seat.guidance_entity import entity_slug_from_id
+from agent_seat.inject_budget import (
+    INJECTED_BODY_BUDGET_BYTES,
+    INJECTED_BODY_TIMEOUT_MS,
+    INJECTED_INDEX_TIMEOUT_MS,
+    INJECTED_TOTAL_DEADLINE_MS,
+)
+from agent_seat.role_entity_sync import resolve_dispatch_capabilities
+
+INJECTED_BODY_BUDGET_BYTES = INJECTED_BODY_BUDGET_BYTES  # re-export for callers
+INJECTED_INDEX_TIMEOUT_MS = INJECTED_INDEX_TIMEOUT_MS
+INJECTED_BODY_TIMEOUT_MS = INJECTED_BODY_TIMEOUT_MS
+INJECTED_TOTAL_DEADLINE_MS = INJECTED_TOTAL_DEADLINE_MS
+
+
+class SkillDeliveryChannel(StrEnum):
+    LAYER_A_FS = "layer_a"
+    LAYER_B_PROVIDER = "layer_b"
+    LAYER_C_BODY = "layer_c"
+
+
+@dataclass(frozen=True, slots=True)
+class DispatchSkillContext:
+    """Effective per-dispatch context (F3) — after model/mcp/role overrides."""
+
+    model: str
+    mcp_enabled: bool
+    role: str | None = None
+    platform: str = "*"
+    inject_profile: str | None = None
+    code_touching: bool = False
+    provider_mount_slugs: frozenset[str] = frozenset()
+
+
+def build_dispatch_skill_context(
+    *,
+    model: str,
+    mcp_enabled: bool | None = None,
+    role: str | None = None,
+    platform: str = "*",
+    inject_profile: str | None = None,
+    code_touching: bool = False,
+    provider_mount_slugs: frozenset[str] | None = None,
+) -> DispatchSkillContext:
+    caps = resolve_dispatch_capabilities(model=model, mcp_enabled=mcp_enabled)
+    return DispatchSkillContext(
+        model=model,
+        mcp_enabled=bool(caps["mcp_connector_active"]),
+        role=role,
+        platform=platform,
+        inject_profile=inject_profile,
+        code_touching=code_touching,
+        provider_mount_slugs=provider_mount_slugs or frozenset(),
+    )
+
+
+def select_skill_delivery_channel(
+    slug_or_entity_id: str,
+    ctx: DispatchSkillContext,
+) -> SkillDeliveryChannel:
+    """Capability-determined exactly-one channel with precedence B > C > A (D3)."""
+    canonical = entity_slug_from_id(slug_or_entity_id) if ":" in slug_or_entity_id else slug_or_entity_id
+    if canonical in ctx.provider_mount_slugs:
+        return SkillDeliveryChannel.LAYER_B_PROVIDER
+    if not ctx.mcp_enabled:
+        return SkillDeliveryChannel.LAYER_C_BODY
+    return SkillDeliveryChannel.LAYER_A_FS
+
+
+def emit_layer_a_fs_line(slug_or_entity_id: str) -> str:
+    """Layer-A packet fs-line for MCP-capable dispatch roles."""
+    from implement_admission.skill_fs_line import skill_slug_to_fs_line
+
+    slug = entity_slug_from_id(slug_or_entity_id) if ":" in slug_or_entity_id else slug_or_entity_id
+    return skill_slug_to_fs_line(slug)
+
+
+def filter_double_load_excluded(
+    slugs: tuple[str, ...],
+    *,
+    already_delivered: frozenset[str],
+) -> tuple[str, ...]:
+    """Exclude slugs whose canonical agent_skill id was already delivered (D3)."""
+    from implement_admission.skill_source_table import canonical_agent_skill_id
+
+    out: list[str] = []
+    for slug in slugs:
+        key = canonical_agent_skill_id(slug)
+        if key in already_delivered:
+            continue
+        out.append(slug)
+    return tuple(out)
 
 
 def web_auto_inject_skill_slugs() -> tuple[str, ...]:
@@ -373,6 +461,7 @@ def append_invariant_pair_bodies(
         packet_invariant_ids=packet_invariant_ids,
         already_present=present,
         budget_bytes=None,
+        inline_only_dispatch=platform != "cursor",
     )
     block = resolution.block_md
     injected = resolution.injected

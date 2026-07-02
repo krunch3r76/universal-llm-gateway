@@ -6,11 +6,11 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from agent_seat.guidance_entity import entity_slug_from_id
 from agent_seat.inject_registry import (
     CODING_SESSION_ADVERTISE_SLUGS,
     coding_scope_inject_entity_ids,
 )
-from cortex_store.guidance_entity import entity_slug_from_id
 
 from implement_admission.admission_read import (
     compute_packet_sha256,

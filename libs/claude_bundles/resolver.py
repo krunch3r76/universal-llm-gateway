@@ -98,6 +98,7 @@ _CLAUDE_BUNDLE_E: list[str] = [
     "debug-with-events",
     "mcp-surface-change",
     "mcp-tool-loop-trace-matrix",
+    "matter-discipline-pattern",
     "orchestrator-workflow",
     "pipeline-substrate-capabilities",
     "pre-deploy-gate-discipline",
