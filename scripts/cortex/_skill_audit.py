@@ -55,10 +55,16 @@ _PARITY_ALLOWLIST: dict[str, dict[str, str]] = {
         "RETIRED 2026-06-16 (grok-build/cursor-build removed)",
         temporary="temporary",
     ),
-    "boe19p-appeal-discipline": _meta("legal domain skill"),
+    "boe19p-appeal-discipline": _meta(
+        "RETIRED 2026-07-02 → document:boe19p-appeal-discipline (has_playbook)"
+    ),
     "case-evidence-retrieval": _meta("legal domain skill"),
-    "chase-escrow-discipline": _meta("finance domain skill"),
-    "chase-escrow-statement-ingestion": _meta("finance domain skill"),
+    "chase-escrow-discipline": _meta(
+        "RETIRED 2026-07-02 → document:chase-escrow-discipline (has_playbook)"
+    ),
+    "chase-escrow-statement-ingestion": _meta(
+        "RETIRED 2026-07-02 — folded into chase-escrow playbook"
+    ),
     "crypto-trading-research": _meta("finance domain skill"),
     "document-ingestion": _meta("document domain skill"),
     "document-lifecycle-tracking": _meta("document domain skill"),
@@ -68,7 +74,13 @@ _PARITY_ALLOWLIST: dict[str, dict[str, str]] = {
     "email-tool-dispatch": _meta("email bridge domain skill"),
     "engagement-stance": _meta("legal domain skill"),
     "financial-reasoning": _meta("finance domain skill"),
-    "flintridge-case-navigation": _meta("legal domain skill"),
+    "flintridge-case-navigation": _meta(
+        "RETIRED 2026-07-02 → document:flintridge-case-navigation (has_playbook)"
+    ),
+    "hei-application-discipline": _meta(
+        "RETIRED 2026-07-02 → document:hei-discipline (archived case)"
+    ),
+    "matter-discipline-pattern": _meta("universal case-playbook loader pattern"),
     "lawyer-stance": _meta("legal domain skill"),
     "legal-opinion-corpus-ingestion": _meta("legal domain skill"),
     "named-entity-verification-gate": _meta("legal/regulatory artifact gate"),

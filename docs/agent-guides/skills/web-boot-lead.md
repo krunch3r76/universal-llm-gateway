@@ -74,8 +74,8 @@ Notes:
   `profile="dispatch"`. Front-matter `boot_profile: dispatch` + the packet path is
   the dispatch carrier.
 - `CODING` bodies do **not** inject on a normal boot (`code_touching=False`); they
-  ride the code-touching generate path. Manual preload (§ Tiered preload) stays
-  load-bearing for coding regardless.
+  ride the code-touching **`team_dispatch(op=generate, …)`** path only. Do not
+  compensate with manual boot preload — name skills in the packet or todo instead.
 - Budget: on budgeted paths (hydrated generate) post-dedupe bodies cap at
   `INJECTED_BODY_BUDGET_BYTES` — `critical` tier fails closed, `must_inline` emits a
   `inject:FAIL_CLOSED` marker, `normal` degrades to an index pointer. Web boot passes
@@ -124,7 +124,8 @@ contract: <consult|implement|…>
 Skip explicit `cortex_boot` when **all** hold:
 
 1. Task bound — `todo:`, implement packet, or operator prompt with scope + ACs
-2. **Skill preload** runs (§ Tiered preload below)
+2. Skills arrive via **dispatch** (`profile="dispatch"` packet invariants, or
+   `team_dispatch` generate CODING inject) — not manual boot preload
 3. Boot agenda not needed (no cross-arc orientation)
 4. No `session_close` this chat **or** boot deferred until close
 
@@ -134,72 +135,76 @@ Web has no separate mode name; same tradeoff applies.
 **What skip loses:** `session_id`, briefing card (todos/bus/deadlines/last session), boot skills
 index file, operational-context write.
 
-**What skip does not lose (if preload runs):** coding discipline skills — generic web boot does
-**not** inline-inject `architecture-invariants` / `ulg-architecture` (`code_touching=False` on
-boot inject). Manual preload is load-bearing for ULG coding regardless of boot.
+**What skip does not lose:** task-class skill bodies when the dispatch packet names them in
+`<invariants>` or the generate path sets `code_touching=True` (CODING bundle server-injected).
 
 ---
 
-## Tiered skill preload (turn 1)
+## Skill loading — dispatch-first
 
-Run after boot (or instead of boot on bound coding). **`md_list` alone is insufficient** — it returns
-TOC only; follow with `md_read(section=…)` or `read` / `read_multi`.
+**Invariant (web + cursor):** boot injects **no** skill bodies — briefing card = index +
+triggers + `fs`/`md_read` hints only (`inject_registry.active_scopes`: UNIVERSAL/LEAD off for
+`platform ∈ {web, cursor}`). Task-class bodies arrive **only** through:
+
+| Channel | When | What injects |
+|---|---|---|
+| `cortex_boot(profile="dispatch")` | Fork / handoff pickup | Each `agent_skill:` in packet `<invariants>` |
+| `team_dispatch(op=generate, …)` | Code-touching implement | CODING bundle (`architecture-invariants`, `ulg-architecture`, …) |
+| claude.ai project attach / cursor rules | Open lead arc | Operator-attached resident skills |
+| On-demand | Todo, inflection, life-matter | `required_skills` → `source_uri`; `skill_suggest` delta; case playbooks |
+
+**Do not** bulk-read skill playbooks at boot turn 1. Call `skill_suggest(loaded=[], …)` at the
+first domain inflection instead.
+
+### Body fetch shape (when a slug is already warranted)
 
 | Size / shape | Load |
 |---|---|
-| ≤ ~5 KB index doc (tag table + deferred refs) | `fs(op="read_multi", …)` |
+| ≤ ~5 KB index doc | `fs(op="read_multi", …)` |
 | Sectional playbook (~6–15 KB) | `md_list` → 2–4 `md_read` sections |
-| > ~15 KB or dispatch-only | Defer until trigger; never bulk-read at boot |
+| > ~15 KB | Defer until trigger; never bulk-read at boot |
 
-**Sandboxes:** one `read_multi` per sandbox (`cortex` vs `workspaces`); mixed bundles need two calls.
+**Sandboxes:** one `read_multi` per sandbox (`cortex` vs `workspaces`).
 
-### Coding session — minimum slugs
+### Life-matter trigger
 
-**Full read (workspaces):** `architecture-invariants`, `ulg-architecture`
+On case/matter work: load **`matter-discipline-pattern`** (full read if not UI-attached), then
+resolve case via `cortex://notes/system/indexes/active-cases.md` or `search` → `has_playbook`
+edges → read playbook `document:` bodies. Retired matter skill slugs are not preload targets.
 
-**Full read (cortex):** `completion-provenance-discipline`, `fs`, `dispatch-shape`
+### Todo-bound implement
 
-**Sectional:** `git-posture` (Execution lanes, Commit posture, What not to infer),
-`service-lifecycle` (Post-code-change loop), `consult-routing` (Executor tier, Implement lane,
-Codified bug reports), `implement-work-item`, `modularize-discipline`, `lead-seat-boot`
+```
+entity_get(todo:…) → union required_skills → load each source_uri → append to LOADED
+```
 
-**Defer:** `handoff-packet-authoring` (44 KB — on dispatch), `friction-review` (bug cycle)
-
-### Life-matter session — minimum slugs
-
-**Full read (cortex, if short):** `fs`, `no-silent-inference`, `named-entity-verification-gate`
-
-**Sectional:** `engagement-stance`, `evidence-review-discipline`, `corpus-cross-reference-discipline`,
-`case-evidence-retrieval`, `financial-reasoning`, `lawyer-stance`, `document-ingestion`,
-`entity-lifecycle-discipline`, `enrichment-quality-discipline`,
-`review-protocol-mandatory-chronology-verification`, `consult-routing`, `lead-seat-boot`
-
-**Domain add-ons (on trigger only):** `hei-application-discipline`, `chase-escrow-discipline`,
-`boe19p-appeal-discipline`, `tax`, `w2-ingestion`, etc.
+If the todo lacks `required_skills`, dispatch should carry them in packet `<invariants>` — that
+is the authoritative inject path for bounded work.
 
 Section titles must match live `md_list` output — bind to TOC, not guessed headings.
 
 ---
 
-## skill_suggest after preload
+## skill_suggest after boot
 
 See `skill-suggest-utilization.md` § **Loaded ledger (current contract)** and § **What to pass** (dispatch path: claude-web uses LLM reasoning via worker-hop, Stage-A is the fallback). **Web-consult handoff pickup:** when receiving a `web-consult` / `web-implement` handoff, step-1 `skill_suggest` is mandatory (exception to the boot-resident rule) — see `skill-suggest-utilization.md` § Web → Carve-out.
 
-After preload, call `skill_suggest(loaded=LOADED, conversation_context=…)` and **maintain
-`LOADED`** across the session (append each newly fetched slug before the next suggest).
+After boot (index only), call `skill_suggest(loaded=LOADED, conversation_context=…)` at
+inflection points and **maintain `LOADED`** across the session (append each newly fetched slug
+before the next suggest).
 
 Do not re-fetch slugs in `seat_preloaded` unless verifying digest drift
 (typically `cortex-orientation`, `cortex-provenance-discipline`, orientation/opcontext slugs).
 
 ---
 
-## Bound coding turn-1 checklist
+## Bound implement turn-1 checklist (dispatch-first)
 
 ```
 1. [optional] cortex_boot(agent="claude-web", role="lead")  — skip when § bound coding
-2. fs(read_multi, workspaces, [architecture-invariants, ulg-architecture])
-3. fs(read_multi, cortex, [completion-provenance-discipline, fs, dispatch-shape])
-4. md_list + md_read sections for git-posture, service-lifecycle, consult-routing, …
-5. skill_suggest(loaded=LOADED, conversation_context="Coding session: …")
-6. entity_get(todo:…) → union required_skills onto LOADED when bound
+2. If handoff/fork packet: cortex_boot(profile="dispatch", packet_text=<packet>)  — invariants inject
+3. Else if code implement: team_dispatch(op=generate, …)  — CODING bundle injects on server
+4. entity_get(todo:…) → load required_skills source_uri → LOADED
+5. skill_suggest(loaded=LOADED, conversation_context="…")  — delta only, not boot bulk preload
+6. Execute deliverable → verify → sidecar → close back
 ```

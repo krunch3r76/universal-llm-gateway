@@ -82,15 +82,10 @@ PARTITION: dict[str, list[str]] = {
         "agent_skill:web-transcript-preprocessing",
         "agent_skill:skill-document-writing",
         "agent_skill:thirdparty-api-mirror",
-        # Case-specific skills — applicable across both seats since cases are
-        # worked from whichever seat is convenient. Previously web-only.
-        "agent_skill:boe19p-appeal-discipline",
-        "agent_skill:chase-escrow-discipline",
-        "agent_skill:chase-escrow-statement-ingestion",
+        "agent_skill:matter-discipline-pattern",
         "agent_skill:claudeburst-shadow-ops",
         "agent_skill:crypto-trading-research",
         "agent_skill:document-lifecycle-tracking",
-        "agent_skill:hei-application-discipline",
         "agent_skill:tax",
         "agent_skill:w2-ingestion",
         # Reconciled 2026-05-29 (todo:agent-skill-applicability-partition-
@@ -138,7 +133,6 @@ PARTITION: dict[str, list[str]] = {
         "agent_skill:cursor-rule-authoring",
         "agent_skill:debug-with-events",
         "agent_skill:email-tool-dispatch",
-        "agent_skill:flintridge-case-navigation",
         "agent_skill:investigation-economy",
         "agent_skill:lead-agent-git-integration",
         "agent_skill:multi-model-review",

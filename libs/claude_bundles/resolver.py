@@ -11,8 +11,7 @@ from claude_bundles.bundle_description import (
     resolve_bundle_description,
 )
 
-# claude.ai bundle = all CURSOR_INDEXED skills except matter playbooks pending retirement
-# (see CURSOR_ONLY_SLUGS). Cursor hardlinks cover full CURSOR_INDEXED union.
+# claude.ai bundle = all CURSOR_INDEXED skills (matter playbooks retired → case documents).
 _CLAUDE_BUNDLE_U: list[str] = [
     "orchestrator-core",
     "markdown-navigation",
@@ -122,9 +121,7 @@ WORKSPACE_SOT_SLUGS: frozenset[str] = frozenset(
 )
 
 # Indexed for cursor hardlink but excluded from .claude render (matter playbook — retiring).
-CURSOR_ONLY_SLUGS: list[str] = [
-    "hei-application-discipline",
-]
+CURSOR_ONLY_SLUGS: list[str] = []
 
 # Back-compat alias (removed next commit window).
 CURSOR_SOT_DIRECT_SLUGS: list[str] = CURSOR_ONLY_SLUGS
@@ -137,10 +134,6 @@ CURSOR_INDEXED_SLUGS: list[str] = list(
 # SOT must live under cortex (not git-whitelisted docs) — personal/domain skills.
 CORTEX_SOT_ONLY_SLUGS: frozenset[str] = frozenset(
     {
-        "hei-application-discipline",
-        "chase-escrow-discipline",
-        "chase-escrow-statement-ingestion",
-        "boe19p-appeal-discipline",
         "case-evidence-retrieval",
         "crypto-trading-research",
         "document-ingestion",
@@ -148,7 +141,6 @@ CORTEX_SOT_ONLY_SLUGS: frozenset[str] = frozenset(
         "email-tool-dispatch",
         "engagement-stance",
         "financial-reasoning",
-        "flintridge-case-navigation",
         "lawyer-stance",
         "legal-opinion-corpus-ingestion",
         "srm",

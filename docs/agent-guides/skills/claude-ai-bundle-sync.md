@@ -1,8 +1,7 @@
 # Claude.ai bundle sync workflow
 
 Operational runbook for keeping **claude.ai Customize → Skills** aligned with
-local `CLAUDE_BUNDLE_SLUGS` (currently 89 skills; excludes cursor-only
-`hei-application-discipline`).
+local `CLAUDE_BUNDLE_SLUGS` (currently 90 skills; matter playbooks retired to case documents).
 
 **Cursor command:** `/claude-ai-sync` (`.cursor/commands/claude-ai-sync.md`)  
 **Cortex checkpoint:** `decision:claude-ai-skill-upload-automation` · agent-bus thread 4050.

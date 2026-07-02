@@ -29,15 +29,10 @@ _ENTITY_NOT_INDEXED_ALLOWLIST: frozenset[str] = frozenset(
         "review-protocol-mandatory-chronology-verification",
         "skill-authoring",
         "superheavy-dispatch",
-        # Matter/domain skills pending retirement (roadmap 1.2) — not indexed.
-        "boe19p-appeal-discipline",
+        # Matter/domain skills not in CURSOR_INDEXED (wave D or universal scrub pending).
         "case-evidence-retrieval",
-        "chase-escrow-discipline",
-        "chase-escrow-statement-ingestion",
         "crypto-trading-research",
         "financial-reasoning",
-        "flintridge-case-navigation",
-        "hei-application-discipline",
         "lawyer-stance",
         "legal-opinion-corpus-ingestion",
         "tax",

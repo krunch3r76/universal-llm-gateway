@@ -11,7 +11,7 @@
 | **`.claude/skills/<slug>/`** | `CLAUDE_BUNDLE_SLUGS` (= indexed minus matter retiring) | Rendered self-contained bundle (gitignored) |
 | **`agent_skill:*`** | boot index | `source_uri` → SOT; `skill_suggest` / boot manifest |
 
-**Invariant:** every `CURSOR_INDEXED` skill renders to `.claude/skills/` **except** matter playbooks pending retirement (`hei-application-discipline` only in `CURSOR_ONLY_SLUGS`).
+**Invariant:** every `CURSOR_INDEXED` skill renders to `.claude/skills/` and hardlinks to `.cursor/skills/`. Matter playbooks (waves B–C) retired 2026-07-02 → `document:` + `has_playbook`.
 
 **Retired (eliminated 2026-07-02):** `delegate-to-grok` (deprecated dir removed), `superheavy-dispatch` (retired entity + SOT removed; use `web-consult` / `panel_dispatch`).
 
