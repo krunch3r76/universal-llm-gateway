@@ -3,7 +3,8 @@
 Builds the merged generation-parameter dict (step defaults < caller
 ``generation_parameters``), applies the model-default ``reasoning_effort``,
 translates ``reasoning_effort`` to a provider-native ``thinking`` config,
-injects the xAI server-side built-in tool set for xAI agent dispatch,
+injects the card-derived server-side built-in tool set for agent dispatch when
+the ``server_tools`` knob allows,
 optionally appends the runtime-context block to the system prompt, resolves the
 per-model ``max_output`` + reasoning at the SINGLE ``CapabilityDispatch``
 boundary (G7), and assembles the :class:`~llm_adapters.FrontierRequest`. This is
@@ -26,12 +27,14 @@ from llm_adapters.capability_dispatch import (
     ProtocolError,
     resolve_dispatch,
 )
+from model_capabilities import server_side_tools
 from model_id import ModelId
 
 from ...events.dispatch import (
     PipelineFrontierCapabilityCatalogMiss,
     PipelineFrontierCapabilityKnobRejected,
     PipelineFrontierCapabilityResolved,
+    PipelineFrontierDispatchToolSuppressed,
 )
 from ...execution.errors import (
     CapabilityCatalogMissError,
@@ -46,7 +49,6 @@ from .request import (
     resolve_messages,
     translate_reasoning_effort,
 )
-from .tools import XAI_BUILTIN_TOOLS
 
 if TYPE_CHECKING:
     from ..protocol import PipelineContext
@@ -80,8 +82,9 @@ def build_frontier_request(
     Generation-parameter precedence is step defaults overlaid by caller
     ``generation_parameters``; explicit caller ``reasoning_effort`` and
     ``thinking`` always win over the model defaults and the effort→thinking
-    translation. The xAI built-in injection and the runtime-context block honor
-    the same guards as the monolith. ``max_tokens`` is resolved at the single
+    translation. Server-side built-in injection honors the ``server_tools`` knob
+    and explicit ``provider_options.{provider}.tools`` override. ``max_tokens``
+    is resolved at the single
     ``CapabilityDispatch`` boundary (:func:`_resolve_dispatch_boundary`) — the
     adapter receives a concrete resolved int and never re-defaults.
     """
@@ -121,26 +124,30 @@ def build_frontier_request(
         if translated is not None:
             gen_params["thinking"] = translated
 
-    # For xAI agent dispatches, inject the server-side built-in tool set as the
-    # default. Two conditions suppress injection:
-    #   (a) mcp=False — unified "no tools" signal; respected for xAI personas.
-    #   (b) Caller supplied an explicit ``tools`` list via /api/v1/frontier/dispatch
-    #       (isinstance(opt_tools, list)); their intent overrides the default.
-    # Caller-supplied ``generation_parameters.provider_options.xai.tools``
-    # (including ``[]`` to suppress) always wins via the ``if "tools" not in``
-    # guard below.
-    if (
-        admission.agent
-        and admission.provider == "xai"
-        and admission.mcp_enabled
-        and not isinstance(admission.opt_tools, list)
-    ):
-        po: dict[str, Any] = dict(gen_params.get("provider_options") or {})
-        xai_opts: dict[str, Any] = dict(po.get("xai") or {})
-        if "tools" not in xai_opts:
-            xai_opts["tools"] = XAI_BUILTIN_TOOLS
-        po["xai"] = xai_opts
-        gen_params["provider_options"] = po
+    # For agent dispatches, inject server-side built-ins from the model card when
+    # the ``server_tools`` knob allows (default ALL). Caller-supplied
+    # ``generation_parameters.provider_options.{provider}.tools`` (including
+    # ``[]`` to suppress) always wins via the ``if "tools" not in`` guard.
+    if admission.agent:
+        builtins = server_side_tools(admission.model)
+        if builtins:
+            po: dict[str, Any] = dict(gen_params.get("provider_options") or {})
+            provider_opts: dict[str, Any] = dict(po.get(admission.provider) or {})
+            if "tools" not in provider_opts:
+                if admission.server_tools_enabled:
+                    provider_opts["tools"] = [{"type": name} for name in builtins]
+                else:
+                    admission.publish(
+                        PipelineFrontierDispatchToolSuppressed(
+                            execution_id=context.execution_id,
+                            agent=admission.agent,
+                            model=admission.model,
+                            provider=admission.provider,
+                            reason="server_tools_knob",
+                        )
+                    )
+            po[admission.provider] = provider_opts
+            gen_params["provider_options"] = po
 
     if bool(step.get_domain_field("inject_runtime_context")):
         effort_str = gen_params.get("reasoning_effort") or "default"
@@ -193,6 +200,7 @@ def build_frontier_request(
         provider_options=gen_params.get("provider_options"),
         mcp_tool_loop=bool(admission.tools) and not admission.remote_mcp,
         remote_mcp=admission.remote_mcp,
+        skills_mount=admission.skills_mount,
     )
     return FrontierRequestBundle(req=req, system=system)
 

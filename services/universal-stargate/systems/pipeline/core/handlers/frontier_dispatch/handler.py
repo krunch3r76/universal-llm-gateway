@@ -14,9 +14,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from ..builtin import BaseHandler
-from .admission_checks import validate_frontier_dispatch_step
 from ..protocol import StepOutput
 from ..registry import register_handler
+from .admission_checks import validate_frontier_dispatch_step
 from .admission_gate import run_admission_gate
 from .completion import build_dispatch_output
 from .gen_params import build_frontier_request
@@ -48,20 +48,19 @@ class FrontierDispatchHandler(BaseHandler):
     # canonical key is ``generation_parameters.reasoning_effort``).
     #
     # ``_endpoint_request_id`` marks canonical endpoint arrivals. The proxy
-    # router uses it to suppress the raw-pipeline persona-bypass hint, and the
-    # handler uses it to admit endpoint-supplied tool overrides with an agent.
+    # router uses it to suppress the raw-pipeline persona-bypass hint.
     _ACCEPTED_RUNTIME_OPTION_KEYS: frozenset[str] = frozenset(
         {
             "model",
             "role",
             "mcp",
-            "remote_mcp",
-            "tools",
+            "server_tools",
             "max_tool_turns",
             "system",
             "generation_parameters",
             "model_entity_id",
             "_endpoint_request_id",
+            "skills_mount",
             # dispatch-surface-split Phase 1: consumed by output_short gate (Phase 3)
             "output_contract",
         }

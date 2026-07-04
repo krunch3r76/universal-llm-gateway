@@ -22,6 +22,39 @@ if TYPE_CHECKING:
     from llm_adapters import FrontierRequest, LLMRequest
 
 
+def _inline_skill_wire(entry: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "type": "inline",
+        "name": entry["name"],
+        "description": entry["description"],
+        "source": {
+            "type": "base64",
+            "media_type": "application/zip",
+            "data": entry["data_base64"],
+        },
+    }
+
+
+def _shell_skills_mount_tool(entries: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "type": "shell",
+        "environment": {
+            "type": "container_auto",
+            "skills": [_inline_skill_wire(entry) for entry in entries],
+        },
+    }
+
+
+def _append_skills_mount_tool(body: dict[str, Any], req: FrontierRequest, *, vendor: str) -> None:
+    if not req.skills_mount:
+        return
+    if vendor != "openai":
+        raise ValueError(
+            f"skills_mount is only supported for OpenAI Responses API (vendor={vendor!r})"
+        )
+    body.setdefault("tools", []).append(_shell_skills_mount_tool(req.skills_mount))
+
+
 class RemoteMcpUnsupportedError(RuntimeError):
     """Raised when remote_mcp=True is requested for a vendor that does not support it.
 
@@ -169,6 +202,7 @@ class ResponsesAPIAdapter:
                 *existing_tools,
                 openai_xai_mcp_tool_entry(url, token),
             ]
+            _append_skills_mount_tool(body, req, vendor=self._vendor)
         else:
             tools_list: list[dict[str, Any]] = []
             if req.tools:
@@ -176,6 +210,7 @@ class ResponsesAPIAdapter:
                     tools_list.append(_normalize_tool_for_responses_api(tool))
             if tools_list:
                 body["tools"] = tools_list
+            _append_skills_mount_tool(body, req, vendor=self._vendor)
         if req.tool_choice is not None:
             body["tool_choice"] = req.tool_choice
 
@@ -220,6 +255,9 @@ class ResponsesAPIAdapter:
                         "arguments": item.get("arguments"),
                     }
                 )
+
+            elif item_type and str(item_type).startswith("shell_call"):
+                server_tool_calls.append(item)
 
             elif item_type in {
                 "web_search_call",
@@ -322,7 +360,9 @@ class ResponsesAPIAdapter:
             if not isinstance(item, dict):
                 continue
             item_type = item.get("type")
-            if item_type in ("message", "function_call"):
+            if item_type in ("message", "function_call") or (
+                item_type and str(item_type).startswith("shell_call")
+            ):
                 body["input"].append(item)
             elif item_type == "reasoning" and item.get("encrypted_content"):
                 body["input"].append(item)

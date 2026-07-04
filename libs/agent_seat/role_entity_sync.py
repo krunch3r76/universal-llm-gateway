@@ -57,12 +57,36 @@ def resolve_dispatch_capabilities(
     capability preview with no caller intent (panel members, introspection).
     """
     if mcp_enabled is None:
-        from agent_seat.profiles import client_side_mcp_tool_loop_admitted
+        from model_id import ModelId
 
-        mcp_enabled = client_side_mcp_tool_loop_admitted(model)
+        if ModelId.parse(model).backend_type == "cursor_sdk":
+            mcp_enabled = True
+        else:
+            from model_capabilities import mcp_capable
+
+            mcp_enabled = mcp_capable(model)
+
+    from model_id import ModelId
+
+    backend = ModelId.parse(model).backend_type
+    if backend == "cursor_sdk":
+        mcp_mechanism = "local_native"
+    elif not mcp_enabled:
+        mcp_mechanism = "none"
+    else:
+        from model_capabilities import mcp_client_tool_loop, mcp_remote_connector
+
+        if mcp_remote_connector(model):
+            mcp_mechanism = "remote_connector"
+        elif mcp_client_tool_loop(model):
+            mcp_mechanism = "client_side_injection"
+        else:
+            mcp_mechanism = "none"
+
     return {
         "resolved_model": model,
         "inline_only": not mcp_enabled,
         "mcp_connector_active": mcp_enabled,
+        "mcp_mechanism": mcp_mechanism,
         "tool_surface": "inline-only" if not mcp_enabled else "mcp",
     }

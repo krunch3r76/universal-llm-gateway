@@ -16,7 +16,11 @@ from implement_admission.admission_read import (
     compute_packet_sha256,
     replace_frontmatter_value,
 )
-from implement_admission.skill_fs_line import skill_slug_to_fs_line
+from implement_admission.skill_fs_line import (
+    SkillSourceResolveError,
+    skill_slug_to_fs_line,
+)
+from implement_admission.skill_source_table import canonical_table_key
 from implement_admission.spec import ImplementSpec, SourceKind, implement_spec_hash
 
 _TOOL_SURFACE = (
@@ -52,8 +56,15 @@ class MaterializedPacket:
     text: str
 
 
-def materialize(spec: ImplementSpec, *, out_dir: Path) -> MaterializedPacket:
+def materialize(
+    spec: ImplementSpec,
+    *,
+    out_dir: Path,
+    skip_freshness_probe: bool = False,
+) -> MaterializedPacket:
     """Write a six-block packet to out_dir and return path + content hash."""
+    if not skip_freshness_probe:
+        assert_skill_table_fresh_for_dispatch()
     out_dir.mkdir(parents=True, exist_ok=True)
     spec_hash = spec.provenance.implement_spec_hash or implement_spec_hash(spec)
     slug = spec.source.canonical_ref.replace(":", "-").replace("/", "-")[:80]
@@ -88,7 +99,26 @@ def _extract_block(text: str, tag: str) -> str | None:
 
 
 def _skill_read(slug: str) -> str:
-    return skill_slug_to_fs_line(slug)
+    try:
+        return skill_slug_to_fs_line(slug)
+    except SkillSourceResolveError as exc:
+        raise SkillSourceResolveError(
+            f"packet materialize blocked — unresolved skill slug {slug!r}: {exc}"
+        ) from exc
+
+
+def assert_skill_table_fresh_for_dispatch(*, enforce_live: bool = False) -> None:
+    """Pre-dispatch freshness probe (F1) — table digest always; live drift optional."""
+    from implement_admission.skill_table_freshness import (
+        assert_fresh_or_raise,
+        check_table_digest,
+    )
+
+    digest_v = check_table_digest()
+    if digest_v is not None:
+        raise RuntimeError(digest_v.detail or digest_v.reason)
+    if enforce_live:
+        assert_fresh_or_raise()
 
 
 def _render_scope(spec: ImplementSpec) -> str:
@@ -170,12 +200,20 @@ _REQUIRED_ARCH_SKILLS: tuple[str, ...] = tuple(
 
 
 def _render_mcp_capabilities(spec: ImplementSpec) -> str:
-    skills = list(spec.skills)
+    raw_skills = list(spec.skills)
     inject_slugs = set(_REQUIRED_ARCH_SKILLS)
-    skills.extend(s for s in _REQUIRED_ARCH_SKILLS if s not in skills)
+    raw_skills.extend(s for s in _REQUIRED_ARCH_SKILLS if s not in raw_skills)
     for slug in CODING_SESSION_ADVERTISE_SLUGS:
-        if slug not in skills and slug not in inject_slugs:
-            skills.append(slug)
+        if slug not in raw_skills and slug not in inject_slugs:
+            raw_skills.append(slug)
+    seen_keys: set[str] = set()
+    skills: list[str] = []
+    for slug in raw_skills:
+        key = canonical_table_key(slug)
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        skills.append(slug)
     lines = [_skill_read(s) for s in skills]
     lines.append(f"Tool surface: {_TOOL_SURFACE}")
     if any(f.endswith(".py") for f in spec.scope.files_expected):

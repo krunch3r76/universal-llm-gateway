@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -35,9 +36,14 @@ from services.git_integration_worker.cursor_sdk_deliverables import (
     artifact_paths_for_closeout,
     cortex_expected_rels,
     full_result_text,
+    relocate_oversize_closeout_body_async,
+    relocate_oversize_closeout_body_sync,
     resolve_cortex_pinned_deliverables,
     sidecar_workspaces_ref,
     write_repo_sidecar,
+)
+from services.git_integration_worker.cursor_sdk_events import (
+    emit_sdk_closeout_relocated,
 )
 from services.git_integration_worker.cursor_sdk_manifest import (
     CaptureBranch,
@@ -61,6 +67,7 @@ logger = get_logger(__name__)
 
 # Must stay aligned with ``libs/agent_bus_store/turns_models`` bus invariants.
 MAX_TURN_BODY_CHARS = 8_000
+_CLOSEOUT_FILE_HEAD = 5
 
 
 @dataclass(frozen=True)
@@ -342,6 +349,76 @@ def _map_closeout_status(degraded_reason: str | None) -> CloseoutStatus:
     return CloseoutStatus.PARTIAL
 
 
+def finalize_closeout_body(
+    body: str,
+    *,
+    body_relocated: dict[str, Any] | None = None,
+) -> str:
+    """Deterministically shrink an oversize closeout JSON body to the bus limit."""
+    if len(body) <= MAX_TURN_BODY_CHARS:
+        return body
+
+    payload = json.loads(body)
+    reduced: dict[str, Any] = {
+        "schema_version": payload.get("schema_version", 1),
+        "status": payload["status"],
+        "summary": payload["summary"],
+        "source_ref": payload["source_ref"],
+    }
+    if payload.get("capture_status") is not None:
+        reduced["capture_status"] = payload["capture_status"]
+    if payload.get("evidence_uris"):
+        reduced["evidence_uris"] = payload["evidence_uris"]
+    verification = payload.get("verification") or []
+    failed_verification = [
+        item for item in verification if isinstance(item, dict) and item.get("exit_code")
+    ]
+    if failed_verification:
+        reduced["verification"] = failed_verification
+    for field, total_field in (
+        ("files_created", "files_created_total"),
+        ("files_modified", "files_modified_total"),
+        ("files_deleted", "files_deleted_total"),
+    ):
+        files = payload.get(field) or []
+        reduced[total_field] = len(files)
+        reduced[field] = list(files[:_CLOSEOUT_FILE_HEAD])
+    ignored = payload.get("files_untracked_or_ignored") or []
+    if ignored:
+        reduced["files_untracked_or_ignored_total"] = len(ignored)
+        reduced["files_untracked_or_ignored"] = list(ignored[:_CLOSEOUT_FILE_HEAD])
+    if payload.get("deviations"):
+        reduced["deviations"] = list(payload["deviations"][:_CLOSEOUT_FILE_HEAD])
+    if body_relocated is not None:
+        reduced["body_relocated"] = body_relocated
+
+    result = json.dumps(reduced, separators=(",", ":"))
+    if len(result) <= MAX_TURN_BODY_CHARS:
+        return result
+
+    summary = str(reduced["summary"])
+    overhead = len(result) - len(summary)
+    max_summary = max(40, MAX_TURN_BODY_CHARS - overhead - 3)
+    reduced["summary"] = summary[:max_summary] + "..."
+    result = json.dumps(reduced, separators=(",", ":"))
+    if len(result) <= MAX_TURN_BODY_CHARS:
+        return result
+
+    minimal: dict[str, Any] = {
+        "schema_version": 1,
+        "status": payload["status"],
+        "summary": str(payload["summary"])[:200],
+        "evidence_uris": payload.get("evidence_uris"),
+    }
+    if body_relocated is not None:
+        minimal["body_relocated"] = body_relocated
+    result = json.dumps(minimal, separators=(",", ":"))
+    while len(result) > MAX_TURN_BODY_CHARS and len(minimal["summary"]) > 20:
+        minimal["summary"] = str(minimal["summary"])[:-10]
+        result = json.dumps(minimal, separators=(",", ":"))
+    return result[:MAX_TURN_BODY_CHARS] if len(result) > MAX_TURN_BODY_CHARS else result
+
+
 def build_implement_closeout_body(
     *,
     dispatch_id: str,
@@ -437,10 +514,6 @@ def build_implement_closeout_body(
                 json.dumps(manifest_source.model_dump(mode="json"), indent=2)
             )
         body = _render_body(compact_payload)
-    assert len(body) <= MAX_TURN_BODY_CHARS, (
-        f"structured closeout body exceeded {MAX_TURN_BODY_CHARS} chars "
-        f"(len={len(body)}); dispatch_id={dispatch_id}"
-    )
     return body
 
 
@@ -459,6 +532,8 @@ def prepare_closeout_delivery(
     deliverables_expected: bool = False,
     divergent_rels: tuple[str, ...] = (),
     light_bounded_expected_paths: tuple[str, ...] = (),
+    execution_id: str = "test-execution",
+    post_closeout_sidecar_fn: Callable[..., dict[str, Any] | None] | None = None,
 ) -> CloseoutDelivery:
     """Sync closeout assembly (tests). Production uses ``prepare_closeout_delivery_async``."""
     return _assemble_closeout_delivery(
@@ -475,6 +550,8 @@ def prepare_closeout_delivery(
         deliverables_expected=deliverables_expected,
         divergent_rels=divergent_rels,
         light_bounded_expected_paths=light_bounded_expected_paths,
+        execution_id=execution_id,
+        post_closeout_sidecar_fn=post_closeout_sidecar_fn,
     )
 
 
@@ -490,6 +567,8 @@ async def prepare_closeout_delivery_async(
     packet_text: str | None = None,
     deliverables_expected: bool = False,
     light_bounded_expected_paths: tuple[str, ...] = (),
+    execution_id: str,
+    post_closeout_sidecar_fn: Callable[..., Any] | None = None,
 ) -> CloseoutDelivery:
     """Write sidecar, resolve pinned cortex deliverables, build closeout JSON."""
     files_expected = _files_expected_from_packet(packet_text)
@@ -510,7 +589,7 @@ async def prepare_closeout_delivery_async(
             shown = f"{shown},+{len(missing) - 3}"
         pin_reason = f"pinned_deliverable_write_failed:{shown}"
         degraded_reason = degraded_reason or pin_reason
-    return _assemble_closeout_delivery(
+    return await _assemble_closeout_delivery_async(
         source_repo=source_repo,
         dispatch_id=dispatch_id,
         outcome=outcome,
@@ -525,6 +604,8 @@ async def prepare_closeout_delivery_async(
         deliverables_expected=deliverables_expected,
         divergent_rels=pinned.divergent_rels,
         light_bounded_expected_paths=light_bounded_expected_paths,
+        execution_id=execution_id,
+        post_closeout_sidecar_fn=post_closeout_sidecar_fn,
     )
 
 
@@ -544,6 +625,9 @@ def _assemble_closeout_delivery(
     deliverables_expected: bool = False,
     divergent_rels: tuple[str, ...] = (),
     light_bounded_expected_paths: tuple[str, ...] = (),
+    execution_id: str = "test-execution",
+    post_closeout_sidecar_fn: Callable[..., dict[str, Any] | None] | None = None,
+    finalize_oversize: bool = True,
 ) -> CloseoutDelivery:
     text = full_result_text(outcome.body, degraded_reason)
     sidecar_appendix: list[str] = []
@@ -651,12 +735,98 @@ def _assemble_closeout_delivery(
             encoding="utf-8",
         )
         result_bytes = len(sidecar_path.read_text(encoding="utf-8").encode("utf-8"))
+    full_body = body
+    if len(full_body) > MAX_TURN_BODY_CHARS and finalize_oversize:
+        body_relocated, tier = relocate_oversize_closeout_body_sync(
+            full_body=full_body,
+            sidecar_path=sidecar_path,
+            sidecar_ref=sidecar_ref,
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            post_closeout_sidecar_fn=post_closeout_sidecar_fn,
+        )
+        emit_sdk_closeout_relocated(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            execution_id=execution_id,
+            uri=body_relocated["uri"],
+            body_chars=body_relocated["body_chars"],
+            tier=tier,
+        )
+        body = finalize_closeout_body(full_body, body_relocated=body_relocated)
     parsed = json.loads(body)
     return CloseoutDelivery(
         body=body,
         sidecar_ref=sidecar_ref,
         sidecar_path=sidecar_path,
         full_result_bytes=result_bytes,
+        closeout_status=CloseoutStatus(parsed["status"]),
+    )
+
+
+async def _assemble_closeout_delivery_async(
+    *,
+    source_repo: Path,
+    dispatch_id: str,
+    outcome: SdkRunOutcome,
+    degraded_reason: str | None,
+    thread_id: str,
+    work_item_ref: str | None,
+    baseline: dict[str, Any] | None,
+    packet_text: str | None,
+    files_expected: list[str] | None = None,
+    cortex_artifact_paths: list[str],
+    gate_d_created_rels: tuple[str, ...],
+    deliverables_expected: bool = False,
+    divergent_rels: tuple[str, ...] = (),
+    light_bounded_expected_paths: tuple[str, ...] = (),
+    execution_id: str,
+    post_closeout_sidecar_fn: Callable[..., Any] | None = None,
+) -> CloseoutDelivery:
+    delivery = _assemble_closeout_delivery(
+        source_repo=source_repo,
+        dispatch_id=dispatch_id,
+        outcome=outcome,
+        degraded_reason=degraded_reason,
+        thread_id=thread_id,
+        work_item_ref=work_item_ref,
+        baseline=baseline,
+        packet_text=packet_text,
+        files_expected=files_expected,
+        cortex_artifact_paths=cortex_artifact_paths,
+        gate_d_created_rels=gate_d_created_rels,
+        deliverables_expected=deliverables_expected,
+        divergent_rels=divergent_rels,
+        light_bounded_expected_paths=light_bounded_expected_paths,
+        execution_id=execution_id,
+        finalize_oversize=False,
+    )
+    full_body = delivery.body
+    if len(full_body) <= MAX_TURN_BODY_CHARS:
+        return delivery
+    body_relocated, tier = await relocate_oversize_closeout_body_async(
+        full_body=full_body,
+        sidecar_path=delivery.sidecar_path,
+        sidecar_ref=delivery.sidecar_ref,
+        dispatch_id=dispatch_id,
+        thread_id=thread_id,
+        post_closeout_sidecar_fn=post_closeout_sidecar_fn,
+    )
+    emit_sdk_closeout_relocated(
+        dispatch_id=dispatch_id,
+        thread_id=thread_id,
+        execution_id=execution_id,
+        uri=body_relocated["uri"],
+        body_chars=body_relocated["body_chars"],
+        tier=tier,
+    )
+    body = finalize_closeout_body(full_body, body_relocated=body_relocated)
+    parsed = json.loads(body)
+    return CloseoutDelivery(
+        body=body,
+        sidecar_ref=delivery.sidecar_ref,
+        sidecar_path=delivery.sidecar_path,
+        full_result_bytes=delivery.full_result_bytes,
         closeout_status=CloseoutStatus(parsed["status"]),
     )
 

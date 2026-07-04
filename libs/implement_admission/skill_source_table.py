@@ -17,6 +17,7 @@ TEMPLATE_VERSION: Final[str] = "1"
 
 # slug synonyms → canonical table key (``entity_slug_from_id`` output may differ)
 CANONICAL_SLUG_ALIASES: Final[dict[str, str]] = {
+    "session-close-kernel": "session-close",
     "ulg-architecture": "ulg-architecture_ulg",
 }
 
@@ -36,12 +37,14 @@ CANONICAL_SKILL_SOURCE_URIS: Final[dict[str, str]] = {
     "git-posture": (
         "workspaces://universal-llm-gateway/docs/agent-guides/skills/git-posture.md"
     ),
+    "implement-todo": "agent-skills/implement-todo.md",
     "implement-work-item": (
         "workspaces://universal-llm-gateway/.cursor/skills/implement-work-item/SKILL.md"
     ),
     "lead-seat-boot": (
         "workspaces://universal-llm-gateway/.cursor/skills/lead-seat-boot/SKILL.md"
     ),
+    "mcp-surface-change": "agent-skills/mcp-surface-change.md",
     "model-tier-awareness-web": "agent-skills/model-tier-awareness-web.md",
     "operator-posture": "agent-skills/operator-posture.md",
     "orchestrator-core": "agent-skills/orchestrator-core.md",
@@ -55,6 +58,9 @@ CANONICAL_SKILL_SOURCE_URIS: Final[dict[str, str]] = {
     ),
     "web-transcript-preprocessing": (
         "workspaces://universal-llm-gateway/.cursor/skills/web-transcript-preprocessing/SKILL.md"
+    ),
+    "agent-identity-signoff": (
+        "workspaces://universal-llm-gateway/agent-surface/sources/agent-identity-signoff.md"
     ),
 }
 

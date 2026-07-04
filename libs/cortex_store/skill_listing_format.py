@@ -13,7 +13,7 @@ from .routes.boot._skill_trigger import canonical_skill_summary
 
 _LOAD_CONTRACT_LINE = (
     "> **Load a body**: `GET /skills/body?id=agent_skill:<slug>&expected_digest=<digest>` "
-    "(REST) or `fs(cortex, md_read, agent-skills/<slug>.md)`."
+    "(REST) or `fs(cortex, md_read, agent-skills/<slug>.md)` (non-platform fallback)."
 )
 
 
@@ -178,17 +178,18 @@ def render_skills_card_section(
     lines: list[str] = [
         f"\n## Agent Skills ({len(items)} active — concise manifest)",
         (
-            "> **Load on demand**: "
-            '`fs(sandbox="cortex", op="md_read", path="agent-skills/<slug>.md")` '
-            "— slug is the backticked id on each line. Web lead: attach required "
-            "skills in the claude.ai UI; boot-card orientation blocks index "
-            "gate skills (`seat_preloaded`)."
+            "> **Bodies**: platform seats (claude-web/app) receive full SKILL.md via "
+            "`<available_skills>` on trigger — no fs re-read. "
+            "Non-platform/unmounted/authoring: "
+            '`fs(sandbox="cortex", op="md_read", path="agent-skills/<slug>.md")`.'
         ),
         (
-            "> **Discovery (you call it, never the operator)**: at task inflection "
-            "points call `skill_suggest(conversation_context=…)` BEFORE scanning "
-            'this manifest. If unbound: `tool_search("skill suggest skills loaded delta")` '
-            "— not the bare tool name (overflow index only)."
+            "> **Discovery (native)**: skill discovery is native — resident boot "
+            "index, description-gated `<available_skills>` / `.cursor/skills` stubs "
+            "(Cursor), and boot manifest orientation. Optionally call "
+            "`skill_suggest(loaded=[], conversation_context=…)` for explicit "
+            "delta-ranking when context shifts; not required before scanning this "
+            "manifest."
         ),
         "> `⚑` = required gate.",
     ]

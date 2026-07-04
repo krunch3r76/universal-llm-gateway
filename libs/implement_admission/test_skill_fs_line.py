@@ -79,6 +79,26 @@ def test_canonical_table_key_ulg_alias() -> None:
 
 
 @pytest.mark.offline
+def test_canonical_table_key_session_close_kernel_alias() -> None:
+    assert canonical_table_key("session-close-kernel") == "session-close"
+
+
+@pytest.mark.offline
+def test_doc_type_hot_path_slugs_resolve() -> None:
+    """Regression: doc_template/doc_validate import-time slugs must be in D1 table."""
+    from implement_admission.skill_source_table import resolve_canonical_source_uri
+
+    for slug in (
+        "implement-todo",
+        "session-close-kernel",
+        "session-close-audit",
+        "web-transcript-preprocessing",
+    ):
+        uri = resolve_canonical_source_uri(slug)
+        assert uri, f"{slug!r} resolved to empty uri"
+
+
+@pytest.mark.offline
 def test_source_uri_to_fs_line_absolute_cortex_files_root() -> None:
     line = source_uri_to_fs_line(
         "/mnt/torus/mcp-data/files/agent-skills/completion-provenance-discipline.md"

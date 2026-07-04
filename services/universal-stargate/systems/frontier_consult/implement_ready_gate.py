@@ -25,11 +25,13 @@ def require_implement_ready(
 ) -> None:
     """Hard gate for todo-sourced implement dispatch. No-op for non-todo sources."""
 
+    root = _workspaces_root()
+
     def _resolve_skeptic(*, assertion: dict[str, Any]) -> dict[str, Any]:
         outcome = evaluate_skeptic_evidence_grounding(
             reader=cortex,
             assertion=assertion,
-            workspaces_root=None,
+            workspaces_root=root,
         )
         return {
             "evidence_grounded": outcome.grounded,
@@ -42,7 +44,7 @@ def require_implement_ready(
             request_id=request_id,
             source_ref=source_ref,
             cortex=cortex,
-            workspaces_root=_workspaces_root(),
+            workspaces_root=root,
             resolve_skeptic=_resolve_skeptic,
         )
     except ImplementReadyGateError as exc:

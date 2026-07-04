@@ -80,6 +80,9 @@ from services.git_integration_worker.cursor_sdk_deliverable_truth import (
     LIGHT_BOUNDED_CONTRACT,
     light_bounded_deliverable_reason,
 )
+from services.git_integration_worker.cursor_sdk_deliverables import (
+    sidecar_workspaces_ref,
+)
 from services.git_integration_worker.cursor_sdk_events import (
     emit_sdk_worker_completed,
     emit_sdk_worker_delivery_failed,
@@ -733,6 +736,7 @@ async def _deliver_sdk_closeout(
         packet_text=packet_text or None,
         deliverables_expected=deliverables_expected,
         light_bounded_expected_paths=light_bounded_expected_paths,
+        execution_id=req.execution_id,
     )
     run_outcome = resolve_run_outcome_label(degraded_reason)
     if delivery.closeout_status.value == "partial":
@@ -1007,6 +1011,11 @@ async def _run_sdk_dispatch_gated(
             message=str(exc),
             subject_suffix="FAILED (closeout)",
             error=f"closeout {type(exc).__name__}: {exc}",
+            retryable=True,
+            data={
+                "sidecar_ref": sidecar_workspaces_ref(req.dispatch_id),
+                "recovery": "full Composer result persisted in sidecar; re-deliver from sidecar",
+            },
         )
 
 
@@ -1020,6 +1029,8 @@ async def _finalize_failed(
     message: str,
     subject_suffix: str,
     error: str | None = None,
+    retryable: bool = False,
+    data: dict[str, str] | None = None,
 ) -> None:
     """Single failure-finalize path: emit, deliver an error envelope, terminate,
     and mark terminal ``failed`` + promote. Guarantees no silent orphan.
@@ -1031,7 +1042,9 @@ async def _finalize_failed(
             execution_id=req.execution_id,
             error=error,
         )
-    env = error_envelope(code=code, message=message, source="gateway")
+    env = error_envelope(
+        code=code, message=message, source="gateway", retryable=retryable, data=data
+    )
     await bus.reply(
         thread_id=req.thread_id,
         to_agent=reply_to,

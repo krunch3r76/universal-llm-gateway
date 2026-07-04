@@ -11,10 +11,10 @@ public import path is unchanged — import the names below from
   ``InvalidNamespaceError`` (input binding + namespace resolution).
 - ``validation`` — ``OutputValidationError`` (handler output-contract).
 - ``timeout`` — ``StepTimeoutError`` / ``HandlerTimeoutError`` (retryable).
-- ``dispatch_frontier`` — ``RemoteMcpUnsupportedError`` /
-  ``UnknownPipelineOptionsError`` / ``AgentModelMismatchError`` /
-  ``EmptyCompletionError`` / ``FrontierDispatchExhaustedError`` (each carries a
-  stable ``code`` for ``_normalize_pipeline_exception``).
+- ``dispatch_frontier`` — ``UnknownPipelineOptionsError`` /
+  ``AgentModelMismatchError`` / ``EmptyCompletionError`` /
+  ``FrontierDispatchExhaustedError`` (each carries a stable ``code`` for
+  ``_normalize_pipeline_exception``).
 - ``map_reduce`` — ``MapPartialFailureError`` (lazy ``IterationStatus``).
 - ``concurrency`` — ``ConcurrencyLockTimeoutError``.
 """
@@ -31,7 +31,6 @@ from .dispatch_frontier import (
     CapabilityKnobRejectedError,
     EmptyCompletionError,
     FrontierDispatchExhaustedError,
-    RemoteMcpUnsupportedError,
     UnknownPipelineOptionsError,
 )
 from .map_reduce import MapPartialFailureError
@@ -47,7 +46,6 @@ __all__ = [
     "InvalidNamespaceError",
     "StepTimeoutError",
     "HandlerTimeoutError",
-    "RemoteMcpUnsupportedError",
     "UnknownPipelineOptionsError",
     "AgentModelMismatchError",
     "CapabilityKnobRejectedError",

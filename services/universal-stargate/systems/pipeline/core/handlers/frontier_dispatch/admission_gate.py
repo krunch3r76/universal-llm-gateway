@@ -58,14 +58,15 @@ class AdmissionResult:
     provider: str
     publish: Callable[[Any], None]
     mcp_enabled: bool
+    server_tools_enabled: bool
     remote_mcp: Any
     max_turns: int
     user_prompt: str
-    opt_tools: Any
     boot_profile: str
     tools: Any
     system: str | None
     hydration_meta: Any
+    skills_mount: Any = None
 
 
 async def run_admission_gate(
@@ -105,30 +106,20 @@ async def run_admission_gate(
             publish=publish,
         )
     mcp_enabled = bool(opts.get("mcp", True))
-    remote_mcp = resolve_remote_mcp(
-        opts=opts,
-        step=step,
-        context=context,
-        provider=provider,
-        model=model,
-        model_entity_id=model_entity_id,
-        agent=agent,
-        mcp_enabled=mcp_enabled,
-        publish=publish,
-    )
+    server_tools_val = opts.get("server_tools")
+    server_tools_enabled = True if server_tools_val is None else bool(server_tools_val)
+    remote_mcp = resolve_remote_mcp(model=model, mcp_enabled=mcp_enabled)
     raw_turns = opts.get("max_tool_turns", step.get_domain_field("max_tool_turns", 100))
     max_turns = int(raw_turns)
     if max_turns < 1:
         raise ValueError(f"max_tool_turns must be >= 1, got {max_turns}")
 
     user_prompt = resolve_user_prompt(step, context)
-    opt_tools = opts.get("tools")
     check_boot_provider_compatibility(
         agent=agent,
         model=model,
         provider=provider,
         mcp_enabled=mcp_enabled,
-        opt_tools=opt_tools,
         execution_id=context.execution_id,
         publish=publish,
     )
@@ -136,7 +127,6 @@ async def run_admission_gate(
     tools, system, hydration_meta = await resolve_dispatch_tool_set(
         mcp_enabled=mcp_enabled,
         remote_mcp=remote_mcp,
-        opt_tools=opt_tools,
         agent=agent,
         model=model,
         provider=provider,
@@ -167,12 +157,13 @@ async def run_admission_gate(
         provider=provider,
         publish=publish,
         mcp_enabled=mcp_enabled,
+        server_tools_enabled=server_tools_enabled,
         remote_mcp=remote_mcp,
         max_turns=max_turns,
         user_prompt=user_prompt,
-        opt_tools=opt_tools,
         boot_profile=boot_profile,
         tools=tools,
         system=system,
         hydration_meta=hydration_meta,
+        skills_mount=opts.get("skills_mount"),
     )

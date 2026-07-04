@@ -1,9 +1,8 @@
 """Frontier-dispatch tool-loop event factories.
 
-Covers per-tool-call lifecycle plus suppression + supplied-list. Node-scoped
+Covers per-tool-call lifecycle plus suppression signals. Node-scoped
 signals (``scope="node"``) covering the per-tool-call lifecycle inside
-``run_native_tool_loop`` and the soft-invariant signals for tool-surface
-suppression and explicit-tools-list usage.
+``run_native_tool_loop`` and tool-surface suppression telemetry.
 
 The ``tool.requested`` / ``tool.called`` / ``tool.failed`` triple is correlated
 by ``tool_call_id`` (Anthropic ``content_block.id``, OpenAI/xAI ``item.id``;
@@ -13,15 +12,11 @@ Consumers:
 - ``core/handlers/frontier_dispatch/streaming.py`` — Requested, Called, Failed
   (lazy imports)
 - ``core/handlers/frontier_dispatch/admission_checks.py`` — Suppressed (admission path)
-- ``core/handlers/frontier_dispatch/tools.py`` — ToolListSupplied, Suppressed
-  (lazy)
+- ``core/handlers/frontier_dispatch/tools.py`` — Suppressed (lazy)
+- ``core/handlers/frontier_dispatch/gen_params.py`` — Suppressed (server_tools knob)
 
 Signals: ``pipeline.frontier.dispatch.{tool.requested,tool.called,tool.failed,
-tool.suppressed,tools.supplied}``.
-
-Signal segment-count: capped at 5 by ``EVENT_SIGNAL_PATTERN`` in
-``libs/universal_event_bus/events/validation.py`` — hence ``tools`` (plural)
-collapses what would otherwise be ``tool.list.supplied`` (6 segments).
+tool.suppressed}``.
 """
 
 from __future__ import annotations
@@ -139,21 +134,15 @@ def PipelineFrontierDispatchToolSuppressed(  # noqa: N802
     provider: str,
     reason: str,
 ) -> Event:
-    """Emitted when agent-tier demotion forces the tool surface to empty.
+    """Emitted when the tool surface is coerced to empty or server-side built-ins
+    are suppressed.
 
-    Primary trigger: ``capability_tier == "inline-only"`` on the dispatched
-    role's Cortex entity (``role:{slug}.attributes.capability_tier``).
-    This gate is orthogonal to the provider-derived xAI multi-agent suppression,
-    which coerces ``tools=[]`` silently without emitting this event.
-
-    Reinstatement is a single Cortex entity-attribute update; no code change.
-    Callers see normal success; telemetry visible to operators via observability
-    or recent-events queries.
-
-    NOTE: The xAI multi-agent branch in ``resolve_dispatch_tool_set`` does NOT
-    emit this event. If xAI suppression should also be observable, add a
-    ``publish(PipelineFrontierDispatchToolSuppressed(...))`` call to that branch
-    with ``reason="provider_xai_multi_agent"``.
+    Reason vocabulary:
+    - ``capability_tier_inline_only`` — role demoted to inline-only substrate
+    - ``mcp_client_tool_loop_unsupported`` — model card rejects client-side MCP
+      tools (boot-compat telemetry)
+    - ``server_tools_knob`` — caller set ``server_tools=False`` while the card
+      carries server-side built-ins
     """
     return Event(
         signal="pipeline.frontier.dispatch.tool.suppressed",
@@ -163,48 +152,6 @@ def PipelineFrontierDispatchToolSuppressed(  # noqa: N802
             "model": model,
             "provider": provider,
             "reason": reason,
-        },
-        scope="node",
-    )
-
-
-@event_factory
-def PipelineFrontierDispatchToolListSupplied(  # noqa: N802
-    execution_id: str,
-    agent: str | None,
-    model: str,
-    provider: str,
-    tool_count: int,
-    tool_names: list[str],
-) -> Event:
-    """Emitted when a caller passes an explicit ``pipeline_options.tools`` list.
-
-    Soft invariant violation per Kaywan 2026-05-01 (Cortex assertion 7974):
-    *"tools are not a concern to any agent or human — all tools are available
-    by default."* The dispatch infrastructure exposes the full MCP catalog
-    when ``mcp=True``; explicit ``tools`` lists pin a narrower surface than
-    the system would otherwise provide and bypass the universal-catalog
-    contract.
-
-    The list is honored (no rejection — soft, not hard, invariant) so legacy
-    callers continue to function while the pattern is surfaced for retirement.
-    Track via ``observability(operation='recent-events',
-    params={'signal': 'pipeline.frontier.dispatch.tools.supplied'})``
-    to identify call sites still relying on the explicit-tools escape hatch.
-
-    Signal segment-count: capped at 5 by ``EVENT_SIGNAL_PATTERN`` in
-    ``libs/universal_event_bus/events/validation.py`` — hence ``tools``
-    (plural) collapses what would otherwise be ``tool.list.supplied`` (6).
-    """
-    return Event(
-        signal="pipeline.frontier.dispatch.tools.supplied",
-        payload={
-            "execution_id": execution_id,
-            "agent": agent,
-            "model": model,
-            "provider": provider,
-            "tool_count": tool_count,
-            "tool_names": tool_names,
         },
         scope="node",
     )

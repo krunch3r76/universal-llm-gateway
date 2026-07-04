@@ -6,10 +6,10 @@ Package-private admission helpers for ``frontier_dispatch_v1``. Seven responsibi
    family/platform seats. Functional roles are model-agnostic; explicit model
    overrides may fill any role.
 
-2. ``check_boot_provider_compatibility`` — pre-hydration guard that rejects
-   xAI multi-agent model dispatches with ``boot_mode='team'`` and
-   ``mcp_enabled=True``: those models reject client-side MCP function tools.
-   Non-multi-agent xAI models (grok-4.3, grok-4.20-reasoning) are not gated.
+2. ``check_boot_provider_compatibility`` — pre-hydration telemetry for models
+   with ``mcp_client_tool_loop=False`` when ``mcp_enabled=True``: those models
+   reject client-side MCP function tools; server-side built-ins are governed
+   separately by the ``server_tools`` knob.
 
 3. ``prepend_dispatch_context`` — injects a minimal ``<dispatch_context>``
    preamble into every system prompt, anchoring temporal reasoning with
@@ -19,9 +19,8 @@ Package-private admission helpers for ``frontier_dispatch_v1``. Seven responsibi
    against the handler's accepted key set; raises ``UnknownPipelineOptionsError``
    for any unknown key.
 
-5. ``resolve_remote_mcp`` — validates and resolves the ``remote_mcp`` option
-   against provider support and the ``mcp`` gate; raises
-   ``RemoteMcpUnsupportedError`` on violation.
+5. ``resolve_remote_mcp`` — card-derived internal remote-connector selection
+   from the single caller ``mcp`` boolean.
 
 6. ``validate_frontier_dispatch_step`` — config-time validation that a step's
    ``type`` is ``frontier_dispatch_v1``; returns a list of error strings for
@@ -45,15 +44,14 @@ from agent_seat.registry import (
     resolve_agent_provider,
     resolve_agent_valid_family,
 )
+from model_capabilities import mcp_client_tool_loop, mcp_remote_connector
 
 from ...events.dispatch import (
     PipelineFrontierDispatchAgentModelMismatch,
-    PipelineFrontierDispatchRemoteMcpUnsupported,
     PipelineFrontierDispatchToolSuppressed,
 )
 from ...execution.errors import (
     AgentModelMismatchError,
-    RemoteMcpUnsupportedError,
     UnknownPipelineOptionsError,
 )
 
@@ -150,61 +148,38 @@ def check_agent_model_consistency(
         )
 
 
-# xAI multi-agent models (identified by "multi-agent" in the model ID) reject
-# client-side MCP function tools at the API level. Non-multi-agent xAI models
-# (e.g. grok-4.3, grok-4.20-reasoning variants) support standard function
-# calling and must NOT be gated. The "multi-agent" substring is the canonical
-# signal — it matches model_requirement="multi-agent" on the grok-api-multi
-# concrete seat profile.
-_XAI_MULTI_AGENT_SUBSTRING: str = "multi-agent"
-
-
 def check_boot_provider_compatibility(
     *,
     agent: str | None,
     model: str,
     provider: str,
     mcp_enabled: bool,
-    opt_tools: Any,
     execution_id: str,
     publish: Callable[[object], None],
 ) -> None:
-    """Apply silent provider-derived tool coercion for incompatible (provider, boot)
-    pairs; no longer raises to caller.
+    """Emit MCP-class coercion telemetry for no-client-loop models; no raise.
 
-    Per todo:retire-tools-allowlist-as-caller-concern, tools is not a caller
-    concern. For xAI multi-agent models (contains "multi-agent") with
-    mcp_enabled=True, silently coerce by allowing dispatch with tools=[] /
-    mcp_tool_loop=False (no client-side MCP function tools) and emit
-    ``pipeline.frontier.dispatch.tool.suppressed`` telemetry. Server-side
-    xAI builtins still injected via provider_options.xai.tools.
+    When ``mcp_enabled=True`` and the model card carries
+    ``mcp_client_tool_loop=False``, silently allow dispatch with ``tools=[]`` /
+    ``mcp_tool_loop=False`` and emit ``pipeline.frontier.dispatch.tool.suppressed``
+    with reason ``mcp_client_tool_loop_unsupported``. Server-side built-ins are
+    governed separately by the ``server_tools`` knob.
 
-    Non-multi-agent xAI models and other providers are unaffected.
-
-    Skipped (no coercion) when:
-    - ``isinstance(opt_tools, list)`` — explicit caller intent via /api/v1/frontier/dispatch
-    - ``agent is None`` — persona-free dispatch
-    - ``not mcp_enabled`` — caller already suppressed
-    - not xAI multi-agent model
+    Skipped when ``agent is None`` (persona-free) or ``not mcp_enabled``.
     """
-    if isinstance(opt_tools, list) or agent is None or not mcp_enabled:
+    if agent is None or not mcp_enabled:
         return
-    if provider != "xai" or _XAI_MULTI_AGENT_SUBSTRING not in model:
+    if mcp_client_tool_loop(model):
         return
-    reason = "xai_multi_agent_client_tools_unsupported"
     publish(
         PipelineFrontierDispatchToolSuppressed(
             execution_id=execution_id,
             agent=agent,
             model=model,
             provider=provider,
-            reason=reason,
+            reason="mcp_client_tool_loop_unsupported",
         ),
     )
-    # Silent coercion: no error raised to caller. Downstream
-    # resolve_dispatch_tool_set sets tools=[] for this case; mcp_tool_loop=False;
-    # CORTEX_TOOL_QUICKREF suppressed in prompt. Provider builtins via
-    # provider_options.xai.tools still available.
 
 
 # Keys injected into ``runtime_options`` by the framework itself — never
@@ -246,76 +221,15 @@ def reject_unknown_runtime_options(
     )
 
 
-_REMOTE_MCP_PROVIDERS: frozenset[str] = frozenset({"anthropic"})
+def resolve_remote_mcp(*, model: str, mcp_enabled: bool) -> bool:
+    """Return whether the card-selected remote-connector path is active.
 
-
-def resolve_remote_mcp(
-    *,
-    opts: dict[str, Any],
-    step: StepConfig,
-    context: PipelineContext,
-    provider: str,
-    model: str,
-    model_entity_id: str,
-    agent: str | None,
-    mcp_enabled: bool,
-    publish: Callable[[object], None],
-) -> bool:
-    """Resolve and validate ``remote_mcp`` against provider support and mcp gate.
-
-    Default: ``True`` iff ``provider=anthropic`` and ``mcp_enabled`` — otherwise
-    ``False``. Explicit ``remote_mcp=True`` is rejected when either (a)
-    ``mcp_enabled=False`` (remote_mcp requires mcp) or (b) the provider is not
-    in ``_REMOTE_MCP_PROVIDERS`` (anthropic-only). Violations emit
-    ``pipeline.frontier.dispatch.remotemcp.unsupported`` and raise
-    ``RemoteMcpUnsupportedError`` before hydration.
-
-    ``model_entity_id`` is included on the published Unsupported event so
-    post-hoc correlators can recover the canonical Cortex ``model:<slug>``
-    directly — Unsupported fires during admission and ``.started`` is never
-    emitted on the rejection path, leaving ``execution_id`` without an outcome
-    event to join against. Mirrors the recovery shape used on
-    ``pipeline.frontier.dispatch.remotemcp.misconfigured``.
+    Internal selection only — callers supply the single ``mcp`` boolean;
+    remote-vs-client-loop is derived from ``mcp_remote_connector(model)``.
+    Missing card/field propagates ``CapabilityCardError`` to the existing
+    structured 422 translation — never a fallback.
     """
-    supports = provider in _REMOTE_MCP_PROVIDERS
-    raw = opts.get("remote_mcp")
-    if raw is None:
-        return supports and mcp_enabled
-    requested = bool(raw)
-    if not requested:
-        return False
-    reason: str | None = None
-    if not mcp_enabled:
-        reason = (
-            "remote_mcp=True requires mcp=True — remote MCP is only "
-            "meaningful when client-side MCP tooling is enabled"
-        )
-    elif not supports:
-        reason = (
-            f"remote_mcp=True is only supported for anthropic models; "
-            f"provider={provider!r} has no native mcp_toolset path"
-        )
-    if reason is not None:
-        publish(
-            PipelineFrontierDispatchRemoteMcpUnsupported(
-                execution_id=context.execution_id,
-                agent=agent,
-                model=model,
-                model_entity_id=model_entity_id,
-                provider=provider,
-                requested=requested,
-                reason=reason,
-            ),
-        )
-        raise RemoteMcpUnsupportedError(
-            step_name=step.id,
-            provider=provider,
-            model=model,
-            agent=agent,
-            requested=requested,
-            reason=reason,
-        )
-    return True
+    return mcp_enabled and mcp_remote_connector(model)
 
 
 def validate_frontier_dispatch_step(step: StepConfig) -> list[str]:

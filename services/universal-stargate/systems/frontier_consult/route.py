@@ -103,10 +103,11 @@ class _DispatchCommon(BaseModel):
     generation_options: dict[str, Any] | None = None
     max_tool_turns: int | None = None
     transcript_id: str | None = None
-    remote_mcp: bool | None = None
     caller_agent: str | None = None
     timeout_seconds: int | None = Field(default=None, gt=0, le=86_400)
     bus_lifecycle: Literal["persistent", "ephemeral"] | None = None
+    skills: list[str] | None = None
+    server_tools: bool | None = None
 
 
 class TeamDispatchGenerateBody(_DispatchCommon):
@@ -136,6 +137,7 @@ class TeamDispatchGenerateBody(_DispatchCommon):
     # (first-class wrap). Grammar: todo:/plan:/plan_phase:/agent-bus:/packet:.
     contract: Literal["light-bounded", "pure-mechanical", "implement", "wrap"]
     reuse_thread: str | None = None
+    split_thread: bool = False
     density_triage: DensityTriage | None = None
     review_opt_out_reason_code: (
         Literal[
@@ -264,7 +266,6 @@ def _normalize_op_body(
         "generation_options": body.generation_options,
         "max_tool_turns": body.max_tool_turns,
         "transcript_id": body.transcript_id,
-        "remote_mcp": body.remote_mcp,
         "caller_agent": body.caller_agent,
         "timeout_seconds": body.timeout_seconds,
         "bus_lifecycle": body.bus_lifecycle,
@@ -292,6 +293,10 @@ def _normalize_op_body(
         common["auto_review_child"] = body.auto_review_child
     if hasattr(body, "packet_path"):
         common["packet_path"] = body.packet_path
+    if hasattr(body, "skills"):
+        common["skills"] = body.skills
+    if hasattr(body, "server_tools"):
+        common["server_tools"] = body.server_tools
 
     if body.op == "generate":
         common["output_contract"] = "inline"

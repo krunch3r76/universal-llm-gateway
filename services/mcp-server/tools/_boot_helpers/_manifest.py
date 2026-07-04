@@ -151,7 +151,10 @@ def build_manifest(
         hint = (
             "Index on briefing_card ## Agent Skills. Browse: "
             'fs(sandbox="cortex", op="md_list", path="agent-skills/"); '
-            'read: fs(sandbox="cortex", op="md_read", path="agent-skills/<slug>.md"). '
+            "Bodies: platform seats (claude-web/app) receive full SKILL.md via "
+            "<available_skills> when a trigger fires — do not re-read via fs. "
+            "Non-platform seats, unmounted skills, or skill authoring: "
+            'fs(sandbox="cortex", op="md_read", path="agent-skills/<slug>.md"). '
             "Refresh entity list: cortex(tool='entities', "
             'arguments=\'{"type": "agent_skill", "limit": 500}\' or layer=all via GET /skills. '
             "Agent-skill entity listing returns only lifecycle=active by default; "

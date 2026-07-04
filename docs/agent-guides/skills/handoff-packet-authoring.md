@@ -186,7 +186,7 @@ fs(workspaces, .cursor/rules/handoff-dispatchers.mdc)            # target seat
 
 Protocol files live at project `.cursor/rules/`, no repo prefix. Skipping because boot had `_CONSULT_ROUTING_GATE` is a violation.
 
-Skill discovery: Web uses `skill_suggest` at inflection before packet `fs` lines. Cursor IDE uses `<available_skills>` / `.cursor/skills` stubs; not `skill_suggest`. Known skill sets still use mandatory source_uri resolution.
+Skill discovery: native on all seats — resident boot index + description-gated stubs (`<available_skills>` / `.cursor/skills` on Cursor; boot manifest on web). Optionally `skill_suggest` for explicit delta-ranking when context shifts. Known skill sets still use mandatory source_uri resolution.
 
 ## Skill load resolution
 
@@ -212,9 +212,9 @@ Do not assume all `agent_skill:*` bodies live at Cortex `agent-skills/<slug>.md`
 Packet-wired ≠ session-loaded ≠ suggested:
 - Packet-wired: fs line exists in packet; receiver has not read body.
 - Session-loaded: receiver fetched body/listed slug in `loaded[]` or boot preloaded.
-- Suggested: `skill_suggest` surfaced not-yet-loaded delta.
+- Optional delta: `skill_suggest` may surface not-yet-loaded slugs (confirmatory, not discovery).
 
-A packet-wired slug appearing in `skill_suggest` for web densify is confirmatory, not a packet defect. Load packet invariants first.
+A packet-wired slug appearing in optional `skill_suggest` output is confirmatory, not a packet defect. Load packet invariants first.
 
 ## Web-receiver priming checklist
 
@@ -242,7 +242,7 @@ Include explicit `fs(workspaces, op=read, path=…)` for primary spec, pickup/si
 
 ### Block 5 `<mcp_capabilities>` concrete plan
 
-Numbered plan SHOULD include: boot + skills (`skill_suggest`); bus/cortex (`agent_bus(fetch)` for each `related_thread_ids`, todo/decision reads); primary code path `fs(read)` steps; live probes for named queues/events. Generic “you have MCP” with <5 concrete steps is an anti-pattern.
+Numbered plan SHOULD include: boot + skills (native index + packet-wired `source_uri`; optional `skill_suggest` delta); bus/cortex (`agent_bus(fetch)` for each `related_thread_ids`, todo/decision reads); primary code path `fs(read)` steps; live probes for named queues/events. Generic “you have MCP” with <5 concrete steps is an anti-pattern.
 
 ### Pre-dispatch self-check
 

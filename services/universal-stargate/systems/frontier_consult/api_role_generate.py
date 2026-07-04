@@ -22,9 +22,18 @@ from .admission import (
     enforce_team_dispatch_generate_admit,
     is_cursor_sdk_generate_role,
 )
+from .cursor_sdk_thread_reuse import (
+    api_split_warning,
+    resolve_generate_thread_targets,
+)
 from .densify_triage import validate_generate_density_intake
 from .dispatch_thread_context import as_user_message, read_latest_dispatch_thread_body
-from .handoff import create_handoff_thread
+from .handoff import (
+    build_generate_dispatch_pointer,
+    create_handoff_thread,
+    extract_generate_pointer_summary,
+    post_pointer_turn,
+)
 from .handoff_response import build_api_generate_result, build_handoff_result
 from .service import FrontierGenerateRequest
 
@@ -34,6 +43,18 @@ if TYPE_CHECKING:
     from .route import TeamDispatchGenerateBody
 
 logger = get_logger(__name__)
+
+
+def _emit_dispatch_thread_event(event_factory: Any, **kwargs: Any) -> None:
+    try:
+        from systems.proxy.dependencies import get_proxy
+
+        proxy = get_proxy()
+        event_bus = getattr(proxy, "event_bus", None)
+        if event_bus is not None:
+            event_bus.publish_from_sync(event_factory(**kwargs))
+    except Exception:
+        return
 
 
 async def _post_api_role_dispatch_failure_turn(
@@ -151,17 +172,67 @@ async def dispatch_api_role_generate(
     thread_subject = f"{role} generate — {request_id}"
     reply_subject = f"{role} reply — {request_id[:8]}"
 
-    thread_id = await create_handoff_thread(
-        request_id=request_id,
-        to_agent=role,
-        subject=thread_subject,
-        pointer_body=last_user[:2000],
-        caller_agent=body.caller_agent,
-        # type:generate + consult persistent → dispatch:close_on_read via handoff.py
-        tags=[f"agent:{role}", "type:generate", f"contract:{contract}"],
-        handoff_contract=contract,
-        bus_lifecycle=getattr(body, "bus_lifecycle", None),
+    pointer_body = build_generate_dispatch_pointer(
+        lane=role,
+        contract=contract,
+        dispatch_thread_id=body.dispatch_thread_id,
+        correlation_id=request_id,
+        summary=extract_generate_pointer_summary(last_user),
     )
+
+    (
+        reuse_id,
+        _parent,
+        is_auto,
+        reuse_after_turn,
+    ) = await resolve_generate_thread_targets(
+        reuse_thread=getattr(body, "reuse_thread", None),
+        dispatch_thread_id=body.dispatch_thread_id,
+        role_lane="api",
+        split_thread=getattr(body, "split_thread", False),
+    )
+
+    if reuse_id is not None:
+        _emit_dispatch_thread_event(
+            _dispatch_thread_reused_event,
+            thread=reuse_id,
+            dispatch_thread_id=body.dispatch_thread_id,
+            lane="api",
+            is_auto=is_auto,
+        )
+        pointer_turn = await post_pointer_turn(
+            request_id=request_id,
+            thread_id=reuse_id,
+            to_agent=role,
+            subject=thread_subject,
+            pointer_body=pointer_body,
+            caller_agent=body.caller_agent,
+        )
+        thread_id = reuse_id
+        after_turn = pointer_turn
+    else:
+        thread_id = await create_handoff_thread(
+            request_id=request_id,
+            to_agent=role,
+            subject=thread_subject,
+            pointer_body=pointer_body,
+            caller_agent=body.caller_agent,
+            # type:generate + consult persistent → dispatch:close_on_read via handoff.py
+            tags=[f"agent:{role}", "type:generate", f"contract:{contract}"],
+            handoff_contract=contract,
+            bus_lifecycle=getattr(body, "bus_lifecycle", None),
+        )
+        after_turn = 1
+        if (
+            body.dispatch_thread_id
+            and body.dispatch_thread_id.strip().isdigit()
+        ):
+            _emit_dispatch_thread_event(
+                _dispatch_thread_split_event,
+                thread=thread_id,
+                dispatch_thread_id=body.dispatch_thread_id,
+                lane="api",
+            )
 
     req = FrontierGenerateRequest(
         messages=as_user_message(last_user),
@@ -174,14 +245,19 @@ async def dispatch_api_role_generate(
         max_tool_turns=body.max_tool_turns,
         transcript_id=body.transcript_id,
         dispatch_thread_id=body.dispatch_thread_id,
-        remote_mcp=body.remote_mcp,
         caller_agent=body.caller_agent,
         timeout_seconds=body.timeout_seconds,
+        skills=body.skills,
         output_contract="thread",
         target_thread=thread_id,
         op="to_thread",
         reply_subject=reply_subject,
         resolved_contract=contract,
+        bus_lifecycle=(
+            "persistent"
+            if reuse_id is not None
+            else getattr(body, "bus_lifecycle", None)
+        ),
     )
 
     from .route import _dispatch
@@ -216,8 +292,10 @@ async def dispatch_api_role_generate(
     _role_agent, _family, _platform, profile = _resolve_role_profile(
         role, request_id=request_id
     )
-    handoff_fields = build_handoff_result(thread_id=thread_id, to_agent=role)
-    return build_api_generate_result(
+    handoff_fields = build_handoff_result(
+        thread_id=thread_id, to_agent=role, after_turn=after_turn
+    )
+    result = build_api_generate_result(
         role=role,
         profile=profile,
         handoff_fields=handoff_fields,
@@ -230,9 +308,29 @@ async def dispatch_api_role_generate(
         review_opt_out_reason_code=body.review_opt_out_reason_code,
         auto_review_child=body.auto_review_child,
     )
+    split_warning = api_split_warning(
+        reuse_thread=reuse_id,
+        parent_dispatch_thread_id=_parent,
+        split_thread=getattr(body, "split_thread", False),
+    )
+    if split_warning:
+        result["warnings"] = list(result.get("warnings") or []) + [split_warning]
+    return result
 
 
 def _resolve_role_profile(role: str, *, request_id: str) -> tuple[str, str, str, Any]:
     from .admission import _resolve_role_or_seat_profile
 
     return _resolve_role_or_seat_profile(role, request_id=request_id)
+
+
+def _dispatch_thread_reused_event(**kwargs: Any) -> Any:
+    from systems.pipeline.core.events.delivery import DispatchThreadReused
+
+    return DispatchThreadReused(**kwargs)
+
+
+def _dispatch_thread_split_event(**kwargs: Any) -> Any:
+    from systems.pipeline.core.events.delivery import DispatchThreadSplit
+
+    return DispatchThreadSplit(**kwargs)

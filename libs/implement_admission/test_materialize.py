@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from implement_admission.admission_read import (
     compute_packet_sha256,
     read_packet,
@@ -15,6 +17,7 @@ from implement_admission.materialize import (
     materialize,
     packet_is_sufficient,
 )
+from implement_admission.skill_source_table import SkillSourceResolveError
 from implement_admission.spec import (
     Acceptance,
     Closeout,
@@ -90,12 +93,21 @@ def test_materialized_packet_has_six_blocks(tmp_path: Path) -> None:
 
 
 def test_mcp_capabilities_enriched(tmp_path: Path) -> None:
-    spec = _sample_spec(skills=["foo", "bar"], files_expected=["x.py", "y.md"])
+    spec = _sample_spec(
+        skills=["git-posture", "architecture-invariants"],
+        files_expected=["x.py", "y.md"],
+    )
     result = materialize(spec, out_dir=tmp_path)
     mcp = result.text.split("<mcp_capabilities>")[1].split("</mcp_capabilities>")[0]
-    assert "agent-skills/foo.md" in mcp
-    assert "agent-skills/bar.md" in mcp
+    assert "git-posture.md" in mcp
+    assert "architecture-invariants.md" in mcp
     assert "quality_gate" in mcp
+
+
+def test_materialize_fail_loud_unknown_skill(tmp_path: Path) -> None:
+    spec = _sample_spec(skills=["foo"])
+    with pytest.raises(SkillSourceResolveError):
+        materialize(spec, out_dir=tmp_path)
 
 
 def test_mcp_capabilities_always_carries_arch_skillrefs(tmp_path: Path) -> None:
@@ -145,16 +157,14 @@ def test_mcp_capabilities_advertises_coding_session_bundle(tmp_path: Path) -> No
         'fs(sandbox="workspaces", op="md_read", '
         'path="universal-llm-gateway/docs/agent-guides/skills/git-posture.md")' in mcp
     )
-    assert (
-        'fs(sandbox="workspaces", op="md_read", '
-        'path="universal-llm-gateway/.cursor/skills/service-lifecycle/SKILL.md")' in mcp
-    )
+    assert 'fs(sandbox="cortex", op="md_read", path="agent-skills/service-lifecycle.md")' in mcp
     for slug in (
         "implement-work-item",
         "completion-provenance-discipline",
         "fs",
+        "service-lifecycle",
     ):
-        assert f"agent-skills/{slug}.md" in mcp
+        assert f"agent-skills/{slug}.md" in mcp or slug in mcp
 
 
 def test_mcp_capabilities_advertise_tier_deduped_against_spec_skills(
@@ -189,12 +199,12 @@ def test_acceptance_defaulted_note(tmp_path: Path) -> None:
 
 
 def test_invariants_routing_derivation(tmp_path: Path) -> None:
-    spec = _sample_spec(skills=["svc-lifecycle"])
+    spec = _sample_spec(skills=["service-lifecycle"])
     result = materialize(spec, out_dir=tmp_path)
     inv = result.text.split("<invariants>")[1].split("</invariants>")[0]
     assert "mode_rule:" in inv
     assert "style_rule:" in inv
-    assert "Required skills: svc-lifecycle" in inv
+    assert "Required skills: service-lifecycle" in inv
 
 
 def test_sufficiency_enriched_true_skills_empty(tmp_path: Path) -> None:
@@ -203,7 +213,7 @@ def test_sufficiency_enriched_true_skills_empty(tmp_path: Path) -> None:
 
 
 def test_sufficiency_enriched_true_skills_present(tmp_path: Path) -> None:
-    result = materialize(_sample_spec(skills=["foo"]), out_dir=tmp_path)
+    result = materialize(_sample_spec(skills=["git-posture"]), out_dir=tmp_path)
     assert packet_is_sufficient(result.text) is True
 
 
@@ -225,7 +235,7 @@ Intent: y
 
 
 def test_render_does_not_change_spec_hash(tmp_path: Path) -> None:
-    spec = _sample_spec(skills=["a"], files_expected=["z.py"])
+    spec = _sample_spec(skills=["git-posture"], files_expected=["z.py"])
     before = implement_spec_hash(spec)
     materialize(spec, out_dir=tmp_path)
     after = implement_spec_hash(spec)

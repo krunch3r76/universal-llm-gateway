@@ -1,64 +1,17 @@
 """Frontier-dispatch admission and completion errors.
 
 Structured errors raised by ``frontier_dispatch_v1`` and its admission checks:
-unsupported remote-MCP requests, unknown pipeline options, agent/seat model
-mismatches, capability-dispatch knob rejections (G9) and catalog-misses (G13),
-empty completions, and tool-loop exhaustion. Each carries a stable
-``code`` consumed by ``_normalize_pipeline_exception`` so terminal states map
-to structured envelopes rather than collapsing to ``pipeline_execution_failed``,
-and serializes via ``to_dict()`` for API responses.
+unknown pipeline options, agent/seat model mismatches, capability-dispatch
+knob rejections (G9) and catalog-misses (G13), empty completions, and
+tool-loop exhaustion. Each carries a stable ``code`` consumed by
+``_normalize_pipeline_exception`` so terminal states map to structured envelopes
+rather than collapsing to ``pipeline_execution_failed``, and serializes via
+``to_dict()`` for API responses.
 """
 
 from dataclasses import dataclass
 
 from .pipeline_error import PipelineError
-
-
-@dataclass
-class RemoteMcpUnsupportedError(PipelineError):
-    """Raised by ``frontier_dispatch_v1`` when the requested ``remote_mcp``
-    value is incompatible with the resolved provider's current capability.
-
-    Enforcement lives in the step handler so direct ``pipeline_id="frontier-dispatch"``
-    dispatches (not only MCP ``team_dispatch`` relay) are validated. Capability matrix
-    (∀ provider ∉ the handler's remote-MCP allowlist: ``remote_mcp=True`` is
-    rejected; ∀ provider: ``remote_mcp=False`` is accepted):
-
-    - ``anthropic``: either value is allowed; the default is ``True`` iff
-      ``mcp`` is enabled. ``remote_mcp=True`` follows the native
-      ``mcp_toolset`` path.
-    - ``openai`` / ``google`` / ``xai``: ``remote_mcp=True`` is rejected.
-      Only providers in the handler's remote-MCP allowlist expose a native
-      remote-MCP toolset.
-    """
-
-    step_name: str
-    provider: str
-    model: str
-    agent: str | None
-    requested: bool
-    reason: str
-
-    def __str__(self) -> str:
-        who = f" agent={self.agent!r}" if self.agent else ""
-        return (
-            f"[Step '{self.step_name}'] remote_mcp={self.requested} unsupported "
-            f"for provider={self.provider!r} model={self.model!r}{who}: "
-            f"{self.reason}"
-        )
-
-    def to_dict(self) -> dict:
-        return {
-            "error_type": "RemoteMcpUnsupportedError",
-            "code": "remote_mcp_unsupported",
-            "retryable": self.retryable,
-            "step_name": self.step_name,
-            "provider": self.provider,
-            "model": self.model,
-            "agent": self.agent,
-            "requested": self.requested,
-            "reason": self.reason,
-        }
 
 
 @dataclass

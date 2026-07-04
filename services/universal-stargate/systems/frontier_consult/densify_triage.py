@@ -131,6 +131,12 @@ def validate_generate_density_intake(
         )
 
 
+_AUTO_REVIEW_CHILD_WARNING = (
+    "auto_review_child_not_honored:spawn_path_unimplemented "
+    "(tracking: todo:auto-review-child-spawn-path-generate-lane)"
+)
+
+
 def build_generate_review_envelope(
     *,
     density_triage: str | None,
@@ -140,8 +146,17 @@ def build_generate_review_envelope(
     """Present-and-null ``recommended_review`` plus opt-out audit fields."""
     from .executor_resolution import derive_generate_review
 
-    value = derive_generate_review(density_triage, auto_review_child=auto_review_child)
-    envelope: dict[str, Any] = {"recommended_review": value}
+    if auto_review_child:
+        value = derive_generate_review(density_triage, auto_review_child=False)
+        envelope: dict[str, Any] = {
+            "recommended_review": value,
+            "auto_review_child_requested": True,
+            "auto_review_spawned": False,
+            "auto_review_child_warning": _AUTO_REVIEW_CHILD_WARNING,
+        }
+    else:
+        value = derive_generate_review(density_triage, auto_review_child=False)
+        envelope = {"recommended_review": value}
     if review_opt_out_reason_code is not None and is_default_on_density(density_triage):
         envelope["recommended_review"] = "cross-family-reconcile:default-on"
         envelope["review_opted_out"] = True

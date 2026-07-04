@@ -45,12 +45,10 @@ from .frontier_lifecycle import (
 from .frontier_mcp import (
     PipelineFrontierDispatchRemoteMcpEnabled,
     PipelineFrontierDispatchRemoteMcpMisconfigured,
-    PipelineFrontierDispatchRemoteMcpUnsupported,
 )
 from .frontier_tools import (
     PipelineFrontierDispatchToolCalled,
     PipelineFrontierDispatchToolFailed,
-    PipelineFrontierDispatchToolListSupplied,
     PipelineFrontierDispatchToolRequested,
     PipelineFrontierDispatchToolSuppressed,
 )
@@ -82,11 +80,9 @@ __all__ = [
     "PipelineFrontierDispatchToolCalled",
     "PipelineFrontierDispatchToolFailed",
     "PipelineFrontierDispatchToolSuppressed",
-    "PipelineFrontierDispatchToolListSupplied",
     # Frontier remote MCP
     "PipelineFrontierDispatchRemoteMcpEnabled",
     "PipelineFrontierDispatchRemoteMcpMisconfigured",
-    "PipelineFrontierDispatchRemoteMcpUnsupported",
     # Frontier anomaly
     "PipelineFrontierDispatchOutputShort",
     "PipelineFrontierDispatchTerminationShadow",

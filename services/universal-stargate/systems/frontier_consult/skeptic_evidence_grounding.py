@@ -22,6 +22,7 @@ _NON_FILE_EVIDENCE_PREFIXES = (
     "decision:",
 )
 _FILE_EVIDENCE_HEADER = re.compile(r"^FILE_EVIDENCE_PATHS:\s*$", re.IGNORECASE)
+_LIST_MARKER_RE = re.compile(r"^(?:[-*+]\s+|\d+[.)]\s+)(?P<entry>.+)$")
 _GROUNDING_MODE_LINE = re.compile(r"^grounding_mode:\s*(\S+)\s*$", re.IGNORECASE)
 _AGENT_BUS_EVIDENCE = re.compile(
     r"^agent-bus:(?P<thread>\d+)(?:#turn-(?P<turn>\d+))?$",
@@ -41,6 +42,14 @@ class SkepticEvidenceOutcome:
     grounded: bool | None
     unresolved: list[str] | None = None
     mode: str | None = None
+
+
+def _normalize_file_evidence_entry(line: str) -> str:
+    stripped = line.strip()
+    match = _LIST_MARKER_RE.match(stripped)
+    if match:
+        return match.group("entry").strip()
+    return stripped
 
 
 def _is_non_file_evidence_token(entry: str) -> bool:
@@ -84,12 +93,13 @@ def parse_skeptic_reply_evidence(body: str) -> tuple[list[str], str | None, bool
             break
         if stripped.endswith(":") and "://" not in stripped and "/" not in stripped:
             break
-        if _is_non_file_evidence_token(stripped):
+        entry = _normalize_file_evidence_entry(stripped)
+        if _is_non_file_evidence_token(entry):
             continue
-        if _is_malformed_file_evidence(stripped):
+        if _is_malformed_file_evidence(entry):
             malformed = True
             continue
-        paths.append(stripped)
+        paths.append(entry)
     return paths, grounding_mode, malformed
 
 

@@ -56,7 +56,11 @@ def build_dispatch_skill_context(
     code_touching: bool = False,
     provider_mount_slugs: frozenset[str] | None = None,
 ) -> DispatchSkillContext:
+    from implement_admission.skill_source_table import canonical_table_key
+
     caps = resolve_dispatch_capabilities(model=model, mcp_enabled=mcp_enabled)
+    mounts = provider_mount_slugs or frozenset()
+    canonical_mounts = frozenset(canonical_table_key(slug) for slug in mounts)
     return DispatchSkillContext(
         model=model,
         mcp_enabled=bool(caps["mcp_connector_active"]),
@@ -64,7 +68,7 @@ def build_dispatch_skill_context(
         platform=platform,
         inject_profile=inject_profile,
         code_touching=code_touching,
-        provider_mount_slugs=provider_mount_slugs or frozenset(),
+        provider_mount_slugs=canonical_mounts,
     )
 
 
@@ -73,7 +77,9 @@ def select_skill_delivery_channel(
     ctx: DispatchSkillContext,
 ) -> SkillDeliveryChannel:
     """Capability-determined exactly-one channel with precedence B > C > A (D3)."""
-    canonical = entity_slug_from_id(slug_or_entity_id) if ":" in slug_or_entity_id else slug_or_entity_id
+    from implement_admission.skill_source_table import canonical_table_key
+
+    canonical = canonical_table_key(slug_or_entity_id)
     if canonical in ctx.provider_mount_slugs:
         return SkillDeliveryChannel.LAYER_B_PROVIDER
     if not ctx.mcp_enabled:
@@ -84,8 +90,9 @@ def select_skill_delivery_channel(
 def emit_layer_a_fs_line(slug_or_entity_id: str) -> str:
     """Layer-A packet fs-line for MCP-capable dispatch roles."""
     from implement_admission.skill_fs_line import skill_slug_to_fs_line
+    from implement_admission.skill_source_table import canonical_table_key
 
-    slug = entity_slug_from_id(slug_or_entity_id) if ":" in slug_or_entity_id else slug_or_entity_id
+    slug = canonical_table_key(slug_or_entity_id)
     return skill_slug_to_fs_line(slug)
 
 

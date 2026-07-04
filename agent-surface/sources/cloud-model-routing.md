@@ -69,7 +69,7 @@ Use `openrouter/` only for providers without direct API integration, or as fallb
 
 ∀ agent consult scripts, pipeline calls, MCP tool inference, and dispatch calls:
 - Model IDs go to the gateway's Stargate endpoint via `/v1/chat/completions`
-- MCP is enabled by default (`mcp=true`). `remote_mcp` is auto-enabled for Anthropic (native path); client-side loop for others. Agents should not reason about injection.
+- MCP client tools are governed by the single `mcp` boolean (default on for tool-capable families; `false` forces inline-only). Remote-connector vs client-side-loop selection is internal and card-derived — not a caller parameter. Server-side provider built-ins are governed independently by the optional `server_tools` knob (omit = ALL; `false` suppresses card-derived built-ins). Agents should not reason about injection details.
 - ¬`curl` to cloud proxy UDS directly
 - ¬ direct HTTP client to a provider's public API base URL — the gateway owns routing
 

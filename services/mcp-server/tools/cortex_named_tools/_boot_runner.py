@@ -107,7 +107,7 @@ def _gate_only_skills_card(card_md: str | None, skills_index_ref: str | None) ->
             continue
         if stripped.startswith(">"):
             out.append(line)
-            if not pointer_injected and "Load on demand" in line:
+            if not pointer_injected and "platform seats" in line:
                 ref = skills_index_ref or "notes/system/boot/skills-index-<seat>.md"
                 out.append(
                     f"> **Full index**: all active skills (concise) live in "
@@ -492,7 +492,6 @@ def run_cortex_boot(
         skills_card_markdown=_gate_only_skills_card(
             extracted.get("skills_card_markdown"), skills_index_ref
         ),
-        rules=extracted["rules"] or None,
         plan_phases=extracted["plan_phases"] or None,
         in_flight_todos=extracted["in_flight_todos"] or None,
         open_arcs=extracted.get("open_arcs") or None,

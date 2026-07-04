@@ -37,7 +37,6 @@ def _apply_mcp_capability_fields(
     substrate: str,
     model: str,
     mcp_enabled: bool | None = None,
-    remote_mcp: bool | None = None,
 ) -> dict[str, Any]:
     effective_mcp = (
         mcp_enabled
@@ -49,27 +48,28 @@ def _apply_mcp_capability_fields(
             substrate=substrate,
             model=model,
             mcp_enabled=bool(effective_mcp),
-            remote_mcp=remote_mcp,
         )
     )
     caps.pop("mcp_connector_active", None)
     return caps
 
 
-def build_result_handle(*, thread_id: str) -> dict[str, Any]:
+def build_result_handle(*, thread_id: str, after_turn: int = 1) -> dict[str, Any]:
     """Typed handle identifying the agent-bus thread as source of truth.
 
-    ``after_turn`` is the pointer turn (1) the handoff just created; a reply
+    ``after_turn`` is the pointer turn the handoff just created; a reply
     is any turn with number > after_turn from the web seat.
     """
     return {
         "kind": "agent_bus_thread",
         "thread_id": thread_id,
-        "after_turn": 1,
+        "after_turn": after_turn,
     }
 
 
-def build_poll_hint_wait(*, thread_id: str, from_agent: str) -> dict[str, Any]:
+def build_poll_hint_wait(
+    *, thread_id: str, from_agent: str, after_turn: int = 1
+) -> dict[str, Any]:
     """Canonical poll_hint (Phase 2+): server-side wait args.
 
     fetch is now only a fallback; the wait op is the documented retrieval path.
@@ -80,7 +80,7 @@ def build_poll_hint_wait(*, thread_id: str, from_agent: str) -> dict[str, Any]:
     """
     wait_args = {
         "thread": thread_id,
-        "after_turn": 1,
+        "after_turn": after_turn,
         "wait_seconds": 60,
         "completion": "first_reply_from",
         "from_agent": from_agent,
@@ -213,6 +213,7 @@ def build_handoff_result(
     thread_id: str,
     to_agent: str,
     reply_from_agent: str | None = None,
+    after_turn: int = 1,
 ) -> dict[str, Any]:
     """Assemble the three additive handoff-response fields.
 
@@ -226,12 +227,15 @@ def build_handoff_result(
     ``agent_bus(tool="wait", from_agent=...)``. Resolves friction 20435.
     """
     return {
-        "result_handle": build_result_handle(thread_id=thread_id),
+        "result_handle": build_result_handle(
+            thread_id=thread_id, after_turn=after_turn
+        ),
         "handoff_status": _INITIAL_HANDOFF_STATUS,
         "reply_from_agent": reply_from_agent or to_agent,
         "poll_hint": build_poll_hint_wait(
             thread_id=thread_id,
             from_agent=reply_from_agent or to_agent,
+            after_turn=after_turn,
         ),
     }
 

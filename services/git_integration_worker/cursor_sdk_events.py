@@ -406,3 +406,56 @@ def emit_sdk_worker_delivery_failed(
         result_bytes,
         sidecar_ref,
     )
+
+
+@event_factory
+def FrontierSdkCloseoutRelocated(  # noqa: N802
+    dispatch_id: str,
+    thread_id: str,
+    execution_id: str,
+    uri: str,
+    body_chars: int,
+    tier: str,
+) -> Event:
+    return Event(
+        signal="frontier.sdk.closeout.relocated",
+        payload={
+            "dispatch_id": dispatch_id,
+            "thread_id": thread_id,
+            "execution_id": execution_id,
+            "uri": uri,
+            "body_chars": body_chars,
+            "tier": tier,
+        },
+        scope="node",
+    )
+
+
+def emit_sdk_closeout_relocated(
+    *,
+    dispatch_id: str,
+    thread_id: str,
+    execution_id: str,
+    uri: str,
+    body_chars: int,
+    tier: str,
+) -> None:
+    _emit(
+        FrontierSdkCloseoutRelocated(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            execution_id=execution_id,
+            uri=uri,
+            body_chars=body_chars,
+            tier=tier,
+        )
+    )
+    logger.info(
+        "cursor sdk closeout relocated: dispatch_id=%s thread_id=%s tier=%s "
+        "body_chars=%s uri=%s",
+        dispatch_id,
+        thread_id,
+        tier,
+        body_chars,
+        uri,
+    )

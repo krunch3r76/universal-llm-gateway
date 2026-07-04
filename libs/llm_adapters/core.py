@@ -83,6 +83,9 @@ class FrontierRequest:
     MCP_PUBLIC_URL + MCP_AUTH_TOKEN must be set or build_frontier_request
     raises. Client-side tool loop MUST be disabled when True — enforced
     by runtime check (mcp_tool_loop=False)."""
+    skills_mount: list[dict[str, Any]] | None = None
+    """Provider-neutral inline skill bundles ``{name, description, data_base64}``.
+    Vendor adapters compose hosted shell tools from these entries."""
 
 
 # ---------------------------------------------------------------------------

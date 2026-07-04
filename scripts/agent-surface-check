@@ -23,5 +23,6 @@ scripts/gen-rules --target agent-guides-rules --check
 "${HOME}/.venvs/universal/bin/python3" -m scripts.gen_event_catalog check || exit 1
 "${HOME}/.venvs/universal/bin/python3" scripts/check-rag-events-imports.py --staged || exit 1
 "${HOME}/.venvs/universal/bin/python3" scripts/check-workflow-doc-drift.py
+"${HOME}/.venvs/universal/bin/python3" scripts/check-team-dispatch-surface-drift.py
 
 echo "OK agent-surface-check: all gates passed"

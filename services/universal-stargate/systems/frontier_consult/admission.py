@@ -21,10 +21,11 @@ from agent_seat.profiles import (
     seat_to_family,
 )
 from agent_seat.registry import normalize_agent_slug
+from model_capabilities import CapabilityCardError
 from model_id import ModelId
 from transport_utils import DEFAULT_AGENT_BUS_URL, make_async_client
 
-from .events import FrontierEndpointRejected
+from .events import DispatchCapabilityCardMissing, FrontierEndpointRejected
 
 EventPublisher = Callable[[Any], None]
 
@@ -48,20 +49,93 @@ def is_chat_completions_only(model: str) -> bool:
     return mid.provider == "openai" and mid.base_id.endswith("-search-api")
 
 
-def _mcp_base_admitted(model: str) -> bool:
+def assert_model_carded(
+    model: str,
+    *,
+    request_id: str,
+    event_publisher: EventPublisher | None,
+) -> None:
+    """Pre-hydration card gate — raises translated 422 on missing capability card."""
+    if ModelId.parse(model).backend_type == "cursor_sdk":
+        return
+    try:
+        client_side_mcp_tool_loop_admitted(model)
+    except CapabilityCardError as exc:
+        raise _translate_capability_card_error(
+            exc,
+            request_id=request_id,
+            event_publisher=event_publisher,
+        ) from exc
+
+
+def _translate_capability_card_error(
+    exc: CapabilityCardError,
+    *,
+    request_id: str,
+    event_publisher: EventPublisher | None,
+) -> FrontierEndpointError:
+    if event_publisher is not None:
+        event_publisher(
+            DispatchCapabilityCardMissing(
+                request_id=request_id,
+                model=exc.model,
+                capability_field=exc.capability_field,
+                reason_code=exc.reason_code,
+            )
+        )
+    return FrontierEndpointError(
+        request_id=request_id,
+        field="model",
+        reason=str(exc),
+        status_code=422,
+        code=exc.reason_code,
+        details={
+            "model": exc.model,
+            "capability_field": exc.capability_field,
+            "reason_code": exc.reason_code,
+        },
+    )
+
+
+def _mcp_base_admitted(
+    model: str,
+    *,
+    request_id: str | None = None,
+    event_publisher: EventPublisher | None = None,
+) -> bool:
     """Shared inline-only gate for every dispatch surface.
 
-    Inline-only families (e.g. gemini) never get a client-side MCP tool loop.
+    Inline-only models never get a client-side MCP tool loop.
     Both ``mcp_enabled_for_frontier_dispatch`` and
     ``mcp_enabled_for_team_dispatch`` MUST pass through here before applying
-    their own (divergent) post-clamp policy, so a newly added inline-only
-    family is clamped on *every* surface — not just the one that remembered to
+    their own (divergent) post-clamp policy, so a newly carded inline-only
+    model is clamped on *every* surface — not just the one that remembered to
     re-check. Returns ``False`` to force ``mcp=False``.
+
+    When ``request_id`` is supplied (dispatch admission), ``CapabilityCardError``
+    is translated to a structured 422; otherwise the lib exception propagates.
     """
-    return client_side_mcp_tool_loop_admitted(model)
+    if ModelId.parse(model).backend_type == "cursor_sdk":
+        return True
+    try:
+        return client_side_mcp_tool_loop_admitted(model)
+    except CapabilityCardError as exc:
+        if request_id is None:
+            raise
+        raise _translate_capability_card_error(
+            exc,
+            request_id=request_id,
+            event_publisher=event_publisher,
+        ) from exc
 
 
-def mcp_enabled_for_frontier_dispatch(model: str, caller_mcp: bool | None) -> bool:
+def mcp_enabled_for_frontier_dispatch(
+    model: str,
+    caller_mcp: bool | None,
+    *,
+    request_id: str | None = None,
+    event_publisher: EventPublisher | None = None,
+) -> bool:
     """Persona-free ``POST /api/v1/frontier/dispatch``: honor ``req.mcp`` unless
     inline-only.
 
@@ -70,12 +144,20 @@ def mcp_enabled_for_frontier_dispatch(model: str, caller_mcp: bool | None) -> bo
     inline-only gate is shared with ``mcp_enabled_for_team_dispatch`` via
     ``_mcp_base_admitted``; the post-clamp policy (honor caller) is local.
     """
-    if not _mcp_base_admitted(model):
+    if not _mcp_base_admitted(
+        model, request_id=request_id, event_publisher=event_publisher
+    ):
         return False
     return bool(caller_mcp)
 
 
-def mcp_enabled_for_team_dispatch(model: str, caller_mcp: bool | None = None) -> bool:
+def mcp_enabled_for_team_dispatch(
+    model: str,
+    caller_mcp: bool | None = None,
+    *,
+    request_id: str | None = None,
+    event_publisher: EventPublisher | None = None,
+) -> bool:
     """Derive team_dispatch MCP tooling from the effective model at admission.
 
     Guard 1 (thread 1206 turn 7): capability binds to the **effective model**.
@@ -86,17 +168,19 @@ def mcp_enabled_for_team_dispatch(model: str, caller_mcp: bool | None = None) ->
 
     ``caller_mcp`` honors an explicit caller intent symmetrically with
     ``mcp_enabled_for_frontier_dispatch``: the inline-only clamp runs first, then
-    an explicit ``False`` opts the dispatch out of the MCP tool loop (and, via the
-    ``remote_mcp`` default ``supports ∧ mcp_enabled``, out of Anthropic
-    server-side remote MCP). When the caller omits the knob (``None``) the
-    team_dispatch default remains tools-on for tool-capable families — peer
-    consults are expected to reach cortex/rag/agent_bus. Without this, an
-    Anthropic native model was forced ``mcp=True`` → remote_mcp=True even when the
-    caller wanted a one-shot inline generation (thread 1653).
+    an explicit ``False`` opts the dispatch out of the MCP tool loop (and, via
+    card-derived internal selection, out of Anthropic server-side remote MCP).
+    When the caller omits the knob (``None``) the team_dispatch default remains
+    tools-on for tool-capable families — peer consults are expected to reach
+    cortex/rag/agent_bus. Without this, an Anthropic native model was forced
+    ``mcp=True`` with card-selected remote connector even when the caller
+    wanted a one-shot inline generation (thread 1653).
 
     Multi-agent and inline-only clamps: ``client_side_mcp_tool_loop_admitted``.
     """
-    if not _mcp_base_admitted(model):
+    if not _mcp_base_admitted(
+        model, request_id=request_id, event_publisher=event_publisher
+    ):
         return False
     if caller_mcp is None:
         return True

@@ -493,6 +493,56 @@ def build_pointer_body(
     return body
 
 
+_GENERATE_POINTER_SUMMARY_MAX_CHARS = 160
+
+
+def extract_generate_pointer_summary(prompt_text: str) -> str | None:
+    """Derive a one-line summary from a dispatch prompt for pointer turns.
+
+    Returns the first non-empty line, clipped at a word boundary to
+    ``_GENERATE_POINTER_SUMMARY_MAX_CHARS``. Never returns a multi-line or
+    mid-word-truncated string. Provenance aid only — the dispatch thread is
+    the authoritative prompt surface.
+    """
+    for raw_line in prompt_text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if len(line) <= _GENERATE_POINTER_SUMMARY_MAX_CHARS:
+            return line
+        clipped = line[:_GENERATE_POINTER_SUMMARY_MAX_CHARS]
+        head, _, _ = clipped.rpartition(" ")
+        return f"{head or clipped}…"
+    return None
+
+
+def build_generate_dispatch_pointer(
+    *,
+    lane: str,
+    contract: str,
+    dispatch_thread_id: str | None,
+    correlation_id: str,
+    summary: str | None = None,
+) -> str:
+    """Short reference envelope for op=generate result-thread turn 1.
+
+    Deliberately omits prompt text — the dispatch thread is the authoritative
+    prompt surface (friction 22100). Mirrors the packet-path pointer form in
+    ``cursor_sdk_generate`` ("SDK {contract} dispatch — see packet ...").
+    """
+    thread_ref = dispatch_thread_id or "unknown"
+    lines = [
+        f"{lane} {contract} generate dispatch — prompt on dispatch thread "
+        f"`{thread_ref}` (correlation `{correlation_id}`).",
+        "",
+        "Read full prompt: "
+        f"agent_bus(get, thread={thread_ref!r}, turn_number=<latest>)",
+    ]
+    if summary:
+        lines += ["", f"Summary: {summary}"]
+    return "\n".join(lines)
+
+
 def _slug_from_subject(subject: str) -> str:
     """Derive a kebab slug from a human subject string."""
     slug = subject.lower()
@@ -591,8 +641,11 @@ async def post_pointer_turn(
     subject: str,
     pointer_body: str,
     caller_agent: str | None,
-) -> None:
-    """POST a pointer turn onto an EXISTING thread (reuse_thread path). POST /turns."""
+) -> int:
+    """POST a pointer turn onto an EXISTING thread (reuse_thread path). POST /turns.
+
+    Returns the created turn number from the agent-bus response.
+    """
     token = os.getenv("AGENT_BUS_TOKEN", "").strip()
     allow_unset = os.getenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "").strip().lower() in (
         "1",
@@ -638,6 +691,24 @@ async def post_pointer_turn(
             ),
             status_code=502,
         )
+    try:
+        payload = resp.json()
+        turn_number = payload.get("turn_number")
+        if turn_number is not None:
+            return int(turn_number)
+    except (TypeError, ValueError):
+        pass
+    try:
+        async with make_async_client(DEFAULT_AGENT_BUS_URL, timeout=10.0) as client:
+            thread_resp = await client.get(
+                f"/threads/{thread_id}", headers=headers
+            )
+        if thread_resp.status_code == 200:
+            thread_payload = thread_resp.json()
+            return int(thread_payload.get("turn_count") or 0)
+    except (httpx.HTTPError, TypeError, ValueError):
+        pass
+    return 0
 
 
 async def claim_and_post_pointer_turn(

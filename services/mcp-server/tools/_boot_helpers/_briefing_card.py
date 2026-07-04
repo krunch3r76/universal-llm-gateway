@@ -21,7 +21,6 @@ from ._briefing_card_render import (
 )
 from ._manifest import build_manifest
 from ._orientation_blocks import render_orientation_blocks
-from ._rules_section import render_rules_section
 from ._time import relative_time
 
 _LA = ZoneInfo("America/Los_Angeles")
@@ -30,55 +29,6 @@ _LA = ZoneInfo("America/Los_Angeles")
 # unbounded dump pushes the card to ~37KB. First-N + count tail mirrors
 # the truncation pattern used elsewhere in this renderer.
 _DROPBOX_DISPLAY_MAX = 3
-
-
-def _tokenize_signal_text(text: str) -> set[str]:
-    return {t for t in re.split(r"[^a-z0-9]+", text.lower()) if len(t) > 2}
-
-
-def _collect_boot_signals(
-    *,
-    todos: list[dict[str, Any]] | None,
-    unread_threads: list[dict[str, Any]] | None,
-    open_arcs: list[dict[str, Any]] | None,
-    in_flight_todos: list[dict[str, Any]] | None,
-) -> set[str]:
-    """Lowercased session tokens for Tier-2 skill ranking."""
-    signals: set[str] = set()
-    for todo in todos or []:
-        for field in ("domain", "title"):
-            val = todo.get(field)
-            if val:
-                signals |= _tokenize_signal_text(str(val))
-        eid = str(todo.get("id") or "")
-        if eid:
-            signals |= _tokenize_signal_text(eid)
-            if ":" in eid:
-                signals |= _tokenize_signal_text(eid.split(":", 1)[1])
-    for thread in unread_threads or []:
-        for field in ("slug", "subject", "last_subject"):
-            val = thread.get(field)
-            if val:
-                signals |= _tokenize_signal_text(str(val))
-    for arc in open_arcs or []:
-        eid = str(arc.get("id") or "")
-        if eid:
-            signals |= _tokenize_signal_text(eid)
-            if ":" in eid:
-                signals |= _tokenize_signal_text(eid.split(":", 1)[1])
-        for child in arc.get("children") or []:
-            cid = str(child.get("id") or "")
-            if cid:
-                signals |= _tokenize_signal_text(cid)
-                if ":" in cid:
-                    signals |= _tokenize_signal_text(cid.split(":", 1)[1])
-    for todo in in_flight_todos or []:
-        eid = str(todo.get("id") or "")
-        if eid:
-            signals |= _tokenize_signal_text(eid)
-            if ":" in eid:
-                signals |= _tokenize_signal_text(eid.split(":", 1)[1])
-    return signals
 
 
 def render_briefing_card(
@@ -103,7 +53,6 @@ def render_briefing_card(
     skills: list[dict[str, Any]] | None = None,
     skills_unpartitioned_count: int = 0,
     skills_card_markdown: str | None = None,
-    rules: list[dict[str, Any]] | None = None,
     plan_phases: list[dict[str, Any]] | None = None,
     in_flight_todos: list[dict[str, Any]] | None = None,
     open_arcs: list[dict[str, Any]] | None = None,
@@ -233,16 +182,8 @@ def render_briefing_card(
         )
     )
 
-    boot_signals = _collect_boot_signals(
-        todos=todos,
-        unread_threads=unread_threads,
-        open_arcs=open_arcs,
-        in_flight_todos=in_flight_todos,
-    )
     if skills_card_markdown:
         parts.extend(skills_card_markdown.split("\n"))
-    if rules:
-        parts.extend(render_rules_section(rules, boot_signals))
 
     if dropbox_files:
         n = len(dropbox_files)

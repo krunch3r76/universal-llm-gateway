@@ -224,45 +224,16 @@ def derive_inline_only(profile: CapabilityProfile) -> bool:
     )
 
 
-_PROVIDER_TO_FAMILY: dict[str, str] = {
-    "anthropic": "claude",
-    "openai": "gpt",
-    "xai": "grok",
-    "google": "gemini",
-}
-
-
-def inline_only_for_model(model: str) -> bool:
-    """True iff the effective model's family resolves to an inline-only profile.
-
-    Looks up the (family, "api") CapabilityProfile for the model's provider.
-    Returns True only if that profile has capability_tier="inline-only" or
-    tool_surface="inline-only". Falls through to False for unknown providers
-    or families without an explicit profile restriction.
-    """
-    from model_id import ModelId
-
-    family = _PROVIDER_TO_FAMILY.get(ModelId.parse(model).provider)
-    if family is None:
-        return False
-    profile = load_profiles().get((family, "api"))
-    return profile is not None and derive_inline_only(profile)
-
-
 def client_side_mcp_tool_loop_admitted(model: str) -> bool:
     """True iff dispatch admission may enable a client-side MCP function-tool loop.
 
     Shared by ``mcp_enabled_for_team_dispatch`` and ``mcp_enabled_for_frontier_dispatch``
-    (via ``_mcp_base_admitted``). False for profiles with capability_tier/tool_surface
-    inline-only, and for xAI multi-agent models (API rejects client-side function
-    tools; server-side built-ins injected via provider_options instead).
+    (via ``_mcp_base_admitted``). Reads ``mcp_client_tool_loop`` from the per-model
+    capability card — no provider or family inference.
     """
-    if inline_only_for_model(model):
-        return False
-    from model_id import ModelId
+    from model_capabilities import mcp_client_tool_loop
 
-    mid = ModelId.parse(model)
-    return not (mid.provider == "xai" and "multi-agent" in mid.base_id)
+    return mcp_client_tool_loop(model)
 
 
 def resolve_seat(

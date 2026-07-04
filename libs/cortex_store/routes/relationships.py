@@ -74,15 +74,26 @@ def list_relationships(
     return RelationshipList(items=[RelationshipItem(**row) for row in rows])
 
 
-@router.post("", response_model=RelationshipCreateResponse)
-def create_relationship(
-    body: RelationshipCreate, response: Response
+def create_relationship_on_conn(
+    conn: sqlite3.Connection,
+    body: RelationshipCreate,
+    *,
+    commit: bool = True,
+    post_commit_emits: list | None = None,
 ) -> RelationshipCreateResponse:
-    """Create a typed relationship between two entities with idempotent dedup.
+    """Create a typed relationship on a caller-supplied connection.
+
+    Extracted from the route handler so composites can run the entity
+    existence checks, type check, symmetric canonicalization, dedup, and
+    INSERT inside their own transaction — uncommitted entity rows are only
+    visible on the same connection. ``commit=False`` leaves the write
+    uncommitted; the caller owns the transaction boundary. ``post_commit_emits``
+    follows the ``update_entity_impl`` deferred-emit idiom; this impl emits
+    no events itself, so the list is accepted for signature parity and left
+    untouched.
 
     Duplicate active relationships (same from/to/type) are silent no-ops
     that return the existing relationship with ``was_new: false``.
-    Symmetric relationship types have their direction canonicalized.
     """
     now = datetime.datetime.now(tz=datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -94,74 +105,74 @@ def create_relationship(
             max(from_entity, to_entity),
         )
 
-    with cortex_conn() as conn:
-        for eid, label in [
-            (body.source_id, "source"),
-            (body.target_id, "target"),
-        ]:
-            if not query(conn, "SELECT id FROM entities WHERE id = ?", (eid,)):
-                raise HTTPException(
-                    status.HTTP_404_NOT_FOUND,
-                    f"{label.title()} entity not found: {eid}",
-                )
-
-        if not query(
-            conn,
-            "SELECT type FROM relationship_types WHERE type = ?",
-            (body.type_id,),
-        ):
+    for eid, label in [
+        (body.source_id, "source"),
+        (body.target_id, "target"),
+    ]:
+        if not query(conn, "SELECT id FROM entities WHERE id = ?", (eid,)):
             raise HTTPException(
                 status.HTTP_404_NOT_FOUND,
-                _relationship_type_not_found_message(conn, body.type_id),
+                f"{label.title()} entity not found: {eid}",
             )
 
-        try:
-            cur = conn.execute(
-                "INSERT INTO relationships "
-                "(type, from_entity, to_entity, role, strength, evidence, "
-                " chunk_id, valid_from, valid_until, source_uri, "
-                " session_id, agent, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    body.type_id,
-                    from_entity,
-                    to_entity,
-                    body.role,
-                    body.strength if body.strength is not None else 1.0,
-                    body.evidence,
-                    body.chunk_id,
-                    body.valid_from,
-                    body.valid_until,
-                    body.source_uri,
-                    body.session_id,
-                    body.agent,
-                    now,
-                    now,
-                ),
-            )
+    if not query(
+        conn,
+        "SELECT type FROM relationship_types WHERE type = ?",
+        (body.type_id,),
+    ):
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            _relationship_type_not_found_message(conn, body.type_id),
+        )
+
+    try:
+        cur = conn.execute(
+            "INSERT INTO relationships "
+            "(type, from_entity, to_entity, role, strength, evidence, "
+            " chunk_id, valid_from, valid_until, source_uri, "
+            " session_id, agent, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                body.type_id,
+                from_entity,
+                to_entity,
+                body.role,
+                body.strength if body.strength is not None else 1.0,
+                body.evidence,
+                body.chunk_id,
+                body.valid_from,
+                body.valid_until,
+                body.source_uri,
+                body.session_id,
+                body.agent,
+                now,
+                now,
+            ),
+        )
+        if commit:
             conn.commit()
-            was_new = True
-            rows = query(
-                conn,
-                f"SELECT {SELECT_COLUMNS} {FROM_CLAUSE} WHERE r.id = ?",
-                (cur.lastrowid,),
+        was_new = True
+        rows = query(
+            conn,
+            f"SELECT {SELECT_COLUMNS} {FROM_CLAUSE} WHERE r.id = ?",
+            (cur.lastrowid,),
+        )
+    except sqlite3.IntegrityError:
+        was_new = False
+        rows = query(
+            conn,
+            f"SELECT {SELECT_COLUMNS} {FROM_CLAUSE} "
+            "WHERE r.from_entity = ? AND r.to_entity = ? AND r.type = ? AND r.active = 1",
+            (from_entity, to_entity, body.type_id),
+        )
+        if rows:
+            logger.info(
+                "Relationship dedup: existing %s -[%s]-> %s (id=%d)",
+                from_entity,
+                body.type_id,
+                to_entity,
+                rows[0]["id"],
             )
-        except sqlite3.IntegrityError:
-            was_new = False
-            rows = query(
-                conn,
-                f"SELECT {SELECT_COLUMNS} {FROM_CLAUSE} "
-                "WHERE r.from_entity = ? AND r.to_entity = ? AND r.type = ? AND r.active = 1",
-                (from_entity, to_entity, body.type_id),
-            )
-            if rows:
-                logger.info(
-                    "Relationship dedup: existing %s -[%s]-> %s (id=%d)",
-                    from_entity,
-                    body.type_id,
-                    to_entity,
-                    rows[0]["id"],
-                )
 
     if not rows:
         logger.error("Relationship create: no row found after insert/dedup")
@@ -171,8 +182,26 @@ def create_relationship(
         )
 
     item = RelationshipItem(**rows[0])
-    response.status_code = status.HTTP_201_CREATED if was_new else status.HTTP_200_OK
     return RelationshipCreateResponse(was_new=was_new, item=item)
+
+
+@router.post("", response_model=RelationshipCreateResponse)
+def create_relationship(
+    body: RelationshipCreate, response: Response
+) -> RelationshipCreateResponse:
+    """Create a typed relationship between two entities with idempotent dedup.
+
+    Duplicate active relationships (same from/to/type) are silent no-ops
+    that return the existing relationship with ``was_new: false``.
+    Symmetric relationship types have their direction canonicalized.
+    """
+    with cortex_conn() as conn:
+        result = create_relationship_on_conn(conn, body, commit=True)
+
+    response.status_code = (
+        status.HTTP_201_CREATED if result.was_new else status.HTTP_200_OK
+    )
+    return result
 
 
 @router.delete("/{relationship_id}", response_model=RelationshipDeleteResponse)

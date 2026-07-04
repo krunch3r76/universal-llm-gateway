@@ -18,12 +18,16 @@ Cursor's local enforcement surfaces (`.cursor/commands/session-end.md`, \
 `.cursor/rules/session-close.mdc`) implement the canonical protocol."""
 
 WEB_TRANSCRIPT_PREPROCESSING = """\
+On claude-web, these bodies arrive via the platform skill layer when triggers fire; \
+fs md_read paths below are the non-platform fallback.
 Web's close discipline is `agent-skills/session-close-kernel.md` (canonical; \
 transcript/handoff siblings at gate). Web also applies \
 `agent-skills/web-transcript-preprocessing.md` to trim raw tool payloads before \
 `session_close`."""
 
 WEB_SESSION_CLOSE_GENERIC = """\
+On claude-web, these bodies arrive via the platform skill layer when triggers fire; \
+fs md_read paths below are the non-platform fallback.
 Session close (web platform): write transcript markdown to \
 `notes/system/transcripts/web-YYYY-MM-DD-HHmm.md`, seed assertions, \
 create transcript entity, write journal row, post to agent-activity-journal \
@@ -260,7 +264,7 @@ silent coercion in `resolve_dispatch_tool_set`.
 `pipeline(op="async", pipeline_id="frontier-dispatch", ...)` is the underlying
 pipeline-composition entry point. Use it ONLY when you need explicit pipeline
 composition; it silently drops keys it does not recognize. For agent consults, prefer `team_dispatch` — validates upstream (MCP gating,
-model consistency, role contract, remote_mcp rules).
+model consistency, role contract, MCP gating).
 
 **When not to:**
 - Routine tasks where your judgment is sufficient

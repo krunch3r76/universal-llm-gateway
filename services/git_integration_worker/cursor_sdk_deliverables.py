@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,6 +16,8 @@ logger = get_logger(__name__)
 
 _WORKSPACES_REPO = "universal-llm-gateway"
 _SIDECAR_DIR = "tmp/reviews/closeouts"
+# Admitted by cortex pinned_deliverable sandbox (notes/ file-root dir).
+_CLOSEOUT_CORTEX_REL_DIR = "notes/system/threads"
 
 PinnedWriteResult = dict[str, Any]
 PinnedWriteFn = Callable[..., Coroutine[Any, Any, PinnedWriteResult | None]]
@@ -103,6 +106,111 @@ def artifact_paths_for_closeout(
             paths.append(uri)
             seen.add(uri)
     return paths
+
+
+def closeout_cortex_sidecar_rel_path(thread_id: str, dispatch_id: str) -> str:
+    return f"{_CLOSEOUT_CORTEX_REL_DIR}/{thread_id}-cursor-sdk-closeout-{dispatch_id}.md"
+
+
+def body_relocated_meta(
+    full_body: str,
+    uri: str,
+    *,
+    sha256: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "uri": uri,
+        "sha256": sha256 or hashlib.sha256(full_body.encode("utf-8")).hexdigest(),
+        "body_chars": len(full_body),
+    }
+
+
+def append_structured_closeout_full_to_repo_sidecar(
+    sidecar_path: Path,
+    full_body: str,
+) -> None:
+    existing = sidecar_path.read_text(encoding="utf-8")
+    sidecar_path.write_text(
+        existing + "\n\n## structured_closeout_full\n\n" + full_body,
+        encoding="utf-8",
+    )
+
+
+async def post_closeout_sidecar(
+    *,
+    full_body: str,
+    dispatch_id: str,
+    thread_id: str,
+    post_pinned: PinnedWriteFn | None = None,
+) -> PinnedWriteResult | None:
+    writer = post_pinned or default_post_pinned_deliverable
+    return await writer(
+        rel_path=closeout_cortex_sidecar_rel_path(thread_id, dispatch_id),
+        content=full_body,
+        write_if_absent=True,
+        dispatch_id=dispatch_id,
+        thread_id=thread_id,
+    )
+
+
+async def relocate_oversize_closeout_body_async(
+    *,
+    full_body: str,
+    sidecar_path: Path,
+    sidecar_ref: str,
+    dispatch_id: str,
+    thread_id: str,
+    post_closeout_sidecar_fn: PinnedWriteFn | None = None,
+) -> tuple[dict[str, Any], str]:
+    result = await post_closeout_sidecar(
+        full_body=full_body,
+        dispatch_id=dispatch_id,
+        thread_id=thread_id,
+        post_pinned=post_closeout_sidecar_fn,
+    )
+    if result and "error" not in result and isinstance(result.get("uri"), str):
+        return (
+            body_relocated_meta(
+                full_body,
+                result["uri"],
+                sha256=result.get("sha256")
+                if isinstance(result.get("sha256"), str)
+                else None,
+            ),
+            "cortex",
+        )
+    append_structured_closeout_full_to_repo_sidecar(sidecar_path, full_body)
+    return body_relocated_meta(full_body, sidecar_ref), "repo_sidecar"
+
+
+def relocate_oversize_closeout_body_sync(
+    *,
+    full_body: str,
+    sidecar_path: Path,
+    sidecar_ref: str,
+    dispatch_id: str,
+    thread_id: str,
+    post_closeout_sidecar_fn: Callable[..., PinnedWriteResult | None] | None = None,
+) -> tuple[dict[str, Any], str]:
+    if post_closeout_sidecar_fn is not None:
+        result = post_closeout_sidecar_fn(
+            full_body=full_body,
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+        )
+        if result and "error" not in result and isinstance(result.get("uri"), str):
+            return (
+                body_relocated_meta(
+                    full_body,
+                    result["uri"],
+                    sha256=result.get("sha256")
+                    if isinstance(result.get("sha256"), str)
+                    else None,
+                ),
+                "cortex",
+            )
+    append_structured_closeout_full_to_repo_sidecar(sidecar_path, full_body)
+    return body_relocated_meta(full_body, sidecar_ref), "repo_sidecar"
 
 
 async def default_post_pinned_deliverable(

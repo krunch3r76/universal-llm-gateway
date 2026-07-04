@@ -2492,6 +2492,8 @@ tools:
   introduced: 2026-05-22
 
   # ─── domain: skill_suggest ───────────────────────────────────────────────────
+  # Role demoted: discovery is native (resident index + description triggers);
+  # skill_suggest = optional explicit delta-ranking, not the discovery mechanism.
   # In-session skill relevance delta — LLM reasoning primary (light-bounded worker);
   # Stage-A trigger_match_terms matching is exploratory fallback. Stage-B rerank is
   # server-env-gated (SKILL_SUGGEST_RERANK_ENABLED); not an agent-facing param.
@@ -2577,7 +2579,9 @@ tools:
         ∧ knob_resolution ∈ Response ∧ parity ∉ {claimed_by_default}
         ∧ resolved_contract = contract.
       Delivery is on-behalf (parity with to_thread): the dispatch_thread_id latest turn becomes the model prompt verbatim — do NOT instruct the model to "reply on this thread"; that plus mcp=true causes a redundant model self-post on top of on-behalf delivery (friction #17396). For a specific existing thread use op=to_thread.
-      mcp (optional, honored as passthrough though absent from json_schema): reserve for genuine codebase investigation; omit for self-contained consults to avoid the self-post failure mode.
+      mcp (optional, present in json_schema): reserve for genuine codebase investigation; omit for self-contained consults to avoid the self-post failure mode.
+      skills (optional, present in json_schema): unified skills input path; capability-selected delivery.
+      server_tools (optional, present in json_schema): omit for default ALL server-side built-ins; set false to suppress card-derived provider built-ins.
     GenerateRoles = generate/to_thread roles (reviewer/gatherer/synthesizer/artisan/skeptic).
     cursor-sdk ∈ GenerateTargets via auto_dispatchable (substrate=sdk); ¬ cloud CapabilityDispatch.
       Default output_contract=thread for sdk; packet_path honored for cursor-sdk generate across {light-bounded,pure-mechanical,implement}; source_ref implement-only; dispatch-thread latest turn is fallback when no packet;
@@ -2596,6 +2600,9 @@ tools:
       subject: {type: string}
       packet_path: {type: string}
       contract: {type: string, enum: [light-bounded, pure-mechanical, implement]}
+      mcp: {type: boolean}
+      skills: {type: array, items: {type: string}}
+      server_tools: {type: boolean}
     required: [op, role, dispatch_thread_id, contract]
   skill_uri: agent_skill:dispatch
   seat_visibility: [mcp, mcp_claude]
@@ -2618,6 +2625,9 @@ tools:
         Stargate posts the role reply on its behalf to thread after dispatch completes.
       Context is read from dispatch_thread_id's latest agent-bus turn; messages[] is not a parameter.
     GenerateRoles = generate/to_thread roles (reviewer/gatherer/synthesizer/artisan/skeptic).
+    server_tools (optional, present in json_schema): omit for default ALL server-side built-ins; set false to suppress card-derived provider built-ins.
+    mcp (optional, present in json_schema): MCP-class tools only; omit for per-model default.
+    skills (optional, present in json_schema): unified skills input path.
     Async. Mutating. See agent_skill:dispatch.
   json_schema:
     type: object
@@ -2631,6 +2641,9 @@ tools:
       thread: {type: string}
       subject: {type: string}
       contract: {type: string, enum: [light-bounded, pure-mechanical]}
+      mcp: {type: boolean}
+      skills: {type: array, items: {type: string}}
+      server_tools: {type: boolean}
     required: [op, role, dispatch_thread_id, thread, contract]
   skill_uri: agent_skill:dispatch
   seat_visibility: [mcp, mcp_claude]

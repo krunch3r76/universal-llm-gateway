@@ -8,19 +8,40 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from agent_seat import AgentMeta, assemble_system_prompt, hydrate_agent
-from agent_seat.body_injection import INJECTED_BODY_BUDGET_BYTES
-from agent_seat.inject_registry import parse_packet_invariant_skill_ids
+from agent_seat.body_injection import INJECTED_BODY_BUDGET_BYTES, emit_layer_a_fs_line
+from agent_seat.inject_registry import (
+    CallerSkillUnresolvedError,
+    parse_packet_invariant_skill_ids,
+    resolve_injected_bodies,
+)
 from agent_seat.role_entity_sync import resolve_dispatch_capabilities
+from agent_seat.skills_merge import (
+    SkillsMountBackendInvalidError,
+    caller_skill_ids_for_layer_c,
+    enrich_rows_with_inline_drops,
+    partition_skill_channels,
+    resolve_effective_skills,
+)
 from llm_adapters.capability_dispatch import project_knob_resolution
+from model_capabilities import CapabilityCardError
 from model_id import (
+    ModelId,
     WireModelResolutionError,
     canonical_model_entity_id,
     resolve_wire_model_id,
 )
+from skills_mount import (
+    SkillMountResolveError,
+    resolve_skill_bundles,
+    to_neutral_entries,
+)
+from skills_mount.resolve import default_workspaces_root
 
 from .admission import (
     EventPublisher,
     FrontierEndpointError,
+    _translate_capability_card_error,
+    assert_model_carded,
     emit_rejection,
     enforce_model,
     enforce_options,
@@ -32,6 +53,8 @@ from .admission import (
 )
 from .dispatch_messages import extract_last_user_message, wire_latest_user_turn
 from .events import (
+    DispatchSkillsChannelResolved,
+    DispatchSkillsMounted,
     FrontierEndpointPersonaResolved,
     FrontierEndpointRequested,
     InlineBodyInjectionResolved,
@@ -62,7 +85,6 @@ class FrontierGenerateRequest:
     max_tool_turns: int | None = None
     transcript_id: str | None = None
     dispatch_thread_id: str | None = None
-    remote_mcp: bool | None = None
     caller_agent: str | None = None
     timeout_seconds: int | None = None
     # dispatch-surface-split Phase 1: explicit op discrimination
@@ -79,6 +101,128 @@ class FrontierGenerateRequest:
     review_opt_out_reason_code: str | None = None
     auto_review_child: bool = False
     packet_path: str | None = None
+    skills: list[str] | None = None
+    server_tools: bool | None = None
+
+
+def _resolve_pre_hydration_effective_model(
+    req: FrontierGenerateRequest,
+    *,
+    request_id: str,
+) -> str:
+    """Effective model for card gate — mirrors ``hydrate_agent`` model resolution."""
+    raw: str | None = req.model
+    if raw is None and req.role:
+        from agent_seat.registry import resolve_agent_model
+
+        try:
+            raw = resolve_agent_model(req.role)
+        except ValueError as exc:
+            raise FrontierEndpointError(
+                request_id=request_id,
+                field="role",
+                reason=str(exc),
+                status_code=422,
+            ) from exc
+    if not raw:
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="model",
+            reason="model is required when no role default is configured",
+        )
+    if ModelId.parse(raw).backend_type == "cursor_sdk":
+        return raw
+    try:
+        return resolve_wire_model_id(raw, require_cloud=True).wire_id
+    except WireModelResolutionError as exc:
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="model",
+            reason=str(exc),
+        ) from exc
+
+
+def _resolve_skills_mount(
+    mount_skill_ids: tuple[str, ...],
+    *,
+    request_id: str,
+    effective_model: str,
+    role: str | None,
+    event_publisher: EventPublisher | None,
+) -> tuple[list[dict[str, Any]], frozenset[str], int]:
+    if not mount_skill_ids:
+        return [], frozenset(), 0
+    try:
+        bundles = resolve_skill_bundles(
+            list(mount_skill_ids),
+            workspaces_root=default_workspaces_root(),
+        )
+    except SkillMountResolveError as exc:
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="skills",
+            reason=str(exc),
+        ) from exc
+    neutral = to_neutral_entries(bundles)
+    mount_slugs = frozenset(bundle.canonical_slug for bundle in bundles)
+    total_bytes = sum(len(entry["data_base64"]) for entry in neutral)
+    if event_publisher is not None:
+        event_publisher(
+            DispatchSkillsMounted(
+                request_id=request_id,
+                role=role,
+                model=effective_model,
+                canonical_slugs=sorted(mount_slugs),
+                entry_count=len(bundles),
+                total_bundle_bytes=total_bytes,
+            )
+        )
+    return neutral, mount_slugs, total_bytes
+
+
+def _emit_skills_channel_resolved(
+    *,
+    request_id: str,
+    role: str | None,
+    model: str,
+    rows: tuple[Any, ...],
+    event_publisher: EventPublisher | None,
+) -> None:
+    if not rows or event_publisher is None:
+        return
+    event_publisher(
+        DispatchSkillsChannelResolved(
+            request_id=request_id,
+            role=role,
+            model=model,
+            skills=[
+                {
+                    "requested_id": row.requested_id,
+                    "canonical_id": row.canonical_id,
+                    "origin": row.origin,
+                    "channel": row.channel,
+                    "disposition": row.disposition,
+                    **({"drop_reason": row.drop_reason} if row.drop_reason else {}),
+                }
+                for row in rows
+            ],
+        )
+    )
+
+
+def _resolve_platform_for_generate(req: FrontierGenerateRequest) -> str:
+    if not req.role:
+        return "*"
+    from agent_seat.registry import load_roles, normalize_agent_slug
+
+    canonical = normalize_agent_slug(req.role)
+    roles = load_roles()
+    if canonical in roles:
+        return roles[canonical].default_platform
+    parts = canonical.split("-", 1)
+    if len(parts) == 2:
+        return parts[1]
+    return "*"
 
 
 def _packet_text_for_invariants(
@@ -128,30 +272,130 @@ async def build_dispatch_body(
             )
         )
 
-    meta = AgentMeta()
-    system_assembled = req.system or ""
-
     if req.role:
         enforce_team_dispatch_generate_admit(
             req.role,
             request_id=request_id,
             event_publisher=event_publisher,
         )
+
+    effective_model = _resolve_pre_hydration_effective_model(
+        req, request_id=request_id
+    )
+    assert_model_carded(
+        effective_model,
+        request_id=request_id,
+        event_publisher=event_publisher,
+    )
+
+    inject_profile = _inject_profile_for_generate(req)
+    code_touching = _code_touching_generate(req)
+    packet_invariant_ids = parse_packet_invariant_skill_ids(
+        _packet_text_for_invariants(req)
+    )
+    platform = _resolve_platform_for_generate(req)
+
+    if req.role is not None:
+        mcp_enabled = mcp_enabled_for_team_dispatch(
+            effective_model,
+            req.mcp,
+            request_id=request_id,
+            event_publisher=event_publisher,
+        )
+    else:
+        mcp_enabled = mcp_enabled_for_frontier_dispatch(
+            effective_model,
+            req.mcp,
+            request_id=request_id,
+            event_publisher=event_publisher,
+        )
+
+    effective_skills = resolve_effective_skills(
+        req.skills,
+        role=req.role,
+        platform=platform,
+        inject_profile=inject_profile,
+        code_touching=code_touching,
+        packet_invariant_ids=packet_invariant_ids,
+    )
+    skill_partition = None
+    channel_rows: tuple[Any, ...] = ()
+    provider_mount_slugs: frozenset[str] = frozenset()
+    caller_layer_c_ids: tuple[str, ...] = ()
+    cursor_sdk_model = ModelId.parse(effective_model).backend_type == "cursor_sdk"
+    if effective_skills and not cursor_sdk_model:
+        try:
+            skill_partition = partition_skill_channels(
+                effective_skills,
+                model=effective_model,
+                mcp_enabled=mcp_enabled,
+                role=req.role,
+                platform=platform,
+                inject_profile=inject_profile,
+                code_touching=code_touching,
+            )
+        except CapabilityCardError as exc:
+            raise _translate_capability_card_error(
+                exc,
+                request_id=request_id,
+                event_publisher=event_publisher,
+            ) from exc
+        except SkillsMountBackendInvalidError as exc:
+            raise FrontierEndpointError(
+                request_id=request_id,
+                field="model",
+                reason=str(exc),
+                status_code=422,
+                code="capability_card_value_invalid",
+                details={
+                    "model": exc.model,
+                    "capability_field": "skills_mount_backend",
+                    "value": exc.value,
+                    "reason_code": "capability_card_value_invalid",
+                },
+            ) from exc
+        channel_rows = skill_partition.rows
+        provider_mount_slugs = skill_partition.provider_mount_slugs
+        caller_layer_c_ids = caller_skill_ids_for_layer_c(
+            effective_skills, skill_partition.layer_c
+        )
+
+    meta = AgentMeta()
+    system_assembled = req.system or ""
+    skills_mount: list[dict[str, Any]] | None = None
+    if skill_partition is not None and skill_partition.layer_b:
+        skills_mount, provider_mount_slugs, _total = _resolve_skills_mount(
+            skill_partition.layer_b,
+            request_id=request_id,
+            effective_model=effective_model,
+            role=req.role,
+            event_publisher=event_publisher,
+        )
+
+    if req.role:
         # Soft boot: team_dispatch and persona-free frontier HTTP dispatches use the
         # lightweight profile by default. Drops deadlines + review-queue
         # fetches; keeps a 3-reflection floor. The pipeline-handler hydration
         # in resolve_dispatch_tool_set must mirror this profile to avoid the
         # final dispatched prompt regaining a heavy briefing card.
-        bundle = await hydrate_agent(
-            req.role,
-            fetch_profile="light",
-            model=req.model,
-            inject_profile=_inject_profile_for_generate(req),
-            code_touching=_code_touching_generate(req),
-            packet_invariant_ids=parse_packet_invariant_skill_ids(
-                _packet_text_for_invariants(req)
-            ),
-        )
+        try:
+            bundle = await hydrate_agent(
+                req.role,
+                fetch_profile="light",
+                model=req.model,
+                inject_profile=inject_profile,
+                code_touching=code_touching,
+                packet_invariant_ids=packet_invariant_ids,
+                caller_skill_ids=caller_layer_c_ids,
+                provider_mount_slugs=provider_mount_slugs,
+            )
+        except CallerSkillUnresolvedError as exc:
+            raise FrontierEndpointError(
+                request_id=request_id,
+                field="skills",
+                reason=str(exc),
+                status_code=422,
+            ) from exc
         # Layer-C body-inject for no-fs generate roles (e.g. openai/gpt-5.5) is enforced
         # inside hydrate_agent → resolve_injected_bodies(inline_only_dispatch=True).
         meta = bundle.agent_meta
@@ -185,6 +429,18 @@ async def build_dispatch_body(
             inline_only=bundle.inline_only,
             injected_bodies_md=injected_bodies_md,
         )
+        if skill_partition is not None and skill_partition.layer_a:
+            layer_a_block = "".join(
+                emit_layer_a_fs_line(skill_id)
+                for skill_id in skill_partition.layer_a
+            )
+            if layer_a_block:
+                system_assembled = f"{system_assembled}{layer_a_block}"
+        if bundle.injection_meta:
+            channel_rows = enrich_rows_with_inline_drops(
+                channel_rows,
+                bundle.injection_meta.get("dropped") or [],
+            )
         if event_publisher is not None and (
             bundle.inline_only or bundle.injection_meta
         ):
@@ -211,23 +467,68 @@ async def build_dispatch_body(
                 )
             )
 
-    effective_model = req.model or meta.default_model
-    if not effective_model:
-        raise FrontierEndpointError(
-            request_id=request_id,
-            field="model",
-            reason="model is required when no role default is configured",
+    elif skill_partition is not None:
+        try:
+            resolution = resolve_injected_bodies(
+                "",
+                role=None,
+                platform=platform,
+                inject_profile=inject_profile,
+                code_touching=code_touching,
+                packet_invariant_ids=packet_invariant_ids,
+                caller_skill_ids=caller_layer_c_ids,
+                provider_mount_slugs=provider_mount_slugs,
+            )
+        except CallerSkillUnresolvedError as exc:
+            raise FrontierEndpointError(
+                request_id=request_id,
+                field="skills",
+                reason=str(exc),
+                status_code=422,
+            ) from exc
+        if resolution.block_md:
+            system_assembled = f"{system_assembled}{resolution.block_md}"
+        if skill_partition.layer_a:
+            layer_a_block = "".join(
+                emit_layer_a_fs_line(skill_id)
+                for skill_id in skill_partition.layer_a
+            )
+            if layer_a_block:
+                system_assembled = f"{system_assembled}{layer_a_block}"
+        channel_rows = enrich_rows_with_inline_drops(
+            channel_rows,
+            resolution.dropped,
         )
-    try:
-        effective_model = resolve_wire_model_id(
-            effective_model, require_cloud=True
-        ).wire_id
-    except WireModelResolutionError as exc:
-        raise FrontierEndpointError(
-            request_id=request_id,
-            field="model",
-            reason=str(exc),
-        ) from exc
+        if event_publisher is not None and (
+            resolution.injected or resolution.dropped
+        ):
+            event_publisher(
+                InlineBodyInjectionResolved(
+                    request_id=request_id,
+                    seat="",
+                    model=req.model or effective_model,
+                    injected=resolution.injected,
+                    dropped=resolution.dropped,
+                    total_bytes=sum(
+                        int(item.get("bytes", 0))
+                        for item in resolution.injected
+                        if isinstance(item, dict)
+                    ),
+                    budget_bytes=INJECTED_BODY_BUDGET_BYTES,
+                    cache_hit=bool(resolution.telemetry.get("cache_hit")),
+                    cold_fetches=int(resolution.telemetry.get("cold_fetches", 0)),
+                    elapsed_ms=0,
+                    deadline_hit=False,
+                )
+            )
+
+    _emit_skills_channel_resolved(
+        request_id=request_id,
+        role=req.role,
+        model=effective_model,
+        rows=channel_rows,
+        event_publisher=event_publisher,
+    )
 
     model_entity_id = canonical_model_entity_id(effective_model)
     enforce_model(
@@ -280,10 +581,6 @@ async def build_dispatch_body(
         requested_effort=_eff,
         requested_max_output=_maxt if isinstance(_maxt, int) else None,
     )
-    if req.role is not None:
-        mcp_enabled = mcp_enabled_for_team_dispatch(effective_model, req.mcp)
-    else:
-        mcp_enabled = mcp_enabled_for_frontier_dispatch(effective_model, req.mcp)
 
     capability_preview: dict[str, Any] | None = None
     if req.role is not None:
@@ -313,8 +610,10 @@ async def build_dispatch_body(
         pipeline_options["max_tool_turns"] = req.max_tool_turns
     elif req.role is not None:
         pipeline_options["max_tool_turns"] = 100
-    if req.remote_mcp is not None:
-        pipeline_options["remote_mcp"] = req.remote_mcp
+    if skills_mount is not None:
+        pipeline_options["skills_mount"] = skills_mount
+    if req.server_tools is not None:
+        pipeline_options["server_tools"] = req.server_tools
 
     if req.output_contract == "thread" and req.target_thread:
         _agent_bus_token = os.getenv("AGENT_BUS_TOKEN", "").strip()

@@ -5,9 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from agent_seat.profiles import client_side_mcp_tool_loop_admitted
-from model_id import ModelId
-
-_REMOTE_MCP_PROVIDERS: frozenset[str] = frozenset({"anthropic"})
+from model_capabilities import mcp_remote_connector
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,19 +18,13 @@ def resolve_mcp_mechanism(
     *,
     substrate: str,
     model: str,
-    remote_mcp: bool | None = None,
 ) -> str:
     """Return the MCP delivery mechanism without implying effective tool access."""
     if substrate == "sdk":
         return "local_native"
     if not client_side_mcp_tool_loop_admitted(model):
         return "none"
-    provider = ModelId.parse(model).provider or ""
-    if remote_mcp is False:
-        return "client_side_injection"
-    if remote_mcp is True:
-        return "remote_connector" if provider in _REMOTE_MCP_PROVIDERS else "none"
-    if provider in _REMOTE_MCP_PROVIDERS:
+    if mcp_remote_connector(model):
         return "remote_connector"
     return "client_side_injection"
 
@@ -42,14 +34,12 @@ def resolve_tool_access(
     substrate: str,
     model: str,
     mcp_enabled: bool = True,
-    remote_mcp: bool | None = None,
     suppress_tools: bool = False,
 ) -> McpCapability:
     """Resolve effective tool access and mechanism as independent signals."""
     mechanism = resolve_mcp_mechanism(
         substrate=substrate,
         model=model,
-        remote_mcp=remote_mcp,
     )
     if suppress_tools:
         return McpCapability(tool_access=False, mcp_mechanism=mechanism)
@@ -65,7 +55,6 @@ def mcp_capability_fields(
     substrate: str,
     model: str,
     mcp_enabled: bool = True,
-    remote_mcp: bool | None = None,
     suppress_tools: bool = False,
 ) -> dict[str, bool | str]:
     """Caller-facing capability fragment for dispatch responses."""
@@ -73,7 +62,6 @@ def mcp_capability_fields(
         substrate=substrate,
         model=model,
         mcp_enabled=mcp_enabled,
-        remote_mcp=remote_mcp,
         suppress_tools=suppress_tools,
     )
     return {

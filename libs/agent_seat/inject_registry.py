@@ -79,6 +79,38 @@ def assert_must_inline_allowlist_valid() -> None:
             f"CODING-bundle slugs in must_inline allowlist (forbidden): {sorted(overlap)}"
         )
 
+
+def boot_session_gate_coverage(*, platform: str = "api") -> dict[str, str]:
+    """F4 completeness map: boot/session-gate skills → delivery channel."""
+    coverage: dict[str, str] = {}
+    for entry in INJECT_REGISTRY:
+        if entry.inline_tier not in (InlineTier.CRITICAL, InlineTier.MUST_INLINE):
+            continue
+        if not _platform_match(entry, platform):
+            continue
+        slug = entity_slug_from_id(entry.entity_id)
+        if entry.entity_id in _MUST_INLINE_BY_ENTITY:
+            coverage[slug] = "must_inline"
+        elif entry.inline_tier == InlineTier.CRITICAL:
+            coverage[slug] = "critical_boot"
+        else:
+            coverage[slug] = "must_inline_tier"
+    for slug in _coding_bundle_slugs():
+        coverage.setdefault(slug, "dispatch_layer")
+    return coverage
+
+
+def assert_boot_session_gate_complete(*, platform: str = "api") -> None:
+    """F4: every boot/session-gate skill has must_inline OR dispatch-layer replacement."""
+    coverage = boot_session_gate_coverage(platform=platform)
+    missing: list[str] = []
+    for slug, channel in coverage.items():
+        if channel in ("must_inline", "critical_boot", "must_inline_tier", "dispatch_layer"):
+            continue
+        missing.append(f"{slug}:{channel}")
+    if missing:
+        raise RuntimeError(f"boot/session-gate skills without delivery channel: {missing}")
+
 _AGENT_SKILL_TOKEN_RE = re.compile(r"agent_skill:([a-z0-9][-a-z0-9_]*)", re.IGNORECASE)
 _SKILL_PATH_RE = re.compile(
     r"(?:agent-skills|agent_skills)/([a-z0-9][-a-z0-9_]*)\.md",
@@ -182,6 +214,14 @@ def coding_scope_inject_entity_ids() -> tuple[str, ...]:
         for entry in INJECT_REGISTRY
         if entry.scope == InjectScope.CODING
     )
+
+
+class CallerSkillUnresolvedError(LookupError):
+    """Caller ``skills=`` id absent from the canonical skill source table."""
+
+    def __init__(self, skill_id: str) -> None:
+        self.skill_id = skill_id
+        super().__init__(f"unresolvable caller skill id: {skill_id!r}")
 
 
 @dataclass
@@ -410,6 +450,40 @@ def _pack_tiered_bodies(
     )
 
 
+def _caller_skill_entity_id(slug: str) -> str:
+    from implement_admission.skill_source_table import (
+        SkillSourceResolveError,
+        canonical_table_key,
+        resolve_canonical_source_uri,
+    )
+
+    key = canonical_table_key(slug)
+    try:
+        resolve_canonical_source_uri(key)
+    except SkillSourceResolveError as exc:
+        raise CallerSkillUnresolvedError(slug) from exc
+    return f"agent_skill:{key}"
+
+
+def scope_default_skill_ids(
+    role: str | None,
+    platform: str,
+    inject_profile: str | None,
+    code_touching: bool,
+    packet_invariant_ids: tuple[str, ...],
+) -> tuple[str, ...]:
+    """Scope-default inject registry entity ids (post-dedupe)."""
+    candidates = _candidate_entries(
+        role=role,
+        platform=platform,
+        inject_profile=inject_profile,
+        code_touching=code_touching,
+        packet_invariant_ids=packet_invariant_ids,
+    )
+    deduped, _ = _dedupe_entries(candidates)
+    return tuple(entry.entity_id for entry in deduped)
+
+
 def _candidate_entries(
     *,
     role: str | None,
@@ -417,6 +491,7 @@ def _candidate_entries(
     inject_profile: str | None,
     code_touching: bool,
     packet_invariant_ids: tuple[str, ...],
+    caller_skill_ids: tuple[str, ...] = (),
     include_loaded_set: bool = False,
 ) -> list[InjectEntry]:
     scopes = active_scopes(role, inject_profile, platform=platform)
@@ -447,6 +522,17 @@ def _candidate_entries(
                     inline_tier=InlineTier.MUST_INLINE,
                 )
             )
+    for idx, slug in enumerate(caller_skill_ids):
+        dynamic.append(
+            InjectEntry(
+                entity_id=_caller_skill_entity_id(slug),
+                scope=InjectScope.DISPATCH_PACKET,
+                platform_predicate="*",
+                profile_applicability=frozenset({"*"}),
+                priority=_DISPATCH_PACKET_PRIORITY_BASE + len(packet_invariant_ids) + idx,
+                inline_tier=InlineTier.MUST_INLINE,
+            )
+        )
     deduped, _ = _dedupe_entries(static + dynamic)
     return deduped
 
@@ -454,12 +540,19 @@ def _candidate_entries(
 def _sort_for_pack(
     entries: list[InjectEntry],
     packet_invariant_ids: tuple[str, ...],
+    caller_skill_ids: tuple[str, ...] = (),
 ) -> list[InjectEntry]:
     packet_order = {eid: i for i, eid in enumerate(packet_invariant_ids)}
+    caller_order = {
+        _caller_skill_entity_id(slug): i for i, slug in enumerate(caller_skill_ids)
+    }
 
     def sort_key(entry: InjectEntry) -> tuple[int, int, int, int, str]:
         tier = _tier_rank(entry.inline_tier)
-        if (
+        if entry.entity_id in caller_order:
+            group = 1
+            packet_idx = caller_order[entry.entity_id]
+        elif (
             entry.scope == InjectScope.DISPATCH_PACKET
             and entry.entity_id in packet_order
         ):
@@ -484,15 +577,20 @@ def resolve_injected_bodies(
     inject_profile: str | None = None,
     code_touching: bool = False,
     packet_invariant_ids: tuple[str, ...] = (),
+    caller_skill_ids: tuple[str, ...] = (),
     budget_bytes: int | None = INJECTED_BODY_BUDGET_BYTES,
     already_present: str = "",
     marker_prefix: str = "invariant-skill",
     mandatory_body_slugs: frozenset[str] = frozenset(),
     inline_only_dispatch: bool = False,
+    provider_mount_slugs: frozenset[str] = frozenset(),
 ) -> InjectResolution:
     """Single registry-driven resolver for all server inject paths."""
     del seat  # reserved for future seat-specific policy
+    from implement_admission.skill_source_table import canonical_agent_skill_id
+
     assert_must_inline_allowlist_valid()
+    mount_ids = {canonical_agent_skill_id(slug) for slug in provider_mount_slugs}
     if inline_only_dispatch and code_touching and inject_profile == "dispatch":
         mandatory_body_slugs = mandatory_body_slugs | _coding_bundle_slugs()
     metrics: dict[str, Any] = {"cold_fetches": 0, "cache_hit": False}
@@ -502,14 +600,20 @@ def resolve_injected_bodies(
         inject_profile=inject_profile,
         code_touching=code_touching,
         packet_invariant_ids=packet_invariant_ids,
+        caller_skill_ids=caller_skill_ids,
     )
     deduped, dedupe_collisions = _dedupe_entries(candidates)
     scopes = active_scopes(role, inject_profile, platform=platform)
-    ordered_entries = _sort_for_pack(deduped, packet_invariant_ids)
+    ordered_entries = _sort_for_pack(
+        deduped, packet_invariant_ids, caller_skill_ids=caller_skill_ids
+    )
 
     resolved_rows: list[tuple[InjectEntry, dict[str, Any]]] = []
     dropped: list[dict[str, Any]] = []
     for entry in ordered_entries:
+        if canonical_agent_skill_id(entry.entity_id) in mount_ids:
+            dropped.append({"id": entry.entity_id, "reason": "provider_mounted"})
+            continue
         row, reason = _fetch_registry_entry(entry, metrics=metrics)
         if row is None:
             dropped.append({"id": entry.entity_id, "reason": reason or "unreachable"})

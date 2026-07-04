@@ -164,6 +164,42 @@ def AgentBusDispatchAdmitFailed(  # noqa: N802
 
 
 @event_factory
+def DispatchThreadReused(  # noqa: N802
+    thread: str,
+    dispatch_thread_id: str | None,
+    lane: str,
+    is_auto: bool,
+) -> Event:
+    """Emitted when generate reuses an existing agent-bus thread."""
+    return Event(
+        signal="mcp.agentbus.dispatch.thread.reused",
+        payload={
+            "thread": thread,
+            "dispatch_thread_id": dispatch_thread_id,
+            "lane": lane,
+            "is_auto": is_auto,
+        },
+    )
+
+
+@event_factory
+def DispatchThreadSplit(  # noqa: N802
+    thread: str,
+    dispatch_thread_id: str | None,
+    lane: str,
+) -> Event:
+    """Emitted when generate mints a sibling thread instead of reusing."""
+    return Event(
+        signal="mcp.agentbus.dispatch.thread.split",
+        payload={
+            "thread": thread,
+            "dispatch_thread_id": dispatch_thread_id,
+            "lane": lane,
+        },
+    )
+
+
+@event_factory
 def AgentBusThreadClosedEphemeral(  # noqa: N802
     thread: str,
 ) -> Event:

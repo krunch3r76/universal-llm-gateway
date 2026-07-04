@@ -293,6 +293,8 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         executor_override_reason: str | None = None,
         pointer_body: str | None = None,
         tags: list[str] | None = None,
+        skills: list[str] | None = None,
+        server_tools: bool | None = None,
     ) -> dict[str, Any]:
         """Team-seat dispatch with explicit op discrimination.
 
@@ -391,9 +393,15 @@ def register_frontier_tools(mcp: FastMCP) -> None:
           ``tool_surface`` for that. Returns ``knob_resolution`` for reasoning
           knob transparency: ``value_kind``, ``reasoning_native``, ``status``,
           ``parity`` (``not_claimed`` unless otherwise stated), and ``notes``.
-          For API roles, ``op="generate"`` auto-provisions a result thread and
-          Stargate posts the role reply on its behalf (system-on-behalf
-          delivery); poll via ``agent_bus(tool="wait", ...)`` from ``poll_hint``
+          For API roles, ``op="generate"`` defaults to single-thread Q/R: when
+          ``dispatch_thread_id`` is a numeric open thread already carrying the
+          prompt (``turn_count>=1``), the pointer and the on-behalf reply land on
+          that same thread and ``poll_hint`` targets it with the correct
+          ``after_turn``; a fresh result thread is minted only when the dispatch
+          thread is not reusable or ``split_thread=true`` is passed;
+          ``reuse_thread`` still overrides explicitly. Stargate posts the role
+          reply on its behalf (system-on-behalf delivery); poll via
+          ``agent_bus(tool="wait", ...)`` from ``poll_hint``
           (``pipeline(op="result")`` is metadata fallback). The
           ``dispatch_thread_id`` latest turn becomes the model prompt verbatim:
           do NOT instruct the model to "reply on this thread" — with
@@ -401,12 +409,11 @@ def register_frontier_tools(mcp: FastMCP) -> None:
           on-behalf delivery (friction #17396).
           If reasoning effort matters, inspect ``knob_resolution.status/parity/notes``;
           do not infer cross-provider parity.
-          ``thread`` must be absent when using this op (generate auto-provisions
-          its own result thread unless ``reuse_thread`` names an existing pending
-          worker thread for cursor-sdk consolidation). ``reuse_thread`` reuses a
-          ``create_thread(lifecycle_state=pending)`` shell so dispatch pointer and
-          closeout land on one thread; ``dispatch_thread_id`` stays the arc
-          coordination thread when it differs. ``subject`` is accepted but IGNORED — it is not
+          ``thread`` must be absent when using this op. For cursor-sdk,
+          ``reuse_thread`` reuses a ``create_thread(lifecycle_state=pending)``
+          shell so dispatch pointer and closeout land on one thread;
+          ``dispatch_thread_id`` stays the arc coordination thread when it
+          differs. ``subject`` is accepted but IGNORED — it is not
           persisted (the result-thread subject is auto-derived); the response
           carries a ``subject_ignored_on_generate`` warning. Use ``op="to_thread"``
           to actually set a thread subject (friction 19803).
@@ -427,15 +434,22 @@ def register_frontier_tools(mcp: FastMCP) -> None:
           ``agent_bus(tool="wait", …)`` from ``poll_hint`` — not
           ``pipeline(op="result")``.
 
-        Tool surface (defaults derived from the effective model; ``mcp`` overrides):
+        Tool surface (defaults derived from the effective model; ``mcp`` overrides
+        MCP-class tools only — client-side loop and remote connector, not
+        provider server-side built-ins):
         - xAI multi-agent models — no client-side MCP tools.
-        - Anthropic models — remote MCP by default when enabled; pass
-          ``mcp=False`` for a one-shot inline generation (no client-side loop and
-          no server-side remote MCP).
+        - Anthropic models — remote MCP connector by default when MCP-class tools
+          are enabled; pass ``mcp=False`` for a one-shot inline generation (no
+          client-side loop and no remote MCP connector).
         - Other MCP-capable providers — in-process tool loop unless ``mcp=False``.
         - ``mcp``: ``None`` (default) keeps the per-model default (tools-on for
-          tool-capable families); ``False`` forces inline-only; inline-only
-          families (e.g. gemini) stay clamped to no-tools regardless.
+          tool-capable families); ``False`` forces inline-only for MCP-class tools;
+          inline-only families (e.g. gemini) stay clamped to no-tools regardless.
+        - ``server_tools``: ``bool|None`` — omit for default ALL card-derived
+          provider built-ins; ``False`` suppresses card-derived built-ins.
+          Provider-neutral no-op where a provider has none (OQ-b ruling).
+        - ``skills``: unified skills input path; capability-selected delivery;
+          ``list[str]``; unsupported on ``op="handoff"`` (see validation above).
 
         ``dispatch_thread_id`` — required compaction key and caller-owned
         thread persistence on the ``team-dispatch`` pipeline (generate/to_thread
@@ -526,6 +540,14 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                             f"({_HANDOFF_ROLE_ROSTER})"
                         ),
                     }
+                }
+            if skills is not None:
+                return {
+                    "error": {
+                        "code": "validation_error",
+                        "message": "skills is not supported when op='handoff'",
+                    },
+                    "field": "skills",
                 }
             handoff_body: dict[str, Any] = {
                 "op": "handoff",
@@ -687,6 +709,8 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         for key, val in (
             ("model", model),
             ("mcp", mcp),
+            ("skills", skills),
+            ("server_tools", server_tools),
             ("reasoning_effort", reasoning_effort),
             ("generation_options", generation_options),
             ("model_knobs", model_knobs),

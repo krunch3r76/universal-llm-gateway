@@ -349,6 +349,50 @@ def FrontierSdkMaterializationIncomplete(  # noqa: N802
 
 
 @event_factory
+def DispatchSkillsMounted(  # noqa: N802
+    request_id: str,
+    role: str | None,
+    model: str,
+    canonical_slugs: list[str],
+    entry_count: int,
+    total_bundle_bytes: int,
+) -> Event:
+    """Skills resolved and mounted at team/frontier dispatch admission."""
+    return Event(
+        signal="dispatch.skills.mounted",
+        payload={
+            "request_id": request_id,
+            "role": role,
+            "model": model,
+            "canonical_slugs": canonical_slugs,
+            "entry_count": entry_count,
+            "total_bundle_bytes": total_bundle_bytes,
+        },
+        scope="node",
+    )
+
+
+@event_factory
+def DispatchSkillsChannelResolved(  # noqa: N802
+    request_id: str,
+    role: str | None,
+    model: str,
+    skills: list[dict[str, object]],
+) -> Event:
+    """Per-skill channel outcome after unified skills= merge and partition."""
+    return Event(
+        signal="dispatch.skills.channel.resolved",
+        payload={
+            "request_id": request_id,
+            "role": role,
+            "model": model,
+            "skills": skills,
+        },
+        scope="node",
+    )
+
+
+@event_factory
 def InlineBodyInjectionResolved(  # noqa: N802
     request_id: str,
     seat: str,
@@ -539,6 +583,26 @@ def FrontierSdkKnobDropped(  # noqa: N802
             "knob": knob,
             "requested": requested,
             "reason": reason,
+        },
+        scope="node",
+    )
+
+
+@event_factory
+def DispatchCapabilityCardMissing(  # noqa: N802
+    request_id: str,
+    model: str,
+    capability_field: str,
+    reason_code: str,
+) -> Event:
+    """Dispatch admission rejected: model capability card missing or incomplete."""
+    return Event(
+        signal="dispatch.capability.card.missing",
+        payload={
+            "request_id": request_id,
+            "model": model,
+            "capability_field": capability_field,
+            "reason_code": reason_code,
         },
         scope="node",
     )

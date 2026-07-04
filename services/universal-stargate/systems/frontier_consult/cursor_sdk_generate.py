@@ -23,8 +23,10 @@ from .cursor_sdk_worker_dispatch import (
 from .handoff import (
     PendingShellContention,
     admit_handoff_dispatch,
+    build_generate_dispatch_pointer,
     claim_and_post_pointer_turn,
     create_handoff_thread,
+    extract_generate_pointer_summary,
     post_pointer_turn,
 )
 from .handoff_response import build_handoff_result, build_sdk_generate_result
@@ -66,6 +68,7 @@ async def dispatch_cursor_sdk_generate(
     reuse_thread: str | None = None,
     bus_lifecycle: Literal["persistent", "ephemeral"] | None = None,
     parent_dispatch_thread_id: str | None = None,
+    dispatch_thread_id: str | None = None,
     is_auto_consolidation: bool = False,
     density_triage: str | None = None,
     review_opt_out_reason_code: str | None = None,
@@ -164,7 +167,13 @@ async def dispatch_cursor_sdk_generate(
                 reason="Dispatch thread must contain a non-empty prompt body",
                 status_code=422,
             )
-        pointer_body = last_user[:2000]
+        pointer_body = build_generate_dispatch_pointer(
+            lane="SDK",
+            contract=contract,
+            dispatch_thread_id=dispatch_thread_id,
+            correlation_id=execution_id,
+            summary=extract_generate_pointer_summary(last_user),
+        )
         worker_packet = None
         worker_message = last_user
 

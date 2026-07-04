@@ -34,22 +34,18 @@ class _Scripted:
 @pytest.mark.parametrize(
     ("model", "expected"),
     [
-        # gemini/api is MCP-enabled (capability_tier removed); inline_only_for_model
-        # must return False for all google models.
         ("google/gemini-3.5-flash", False),
         ("google/gemini-2.5-pro", False),
-        # Other families unaffected.
         ("openai/gpt-5.5", False),
         ("anthropic/claude-opus-4-8", False),
         ("xai/grok-4.3", False),
+        ("xai/grok-4.20-multi-agent-0309", True),
     ],
 )
-def test_inline_only_for_model_binds_to_effective_family(
-    model: str, expected: bool
-) -> None:
-    from agent_seat.profiles import inline_only_for_model
+def test_card_inline_only_matches_model(model: str, expected: bool) -> None:
+    from model_capabilities import inline_only
 
-    assert inline_only_for_model(model) is expected
+    assert inline_only(model) is expected
 
 
 @pytest.mark.asyncio
@@ -432,9 +428,9 @@ async def test_already_present_includes_continuation(
 
     async def fake_meta(_agent: str) -> AgentMeta:
         return AgentMeta(
-            default_model="xai/grok-4.3-multi-agent",
+            default_model="xai/grok-4.20-multi-agent-0309",
             frontier_kind="xai",
-            allowed_models=["xai/grok-4.3-multi-agent"],
+            allowed_models=["xai/grok-4.20-multi-agent-0309"],
         )
 
     async def fake_continuation(
@@ -451,7 +447,7 @@ async def test_already_present_includes_continuation(
     bundle = await hydrate_agent(
         "grok-api-multi",
         transcript_id="abc123",
-        model="xai/grok-4.3-multi-agent",
+        model="xai/grok-4.20-multi-agent-0309",
     )
 
     assert bundle.inline_only is True
@@ -467,3 +463,51 @@ def test_static_tool_fallback_unique_names() -> None:
     names = [d.get("function", {}).get("name", "") for d in STATIC_TOOL_FALLBACK]
     assert len(names) == len(set(names)), f"Duplicate tool names: {names}"
     assert names.count("cortex") == 1, f"Expected exactly one cortex, got: {names}"
+
+
+@pytest.mark.asyncio
+async def test_hydrate_passes_provider_mount_slugs_to_inject_registry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: dict[str, object] = {}
+
+    def fake_resolve(*_args, **kwargs):
+        seen["provider_mount_slugs"] = kwargs.get("provider_mount_slugs")
+        from agent_seat.inject_registry import InjectResolution
+
+        return InjectResolution(block_md="", injected=[], dropped=[], telemetry={})
+
+    monkeypatch.setattr(_hyd, "_cortex_get", _Scripted({"/": {}}))
+    monkeypatch.setattr(_hyd, "_bus_get", _Scripted({}))
+    monkeypatch.setattr(_hyd, "resolve_injected_bodies", fake_resolve)
+
+    await hydrate_agent(
+        "reviewer",
+        provider_mount_slugs=frozenset({"architecture-invariants"}),
+    )
+
+    assert seen["provider_mount_slugs"] == frozenset({"architecture-invariants"})
+
+
+@pytest.mark.asyncio
+async def test_hydrate_passes_caller_skill_ids_to_inject_registry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: dict[str, object] = {}
+
+    def fake_resolve(*_args, **kwargs):
+        seen["caller_skill_ids"] = kwargs.get("caller_skill_ids")
+        from agent_seat.inject_registry import InjectResolution
+
+        return InjectResolution(block_md="", injected=[], dropped=[], telemetry={})
+
+    monkeypatch.setattr(_hyd, "_cortex_get", _Scripted({"/": {}}))
+    monkeypatch.setattr(_hyd, "_bus_get", _Scripted({}))
+    monkeypatch.setattr(_hyd, "resolve_injected_bodies", fake_resolve)
+
+    await hydrate_agent(
+        "reviewer",
+        caller_skill_ids=("architecture-invariants",),
+    )
+
+    assert seen["caller_skill_ids"] == ("architecture-invariants",)

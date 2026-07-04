@@ -91,7 +91,7 @@ card. Some provider features change the workflow shape and must be surfaced as
 | Provider | Affordance class | Current agent-facing guidance |
 |---|---|---|
 | Anthropic | Advisor-style strategic checkpoint | Existing MCP `advisor` is a lightweight consult over caller-packaged context. Provider-native Anthropic advisor is a dispatch affordance candidate for Anthropic API calls: Sonnet/Haiku executor with Opus advisor inside one Messages request. It is not a `team_dispatch` role. |
-| Anthropic | Remote MCP / server-side toolset | `remote_mcp=True` is Anthropic-only in the frontier dispatcher today; local MCP tool loops and provider-native MCP are different substrates. |
+| Anthropic | MCP client tools / server-side built-ins | Remote-connector vs client-side-loop selection is internal and card-derived — not a caller parameter. `mcp=` governs MCP-class tools; `server_tools=` governs card-derived provider built-ins independently. |
 | Anthropic | Prompt/context controls | Adapter already exposes `context_management`, compact/fast betas, and output config through `provider_options.anthropic`; cost/latency behavior belongs in provider-affordance docs, not only knob validation. |
 | OpenAI / xAI | Responses API state and reasoning | Responses requests use `reasoning.effort`, encrypted reasoning replay, `store=False`, and optional provider-native MCP for OpenAI. xAI remote MCP is currently rejected; xAI server-side built-ins are injected separately. |
 | Google / Gemini | Thinking visibility and long-context behavior | Gemini uses `thinkingConfig` with `includeThoughts` when reasoning is requested; thought summaries are observable enough to support termination-shadow triage. Treat this as a workflow affordance, not just a reasoning knob. |

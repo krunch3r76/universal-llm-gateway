@@ -297,6 +297,8 @@ async def hydrate_agent(
     inject_profile: str | None = None,
     code_touching: bool = False,
     packet_invariant_ids: tuple[str, ...] = (),
+    caller_skill_ids: tuple[str, ...] = (),
+    provider_mount_slugs: frozenset[str] = frozenset(),
 ) -> HydrationBundle:
     """Fetch the dispatched agent's boot state and render a briefing card.
 
@@ -389,11 +391,13 @@ async def hydrate_agent(
     effective_model = model if model is not None else agent_meta.default_model
     if normalized_agent in load_roles() and effective_model is not None:
         # Capability tier binds to the EFFECTIVE model, not the role default
-        # profile: an explicit model= override (e.g. skeptic + model=gemini)
-        # must clear stale inline-only from grok/api-multi so MCP-capable
-        # models get the tool surface; conversely reviewer + xai multi-agent
-        # must recompute inline-only even when the role default is MCP-capable.
-        if client_side_mcp_tool_loop_admitted(effective_model):
+        # profile: an explicit model= override must recompute from the card.
+        # Cursor-sdk substrate models are out of the frontier card domain (F6).
+        from model_id import ModelId
+
+        if ModelId.parse(effective_model).backend_type == "cursor_sdk":
+            pass
+        elif client_side_mcp_tool_loop_admitted(effective_model):
             agent_meta = replace(agent_meta, capability_tier=None)
         else:
             agent_meta = replace(agent_meta, capability_tier="inline-only")
@@ -403,7 +407,13 @@ async def hydrate_agent(
     ]
 
     if effective_model is not None:
-        inline_only = not client_side_mcp_tool_loop_admitted(effective_model)
+        from model_capabilities import inline_only as card_inline_only
+        from model_id import ModelId
+
+        if ModelId.parse(effective_model).backend_type == "cursor_sdk":
+            inline_only = agent_meta.capability_tier == "inline-only"
+        else:
+            inline_only = card_inline_only(effective_model)
     else:
         inline_only = agent_meta.capability_tier == "inline-only"
 
@@ -444,8 +454,10 @@ async def hydrate_agent(
             inject_profile=inject_profile,
             code_touching=code_touching,
             packet_invariant_ids=packet_invariant_ids,
+            caller_skill_ids=caller_skill_ids,
             already_present=already_present,
             inline_only_dispatch=inline_only and inject_profile == "dispatch",
+            provider_mount_slugs=provider_mount_slugs,
         )
         if resolution.block_md:
             injected_bodies_md = resolution.block_md

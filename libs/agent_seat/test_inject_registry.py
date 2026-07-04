@@ -16,6 +16,8 @@ from agent_seat.inject_registry import (
     SENTINEL_DISPATCH_INJECT_ENTITY_ID,
     InjectScope,
     active_scopes,
+    assert_boot_session_gate_complete,
+    assert_must_inline_allowlist_valid,
     injected_skill_slugs,
     parse_packet_invariant_skill_ids,
     resolve_injected_bodies,
@@ -64,7 +66,18 @@ def _body_map(monkeypatch: pytest.MonkeyPatch, bodies: dict[str, str]) -> None:
     )
 
 
-def test_parse_packet_invariant_skill_ids() -> None:
+def test_must_inline_regression_guard() -> None:
+    assert_must_inline_allowlist_valid()
+
+
+def test_boot_session_gate_completeness_api() -> None:
+    assert_boot_session_gate_complete(platform="api")
+
+
+def test_boot_session_gate_completeness_web() -> None:
+    assert_boot_session_gate_complete(platform="web")
+
+
     packet = """
 <invariants>
 - agent_skill:sentinel-dispatch-inject-19887
@@ -455,4 +468,108 @@ async def test_lead_web_boot_skips_static_auto_inject(
     assert not any(
         a.get("name") == "auto_inject_skills"
         for a in boot_result.get("injected_artifacts") or []
+    )
+
+
+def test_provider_mount_excludes_matching_canonical_skill(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bodies = {
+        "agent_skill:architecture-invariants": "arch body",
+        "agent_skill:cortex-orientation": "orientation",
+    }
+    _body_map(monkeypatch, bodies)
+    resolution = resolve_injected_bodies(
+        "claude-api",
+        platform="api",
+        inject_profile="dispatch",
+        code_touching=True,
+        provider_mount_slugs=frozenset({"architecture-invariants"}),
+        budget_bytes=None,
+    )
+    injected_ids = {str(item.get("id") or "") for item in resolution.injected}
+    assert "rule:architecture-invariants" not in injected_ids
+    assert any(
+        item.get("reason") == "provider_mounted"
+        and item.get("id") == "rule:architecture-invariants"
+        for item in resolution.dropped
+    )
+
+
+def test_provider_mount_excludes_alias_input_slug(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bodies = {
+        "agent_skill:ulg-architecture": "ulg body",
+        "agent_skill:cortex-orientation": "orientation",
+    }
+    _body_map(monkeypatch, bodies)
+    resolution = resolve_injected_bodies(
+        "claude-api",
+        platform="api",
+        inject_profile="dispatch",
+        code_touching=True,
+        provider_mount_slugs=frozenset({"ulg-architecture"}),
+        budget_bytes=None,
+    )
+    injected_ids = {str(item.get("id") or "") for item in resolution.injected}
+    assert "rule:ulg-architecture_ulg" not in injected_ids
+    assert any(item.get("reason") == "provider_mounted" for item in resolution.dropped)
+
+
+def test_caller_skill_ids_resolve_as_mandatory_candidates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bodies = {
+        "agent_skill:architecture-invariants": "arch body",
+        "agent_skill:cortex-orientation": "orientation",
+    }
+    _body_map(monkeypatch, bodies)
+    resolution = resolve_injected_bodies(
+        "claude-api",
+        platform="api",
+        inject_profile="dispatch",
+        code_touching=True,
+        caller_skill_ids=("architecture-invariants",),
+        budget_bytes=None,
+    )
+    injected_ids = {str(item.get("id") or "") for item in resolution.injected}
+    assert "agent_skill:architecture-invariants" in injected_ids
+
+
+def test_caller_skill_unresolvable_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent_seat.inject_registry import CallerSkillUnresolvedError
+
+    with pytest.raises(CallerSkillUnresolvedError, match="definitely-not-a-skill"):
+        resolve_injected_bodies(
+            "claude-api",
+            caller_skill_ids=("definitely-not-a-skill",),
+            budget_bytes=None,
+        )
+
+
+def test_merged_overlap_provider_mounted_regression(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bodies = {
+        "agent_skill:architecture-invariants": "arch body",
+        "agent_skill:cortex-orientation": "orientation",
+    }
+    _body_map(monkeypatch, bodies)
+    resolution = resolve_injected_bodies(
+        "claude-api",
+        platform="api",
+        inject_profile="dispatch",
+        code_touching=True,
+        caller_skill_ids=("architecture-invariants",),
+        provider_mount_slugs=frozenset({"architecture-invariants"}),
+        budget_bytes=None,
+    )
+    injected_ids = {str(item.get("id") or "") for item in resolution.injected}
+    assert "agent_skill:architecture-invariants" not in injected_ids
+    assert any(
+        item.get("reason") == "provider_mounted"
+        for item in resolution.dropped
     )

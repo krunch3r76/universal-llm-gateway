@@ -310,28 +310,35 @@ Pipeline caller shape:
     "model": "openai/gpt-5.4",
     "role": "gatherer",
     "max_tool_turns": 10,
-    "generation_parameters": {"reasoning_effort": "high"}
+    "generation_parameters": {"reasoning_effort": "high"},
+    "server_tools": null,
+    "skills": null
   },
   "messages": [{"role": "user", "content": "..."}]
 }
 ```
 
 `pipeline_options.model` is required; `role` is optional; everything else has
-sensible defaults.
+sensible defaults. Optional `pipeline_options.server_tools` and
+`pipeline_options.skills` mirror the HTTP `team_dispatch` surface (`mcp` is
+documented under Role-free mode below).
 
 MCP callers reach this via `team_dispatch` only (`op=generate|to_thread` with
-`role=`, or `op=handoff` for manual seats):
+`role=`, or `op=handoff` for manual seats). Prompt context comes from
+`dispatch_thread_id` (latest agent-bus turn) or a pre-staged packet — not
+`messages[]`:
 
 ```python
 team_dispatch(
     op="generate",
     role="gatherer",
     dispatch_thread_id="arc-topic-slug",
-    messages=[{"role": "user", "content": "..."}],
+    contract="light-bounded",
     reasoning_effort="high",
     caller_agent="cursor",
 )
-# Then: pipeline(op="result", execution_id=<id>, wait_seconds=60.0)
+# Poll via poll_hint (agent_bus wait) — primary completion path.
+# pipeline(op="result", ...) is metadata fallback only.
 ```
 
 ### Runtime modes

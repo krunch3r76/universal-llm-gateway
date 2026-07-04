@@ -74,5 +74,5 @@ when synthetic-ID resolution fails — this propagates as
 
 ## MCP Injection (Post-Catalog)
 
-Catalog presence (`available: true`) determines if the gateway can serve a model. MCP is enabled by default (`mcp=true`); `remote_mcp` is automatically selected by model family (Anthropic uses native path). Agents should not reason about or override injection details.
+Catalog presence (`available: true`) determines if the gateway can serve a model. MCP client tools are governed by the single `mcp` boolean (default on for tool-capable families; `false` forces inline-only). Remote-connector vs client-side-loop selection is internal and card-derived — not a caller parameter. Server-side provider built-ins are governed independently by the optional `server_tools` knob (omit = ALL; `false` suppresses card-derived built-ins). Agents should not reason about injection details.
 <!-- /target:* -->

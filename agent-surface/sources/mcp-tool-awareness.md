@@ -107,5 +107,5 @@ For write-side verification, querying the written artifact directly (entity_get,
 <!-- target:cursor -->
 ## MCP Defaults
 
-MCP is enabled by default (`mcp=true`). `remote_mcp` is automatically enabled for Anthropic models (native `mcp_toolset` path) and uses the client-side gateway tool loop for all other providers. Agents should not override or reason about injection details.
+MCP client tools are governed by the single `mcp` boolean (default on for tool-capable families; `false` forces inline-only). Remote-connector vs client-side-loop selection is internal and card-derived — not a caller parameter. Server-side provider built-ins are governed independently by the optional `server_tools` knob (omit = ALL; `false` suppresses card-derived built-ins). Agents should not reason about injection details.
 <!-- /target:cursor -->
