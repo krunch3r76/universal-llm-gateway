@@ -73,9 +73,10 @@ def test_resolve_skill_source_uri_rule_alias() -> None:
 
 
 @pytest.mark.offline
-def test_canonical_table_key_ulg_alias() -> None:
-    assert canonical_table_key("ulg-architecture") == "ulg-architecture_ulg"
-    assert canonical_table_key("rule:ulg-architecture_ulg") == "ulg-architecture_ulg"
+def test_canonical_table_key_ulg_no_phantom_alias() -> None:
+    assert canonical_table_key("ulg-architecture") == "ulg-architecture"
+    assert canonical_table_key("ulg-architecture_ulg") == "ulg-architecture"
+    assert canonical_table_key("rule:ulg-architecture_ulg") == "ulg-architecture"
 
 
 @pytest.mark.offline
@@ -150,15 +151,12 @@ def test_known_source_uris_covers_entire_coding_session_bundle() -> None:
         for entity_id in coding_scope_inject_entity_ids()
     }
     advertise = set(CODING_SESSION_ADVERTISE_SLUGS)
-    missing = (inject | advertise) - set(CANONICAL_SKILL_SOURCE_URIS)
-    alias_missing = {
-        s for s in (inject | advertise) if canonical_table_key(s) not in CANONICAL_SKILL_SOURCE_URIS
+    missing = {
+        slug
+        for slug in (inject | advertise)
+        if canonical_table_key(slug) not in CANONICAL_SKILL_SOURCE_URIS
     }
     assert not missing, (
-        "coding bundle slugs absent from CANONICAL_SKILL_SOURCE_URIS: "
-        f"{sorted(missing)}"
-    )
-    assert not alias_missing, (
         "coding bundle slugs fail canonical_table_key lookup: "
-        f"{sorted(alias_missing)}"
+        f"{sorted(missing)}"
     )

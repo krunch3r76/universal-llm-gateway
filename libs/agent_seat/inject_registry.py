@@ -594,6 +594,12 @@ def resolve_injected_bodies(
     mount_ids = {canonical_agent_skill_id(slug) for slug in provider_mount_slugs}
     if inline_only_dispatch and code_touching and inject_profile == "dispatch":
         mandatory_body_slugs = mandatory_body_slugs | _coding_bundle_slugs()
+    if caller_skill_ids:
+        caller_mandatory = frozenset(
+            entity_slug_from_id(canonical_agent_skill_id(cid))
+            for cid in caller_skill_ids
+        )
+        mandatory_body_slugs = mandatory_body_slugs | caller_mandatory
     metrics: dict[str, Any] = {"cold_fetches": 0, "cache_hit": False}
     candidates = _candidate_entries(
         role=role,

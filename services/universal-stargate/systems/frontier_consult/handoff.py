@@ -76,13 +76,16 @@ _REQUIRED_INVARIANT_SKILL_REFS: tuple[str, ...] = tuple(
 
 
 def _packet_references_arch_skill_slug(text: str, slug: str) -> bool:
-    """Canonical-form only: a loadable ref — the legacy cortex slug substring or
-    the workspaces SOT path. A display-name *stem* deliberately does NOT satisfy
-    the gate; it is reported by _nonconforming_skill_ref_hint with the exact
-    rewrite, so the reviewer gets a loadable ref, not an unresolvable mention."""
+    """Canonical-form only: a loadable ref — the legacy cortex slug substring,
+    the workspaces SOT path, or the canonical ``.cursor/skills/<slug>/SKILL.md``
+    location. A display-name *stem* deliberately does NOT satisfy the gate; it is
+    reported by _nonconforming_skill_ref_hint with the exact rewrite, so the
+    reviewer gets a loadable ref, not an unresolvable mention."""
     if f"agent-skills/{slug}" in text:
         return True
-    return f"docs/agent-guides/skills/{slug}.md" in text
+    if f"docs/agent-guides/skills/{slug}.md" in text:
+        return True
+    return f".cursor/skills/{slug}/SKILL.md" in text
 
 
 def _missing_arch_skill_refs(text: str) -> list[str]:

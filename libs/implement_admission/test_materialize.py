@@ -126,7 +126,7 @@ def test_mcp_capabilities_always_carries_arch_skillrefs(tmp_path: Path) -> None:
     )
     assert (
         'fs(sandbox="workspaces", op="md_read", '
-        'path="universal-llm-gateway/docs/agent-guides/skills/ulg-architecture.md")'
+        'path="universal-llm-gateway/.cursor/skills/ulg-architecture/SKILL.md")'
         in mcp
     )
 
@@ -141,7 +141,7 @@ def test_mcp_capabilities_arch_skillrefs_not_duplicated(tmp_path: Path) -> None:
     assert (
         mcp.count(
             'fs(sandbox="workspaces", op="md_read", '
-            'path="universal-llm-gateway/docs/agent-guides/skills/ulg-architecture.md")'
+            'path="universal-llm-gateway/.cursor/skills/ulg-architecture/SKILL.md")'
         )
         == 1
     )

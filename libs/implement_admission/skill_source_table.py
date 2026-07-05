@@ -18,7 +18,7 @@ TEMPLATE_VERSION: Final[str] = "1"
 # slug synonyms → canonical table key (``entity_slug_from_id`` output may differ)
 CANONICAL_SLUG_ALIASES: Final[dict[str, str]] = {
     "session-close-kernel": "session-close",
-    "ulg-architecture": "ulg-architecture_ulg",
+    "ulg-architecture_ulg": "ulg-architecture",
 }
 
 # Generated from live Cortex entities — prefer substantiated ``rule:`` ``source_uri``.
@@ -131,13 +131,13 @@ CANONICAL_SKILL_SOURCE_URIS: Final[dict[str, str]] = {
     "tax": "agent-skills/tax.md",
     "thirdparty-api-mirror": "workspaces://universal-llm-gateway/.cursor/skills/thirdparty-api-mirror/SKILL.md",
     "todo-lifecycle": "docs/agent-guides/rules/todo-lifecycle.md",
-    "ulg-architecture_ulg": "workspaces://universal-llm-gateway/docs/agent-guides/skills/ulg-architecture.md",
+    "ulg-architecture": "workspaces://universal-llm-gateway/.cursor/skills/ulg-architecture/SKILL.md",
     "w2-ingestion": "agent-skills/w2-ingestion.md",
     "web-generate-substrate": "workspaces://universal-llm-gateway/.cursor/skills/web-generate-substrate/SKILL.md",
     "web-transcript-preprocessing": "workspaces://universal-llm-gateway/.cursor/skills/web-transcript-preprocessing/SKILL.md",
 }
 
-TABLE_DIGEST: Final[str] = "sha256:8c59795d74c53191dd0df6604d2940344800838c6ebc32c4131496b9c34606c1"
+TABLE_DIGEST: Final[str] = "sha256:be8784a8d07e2088d9ffba4c4dc8e0efa81bf7333f8ac24e6a2d3205edc3bdb2"
 # fmt: on
 
 

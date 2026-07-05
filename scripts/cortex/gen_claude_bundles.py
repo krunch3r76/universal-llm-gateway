@@ -21,6 +21,7 @@ from _skill_git_guard import run_skill_git_guard  # noqa: E402
 from claude_bundles.bundle_description import (  # noqa: E402
     MAX_CLAUDE_AI_DESCRIPTION_LEN,
     MIN_BUNDLE_DESCRIPTION_LEN,
+    description_has_xml_tags,
     extract_rendered_description,
 )
 from claude_bundles.resolver import (  # noqa: E402
@@ -215,6 +216,12 @@ def _check_bundle_descriptions(
             print(
                 f"DESCRIPTION: {slug} too long ({len(desc)} > "
                 f"{MAX_CLAUDE_AI_DESCRIPTION_LEN}): {desc!r}",
+                file=sys.stderr,
+            )
+            fail = 1
+        elif description_has_xml_tags(desc):
+            print(
+                f"DESCRIPTION: {slug} contains XML tags (claude.ai rejects): {desc!r}",
                 file=sys.stderr,
             )
             fail = 1

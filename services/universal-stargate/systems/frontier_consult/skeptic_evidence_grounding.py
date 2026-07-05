@@ -29,6 +29,7 @@ _AGENT_BUS_EVIDENCE = re.compile(
     re.IGNORECASE,
 )
 _KNOWN_FILE_SCHEMES = frozenset({"workspaces", "cortex", "ws"})
+_MAX_FILE_EVIDENCE_PATH_LEN = 200
 
 
 class SkepticBusReader(Protocol):
@@ -44,12 +45,22 @@ class SkepticEvidenceOutcome:
     mode: str | None = None
 
 
+def _strip_evidence_path_annotation(entry: str) -> str:
+    """Keep the resolvable path prefix; drop optional :: / — annotation tails."""
+    path = entry.strip()
+    if " :: " in path:
+        path = path.split(" :: ", 1)[0].strip()
+    if " — " in path:
+        path = path.split(" — ", 1)[0].strip()
+    return path
+
+
 def _normalize_file_evidence_entry(line: str) -> str:
     stripped = line.strip()
     match = _LIST_MARKER_RE.match(stripped)
     if match:
-        return match.group("entry").strip()
-    return stripped
+        stripped = match.group("entry").strip()
+    return _strip_evidence_path_annotation(stripped)
 
 
 def _is_non_file_evidence_token(entry: str) -> bool:
@@ -61,6 +72,8 @@ def _is_malformed_file_evidence(entry: str) -> bool:
     raw = entry.strip()
     if not raw or _is_non_file_evidence_token(raw):
         return False
+    if len(raw) > _MAX_FILE_EVIDENCE_PATH_LEN or any(ch.isspace() for ch in raw):
+        return True
     parsed = parse_schemed_path(raw)
     if parsed.scheme is not None:
         return parsed.scheme not in _KNOWN_FILE_SCHEMES
@@ -143,13 +156,15 @@ def ground_skeptic_file_paths(
     unresolved: list[str] = []
     resolved_count = 0
     for path in paths:
-        if (
-            resolve_schemed_packet_file(
+        try:
+            resolved = resolve_schemed_packet_file(
                 path,
                 workspaces_root_override=workspaces_root,
             )
-            is None
-        ):
+        except OSError:
+            unresolved.append(path)
+            continue
+        if resolved is None:
             unresolved.append(path)
         else:
             resolved_count += 1

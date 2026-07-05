@@ -127,6 +127,7 @@ class HydrationBundle:
     inline_only: bool = False
     injected_bodies_md: str | None = None
     required_body_unresolved: bool = False
+    required_body_dropped: list[dict[str, Any]] | None = None
     injection_meta: dict[str, Any] = field(default_factory=dict)
 
 
@@ -434,6 +435,7 @@ async def hydrate_agent(
 
     injected_bodies_md: str | None = None
     required_body_unresolved = False
+    required_body_dropped: list[dict[str, Any]] | None = None
     injection_meta: dict[str, Any] = {}
     resolve_role = normalized_agent if normalized_agent in load_roles() else None
     resolve_platform = "*"
@@ -470,6 +472,7 @@ async def hydrate_agent(
         }
     except RequiredBodyUnresolved as exc:
         required_body_unresolved = True
+        required_body_dropped = exc.dropped
         injection_meta = {
             "injected": [],
             "dropped": exc.dropped,
@@ -502,5 +505,6 @@ async def hydrate_agent(
         inline_only=inline_only,
         injected_bodies_md=injected_bodies_md,
         required_body_unresolved=required_body_unresolved,
+        required_body_dropped=required_body_dropped,
         injection_meta=injection_meta,
     )

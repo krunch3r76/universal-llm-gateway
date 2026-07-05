@@ -537,6 +537,46 @@ def test_caller_skill_ids_resolve_as_mandatory_candidates(
     assert "agent_skill:architecture-invariants" in injected_ids
 
 
+def test_caller_skill_mandatory_raises_on_budget_overflow(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bodies = {
+        "agent_skill:architecture-invariants": "x" * 60_000,
+        "agent_skill:cortex-orientation": "small",
+    }
+    _body_map(monkeypatch, bodies)
+    with pytest.raises(RequiredBodyUnresolved) as exc_info:
+        resolve_injected_bodies(
+            "claude-api",
+            platform="api",
+            inject_profile="dispatch",
+            caller_skill_ids=("architecture-invariants",),
+            budget_bytes=1000,
+        )
+    dropped = exc_info.value.dropped
+    assert any(item.get("reason") == "layer_c_budget" for item in dropped)
+    assert any(item.get("slug") == "architecture-invariants" for item in dropped)
+
+
+def test_caller_mcp_predicated_stripped_from_mandatory_no_budget_raise(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bodies = {
+        "agent_skill:cortex-orientation": "x" * 60_000,
+        "agent_skill:cortex-provenance-discipline": "small",
+    }
+    _body_map(monkeypatch, bodies)
+    resolution = resolve_injected_bodies(
+        "claude-api",
+        platform="api",
+        caller_skill_ids=("cortex-orientation",),
+        budget_bytes=1000,
+        exclude_mcp_predicated=True,
+    )
+    assert any(item.get("reason") == "mcp_predicated_skip" for item in resolution.dropped)
+    assert "x" * 100 not in resolution.block_md
+
+
 def test_caller_skill_unresolvable_raises(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

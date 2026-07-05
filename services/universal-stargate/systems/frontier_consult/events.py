@@ -445,6 +445,30 @@ def DispatchSkillsInlineInjected(  # noqa: N802
 
 
 @event_factory
+def DispatchSkillsInlineRejected(  # noqa: N802
+    request_id: str,
+    role: str | None,
+    model: str,
+    skills: list[str],
+    budget_bytes: int,
+    reason_code: str = "budget",
+) -> Event:
+    """Caller-origin Layer-C inline injection rejected at budget admission."""
+    return Event(
+        signal="dispatch.skills.inline.rejected",
+        payload={
+            "request_id": request_id,
+            "role": role,
+            "model": model,
+            "skills": skills,
+            "budget_bytes": budget_bytes,
+            "reason_code": reason_code,
+        },
+        scope="node",
+    )
+
+
+@event_factory
 def DispatchSkillsInlineOverflow(  # noqa: N802
     request_id: str,
     role: str | None,

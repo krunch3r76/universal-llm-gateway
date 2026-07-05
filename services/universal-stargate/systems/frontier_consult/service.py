@@ -8,7 +8,11 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from agent_seat import AgentMeta, assemble_system_prompt, hydrate_agent
-from agent_seat.body_injection import INJECTED_BODY_BUDGET_BYTES, emit_layer_a_fs_line
+from agent_seat.body_injection import (
+    INJECTED_BODY_BUDGET_BYTES,
+    RequiredBodyUnresolved,
+    emit_layer_a_fs_line,
+)
 from agent_seat.inject_registry import (
     CallerSkillUnresolvedError,
     parse_packet_invariant_skill_ids,
@@ -56,6 +60,7 @@ from .admission import (
 from .dispatch_messages import extract_last_user_message, wire_latest_user_turn
 from .events import (
     DispatchSkillsChannelResolved,
+    DispatchSkillsInlineRejected,
     DispatchSkillsMounted,
     DispatchSkillsPredicatedRejected,
     DispatchSkillsPredicatedSkipped,
@@ -250,6 +255,116 @@ def _classification_missing_slug(exc: Exception) -> str:
 
     match = re.search(r"canonical slug '([^']+)'", str(exc))
     return match.group(1) if match else "unknown"
+
+
+def _dropped_entry_canonical(entry: dict[str, Any]) -> str:
+    from implement_admission.skill_source_table import canonical_agent_skill_id
+
+    slug = entry.get("slug")
+    if slug:
+        return canonical_agent_skill_id(str(slug))
+    entity_id = entry.get("id")
+    if entity_id:
+        return canonical_agent_skill_id(str(entity_id))
+    return ""
+
+
+def _caller_origin_overflow_skills(
+    dropped: list[dict[str, Any]],
+    caller_canonical_set: frozenset[str],
+) -> list[str]:
+    skills: list[str] = []
+    for entry in dropped:
+        if entry.get("reason") != "layer_c_budget":
+            continue
+        canonical = _dropped_entry_canonical(entry)
+        if canonical in caller_canonical_set:
+            slug = entry.get("slug")
+            if slug:
+                skills.append(str(slug))
+            elif canonical:
+                from agent_seat.guidance_entity import entity_slug_from_id
+
+                skills.append(entity_slug_from_id(canonical))
+    return skills
+
+
+def _classify_required_body_overflow(
+    dropped: list[dict[str, Any]],
+    caller_canonical_set: frozenset[str],
+    *,
+    request_id: str,
+    role: str | None,
+    model: str,
+    event_publisher: EventPublisher | None = None,
+) -> FrontierEndpointError | None:
+    overflow_skills = _caller_origin_overflow_skills(dropped, caller_canonical_set)
+    if not overflow_skills:
+        return None
+    if event_publisher is not None:
+        event_publisher(
+            DispatchSkillsInlineRejected(
+                request_id=request_id,
+                role=role,
+                model=model,
+                skills=overflow_skills,
+                budget_bytes=INJECTED_BODY_BUDGET_BYTES,
+                reason_code="budget",
+            )
+        )
+    return FrontierEndpointError(
+        request_id=request_id,
+        field="skills",
+        reason=(
+            "caller Layer-C skill(s) exceed the inline injection budget: "
+            + ", ".join(overflow_skills)
+        ),
+        status_code=422,
+        code="skills_inline_budget_exceeded",
+        details={
+            "skills": overflow_skills,
+            "budget_bytes": INJECTED_BODY_BUDGET_BYTES,
+            "reason_code": "budget",
+        },
+    )
+
+
+def _caller_canonical_set(caller_layer_c_ids: tuple[str, ...]) -> frozenset[str]:
+    from implement_admission.skill_source_table import canonical_agent_skill_id
+
+    return frozenset(
+        canonical_agent_skill_id(skill_id) for skill_id in caller_layer_c_ids
+    )
+
+
+def _required_body_infra_error(request_id: str) -> FrontierEndpointError:
+    return FrontierEndpointError(
+        request_id=request_id,
+        field="injected_bodies",
+        reason="required conduct rule body failed to resolve",
+    )
+
+
+def _raise_required_body_unresolved(
+    dropped: list[dict[str, Any]],
+    caller_canonical_set: frozenset[str],
+    *,
+    request_id: str,
+    role: str | None,
+    model: str,
+    event_publisher: EventPublisher | None = None,
+) -> None:
+    overflow_err = _classify_required_body_overflow(
+        dropped,
+        caller_canonical_set,
+        request_id=request_id,
+        role=role,
+        model=model,
+        event_publisher=event_publisher,
+    )
+    if overflow_err is not None:
+        raise overflow_err
+    raise _required_body_infra_error(request_id)
 
 
 def _resolve_platform_for_generate(req: FrontierGenerateRequest) -> str:
@@ -453,6 +568,8 @@ async def build_dispatch_body(
         )
         channel_rows = (*predicated_skip_rows, *channel_rows)
 
+    layer_c_caller_canonical = _caller_canonical_set(caller_layer_c_ids)
+
     meta = AgentMeta()
     system_assembled = req.system or ""
     skills_mount: list[dict[str, Any]] | None = None
@@ -528,10 +645,13 @@ async def build_dispatch_body(
                 )
             )
         if bundle.required_body_unresolved:
-            raise FrontierEndpointError(
+            _raise_required_body_unresolved(
+                bundle.required_body_dropped or [],
+                layer_c_caller_canonical,
                 request_id=request_id,
-                field="injected_bodies",
-                reason="required conduct rule body failed to resolve",
+                role=req.role,
+                model=effective_model,
+                event_publisher=event_publisher,
             )
         injected_bodies_md = bundle.injected_bodies_md
         system_assembled = assemble_system_prompt(
@@ -631,6 +751,15 @@ async def build_dispatch_body(
                     },
                 ) from exc
             raise
+        except RequiredBodyUnresolved as exc:
+            _raise_required_body_unresolved(
+                exc.dropped,
+                layer_c_caller_canonical,
+                request_id=request_id,
+                role=req.role,
+                model=effective_model,
+                event_publisher=event_publisher,
+            )
         if resolution.block_md:
             system_assembled = f"{system_assembled}{resolution.block_md}"
         if skill_partition.layer_a:

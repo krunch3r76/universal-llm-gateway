@@ -16,6 +16,7 @@ _TRIGGER_LINE_RE = re.compile(r"^\*\*Trigger(?::\*\*|\*\*:)\s*(.+)$", re.MULTILI
 _SOT_LINE_RE = re.compile(r"^\*\*SOT")
 _SOURCE_LINE_RE = re.compile(r"^\*\*Source:\*\*")
 _BROKEN_DESCRIPTIONS = frozenset({">-", "|", ""})
+_XML_TAG_RE = re.compile(r"<[^>]+>")
 
 
 def parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
@@ -66,6 +67,10 @@ def _prose_excerpts(body: str) -> list[str]:
     return sorted(excerpts, key=len, reverse=True)
 
 
+def description_has_xml_tags(description: str) -> bool:
+    return bool(_XML_TAG_RE.search(description))
+
+
 def is_trigger_grade(description: str) -> bool:
     desc = description.strip()
     if not desc or desc in _BROKEN_DESCRIPTIONS:
@@ -73,6 +78,8 @@ def is_trigger_grade(description: str) -> bool:
     if len(desc) < MIN_BUNDLE_DESCRIPTION_LEN:
         return False
     if desc.upper() == "RETIRED":
+        return False
+    if description_has_xml_tags(desc):
         return False
     return True
 
@@ -92,7 +99,12 @@ def resolve_bundle_description(
 
     candidates: list[str] = []
     for value in (fm_desc, trigger, entity, *prose_excerpts, slug.replace("-", " ")):
-        if value and value not in _BROKEN_DESCRIPTIONS and value not in candidates:
+        if (
+            value
+            and value not in _BROKEN_DESCRIPTIONS
+            and value not in candidates
+            and not description_has_xml_tags(value)
+        ):
             candidates.append(value)
 
     for candidate in candidates:
