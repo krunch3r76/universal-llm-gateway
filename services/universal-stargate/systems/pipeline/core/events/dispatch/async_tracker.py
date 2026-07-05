@@ -29,6 +29,7 @@ def PipelineDispatchAsync(  # noqa: N802
     caller_agent: str | None = None,
     op: str = "",
     output_contract: str = "inline",
+    endpoint_request_id: str | None = None,
 ) -> Event:
     """Emitted when the async tracker admits a new execution.
 
@@ -38,17 +39,22 @@ def PipelineDispatchAsync(  # noqa: N802
         has_delivery_hook: Whether a delivery config was supplied
         op: Dispatch op (``generate`` | ``to_thread`` | empty for legacy)
         output_contract: Where the work product lands (``inline`` | ``thread``)
+        endpoint_request_id: Endpoint ``request_id`` when admitted via a
+            canonical dispatch route (join key for ``dispatch.skills.*``)
     """
+    payload: dict[str, object] = {
+        "pipeline_id": pipeline_id,
+        "execution_id": execution_id,
+        "has_delivery_hook": has_delivery_hook,
+        "caller_agent": caller_agent,
+        "op": op,
+        "output_contract": output_contract,
+    }
+    if endpoint_request_id is not None:
+        payload["endpoint_request_id"] = endpoint_request_id
     return Event(
         signal="pipeline.dispatch.async",
-        payload={
-            "pipeline_id": pipeline_id,
-            "execution_id": execution_id,
-            "has_delivery_hook": has_delivery_hook,
-            "caller_agent": caller_agent,
-            "op": op,
-            "output_contract": output_contract,
-        },
+        payload=payload,
     )
 
 

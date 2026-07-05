@@ -459,3 +459,52 @@ def emit_sdk_closeout_relocated(
         body_chars,
         uri,
     )
+
+
+@event_factory
+def FrontierSdkCloseoutReconciled(  # noqa: N802
+    dispatch_id: str,
+    thread_id: str,
+    suppressed_reason: str,
+    verifying_path: str,
+) -> Event:
+    return Event(
+        signal="frontier.sdk.closeout.reconciled",
+        payload={
+            "dispatch_id": dispatch_id,
+            "thread_id": thread_id,
+            "suppressed_reason": suppressed_reason,
+            "verifying_path": verifying_path,
+        },
+        scope="node",
+    )
+
+
+def emit_sdk_closeout_reconciled(
+    *,
+    dispatch_id: str,
+    thread_id: str,
+    suppressed_reason: str,
+    verifying_path: str,
+) -> None:
+    """Emitted when filesystem ground truth suppresses a would-be light-bounded
+    ``stated_intent_no_write`` / ``deliverable_write_choked`` degrade because the
+    packet-declared deliverable is verified present on disk/cortex (the SDK stream
+    missed the write, e.g. a cortex sidecar; cf. the 22454 ``zero_tool_calls`` gap).
+    """
+    _emit(
+        FrontierSdkCloseoutReconciled(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            suppressed_reason=suppressed_reason,
+            verifying_path=verifying_path,
+        )
+    )
+    logger.info(
+        "cursor sdk closeout reconciled: dispatch_id=%s thread_id=%s "
+        "suppressed_reason=%s verifying_path=%s",
+        dispatch_id,
+        thread_id,
+        suppressed_reason,
+        verifying_path,
+    )

@@ -147,14 +147,27 @@ def light_bounded_deliverable_reason(
     body: str,
     tool_calls: tuple[ToolCallObservation, ...],
     contract: str,
+    deliverable_present: bool = False,
 ) -> str | None:
     """Degrade reason (→ PARTIAL) when a light-bounded deliverable did not land.
 
     Contract-gated: other contract types carry their own closeout semantics
     (implement has git-baseline capture + files_expected; consult expects no
     durable artifact), so this backstop applies to ``light-bounded`` only.
+
+    ``deliverable_present`` is the filesystem ground-truth override: when the
+    packet-declared deliverable path(s) are verified present on disk/cortex
+    (see ``cursor_sdk_light_bounded_capture.light_bounded_deliverable_present``),
+    a ``tool_calls``-derived ``stated_intent_no_write`` / ``deliverable_write_choked``
+    is a false negative — the SDK stream did not surface the write (e.g. a cortex
+    sidecar; cf. the 22454 ``zero_tool_calls`` gap) — so the degrade is suppressed
+    at birth. Defaults ``False`` so every existing caller keeps prior behavior. A
+    genuine no-write run leaves the declared path absent (``deliverable_present``
+    stays ``False``) and still degrades.
     """
     if contract != LIGHT_BOUNDED_CONTRACT:
+        return None
+    if deliverable_present:
         return None
     return deliverable_write_choke_reason(tool_calls) or stated_intent_no_write_reason(
         body, tool_calls

@@ -180,6 +180,7 @@ async def run_dispatch_loop(
             boot_level="team" if agent else "none",
             remote_mcp=admission.remote_mcp,
             op=opts.get("op", ""),
+            endpoint_request_id=opts.get("_endpoint_request_id"),
         )
     )
 

@@ -29,6 +29,7 @@ from threading import Thread
 from cursor_sdk import Client
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import JSONResponse
+from implement_admission.closeout_helpers import cortex_files_root
 from universal_logging import get_logger
 from universal_protocol import error_envelope
 
@@ -85,6 +86,7 @@ from services.git_integration_worker.cursor_sdk_deliverables import (
     sidecar_workspaces_ref,
 )
 from services.git_integration_worker.cursor_sdk_events import (
+    emit_sdk_closeout_reconciled,
     emit_sdk_worker_completed,
     emit_sdk_worker_delivery_failed,
     emit_sdk_worker_failed,
@@ -101,6 +103,7 @@ from services.git_integration_worker.cursor_sdk_gate import (
 )
 from services.git_integration_worker.cursor_sdk_light_bounded_capture import (
     extract_named_paths,
+    light_bounded_deliverable_present,
 )
 from services.git_integration_worker.cursor_sdk_manifest import (
     build_effects_manifest,
@@ -1084,6 +1087,31 @@ async def _finalize_success(
     degraded_reason = (
         degraded_implement_reason(outcome) if contract == "implement" else None
     )
+    # deliverables_expected gate (todo:cursor-sdk-deliverables-expected-light-bounded):
+    # a light-bounded packet that names a durable output path in prose (almost
+    # never a structured files_expected: field) gates the same as implement, but
+    # via disk/cortex existence rather than the implement-only baseline-diff
+    # machinery — see light_bounded_expected_paths threading into
+    # resolve_closeout_capture_fields.
+    light_bounded_expected_paths = (
+        extract_named_paths(packet_text) if contract == LIGHT_BOUNDED_CONTRACT else ()
+    )
+    # Sidecar-write detection gap (todo:cursor-sdk-sidecar-write-detection-gap,
+    # assertion 22423): the light-bounded stated_intent_no_write / choke reason is
+    # inferred from outcome.tool_calls alone, which is blind to cortex sidecar
+    # fs.writes the SDK stream never surfaced (cf. 22454 zero_tool_calls). Filesystem
+    # ground truth overrides: when every declared deliverable is present on
+    # disk/cortex the degrade is suppressed at birth. Named-paths only (no tree
+    # scan) so background/non-agent writes are never attributed.
+    deliverable_present = (
+        light_bounded_deliverable_present(
+            light_bounded_expected_paths,
+            source_repo=source_repo,
+            cortex_root=cortex_files_root(),
+        )
+        if contract == LIGHT_BOUNDED_CONTRACT
+        else False
+    )
     # Empty-output invariant (friction 19819) applies to ALL contracts: a finished
     # run whose captured body (after transcript reconstruction in resolve_run_body)
     # is empty must never report status:complete + 0B. Implement-specific reasons
@@ -1098,16 +1126,27 @@ async def _finalize_success(
             body=outcome.body,
             tool_calls=outcome.tool_calls,
             contract=contract,
+            deliverable_present=deliverable_present,
         )
-    # deliverables_expected gate (todo:cursor-sdk-deliverables-expected-light-bounded):
-    # a light-bounded packet that names a durable output path in prose (almost
-    # never a structured files_expected: field) gates the same as implement, but
-    # via disk/cortex existence rather than the implement-only baseline-diff
-    # machinery — see light_bounded_expected_paths threading into
-    # resolve_closeout_capture_fields.
-    light_bounded_expected_paths = (
-        extract_named_paths(packet_text) if contract == LIGHT_BOUNDED_CONTRACT else ()
-    )
+        # Observability: if filesystem ground truth suppressed a would-be
+        # light-bounded degrade, surface it (frontier.sdk.closeout.reconciled).
+        if deliverable_present and degraded_reason is None:
+            suppressed_reason = light_bounded_deliverable_reason(
+                body=outcome.body,
+                tool_calls=outcome.tool_calls,
+                contract=contract,
+            )
+            if suppressed_reason is not None:
+                emit_sdk_closeout_reconciled(
+                    dispatch_id=req.dispatch_id,
+                    thread_id=req.thread_id,
+                    suppressed_reason=suppressed_reason,
+                    verifying_path=(
+                        light_bounded_expected_paths[0]
+                        if light_bounded_expected_paths
+                        else ""
+                    ),
+                )
     await _deliver_sdk_closeout(
         req=req,
         source_repo=source_repo,

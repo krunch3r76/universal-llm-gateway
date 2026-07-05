@@ -415,6 +415,64 @@ def DispatchSkillsPredicatedRejected(  # noqa: N802
 
 
 @event_factory
+def DispatchSkillsInlineInjected(  # noqa: N802
+    request_id: str,
+    role: str | None,
+    model: str,
+    canonical_slugs: list[str],
+    entry_count: int,
+    injected_bytes: int,
+    budget_bytes: int,
+) -> Event:
+    """Inline-fallback success — resolved SKILL bodies inlined into system prompt.
+
+    Contract stub for ``task:stage2-fallback-standardization``; emit sites owned
+    by Stage-2. See ``todo:skills-delivery-telemetry-async-path``.
+    """
+    return Event(
+        signal="dispatch.skills.inline.injected",
+        payload={
+            "request_id": request_id,
+            "role": role,
+            "model": model,
+            "canonical_slugs": canonical_slugs,
+            "entry_count": entry_count,
+            "injected_bytes": injected_bytes,
+            "budget_bytes": budget_bytes,
+        },
+        scope="node",
+    )
+
+
+@event_factory
+def DispatchSkillsInlineOverflow(  # noqa: N802
+    request_id: str,
+    role: str | None,
+    model: str,
+    canonical_slugs: list[str],
+    requested_bytes: int,
+    budget_bytes: int,
+) -> Event:
+    """Inline-fallback hard-error when injection exceeds the token/byte budget.
+
+    Contract stub for ``task:stage2-fallback-standardization``; emit sites owned
+    by Stage-2. See ``todo:skills-delivery-telemetry-async-path``.
+    """
+    return Event(
+        signal="dispatch.skills.inline.overflow",
+        payload={
+            "request_id": request_id,
+            "role": role,
+            "model": model,
+            "canonical_slugs": canonical_slugs,
+            "requested_bytes": requested_bytes,
+            "budget_bytes": budget_bytes,
+        },
+        scope="node",
+    )
+
+
+@event_factory
 def DispatchSkillsPredicatedSkipped(  # noqa: N802
     request_id: str,
     role: str | None,

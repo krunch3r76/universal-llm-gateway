@@ -24,6 +24,7 @@ __all__ = [
     "LIGHT_BOUNDED_CONTRACT",
     "extract_named_paths",
     "light_bounded_capture_status",
+    "light_bounded_deliverable_present",
 ]
 
 # Prefixes conservative enough that a bare mention is almost always a real
@@ -104,3 +105,33 @@ def light_bounded_capture_status(
     if missing:
         return "partial", f"divergence:light_bounded_path_absent:{missing[0]}"
     return "complete", None
+
+
+def light_bounded_deliverable_present(
+    expected_paths: tuple[str, ...],
+    *,
+    source_repo: Path,
+    cortex_root: Path,
+) -> bool:
+    """True iff every declared light-bounded deliverable path is present.
+
+    Ground-truth completeness signal for the reason-birth suppression in
+    ``cursor_sdk_deliverable_truth.light_bounded_deliverable_reason``: when the
+    packet-declared deliverable(s) all exist on disk (source repo) or in the
+    cortex sandbox post-dispatch, a tool-call-stream ``stated_intent_no_write``
+    inference is a false negative — the SDK stream simply did not surface the
+    write (e.g. a cortex sidecar; cf. the 22454 ``zero_tool_calls`` gap).
+
+    Empty ``expected_paths`` => ``False`` (no declared deliverable to verify, so
+    nothing to suppress). Named paths only — never scans the working tree — so
+    it cannot over-attribute background/non-agent writes (no 22316-direction
+    over-capture). It does NOT prove *this run* wrote the path (no mtime /
+    baseline-hash check; those remain RC-3 surfaces); presence is treated as
+    completeness, consistent with ``light_bounded_capture_status``.
+    """
+    if not expected_paths:
+        return False
+    return all(
+        _path_present(path, source_repo=source_repo, cortex_root=cortex_root)
+        for path in expected_paths
+    )

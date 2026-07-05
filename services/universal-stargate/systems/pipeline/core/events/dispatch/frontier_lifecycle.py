@@ -35,7 +35,8 @@ def PipelineFrontierDispatchHydrated(  # noqa: N802
     persona is specified (persona-free dispatches skip hydration entirely).
 
     Payload:
-        agent: Dispatched role or seat slug (``gatherer``, ``skeptic``, ``claude-web``, …)
+        agent: Dispatched role or seat slug (``gatherer``, ``skeptic``,
+            ``claude-web``, …)
         execution_id: Pipeline execution UUID (joins with dispatch.* signals)
         briefing_bytes: Size of the rendered briefing card in characters
         section_counts: Per-section item counts (sessions, deadlines, todos, ...)
@@ -64,6 +65,7 @@ def PipelineFrontierDispatchStarted(  # noqa: N802
     boot_level: str,
     remote_mcp: bool,
     op: str = "",
+    endpoint_request_id: str | None = None,
 ) -> Event:
     """Emitted when a ``frontier_dispatch_v1`` execution begins its native call.
 
@@ -86,19 +88,24 @@ def PipelineFrontierDispatchStarted(  # noqa: N802
             inline-only ``synthesizer``).
         remote_mcp: True iff adapter-level remote MCP injection is active
         op: Dispatch op (``generate`` | ``to_thread`` | empty for legacy)
+        endpoint_request_id: Endpoint ``request_id`` when admitted via a
+            canonical dispatch route (join key for ``dispatch.skills.*``)
     """
+    payload: dict[str, object] = {
+        "execution_id": execution_id,
+        "agent": agent,
+        "model": model,
+        "model_entity_id": model_entity_id,
+        "provider": provider,
+        "boot_level": boot_level,
+        "remote_mcp": remote_mcp,
+        "op": op,
+    }
+    if endpoint_request_id is not None:
+        payload["endpoint_request_id"] = endpoint_request_id
     return Event(
         signal="pipeline.frontier.dispatch.started",
-        payload={
-            "execution_id": execution_id,
-            "agent": agent,
-            "model": model,
-            "model_entity_id": model_entity_id,
-            "provider": provider,
-            "boot_level": boot_level,
-            "remote_mcp": remote_mcp,
-            "op": op,
-        },
+        payload=payload,
         scope="node",
     )
 

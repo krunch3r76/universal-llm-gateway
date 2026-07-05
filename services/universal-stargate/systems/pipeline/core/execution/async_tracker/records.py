@@ -151,6 +151,9 @@ class PipelineExecutionRecord:
     # closes the bus thread after a successful on-behalf POST (team-dispatch
     # one-shots default ephemeral at admission).
     bus_lifecycle: Literal["persistent", "ephemeral"] = "ephemeral"
+    # Endpoint request_id forwarded from canonical dispatch routes via
+    # pipeline_options["_endpoint_request_id"]; joins dispatch.skills.* rows.
+    endpoint_request_id: str | None = None
     # Caller-facing delivery outcome (friction 16985). None until op="to_thread"
     # delivery runs; legacy result_delivery path leaves this None.
     delivery: DeliveryState | None = None
@@ -191,6 +194,7 @@ class PipelineExecutionRecord:
             "target_thread": self.target_thread,
             "op": self.op,
             "thread_reply_observed_at": self.thread_reply_observed_at,
+            "endpoint_request_id": self.endpoint_request_id,
             "delivery": (
                 self.delivery.to_dict(self.execution_id)
                 if self.delivery is not None

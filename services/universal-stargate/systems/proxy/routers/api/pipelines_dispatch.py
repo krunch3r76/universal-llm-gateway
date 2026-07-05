@@ -282,6 +282,9 @@ async def dispatch_pipeline(
     )
 
     try:
+        endpoint_request_id = (dispatch.pipeline_options or {}).get(
+            "_endpoint_request_id"
+        )
         tracker.register_execution(
             execution_id=execution_id,
             pipeline=dispatch.model,
@@ -294,6 +297,7 @@ async def dispatch_pipeline(
             from_agent=dispatch.from_agent,
             reply_subject=dispatch.reply_subject,
             bus_lifecycle=_resolve_bus_lifecycle(dispatch),
+            endpoint_request_id=endpoint_request_id,
         )
     except TrackerCapacityError as exc:
         logger.warning("Dispatch rejected (capacity): %s", exc)

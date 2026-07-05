@@ -53,6 +53,7 @@ def register_execution(
     from_agent: str | None = None,
     reply_subject: str | None = None,
     bus_lifecycle: Literal["persistent", "ephemeral"] = "ephemeral",
+    endpoint_request_id: str | None = None,
 ) -> PipelineExecutionRecord:
     """Admit a new execution and emit ``pipeline.dispatch.async``.
 
@@ -98,6 +99,7 @@ def register_execution(
         from_agent=from_agent,
         reply_subject=reply_subject,
         bus_lifecycle=bus_lifecycle,
+        endpoint_request_id=endpoint_request_id,
     )
     tracker.records[execution_id] = record
 
@@ -113,6 +115,7 @@ def register_execution(
             caller_agent=record.caller_agent,
             op=op or "",
             output_contract=output_contract,
+            endpoint_request_id=endpoint_request_id,
         ),
     )
 

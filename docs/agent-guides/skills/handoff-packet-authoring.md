@@ -37,6 +37,9 @@ Gate 2 in        Gate 2 out  Gate 3 in
 
 Dense spec ≠ dispatchable packet. Never dispatch a spec raw; re-wrap into implement packet (spec → `<corpus>`, ACs → `<task_guidance>`). Web saying “a spec is not a packet” is this rule firing, not a finding that the upstream consult brief was malformed.
 
+
+Pre-dispatch tag check (friction 20767): a raw spec has 0/6 block tags and fails `validate_packet`. Before dispatching a hand-wrapped `packet_path`, grep each of the six blocks with a **line-anchored** pattern (`^<scope>$` … `^<output_format>$`), never a bare substring — bare substring is a false-green (matches the tag named in prose). Confirm all six present before wrap.
+
 ## Dispatch lifecycle
 
 Invariant: reasoning tier (`web-consult` / `cursor-consult` / Opus) authors dispatch-ready specs; mechanical tier (`cursor-sdk`/Composer default, `cursor-implement` fallback) executes. Never reverse. Composer is mechanical; implement packet MUST pin files/functions/tests/forks. Under-specified cursor-sdk packet = routing error.
@@ -80,6 +83,26 @@ Sequence:
 5. **Hand back** thread id + `push_reminder`. Gate 3 is later; do not pre-author implement packet.
 6. **Gate-2 close distillation (mandatory):** before implement-ready, project dense spec to todo attrs: non-empty `files_expected`, non-empty `acceptance_criteria`, `required_skills` when applicable. Materializer reads attrs only; spec prose is fingerprinted, not content-read. Empty/default attrs reject 422 `implement_attrs_unpopulated` unless waived via `attributes_distillation_waived`.
 7. **Entity hygiene:** at stage, seed tracking assertion citing stub + dispatch thread; leave `confidence_band` unchanged. At Gate-2 close, record implement-ready assertion citing dense spec + `spec_sha256:<hex>`, promote confidence as appropriate, distill attrs, keep `workflow_state=in_progress` until Gate 3 completes. Predicate must normalize to `status({todo_id}, implement_ready, current)`; avoid “reopened/in_progress” phrasing or set `predicate_form` explicitly.
+
+
+**Dense-spec heading phrases (friction 21659).** `validate_dense_spec` matches its 8 required sections by regex against heading **text**, not the canonical key — the key name alone will not pass. Use these accepted phrases (source: `libs/implement_admission/dense_spec_schema.py::_SECTION_ACCEPTED_PATTERNS`):
+
+| Section | Heading must contain |
+|---|---|
+| problem | `problem` |
+| non_goals | `non-goal` or `scope exclusion` |
+| provenance | `source-of-truth` or `provenance` |
+| touch_points | `touch-point` / `touchpoint` |
+| forks | `bound design`, `fork table`, `design decision`, or `resolved fork` |
+| implementation | `implementation guidance` or `implementation steps` |
+| acceptance | `acceptance` |
+| verification | `verification` or `quality gate` |
+
+Plus a `<reasoning_trace>…</reasoning_trace>` tag block whose body contains the literal attestation `no fork remains open`. Match the phrasing to avoid a guess-and-fail loop.
+
+**Skeptic ratification → implement admission (frictions 21656, 22008).** When a skeptic/review consult gates implement, two machine-readable bindings are required and are checked separately:
+- `spec_sha256:<hex>` (the dense spec's hash URI) MUST be a **literal member of the `skeptic_ratified` assertion's `evidence_uris`** (`find_skeptic_assertion`, `libs/cortex_store/dispatch_ops/_doc_validate_skeptic.py`). Citing only the skeptic bus thread is insufficient and yields a bare `skeptic_pass_missing` 422 with no hint about the missing hash.
+- The reviewer's **bus reply turn** MUST carry a literal `FILE_EVIDENCE_PATHS:` block (one `workspaces://…` path per line, blank-line terminated). The grounding parser (`systems/frontier_consult/skeptic_evidence_grounding.py`) reads the cited bus turn body only — paths in the sidecar or in `evidence_uris` are invisible to this axis-2 gate, and their absence yields `skeptic_evidence_missing`. Author the skeptic packet `<output_format>` to demand this block (see § The Six Required Blocks / Block 6).
 
 ## Gate 3 — direct implement dispatch
 
@@ -283,6 +306,11 @@ Executor override (implement) may be in frontmatter/request: `executor_override`
 - Inline/no-MCP worker (`cursor-sdk`, API generate): emit full closeout inline. Stargate on-behalf delivery writes durable sidecar first and sets `allow_long_body` as needed. Do not tell inline-only worker to write sidecar.
 
 Bus limits: 8,000 chars normally, 64,000 with `allow_long_body`. `allow_long_body=true` only when recipient needs inline long-form and sidecar would break contract.
+
+
+Skeptic/review packet whose ratification gates implement (friction 22008): `<output_format>` MUST instruct the reviewer to emit, in its **bus reply turn**, a literal `FILE_EVIDENCE_PATHS:` block — one `workspaces://…` (or `cortex://`) path per line, blank-line terminated — alongside the `skeptic_ratified` assert template. The axis-2 grounding parser reads only the bus turn body; paths in the sidecar or `evidence_uris` do not satisfy it. Include this in the skeptic-packet skeleton.
+
+Verify/acceptance commands (friction 20766): `ruff check` must receive Python files **only** — never YAML/TOML/JSON. ruff parses every argument as Python and errors on non-`.py` inputs, producing noisy false failures. Keep linting (`ruff` on `.py` only) separate from config validation (verified implicitly at pytest import time).
 
 ## Skeleton
 
