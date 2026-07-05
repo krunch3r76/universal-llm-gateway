@@ -393,6 +393,48 @@ def DispatchSkillsChannelResolved(  # noqa: N802
 
 
 @event_factory
+def DispatchSkillsPredicatedRejected(  # noqa: N802
+    request_id: str,
+    role: str | None,
+    model: str,
+    skills: list[str],
+    origin: str,
+) -> Event:
+    """Caller-supplied MCP-predicated skills rejected on a non-MCP dispatch."""
+    return Event(
+        signal="dispatch.skills.predicated.rejected",
+        payload={
+            "request_id": request_id,
+            "role": role,
+            "model": model,
+            "skills": skills,
+            "origin": origin,
+        },
+        scope="node",
+    )
+
+
+@event_factory
+def DispatchSkillsPredicatedSkipped(  # noqa: N802
+    request_id: str,
+    role: str | None,
+    model: str,
+    skills: list[str],
+) -> Event:
+    """Scope-default MCP-predicated skills skipped on a non-MCP dispatch."""
+    return Event(
+        signal="dispatch.skills.predicated.skipped",
+        payload={
+            "request_id": request_id,
+            "role": role,
+            "model": model,
+            "skills": skills,
+        },
+        scope="node",
+    )
+
+
+@event_factory
 def InlineBodyInjectionResolved(  # noqa: N802
     request_id: str,
     seat: str,
@@ -603,6 +645,48 @@ def DispatchCapabilityCardMissing(  # noqa: N802
             "model": model,
             "capability_field": capability_field,
             "reason_code": reason_code,
+        },
+        scope="node",
+    )
+
+
+@event_factory
+def FrontierSdkReviewChildSpawned(  # noqa: N802
+    execution_id: str,
+    parent_execution_id: str,
+    parent_thread_id: str,
+    reviewer_model: str,
+    reviewer_family: str,
+    dedupe_key: str,
+) -> Event:
+    """Auto review child spawned after generate/cursor-sdk worker completion."""
+    return Event(
+        signal="frontier.sdk.review_child.spawned",
+        payload={
+            "execution_id": execution_id,
+            "parent_execution_id": parent_execution_id,
+            "parent_thread_id": parent_thread_id,
+            "reviewer_model": reviewer_model,
+            "reviewer_family": reviewer_family,
+            "dedupe_key": dedupe_key,
+        },
+        scope="node",
+    )
+
+
+@event_factory
+def FrontierReviewChildContextMissing(  # noqa: N802
+    execution_id: str,
+    thread_id: str,
+    attempts: int,
+) -> Event:
+    """Admission context miss exhausted reconcile window — fail closed, no spawn."""
+    return Event(
+        signal="frontier.review_child.context_missing",
+        payload={
+            "execution_id": execution_id,
+            "thread_id": thread_id,
+            "attempts": attempts,
         },
         scope="node",
     )

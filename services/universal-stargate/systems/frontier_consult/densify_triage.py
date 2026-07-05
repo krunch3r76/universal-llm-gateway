@@ -145,6 +145,7 @@ def build_generate_review_envelope(
 ) -> dict[str, Any]:
     """Present-and-null ``recommended_review`` plus opt-out audit fields."""
     from .executor_resolution import derive_generate_review
+    from .generate_admission_context_store import is_generate_review_child_lane_wired
 
     if auto_review_child:
         value = derive_generate_review(density_triage, auto_review_child=False)
@@ -152,8 +153,9 @@ def build_generate_review_envelope(
             "recommended_review": value,
             "auto_review_child_requested": True,
             "auto_review_spawned": False,
-            "auto_review_child_warning": _AUTO_REVIEW_CHILD_WARNING,
         }
+        if not is_generate_review_child_lane_wired():
+            envelope["auto_review_child_warning"] = _AUTO_REVIEW_CHILD_WARNING
     else:
         value = derive_generate_review(density_triage, auto_review_child=False)
         envelope = {"recommended_review": value}

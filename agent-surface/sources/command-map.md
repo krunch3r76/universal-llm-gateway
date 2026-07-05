@@ -18,7 +18,7 @@ use only the **read/plan** column.
 | `/consult-review` | `.cursor/commands/consult-review.md` → reviewer dispatch | same | In scope — primary connector job |
 | `/verify-implementation` | `.cursor/commands/verify-implementation.md` → checklist + gates | `fs` read-back + `observability` / dispatch as available | Read-only verification against named files |
 | `/overhaul` | `.cursor/commands/overhaul.md` → 12-step directory pass; read `docs/agent-guides/skills/overhaul-program.md` first | `fs` scan paths + `team_dispatch(handoff, role=web-consult)` for deep split **planning** + post-overhaul **review**, `team_dispatch(op=generate, role=cursor-sdk, packet_path=…, contract=implement)` for approved **mechanical apply** (default; dense packet) + `scripts/modularize` / `doc-generate` when operator approves each call | Read/plan only: modularize scan output + propose split/review plan; no execution |
-| `/claude-ai-sync` | `.cursor/commands/claude-ai-sync.md` → `gen_claude_bundles` + `upload_claude_bundles_ui.py --status` / upload; runbook `docs/agent-guides/skills/claude-ai-bundle-sync.md` | `fs` regen + validate; operator runs CDP upload on Jupiter — agent proposes commands, verifies `--status` | Out of scope (no claude.ai UI access) |
+| `/claude-ai-sync` | `.cursor/commands/claude-ai-sync.md` → `gen_claude_bundles` + `scripts/cortex/claude-ai-sync-jupiter` (status/upload on Jupiter); runbook `docs/agent-guides/skills/claude-ai-bundle-sync.md` | `fs` regen + validate locally; `claude-ai-sync-jupiter` or operator SSH for CDP upload | Out of scope (no claude.ai UI access) |
 
 **SOT:** this file. **Projection:** `docs/agent-guides/mvw-command-map.md` via
 `scripts/gen-rules --target command-map`. **Drift:** `scripts/agent-surface-check`.

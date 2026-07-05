@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+# Run claude.ai Skills upload/status on Jupiter where Chrome CDP lives.
+#
+# Cursor and other remote seats often have no DISPLAY and no CDP on :9222.
+# Playwright must SSH to Jupiter (DISPLAY=:1, logged-in claude.ai profile).
+#
+# Usage:
+#   scripts/cortex/claude-ai-sync-jupiter ensure-chrome
+#   scripts/cortex/claude-ai-sync-jupiter status
+#   scripts/cortex/claude-ai-sync-jupiter upload --slugs my-skill --continue-on-error
+#   scripts/cortex/claude-ai-sync-jupiter upload --all --continue-on-error
+#
+# Env: CLAUDE_AI_SSH_HOST (default jupiter), CLAUDE_AI_SSH_USER (default krunch3r)
+
+set -euo pipefail
+
+HOST="${CLAUDE_AI_SSH_HOST:-jupiter}"
+USER="${CLAUDE_AI_SSH_USER:-krunch3r}"
+SSH="${USER}@${HOST}"
+REMOTE_REPO="/mnt/torus/projects/universal-llm-gateway"
+PY='~/.venvs/universal/bin/python'
+PROFILE='$HOME/.gateway/claude-ai-chrome-profile'
+
+usage() {
+  sed -n '2,14p' "$0" | sed 's/^# \?//'
+  echo ""
+  echo "Commands: ensure-chrome | status | upload (pass-through args)"
+  exit "${1:-0}"
+}
+
+ensure_chrome() {
+  ssh "$SSH" 'bash -s' <<REMOTE
+set -e
+if curl -sf http://127.0.0.1:9222/json/version >/dev/null 2>&1; then
+  echo "CDP already up: \$(curl -s http://127.0.0.1:9222/json/version | python3 -c "import sys,json; print(json.load(sys.stdin).get('Browser','?'))")"
+  exit 0
+fi
+pkill -f 'remote-debugging-port=9222' 2>/dev/null || true
+sleep 1
+DISPLAY=:1 nohup google-chrome \\
+  --remote-debugging-port=9222 \\
+  --remote-allow-origins=* \\
+  --user-data-dir=${PROFILE} \\
+  --no-first-run \\
+  --no-default-browser-check \\
+  > /tmp/chrome-cdp-claude-ai.log 2>&1 &
+echo "Chrome PID: \$!"
+for i in \$(seq 1 15); do
+  sleep 1
+  if curl -sf http://127.0.0.1:9222/json/version >/dev/null 2>&1; then
+    echo "CDP ready after \${i}s"
+    curl -s http://127.0.0.1:9222/json/version | python3 -c "import sys,json; print(json.load(sys.stdin).get('Browser','?'))"
+    exit 0
+  fi
+done
+echo "CDP failed — tail /tmp/chrome-cdp-claude-ai.log" >&2
+tail -10 /tmp/chrome-cdp-claude-ai.log 2>/dev/null || true
+exit 1
+REMOTE
+}
+
+remote_ui() {
+  # shellcheck disable=SC2029
+  ssh "$SSH" "cd ${REMOTE_REPO} && BROWSER_CDP_URL=http://127.0.0.1:9222 ${PY} scripts/cortex/upload_claude_bundles_ui.py $*"
+}
+
+cmd="${1:-}"
+shift || true
+
+case "$cmd" in
+  ensure-chrome) ensure_chrome ;;
+  status)
+    ensure_chrome
+    remote_ui --status
+    ;;
+  upload)
+    ensure_chrome
+    remote_ui "$@"
+    ;;
+  -h|--help|help|'') usage 0 ;;
+  *)
+    echo "Unknown command: $cmd" >&2
+    usage 1
+    ;;
+esac

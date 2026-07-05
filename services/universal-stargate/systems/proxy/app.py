@@ -222,6 +222,11 @@ async def lifespan(app: FastAPI):
 
     try:
         await proxy.startup(app)
+        from systems.frontier_consult.review_child_spawn_hook import (
+            start_review_child_spawn_listener,
+        )
+
+        await start_review_child_spawn_listener()
         logger.info(
             "🔍 Lifespan: Startup completed successfully, yielding to application..."
         )

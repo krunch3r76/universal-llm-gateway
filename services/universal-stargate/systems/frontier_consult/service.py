@@ -16,8 +16,10 @@ from agent_seat.inject_registry import (
 )
 from agent_seat.role_entity_sync import resolve_dispatch_capabilities
 from agent_seat.skills_merge import (
+    McpPredicatedSkillsRejectedError,
     SkillsMountBackendInvalidError,
     caller_skill_ids_for_layer_c,
+    enforce_mcp_predicated_skills,
     enrich_rows_with_inline_drops,
     partition_skill_channels,
     resolve_effective_skills,
@@ -55,6 +57,8 @@ from .dispatch_messages import extract_last_user_message, wire_latest_user_turn
 from .events import (
     DispatchSkillsChannelResolved,
     DispatchSkillsMounted,
+    DispatchSkillsPredicatedRejected,
+    DispatchSkillsPredicatedSkipped,
     FrontierEndpointPersonaResolved,
     FrontierEndpointRequested,
     InlineBodyInjectionResolved,
@@ -210,6 +214,44 @@ def _emit_skills_channel_resolved(
     )
 
 
+def _emit_predicated_skipped(
+    *,
+    request_id: str,
+    role: str | None,
+    model: str,
+    skip_rows: tuple[Any, ...],
+    dropped: list[dict[str, object]] | None,
+    event_publisher: EventPublisher | None,
+) -> None:
+    if event_publisher is None:
+        return
+    skipped: list[str] = [row.requested_id for row in skip_rows]
+    for item in dropped or []:
+        if item.get("reason") == "mcp_predicated_skip":
+            entity_id = item.get("id")
+            if entity_id:
+                from agent_seat.guidance_entity import entity_slug_from_id
+
+                skipped.append(entity_slug_from_id(str(entity_id)))
+    if not skipped:
+        return
+    event_publisher(
+        DispatchSkillsPredicatedSkipped(
+            request_id=request_id,
+            role=role,
+            model=model,
+            skills=sorted(set(skipped)),
+        )
+    )
+
+
+def _classification_missing_slug(exc: Exception) -> str:
+    import re
+
+    match = re.search(r"canonical slug '([^']+)'", str(exc))
+    return match.group(1) if match else "unknown"
+
+
 def _resolve_platform_for_generate(req: FrontierGenerateRequest) -> str:
     if not req.role:
         return "*"
@@ -318,8 +360,58 @@ async def build_dispatch_body(
         code_touching=code_touching,
         packet_invariant_ids=packet_invariant_ids,
     )
+    predicated_skip_rows: tuple[Any, ...] = ()
+    try:
+        effective_skills, predicated_skip_rows = enforce_mcp_predicated_skills(
+            effective_skills,
+            mcp_enabled=mcp_enabled,
+        )
+    except McpPredicatedSkillsRejectedError as exc:
+        if event_publisher is not None:
+            event_publisher(
+                DispatchSkillsPredicatedRejected(
+                    request_id=request_id,
+                    role=req.role,
+                    model=effective_model,
+                    skills=list(exc.skills),
+                    origin="caller",
+                )
+            )
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="skills",
+            reason=(
+                "MCP-predicated caller skills cannot be dispatched to a non-MCP context"
+            ),
+            status_code=422,
+            code="skills_mcp_predicated",
+            details={
+                "model": effective_model,
+                "skills": list(exc.skills),
+                "reason_code": "skills_mcp_predicated",
+            },
+        ) from exc
+    except LookupError as exc:
+        from implement_admission.skill_mcp_classification import (
+            SkillClassificationMissingError,
+        )
+
+        if isinstance(exc, SkillClassificationMissingError):
+            slug = _classification_missing_slug(exc)
+            raise FrontierEndpointError(
+                request_id=request_id,
+                field="skills",
+                reason=str(exc),
+                status_code=422,
+                code="skill_classification_missing",
+                details={
+                    "slug": slug,
+                    "reason_code": "skill_classification_missing",
+                },
+            ) from exc
+        raise
     skill_partition = None
-    channel_rows: tuple[Any, ...] = ()
+    channel_rows: tuple[Any, ...] = predicated_skip_rows
     provider_mount_slugs: frozenset[str] = frozenset()
     caller_layer_c_ids: tuple[str, ...] = ()
     cursor_sdk_model = ModelId.parse(effective_model).backend_type == "cursor_sdk"
@@ -359,6 +451,7 @@ async def build_dispatch_body(
         caller_layer_c_ids = caller_skill_ids_for_layer_c(
             effective_skills, skill_partition.layer_c
         )
+        channel_rows = (*predicated_skip_rows, *channel_rows)
 
     meta = AgentMeta()
     system_assembled = req.system or ""
@@ -388,6 +481,7 @@ async def build_dispatch_body(
                 packet_invariant_ids=packet_invariant_ids,
                 caller_skill_ids=caller_layer_c_ids,
                 provider_mount_slugs=provider_mount_slugs,
+                exclude_mcp_predicated=not mcp_enabled,
             )
         except CallerSkillUnresolvedError as exc:
             raise FrontierEndpointError(
@@ -396,6 +490,25 @@ async def build_dispatch_body(
                 reason=str(exc),
                 status_code=422,
             ) from exc
+        except LookupError as exc:
+            from implement_admission.skill_mcp_classification import (
+                SkillClassificationMissingError,
+            )
+
+            if isinstance(exc, SkillClassificationMissingError):
+                slug = _classification_missing_slug(exc)
+                raise FrontierEndpointError(
+                    request_id=request_id,
+                    field="skills",
+                    reason=str(exc),
+                    status_code=422,
+                    code="skill_classification_missing",
+                    details={
+                        "slug": slug,
+                        "reason_code": "skill_classification_missing",
+                    },
+                ) from exc
+            raise
         # Layer-C body-inject for no-fs generate roles (e.g. openai/gpt-5.5) is enforced
         # inside hydrate_agent → resolve_injected_bodies(inline_only_dispatch=True).
         meta = bundle.agent_meta
@@ -466,6 +579,18 @@ async def build_dispatch_body(
                     deadline_hit=bool(metrics.get("deadline_hit")),
                 )
             )
+        _emit_predicated_skipped(
+            request_id=request_id,
+            role=req.role,
+            model=effective_model,
+            skip_rows=predicated_skip_rows,
+            dropped=(
+                (bundle.injection_meta or {}).get("dropped")
+                if bundle.injection_meta
+                else None
+            ),
+            event_publisher=event_publisher,
+        )
 
     elif skill_partition is not None:
         try:
@@ -478,6 +603,7 @@ async def build_dispatch_body(
                 packet_invariant_ids=packet_invariant_ids,
                 caller_skill_ids=caller_layer_c_ids,
                 provider_mount_slugs=provider_mount_slugs,
+                exclude_mcp_predicated=not mcp_enabled,
             )
         except CallerSkillUnresolvedError as exc:
             raise FrontierEndpointError(
@@ -486,6 +612,25 @@ async def build_dispatch_body(
                 reason=str(exc),
                 status_code=422,
             ) from exc
+        except LookupError as exc:
+            from implement_admission.skill_mcp_classification import (
+                SkillClassificationMissingError,
+            )
+
+            if isinstance(exc, SkillClassificationMissingError):
+                slug = _classification_missing_slug(exc)
+                raise FrontierEndpointError(
+                    request_id=request_id,
+                    field="skills",
+                    reason=str(exc),
+                    status_code=422,
+                    code="skill_classification_missing",
+                    details={
+                        "slug": slug,
+                        "reason_code": "skill_classification_missing",
+                    },
+                ) from exc
+            raise
         if resolution.block_md:
             system_assembled = f"{system_assembled}{resolution.block_md}"
         if skill_partition.layer_a:
@@ -521,6 +666,14 @@ async def build_dispatch_body(
                     deadline_hit=False,
                 )
             )
+        _emit_predicated_skipped(
+            request_id=request_id,
+            role=req.role,
+            model=effective_model,
+            skip_rows=predicated_skip_rows,
+            dropped=resolution.dropped,
+            event_publisher=event_publisher,
+        )
 
     _emit_skills_channel_resolved(
         request_id=request_id,

@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import HTTPException
+from implement_admission.dense_spec_schema import dense_spec_hash_uri
 from implement_admission.gate_distillation import (
     GateDistillationInputs,
     prepare_gate_distillation,
@@ -16,16 +17,33 @@ from implement_admission.implement_ready import (
     ImplementReadyVerdict,
     evaluate_implement_ready,
 )
+from implement_admission.implement_ready_gate_resolve import (
+    SkepticRatificationOutcome,
+    resolve_skeptic_ratification,
+)
 from universal_logging import get_logger
 
 from ..db import cortex_conn, query
 from ..entity_aliases import resolve_entity_reference
 from ..routes.assertions import _create_assertion_impl
 from ._shared import record
+from .ops_assertions import _op_assertions
 from .ops_assertions_update import _op_assertion_get, _op_assertion_update
 from .ops_entities import _op_entity_get, _op_entity_update
 
 logger = get_logger("cortex-api.dispatch_ops.todo_gate_distillation")
+
+
+class _DistillImplementReadyCortex:
+    def entity_get(self, entity_id: str, **kwargs: Any) -> dict[str, Any]:
+        return _op_entity_get(entity_id=entity_id, **kwargs)
+
+    def assertion_get(self, assertion_id: int) -> dict[str, Any]:
+        return _op_assertion_get(assertion_id=assertion_id)
+
+    def assertions(self, entity_id: str, **kwargs: Any) -> dict[str, Any]:
+        return _op_assertions(entity_id=entity_id, **kwargs)
+
 
 _DEFAULT_CLAIM = (
     "Implement-ready: Gate-2 attribute distillation wired — dense spec path and "
@@ -162,18 +180,39 @@ def _evaluate_from_persisted(
     raw_acs = attrs.get("acceptance_criteria")
     acceptance_criteria = raw_acs if isinstance(raw_acs, list) else []
 
+    now_iso = datetime.now(UTC).isoformat()
+    triage = (attrs.get("density_triage") or "").strip()
+    spec_hash_uri = dense_spec_hash_uri(spec_text) if spec_text else None
+    if triage == "judgment_required":
+        skeptic_outcome = resolve_skeptic_ratification(
+            todo_id=entity_id,
+            cortex=_DistillImplementReadyCortex(),
+            now_iso=now_iso,
+            spec_hash_uri=spec_hash_uri,
+        )
+    else:
+        skeptic_outcome = SkepticRatificationOutcome(ratified=False)
+
+    raw_waived = attrs.get("recon_waived")
+    recon_waived = isinstance(raw_waived, str) and bool(raw_waived.strip())
+
     return evaluate_implement_ready(
         todo_id=entity_id,
         density_triage=attrs.get("density_triage"),
         source_uri=entity.get("source_uri"),
         implement_ready_assertion_id=aid,
         assertion=assertion,
-        now_iso=datetime.now(UTC).isoformat(),
+        now_iso=now_iso,
         dense_spec_uri=prepared.spec_path,
         dense_spec_text=spec_text,
         files_expected=files_expected,
         acceptance_criteria=acceptance_criteria,
         entity_name=entity.get("name"),
+        skeptic_ratified=skeptic_outcome.ratified,
+        recon_waived=recon_waived,
+        skeptic_evidence_grounded=skeptic_outcome.evidence_grounded,
+        skeptic_evidence_unresolved=skeptic_outcome.evidence_unresolved,
+        skeptic_evidence_mode=skeptic_outcome.evidence_mode,
     )
 
 

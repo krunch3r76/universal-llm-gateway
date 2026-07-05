@@ -287,6 +287,18 @@ async def dispatch_cursor_sdk_generate(
         contract=handoff_contract,
     )
 
+    from .generate_admission_context_store import write_admission_context
+
+    write_admission_context(
+        execution_id=execution_id,
+        auto_review_child=auto_review_child,
+        op="generate",
+        role=role,
+        resolved_model=resolved_model,
+        parent_dispatch_thread_id=parent_dispatch_thread_id,
+        dispatch_thread_id=dispatch_thread_id,
+    )
+
     if claimed_via_atomic:
         admitted = True
     else:

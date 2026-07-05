@@ -15,7 +15,7 @@ from agent_seat.body_injection import (
 from agent_seat.guidance_entity import entity_slug_from_id
 
 Origin = Literal["caller", "scope_default"]
-Channel = Literal["layer_a", "layer_b", "layer_c"]
+Channel = Literal["layer_a", "layer_b", "layer_c", "none"]
 Disposition = Literal["delivered", "dropped"]
 
 _VALID_MOUNT_BACKENDS = frozenset({"openai_container", "none"})
@@ -30,6 +30,16 @@ class SkillsMountBackendInvalidError(ValueError):
         super().__init__(
             f"capability_card_value_invalid: model={model!r} "
             f"capability_field='skills_mount_backend' value={value!r}"
+        )
+
+
+class McpPredicatedSkillsRejectedError(ValueError):
+    """Caller-supplied MCP-predicated skills on a non-MCP dispatch."""
+
+    def __init__(self, skills: tuple[str, ...]) -> None:
+        self.skills = skills
+        super().__init__(
+            f"MCP-predicated caller skills rejected on non-MCP dispatch: {list(skills)}"
         )
 
 
@@ -111,6 +121,45 @@ def resolve_effective_skills(
         order.append(canonical)
 
     return tuple(seen[key] for key in order)
+
+
+def enforce_mcp_predicated_skills(
+    effective: tuple[EffectiveSkill, ...],
+    *,
+    mcp_enabled: bool,
+) -> tuple[tuple[EffectiveSkill, ...], tuple[SkillChannelRow, ...]]:
+    """Reject caller-origin predicated skills; skip scope-default predicated ones."""
+    if mcp_enabled:
+        return effective, ()
+
+    from implement_admission.skill_mcp_classification import skill_mcp_predicated
+
+    caller_offenders: list[str] = []
+    filtered: list[EffectiveSkill] = []
+    skip_rows: list[SkillChannelRow] = []
+
+    for skill in effective:
+        if skill_mcp_predicated(skill.canonical_id):
+            if skill.origin == "caller":
+                caller_offenders.append(skill.requested_id)
+            else:
+                skip_rows.append(
+                    SkillChannelRow(
+                        requested_id=skill.requested_id,
+                        canonical_id=skill.canonical_id,
+                        origin=skill.origin,
+                        channel="none",
+                        disposition="dropped",
+                        drop_reason="mcp_predicated_skip",
+                    )
+                )
+        else:
+            filtered.append(skill)
+
+    if caller_offenders:
+        raise McpPredicatedSkillsRejectedError(tuple(caller_offenders))
+
+    return tuple(filtered), tuple(skip_rows)
 
 
 def _read_mount_backend(model: str) -> str:

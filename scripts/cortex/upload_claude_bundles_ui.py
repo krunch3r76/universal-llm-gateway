@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
 """Upload skills to claude.ai Customize → Skills via CDP-attached Chrome.
 
-Workflow (saved runbook: docs/agent-guides/skills/claude-ai-bundle-sync.md):
+Workflow (SOT): docs/agent-guides/skills/claude-ai-bundle-sync.md
 
-  # 1. Regen local bundles from SOT
+**Run on Jupiter** where Chrome CDP lives. From Cursor / remote seats use:
+  scripts/cortex/claude-ai-sync-jupiter status|upload …
+
+Local-only steps (any host with repo mount):
   python scripts/cortex/gen_claude_bundles.py
+  python scripts/cortex/gen_claude_bundles.py --check
 
-  # 2. Scan drift (Chrome CDP on Customize → Skills)
+On Jupiter (or via claude-ai-sync-jupiter wrapper):
   python scripts/cortex/upload_claude_bundles_ui.py --status
-
-  # 3. Upload NEW slugs only
+  python scripts/cortex/upload_claude_bundles_ui.py --slugs SLUG --continue-on-error
   python scripts/cortex/upload_claude_bundles_ui.py --all --continue-on-error
-
-  # 4. Refresh content for skills already on UI
   python scripts/cortex/upload_claude_bundles_ui.py --all --replace --continue-on-error
 
 Skills API (--api on upload_claude_bundles.py) does **not** populate this UI.

@@ -201,6 +201,19 @@ def _collect_skill_slugs(text: str, cortex: CortexEntityReader) -> list[str]:
     return slugs
 
 
+def _slug_represented_in_text(text: str, slug: str) -> bool:
+    """Return True when slug is already wired in any fs-line or comment form."""
+    lowered = text.lower()
+    needle = slug.lower()
+    if f"agent_skill:{needle}" in lowered:
+        return True
+    if f"agent-skills/{needle}.md" in lowered:
+        return True
+    if f"/{needle}.md" in lowered:
+        return True
+    return False
+
+
 def _merge_block_lines(
     text: str, tag: str, new_lines: list[str]
 ) -> tuple[str, list[str]]:
@@ -255,11 +268,11 @@ def enrich_handoff_packet(
             line = source_uri_to_fs_line(source_uri)
         except ValueError:
             continue
-        if line not in text:
+        if _slug_represented_in_text(text, slug):
+            skills_already_wired.append(slug)
+        else:
             invariant_lines.append(f"- {line}  # agent_skill:{slug}")
             skills_added.append(slug)
-        else:
-            skills_already_wired.append(slug)
 
     text, _ = _merge_block_lines(text, "invariants", invariant_lines)
 

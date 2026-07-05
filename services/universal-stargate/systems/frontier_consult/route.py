@@ -200,6 +200,8 @@ class TeamDispatchToThreadBody(_DispatchCommon):
     mcp: bool | None = None
     contract: Literal["light-bounded", "pure-mechanical", "implement"]
     auto_review_child: bool = False
+    read_only: bool = False
+    spawn_review_provenance: Literal["generate_review_child"] | None = None
     # result_delivery MUST NOT appear — derived from thread + role; extra="forbid"
     # rejects any caller that supplies it.
 

@@ -32,7 +32,10 @@ def chrome_start_hint(*, port: int = 9222, profile_dir=None) -> str:
 
     profile = profile_dir or Path.home() / ".gateway" / "claude-ai-chrome-profile"
     return (
-        f"google-chrome --remote-debugging-port={port} "
+        "# Run ON THE CDP HOST (default: Jupiter DISPLAY=:1), not the Cursor remote shell.\n"
+        "# Prefer: scripts/cortex/claude-ai-sync-jupiter ensure-chrome\n"
+        f"DISPLAY=:1 google-chrome --remote-debugging-port={port} "
+        f"--remote-allow-origins=* "
         f'--user-data-dir="{profile}"'
     )
 
@@ -121,8 +124,9 @@ async def connect_cdp(cdp_url: str) -> tuple[object, Browser, BrowserContext, Pa
     except Exception as exc:
         await pw.stop()
         raise RuntimeError(
-            f"CDP connect failed ({cdp_url}). Start Chrome first:\n"
-            f"  {chrome_start_hint()}"
+            f"CDP connect failed ({cdp_url}). Start Chrome on the CDP host first.\n"
+            f"  Cursor/remote seat → scripts/cortex/claude-ai-sync-jupiter ensure-chrome\n"
+            f"  Manual Jupiter:\n{chrome_start_hint()}"
         ) from exc
     if not browser.contexts:
         await pw.stop()

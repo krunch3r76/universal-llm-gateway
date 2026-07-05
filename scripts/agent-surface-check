@@ -14,15 +14,17 @@ set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
 
+PYTHON="${VIRTUAL_ENV:-${HOME}/.venvs/universal}/bin/python3"
+
 scripts/gen-rules --target cursor --check
 scripts/gen-rules --target command-map --check
 scripts/gen-rules --target agent-guides-rules --check
-"${HOME}/.venvs/universal/bin/python3" scripts/registry-check
-"${HOME}/.venvs/universal/bin/python3" scripts/gen-mcp-dispatch-role-docs --check
+"$PYTHON" scripts/registry-check
+"$PYTHON" scripts/gen-mcp-dispatch-role-docs --check
 # Blocking catalog gate + import guard (parity logic retired Phase 2).
-"${HOME}/.venvs/universal/bin/python3" -m scripts.gen_event_catalog check || exit 1
-"${HOME}/.venvs/universal/bin/python3" scripts/check-rag-events-imports.py --staged || exit 1
-"${HOME}/.venvs/universal/bin/python3" scripts/check-workflow-doc-drift.py
-"${HOME}/.venvs/universal/bin/python3" scripts/check-team-dispatch-surface-drift.py
+"$PYTHON" -m scripts.gen_event_catalog check || exit 1
+"$PYTHON" scripts/check-rag-events-imports.py --staged || exit 1
+"$PYTHON" scripts/check-workflow-doc-drift.py
+"$PYTHON" scripts/check-team-dispatch-surface-drift.py
 
 echo "OK agent-surface-check: all gates passed"

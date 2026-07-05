@@ -573,3 +573,100 @@ def test_merged_overlap_provider_mounted_regression(
         item.get("reason") == "provider_mounted"
         for item in resolution.dropped
     )
+
+
+def test_exclude_mcp_predicated_drops_predicated_entry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bodies = {
+        "agent_skill:cortex-orientation": "orientation-body",
+        "agent_skill:cortex-provenance-discipline": "provenance-body",
+    }
+    _body_map(monkeypatch, bodies)
+    resolution = resolve_injected_bodies(
+        "claude-api",
+        platform="api",
+        budget_bytes=None,
+        exclude_mcp_predicated=True,
+    )
+    dropped_reasons = {
+        item["id"]: item["reason"] for item in resolution.dropped
+    }
+    assert dropped_reasons.get("rule:cortex-orientation") == "mcp_predicated_skip"
+    assert "orientation-body" not in resolution.block_md
+    assert "provenance-body" in resolution.block_md
+
+
+def test_exclude_mcp_predicated_critical_tier_no_required_body_unresolved(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bodies = {
+        "agent_skill:cortex-orientation": "orientation-body",
+    }
+    _body_map(monkeypatch, bodies)
+    resolution = resolve_injected_bodies(
+        "claude-api",
+        platform="api",
+        budget_bytes=None,
+        exclude_mcp_predicated=True,
+    )
+    assert resolution.injected == []
+    assert any(
+        item.get("reason") == "mcp_predicated_skip"
+        for item in resolution.dropped
+    )
+
+
+def test_exclude_mcp_predicated_mandatory_bundle_predicated_excluded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bodies = {
+        "agent_skill:cortex-orientation": "orientation",
+        "agent_skill:cortex-provenance-discipline": "provenance",
+        "agent_skill:orchestrator-workflow": "orchestrator-workflow",
+        "agent_skill:architecture-invariants": "arch",
+        "agent_skill:ulg-architecture": "ulg",
+    }
+    _body_map(monkeypatch, bodies)
+    resolution = resolve_injected_bodies(
+        "claude-web",
+        role="claude-web",
+        platform="web",
+        inject_profile="dispatch",
+        code_touching=True,
+        budget_bytes=None,
+        inline_only_dispatch=True,
+        exclude_mcp_predicated=True,
+    )
+    injected_ids = {item["id"] for item in resolution.injected}
+    assert "rule:orchestrator-workflow" not in injected_ids
+    assert "rule:architecture-invariants" in injected_ids
+    assert any(
+        item.get("id") == "rule:orchestrator-workflow"
+        and item.get("reason") == "mcp_predicated_skip"
+        for item in resolution.dropped
+    )
+
+
+def test_exclude_mcp_predicated_false_preserves_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bodies = {
+        "agent_skill:cortex-orientation": "orientation-body",
+        "agent_skill:cortex-provenance-discipline": "provenance-body",
+    }
+    _body_map(monkeypatch, bodies)
+    baseline = resolve_injected_bodies(
+        "claude-api",
+        platform="api",
+        budget_bytes=None,
+    )
+    with_flag = resolve_injected_bodies(
+        "claude-api",
+        platform="api",
+        budget_bytes=None,
+        exclude_mcp_predicated=False,
+    )
+    assert with_flag.block_md == baseline.block_md
+    assert with_flag.injected == baseline.injected
+    assert with_flag.dropped == baseline.dropped

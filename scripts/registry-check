@@ -15,8 +15,11 @@ Gates:
   G5 — JSON-Schema ≡ live OpenAPI: compare canonical.yaml json_schema fields
        against /openapi.json from the running MCP server. Skipped (not failed)
        if the server is unreachable. Drift written to tmp/reviews/g5-drift-*.md.
-  G6 — FOL descriptor presence: every entry has a fol_descriptor containing
-       at least one FOL symbol (∀ ∃ ⟹ ¬ ∈).
+  G6 — (retired 2026-06-30, operator decision agent-bus:3782 / cortex assertion
+       21597) FOL-symbol presence requirement dropped; a fol_descriptor is valid
+       when non-empty (behavioral clause OR "See agent_skill:X" pointer).
+       Enforcement moved to agent_skill:descriptor-authoring-discipline; the
+       mechanical symbol-presence hard-fail is removed. Gate no-ops.
   G7 — Cache-invariance window (D5): if any fol_descriptor block was modified
        within the last 30 days (git blame, non-initial commits) AND the entry
        lacks cache_window_override: true, fail.
@@ -68,7 +71,6 @@ def _fix_dates(obj: object) -> object:
     return obj
 
 
-_FOL_SYMBOLS: frozenset[str] = frozenset({"∀", "∃", "⟹", "¬", "∈"})
 _NAME_RE = re.compile(r"^[a-z][a-z0-9]*(_[a-z0-9]+)+$")
 # G3 cap: Claude /mcp dispatcher count ≤ 24 (D0).
 _CLAUDE_DISPATCHER_CAP = 24
@@ -106,6 +108,18 @@ def _check_cortex_api_health() -> bool:
     return sock_path.exists()
 
 
+def _g4_valid_reference_names(tools: list[dict]) -> set[str]:
+    """Canonical names plus MCP surface names from dispatcher/flat call shapes."""
+    valid: set[str] = {t["canonical_name"] for t in tools}
+    for tool in tools:
+        canonical = tool["canonical_name"]
+        for shape_key in ("dispatcher_call_shape", "flat_call_shape"):
+            surface = tool[shape_key]["tool"]
+            if surface != canonical:
+                valid.add(surface)
+    return valid
+
+
 def _run_g4(tools: list[dict], skills_root: Path) -> None:
     """G4: every canonical name mentioned in skill files exists in the registry.
 
@@ -113,7 +127,7 @@ def _run_g4(tools: list[dict], skills_root: Path) -> None:
     migration-040 must be resolved with G4 scheduled OR descriptors flagged
     'skill-pointer unvalidated' before B5 cutover.
     """
-    canonical_names: set[str] = {t["canonical_name"] for t in tools}
+    valid_names = _g4_valid_reference_names(tools)
     cortex_available = _check_cortex_api_health()
 
     if not cortex_available:
@@ -146,7 +160,7 @@ def _run_g4(tools: list[dict], skills_root: Path) -> None:
             domain_prefix = token.split("_")[0]
             if domain_prefix not in known_domains:
                 continue
-            if token not in canonical_names:
+            if token not in valid_names:
                 stale_refs.append(f"{rel_path}: {token!r}")
 
     for skill_file in sorted(skill_files):
@@ -603,18 +617,12 @@ def run_gates(
     else:
         _run_g5(tools, mcp_url, repo_root)
 
-    # ── G6 — FOL descriptor presence ─────────────────────────────────────────
-    missing_fol: list[str] = [
-        t["canonical_name"]
-        for t in tools
-        if not any(sym in t.get("fol_descriptor", "") for sym in _FOL_SYMBOLS)
-    ]
-    if missing_fol:
-        _fail(
-            "G6",
-            f"{len(missing_fol)} entries missing FOL symbols: {missing_fol}",
-        )
-    _ok("G6", f"all {len(tools)} entries have FOL descriptors")
+    # ── G6 — (retired 2026-06-30) FOL-symbol presence requirement dropped ─────
+    # Operator decision agent-bus:3782 / cortex assertion 21597: a fol_descriptor
+    # is valid when non-empty (behavioral clause OR "See agent_skill:X" pointer).
+    # Enforcement moved to agent_skill:descriptor-authoring-discipline; the
+    # mechanical symbol-presence hard-fail is removed. Gate intentionally no-ops.
+    _ok("G6", "retired — FOL-symbol requirement dropped (see assertion 21597)")
 
     # ── G7 — cache-invariance window ──────────────────────────────────────────
     _run_g7(tools, registry_path)

@@ -47,6 +47,7 @@ from services.git_integration_worker.cursor_home import (
     CursorHomeConfigError,
     CursorVenvConfigError,
     build_dispatch_path_prepend,
+    prune_stale_dispatch_homes,
     resolve_repo_venv,
     setup_cursor_dispatch_home,
     validate_repo_venv,
@@ -671,6 +672,9 @@ async def stale_lease_sweeper(app: FastAPI) -> None:
 
 async def startup_ledger_reconcile(app: FastAPI) -> None:
     """Reconcile restart survivors and promote any queued heads."""
+    removed = await asyncio.to_thread(prune_stale_dispatch_homes)
+    if removed:
+        logger.info("startup dispatch_home prune removed=%d", removed)
     ledger = CursorDispatchLedger.instance()
     controller = app.state.admission_controller
     repos = await asyncio.to_thread(

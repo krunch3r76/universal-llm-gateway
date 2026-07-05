@@ -6,35 +6,7 @@ INVARIANT: ∀ failure_mode f: ∃ metric m: detects(m, f)
 All metrics use federation_ prefix per naming conventions.
 """
 
-from universal_logging import get_logger
-
-logger = get_logger(__name__)
-
-try:
-    from prometheus_client import Counter, Gauge, Histogram
-except ImportError:
-
-    class _NoOpMetricChild:
-        def inc(self, amount: float = 1) -> None:
-            pass
-
-        def dec(self, amount: float = 1) -> None:
-            pass
-
-        def set(self, value: float) -> None:
-            pass
-
-        def observe(self, amount: float) -> None:
-            pass
-
-    class _NoOpMetric:
-        def __init__(self, *args, **kwargs) -> None:
-            pass
-
-        def labels(self, *args, **kwargs) -> _NoOpMetricChild:
-            return _NoOpMetricChild()
-
-    Counter = Gauge = Histogram = _NoOpMetric
+from prometheus_client import Counter, Gauge, Histogram
 
 
 class FederationMetrics:

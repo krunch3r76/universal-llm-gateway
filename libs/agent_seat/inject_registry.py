@@ -584,6 +584,7 @@ def resolve_injected_bodies(
     mandatory_body_slugs: frozenset[str] = frozenset(),
     inline_only_dispatch: bool = False,
     provider_mount_slugs: frozenset[str] = frozenset(),
+    exclude_mcp_predicated: bool = False,
 ) -> InjectResolution:
     """Single registry-driven resolver for all server inject paths."""
     del seat  # reserved for future seat-specific policy
@@ -610,10 +611,22 @@ def resolve_injected_bodies(
 
     resolved_rows: list[tuple[InjectEntry, dict[str, Any]]] = []
     dropped: list[dict[str, Any]] = []
+    skipped_predicated_canonical: set[str] = set()
     for entry in ordered_entries:
         if canonical_agent_skill_id(entry.entity_id) in mount_ids:
             dropped.append({"id": entry.entity_id, "reason": "provider_mounted"})
             continue
+        if exclude_mcp_predicated:
+            from implement_admission.skill_mcp_classification import (
+                skill_mcp_predicated,
+            )
+
+            if skill_mcp_predicated(entry.entity_id):
+                dropped.append({"id": entry.entity_id, "reason": "mcp_predicated_skip"})
+                skipped_predicated_canonical.add(
+                    canonical_agent_skill_id(entry.entity_id)
+                )
+                continue
         row, reason = _fetch_registry_entry(entry, metrics=metrics)
         if row is None:
             dropped.append({"id": entry.entity_id, "reason": reason or "unreachable"})
@@ -621,6 +634,13 @@ def resolve_injected_bodies(
                 raise RequiredBodyUnresolved(dropped)
             continue
         resolved_rows.append((entry, row))
+
+    if skipped_predicated_canonical:
+        mandatory_body_slugs = frozenset(
+            slug
+            for slug in mandatory_body_slugs
+            if canonical_agent_skill_id(slug) not in skipped_predicated_canonical
+        )
 
     block_md, injected, pack_dropped, pack_meta = _pack_tiered_bodies(
         resolved_rows,

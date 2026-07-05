@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import os
 import shutil
+import time
+from datetime import UTC, datetime
 from pathlib import Path
 
 from universal_logging import get_logger
@@ -30,6 +32,9 @@ _DISPATCH_HOME_ROOT = Path(
         "~/.local/share/git-integration-worker/cursor-dispatch-homes",
     )
 ).expanduser()
+_DEFAULT_DISPATCH_HOME_RETENTION_DAYS = int(
+    os.environ.get("CURSOR_DISPATCH_HOME_RETENTION_DAYS", "14")
+)
 
 
 DEFAULT_REPO_VENV_RELPATH = Path(".venvs") / "universal"
@@ -49,6 +54,53 @@ def dispatch_home_path(dispatch_id: str, *, root: Path | None = None) -> Path:
     """``{root}/{dispatch_id}-home`` — root defaults to ``_DISPATCH_HOME_ROOT``."""
     base = root if root is not None else _DISPATCH_HOME_ROOT
     return base / f"{dispatch_id}-home"
+
+
+def prune_stale_dispatch_homes(
+    *,
+    max_age_days: int | None = None,
+    root: Path | None = None,
+) -> int:
+    """Delete dispatch HOME dirs older than *max_age_days* (default env/14).
+
+    Each cursor-sdk dispatch copies credentials into a private HOME; these
+    accumulate without bound. Prune at worker startup and via manual cleanup.
+    """
+    retention_days = (
+        _DEFAULT_DISPATCH_HOME_RETENTION_DAYS
+        if max_age_days is None
+        else max_age_days
+    )
+    if retention_days < 1:
+        return 0
+    base = root if root is not None else _DISPATCH_HOME_ROOT
+    if not base.is_dir():
+        return 0
+    cutoff = time.time() - retention_days * 86400
+    removed = 0
+    for entry in base.iterdir():
+        if not entry.is_dir() or not entry.name.endswith("-home"):
+            continue
+        try:
+            if entry.stat().st_mtime >= cutoff:
+                continue
+        except OSError as exc:
+            logger.warning("dispatch_home prune skip %s: %s", entry, exc)
+            continue
+        try:
+            shutil.rmtree(entry)
+            removed += 1
+        except OSError as exc:
+            logger.warning("dispatch_home prune failed %s: %s", entry, exc)
+    if removed:
+        logger.info(
+            "dispatch_home prune: removed=%d retention_days=%d root=%s cutoff=%s",
+            removed,
+            retention_days,
+            base,
+            datetime.fromtimestamp(cutoff, tz=UTC).isoformat(),
+        )
+    return removed
 
 
 def _copy_path_if_present(src: Path, dst: Path) -> None:

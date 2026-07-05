@@ -299,6 +299,7 @@ async def hydrate_agent(
     packet_invariant_ids: tuple[str, ...] = (),
     caller_skill_ids: tuple[str, ...] = (),
     provider_mount_slugs: frozenset[str] = frozenset(),
+    exclude_mcp_predicated: bool = False,
 ) -> HydrationBundle:
     """Fetch the dispatched agent's boot state and render a briefing card.
 
@@ -458,6 +459,7 @@ async def hydrate_agent(
             already_present=already_present,
             inline_only_dispatch=inline_only and inject_profile == "dispatch",
             provider_mount_slugs=provider_mount_slugs,
+            exclude_mcp_predicated=exclude_mcp_predicated,
         )
         if resolution.block_md:
             injected_bodies_md = resolution.block_md
