@@ -15,7 +15,7 @@ _ENTITY_NOT_INDEXED_ALLOWLIST: frozenset[str] = frozenset(
         "delegate-to-grok",
         "document-ocr",
         "document-review-timeline-linkage-audit",
-        "docx_ingestion",
+        "docx-ingestion",
         "grok-build-dispatch",
         "grok-web-dispatch",
         "grokbuild",

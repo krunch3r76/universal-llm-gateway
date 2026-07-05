@@ -92,10 +92,13 @@ For confirmed candidates, execute `scripts/ingest-article` per `research-article
 
 ```bash
 scripts/ingest-article --arxiv <ID> --subdir <subdir> --filename <slug>.pdf \
-  --title "<title>" --authors "<authors>" --date <YYYY-MM-DD> --scope <scope>
+  --title "<title>" --authors "<authors>" --date <YYYY-MM-DD> --scope <scope> --index
 ```
 
 Batch ingestion: script like `scripts/download-doc-research-corpus.py`.
+
+
+**Indexing is a separate step — do not omit it.** Without `--index`, the file is indexed only on the next RAG restart or watcher cycle (not immediately), so a verbatim copy of the command without it leaves new files on disk but unsearchable until then — the +0-coverage trap (assertion **21956**, thread 4041). Pass `--index` to trigger immediate indexing via `POST /index` (requires RAG running), then confirm with Step 7 `rag(op="coverage")` that `indexed_files` rose and `last_indexed` is fresh before treating ingest as done.
 
 ## Step 7 — Verify coverage
 

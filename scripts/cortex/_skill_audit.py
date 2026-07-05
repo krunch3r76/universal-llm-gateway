@@ -69,7 +69,7 @@ _PARITY_ALLOWLIST: dict[str, dict[str, str]] = {
     "document-ingestion": _meta("document domain skill"),
     "document-lifecycle-tracking": _meta("document domain skill"),
     "document-review-timeline-linkage-audit": _meta("legal domain skill"),
-    "docx_ingestion": _meta("document domain skill"),
+    "docx-ingestion": _meta("document domain skill"),
     "email-bridge-mailbox": _meta("email bridge domain skill"),
     "email-tool-dispatch": _meta("email bridge domain skill"),
     "engagement-stance": _meta("legal domain skill"),
