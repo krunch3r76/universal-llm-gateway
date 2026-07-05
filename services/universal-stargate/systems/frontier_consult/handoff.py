@@ -83,8 +83,6 @@ def _packet_references_arch_skill_slug(text: str, slug: str) -> bool:
     reviewer gets a loadable ref, not an unresolvable mention."""
     if f"agent-skills/{slug}" in text:
         return True
-    if f"docs/agent-guides/skills/{slug}.md" in text:
-        return True
     return f".cursor/skills/{slug}/SKILL.md" in text
 
 
@@ -139,7 +137,7 @@ def _mcp_packet_seats() -> frozenset[str]:
 _PROTOCOL_HINT = (
     "Author per project .cursor/rules/architecture-handoff-protocol.mdc "
     "§ The Six Required Blocks (skeleton: "
-    "docs/agent-guides/skills/handoff-packet-authoring.md)."
+    ".cursor/skills/handoff-packet-authoring/SKILL.md)."
 )
 
 
@@ -264,8 +262,8 @@ def validate_packet(
                     "must reference the universal invariant + ULG architecture "
                     "layers (Block 2 / Block 5) so the reviewer reads them before "
                     "findings. Acceptable forms: legacy slug substring "
-                    "('agent-skills/<slug>'), workspaces SOT path "
-                    "('docs/agent-guides/skills/<slug>.md') — not a non-resolving "
+                    "('agent-skills/<slug>'), workspaces canonical path "
+                    "('.cursor/skills/<slug>/SKILL.md') — not a non-resolving "
                     "display path; a recognizable display-name stem is reported "
                     "below with its exact rewrite. "
                     "Exact legacy strings in details.expected_refs. "

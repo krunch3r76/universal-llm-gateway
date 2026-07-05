@@ -5,9 +5,6 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-_CANONICAL_DOC_RE = re.compile(
-    r"universal-llm-gateway/docs/agent-guides/skills/([A-Za-z0-9_-]+)\.md"
-)
 _CORTEX_SOT_RE = re.compile(
     r"SOT:[\s`*]*"
     r"(?:cortex://agent-skills/"
@@ -17,7 +14,7 @@ _CORTEX_SOT_RE = re.compile(
 _SUPPRESSED = frozenset({"deprecated", "retired"})
 _CREATE_SUPPRESSED_LIFECYCLES = frozenset({"deprecated", "retired", "merged"})
 _WS = "workspaces://universal-llm-gateway"
-_SYNC_SOURCE_URI = f"{_WS}/docs/agent-guides/skills/skill-document-writing.md"
+_SYNC_SOURCE_URI = f"{_WS}/.cursor/skills/skill-document-writing/SKILL.md"
 _SKIP_CORTEX_SOT = frozenset({"README"})
 
 GENERATOR_VERSION = "1.0.0"

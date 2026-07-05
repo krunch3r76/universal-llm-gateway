@@ -99,8 +99,8 @@ def test_mcp_capabilities_enriched(tmp_path: Path) -> None:
     )
     result = materialize(spec, out_dir=tmp_path)
     mcp = result.text.split("<mcp_capabilities>")[1].split("</mcp_capabilities>")[0]
-    assert "git-posture.md" in mcp
-    assert "architecture-invariants.md" in mcp
+    assert "git-posture/SKILL.md" in mcp
+    assert "architecture-invariants/SKILL.md" in mcp
     assert "quality_gate" in mcp
 
 
@@ -121,7 +121,7 @@ def test_mcp_capabilities_always_carries_arch_skillrefs(tmp_path: Path) -> None:
     )
     assert (
         'fs(sandbox="workspaces", op="md_read", '
-        'path="universal-llm-gateway/docs/agent-guides/skills/architecture-invariants.md")'
+        'path="universal-llm-gateway/.cursor/skills/architecture-invariants/SKILL.md")'
         in mcp
     )
     assert (
@@ -155,7 +155,7 @@ def test_mcp_capabilities_advertises_coding_session_bundle(tmp_path: Path) -> No
     )
     assert (
         'fs(sandbox="workspaces", op="md_read", '
-        'path="universal-llm-gateway/docs/agent-guides/skills/git-posture.md")' in mcp
+        'path="universal-llm-gateway/.cursor/skills/git-posture/SKILL.md")' in mcp
     )
     assert 'fs(sandbox="cortex", op="md_read", path="agent-skills/service-lifecycle.md")' in mcp
     for slug in (
@@ -178,7 +178,7 @@ def test_mcp_capabilities_advertise_tier_deduped_against_spec_skills(
     assert (
         mcp.count(
             'fs(sandbox="workspaces", op="md_read", '
-            'path="universal-llm-gateway/docs/agent-guides/skills/git-posture.md")'
+            'path="universal-llm-gateway/.cursor/skills/git-posture/SKILL.md")'
         )
         == 1
     )

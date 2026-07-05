@@ -168,7 +168,7 @@ def _docs_defers_to_cortex(docs_text: str) -> bool:
 
 
 def docs_defers_to_cortex(docs_text: str) -> bool:
-    """True when docs/agent-guides/skills is a pointer stub, not authoritative body."""
+    """True when a legacy docs stub defers to cortex SOT, not an authoritative body."""
     return _docs_defers_to_cortex(docs_text)
 
 
@@ -201,16 +201,11 @@ def _cortex_mount_missing() -> bool:
 
 def resolve_sot(slug: str, repo_root: Path) -> tuple[Path, str]:
     """Return the first existing SOT path and a short root label for reporting."""
-    docs_skills = repo_root / "docs/agent-guides/skills" / f"{slug}.md"
+    docs_skills = repo_root / ".cursor" / "skills" / slug / "SKILL.md"
     cortex_sot = CORTEX_SOT_ROOT / f"{slug}.md"
-    docs_defer_cortex = (
-        docs_skills.is_file()
-        and _docs_defers_to_cortex(docs_skills.read_text(encoding="utf-8"))
-    )
-    if _cortex_mount_missing() and (docs_defer_cortex or (slug in CURSOR_INDEXED_SLUGS and not docs_skills.is_file())):
-        raise FileNotFoundError(
-            f"cortex SOT mount missing ({CORTEX_SOT_ROOT}) — cannot resolve {slug!r}"
-        )
+    docs_defer_cortex = False
+    if _cortex_mount_missing() and (slug in CURSOR_INDEXED_SLUGS):
+        pass  # .cursor is primary; mount optional for indexed slugs
     if docs_skills.is_file() and cortex_sot.is_file() and docs_defer_cortex:
         return cortex_sot, "cortex/agent-skills"
     if docs_defer_cortex and not cortex_sot.is_file():
@@ -218,24 +213,16 @@ def resolve_sot(slug: str, repo_root: Path) -> tuple[Path, str]:
             f"no SOT for {slug!r} — docs stub defers to missing {cortex_sot}"
         )
     candidates: list[tuple[str, Path]] = [
-        ("docs/agent-guides/skills", docs_skills),
         (
-            "docs/agent-guides/skills",
-            repo_root / "docs/agent-guides/skills" / slug / "SKILL.md",
+            ".cursor/skills",
+            repo_root / ".cursor" / "skills" / slug / "SKILL.md",
         ),
+        ("cortex/agent-skills", cortex_sot),
         (
             "docs/agent-guides/rules",
             repo_root / "docs/agent-guides/rules" / f"{slug}.md",
         ),
-        ("cortex/agent-skills", cortex_sot),
     ]
-    if slug in WORKSPACE_SOT_SLUGS or slug not in CURSOR_INDEXED_SLUGS:
-        candidates.append(
-            (
-                ".cursor/skills",
-                repo_root / ".cursor" / "skills" / slug / "SKILL.md",
-            )
-        )
     if docs_defer_cortex:
         candidates = [c for c in candidates if c[0] != "docs/agent-guides/rules"]
     for label, path in candidates:

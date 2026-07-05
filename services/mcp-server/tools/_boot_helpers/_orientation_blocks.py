@@ -88,7 +88,7 @@ Seed via `entity_create` + `relationship_create child_of`; refs: agent-skills/en
 _LIVENESS_BLOCK = """\
 ## Git posture & liveness — disk + cortex canonical; git ≠ project index
 A change is LIVE only when LOADED into the running process at its last deploy/restart — git commit/master is neither necessary nor sufficient. Before claiming a surface changed, ask: (1) WHICH substrate? (2) did its LOAD EVENT fire? (3) what does the LIVE PROBE say? — service behavior→`sync_restart`+observability · MCP surface→mcp restart+boot manifest · routing→`/v1/models` · agent-context→`cortex_boot`. ¬ infer existence/canonicality/done-ness from git; commit is NOT a completion gate.
-Coding-session detail: `agent_skill:git-posture` → `docs/agent-guides/skills/git-posture.md` (md_list / md_read). Tag one-liner: `[universal:git-posture]` in injected `architecture-invariants`."""
+Coding-session detail: `agent_skill:git-posture` → `.cursor/skills/git-posture/SKILL.md` (md_list / md_read). Tag one-liner: `[universal:git-posture]` in injected `architecture-invariants`."""
 
 # Compact index — full playbook is agent-skills/consult-routing.md (current superset,
 # verified 2026-06-04). The two highest-frequency traps are kept inline; everything

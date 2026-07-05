@@ -182,7 +182,7 @@ def _op_frictions(
             "DEFAULT investigate unless mechanical-only or a dense spec exists. "
             "lifecycle investigate→fix→report. friction() is log-only. "
             "Close via friction_close (agent_skill:|workflow:|todo:|superseded|wontfix). "
-            "Skill: docs/agent-guides/skills/friction-review.md or consult-routing § Codified bug reports."
+            "Skill: .cursor/skills/friction-review/SKILL.md or consult-routing § Codified bug reports."
         )
         if resolved_intent == "summary":
             result["_next"] = (

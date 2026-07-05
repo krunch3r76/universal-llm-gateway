@@ -217,7 +217,7 @@ def sync_reference_edges_only(
     dry_run: bool,
     session_id: str = "ingest-skills-related-sync",
     agent: str = "ingest-skills",
-    source_uri: str = "workspaces://universal-llm-gateway/docs/agent-guides/skills/skill-document-writing.md",
+    source_uri: str = "workspaces://universal-llm-gateway/.cursor/skills/skill-document-writing/SKILL.md",
 ) -> bool:
     ok = True
     for target in targets:
@@ -251,7 +251,7 @@ def sync_declared_related(
     dry_run: bool,
     session_id: str = "ingest-skills-related-sync",
     agent: str = "ingest-skills",
-    source_uri: str = "workspaces://universal-llm-gateway/docs/agent-guides/skills/skill-document-writing.md",
+    source_uri: str = "workspaces://universal-llm-gateway/.cursor/skills/skill-document-writing/SKILL.md",
 ) -> bool:
     ok = patch_related_skills(client, source_slug, declared, dry_run=dry_run)
     for target in declared:

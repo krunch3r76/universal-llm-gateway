@@ -9,8 +9,6 @@ from claude_bundles.resolver import (
     CORTEX_SOT_ROOT,
     CURSOR_INDEXED_SLUGS,
     cortex_sot_only_slugs,
-    docs_defers_to_cortex,
-    is_cortex_sot_frontmatter,
     resolve_sot,
 )
 
@@ -85,31 +83,9 @@ def check_cortex_sot_only_slugs(repo_root: Path) -> list[str]:
     return problems
 
 
-def check_docs_defer_sot_frontmatter(repo_root: Path) -> list[str]:
-    """Docs defer stubs must declare ``sot: cortex`` (roadmap 2.3), not prose-only markers."""
-    problems: list[str] = []
-    skills_dir = repo_root / "docs/agent-guides/skills"
-    if not skills_dir.is_dir():
-        return problems
-    for path in sorted(skills_dir.glob("*.md")):
-        try:
-            text = path.read_text(encoding="utf-8")
-        except OSError as exc:
-            problems.append(f"{path.stem}: unreadable docs stub ({exc})")
-            continue
-        if not docs_defers_to_cortex(text):
-            continue
-        if not is_cortex_sot_frontmatter(text):
-            problems.append(
-                f"{path.stem}: docs defer stub missing frontmatter sot: cortex"
-            )
-    return problems
-
-
 def run_skill_git_guard(repo_root: Path) -> int:
     problems = check_cursor_skills_gitignored(repo_root)
     problems.extend(check_cortex_sot_only_slugs(repo_root))
-    problems.extend(check_docs_defer_sot_frontmatter(repo_root))
     if not problems:
         return 0
     for line in problems:

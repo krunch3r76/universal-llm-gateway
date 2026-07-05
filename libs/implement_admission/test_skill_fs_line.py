@@ -28,11 +28,11 @@ from implement_admission.test_materialize import _sample_spec
 @pytest.mark.offline
 def test_source_uri_to_fs_line_workspaces() -> None:
     line = source_uri_to_fs_line(
-        "workspaces://universal-llm-gateway/docs/agent-guides/skills/git-posture.md"
+        "workspaces://universal-llm-gateway/.cursor/skills/git-posture/SKILL.md"
     )
     assert line == (
         'fs(sandbox="workspaces", op="md_read", '
-        'path="universal-llm-gateway/docs/agent-guides/skills/git-posture.md")'
+        'path="universal-llm-gateway/.cursor/skills/git-posture/SKILL.md")'
     )
 
 
@@ -57,7 +57,7 @@ def test_source_uri_to_fs_line_cursor_skill_path() -> None:
 def test_skill_slug_to_fs_line_known_consolidated_slug() -> None:
     line = skill_slug_to_fs_line("git-posture")
     assert 'fs(sandbox="workspaces"' in line
-    assert "git-posture.md" in line
+    assert "git-posture/SKILL.md" in line
 
 
 @pytest.mark.offline
@@ -116,7 +116,7 @@ def test_source_uri_to_fs_line_positional_matches_enrich_producer() -> None:
         source_uri_to_fs_line as enrich_line,
     )
 
-    uri = "workspaces://universal-llm-gateway/docs/agent-guides/skills/foo.md"
+    uri = "workspaces://universal-llm-gateway/.cursor/skills/foo/SKILL.md"
     assert enrich_line(uri) == source_uri_to_fs_line(
         uri, op="read", fs_call_style="positional"
     )

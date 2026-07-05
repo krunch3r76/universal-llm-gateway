@@ -89,7 +89,7 @@ set is auto-derived. See `tasks/discoveries/mcp-tool-definition-context-churn.md
 **headless / arc-worktree only** (`decision:lead-agent-git-integration`). A Cursor
 IDE session does not use them even if `tool_search` surfaces them — use the
 editor + native apply/review instead. Load `agent_skill:git-posture` /
-`docs/agent-guides/skills/git-posture.md` for truth-substrate doctrine."""
+`.cursor/skills/git-posture/SKILL.md` for truth-substrate doctrine."""
 
 GROK_WEB_TOOL_SURFACE = """\
 ## Grok.com Tool Surface
@@ -130,8 +130,8 @@ CLAUDE_WEB_TOOL_SURFACE = """\
 ## ULG architecture orientation (claude-web — skill-first)
 Before findings / spec / orchestration on any universal-llm-gateway task, read BOTH
 from git SOT (Track A — `agent_skill:*` `source_uri` is `workspaces://…`):
-`fs(sandbox="workspaces", op="read", path="universal-llm-gateway/docs/agent-guides/skills/architecture-invariants.md")` and
-`fs(sandbox="workspaces", op="read", path="universal-llm-gateway/docs/agent-guides/skills/ulg-architecture.md")`.
+`fs(sandbox="workspaces", op="read", path="universal-llm-gateway/.cursor/skills/architecture-invariants/SKILL.md")` and
+`fs(sandbox="workspaces", op="read", path="universal-llm-gateway/.cursor/skills/ulg-architecture/SKILL.md")`.
 Other `required_skills` slugs: `entity_get(agent_skill:{slug})` → read `source_uri`
 (prefer `fs(workspaces, …)` when `workspaces://`). You have NO IDE `*_ws.mdc`
 auto-load backstop — `ulg-architecture` is in your manifest (partition

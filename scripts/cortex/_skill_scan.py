@@ -7,7 +7,6 @@ import sys
 from pathlib import Path
 
 from _skill_constants import (
-    _CANONICAL_DOC_RE,
     _CORTEX_SOT_RE,
     _CREATE_SUPPRESSED_LIFECYCLES,
     _SKIP_CORTEX_SOT,
@@ -118,12 +117,6 @@ def _source_uri(slug: str, body: str, root: Path) -> str:
     sot = _CORTEX_SOT_RE.search(body)
     if sot:
         return f"agent-skills/{sot.group(1)}.md"
-    match = _CANONICAL_DOC_RE.search(body)
-    if match and match.group(1) == slug:
-        return f"{_WS}/docs/agent-guides/skills/{slug}.md"
-    subdir_skill = root / "docs" / "agent-guides" / "skills" / slug / "SKILL.md"
-    if subdir_skill.is_file():
-        return f"{_WS}/docs/agent-guides/skills/{slug}/SKILL.md"
     return f"{_WS}/.cursor/skills/{slug}/SKILL.md"
 
 

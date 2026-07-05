@@ -53,7 +53,7 @@ _CODING_SESSION_CONTEXT_PHRASES = (
 )
 
 _GIT_POSTURE_MD_LIST_PATH = (
-    "universal-llm-gateway/docs/agent-guides/skills/git-posture.md"
+    "universal-llm-gateway/.cursor/skills/git-posture/SKILL.md"
 )
 _GIT_POSTURE_CODING_SESSION_NUDGE = (
     f"git-posture: fs(workspaces, md_list {_GIT_POSTURE_MD_LIST_PATH}) → "

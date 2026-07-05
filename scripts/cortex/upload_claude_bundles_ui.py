@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Upload skills to claude.ai Customize → Skills via CDP-attached Chrome.
 
-Workflow (SOT): docs/agent-guides/skills/claude-ai-bundle-sync.md
+Workflow (SOT): .cursor/skills/claude-ai-bundle-sync/SKILL.md
 
 **Run on Jupiter** where Chrome CDP lives. From Cursor / remote seats use:
   scripts/cortex/claude-ai-sync-jupiter status|upload …

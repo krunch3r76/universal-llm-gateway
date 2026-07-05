@@ -190,7 +190,7 @@ _FRICTION_TICKET_NEXT = (
     "Lifecycle: investigate → fix → report; pass zoom-out duty (touch-point inventory, "
     "bug-class grep, labeled secondary findings in closeout). "
     "Read: fs(cortex, agent-skills/consult-routing.md) § Codified bug reports or "
-    "fs(workspaces, universal-llm-gateway/docs/agent-guides/skills/friction-review.md)."
+    "fs(workspaces, universal-llm-gateway/.cursor/skills/friction-review/SKILL.md)."
 )
 
 _FRICTION_HINT = (

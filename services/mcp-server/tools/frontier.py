@@ -333,7 +333,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         **Packet shape:** six required XML blocks — ``<scope>``,
         ``<invariants>``, ``<task_guidance>``, ``<corpus>``,
         ``<mcp_capabilities>`` (MCP seats), ``<output_format>``. Author per
-        ``docs/agent-guides/skills/handoff-packet-authoring.md``.
+        ``.cursor/skills/handoff-packet-authoring/SKILL.md``.
 
         The ``{platform}-{contract}`` shorthand slugs remain accepted and encode
         (seat, contract) — roster in the module docstring above.

@@ -49,11 +49,11 @@ class _StubCortex:
         self.skills = skills or {
             "lead-seat-boot": "agent-skills/lead-seat-boot.md",
             "consult-routing": "agent-skills/consult-routing.md",
-            "handoff-packet-authoring": "workspaces://universal-llm-gateway/docs/agent-guides/skills/handoff-packet-authoring.md",
+            "handoff-packet-authoring": "workspaces://universal-llm-gateway/.cursor/skills/handoff-packet-authoring/SKILL.md",
             "mcp-surface-change": "agent-skills/mcp-surface-change.md",
             "debug-with-events": "agent-skills/debug-with-events.md",
-            "architecture-invariants": "workspaces://universal-llm-gateway/docs/agent-guides/skills/architecture-invariants.md",
-            "ulg-architecture": "workspaces://universal-llm-gateway/docs/agent-guides/skills/ulg-architecture.md",
+            "architecture-invariants": "workspaces://universal-llm-gateway/.cursor/skills/architecture-invariants/SKILL.md",
+            "ulg-architecture": "workspaces://universal-llm-gateway/.cursor/skills/ulg-architecture/SKILL.md",
         }
         self.todo_skills = todo_skills or []
         self.task_skills = task_skills or []
@@ -87,10 +87,10 @@ def test_source_uri_to_fs_line_cortex_relative() -> None:
 
 def test_source_uri_to_fs_line_workspaces_uri() -> None:
     line = source_uri_to_fs_line(
-        "workspaces://universal-llm-gateway/docs/agent-guides/skills/foo.md"
+        "workspaces://universal-llm-gateway/.cursor/skills/foo/SKILL.md"
     )
     assert "fs(workspaces, op=read" in line
-    assert "universal-llm-gateway/docs" in line
+    assert "universal-llm-gateway/.cursor/skills" in line
 
 
 def test_resolve_source_uri_top_level_shape() -> None:
@@ -142,7 +142,7 @@ contract: consult
     result = enrich_handoff_packet(packet, cortex=cortex)
     assert "architecture-invariants" in result.skills_added
     assert "ulg-architecture" in result.skills_added
-    assert "architecture-invariants.md" in result.text
+    assert "architecture-invariants/SKILL.md" in result.text
 
 
 def test_enrich_idempotent() -> None:
@@ -302,8 +302,8 @@ def test_enrich_injects_arch_refs_for_cursor_parity() -> None:
     result = enrich_handoff_packet(_THIN_WEB_PACKET, cortex=cortex)
     assert "architecture-invariants" in result.skills_added
     assert "ulg-architecture" in result.skills_added
-    assert "architecture-invariants.md" in result.text
-    assert "ulg-architecture.md" in result.text
+    assert "architecture-invariants/SKILL.md" in result.text
+    assert "ulg-architecture/SKILL.md" in result.text
 
 
 def test_skill_slug_from_entity_accepts_rule_prefix() -> None:

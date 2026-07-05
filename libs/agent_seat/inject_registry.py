@@ -198,7 +198,7 @@ INJECT_REGISTRY: tuple[InjectEntry, ...] = (
         inline_tier=InlineTier.NORMAL,
     ),
     InjectEntry(
-        entity_id="rule:ulg-architecture_ulg",
+        entity_id="rule:ulg-architecture",
         scope=InjectScope.CODING,
         platform_predicate="*",
         profile_applicability=frozenset({"code_touching"}),

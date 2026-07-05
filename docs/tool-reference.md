@@ -177,7 +177,7 @@ Authority: `projects/.cursor/rules/handoff-dispatchers.mdc` § Self-handoff;
 
 The pointer body defaults to the standard ≤25-line pointer template (see
 `projects/.cursor/rules/handoff-dispatchers.mdc` and the durable packet skeleton
-`docs/agent-guides/skills/handoff-packet-authoring.md`)
+`.cursor/skills/handoff-packet-authoring/SKILL.md`)
 (packet path + six-block enumeration + reply instruction). Caller may supply
 `pointer_body` override up to 25 lines. Longer overrides are rejected 422.
 
@@ -972,7 +972,7 @@ In-session skill delta for web/API seats. Ranked slugs **not** already in `loade
 | `limit` | no | Max suggestions (default 8) |
 | `agent` | no | Seat slug when session resolution fails |
 
-See `docs/agent-guides/skills/skill-suggest-utilization.md` and `agent-skills/consult-routing.md`.
+See `.cursor/skills/skill-suggest-utilization/SKILL.md` and `agent-skills/consult-routing.md`.
 
 ## rag
 

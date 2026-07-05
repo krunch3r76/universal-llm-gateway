@@ -612,7 +612,7 @@ def test_coding_session_start_git_posture_carries_md_list_nudge() -> None:
         conn,
         "agent_skill:git-posture",
         source_uri=(
-            "workspaces://universal-llm-gateway/docs/agent-guides/skills/git-posture.md"
+            "workspaces://universal-llm-gateway/.cursor/skills/git-posture/SKILL.md"
         ),
         trigger_match_terms=["git-posture", "git status", "uncommitted"],
         applicable_agents=["*"],

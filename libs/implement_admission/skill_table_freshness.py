@@ -89,12 +89,6 @@ def _live_entity_uris(client: Any, slug: str) -> dict[str, str]:
         uri = _entity_source_uri(payload)
         if uri:
             uris[eid] = uri
-    if slug == "ulg-architecture_ulg":
-        resp = client.get("/entities/agent_skill:ulg-architecture?intent=full")
-        if resp.status_code == 200 and isinstance(resp.json(), dict):
-            uri = _entity_source_uri(resp.json())
-            if uri:
-                uris["agent_skill:ulg-architecture"] = uri
     return uris
 
 
