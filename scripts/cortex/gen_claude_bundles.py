@@ -17,12 +17,17 @@ if str(_SCRIPTS_CORTEX) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_CORTEX))
 
 from _skill_entity_reconcile import run_entity_reconcile_check  # noqa: E402
-from _skill_git_guard import run_skill_git_guard  # noqa: E402
+from _skill_git_guard import (  # noqa: E402
+    run_cortex_cursor_body_drift_check,
+    run_skill_git_guard,
+)
 from claude_bundles.bundle_description import (  # noqa: E402
     MAX_CLAUDE_AI_DESCRIPTION_LEN,
     MIN_BUNDLE_DESCRIPTION_LEN,
+    FrontmatterParseError,
     description_has_xml_tags,
     extract_rendered_description,
+    lint_frontmatter_description,
 )
 from claude_bundles.resolver import (  # noqa: E402
     CLAUDE_BUNDLE_SLUGS,
@@ -230,15 +235,40 @@ def _check_bundle_descriptions(
     return fail
 
 
+def _check_frontmatter_lint(root: Path) -> int:
+    fail = 0
+    for slug in CLAUDE_BUNDLE_SLUGS:
+        try:
+            sot_path, _ = resolve_sot(slug, root)
+        except FileNotFoundError:
+            continue
+        msg = lint_frontmatter_description(
+            slug, sot_path.read_text(encoding="utf-8")
+        )
+        if msg:
+            print(msg, file=sys.stderr)
+            fail = 1
+    return fail
+
+
 def run_check(root: Path) -> int:
     fail = 0
     client = _cortex_client()
     entity_descriptions = _fetch_entity_descriptions(client) if client else {}
+    fail |= run_cortex_cursor_body_drift_check(root, CLAUDE_BUNDLE_SLUGS)
+    fail |= _check_frontmatter_lint(root)
     for slug in CLAUDE_BUNDLE_SLUGS:
         try:
             _, _, rendered = _load_rendered(
                 slug, root, entity_descriptions=entity_descriptions
             )
+        except FrontmatterParseError as exc:
+            print(
+                f"FRONTMATTER: {slug} token_class={exc.token_class}: {exc}",
+                file=sys.stderr,
+            )
+            fail = 1
+            continue
         except FileNotFoundError as exc:
             print(f"ERROR: {slug}: {exc}", file=sys.stderr)
             fail = 1

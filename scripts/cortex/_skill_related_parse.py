@@ -13,6 +13,44 @@ _RELATED_SKILLS_SECTION_RE = re.compile(
 BARE_SLUG_RE = re.compile(r"^[a-z0-9-]+$")
 
 
+def resolve_related_target_id(declared: str) -> str:
+    """Map a ``related_skills`` entry to a cortex entity id.
+
+    Bare slugs become ``agent_skill:{slug}``. Typed ids (``rule:``, ``workflow:``,
+    …) pass through unchanged. Legacy ``agent_skill:rule:…`` double-prefix forms
+    collapse to the typed id.
+    """
+    raw = declared.strip()
+    if not raw:
+        raise ValueError("empty related_skills target")
+    if raw.startswith("agent_skill:"):
+        rest = raw.removeprefix("agent_skill:")
+        if ":" in rest:
+            return rest
+        return raw
+    if ":" in raw:
+        return raw
+    return f"agent_skill:{raw}"
+
+
+def declared_target_from_entity_id(entity_id: str) -> str | None:
+    """Map a live ``references`` edge target back to declared ``related_skills`` form.
+
+    Only ``agent_skill:*`` and ``rule:*`` targets are ingest-managed; other typed
+    edges (``doc:``, ``docket:``, …) are left untouched.
+    """
+    if not entity_id:
+        return None
+    if entity_id.startswith("agent_skill:"):
+        rest = entity_id.removeprefix("agent_skill:")
+        if ":" in rest:
+            return rest
+        return rest
+    if entity_id.startswith("rule:"):
+        return entity_id
+    return None
+
+
 def parse_frontmatter(text: str) -> dict[str, object]:
     match = _FRONTMATTER_RE.match(text)
     if not match:

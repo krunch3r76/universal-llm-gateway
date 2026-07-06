@@ -9,6 +9,10 @@ from _skill_projection import (
     _matches,
     _projection,
 )
+from _skill_related_parse import (
+    declared_target_from_entity_id,
+    resolve_related_target_id,
+)
 from _skill_related_sync import list_outgoing_reference_edges, remediation_hint
 
 
@@ -21,22 +25,26 @@ def _reference_edge_drift(
     eid = f"agent_skill:{slug}"
     if live_edges is None:
         live_edges = list_outgoing_reference_edges(client, slug)
-    declared_set = set(declared)
-    edge_targets: set[str] = set()
+    declared_ids = {resolve_related_target_id(t) for t in declared}
+    live_ids: set[str] = set()
     for row in live_edges:
         target_id = str(row.get("target_id") or "")
-        if not target_id.startswith("agent_skill:"):
-            continue
-        edge_targets.add(target_id.removeprefix("agent_skill:"))
+        if target_id in declared_ids:
+            live_ids.add(target_id)
     out: list[str] = []
-    for target in sorted(declared_set - edge_targets):
+    for target_id in sorted(declared_ids - live_ids):
         out.append(
-            f"{eid} missing references edge to agent_skill:{target} — "
+            f"{eid} missing references edge to {target_id} — "
             f"run: {remediation_hint()}"
         )
-    for target in sorted(edge_targets - declared_set):
+    for row in live_edges:
+        target_id = str(row.get("target_id") or "")
+        if not target_id or target_id in declared_ids:
+            continue
+        if declared_target_from_entity_id(target_id) is None:
+            continue
         out.append(
-            f"{eid} stale references edge to agent_skill:{target} "
+            f"{eid} stale references edge to {target_id} "
             f"(not in declared list) — run: {remediation_hint()}"
         )
     return out

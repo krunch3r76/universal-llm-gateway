@@ -48,6 +48,8 @@ from services.git_integration_worker.cursor_sdk_events import (
 from services.git_integration_worker.cursor_sdk_manifest import (
     CaptureBranch,
     compact_manifest_for_body,
+    cortex_surface_has_write_op,
+    harvest_cortex_assertion_ids,
     merge_wrapper_manifest,
     no_capture_degraded_reason,
     registered_repo_roots,
@@ -467,6 +469,14 @@ def build_implement_closeout_body(
         manifest_source,
         sidecar_appendix=sidecar_appendix,
     )
+    cortex_assertions = harvest_cortex_assertion_ids(manifest_source)
+    cortex_writes_unattributed = (
+        not cortex_assertions
+        and cortex_surface_has_write_op(manifest_source)
+    )
+    if cortex_writes_unattributed:
+        cortex_assertions = None
+        deviations = [*(deviations or []), "capture:cortex_writes_unattributed"]
     repo_files = change_set or ChangeSet(created=(), modified=(), deleted=())
 
     def _render_body(
@@ -493,6 +503,7 @@ def build_implement_closeout_body(
                 ),
                 bus_threads=[thread_id],
                 dispatch_ids=[dispatch_id],
+                cortex_assertions=cortex_assertions,
             ),
         )
         payload = closeout.model_dump(mode="json")

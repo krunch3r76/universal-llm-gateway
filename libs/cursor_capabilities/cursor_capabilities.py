@@ -38,6 +38,7 @@ class ModelCapability:
     knobs: Mapping[str, KnobSpec]
     default_variant: Mapping[str, str]
     fixed_params: Mapping[str, str] = field(default_factory=dict)
+    instruction_profile: str = "mechanical"
 
 
 def _knob_card_entry(spec: KnobSpec) -> dict[str, Any]:
@@ -56,6 +57,7 @@ def to_model_card_dict(cap: ModelCapability) -> dict[str, Any]:
     return {
         "knobs": {name: _knob_card_entry(spec) for name, spec in cap.knobs.items()},
         "fixed_params": dict(cap.fixed_params),
+        "instruction_profile": cap.instruction_profile,
     }
 
 
@@ -102,6 +104,7 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
             "fast": KnobSpec(accepted=("false", "true"), default="true"),
         },
         default_variant={"fast": "true"},
+        instruction_profile="mechanical",
     ),
     "claude-opus-4-8": ModelCapability(
         knobs={
@@ -117,6 +120,7 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
             "effort": "high",
             "fast": "false",
         },
+        instruction_profile="reasoner",
     ),
     "claude-sonnet-4-6": ModelCapability(
         knobs={
@@ -129,6 +133,7 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
             "context": "1m",
             "effort": "medium",
         },
+        instruction_profile="reasoner",
     ),
     "claude-sonnet-5": ModelCapability(
         knobs={
@@ -141,6 +146,7 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
             "context": "1m",
             "effort": "high",
         },
+        instruction_profile="reasoner",
     ),
     # Routed-but-untrusted consult models (team_dispatch reviewer/skeptic/cheap-recon
     # targets) promoted into the trusted dispatch allowlist. Allowlist = trust/route
@@ -155,16 +161,19 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
             "fast": KnobSpec(accepted=("false", "true")),
         },
         default_variant={"context": "1m", "reasoning": "medium", "fast": "false"},
+        instruction_profile="reasoner",
     ),
     "grok-4.3": ModelCapability(
         knobs={
             "context": KnobSpec(accepted=("200k", "1m")),
         },
         default_variant={"context": "1m"},
+        instruction_profile="reasoner",
     ),
     "gemini-3.5-flash": ModelCapability(
         knobs={},
         default_variant={},
+        instruction_profile="mechanical",
     ),
 }
 

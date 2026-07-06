@@ -128,8 +128,6 @@ def _op_supersede(
         ("claim", claim),
         ("confidence", confidence),
         ("evidence", evidence),
-        ("session_id", session_id),
-        ("agent", agent),
     ]:
         if not val:
             return {"error": f"{field} is required"}

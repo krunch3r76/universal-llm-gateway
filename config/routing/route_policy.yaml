@@ -1,7 +1,30 @@
 # Machine-readable routing policy — single source for resolver + consult-routing drift check.
 policy_source: consult-routing
-policy_version: "2026-06-17"
+policy_version: "2026-07-06"
 lead_claim_authority: server_contract_overrides_packet_prose
+
+# Doc-layer dispatch_lane (advisory, not a RoleProfile or hard gate).
+# Derive code vs non-code from substrate: cursor-sdk ⇒ code (checkout present);
+# API roles (reviewer/skeptic/synthesizer/artisan) ⇒ non-code.
+dispatch_lane:
+  code:
+    substrate: cursor-sdk
+    default_role: cursor-sdk
+    work: [recon, review-on-source, implement, light-bounded, pure-mechanical]
+  non_code:
+    substrate: api
+    roles: [reviewer, skeptic, synthesizer, artisan]
+    work: [adversarial, life-domain, correspondence, analysis]
+  overrides:
+    code_on_api:
+      description: >-
+        API reviewer over a pasted diff or checkout-free self-contained recon;
+        advisory dispatch_lane label only — does not change role identity.
+  substrate_guard:
+    rule: cursor/* models never appear under allowed_models on API roles
+    enforcement: >-
+      route ordering → is_cursor_sdk_generate_admission →
+      resolve_cursor_sdk_generate_target → sdk_substrate_required (422)
 
 routes:
   implement:

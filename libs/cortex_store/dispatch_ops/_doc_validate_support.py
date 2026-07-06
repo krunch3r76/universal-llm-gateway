@@ -10,6 +10,7 @@ from implement_admission.dense_spec_schema import (
     validate_dense_spec,
 )
 from implement_admission.gate_distillation import read_dense_spec_text
+from implement_admission.recon_waiver import parse_recon_waiver, recon_waived_bool
 from implement_admission.source_ref import parse_source_ref
 from implement_admission.spec import SourceKind
 
@@ -124,7 +125,8 @@ def resolve_todo_preflight_kwargs(source_ref: str, *, now_iso: str) -> dict[str,
     raw_acs = attrs.get("acceptance_criteria")
     acceptance_criteria = raw_acs if isinstance(raw_acs, list) else []
     raw_waived = attrs.get("recon_waived")
-    recon_waived = isinstance(raw_waived, str) and bool(raw_waived.strip())
+    recon_waived = recon_waived_bool(raw_waived)
+    recon_waiver = parse_recon_waiver(raw_waived)
 
     spec_hash_uri = dense_spec_hash_uri(spec_text) if spec_text else None
     skeptic_ratified = False
@@ -149,6 +151,7 @@ def resolve_todo_preflight_kwargs(source_ref: str, *, now_iso: str) -> dict[str,
         "resolution": resolution,
         "skeptic_ratified": skeptic_ratified,
         "recon_waived": recon_waived,
+        "recon_waiver": recon_waiver.to_gate_sibling() if recon_waiver else None,
     }
 
 

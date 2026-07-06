@@ -775,6 +775,54 @@ def FrontierReviewChildContextMissing(  # noqa: N802
 
 
 @event_factory
+def PipelineFrontierDispatchCorpusInlined(  # noqa: N802
+    request_id: str,
+    role: str | None,
+    model: str,
+    injected_count: int,
+    dropped_count: int,
+    injected_bytes: int,
+    dropped_bytes: int,
+    budget_bytes: int,
+) -> Event:
+    """Corpus document bodies inlined for an inline-only dispatch."""
+    return Event(
+        signal="pipeline.frontier.dispatch.corpus.inlined",
+        payload={
+            "request_id": request_id,
+            "role": role,
+            "model": model,
+            "injected_count": injected_count,
+            "dropped_count": dropped_count,
+            "injected_bytes": injected_bytes,
+            "dropped_bytes": dropped_bytes,
+            "budget_bytes": budget_bytes,
+        },
+        scope="node",
+    )
+
+
+@event_factory
+def PipelineFrontierDispatchCorpusUnresolved(  # noqa: N802
+    request_id: str,
+    role: str | None,
+    model: str,
+    uri: str,
+) -> Event:
+    """A ``<corpus>`` URI could not be resolved (soft-drop)."""
+    return Event(
+        signal="pipeline.frontier.dispatch.corpus.unresolved",
+        payload={
+            "request_id": request_id,
+            "role": role,
+            "model": model,
+            "uri": uri,
+        },
+        scope="node",
+    )
+
+
+@event_factory
 def FrontierSkillSuggestDispatchDegraded(  # noqa: N802
     request_id: str,
     agent: str,

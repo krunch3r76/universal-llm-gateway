@@ -1,6 +1,6 @@
 """Admission, context injection, and prompt-block construction for frontier_dispatch_v1.
 
-Package-private admission helpers for ``frontier_dispatch_v1``. Seven responsibilities:
+Package-private admission helpers for ``frontier_dispatch_v1``. Eight responsibilities:
 
 1. ``check_agent_model_consistency`` — pre-hydration guard for concrete
    family/platform seats. Functional roles are model-agnostic; explicit model
@@ -11,22 +11,25 @@ Package-private admission helpers for ``frontier_dispatch_v1``. Seven responsibi
    reject client-side MCP function tools; server-side built-ins are governed
    separately by the ``server_tools`` knob.
 
-3. ``prepend_dispatch_context`` — injects a minimal ``<dispatch_context>``
+3. ``warn_caller_mcp_disabled`` — telemetry when the caller explicitly passes
+   ``mcp=False`` on an MCP-capable model (full catalog suppressed).
+
+4. ``prepend_dispatch_context`` — injects a minimal ``<dispatch_context>``
    preamble into every system prompt, anchoring temporal reasoning with
    today's UTC date.
 
-4. ``reject_unknown_runtime_options`` — validates ``context.runtime_options``
+5. ``reject_unknown_runtime_options`` — validates ``context.runtime_options``
    against the handler's accepted key set; raises ``UnknownPipelineOptionsError``
    for any unknown key.
 
-5. ``resolve_remote_mcp`` — card-derived internal remote-connector selection
+6. ``resolve_remote_mcp`` — card-derived internal remote-connector selection
    from the single caller ``mcp`` boolean.
 
-6. ``validate_frontier_dispatch_step`` — config-time validation that a step's
+7. ``validate_frontier_dispatch_step`` — config-time validation that a step's
    ``type`` is ``frontier_dispatch_v1``; returns a list of error strings for
    the step-config validator.
 
-7. ``build_runtime_context_block`` — renders the Active Runtime Context
+8. ``build_runtime_context_block`` — renders the Active Runtime Context
    markdown block that the handler optionally appends to ``system`` when
    ``step.inject_runtime_context`` is set.
 """
@@ -45,6 +48,7 @@ from agent_seat.registry import (
     resolve_agent_valid_family,
 )
 from model_capabilities import mcp_client_tool_loop, mcp_remote_connector
+from universal_logging import get_logger
 
 from ...events.dispatch import (
     PipelineFrontierDispatchAgentModelMismatch,
@@ -60,6 +64,8 @@ if TYPE_CHECKING:
 
     from ...schemas import StepConfig
     from ..protocol import PipelineContext
+
+logger = get_logger(__name__)
 
 
 def prepend_dispatch_context(system: str) -> str:
@@ -178,6 +184,35 @@ def check_boot_provider_compatibility(
             model=model,
             provider=provider,
             reason="mcp_client_tool_loop_unsupported",
+        ),
+    )
+
+
+def warn_caller_mcp_disabled(
+    *,
+    opts: dict[str, Any],
+    model: str,
+    agent: str | None,
+    provider: str,
+    execution_id: str,
+    publish: Callable[[object], None],
+) -> None:
+    """Warn when caller explicitly opts out of MCP on an MCP-capable model."""
+    if "mcp" not in opts or opts.get("mcp"):
+        return
+    if not mcp_client_tool_loop(model):
+        return
+    logger.warning(
+        "dispatch mcp=False suppresses MCP tool catalog for MCP-capable model %s",
+        model,
+    )
+    publish(
+        PipelineFrontierDispatchToolSuppressed(
+            execution_id=execution_id,
+            agent=agent,
+            model=model,
+            provider=provider,
+            reason="caller_mcp_false",
         ),
     )
 

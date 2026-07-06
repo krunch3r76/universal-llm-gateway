@@ -7,7 +7,7 @@ execution contract in Cortex. Optional ``model=`` overrides within
 ``allowed_models``. Rosters are op-scoped (regenerate via
 ``scripts/gen-mcp-dispatch-role-docs`` — do not hand-edit the two lines below):
 
-  generate/to_thread roles: reviewer, gatherer, synthesizer, artisan, skeptic
+  generate/to_thread roles: reviewer, synthesizer, artisan, skeptic
   handoff roles: web-consult, web-implement, cursor-consult, cursor-implement
 
 Op enum: "generate" (auto result thread; on-behalf delivery), "to_thread" (reply
@@ -355,7 +355,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         **``op="generate"`` / ``op="to_thread"``** — API functional roles via
         ``role`` (regenerate roster via ``scripts/gen-mcp-dispatch-role-docs``):
 
-        generate/to_thread roles: reviewer, gatherer, synthesizer, artisan, skeptic
+        generate/to_thread roles: reviewer, synthesizer, artisan, skeptic
 
         ``role`` is required for generate/to_thread. Each role carries a default
         provider model used when ``model`` is omitted on those ops.

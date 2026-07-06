@@ -8,6 +8,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from claude_bundles.bundle_description import (
+    FrontmatterParseError,
     parse_frontmatter,
     resolve_bundle_description,
 )
@@ -273,7 +274,12 @@ def render_bundle(
     entity_description: str | None = None,
 ) -> str:
     """Inline SOT into a self-contained SKILL.md for claude.ai consumption."""
-    fm, body = parse_frontmatter(raw)
+    try:
+        fm, body = parse_frontmatter(raw)
+    except FrontmatterParseError:
+        match = _FRONTMATTER_RE.match(raw)
+        fm = {}
+        body = raw[match.end() :].lstrip("\n") if match else raw
     cleaned = _strip_pointer_fences(body)
     name = str(fm.get("name") or slug)
     description = resolve_bundle_description(

@@ -25,6 +25,7 @@ from .admission_checks import (
     check_boot_provider_compatibility,
     reject_unknown_runtime_options,
     resolve_remote_mcp,
+    warn_caller_mcp_disabled,
 )
 from .request import (
     resolve_agent,
@@ -106,6 +107,14 @@ async def run_admission_gate(
             publish=publish,
         )
     mcp_enabled = bool(opts.get("mcp", True))
+    warn_caller_mcp_disabled(
+        opts=opts,
+        model=model,
+        agent=agent,
+        provider=provider,
+        execution_id=context.execution_id,
+        publish=publish,
+    )
     server_tools_val = opts.get("server_tools")
     server_tools_enabled = True if server_tools_val is None else bool(server_tools_val)
     remote_mcp = resolve_remote_mcp(model=model, mcp_enabled=mcp_enabled)
@@ -130,7 +139,6 @@ async def run_admission_gate(
         agent=agent,
         model=model,
         provider=provider,
-        team_tool_names=handler._TEAM_TOOL_NAMES,
         endpoint_request_id=opts.get("_endpoint_request_id"),
         system_prompt=resolve_system_prompt(step, context),
         publish=publish,

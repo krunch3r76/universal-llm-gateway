@@ -44,7 +44,7 @@ class EvidenceUris(BaseModel):
     dispatch_ids: list[str] = Field(default_factory=list)
     bus_threads: list[str] = Field(default_factory=list)
     artifact_paths: list[str] = Field(default_factory=list)
-    cortex_assertions: list[str] = Field(default_factory=list)
+    cortex_assertions: list[str] | None = Field(default_factory=list)
     git_refs: list[str] = Field(default_factory=list)
 
 

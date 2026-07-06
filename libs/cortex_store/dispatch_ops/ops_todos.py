@@ -120,6 +120,8 @@ def _op_todo_distill_implement_gate(
     seeded_by: str | None = None,
     density_triage: str | None = None,
     source_uri: str | None = None,
+    recon_waive_reason_code: str | None = None,
+    recon_waive_reason: str | None = None,
     **kwargs: object,
 ) -> dict[str, Any]:
     """Wire implement-admission gate fields atomically at Gate-2 close."""
@@ -135,5 +137,7 @@ def _op_todo_distill_implement_gate(
         seeded_by=seeded_by,
         density_triage=density_triage,
         source_uri=source_uri,
+        recon_waive_reason_code=recon_waive_reason_code,
+        recon_waive_reason=recon_waive_reason,
         **kwargs,
     )

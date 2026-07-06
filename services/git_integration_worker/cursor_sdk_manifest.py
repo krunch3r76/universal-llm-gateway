@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any, Literal
@@ -31,6 +32,8 @@ _MCP_OP = "mcp"
 _VORTEX_SERVER = "user-vortex"
 
 _CORTEX_TOOLS = frozenset({"cortex", "cortex_boot"})
+_CORTEX_WRITE_OPS = frozenset({"assert", "supersede", "observe", "friction"})
+_ASSERTION_IDENTITY_RE = re.compile(r"^assertion:(\d+)$")
 _AGENT_BUS_TOOLS = frozenset({"agent_bus", "agent_bus_read"})
 _FS_TOOLS = frozenset({"fs"})
 _RAG_TOOLS = frozenset({"rag"})
@@ -495,6 +498,102 @@ def _iter_tool_call_messages(turns: Iterable) -> Iterable[Mapping[str, Any]]:
                 yield message
 
 
+def harvest_cortex_assertion_ids(manifest: EffectsManifest | None) -> list[str]:
+    """Collect deduped assertion ids from cortex-surface manifest entry identities."""
+    if manifest is None:
+        return []
+    section = manifest.surfaces.get("cortex")
+    if section is None:
+        return []
+    ids: set[int] = set()
+    for entry in section.entries:
+        ident = entry.identity
+        if not ident:
+            continue
+        match = _ASSERTION_IDENTITY_RE.match(ident)
+        if match:
+            ids.add(int(match.group(1)))
+    return [str(i) for i in sorted(ids)]
+
+
+def cortex_surface_has_write_op(manifest: EffectsManifest | None) -> bool:
+    """True iff the cortex surface contains >=1 write-family op (assert/supersede/observe/friction).
+
+    Used by the closeout builder to distinguish 'no cortex writes happened'
+    (empty list is correct) from 'writes happened but no id was harvestable'
+    (None + capture:cortex_writes_unattributed deviation). See
+    todo:cursor-sdk-closeout-cortex-assertions-harvest.
+    """
+    if manifest is None:
+        return False
+    section = manifest.surfaces.get("cortex")
+    if section is None:
+        return False
+    for entry in section.entries:
+        detail = entry.detail or {}
+        args = detail.get("args") if isinstance(detail, Mapping) else None
+        op = _cortex_op_from_args(args) if isinstance(args, Mapping) else None
+        if op in _CORTEX_WRITE_OPS:
+            return True
+    return False
+
+
+def _cortex_op_from_args(args: Mapping[str, Any]) -> str | None:
+    return _string_arg(args, "tool", "op")
+
+
+def _unwrap_tool_result(result: object) -> object | None:
+    if not isinstance(result, Mapping):
+        return result
+    if result.get("status") == "error":
+        return None
+    value = result.get("value")
+    if value is not None:
+        if isinstance(value, str):
+            try:
+                return json.loads(value)
+            except (json.JSONDecodeError, TypeError, ValueError):
+                return value
+        return value
+    return result
+
+
+def _assertion_id_from_payload(payload: object) -> int | None:
+    if not isinstance(payload, Mapping):
+        return None
+    item = payload.get("item")
+    if isinstance(item, Mapping):
+        id_val = item.get("id")
+        if isinstance(id_val, int) and not isinstance(id_val, bool):
+            return id_val
+    for key in ("id", "assertion_id"):
+        id_val = payload.get(key)
+        if isinstance(id_val, int) and not isinstance(id_val, bool):
+            return id_val
+        if isinstance(id_val, str) and id_val.isdigit():
+            return int(id_val)
+    return None
+
+
+def _cortex_result_assertion_id(
+    tool_name: str,
+    args: Mapping[str, Any],
+    result: object,
+) -> int | None:
+    if tool_name not in _CORTEX_TOOLS:
+        return None
+    op = _cortex_op_from_args(args)
+    if op not in _CORTEX_WRITE_OPS:
+        return None
+    try:
+        payload = _unwrap_tool_result(result)
+        if payload is None:
+            return None
+        return _assertion_id_from_payload(payload)
+    except (TypeError, ValueError, AttributeError):
+        return None
+
+
 def _entry_from_tool_call(message: Mapping[str, Any]) -> EffectEntry | None:
     tool_type = str(message.get("type") or "tool")
     args = message.get("args") if isinstance(message.get("args"), Mapping) else {}
@@ -505,6 +604,10 @@ def _entry_from_tool_call(message: Mapping[str, Any]) -> EffectEntry | None:
         effective = _effective_mcp_args(nested)
         target = _mcp_target(tool_name, effective)
         identity = _mcp_identity(tool_name, effective)
+        result = message.get("result")
+        assertion_id = _cortex_result_assertion_id(tool_name, effective, result)
+        if assertion_id is not None:
+            identity = f"assertion:{assertion_id}"
         if tool_name == "dispatch":
             dispatched = _string_arg(effective, "tool")
             merged_detail = dict(detail or {})
@@ -835,20 +938,9 @@ def _normalize_repo_path(
         return None
     if repo_root is None:
         return raw.strip().lstrip("/")
-    path = raw.strip()
-    root = str(repo_root).rstrip("/")
-    for prefix in (f"{root}/", f"{root.lstrip('/')}/"):
-        if path.startswith(prefix):
-            path = path[len(prefix) :]
-            break
-        stripped = path.lstrip("/")
-        bare_prefix = prefix.lstrip("/")
-        if stripped.startswith(bare_prefix):
-            path = stripped[len(bare_prefix) :]
-            break
-    bare_repo = "universal-llm-gateway/"
-    if path.startswith(bare_repo):
-        path = path[len(bare_repo) :]
-    elif path.lstrip("/").startswith(bare_repo):
-        path = path.lstrip("/")[len(bare_repo) :]
-    return path.lstrip("/")
+    from services.git_integration_worker.cursor_sdk_capture_status import (
+        canonicalize_capture_path,
+    )
+
+    canon = canonicalize_capture_path(raw, source_repo=Path(repo_root))
+    return canon.canonical_path or None

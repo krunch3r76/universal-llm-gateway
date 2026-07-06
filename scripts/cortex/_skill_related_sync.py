@@ -5,6 +5,11 @@ from __future__ import annotations
 import sys
 import urllib.parse
 
+from _skill_related_parse import (
+    declared_target_from_entity_id,
+    resolve_related_target_id,
+)
+
 INVARIANT_TARGETS = frozenset({"architecture-invariants", "ulg-architecture"})
 _REMEDIATION = "python scripts/cortex/ingest_skills.py"
 
@@ -124,11 +129,8 @@ def list_outgoing_reference_edges(client: object, source_slug: str) -> list[dict
     return rows
 
 
-def _reference_target_slug(row: dict) -> str | None:
-    target_id = str(row.get("target_id") or "")
-    if not target_id.startswith("agent_skill:"):
-        return None
-    return target_id.removeprefix("agent_skill:")
+def _reference_target_entity_id(row: dict) -> str | None:
+    return declared_target_from_entity_id(str(row.get("target_id") or ""))
 
 
 def prune_stale_reference_edges(
@@ -146,14 +148,16 @@ def prune_stale_reference_edges(
     ``agent_skill:*``.
     """
     _ = session_id, agent
-    declared_set = set(declared)
+    declared_ids = {resolve_related_target_id(t) for t in declared}
     ok = True
     for row in list_outgoing_reference_edges(client, source_slug):
-        target_slug = _reference_target_slug(row)
-        if target_slug is None or target_slug in declared_set:
+        target_id = str(row.get("target_id") or "")
+        if not target_id or target_id in declared_ids:
+            continue
+        if declared_target_from_entity_id(target_id) is None:
             continue
         rel_id = row.get("id")
-        label = f"{source_slug} → {target_slug} (references)"
+        label = f"{source_slug} → {target_id} (references)"
         if dry_run:
             print(f"  WOULD-RETIRE  {label}")
             continue
@@ -183,14 +187,18 @@ def create_reference_edge(
     if dry_run:
         print(f"  WOULD EDGE  {label}")
         return True
+    target_entity_id = resolve_related_target_id(target_slug)
+    role_slug = target_slug.removeprefix("agent_skill:")
+    if ":" in role_slug and not role_slug.startswith("agent_skill:"):
+        role_slug = role_slug.split(":", 1)[-1]
     resp = client.request(
         "POST",
         "/relationships",
         json={
             "source_id": f"agent_skill:{source_slug}",
-            "target_id": f"agent_skill:{target_slug}",
+            "target_id": target_entity_id,
             "type_id": "references",
-            "role": infer_role(target_slug),
+            "role": infer_role(role_slug),
             "strength": 0.6,
             "session_id": session_id,
             "agent": agent,

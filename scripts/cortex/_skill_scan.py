@@ -136,7 +136,7 @@ def _scan_skills(root: Path) -> dict[str, dict[str, object]]:
         fm = parse_frontmatter(text)
         description = str(fm.get("description") or "").strip()
         if not description:
-            print(f"ERROR: missing description: {skill_path}", file=sys.stderr)
+            print(f"WARN: missing description: {skill_path}", file=sys.stderr)
             continue
         found[slug] = {
             "slug": slug,

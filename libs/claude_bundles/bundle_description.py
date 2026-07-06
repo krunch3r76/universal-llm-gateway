@@ -19,6 +19,14 @@ _BROKEN_DESCRIPTIONS = frozenset({">-", "|", ""})
 _XML_TAG_RE = re.compile(r"<[^>]+>")
 
 
+class FrontmatterParseError(ValueError):
+    """Malformed YAML frontmatter block."""
+
+    def __init__(self, message: str, *, token_class: str = "yaml_syntax") -> None:
+        super().__init__(message)
+        self.token_class = token_class
+
+
 def parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
     """Return YAML frontmatter dict and body after the closing ``---``."""
     match = _FRONTMATTER_RE.match(text)
@@ -27,12 +35,41 @@ def parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
     block = match.group(1)
     try:
         parsed = yaml.safe_load(block) or {}
-    except yaml.YAMLError:
-        parsed = {}
+    except yaml.YAMLError as exc:
+        raise FrontmatterParseError(str(exc), token_class="yaml_syntax") from exc
     if not isinstance(parsed, dict):
         parsed = {}
     body = text[match.end() :].lstrip("\n")
     return parsed, body
+
+
+def _description_scalar_raw(block: str) -> str | None:
+    for line in block.splitlines():
+        if not line.strip().startswith("description:"):
+            continue
+        return line.split("description:", 1)[1].strip()
+    return None
+
+
+def lint_frontmatter_description(slug: str, text: str) -> str | None:
+    """Fail-loud when SOT ``description:`` is unsafe for YAML or claude.ai."""
+    match = _FRONTMATTER_RE.match(text)
+    if not match:
+        return None
+    block = match.group(1)
+    raw_value = _description_scalar_raw(block)
+    if raw_value and raw_value[0] not in "\"'|>{[":
+        if ": " in raw_value:
+            return f"FRONTMATTER: {slug} token_class=unquoted_colon_space"
+        if '"' in raw_value or "'" in raw_value:
+            return f"FRONTMATTER: {slug} token_class=embedded_quotes"
+        if description_has_xml_tags(raw_value):
+            return f"FRONTMATTER: {slug} token_class=angle_brackets"
+    try:
+        parse_frontmatter(text)
+    except FrontmatterParseError as exc:
+        return f"FRONTMATTER: {slug} token_class={exc.token_class}"
+    return None
 
 
 def first_sentence(text: str | None) -> str:

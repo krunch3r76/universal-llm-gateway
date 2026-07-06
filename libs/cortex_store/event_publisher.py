@@ -604,3 +604,31 @@ def cortex_supersede_would_reject(
     )
     record(ev.signal, **ev.payload)
     return ev
+
+
+@event_factory
+def cortex_implement_recon_waived(
+    *,
+    todo_id: str,
+    waived_by: str | None,
+    reason_code: str | None,
+    reason: str | None,
+    spec_sha256: str | None,
+    waived_at: str | None,
+) -> Event:
+    """cortex.implement.recon.waived — audited skeptic-gate recon waiver applied."""
+    ev = Event(
+        signal="cortex.implement.recon.waived",
+        role="observation",
+        scope="global",
+        payload={
+            "todo_id": todo_id,
+            "waived_by": waived_by,
+            "reason_code": reason_code,
+            "reason": reason,
+            "spec_sha256": spec_sha256,
+            "waived_at": waived_at,
+        },
+    )
+    record(ev.signal, **ev.payload)
+    return ev

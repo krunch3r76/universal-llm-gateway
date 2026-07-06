@@ -13,6 +13,7 @@ from implement_admission.dense_spec_schema import (
 )
 from implement_admission.gate_distillation import read_dense_spec_text
 from implement_admission.implement_ready_preflight import preflight_implement_ready
+from implement_admission.recon_waiver import parse_recon_waiver, recon_waived_bool
 from implement_admission.source_ref import parse_source_ref
 from implement_admission.spec import SourceKind
 
@@ -261,7 +262,8 @@ def _op_implement_ready_preflight(
         )
 
     raw_waived = attrs.get("recon_waived")
-    recon_waived = isinstance(raw_waived, str) and bool(raw_waived.strip())
+    recon_waived = recon_waived_bool(raw_waived)
+    recon_waiver = parse_recon_waiver(raw_waived)
 
     report = preflight_implement_ready(
         todo_id=todo_id,
@@ -278,6 +280,7 @@ def _op_implement_ready_preflight(
         resolution=resolution,
         skeptic_ratified=skeptic_ratified,
         recon_waived=recon_waived,
+        recon_waiver=recon_waiver.to_gate_sibling() if recon_waiver else None,
     )
     return report.to_dict()
 

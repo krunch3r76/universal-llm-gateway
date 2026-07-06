@@ -655,6 +655,53 @@ tools:
   cache_priority: always_loaded
   introduced: 2026-05-22
 
+- canonical_name: cortex_todo_distill_implement_gate
+  domain: cortex
+  operation: todo_distill_implement_gate
+  dispatcher_call_shape:
+    tool: cortex
+    dispatch_key: op
+    dispatch_value: todo_distill_implement_gate
+  flat_call_shape:
+    tool: cortex_todo_distill_implement_gate
+    substrate_qualified: user-vortex__cortex_todo_distill_implement_gate
+  fol_descriptor: |
+    Atomically wire implement-admission gate fields at Gate-2 close.
+    Optional recon_waive_reason_code applies an audited skeptic-gate override
+    (attrs.recon_waived JSON + cortex.implement.recon.waived event).
+    Closed enum: ratified_on_prior_spec_revision, design_pre_adjudicated,
+    operator_directive.
+  json_schema:
+    type: object
+    properties:
+      todo_id: {type: string}
+      files_expected:
+        type: array
+        items: {type: string}
+      acceptance_criteria:
+        type: array
+        items: {type: string}
+      required_skills:
+        type: array
+        items: {type: string}
+      claim: {type: string}
+      evidence: {type: string}
+      agent: {type: string}
+      session_id: {type: string}
+      seeded_by: {type: string}
+      density_triage: {type: string}
+      source_uri: {type: string}
+      recon_waive_reason_code:
+        type: string
+        enum: [ratified_on_prior_spec_revision, design_pre_adjudicated, operator_directive]
+      recon_waive_reason: {type: string}
+    required: [todo_id, files_expected, acceptance_criteria]
+  skill_uri: rule:implement-todo
+  seat_visibility: [mcp, mcp_claude]
+  mandate_safety: write
+  cache_priority: on_demand
+  introduced: 2026-07-06
+
 - canonical_name: cortex_edge_create
   domain: cortex
   operation: edge_create
@@ -2582,7 +2629,7 @@ tools:
       mcp (optional, present in json_schema): reserve for genuine codebase investigation; omit for self-contained consults to avoid the self-post failure mode.
       skills (optional, present in json_schema): unified skills input path; capability-selected delivery.
       server_tools (optional, present in json_schema): omit for default ALL server-side built-ins; set false to suppress card-derived provider built-ins.
-    GenerateRoles = generate/to_thread roles (reviewer/gatherer/synthesizer/artisan/skeptic).
+    GenerateRoles = generate/to_thread roles (reviewer/synthesizer/artisan/skeptic).
     cursor-sdk ∈ GenerateTargets via auto_dispatchable (substrate=sdk); ¬ cloud CapabilityDispatch.
       Default output_contract=thread for sdk; packet_path honored for cursor-sdk generate across {light-bounded,pure-mechanical,implement}; source_ref implement-only; dispatch-thread latest turn is fallback when no packet;
       poll via poll_hint (agent-bus wait), NOT pipeline(op=result), until the execution registry (Track 2).
@@ -2624,7 +2671,7 @@ tools:
       team_dispatch(op=to_thread, role, dispatch_thread_id, contract, thread) ⟹
         Stargate posts the role reply on its behalf to thread after dispatch completes.
       Context is read from dispatch_thread_id's latest agent-bus turn; messages[] is not a parameter.
-    GenerateRoles = generate/to_thread roles (reviewer/gatherer/synthesizer/artisan/skeptic).
+    GenerateRoles = generate/to_thread roles (reviewer/synthesizer/artisan/skeptic).
     server_tools (optional, present in json_schema): omit for default ALL server-side built-ins; set false to suppress card-derived provider built-ins.
     mcp (optional, present in json_schema): MCP-class tools only; omit for per-model default.
     skills (optional, present in json_schema): unified skills input path.

@@ -141,6 +141,7 @@ def PipelineFrontierDispatchToolSuppressed(  # noqa: N802
     - ``capability_tier_inline_only`` — role demoted to inline-only substrate
     - ``mcp_client_tool_loop_unsupported`` — model card rejects client-side MCP
       tools (boot-compat telemetry)
+    - ``caller_mcp_false`` — caller passed ``mcp=False`` on an MCP-capable model
     - ``server_tools_knob`` — caller set ``server_tools=False`` while the card
       carries server-side built-ins
     """

@@ -62,6 +62,7 @@ class GateReport:
     reason: str | None = None
     blocked_by: tuple[int, ...] = ()
     deferred_subchecks: tuple[str, ...] = ()
+    recon_waiver: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -76,6 +77,7 @@ class GateReport:
                 if self.deferred_subchecks
                 else {}
             ),
+            **({"recon_waiver": self.recon_waiver} if self.recon_waiver else {}),
         }
 
 
@@ -93,6 +95,8 @@ class PreflightReport:
     first_failure: dict[str, str] | None
     resolution: dict[str, Any] | None
     gates: list[GateReport]
+    recon_waived: bool = False
+    recon_waiver: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -102,6 +106,8 @@ class PreflightReport:
             **({"first_failure": self.first_failure} if self.first_failure else {}),
             **({"resolution": self.resolution} if self.resolution else {}),
             "gates": [g.to_dict() for g in self.gates],
+            "recon_waived": self.recon_waived,
+            **({"recon_waiver": self.recon_waiver} if self.recon_waiver else {}),
         }
 
 
@@ -111,6 +117,8 @@ def _make_report(
     gates: list[GateReport],
     first_failure: dict[str, str] | None,
     resolution: dict[str, Any] | None,
+    recon_waived: bool = False,
+    recon_waiver: dict[str, Any] | None = None,
 ) -> PreflightReport:
     failed = sum(1 for g in gates if g.status == GateStatus.FAILED)
     blocked_count = sum(1 for g in gates if g.status == GateStatus.BLOCKED)
@@ -125,6 +133,8 @@ def _make_report(
         first_failure=first_failure,
         resolution=resolution,
         gates=gates,
+        recon_waived=recon_waived,
+        recon_waiver=recon_waiver,
     )
 
 
@@ -144,6 +154,7 @@ def preflight_implement_ready(
     resolution: dict[str, Any] | None = None,
     skeptic_ratified: bool = False,
     recon_waived: bool = False,
+    recon_waiver: dict[str, Any] | None = None,
     authoring_mode: bool = False,
 ) -> PreflightReport:
     """Non-writing preflight over the declared-state gates (0-13).
@@ -174,6 +185,7 @@ def preflight_implement_ready(
         name: str,
         *,
         deferred_subchecks: tuple[str, ...] = (),
+        gate_recon_waiver: dict[str, Any] | None = None,
     ) -> None:
         gates.append(
             GateReport(
@@ -181,6 +193,7 @@ def preflight_implement_ready(
                 name=name,
                 status=GateStatus.PASSED,
                 deferred_subchecks=deferred_subchecks,
+                recon_waiver=gate_recon_waiver,
             )
         )
 
@@ -455,7 +468,13 @@ def preflight_implement_ready(
         )
         _fail(13, "skeptic_pass", code, reason)
     else:
-        _pass(13, "skeptic_pass", deferred_subchecks=_GATE_13_DEFERRED_SUBCHECKS)
+        gate_waiver = recon_waiver if recon_waived and recon_waiver else None
+        _pass(
+            13,
+            "skeptic_pass",
+            deferred_subchecks=_GATE_13_DEFERRED_SUBCHECKS,
+            gate_recon_waiver=gate_waiver,
+        )
 
     return _make_report(
         admitted=first_failure
@@ -463,6 +482,8 @@ def preflight_implement_ready(
         gates=gates,
         first_failure=first_failure,
         resolution=resolution,
+        recon_waived=recon_waived,
+        recon_waiver=recon_waiver if recon_waived else None,
     )
 
 

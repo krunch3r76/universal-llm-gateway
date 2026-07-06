@@ -35,6 +35,7 @@ from implement_admission.implement_ready_gate_resolve import (
     resolve_skeptic_ratification,
     select_cited_dense_spec_uri,
 )
+from implement_admission.recon_waiver import parse_recon_waiver, recon_waived_bool
 from implement_admission.source_ref import parse_source_ref
 from implement_admission.spec import SourceKind
 
@@ -138,7 +139,8 @@ def require_implement_ready(
         skeptic_outcome = SkepticRatificationOutcome(ratified=False)
 
     raw_waived = attrs.get("recon_waived")
-    recon_waived = isinstance(raw_waived, str) and bool(raw_waived.strip())
+    recon_waived = recon_waived_bool(raw_waived)
+    recon_waiver = parse_recon_waiver(raw_waived)
 
     verdict = evaluate_implement_ready(
         todo_id=ref.canonical_ref,
@@ -185,6 +187,7 @@ def require_implement_ready(
                 "entity_name": entity.get("name"),
                 "skeptic_ratified": skeptic_outcome.ratified,
                 "recon_waived": recon_waived,
+                "recon_waiver": recon_waiver.to_gate_sibling() if recon_waiver else None,
             },
             skip_side_effect_guard=skip_doc_validate_guard,
         )

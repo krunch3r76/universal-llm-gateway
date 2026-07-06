@@ -15,6 +15,12 @@ from services.git_integration_worker.cursor_sdk_light_bounded_capture import (
 )
 
 CaptureStatus = Literal["complete", "partial", "unavailable"]
+CapturePathScope = Literal["control_plane", "user_workspace", "external_or_unknown"]
+
+_CONTROL_PLANE_PREFIXES: tuple[str, ...] = (
+    "tmp/reviews/closeouts/",
+    "tmp/reviews/",
+)
 
 
 @dataclass(frozen=True)
@@ -22,6 +28,195 @@ class ChangeSet:
     created: tuple[str, ...]
     modified: tuple[str, ...]
     deleted: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class CanonicalCapturePath:
+    original_path: str
+    canonical_path: str
+    scope: CapturePathScope
+    canonicalization_reason: str
+
+
+def _git_repo_binding(source_repo: Path) -> tuple[Path, str, str]:
+    repo = source_repo.resolve()
+    try:
+        top_proc = subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=True,
+        )
+        prefix_proc = subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "--show-prefix"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=True,
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+        return repo, "", repo.name
+    toplevel = Path(top_proc.stdout.strip() or str(repo)).resolve()
+    show_prefix = prefix_proc.stdout.strip().strip("/")
+    return toplevel, show_prefix, toplevel.name
+
+
+def _collapse_duplicate_repo_prefix(path: str, repo_name: str) -> tuple[str, bool]:
+    collapsed = False
+    stripped = path.lstrip("/")
+    prefix = f"{repo_name}/"
+    while stripped.startswith(prefix):
+        stripped = stripped[len(prefix) :]
+        collapsed = True
+    return stripped, collapsed
+
+
+def is_allowlisted_control_plane_path(canonical_path: str) -> bool:
+    """Exact segment-boundary prefix match — classifier and allowlist share this form."""
+    norm = canonical_path.lstrip("/")
+    for prefix in _CONTROL_PLANE_PREFIXES:
+        bare = prefix.rstrip("/")
+        if norm == bare or norm.startswith(prefix):
+            return True
+    return False
+
+
+def _classify_capture_path_scope(
+    canonical_path: str,
+    *,
+    external: bool,
+) -> CapturePathScope:
+    if external or not canonical_path:
+        return "external_or_unknown"
+    if is_allowlisted_control_plane_path(canonical_path):
+        return "control_plane"
+    return "user_workspace"
+
+
+def canonicalize_capture_path(raw: str, *, source_repo: Path) -> CanonicalCapturePath:
+    """Idempotent repo-relative normal form for capture classification."""
+    original = raw.strip()
+    if not original:
+        return CanonicalCapturePath(
+            original_path=original,
+            canonical_path="",
+            scope="external_or_unknown",
+            canonicalization_reason="empty_path",
+        )
+
+    toplevel, show_prefix, repo_name = _git_repo_binding(source_repo)
+    path = original.replace("\\", "/")
+    reasons: list[str] = []
+    external = False
+
+    candidate = Path(path)
+    if candidate.is_absolute():
+        try:
+            resolved = candidate.resolve()
+            try:
+                rel = resolved.relative_to(toplevel)
+                path = rel.as_posix()
+                reasons.append("absolute_inside_repo")
+            except ValueError:
+                external = True
+                reasons.append("absolute_outside_repo")
+        except OSError:
+            external = True
+            reasons.append("absolute_unresolvable")
+
+    if not external:
+        top_text = toplevel.as_posix().rstrip("/")
+        for prefix in (f"{top_text}/", f"{top_text.lstrip('/')}/"):
+            if path.startswith(prefix):
+                path = path[len(prefix) :]
+                reasons.append("toplevel_prefix_stripped")
+                break
+
+        path, collapsed = _collapse_duplicate_repo_prefix(path, repo_name)
+        if collapsed:
+            reasons.append("duplicate_repo_prefix_collapsed")
+
+        if show_prefix:
+            worktree_prefix = f"{show_prefix}/"
+            if path.startswith(worktree_prefix):
+                path = path[len(worktree_prefix) :]
+                reasons.append("worktree_prefix_stripped")
+            elif path == show_prefix:
+                path = ""
+                reasons.append("worktree_prefix_stripped")
+
+        path = path.lstrip("/")
+
+        candidate = toplevel / path if path else toplevel
+        try:
+            resolved = candidate.resolve()
+            resolved.relative_to(toplevel.resolve())
+        except ValueError:
+            external = True
+            reasons.append("symlink_outside_repo")
+        except OSError:
+            pass
+
+    scope = _classify_capture_path_scope(path, external=external)
+    reason = "+".join(reasons) if reasons else "repo_relative"
+    return CanonicalCapturePath(
+        original_path=original,
+        canonical_path=path,
+        scope=scope,
+        canonicalization_reason=reason,
+    )
+
+
+def is_no_write_intent_reason(degraded_reason: str | None) -> bool:
+    return degraded_reason == "stated_intent_no_write"
+
+
+def iter_capture_paths(
+    change_set: ChangeSet,
+    manifest: EffectsManifest | None,
+    *,
+    source_repo: Path,
+) -> tuple[CanonicalCapturePath, ...]:
+    raw_paths: list[str] = []
+    raw_paths.extend(change_set.created)
+    raw_paths.extend(change_set.modified)
+    raw_paths.extend(change_set.deleted)
+    if manifest is not None:
+        section = manifest.surfaces.get("repo")
+        if section is not None:
+            for entry in section.entries:
+                if entry.op in {"write", "edit", "delete"} and entry.target:
+                    raw_paths.append(entry.target)
+    seen: set[str] = set()
+    ordered: list[CanonicalCapturePath] = []
+    for raw in raw_paths:
+        if not raw or raw in seen:
+            continue
+        seen.add(raw)
+        ordered.append(canonicalize_capture_path(raw, source_repo=source_repo))
+    return tuple(ordered)
+
+
+def stated_intent_no_write_capture_violation(
+    *,
+    change_set: ChangeSet,
+    manifest: EffectsManifest | None,
+    source_repo: Path,
+    degraded_reason: str | None,
+) -> str | None:
+    """Hard final gate — manifest suppression cannot bypass no-write contract."""
+    if not is_no_write_intent_reason(degraded_reason):
+        return None
+    violations: list[str] = []
+    for canon in iter_capture_paths(change_set, manifest, source_repo=source_repo):
+        if canon.scope == "user_workspace":
+            violations.append(canon.canonical_path)
+        elif canon.scope == "external_or_unknown":
+            violations.append(canon.original_path)
+    if not violations:
+        return None
+    return f"capture:stated_intent_no_write_violation:{violations[0]}"
 
 
 def _normalize_expected_path(raw: str) -> str:
@@ -106,10 +301,10 @@ def _normalize_repo_path_for_compare(
     *,
     source_repo: Path | None,
 ) -> str:
-    from services.git_integration_worker.cursor_sdk_manifest import _normalize_repo_path
-
-    normalized = _normalize_repo_path(raw, repo_root=source_repo)
-    return normalized or raw.lstrip("/")
+    if source_repo is None:
+        return raw.strip().lstrip("/")
+    canon = canonicalize_capture_path(raw, source_repo=source_repo)
+    return canon.canonical_path or raw.lstrip("/")
 
 
 def _path_gitignored(source_repo: Path, rel_path: str) -> bool:
@@ -266,6 +461,17 @@ def resolve_closeout_capture_fields(
     )
     if divergence_reason and capture_status == "complete":
         capture_status = "partial"
+    intent_violation = stated_intent_no_write_capture_violation(
+        change_set=change_set,
+        manifest=manifest,
+        source_repo=source_repo,
+        degraded_reason=degraded_reason,
+    )
+    if intent_violation:
+        if capture_status == "complete":
+            capture_status = "partial"
+        if divergence_reason is None:
+            divergence_reason = intent_violation
     deviations: list[str] = []
     if (
         capture_status == "partial"
@@ -282,4 +488,6 @@ def resolve_closeout_capture_fields(
         deviations.append("capture:gitignored_present_unattributed")
     if divergence_reason:
         deviations.append(divergence_reason)
+    if intent_violation:
+        deviations.append(intent_violation)
     return capture_status, divergence_reason, deviations, manifest

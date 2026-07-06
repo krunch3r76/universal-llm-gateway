@@ -14,6 +14,8 @@ from services.git_integration_worker.cursor_sdk_capture_status import (
     _normalize_repo_path_for_compare,
     _path_exists_in_sandboxes,
     _repo_manifest_paths,
+    canonicalize_capture_path,
+    is_no_write_intent_reason,
 )
 
 _CORTEX_ENTITY_ID_RE = re.compile(r"^[a-z][a-z0-9_]*:[^/]+$")
@@ -223,6 +225,7 @@ def _repo_surface_cross_check(
     change_set: ChangeSet,
     outside_repo_paths: tuple[str, ...] = (),
     worktree_isolated: bool = False,
+    degraded_reason: str | None = None,
 ) -> str | None:
     del git_changed, change_set
     if worktree_isolated and outside_repo_paths:
@@ -238,9 +241,26 @@ def _repo_surface_cross_check(
         reason = _divergence_from_divergent_rel(rel_entry)
         if reason:
             return reason
-    for path in sorted(_repo_manifest_paths(manifest, source_repo=source_repo)):
-        if not _path_exists_in_sandboxes(path, source_repo, cortex_root):
-            return f"divergence:emitted_path_absent:{path}"
+    for raw_path in sorted(_repo_manifest_paths(manifest, source_repo=source_repo)):
+        if _is_cortex_expected_path(raw_path):
+            cortex_rel = _cortex_expected_rel(raw_path)
+            if (cortex_root / cortex_rel).exists():
+                continue
+            return f"divergence:cortex_target_absent:{raw_path}"
+        canon = canonicalize_capture_path(raw_path, source_repo=source_repo)
+        if canon.scope == "control_plane":
+            continue
+        if canon.scope == "external_or_unknown":
+            if is_no_write_intent_reason(degraded_reason):
+                return (
+                    "capture:stated_intent_no_write_violation:"
+                    f"{canon.original_path}"
+                )
+            continue
+        if not _path_exists_in_sandboxes(
+            canon.canonical_path, source_repo, cortex_root
+        ):
+            return f"divergence:emitted_path_absent:{canon.original_path}"
     return None
 
 
@@ -265,7 +285,7 @@ def apply_surface_cross_checks(
     mount = (mount_root or resolve_mount_root(source_repo)).resolve()
     git_changed = _changed_path_set(change_set, source_repo=source_repo)
     repo_cross_check: str | None = None
-    if deliverables_expected and degraded_reason is None:
+    if deliverables_expected:
         repo_cross_check = _repo_surface_cross_check(
             manifest=manifest,
             git_changed=git_changed,
@@ -276,6 +296,7 @@ def apply_surface_cross_checks(
             change_set=change_set,
             outside_repo_paths=outside_repo_paths,
             worktree_isolated=worktree_isolated,
+            degraded_reason=degraded_reason,
         )
     updated: dict[str, object] = {}
     coverage = dict(manifest.coverage)
@@ -362,11 +383,16 @@ def closeout_divergence_reason(
             if reason:
                 return reason
         if manifest is not None:
-            for path in sorted(
+            for raw_path in sorted(
                 _repo_manifest_paths(manifest, source_repo=source_repo)
             ):
-                if not _path_exists_in_sandboxes(path, source_repo, cortex_root):
-                    return f"divergence:emitted_path_absent:{path}"
+                canon = canonicalize_capture_path(raw_path, source_repo=source_repo)
+                if canon.scope == "control_plane":
+                    continue
+                if not _path_exists_in_sandboxes(
+                    canon.canonical_path, source_repo, cortex_root
+                ):
+                    return f"divergence:emitted_path_absent:{canon.original_path}"
         return None
     for name in ("repo", "cortex", "agent_bus", "fs", "rag", "service"):
         section = checked.surfaces.get(name)

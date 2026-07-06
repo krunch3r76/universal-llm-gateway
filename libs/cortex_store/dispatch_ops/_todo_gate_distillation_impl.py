@@ -8,6 +8,12 @@ from typing import Any
 
 from fastapi import HTTPException
 from implement_admission.dense_spec_schema import dense_spec_hash_uri
+from implement_admission.density_triage_gate import (
+    JUDGMENT_REQUIRED,
+    MECHANICAL,
+    RECON_PENDING,
+    format_implement_triage_unknown_reason,
+)
 from implement_admission.gate_distillation import (
     GateDistillationInputs,
     prepare_gate_distillation,
@@ -17,20 +23,22 @@ from implement_admission.implement_ready import (
     ImplementReadyVerdict,
     evaluate_implement_ready,
 )
-from implement_admission.density_triage_gate import (
-    JUDGMENT_REQUIRED,
-    MECHANICAL,
-    RECON_PENDING,
-    format_implement_triage_unknown_reason,
-)
 from implement_admission.implement_ready_gate_resolve import (
     SkepticRatificationOutcome,
     resolve_skeptic_ratification,
+)
+from implement_admission.recon_waiver import (
+    WaiverInfo,
+    build_structured_waiver,
+    parse_recon_waiver,
+    recon_waived_bool,
+    validate_recon_waive_reason_code,
 )
 from universal_logging import get_logger
 
 from ..db import cortex_conn, query
 from ..entity_aliases import resolve_entity_reference
+from ..event_publisher import cortex_implement_recon_waived
 from ..routes.assertions import _create_assertion_impl
 from ._shared import record
 from .ops_assertions import _op_assertions
@@ -133,6 +141,7 @@ def _existing_gate_assertion_id(
     expected: list[str],
     acs: list[str],
     triage: str,
+    incoming_waiver: WaiverInfo | None,
 ) -> int | None:
     aid = _coerce_assertion_id(prior_attrs.get("implement_ready_assertion_id"))
     if aid is None:
@@ -144,6 +153,10 @@ def _existing_gate_assertion_id(
     if prior_attrs.get("files_expected") != expected:
         return None
     if prior_attrs.get("acceptance_criteria") != acs:
+        return None
+
+    prior_waiver = parse_recon_waiver(prior_attrs.get("recon_waived"))
+    if not (incoming_waiver or WaiverInfo(waived=False)).equivalent_to(prior_waiver):
         return None
 
     assertion = _load_assertion(conn, aid)
@@ -200,7 +213,7 @@ def _evaluate_from_persisted(
         skeptic_outcome = SkepticRatificationOutcome(ratified=False)
 
     raw_waived = attrs.get("recon_waived")
-    recon_waived = isinstance(raw_waived, str) and bool(raw_waived.strip())
+    recon_waived = recon_waived_bool(raw_waived)
 
     return evaluate_implement_ready(
         todo_id=entity_id,
@@ -246,6 +259,24 @@ def _success_payload(
     return payload
 
 
+def _incoming_waiver_from_params(
+    *,
+    recon_waive_reason_code: str | None,
+    recon_waive_reason: str | None,
+    waived_by: str,
+    spec_sha256: str,
+) -> WaiverInfo | None:
+    code = (recon_waive_reason_code or "").strip()
+    if not code:
+        return None
+    return build_structured_waiver(
+        reason_code=code,
+        reason=recon_waive_reason,
+        waived_by=waived_by,
+        spec_sha256=spec_sha256,
+    )
+
+
 def distill_todo_implement_gate(
     *,
     todo_id: str | None = None,
@@ -259,6 +290,8 @@ def distill_todo_implement_gate(
     seeded_by: str | None = None,
     density_triage: str | None = None,
     source_uri: str | None = None,
+    recon_waive_reason_code: str | None = None,
+    recon_waive_reason: str | None = None,
     **_: object,
 ) -> dict[str, Any]:
     """Atomically wire implement-admission gate fields at Gate-2 close."""
@@ -291,6 +324,10 @@ def distill_todo_implement_gate(
             "code": "implement_triage_unknown",
         }
 
+    reason_code_error = validate_recon_waive_reason_code(recon_waive_reason_code)
+    if reason_code_error is not None:
+        return reason_code_error
+
     with cortex_conn() as conn:
         try:
             resolved = resolve_entity_reference(conn, todo_id, label="entity")
@@ -318,6 +355,14 @@ def distill_todo_implement_gate(
             code, reason = prepared
             return {"error": reason, "code": code}
 
+        waived_by = seeded_by or agent or "todo_distill_implement_gate"
+        incoming_waiver = _incoming_waiver_from_params(
+            recon_waive_reason_code=recon_waive_reason_code,
+            recon_waive_reason=recon_waive_reason,
+            waived_by=waived_by,
+            spec_sha256=prepared.evidence_uris[-1],
+        )
+
         existing_id = _existing_gate_assertion_id(
             conn,
             row=row,
@@ -326,6 +371,7 @@ def distill_todo_implement_gate(
             expected=expected,
             acs=acs,
             triage=triage,
+            incoming_waiver=incoming_waiver,
         )
         if existing_id is not None:
             verdict = _evaluate_from_persisted(
@@ -387,6 +433,8 @@ def distill_todo_implement_gate(
         }
         if skills:
             attr_patch["required_skills"] = skills
+        if incoming_waiver is not None:
+            attr_patch["recon_waived"] = incoming_waiver.to_attr_json()
 
         update = _op_entity_update(
             entity_id=resolved.entity_id,
@@ -436,6 +484,11 @@ def distill_todo_implement_gate(
             todo_id=resolved.entity_id,
             assertion_id=assertion_id,
         )
+        if incoming_waiver is not None:
+            cortex_implement_recon_waived(
+                todo_id=resolved.entity_id,
+                **incoming_waiver.event_payload(),
+            )
         return _success_payload(
             entity_id=resolved.entity_id,
             prepared=prepared,

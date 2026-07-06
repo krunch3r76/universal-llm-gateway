@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from agent_seat.session_id import derive_session_id_from_timestamp
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from ._shared import (
     AssertionConfidence,
@@ -214,8 +216,10 @@ class SupersedeRequest(BaseModel):
     seeded_by: str | None = None
     chunk_id: str | None = None  # RAG-deterministic ID: {content_hash_prefix}-{i}
     confidence_score: float | None = None
-    session_id: str
-    agent: str
+    # Optional at call time — defaulted for session_edges bookkeeping when omitted
+    # (matches assert ergonomics; friction 22843).
+    session_id: str | None = None
+    agent: str | None = None
     # Clone-then-override: predicate_form is carried over from the superseded
     # assertion unless explicitly supplied here. Pass explicit null to
     # intentionally drop the field on the new row. When supplied and non-null,
@@ -243,6 +247,20 @@ class SupersedeRequest(BaseModel):
     _validate_evidence_uris = field_validator("evidence_uris")(
         reject_cortex_dropbox_uri_list
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _default_session_context(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        payload = dict(data)
+        if not payload.get("agent"):
+            payload["agent"] = payload.get("seeded_by") or "unknown"
+        if not payload.get("session_id"):
+            payload["session_id"] = derive_session_id_from_timestamp(
+                payload["agent"], datetime.now(UTC).isoformat()
+            )
+        return payload
 
 
 class SupersedeResponse(BaseModel):

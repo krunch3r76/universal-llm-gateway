@@ -57,6 +57,11 @@ from .admission import (
     mcp_enabled_for_team_dispatch,
     verify_thread_writable,
 )
+from .corpus_inline import (
+    CORPUS_BODY_BUDGET_BYTES,
+    corpus_inline_gated,
+    inline_corpus_for_packet,
+)
 from .dispatch_messages import extract_last_user_message, wire_latest_user_turn
 from .events import (
     DispatchSkillsChannelResolved,
@@ -67,6 +72,8 @@ from .events import (
     DispatchSkillsPredicatedSkipped,
     FrontierEndpointPersonaResolved,
     FrontierEndpointRequested,
+    PipelineFrontierDispatchCorpusInlined,
+    PipelineFrontierDispatchCorpusUnresolved,
 )
 from .handoff import _resolve_packet_file, _workspaces_root
 
@@ -803,6 +810,39 @@ async def build_dispatch_body(
             dropped=resolution.dropped,
             event_publisher=event_publisher,
         )
+
+    if corpus_inline_gated(effective_model):
+        corpus_result = inline_corpus_for_packet(
+            _packet_text_for_invariants(req),
+            budget_bytes=CORPUS_BODY_BUDGET_BYTES,
+            workspaces_root_override=_workspaces_root(),
+            already_present=system_assembled,
+        )
+        if corpus_result.block_md:
+            system_assembled = f"{system_assembled}{corpus_result.block_md}"
+        if event_publisher is not None:
+            if corpus_result.injected or corpus_result.dropped:
+                event_publisher(
+                    PipelineFrontierDispatchCorpusInlined(
+                        request_id=request_id,
+                        role=req.role,
+                        model=effective_model,
+                        injected_count=len(corpus_result.injected),
+                        dropped_count=len(corpus_result.dropped),
+                        injected_bytes=corpus_result.injected_bytes,
+                        dropped_bytes=corpus_result.dropped_bytes,
+                        budget_bytes=CORPUS_BODY_BUDGET_BYTES,
+                    )
+                )
+            for uri in corpus_result.unresolved:
+                event_publisher(
+                    PipelineFrontierDispatchCorpusUnresolved(
+                        request_id=request_id,
+                        role=req.role,
+                        model=effective_model,
+                        uri=uri,
+                    )
+                )
 
     _emit_skills_channel_resolved(
         request_id=request_id,
