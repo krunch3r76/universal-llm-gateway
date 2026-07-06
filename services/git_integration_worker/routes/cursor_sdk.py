@@ -108,6 +108,8 @@ from services.git_integration_worker.cursor_sdk_light_bounded_capture import (
 from services.git_integration_worker.cursor_sdk_manifest import (
     build_effects_manifest,
     classify_mcp_capture_branch,
+    merge_artifact_paths,
+    merge_stream_tool_calls,
 )
 from services.git_integration_worker.cursor_sdk_packet import (
     extract_source_ref_from_packet,
@@ -486,6 +488,21 @@ def _run_sdk_sync(
                     resolved_model=resolved_model,
                 )
                 result = run.wait()
+                artifact_paths: list[str] = []
+                list_artifacts_fn = getattr(agent, "list_artifacts", None)
+                if callable(list_artifacts_fn):
+                    try:
+                        raw_artifacts = list_artifacts_fn()
+                        if raw_artifacts:
+                            artifact_paths = [
+                                str(path) for path in raw_artifacts if path
+                            ]
+                    except Exception as artifact_exc:  # noqa: BLE001
+                        logger.debug(
+                            "cursor sdk list_artifacts unavailable: dispatch_id=%s err=%s",
+                            dispatch_id,
+                            artifact_exc,
+                        )
                 turns = run.conversation()
                 capture_branch = classify_mcp_capture_branch(turns)
                 effects_manifest = build_effects_manifest(
@@ -494,6 +511,17 @@ def _run_sdk_sync(
                     turns=turns,
                     capture_branch=capture_branch,
                 )
+                effects_manifest = merge_stream_tool_calls(
+                    effects_manifest,
+                    stream_capture.tool_calls,
+                    source_repo=source_repo,
+                )
+                if artifact_paths:
+                    effects_manifest = merge_artifact_paths(
+                        effects_manifest,
+                        artifact_paths,
+                        source_repo=source_repo,
+                    )
                 conversation_tool_call_count = count_tool_calls(turns)
                 tool_call_count = (
                     stream_capture.tool_call_count or conversation_tool_call_count

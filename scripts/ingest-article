@@ -57,6 +57,7 @@ SUBDIRECTORY_TO_SCOPE: dict[str, str] = {
     "llm/prompting": "llm_prompting",
     "documentation": "code_documentation",
     "software-agents": "software_agents",
+    "agent-evaluation": "agent_evaluation",
     "information-extraction": "information_extraction",
     "event-salience": "event_salience",
     "trading/strategies": "trading_strategies",

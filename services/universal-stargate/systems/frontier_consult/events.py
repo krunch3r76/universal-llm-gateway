@@ -517,7 +517,7 @@ def DispatchSkillsPredicatedSkipped(  # noqa: N802
 
 
 @event_factory
-def InlineBodyInjectionResolved(  # noqa: N802
+def DispatchSkillsInlineResolved(  # noqa: N802
     request_id: str,
     seat: str,
     model: str | None,
@@ -532,7 +532,7 @@ def InlineBodyInjectionResolved(  # noqa: N802
 ) -> Event:
     """Inline-only dispatch body injection audit (G3-owned, not B3 substrate)."""
     return Event(
-        signal="inline.body.injection.resolved",
+        signal="dispatch.skills.inline.resolved",
         payload={
             "request_id": request_id,
             "seat": seat,

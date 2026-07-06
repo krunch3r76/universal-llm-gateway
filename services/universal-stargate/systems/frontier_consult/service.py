@@ -61,12 +61,12 @@ from .dispatch_messages import extract_last_user_message, wire_latest_user_turn
 from .events import (
     DispatchSkillsChannelResolved,
     DispatchSkillsInlineRejected,
+    DispatchSkillsInlineResolved,
     DispatchSkillsMounted,
     DispatchSkillsPredicatedRejected,
     DispatchSkillsPredicatedSkipped,
     FrontierEndpointPersonaResolved,
     FrontierEndpointRequested,
-    InlineBodyInjectionResolved,
 )
 from .handoff import _resolve_packet_file, _workspaces_root
 
@@ -681,7 +681,7 @@ async def build_dispatch_body(
             metrics = meta_inj.get("metrics") or {}
             injected = meta_inj.get("injected") or []
             event_publisher(
-                InlineBodyInjectionResolved(
+                DispatchSkillsInlineResolved(
                     request_id=request_id,
                     seat=req.role,
                     model=req.model or meta.default_model,
@@ -777,7 +777,7 @@ async def build_dispatch_body(
             resolution.injected or resolution.dropped
         ):
             event_publisher(
-                InlineBodyInjectionResolved(
+                DispatchSkillsInlineResolved(
                     request_id=request_id,
                     seat="",
                     model=req.model or effective_model,

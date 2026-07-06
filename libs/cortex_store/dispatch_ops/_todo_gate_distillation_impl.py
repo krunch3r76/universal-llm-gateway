@@ -17,6 +17,12 @@ from implement_admission.implement_ready import (
     ImplementReadyVerdict,
     evaluate_implement_ready,
 )
+from implement_admission.density_triage_gate import (
+    JUDGMENT_REQUIRED,
+    MECHANICAL,
+    RECON_PENDING,
+    format_implement_triage_unknown_reason,
+)
 from implement_admission.implement_ready_gate_resolve import (
     SkepticRatificationOutcome,
     resolve_skeptic_ratification,
@@ -270,13 +276,19 @@ def distill_todo_implement_gate(
             "error": "acceptance_criteria must be a non-empty list[str] of non-empty strings"
         }
 
-    triage = (density_triage or "judgment_required").strip()
-    if triage != "judgment_required":
+    triage = (density_triage or JUDGMENT_REQUIRED).strip()
+    if triage == RECON_PENDING:
         return {
             "error": (
-                "density_triage must be judgment_required for gate distillation "
-                f"(got {triage!r})"
-            )
+                f"{todo_id}: recon_pending — re-triage to {JUDGMENT_REQUIRED} or "
+                f"{MECHANICAL} before gate distillation"
+            ),
+            "code": "implement_blocked_recon_pending",
+        }
+    if triage not in {MECHANICAL, JUDGMENT_REQUIRED}:
+        return {
+            "error": format_implement_triage_unknown_reason(todo_id, density_triage),
+            "code": "implement_triage_unknown",
         }
 
     with cortex_conn() as conn:

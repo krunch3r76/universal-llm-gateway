@@ -16,6 +16,9 @@ from implement_admission.closeout_models import (
 )
 
 from services.git_integration_worker.cursor_sdk_capture_status import ChangeSet
+from services.git_integration_worker.cursor_sdk_stream_capture import (
+    ToolCallObservation,
+)
 
 CaptureBranch = Literal["A", "B", "NO_CAPTURE"]
 DetailCap = 500
@@ -210,6 +213,100 @@ def repo_change_set_from_manifest(
         created=tuple(dict.fromkeys(created)),
         modified=tuple(dict.fromkeys(modified)),
         deleted=tuple(dict.fromkeys(deleted)),
+    )
+
+
+def merge_repo_paths_into_manifest(
+    manifest: EffectsManifest | None,
+    paths: Iterable[str],
+    *,
+    source_repo: Path | None = None,
+    source_label: str = "stream",
+) -> EffectsManifest | None:
+    """Append repo write entries for paths not already present in the manifest."""
+    normalized: list[str] = []
+    existing = manifest_repo_paths(manifest, source_repo=source_repo)
+    for raw in paths:
+        path = _normalize_repo_path(raw, repo_root=source_repo)
+        if not path or path in existing:
+            continue
+        normalized.append(path)
+        existing.add(path)
+    if not normalized:
+        return manifest
+    new_entries = [
+        EffectEntry(op="write", target=path, identity=path) for path in normalized
+    ]
+    if manifest is None:
+        return EffectsManifest(
+            dispatch_id="",
+            thread_id="",
+            capture_sources=[source_label],
+            surfaces={
+                "repo": SurfaceSection(
+                    surface="repo",
+                    source=source_label,
+                    entries=new_entries,
+                )
+            },
+            coverage={"repo": "complete"},
+        )
+    repo_section = manifest.surfaces.get("repo")
+    if repo_section is None:
+        merged_surfaces = dict(manifest.surfaces)
+        merged_surfaces["repo"] = SurfaceSection(
+            surface="repo",
+            source=source_label,
+            entries=new_entries,
+        )
+    else:
+        merged_surfaces = dict(manifest.surfaces)
+        merged_surfaces["repo"] = SurfaceSection(
+            surface="repo",
+            source=repo_section.source,
+            entries=[*repo_section.entries, *new_entries],
+            cross_check=repo_section.cross_check,
+        )
+    sources = list(dict.fromkeys([*manifest.capture_sources, source_label]))
+    coverage = dict(manifest.coverage)
+    coverage["repo"] = coverage.get("repo", "complete")
+    return manifest.model_copy(
+        update={
+            "surfaces": merged_surfaces,
+            "capture_sources": sources,
+            "coverage": coverage,
+        }
+    )
+
+
+def merge_stream_tool_calls(
+    manifest: EffectsManifest | None,
+    tool_calls: tuple[ToolCallObservation, ...],
+    *,
+    source_repo: Path | None = None,
+) -> EffectsManifest | None:
+    """Fold stream-observed write paths missing from the conversation manifest."""
+    paths = [tc.target_path for tc in tool_calls if tc.target_path]
+    return merge_repo_paths_into_manifest(
+        manifest,
+        paths,
+        source_repo=source_repo,
+        source_label="stream",
+    )
+
+
+def merge_artifact_paths(
+    manifest: EffectsManifest | None,
+    artifact_paths: Iterable[str],
+    *,
+    source_repo: Path | None = None,
+) -> EffectsManifest | None:
+    """Fold ``list_artifacts()`` paths into the repo surface when non-empty."""
+    return merge_repo_paths_into_manifest(
+        manifest,
+        artifact_paths,
+        source_repo=source_repo,
+        source_label="artifacts",
     )
 
 

@@ -628,6 +628,7 @@ def _assemble_closeout_delivery(
     execution_id: str = "test-execution",
     post_closeout_sidecar_fn: Callable[..., dict[str, Any] | None] | None = None,
     finalize_oversize: bool = True,
+    worktree_isolated: bool = False,
 ) -> CloseoutDelivery:
     text = full_result_text(outcome.body, degraded_reason)
     sidecar_appendix: list[str] = []
@@ -706,6 +707,7 @@ def _assemble_closeout_delivery(
             files_untracked_or_ignored=files_untracked_or_ignored,
             mount_root=resolve_mount_root(source_repo),
             light_bounded_expected_paths=light_bounded_expected_paths,
+            worktree_isolated=worktree_isolated,
         )
     )
     cortex_authoritative = bool(gate_d_created_rels)

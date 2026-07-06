@@ -15,6 +15,7 @@ is a free cache hit, not a second RPC).
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -36,6 +37,7 @@ class ToolCallObservation:
     arg_bytes: int
     result_bytes: int
     truncated_fields: tuple[str, ...]
+    target_path: str | None = None
 
     @property
     def truncated_any(self) -> bool:
@@ -100,15 +102,47 @@ def FrontierSdkWorkerToolCall(  # noqa: N802
     )
 
 
+_READ_FAMILY_FS_OPS = frozenset({"read", "md_read", "list", "glob", "grep", "search"})
+
+
+def _string_stream_arg(args: Mapping[str, Any], *keys: str) -> str | None:
+    for key in keys:
+        value = args.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _target_path_from_stream_args(tool_name: str, args: Any) -> str | None:
+    if not isinstance(args, Mapping):
+        return None
+    name = (tool_name or "").lower()
+    if name == "fs" or name.endswith(".fs") or name.endswith("_fs"):
+        op = str(args.get("op") or "").lower()
+        if op in _READ_FAMILY_FS_OPS:
+            return None
+        if op and op not in {"write", "append", "edit"}:
+            return None
+    nested = args.get("args")
+    if isinstance(nested, Mapping):
+        path = _string_stream_arg(nested, "path", "filePath", "target")
+        if path:
+            return path
+    return _string_stream_arg(args, "path", "filePath", "target")
+
+
 def _observation_from_message(message: Any) -> ToolCallObservation:
     truncated = getattr(message, "truncated", None) or {}
+    args = getattr(message, "args", None)
+    tool_name = getattr(message, "name", "") or ""
     return ToolCallObservation(
         call_id=getattr(message, "call_id", "") or "",
-        tool_name=getattr(message, "name", "") or "",
+        tool_name=tool_name,
         status=str(getattr(message, "status", "")),
-        arg_bytes=_json_bytes(getattr(message, "args", None)),
+        arg_bytes=_json_bytes(args),
         result_bytes=_json_bytes(getattr(message, "result", None)),
         truncated_fields=tuple(sorted(k for k, v in truncated.items() if v)),
+        target_path=_target_path_from_stream_args(tool_name, args),
     )
 
 

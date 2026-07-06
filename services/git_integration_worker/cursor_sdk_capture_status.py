@@ -1,15 +1,13 @@
-"""Pure capture-status classification and divergence detection for cursor-sdk closeout."""
+"""Pure capture-status classification for cursor-sdk closeout."""
 
 from __future__ import annotations
 
-import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
 from implement_admission.closeout_models import EffectsManifest
-from implement_admission.deliverable_verification import _paths_intersect
 from implement_admission.spec import CloseoutStatus
 
 from services.git_integration_worker.cursor_sdk_light_bounded_capture import (
@@ -17,8 +15,6 @@ from services.git_integration_worker.cursor_sdk_light_bounded_capture import (
 )
 
 CaptureStatus = Literal["complete", "partial", "unavailable"]
-
-_CORTEX_ENTITY_ID_RE = re.compile(r"^[a-z][a-z0-9_]*:[^/]+$")
 
 
 @dataclass(frozen=True)
@@ -89,22 +85,12 @@ def classify_capture_status(
     manifest: EffectsManifest | None = None,
     baseline_has_hashes: bool = False,
 ) -> CaptureStatus | None:
-    """Classify capture completeness for implement closeouts.
-
-    Trust boundary: repo change-set attribution covers (a) porcelain-tracked
-    ``source_repo`` paths and (b) Composer-native write/edit/delete paths via the
-    manifest fold (including gitignored/reset-away). It does NOT byte-attribute
-    arbitrary shell side effects, undeclared gitignored files, or writes outside
-    ``source_repo``. Shell repo manifest entries force ``capture_status=partial``
-    with an explicit deviation rather than a silent COMPLETE.
-    """
+    """Classify capture completeness for implement closeouts."""
     if not deliverables_expected:
         return None
     if baseline is None:
         return "unavailable"
     if baseline_dirty_in_expected(baseline, files_expected) and not baseline_has_hashes:
-        return "partial"
-    if manifest and _repo_has_shell_entry(manifest):
         return "partial"
     if manifest and manifest.coverage:
         values = set(manifest.coverage.values())
@@ -138,6 +124,25 @@ def _path_gitignored(source_repo: Path, rel_path: str) -> bool:
     return proc.returncode == 0
 
 
+def _repo_manifest_paths(
+    manifest: EffectsManifest | None,
+    *,
+    source_repo: Path | None = None,
+) -> set[str]:
+    section = manifest.surfaces.get("repo") if manifest else None
+    if section is None:
+        return set()
+    paths: set[str] = set()
+    for entry in section.entries:
+        if entry.op not in {"write", "edit", "delete"}:
+            continue
+        if entry.target:
+            paths.add(
+                _normalize_repo_path_for_compare(entry.target, source_repo=source_repo)
+            )
+    return paths
+
+
 def gitignored_manifest_paths(
     manifest: EffectsManifest | None,
     *,
@@ -162,285 +167,11 @@ def _path_exists_in_sandboxes(path: str, source_repo: Path, cortex_root: Path) -
     return (source_repo / rel).exists() or (cortex_root / rel).exists()
 
 
-def _divergence_from_divergent_rel(rel_entry: str) -> str | None:
-    if rel_entry.startswith("pinned_deliverable_wrong_sandbox:"):
-        rel = rel_entry.split(":", 1)[1]
-        return f"divergence:target_unreadable:{rel}"
-    if rel_entry.startswith("pinned_deliverable_write_failed:"):
-        rel = rel_entry.split(":", 1)[1]
-        return f"divergence:target_unreadable:{rel}"
-    return None
-
-
-def _changed_path_set(
-    change_set: ChangeSet,
-    *,
-    source_repo: Path | None = None,
-) -> set[str]:
-    paths: set[str] = set()
-    for group in (change_set.created, change_set.modified, change_set.deleted):
-        for path in group:
-            paths.add(_normalize_repo_path_for_compare(path, source_repo=source_repo))
-    return paths
-
-
-def _repo_manifest_paths(
-    manifest: EffectsManifest | None,
-    *,
-    source_repo: Path | None = None,
-) -> set[str]:
-    section = manifest.surfaces.get("repo") if manifest else None
-    if section is None:
-        return set()
-    paths: set[str] = set()
-    for entry in section.entries:
-        if entry.op not in {"write", "edit", "delete"}:
-            continue
-        if entry.target:
-            paths.add(
-                _normalize_repo_path_for_compare(entry.target, source_repo=source_repo)
-            )
-    return paths
-
-
 def _repo_has_shell_entry(manifest: EffectsManifest | None) -> bool:
     section = manifest.surfaces.get("repo") if manifest else None
     if section is None:
         return False
     return any(entry.op == "shell" for entry in section.entries)
-
-
-def _repo_diff_mismatch(
-    manifest: EffectsManifest | None,
-    git_changed: set[str],
-    *,
-    source_repo: Path | None = None,
-) -> str | None:
-    manifest_paths = _repo_manifest_paths(manifest, source_repo=source_repo)
-    has_shell = _repo_has_shell_entry(manifest)
-    if not manifest_paths and not has_shell:
-        return None
-    missing = sorted(path for path in manifest_paths if path not in git_changed)
-    if not missing:
-        return None
-    if source_repo is not None:
-        for path in missing:
-            if (source_repo / path).is_file() and _path_gitignored(source_repo, path):
-                continue
-            return f"divergence:repo_diff_mismatch:{path}"
-        return None
-    return f"divergence:repo_diff_mismatch:{missing[0]}"
-
-
-def _cortex_target_absent(
-    manifest: EffectsManifest | None, cortex_root: Path
-) -> str | None:
-    section = manifest.surfaces.get("cortex") if manifest else None
-    if section is None:
-        return None
-    for entry in section.entries:
-        target = entry.identity or entry.target
-        if not target:
-            continue
-        if _CORTEX_ENTITY_ID_RE.match(target):
-            continue
-        rel = target.lstrip("/")
-        if rel and not (cortex_root / rel).exists():
-            return f"divergence:cortex_target_absent:{target}"
-    return None
-
-
-def _agent_bus_turn_absent(manifest: EffectsManifest | None) -> str | None:
-    section = manifest.surfaces.get("agent_bus") if manifest else None
-    if section is None:
-        return None
-    for entry in section.entries:
-        if entry.op in {"agent_bus.reply", "agent_bus.send"}:
-            continue
-        target = entry.target or entry.identity
-        if not target or "#" not in target:
-            continue
-        _thread, turn = target.split("#", 1)
-        if turn.strip() and not turn.strip().isdigit():
-            return f"divergence:bus_turn_absent:{target}"
-    return None
-
-
-def _fs_surface_cross_check(
-    manifest: EffectsManifest,
-    *,
-    source_repo: Path,
-    cortex_root: Path,
-    mount_root: Path,
-) -> str | None:
-    from services.git_integration_worker.cursor_sdk_manifest import (
-        classify_mount_path,
-        manifest_fs_targets,
-        mount_relative_path,
-        registered_repo_roots,
-        resolve_fs_target_absolute,
-    )
-
-    repo_roots = registered_repo_roots(mount_root)
-    for target in manifest_fs_targets(manifest):
-        abs_path = resolve_fs_target_absolute(
-            target,
-            mount_root=mount_root,
-            cortex_root=cortex_root,
-        )
-        if abs_path is None:
-            continue
-        kind = classify_mount_path(
-            abs_path,
-            source_repo=source_repo,
-            mount_root=mount_root,
-            repo_roots=repo_roots,
-        )
-        if kind == "source_repo":
-            continue
-        if kind == "other_repo":
-            rel = mount_relative_path(mount_root, abs_path) or target
-            return f"divergence:other_repo_root:{rel}"
-        if kind == "shared_cursor":
-            rel = mount_relative_path(mount_root, abs_path) or target
-            return f"divergence:shared_cursor_parent:{rel}"
-        rel = mount_relative_path(mount_root, abs_path) or target
-        return f"divergence:unknown_root_child:{rel}"
-    return None
-
-
-def apply_surface_cross_checks(
-    manifest: EffectsManifest | None,
-    *,
-    change_set: ChangeSet,
-    source_repo: Path,
-    cortex_root: Path,
-    files_expected: list[str],
-    divergent_rels: tuple[str, ...],
-    deliverables_expected: bool,
-    degraded_reason: str | None,
-    mount_root: Path | None = None,
-    outside_repo_paths: tuple[str, ...] = (),
-) -> EffectsManifest | None:
-    if manifest is None:
-        return None
-    from services.git_integration_worker.cursor_sdk_manifest import resolve_mount_root
-
-    mount = (mount_root or resolve_mount_root(source_repo)).resolve()
-    git_changed = _changed_path_set(change_set, source_repo=source_repo)
-    updated: dict[str, object] = {}
-    coverage = dict(manifest.coverage)
-    for name, section in manifest.surfaces.items():
-        cross_check = section.cross_check
-        if name == "repo" and deliverables_expected and degraded_reason is None:
-            cross_check = cross_check or _repo_surface_cross_check(
-                manifest=manifest,
-                git_changed=git_changed,
-                files_expected=files_expected,
-                divergent_rels=divergent_rels,
-                source_repo=source_repo,
-                cortex_root=cortex_root,
-                change_set=change_set,
-                outside_repo_paths=outside_repo_paths,
-            )
-        elif name == "fs" and deliverables_expected and degraded_reason is None:
-            cross_check = cross_check or _fs_surface_cross_check(
-                manifest,
-                source_repo=source_repo,
-                cortex_root=cortex_root,
-                mount_root=mount,
-            )
-        elif name == "cortex" and deliverables_expected and degraded_reason is None:
-            cross_check = cross_check or _cortex_target_absent(manifest, cortex_root)
-        elif name == "agent_bus" and deliverables_expected and degraded_reason is None:
-            cross_check = cross_check or _agent_bus_turn_absent(manifest)
-        if cross_check:
-            coverage[name] = "partial"
-        elif name in coverage:
-            coverage[name] = "complete"
-        updated[name] = section.model_copy(update={"cross_check": cross_check})
-    return manifest.model_copy(
-        update={
-            "surfaces": updated,
-            "coverage": coverage,
-        }
-    )
-
-
-def _repo_surface_cross_check(
-    *,
-    manifest: EffectsManifest,
-    git_changed: set[str],
-    files_expected: list[str],
-    divergent_rels: tuple[str, ...],
-    source_repo: Path,
-    cortex_root: Path,
-    change_set: ChangeSet,
-    outside_repo_paths: tuple[str, ...] = (),
-) -> str | None:
-    if outside_repo_paths:
-        return f"divergence:unknown_root_child:{outside_repo_paths[0]}"
-    if files_expected and not _paths_intersect(files_expected, git_changed):
-        return "divergence:no_expected_files_touched"
-    for rel_entry in divergent_rels:
-        reason = _divergence_from_divergent_rel(rel_entry)
-        if reason:
-            return reason
-    for path in (*change_set.created, *change_set.modified):
-        if not _path_exists_in_sandboxes(path, source_repo, cortex_root):
-            return f"divergence:emitted_path_absent:{path}"
-    return _repo_diff_mismatch(manifest, git_changed, source_repo=source_repo)
-
-
-def closeout_divergence_reason(
-    *,
-    deliverables_expected: bool,
-    degraded_reason: str | None,
-    change_set: ChangeSet,
-    files_expected: list[str],
-    divergent_rels: tuple[str, ...],
-    source_repo: Path,
-    cortex_root: Path,
-    manifest: EffectsManifest | None = None,
-    mount_root: Path | None = None,
-    outside_repo_paths: tuple[str, ...] = (),
-    files_untracked_or_ignored: tuple[str, ...] = (),
-) -> str | None:
-    if not deliverables_expected or degraded_reason is not None:
-        return None
-    if files_untracked_or_ignored:
-        return "divergence:repo_diff_gitignored_present"
-    checked = apply_surface_cross_checks(
-        manifest,
-        change_set=change_set,
-        source_repo=source_repo,
-        cortex_root=cortex_root,
-        files_expected=files_expected,
-        divergent_rels=divergent_rels,
-        deliverables_expected=deliverables_expected,
-        degraded_reason=degraded_reason,
-        mount_root=mount_root,
-        outside_repo_paths=outside_repo_paths,
-    )
-    if checked is None:
-        changed = _changed_path_set(change_set, source_repo=source_repo)
-        if outside_repo_paths:
-            return f"divergence:unknown_root_child:{outside_repo_paths[0]}"
-        if files_expected and not _paths_intersect(files_expected, changed):
-            return "divergence:no_expected_files_touched"
-        for rel_entry in divergent_rels:
-            reason = _divergence_from_divergent_rel(rel_entry)
-            if reason:
-                return reason
-        for path in (*change_set.created, *change_set.modified):
-            if not _path_exists_in_sandboxes(path, source_repo, cortex_root):
-                return f"divergence:emitted_path_absent:{path}"
-        return None
-    for name in ("repo", "cortex", "agent_bus", "fs", "rag", "service"):
-        section = checked.surfaces.get(name)
-        if section and section.cross_check:
-            return section.cross_check
-    return None
 
 
 def degrade_status_for_capture(
@@ -470,12 +201,15 @@ def resolve_closeout_capture_fields(
     outside_repo_paths: tuple[str, ...] = (),
     files_untracked_or_ignored: tuple[str, ...] = (),
     light_bounded_expected_paths: tuple[str, ...] = (),
+    worktree_isolated: bool = False,
 ) -> tuple[CaptureStatus | None, str | None, list[str], EffectsManifest | None]:
+    from services.git_integration_worker.cursor_sdk_capture_divergence import (
+        apply_surface_cross_checks,
+        closeout_divergence_reason,
+        expected_deliverables_present,
+    )
+
     if baseline is None and light_bounded_expected_paths:
-        # Light-bounded has no admit-time git baseline to diff against (that
-        # capture is implement-only) — disk/cortex existence is the
-        # independent completeness signal instead of the baseline-diff
-        # machinery below.
         capture_status, divergence_reason = light_bounded_capture_status(
             light_bounded_expected_paths,
             source_repo=source_repo,
@@ -495,6 +229,7 @@ def resolve_closeout_capture_fields(
         degraded_reason=degraded_reason,
         mount_root=mount_root,
         outside_repo_paths=outside_repo_paths,
+        worktree_isolated=worktree_isolated,
     )
     capture_status = classify_capture_status(
         deliverables_expected=deliverables_expected,
@@ -503,6 +238,18 @@ def resolve_closeout_capture_fields(
         manifest=manifest,
         baseline_has_hashes=baseline_has_hashes,
     )
+    if (
+        deliverables_expected
+        and files_expected
+        and capture_status == "complete"
+        and not expected_deliverables_present(
+            files_expected,
+            manifest,
+            source_repo=source_repo,
+            cortex_root=cortex_root,
+        )
+    ):
+        capture_status = "partial"
     divergence_reason = closeout_divergence_reason(
         deliverables_expected=deliverables_expected,
         degraded_reason=degraded_reason,
@@ -515,6 +262,7 @@ def resolve_closeout_capture_fields(
         mount_root=mount_root,
         outside_repo_paths=outside_repo_paths,
         files_untracked_or_ignored=files_untracked_or_ignored,
+        worktree_isolated=worktree_isolated,
     )
     if divergence_reason and capture_status == "complete":
         capture_status = "partial"
@@ -528,6 +276,8 @@ def resolve_closeout_capture_fields(
         deviations.append("capture:dirty_baseline_under_capture")
     if deliverables_expected and manifest and _repo_has_shell_entry(manifest):
         deviations.append("capture:shell_repo_writes_unverified")
+    if outside_repo_paths and not worktree_isolated:
+        deviations.append("capture:outside_repo_paths_present")
     if files_untracked_or_ignored:
         deviations.append("capture:gitignored_present_unattributed")
     if divergence_reason:

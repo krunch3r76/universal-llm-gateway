@@ -72,7 +72,7 @@
 "frontier.endpoint.persona.resolved" = "`frontier_kind`, `default_model`, `allowed_options_count`"
 "frontier.endpoint.requested" = "`agent` (nullable), `model` (nullable)"
 "frontier.handoff.requested" = "`handoff_contract` (`consult` \\"
-"inline.body.injection.resolved" = "`request_id`, `seat`, `model`, `injected`, `dropped`, `total_bytes`, `budget_bytes`, `cache_hit`, `cold_fetches`, `elapsed_ms`, `deadline_hit`"
+"dispatch.skills.inline.resolved" = "`request_id`, `seat`, `model`, `injected`, `dropped`, `total_bytes`, `budget_bytes`, `cache_hit`, `cold_fetches`, `elapsed_ms`, `deadline_hit`"
 "fs.timeout.suspected" = "Derived signal for provider-side MCP cutoffs: `tool_name=\"fs\"`, `duration_s >= 25`, and `0 < response_bytes <= 100`"
 "gateway.model.ghost.cleaned" = "`vram_freed_mb`"
 "gateway.model.phantom.cleaned" = "`vram_freed_mb`"
