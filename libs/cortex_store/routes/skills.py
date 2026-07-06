@@ -51,14 +51,12 @@ from ..skill_suggest_rank import (
     suggestions_need_description,
 )
 from ._skill_index import (
-    body_digest,
     entity_types_for_layer,
     fetch_boot_skills_view,
     index_envelope_fields,
-    slug_from_row,
 )
 from ._skill_suggest import run_stage_a
-from .boot._skill_trigger import _resolve_skill_file, skill_description_text
+from .boot._skill_trigger import skill_description_text
 
 _DISCOVERABLE_SKILL_LIFECYCLE = discoverable_skill_lifecycle_sql_predicate()
 
@@ -299,62 +297,33 @@ def get_skill_body(
     ] = False,
 ) -> dict[str, Any]:
     """Return the substantive skill/rule body with source_uri and content digest."""
-    conn = cortex_conn()
-    try:
-        rows = db_query(
-            conn,
-            "SELECT id, name, source_uri, type, lifecycle FROM entities WHERE id = ? "
-            "AND type IN ('agent_skill', 'rule', 'skill')",
-            (id,),
+    from implement_admission.skill_body_resolve import resolve_skill_body_from_table
+
+    payload, reason = resolve_skill_body_from_table(
+        id,
+        include_non_active=include_non_active,
+        expected_digest=expected_digest,
+    )
+    if reason == "digest_mismatch":
+        raise HTTPException(
+            status_code=409,
+            detail=payload
+            if isinstance(payload, dict) and payload.get("error")
+            else {
+                "error": "digest_mismatch",
+                "expected_digest": expected_digest,
+                "digest": None,
+            },
         )
-    finally:
-        conn.close()
-    if not rows:
+    if payload is None:
         raise HTTPException(status_code=404, detail=f"Skill not found: {id}")
-    row = rows[0]
-    entity_id = str(row.get("id") or "")
-    slug = slug_from_row(row)
-    source_uri = row.get("source_uri")
-    lifecycle = row.get("lifecycle")
-    is_skill = row.get("type") in ("agent_skill", "skill")
-    discoverable = (not is_skill) or (lifecycle == DISCOVERABLE_SKILL_LIFECYCLE)
-    if is_skill and not discoverable and not include_non_active:
-        return {
-            "id": entity_id,
-            "lifecycle": lifecycle,
-            "discoverable": False,
-            "body": None,
-            "reason": "inactive_lifecycle_withheld",
-        }
-    path = _resolve_skill_file(source_uri, slug)
-    if path is None:
+    if payload.get("reason") == "inactive_lifecycle_withheld":
+        return payload
+    if not payload.get("body"):
         raise HTTPException(
             status_code=404, detail=f"Skill body not resolvable for {id}"
         )
-    try:
-        body_text = path.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise HTTPException(
-            status_code=404, detail=f"Skill body not readable for {id}"
-        ) from exc
-    digest = body_digest(source_uri, slug)
-    if expected_digest and digest and expected_digest != digest:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "error": "digest_mismatch",
-                "expected_digest": expected_digest,
-                "digest": digest,
-            },
-        )
-    return {
-        "id": entity_id,
-        "source_uri": source_uri,
-        "digest": digest,
-        "body": body_text,
-        "lifecycle": lifecycle,
-        "discoverable": discoverable,
-    }
+    return payload
 
 
 _CONTEXT_MAX = 16384

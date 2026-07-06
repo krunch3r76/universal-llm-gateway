@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 from typing import Any
 
@@ -75,22 +74,17 @@ def slug_from_row(row: dict[str, Any]) -> str:
 
 
 def content_digest(data: bytes) -> str:
-    """SHA-256 digest prefix shared by route body resolution and ingest projection."""
-    return f"sha256:{hashlib.sha256(data).hexdigest()[:16]}"
+    """Re-export — shared SOT lives in implement_admission.skill_body_resolve."""
+    from implement_admission.skill_body_resolve import content_digest as _content_digest
+
+    return _content_digest(data)
 
 
 def body_digest(source_uri: str | None, slug: str) -> str | None:
-    """Content digest of the resolved skill/rule body for the INDEX envelope."""
-    from .boot._skill_trigger import _resolve_skill_file
+    """Re-export — shared SOT lives in implement_admission.skill_body_resolve."""
+    from implement_admission.skill_body_resolve import body_digest as _body_digest
 
-    path = _resolve_skill_file(source_uri, slug)
-    if path is None:
-        return None
-    try:
-        data = path.read_bytes()
-    except OSError:
-        return None
-    return content_digest(data)
+    return _body_digest(source_uri, slug)
 
 
 def index_envelope_fields(row: dict[str, Any]) -> dict[str, str | None]:

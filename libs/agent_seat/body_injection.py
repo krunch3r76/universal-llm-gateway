@@ -222,29 +222,24 @@ def _fetch_body_sync(
     include_non_active: bool = False,
     timeout_ms: int = INJECTED_BODY_TIMEOUT_MS,
 ) -> tuple[dict[str, Any] | None, str | None]:
-    """Return (payload, drop_reason). ``drop_reason`` set on non-200 responses."""
-    try:
-        with make_sync_client(
-            DEFAULT_CORTEX_URL, timeout=timeout_ms / 1000.0
-        ) as client:
-            params: dict[str, str] = {"id": entity_id}
-            if expected_digest:
-                params["expected_digest"] = expected_digest
-            if include_non_active:
-                params["include_non_active"] = "true"
-            resp = client.get("/skills/body", params=params)
-            if resp.status_code == 200:
-                payload = resp.json()
-                return (payload if isinstance(payload, dict) else None), None
-            if resp.status_code == 409:
-                return None, "digest_mismatch"
-            if resp.status_code == 404:
-                return None, "body_missing"
-            return None, "unreachable"
-    except Exception as exc:
-        if exc.__class__.__name__.endswith("Timeout"):
-            return None, "timeout"
-        return None, "unreachable"
+    """Return (payload, drop_reason). Uses shared table-first resolver in-process."""
+    del timeout_ms  # in-process resolver — HTTP timeout N/A
+    from implement_admission.skill_body_resolve import resolve_skill_body_from_table
+
+    payload, reason = resolve_skill_body_from_table(
+        entity_id,
+        include_non_active=include_non_active,
+        expected_digest=expected_digest,
+    )
+    if reason == "digest_mismatch":
+        return None, "digest_mismatch"
+    if payload is None:
+        return None, reason or "body_missing"
+    if payload.get("reason") == "inactive_lifecycle_withheld":
+        return None, "inactive_lifecycle_withheld"
+    if not payload.get("body"):
+        return None, reason or "body_missing"
+    return payload, None
 
 
 def _fetch_payload(

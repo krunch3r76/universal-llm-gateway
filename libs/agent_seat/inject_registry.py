@@ -13,7 +13,6 @@ from agent_seat.registry import is_lead_agent
 
 from .body_injection import (
     RequiredBodyUnresolved,
-    _fetch_body_sync,
     _slug_from_entry,
 )
 
@@ -324,15 +323,19 @@ def _fetch_registry_entry(
     metrics: dict[str, Any],
 ) -> tuple[dict[str, Any] | None, str | None]:
     include_non_active = not entry.lifecycle_required
-    payload, reason = _fetch_body_sync(
-        entry.entity_id,
-        None,
+    slug = entity_slug_from_id(entry.entity_id)
+    from implement_admission.skill_body_resolve import resolve_skill_body_from_table
+
+    payload, reason = resolve_skill_body_from_table(
+        slug,
         include_non_active=include_non_active,
     )
     if payload is None:
-        if entry.lifecycle_required:
+        if entry.lifecycle_required and reason != "digest_mismatch":
             return None, "inactive_lifecycle_withheld"
         return None, reason or "unreachable"
+    if payload.get("reason") == "inactive_lifecycle_withheld":
+        return None, "inactive_lifecycle_withheld"
     digest = str(payload.get("digest") or "")
     body = str(payload.get("body") or "")
     if not digest or not body:

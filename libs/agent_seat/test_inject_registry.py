@@ -47,22 +47,34 @@ def _body_map(monkeypatch: pytest.MonkeyPatch, bodies: dict[str, str]) -> None:
             "rule:ulg-architecture_ulg", expanded["agent_skill:ulg-architecture"]
         )
 
-    def fake_fetch(
-        entity_id: str,
-        _digest: str | None,
+    def fake_resolve(
+        slug_or_entity_id: str,
         *,
         include_non_active: bool = False,
-        timeout_ms: int = 300,
+        expected_digest: str | None = None,
+        conn: object | None = None,
     ) -> tuple[dict[str, Any] | None, str | None]:
-        del include_non_active, timeout_ms
-        if entity_id not in expanded:
+        del conn, expected_digest
+        lookup = slug_or_entity_id
+        if lookup not in expanded and ":" in lookup:
+            lookup = lookup.split(":", 1)[1]
+        if lookup not in expanded:
+            prefixed = f"agent_skill:{lookup}"
+            if prefixed in expanded:
+                lookup = prefixed
+            elif f"rule:{lookup}" in expanded:
+                lookup = f"rule:{lookup}"
+        if lookup not in expanded:
             return None, "body_missing"
-        digest = f"sha256:{entity_id.split(':')[-1]}"
-        return {"digest": digest, "body": expanded[entity_id]}, None
+        if lookup == "rule:orchestrator-core" and not include_non_active:
+            return None, "body_missing"
+        slug = lookup.split(":", 1)[-1]
+        digest = f"sha256:{slug}"
+        return {"digest": digest, "body": expanded[lookup], "id": lookup}, None
 
     monkeypatch.setattr(
-        "agent_seat.inject_registry._fetch_body_sync",
-        fake_fetch,
+        "implement_admission.skill_body_resolve.resolve_skill_body_from_table",
+        fake_resolve,
     )
 
 
@@ -173,7 +185,7 @@ def test_union_matrix_no_duplicates(monkeypatch: pytest.MonkeyPatch) -> None:
     assert set(injected_ids) == {
         "rule:orchestrator-workflow",
         "rule:architecture-invariants",
-        "rule:ulg-architecture_ulg",
+        "rule:ulg-architecture",
         SENTINEL_DISPATCH_INJECT_ENTITY_ID,
     }
 
@@ -263,23 +275,34 @@ def test_normal_overflow_degrades_to_index(monkeypatch: pytest.MonkeyPatch) -> N
 
 
 def test_lifecycle_required_withheld(monkeypatch: pytest.MonkeyPatch) -> None:
-    def fake_fetch(
-        entity_id: str,
-        _digest: str | None,
+    def fake_resolve(
+        slug_or_entity_id: str,
         *,
         include_non_active: bool = False,
-        timeout_ms: int = 300,
+        expected_digest: str | None = None,
+        conn: object | None = None,
     ) -> tuple[dict[str, Any] | None, str | None]:
-        del timeout_ms
-        if entity_id == "rule:orchestrator-core" and not include_non_active:
-            return None, "body_missing"
-        if entity_id == "rule:cortex-orientation":
+        del expected_digest, conn
+        if slug_or_entity_id == "orchestrator-core" and not include_non_active:
+            return (
+                {
+                    "id": "rule:orchestrator-core",
+                    "body": None,
+                    "digest": "sha256:orch",
+                    "reason": "inactive_lifecycle_withheld",
+                },
+                None,
+            )
+        if slug_or_entity_id == "cortex-orientation":
             return {"digest": "sha256:o", "body": "orientation"}, None
-        if entity_id == "rule:cortex-provenance-discipline":
+        if slug_or_entity_id == "cortex-provenance-discipline":
             return {"digest": "sha256:p", "body": "provenance"}, None
         return None, "body_missing"
 
-    monkeypatch.setattr("agent_seat.inject_registry._fetch_body_sync", fake_fetch)
+    monkeypatch.setattr(
+        "implement_admission.skill_body_resolve.resolve_skill_body_from_table",
+        fake_resolve,
+    )
     monkeypatch.setattr(
         "agent_seat.inject_registry.is_lead_agent",
         lambda slug: slug == "claude-api",
@@ -513,7 +536,7 @@ def test_provider_mount_excludes_alias_input_slug(
         budget_bytes=None,
     )
     injected_ids = {str(item.get("id") or "") for item in resolution.injected}
-    assert "rule:ulg-architecture_ulg" not in injected_ids
+    assert "rule:ulg-architecture" not in injected_ids
     assert any(item.get("reason") == "provider_mounted" for item in resolution.dropped)
 
 
@@ -710,3 +733,122 @@ def test_exclude_mcp_predicated_false_preserves_defaults(
     assert with_flag.block_md == baseline.block_md
     assert with_flag.injected == baseline.injected
     assert with_flag.dropped == baseline.dropped
+
+
+def test_caller_ulg_alias_resolves_same_body_as_bare_slug(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    shared_body = "ULG_ARCHITECTURE_SHARED_BODY_MARKER"
+    _body_map(
+        monkeypatch,
+        {
+            "agent_skill:ulg-architecture": shared_body,
+            "agent_skill:cortex-orientation": "orientation",
+        },
+    )
+    bare = resolve_injected_bodies(
+        "claude-api",
+        platform="api",
+        inject_profile="dispatch",
+        caller_skill_ids=("ulg-architecture",),
+        budget_bytes=None,
+    )
+    alias = resolve_injected_bodies(
+        "claude-api",
+        platform="api",
+        inject_profile="dispatch",
+        caller_skill_ids=("ulg-architecture_ulg",),
+        budget_bytes=None,
+    )
+    assert shared_body in bare.block_md
+    assert shared_body in alias.block_md
+    assert bare.block_md.count(shared_body) == 1
+    assert alias.block_md.count(shared_body) == 1
+
+
+def test_injected_markers_carry_resolver_digest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    table_digest = "sha256:table-digest-from-resolver"
+
+    def fake_resolve(
+        slug_or_entity_id: str,
+        *,
+        include_non_active: bool = False,
+        expected_digest: str | None = None,
+        conn: object | None = None,
+    ) -> tuple[dict[str, Any] | None, str | None]:
+        del include_non_active, expected_digest, conn
+        slug = slug_or_entity_id.split(":", 1)[-1]
+        if slug == "architecture-invariants":
+            return {
+                "id": "agent_skill:architecture-invariants",
+                "digest": table_digest,
+                "body": "arch body",
+            }, None
+        if slug == "cortex-orientation":
+            return {
+                "id": "rule:cortex-orientation",
+                "digest": "sha256:cortex-orientation",
+                "body": "orientation",
+            }, None
+        return None, "body_missing"
+
+    monkeypatch.setattr(
+        "implement_admission.skill_body_resolve.resolve_skill_body_from_table",
+        fake_resolve,
+    )
+    resolution = resolve_injected_bodies(
+        "claude-api",
+        platform="api",
+        inject_profile="dispatch",
+        caller_skill_ids=("architecture-invariants",),
+        budget_bytes=None,
+    )
+    assert f"digest:{table_digest}" in resolution.block_md
+    assert any(item["digest"] == table_digest for item in resolution.injected)
+
+
+def test_phantom_agent_skill_id_resolves_via_table_slug(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Alias caller entity id absent from DB still inline-resolves via table uri."""
+    marker = "PHANTOM_ID_TABLE_URI_BODY"
+
+    def fake_resolve(
+        slug_or_entity_id: str,
+        *,
+        include_non_active: bool = False,
+        expected_digest: str | None = None,
+        conn: object | None = None,
+    ) -> tuple[dict[str, Any] | None, str | None]:
+        del include_non_active, expected_digest, conn
+        from implement_admission.skill_source_table import canonical_table_key
+
+        key = canonical_table_key(slug_or_entity_id)
+        if key == "ulg-architecture":
+            return {
+                "id": "agent_skill:ulg-architecture",
+                "digest": "sha256:ulg-architecture",
+                "body": marker,
+            }, None
+        if key == "cortex-orientation":
+            return {
+                "id": "rule:cortex-orientation",
+                "digest": "sha256:cortex-orientation",
+                "body": "orientation",
+            }, None
+        return None, "body_missing"
+
+    monkeypatch.setattr(
+        "implement_admission.skill_body_resolve.resolve_skill_body_from_table",
+        fake_resolve,
+    )
+    resolution = resolve_injected_bodies(
+        "claude-api",
+        platform="api",
+        inject_profile="dispatch",
+        caller_skill_ids=("ulg-architecture_ulg",),
+        budget_bytes=None,
+    )
+    assert marker in resolution.block_md
