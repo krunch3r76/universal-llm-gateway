@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from .db.threads import get_thread, get_thread_turns_asc
 from .db.threads_atomic import close_thread
@@ -11,14 +11,27 @@ from .turns_models import ThreadStatus
 
 CLOSE_ON_READ_TAG = "dispatch:close_on_read"
 _TYPE_GENERATE_TAG = "type:generate"
+CloseContract = Literal["lead", "auto"]
+
+
+def terminate_bus_lifecycle_for_close_contract(
+    close_contract: CloseContract | None,
+) -> Literal["persistent", "ephemeral"] | None:
+    """Explicit terminate override — ``lead`` keeps the thread active post-closeout."""
+    if close_contract == "lead":
+        return "persistent"
+    return None
 
 
 def append_close_on_read_marker(
     tags: list[str],
     *,
     bus_lifecycle: str | None = None,
+    close_contract: CloseContract | None = None,
 ) -> list[str]:
     """Tag auto-provisioned persistent generate consult threads for close-on-read."""
+    if close_contract == "lead":
+        return list(tags)
     effective = list(tags)
     lifecycle = resolve_bus_lifecycle(
         effective,

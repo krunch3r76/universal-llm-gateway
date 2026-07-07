@@ -57,7 +57,7 @@ logger = get_logger(__name__)
 # Gen-gated roster constants — regenerate via scripts/gen-mcp-dispatch-role-docs;
 # do not hand-edit the two lines below.
 _HANDOFF_ROLE_ROSTER = "web-consult, web-implement, cursor-consult, cursor-implement"
-_HANDOFF_SEAT_ROSTER = "claude-web, claude-cursor"
+_HANDOFF_SEAT_ROSTER = "web-anthropic, cursor"
 
 # Relay only handles admission (role contract + model admission at Stargate).
 # Long-poll blocking is the caller's responsibility via pipeline(op="result").

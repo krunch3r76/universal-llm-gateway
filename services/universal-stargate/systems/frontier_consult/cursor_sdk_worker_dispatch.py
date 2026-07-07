@@ -4,15 +4,46 @@ from __future__ import annotations
 
 import os
 import uuid
-from typing import Any
+from typing import Any, Literal
 
 import httpx
+from agent_bus_store.close_on_read import CloseContract, append_close_on_read_marker
+from agent_bus_store.disposition import append_bus_lifecycle_tags
 from transport_utils import DEFAULT_AGENT_BUS_URL, make_async_client
 from universal_logging import get_logger
 
 logger = get_logger(__name__)
 
 _WORKER_TIMEOUT = httpx.Timeout(connect=5.0, read=10.0, write=10.0, pool=5.0)
+
+
+def resolve_close_contract_bus_lifecycle(
+    close_contract: CloseContract | None,
+) -> Literal["persistent", "ephemeral"] | None:
+    """Map close-contract to lifecycle; ``lead`` reserves closure for adjudication."""
+    if close_contract == "lead":
+        return "persistent"
+    return None
+
+
+def assemble_cursor_sdk_generate_tags(
+    base_tags: list[str],
+    *,
+    close_contract: CloseContract = "auto",
+    bus_lifecycle: Literal["persistent", "ephemeral"] | None = None,
+) -> list[str]:
+    """Apply bus lifecycle + close-on-read marker for cursor-sdk generate threads."""
+    effective_lifecycle: Literal["persistent", "ephemeral"] = (
+        resolve_close_contract_bus_lifecycle(close_contract)
+        or bus_lifecycle
+        or "ephemeral"
+    )
+    tagged = append_bus_lifecycle_tags(base_tags, bus_lifecycle=effective_lifecycle)
+    return append_close_on_read_marker(
+        tagged,
+        bus_lifecycle=effective_lifecycle,
+        close_contract=close_contract,
+    )
 
 
 def _classify_transport_error(exc: httpx.HTTPError) -> str:
@@ -159,6 +190,7 @@ async def dispatch_cursor_sdk_worker(
     prompt_preamble: str | None = None,
     model_knobs: dict[str, str] | None = None,
     read_only: bool = False,
+    close_contract: CloseContract = "auto",
 ) -> tuple[bool, dict[str, Any]]:
     """POST ``/api/v1/cursor/dispatch``; return structured ``(ok, detail)``."""
     dispatch_id = f"{request_id}-{uuid.uuid4().hex[:8]}"
@@ -177,6 +209,8 @@ async def dispatch_cursor_sdk_worker(
         payload["model_knobs"] = model_knobs
     if read_only:
         payload["read_only"] = True
+    if close_contract != "auto":
+        payload["close_contract"] = close_contract
     try:
         async with make_async_client(
             worker_base_url(), timeout=_WORKER_TIMEOUT

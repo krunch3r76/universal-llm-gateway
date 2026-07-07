@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -21,6 +22,27 @@ _CONTROL_PLANE_PREFIXES: tuple[str, ...] = (
     "tmp/reviews/closeouts/",
     "tmp/reviews/",
 )
+
+_SWAMP_EXCLUDE_PREFIXES: tuple[str, ...] = (
+    ".cursor/",
+    ".pytest_cache/",
+    "__pycache__/",
+)
+
+
+def is_swamp_excluded_path(path: str) -> bool:
+    """True when *path* must not appear in closeout files_* or outside-repo census."""
+    norm = path.lstrip("/")
+    for prefix in _SWAMP_EXCLUDE_PREFIXES:
+        bare = prefix.rstrip("/")
+        if norm == bare or norm.startswith(prefix):
+            return True
+    return False
+
+
+def filter_manifest_swamp(paths: Iterable[str]) -> tuple[str, ...]:
+    """Drop `.cursor/`, cache dirs, and gitignored-adjacent swamp from files_* labeling."""
+    return tuple(path for path in paths if not is_swamp_excluded_path(path))
 
 
 @dataclass(frozen=True)
@@ -296,6 +318,37 @@ def classify_capture_status(
     return "complete"
 
 
+def partition_gitignored_from_change_set(
+    change_set: ChangeSet,
+    *,
+    source_repo: Path,
+    existing_untracked: tuple[str, ...] = (),
+) -> tuple[ChangeSet, tuple[str, ...]]:
+    """Move gitignored, swamp, and control-plane paths out of files_* buckets."""
+    untracked = list(existing_untracked)
+
+    def _partition(paths: tuple[str, ...]) -> tuple[str, ...]:
+        kept: list[str] = []
+        for path in paths:
+            if is_allowlisted_control_plane_path(path):
+                continue
+            if is_swamp_excluded_path(path) or _path_gitignored(source_repo, path):
+                if path not in untracked:
+                    untracked.append(path)
+                continue
+            kept.append(path)
+        return tuple(kept)
+
+    return (
+        ChangeSet(
+            created=_partition(change_set.created),
+            modified=_partition(change_set.modified),
+            deleted=_partition(change_set.deleted),
+        ),
+        tuple(sorted(set(untracked))),
+    )
+
+
 def _normalize_repo_path_for_compare(
     raw: str,
     *,
@@ -329,7 +382,7 @@ def _repo_manifest_paths(
         return set()
     paths: set[str] = set()
     for entry in section.entries:
-        if entry.op not in {"write", "edit", "delete"}:
+        if entry.op not in {"write", "edit", "delete", "observed"}:
             continue
         if entry.target:
             paths.add(
@@ -344,7 +397,7 @@ def gitignored_manifest_paths(
     source_repo: Path,
     git_changed: set[str],
 ) -> tuple[str, ...]:
-    """Manifest repo paths present on disk but ignored by git."""
+    """Manifest repo paths on disk that are gitignored or swamp-excluded."""
     manifest_paths = _repo_manifest_paths(manifest, source_repo=source_repo)
     ignored: list[str] = []
     for path in sorted(manifest_paths):
@@ -352,7 +405,7 @@ def gitignored_manifest_paths(
             continue
         if not (source_repo / path).is_file():
             continue
-        if _path_gitignored(source_repo, path):
+        if _path_gitignored(source_repo, path) or is_swamp_excluded_path(path):
             ignored.append(path)
     return tuple(ignored)
 

@@ -1,3 +1,7 @@
+<!-- frontmatter:skill
+name: advisor-timing
+description: Pause and consult at decision points before substantive work, consult dispatch, declaring done, recurring failure, or phase boundaries — read BEFORE choosing transport or editing.
+-->
 <!-- target:* -->
 # Advisor Timing Discipline
 
@@ -26,10 +30,10 @@ second opinion, hand off reasoning, **or hand off a bound implementation**.
    (`_CONSULT_ROUTING_GATE`) is **binding**, not orientation fluff. Skipping
    `consult-routing.md` before a dispatch is a protocol violation — the same
    severity as skipping the packet protocol reads.
-2. Complete the **mandatory preflight trio** (consult AND implement handoffs):
-   1. `fs(cortex, agent-skills/consult-routing.md)` — transport + authority map
-   2. `fs(workspaces, .cursor/rules/architecture-handoff-protocol.mdc)` — md_read § The Six Required Blocks
-   3. `fs(workspaces, .cursor/rules/handoff-dispatchers.mdc)` — § target seat
+2. Complete the **mandatory preflight** (consult AND implement handoffs):
+   1. Load skill: `consult-routing` (canonical slug — platform trigger; do not fs-read skill body) — transport + authority map
+   2. `fs(workspaces, .cursor/rules/architecture-handoff-protocol.mdc)` — md_read § The Six Required Blocks (rule artifact — read)
+   3. `fs(workspaces, .cursor/rules/handoff-dispatchers.mdc)` — § target seat (rule artifact — read)
 
    The protocol files live at **project** `.cursor/rules/` (no
    `universal-llm-gateway/` prefix), NOT under the repo's `.cursor/rules/`.

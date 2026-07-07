@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from enum import Enum
+from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Any
 
 from implement_admission.dense_spec_schema import (
@@ -20,6 +20,7 @@ from implement_admission.implement_ready import (
     _acceptance_unpopulated_or_default,
     _assertion_cites_dense_spec,
     _assertion_inactive,
+    _skeptic_evidence_reject,
 )
 
 _GATE_NAMES: dict[int, str] = {
@@ -46,7 +47,7 @@ _GATE_13_DEFERRED_SUBCHECKS: tuple[str, ...] = (
 )
 
 
-class GateStatus(str, Enum):
+class GateStatus(StrEnum):
     PASSED = "passed"
     FAILED = "failed"
     BLOCKED = "blocked"
@@ -83,11 +84,17 @@ class GateReport:
 
 @dataclass
 class PreflightReport:
-    """Preflight admission over declared-state gates 0-13 only.
+    """Preflight admission over declared-state gates 0-13.
 
-    ``admitted`` does NOT imply ``evaluate_implement_ready`` would admit —
-    skeptic evidence-grounding is evaluator-only (see gate-13
-    ``deferred_subchecks``).
+    Gate-13 skeptic evidence-grounding: when the caller supplies the
+    grounding outcome (``skeptic_evidence_grounded`` is not None) the same
+    sub-checks the implement dispatch enforces are evaluated here and a
+    failing outcome FAILS gate 13 with the dispatch's code (for example
+    ``skeptic_evidence_missing``). When grounding could not be evaluated,
+    gate 13 passes with ``deferred_subchecks`` AND an explicit entry in
+    ``warnings`` naming the FILE_EVIDENCE_PATHS requirement — ``admitted``
+    true with empty ``warnings`` implies the implement dispatch will not
+    reject on gate-13 grounds for the same inputs.
     """
 
     admitted: bool
@@ -97,6 +104,7 @@ class PreflightReport:
     gates: list[GateReport]
     recon_waived: bool = False
     recon_waiver: dict[str, Any] | None = None
+    warnings: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -108,6 +116,7 @@ class PreflightReport:
             "gates": [g.to_dict() for g in self.gates],
             "recon_waived": self.recon_waived,
             **({"recon_waiver": self.recon_waiver} if self.recon_waiver else {}),
+            "warnings": list(self.warnings),
         }
 
 
@@ -119,6 +128,7 @@ def _make_report(
     resolution: dict[str, Any] | None,
     recon_waived: bool = False,
     recon_waiver: dict[str, Any] | None = None,
+    warnings: list[str] | None = None,
 ) -> PreflightReport:
     failed = sum(1 for g in gates if g.status == GateStatus.FAILED)
     blocked_count = sum(1 for g in gates if g.status == GateStatus.BLOCKED)
@@ -135,6 +145,7 @@ def _make_report(
         gates=gates,
         recon_waived=recon_waived,
         recon_waiver=recon_waiver,
+        warnings=warnings or [],
     )
 
 
@@ -156,6 +167,10 @@ def preflight_implement_ready(
     recon_waived: bool = False,
     recon_waiver: dict[str, Any] | None = None,
     authoring_mode: bool = False,
+    skeptic_evidence_grounded: bool | None = None,
+    skeptic_evidence_unresolved: list[str] | None = None,
+    skeptic_evidence_mode: str | None = None,
+    skeptic_unratified_reason: str | None = None,
 ) -> PreflightReport:
     """Non-writing preflight over the declared-state gates (0-13).
 
@@ -166,19 +181,20 @@ def preflight_implement_ready(
     stand-in values — those gates test facts about a todo entity that does
     not exist here. Spec-content gates (6, 8, 9) still evaluate for real.
 
-    NOTE: gate 13 (skeptic_pass) reports only on skeptic ratification /
-    recon waiver. The skeptic-evidence-grounding sub-checks enforced by
-    evaluate_implement_ready (_skeptic_evidence_reject) are intentionally NOT
-    evaluated here -- preflight lacks those inputs -- so a PASSED gate 13 does
-    not guarantee the full gate admits. See
-    test_gate14_intentionally_stargate_only_preflight_admits.
-
-    ``admitted`` is true over preflight-available declared-state gates 0-13
-    only; it does NOT imply ``evaluate_implement_ready`` would admit.
+    Gate 13 (skeptic_pass): when the caller supplies the skeptic
+    evidence-grounding outcome (``skeptic_evidence_grounded`` is not None),
+    the same sub-checks the implement dispatch enforces
+    (``_skeptic_evidence_reject``) are evaluated here and a failing outcome
+    FAILS gate 13 with the dispatch code (``skeptic_evidence_missing`` /
+    ``skeptic_evidence_unresolved`` / ...). When grounding is not supplied,
+    gate 13 passes with ``deferred_subchecks`` and an explicit warning
+    naming the FILE_EVIDENCE_PATHS requirement so an admitted report is
+    never silently weaker than the dispatch gate.
     """
     gates: list[GateReport] = []
     blocked: set[int] = set()
     first_failure: dict[str, str] | None = None
+    warnings: list[str] = []
 
     def _pass(
         gate_id: int,
@@ -463,18 +479,45 @@ def preflight_implement_ready(
             f"{todo_id}: judgment_required (material) decision needs a skeptic "
             f"ratification before implement — record a confirmed "
             f"status({todo_id}, skeptic_ratified, current) assertion citing the "
-            "skeptic/panel thread (run the axis-2 skeptic pass per "
-            "cheap-recon-before-escalation)."
+            "skeptic/panel thread AND the spec_sha256:<hex> URI of the current "
+            "dense-spec content in evidence_uris (run the axis-2 skeptic pass "
+            "per cheap-recon-before-escalation)."
         )
+        if skeptic_unratified_reason:
+            reason += f" Unmet subcondition: {skeptic_unratified_reason}"
         _fail(13, "skeptic_pass", code, reason)
+    elif skeptic_ratified and not recon_waived:
+        if skeptic_evidence_grounded is None:
+            _pass(13, "skeptic_pass", deferred_subchecks=_GATE_13_DEFERRED_SUBCHECKS)
+            warnings.append(
+                "gate 13 skeptic evidence-grounding was not evaluated at "
+                "preflight: the implement dispatch additionally requires the "
+                "ratifying skeptic bus turn to contain a FILE_EVIDENCE_PATHS "
+                "block with resolvable file paths (inline-only skeptics echo "
+                "dispatcher-supplied paths). If the cited turn lacks it, the "
+                "dispatch will reject with skeptic_evidence_missing (or "
+                "skeptic_evidence_unresolved / skeptic_evidence_malformed / "
+                "skeptic_evidence_stamp_missing)."
+            )
+        else:
+            evidence_reject = _skeptic_evidence_reject(
+                todo_id=todo_id,
+                evidence_grounded=skeptic_evidence_grounded,
+                evidence_unresolved=skeptic_evidence_unresolved,
+                evidence_mode=skeptic_evidence_mode,
+            )
+            if evidence_reject is not None:
+                _fail(
+                    13,
+                    "skeptic_pass",
+                    evidence_reject.code or "skeptic_evidence_missing",
+                    evidence_reject.reason or "skeptic evidence not grounded",
+                )
+            else:
+                _pass(13, "skeptic_pass")
     else:
         gate_waiver = recon_waiver if recon_waived and recon_waiver else None
-        _pass(
-            13,
-            "skeptic_pass",
-            deferred_subchecks=_GATE_13_DEFERRED_SUBCHECKS,
-            gate_recon_waiver=gate_waiver,
-        )
+        _pass(13, "skeptic_pass", gate_recon_waiver=gate_waiver)
 
     return _make_report(
         admitted=first_failure
@@ -484,6 +527,7 @@ def preflight_implement_ready(
         resolution=resolution,
         recon_waived=recon_waived,
         recon_waiver=recon_waiver if recon_waived else None,
+        warnings=warnings,
     )
 
 

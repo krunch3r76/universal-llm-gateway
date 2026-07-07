@@ -11,9 +11,9 @@ from .admission import FrontierEndpointError
 from .handoff import build_pointer_body, validate_packet
 from .handoff_packet_enrich import (
     EnrichResult,
+    _canonical_skill_invariant_line,
     enrich_handoff_packet,
     has_densify_floor,
-    source_uri_to_fs_line,
 )
 
 _THIN_WEB_PACKET = """\
@@ -34,8 +34,10 @@ contract: consult
 """
 
 _DENSIFY_INVARIANTS = (
-    '- fs(cortex, op=read, path="agent-skills/consult-routing.md")\n'
-    '- fs(cortex, op=read, path="agent-skills/lead-seat-boot.md")'
+    "- Load skill: `consult-routing` "
+    "(canonical slug — platform trigger; do not fs-read skill body)\n"
+    "- Load skill: `lead-seat-boot` "
+    "(canonical slug — platform trigger; do not fs-read skill body)"
 )
 
 
@@ -46,27 +48,11 @@ class _StubCortex:
         todo_skills: list[str] | None = None,
         task_skills: list[str] | None = None,
     ) -> None:
-        self.skills = skills or {
-            "lead-seat-boot": "agent-skills/lead-seat-boot.md",
-            "consult-routing": "agent-skills/consult-routing.md",
-            "handoff-packet-authoring": "workspaces://universal-llm-gateway/.cursor/skills/handoff-packet-authoring/SKILL.md",
-            "mcp-surface-change": "agent-skills/mcp-surface-change.md",
-            "debug-with-events": "agent-skills/debug-with-events.md",
-            "architecture-invariants": "workspaces://universal-llm-gateway/.cursor/skills/architecture-invariants/SKILL.md",
-            "ulg-architecture": "workspaces://universal-llm-gateway/.cursor/skills/ulg-architecture/SKILL.md",
-        }
+        self.skills = skills or {}
         self.todo_skills = todo_skills or []
         self.task_skills = task_skills or []
 
     def entity_get(self, entity_id: str, **kwargs: Any) -> dict[str, Any]:
-        if entity_id.startswith("agent_skill:"):
-            slug = entity_id.removeprefix("agent_skill:")
-            uri = self.skills.get(slug, "")
-            return {
-                "id": entity_id,
-                "source_uri": uri,
-                "attributes": None,
-            }
         if entity_id.startswith("todo:"):
             return {
                 "id": entity_id,
@@ -80,36 +66,11 @@ class _StubCortex:
         raise KeyError(entity_id)
 
 
-def test_source_uri_to_fs_line_cortex_relative() -> None:
-    line = source_uri_to_fs_line("agent-skills/mcp-surface-change.md")
-    assert line == 'fs(cortex, op=read, path="agent-skills/mcp-surface-change.md")'
-
-
-def test_source_uri_to_fs_line_workspaces_uri() -> None:
-    line = source_uri_to_fs_line(
-        "workspaces://universal-llm-gateway/.cursor/skills/foo/SKILL.md"
-    )
-    assert "fs(workspaces, op=read" in line
-    assert "universal-llm-gateway/.cursor/skills" in line
-
-
-def test_resolve_source_uri_top_level_shape() -> None:
-    """source_uri returned at top level (SF1), not only in attributes."""
-
-    class TopLevelCortex:
-        def entity_get(self, entity_id: str, **kwargs: Any) -> dict[str, Any]:
-            return {
-                "id": entity_id,
-                "source_uri": "agent-skills/consult-routing.md",
-                "attributes": None,
-            }
-
-    from .handoff_packet_enrich import _resolve_source_uri
-
-    assert (
-        _resolve_source_uri(TopLevelCortex(), "consult-routing")
-        == "agent-skills/consult-routing.md"
-    )
+def test_canonical_skill_invariant_line_shape() -> None:
+    line = _canonical_skill_invariant_line("consult-routing")
+    assert "`consult-routing`" in line
+    assert "canonical slug" in line
+    assert "agent-skills/" not in line
 
 
 def test_enrich_adds_skills_and_thread_fetch() -> None:
@@ -119,8 +80,9 @@ def test_enrich_adds_skills_and_thread_fetch() -> None:
     assert result.changed
     assert "mcp-surface-change" in result.skills_added
     assert "2235" in result.threads_added
-    assert "skill_suggest" in result.text
+    assert "skill_suggest" not in result.text.lower()
     assert "agent_bus(fetch, thread=2235" in result.text
+    assert 'path="agent-skills/' not in result.text
 
 
 def test_enrich_merges_task_frontmatter_required_skills() -> None:
@@ -142,7 +104,8 @@ contract: consult
     result = enrich_handoff_packet(packet, cortex=cortex)
     assert "architecture-invariants" in result.skills_added
     assert "ulg-architecture" in result.skills_added
-    assert "architecture-invariants/SKILL.md" in result.text
+    assert "`architecture-invariants`" in result.text
+    assert "agent-skills/" not in result.text
 
 
 def test_enrich_idempotent() -> None:
@@ -157,27 +120,24 @@ def test_enrich_injects_handoff_packet_authoring_by_default() -> None:
     cortex = _StubCortex()
     result = enrich_handoff_packet(_THIN_WEB_PACKET, cortex=cortex)
     assert "handoff-packet-authoring" in result.skills_added
-    assert "handoff-packet-authoring" in result.text
+    assert "`handoff-packet-authoring`" in result.text
 
 
 def test_enrich_reports_already_wired_not_readded() -> None:
-    """AC2/AC8: pre-existing fs-lines land in skills_already_wired, not skills_added."""
+    """Pre-existing canonical slug lines land in skills_already_wired, not skills_added."""
     cortex = _StubCortex()
     first = enrich_handoff_packet(_THIN_WEB_PACKET, cortex=cortex)
     second = enrich_handoff_packet(first.text, cortex=cortex)
-    # Second pass: the default slugs are now present and must not be re-added.
     for slug in ("lead-seat-boot", "consult-routing", "handoff-packet-authoring"):
         assert slug in second.skills_already_wired
         assert slug not in second.skills_added
-    assert not second.changed  # already-wired is informational; idempotency holds
+    assert not second.changed
 
 
-def test_injected_skill_suggest_step_omits_loaded() -> None:
-    """AC5/AC8: injected skill_suggest step passes conversation_context only."""
+def test_enrich_never_injects_skill_suggest() -> None:
     cortex = _StubCortex()
     result = enrich_handoff_packet(_THIN_WEB_PACKET, cortex=cortex)
-    assert "skill_suggest" in result.text
-    assert "loaded=[" not in result.text
+    assert "skill_suggest" not in result.text.lower()
 
 
 def test_has_densify_floor_requires_task_class() -> None:
@@ -224,8 +184,6 @@ def test_validate_web_skips_arch_refs_with_densify_floor(tmp_path: Path) -> None
 
 def test_validate_cursor_still_requires_arch_refs(tmp_path: Path) -> None:
     rel = "universal-llm-gateway/tmp/reviews/cursor-thin.md"
-    # Densify floor satisfied (task-class skill refs + per-thread fetch steps) so
-    # the packet reaches the arch-ref check; arch refs (Block 2/5) still absent.
     packet = _THIN_WEB_PACKET.replace(
         "<invariants>[scope] traces to task.</invariants>",
         f"<invariants>[scope] traces to task.\n{_DENSIFY_INVARIANTS}</invariants>",
@@ -251,7 +209,6 @@ def test_validate_cursor_still_requires_arch_refs(tmp_path: Path) -> None:
 def test_validate_cursor_requires_densify_floor(tmp_path: Path) -> None:
     """P1: the densify floor binds non-web MCP seats too, not just claude-web."""
     rel = "universal-llm-gateway/tmp/reviews/cursor-no-floor.md"
-    # related_thread_ids set but no per-thread agent_bus(fetch) step → floor unmet.
     packet = _THIN_WEB_PACKET
     dest = tmp_path / rel
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -267,7 +224,7 @@ def test_validate_cursor_requires_densify_floor(tmp_path: Path) -> None:
     assert exc_info.value.code == "handoff_packet_missing_densify_floor"
 
 
-def test_build_pointer_web_consult_uses_checklist_not_arch_read() -> None:
+def test_build_pointer_web_consult_uses_canonical_slug_priming() -> None:
     body = build_pointer_body(
         request_id="req-ptr-web",
         packet_path="tmp/reviews/foo.md",
@@ -276,12 +233,12 @@ def test_build_pointer_web_consult_uses_checklist_not_arch_read() -> None:
         handoff_contract="consult",
         to_agent="claude-web",
     )
-    assert "web-receiver priming checklist" in body
-    assert "server-injected on boot" not in body
-    assert "architecture-invariants.md" not in body
+    assert "canonical slug" in body
+    assert "skill_suggest" not in body.lower()
+    assert 'path="agent-skills/' not in body
 
 
-def test_build_pointer_cursor_consult_keeps_arch_read() -> None:
+def test_build_pointer_cursor_consult_uses_canonical_slug_priming() -> None:
     body = build_pointer_body(
         request_id="req-ptr-cursor",
         packet_path="tmp/reviews/foo.md",
@@ -290,20 +247,20 @@ def test_build_pointer_cursor_consult_keeps_arch_read() -> None:
         handoff_contract="consult",
         to_agent="claude-cursor",
     )
-    assert "architecture-invariants.md" in body
+    assert "canonical slug" in body
+    assert "architecture-invariants.md" not in body
+    assert "skill_suggest" not in body.lower()
 
 
 def test_enrich_injects_arch_refs_for_cursor_parity() -> None:
-    """Phase 1: enrich wires architecture-invariants + ulg-architecture by default.
-
-    Cursor handoff packets satisfy the arch-ref floor via enrich (friction 20979).
-    """
+    """Phase 1: enrich wires architecture-invariants + ulg-architecture by default."""
     cortex = _StubCortex()
     result = enrich_handoff_packet(_THIN_WEB_PACKET, cortex=cortex)
     assert "architecture-invariants" in result.skills_added
     assert "ulg-architecture" in result.skills_added
-    assert "architecture-invariants/SKILL.md" in result.text
-    assert "ulg-architecture/SKILL.md" in result.text
+    assert "`architecture-invariants`" in result.text
+    assert "`ulg-architecture`" in result.text
+    assert "agent-skills/" not in result.text
 
 
 def test_skill_slug_from_entity_accepts_rule_prefix() -> None:
@@ -324,3 +281,21 @@ def test_has_task_class_skill_ref_accepts_rule_entity_id() -> None:
 
     text = "<mcp_capabilities>rule:mcp-surface-change</mcp_capabilities>"
     assert _has_task_class_skill_ref(text) is True
+
+
+def test_enrich_recognizes_legacy_fs_lines_as_already_wired() -> None:
+    """Legacy fs-line packets must not get duplicate canonical slug lines."""
+    legacy = _THIN_WEB_PACKET.replace(
+        "<invariants>[scope] traces to task.</invariants>",
+        (
+            "<invariants>[scope] traces to task.\n"
+            '- fs(cortex, op=read, path="agent-skills/consult-routing.md")'
+            "  # agent_skill:consult-routing</invariants>"
+        ),
+    )
+    cortex = _StubCortex()
+    result = enrich_handoff_packet(legacy, cortex=cortex)
+    assert "consult-routing" in result.skills_already_wired
+    assert "consult-routing" not in result.skills_added
+    invariants = result.text.split("<invariants>")[1].split("</invariants>")[0]
+    assert "`consult-routing`" not in invariants

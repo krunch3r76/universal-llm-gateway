@@ -41,10 +41,10 @@ def _body_map(monkeypatch: pytest.MonkeyPatch, bodies: dict[str, str]) -> None:
         elif key.startswith("rule:"):
             slug = key.split(":", 1)[1]
             expanded.setdefault(f"agent_skill:{slug}", value)
-    # Registry ulg entry uses a distinct slug suffix.
+    # Registry ulg entry uses bare slug.
     if "agent_skill:ulg-architecture" in expanded:
         expanded.setdefault(
-            "rule:ulg-architecture_ulg", expanded["agent_skill:ulg-architecture"]
+            "rule:ulg-architecture", expanded["agent_skill:ulg-architecture"]
         )
 
     def fake_resolve(
@@ -735,9 +735,11 @@ def test_exclude_mcp_predicated_false_preserves_defaults(
     assert with_flag.dropped == baseline.dropped
 
 
-def test_caller_ulg_alias_resolves_same_body_as_bare_slug(
+def test_caller_ulg_suffix_no_longer_resolves(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from agent_seat.inject_registry import CallerSkillUnresolvedError
+
     shared_body = "ULG_ARCHITECTURE_SHARED_BODY_MARKER"
     _body_map(
         monkeypatch,
@@ -753,17 +755,15 @@ def test_caller_ulg_alias_resolves_same_body_as_bare_slug(
         caller_skill_ids=("ulg-architecture",),
         budget_bytes=None,
     )
-    alias = resolve_injected_bodies(
-        "claude-api",
-        platform="api",
-        inject_profile="dispatch",
-        caller_skill_ids=("ulg-architecture_ulg",),
-        budget_bytes=None,
-    )
     assert shared_body in bare.block_md
-    assert shared_body in alias.block_md
-    assert bare.block_md.count(shared_body) == 1
-    assert alias.block_md.count(shared_body) == 1
+    with pytest.raises(CallerSkillUnresolvedError, match="ulg-architecture_ulg"):
+        resolve_injected_bodies(
+            "claude-api",
+            platform="api",
+            inject_profile="dispatch",
+            caller_skill_ids=("ulg-architecture_ulg",),
+            budget_bytes=None,
+        )
 
 
 def test_injected_markers_carry_resolver_digest(
@@ -812,7 +812,7 @@ def test_injected_markers_carry_resolver_digest(
 def test_phantom_agent_skill_id_resolves_via_table_slug(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Alias caller entity id absent from DB still inline-resolves via table uri."""
+    """Caller entity id absent from DB still inline-resolves via table uri."""
     marker = "PHANTOM_ID_TABLE_URI_BODY"
 
     def fake_resolve(
@@ -848,7 +848,7 @@ def test_phantom_agent_skill_id_resolves_via_table_slug(
         "claude-api",
         platform="api",
         inject_profile="dispatch",
-        caller_skill_ids=("ulg-architecture_ulg",),
+        caller_skill_ids=("ulg-architecture",),
         budget_bytes=None,
     )
     assert marker in resolution.block_md

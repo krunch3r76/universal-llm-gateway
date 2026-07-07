@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any, Literal
@@ -16,7 +17,12 @@ from implement_admission.closeout_models import (
     SurfaceSection,
 )
 
-from services.git_integration_worker.cursor_sdk_capture_status import ChangeSet
+from services.git_integration_worker.cursor_sdk_capture_status import (
+    ChangeSet,
+    canonicalize_capture_path,
+    filter_manifest_swamp,
+    is_swamp_excluded_path,
+)
 from services.git_integration_worker.cursor_sdk_stream_capture import (
     ToolCallObservation,
 )
@@ -26,7 +32,8 @@ DetailCap = 500
 ResultCap = 2000
 MAX_MANIFEST_BODY_PROBE = 4_000
 
-_REPO_FILE_OPS = frozenset({"write", "edit", "delete"})
+_REPO_FILE_OPS = frozenset({"write", "edit", "delete", "observed"})
+_REPO_LABEL_OPS = frozenset({"write", "edit", "delete"})
 _REPO_SHELL_OP = "shell"
 _MCP_OP = "mcp"
 _VORTEX_SERVER = "user-vortex"
@@ -192,19 +199,37 @@ def repo_change_set_from_manifest(
     manifest: EffectsManifest | None,
     *,
     source_repo: Path | None = None,
-) -> ChangeSet | None:
-    """Manifest op-intent projection — authoritative for closeout files_* categories."""
+    mount_root: Path | None = None,
+) -> tuple[ChangeSet | None, tuple[str, ...], bool]:
+    """Manifest op-intent projection — cross-check input for closeout files_* categories.
+
+    Returns ``(change_set, outside_repo_paths, non_file_entries_dropped)``.
+    """
     if manifest is None:
-        return None
+        return None, (), False
     section = manifest.surfaces.get("repo")
     if section is None:
-        return ChangeSet(created=(), modified=(), deleted=())
+        return ChangeSet(created=(), modified=(), deleted=()), (), False
+    mount = (mount_root or resolve_mount_root(source_repo)).resolve() if source_repo else None
     created: list[str] = []
     modified: list[str] = []
     deleted: list[str] = []
+    outside_repo: list[str] = []
+    dropped_non_file = False
     for entry in section.entries:
-        path = _normalize_repo_path(entry.target, repo_root=source_repo)
-        if not path:
+        classification = _classify_manifest_repo_entry(
+            entry.target,
+            source_repo=source_repo,
+            mount_root=mount,
+        )
+        if classification is None:
+            dropped_non_file = True
+            continue
+        kind, path = classification
+        if kind == "outside_repo":
+            outside_repo.append(path)
+            continue
+        if entry.op not in _REPO_LABEL_OPS:
             continue
         if entry.op == "write":
             created.append(path)
@@ -212,11 +237,78 @@ def repo_change_set_from_manifest(
             modified.append(path)
         elif entry.op == "delete":
             deleted.append(path)
-    return ChangeSet(
-        created=tuple(dict.fromkeys(created)),
-        modified=tuple(dict.fromkeys(modified)),
-        deleted=tuple(dict.fromkeys(deleted)),
+    return (
+        ChangeSet(
+            created=tuple(dict.fromkeys(created)),
+            modified=tuple(dict.fromkeys(modified)),
+            deleted=tuple(dict.fromkeys(deleted)),
+        ),
+        tuple(dict.fromkeys(outside_repo)),
+        dropped_non_file,
     )
+
+
+def _classify_manifest_repo_entry(
+    raw: str | None,
+    *,
+    source_repo: Path | None,
+    mount_root: Path | None,
+) -> tuple[Literal["repo", "outside_repo"], str] | None:
+    """Return repo/outside_repo classification, or None when the entry is non-file."""
+    if not raw or not str(raw).strip() or str(raw).strip() == ".":
+        return None
+    if source_repo is None:
+        path = str(raw).strip().lstrip("/")
+        return ("repo", path) if path and path != "." else None
+
+    canon = canonicalize_capture_path(str(raw), source_repo=source_repo)
+    if not canon.canonical_path and canon.scope == "external_or_unknown":
+        if canon.canonicalization_reason == "empty_path":
+            return None
+        candidate = Path(str(raw).strip())
+        if not candidate.is_absolute():
+            return None
+        try:
+            resolved = candidate.resolve()
+        except OSError:
+            return None
+        if resolved.is_dir():
+            return None
+        if mount_root is not None:
+            rel = mount_relative_path(mount_root, resolved)
+            if rel is not None:
+                return ("outside_repo", rel)
+        return None
+
+    path = canon.canonical_path
+    if not path or path == ".":
+        return None
+    candidate = source_repo / path
+    try:
+        if candidate.exists() and candidate.is_dir():
+            return None
+    except OSError:
+        return None
+    if canon.scope == "external_or_unknown":
+        if mount_root is None:
+            return None
+        try:
+            resolved = (source_repo / path).resolve()
+        except OSError:
+            return None
+        rel = mount_relative_path(mount_root, resolved)
+        if rel is None:
+            return None
+        try:
+            abs_path = (mount_root / rel).resolve()
+            if abs_path.is_dir():
+                return None
+            if abs_path.is_file():
+                return ("outside_repo", rel)
+        except OSError:
+            return None
+        return None
+    return ("repo", path)
 
 
 def merge_repo_paths_into_manifest(
@@ -225,8 +317,9 @@ def merge_repo_paths_into_manifest(
     *,
     source_repo: Path | None = None,
     source_label: str = "stream",
+    op: str = "observed",
 ) -> EffectsManifest | None:
-    """Append repo write entries for paths not already present in the manifest."""
+    """Append repo entries for paths not already present in the manifest."""
     normalized: list[str] = []
     existing = manifest_repo_paths(manifest, source_repo=source_repo)
     for raw in paths:
@@ -238,7 +331,7 @@ def merge_repo_paths_into_manifest(
     if not normalized:
         return manifest
     new_entries = [
-        EffectEntry(op="write", target=path, identity=path) for path in normalized
+        EffectEntry(op=op, target=path, identity=path) for path in normalized
     ]
     if manifest is None:
         return EffectsManifest(
@@ -424,21 +517,103 @@ def resolve_repo_change_set(
     *,
     manifest: EffectsManifest | None,
     git_change_set: ChangeSet,
-) -> ChangeSet:
+    source_repo: Path | None = None,
+    mount_root: Path | None = None,
+) -> tuple[ChangeSet, tuple[str, ...], bool]:
+    """Git-authoritative change set with manifest completeness net.
+
+    Returns ``(change_set, extra_untracked_or_ignored, manifest_git_divergence)``.
+    """
+    manifest_cs, _, _ = repo_change_set_from_manifest(
+        manifest,
+        source_repo=source_repo,
+        mount_root=mount_root,
+    )
+    if manifest_cs is None:
+        manifest_cs = ChangeSet(created=(), modified=(), deleted=())
+    divergence = git_manifest_label_divergence(git_change_set, manifest_cs)
     git_paths = (
         set(git_change_set.created)
         | set(git_change_set.modified)
         | set(git_change_set.deleted)
     )
-    manifest_paths = manifest_repo_paths(manifest)
-    extra = sorted(manifest_paths - git_paths)
-    if not extra:
-        return git_change_set
-    return ChangeSet(
-        created=git_change_set.created,
-        modified=tuple(dict.fromkeys([*git_change_set.modified, *extra])),
-        deleted=git_change_set.deleted,
+    manifest_paths = (
+        set(manifest_cs.created)
+        | set(manifest_cs.modified)
+        | set(manifest_cs.deleted)
     )
+    extra_modified: list[str] = []
+    extra_untracked: list[str] = []
+    for path in sorted(manifest_paths - git_paths):
+        if source_repo is None:
+            continue
+        candidate = source_repo / path
+        try:
+            if not candidate.is_file():
+                continue
+        except OSError:
+            continue
+        if _path_is_tracked(source_repo, path):
+            extra_modified.append(path)
+        else:
+            extra_untracked.append(path)
+        divergence = True
+    return (
+        ChangeSet(
+            created=git_change_set.created,
+            modified=tuple(dict.fromkeys([*git_change_set.modified, *extra_modified])),
+            deleted=git_change_set.deleted,
+        ),
+        tuple(extra_untracked),
+        divergence,
+    )
+
+
+def git_manifest_label_divergence(
+    git_change_set: ChangeSet,
+    manifest_change_set: ChangeSet,
+) -> bool:
+    """True when manifest op-intent labels disagree with git XY labels."""
+
+    def _label(path: str, change_set: ChangeSet) -> str | None:
+        if path in change_set.created:
+            return "created"
+        if path in change_set.modified:
+            return "modified"
+        if path in change_set.deleted:
+            return "deleted"
+        return None
+
+    git_paths = (
+        set(git_change_set.created)
+        | set(git_change_set.modified)
+        | set(git_change_set.deleted)
+    )
+    manifest_paths = (
+        set(manifest_change_set.created)
+        | set(manifest_change_set.modified)
+        | set(manifest_change_set.deleted)
+    )
+    for path in git_paths | manifest_paths:
+        git_label = _label(path, git_change_set)
+        manifest_label = _label(path, manifest_change_set)
+        if manifest_label is None:
+            continue
+        if git_label != manifest_label:
+            return True
+    return False
+
+
+def _path_is_tracked(source_repo: Path, rel_path: str) -> bool:
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(source_repo), "ls-files", "--error-unmatch", rel_path],
+            capture_output=True,
+            timeout=5,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+    return proc.returncode == 0
 
 
 def verification_change_set(
@@ -925,9 +1100,9 @@ def snapshot_outside_repo_paths(
         if not path.is_file() or _under_repo(path):
             continue
         rel = mount_relative_path(mount_resolved, path)
-        if rel is not None:
+        if rel is not None and not is_swamp_excluded_path(rel):
             found.add(rel)
-    return frozenset(found)
+    return frozenset(filter_manifest_swamp(found))
 
 
 def _normalize_repo_path(

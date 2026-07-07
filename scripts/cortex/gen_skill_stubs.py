@@ -14,16 +14,23 @@ if str(_REPO / "libs") not in sys.path:
 if str(_SCRIPTS_CORTEX) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_CORTEX))
 
-from claude_bundles.resolver import CLAUDE_BUNDLE_SLUGS, CURSOR_INDEXED_SLUGS  # noqa: E402
 from _skill_audit import (  # noqa: E402
     _PARITY_ALLOWLIST,
     allowlist_verdict,
     parity_verdict,
     stub_critical_field_verdict,
 )
+from claude_bundles.resolver import (  # noqa: E402
+    CURSOR_INDEXED_SLUGS,
+)
 
 _CURSOR_PRIMARY_SLUGS = set(CURSOR_INDEXED_SLUGS)
-from _skill_constants import REMEDIATION_CMD  # noqa: E402
+from _skill_constants import (  # noqa: E402
+    _SOT_DRIFT_HOLDOUTS,
+    _SOT_DRIFT_KNOWN_RESIDUALS,
+    _SUPPRESSED,
+    REMEDIATION_CMD,
+)
 from _skill_drift import _drifts  # noqa: E402
 from _skill_manifest import (  # noqa: E402
     aggregate_verdicts,
@@ -41,6 +48,7 @@ from transport_utils import DEFAULT_CORTEX_URL, make_sync_client  # noqa: E402
 
 VERDICT_ORDER = (
     "EDGE_DRIFT",
+    "SOT_DRIFT",
     "STUB_PARITY",
     "GENERATOR_MANIFEST",
     "ALLOWLIST",
@@ -56,11 +64,55 @@ def _edge_drift_verdict(client: object, repo_root: Path) -> tuple[str, list[str]
     return "clean", []
 
 
+def _is_cortex_tier_source_uri(source_uri: str) -> bool:
+    uri = source_uri.strip()
+    return uri.startswith("agent-skills/") or uri.startswith("cortex://agent-skills/")
+
+
+def _sot_drift_verdict(client: object, repo_root: Path) -> tuple[str, list[str]]:
+    _, entities = build_renderer_snapshot(client)
+    skills_dir = repo_root / ".cursor" / "skills"
+    dirty_lines: list[str] = []
+    info_lines: list[str] = []
+    for slug, entity in sorted(entities.items()):
+        if entity.get("type") != "agent_skill":
+            continue
+        if entity.get("lifecycle") in _SUPPRESSED:
+            continue
+        if slug in _SOT_DRIFT_HOLDOUTS:
+            continue
+        fields = extract_renderer_fields(entity, slug)
+        source_uri = str(fields.get("source_uri") or entity.get("source_uri") or "")
+        entity_id = str(entity.get("id") or f"agent_skill:{slug}")
+        rules_fired: list[str] = []
+        if _is_cortex_tier_source_uri(source_uri):
+            rules_fired.append("A cortex-tier source_uri")
+        if not (skills_dir / slug / "SKILL.md").is_file():
+            rules_fired.append("B missing .cursor twin")
+        if not rules_fired:
+            continue
+        rule_str = " / ".join(rules_fired)
+        hint = (
+            f"migrate body to `.cursor/skills/{slug}/SKILL.md` SOT + repoint "
+            f"source_uri; then `{REMEDIATION_CMD}`"
+        )
+        line = f"{entity_id}: {rule_str} — {hint}"
+        if slug in _SOT_DRIFT_KNOWN_RESIDUALS:
+            info_lines.append(f"KNOWN-RESIDUAL: {line}")
+        else:
+            dirty_lines.append(line)
+    lines = dirty_lines + info_lines
+    if dirty_lines:
+        return "dirty", lines
+    return "clean", lines
+
+
 def run_check(
     client: object, repo_root: Path, *, gate_manifest: bool = True
 ) -> int:
     scanned = scanned_stub_slugs(repo_root)
     edge_status, edge_lines = _edge_drift_verdict(client, repo_root)
+    sot_status, sot_lines = _sot_drift_verdict(client, repo_root)
     critical_status, critical_lines, _ = stub_critical_field_verdict(client, repo_root)
     parity_status, parity_lines = parity_verdict(scanned)
     if critical_status == "error":
@@ -76,6 +128,7 @@ def run_check(
     allow_status, allow_lines = allowlist_verdict()
     verdicts = aggregate_verdicts(
         edge_drift=edge_status,  # type: ignore[arg-type]
+        sot_drift=sot_status,  # type: ignore[arg-type]
         stub_parity=stub_status,  # type: ignore[arg-type]
         generator_manifest=manifest_status,  # type: ignore[arg-type]
         allowlist=allow_status,  # type: ignore[arg-type]
@@ -84,6 +137,7 @@ def run_check(
         print(f"{name}: {verdicts[name]}")
     detail_map = {
         "EDGE_DRIFT": edge_lines,
+        "SOT_DRIFT": sot_lines,
         "STUB_PARITY": stub_lines,
         "GENERATOR_MANIFEST": manifest_lines,
         "ALLOWLIST": allow_lines,

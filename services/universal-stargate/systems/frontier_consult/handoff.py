@@ -70,17 +70,18 @@ _ARCH_SKILL_SLUGS: tuple[str, ...] = (
     "architecture-invariants",
     "ulg-architecture",
 )
-_REQUIRED_INVARIANT_SKILL_REFS: tuple[str, ...] = tuple(
-    f"agent-skills/{slug}" for slug in _ARCH_SKILL_SLUGS
-)
+_REQUIRED_INVARIANT_SKILL_REFS: tuple[str, ...] = _ARCH_SKILL_SLUGS
 
 
 def _packet_references_arch_skill_slug(text: str, slug: str) -> bool:
-    """Canonical-form only: a loadable ref — the legacy cortex slug substring,
-    the workspaces SOT path, or the canonical ``.cursor/skills/<slug>/SKILL.md``
-    location. A display-name *stem* deliberately does NOT satisfy the gate; it is
-    reported by _nonconforming_skill_ref_hint with the exact rewrite, so the
-    reviewer gets a loadable ref, not an unresolvable mention."""
+    """Canonical slug ref — platform-trigger name, legacy path, or workspaces stub.
+
+    A display-name *stem* deliberately does NOT satisfy the gate; it is reported
+    by _nonconforming_skill_ref_hint with the exact rewrite."""
+    if f"agent_skill:{slug}" in text:
+        return True
+    if f"`{slug}`" in text:
+        return True
     if f"agent-skills/{slug}" in text:
         return True
     return f".cursor/skills/{slug}/SKILL.md" in text
@@ -246,7 +247,7 @@ def validate_packet(
                 field="packet_path",
                 reason=(
                     f"Packet {packet_path!r} missing densify floor: "
-                    "require ≥1 task-class skill ref (via source_uri) and, "
+                    "require ≥1 task-class skill ref (canonical slug) and, "
                     "when related_thread_ids is set, ≥1 agent_bus(fetch) "
                     f"step per upstream thread. {_PROTOCOL_HINT}"
                 ),
@@ -261,12 +262,12 @@ def validate_packet(
                     f"skill-ref(s): {', '.join(missing_refs)}. MCP-seat handoffs "
                     "must reference the universal invariant + ULG architecture "
                     "layers (Block 2 / Block 5) so the reviewer reads them before "
-                    "findings. Acceptable forms: legacy slug substring "
-                    "('agent-skills/<slug>'), workspaces canonical path "
-                    "('.cursor/skills/<slug>/SKILL.md') — not a non-resolving "
-                    "display path; a recognizable display-name stem is reported "
-                    "below with its exact rewrite. "
-                    "Exact legacy strings in details.expected_refs. "
+                    "findings. Acceptable forms: canonical slug (`architecture-invariants`), "
+                    "`agent_skill:<slug>`, legacy path ('agent-skills/<slug>'), or "
+                    "workspaces stub ('.cursor/skills/<slug>/SKILL.md') — not a "
+                    "non-resolving display path; a recognizable display-name stem is "
+                    "reported below with its exact rewrite. "
+                    "Expected slugs in details.expected_refs. "
                 )
                 nonconforming = _nonconforming_skill_ref_hint(text, missing_refs)
                 if nonconforming:
@@ -416,28 +417,19 @@ _CONTRACT_LINES: dict[str, str] = {
     ),
 }
 
-# Mechanical arch-layer reminder for MCP consult seats that lack server-injected
-# arch bodies (claude-cursor). Web uses _WEB_CONSULT_PRIMING instead (2235).
+# Platform-seat skill load reminder for MCP consult handoffs (claude-cursor).
+# Web uses _WEB_CONSULT_PRIMING instead (2235).
 _CONSULT_ARCH_READ = (
-    "Before findings: read fs(cortex, agent-skills/architecture-invariants.md) "
-    "and fs(cortex, agent-skills/ulg-architecture.md) per packet <invariants> / "
-    "<mcp_capabilities> item 0; load additional cortex skills named there. "
-    "Web has no IDE rule auto-load — these reads are mandatory."
+    "Before findings: load skills named in packet <invariants> by canonical slug "
+    "(platform triggers on claude-cursor). Do not fs-read agent-skills/*.md for "
+    "skill bodies on platform seats."
 )
 
 _WEB_CONSULT_PRIMING = (
-    "Before findings: follow the web-receiver priming checklist in the packet "
-    "(handoff-packet-authoring.md § Web-receiver priming checklist): load "
-    "task-class skills from packet <invariants> first; agent_bus(fetch) each "
-    "related_thread_ids thread; skill_suggest is confirmatory delta only. "
-    "Web has no IDE rule auto-load. Generic web boot does NOT inject "
-    "architecture-invariants/ulg-architecture bodies (CODING scope requires "
-    "code_touching=True). For ULG work touching code, MCP, events, "
-    "git-integration, service lifecycle, routing, pipelines, or architecture/"
-    "protocol docs, read architecture-invariants + ulg-architecture via "
-    "fs(read_multi, workspaces, ...) per web-boot-lead.md § Tiered skill "
-    "preload. For non-ULG or pure Cortex/document consults, skip the arch "
-    "preload unless packet required_skills names it."
+    "Before findings: load skills named in packet <invariants> by canonical slug "
+    "(platform triggers on claude-web). agent_bus(fetch) each related_thread_ids "
+    "thread per packet <mcp_capabilities>. Do not fs-read agent-skills/*.md for "
+    "skill bodies on platform seats."
 )
 
 _WEB_RECEIVER_AGENT = "claude-web"

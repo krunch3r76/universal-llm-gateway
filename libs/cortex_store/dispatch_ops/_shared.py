@@ -198,6 +198,73 @@ def _derive_session_id_local(agent: str, timestamp: str) -> str:
     return derive_session_id_from_timestamp(agent, timestamp)
 
 
+_SKILL_SOT_WS_PREFIX = "workspaces://universal-llm-gateway/"
+_SKILL_SOT_REL_PREFIX = ".cursor/skills/"
+
+
+def _workspaces_repo_root() -> Path:
+    raw = os.environ.get("WORKSPACES_ROOT", "/mnt/torus/projects")
+    root = Path(raw).resolve()
+    nested = root / "universal-llm-gateway"
+    return nested if nested.is_dir() else root
+
+
+def _canonical_skill_sot_uri(slug: str) -> str:
+    return f"{_SKILL_SOT_WS_PREFIX}{_SKILL_SOT_REL_PREFIX}{slug}/SKILL.md"
+
+
+def _validate_skill_registration_path(skill_id: str, skill_path: str) -> str:
+    """Validate register_skill_substrate path; return canonical workspace SOT URI.
+
+    New registrations must target ``workspaces://universal-llm-gateway/.cursor/skills/{slug}/SKILL.md``.
+    Legacy ``agent-skills/`` and ``cortex://agent-skills/`` paths are rejected with an
+    error naming the workspace SOT (mirror is generated/legacy — todo:consolidate-skill-sot).
+    """
+    candidate = skill_path.strip()
+    if not candidate:
+        raise ValueError("skill_path is empty")
+
+    canonical = _canonical_skill_sot_uri(skill_id)
+    bare = candidate.removeprefix("cortex://")
+    if bare.startswith("agent-skills/"):
+        raise ValueError(
+            f"skill_path {skill_path!r} is the legacy cortex mirror; "
+            f"new registrations must use SOT {canonical} "
+            f"(cortex mirror is generated/legacy — todo:consolidate-skill-sot)"
+        )
+
+    if candidate.startswith(_SKILL_SOT_WS_PREFIX):
+        rel = candidate.removeprefix(_SKILL_SOT_WS_PREFIX)
+    elif candidate.startswith(f"universal-llm-gateway/{_SKILL_SOT_REL_PREFIX}"):
+        rel = candidate.removeprefix("universal-llm-gateway/")
+    elif candidate.startswith(_SKILL_SOT_REL_PREFIX):
+        rel = candidate
+    else:
+        raise ValueError(
+            f"skill_path {skill_path!r} is outside workspace skill SOT; "
+            f"expected {canonical} or {_SKILL_SOT_REL_PREFIX}{{slug}}/SKILL.md"
+        )
+
+    if not rel.startswith(_SKILL_SOT_REL_PREFIX) or not rel.endswith("/SKILL.md"):
+        raise ValueError(
+            f"skill_path {skill_path!r} must be {_SKILL_SOT_REL_PREFIX}{{slug}}/SKILL.md"
+        )
+
+    slug_from_path = rel[len(_SKILL_SOT_REL_PREFIX) : -len("/SKILL.md")]
+    if slug_from_path != skill_id:
+        raise ValueError(
+            f"skill_path slug {slug_from_path!r} does not match skill_id {skill_id!r}"
+        )
+
+    local = _workspaces_repo_root() / rel
+    if not local.is_file():
+        raise ValueError(
+            f"skill_path {skill_path!r} does not resolve to an existing file at {local}"
+        )
+
+    return canonical
+
+
 def _validate_canonical_sandbox_path(
     candidate: str,
     *,
@@ -212,8 +279,8 @@ def _validate_canonical_sandbox_path(
       - absolute paths under workspaces/ or any other sandbox alias
 
     Returns the resolved Path on success; raises ValueError otherwise.
-    Used by register_skill_substrate, register_evidence, etc. (W5 from
-    cortex-primitives v2 plan).
+    Used by register_evidence and audit detectors (W5 from cortex-primitives
+    v2 plan). register_skill_substrate uses _validate_skill_registration_path.
     """
     canonical_root = (_FILES_ROOT / canonical_subdir).resolve()
     if Path(candidate).is_absolute():

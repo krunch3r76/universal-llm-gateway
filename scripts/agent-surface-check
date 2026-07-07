@@ -7,7 +7,9 @@
 #      → .cursor/rules/cursor-boot_ws.mdc and mcp-tool-awareness_ws.mdc match
 #        agent-surface/sources/*.md; subagent-model-table.cursor.md byte-equal
 #        to core_ws.mdc Subagent Model Selection table.
-#   2. scripts/gen-mcp-dispatch-role-docs --check
+#   2. scripts/gen-rules --target agent-skill-bundles --check
+#      → .cursor/skills/<slug>/SKILL.md for agent-surface overlap slugs match sources.
+#   3. scripts/gen-mcp-dispatch-role-docs --check
 #      → dispatch-role advertisement clauses match dispatch_role_catalog SOT.
 
 set -euo pipefail
@@ -19,6 +21,7 @@ PYTHON="${VIRTUAL_ENV:-${HOME}/.venvs/universal}/bin/python3"
 scripts/gen-rules --target cursor --check
 scripts/gen-rules --target command-map --check
 scripts/gen-rules --target agent-guides-rules --check
+scripts/gen-rules --target agent-skill-bundles --check
 "$PYTHON" scripts/registry-check
 "$PYTHON" scripts/gen-mcp-dispatch-role-docs --check
 # Blocking catalog gate + import guard (parity logic retired Phase 2).

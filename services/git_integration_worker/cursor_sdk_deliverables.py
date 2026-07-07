@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from pathlib import Path
@@ -153,6 +154,11 @@ async def post_closeout_sidecar(
     )
 
 
+def pretty_relocated_closeout_body(full_body: str) -> str:
+    """Multi-line JSON for relocated sidecars — readable under fs-read line limits."""
+    return json.dumps(json.loads(full_body), indent=2)
+
+
 async def relocate_oversize_closeout_body_async(
     *,
     full_body: str,
@@ -162,8 +168,9 @@ async def relocate_oversize_closeout_body_async(
     thread_id: str,
     post_closeout_sidecar_fn: PinnedWriteFn | None = None,
 ) -> tuple[dict[str, Any], str]:
+    pretty_body = pretty_relocated_closeout_body(full_body)
     result = await post_closeout_sidecar(
-        full_body=full_body,
+        full_body=pretty_body,
         dispatch_id=dispatch_id,
         thread_id=thread_id,
         post_pinned=post_closeout_sidecar_fn,
@@ -171,7 +178,7 @@ async def relocate_oversize_closeout_body_async(
     if result and "error" not in result and isinstance(result.get("uri"), str):
         return (
             body_relocated_meta(
-                full_body,
+                pretty_body,
                 result["uri"],
                 sha256=result.get("sha256")
                 if isinstance(result.get("sha256"), str)
@@ -179,8 +186,8 @@ async def relocate_oversize_closeout_body_async(
             ),
             "cortex",
         )
-    append_structured_closeout_full_to_repo_sidecar(sidecar_path, full_body)
-    return body_relocated_meta(full_body, sidecar_ref), "repo_sidecar"
+    append_structured_closeout_full_to_repo_sidecar(sidecar_path, pretty_body)
+    return body_relocated_meta(pretty_body, sidecar_ref), "repo_sidecar"
 
 
 def relocate_oversize_closeout_body_sync(
@@ -192,16 +199,17 @@ def relocate_oversize_closeout_body_sync(
     thread_id: str,
     post_closeout_sidecar_fn: Callable[..., PinnedWriteResult | None] | None = None,
 ) -> tuple[dict[str, Any], str]:
+    pretty_body = pretty_relocated_closeout_body(full_body)
     if post_closeout_sidecar_fn is not None:
         result = post_closeout_sidecar_fn(
-            full_body=full_body,
+            full_body=pretty_body,
             dispatch_id=dispatch_id,
             thread_id=thread_id,
         )
         if result and "error" not in result and isinstance(result.get("uri"), str):
             return (
                 body_relocated_meta(
-                    full_body,
+                    pretty_body,
                     result["uri"],
                     sha256=result.get("sha256")
                     if isinstance(result.get("sha256"), str)
@@ -209,8 +217,8 @@ def relocate_oversize_closeout_body_sync(
                 ),
                 "cortex",
             )
-    append_structured_closeout_full_to_repo_sidecar(sidecar_path, full_body)
-    return body_relocated_meta(full_body, sidecar_ref), "repo_sidecar"
+    append_structured_closeout_full_to_repo_sidecar(sidecar_path, pretty_body)
+    return body_relocated_meta(pretty_body, sidecar_ref), "repo_sidecar"
 
 
 async def default_post_pinned_deliverable(

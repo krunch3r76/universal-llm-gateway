@@ -2,8 +2,9 @@
 cortex-graph-projection-and-audit-primitives per v2 plan).
 
 All ops are strictly DB-only (no filesystem mutation inside tx per C1).
-Idempotency follows per-op equality table (W3). Path validation uses
-_validate_canonical_sandbox_path (W5). register_decision registers the new
+Idempotency follows per-op equality table (W3). register_skill_substrate path
+validation uses _validate_skill_registration_path (workspace SOT). Other ops
+may use _validate_canonical_sandbox_path (W5). register_decision registers the new
 `decision:` entity type (S2).
 
 See v2 plan §5 for exact semantics, error codes, and docstring requirements.
@@ -21,7 +22,11 @@ from ..db import WRITE_LOCK, cortex_conn, json_decode, query
 from ..entity_crud import create_entity_impl
 from ..models import RelationshipCreate
 from ..routes.relationships import create_relationship_on_conn
-from ._shared import _compute_content_hash, _validate_canonical_sandbox_path, record
+from ._shared import (
+    _compute_content_hash,
+    _validate_skill_registration_path,
+    record,
+)
 from .ops_entities import _op_entity_create
 from .ops_relationships import _op_relationship_create
 
@@ -124,16 +129,16 @@ def _op_register_skill_substrate(
       re-register after applying it converges to "existing").
     - Else create all three rows atomically.
 
-    Uses _validate_canonical_sandbox_path(skill_path, canonical_subdir="agent-skills").
+    Canonical ``source_uri`` for new registrations:
+    ``workspaces://universal-llm-gateway/.cursor/skills/{skill_id}/SKILL.md``.
+    Legacy ``cortex://agent-skills/`` paths are rejected (invalid_skill_path).
     Emits cortex.composite.registered with entity_ids, composite, status.
     """
     if not skill_id or not skill_path:
         return {"error": "skill_id and skill_path are required"}
 
     try:
-        validated_path = _validate_canonical_sandbox_path(
-            skill_path, canonical_subdir="agent-skills", must_be_file=True
-        )
+        validated_path = _validate_skill_registration_path(skill_id, skill_path)
     except ValueError as exc:
         return {"error": str(exc), "code": "invalid_skill_path"}
 

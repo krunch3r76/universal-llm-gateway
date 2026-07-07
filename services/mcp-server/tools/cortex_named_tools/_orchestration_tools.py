@@ -4,8 +4,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from agent_seat.profiles import resolve_seat, seat_to_family
-from agent_seat.registry import normalize_agent_slug
+from agent_seat.profiles import resolve_seat
+from agent_seat.registry import (
+    normalize_agent_slug,
+    normalize_bus_address,
+    resolve_capability_cell_from_bus_address,
+)
 
 from ._boot_diff import build_boot_diff
 from ._boot_runner import BootMode, run_cortex_boot
@@ -15,19 +19,19 @@ if TYPE_CHECKING:
 
 
 def _parse_seat_slug(slug: str) -> tuple[str | None, str | None]:
-    """Parse a '{family}-{platform}' slug into (family, platform).
+    """Parse a seat slug or bus address into (family, platform).
 
-    Returns (None, None) when the slug doesn't match a known family prefix.
-    Used only by boot_inspect's diff_with parameter.
+    Accepts new endpoint addresses (``web-anthropic``, ``cursor``) and legacy
+    ``{family}-{platform}`` capability cells.
     """
     if not slug:
         return None, None
-    family = seat_to_family(slug)
-    if family is None:
-        return None, None
+    resolved = resolve_capability_cell_from_bus_address(slug)
+    if resolved is not None:
+        return resolved
     parts = slug.split("-", 1)
     if len(parts) == 2:
-        return family, parts[1]
+        return parts[0], parts[1]
     return None, None
 
 
@@ -39,15 +43,19 @@ def _resolve_boot_family_platform(
 ) -> tuple[str, str]:
     """Map boot call axes to canonical (family, platform).
 
-    ``agent`` is the primary seat slug (e.g. ``cursor`` → ``claude-cursor``,
-    ``grok-cursor``). Explicit ``family`` / ``platform`` apply only when
-    ``agent`` is absent or does not parse as ``{family}-{platform}``.
+    ``agent`` is the primary seat slug or bus address (``web-anthropic``,
+    ``cursor``, legacy ``claude-web``). Explicit ``family`` / ``platform`` apply
+    only when ``agent`` is absent or does not resolve to a capability cell.
     """
     if agent:
+        bus_addr = normalize_bus_address(agent)
+        resolved = resolve_capability_cell_from_bus_address(bus_addr)
+        if resolved is not None:
+            return resolved
         slug = normalize_agent_slug(agent)
-        parsed_family, parsed_platform = _parse_seat_slug(slug)
-        if parsed_family is not None:
-            return parsed_family, parsed_platform
+        parsed = _parse_seat_slug(slug)
+        if parsed[0] is not None:
+            return parsed
     fam = family.lower() if family else None
     return resolve_seat(family=fam, platform=platform)
 

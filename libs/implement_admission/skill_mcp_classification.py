@@ -108,13 +108,14 @@ SKILL_MCP_PREDICATED: Final[dict[str, bool]] = {
     "thirdparty-api-mirror": True,
     "todo-lifecycle": False,
     "ulg-architecture": False,
+    "ulg-architecture_ulg": False,
     "web-boot-lead": True,
     "web-generate-substrate": False,
     "web-transcript-preprocessing": True,
     "yaml-reference": False,
 }
 
-CLASSIFICATION_DIGEST: Final[str] = 'sha256:463aa009d271b1fb7f0628f18424108d08c365c30f6a66eff164cda711fe19aa'
+CLASSIFICATION_DIGEST: Final[str] = 'sha256:5c68cf7ee605f4f27c29cd577e4082ab6e185c0678e5b74f6d9ad1f217c1bff4'
 
 DISPOSITION_SOURCE_SHA256: Final[str] = 'sha256:ed1ccc90b5ca3ce57ec24ad4eb472e6fb5d625badda8b98e657f71b9948b0d8f'
 

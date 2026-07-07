@@ -152,9 +152,9 @@ a pre-bound-set or event check.
 Pick by CAPABILITY, not model family. To consult a MODEL (any provider, incl. grok) you do NOT use a build harness.
 When connector-bound: team_dispatch + panel_dispatch are server-primary — call directly.
 - local file/entity work (you ARE claude-web) → fs / cortex / agent_bus directly — ¬ team_dispatch(op="generate"|"to_thread", model="claude-web") (422)
-- manual seat handoff → team_dispatch(op="handoff", seat=claude-web|claude-cursor, packet_path=…|source_ref=…, subject=…) — shorthands accepted; handoff seat-map: web-consult, web-implement → claude-web; cursor-consult, cursor-implement → claude-cursor.
+- manual seat handoff → team_dispatch(op="handoff", seat=claude-web|claude-cursor, packet_path=…|source_ref=…, subject=…) — shorthands accepted; handoff seat-map: web-consult, web-implement → web-anthropic; cursor-consult, cursor-implement → cursor.
 - API consult (any provider) → pre-stage context on an agent-bus thread, then team_dispatch(op="generate", role="reviewer"|"artisan"|…, dispatch_thread_id="<thread>", contract="light-bounded", model="provider/model"?) → execution_id + poll_hint
-- forbidden on generate → synthetic seat models (claude-web, claude-cursor) — use op="handoff" with role= instead
+- forbidden on generate → synthetic seat models (web-anthropic, cursor) — use op="handoff" with role= instead
 - handoff roles: web-consult, web-implement, cursor-consult, cursor-implement (complete roster)
 - consensus panel → panel_dispatch(messages=[…], dispatch_thread_id="…", disposition="panel") → panel_executions; lead adjudication NON-offloadable
 - strategic advice / in-pipeline RAG → dispatch(tool="advisor" | "pipeline_consult", …)  [overflow]

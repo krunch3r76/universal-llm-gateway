@@ -1,6 +1,6 @@
 """Source-file parser for `agent-surface/sources/*.md`.
 
-Parses target-tagged blocks and the optional `frontmatter:cursor` block.
+Parses target-tagged blocks and optional `frontmatter:cursor` / `frontmatter:skill` blocks.
 All non-blank content outside a recognized block is a parser error — this prevents
 silent drift when content is added to a source without picking a target.
 """
@@ -16,7 +16,8 @@ WILDCARD = "*"
 
 _TARGET_OPEN = re.compile(r"<!--\s*target:(cursor|\*)\s*-->")
 _TARGET_CLOSE = re.compile(r"<!--\s*/target:(cursor|\*)\s*-->")
-_FRONTMATTER_OPEN = re.compile(r"<!--\s*frontmatter:cursor\s*$")
+_FRONTMATTER_CURSOR_OPEN = re.compile(r"<!--\s*frontmatter:cursor\s*$")
+_FRONTMATTER_SKILL_OPEN = re.compile(r"<!--\s*frontmatter:skill\s*$")
 _FRONTMATTER_CLOSE = re.compile(r"^-->\s*$")
 _UNKNOWN_TARGET = re.compile(r"<!--\s*/?target:([^\s>]+)\s*-->")
 
@@ -32,6 +33,7 @@ class Block:
 class ParsedSource:
     path: Path
     frontmatter_cursor: str | None = None
+    frontmatter_skill: str | None = None
     blocks: list[Block] = field(default_factory=list)
 
     def blocks_for(self, target: str) -> list[Block]:
@@ -49,13 +51,26 @@ def parse_source(path: Path) -> ParsedSource:
         line = lines[i]
         line_no = i + 1
 
-        fm_open = _FRONTMATTER_OPEN.match(line.strip())
-        if fm_open:
+        fm_cursor = _FRONTMATTER_CURSOR_OPEN.match(line.strip())
+        if fm_cursor:
             fm_lines: list[str] = []
             i += 1
             while i < len(lines):
                 if _FRONTMATTER_CLOSE.match(lines[i].strip()):
                     parsed.frontmatter_cursor = "".join(fm_lines)
+                    i += 1
+                    break
+                fm_lines.append(lines[i])
+                i += 1
+            continue
+
+        fm_skill = _FRONTMATTER_SKILL_OPEN.match(line.strip())
+        if fm_skill:
+            fm_lines = []
+            i += 1
+            while i < len(lines):
+                if _FRONTMATTER_CLOSE.match(lines[i].strip()):
+                    parsed.frontmatter_skill = "".join(fm_lines)
                     i += 1
                     break
                 fm_lines.append(lines[i])

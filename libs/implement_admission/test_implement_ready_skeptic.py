@@ -198,3 +198,163 @@ def test_skeptic_evidence_reject_codes(
     )
     assert not verdict.admitted
     assert verdict.code == code
+
+
+@pytest.mark.offline
+def test_skeptic_pass_missing_reason_names_spec_sha256_requirement() -> None:
+    verdict = evaluate_implement_ready(
+        **_ready_kwargs(
+            skeptic_ratified=False,
+            skeptic_unratified_reason=(
+                "assertion 22900 matches predicate status(todo:sample, "
+                "skeptic_ratified, current) and is active, but its evidence_uris "
+                "does not contain the required spec_sha256:<hex> URI"
+            ),
+        )
+    )
+    assert not verdict.admitted
+    assert verdict.code == "skeptic_pass_missing"
+    assert verdict.reason is not None
+    assert "spec_sha256" in verdict.reason
+    assert "Unmet subcondition" in verdict.reason
+
+
+class _FakeCortex:
+    def __init__(self, items: list[dict[str, object]]) -> None:
+        self._items = items
+
+    def entity_get(self, entity_id: str, **kwargs: object) -> dict[str, object]:
+        return {}
+
+    def assertion_get(self, assertion_id: int) -> dict[str, object]:
+        return {}
+
+    def assertions(self, entity_id: str, **kwargs: object) -> dict[str, object]:
+        return {"items": self._items}
+
+
+def _skeptic_item(**over: object) -> dict[str, object]:
+    base: dict[str, object] = {
+        "id": 7,
+        "entity_id": "todo:sample",
+        "predicate_form": "status(todo:sample, skeptic_ratified, current)",
+        "evidence_uris": ["agent-bus:1#turn-1", "spec_sha256:abc"],
+        "superseded_by": None,
+        "valid_until": None,
+    }
+    base.update(over)
+    return base
+
+
+@pytest.mark.offline
+def test_resolver_reason_spec_hash_unavailable() -> None:
+    from implement_admission.implement_ready_gate_resolve import (
+        resolve_skeptic_ratification,
+    )
+
+    outcome = resolve_skeptic_ratification(
+        todo_id="todo:sample",
+        cortex=_FakeCortex([]),
+        now_iso=_NOW,
+        spec_hash_uri=None,
+    )
+    assert not outcome.ratified
+    assert outcome.reason is not None and "spec_sha256" in outcome.reason
+
+
+@pytest.mark.offline
+def test_resolver_reason_no_predicate_match() -> None:
+    from implement_admission.implement_ready_gate_resolve import (
+        resolve_skeptic_ratification,
+    )
+
+    outcome = resolve_skeptic_ratification(
+        todo_id="todo:sample",
+        cortex=_FakeCortex([_skeptic_item(predicate_form="status(x, other, current)")]),
+        now_iso=_NOW,
+        spec_hash_uri="spec_sha256:abc",
+    )
+    assert not outcome.ratified
+    assert outcome.reason is not None
+    assert "no confirmed active assertion" in outcome.reason
+
+
+@pytest.mark.offline
+def test_resolver_reason_predicate_matched_but_inactive() -> None:
+    from implement_admission.implement_ready_gate_resolve import (
+        resolve_skeptic_ratification,
+    )
+
+    outcome = resolve_skeptic_ratification(
+        todo_id="todo:sample",
+        cortex=_FakeCortex([_skeptic_item(superseded_by=99)]),
+        now_iso=_NOW,
+        spec_hash_uri="spec_sha256:abc",
+    )
+    assert not outcome.ratified
+    assert outcome.reason is not None
+    assert "superseded or expired" in outcome.reason
+
+
+@pytest.mark.offline
+def test_resolver_reason_spec_sha256_uri_absent_from_evidence() -> None:
+    from implement_admission.implement_ready_gate_resolve import (
+        resolve_skeptic_ratification,
+    )
+
+    outcome = resolve_skeptic_ratification(
+        todo_id="todo:sample",
+        cortex=_FakeCortex(
+            [_skeptic_item(evidence_uris=["agent-bus:1#turn-1", "tasks/specs/x.md"])]
+        ),
+        now_iso=_NOW,
+        spec_hash_uri="spec_sha256:abc",
+    )
+    assert not outcome.ratified
+    assert outcome.reason is not None
+    assert "spec_sha256:<hex>" in outcome.reason
+    assert "spec_sha256:abc" in outcome.reason
+
+
+@pytest.mark.offline
+def test_resolver_ratified_exposes_matched_assertion() -> None:
+    from implement_admission.implement_ready_gate_resolve import (
+        resolve_skeptic_ratification,
+    )
+
+    outcome = resolve_skeptic_ratification(
+        todo_id="todo:sample",
+        cortex=_FakeCortex([_skeptic_item()]),
+        now_iso=_NOW,
+        spec_hash_uri="spec_sha256:abc",
+    )
+    assert outcome.ratified
+    assert outcome.reason is None
+    assert outcome.assertion is not None and outcome.assertion["id"] == 7
+
+
+@pytest.mark.offline
+def test_resolver_claim_prefix_fallback_is_opt_in() -> None:
+    from implement_admission.implement_ready_gate_resolve import (
+        resolve_skeptic_ratification,
+    )
+
+    item = _skeptic_item(
+        predicate_form=None,
+        claim="status(todo:sample, skeptic_ratified, current) — ratified by skeptic",
+    )
+    strict = resolve_skeptic_ratification(
+        todo_id="todo:sample",
+        cortex=_FakeCortex([item]),
+        now_iso=_NOW,
+        spec_hash_uri="spec_sha256:abc",
+    )
+    assert not strict.ratified
+    fallback = resolve_skeptic_ratification(
+        todo_id="todo:sample",
+        cortex=_FakeCortex([item]),
+        now_iso=_NOW,
+        spec_hash_uri="spec_sha256:abc",
+        match_claim_prefix=True,
+    )
+    assert fallback.ratified

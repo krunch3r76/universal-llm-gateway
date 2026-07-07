@@ -126,6 +126,7 @@ def evaluate_implement_ready(
     skeptic_evidence_grounded: bool | None = None,
     skeptic_evidence_unresolved: list[str] | None = None,
     skeptic_evidence_mode: str | None = None,
+    skeptic_unratified_reason: str | None = None,
 ) -> ImplementReadyVerdict:
     """Deterministic implement-readiness verdict over declared todo state."""
     triage = (density_triage or "").strip() or None
@@ -235,13 +236,17 @@ def evaluate_implement_ready(
     # implement on a reviewer-tightened spec alone — the skeptic must have run
     # (a20966; consensus-steelman-posture). Mechanical todos returned admitted above.
     if not skeptic_ratified and not recon_waived:
-        return _reject(
-            "skeptic_pass_missing",
+        reason = (
             f"{todo_id}: judgment_required (material) decision needs a skeptic "
             f"ratification before implement — record a confirmed status({todo_id}, "
             "skeptic_ratified, current) assertion citing the skeptic/panel thread "
-            "(run the axis-2 skeptic pass per cheap-recon-before-escalation).",
+            "AND the spec_sha256:<hex> URI of the current dense-spec content in "
+            "evidence_uris (run the axis-2 skeptic pass per "
+            "cheap-recon-before-escalation)."
         )
+        if skeptic_unratified_reason:
+            reason += f" Unmet subcondition: {skeptic_unratified_reason}"
+        return _reject("skeptic_pass_missing", reason)
 
     if skeptic_ratified and not recon_waived:
         evidence_reject = _skeptic_evidence_reject(

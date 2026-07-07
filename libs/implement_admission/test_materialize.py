@@ -157,7 +157,11 @@ def test_mcp_capabilities_advertises_coding_session_bundle(tmp_path: Path) -> No
         'fs(sandbox="workspaces", op="md_read", '
         'path="universal-llm-gateway/.cursor/skills/git-posture/SKILL.md")' in mcp
     )
-    assert 'fs(sandbox="cortex", op="md_read", path="agent-skills/service-lifecycle.md")' in mcp
+    assert (
+        'fs(sandbox="workspaces", op="md_read", '
+        'path="universal-llm-gateway/.cursor/skills/service-lifecycle/SKILL.md")'
+        in mcp
+    )
     for slug in (
         "implement-work-item",
         "completion-provenance-discipline",

@@ -20,7 +20,7 @@ from agent_seat.profiles import (
     load_roles,
     seat_to_family,
 )
-from agent_seat.registry import normalize_agent_slug
+from agent_seat.registry import normalize_agent_slug, normalize_bus_address
 from model_capabilities import CapabilityCardError
 from model_id import ModelId
 from transport_utils import DEFAULT_AGENT_BUS_URL, make_async_client
@@ -240,7 +240,7 @@ def _resolve_role_or_seat_profile(
             status_code=422,
         )
 
-    to_agent = f"{family}-{platform}"
+    to_agent = normalize_bus_address(f"{family}-{platform}")
     return to_agent, family, platform, profile
 
 

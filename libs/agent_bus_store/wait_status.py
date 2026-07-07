@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from typing import Any, Literal, TypedDict
 
-from agent_seat.registry import normalize_agent_slug
+from agent_seat.registry import normalize_bus_address
 
 from .close_on_read import CLOSE_ON_READ_TAG
 from .disposition import resolve_bus_lifecycle
@@ -50,11 +50,11 @@ def qualifying_reply(
     (``claude-cursor``) and vice versa — mirroring the alias-aware inbox filter
     (``recipients.expand_recipient_slugs``).
     """
-    expected = normalize_agent_slug(from_agent) if from_agent is not None else None
+    expected = normalize_bus_address(from_agent) if from_agent is not None else None
     for t in sorted(turns, key=lambda r: r["turn_number"]):
         if t["turn_number"] <= after_turn:
             continue
-        if expected is None or normalize_agent_slug(t["from_agent"]) == expected:
+        if expected is None or normalize_bus_address(t["from_agent"]) == expected:
             return t
     return None
 

@@ -507,7 +507,7 @@ def test_coding_session_start_returns_bundle_not_session_close() -> None:
         "session-close",
         *advertise_slugs,
         "architecture-invariants",
-        "ulg-architecture_ulg",
+        "ulg-architecture",
         "orchestrator-workflow",
     ):
         _insert(
@@ -534,7 +534,7 @@ def test_coding_session_start_returns_bundle_not_session_close() -> None:
     web_advertise = [slug for slug in advertise_slugs if slug != "git-posture"]
     assert set(slugs) == set(web_advertise) | {
         "architecture-invariants",
-        "ulg-architecture_ulg",
+        "ulg-architecture",
         "orchestrator-workflow",
     }
     assert "git-posture" not in slugs

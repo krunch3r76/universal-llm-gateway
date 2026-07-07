@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from agent_seat.registry import normalize_agent_slug
+from agent_seat.registry import normalize_bus_address
 
 from .db.threads import get_thread, get_thread_turns_asc
 from .db.threads_atomic import close_thread
@@ -29,7 +29,7 @@ def agents_match(left: str | None, right: str | None) -> bool:
         return True
     left_base = _dispatch_base_seat(str(left))
     right_base = _dispatch_base_seat(str(right))
-    return normalize_agent_slug(left_base) == normalize_agent_slug(right_base)
+    return normalize_bus_address(left_base) == normalize_bus_address(right_base)
 
 
 def resolve_bus_lifecycle(
@@ -131,7 +131,7 @@ def maybe_auto_close_after_implement_handoff_reply(
     implement_seat = turns[0].get("to_agent")
     if not implement_seat:
         return None
-    if normalize_agent_slug(from_agent) != normalize_agent_slug(implement_seat):
+    if normalize_bus_address(from_agent) != normalize_bus_address(implement_seat):
         return None
     summary = f"Implement reply (turn {turn_number}) — auto-closed (ephemeral default)."
     return close_thread(thread_id, summary=summary, mark_all_read=False)

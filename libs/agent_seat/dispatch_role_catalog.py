@@ -17,6 +17,7 @@ regenerates those clauses from here so docs stay in lockstep with the role roste
 from __future__ import annotations
 
 from .profiles import CapabilityProfile, get_profile, load_roles
+from .registry import normalize_bus_address
 
 # Roles documented as legacy in agent-facing docs. Currently empty — machinery
 # retained so future legacy roles can render with a "(legacy)" suffix.
@@ -44,9 +45,14 @@ def handoff_roles() -> list[str]:
 
 
 def handoff_role_seat(role: str) -> str:
-    """Resolved ``{family}-{platform}`` seat slug for a handoff role."""
+    """Resolved ``{family}-{platform}`` capability cell for a handoff role."""
     rp = load_roles()[role]
     return f"{rp.default_family}-{rp.default_platform}"
+
+
+def handoff_role_bus_address(role: str) -> str:
+    """Canonical bus endpoint address for a handoff role."""
+    return normalize_bus_address(handoff_role_seat(role))
 
 
 # ── Render helpers (canonical agent-facing clause strings) ────────────────────
@@ -72,15 +78,15 @@ def handoff_comma_clause() -> str:
 
 def handoff_seat_map_clause() -> str:
     """Seat-grouped handoff map, e.g.
-    ``web-consult, web-implement → claude-web; cursor-consult, cursor-implement → claude-cursor``.
+    ``web-consult, web-implement → web-anthropic; cursor-consult, cursor-implement → cursor``.
 
-    Roles are grouped by resolved seat (first-seen order); a group is marked
+    Roles are grouped by resolved bus address (first-seen order); a group is marked
     ``(legacy)`` when every role in it is legacy.
     """
     groups: list[tuple[str, list[str]]] = []
     seat_index: dict[str, int] = {}
     for role in handoff_roles():
-        seat = handoff_role_seat(role)
+        seat = handoff_role_bus_address(role)
         if seat not in seat_index:
             seat_index[seat] = len(groups)
             groups.append((seat, []))
@@ -111,10 +117,10 @@ def handoff_bare_comma_clause() -> str:
 
 
 def handoff_seats() -> list[str]:
-    """Distinct resolved handoff seats, first-seen roster order."""
+    """Distinct resolved handoff bus addresses, first-seen roster order."""
     seats: list[str] = []
     for role in handoff_roles():
-        seat = handoff_role_seat(role)
+        seat = handoff_role_bus_address(role)
         if seat not in seats:
             seats.append(seat)
     return seats

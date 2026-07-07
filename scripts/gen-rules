@@ -2,7 +2,7 @@
 """Generate cursor `.mdc` rule files from `agent-surface/` neutral-canonical sources.
 
 Usage:
-    scripts/gen-rules --target {cursor|command-map|agent-guides-rules|cortex-rules} [--check] [--dry-run]
+    scripts/gen-rules --target {cursor|command-map|agent-guides-rules|agent-skill-bundles|cortex-rules} [--check] [--dry-run]
 
 Targets:
     cursor       Emit `.cursor/rules/cursor-boot_ws.mdc` + `.cursor/rules/mcp-tool-awareness_ws.mdc`;
@@ -12,6 +12,9 @@ Targets:
                  `agent-surface/sources/command-map.md` (wildcard target blocks).
     agent-guides-rules  Emit `docs/agent-guides/rules/*.md` from the MVW conduct manifest
                  in `libs/gen_rules/agent_guides.py` (wildcard `target:*` blocks).
+    agent-skill-bundles  Emit `.cursor/skills/<slug>/SKILL.md` for agent-surface overlap
+                 slugs in `libs/gen_rules/agent_skill_bundles.py` (wildcard `target:*`
+                 blocks + `frontmatter:skill`).
     cortex-rules Upsert `rule:<slug>` cortex projections (source_uri + digest +
                  applicability) via scripts/cortex/ingest_rules.py. Run AFTER
                  agent-guides-rules so generated files exist to digest.
@@ -35,6 +38,7 @@ if str(_REPO / "libs") not in sys.path:
     sys.path.insert(0, str(_REPO / "libs"))
 
 from gen_rules.agent_guides import emit_agent_guides_rules  # noqa: E402
+from gen_rules.agent_skill_bundles import emit_agent_skill_bundles  # noqa: E402
 
 _SCRIPTS_CORTEX = _REPO / "scripts" / "cortex"
 if str(_SCRIPTS_CORTEX) not in sys.path:
@@ -181,7 +185,13 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--target",
-        choices=("cursor", "command-map", "agent-guides-rules", "cortex-rules"),
+        choices=(
+            "cursor",
+            "command-map",
+            "agent-guides-rules",
+            "agent-skill-bundles",
+            "cortex-rules",
+        ),
         required=True,
     )
     parser.add_argument("--check", action="store_true")
@@ -195,6 +205,8 @@ def main(argv: list[str] | None = None) -> int:
         rc = _emit_command_map(root, check=args.check, dry_run=args.dry_run)
     elif args.target == "agent-guides-rules":
         rc = emit_agent_guides_rules(root, check=args.check, dry_run=args.dry_run)
+    elif args.target == "agent-skill-bundles":
+        rc = emit_agent_skill_bundles(root, check=args.check, dry_run=args.dry_run)
     else:
         ingest_argv: list[str] = ["--root", str(root)]
         if args.check:

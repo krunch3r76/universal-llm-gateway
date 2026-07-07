@@ -73,10 +73,10 @@ def test_resolve_skill_source_uri_rule_alias() -> None:
 
 
 @pytest.mark.offline
-def test_canonical_table_key_ulg_no_phantom_alias() -> None:
+def test_canonical_table_key_ulg_suffix_no_longer_aliases() -> None:
     assert canonical_table_key("ulg-architecture") == "ulg-architecture"
-    assert canonical_table_key("ulg-architecture_ulg") == "ulg-architecture"
-    assert canonical_table_key("rule:ulg-architecture_ulg") == "ulg-architecture"
+    assert canonical_table_key("ulg-architecture_ulg") == "ulg-architecture_ulg"
+    assert canonical_table_key("rule:ulg-architecture_ulg") == "ulg-architecture_ulg"
 
 
 @pytest.mark.offline
@@ -111,15 +111,16 @@ def test_source_uri_to_fs_line_absolute_cortex_files_root() -> None:
 
 
 @pytest.mark.offline
-def test_source_uri_to_fs_line_positional_matches_enrich_producer() -> None:
-    from systems.frontier_consult.handoff_packet_enrich import (
-        source_uri_to_fs_line as enrich_line,
-    )
-
+def test_source_uri_to_fs_line_positional_style() -> None:
+    """Positional fs_call_style for implement-packet producers (sandbox_kwargs default elsewhere)."""
     uri = "workspaces://universal-llm-gateway/.cursor/skills/foo/SKILL.md"
-    assert enrich_line(uri) == source_uri_to_fs_line(
-        uri, op="read", fs_call_style="positional"
+    assert source_uri_to_fs_line(uri, op="read", fs_call_style="positional") == (
+        'fs(workspaces, op=read, path="universal-llm-gateway/.cursor/skills/foo/SKILL.md")'
     )
+    cortex_uri = "cortex://agent-skills/implement-work-item.md"
+    assert source_uri_to_fs_line(
+        cortex_uri, op="md_read", fs_call_style="positional"
+    ) == 'fs(cortex, op=md_read, path="agent-skills/implement-work-item.md")'
 
 
 @pytest.mark.offline

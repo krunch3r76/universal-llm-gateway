@@ -185,6 +185,11 @@ class SessionCloseResponse(BaseModel):
     content_hash: str | None = None
     turn_count: int
     byte_count: int
+    # True when this response echoes a prior close (idempotent path): NO new
+    # file or DB write happened on this call. content_hash is null and
+    # turn_count/byte_count are 0. Callers MUST NOT treat such a response as
+    # evidence that the payload passed on this call was persisted.
+    already_closed: bool = False
     # v1.3.1 Path 3 advisory (non-blocking): normalization refusals detected
     # in session-written assertions via the ledger. Never causes 422.
     audit_warnings: list[dict[str, Any]] | None = None

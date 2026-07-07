@@ -1,11 +1,4 @@
-"""Table-first skill body resolution — shared SOT for Layer-C inline + GET /skills/body.
-
-Historical ``_ulg`` suffix: repo-scoped ULG skills once used table keys like
-``ulg-architecture_ulg`` before Lane-2 substantiation. Wave 0 + A1 inverted the
-alias so bare ``ulg-architecture`` is canonical; explicit ``*_ulg`` callers still
-resolve via ``CANONICAL_SLUG_ALIASES`` to the same ``source_uri``. Narrative:
-cortex://notes/system/threads/4433-skeptic-reply-0d8766d9.md.
-"""
+"""Table-first skill body resolution — shared SOT for Layer-C inline + GET /skills/body."""
 
 from __future__ import annotations
 

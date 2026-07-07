@@ -1,8 +1,8 @@
-"""Auto-enrich web handoff packets before validation (assertion #19650).
+"""Auto-enrich MCP-seat handoff packets before validation (assertion #19650).
 
-Resolves todo required_skills + default densify slugs via entity_get → source_uri,
-merges translated fs lines into <invariants>/<mcp_capabilities>, and mirrors
-related_thread_ids as agent_bus(fetch) steps.
+Merges canonical skill slugs into <invariants>, mirrors related_thread_ids as
+agent_bus(fetch) steps. Platform seats load skill bodies via native triggers —
+not fs(agent-skills/…) lines or skill_suggest.
 """
 
 from __future__ import annotations
@@ -14,9 +14,6 @@ from typing import Any, Protocol
 
 from cortex_store.guidance_entity import entity_slug_from_id
 from implement_admission.admission_read import frontmatter_value
-from implement_admission.skill_fs_line import (
-    source_uri_to_fs_line as _canonical_source_uri_to_fs_line,
-)
 from universal_logging import get_logger
 
 from .handoff import _extract_block
@@ -64,11 +61,6 @@ KNOWN_TASK_CLASS_SLUGS: frozenset[str] = frozenset(
     }
 )
 
-_SKILL_SUGGEST_STEP = (
-    'skill_suggest(conversation_context="<task summary from packet scope>")'
-)
-
-
 class CortexEntityReader(Protocol):
     def entity_get(self, entity_id: str, **kwargs: Any) -> dict[str, Any]: ...
 
@@ -82,10 +74,11 @@ class EnrichResult:
     changed: bool = False
 
 
-def source_uri_to_fs_line(source_uri: str) -> str:
-    """Map agent_skill.source_uri to a packet fs load line (enrich positional form)."""
-    return _canonical_source_uri_to_fs_line(
-        source_uri, op="read", fs_call_style="positional"
+def _canonical_skill_invariant_line(slug: str) -> str:
+    """One Block-2 line naming a skill by canonical slug (platform-trigger load)."""
+    return (
+        f"- Load skill: `{slug}` "
+        f"(canonical slug — platform trigger; do not fs-read skill body)"
     )
 
 
@@ -141,22 +134,6 @@ def _skill_slug_from_entity(entity: dict[str, Any]) -> str | None:
     return slug or None
 
 
-def _resolve_source_uri(cortex: CortexEntityReader, slug: str) -> str | None:
-    try:
-        entity = cortex.entity_get(f"agent_skill:{slug}", intent="full")
-    except Exception as exc:
-        logger.warning("enrich entity_get failed slug=%s error=%s", slug, exc)
-        return None
-    top = entity.get("source_uri")
-    if top and str(top).strip():
-        return str(top).strip()
-    attrs = entity.get("attributes") or {}
-    if not isinstance(attrs, dict):
-        return None
-    raw = attrs.get("source_uri")
-    return str(raw).strip() if raw else None
-
-
 def _heuristic_task_class_slugs(text: str) -> list[str]:
     haystack = " ".join(
         filter(
@@ -202,12 +179,17 @@ def _collect_skill_slugs(text: str, cortex: CortexEntityReader) -> list[str]:
 
 
 def _slug_represented_in_text(text: str, slug: str) -> bool:
-    """Return True when slug is already wired in any fs-line or comment form."""
+    """Return True when slug is already wired in canonical or legacy packet form."""
     lowered = text.lower()
     needle = slug.lower()
     if f"agent_skill:{needle}" in lowered:
         return True
+    if f"`{needle}`" in lowered:
+        return True
+    # Legacy fs-line packets (idempotent re-enrich)
     if f"agent-skills/{needle}.md" in lowered:
+        return True
+    if f"/{needle}/skill.md" in lowered:
         return True
     if f"/{needle}.md" in lowered:
         return True
@@ -261,17 +243,10 @@ def enrich_handoff_packet(
     skills_added: list[str] = []
     skills_already_wired: list[str] = []
     for slug in skill_slugs:
-        source_uri = _resolve_source_uri(cortex, slug)
-        if not source_uri:
-            continue
-        try:
-            line = source_uri_to_fs_line(source_uri)
-        except ValueError:
-            continue
         if _slug_represented_in_text(text, slug):
             skills_already_wired.append(slug)
         else:
-            invariant_lines.append(f"- {line}  # agent_skill:{slug}")
+            invariant_lines.append(_canonical_skill_invariant_line(slug))
             skills_added.append(slug)
 
     text, _ = _merge_block_lines(text, "invariants", invariant_lines)
@@ -279,10 +254,6 @@ def enrich_handoff_packet(
     mcp_block = _extract_block(text, "mcp_capabilities") or ""
     mcp_additions: list[str] = []
     threads_added: list[str] = []
-
-    if "skill_suggest" not in mcp_block.lower():
-        step = _next_mcp_step_number(mcp_block)
-        mcp_additions.append(f"{step}. {_SKILL_SUGGEST_STEP}")
 
     for thread_id in _parse_related_thread_ids(text):
         fetch_snippet = f"agent_bus(fetch, thread={thread_id}"

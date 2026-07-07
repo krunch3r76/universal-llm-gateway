@@ -1,7 +1,11 @@
 """Agent model registry — dispatch identity resolved from CapabilityProfile.
 
-Provides normalize_agent_slug (for frontier dispatch pipeline slug normalization)
-and the resolve_agent_* / check_agent_* helpers used by admission gates.
+Two normalization layers (identity doctrine Phase 2 §B):
+- ``normalize_bus_address`` — endpoint mailbox addressing (``web-anthropic``,
+  ``cursor``, ``api-openai``); alias-complete across old ``{family}-{platform}``
+  slugs and nicknames.
+- ``normalize_agent_slug`` — capability-cell key (``{family}-{platform}``);
+  unchanged for model/provider/family resolution and lead-seat checks.
 
 ``web`` seats are not dispatch targets — strategic-advisor seats only
 (∀ dispatch with a web seat slug: caller error; see Cortex assertion 5258).
@@ -18,6 +22,9 @@ from .profiles import (
     load_roles,
     seat_to_family,
 )
+
+# Endpoint mailboxes only — sdk/subagent are capability routing, not bus addresses.
+_BUS_ADDRESS_EXCLUDED_PLATFORMS = frozenset({"sdk", "subagent"})
 
 
 def _normalize_agent_key(slug: str) -> str:
@@ -69,6 +76,91 @@ def _dispatch_aliases() -> dict[str, str]:
     return {**_LEGACY_ALIASES, **derived}
 
 
+@functools.cache
+def _bus_address_map() -> dict[str, str]:
+    """Capability cell slug → canonical bus address (derived from load_profiles)."""
+    mapping: dict[str, str] = {}
+    for (family, platform), profile in load_profiles().items():
+        if platform in _BUS_ADDRESS_EXCLUDED_PLATFORMS:
+            continue
+        cell = f"{family}-{platform}"
+        if platform == "cursor":
+            mapping[cell] = "cursor"
+        else:
+            mapping[cell] = f"{platform}-{profile.provider}"
+    addr_to_cells: dict[str, list[str]] = {}
+    for cell, addr in mapping.items():
+        addr_to_cells.setdefault(addr, []).append(cell)
+    for addr, cells in addr_to_cells.items():
+        if addr == "cursor":
+            continue
+        if len(cells) > 1:
+            raise RuntimeError(
+                f"_bus_address_map non-injective: {addr!r} ← {sorted(cells)}"
+            )
+    return mapping
+
+
+@functools.cache
+def _bus_address_aliases() -> dict[str, str]:
+    """Normalized spelling → canonical bus address (alias-complete old↔new)."""
+    cell_to_addr = _bus_address_map()
+    aliases: dict[str, str] = {}
+    for addr in set(cell_to_addr.values()):
+        aliases[_normalize_agent_key(addr)] = addr
+    for alias_norm, cell in _dispatch_aliases().items():
+        if cell in cell_to_addr:
+            aliases[alias_norm] = cell_to_addr[cell]
+    return aliases
+
+
+def normalize_bus_address(slug: str) -> str:
+    """Normalize a bus ``to``/``from_agent`` value to a canonical endpoint address.
+
+    Canonical forms: ``cursor`` | ``web-{provider}`` | ``api-{provider}`` |
+    ``api-multi-{provider}``. Old ``{family}-{platform}`` slugs and nicknames
+    (``web``, ``cursor``, ``web_claude``) alias to the same canonical. Non-endpoint
+    slugs (roles, ``cursor-sdk``, ``subagent-subagent``) pass through unchanged.
+    """
+    if not isinstance(slug, str):
+        slug = str(slug)
+    norm = _normalize_agent_key(slug)
+    hit = _bus_address_aliases().get(norm)
+    if hit is not None:
+        return hit
+    cell = normalize_agent_slug(slug)
+    return _bus_address_map().get(cell, cell)
+
+
+def resolve_capability_cell_from_bus_address(
+    address: str,
+) -> tuple[str, str] | None:
+    """Map a bus endpoint address to ``(family, platform)`` for boot resolution.
+
+    Ambiguous ``cursor`` defaults to ``(claude, cursor)``. Provider-scoped
+    addresses are unique. Non-endpoint slugs fall back to capability-cell parse.
+    """
+    bus_addr = normalize_bus_address(address)
+    if bus_addr == "cursor":
+        return "claude", "cursor"
+    cell_map = _bus_address_map()
+    for cell, addr in cell_map.items():
+        if addr == bus_addr:
+            family, _, platform = cell.partition("-")
+            return family, platform
+    canonical = normalize_agent_slug(address)
+    if canonical in cell_map:
+        family, _, platform = canonical.partition("-")
+        return family, platform
+    family = seat_to_family(canonical)
+    if family is None:
+        return None
+    parts = canonical.split("-", 1)
+    if len(parts) == 2:
+        return family, parts[1]
+    return None
+
+
 def normalize_agent_slug(slug: str) -> str:
     """Normalize dispatch agent slug to canonical seat or role slug.
 
@@ -89,28 +181,38 @@ def normalize_agent_slug(slug: str) -> str:
 
 
 def is_lead_agent(slug: str) -> bool:
-    """True when ``slug`` is an operator lead seat (``agents.yaml`` ``lead_seats``)."""
+    """True when ``slug`` is an operator lead seat (``agents.yaml`` ``lead_seats``).
+
+    The folded bus address ``cursor`` alone is never lead — lead-ness is a
+    capability-cell property (``claude-cursor``, ``gpt-cursor``, …).
+    """
+    if _normalize_agent_key(slug) == "cursor" and normalize_bus_address(slug) == "cursor":
+        return False
     return normalize_agent_slug(slug) in load_lead_agent_slugs()
 
 
 def expand_recipient_slugs(slug: str) -> list[str]:
     """All ``to_agent`` values that should match inbox fetches for this seat.
 
-    Historical turns store legacy short slugs (``web``, ``cursor``) while
-    seats query with canonical ``claude-web`` / ``claude-cursor``. Agent-bus
-    recipient filters must match every alias that normalizes to the same seat.
+    Address-layer superset: new canonical (``web-anthropic``, ``cursor``), old
+    ``{family}-{platform}`` cells, and legacy nicknames (``web``, ``cursor``).
     """
-    canonical = normalize_agent_slug(slug)
+    canonical = normalize_bus_address(slug)
     values: set[str] = {canonical}
     raw = slug.strip()
     if raw:
         values.add(raw)
     values.add(canonical.replace("-", "_"))
-    for alias_norm, target in _dispatch_aliases().items():
+    for alias_norm, target in _bus_address_aliases().items():
         if target != canonical:
             continue
         values.add(alias_norm)
         values.add(alias_norm.replace("_", "-"))
+    for cell, addr in _bus_address_map().items():
+        if addr != canonical:
+            continue
+        values.add(cell)
+        values.add(cell.replace("-", "_"))
     return sorted(values)
 
 

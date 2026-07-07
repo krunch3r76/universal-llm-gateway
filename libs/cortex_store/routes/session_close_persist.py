@@ -8,7 +8,7 @@ from pathlib import Path
 from fastapi import HTTPException, status
 from universal_logging import get_logger
 
-from ..db import cortex_conn, decode_row, json_encode
+from ..db import cortex_conn, json_encode
 from ..dispatch_ops._shared import _FILES_ROOT, record
 from ..handoff_surface import build_handoff_surface_preview
 from ..models import SessionCloseRequest, SessionCloseResponse
@@ -39,14 +39,27 @@ from .session_close_validate import (
 
 logger = get_logger("cortex-api.session_close")
 
-_JSON_FIELDS = frozenset({"domains", "decisions", "open_items", "entity_ids"})
-
 
 def try_idempotent_session_close(
     body: SessionCloseRequest,
     ctx: ValidatedCloseContext,
-) -> SessionCloseResponse | None:
-    """Return prior close response when session_id already closed; else None."""
+) -> tuple[SessionCloseResponse | None, int | None]:
+    """Idempotency gate for session_close.
+
+    Returns ``(response, reuse_journal_row_id)``:
+
+      - ``(response, None)`` — a *real* prior session_close exists for this
+        session_id; echo it (``response.already_closed=True``).
+      - ``(None, row_id)`` — a journal row exists but was NOT created by a
+        real close (legacy ``journal_write`` row: no transcript entity AND
+        ``file_path IS NULL``). Persist must run the full close and UPDATE
+        row ``row_id`` in place instead of inserting a duplicate.
+      - ``(None, None)`` — no prior row; fresh close.
+
+    Silent-no-op regression guard (friction 22962): a deprecated
+    journal_write row must never suppress the compose/write path while
+    returning a success envelope.
+    """
     _idem_conn = cortex_conn()
     try:
         existing = _idem_conn.execute(
@@ -58,7 +71,7 @@ def try_idempotent_session_close(
     finally:
         _idem_conn.close()
     if existing is None:
-        return None
+        return None, None
 
     prior_transcript_id = f"transcript:{body.session_id}"
     prior_depth = "none"
@@ -67,9 +80,11 @@ def try_idempotent_session_close(
             "SELECT attributes FROM entities WHERE id = ?",
             (prior_transcript_id,),
         ).fetchone()
+        entity_stamped_by_close = False
         if depth_row and depth_row["attributes"]:
             try:
                 prior_attrs = json.loads(depth_row["attributes"])
+                entity_stamped_by_close = "transcript_depth" in prior_attrs
                 prior_depth = prior_attrs.get("transcript_depth", "verbatim")
             except (json.JSONDecodeError, AttributeError) as exc:
                 emit_session_close_depth_decode_fallback(
@@ -77,6 +92,29 @@ def try_idempotent_session_close(
                     error_type=type(exc).__name__,
                 )
                 prior_depth = "verbatim"
+                entity_stamped_by_close = True  # can't prove legacy; be safe
+        if existing["file_path"] is None and not entity_stamped_by_close:
+            # No transcript file AND no close-stamped transcript entity
+            # (verbatim/light closes always leave both; journal_write leaves a
+            # stub entity with empty attributes, or none at all; a real
+            # depth="none" close leaves neither — re-closing it with content is
+            # the intended repair path). This row cannot be attributed to a
+            # real session_close: run the full close, reusing the row, instead
+            # of silently returning a no-op success envelope (friction 22962).
+            logger.info(
+                "session_close: session_id %s has a legacy journal row "
+                "(id=%d, file_path NULL, no close-stamped transcript entity) "
+                "— proceeding with real close, reusing the row",
+                body.session_id,
+                existing["id"],
+            )
+            record(
+                "mcp.session.close.legacy_row.reclose",
+                session_id=body.session_id,
+                agent=body.agent,
+                journal_row_id=existing["id"],
+            )
+            return None, existing["id"]
     prior_handoff = existing["handoff_prompt"]
     handoff_retry = resolve_handoff_for_write(
         files_root=_FILES_ROOT,
@@ -112,44 +150,47 @@ def try_idempotent_session_close(
             status_code=status.HTTP_409_CONFLICT,
             detail=conflict_detail,
         )
-    decoded = decode_row(dict(existing), _JSON_FIELDS)
-    debrief = attempt_session_close_debrief(
-        session_id=body.session_id,
-        agent=decoded["agent"],
-        summary=decoded["summary"],
-        journal_row_id=existing["id"],
-        transcript_depth=prior_depth,
-        content_hash=None,
-        domains=decoded.get("domains"),
-        decisions=decoded.get("decisions"),
-        open_items=decoded.get("open_items"),
-    )
-    return SessionCloseResponse(
-        transcript_entity_id=(prior_transcript_id if prior_depth != "none" else None),
-        transcript_path=existing["file_path"],
-        journal_row_id=existing["id"],
-        session_id=body.session_id,
-        transcript_depth=prior_depth,
-        content_hash=None,
-        turn_count=0,
-        byte_count=0,
-        audit_warnings=None,
-        handoff_surface_preview=build_handoff_surface_preview(
-            handoff_retry.handoff_prompt,
-            handoff_retry.provenance,
-            handoff_retry.handoff_verification,
+    # Genuinely re-closing an already-closed session: echo the prior close
+    # explicitly. Do NOT re-post a bus debrief — the prior close already
+    # posted one, and re-posting here replays stale summary text (22962).
+    return (
+        SessionCloseResponse(
+            transcript_entity_id=(
+                prior_transcript_id if prior_depth != "none" else None
+            ),
+            transcript_path=existing["file_path"],
+            journal_row_id=existing["id"],
+            session_id=body.session_id,
+            transcript_depth=prior_depth,
+            content_hash=None,
+            turn_count=0,
+            byte_count=0,
+            already_closed=True,
+            audit_warnings=None,
+            handoff_surface_preview=build_handoff_surface_preview(
+                handoff_retry.handoff_prompt,
+                handoff_retry.provenance,
+                handoff_retry.handoff_verification,
+            ),
+            debrief_turn_number=None,
+            debrief_status="skipped_existing",
+            debrief_body=None,
         ),
-        debrief_turn_number=debrief.debrief_turn_number,
-        debrief_status=debrief.debrief_status,
-        debrief_body=debrief.debrief_body,
+        None,
     )
 
 
 def persist_session_close(
     body: SessionCloseRequest,
     ctx: ValidatedCloseContext,
+    reuse_journal_row_id: int | None = None,
 ) -> SessionCloseResponse:
-    """Write transcript file (if any), commit DB tx, return close response."""
+    """Write transcript file (if any), commit DB tx, return close response.
+
+    ``reuse_journal_row_id``: id of a legacy journal_write row for this
+    session_id — the close UPDATEs that row in place instead of inserting a
+    duplicate (see try_idempotent_session_close).
+    """
     handoff_resolution = resolve_handoff_for_write(
         files_root=_FILES_ROOT,
         write_path=WRITE_PATH_SESSION_CLOSE,
@@ -267,28 +308,52 @@ def persist_session_close(
         journal_source_ref = (
             source_ref_resolution.stamped_ref if source_ref_resolution else None
         )
-        cur = conn.execute(
-            "INSERT INTO session_journals "
-            "(timestamp, agent, summary, domains, decisions, open_items, "
-            "entity_ids, file_path, session_id, prior_session_id, handoff_prompt, "
-            "source_ref) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                ctx.now,
-                body.agent,
-                body.summary,
-                json_encode(body.domains),
-                json_encode(body.decisions),
-                json_encode(body.open_items),
-                json_encode(body.entity_ids),
-                ctx.transcript_path,
-                body.session_id,
-                body.prior_session_id,
-                handoff_prompt,
-                journal_source_ref,
-            ),
-        )
-        journal_row_id = cur.lastrowid or 0
+        if reuse_journal_row_id is not None:
+            conn.execute(
+                "UPDATE session_journals SET "
+                "timestamp = ?, agent = ?, summary = ?, domains = ?, "
+                "decisions = ?, open_items = ?, entity_ids = ?, file_path = ?, "
+                "prior_session_id = ?, handoff_prompt = ?, source_ref = ? "
+                "WHERE id = ?",
+                (
+                    ctx.now,
+                    body.agent,
+                    body.summary,
+                    json_encode(body.domains),
+                    json_encode(body.decisions),
+                    json_encode(body.open_items),
+                    json_encode(body.entity_ids),
+                    ctx.transcript_path,
+                    body.prior_session_id,
+                    handoff_prompt,
+                    journal_source_ref,
+                    reuse_journal_row_id,
+                ),
+            )
+            journal_row_id = reuse_journal_row_id
+        else:
+            cur = conn.execute(
+                "INSERT INTO session_journals "
+                "(timestamp, agent, summary, domains, decisions, open_items, "
+                "entity_ids, file_path, session_id, prior_session_id, "
+                "handoff_prompt, source_ref) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    ctx.now,
+                    body.agent,
+                    body.summary,
+                    json_encode(body.domains),
+                    json_encode(body.decisions),
+                    json_encode(body.open_items),
+                    json_encode(body.entity_ids),
+                    ctx.transcript_path,
+                    body.session_id,
+                    body.prior_session_id,
+                    handoff_prompt,
+                    journal_source_ref,
+                ),
+            )
+            journal_row_id = cur.lastrowid or 0
 
         if body.prior_session_id:
             _ensure_transcript_entity(conn, body.prior_session_id, body.agent, ctx.now)

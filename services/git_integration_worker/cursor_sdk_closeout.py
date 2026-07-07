@@ -28,8 +28,10 @@ from services.git_integration_worker.cursor_sdk_capture_status import (
     ChangeSet,
     baseline_dirty_in_expected,
     degrade_status_for_capture,
+    filter_manifest_swamp,
     gitignored_manifest_paths,
     normalize_wt_baseline,
+    partition_gitignored_from_change_set,
     resolve_closeout_capture_fields,
 )
 from services.git_integration_worker.cursor_sdk_deliverables import (
@@ -55,6 +57,7 @@ from services.git_integration_worker.cursor_sdk_manifest import (
     registered_repo_roots,
     repo_change_set_from_manifest,
     resolve_mount_root,
+    resolve_repo_change_set,
     serialize_effects_manifest_for_body,
     snapshot_outside_repo_paths,
 )
@@ -150,7 +153,7 @@ def capture_wt_baseline(source_repo: Path) -> dict[str, str] | None:
 
 
 def capture_wt_baseline_with_hashes(source_repo: Path) -> dict[str, Any] | None:
-    """Porcelain codes plus content hashes for paths dirty at admit."""
+    """Porcelain codes plus content hashes and outside-repo census at admit."""
     codes = capture_wt_baseline(source_repo)
     if codes is None:
         return None
@@ -159,7 +162,41 @@ def capture_wt_baseline_with_hashes(source_repo: Path) -> dict[str, Any] | None:
         digest = _hash_worktree_file(source_repo, path)
         if digest is not None:
             hashes[path] = digest
-    return {"codes": codes, "hashes": hashes}
+    mount = resolve_mount_root(source_repo)
+    outside = sorted(
+        snapshot_outside_repo_paths(mount, registered_repo_roots(mount))
+    )
+    return {"codes": codes, "hashes": hashes, "outside_repo": outside}
+
+
+def run_touched_files_lint(
+    source_repo: Path,
+    change_set: ChangeSet,
+) -> tuple[Verification, str | None]:
+    """Run ``ruff check`` on touched ``*.py`` paths from the git change set."""
+    py_paths = [
+        path
+        for path in (*change_set.created, *change_set.modified)
+        if path.endswith(".py")
+    ]
+    if not py_paths:
+        return (
+            Verification(command="ruff check (no python files touched)", exit_code=0),
+            None,
+        )
+    abs_paths = [str(source_repo / path) for path in py_paths]
+    command = f"ruff check {len(py_paths)} touched files"
+    try:
+        proc = subprocess.run(
+            ["ruff", "check", *abs_paths],
+            capture_output=True,
+            timeout=60,
+        )
+    except FileNotFoundError:
+        return Verification(command=command, exit_code=0), "verification:lint_unavailable"
+    except subprocess.TimeoutExpired:
+        return Verification(command=command, exit_code=0), "verification:lint_unavailable"
+    return Verification(command=command, exit_code=proc.returncode), None
 
 
 def _split_baseline(
@@ -241,16 +278,7 @@ def reconcile_workspace_changes(
     baseline_outside = _baseline_outside_repo_paths(baseline)
     current_outside = snapshot_outside_repo_paths(mount, repos)
     new_outside = tuple(sorted(current_outside - baseline_outside))
-    merged_modified = tuple(dict.fromkeys([*git_change.modified, *new_outside]))
-    return (
-        ChangeSet(
-            created=git_change.created,
-            modified=merged_modified,
-            deleted=git_change.deleted,
-        ),
-        gitignored,
-        new_outside,
-    )
+    return git_change, gitignored, new_outside
 
 
 def _baseline_dirty_in_expected(
@@ -381,6 +409,7 @@ def finalize_closeout_body(
         ("files_created", "files_created_total"),
         ("files_modified", "files_modified_total"),
         ("files_deleted", "files_deleted_total"),
+        ("files_outside_repo", "files_outside_repo_total"),
     ):
         files = payload.get(field) or []
         reduced[total_field] = len(files)
@@ -440,6 +469,7 @@ def build_implement_closeout_body(
     sidecar_appendix: list[str] | None = None,
     cortex_first: bool = False,
     files_untracked_or_ignored: list[str] | None = None,
+    files_outside_repo: list[str] | None = None,
 ) -> str:
     """Build a compact, valid ImplementCloseout JSON turn body.
 
@@ -509,6 +539,8 @@ def build_implement_closeout_body(
         payload = closeout.model_dump(mode="json")
         if files_untracked_or_ignored:
             payload["files_untracked_or_ignored"] = files_untracked_or_ignored
+        if files_outside_repo:
+            payload["files_outside_repo"] = files_outside_repo
         if manifest_value is not None and not isinstance(
             manifest_value, EffectsManifest
         ):
@@ -655,6 +687,7 @@ def _assemble_closeout_delivery(
         git_change_set = ChangeSet(created=(), modified=(), deleted=())
         files_untracked_or_ignored: tuple[str, ...] = ()
         outside_repo_paths: tuple[str, ...] = ()
+        baseline_deviations: list[str] = []
     else:
         git_change_set, files_untracked_or_ignored, outside_repo_paths = (
             reconcile_workspace_changes(
@@ -663,6 +696,9 @@ def _assemble_closeout_delivery(
                 manifest=outcome.effects_manifest,
             )
         )
+        baseline_deviations = []
+        if "outside_repo" not in baseline:
+            baseline_deviations.append("capture:outside_repo_baseline_missing")
     manifest = merge_wrapper_manifest(
         dispatch_id=dispatch_id,
         thread_id=thread_id,
@@ -670,23 +706,34 @@ def _assemble_closeout_delivery(
         cortex_artifact_paths=cortex_artifact_paths,
         git_change_set=git_change_set,
     )
-    # Manifest projection for in-repo paths; outside-repo + gitignored split per spec A1/A3.
-    manifest_cs = repo_change_set_from_manifest(
+    mount = resolve_mount_root(source_repo)
+    manifest_cs, manifest_outside, non_file_dropped = repo_change_set_from_manifest(
         manifest,
         source_repo=source_repo,
-    ) or ChangeSet(created=(), modified=(), deleted=())
-    ignored_set = set(files_untracked_or_ignored)
+        mount_root=mount,
+    )
+    if manifest_cs is None:
+        manifest_cs = ChangeSet(created=(), modified=(), deleted=())
+    repo_change_set, manifest_extra_untracked, manifest_git_divergence = (
+        resolve_repo_change_set(
+            manifest=manifest,
+            git_change_set=git_change_set,
+            source_repo=source_repo,
+            mount_root=mount,
+        )
+    )
+    repo_change_set, files_untracked_or_ignored = partition_gitignored_from_change_set(
+        repo_change_set,
+        source_repo=source_repo,
+        existing_untracked=(*files_untracked_or_ignored, *manifest_extra_untracked),
+    )
     repo_change_set = ChangeSet(
-        created=tuple(p for p in manifest_cs.created if p not in ignored_set),
-        modified=tuple(
-            dict.fromkeys(
-                [
-                    *(p for p in manifest_cs.modified if p not in ignored_set),
-                    *outside_repo_paths,
-                ]
-            )
-        ),
-        deleted=manifest_cs.deleted,
+        created=tuple(filter_manifest_swamp(repo_change_set.created)),
+        modified=tuple(filter_manifest_swamp(repo_change_set.modified)),
+        deleted=tuple(filter_manifest_swamp(repo_change_set.deleted)),
+    )
+    all_outside_repo = tuple(
+        dict.fromkeys([*outside_repo_paths, *manifest_outside])
     )
     verification_cs = build_verification_change_set(
         repo_change_set, gate_d_created_rels
@@ -703,6 +750,12 @@ def _assemble_closeout_delivery(
             baseline=baseline,
             source_repo=source_repo,
         )
+        lint_verification, lint_deviation = run_touched_files_lint(
+            source_repo, repo_change_set
+        )
+        verification = [*verification, lint_verification]
+        if lint_deviation:
+            baseline_deviations.append(lint_deviation)
     capture_status, divergence_reason, deviations, manifest = (
         resolve_closeout_capture_fields(
             deliverables_expected=deliverables_expected,
@@ -714,13 +767,20 @@ def _assemble_closeout_delivery(
             source_repo=source_repo,
             cortex_root=cortex_files_root(),
             manifest=manifest,
-            outside_repo_paths=outside_repo_paths,
+            outside_repo_paths=all_outside_repo,
             files_untracked_or_ignored=files_untracked_or_ignored,
-            mount_root=resolve_mount_root(source_repo),
+            mount_root=mount,
             light_bounded_expected_paths=light_bounded_expected_paths,
             worktree_isolated=worktree_isolated,
         )
     )
+    deviations = [*baseline_deviations, *(deviations or [])]
+    if non_file_dropped:
+        deviations = [*(deviations or []), "capture:non_file_manifest_entry_dropped"]
+    if manifest_git_divergence and "divergence:manifest_vs_git_labels" not in deviations:
+        deviations = [*(deviations or []), "divergence:manifest_vs_git_labels"]
+        if divergence_reason is None:
+            divergence_reason = "divergence:manifest_vs_git_labels"
     cortex_authoritative = bool(gate_d_created_rels)
     body = build_implement_closeout_body(
         dispatch_id=dispatch_id,
@@ -740,6 +800,7 @@ def _assemble_closeout_delivery(
         sidecar_appendix=sidecar_appendix,
         cortex_first=cortex_authoritative,
         files_untracked_or_ignored=list(files_untracked_or_ignored),
+        files_outside_repo=list(all_outside_repo),
     )
     if sidecar_appendix:
         appendix = "\n\n## effects_manifest\n\n" + "\n".join(sidecar_appendix)

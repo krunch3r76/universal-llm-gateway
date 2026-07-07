@@ -52,7 +52,9 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
     and does not suppress the original exception.
     """
     ctx = validate_session_close(body)
-    idempotent = try_idempotent_session_close(body, ctx)
+    idempotent, reuse_journal_row_id = try_idempotent_session_close(body, ctx)
     if idempotent is not None:
         return idempotent
-    return persist_session_close(body, ctx)
+    return persist_session_close(
+        body, ctx, reuse_journal_row_id=reuse_journal_row_id
+    )

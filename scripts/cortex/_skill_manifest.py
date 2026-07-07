@@ -184,12 +184,14 @@ def generator_manifest_verdict(
 def aggregate_verdicts(
     *,
     edge_drift: VerdictStatus,
+    sot_drift: VerdictStatus,
     stub_parity: VerdictStatus,
     generator_manifest: VerdictStatus,
     allowlist: VerdictStatus,
 ) -> dict[str, VerdictStatus]:
     return {
         "EDGE_DRIFT": edge_drift,
+        "SOT_DRIFT": sot_drift,
         "STUB_PARITY": stub_parity,
         "GENERATOR_MANIFEST": generator_manifest,
         "ALLOWLIST": allowlist,

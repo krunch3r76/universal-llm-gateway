@@ -1,3 +1,7 @@
+<!-- frontmatter:skill
+name: handoff-pickup
+description: Resolve a named transcript handoff before agent-bus fetch, file grep, or newest-thread scan.
+-->
 <!-- target:* -->
 # Handoff Pickup Gate
 

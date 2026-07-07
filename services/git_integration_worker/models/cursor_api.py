@@ -23,6 +23,7 @@ class CursorDispatchRequest(BaseModel):
     prompt_preamble: str | None = None
     model_knobs: dict[str, str] | None = None
     read_only: bool = False
+    close_contract: Literal["lead", "auto"] = "auto"
 
     @model_validator(mode="after")
     def _packet_xor_message(self) -> CursorDispatchRequest:

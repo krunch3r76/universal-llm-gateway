@@ -27,7 +27,6 @@ TEMPLATE_VERSION = "1"
 
 CANONICAL_SLUG_ALIASES: dict[str, str] = {
     "session-close-kernel": "session-close",
-    "ulg-architecture_ulg": "ulg-architecture",
 }
 
 # Slugs that must persist without a resolvable live source_uri (slug → uri).

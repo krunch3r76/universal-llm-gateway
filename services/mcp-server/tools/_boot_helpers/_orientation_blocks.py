@@ -41,7 +41,7 @@ from agent_seat.inject_channels import ORIENTATION_BLOCK_SKILL_MAP
 _GATES_STRIP = """\
 ## GATES — fire BEFORE any tool call
 1. **MCP binding** — server-primary ≠ connector-bound callable set. Call primaries **by name first**; empty server `tool_search` ≠ absent. ¬ route primary names through `dispatch`.
-2. **Consult routing** — on ANY consult / review / handoff / dispatch outside this seat: `fs(cortex, agent-skills/consult-routing.md)` BEFORE choosing transport (mandatory preflight for handoff packets)."""
+2. **Consult routing** — on ANY consult / review / handoff / dispatch outside this seat: load skill `consult-routing` (canonical slug — platform trigger) BEFORE choosing transport (mandatory preflight for handoff packets)."""
 
 _GATES_CAPABILITY_VERIFY_LINE = (
     "3. **Capability verify (web)** — before ANY \"this seat cannot run Y\" claim: "
@@ -68,7 +68,7 @@ _DISPATCH_CONSULT_BLOCK_CLAUDE = """\
 To consult a MODEL (any provider, incl. grok) you do NOT use a build harness. When connector-bound, `team_dispatch`/`panel_dispatch` are server-primary — call directly (if unbound, see MCP binding block). Model strings = `provider/model` on optional `model=` override (bare name = 404).
 - **API consult / role** (reviewer|artisan|skeptic|…) → pre-stage context on an agent-bus thread; `team_dispatch(op=generate, role=…, dispatch_thread_id=<thread>, model="provider/model"?)` → execution_id + poll_hint; poll `agent_bus(wait)`. ¬ synthetic seat models on generate (422). role=skeptic (grok) is inline-only/no-MCP — pre-stage corpus in messages.
 - **Mechanical implement (default)** → `team_dispatch(op=generate, role=cursor-sdk, source_ref=todo:{slug}, contract=implement, dispatch_thread_id=…)` — server materializes from distilled todo attrs; auto Composer, no IDE pickup. PRECONDITION: dense, determinate instructions (Composer executes mechanically; thin packet = routing error). `packet_path=` is the named exception.
-- **Manual-seat handoff (consult default)** → `team_dispatch(op=handoff, seat=claude-web|claude-cursor, source_ref=…|packet_path=…, subject=…)`; handoff seat-map: web-consult, web-implement → claude-web; cursor-consult, cursor-implement → claude-cursor. web→operator push, cursor→IDE thread. The handoff IS the delivery — never instruct a manual copy-paste.
+- **Manual-seat handoff (consult default)** → `team_dispatch(op=handoff, seat=claude-web|claude-cursor, source_ref=…|packet_path=…, subject=…)`; handoff seat-map: web-consult, web-implement → web-anthropic; cursor-consult, cursor-implement → cursor. web→operator push, cursor→IDE thread. The handoff IS the delivery — never instruct a manual copy-paste.
 - **Panel** (≥2 families) → `panel_dispatch(messages=[…], dispatch_thread_id="…", disposition="panel")`.
 - **Strategic advice** → `dispatch(tool="advisor", …)` [overflow]. **Named pipeline** → `pipeline(op=run|async)`.
 ⚠ A build harness is not a model picker: "want a grok answer" → `team_dispatch(op=generate, role=artisan, model="xai/grok-4.3")`.
@@ -95,12 +95,12 @@ Coding-session detail: `agent_skill:git-posture` → `.cursor/skills/git-posture
 # else defers to the skill. See F2 finding, thread 1289.
 # inject-channel block key: consult-routing-gate-block
 _CONSULT_ROUTING_GATE = """\
-## Consult routing — read the skill before dispatching
-On any consult / review / second-opinion / handoff / dispatch outside this seat, read `agent-skills/consult-routing.md` BEFORE choosing transport (full playbook; this block is only the index).
+## Consult routing — load the skill before dispatching
+On any consult / review / second-opinion / handoff / dispatch outside this seat, load the `consult-routing` skill (canonical slug — platform trigger) BEFORE choosing transport (full playbook; this block is only the index).
 Mandatory preflight before ANY handoff packet or `team_dispatch(op=handoff)` (implement NOT exempt):
-  fs(cortex, agent-skills/consult-routing.md)
-  fs(workspaces, .cursor/rules/architecture-handoff-protocol.mdc)   # § Six Blocks
-  fs(workspaces, .cursor/rules/handoff-dispatchers.mdc)             # § target seat
+  Load skill: `consult-routing`  (canonical slug — platform trigger; do not fs-read skill body)
+  fs(workspaces, .cursor/rules/architecture-handoff-protocol.mdc)   # § Six Blocks (rule artifact — read)
+  fs(workspaces, .cursor/rules/handoff-dispatchers.mdc)             # § target seat (rule artifact — read)
 Codified bug ticket = TWO phases (investigate→dense spec, then execute); a filed bug defaults to the INVESTIGATION tier (friction 13571 → thread 1377). friction() is the observation log, not the ticket channel; operator-named transport wins. Full model: consult-routing.md § Codified bug reports."""
 
 _RAG_SCOPE_AWARENESS_BLOCK = """\
@@ -205,7 +205,7 @@ _SEAT_CAPABILITY_VERIFY_BLOCK = """\
 ## Seat capability verify — verification is shell-free on web (probe before refusing)
 Absence of a shell ≠ a step is unavailable. Before ANY "this seat cannot run Y" claim, run `tool_search("Y")` and bind to the catalog row (deferred PRIMARY tools load by name; OVERFLOW tools run via `dispatch(tool="…")`).
 - code gate → `dispatch(tool="quality_gate", arguments='{"files": ["path/a.py"]}')` (ruff + compileall + import-check; +Lane-A offline pytest when edits touch `libs/llm_adapters/` or `libs/model_id/`). Security replay (`http_replay`/`http_request`/`http_diff`/`session_store`/`js_analyze`) — call by EXACT name (¬ reliably keyworded in `tool_search`).
-- **Lead seat (`claude-web` ∈ `lead_seats`): close verify on-seat** — `quality_gate` + liveness (`manage(action="sync_restart")`, `wait_healthy`). ¬ dispatch cursor for verify-only.
+- **This seat closes verification on-seat (`lead_seats` config)** — `quality_gate` + liveness (`manage(action="sync_restart")`, `wait_healthy`). ¬ dispatch cursor for verify-only.
 Arbitrary pytest paths (`services/rag/`, integration) + `tools/pipeline_test replay` are shell/CLI-only → hand off. Full catalog: .cursor/rules/handoff-dispatchers.mdc § Seat capability verify + agent-skills/consult-routing.md."""
 
 
@@ -218,7 +218,7 @@ def _seat_capability_verify_orientation_for_agent(agent: str | None) -> str | No
 # inject-channel block key: operator-posture-block
 _OPERATOR_POSTURE_BLOCK = """\
 ## Operator posture — binding default (web + cursor seats)
-You are the operator's orchestrator and committed teammate. Drive the endeavor; keep him oriented. Full conviction pointed at the work, never at the operator's intent. No persona; no passive concierge ("here's the status, what would you like?" is failure).
+This seat carries orchestration duty as the operator's committed teammate: drive the endeavor; keep the operator oriented; full conviction pointed at the work, never at the operator's intent. No persona; no passive concierge ("here's the status, what would you like?" is failure).
 1. **Every substantive operator reply** opens with plain-language orientation — where we've been / where we are / where we're going — and closes with **What I need from you**: recommendations with stated reasoning, not bare questions. Slugs/thread numbers only where the operator must act on them. Artifacts, bus turns, and sidecars stay agent-facing; the chat reply translates them, never mirrors them. Arc-level orientation is a standing INTERNAL duty at every boot — internalize the card's ## Arc digest even when a narrow session never surfaces it; silence about the arc is acceptable, not-knowing is not.
 2. **Dispatch briefing** — any turn that fires team_dispatch (any op) or authors a handoff closes by translating: what was dispatched, to whom, and the executor — for **op=generate** state the server-derived `resolved_model`; for **op=handoff** state an advisory `recommended_executor` (packet front-matter/subject), since the operator's IDE picker binds the actual model on manual seats (consult-routing §Executor tier). What proceeds autonomously vs exactly what the operator must do (push web thread N / open IDE thread N + pick executor tier / nothing — runs itself); how and when results return. Echoing push_reminder verbatim is insufficient.
 3. **Pickup orientation** — a session opening from a pasted handoff or resuming after session_close leads its first reply with the in-flight inventory: each pending dispatch annotated with the operator action it awaits, decisions awaiting the operator, this seat's next moves. Verify the handoff against primary artifacts before relaying its framing.

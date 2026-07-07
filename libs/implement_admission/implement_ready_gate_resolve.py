@@ -116,6 +116,22 @@ class SkepticRatificationOutcome:
     evidence_grounded: bool | None = None
     evidence_unresolved: list[str] | None = None
     evidence_mode: str | None = None
+    reason: str | None = None
+    assertion: dict[str, Any] | None = None
+
+
+def _predicate_matches(
+    item: dict[str, Any],
+    target: str,
+    *,
+    match_claim_prefix: bool,
+) -> bool:
+    if _normalize_predicate(item.get("predicate_form")) == target:
+        return True
+    if not match_claim_prefix:
+        return False
+    claim_prefix = _normalize_predicate((item.get("claim") or "")[:90])
+    return claim_prefix.startswith(target)
 
 
 def resolve_skeptic_ratification(
@@ -125,9 +141,27 @@ def resolve_skeptic_ratification(
     now_iso: str,
     spec_hash_uri: str | None,
     resolve_skeptic: Any | None = None,
+    match_claim_prefix: bool = False,
 ) -> SkepticRatificationOutcome:
+    """Resolve the gate-13 skeptic ratification with an unmet-subcondition reason.
+
+    ``reason`` names the tightest unmet subcondition for the best candidate
+    assertion so ``skeptic_pass_missing`` failures are actionable without
+    reading this source (friction 22902). Subcondition priority (tightest
+    first): spec_sha256 evidence URI absent from a predicate-matched active
+    assertion > predicate matched but assertion inactive/superseded > no
+    predicate-matched assertion at all > spec hash unavailable.
+    """
+    predicate = f"status({todo_id}, {_SKEPTIC_RATIFIED_STATUS}, current)"
     if not spec_hash_uri:
-        return SkepticRatificationOutcome(ratified=False)
+        return SkepticRatificationOutcome(
+            ratified=False,
+            reason=(
+                "dense-spec content hash is unavailable, so the required "
+                "spec_sha256:<hex> evidence URI cannot be checked — ensure the "
+                "cited dense spec is readable"
+            ),
+        )
     listed = cortex.assertions(
         todo_id,
         confidence="confirmed",
@@ -137,21 +171,28 @@ def resolve_skeptic_ratification(
     )
     items = listed.get("items") if isinstance(listed, dict) else None
     if not isinstance(items, list):
-        return SkepticRatificationOutcome(ratified=False)
-    target = _normalize_predicate(
-        f"status({todo_id}, {_SKEPTIC_RATIFIED_STATUS}, current)"
-    )
+        return SkepticRatificationOutcome(
+            ratified=False,
+            reason=f"no confirmed assertions could be listed for {todo_id}",
+        )
+    target = _normalize_predicate(predicate)
+    saw_predicate_inactive = False
+    evidence_missing_id: Any = None
     for item in items:
         if not isinstance(item, dict):
             continue
         if item.get("entity_id") != todo_id:
             continue
-        if _normalize_predicate(item.get("predicate_form")) != target:
+        if not _predicate_matches(
+            item, target, match_claim_prefix=match_claim_prefix
+        ):
             continue
         if not assertion_active(item, now_iso=now_iso):
+            saw_predicate_inactive = True
             continue
         evidence = item.get("evidence_uris")
         if not (isinstance(evidence, list) and spec_hash_uri in evidence):
+            evidence_missing_id = item.get("id")
             continue
         if resolve_skeptic is not None:
             outcome = resolve_skeptic(assertion=item)
@@ -163,9 +204,35 @@ def resolve_skeptic_ratification(
                     evidence_grounded=outcome.get("evidence_grounded"),
                     evidence_unresolved=outcome.get("evidence_unresolved"),
                     evidence_mode=outcome.get("evidence_mode"),
+                    assertion=item,
                 )
-        return SkepticRatificationOutcome(ratified=True)
-    return SkepticRatificationOutcome(ratified=False)
+        return SkepticRatificationOutcome(ratified=True, assertion=item)
+    if evidence_missing_id is not None:
+        return SkepticRatificationOutcome(
+            ratified=False,
+            reason=(
+                f"assertion {evidence_missing_id} matches predicate "
+                f"{predicate} and is active, but its evidence_uris does not "
+                f"contain the required spec_sha256:<hex> URI of the current "
+                f"dense-spec content ({spec_hash_uri}) — supersede the "
+                "ratification citing that URI"
+            ),
+        )
+    if saw_predicate_inactive:
+        return SkepticRatificationOutcome(
+            ratified=False,
+            reason=(
+                f"a predicate-matched {predicate} assertion exists but is "
+                "superseded or expired — record a fresh confirmed ratification"
+            ),
+        )
+    return SkepticRatificationOutcome(
+        ratified=False,
+        reason=(
+            "no confirmed active assertion with predicate_form "
+            f"{predicate} was found"
+        ),
+    )
 
 
 def select_cited_dense_spec_uri(

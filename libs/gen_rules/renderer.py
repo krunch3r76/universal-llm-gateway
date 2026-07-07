@@ -2,9 +2,12 @@
 
 Cursor target → `.cursor/rules/*.mdc` body (with YAML front matter and DO NOT EDIT
 header before it).
+Skill bundle → `.cursor/skills/<slug>/SKILL.md` (YAML frontmatter first, then DO NOT EDIT).
 """
 
 from __future__ import annotations
+
+import yaml
 
 from .parser import ParsedSource
 
@@ -23,6 +26,49 @@ def _do_not_edit(source_rel: str) -> str:
 def _join_blocks(parsed: ParsedSource, target: str) -> str:
     pieces = [b.content for b in parsed.blocks_for(target)]
     return "".join(pieces)
+
+
+def _yaml_scalar(value: str) -> str:
+    if not value:
+        return '""'
+    import json
+    import re
+
+    if re.fullmatch(r"[^\n\"'#,:{}\\[\\]&*!?|>@%]+", value):
+        return value
+    return json.dumps(value)
+
+
+def render_skill_bundle(parsed: ParsedSource, source_rel: str, slug: str) -> str:
+    """Render `.cursor/skills/<slug>/SKILL.md` from agent-surface source."""
+    if parsed.frontmatter_skill is None:
+        raise ValueError(f"{parsed.path}: missing frontmatter:skill block for {slug!r}")
+
+    try:
+        fm = yaml.safe_load(parsed.frontmatter_skill) or {}
+    except yaml.YAMLError as exc:
+        raise ValueError(f"{parsed.path}: invalid frontmatter:skill YAML: {exc}") from exc
+    if not isinstance(fm, dict):
+        raise ValueError(f"{parsed.path}: frontmatter:skill must be a YAML mapping")
+
+    name = str(fm.get("name") or slug)
+    description = str(fm.get("description") or "").strip()
+    if not description:
+        raise ValueError(f"{parsed.path}: frontmatter:skill missing description for {slug!r}")
+
+    body = _join_blocks(parsed, "*")
+    parts = [
+        "---\n",
+        f"name: {name}\n",
+        f"description: {_yaml_scalar(description)}\n",
+        "---\n",
+        _do_not_edit(source_rel) + "\n",
+        body,
+    ]
+    out = "".join(parts)
+    if not out.endswith("\n"):
+        out += "\n"
+    return out
 
 
 def render_cursor_mdc(parsed: ParsedSource, source_rel: str) -> str:

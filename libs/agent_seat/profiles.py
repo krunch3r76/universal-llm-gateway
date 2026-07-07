@@ -289,19 +289,44 @@ def known_seats() -> frozenset[str]:
     return frozenset(f"{family}-{platform}" for family, platform in load_profiles())
 
 
+@functools.cache
+def _provider_family_index() -> dict[tuple[str, str], str]:
+    """(platform, provider) → family — unique per endpoint except cursor fold."""
+    index: dict[tuple[str, str], str] = {}
+    for (family, platform), profile in load_profiles().items():
+        if platform in ("sdk", "subagent", "cursor"):
+            continue
+        key = (platform, profile.provider)
+        if key in index and index[key] != family:
+            raise RuntimeError(
+                f"provider-family collision: {key} ← {index[key]!r} and {family!r}"
+            )
+        index[key] = family
+    return index
+
+
 def seat_to_family(slug: str) -> str | None:
     """Project a seat slug to its model family (provenance granularity).
 
-    ``claude-cursor`` → ``claude``; ``grok-cursor`` → ``grok``. Returns the
-    input unchanged when it is already a bare family. Returns None when the
-    leading token is not a registered family — caller decides reject vs pass.
+    ``claude-cursor`` → ``claude``; ``web-anthropic`` → ``claude`` via provider
+    index; bare ``cursor`` → ``None`` (folded mailbox — not a family claim).
+    Returns the input unchanged when it is already a bare family. Returns None
+    when the slug is not projectable — caller decides reject vs pass.
     Routing/operational identity keeps the full seat; this projection is for
     knowledge provenance (``seeded_by``) only.
     """
     if not slug:
         return None
+    if slug == "cursor":
+        return None
     families = known_families()
     if slug in families:
         return slug
-    head = slug.split("-", 1)[0]
+    parts = slug.split("-", 1)
+    if len(parts) == 2:
+        platform, provider = parts
+        hit = _provider_family_index().get((platform, provider))
+        if hit is not None:
+            return hit
+    head = parts[0]
     return head if head in families else None

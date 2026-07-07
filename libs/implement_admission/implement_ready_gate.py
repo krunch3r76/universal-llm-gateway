@@ -159,6 +159,7 @@ def require_implement_ready(
         skeptic_evidence_grounded=skeptic_outcome.evidence_grounded,
         skeptic_evidence_unresolved=skeptic_outcome.evidence_unresolved,
         skeptic_evidence_mode=skeptic_outcome.evidence_mode,
+        skeptic_unratified_reason=skeptic_outcome.reason,
     )
     if not verdict.admitted:
         raise ImplementReadyGateError(

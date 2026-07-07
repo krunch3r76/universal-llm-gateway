@@ -2131,7 +2131,7 @@ tools:
   # headless/arc-only: git relays to git-integration-worker (decision:lead-agent-git-integration).
   # Not a Cursor-IDE concern — demoted off mcp_claude → overflow for Claude seats.
   seat_visibility: [mcp]
-  skill_uri: rule:lead-agent-git-integration_ulg
+  skill_uri: rule:lead-agent-git-integration
   mandate_safety: write
   cache_priority: on_demand
   introduced: 2026-05-29
@@ -2166,7 +2166,7 @@ tools:
     required: [arc, phase, worktree_path, approval, expected_diff_sha256]
   # headless/arc-only (see git_integrate note). Off mcp_claude → overflow for Claude.
   seat_visibility: [mcp]
-  skill_uri: rule:lead-agent-git-integration_ulg
+  skill_uri: rule:lead-agent-git-integration
   mandate_safety: write
   cache_priority: on_demand
   introduced: 2026-05-31
@@ -2193,7 +2193,7 @@ tools:
     required: [worktree_path]
   # headless/arc-only (see git_integrate note). Off mcp_claude → overflow for Claude.
   seat_visibility: [mcp]
-  skill_uri: rule:lead-agent-git-integration_ulg
+  skill_uri: rule:lead-agent-git-integration
   mandate_safety: read_only
   cache_priority: on_demand
   introduced: 2026-05-29
@@ -2224,7 +2224,7 @@ tools:
     required: [worktree_path]
   # headless/arc-only (see git_integrate note). Off mcp_claude → overflow for Claude.
   seat_visibility: [mcp]
-  skill_uri: rule:lead-agent-git-integration_ulg
+  skill_uri: rule:lead-agent-git-integration
   mandate_safety: read_only
   cache_priority: on_demand
   introduced: 2026-05-29
@@ -2260,7 +2260,7 @@ tools:
     required: [worktree_path, expected_branch, paths]
   # headless/arc-only (see git_integrate note). Off mcp_claude → overflow for Claude.
   seat_visibility: [mcp]
-  skill_uri: rule:lead-agent-git-integration_ulg
+  skill_uri: rule:lead-agent-git-integration
   mandate_safety: write
   cache_priority: on_demand
   introduced: 2026-05-31
@@ -2715,10 +2715,10 @@ tools:
         ∧ ¬execution_id.
     At least one of packet_path | source_ref; source_ref triggers normalize→materialize and the
     confirmed-decision gate (source_ref path only). Stargate owns resolution — relay pass-through only.
-    HandoffSeat = claude-web | claude-cursor. Contract derived server-side (source_ref dispatch_lane →
+    HandoffSeat = web-anthropic | cursor. Contract derived server-side (source_ref dispatch_lane →
     packet front-matter contract: → role default_contract → consult).
     The {platform}-{contract} shorthands (web-consult, web-implement, cursor-consult, cursor-implement) remain accepted and encode (seat, contract).
-    handoff seat-map: web-consult, web-implement → claude-web; cursor-consult, cursor-implement → claude-cursor.
+    handoff seat-map: web-consult, web-implement → web-anthropic; cursor-consult, cursor-implement → cursor.
     Operator-only overrides (hidden from default agent guidance): role=, op=, contract=.
     ¬model on handoff. ¬handoff_contract on request (derived server-side).
     API roles (reviewer, …) → 422 handoff_requires_web_seat.
@@ -2727,7 +2727,7 @@ tools:
     type: object
     properties:
       op: {type: string, enum: [handoff]}
-      seat: {type: string, enum: [claude-web, claude-cursor]}
+      seat: {type: string, enum: [web-anthropic, cursor]}
       role: {type: string, enum: [web-consult, web-implement, cursor-consult, cursor-implement]}
       packet_path: {type: string}
       source_ref: {type: string}

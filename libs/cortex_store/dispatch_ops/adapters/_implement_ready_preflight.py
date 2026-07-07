@@ -12,6 +12,10 @@ from implement_admission.dense_spec_schema import (
     spec_basename,
 )
 from implement_admission.gate_distillation import read_dense_spec_text
+from implement_admission.implement_ready_gate_resolve import (
+    SkepticRatificationOutcome,
+    resolve_skeptic_ratification,
+)
 from implement_admission.implement_ready_preflight import preflight_implement_ready
 from implement_admission.recon_waiver import parse_recon_waiver, recon_waived_bool
 from implement_admission.source_ref import parse_source_ref
@@ -126,45 +130,52 @@ def _select_cited_spec_uri(
     return cited[0]
 
 
+class _CortexOpsShim:
+    """ImplementReadyCortex over the in-process dispatch ops."""
+
+    def entity_get(self, entity_id: str, **kwargs: Any) -> dict[str, Any]:
+        return _op_entity_get(entity_id=entity_id, **kwargs)
+
+    def assertion_get(self, assertion_id: int) -> dict[str, Any]:
+        return _op_assertion_get(assertion_id=assertion_id)
+
+    def assertions(self, entity_id: str, **kwargs: Any) -> dict[str, Any]:
+        return _op_assertions(entity_id=entity_id, **kwargs)
+
+
+def _resolve_skeptic_ratification_outcome(
+    *,
+    todo_id: str,
+    spec_hash_uri: str | None,
+    now_iso: str,
+) -> SkepticRatificationOutcome:
+    """Shared gate-13 resolver (with unmet-subcondition reason enumeration).
+
+    ``match_claim_prefix=True`` preserves this adapter's historical
+    claim-prefix fallback for ratifications whose predicate_form was dropped
+    by supersede (assertion 21699).
+    """
+    return resolve_skeptic_ratification(
+        todo_id=todo_id,
+        cortex=_CortexOpsShim(),
+        now_iso=now_iso,
+        spec_hash_uri=spec_hash_uri,
+        match_claim_prefix=True,
+    )
+
+
 def _resolve_skeptic_outcome(
     *,
     todo_id: str,
     spec_hash_uri: str | None,
     now_iso: str,
 ) -> bool:
-    """Check for active confirmed skeptic-ratified assertion citing current spec sha."""
-    if not spec_hash_uri:
-        return False
-
-    listed = _op_assertions(
-        entity_id=todo_id,
-        confidence="confirmed",
-        superseded=False,
-        intent="full",
-        limit=50,
-    )
-    items = listed.get("items") if isinstance(listed, dict) else None
-    if not isinstance(items, list):
-        return False
-
-    target_pf = _normalize_predicate(f"status({todo_id}, skeptic_ratified, current)")
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        if item.get("entity_id") != todo_id:
-            continue
-        if _assertion_is_inactive(item, now_iso):
-            continue
-        pf = item.get("predicate_form") or ""
-        by_pf = _normalize_predicate(pf) == target_pf
-        claim_prefix = _normalize_predicate((item.get("claim") or "")[:90])
-        by_claim = claim_prefix.startswith(target_pf)
-        if not (by_pf or by_claim):
-            continue
-        evidence = item.get("evidence_uris")
-        if isinstance(evidence, list) and spec_hash_uri in evidence:
-            return True
-    return False
+    """Boolean view of the skeptic ratification (doc_validate support callers)."""
+    return _resolve_skeptic_ratification_outcome(
+        todo_id=todo_id,
+        spec_hash_uri=spec_hash_uri,
+        now_iso=now_iso,
+    ).ratified
 
 
 def _spec_path_from_uri(uri: str) -> str | None:
@@ -253,9 +264,9 @@ def _op_implement_ready_preflight(
     acceptance_criteria = raw_acs if isinstance(raw_acs, list) else []
 
     spec_hash_uri = dense_spec_hash_uri(spec_text) if spec_text else None
-    skeptic_ratified = False
+    skeptic_outcome = SkepticRatificationOutcome(ratified=False)
     if triage == "judgment_required":
-        skeptic_ratified = _resolve_skeptic_outcome(
+        skeptic_outcome = _resolve_skeptic_ratification_outcome(
             todo_id=todo_id,
             spec_hash_uri=spec_hash_uri,
             now_iso=now_iso,
@@ -264,6 +275,34 @@ def _op_implement_ready_preflight(
     raw_waived = attrs.get("recon_waived")
     recon_waived = recon_waived_bool(raw_waived)
     recon_waiver = parse_recon_waiver(raw_waived)
+
+    # Dispatch-parity evidence grounding (friction 22906): evaluate the same
+    # FILE_EVIDENCE_PATHS sub-checks the implement dispatch enforces where the
+    # skeptic bus turn is fetchable; the lib falls back to an explicit warning
+    # when grounding stays deferred.
+    evidence_grounded: bool | None = None
+    evidence_unresolved: list[str] | None = None
+    evidence_mode: str | None = None
+    if (
+        skeptic_outcome.ratified
+        and not recon_waived
+        and skeptic_outcome.assertion is not None
+    ):
+        try:
+            from implement_admission.closeout_helpers import workspaces_root
+
+            from .._doc_validate_skeptic import evaluate_skeptic_grounding
+
+            grounding = evaluate_skeptic_grounding(
+                skeptic_assertion=skeptic_outcome.assertion,
+                ws_root=workspaces_root(),
+            )
+        except Exception:
+            grounding = {"deferred_to_stargate": True}
+        if not grounding.get("deferred_to_stargate"):
+            evidence_grounded = grounding.get("evidence_grounded")
+            evidence_unresolved = grounding.get("evidence_unresolved")
+            evidence_mode = grounding.get("evidence_mode")
 
     report = preflight_implement_ready(
         todo_id=todo_id,
@@ -278,9 +317,13 @@ def _op_implement_ready_preflight(
         acceptance_criteria=acceptance_criteria,
         entity_name=entity.get("name"),
         resolution=resolution,
-        skeptic_ratified=skeptic_ratified,
+        skeptic_ratified=skeptic_outcome.ratified,
         recon_waived=recon_waived,
         recon_waiver=recon_waiver.to_gate_sibling() if recon_waiver else None,
+        skeptic_evidence_grounded=evidence_grounded,
+        skeptic_evidence_unresolved=evidence_unresolved,
+        skeptic_evidence_mode=evidence_mode,
+        skeptic_unratified_reason=skeptic_outcome.reason,
     )
     return report.to_dict()
 

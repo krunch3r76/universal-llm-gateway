@@ -121,10 +121,13 @@ class CursorBusClient:
         thread_id: str,
         terminal_status: str,
         execution_id: str | None = None,
+        bus_lifecycle: str | None = None,
     ) -> BusReplyResult:
         payload: dict[str, Any] = {"terminal_status": terminal_status}
         if execution_id is not None:
             payload["execution_id"] = execution_id
+        if bus_lifecycle is not None:
+            payload["bus_lifecycle"] = bus_lifecycle
         headers = self._headers()
         try:
             async with make_async_client(self._base_url, timeout=15.0) as client:

@@ -143,6 +143,23 @@ PARTITION: dict[str, list[str]] = {
         "agent_skill:review-task-guidance",
         "agent_skill:service-lifecycle",
         "agent_skill:task-grouping-discipline",
+        # Reconciled 2026-07-07 (todo:skill-bundle-add-partition-reconcile):
+        # candidate-15 seat-agnostic skills previously unpartitioned.
+        "agent_skill:claude-ai-bundle-sync",
+        "agent_skill:corpus-grounded-skill-authoring",
+        "agent_skill:corpus-map-authoring",
+        "agent_skill:cursor-sdk-instruction-standard",
+        "agent_skill:cheap-recon-before-escalation",
+        "agent_skill:commit-and-git-scope",
+        "agent_skill:dispatch-prompt-house-style",
+        "agent_skill:handoff-pickup",
+        "agent_skill:rag-canonical-reference-reminder",
+        "agent_skill:required-skills-pickup",
+        "agent_skill:research-article-search",
+        "agent_skill:session-close-kernel",
+        "agent_skill:skill-suggest-utilization",
+        "agent_skill:todo-lifecycle",
+        "agent_skill:xai-mcp-calling-shape",
     ],
     "claude-cursor": [
         # delegate-to-grok removed 2026-07-02 (retired; dir eliminated)

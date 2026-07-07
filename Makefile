@@ -41,4 +41,5 @@ skill-graph-reconcile:
 	python scripts/cortex/ingest_skills.py && python scripts/cortex/gen_skill_stubs.py --generate && python scripts/rag/attribute_skill_vocabulary.py
 
 claude-bundles:
+	scripts/gen-rules --target agent-skill-bundles
 	python scripts/cortex/gen_claude_bundles.py
