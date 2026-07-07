@@ -59,6 +59,7 @@ from tools.extract_document import register_extract_document_tools
 from tools.filesystem import register_filesystem_tools
 from tools.filesystem._cross_sandbox import copy_between_sandboxes_impl
 from tools.filesystem._fs_dispatch import (
+    SEARCH_MODES,
     dispatch_workspaces_op,
     md_section_op_doc,
     sandbox_op_doc,
@@ -442,6 +443,7 @@ def _build_server() -> tuple[
         heading: str = "",
         level: int = 0,
         position: str = "",
+        mode: str = "",
     ) -> dict[str, Any]:
         """Sandboxed file I/O (cortex, workspaces). Full catalog in tool description."""
         try:
@@ -466,6 +468,7 @@ def _build_server() -> tuple[
                 heading,
                 level,
                 position,
+                mode,
             )
         except Exception as exc:
             return _tool_error_envelope("fs", op, exc)
@@ -491,9 +494,18 @@ def _build_server() -> tuple[
         heading: str = "",
         level: int = 0,
         position: str = "",
+        mode: str = "",
     ) -> dict[str, Any]:
         if not op:
             return {"error": "'op' is required"}
+        if mode and mode not in SEARCH_MODES:
+            return {
+                "error": (
+                    f"Invalid mode: {mode!r}. Accepted values: auto (default — "
+                    "heuristic routing), content (force content regex search), "
+                    "filename (glob filename find, workspaces only)."
+                )
+            }
 
         ingress_meta: dict[str, Any] = {}
         effective_sandbox = sandbox.strip()
@@ -539,6 +551,7 @@ def _build_server() -> tuple[
                 "level": level,
                 "position": position,
                 "all_occurrences": all_occurrences,
+                "mode": mode,
             },
         )
         if contract_error is not None:
@@ -597,6 +610,7 @@ def _build_server() -> tuple[
                 limit,
                 overflow_registry,
                 FS_WORKFLOW_HINTS,
+                mode=mode,
             )
             if isinstance(result, dict) and "error" not in result:
                 result.update(ingress_meta)
@@ -623,6 +637,7 @@ def _build_server() -> tuple[
                 limit=limit,
                 expected_sha256=expected_sha256,
                 if_absent=if_absent,
+                mode=mode,
             )
             if isinstance(result, dict) and "error" not in result:
                 result.update(ingress_meta)

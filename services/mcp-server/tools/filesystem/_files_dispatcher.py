@@ -38,6 +38,7 @@ def register_files_tool(mcp: FastMCP) -> None:
         limit: int = 0,
         expected_sha256: str = "",
         if_absent: bool = False,
+        mode: str = "",
     ) -> dict[str, Any]:
         """Unified file operations for the sandboxed /data/files directory.
 
@@ -81,7 +82,8 @@ def register_files_tool(mcp: FastMCP) -> None:
           insert_at_line — insert at line N (path, content, line required)
           list   — list files in directory (path optional, defaults to root)
           search — regex-search a file or directory (path required, content =
-              regex pattern). Searches text and converted documents
+              regex pattern; mode accepts auto|content — filename is
+              workspaces-only and rejected here). Searches text and converted documents
               (PDF/DOCX/ODT/EML/HTML), sidecar-first for PDFs. File mode returns
               {path, mode: "file", matches: [{line, text}], truncated,
               extraction_method}; directory mode adds a "file" key per match and
@@ -168,6 +170,14 @@ def register_files_tool(mcp: FastMCP) -> None:
                     "'content' is required for search and holds the regex "
                     "pattern. Example: fs(sandbox='cortex', op='search', "
                     "path='notes/paper.pdf', content='credibility')"
+                )
+            if mode == "filename":
+                raise ValueError(
+                    "mode='filename' is not supported in the cortex sandbox — "
+                    "filename glob find is workspaces-only (fs op='find', "
+                    "sandbox='workspaces'). Accepted here: auto (default), "
+                    "content (identical — cortex search has no filename "
+                    "heuristic)."
                 )
             return search_path_impl(path, content)
         if op in ("append", "prepend"):

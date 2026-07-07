@@ -115,7 +115,24 @@ _CLAUDE_BUNDLE_E: list[str] = [
     "produce-uml",
 ]
 
-CLAUDE_BUNDLE_SLUGS: list[str] = _CLAUDE_BUNDLE_U + _CLAUDE_BUNDLE_E
+# Domain / matter skills — flat-upload-safe after E1 remediation (agent-bus 4559 / 4649).
+# A distinct class from universal-reasoning (_U) and engineering (_E); the static
+# allowlist historically omitted the domain class entirely. Added tactically pending
+# the CLAUDE_BUNDLE allowlist->denylist inversion investigation.
+_CLAUDE_BUNDLE_D: list[str] = [
+    "tax",
+    "w2-ingestion",
+    "legal-opinion-corpus-ingestion",
+    "crypto-trading-research",
+    "financial-reasoning",
+    "named-entity-verification-gate",
+    "case-evidence-retrieval",
+    "lawyer-stance",
+    "document-review-timeline-linkage-audit",
+    "psych-framework-counsel",
+]
+
+CLAUDE_BUNDLE_SLUGS: list[str] = _CLAUDE_BUNDLE_U + _CLAUDE_BUNDLE_E + _CLAUDE_BUNDLE_D
 
 # IDE-authored SOT under .cursor/skills/ (authoritative body, not a defer stub).
 WORKSPACE_SOT_SLUGS: frozenset[str] = frozenset(

@@ -129,12 +129,17 @@ def _resolve_project_file_path(relative: str) -> tuple[Path, str]:
 _LITERAL_FILENAME_PATTERN = re.compile(r"^[\w./-]+$")
 _REGEX_METACHAR_PATTERN = re.compile(r"[\\^$|+()\[\]{}]")
 # A literal-looking token is only treated as a filename when it carries a
-# filename signal: a path separator (`/`) or an extension-like trailing dot
-# (`.py`, `.md`). A bare identifier word ("provenance", "handoff_provenance")
-# is a legitimate content-search term, NOT a filename — routing it to filename
-# `find` silently returns matches:[] for a string that is actually present
-# (agent-bus:1193 hazard 1). When filename lookup is intended, op=find exists.
-_FILENAME_SIGNAL_PATTERN = re.compile(r"/|\.\w+$")
+# filename signal: an extension-like trailing dot (`.py`, `.md`). A bare
+# identifier word ("provenance", "handoff_provenance") is a legitimate
+# content-search term, NOT a filename — routing it to filename `find`
+# silently returns matches:[] for a string that is actually present
+# (agent-bus:1193 hazard 1). A path separator (`/`) is NOT a filename
+# signal: content searches for path fragments ('tasks/specs',
+# 'libs/cortex_store/dispatch_ops') are common and were silently rerouted
+# to filename-glob mode, returning filename matches instead of content
+# hits and causing false exhaustiveness certifications (friction 23000).
+# When filename lookup is intended, op=find exists.
+_FILENAME_SIGNAL_PATTERN = re.compile(r"\.\w+$")
 
 
 def _looks_like_literal_filename(pattern: str) -> bool:
@@ -641,8 +646,15 @@ def register_project_tools(mcp: FastMCP) -> None:
         directory: str = "",
         max_results: int = DEFAULT_MAX_RESULTS,
         include_untracked: bool = True,
+        mode: str = "auto",
     ) -> dict[str, Any]:
         """Search for an exact regex pattern across project files.
+
+        ``mode`` selects routing deterministically (friction 23000 follow-on):
+        ``auto`` (default) keeps the annotated filename-heuristic reroute;
+        ``content`` forces content regex search regardless of pattern shape;
+        ``filename`` explicitly routes to glob filename find (same impl as
+        ``op=find``, which remains available and unchanged).
 
         This is literal/regex text search — use rag(op="search", arguments={...})
         with scope="project" when you need meaning-based retrieval.
@@ -669,12 +681,32 @@ def register_project_tools(mcp: FastMCP) -> None:
             Unified search envelope with ``mode`` ``file`` or ``directory``.
         """
         directory = normalize_directory_arg(directory)
-        if _looks_like_literal_filename(pattern):
-            return find_project_files(
+        mode = mode or "auto"
+        if mode == "filename":
+            result = find_project_files(
                 pattern,
                 directory,
                 max_results=max_results,
             )
+            if isinstance(result, dict) and "error" not in result:
+                result["explicit_mode"] = "filename"
+            return result
+        if mode == "auto" and _looks_like_literal_filename(pattern):
+            result = find_project_files(
+                pattern,
+                directory,
+                max_results=max_results,
+            )
+            if isinstance(result, dict) and "error" not in result:
+                result["heuristic_rerouted"] = "filename_find"
+                result["_warning"] = (
+                    "Pattern looked like a literal filename (extension "
+                    "suffix) and was routed to filename find — file CONTENTS "
+                    "were NOT searched. For content mode, wrap the pattern "
+                    "in a regex group, e.g. '(foo\\.py)'; for filename "
+                    "lookup, prefer op=find. (friction 23000)"
+                )
+            return result
         if (
             multi_repo_root_unscoped(resolved_root := _PROJECT_ROOT.resolve())
             and not directory
@@ -765,7 +797,7 @@ def register_project_tools(mcp: FastMCP) -> None:
             state.skipped_converted,
             " (truncated)" if truncated else "",
         )
-        return {
+        response: dict[str, Any] = {
             "path": directory,
             "mode": "directory",
             "matches": matches,
@@ -776,6 +808,15 @@ def register_project_tools(mcp: FastMCP) -> None:
             if state.methods
             else "native_text",
         }
+        if state.skipped_converted:
+            response["_warning"] = (
+                f"{state.skipped_converted} converted document(s) were NOT "
+                "searched (extraction budget/cap) — results are NOT "
+                "exhaustive over this tree. Do not certify 'zero remaining "
+                "hits' from this response; use an in-checkout ripgrep/git "
+                "grep for authoritative closure. (friction 23000)"
+            )
+        return response
 
     @mcp.tool(title="Write Project File")
     def write_project_file(path: str, content: str) -> dict[str, str]:

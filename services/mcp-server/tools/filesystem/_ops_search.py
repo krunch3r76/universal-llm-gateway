@@ -159,7 +159,7 @@ def search_directory_impl(
         skipped_converted=state.skipped_converted,
         truncated=truncated,
     )
-    return {
+    response: dict[str, Any] = {
         "path": path,
         "mode": "directory",
         "matches": matches,
@@ -169,6 +169,14 @@ def search_directory_impl(
         if state.methods
         else "native_text",
     }
+    if state.skipped_converted:
+        response["_warning"] = (
+            f"{state.skipped_converted} converted document(s) were NOT "
+            "searched (extraction budget/cap) — results are NOT exhaustive "
+            "over this tree. Do not certify 'zero remaining hits' from this "
+            "response. (friction 23000)"
+        )
+    return response
 
 
 def search_path_impl(

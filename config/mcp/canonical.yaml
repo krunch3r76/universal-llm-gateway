@@ -1619,6 +1619,9 @@ tools:
     ∀ sandbox ∈ {"cortex","workspaces"} ∧ path ∈ str ∧ content ∈ str:
       fs_search(sandbox, path, content) ⟹
         result.mode ∈ {"file","directory"} ∧ matches are regex line hits.
+    mode ∈ {"auto","content","filename"} (default auto = annotated filename
+    heuristic; content forces content regex search; filename = glob find,
+    workspaces only — cortex rejects it). Invalid mode ⟹ structured error.
     Conversion-aware (PDF/DOCX/ODT/EML/HTML). Read-only. See agent_skill:fs.
   json_schema:
     type: object
@@ -1626,6 +1629,7 @@ tools:
       sandbox: {type: string}
       path: {type: string}
       content: {type: string}
+      mode: {type: string, enum: [auto, content, filename]}
     required: [sandbox, path, content]
   skill_uri: rule:fs
   seat_visibility: [mcp, mcp_claude]

@@ -58,7 +58,13 @@ OP_DOC: dict[str, tuple[str, str]] = {
     "list": ("(path?, max_depth?)", "list directory (max_depth default 3)"),
     "find": ("(path?, content)", "glob filename find (workspaces only)"),
     "delete": ("(path)", "delete file"),
-    "search": ("(path, content)", "regex content search; literal filenames → find"),
+    "search": (
+        "(path, content, mode?)",
+        "regex content search; mode ∈ auto|content|filename (default auto: "
+        "bare ext-suffixed filenames reroute to find, annotated; content "
+        "forces content search; filename = glob find, workspaces only); "
+        "non-exhaustive when skipped_converted>0",
+    ),
     "move": ("(path, target)", "rename/relocate file"),
     "copy": (
         "(path, target, target_sandbox?)",
@@ -88,7 +94,11 @@ CONTRACT_PARAMS: tuple[str, ...] = (
     "level",
     "position",
     "all_occurrences",
+    "mode",
 )
+
+# Accepted values for the search `mode` selector (empty string == "auto").
+SEARCH_MODES: frozenset[str] = frozenset({"auto", "content", "filename"})
 
 PARAM_PURPOSE: dict[str, str] = {
     "target": "text anchor for replace / destination for move·copy",
@@ -98,6 +108,7 @@ PARAM_PURPOSE: dict[str, str] = {
     "level": "new section depth for md_insert",
     "position": "placement (end|after|before) for md_insert",
     "all_occurrences": "replace-all flag for replace",
+    "mode": "search routing selector (auto|content|filename) for search",
 }
 
 # unified op -> confusable params it actually consumes
@@ -113,7 +124,7 @@ OP_CONSUMES: dict[str, frozenset[str]] = {
     "insert_at_line": frozenset({"line"}),
     "list": frozenset(),
     "find": frozenset(),
-    "search": frozenset(),
+    "search": frozenset({"mode"}),
     "move": frozenset({"target"}),
     "copy": frozenset({"target"}),
     "delete": frozenset(),
@@ -296,6 +307,7 @@ def dispatch_workspaces_op(
     limit: int,
     overflow_registry: dict[str, Callable[..., Any]],
     workflow_hints: dict[str, Any],
+    mode: str = "",
 ) -> dict[str, Any]:
     """Dispatch a workspaces-sandbox fs op via the project adapter.
 
@@ -371,7 +383,12 @@ def dispatch_workspaces_op(
         fn = overflow_registry.get("search_project_files")
         if fn is None:
             return {"error": "search_project_files tool not available"}
-        return fn(content, directory=path, include_untracked=include_untracked)
+        return fn(
+            content,
+            directory=path,
+            include_untracked=include_untracked,
+            mode=mode or "auto",
+        )
 
     if op in {"append", "prepend"}:
         fn = overflow_registry.get("edit_project_file")
