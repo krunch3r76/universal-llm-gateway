@@ -69,7 +69,7 @@ def test_promoted_todo_attributes(objective_db: None) -> None:
 
     entity = _op_entity_get(entity_id=_TODO_ID, intent="full")
     assert "error" not in entity, f"todo not found: {entity}"
-    assert entity["source_uri"] == "tasks/specs/obj-sample.md"
+    assert entity["source_uri"] == "cortex://notes/system/specs/obj-sample.md"
 
     attrs = entity.get("attributes") or {}
     assert attrs.get("required_skills") == ["ulg-architecture"]

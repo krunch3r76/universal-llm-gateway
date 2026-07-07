@@ -11,7 +11,7 @@ enum-validated against the `workflow_schemas` registry),
 `attributes: {priority, domain, required_skills: [...], backlog?, seed_contract_ack?,
 dispatch_lane?, density?, density_triage?, density_triaged_by?,
 density_triage_evidence_uri?, executor_harness?, artifact_uri?, block_reason?}`.
-Rich todos have `source_uri: tasks/specs/{slug}.md` — spec files are RAG-indexed
+Rich todos have `source_uri: cortex://notes/system/specs/{slug}.md` — spec files are RAG-indexed
 in the `todo_specs` scope for semantic search.
 
 **Priority**: `high` | `medium` | `backlog`

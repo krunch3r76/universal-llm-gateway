@@ -30,7 +30,7 @@ source, config, tasks, docs, scripts.
 - Use `op="list"` for directories; `op="read"` on a directory path returns an error
 - Repo root listing: `fs(sandbox="workspaces", op="list", path="universal-llm-gateway")`
 - Config files: `fs(sandbox="workspaces", op="list", path="universal-llm-gateway/config")`
-- Tasks/specs: `fs(sandbox="workspaces", op="read", path="universal-llm-gateway/tasks/specs/foo.md")`
+- Specs: `fs(sandbox="cortex", op="read", path="notes/system/specs/foo.md")`
 - Source file: `fs(sandbox="workspaces", op="read", path="universal-llm-gateway/services/mcp-server/server.py")`
 
 **When you don't know where something is:**
@@ -149,7 +149,7 @@ A compliant transcript contains:
    - `**Attachments:**` every file written, spec created, or artifact produced this
      session — full sandbox paths. Example:
      ```
-     - spec: universal-llm-gateway/tasks/specs/some-spec.md
+     - spec: cortex://notes/system/specs/some-spec.md
      - notes: files/notes/system/some-note.md
      - transcript: files/notes/system/transcripts/web-2026-04-08-2130.md
      ```

@@ -117,7 +117,7 @@ def test_promoted_todo_attributes(friction_db: int) -> None:
     entity = _op_entity_get(entity_id=_TODO_ID, intent="full")
     assert "error" not in entity, f"todo not found: {entity}"
     assert entity["workflow_state"] == "open"
-    assert entity["source_uri"] == "tasks/specs/promoted-sample.md"
+    assert entity["source_uri"] == "cortex://notes/system/specs/promoted-sample.md"
 
     attrs = entity.get("attributes") or {}
     assert "test-promoted" in attrs.get("required_skills", [])

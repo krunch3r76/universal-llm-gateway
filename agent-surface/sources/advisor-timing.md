@@ -161,7 +161,7 @@ bouncing between two incompatible approaches.
 | Poll `pipeline(op=result)` after handoff | `agent_bus(wait)` from `poll_hint` — handoff has no `execution_id` |
 | Override operator `team_dispatch` with `agent_bus`, citing the thin-ping row | Operator-named transport wins; obey it or stop and ask — never silently substitute |
 | `cursor-implement` as the first hop on a bug with open root cause / design (friction 13571 → thread 1377) | investigate + decide (`cursor-consult`/`web-consult`) → distill attrs at investigate close → execute default `cursor-sdk` + `source_ref`; `cursor-implement` = fallback |
-| Composer / `cursor-implement` authors its own dispatch-ready spec (`tasks/specs/{slug}.md`) | Reasoning tier (`web-consult` / `cursor-consult` / Opus) authors spec + todo seed; mechanical tier executes — never the reverse (`handoff-packet-authoring.md` § Dispatch lifecycle) |
+| Composer / `cursor-implement` authors its own dispatch-ready spec (`cortex://notes/system/specs/{slug}.md`) | Reasoning tier (`web-consult` / `cursor-consult` / Opus) authors spec + todo seed; mechanical tier executes — never the reverse (`handoff-packet-authoring.md` § Dispatch lifecycle) |
 | Open a codified bug report with redesign / graph-walk before investigate/fix/report | Run the bug cycle first; secondary findings belong in the closeout |
 | Treat a codified bug report as file+friction only (no fix) | Bound implement: investigate, fix, verify, report |
 | Fix only the filed symptom on a bug bus pickup (no touch-point sweep / secondary findings) | Pass zoom-out duty: inventory touch points, bug-class grep, labeled `## Secondary findings` in closeout |

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shlex
 import statistics
@@ -27,7 +28,7 @@ except ImportError as exc:  # pragma: no cover - runtime environment concern
     raise SystemExit("PyYAML is required. Install with: pip install pyyaml") from exc
 
 
-DEFAULT_FIXTURE = "tasks/specs/consult-code-rag-benchmark-tasks.yaml"
+DEFAULT_FIXTURE = "notes/system/specs/consult-code-rag-benchmark-tasks.yaml"
 DEFAULT_BASELINE_CMD = (
     "python scripts/consult -r planner --cloud-only --chain -o {output} {prompt}"
 )
@@ -554,6 +555,13 @@ def main() -> None:
     fixture_path = Path(args.fixture)
     if not fixture_path.is_absolute():
         fixture_path = root / fixture_path
+    if not fixture_path.exists():
+        cortex_root = Path(
+            os.environ.get("CORTEX_FILES_ROOT", "/home/io/mcp-data/files")
+        )
+        cortex_candidate = cortex_root / args.fixture
+        if cortex_candidate.exists():
+            fixture_path = cortex_candidate
     if not fixture_path.exists():
         _ = parser.error(f"Fixture not found: {fixture_path}")
 

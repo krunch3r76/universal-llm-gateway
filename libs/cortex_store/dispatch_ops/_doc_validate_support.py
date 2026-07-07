@@ -54,7 +54,7 @@ def authoring_preflight_kwargs(
     tells ``preflight_implement_ready`` to report them ``not_applicable``
     instead. Only the spec-content gates (6, 8, 9) are meaningful here.
     """
-    uri = spec_uri or "tasks/specs/__authoring__.md"
+    uri = spec_uri or "cortex://notes/system/specs/__authoring__.md"
     return {
         "todo_id": _AUTHORING_TODO,
         "density_triage": "judgment_required",

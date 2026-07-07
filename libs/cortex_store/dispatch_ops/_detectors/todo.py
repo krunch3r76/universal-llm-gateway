@@ -7,7 +7,7 @@ session memory. Checks are driven by the ``todo`` row in
 sandboxes with no registry row skip this detector (graceful degradation).
 
 Default seed contract when the registry row exists:
-  * source_uri — stub spec file (tasks/specs/{slug}.md) a fresh agent opens first
+  * source_uri — stub spec file (cortex://notes/system/specs/{slug}.md) a fresh agent opens first
   * required_skills — when listed in the registry optional/required keys
   * context edge — ≥1 active relationship incident to the todo whose *other*
     endpoint is NOT an agent_skill entity
@@ -107,7 +107,7 @@ def detect_todo_implementation_seed_incomplete(
         gaps: list[str] = []
 
         if not r.get("source_uri") or not str(r["source_uri"]).strip():
-            gaps.append("source_uri (stub spec at tasks/specs/{slug}.md)")
+            gaps.append("source_uri (stub spec at cortex://notes/system/specs/{slug}.md)")
 
         if check_required_skills:
             rs = attrs.get("required_skills")

@@ -15,7 +15,7 @@ Concretely, for `{slug} = manage-mvc-busy-channel`:
 |---|---|
 | Todo entity | `todo:manage-mvc-busy-channel` |
 | Plan entity | `plan:manage-mvc-busy-channel` |
-| Spec file | `tasks/specs/manage-mvc-busy-channel.md` |
+| Spec file | `cortex://notes/system/specs/manage-mvc-busy-channel.md` |
 | Phase dir | `tmp/prompts/manage-mvc-busy-channel/` |
 | Phase entity | `plan_phase:manage-mvc-busy-channel/phase-N` |
 

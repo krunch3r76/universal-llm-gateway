@@ -293,7 +293,7 @@ def phase2_create_entities(
 
         if needs_spec(desc, refs_json):
             spec_path = write_spec_file(tid, title, desc, dry_run=dry_run)
-            source_uri = f"tasks/specs/{spec_path.name}"
+            source_uri = f"cortex://notes/system/specs/{spec_path.name}"
             entity_desc = first_sentence(desc)
             counts["specs_extracted"] += 1
         else:

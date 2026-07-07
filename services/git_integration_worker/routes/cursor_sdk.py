@@ -615,16 +615,9 @@ async def _start_promoted_dispatch(
     req = ledger.load_promoted_request(promoted)
     cfg = _config(request) if request is not None else _CONFIG
     contract = (promoted.contract or "consult").lower()
-    if contract == "implement":
-        baseline_map = await asyncio.to_thread(
-            capture_wt_baseline_with_hashes, cfg.source_repo
-        )
-        if baseline_map is not None:
-            await asyncio.to_thread(
-                ledger.set_wt_baseline,
-                dispatch_id=promoted.dispatch_id,
-                wt_baseline=json.dumps(baseline_map),
-            )
+    # Friction 23001: baseline capture deferred into _run_sdk_dispatch_gated
+    # (post slot acquisition) — also fixes misattribution where a queued
+    # dispatch's baseline included none of its predecessor's edits.
     try:
         ticket = controller.try_admit(
             "cursor_sdk",
@@ -647,6 +640,7 @@ async def _start_promoted_dispatch(
                 dispatch_workspace=cfg.dispatch_workspace,
                 bus=bus,
                 controller=controller,
+                contract=contract,
             ),
             controller=controller,
             op_id=promoted.dispatch_id,
@@ -891,6 +885,7 @@ async def _run_sdk_dispatch_gated(
     dispatch_workspace: Path,
     bus: CursorBusClient,
     controller: WorkAdmissionController,
+    contract: str = "consult",
 ) -> None:
     reply_to = req.caller_agent or "dispatch"
     outer_timeout_s = _SDK_TIMEOUT_S + _SDK_TIMEOUT_BUFFER_S
@@ -898,6 +893,21 @@ async def _run_sdk_dispatch_gated(
 
     # Acquire slot before spawning — released inside _run_sdk_sync finally block.
     await acquire_sdk_dispatch_slot(dispatch_id=req.dispatch_id)
+
+    # Friction 23001: capture the implement wt baseline here — after the FIFO
+    # slot is held (predecessor edits are included) and off the admission HTTP
+    # request path (caller gets 200/202 immediately; no Stargate read-timeout
+    # 599 on slow dirty-checkout baselines).
+    if contract == "implement":
+        baseline_map = await asyncio.to_thread(
+            capture_wt_baseline_with_hashes, source_repo
+        )
+        if baseline_map is not None:
+            await asyncio.to_thread(
+                CursorDispatchLedger.instance().set_wt_baseline,
+                dispatch_id=req.dispatch_id,
+                wt_baseline=json.dumps(baseline_map),
+            )
 
     prompt = _resolve_prompt(req, source_repo)
 
@@ -1230,7 +1240,7 @@ async def cursor_dispatch(
             detail_summary=str(exc),
         )
     logger.info(
-        "cursor sdk dispatch admitted: dispatch_id=%s thread_id=%s parity=%s",
+        "cursor sdk dispatch validated (pre-admission): dispatch_id=%s thread_id=%s parity=%s",
         req.dispatch_id,
         req.thread_id,
         parity,
@@ -1311,16 +1321,11 @@ async def cursor_dispatch(
             )
         return JSONResponse(status_code=status_code, content=cached.model_dump())
 
-    if contract == "implement":
-        baseline_map = await asyncio.to_thread(
-            capture_wt_baseline_with_hashes, cfg.source_repo
-        )
-        if baseline_map is not None:
-            await asyncio.to_thread(
-                ledger.set_wt_baseline,
-                dispatch_id=req.dispatch_id,
-                wt_baseline=json.dumps(baseline_map),
-            )
+    # Friction 23001: wt-baseline capture is deferred into
+    # _run_sdk_dispatch_gated (post slot acquisition) so the admission HTTP
+    # response returns immediately. Capturing here blocked the response for
+    # ~26s on a 58-path dirty checkout, exceeding Stargate's read timeout and
+    # producing false-negative 599s while the dispatch executed anyway.
 
     # Reserve the admission ticket synchronously. try_admit re-checks drain with
     # no await between the check and the reservation; if a drain began during the
@@ -1349,6 +1354,7 @@ async def cursor_dispatch(
                 dispatch_workspace=cfg.dispatch_workspace,
                 bus=bus,
                 controller=controller,
+                contract=contract,
             ),
             controller=controller,
             op_id=req.dispatch_id,

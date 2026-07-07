@@ -207,7 +207,7 @@ def _create_edge(client: object, edge: SkillEdge, *, dry_run: bool) -> bool:
             "strength": edge.strength,
             "session_id": _SESSION,
             "agent": _AGENT,
-            "source_uri": f"{_WS}/tasks/specs/cortex-skill-entity-edges.md",
+            "source_uri": f"{_WS}/notes/system/specs/cortex-skill-entity-edges.md",
         },
     )
     if code not in (200, 201):

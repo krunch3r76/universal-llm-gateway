@@ -391,6 +391,39 @@ def _repo_manifest_paths(
     return paths
 
 
+def repo_diff_unattributed_deviation(
+    *,
+    change_set: ChangeSet,
+    manifest: EffectsManifest | None,
+    source_repo: Path | None = None,
+) -> str | None:
+    """Deviation when baseline-diff paths carry no write-evidence in the dispatch's own capture.
+
+    Friction 23015: a stale/ambient worktree diff attributed another session's
+    edits (and their failing lint) to a verification-only dispatch. The files_*
+    buckets stay git-authoritative (shell writes are legitimately invisible to
+    the manifest — see capture:shell_repo_writes_unverified), but the
+    manifest/diff disagreement must be machine-visible so a lead reconciles the
+    bus-turn manifest against the closeout instead of trusting phantom writes.
+    """
+    diff_paths = [*change_set.created, *change_set.modified, *change_set.deleted]
+    if not diff_paths:
+        return None
+    evidence = _repo_manifest_paths(manifest, source_repo=source_repo)
+    unattributed = sorted(
+        path
+        for path in dict.fromkeys(diff_paths)
+        if _normalize_repo_path_for_compare(path, source_repo=source_repo)
+        not in evidence
+    )
+    if not unattributed:
+        return None
+    shown = ",".join(unattributed[:3])
+    if len(unattributed) > 3:
+        shown = f"{shown},+{len(unattributed) - 3}"
+    return f"divergence:repo_diff_paths_unattributed:{shown}"
+
+
 def gitignored_manifest_paths(
     manifest: EffectsManifest | None,
     *,
@@ -535,6 +568,13 @@ def resolve_closeout_capture_fields(
         deviations.append("capture:dirty_baseline_under_capture")
     if deliverables_expected and manifest and _repo_has_shell_entry(manifest):
         deviations.append("capture:shell_repo_writes_unverified")
+    unattributed_deviation = repo_diff_unattributed_deviation(
+        change_set=change_set,
+        manifest=manifest,
+        source_repo=source_repo,
+    )
+    if unattributed_deviation:
+        deviations.append(unattributed_deviation)
     if outside_repo_paths and not worktree_isolated:
         deviations.append("capture:outside_repo_paths_present")
     if files_untracked_or_ignored:

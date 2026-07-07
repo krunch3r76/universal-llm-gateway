@@ -12,7 +12,7 @@ Per-call results are collected into a structured response object so the agent
 learns exactly what succeeded in one call. No retries — partial failures stay
 visible; idempotency is provided by cortex-api's unique-constraint behaviour.
 
-The spec file (tasks/specs/{slug}.md) is written by the /plan-seed command
+The spec file (cortex://notes/system/specs/{slug}.md) is written by the /plan-seed command
 before invocation — this handler is pure cortex composition, per the
 architecture rationale recorded for todo-close (assertions 220, 221, 5184).
 This handler does NOT call any LLM.
@@ -64,7 +64,7 @@ class PlanSeedApplyHandler(BaseHandler):
         slug = opts["slug"]
         name = opts["name"]
         description = opts.get("description")
-        source_uri = f"tasks/specs/{slug}.md"
+        source_uri = f"cortex://notes/system/specs/{slug}.md"
         todo_id = f"todo:{slug}"
         plan_id = f"plan:{slug}"
         agent = opts.get("agent") or "pipeline:plan-seed"

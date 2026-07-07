@@ -14,7 +14,24 @@ from universal_logging import get_logger
 
 logger = get_logger(__name__)
 
-_WORKER_TIMEOUT = httpx.Timeout(connect=5.0, read=10.0, write=10.0, pool=5.0)
+def _worker_read_timeout_s() -> float:
+    """Friction 23001: read timeout on the worker admission POST.
+
+    Env-configurable; default 60s. The worker now responds fast (baseline
+    capture deferred off the request path), but headroom prevents
+    false-negative 599s — which the caller may retry, duplicating execution
+    (friction 23002) — if admission ever slows again.
+    """
+    raw = os.environ.get("CURSOR_SDK_WORKER_READ_TIMEOUT_S", "60")
+    try:
+        return float(raw)
+    except ValueError:
+        return 60.0
+
+
+_WORKER_TIMEOUT = httpx.Timeout(
+    connect=5.0, read=_worker_read_timeout_s(), write=10.0, pool=5.0
+)
 
 
 def resolve_close_contract_bus_lifecycle(

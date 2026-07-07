@@ -25,7 +25,7 @@ def todo_slug(todo_id: str) -> str:
 
 def default_dense_spec_uri(todo_id: str) -> str:
     """Canonical dense-spec path for a todo slug."""
-    return f"tasks/specs/{todo_slug(todo_id)}.md"
+    return f"notes/system/specs/{todo_slug(todo_id)}.md"
 
 
 def _rejected_spec_source(source_uri: str) -> bool:
@@ -33,23 +33,34 @@ def _rejected_spec_source(source_uri: str) -> bool:
     return lower.startswith(_REJECTED_SPEC_PREFIXES)
 
 
+def _cortex_spec_cited(uri: str, cited: str) -> bool:
+    lower = uri.lower()
+    return lower.startswith("cortex://") or cited.lower().startswith("notes/system/specs/")
+
+
 def normalize_dense_spec_path(source_uri: str | None, *, todo_id: str) -> str:
-    """Resolve canonical Share URI for ``tasks/specs/{slug}.md``."""
+    """Resolve canonical Share URI for ``notes/system/specs/{slug}.md``."""
     canonical = default_dense_spec_uri(todo_id)
     if not source_uri or not str(source_uri).strip():
-        return to_share_uri("workspaces", canonical)
+        return to_share_uri("cortex", canonical)
 
     uri = str(source_uri).strip().removeprefix("files://")
     match = DENSE_SPEC_RE.search(uri)
     if not match:
-        return to_share_uri("workspaces", canonical)
+        return to_share_uri("cortex", canonical)
 
     cited = match.group(0)
-    if PurePosixPath(cited).name == PurePosixPath(canonical).name:
-        if "://" in uri:
-            return uri if uri.startswith("workspaces://") else to_share_uri("workspaces", cited)
-        return to_share_uri("workspaces", cited)
-    return to_share_uri("workspaces", canonical)
+    if PurePosixPath(cited).name != PurePosixPath(canonical).name:
+        return to_share_uri("cortex", canonical)
+
+    if _cortex_spec_cited(uri, cited):
+        if "://" in uri and uri.lower().startswith("cortex"):
+            return uri if uri.lower().startswith("cortex://") else to_share_uri("cortex", cited)
+        return to_share_uri("cortex", cited)
+
+    if "://" in uri:
+        return uri if uri.lower().startswith("workspaces://") else to_share_uri("workspaces", cited)
+    return to_share_uri("workspaces", cited)
 
 
 def _repo_candidates(root: Path) -> tuple[Path, ...]:
@@ -106,7 +117,7 @@ def prepare_gate_distillation(
         if _rejected_spec_source(raw):
             return (
                 "implement_spec_source_rejected",
-                f"{todo_id}: dense spec source_uri must be tasks/specs/{{slug}}.md, "
+                f"{todo_id}: dense spec source_uri must be notes/system/specs/{{slug}}.md, "
                 f"not {raw!r}",
             )
 

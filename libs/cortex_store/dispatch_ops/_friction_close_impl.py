@@ -54,7 +54,7 @@ def _promote_friction_to_todo(
     result = seed_recon_todo(
         todo_id=resolution_kind,
         name=friction_claim or f"Promoted from friction #{friction_assertion_id}",
-        source_uri=f"tasks/specs/{slug}.md",
+        source_uri=f"cortex://notes/system/specs/{slug}.md",
         required_skills=required_skills,
         seed_ack=(
             f"auto-promoted from friction #{friction_assertion_id}; "

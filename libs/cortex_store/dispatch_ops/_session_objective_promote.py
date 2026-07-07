@@ -60,7 +60,9 @@ def promote_session_objectives(
         required_skills = (
             [str(s) for s in raw_skills] if isinstance(raw_skills, list) else []
         )
-        source_uri = str(spec.get("source_uri") or f"tasks/specs/{bare}.md")
+        source_uri = str(
+            spec.get("source_uri") or f"cortex://notes/system/specs/{bare}.md"
+        )
         result = seed_recon_todo(
             todo_id=todo_id,
             name=name,

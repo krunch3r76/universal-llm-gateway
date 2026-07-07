@@ -160,6 +160,13 @@ PARTITION: dict[str, list[str]] = {
         "agent_skill:skill-suggest-utilization",
         "agent_skill:todo-lifecycle",
         "agent_skill:xai-mcp-calling-shape",
+        # D5(c) 2026-07-07 (arc 4559): partition membership; 4 OVERRIDDEN below to lead-seat, 1 stays universal.
+        "agent_skill:document-review-timeline-linkage-audit",
+        "agent_skill:overhaul-program",
+        "agent_skill:psych-framework-counsel",
+        "agent_skill:web-generate-substrate",
+        "agent_skill:writing-discipline-outbound",
+        "agent_skill:handoff-packet-authoring",
     ],
     "claude-cursor": [
         # delegate-to-grok removed 2026-07-02 (retired; dir eliminated)
@@ -206,6 +213,11 @@ OVERRIDES: dict[str, list[str]] = {
     # Lead-seat posture (thread 1189) — agents.yaml lead_seats; not universal.
     "agent_skill:consensus-steelman-posture": sorted(load_lead_agent_slugs()),
     "agent_skill:handoff-packet-authoring": ["claude-web", "claude-cursor"],
+    # D5(c) 2026-07-07 (arc 4559, operator ruling): lead-seat skills apply to both web + cursor.
+    "agent_skill:overhaul-program": ["claude-web", "claude-cursor"],
+    "agent_skill:psych-framework-counsel": ["claude-web", "claude-cursor"],
+    "agent_skill:web-generate-substrate": ["claude-web", "claude-cursor"],
+    "agent_skill:writing-discipline-outbound": ["claude-web", "claude-cursor"],
 }
 
 

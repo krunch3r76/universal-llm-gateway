@@ -377,8 +377,8 @@ def _build_server() -> tuple[
         "  workspaces://{repo}/{rel}  — repository source, tasks, docs\n"
         "  cortex://{rel}             — notes, agent-skills, dropbox, uploads\n\n"
         "Examples:\n"
-        '  fs(op="read", path="workspaces://universal-llm-gateway/tasks/specs/foo.md")\n'
         '  fs(op="read", path="cortex://notes/system/specs/foo.md")\n'
+        '  fs(op="read", path="workspaces://universal-llm-gateway/tasks/specs/foo.md")  # legacy back-compat\n'
         '  fs(sandbox="workspaces", op="read", path="universal-llm-gateway/libs/foo.py")\n\n'
         "`read` is unified across sandboxes: source files plus text-oriented\n"
         "document formats such as PDF, DOCX, ODT, EML, and HTML can be read in\n"
