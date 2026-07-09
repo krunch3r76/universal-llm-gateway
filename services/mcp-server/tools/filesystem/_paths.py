@@ -89,7 +89,7 @@ DROPBOX_COPY_WARNING = (
     "dropbox/ is temporary staging — use op='move' to clear the source. "
     "Copying leaves the original in staging; the assertion API will reject "
     "evidence_uris pointing to dropbox paths (HTTP 422). "
-    "See agent-skills/document-lifecycle-tracking.md § Dropbox Ingest Protocol."
+    "See skill `document-lifecycle-tracking` § Dropbox Ingest Protocol."
 )
 
 

@@ -5,8 +5,6 @@ from __future__ import annotations
 import hashlib
 from typing import Any
 
-from implement_admission.skill_fs_line import skill_slug_to_fs_line
-
 from .ops_review_gate import _PRE_CLOSE_GATE_KINDS
 
 _SESSION_CLOSE_VALIDATE_PASS = "session_close_validate:pass"
@@ -98,8 +96,7 @@ def skill_digest(slug: str) -> str:
 def _skill_pointer_block() -> str:
     lines = ["## Canonical skill pointers\n"]
     for slug in _SESSION_CLOSE_SKILLS:
-        fs_line = skill_slug_to_fs_line(slug)
-        lines.append(f"- Load: {fs_line}")
+        lines.append(f"- Load skill: `{slug}`")
         lines.append(f"  Skill digest: `{skill_digest(slug)}`")
     return "\n".join(lines) + "\n"
 

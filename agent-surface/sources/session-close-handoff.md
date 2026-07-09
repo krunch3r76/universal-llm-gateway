@@ -3,7 +3,7 @@
 
 Load when the operator requests a handoff on close (`with handoff`, `continuation handoff`, poll-delegation to a fresh session).
 
-Companion: `session-close-handoff-depth-gate.md` (depth ∈ {light, verbatim}); kernel `agent-skills/session-close-kernel.md` § Step 6b.
+Companion: `session-close-handoff-depth-gate.md` (depth ∈ {light, verbatim}); kernel skill `session-close-kernel` § Step 6b.
 
 ## Invariant — transcript anchor (MANDATORY)
 

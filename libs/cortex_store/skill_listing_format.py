@@ -12,8 +12,10 @@ from typing import Any
 from .routes.boot._skill_trigger import canonical_skill_summary
 
 _LOAD_CONTRACT_LINE = (
-    "> **Load a body**: `GET /skills/body?id=agent_skill:<slug>&expected_digest=<digest>` "
-    "(REST) or `fs(cortex, md_read, agent-skills/<slug>.md)` (non-platform fallback)."
+    "> **Load a body**: platform/server injects skill bodies by canonical slug "
+    "(`agent_skill:<slug>` / skill `<slug>`). Do NOT fs-read skill paths — "
+    "`agent-skills/` is retired. Optional REST: "
+    "`GET /skills/body?id=agent_skill:<slug>&expected_digest=<digest>`."
 )
 
 
@@ -177,10 +179,9 @@ def render_skills_card_section(
     lines: list[str] = [
         f"\n## Agent Skills ({len(items)} active — concise manifest)",
         (
-            "> **Bodies**: platform seats (claude-web/app) receive full SKILL.md via "
-            "`<available_skills>` on trigger — no fs re-read. "
-            "Non-platform/unmounted/authoring: "
-            '`fs(sandbox="cortex", op="md_read", path="agent-skills/<slug>.md")`.'
+            "> **Bodies**: platform/server seats receive full SKILL.md by canonical "
+            "slug on trigger (`agent_skill:<slug>` / skill `<slug>`) — do NOT "
+            "fs-read skill bodies. `agent-skills/` path refs are retired."
         ),
         (
             "> **Discovery (native)**: skill discovery is native — resident boot "

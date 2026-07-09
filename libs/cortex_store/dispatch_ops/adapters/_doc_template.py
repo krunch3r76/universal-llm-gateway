@@ -7,7 +7,6 @@ from typing import Any
 
 from implement_admission import dense_spec_schema as _schema
 from implement_admission.dense_spec_schema import validate_dense_spec
-from implement_admission.skill_fs_line import skill_slug_to_fs_line
 
 from .._doc_type_resolve import DocTypeRecord, resolve_doc_type
 from .._session_close_doc_type import (
@@ -111,10 +110,9 @@ _HYBRID_PEDAGOGY_INLINE = """\
 
 
 def _hybrid_pedagogy_pointer(*, skill_slug: str, skill_digest: str) -> str:
-    fs_line = skill_slug_to_fs_line(skill_slug)
     return (
         "## Canonical skill pointer\n\n"
-        f"Load: {fs_line}\n"
+        f"Load skill: `{skill_slug}`\n"
         f"Skill digest: `{skill_digest}`\n"
         "Dense-spec accepted-pattern SOT: "
         "implement_admission.dense_spec_schema.validate_dense_spec\n"

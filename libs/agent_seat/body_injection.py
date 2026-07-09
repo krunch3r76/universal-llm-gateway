@@ -88,12 +88,15 @@ def select_skill_delivery_channel(
 
 
 def emit_layer_a_fs_line(slug_or_entity_id: str) -> str:
-    """Layer-A packet fs-line for MCP-capable dispatch roles."""
-    from implement_admission.skill_fs_line import skill_slug_to_fs_line
+    """Layer-A skill load instruction for MCP-capable dispatch roles.
+
+    Name-only (canonical slug). Platform/server injects bodies — do NOT emit
+    ``fs(...)`` skill paths (``agent-skills/`` retired; friction 23128 zoom-out).
+    """
     from implement_admission.skill_source_table import canonical_table_key
 
     slug = canonical_table_key(slug_or_entity_id)
-    return skill_slug_to_fs_line(slug)
+    return f"\nLoad skill: `{slug}`"
 
 
 def filter_double_load_excluded(

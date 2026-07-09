@@ -32,7 +32,7 @@ Run `scripts/gen-rules --target cursor --check` in CI; must exit 0.
 | `agent-guides-rules` | MVW conduct manifest in `libs/gen_rules/agent_guides.py` | `docs/agent-guides/rules/*.md` (`gen-rules --target agent-guides-rules`) — incl. `capability-dispatch` |
 
 **Manual sync (cortex sandbox):** `sources/session-close-handoff.md` (+ depth-gate section
-from `session-close-handoff-depth-gate.md`) — merge into `agent-skills/session-close-handoff.md`
+from `session-close-handoff-depth-gate.md`) — merge into skill `session-close-handoff`
 when the cortex skill drifts. Cursor binding: `projects/.cursor/rules/session-close.mdc` §6b.
 
 ## Design

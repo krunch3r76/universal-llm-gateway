@@ -18,7 +18,7 @@ translate to `CallMcpTool(server="user-vortex", toolName="fs", arguments={"sandb
 
 **Dispatch-style tools** (`cortex`, `agent_bus`, `dispatch`, `rag`): the outer
 `CallMcpTool` envelope is an object, but the inner `arguments` field MUST be a
-**JSON string**, not a nested object. See `agent-skills/dispatch-shape.md`.
+**JSON string**, not a nested object. See skill `dispatch-shape`.
 
 ```
 CallMcpTool(server="user-vortex", toolName="agent_bus", arguments={

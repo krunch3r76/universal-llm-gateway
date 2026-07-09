@@ -200,7 +200,7 @@ def render_briefing_card(
                 "see /data/files/dropbox/ for full listing*"
             )
         parts.append(
-            "→ Read agent-skills/document-lifecycle-tracking.md before handling"
+            "→ Load skill `document-lifecycle-tracking` before handling"
             " — dropbox ingest required."
         )
 

@@ -410,8 +410,8 @@ tools:
         transcript_entity_id ∈ Cortex ∧ journal_row_id ∈ ℕ ∧ content_hash ∈ sha256.
     Atomic. Mutating. Idempotent by session_id (second close → 422 session.already_closed).
     Requires validate_attestation from doc_validate(session_close) PASS before atomic write.
-    BEFORE close: load agent-skills/session-close-kernel.md (+ session-close-audit.md for web/API).
-    Cursor: session-close.mdc. See agent_skill:session-close.
+    BEFORE close: load skill `session-close-kernel` (+ skill `session-close-audit` for web/API).
+    Cursor: session-close.mdc. See agent_skill:session-close-kernel.
   json_schema:
     type: object
     properties:
@@ -2809,7 +2809,7 @@ tools:
       cortex_boot(agent?, family?, platform?, role?, transcript_id?, views?) ⟹
         briefing_card ∈ Markdown ∧ sections_available ∈ List[ManifestEntry]
         ∧ agent_skill bodies indexed (slug + trigger) — ¬inlined;
-        load via fs(sandbox="cortex", op="md_read", path="agent-skills/<slug>.md").
+        load by canonical slug (platform/server inject; ¬ fs-read agent-skills/ paths).
     LIVE boot writes operational_context to disk. Read-only fetch graph. See agent_skill:cortex.
   json_schema:
     type: object

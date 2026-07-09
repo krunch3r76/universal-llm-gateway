@@ -46,5 +46,5 @@ Canonical definition and collision disambiguation: `entity-lifecycle-discipline`
 The full architecture→implementation funnel this slug rides — decision / spec /
 handoff-packet → `todo:` → shape (`plan:` phases vs `task:` steps) → decompose →
 execute, plus where provenance attaches (`source_uri`, `derived_from`, `references`,
-`evidence_uris`, `source_ref`): `agent-skills/planning-promotion-ladder.md`.
+`evidence_uris`, `source_ref`): skill `planning-promotion-ladder`.
 <!-- /target:* -->

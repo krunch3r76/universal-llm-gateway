@@ -113,9 +113,8 @@ def _render_briefing(
         else:
             parts.append(
                 "\n## Agent Skills "
-                "(read on trigger match — "
-                "`fs(sandbox='cortex', op='read', "
-                "path='agent-skills/<NAME>.md')`)",
+                "(load by canonical slug on trigger match — "
+                "platform/server inject; ¬ fs-read skill paths)",
             )
         for s in skills:
             slug = s.get("name") or entity_slug_from_id(str(s.get("id") or "?"))

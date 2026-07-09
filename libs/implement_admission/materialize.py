@@ -16,11 +16,11 @@ from implement_admission.admission_read import (
     compute_packet_sha256,
     replace_frontmatter_value,
 )
-from implement_admission.skill_fs_line import (
-    SkillSourceResolveError,
-    skill_slug_to_fs_line,
+from implement_admission.skill_fs_line import SkillSourceResolveError
+from implement_admission.skill_source_table import (
+    canonical_table_key,
+    resolve_canonical_source_uri,
 )
-from implement_admission.skill_source_table import canonical_table_key
 from implement_admission.spec import ImplementSpec, SourceKind, implement_spec_hash
 
 _TOOL_SURFACE = (
@@ -87,7 +87,13 @@ def packet_is_sufficient(text: str) -> bool:
     guidance = _extract_block(text, "task_guidance") or ""
     corpus = _extract_block(text, "corpus") or ""
 
-    mcp_ok = "agent-skills/" in mcp or "fs(" in mcp or "cortex" in mcp
+    mcp_ok = (
+        "Load skill:" in mcp
+        or "agent_skill:" in mcp
+        or "fs(" in mcp
+        or "cortex" in mcp
+        or "agent-skills/" in mcp  # legacy packets only
+    )
     numbered_ac = bool(re.search(r"^\s*1\.\s", guidance, flags=re.MULTILINE))
     corpus_ok = "Source:" in corpus and "Intent:" in corpus
     return mcp_ok and numbered_ac and corpus_ok
@@ -99,12 +105,15 @@ def _extract_block(text: str, tag: str) -> str | None:
 
 
 def _skill_read(slug: str) -> str:
+    """Name-only skill load line for implement packets (¬ fs path)."""
     try:
-        return skill_slug_to_fs_line(slug)
+        # Validate slug resolves in the committed table; emit name-only instruction.
+        resolve_canonical_source_uri(slug)
     except SkillSourceResolveError as exc:
         raise SkillSourceResolveError(
             f"packet materialize blocked — unresolved skill slug {slug!r}: {exc}"
         ) from exc
+    return f"Load skill: `{slug}`"
 
 
 def assert_skill_table_fresh_for_dispatch(*, enforce_live: bool = False) -> None:

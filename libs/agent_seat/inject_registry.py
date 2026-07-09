@@ -356,14 +356,9 @@ def _fetch_registry_entry(
 
 
 def _index_entry(slug: str, entity_id: str) -> str:
-    from implement_admission.skill_fs_line import source_uri_to_fs_line
-    from implement_admission.skill_source_table import resolve_canonical_source_uri
-
-    uri = resolve_canonical_source_uri(slug)
-    fs_line = source_uri_to_fs_line(uri)
     return (
         f"\n\n<!-- injected-index:{slug} entity_id={entity_id} -->"
-        f"\n- `{slug}` — {fs_line}"
+        f"\n- `{slug}` — Load skill: `{slug}`"
     )
 
 

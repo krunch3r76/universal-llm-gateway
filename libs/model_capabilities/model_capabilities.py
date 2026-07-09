@@ -21,7 +21,7 @@ __all__ = [
     "skills_mount_backend",
 ]
 
-CARD_VERSION: Final[str] = "2026-07-08"
+CARD_VERSION: Final[str] = "2026-07-09"
 
 ReasonCode = Literal["capability_card_missing", "capability_card_field_missing"]
 SkillsMountBackend = Literal["openai_container", "none"]
@@ -73,6 +73,13 @@ _XAI_STANDARD = ModelCapabilityCard(
     skills_mount_backend="none",
 )
 
+_XAI_MULTI_AGENT = ModelCapabilityCard(
+    mcp_client_tool_loop=False,
+    mcp_remote_connector=False,
+    server_side_tools=("web_search", "x_search", "code_interpreter"),
+    skills_mount_backend="none",
+)
+
 _GEMINI_API = ModelCapabilityCard(
     mcp_client_tool_loop=True,
     mcp_remote_connector=False,
@@ -91,6 +98,8 @@ MODEL_CAPABILITY_CARDS: Final[dict[str, ModelCapabilityCard]] = {
     "openai/o4-mini": _OPENAI_API,
     "openai/o3": _OPENAI_API,
     "xai/grok-4.5": _XAI_STANDARD,
+    "xai/grok-4.20-0309-reasoning": _XAI_STANDARD,
+    "xai/grok-4.20-multi-agent-0309": _XAI_MULTI_AGENT,
     "google/gemini-3.5-flash": _GEMINI_API,
     "google/gemini-3.1-pro-preview": _GEMINI_API,
     "google/gemini-2.5-flash": _GEMINI_API,

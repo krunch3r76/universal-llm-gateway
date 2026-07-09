@@ -9,7 +9,7 @@ mismatch into a startup-time `AssertionError` naming the offending constant
 by file:line so the next occurrence fires at `sync_restart cortex_api`,
 not at first request.
 
-See `agent-skills/architecture-invariants.md` §`Projection fidelity` for the
+See skill `architecture-invariants` §`Projection fidelity` for the
 broader invariant (renderer-side derivations from payload-field content are
 an architectural smell; the projection is the contract).
 """
@@ -84,5 +84,5 @@ def assert_projection_covers_required(
         f"{model.__name__}: missing required fields {sorted(missing)!r}. "
         f"Every required field of the response model must appear in the "
         f"SQL projection, or the route will fail deserialization silently. "
-        f"See agent-skills/architecture-invariants.md § Projection fidelity."
+        f"See skill `architecture-invariants` § Projection fidelity."
     )

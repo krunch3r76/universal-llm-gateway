@@ -121,6 +121,8 @@ profiles:
       - session-close-transcript
     allowed_models:
       - xai/grok-4.5
+      - xai/grok-4.20-0309-reasoning
+      - xai/grok-4.20-multi-agent-0309
 
   grok/api:
     provider: xai
@@ -134,6 +136,8 @@ profiles:
     addenda: []
     allowed_models:
       - xai/grok-4.5
+      - xai/grok-4.20-0309-reasoning
+      - xai/grok-4.20-multi-agent-0309
 
   # Legacy platform slug retained for seat identity; model migrated to grok-4.5
   # standard (tool-loop) card — no multi-agent / inline-only variant exists.
@@ -149,6 +153,8 @@ profiles:
     addenda: []
     allowed_models:
       - xai/grok-4.5
+      - xai/grok-4.20-0309-reasoning
+      - xai/grok-4.20-multi-agent-0309
 
   grok/web:
     provider: xai
@@ -345,9 +351,14 @@ roles:
       - xai/grok-4.5
 
   skeptic:
-    description: "Adversarial / dialectical seat; pushback on consensus framing"
-    default_family: grok
+    description: "Adversarial / dialectical seat; pushback on consensus framing.
+      Family MUST differ from the artifact's author (independence). Default gpt-5.5
+      covers the common case (Grok-authored code); allowlist carries the other
+      families for author-dependent selection. MCP-on is inherent to gpt/api."
+    default_family: gpt
     default_platform: api
-    default_model: xai/grok-4.5
+    default_model: openai/gpt-5.5
     allowed_models:
+      - openai/gpt-5.5
+      - anthropic/claude-opus-4-8
       - xai/grok-4.5

@@ -116,6 +116,7 @@ _GOOGLE_CONTEXT_WINDOW = 1_000_000
 _RESPONSES_CONTEXT_WINDOWS: tuple[tuple[str, int], ...] = (
     ("gpt-5.5", 1_050_000),
     ("gpt-5.4", 1_050_000),
+    ("grok-4.20", 1_000_000),
     ("grok-4.5", 500_000),
     ("grok-4-1", 1_000_000),
     ("grok-4", 1_000_000),
@@ -218,14 +219,20 @@ def _anthropic_uses_adaptive(bare_model: str) -> bool:
 
 
 def xai_supports_reasoning_effort(model: str) -> bool:
-    """grok-3 family and grok-4.5 accept reasoning.effort.
+    """grok-3 family, grok-4.5, and grok-4.20-multi-agent accept reasoning.effort.
 
     Reshaped from the deleted ``reasoning_capabilities`` predicate; primary
-    marker migrated to grok-4.5 (docs.x.ai 2026-07-08).
+    marker migrated to grok-4.5 (docs.x.ai 2026-07-08). Plain grok-4.20-reasoning
+    is not listed — only explicit multi-agent prefix gets effort support.
     """
     return any(
         prefix in model
-        for prefix in ("grok-3-mini", "grok-3", "grok-4.5")
+        for prefix in (
+            "grok-3-mini",
+            "grok-3",
+            "grok-4.5",
+            "grok-4.20-multi-agent",
+        )
     )
 
 

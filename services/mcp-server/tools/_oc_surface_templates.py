@@ -18,21 +18,16 @@ Cursor's local enforcement surfaces (`.cursor/commands/session-end.md`, \
 `.cursor/rules/session-close.mdc`) implement the canonical protocol."""
 
 WEB_TRANSCRIPT_PREPROCESSING = """\
-On claude-web, these bodies arrive via the platform skill layer when triggers fire; \
-fs md_read paths below are the non-platform fallback.
-Web's close discipline is `agent-skills/session-close-kernel.md` (canonical; \
-transcript/handoff siblings at gate). Web also applies \
-`agent-skills/web-transcript-preprocessing.md` to trim raw tool payloads before \
-`session_close`."""
+On claude-web, skill bodies arrive via the platform skill layer when triggers fire — do NOT fs-read skill bodies.
+Web's close discipline is skill `session-close-kernel` (canonical; transcript/handoff siblings at gate). Web also applies \
+skill `web-transcript-preprocessing` to trim raw tool payloads before `session_close`."""
 
 WEB_SESSION_CLOSE_GENERIC = """\
-On claude-web, these bodies arrive via the platform skill layer when triggers fire; \
-fs md_read paths below are the non-platform fallback.
+On claude-web, skill bodies arrive via the platform skill layer when triggers fire — do NOT fs-read skill bodies.
 Session close (web platform): write transcript markdown to \
 `notes/system/transcripts/web-YYYY-MM-DD-HHmm.md`, seed assertions, \
 create transcript entity, write journal row, post to agent-activity-journal \
-(thread 480). See `agent-skills/session-close-kernel.md` for the canonical close \
-sequence."""
+(thread 480). See skill `session-close-kernel` for the canonical close sequence."""
 
 SUBAGENT_INHERITANCE = """\
 Subagents typically inherit close behavior from the calling agent. When a \
@@ -160,7 +155,7 @@ When connector-bound: team_dispatch + panel_dispatch are server-primary — call
 - strategic advice / in-pipeline RAG → dispatch(tool="advisor" | "pipeline_consult", …)  [overflow]
 - bounded determinate task → team_dispatch(op=generate, role=cursor-sdk, dispatch_thread_id="<thread>", contract=light-bounded|pure-mechanical|implement, packet_path?=…)
 - deprecated: op=handoff,seat=cursor-sdk normalizes to generate with a warning
-Read agent-skills/dispatch-workflow.md §0a before first dispatch. Source: claude-web-dispatch-decision-table.md (§2/§3/§4)."""
+Read skill `dispatch-workflow` §0a before first dispatch. Source: claude-web-dispatch-decision-table.md (§2/§3/§4)."""
 
 GEMINI_WEB_TOOL_SURFACE = """\
 ## Gemini App Tool Surface (gemini-web — CANDIDATE seat)
@@ -248,7 +243,7 @@ with a structured error envelope **before** dispatch.
 - `team_dispatch`: `op="generate"` (poll result), `op="to_thread"` (bus delivery),
   or `op="handoff"` — `seat=` (or `{platform}-{contract}` shorthand role; roster above); handoff
   returns `{thread_id, resolved_model, push_reminder}`; no provider dispatch.
-  See `agent-skills/consult-routing.md`.
+  See skill `consult-routing`.
 
 **MCP access**: `team_dispatch` enables client-side MCP tools by default for
 non-xAI models. Some provider models suppress client-side function calling —
@@ -293,7 +288,7 @@ agent bus — the next session picks it up.
 
 **Three guards (thread 1206 panel):** (1) capability binds to **effective model** — gemini inline-only on any role; Stargate sets `mcp=False` at admission + hydration suppresses the tool loop (¬ admission reject for explicit `model=`). (2) **Offload boundary** — legwork offloadable; steelman + falsifier adjudication + adjudicating-caller review of panelist writes + `panel_adjudication_artifact` NON-offloadable. The **adjudicating caller** (any seat invoking the panel) is distinct from the `web-consult` handoff role. (3) **Audit binding (landed)** — session-close gate runs `panel_disposition_incomplete` on scoped session entities; `validate_panel_assert_attributes` / `build_panel_assert_attributes` remain helper-only schema checks ahead of assert.
 
-**Post-panel assert (Menu D — assertion SOT):** pass `attributes=build_panel_assert_attributes(...)` directly to `assert` alongside `evidence_uris` (`agent-bus:T`, ≥2 `execution:E`). Per skill §3.1: `assertion.attributes` is the source of truth; `entity_update(attributes=...)` is optional as a derived read cache only — audits and session-close detectors query the non-superseded assertion, NEVER the entity blob. Required `attributes` keys: `consensus_disposition`, `panel_families`, `panel_executions`, `decisive_falsifier`, `panel_adjudication_artifact`, `material`. `panel` without an adjudication artifact ⟹ stamp `steelman-only`. (`lead_adjudication_artifact` is accepted as a deprecated read alias.) **Falsifier metric** (cadence §3.3 — not per-close): fraction of material `panel` decisions lacking `panel_adjudication_artifact` over N≥20; cadence runner (every-10/monthly) still TODO. Full skill: `fs(sandbox="cortex", op="read", path="agent-skills/consensus-steelman-posture.md")`."""
+**Post-panel assert (Menu D — assertion SOT):** pass `attributes=build_panel_assert_attributes(...)` directly to `assert` alongside `evidence_uris` (`agent-bus:T`, ≥2 `execution:E`). Per skill §3.1: `assertion.attributes` is the source of truth; `entity_update(attributes=...)` is optional as a derived read cache only — audits and session-close detectors query the non-superseded assertion, NEVER the entity blob. Required `attributes` keys: `consensus_disposition`, `panel_families`, `panel_executions`, `decisive_falsifier`, `panel_adjudication_artifact`, `material`. `panel` without an adjudication artifact ⟹ stamp `steelman-only`. (`lead_adjudication_artifact` is accepted as a deprecated read alias.) **Falsifier metric** (cadence §3.3 — not per-close): fraction of material `panel` decisions lacking `panel_adjudication_artifact` over N≥20; cadence runner (every-10/monthly) still TODO. Full skill: `agent_skill:consensus-steelman-posture` (canonical slug — platform/server inject)."""
 
 FRONTIER_MODEL_ROUTING = """\
 ## Team Dispatch Routing
@@ -338,14 +333,14 @@ BEHAVIORAL_RULES = """\
 6. **Surface risks proactively.** Deadlines, blockers, stale leads, financial constraints — raise them, don't wait to be asked.
 7. **Anticipate the next action.** After completing work, propose the logical next step. Sessions should have momentum.
 8. **Anchor and co-decide in operator sessions.** Open each substantive turn by restating the original problem and where the current step sits relative to it. Rule 2's "execute immediately" covers reversible, self-scoped work; writes to shared substrate (bus posts, cortex entities, code) and operator-owned or irreversible decisions are proposed-and-confirmed, not executed-then-narrated. Read "how shall we" / "one of us should" as "surface the options and wait," not "go."
-9. **Operator posture is binding** — the boot-card "## Operator posture" block and `agent-skills/operator-posture.md` govern operator-facing register, dispatch briefings, and pickup orientation. This section defers to them on any conflict."""
+9. **Operator posture is binding** — the boot-card "## Operator posture" block and skill `operator-posture` govern operator-facing register, dispatch briefings, and pickup orientation. This section defers to them on any conflict."""
 
 # Change B (consensus-steelman-posture §5): rule 0 + invitational line for lead seats only.
 _LEAD_CONSENSUS_FRONTIER_PREAMBLE = """\
 ## Frontier Reasoning Discipline
 When a decision is **material**, steelman every live option and name `consensus_disposition` on the `decision:*` assertion you write — detection at session close makes aggregate misses visible.
 
-0. **Material lead decisions** — classify per `agent-skills/consensus-steelman-posture.md` §1 (`panel` | `steelman-only` | `waived-by-operator` | `n/a-mechanical`); steelman each live option in lead context; on hard triggers (policy/invariant, hard-to-reverse scope, deadline/legal/financial) run a ≥2-provider panel (`panel_dispatch` or `team_dispatch`) and lead-adjudicate before assert; stamp `consensus_disposition` and panel metadata on the non-superseded `decision:*` assertion via `build_panel_assert_attributes` when applicable. `panel` without a lead adjudication artifact ⟹ honest stamp is `steelman-only`, not `panel`.
+0. **Material lead decisions** — classify per skill `consensus-steelman-posture` §1 (`panel` | `steelman-only` | `waived-by-operator` | `n/a-mechanical`); steelman each live option in lead context; on hard triggers (policy/invariant, hard-to-reverse scope, deadline/legal/financial) run a ≥2-provider panel (`panel_dispatch` or `team_dispatch`) and lead-adjudicate before assert; stamp `consensus_disposition` and panel metadata on the non-superseded `decision:*` assertion via `build_panel_assert_attributes` when applicable. `panel` without a lead adjudication artifact ⟹ honest stamp is `steelman-only`, not `panel`.
 """
 
 _FRONTIER_REASONING_CORE = """\
@@ -355,7 +350,7 @@ _FRONTIER_REASONING_CORE = """\
 4. **Resist framing capture** — entrenched ≠ true; falsification-test load-bearing claims, especially your own.
 5. **Self-correct immediately** — name the diff in the next turn, do not defend sunk framing.
 
-Full procedure (falsification mode, anti-patterns, lineage): `fs(sandbox="cortex", op="read", path="agent-skills/frontier-reasoning-discipline.md")`."""
+Full procedure (falsification mode, anti-patterns, lineage): skill `frontier-reasoning-discipline`."""
 
 _FRONTIER_REASONING_HEADER = """\
 ## Frontier Reasoning Discipline
@@ -391,9 +386,9 @@ PROSE_DISCIPLINE_SCOPE = """\
 - Direct conversational replies to the operator in chat
 - Inter-agent traffic (bus turns, sidecars) and internal cortex artifacts (assertion claims, journals). Conforming is permitted but not required.
 
-**Mutually exclusive:** text whose primary reader is a frontier model acting on procedural rules → `agent-skills/frontier-model-instructions.md` (not prose-discipline).
+**Mutually exclusive:** text whose primary reader is a frontier model acting on procedural rules → skill `frontier-model-instructions` (not prose-discipline).
 
-Full rules on trigger match: `fs(sandbox="cortex", op="read", path="agent-skills/prose-discipline.md")`."""
+Full rules on trigger match: skill `prose-discipline`."""
 
 ON_DEMAND_POINTERS = """\
 ## On-Demand Modules (load when needed)

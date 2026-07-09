@@ -94,7 +94,7 @@ def register_advisor_tools(mcp: FastMCP) -> None:
 
         - Trivial/mechanical changes (rename, typo, format)
         - When you need tool access or code execution (use ``/consult-implement``)
-        - Complex multi-model advisory (use ``panel_dispatch`` or paired ``team_dispatch``; see ``agent-skills/dispatch-workflow.md``)
+        - Complex multi-model advisory (use ``panel_dispatch`` or paired ``team_dispatch``; see skill ``dispatch-workflow``)
         - Architectural planning (use ``/consult-plan`` or Plan mode)
 
         Args:

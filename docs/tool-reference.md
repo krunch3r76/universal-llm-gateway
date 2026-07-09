@@ -70,12 +70,12 @@ For `team_dispatch(op="handoff")` only: returns synchronously with
   a determinate, pre-authored task may instead run via `contract=light-bounded` or
   `contract=pure-mechanical` with context on `dispatch_thread_id` (no packet, still
   explicit + bounded — § General execution lane). Legacy: `packet_path` +
-  `contract=implement`. See `agent-skills/consult-routing.md` § Implement lane — source_ref.
+  `contract=implement`. See skill `consult-routing` § Implement lane — source_ref.
 - `"to_thread"` — bus mode when caller already owns `thread`; Stargate posts the
   role's reply on its behalf after dispatch completes.
 - `"handoff"` (**team_dispatch only**) — manual-seat handoff (`web-consult` → `claude-web`, `web-implement` → `claude-web` (bound implement), `cursor-consult` / `cursor-implement` → `claude-cursor`). Creates an agent-bus thread with a packet pointer synchronously. Returns `{thread_id, subject, to_agent, resolved_handoff_seat, handoff_contract, handoff_contract_source, push_reminder, result_handle, handoff_status, poll_hint}`. No model dispatch; web seats need operator push; Cursor seats need opening the thread in the IDE.
 
-See `agent-skills/consult-routing.md` § team_dispatch / direct vs bus mode for decision rules.
+See skill `consult-routing` § team_dispatch / direct vs bus mode for decision rules.
 
 ### `team_dispatch`
 
@@ -148,7 +148,7 @@ slug whose `{platform}-{contract}` encodes your intent. Web-native bound work wi
 fresh-thread handoff: `Pick up todo:{slug}` (loads `implement-todo` skill).
 
 See `projects/.cursor/rules/handoff-dispatchers.mdc` (§ web-claude for `role=web-consult`, §
-`cursor-claude` for `role=cursor-consult`); consult index `agent-skills/consult-routing.md`.
+`cursor-claude` for `role=cursor-consult`); consult index skill `consult-routing`.
 
 Creates an agent-bus thread (e.g. `web-consult` / `web-implement` → `claude-web`,
 `cursor-consult` / `cursor-implement` → `claude-cursor`)
@@ -161,7 +161,7 @@ poll_hint}` synchronously — no model is dispatched and no `execution_id` is mi
 `agent_bus`, not `pipeline(op="result")`). Initial `handoff_status` is
 `awaiting_first_reply`. `poll_hint` carries `tool` (`"wait"`), `arguments` (object,
 human-readable), and `arguments_json` (string — **use this** for MCP `agent_bus`
-calls; see `agent-skills/dispatch-shape.md`). Re-call with `wait_seconds` until
+calls; see skill `dispatch-shape`). Re-call with `wait_seconds` until
 `status` is `complete`. Web seats start after the operator pushes the bus
 message; Cursor seats start when the operator opens the thread in the IDE. The
 endpoint enforces that the role resolves to a manual-handoff seat
@@ -173,7 +173,7 @@ role (`claude-web` → `role=web-consult` or `role=web-implement`; `claude-curso
 a new agent-bus thread with packet-booted context. This is **supported** — distinct
 from `op="generate"` to the same seat (422 `web_seat_not_generate_target`).
 Authority: `projects/.cursor/rules/handoff-dispatchers.mdc` § Self-handoff;
-`agent-skills/consult-routing.md`.
+skill `consult-routing`.
 
 The pointer body defaults to the standard ≤25-line pointer template (see
 `projects/.cursor/rules/handoff-dispatchers.mdc` and the durable packet skeleton
@@ -308,7 +308,7 @@ Consensus panel helper — the **default transport for ≥2-family material deci
 (optional `synthesizer`) via `team_dispatch` admission; returns `panel_executions`
 for Menu D asserts. **Always steelman live options first**; run the panel when the
 material gate fires — not only on explicit operator request. Read
-`agent-skills/consensus-steelman-posture.md` before use. Adjudicating-caller review +
+skill `consensus-steelman-posture` before use. Adjudicating-caller review +
 `panel_adjudication_artifact` remain NON-offloadable after the helper returns.
 
 | Arg | Type | Description |
@@ -913,7 +913,7 @@ All parameters optional. **Default seat when nothing is passed:** `family=claude
 **Web lead:** `cortex_boot(agent="claude-web", role="lead")`.
 
 Bound ULG coding sessions may **skip** boot when task + skill preload suffice — see
-`agent-skills/consult-routing.md` (doc-only guidance; no backing `agent_skill` entity for `web-boot-lead`).
+skill `consult-routing` (doc-only guidance; no backing `agent_skill` entity for `web-boot-lead`).
 
 ### Response fields (key selection)
 
@@ -972,7 +972,7 @@ In-session skill delta for web/API seats. Ranked slugs **not** already in `loade
 | `limit` | no | Max suggestions (default 8) |
 | `agent` | no | Seat slug when session resolution fails |
 
-See `.cursor/skills/skill-suggest-utilization/SKILL.md` and `agent-skills/consult-routing.md`.
+See `.cursor/skills/skill-suggest-utilization/SKILL.md` and skill `consult-routing`.
 
 ## rag
 

@@ -99,9 +99,10 @@ def test_mcp_capabilities_enriched(tmp_path: Path) -> None:
     )
     result = materialize(spec, out_dir=tmp_path)
     mcp = result.text.split("<mcp_capabilities>")[1].split("</mcp_capabilities>")[0]
-    assert "git-posture/SKILL.md" in mcp
-    assert "architecture-invariants/SKILL.md" in mcp
+    assert "Load skill: `git-posture`" in mcp
+    assert "Load skill: `architecture-invariants`" in mcp
     assert "quality_gate" in mcp
+    assert "agent-skills/" not in mcp
 
 
 def test_materialize_fail_loud_unknown_skill(tmp_path: Path) -> None:
@@ -119,16 +120,9 @@ def test_mcp_capabilities_always_carries_arch_skillrefs(tmp_path: Path) -> None:
         .text.split("<mcp_capabilities>")[1]
         .split("</mcp_capabilities>")[0]
     )
-    assert (
-        'fs(sandbox="workspaces", op="md_read", '
-        'path="universal-llm-gateway/.cursor/skills/architecture-invariants/SKILL.md")'
-        in mcp
-    )
-    assert (
-        'fs(sandbox="workspaces", op="md_read", '
-        'path="universal-llm-gateway/.cursor/skills/ulg-architecture/SKILL.md")'
-        in mcp
-    )
+    assert "Load skill: `architecture-invariants`" in mcp
+    assert "Load skill: `ulg-architecture`" in mcp
+    assert "agent-skills/" not in mcp
 
 
 def test_mcp_capabilities_arch_skillrefs_not_duplicated(tmp_path: Path) -> None:
@@ -138,13 +132,7 @@ def test_mcp_capabilities_arch_skillrefs_not_duplicated(tmp_path: Path) -> None:
         .text.split("<mcp_capabilities>")[1]
         .split("</mcp_capabilities>")[0]
     )
-    assert (
-        mcp.count(
-            'fs(sandbox="workspaces", op="md_read", '
-            'path="universal-llm-gateway/.cursor/skills/ulg-architecture/SKILL.md")'
-        )
-        == 1
-    )
+    assert mcp.count("Load skill: `ulg-architecture`") == 1
 
 
 def test_mcp_capabilities_advertises_coding_session_bundle(tmp_path: Path) -> None:
@@ -153,22 +141,16 @@ def test_mcp_capabilities_advertises_coding_session_bundle(tmp_path: Path) -> No
         .text.split("<mcp_capabilities>")[1]
         .split("</mcp_capabilities>")[0]
     )
-    assert (
-        'fs(sandbox="workspaces", op="md_read", '
-        'path="universal-llm-gateway/.cursor/skills/git-posture/SKILL.md")' in mcp
-    )
-    assert (
-        'fs(sandbox="workspaces", op="md_read", '
-        'path="universal-llm-gateway/.cursor/skills/service-lifecycle/SKILL.md")'
-        in mcp
-    )
+    assert "Load skill: `git-posture`" in mcp
+    assert "Load skill: `service-lifecycle`" in mcp
     for slug in (
         "implement-work-item",
         "completion-provenance-discipline",
         "fs",
         "service-lifecycle",
     ):
-        assert f"agent-skills/{slug}.md" in mcp or slug in mcp
+        assert f"Load skill: `{slug}`" in mcp
+    assert "agent-skills/" not in mcp
 
 
 def test_mcp_capabilities_advertise_tier_deduped_against_spec_skills(
@@ -179,13 +161,7 @@ def test_mcp_capabilities_advertise_tier_deduped_against_spec_skills(
         .text.split("<mcp_capabilities>")[1]
         .split("</mcp_capabilities>")[0]
     )
-    assert (
-        mcp.count(
-            'fs(sandbox="workspaces", op="md_read", '
-            'path="universal-llm-gateway/.cursor/skills/git-posture/SKILL.md")'
-        )
-        == 1
-    )
+    assert mcp.count("Load skill: `git-posture`") == 1
 
 
 def test_task_guidance_numbered(tmp_path: Path) -> None:

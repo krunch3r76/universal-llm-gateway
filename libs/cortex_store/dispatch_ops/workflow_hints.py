@@ -12,12 +12,13 @@ from typing import Any
 
 from ._shared import record
 
+# Name-only skill refs — platform/server injects bodies; ¬ fs-read skill paths
+# (friction 23128 zoom-out; agent-skills/ mirror retired by D3).
 _SESSION_CLOSE_PROTOCOL = (
-    "Load before close: "
-    'fs(sandbox="cortex", op="md_read", path="agent-skills/session-close-kernel.md") '
-    "(web/API/subagent) or session-close.mdc (Cursor). "
-    "Web/API: also session-close-audit.md before invoking session_close. "
-    "claude-web: web-transcript-preprocessing.md before assembling transcript_md."
+    "Load before close: skill `session-close-kernel` "
+    "(web/API/subagent; platform/server inject) or session-close.mdc (Cursor). "
+    "Web/API: also skill `session-close-audit` before invoking session_close. "
+    "claude-web: skill `web-transcript-preprocessing` before assembling transcript_md."
 )
 
 _SESSION_CLOSE_TOOLS = frozenset({"session_close", "session_close_preflight"})
@@ -85,7 +86,7 @@ _WORKFLOW_HINTS: dict[str, str] = {
     ),
     "session_close_preflight": (
         "on ok=true: proceed to session_close with same args. "
-        "on ok=false: fix per session-close-kernel.md before retrying close."
+        "on ok=false: fix per skill `session-close-kernel` before retrying close."
     ),
     "session_handoff_upsert": (
         "next: entity_get on transcript_entity_id (or journal row via session_id) "
@@ -118,7 +119,7 @@ _WORKFLOW_HINTS: dict[str, str] = {
         "run doc_validate(text=…) or doc_validate(path=…) until status=pass; "
         "record attestation_tokens from the PASS response on the todo's "
         "implement-ready assertion before implement dispatch. "
-        "Load: fs(cortex, op=md_read, path=agent-skills/implement-todo.md)"
+        "Load: skill `implement-todo`"
     ),
     "doc_validate": (
         "on status=pass: cite attestation_tokens (doc_validate:pass, "
@@ -132,7 +133,7 @@ _WORKFLOW_HINTS: dict[str, str] = {
         "fill required sections; run doc_validate(text=…) or doc_validate(path=…) until "
         "status=pass; record attestation_tokens on the todo's implement-ready assertion; "
         "then todo_distill_implement_gate at Gate-2 close before implement dispatch. "
-        "Load: fs(cortex, op=md_read, path=agent-skills/implement-todo.md)"
+        "Load: skill `implement-todo`"
     ),
     "edges": (
         "tip: to see edges in entity context, use entity_get with include_edges=true. "
@@ -189,8 +190,7 @@ _FRICTION_TICKET_NEXT = (
     "do NOT make cursor-implement the first hop on a bug with open root cause/design. "
     "Lifecycle: investigate → fix → report; pass zoom-out duty (touch-point inventory, "
     "bug-class grep, labeled secondary findings in closeout). "
-    "Read: fs(cortex, agent-skills/consult-routing.md) § Codified bug reports or "
-    "fs(workspaces, universal-llm-gateway/.cursor/skills/friction-review/SKILL.md)."
+    "Read: skill `consult-routing` § Codified bug reports or skill `friction-review`."
 )
 
 _FRICTION_HINT = (

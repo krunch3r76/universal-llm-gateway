@@ -118,7 +118,7 @@ def detect_panel_disposition_incomplete(
             f"panel stamp is incomplete: {'; '.join(reasons)}. "
             "Bind via agent_seat.panel_dispatch.build_panel_assert_attributes; "
             "pass attributes=... to cortex assert (not entity_update). "
-            "See agent-skills/consensus-steelman-posture.md §3.1."
+            "See skill `consensus-steelman-posture` §3.1."
         )
         findings.append(_finding("panel_disposition_incomplete", entity_id, detail))
     return findings

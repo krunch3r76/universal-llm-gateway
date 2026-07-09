@@ -58,7 +58,7 @@ Three layers — do not conflate: (1) **Server primary** — `_PRIMARY_TOOLS`/`t
 1. **Connector deferred-tools block** (Anthropic system prompt) — platform bootstrap for lazy-loading MCP primaries; emits no server event.
 2. **Server `tool_search` MCP tool** — indexes **overflow only** (sql, web_fetch, advisor, …). It does NOT list or load server primaries (`fs`, `rag`, `dispatch`, `team_dispatch`, …).
 
-If `fs`/`rag`/any primary looks absent from your pre-bound set: **call it directly by name first** (e.g. `fs(sandbox="cortex", op="md_list", path="agent-skills/fs.md")`). Do NOT conclude unavailability from an empty server `tool_search` result — that is expected for primaries. ¬ route primary names through `dispatch` (it rejects them).
+If `fs`/`rag`/any primary looks absent from your pre-bound set: **call it directly by name first** (e.g. `fs(sandbox="cortex", op="list", path="notes/system")`). Do NOT conclude unavailability from an empty server `tool_search` result — that is expected for primaries. ¬ route primary names through `dispatch` (it rejects them).
 
 Genuine omission only if a **direct** primary call fails at the connector (tool unavailable / no `mcp.request.started`) → log friction, refresh connector, or hand off (cursor-consult)."""
 
@@ -72,7 +72,7 @@ To consult a MODEL (any provider, incl. grok) you do NOT use a build harness. Wh
 - **Panel** (≥2 families) → `panel_dispatch(messages=[…], dispatch_thread_id="…", disposition="panel")`.
 - **Strategic advice** → `dispatch(tool="advisor", …)` [overflow]. **Named pipeline** → `pipeline(op=run|async)`.
 ⚠ A build harness is not a model picker: "want a grok answer" → `team_dispatch(op=generate, role=artisan, model="xai/grok-4.5")`.
-Full shapes + wrap/contract semantics + executor tiers: agent-skills/consult-routing.md → claude-web-dispatch-decision-table.md."""
+Full shapes + wrap/contract semantics + executor tiers: skill `consult-routing` (canonical slug)."""
 
 # Co-located liveness block (2a durable home). Trimmed per F4-A finding (thread
 # 1289): 3-question redirect + salience line kept inline; substrate table collapsed
@@ -82,15 +82,15 @@ _ENTITY_HIERARCHY_BLOCK = """\
 ## Entity granularity — seed the right type
 - **Todos have steps; plans have phases** — invariant. `phase`/`Phase N` is plan-domain only (`plan:` / `plan_phase:` / `/implement-plan`); on `todo:`/`task:` use **steps**/**slices**, never phases.
 - **work item** = canonical genus for `project:`/`plan:`/`task:`/`todo:`. plan→plan_phase children (phases); task→todo children via `child_of` + umbrella `project:` via `related_to` (bounded arc of ≥2 leaf todos ordered by steps/`depends_on`); todo→steps inline in the body (¬ cram "PHASE 1/2/3" — that's a plan).
-Seed via `entity_create` + `relationship_create child_of`; refs: agent-skills/entity-lifecycle-discipline.md."""
+Seed via `entity_create` + `relationship_create child_of`; refs: skill `entity-lifecycle-discipline`."""
 
 # inject-channel block key: liveness-block
 _LIVENESS_BLOCK = """\
 ## Git posture & liveness — disk + cortex canonical; git ≠ project index
 A change is LIVE only when LOADED into the running process at its last deploy/restart — git commit/master is neither necessary nor sufficient. Before claiming a surface changed, ask: (1) WHICH substrate? (2) did its LOAD EVENT fire? (3) what does the LIVE PROBE say? — service behavior→`sync_restart`+observability · MCP surface→mcp restart+boot manifest · routing→`/v1/models` · agent-context→`cortex_boot`. ¬ infer existence/canonicality/done-ness from git; commit is NOT a completion gate.
-Coding-session detail: `agent_skill:git-posture` → `.cursor/skills/git-posture/SKILL.md` (md_list / md_read). Tag one-liner: `[universal:git-posture]` in injected `architecture-invariants`."""
+Coding-session detail: skill `git-posture` (`agent_skill:git-posture` — platform/server resolves body). Tag one-liner: `[universal:git-posture]` in injected `architecture-invariants`."""
 
-# Compact index — full playbook is agent-skills/consult-routing.md (current superset,
+# Compact index — full playbook is skill `consult-routing` (current superset,
 # verified 2026-06-04). The two highest-frequency traps are kept inline; everything
 # else defers to the skill. See F2 finding, thread 1289.
 # inject-channel block key: consult-routing-gate-block
@@ -101,7 +101,7 @@ Mandatory preflight before ANY handoff packet or `team_dispatch(op=handoff)` (im
   Load skill: `consult-routing`  (canonical slug — platform trigger; do not fs-read skill body)
   fs(workspaces, .cursor/rules/architecture-handoff-protocol.mdc)   # § Six Blocks (rule artifact — read)
   fs(workspaces, .cursor/rules/handoff-dispatchers.mdc)             # § target seat (rule artifact — read)
-Codified bug ticket = TWO phases (investigate→dense spec, then execute); a filed bug defaults to the INVESTIGATION tier (friction 13571 → thread 1377). friction() is the observation log, not the ticket channel; operator-named transport wins. Full model: consult-routing.md § Codified bug reports."""
+Codified bug ticket = TWO phases (investigate→dense spec, then execute); a filed bug defaults to the INVESTIGATION tier (friction 13571 → thread 1377). friction() is the observation log, not the ticket channel; operator-named transport wins. Full model: skill `consult-routing` § Codified bug reports."""
 
 _RAG_SCOPE_AWARENESS_BLOCK = """\
 ## RAG corpus retrieval — primary tool (call directly; ¬ dispatch overflow)
@@ -131,13 +131,15 @@ def _render_server_primary_manifest_line() -> str:
 
 
 # inject-channel block key: session-close-web-block
+# Name-only skill refs (friction 23128 zoom-out): platform/server injects bodies;
+# ¬ fs-read skill paths. agent-skills/ mirror is retired (D3).
 _SESSION_CLOSE_WEB_BLOCK = """\
 ## Session Close — MANDATORY on "close session" / "session end"
-On claude-web, these bodies arrive via the platform skill layer when triggers fire; fs md_read paths below are the non-platform fallback.
+Skill bodies arrive via platform/server injection when triggers fire — do NOT fs-read skill bodies.
 Web seats have **no** auto-loaded `session-close.mdc`. Before `cortex(tool="session_close", ...)`:
-1. `fs(sandbox="cortex", op="md_read", path="agent-skills/session-close-kernel.md")` — canonical protocol
-2. `fs(sandbox="cortex", op="md_read", path="agent-skills/session-close-audit.md")` — run before close
-3. claude-web only: `fs(sandbox="cortex", op="md_read", path="agent-skills/web-transcript-preprocessing.md")` before assembling `transcript_md`
+1. Load skill: `session-close-kernel` — canonical protocol
+2. Load skill: `session-close-audit` — run before close
+3. claude-web only: load skill `web-transcript-preprocessing` before assembling `transcript_md`
 4. `cortex(tool="session_close_preflight", ...)` → then `cortex(tool="session_close", ...)`
 Every `session_close` / `session_close_preflight` response carries `_protocol` with this pointer."""
 
@@ -184,7 +186,7 @@ def _session_close_orientation_for_agent(agent: str | None) -> str | None:
 # inject-channel block key: tier-selection-block
 _TIER_SELECTION_POINTER = """\
 ## Model tier — full protocol auto-injects
-`agent_skill:model-tier-awareness-web` auto-injects on web boot (INJECT_REGISTRY / seat_preloaded). When the operator declares model identity or a task-class trigger fires, follow the **auto-injected** full protocol — do NOT re-derive tier rules from this pointer. Derived home: `agent-skills/model-tier-awareness-web.md`."""
+`agent_skill:model-tier-awareness-web` auto-injects on web boot (INJECT_REGISTRY / seat_preloaded). When the operator declares model identity or a task-class trigger fires, follow the **auto-injected** full protocol — do NOT re-derive tier rules from this pointer. Canonical slug: `model-tier-awareness-web`."""
 
 
 def _tier_selection_orientation_for_agent(agent: str | None) -> str | None:
@@ -206,7 +208,7 @@ _SEAT_CAPABILITY_VERIFY_BLOCK = """\
 Absence of a shell ≠ a step is unavailable. Before ANY "this seat cannot run Y" claim, run `tool_search("Y")` and bind to the catalog row (deferred PRIMARY tools load by name; OVERFLOW tools run via `dispatch(tool="…")`).
 - code gate → `dispatch(tool="quality_gate", arguments='{"files": ["path/a.py"]}')` (ruff + compileall + import-check; +Lane-A offline pytest when edits touch `libs/llm_adapters/` or `libs/model_id/`). Security replay (`http_replay`/`http_request`/`http_diff`/`session_store`/`js_analyze`) — call by EXACT name (¬ reliably keyworded in `tool_search`).
 - **This seat closes verification on-seat (`lead_seats` config)** — `quality_gate` + liveness (`manage(action="sync_restart")`, `wait_healthy`). ¬ dispatch cursor for verify-only.
-Arbitrary pytest paths (`services/rag/`, integration) + `tools/pipeline_test replay` are shell/CLI-only → hand off. Full catalog: .cursor/rules/handoff-dispatchers.mdc § Seat capability verify + agent-skills/consult-routing.md."""
+Arbitrary pytest paths (`services/rag/`, integration) + `tools/pipeline_test replay` are shell/CLI-only → hand off. Full catalog: `.cursor/rules/handoff-dispatchers.mdc` § Seat capability verify + skill `consult-routing`."""
 
 
 def _seat_capability_verify_orientation_for_agent(agent: str | None) -> str | None:
@@ -224,7 +226,7 @@ This seat carries orchestration duty as the operator's committed teammate: drive
 3. **Pickup orientation** — a session opening from a pasted handoff or resuming after session_close leads its first reply with the in-flight inventory: each pending dispatch annotated with the operator action it awaits, decisions awaiting the operator, this seat's next moves. Verify the handoff against primary artifacts before relaying its framing.
 4. **Ambiguous operator proposal** ("perhaps we should…") → advise with stated reasoning, then confirm-or-execute. Never silently comply; never litigate.
 5. **Verification on request is default duty** — operator asks for steelman / panel / consult / friction ticket → fire it. Adversarial verification of the operator's own position at his request is standard service, never suspicion. Exhaust the true, lawful reading of the facts before any fallback or refusal; if a missing fact would change the answer, ask for it.
-Full register + anti-patterns (derived home — edit agent-skills/operator-posture.md first): fs(cortex, agent-skills/operator-posture.md)"""
+Full register + anti-patterns: skill `operator-posture` (`agent_skill:operator-posture`)."""
 
 
 def render_orientation_blocks(

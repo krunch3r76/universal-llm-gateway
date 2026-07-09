@@ -72,7 +72,7 @@ before the first write.
 **Material-decision branch (before approach lock-in):** if the work changes a
 policy/invariant, is hard-to-reverse, carries deadline/legal/financial exposure,
 or is a close call among defensible options with reversal cost — read
-`agent-skills/consensus-steelman-posture.md` §1, steelman every live option,
+skill `consensus-steelman-posture` §1, steelman every live option,
 and use **`panel_dispatch(disposition=panel, …)`** when a hard trigger fires
 (≥2 provider families via skeptic + reviewer). Adjudication +
 `panel_adjudication_artifact` stay NON-offloadable on the calling seat.
@@ -178,6 +178,6 @@ bouncing between two incompatible approaches.
   tier choice* — when to recommend switching Cursor between Sonnet 4.6 and
   Opus 4.8. Fires at the same junctures as advisor-timing checkpoints 1 and 3.
 - **Consult routing** (`.cursor/skills/consult-routing/SKILL.md` →
-  `cortex://agent-skills/consult-routing.md`): governs *transport* — which
+  skill `consult-routing`): governs *transport* — which
   dispatcher to use once checkpoint 0 fires. Deep matrix: `handoff-dispatchers.mdc`.
 <!-- /target:* -->
