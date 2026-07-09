@@ -28,6 +28,7 @@ from ..transcript_assembly import (
 )
 from ._session_close_doc_type import check_session_close_validate_attestation
 from ._session_objective_promote import promote_session_objectives
+from ._session_summary_path import resolve_session_summary_md
 from ._session_todo_reconciliation import todo_reconciliation_preflight_fields
 from ._shared import _FILES_ROOT, record
 from .ops_audit_detectors import run_detectors
@@ -202,6 +203,7 @@ def _op_session_close_preflight(
     transcript_jsonl_path: str | None = None,
     transcript_md: str | None = None,
     session_summary_md: str | None = None,
+    session_summary_md_path: str | None = None,
     summary: str | None = None,
     transcript_depth: str = "verbatim",
     handoff_prompt: str | None = None,
@@ -222,7 +224,18 @@ def _op_session_close_preflight(
     ``transcript_depth`` (default ``"verbatim"``) selects the archival
     depth — ``none`` skips assembly entirely; ``light`` derives the
     composed file from ``session_summary_md`` alone.
+
+    ``session_summary_md_path`` (optional) loads the structural summary from
+    a CORTEX_FILES_ROOT-relative file. When both path and inline
+    ``session_summary_md`` are set, **path wins**.
     """
+    session_summary_md, path_err = resolve_session_summary_md(
+        session_summary_md=session_summary_md,
+        session_summary_md_path=session_summary_md_path,
+    )
+    if path_err is not None:
+        return {"ok": False, **path_err}
+
     arg_error = _validate_session_close_args(
         session_id=session_id,
         agent=agent,
@@ -328,6 +341,7 @@ def _op_session_close(
     transcript_jsonl_path: str | None = None,
     transcript_md: str | None = None,
     session_summary_md: str | None = None,
+    session_summary_md_path: str | None = None,
     summary: str | None = None,
     transcript_depth: str = "verbatim",
     domains: list[str] | None = None,
@@ -370,10 +384,23 @@ def _op_session_close(
     422 ``handoff.requires_transcript_entity`` — use ``light`` minimum.
     Continuity is preserved at all depths.
 
+    ``session_summary_md_path`` (optional) loads the structural summary from
+    a CORTEX_FILES_ROOT-relative file. When both path and inline
+    ``session_summary_md`` are set, **path wins**.
+
     See session-close-server-side-transcript Phase 2 for the architecture
     rewrite; the route handler in `routes/session_journals.py` is the
     single atomic boundary.
     """
+    session_summary_md, path_err = resolve_session_summary_md(
+        session_summary_md=session_summary_md,
+        session_summary_md_path=session_summary_md_path,
+    )
+    if path_err is not None:
+        if dry_run:
+            return {"dry_run": True, "would_fail": True, **path_err}
+        return path_err
+
     arg_error = _validate_session_close_args(
         session_id=session_id,
         agent=agent,

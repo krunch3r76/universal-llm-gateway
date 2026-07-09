@@ -237,9 +237,10 @@ _CORTEX_LARGE_PAYLOAD_OPS: frozenset[str] = frozenset(
 
 _CORTEX_OFFLOAD_HINT = (
     " If the payload contains quotes, newlines, or embedded JSON/code fences "
-    "(e.g. a large transcript_md or handoff_prompt), do not hand-build the JSON "
-    "string: write the payload to a file and pass a file-path parameter instead "
-    "(session_close: transcript_jsonl_path / handoff_source_path / source_ref), "
+    "(e.g. a large transcript_md, session_summary_md, or handoff_prompt), do not "
+    "hand-build the JSON string: write the payload to a file and pass a "
+    "file-path parameter instead (session_close: session_summary_md_path / "
+    "transcript_jsonl_path / handoff_source_path / source_ref), "
     "or use the /agent-bus CLI, which bypasses MCP shape validation."
 )
 

@@ -28,6 +28,7 @@ _SESSION_CLOSE_OPTIONAL_FIELDS: tuple[str, ...] = (
     "transcript_depth",
     "transcript_jsonl_path",
     "transcript_md",
+    "session_summary_md_path",
     "entity_ids",
     "defer_gaps",
     "handoff_prompt",

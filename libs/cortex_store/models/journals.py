@@ -94,7 +94,10 @@ class SessionCloseRequest(BaseModel):
         ``## Session Summary`` heading is normalized in (prepended or
         rewritten from a near-miss) when absent — see
         ``normalize_session_summary_heading``. A Decisions list is
-        recommended but not enforced.
+        recommended but not enforced. May be omitted when
+        ``session_summary_md_path`` is set (path wins if both set).
+      session_summary_md_path: optional CORTEX_FILES_ROOT-relative path to
+        the structural summary file; contents populate ``session_summary_md``.
       summary:            ≥20 chars synthesis used for the entity name
         and journal row.
 
@@ -133,10 +136,11 @@ class SessionCloseRequest(BaseModel):
 
     session_id: str
     agent: str
-    transcript_jsonl_path: str | None = None
-    transcript_md: str | None = None
     session_summary_md: str
     summary: str
+    transcript_jsonl_path: str | None = None
+    transcript_md: str | None = None
+    session_summary_md_path: str | None = None
     transcript_depth: Literal["verbatim", "light", "none"] = "verbatim"
     domains: list[str] | None = None
     decisions: list[str] | None = None

@@ -420,6 +420,12 @@ tools:
       transcript_jsonl_path: {type: string}
       transcript_md: {type: string}
       session_summary_md: {type: string}
+      session_summary_md_path:
+        type: string
+        description: >
+          Optional CORTEX_FILES_ROOT-relative path to the structural summary.
+          When set, file contents populate session_summary_md (path wins if
+          both are supplied). Prefer for light closes with quote-heavy markdown.
       summary: {type: string}
       promote_todos:
         type: array
@@ -442,7 +448,7 @@ tools:
           Attestation tokens from doc_validate(doc_type=session_close) PASS —
           must include session_close_validate:pass and session_id:{id}.
         items: {type: string}
-    required: [session_id, agent, session_summary_md, summary]
+    required: [session_id, agent, summary]
   skill_uri: rule:session-close
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: write
@@ -474,9 +480,15 @@ tools:
       transcript_jsonl_path: {type: string}
       transcript_md: {type: string}
       session_summary_md: {type: string}
+      session_summary_md_path:
+        type: string
+        description: >
+          Optional CORTEX_FILES_ROOT-relative path to the structural summary.
+          When set, file contents populate session_summary_md (path wins if
+          both are supplied).
       summary: {type: string}
       transcript_depth: {type: string}
-    required: [session_id, agent, session_summary_md, summary]
+    required: [session_id, agent, summary]
   skill_uri: rule:session-close-audit
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only

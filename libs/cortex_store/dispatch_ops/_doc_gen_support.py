@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from . import _DEPRECATED_PARAM_NAMES, _INTERNAL_PARAMS, _OP_SPECS
+from ._session_close_doc_type import _SESSION_CLOSE_REQUIRED_FIELDS
 from ._shared import _ENTITY_MUTABLE
 
 START_MARKER = "# >>> AUTOGEN:cortex-ops (do not edit) >>>"
@@ -23,6 +24,16 @@ TOOLS_PY = _PKG_ROOT / "libs/agent_seat/tools.py"
 
 ALIAS_AMBIGUOUS = "alias_canonical_ambiguous"
 _DISPATCH_PKG = "cortex_store.dispatch_ops"
+
+# Handlers keep ``= None`` defaults so ``handler(**parsed)`` yields structured
+# ``{field}.required`` errors instead of TypeError when callers omit keys.
+# Signature inspection alone therefore marks those params optional in the MCP
+# prose descriptor — override here when validation (or the Pydantic contract)
+# requires them. Friction 23129: session_close / session_close_preflight.
+_DOC_REQUIRED_BY_OP: Mapping[str, frozenset[str]] = {
+    "session_close": frozenset(_SESSION_CLOSE_REQUIRED_FIELDS),
+    "session_close_preflight": frozenset(_SESSION_CLOSE_REQUIRED_FIELDS),
+}
 
 
 @dataclass(frozen=True)
@@ -84,13 +95,26 @@ def visible_signature_params(
     return names
 
 
-def format_param_list(sig: inspect.Signature, param_names: Sequence[str]) -> str:
+def format_param_list(
+    sig: inspect.Signature,
+    param_names: Sequence[str],
+    *,
+    required_names: frozenset[str] | None = None,
+) -> str:
+    required = required_names or frozenset()
     parts: list[str] = []
     for name in param_names:
+        if name in required:
+            parts.append(name)
+            continue
         param = sig.parameters.get(name)
         optional = param is None or param.default is not inspect.Parameter.empty
         parts.append(f"{name}?" if optional else name)
     return ", ".join(parts)
+
+
+def doc_required_names(op_name: str) -> frozenset[str]:
+    return _DOC_REQUIRED_BY_OP.get(op_name, frozenset())
 
 
 def group_canonical_ops(

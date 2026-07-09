@@ -301,7 +301,6 @@ def _validate_session_close_args(
     required = {
         "session_id": session_id,
         "agent": agent,
-        "session_summary_md": session_summary_md,
         "summary": summary,
     }
     for field, val in required.items():
@@ -315,6 +314,22 @@ def _validate_session_close_args(
                 "examples": [],
                 "hint": (f"Supply a non-empty {field} on the session_close call."),
             }
+    # session_summary_md may be omitted when session_summary_md_path was
+    # resolved earlier (path wins if both set). Callers must resolve the path
+    # before this validator so the populated text is present here.
+    if not session_summary_md:
+        return {
+            "error": "session_summary_md is required",
+            "reason": "session_summary_md.required",
+            "field": "session_summary_md",
+            "received": session_summary_md,
+            "expected": "non-empty string or session_summary_md_path",
+            "examples": [],
+            "hint": (
+                "Supply session_summary_md inline, or pass "
+                "session_summary_md_path (sandbox-rooted; path wins if both set)."
+            ),
+        }
     handoff_reject = reject_handoff_at_none_depth(
         transcript_depth=transcript_depth,
         handoff_prompt=handoff_prompt,

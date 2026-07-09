@@ -144,5 +144,22 @@ def _create_session_journal_impl(payload: dict[str, object]) -> dict[str, object
 
 
 def _close_session_impl(payload: dict[str, object]) -> dict[str, object]:
-    data = close_session(SessionCloseRequest.model_validate(payload))
+    from ..dispatch_ops._session_summary_path import resolve_session_summary_md
+    from fastapi import HTTPException
+
+    md = payload.get("session_summary_md")
+    path = payload.get("session_summary_md_path")
+    md_s = md if isinstance(md, str) else None
+    path_s = path if isinstance(path, str) else None
+    if path_s:
+        resolved, path_err = resolve_session_summary_md(
+            session_summary_md=md_s,
+            session_summary_md_path=path_s,
+        )
+        if path_err is not None:
+            raise HTTPException(status_code=422, detail=path_err)
+        body_payload = {**payload, "session_summary_md": resolved}
+    else:
+        body_payload = payload
+    data = close_session(SessionCloseRequest.model_validate(body_payload))
     return data.model_dump(mode="json")

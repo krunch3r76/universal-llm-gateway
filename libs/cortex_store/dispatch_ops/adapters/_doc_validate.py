@@ -164,7 +164,22 @@ def _validate_session_close_doc(
     resolved: Any,
     kwargs: dict[str, Any],
 ) -> dict[str, Any]:
+    from .._session_summary_path import resolve_session_summary_md
+
     payload = merge_session_close_payload(kwargs)
+    resolved_md, path_err = resolve_session_summary_md(
+        session_summary_md=payload.get("session_summary_md")
+        if isinstance(payload.get("session_summary_md"), str)
+        else None,
+        session_summary_md_path=payload.get("session_summary_md_path")
+        if isinstance(payload.get("session_summary_md_path"), str)
+        else None,
+    )
+    if path_err is not None:
+        return err422(str(path_err.get("error") or path_err))
+    if resolved_md is not None:
+        payload["session_summary_md"] = resolved_md
+
     missing = [
         field
         for field in ("session_id", "agent", "session_summary_md", "summary")
@@ -174,8 +189,8 @@ def _validate_session_close_doc(
         return err422(
             f"session_close doc_validate requires close payload fields: {missing} — "
             "pass them as flat top-level kwargs alongside doc_type "
-            "(session_id, agent, session_summary_md, summary, …); "
-            "text/path/source_ref apply only to implement_dense_spec; "
+            "(session_id, agent, session_summary_md|session_summary_md_path, "
+            "summary, …); text/path/source_ref apply only to implement_dense_spec; "
             "for session_close, text may be a JSON object with the same keys"
         )
 

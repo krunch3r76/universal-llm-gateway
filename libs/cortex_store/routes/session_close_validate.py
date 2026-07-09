@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from ..dispatch_ops._session_summary_path import resolve_session_summary_md
 from ..dispatch_ops._shared import (
     _AGENT_SLUG_EXAMPLES,
     _AGENT_SLUG_RE,
@@ -141,18 +142,37 @@ def validate_session_close(body: SessionCloseRequest) -> ValidatedCloseContext:
             detail=f"summary must be >= 20 characters (got {len(body.summary)})",
         )
 
+    resolved_md, path_err = resolve_session_summary_md(
+        session_summary_md=body.session_summary_md,
+        session_summary_md_path=body.session_summary_md_path,
+    )
+    if path_err is not None:
+        _structured_422(
+            body,
+            reason=str(path_err.get("reason") or "session_summary_md_path.invalid"),
+            field=str(path_err.get("field") or "session_summary_md_path"),
+            received=path_err.get("received"),
+            expected=str(path_err.get("expected") or "readable summary file"),
+            examples=list(path_err.get("examples") or []),
+            hint=str(path_err.get("hint") or ""),
+            detail=str(path_err.get("error") or path_err),
+        )
+    if resolved_md is not None:
+        body.session_summary_md = resolved_md
+
     if not body.session_summary_md.strip():
         _structured_422(
             body,
             reason="session_summary.invalid",
             field="session_summary_md",
             received=body.session_summary_md,
-            expected="non-empty structural-layer markdown",
+            expected="non-empty structural-layer markdown or session_summary_md_path",
             examples=["## Session Summary\\n…\\n## Decisions\\n…"],
             hint=(
                 "session_summary_md is the structural layer the agent "
-                "composes — it must be non-empty. A '## Session Summary' "
-                "heading is added automatically if absent."
+                "composes — it must be non-empty. Pass session_summary_md_path "
+                "to offload quote-heavy markdown (path wins if both set). "
+                "A '## Session Summary' heading is added automatically if absent."
             ),
             detail="session_summary_md is required (structural layer).",
         )

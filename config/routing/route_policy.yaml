@@ -27,6 +27,10 @@ dispatch_lane:
       resolve_cursor_sdk_generate_target → sdk_substrate_required (422)
 
 routes:
+  # Advisory preferred_model (doc/comment only — resolver does not enforce):
+  #   implement → cursor/composer-2.5 (role default)
+  #   recon / investigate-emphasis light-bounded → cursor/grok-4.5 via model= override
+  #   pure-mechanical inventory → Composer OK
   implement:
     cursor-sdk:
       dispatch_kind: implement

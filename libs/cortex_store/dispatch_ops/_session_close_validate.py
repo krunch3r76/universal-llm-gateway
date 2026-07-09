@@ -65,7 +65,21 @@ def _gate(
     return row
 
 
+def _severity_for_kind(findings: list[Any], kind: str) -> str | None:
+    for finding in findings:
+        if not isinstance(finding, dict):
+            continue
+        if finding.get("kind") == kind and finding.get("severity"):
+            return str(finding["severity"])
+    return None
+
+
 def _audit_gates(audit: dict[str, Any]) -> list[dict[str, Any]]:
+    """Map session-audit outcome to doc_validate gates.
+
+    WARN-mode findings are advisory (``status=passed`` + metadata) so validate
+    predicts close success. Only ``audit.blocked`` / unresolved criticals fail.
+    """
     gates: list[dict[str, Any]] = []
     if audit.get("blocked"):
         criticals = audit.get("criticals") or []
@@ -86,23 +100,36 @@ def _audit_gates(audit: dict[str, Any]) -> list[dict[str, Any]]:
         gates.append(_gate(gate_id="audit", status="passed"))
         return gates
 
+    deferred = {str(k) for k in (warning.get("deferred") or [])}
     by_kind = warning.get("by_kind") or {}
     for kind, count in sorted(by_kind.items()):
+        kind_s = str(kind)
+        extra: dict[str, Any] = {
+            "advisory": True,
+            "count": count,
+        }
+        severity = _severity_for_kind(findings, kind_s)
+        if severity:
+            extra["severity"] = severity
+        if kind_s in deferred:
+            extra["deferred"] = True
         gates.append(
             _gate(
-                gate_id=f"audit.{kind}",
-                status="failed",
+                gate_id=f"audit.{kind_s}",
+                status="passed",
                 detail=f"{count} finding(s)",
-                count=count,
+                **extra,
             )
         )
     if not by_kind:
         gates.append(
             _gate(
                 gate_id="audit",
-                status="failed",
+                status="passed",
                 detail=f"{len(findings)} audit finding(s)",
+                advisory=True,
                 gap_count=warning.get("gap_count", len(findings)),
+                severity="warning",
             )
         )
     return gates

@@ -16,6 +16,7 @@ from ._doc_gen_support import (
     TOOLS_PY,
     OpDoc,
     build_op_docs,
+    doc_required_names,
     format_param_list,
     handler_for_op,
     validate_generated_blocks,
@@ -33,7 +34,9 @@ def render_cortex_ops_block(docs: Mapping[str, OpDoc]) -> str:
         alias_note = f" (aliases: {', '.join(doc.aliases)})" if doc.aliases else ""
         handler = handler_for_op(name)
         sig = inspect.signature(handler)
-        param_str = format_param_list(sig, doc.params)
+        param_str = format_param_list(
+            sig, doc.params, required_names=doc_required_names(name)
+        )
         prose_suffix = f" — {doc.prose}" if doc.prose else ""
         lines.append(
             f"                  {name:<18} ({param_str}){alias_note}{prose_suffix}"
@@ -47,7 +50,9 @@ def render_tool_definition_block(docs: Mapping[str, OpDoc]) -> str:
         doc = docs[name]
         handler = handler_for_op(name)
         sig = inspect.signature(handler)
-        param_str = format_param_list(sig, doc.params)
+        param_str = format_param_list(
+            sig, doc.params, required_names=doc_required_names(name)
+        )
         alias_note = f" (aliases: {', '.join(doc.aliases)})" if doc.aliases else ""
         prose_suffix = f" — {doc.prose}" if doc.prose else ""
         line = f"  {name} ({param_str}){alias_note}{prose_suffix}\n"
@@ -80,7 +85,12 @@ def generate_blocks(
             alias_note = (
                 f" (aliases: {', '.join(doc.aliases)})" if doc.aliases else ""
             )
-            param_str = ", ".join(f"{p}?" for p in doc.params)
+            # Synthetic op_specs path (tests): no live handler — still honor
+            # required-name overrides so optional marking stays honest.
+            required = doc_required_names(name)
+            param_str = ", ".join(
+                p if p in required else f"{p}?" for p in doc.params
+            )
             prose_suffix = f" — {doc.prose}" if doc.prose else ""
             cortex_lines.append(
                 f"                  {name:<18} ({param_str}){alias_note}{prose_suffix}"
