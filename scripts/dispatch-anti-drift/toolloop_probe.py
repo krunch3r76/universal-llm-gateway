@@ -64,7 +64,7 @@ _PROBE_MATRIX: list[tuple[str, str, str, int, int]] = [
     ("anthropic/claude-sonnet-4-6", "task_a", _TASK_A_PROMPT, 3, 1),
     ("anthropic/claude-sonnet-4-6", "task_b", _TASK_B_PROMPT, 5, 2),
     # xAI.
-    ("xai/grok-4.3", "task_a", _TASK_A_PROMPT, 3, 1),
+    ("xai/grok-4.5", "task_a", _TASK_A_PROMPT, 3, 1),
     # Google (regression-class monitoring).
     ("google/gemini-3-pro", "task_a", _TASK_A_PROMPT, 3, 1),
 ]

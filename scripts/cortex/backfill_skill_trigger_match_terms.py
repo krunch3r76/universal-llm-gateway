@@ -28,13 +28,14 @@ if str(_SCRIPTS_CORTEX) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_CORTEX))
 
 from _skill_related_parse import parse_frontmatter  # noqa: E402
-from cortex_store.routes._skill_suggest import STOPWORDS  # noqa: E402
+from _skill_terms import (  # noqa: E402
+    canonicalize_trigger_match_terms,
+    derive_trigger_match_terms,
+    derive_trigger_match_terms_from_vocab,
+)
 from transport_utils import DEFAULT_CORTEX_URL, make_sync_client  # noqa: E402
 
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---", re.DOTALL)
-_TOKEN_SPLIT_RE = re.compile(r"[^a-z0-9_+.-]+")
-_FOL_OPERATORS = {"∨", "∧", "⇒", "⇔", "¬", "→", "∈", "∉", "∪", "∩", "⊆", "⊂", "|"}
-_MAX_TERMS = 12
 _PRESERVE_SLUGS = frozenset(
     {
         "completion-provenance-discipline",
@@ -49,98 +50,7 @@ _PRESERVE_SLUGS = frozenset(
         "subgraph-render",
     }
 )
-_PROCEDURAL_STOPWORDS = frozenset(
-    {"before", "when", "task", "read", "agent", "session", "any", "use"}
-)
 _SUPPRESSED = frozenset({"deprecated", "retired", "merged"})
-
-
-def _tokenize(text: str) -> list[str]:
-    return [t for t in _TOKEN_SPLIT_RE.split(text.lower()) if t]
-
-
-def _domain_tokens(slug: str, skill_category: str) -> set[str]:
-    out = set(_tokenize(slug))
-    out.update(_tokenize(skill_category))
-    if skill_category:
-        out.add(skill_category.lower())
-    return out
-
-
-def _keep_term(term: str, *, domain_tokens: set[str]) -> bool:
-    low = term.lower()
-    if len(low) <= 2:
-        return False
-    if low in STOPWORDS or low in _PROCEDURAL_STOPWORDS:
-        return low in domain_tokens
-    return True
-
-
-def derive_trigger_match_terms(
-    slug: str,
-    *,
-    trigger_short: str = "",
-    skill_category: str = "",
-    description: str = "",
-) -> list[str]:
-    """Deterministic H3 derivation — cap 12, idempotent."""
-    domain = _domain_tokens(slug, skill_category)
-    terms: list[str] = []
-    seen: set[str] = set()
-
-    def add(raw: str) -> None:
-        text = raw.strip()
-        if not text:
-            return
-        key = text.lower()
-        if key in seen:
-            return
-        if not _keep_term(text, domain_tokens=domain):
-            return
-        seen.add(key)
-        terms.append(text)
-
-    add(slug)
-    add(slug.replace("-", "_"))
-
-    trigger_raw = trigger_short or ""
-    for op in _FOL_OPERATORS:
-        trigger_raw = trigger_raw.replace(op, " ")
-    for tok in _tokenize(trigger_raw):
-        add(tok)
-
-    for tok in _tokenize(skill_category):
-        add(tok)
-    if skill_category and "-" in skill_category:
-        add(skill_category)
-
-    desc = (description or "")[:120]
-    for tok in _tokenize(desc):
-        add(tok)
-
-    return terms[:_MAX_TERMS]
-
-
-def derive_trigger_match_terms_from_vocab(
-    slug: str,
-    *,
-    vocab_rows: list[tuple[str, str, str, float, int]],
-    top_n: int = _MAX_TERMS,
-) -> list[str]:
-    """Top-N terms by score from skill_vocabulary rows for one slug."""
-    slug_rows = [row for row in vocab_rows if row[0] == slug]
-    slug_rows.sort(key=lambda row: (-row[3], row[2]))
-    terms: list[str] = []
-    seen: set[str] = set()
-    for _slug, _register, term, _score, _chunks in slug_rows:
-        key = term.lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        terms.append(term)
-        if len(terms) >= top_n:
-            break
-    return terms
 
 
 async def _load_skill_vocabulary_rows(
@@ -368,7 +278,6 @@ def main(argv: list[str] | None = None) -> int:
     pending_files: list[tuple[str, list[str], Path]] = []
     pending_entities: list[tuple[str, list[str], str]] = []
     skipped_preserve = 0
-    skipped_frontmatter = 0
 
     for row in rows:
         if _entity_terms(row):
@@ -383,9 +292,11 @@ def main(argv: list[str] | None = None) -> int:
         if target is not None:
             existing = _existing_frontmatter_terms(target)
             if existing:
-                skipped_frontmatter += 1
+                pending_entities.append(
+                    (slug, canonicalize_trigger_match_terms(existing), entity_id)
+                )
                 continue
-        terms = (
+        raw_terms = (
             derive_trigger_match_terms_from_vocab(slug, vocab_rows=vocab_rows)
             if args.source == "vocab"
             else derive_trigger_match_terms(
@@ -395,6 +306,7 @@ def main(argv: list[str] | None = None) -> int:
                 description=description,
             )
         )
+        terms = canonicalize_trigger_match_terms(raw_terms)
         if target is not None:
             pending_files.append((slug, terms, target))
         else:
@@ -404,7 +316,6 @@ def main(argv: list[str] | None = None) -> int:
         f"Backfill trigger_match_terms: {len(pending_files)} file(s), {len(pending_entities)} entity PATCH"
     )
     print(f"  preserve-set skip: {skipped_preserve}")
-    print(f"  frontmatter-already-set skip: {skipped_frontmatter}")
     failures = 0
     for slug, terms, target in sorted(pending_files):
         label = "WOULD WRITE" if args.dry_run else "WRITE"

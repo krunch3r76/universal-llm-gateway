@@ -61,7 +61,7 @@ class BehavioralReport:
 _SCENARIOS: list[tuple[str, str, int | None, dict | None, str | None, str]] = [
     # Responses floor-bump
     ("openai/gpt-5.5", "responses_floor_bump", 1000, None, None, "floor_bump"),
-    ("xai/grok-4.3", "responses_floor_bump", 1000, None, None, "floor_bump"),
+    ("xai/grok-4.5", "responses_floor_bump", 1000, None, None, "floor_bump"),
     # Anthropic ceiling-clamp
     (
         "anthropic/claude-opus-4-8",

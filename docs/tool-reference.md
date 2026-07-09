@@ -86,7 +86,7 @@ entity, assembles birth + briefing + continuation, and rejects violations before
 | Arg | Type | Description |
 |---|---|---|
 | `op` | `"generate"\|"to_thread"\|"handoff"` | Output channel |
-| `role` | API (`generate`/`to_thread`): `reviewer`, `gatherer`, `synthesizer`, `artisan`, `skeptic`, `cursor-sdk`. Handoff only: `web-consult`, `web-implement`, `cursor-consult`, `cursor-implement` | `{platform}-{contract}` roster slug (seat aliases like `claude-web` → 422 `handoff_role_invalid`). **`skeptic`**: default `xai/grok-4.20-multi-agent-0309` is inline-only (no client-side MCP) — pre-stage context on `dispatch_thread_id`; admission returns `capabilities.inline_only` / `capabilities.mcp_enabled`. |
+| `role` | API (`generate`/`to_thread`): `reviewer`, `gatherer`, `synthesizer`, `artisan`, `skeptic`, `cursor-sdk`. Handoff only: `web-consult`, `web-implement`, `cursor-consult`, `cursor-implement` | `{platform}-{contract}` roster slug (seat aliases like `claude-web` → 422 `handoff_role_invalid`). **`skeptic`**: default `xai/grok-4.5` (MCP-capable standard card) — pre-stage context on `dispatch_thread_id`; admission returns `capabilities.inline_only` / `capabilities.mcp_enabled`. |
 | `contract` | `"light-bounded"\|"pure-mechanical"\|"implement"\|"wrap"` | **Required** for `op="generate"`/`op="to_thread"`. Authority grant: `light-bounded` (bounded consult/execution), `pure-mechanical` (deterministic write loop), `implement` (bound mechanical implement — default via `source_ref=todo:{slug}` server materialization on `role=cursor-sdk`; legacy `packet_path` escape-hatch), `wrap` (materialize-only, no Composer spawn; requires `source_ref`, forbids `packet_path`). `consult` is dropped — migrate to `light-bounded`. |
 | `dispatch_thread_id` | `str` | Compaction key for server-owned thread persistence (`thread:dispatch:{id}`). Stable per arc/session. Context for non-packet dispatches is read from this thread's latest turn body. For `role=cursor-sdk` generate with `packet_path`, the packet is the instruction channel (bus turn ignored when both are present). Unused by `op="handoff"`. |
 | `thread` | `str\|None` | Required when `op="to_thread"` — agent-bus thread ID |
@@ -296,7 +296,7 @@ team_dispatch(op="generate", role="reviewer", dispatch_thread_id="arc-123",
               contract="light-bounded")
 
 # Grok consult
-team_dispatch(op="generate", role="artisan", model="xai/grok-4.3",
+team_dispatch(op="generate", role="artisan", model="xai/grok-4.5",
               dispatch_thread_id="arc-123",
               contract="light-bounded")
 ```
@@ -354,7 +354,7 @@ envelope and Menu D assert stamp — not wire-pinned models.
 
 **Capability envelope:** `panel_capabilities` maps each member role to effective
 `inline_only`, `mcp_enabled`, `tool_surface`, and `resolved_model` (mixed tiers:
-skeptic inline-only, reviewer MCP-capable). Each member `dispatches` entry may also
+skeptic + reviewer MCP-capable (grok-4.5 standard card)). Each member `dispatches` entry may also
 carry `capabilities` from team_dispatch admission.
 
 **Generate-only by design:** no `op=to_thread` or `op=handoff` fan-out — member outputs

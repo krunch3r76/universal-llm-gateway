@@ -13,6 +13,10 @@ import urllib.parse
 
 from _skill_constants import _SUPPRESSED, slug_to_name
 from _skill_scan import _create_lifecycle
+from _skill_terms import (
+    canonicalize_trigger_match_terms,
+    derive_projection_trigger_match_terms,
+)
 
 
 def _request(
@@ -33,7 +37,10 @@ def _entity_get(client: object, entity_id: str) -> tuple[int, dict]:
 
 
 def _projection(
-    scanned: dict[str, object], *, live: dict | None = None
+    scanned: dict[str, object],
+    *,
+    live: dict | None = None,
+    vocab_rows: list[tuple[str, str, str, float, int]] | None = None,
 ) -> dict[str, object]:
     slug = str(scanned["slug"])
     fm = scanned["frontmatter"]
@@ -51,6 +58,16 @@ def _projection(
     for key in ("skill_category", "trigger_short", "trigger_match_terms"):
         if key in fm:
             attrs[key] = fm[key]
+    # Auto-derivation masks weak descriptions (generic terms); explicit fm always wins.
+    if "trigger_match_terms" not in attrs:
+        description = str(scanned.get("description") or "").strip()
+        if description:
+            attrs["trigger_match_terms"] = derive_projection_trigger_match_terms(
+                slug,
+                frontmatter=fm,
+                description=description,
+                vocab_rows=vocab_rows,
+            )
     declared = scanned.get("related_skills")
     fm_declared = isinstance(fm.get("related_skills"), list)
     if isinstance(declared, list) and (declared or fm_declared):
@@ -86,6 +103,18 @@ def _matches(live: dict, expected: dict[str, object]) -> tuple[bool, str]:
             return (
                 False,
                 f"related_skills live={live_related!r} declared={exp_related!r}",
+            )
+    live_terms = attrs.get("trigger_match_terms")
+    exp_terms = exp.get("trigger_match_terms")
+    if live_terms is not None or exp_terms is not None:
+        live_canon = canonicalize_trigger_match_terms(
+            [str(x) for x in (live_terms or [])]
+        )
+        exp_canon = canonicalize_trigger_match_terms([str(x) for x in (exp_terms or [])])
+        if live_canon != exp_canon:
+            return (
+                False,
+                f"trigger_match_terms live={live_terms!r} projected={exp_terms!r}",
             )
     if "digest" in attrs:
         return False, "digest must not be stored on agent_skill"

@@ -38,8 +38,7 @@ class _Scripted:
         ("google/gemini-2.5-pro", False),
         ("openai/gpt-5.5", False),
         ("anthropic/claude-opus-4-8", False),
-        ("xai/grok-4.3", False),
-        ("xai/grok-4.20-multi-agent-0309", True),
+        ("xai/grok-4.5", False),
     ],
 )
 def test_card_inline_only_matches_model(model: str, expected: bool) -> None:
@@ -79,33 +78,33 @@ async def test_hydrate_skeptic_with_explicit_gemini_clears_capability_tier(
 
 
 @pytest.mark.asyncio
-async def test_hydrate_skeptic_default_grok_multi_agent_is_inline_only(
+async def test_hydrate_skeptic_default_grok_45_is_mcp_capable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """skeptic default grok multi-agent remains inline-only."""
+    """skeptic default xai/grok-4.5 is MCP-capable (standard card)."""
     monkeypatch.setattr(_hyd, "_cortex_get", _Scripted({"/": {}}))
     monkeypatch.setattr(_hyd, "_bus_get", _Scripted({}))
 
     bundle = await hydrate_agent("skeptic")
 
-    assert bundle.inline_only is True
-    assert bundle.agent_meta.capability_tier == "inline-only"
+    assert bundle.inline_only is False
+    assert bundle.agent_meta.capability_tier != "inline-only"
 
 
 @pytest.mark.asyncio
-async def test_hydrate_reviewer_with_xai_multi_agent_is_inline_only(
+async def test_hydrate_reviewer_with_xai_grok_45_is_mcp_capable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """reviewer + xai multi-agent must recompute inline-only (security catch)."""
+    """reviewer + xai/grok-4.5 follows standard card (MCP-capable)."""
     monkeypatch.setattr(_hyd, "_cortex_get", _Scripted({"/": {}}))
     monkeypatch.setattr(_hyd, "_bus_get", _Scripted({}))
 
     bundle = await hydrate_agent(
-        "reviewer", model="xai/grok-4.20-multi-agent-0309"
+        "reviewer", model="xai/grok-4.5"
     )
 
-    assert bundle.inline_only is True
-    assert bundle.agent_meta.capability_tier == "inline-only"
+    assert bundle.inline_only is False
+    assert bundle.agent_meta.capability_tier != "inline-only"
 
 
 @pytest.mark.asyncio
@@ -129,17 +128,17 @@ async def test_hydrate_skeptic_gemini_capability_vs_mcp_authorization(
 
 
 @pytest.mark.asyncio
-async def test_hydrate_skeptic_no_explicit_model_uses_default_multi_agent(
+async def test_hydrate_skeptic_no_explicit_model_uses_default_grok_45(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """skeptic without model= uses role default xai multi-agent → inline-only."""
+    """skeptic without model= uses role default xai/grok-4.5 → MCP-capable."""
     monkeypatch.setattr(_hyd, "_cortex_get", _Scripted({"/": {}}))
     monkeypatch.setattr(_hyd, "_bus_get", _Scripted({}))
 
     bundle = await hydrate_agent("skeptic")
 
-    assert bundle.agent_meta.default_model == "xai/grok-4.20-multi-agent-0309"
-    assert bundle.inline_only is True
+    assert bundle.agent_meta.default_model == "xai/grok-4.5"
+    assert bundle.inline_only is False
 
 
 @pytest.mark.asyncio
@@ -152,19 +151,19 @@ async def test_hydrate_effective_none_boot_role_default_fallback_unchanged(
 
     bundle = await hydrate_agent("skeptic", model=None)
 
-    assert bundle.agent_meta.default_model == "xai/grok-4.20-multi-agent-0309"
-    assert bundle.inline_only is True
-    assert bundle.agent_meta.capability_tier == "inline-only"
+    assert bundle.agent_meta.default_model == "xai/grok-4.5"
+    assert bundle.inline_only is False
+    assert bundle.agent_meta.capability_tier != "inline-only"
 
 
 @pytest.mark.parametrize(
     ("role", "model"),
     [
         ("skeptic", "google/gemini-3.1-pro-preview"),
-        ("skeptic", "xai/grok-4.20-multi-agent-0309"),
+        ("skeptic", "xai/grok-4.5"),
         ("skeptic", None),
         ("reviewer", "google/gemini-2.5-pro"),
-        ("reviewer", "xai/grok-4.20-multi-agent-0309"),
+        ("reviewer", "xai/grok-4.5"),
         ("gatherer", "openai/gpt-5.5"),
     ],
 )
@@ -428,9 +427,9 @@ async def test_already_present_includes_continuation(
 
     async def fake_meta(_agent: str) -> AgentMeta:
         return AgentMeta(
-            default_model="xai/grok-4.20-multi-agent-0309",
+            default_model="xai/grok-4.5",
             frontier_kind="xai",
-            allowed_models=["xai/grok-4.20-multi-agent-0309"],
+            allowed_models=["xai/grok-4.5"],
         )
 
     async def fake_continuation(
@@ -447,10 +446,10 @@ async def test_already_present_includes_continuation(
     bundle = await hydrate_agent(
         "grok-api-multi",
         transcript_id="abc123",
-        model="xai/grok-4.20-multi-agent-0309",
+        model="xai/grok-4.5",
     )
 
-    assert bundle.inline_only is True
+    assert bundle.inline_only is False
     assert "Resuming From" in seen.get("already_present", "")
     assert bundle.briefing_card_md.split("Resuming From")[0] in seen["already_present"]
 

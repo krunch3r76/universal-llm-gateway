@@ -24,7 +24,7 @@ Cloud dispatch keys use the full admission id:
 provider/model-id
 ```
 
-Examples: `openai/gpt-5.5`, `anthropic/claude-sonnet-4-6`, `xai/grok-4.3`, `google/gemini-3-pro`
+Examples: `openai/gpt-5.5`, `anthropic/claude-sonnet-4-6`, `xai/grok-4.5`, `google/gemini-3-pro`
 
 Bare aliases (`gpt-5.5`) resolve via `ModelId` + provider inference. Prefer `provider/model`
 in specs, handoffs, and registry edits.
@@ -173,7 +173,7 @@ Errors:
 | Model | `api_surface` | Notable dispatch |
 |---|---|---|
 | `openai/gpt-5.5` | `openai_responses` | floor 16384; effort_string; supports `reasoning.effort` |
-| `xai/grok-4.3` | `openai_responses` | same surface; implicit default effort `high` |
+| `xai/grok-4.5` | `openai_responses` | same surface; implicit default effort `high` |
 | `anthropic/claude-sonnet-4-6` | `anthropic` | ceiling 64000; adaptive thinking |
 | `google/gemini-3-pro` | `google_generate_content` | no floor/ceiling; `thinkingConfig` path |
 

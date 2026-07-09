@@ -14,7 +14,7 @@ see the shared capability-dispatch reference.
 |---|---|---|
 | `openrouter/provider/model` | OpenRouter relay | `openrouter/anthropic/claude-sonnet-4` |
 | `anthropic/model` | Direct Anthropic API | `anthropic/claude-sonnet-4-6` |
-| `xai/model` | Direct xAI API | `xai/grok-4.20-0309-reasoning` |
+| `xai/model` | Direct xAI API | `xai/grok-4.5` |
 | `openai/model` | Direct OpenAI API | `openai/gpt-5.4` |
 | `google/model` | Direct Google API | `google/gemini-3.1-pro-preview` |
 | `{local-model-id}` | Local gateway (no `/`) | `hermes-3-llama-3-1-70b-uncensored-q4-k-m-16384-hybrid` |
@@ -57,7 +57,7 @@ GET  :9999/cloud-ui         # browser model browser
 | Provider | Preferred | Fallback |
 |---|---|---|
 | Anthropic | `anthropic/claude-sonnet-4-6` | `openrouter/anthropic/claude-sonnet-4` |
-| xAI | `xai/grok-4.20-0309-reasoning` | `openrouter/x-ai/grok-4.20` |
+| xAI | `xai/grok-4.5` | `openrouter/x-ai/grok-4.5` |
 | OpenAI | latest capable model for automated dispatch / MCP writes; a slightly cheaper default for casual use | `openrouter/openai/gpt-4o` |
 | Google | `google/gemini-3.5-flash` | `openrouter/google/gemini-3.5-flash` |
 | Other (Qwen, Mistral, etc.) | `openrouter/qwen/qwen3-32b` | (no direct route) |
@@ -78,7 +78,7 @@ Use `openrouter/` only for providers without direct API integration, or as fallb
 | Bad | Good |
 |---|---|
 | `openrouter/anthropic/claude-sonnet-4` for Anthropic | `anthropic/claude-sonnet-4-6` |
-| `openrouter/x-ai/grok-4.20` for xAI | `xai/grok-4.20-0309-reasoning` |
+| `openrouter/x-ai/grok-4.5` for xAI | `xai/grok-4.5` |
 | Calling cloud proxy UDS directly for inference | `POST :9999/v1/chat/completions` |
 | Hardcoding provider API URLs in scripts | Route through the gateway |
 <!-- /target:* -->

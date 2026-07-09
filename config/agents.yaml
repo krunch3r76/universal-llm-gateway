@@ -108,7 +108,7 @@ profiles:
 
   grok/cursor:
     provider: xai
-    default_model: xai/grok-4.20-0309-reasoning
+    default_model: xai/grok-4.5
     tool_surface: mcp
     delivery: manual
     manual_handoff: true
@@ -120,12 +120,11 @@ profiles:
       - session-close-markdown-audit
       - session-close-transcript
     allowed_models:
-      - xai/grok-4.20-0309-reasoning
-      - xai/grok-4.3
+      - xai/grok-4.5
 
   grok/api:
     provider: xai
-    default_model: xai/grok-4.20-0309-reasoning
+    default_model: xai/grok-4.5
     tool_surface: mcp
     delivery: auto
     api_dispatchable: true
@@ -134,13 +133,14 @@ profiles:
     confirm_and_proceed: true
     addenda: []
     allowed_models:
-      - xai/grok-4.20-0309-reasoning
-      - xai/grok-4.3
+      - xai/grok-4.5
 
+  # Legacy platform slug retained for seat identity; model migrated to grok-4.5
+  # standard (tool-loop) card — no multi-agent / inline-only variant exists.
   grok/api-multi:
     provider: xai
-    default_model: xai/grok-4.20-multi-agent-0309
-    tool_surface: inline-only
+    default_model: xai/grok-4.5
+    tool_surface: mcp
     delivery: auto
     api_dispatchable: true
     include_deadlines: true
@@ -148,9 +148,7 @@ profiles:
     confirm_and_proceed: true
     addenda: []
     allowed_models:
-      - xai/grok-4.20-multi-agent-0309
-    model_requirement: multi-agent
-    capability_tier: inline-only
+      - xai/grok-4.5
 
   grok/web:
     provider: xai
@@ -342,15 +340,14 @@ roles:
     description: "Inline reasoning specialist; structured execution at frontier-grade reasoning"
     default_family: grok
     default_platform: api
-    default_model: xai/grok-4.20-0309-reasoning
+    default_model: xai/grok-4.5
     allowed_models:
-      - xai/grok-4.20-0309-reasoning
-      - xai/grok-4.3
+      - xai/grok-4.5
 
   skeptic:
     description: "Adversarial / dialectical seat; pushback on consensus framing"
     default_family: grok
-    default_platform: api-multi
-    default_model: xai/grok-4.20-multi-agent-0309
+    default_platform: api
+    default_model: xai/grok-4.5
     allowed_models:
-      - xai/grok-4.20-multi-agent-0309
+      - xai/grok-4.5

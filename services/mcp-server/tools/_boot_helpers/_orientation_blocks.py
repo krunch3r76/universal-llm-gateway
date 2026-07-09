@@ -11,7 +11,7 @@ in renderer SOURCE rather than a rendered ``operational-context-*.md``, because
 manual edits (assertion 11520). Renderer source survives the next boot.
 
 Block text is operator-approved (2026-05-31); the grok model string is
-``xai/grok-4.3`` per operator. Spec:
+``xai/grok-4.5`` per operator. Spec:
 ``cortex:notes/system/threads/part2-cortex-boot-capability-axis-handoff.md`` and
 ``claude-web-dispatch-decision-table.md`` §4.
 """
@@ -66,12 +66,12 @@ Genuine omission only if a **direct** primary call fails at the connector (tool 
 _DISPATCH_CONSULT_BLOCK_CLAUDE = """\
 ## Dispatch & Consult — pick by CAPABILITY, not model family
 To consult a MODEL (any provider, incl. grok) you do NOT use a build harness. When connector-bound, `team_dispatch`/`panel_dispatch` are server-primary — call directly (if unbound, see MCP binding block). Model strings = `provider/model` on optional `model=` override (bare name = 404).
-- **API consult / role** (reviewer|artisan|skeptic|…) → pre-stage context on an agent-bus thread; `team_dispatch(op=generate, role=…, dispatch_thread_id=<thread>, model="provider/model"?)` → execution_id + poll_hint; poll `agent_bus(wait)`. ¬ synthetic seat models on generate (422). role=skeptic (grok) is inline-only/no-MCP — pre-stage corpus in messages.
+- **API consult / role** (reviewer|artisan|skeptic|…) → pre-stage context on an agent-bus thread; `team_dispatch(op=generate, role=…, dispatch_thread_id=<thread>, model="provider/model"?)` → execution_id + poll_hint; poll `agent_bus(wait)`. ¬ synthetic seat models on generate (422). role=skeptic defaults to xai/grok-4.5 (MCP-capable); pre-stage corpus on dispatch_thread_id still recommended.
 - **Mechanical implement (default)** → `team_dispatch(op=generate, role=cursor-sdk, source_ref=todo:{slug}, contract=implement, dispatch_thread_id=…)` — server materializes from distilled todo attrs; auto Composer, no IDE pickup. PRECONDITION: dense, determinate instructions (Composer executes mechanically; thin packet = routing error). `packet_path=` is the named exception.
 - **Manual-seat handoff (consult default)** → `team_dispatch(op=handoff, seat=claude-web|claude-cursor, source_ref=…|packet_path=…, subject=…)`; handoff seat-map: web-consult, web-implement → web-anthropic; cursor-consult, cursor-implement → cursor. web→operator push, cursor→IDE thread. The handoff IS the delivery — never instruct a manual copy-paste.
 - **Panel** (≥2 families) → `panel_dispatch(messages=[…], dispatch_thread_id="…", disposition="panel")`.
 - **Strategic advice** → `dispatch(tool="advisor", …)` [overflow]. **Named pipeline** → `pipeline(op=run|async)`.
-⚠ A build harness is not a model picker: "want a grok answer" → `team_dispatch(op=generate, role=artisan, model="xai/grok-4.3")`.
+⚠ A build harness is not a model picker: "want a grok answer" → `team_dispatch(op=generate, role=artisan, model="xai/grok-4.5")`.
 Full shapes + wrap/contract semantics + executor tiers: agent-skills/consult-routing.md → claude-web-dispatch-decision-table.md."""
 
 # Co-located liveness block (2a durable home). Trimmed per F4-A finding (thread

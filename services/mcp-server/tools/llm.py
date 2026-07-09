@@ -174,7 +174,7 @@ def register_llm_tools(mcp: FastMCP) -> None:
         **Model ID format** (CRITICAL — wrong format → 404):
 
         - ``anthropic/claude-sonnet-4`` — direct Anthropic API
-        - ``xai/grok-4.20-0309-reasoning`` — direct xAI API
+        - ``xai/grok-4.5`` — direct xAI API
         - ``openai/gpt-5.4`` — direct OpenAI API
         - ``openai/gpt-5-search-api`` — OpenAI search model (Chat Completions only —
           do NOT use ``team_dispatch`` for search models;
