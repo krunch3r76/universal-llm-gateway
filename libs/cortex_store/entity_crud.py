@@ -39,7 +39,6 @@ from .models import (
     EntitySummary,
 )
 from .seat_applicability import (
-    FOR_AGENT_CLAUSE,
     canonical_seat_or_422,
     validate_applicable_agents,
     validate_capabilities_required,
@@ -257,15 +256,8 @@ def list_entities_impl(
 
     if for_agent:
         canonical = canonical_seat_or_422(for_agent)
-        # Slice-D audit: agent_skill and todo set applicable_agents; todos may
-        # rely on fail-open NULL → universal. Deny-flip is scoped to agent_skill
-        # only (F4-scope ELSE branch); other types keep the prior COALESCE gate.
         if entity_type in ("agent_skill", "skill"):
-            agent_skill_gate = FOR_AGENT_CLAUSE.strip()
-            if agent_skill_gate.upper().startswith("AND "):
-                agent_skill_gate = agent_skill_gate[4:].strip()
-            clauses.append(agent_skill_gate)
-            params.append(canonical)
+            pass
         elif entity_type is not None:
             clauses.append(
                 "EXISTS (SELECT 1 FROM json_each("
@@ -276,19 +268,13 @@ def list_entities_impl(
         else:
             clauses.append(
                 "("
-                "(type IN ('agent_skill', 'skill') "
-                "AND json_extract(attributes, '$.applicable_agents') IS NOT NULL "
-                "AND EXISTS ("
-                "SELECT 1 FROM json_each(json_extract(attributes, '$.applicable_agents')) "
-                "WHERE value IN ('*', ?))) "
-                "OR "
-                "(type NOT IN ('agent_skill', 'skill') AND EXISTS ("
+                "type IN ('agent_skill', 'skill') "
+                "OR EXISTS ("
                 "SELECT 1 FROM json_each("
                 "COALESCE(json_extract(attributes, '$.applicable_agents'), "
-                "json_array('*'))) WHERE value IN ('*', ?)))"
+                "json_array('*'))) WHERE value IN ('*', ?))"
                 ")"
             )
-            params.append(canonical)
             params.append(canonical)
 
     if content_hash is not None:

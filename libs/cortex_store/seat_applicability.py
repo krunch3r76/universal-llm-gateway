@@ -1,9 +1,8 @@
-"""Seat-applicability vocabulary + the GET /skills?view=boot seat filter.
+"""Seat-applicability vocabulary for skill/rule entity writes and discovery params.
 
-Single enforcement seam for the canonical seat enum (derived from agent_seat config,
-not hardcoded), seat-slug validation/normalization, and the default-DENY SQL clause the
-GET /skills?view=boot route binds for `for_agent` filtering. Reused by the /skills HTTP
-endpoint and Track B B2.
+Canonical seat enum (derived from agent_seat config), seat-slug validation/normalization,
+and capability filtering for GET /skills. ``applicable_agents`` is informational metadata
+only — discovery does not filter on it.
 """
 
 from __future__ import annotations
@@ -13,7 +12,6 @@ import json
 from agent_seat.profiles import (
     CAPABILITY_TOKENS,
     known_seats,
-    load_profiles,
     seat_capability_map,
 )
 from agent_seat.registry import normalize_agent_slug
@@ -39,28 +37,6 @@ def validate_scope(attributes: dict[str, object] | None) -> None:
             ),
         )
 
-
-# Default-DENY: a skill with no `applicable_agents` attribute matches NO seat. Universal
-# visibility requires an explicit ['*']. The IS NOT NULL guard makes the deny explicit and
-# avoids relying on json_each(NULL) behaviour (implementation-defined; can raise on bad JSON).
-FOR_AGENT_CLAUSE = """
-    AND json_extract(attributes, '$.applicable_agents') IS NOT NULL
-    AND EXISTS (
-        SELECT 1 FROM json_each(json_extract(attributes, '$.applicable_agents'))
-        WHERE value IN ('*', ?)
-    )
-"""
-
-# API seats: universal ``*`` does not imply visibility — explicit seat slug only.
-FOR_AGENT_EXPLICIT_CLAUSE = """
-    AND json_extract(attributes, '$.applicable_agents') IS NOT NULL
-    AND EXISTS (
-        SELECT 1 FROM json_each(json_extract(attributes, '$.applicable_agents'))
-        WHERE value = ?
-    )
-"""
-
-_EXPLICIT_ONLY_PLATFORMS = frozenset({"api", "api-multi"})
 
 CAPABILITY_CLAUSE = """
     AND NOT EXISTS (
@@ -97,17 +73,13 @@ def seat_capabilities_json(seat: str) -> str:
 
 
 def for_agent_filter_clause(canonical_seat: str) -> str:
-    """Seat filter for skill discovery: cursor/web inherit universal ``*``; api explicit only."""
-    parts = canonical_seat.split("-", 1)
-    if len(parts) == 2:
-        profile = load_profiles().get((parts[0], parts[1]))
-        if profile is not None and profile.platform in _EXPLICIT_ONLY_PLATFORMS:
-            return FOR_AGENT_EXPLICIT_CLAUSE
-    return FOR_AGENT_CLAUSE
+    """Seat filter for skill discovery — retired; ``applicable_agents`` is metadata only."""
+    del canonical_seat
+    return ""
 
 
 def validate_applicable_agents(attributes: dict[str, object] | None) -> None:
-    """Reject an entity write whose applicable_agents holds an unknown seat slug."""
+    """Reject an entity write whose applicable_agents is not a JSON list."""
     if not attributes:
         return
     agents = attributes.get("applicable_agents")
@@ -117,8 +89,6 @@ def validate_applicable_agents(attributes: dict[str, object] | None) -> None:
         raise HTTPException(
             status_code=422, detail="applicable_agents must be a JSON list"
         )
-    for slug in agents:
-        canonical_seat_or_422(str(slug))
 
 
 def validate_capabilities_required(attributes: dict[str, object] | None) -> None:

@@ -549,7 +549,8 @@ def test_coding_session_start_returns_bundle_not_session_close() -> None:
 
 
 @pytest.mark.offline
-def test_coding_session_bundle_cursor_only_member_withheld_from_web() -> None:
+def test_fetch_candidates_includes_lead_scoped_skill_for_api_platform() -> None:
+    """SQL seat gate retired — cursor-scoped skills are discoverable on api seats."""
     conn = _conn()
     _insert(
         conn,
@@ -558,29 +559,11 @@ def test_coding_session_bundle_cursor_only_member_withheld_from_web() -> None:
         trigger_match_terms=["git-posture"],
         applicable_agents=["claude-cursor"],
     )
-    for slug in (
-        "implement-work-item",
-        "service-lifecycle",
-        "completion-provenance-discipline",
-        "fs",
-    ):
-        _insert(
-            conn,
-            f"agent_skill:{slug}",
-            source_uri=f"agent-skills/{slug}.md",
-            trigger_match_terms=[slug],
-            applicable_agents=["*"],
-        )
     conn.commit()
-    with patch("cortex_store.routes._skill_suggest.cortex_conn", return_value=conn):
-        result = run_stage_a(
-            agent="claude-web",
-            loaded=[],
-            conversation_context="coding session: modify a service in the repo",
-            limit=8,
-        )
-    slugs = {s["slug"] for s in result["suggestions"]}
-    assert "git-posture" not in slugs
+    from cortex_store.routes._skill_suggest_candidates import fetch_candidates
+
+    rows = fetch_candidates(conn, "claude-api")
+    assert {r["id"] for r in rows} == {"agent_skill:git-posture"}
 
 
 @pytest.mark.offline

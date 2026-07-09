@@ -20,7 +20,7 @@ __all__ = [
     "to_model_card_dict",
 ]
 
-DESCRIPTOR_VERSION: Final[str] = "2026-06-30"
+DESCRIPTOR_VERSION: Final[str] = "2026-07-08"
 
 # Emergency denylist for cursor-sdk substrate admission. Entries are bare wire ids
 # (no cursor/ prefix); membership is checked after prefix strip + lowercase.
@@ -163,11 +163,23 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
         default_variant={"context": "1m", "reasoning": "medium", "fast": "false"},
         instruction_profile="reasoner",
     ),
-    "grok-4.3": ModelCapability(
+    # Cursor Grok 4.5 — replaces all Grok 4.x cursor-sdk / picker / subagent slugs
+    # (operator 2026-07-08). Default non-fast (unlike composer-2.5). Effort Low/Medium/High
+    # operator-confirmed; Extra High / Max and context ladder unverified — keep accepted
+    # set conservative until a live ListModels probe widens it.
+    "grok-4.5": ModelCapability(
         knobs={
-            "context": KnobSpec(accepted=("200k", "1m")),
+            "thinking": KnobSpec(accepted=("false", "true"), default="true"),
+            "effort": KnobSpec(accepted=("low", "medium", "high"), default="high"),
+            "context": KnobSpec(accepted=("200k",), default="200k"),
+            "fast": KnobSpec(accepted=("false", "true"), default="false"),
         },
-        default_variant={"context": "1m"},
+        default_variant={
+            "thinking": "true",
+            "effort": "high",
+            "context": "200k",
+            "fast": "false",
+        },
         instruction_profile="reasoner",
     ),
     "gemini-3.5-flash": ModelCapability(

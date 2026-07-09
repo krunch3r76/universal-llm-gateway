@@ -9,6 +9,7 @@
 #   scripts/cortex/claude-ai-sync-jupiter status
 #   scripts/cortex/claude-ai-sync-jupiter upload --slugs my-skill --continue-on-error
 #   scripts/cortex/claude-ai-sync-jupiter upload --all --continue-on-error
+#   scripts/cortex/claude-ai-sync-jupiter restore-connector
 #
 # Env: CLAUDE_AI_SSH_HOST (default jupiter), CLAUDE_AI_SSH_USER (default krunch3r)
 
@@ -24,7 +25,7 @@ PROFILE='$HOME/.gateway/claude-ai-chrome-profile'
 usage() {
   sed -n '2,14p' "$0" | sed 's/^# \?//'
   echo ""
-  echo "Commands: ensure-chrome | status | upload (pass-through args)"
+  echo "Commands: ensure-chrome | status | upload (pass-through args) | restore-connector"
   exit "${1:-0}"
 }
 
@@ -64,6 +65,11 @@ remote_ui() {
   ssh "$SSH" "cd ${REMOTE_REPO} && BROWSER_CDP_URL=http://127.0.0.1:9222 ${PY} scripts/cortex/upload_claude_bundles_ui.py $*"
 }
 
+restore_connector() {
+  # shellcheck disable=SC2029
+  ssh "$SSH" "cd ${REMOTE_REPO} && BROWSER_CDP_URL=http://127.0.0.1:9222 ${PY} scripts/cortex/restore_claude_mcp_connector.py $*"
+}
+
 cmd="${1:-}"
 shift || true
 
@@ -76,6 +82,10 @@ case "$cmd" in
   upload)
     ensure_chrome
     remote_ui "$@"
+    ;;
+  restore-connector)
+    ensure_chrome
+    restore_connector "$@"
     ;;
   -h|--help|help|'') usage 0 ;;
   *)

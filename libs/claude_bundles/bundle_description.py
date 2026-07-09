@@ -108,6 +108,19 @@ def description_has_xml_tags(description: str) -> bool:
     return bool(_XML_TAG_RE.search(description))
 
 
+def _sanitize_description(description: str) -> str:
+    """Strip angle-bracket tags and collapse whitespace.
+
+    claude.ai garbles literal ``<tag>`` fragments, so a real frontmatter
+    ``description`` that carries tags must be *repaired* (tags removed, wording
+    otherwise intact) rather than discarded in favour of a prose-body line.
+    Tags are replaced with a space (not deleted) so adjacent words are not
+    glued together, then runs of whitespace are collapsed.
+    """
+    without_tags = _XML_TAG_RE.sub(" ", description)
+    return re.sub(r"\s+", " ", without_tags).strip()
+
+
 def is_trigger_grade(description: str) -> bool:
     desc = description.strip()
     if not desc or desc in _BROKEN_DESCRIPTIONS:
@@ -128,31 +141,50 @@ def resolve_bundle_description(
     body: str,
     entity_description: str | None = None,
 ) -> str:
-    """Pick the best soft-trigger description for a claude.ai bundle."""
+    """Pick the best soft-trigger description for a claude.ai bundle.
+
+    A present, non-empty frontmatter ``description`` is authoritative: it is
+    sanitized tag-free (see ``_sanitize_description``) and wins over prose-body
+    excerpts rather than being silently dropped when it contains angle-bracket
+    tags. Prose-body excerpts — the historical source of the claude.ai
+    description garble — are a strict last resort, consulted only when no
+    curated source (frontmatter / trigger line / entity) is trigger-grade.
+    """
     fm_desc = str(frontmatter.get("description") or "").strip()
+    fm_candidate = _sanitize_description(fm_desc) if fm_desc else ""
     trigger = parse_trigger_line(body)
     entity = (entity_description or "").strip()
     prose_excerpts = _prose_excerpts(body)
 
-    candidates: list[str] = []
-    for value in (fm_desc, trigger, entity, *prose_excerpts, slug.replace("-", " ")):
-        if (
-            value
-            and value not in _BROKEN_DESCRIPTIONS
-            and value not in candidates
-            and not description_has_xml_tags(value)
-        ):
-            candidates.append(value)
+    def _clean(values: list[str]) -> list[str]:
+        out: list[str] = []
+        for value in values:
+            if (
+                value
+                and value not in _BROKEN_DESCRIPTIONS
+                and value not in out
+                and not description_has_xml_tags(value)
+            ):
+                out.append(value)
+        return out
 
-    for candidate in candidates:
-        if is_trigger_grade(candidate) and len(candidate) <= MAX_CLAUDE_AI_DESCRIPTION_LEN:
-            return candidate
+    # Curated sources first (frontmatter authoritative), body excerpts last.
+    primary = _clean([fm_candidate, trigger, entity])
+    body_fallback = _clean(prose_excerpts)
 
-    for candidate in candidates:
-        if is_trigger_grade(candidate):
-            return candidate
+    for pool in (primary, body_fallback):
+        for candidate in pool:
+            if is_trigger_grade(candidate) and len(candidate) <= MAX_CLAUDE_AI_DESCRIPTION_LEN:
+                return candidate
+        for candidate in pool:
+            if is_trigger_grade(candidate):
+                return candidate
 
-    valid = [c for c in candidates if c and c not in _BROKEN_DESCRIPTIONS]
+    valid = [
+        c
+        for c in (*primary, *body_fallback, slug.replace("-", " "))
+        if c and c not in _BROKEN_DESCRIPTIONS
+    ]
     return max(valid, key=len) if valid else slug
 
 

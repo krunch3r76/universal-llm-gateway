@@ -104,9 +104,10 @@ def list_entities(
         description=(
             "Filter to entities whose `applicable_agents` JSON-list "
             "attribute contains either `*` (universal) or this seat slug. "
-            "For `agent_skill` rows, entities without the attribute are "
-            "withheld (default-deny). Other entity types retain fail-open "
-            "NULL → universal semantics."
+            "For `agent_skill`/`skill` rows, `applicable_agents` is "
+            "informational metadata only and does NOT filter. Other entity "
+            "types retain the seat-slug filter with NULL → fail-open "
+            "universal semantics."
         ),
     ),
     query: str | None = Query(

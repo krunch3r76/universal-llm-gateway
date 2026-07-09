@@ -171,7 +171,6 @@ def _append_skill_line_flat(
 
 def render_skills_card_section(
     items: Sequence[Mapping[str, Any]],
-    unpartitioned_count: int,
 ) -> str:
     """Render boot-card Agent Skills block (domain-grouped concise manifest)."""
     gate_ids = {_row_slug(s) for s in items if _is_gate_skill(s)}
@@ -206,13 +205,6 @@ def render_skills_card_section(
                 lines, row, is_gate=_row_slug(row) in gate_ids
             )
 
-    if unpartitioned_count:
-        lines.append(
-            f"\n> **Skill partition drift**: {unpartitioned_count} "
-            f"skill(s) missing `applicable_agents` — WITHHELD from all seats "
-            f"(default-deny); run backfill. Audit: `scripts/cortex/"
-            f"backfill_agent_skill_applicability.py --audit`."
-        )
     return "\n".join(lines)
 
 

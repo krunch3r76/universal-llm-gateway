@@ -244,6 +244,8 @@ profiles:
     auto_dispatchable: true
     # F-2: intentional empty — cursor/sdk admission checks CURSOR_DENIED_MODELS only
     # (deny-list, admit-rest); knob trust lives on CURSOR_MODEL_CAPABILITIES, not here.
+    # Trusted cursor-sdk models include cursor/grok-4.5 (default non-fast) — see
+    # libs/cursor_capabilities/cursor_capabilities.py (replaces all Grok 4.x).
     allowed_models: []
 
   subagent/subagent:

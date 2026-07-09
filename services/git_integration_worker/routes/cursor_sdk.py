@@ -20,12 +20,14 @@ import json
 import os
 import threading
 import time
-from collections.abc import Awaitable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 from threading import Event as _ThreadEvent
 from threading import Thread
+from typing import Any
 
+import httpx
 from cursor_sdk import Client
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -139,6 +141,45 @@ _CONFIG: WorkerConfig = load_config()
 _SDK_BRIDGE_BIN = os.environ.get("CURSOR_SDK_BRIDGE_BIN", "").strip() or None
 _SDK_TIMEOUT_S = float(os.environ.get("CURSOR_SDK_TIMEOUT", "1800"))
 _SDK_TIMEOUT_BUFFER_S = 120.0
+
+
+def _sdk_client_read_timeout() -> float | None:
+    """Bridge HTTP read deadline (friction 23057).
+
+    The SDK's default stream read timeout is 600s (`cursor_sdk._connect.
+    DEFAULT_STREAM_TIMEOUT_SECONDS`); only bytes on the bridge response
+    stream reset it, so a healthy-but-quiet tool leg (e.g. a long remote
+    Playwright/upload step) trips ReadTimeout at last_byte+600s while the
+    30s heartbeat keeps reporting progress — heartbeat and read deadline
+    are on different clocks.
+
+    Default: outer budget + 60s margin (NOT None). The outer
+    ``asyncio.wait`` watchdog governs every healthy run first, so this
+    deadline never fires on a live dispatch; its sole job is to unblock
+    an orphaned sync worker thread after the async side has already timed
+    out. That unblock matters: the worker thread's ``finally`` is what
+    releases the capacity slot (gate limit=1) and closes the bridge — a
+    truly unbounded read against a wedged-but-connected bridge would hold
+    the slot forever and brick the dispatch lane. Set
+    CURSOR_SDK_CLIENT_READ_TIMEOUT to override (<=0 for unbounded — not
+    recommended).
+    """
+    raw = os.environ.get("CURSOR_SDK_CLIENT_READ_TIMEOUT", "").strip()
+    if not raw:
+        return _SDK_TIMEOUT_S + _SDK_TIMEOUT_BUFFER_S + 60.0
+    value = float(raw)
+    return value if value > 0 else None
+
+
+# Finite everywhere: connect/write/pool keep genuinely-dead bridges failing
+# fast; read sits just above the outer watchdog so it only fires to unblock
+# an orphaned worker thread (see friction 23057 / _sdk_client_read_timeout).
+_SDK_CLIENT_TIMEOUT = httpx.Timeout(
+    connect=30.0,
+    read=_sdk_client_read_timeout(),
+    write=120.0,
+    pool=60.0,
+)
 _SDK_HEARTBEAT_S = float(os.environ.get("CURSOR_SDK_HEARTBEAT", "30"))
 _STALE_LEASE_S = float(
     os.environ.get(
@@ -366,8 +407,42 @@ def _dispatch_home_overlay(
 _install_bridge_env_patch()
 
 
+class SdkRunAbortedError(RuntimeError):
+    """SDK run aborted mid-flight (e.g. bridge ReadTimeout) — carries forensics.
+
+    Friction 23050: a bridge death after minutes of real work must not destroy
+    knowledge of what the run did. The wrapper preserves partial stream-capture
+    state so the failure envelope can report elapsed time, tool-call progress,
+    and the bridge state-root — and flag that side effects (browser automation,
+    remote shell legs) may have continued or partially applied.
+    """
+
+    def __init__(self, message: str, *, forensics: dict[str, Any]) -> None:
+        super().__init__(message)
+        self.forensics = forensics
+
+
+class _LiveToolCallCounter:
+    """Monotonic tool-call counter shared between stream capture and heartbeat."""
+
+    __slots__ = ("_n",)
+
+    def __init__(self) -> None:
+        self._n = 0
+
+    def bump(self, _observation: object = None) -> None:
+        self._n += 1
+
+    def value(self) -> int:
+        return self._n
+
+
 def _start_heartbeat(
-    *, dispatch_id: str, thread_id: str, resolved_model: str
+    *,
+    dispatch_id: str,
+    thread_id: str,
+    resolved_model: str,
+    tool_call_count_fn: Callable[[], int] | None = None,
 ) -> tuple[Thread, _ThreadEvent]:
     stop = _ThreadEvent()
     started = time.monotonic()
@@ -381,7 +456,9 @@ def _start_heartbeat(
                     thread_id=thread_id,
                     resolved_model=resolved_model,
                     elapsed_s=elapsed,
-                    tool_call_count=0,
+                    tool_call_count=(
+                        tool_call_count_fn() if tool_call_count_fn is not None else 0
+                    ),
                 )
                 CursorDispatchLedger.instance().bump_heartbeat(dispatch_id=dispatch_id)
             except Exception as exc:  # heartbeat must never kill the dispatch
@@ -442,6 +519,10 @@ def _run_sdk_sync(
                         workspace=str(dispatch_workspace),
                         state_root=str(bridge_state),
                         timeout=_SDK_TIMEOUT_S,
+                        # Friction 23057: without this the SDK's default
+                        # 600s stream read timeout kills long silent tool
+                        # legs despite healthy heartbeats.
+                        client_timeout=_SDK_CLIENT_TIMEOUT,
                         local=agent_options.local,
                     )
                     break
@@ -462,11 +543,44 @@ def _run_sdk_sync(
                         backoff,
                     )
                     time.sleep(backoff)
+            live_counter = _LiveToolCallCounter()
             hb_thread, hb_stop = _start_heartbeat(
                 dispatch_id=dispatch_id,
                 thread_id=thread_id,
                 resolved_model=resolved_model,
+                tool_call_count_fn=live_counter.value,
             )
+            run_started = time.monotonic()
+            agent = None
+            run = None
+            stream_capture = None
+
+            def _abort_forensics(exc: BaseException) -> dict[str, Any]:
+                # Friction 23050: preserve knowledge of a mid-flight bridge death.
+                last_calls: list[dict[str, str]] = []
+                if stream_capture is not None:
+                    last_calls = [
+                        {"tool_name": tc.tool_name, "status": tc.status}
+                        for tc in stream_capture.tool_calls[-3:]
+                    ]
+                return {
+                    "cause": f"{type(exc).__name__}: {exc}",
+                    "elapsed_s": round(time.monotonic() - run_started, 1),
+                    "stream_tool_call_count": live_counter.value(),
+                    "last_tool_calls": last_calls,
+                    "state_root": str(bridge_state),
+                    "agent_id": getattr(agent, "id", None),
+                    "run_id": getattr(run, "id", None),
+                    "note": (
+                        "bridge failure, not verified run death — the underlying "
+                        "cursor-agent and any remote side effects (browser "
+                        "automation, ssh legs) may have continued or partially "
+                        "applied; verify outcome independently. Per-call telemetry: "
+                        "frontier.sdk.worker.{progress,toolcall} events for this "
+                        "dispatch_id."
+                    ),
+                }
+
             try:
                 agent = client.create_agent(agent_options)
                 # Local bridge Send rejects Idempotency-Key (cloud-only in SDK v1).
@@ -486,6 +600,7 @@ def _run_sdk_sync(
                     dispatch_id=dispatch_id,
                     thread_id=thread_id,
                     resolved_model=resolved_model,
+                    on_tool_call=live_counter.bump,
                 )
                 result = run.wait()
                 artifact_paths: list[str] = []
@@ -546,6 +661,13 @@ def _run_sdk_sync(
                     capture_branch=capture_branch,
                     tool_calls=stream_capture.tool_calls,
                 )
+            except BaseException as exc:
+                # Friction 23050: wrap any mid-flight abort (APITimeoutError /
+                # bridge ReadTimeout / dying SDK) with partial forensics so the
+                # failure envelope does not destroy all knowledge of the run.
+                raise SdkRunAbortedError(
+                    str(exc), forensics=_abort_forensics(exc)
+                ) from exc
             finally:
                 hb_stop.set()
                 hb_thread.join(timeout=5.0)
@@ -1020,6 +1142,7 @@ async def _run_sdk_dispatch_gated(
         # with zero delivery (the orphaned-dispatch failure mode). Finalize on
         # ANY worker outcome so there is no silent path.
         logger.exception("cursor sdk dispatch failed: dispatch_id=%s", req.dispatch_id)
+        forensics = getattr(exc, "forensics", None)
         await _finalize_failed(
             req=req,
             bus=bus,
@@ -1029,6 +1152,7 @@ async def _run_sdk_dispatch_gated(
             message=str(exc),
             subject_suffix="FAILED",
             error=f"{type(exc).__name__}: {exc}",
+            data=forensics if isinstance(forensics, dict) else None,
         )
         return
 
@@ -1075,7 +1199,7 @@ async def _finalize_failed(
     subject_suffix: str,
     error: str | None = None,
     retryable: bool = False,
-    data: dict[str, str] | None = None,
+    data: dict[str, Any] | None = None,
 ) -> None:
     """Single failure-finalize path: emit, deliver an error envelope, terminate,
     and mark terminal ``failed`` + promote. Guarantees no silent orphan.

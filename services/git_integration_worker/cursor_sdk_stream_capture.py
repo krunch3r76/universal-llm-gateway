@@ -15,7 +15,7 @@ is a free cache hit, not a second RPC).
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -152,11 +152,16 @@ def observe_run_stream(
     dispatch_id: str,
     thread_id: str,
     resolved_model: str,
+    on_tool_call: Callable[[ToolCallObservation], None] | None = None,
 ) -> StreamCapture:
     """Drain ``run.stream()``, emitting one ``frontier.sdk.worker.toolcall``
     event per tool call (on terminal status, or flushed at end-of-stream if
     the call never reached one). Never raises — a capture failure degrades
     to a partial/empty result rather than breaking the dispatch.
+
+    ``on_tool_call`` (optional, friction 23050) is invoked once per emitted
+    observation so callers can maintain a live progress counter (heartbeat)
+    without waiting for the drained capture; callback errors are swallowed.
     """
     latest: dict[str, Any] = {}
     emitted: dict[str, ToolCallObservation] = {}
@@ -164,6 +169,15 @@ def observe_run_stream(
     def _emit(call_id: str, message: Any) -> None:
         observation = _observation_from_message(message)
         emitted[call_id] = observation
+        if on_tool_call is not None:
+            try:
+                on_tool_call(observation)
+            except Exception:  # noqa: BLE001 — telemetry callback must not break capture
+                logger.debug(
+                    "on_tool_call callback failed: dispatch_id=%s",
+                    dispatch_id,
+                    exc_info=True,
+                )
         emit_frontier_event(
             FrontierSdkWorkerToolCall(
                 dispatch_id=dispatch_id,

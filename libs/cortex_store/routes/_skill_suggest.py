@@ -24,7 +24,6 @@ from ._skill_suggest_candidates import (
     norm_loaded,
     normalized_context,
     passes_precision_gate,
-    row_applies_to_seat,
     score_candidate,
     slug_from_source_uri,
     sort_key,
@@ -164,13 +163,10 @@ def _apply_coding_session_start(
     rows: list[dict[str, Any]],
     loaded_set: set[str],
     ctx: str,
-    *,
-    agent: str,
 ) -> list[dict[str, Any]]:
     if not _matches_coding_session_start(ctx):
         return scored_new
 
-    canonical_agent = canonical_seat_or_422(agent)
     filtered = [
         item
         for item in scored_new
@@ -189,8 +185,6 @@ def _apply_coding_session_start(
             continue
         row = by_slug.get(slug)
         if row is None:
-            continue
-        if not row_applies_to_seat(row, canonical_agent):
             continue
         entity_id = str(row.get("id") or "")
         if _is_loaded(slug, entity_id, loaded_set):
@@ -359,9 +353,7 @@ def run_stage_a(
             scored_new.append(entry)
 
     loaded_echo = sorted(set(loaded_echo))
-    scored_new = _apply_coding_session_start(
-        scored_new, rows, loaded_set, ctx, agent=agent
-    )
+    scored_new = _apply_coding_session_start(scored_new, rows, loaded_set, ctx)
     scored_new.sort(key=sort_key)
     suggestions = [_public_suggestion(item) for item in scored_new[:limit]]
     omitted = [

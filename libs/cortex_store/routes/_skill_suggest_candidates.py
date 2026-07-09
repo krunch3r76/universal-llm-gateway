@@ -16,7 +16,6 @@ from ..db import query as db_query
 from ..guidance_entity import strip_guidance_id_prefix
 from ..seat_applicability import (
     CAPABILITY_CLAUSE,
-    UNIVERSAL,
     canonical_seat_or_422,
     for_agent_filter_clause,
     seat_capabilities_json,
@@ -323,31 +322,10 @@ def passes_precision_gate(score: CandidateScore) -> bool:
     return len(score.matched_specific_terms) >= 1
 
 
-def _decode_applicable_agents(row: dict[str, Any]) -> list[str]:
-    raw = row.get("applicable_agents_json")
-    if not raw:
-        return []
-    try:
-        values = json.loads(raw)
-    except (json.JSONDecodeError, TypeError):
-        return []
-    if not isinstance(values, list):
-        return []
-    return [str(v).strip() for v in values if str(v).strip()]
-
-
-def row_applies_to_seat(row: dict[str, Any], canonical_seat: str) -> bool:
-    agents = _decode_applicable_agents(row)
-    if not agents:
-        return False
-    return UNIVERSAL in agents or canonical_seat in agents
-
-
 def fetch_candidates(conn: sqlite3.Connection, agent: str) -> list[dict[str, Any]]:
     canonical = canonical_seat_or_422(agent)
     params: list[Any] = [
         DISCOVERABLE_SKILL_LIFECYCLE,
-        canonical,
         seat_capabilities_json(canonical),
     ]
     sql = _SUGGEST_CANDIDATE_SQL.format(

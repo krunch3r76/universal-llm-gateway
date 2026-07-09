@@ -1,13 +1,10 @@
-"""GET /skills — seat-filtered skill manifest over HTTP (HTTP-first agent substrate PoC).
-
-First non-boot consumer of the shared default-DENY seat gate
-(`seat_applicability.FOR_AGENT_CLAUSE` + `canonical_seat_or_422`). Proves the B0
-gate is reusable by a second route family with no duplication: same default-deny
-semantics, same 422 slug validation, same canonical seat enum.
+"""GET /skills — skill manifest over HTTP (HTTP-first agent substrate PoC).
 
 Serves the INDEX envelope — id, name, trigger, `source_uri` + body `digest`,
-`applicable_agents` — so an agent with only `curl` can discover its seat-correct
-skill set. Bodies stay pull-on-demand via `source_uri` (preserves the 1637 trim).
+`applicable_agents` (informational metadata) — so an agent with only `curl` can
+discover the full active skill set. ``for_agent`` is accepted for back-compat and
+slug validation only; capability filtering still applies when set. Bodies stay
+pull-on-demand via `source_uri` (preserves the 1637 trim).
 todo:skills-http-endpoint / decision:http-first-agent-substrate.
 """
 
@@ -62,10 +59,6 @@ _DISCOVERABLE_SKILL_LIFECYCLE = discoverable_skill_lifecycle_sql_predicate()
 
 router = APIRouter(prefix="/skills", tags=["skills"])
 
-# Same default-DENY seat semantics as GET /skills?view=boot: a skill with no
-# `applicable_agents` attribute is withheld from every seat; universal
-# visibility requires an explicit `["*"]`. The filter clause is the shared
-# B0 gate — see seat_applicability.FOR_AGENT_CLAUSE.
 _SKILLS_MANIFEST_SQL = f"""
     SELECT id, name, description, source_uri,
            json_extract(attributes, '$.trigger_short') AS trigger_short,
@@ -141,7 +134,7 @@ def _seat_filter_params(
         canonical = canonical_seat_or_422(for_agent)
         for_agent_filter = for_agent_filter_clause(canonical)
         capability_filter = CAPABILITY_CLAUSE
-        seat_params = [canonical, seat_capabilities_json(canonical)]
+        seat_params = [seat_capabilities_json(canonical)]
     else:
         for_agent_filter = ""
         capability_filter = ""
@@ -184,11 +177,10 @@ def get_skills(
     for_agent: str | None = Query(
         None,
         description=(
-            "Filter to skills whose `applicable_agents` list contains this "
-            "seat slug. Cursor/sdk seats also inherit universal `*`. Web and "
-            "API seats require an explicit slug. Unknown slugs return HTTP "
-            "422. Skills with no `applicable_agents` are withheld "
-            "(default-deny). Only `lifecycle=active` skills are listed."
+            "Seat slug for back-compat and capability filtering. Unknown slugs "
+            "return HTTP 422. Does not filter on `applicable_agents` "
+            "(informational metadata only). Only `lifecycle=active` skills "
+            "are listed."
         ),
     ),
     view: Annotated[
@@ -202,11 +194,10 @@ def get_skills(
         ),
     ] = None,
 ) -> dict[str, Any]:
-    """Seat-filtered skill manifest INDEX over HTTP (bodies pull-on-demand).
+    """Skill manifest INDEX over HTTP (bodies pull-on-demand).
 
-    Reuses the shared B0 seat gate so a `curl`-only agent receives exactly its
-    seat-correct skill set. Each item ships the body `source_uri` + `digest`;
-    full bodies are fetched on demand, never inlined here.
+    Each item ships the body `source_uri` + `digest`; full bodies are fetched on
+    demand, never inlined here.
     """
     if view not in _VALID_VIEWS:
         raise HTTPException(
@@ -232,7 +223,7 @@ def get_skills(
     conn = cortex_conn()
     try:
         if view == "boot":
-            items, unpartitioned = fetch_boot_skills_view(
+            items = fetch_boot_skills_view(
                 conn,
                 limit=limit,
                 layer=layer,
@@ -243,7 +234,6 @@ def get_skills(
             )
             response: dict[str, Any] = {
                 "items": items,
-                "unpartitioned_count": unpartitioned,
                 "layer": layer,
             }
         else:
@@ -269,12 +259,7 @@ def get_skills(
         if "concise" in render_modes:
             rendered["concise_markdown"] = render_concise_skill_index(items)
         if "card" in render_modes:
-            unpartitioned = (
-                int(response.get("unpartitioned_count", 0) or 0)
-                if view == "boot"
-                else 0
-            )
-            rendered["card_markdown"] = render_skills_card_section(items, unpartitioned)
+            rendered["card_markdown"] = render_skills_card_section(items)
         response["rendered"] = rendered
 
     return response

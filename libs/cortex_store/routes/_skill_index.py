@@ -30,21 +30,14 @@ BOOT_SKILLS_SQL = f"""
            json_extract(attributes, '$.skill_category') AS skill_category,
            json_extract(attributes, '$.trigger_match_terms') AS trigger_match_terms_json,
            json_extract(attributes, '$.boot_importance') AS boot_importance,
-           json_extract(attributes, '$.related_skills') AS related_skills_json
+           json_extract(attributes, '$.related_skills') AS related_skills_json,
+           json_extract(attributes, '$.applicable_agents') AS applicable_agents_json
     FROM entities
     WHERE type IN ({{type_placeholders}})
       AND (type NOT IN ('agent_skill', 'skill') OR {_DISCOVERABLE_SKILL_LIFECYCLE})
       {{for_agent_filter}}{{capability_filter}}
     ORDER BY name ASC
     LIMIT ?
-"""
-
-UNPARTITIONED_COUNT_SQL = f"""
-    SELECT COUNT(*) AS n
-    FROM entities
-    WHERE type IN ('agent_skill', 'skill')
-      AND {_DISCOVERABLE_SKILL_LIFECYCLE}
-      AND json_extract(attributes, '$.applicable_agents') IS NULL
 """
 
 
@@ -152,6 +145,18 @@ def _decode_related_skills(raw: str | None) -> list[str]:
     return slugs
 
 
+def _decode_applicable_agents(raw: str | None) -> list[str]:
+    if not raw:
+        return []
+    try:
+        values = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return []
+    if not isinstance(values, list):
+        return []
+    return [str(v).strip() for v in values if str(v).strip()]
+
+
 def boot_skill_row(row: dict[str, Any]) -> dict[str, Any]:
     skill_class, tool_binding = _parse_skill_binding(row.get("skill_binding_json"))
     item: dict[str, Any] = {
@@ -164,6 +169,7 @@ def boot_skill_row(row: dict[str, Any]) -> dict[str, Any]:
         "trigger_match_terms": _decode_match_terms(row.get("trigger_match_terms_json")),
         "boot_importance": row.get("boot_importance"),
         "related_skills": _decode_related_skills(row.get("related_skills_json")),
+        "applicable_agents": _decode_applicable_agents(row.get("applicable_agents_json")),
         "skill_class": skill_class,
         "binding_kind": _derive_binding_kind(skill_class, tool_binding),
     }
@@ -182,8 +188,8 @@ def fetch_boot_skills_view(
     capability_filter: str,
     seat_params: list[Any],
     entity_types: tuple[str, ...],
-) -> tuple[list[dict[str, Any]], int]:
-    """Project boot-view items + unpartitioned_count for GET /skills?view=boot."""
+) -> list[dict[str, Any]]:
+    """Project boot-view items for GET /skills?view=boot."""
     type_placeholders = ", ".join("?" * len(entity_types))
     params: list[Any] = [
         *entity_types,
@@ -197,11 +203,4 @@ def fetch_boot_skills_view(
         capability_filter=capability_filter,
     )
     rows = db_query(conn, sql, tuple(params))
-    unpartitioned = 0
-    if layer == "skills":
-        unpartitioned_rows = db_query(
-            conn, UNPARTITIONED_COUNT_SQL, (DISCOVERABLE_SKILL_LIFECYCLE,)
-        )
-        unpartitioned = int(unpartitioned_rows[0]["n"]) if unpartitioned_rows else 0
-    items = [boot_skill_row(r) for r in rows]
-    return items, unpartitioned
+    return [boot_skill_row(r) for r in rows]
