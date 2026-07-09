@@ -83,7 +83,7 @@ def _handoff_conn() -> sqlite3.Connection:
     _insert(
         conn,
         "agent_skill:consult-routing",
-        source_uri="agent-skills/consult-routing.md",
+        source_uri="workspaces://universal-llm-gateway/.cursor/skills/consult-routing/SKILL.md",
         trigger_match_terms=[
             "consult",
             "handoff",
@@ -96,21 +96,21 @@ def _handoff_conn() -> sqlite3.Connection:
     _insert(
         conn,
         "agent_skill:handoff-packet-authoring",
-        source_uri="agent-skills/handoff-packet-authoring.md",
+        source_uri="workspaces://universal-llm-gateway/.cursor/skills/handoff-packet-authoring/SKILL.md",
         trigger_match_terms=["packet", "handoff", "team_dispatch"],
         description="Author six-block handoff packets for dispatch.",
     )
     _insert(
         conn,
         "agent_skill:consensus-steelman-posture",
-        source_uri="agent-skills/consensus-steelman-posture.md",
+        source_uri="workspaces://universal-llm-gateway/.cursor/skills/consensus-steelman-posture/SKILL.md",
         trigger_match_terms=["steelman", "panel", "consensus"],
         description="Run consensus panels with steelman posture.",
     )
     _insert(
         conn,
         "agent_skill:lead-seat-boot",
-        source_uri="agent-skills/lead-seat-boot.md",
+        source_uri="workspaces://universal-llm-gateway/.cursor/skills/lead-seat-boot/SKILL.md",
         trigger_match_terms=["lead", "seat", "boot", "lead seat boot"],
         boot_importance="required_gate",
         delivery_priority=5,
@@ -118,7 +118,7 @@ def _handoff_conn() -> sqlite3.Connection:
     _insert(
         conn,
         "agent_skill:advisor-timing",
-        source_uri="agent-skills/advisor-timing.md",
+        source_uri="workspaces://universal-llm-gateway/.cursor/skills/advisor-timing/SKILL.md",
         trigger_match_terms=["consult", "decision", "pre-edit"],
         boot_importance="required_gate",
         delivery_priority=5,
@@ -164,7 +164,7 @@ def test_stage_a_phrase_match_can_pass_precision_gate_for_required_gate_skill() 
     _insert(
         conn,
         "agent_skill:lead-seat-boot",
-        source_uri="agent-skills/lead-seat-boot.md",
+        source_uri="workspaces://universal-llm-gateway/.cursor/skills/lead-seat-boot/SKILL.md",
         trigger_match_terms=["lead", "seat", "boot", "lead seat"],
         boot_importance="required_gate",
         applicable_agents=["claude-cursor"],
@@ -187,7 +187,7 @@ def test_stage_a_boosts_do_not_rescue_generic_singleton_matches() -> None:
     _insert(
         conn,
         "agent_skill:advisor-timing",
-        source_uri="agent-skills/advisor-timing.md",
+        source_uri="workspaces://universal-llm-gateway/.cursor/skills/advisor-timing/SKILL.md",
         trigger_match_terms=["consult", "decision", "pre-edit"],
         boot_importance="required_gate",
         delivery_priority=1,
@@ -229,7 +229,7 @@ def _generic_phrase_conn() -> sqlite3.Connection:
     _insert(
         conn,
         "agent_skill:lead-seat-boot",
-        source_uri="agent-skills/lead-seat-boot.md",
+        source_uri="workspaces://universal-llm-gateway/.cursor/skills/lead-seat-boot/SKILL.md",
         trigger_match_terms=["lead", "seat", "lead seat"],
         boot_importance="required_gate",
         delivery_priority=5,
@@ -319,19 +319,19 @@ def test_web_seat_preloaded_uses_boot_card_channels_not_registry() -> None:
     _insert(
         conn,
         "agent_skill:cortex-orientation",
-        source_uri="agent-skills/cortex-orientation.md",
+        source_uri="workspaces://universal-llm-gateway/.cursor/skills/cortex-orientation/SKILL.md",
         trigger_match_terms=["cortex", "boot", "entity_get"],
     )
     _insert(
         conn,
         "agent_skill:cortex-provenance-discipline",
-        source_uri="agent-skills/cortex-provenance-discipline.md",
+        source_uri="workspaces://universal-llm-gateway/.cursor/skills/cortex-provenance-discipline/SKILL.md",
         trigger_match_terms=["cortex", "cite", "quote"],
     )
     _insert(
         conn,
         "agent_skill:boot-execution-discipline",
-        source_uri="agent-skills/boot-execution-discipline.md",
+        source_uri="workspaces://universal-llm-gateway/.cursor/skills/boot-execution-discipline/SKILL.md",
         trigger_match_terms=["cortex", "boot"],
     )
     conn.commit()
@@ -375,13 +375,13 @@ def test_web_loaded_set_unions_orientation_and_opcontext_channels() -> None:
         _insert(
             conn,
             f"agent_skill:{slug}",
-            source_uri=f"agent-skills/{slug}.md",
+            source_uri=f"workspaces://universal-llm-gateway/.cursor/skills/{slug}/SKILL.md",
             trigger_match_terms=terms,
         )
     _insert(
         conn,
         "agent_skill:boot-execution-discipline",
-        source_uri="agent-skills/boot-execution-discipline.md",
+        source_uri="workspaces://universal-llm-gateway/.cursor/skills/boot-execution-discipline/SKILL.md",
         trigger_match_terms=["boot", "execution", "discipline", "cortex boot"],
     )
     conn.commit()
@@ -428,7 +428,7 @@ def test_stage_a_suggests_subgraph_render_on_walk_graph_context() -> None:
     _insert(
         conn,
         "agent_skill:subgraph-render",
-        source_uri="agent-skills/subgraph-render.md",
+        source_uri="workspaces://universal-llm-gateway/.cursor/skills/subgraph-render/SKILL.md",
         trigger_match_terms=[
             "walk graph",
             "walk_subgraph",
@@ -460,7 +460,7 @@ def test_related_skills_boost_surfaces_subgraph_render_when_orientation_loaded()
     _insert(
         conn,
         "agent_skill:subgraph-render",
-        source_uri="agent-skills/subgraph-render.md",
+        source_uri="workspaces://universal-llm-gateway/.cursor/skills/subgraph-render/SKILL.md",
         trigger_match_terms=["render_subgraph", "hub entity"],
     )
     conn.execute(
@@ -469,7 +469,7 @@ def test_related_skills_boost_surfaces_subgraph_render_when_orientation_loaded()
         (
             "agent_skill:cortex-orientation",
             "cortex-orientation",
-            "agent-skills/cortex-orientation.md",
+            "workspaces://universal-llm-gateway/.cursor/skills/cortex-orientation/SKILL.md",
             json.dumps(
                 {
                     "applicable_agents": ["claude-web"],
@@ -513,7 +513,7 @@ def test_coding_session_start_returns_bundle_not_session_close() -> None:
         _insert(
             conn,
             f"agent_skill:{slug}",
-            source_uri=f"agent-skills/{slug}.md",
+            source_uri=f"workspaces://universal-llm-gateway/.cursor/skills/{slug}/SKILL.md",
             trigger_match_terms=["session", "close"]
             if slug == "session-close"
             else [slug],
@@ -555,7 +555,7 @@ def test_fetch_candidates_includes_lead_scoped_skill_for_api_platform() -> None:
     _insert(
         conn,
         "agent_skill:git-posture",
-        source_uri="agent-skills/git-posture.md",
+        source_uri="workspaces://universal-llm-gateway/.cursor/skills/git-posture/SKILL.md",
         trigger_match_terms=["git-posture"],
         applicable_agents=["claude-cursor"],
     )
@@ -572,7 +572,7 @@ def test_universal_non_bundle_skill_included_for_web_general_discovery() -> None
     _insert(
         conn,
         "agent_skill:universal-only",
-        source_uri="agent-skills/universal-only.md",
+        source_uri="workspaces://universal-llm-gateway/.cursor/skills/universal-only/SKILL.md",
         trigger_match_terms=["handoff", "dispatch", "packet"],
         applicable_agents=["*"],
     )
@@ -609,7 +609,7 @@ def test_coding_session_start_git_posture_carries_md_list_nudge() -> None:
         _insert(
             conn,
             f"agent_skill:{slug}",
-            source_uri=f"agent-skills/{slug}.md",
+            source_uri=f"workspaces://universal-llm-gateway/.cursor/skills/{slug}/SKILL.md",
             trigger_match_terms=[slug],
             applicable_agents=["*"],
         )
@@ -644,7 +644,7 @@ def test_coding_session_start_surfaces_advertise_slugs_for_cursor() -> None:
         _insert(
             conn,
             f"agent_skill:{slug}",
-            source_uri=f"agent-skills/{slug}.md",
+            source_uri=f"workspaces://universal-llm-gateway/.cursor/skills/{slug}/SKILL.md",
             trigger_match_terms=[slug],
             applicable_agents=["*"],
         )

@@ -115,6 +115,10 @@ _SKILL_PATH_RE = re.compile(
     r"(?:agent-skills|agent_skills)/([a-z0-9][-a-z0-9_]*)\.md",
     re.IGNORECASE,
 )
+_LOAD_SKILL_RE = re.compile(
+    r"Load skill:\s*`([a-z0-9][-a-z0-9_]*)`",
+    re.IGNORECASE,
+)
 _INVARIANTS_BLOCK_RE = re.compile(
     r"<invariants>(.*?)</invariants>",
     re.DOTALL | re.IGNORECASE,
@@ -286,7 +290,7 @@ def parse_packet_invariant_skill_ids(packet_text: str) -> tuple[str, ...]:
     block = match.group(1) if match else packet_text
     seen: set[str] = set()
     ordered: list[str] = []
-    for pattern in (_AGENT_SKILL_TOKEN_RE, _SKILL_PATH_RE):
+    for pattern in (_AGENT_SKILL_TOKEN_RE, _LOAD_SKILL_RE, _SKILL_PATH_RE):
         for found in pattern.finditer(block):
             slug = found.group(1).lower()
             entity_id = f"agent_skill:{slug}"

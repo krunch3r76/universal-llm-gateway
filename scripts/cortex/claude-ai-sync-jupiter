@@ -61,13 +61,16 @@ REMOTE
 }
 
 remote_ui() {
+  # Jupiter venv does not load its site-packages sitecustomize (system
+  # /usr/lib/.../sitecustomize.py wins), so libs/ is not auto-injected.
+  # Force PYTHONPATH; PROJECT_ROOT kept for any path that does load the venv hook.
   # shellcheck disable=SC2029
-  ssh "$SSH" "cd ${REMOTE_REPO} && BROWSER_CDP_URL=http://127.0.0.1:9222 ${PY} scripts/cortex/upload_claude_bundles_ui.py $*"
+  ssh "$SSH" "cd ${REMOTE_REPO} && PROJECT_ROOT=${REMOTE_REPO} PYTHONPATH=${REMOTE_REPO}/libs BROWSER_CDP_URL=http://127.0.0.1:9222 ${PY} scripts/cortex/upload_claude_bundles_ui.py $*"
 }
 
 restore_connector() {
   # shellcheck disable=SC2029
-  ssh "$SSH" "cd ${REMOTE_REPO} && BROWSER_CDP_URL=http://127.0.0.1:9222 ${PY} scripts/cortex/restore_claude_mcp_connector.py $*"
+  ssh "$SSH" "cd ${REMOTE_REPO} && PROJECT_ROOT=${REMOTE_REPO} PYTHONPATH=${REMOTE_REPO}/libs BROWSER_CDP_URL=http://127.0.0.1:9222 ${PY} scripts/cortex/restore_claude_mcp_connector.py $*"
 }
 
 cmd="${1:-}"

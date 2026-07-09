@@ -90,14 +90,24 @@ def test_boot_session_gate_completeness_web() -> None:
     assert_boot_session_gate_complete(platform="web")
 
 
-    packet = """
+def test_parse_packet_invariant_skill_ids_name_only_and_legacy() -> None:
+    """Name-only refs parse; legacy fs path still recognized for old packets."""
+    name_only = """
 <invariants>
 - agent_skill:sentinel-dispatch-inject-19887
+- Load skill: `architecture-invariants`
+</invariants>
+"""
+    assert parse_packet_invariant_skill_ids(name_only) == (
+        "agent_skill:sentinel-dispatch-inject-19887",
+        "agent_skill:architecture-invariants",
+    )
+    legacy = """
+<invariants>
 - fs(cortex, md_read, agent-skills/architecture-invariants.md)
 </invariants>
 """
-    assert parse_packet_invariant_skill_ids(packet) == (
-        "agent_skill:sentinel-dispatch-inject-19887",
+    assert parse_packet_invariant_skill_ids(legacy) == (
         "agent_skill:architecture-invariants",
     )
 

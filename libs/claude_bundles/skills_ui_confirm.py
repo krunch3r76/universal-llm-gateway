@@ -7,7 +7,10 @@ import sys
 
 from playwright.async_api import Locator, Page
 
-_REPLACE_CONFIRM_TITLE = re.compile(r'Replace ".+" skill\?', re.I)
+_REPLACE_CONFIRM_TITLE = re.compile(
+    r'Replace\s+(?:".+"|.+?)\s+skill\?',
+    re.I,
+)
 _REPLACE_BODY = re.compile(r"can.?t be restored", re.I)
 _UPLOAD_REPLACE_BTN = re.compile(r"upload and replace", re.I)
 

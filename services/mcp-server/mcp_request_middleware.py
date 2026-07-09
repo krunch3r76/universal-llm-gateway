@@ -25,6 +25,8 @@ from typing import TYPE_CHECKING, Any
 from mcp_events import monotonic_now, record
 from request_profile import bind_request
 from starlette.requests import Request
+from starlette.responses import JSONResponse, Response
+from tool_access import oauth_client_denial_reason, oauth_client_tool_allowed
 from universal_logging import get_logger
 
 if TYPE_CHECKING:
@@ -254,6 +256,39 @@ class McpRequestEventsMiddleware:
             summary = _summarize_tool_args(tool_name, tool_args)
             log_detail = f" {summary}" if summary else ""
             logger.info("MCP tool call: %s%s", tool_name, log_detail)
+
+        # Server-side OAuth-client allowlist (grok-connector read-only).
+        # Must run before FastMCP handles tools/call — client-side
+        # allowed_tools is advisory only.
+        if (
+            mcp_method == "tools/call"
+            and tool_name
+            and not oauth_client_tool_allowed(oauth_client_id or None, tool_name, tool_args)
+        ):
+            reason = oauth_client_denial_reason(oauth_client_id, tool_name)
+            record(
+                "mcp.oauth.client.tool.denied",
+                role="coordination",
+                oauth_client_id=oauth_client_id,
+                tool_name=tool_name,
+                reason=reason,
+                seat_class=seat_class,
+                client_ip=client_ip,
+            )
+            logger.warning(
+                "MCP oauth client tool denied: client=%s tool=%s",
+                oauth_client_id,
+                tool_name,
+            )
+            deny_body: dict[str, Any] = {
+                "jsonrpc": "2.0",
+                "error": {"code": -32001, "message": reason},
+            }
+            if jsonrpc_id is not None:
+                deny_body["id"] = jsonrpc_id
+            response: Response = JSONResponse(deny_body, status_code=200)
+            await response(scope, receive, send)
+            return
 
         response_bytes = 0
         stream_opened = False

@@ -5,8 +5,15 @@ from __future__ import annotations
 import os
 import re
 import sys
+from dataclasses import dataclass
 
-from playwright.async_api import Browser, BrowserContext, Locator, Page, async_playwright
+from playwright.async_api import (
+    Browser,
+    BrowserContext,
+    Locator,
+    Page,
+    async_playwright,
+)
 
 SKILLS_URL = "https://claude.ai/new#settings/customize-skills"
 DEFAULT_CDP_URL = os.environ.get("BROWSER_CDP_URL", "http://127.0.0.1:9222")
@@ -14,12 +21,25 @@ DEFAULT_CDP_URL = os.environ.get("BROWSER_CDP_URL", "http://127.0.0.1:9222")
 _SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _BROWSE_LABEL = re.compile(r"browse", re.I)
 _ADD_LABEL = re.compile(r"add skill|^add\b", re.I)
+_SKILLS_NAV = re.compile(r"skills", re.I)
+_UPLOAD_TITLE = re.compile(r"upload\s+skill", re.I)
 _CF_MARKERS = (
     "Performing security verification",
     "Verify you are human",
     "challenge_redirect",
     "cf-browser-verification",
 )
+
+
+@dataclass
+class NavigationGate:
+    """Gate real navigation remount while upload is in-flight or unverified."""
+
+    upload_in_flight: bool = False
+    network_verified: bool = True
+
+    def remount_permitted(self) -> bool:
+        return not self.upload_in_flight and self.network_verified
 
 
 def _is_skills_url(url: str) -> bool:
@@ -148,14 +168,37 @@ async def _page_blocked(page: Page) -> bool:
     return any(m in head or m in url for m in _CF_MARKERS)
 
 
+async def panel_state_summary(page: Page, context: BrowserContext) -> str:
+    add = await _find_add_button(page)
+    browse = await _find_browse_button(page)
+    rows = await _skills_table_rows(page)
+    return (
+        f"url={page.url} panel={await _skills_panel_visible(page)} "
+        f"browse={browse is not None} add={add is not None} rows={rows}\n"
+        f"tabs:\n{_tab_list(context)}"
+    )
+
+
 async def slug_in_skills_table(page: Page, slug: str) -> bool:
     """Whether ``slug`` appears in the Customize → Skills table."""
     if slug.lower() in await listed_skill_names(page):
         return True
-    row = page.locator("table tbody tr").filter(
-        has=page.locator("td").filter(has_text=re.compile(rf"^{re.escape(slug)}$", re.I))
-    )
-    return await row.count() > 0
+    pattern = re.compile(rf"\b{re.escape(slug)}\b", re.I)
+    rows = page.locator("table tbody tr")
+    for i in range(await rows.count()):
+        if pattern.search(await rows.nth(i).inner_text()):
+            return True
+    return False
+
+
+async def snapshot_slug_row(page: Page, slug: str) -> str | None:
+    pattern = re.compile(rf"\b{re.escape(slug)}\b", re.I)
+    rows = page.locator("table tbody tr")
+    for i in range(await rows.count()):
+        text = await rows.nth(i).inner_text()
+        if pattern.search(text):
+            return text.strip()
+    return None
 
 
 async def listed_skill_names(page: Page) -> set[str]:
@@ -179,9 +222,10 @@ async def _reopen_skills_from_hash(page: Page) -> None:
         await page.wait_for_timeout(800)
 
     for skills in (
-        page.get_by_role("link", name=re.compile(r"^skills$", re.I)),
-        page.locator("a, button, [role='button'], [role='menuitem']").filter(
-            has_text=re.compile(r"^skills$", re.I)
+        page.get_by_role("tab", name=_SKILLS_NAV),
+        page.get_by_role("link", name=_SKILLS_NAV),
+        page.locator("a, button, [role='button'], [role='menuitem'], [role='tab']").filter(
+            has_text=_SKILLS_NAV
         ),
     ):
         btn = await _first_visible(skills)
@@ -191,9 +235,28 @@ async def _reopen_skills_from_hash(page: Page) -> None:
             return
 
 
-async def open_skills_panel(page: Page, context: BrowserContext) -> Page:
+async def _hash_cycle(page: Page) -> None:
+    await page.evaluate("() => { window.location.hash = ''; }")
+    await page.wait_for_timeout(800)
+    await page.evaluate("() => { window.location.hash = 'settings/customize-skills'; }")
+    await page.wait_for_timeout(2000)
+
+
+async def _remount_skills(page: Page) -> None:
+    await page.goto("https://claude.ai/new", wait_until="domcontentloaded")
+    await page.wait_for_timeout(1500)
+    await page.goto(SKILLS_URL, wait_until="domcontentloaded")
+    await page.wait_for_timeout(2500)
+
+
+async def open_skills_panel(
+    page: Page,
+    context: BrowserContext,
+    *,
+    nav_gate: NavigationGate | None = None,
+) -> Page:
     for tab in context.pages:
-        await tab.wait_for_timeout(500)
+        await tab.wait_for_timeout(300)
         if await _skills_panel_visible(tab):
             await tab.bring_to_front()
             return tab
@@ -212,16 +275,17 @@ async def open_skills_panel(page: Page, context: BrowserContext) -> Page:
         await page.goto("https://claude.ai/new", wait_until="domcontentloaded")
         await page.wait_for_timeout(1500)
 
-    await page.evaluate(
-        "() => { window.location.hash = 'settings/customize-skills'; "
-        "window.dispatchEvent(new HashChangeEvent('hashchange')); }"
-    )
-    await page.wait_for_timeout(2500)
+    await _hash_cycle(page)
     if not await _skills_panel_visible(page):
         await _reopen_skills_from_hash(page)
 
     if await _skills_panel_visible(page):
         return page
+
+    if nav_gate is None or nav_gate.remount_permitted():
+        await _remount_skills(page)
+        if await _skills_panel_visible(page):
+            return page
 
     for tab in context.pages:
         if await _skills_panel_visible(tab):
@@ -235,18 +299,40 @@ async def open_skills_panel(page: Page, context: BrowserContext) -> Page:
     )
 
 
+async def run_preflight(page: Page, context: BrowserContext) -> None:
+    """CDP session valid, panel mounts, Add visible, dry menu open/close."""
+    if await _page_blocked(page):
+        raise RuntimeError(
+            "Preflight failed: Cloudflare or login gate — solve in Chrome, then re-run"
+        )
+    page = await open_skills_panel(page, context)
+    add = await _find_add_button(page)
+    if add is None:
+        raise RuntimeError(
+            "Preflight failed: Add button not visible — open Customize → Skills\n"
+            + await panel_state_summary(page, context)
+        )
+    await add.click()
+    await page.wait_for_timeout(600)
+    await page.keyboard.press("Escape")
+    await page.wait_for_timeout(400)
+    if not await _find_add_button(page):
+        raise RuntimeError(
+            "Preflight failed: Add button lost after dry menu — panel unstable\n"
+            + await panel_state_summary(page, context)
+        )
+
+
 async def _upload_modal_open(page: Page) -> bool:
-    title = page.get_by_text("Upload skill", exact=True)
-    if not await title.count():
-        return False
-    return await title.first.is_visible()
-
-
-async def _file_input(page: Page) -> Locator | None:
-    loc = page.locator('input[type="file"]')
-    if await loc.count():
-        return loc.first
-    return None
+    overlays = page.locator('[data-state="open"].fixed, [role="dialog"]')
+    for i in range(await overlays.count()):
+        ov = overlays.nth(i)
+        if not await ov.is_visible():
+            continue
+        if _UPLOAD_TITLE.search(await ov.inner_text()):
+            return True
+    title = page.get_by_text(_UPLOAD_TITLE)
+    return bool(await title.count() and await title.first.is_visible())
 
 
 async def _dismiss_modals(page: Page) -> None:

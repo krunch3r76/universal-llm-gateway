@@ -12,6 +12,7 @@ Local-only steps (any host with repo mount):
 
 On Jupiter (or via claude-ai-sync-jupiter wrapper):
   python scripts/cortex/upload_claude_bundles_ui.py --status
+  python scripts/cortex/upload_claude_bundles_ui.py --preflight
   python scripts/cortex/upload_claude_bundles_ui.py --slugs SLUG --continue-on-error
   python scripts/cortex/upload_claude_bundles_ui.py --all --continue-on-error
   python scripts/cortex/upload_claude_bundles_ui.py --all --replace --continue-on-error
@@ -24,8 +25,12 @@ from __future__ import annotations
 import argparse
 import asyncio
 import importlib.util
+import json
 import sys
+from dataclasses import asdict
 from pathlib import Path
+
+from universal_logging import get_logger
 
 _REPO = Path(__file__).resolve().parent.parent.parent
 if str(_REPO / "libs") not in sys.path:
@@ -40,9 +45,15 @@ from claude_bundles.skills_ui import (  # noqa: E402
     list_bundle_mds,
     list_zip_dir,
     prepare_session,
+    run_preflight_session,
     upload_skills,
 )
-from claude_bundles.skills_ui_status import print_parity_report, scan_ui_parity  # noqa: E402
+from claude_bundles.skills_ui_status import (  # noqa: E402
+    print_parity_report,
+    scan_ui_parity,
+)
+
+logger = get_logger(__name__)
 
 
 def _parse_slugs(raw: str | None) -> list[str] | None:
@@ -80,7 +91,7 @@ def _filter_valid(
     for slug, path in items:
         bundle_dir = path.parent
         try:
-            _, desc = validate_bundle_dir(slug, bundle_dir)
+            validate_bundle_dir(slug, bundle_dir)
             kept.append((slug, path))
         except ValueError as exc:
             print(f"SKIP-INVALID {slug}: {exc}", file=sys.stderr)
@@ -97,10 +108,23 @@ def _resolve_items(args: argparse.Namespace) -> list[tuple[str, Path]]:
     return _filter_valid(items, skip_invalid=args.skip_invalid)
 
 
+def _emit_status_json(report) -> int:
+    payload = asdict(report)
+    payload["on_ui"] = sorted(report.on_ui)
+    payload["in_sync"] = report.in_sync
+    print(json.dumps(payload, indent=2))
+    if report.in_sync and not report.extra_on_ui:
+        return 0
+    if report.in_sync:
+        return 0
+    return 1
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--cdp-url", default=DEFAULT_CDP_URL)
     parser.add_argument("--prepare", action="store_true")
+    parser.add_argument("--preflight", action="store_true", help="Validate CDP session and Skills panel")
     parser.add_argument("--print-chrome-cmd", action="store_true")
     parser.add_argument("--bundles-dir", metavar="DIR")
     parser.add_argument("--zip-dir", metavar="DIR")
@@ -141,6 +165,7 @@ def main() -> int:
         action="store_true",
         help="Scan local bundles vs claude.ai Skills table (no upload)",
     )
+    parser.add_argument("--json", action="store_true", help="Machine-readable JSON output (with --status)")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--screenshots", metavar="DIR")
     parser.add_argument(
@@ -165,9 +190,19 @@ def main() -> int:
     if args.prepare:
         asyncio.run(prepare_session(args.cdp_url))
         return 0
+    if args.preflight:
+        try:
+            asyncio.run(run_preflight_session(args.cdp_url))
+            return 0
+        except Exception as exc:
+            logger.error("preflight failed", extra={"error": str(exc)})
+            print(f"PREFLIGHT FAILED: {exc}", file=sys.stderr)
+            return 1
     if args.status:
         bundles = Path(args.bundles_dir or (_REPO / ".claude" / "skills"))
         report = asyncio.run(scan_ui_parity(cdp_url=args.cdp_url, bundles_dir=bundles))
+        if args.json:
+            return _emit_status_json(report)
         return print_parity_report(report)
 
     if args.zip_dir and args.bundles_dir:
@@ -194,12 +229,13 @@ def main() -> int:
     if args.skip_existing:
         skip_existing = True
 
+    screenshot_dir = Path(args.screenshots) if args.screenshots else None
     uploaded = asyncio.run(
         upload_skills(
             items,
             cdp_url=args.cdp_url,
             sleep_s=args.sleep,
-            screenshot_dir=Path(args.screenshots) if args.screenshots else None,
+            screenshot_dir=screenshot_dir,
             skip_existing=skip_existing,
             limit=args.limit,
             continue_on_error=args.continue_on_error,

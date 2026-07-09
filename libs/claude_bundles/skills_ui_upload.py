@@ -16,14 +16,19 @@ from claude_bundles.skills_ui_confirm import (
     replace_confirm_root,
     wait_replace_confirm,
 )
+from claude_bundles.skills_ui_network import UploadNetworkOracle, UploadResult
 from claude_bundles.skills_ui_panel import (
+    NavigationGate,
     _dismiss_modals,
-    _file_input,
     _find_add_button,
+    open_skills_panel,
+    panel_state_summary,
     slug_in_skills_table,
+    snapshot_slug_row,
 )
 
 _UPLOAD_MENU = re.compile(r"upload a skill", re.I)
+_UPLOAD_TITLE = re.compile(r"upload\s+skill", re.I)
 _DROP_ZONE = re.compile(r"click to upload|drag and drop", re.I)
 _UPLOAD_BTN = re.compile(r"^upload$", re.I)
 _REJECT_RE = re.compile(
@@ -36,15 +41,51 @@ class ReplaceBlockedError(Exception):
     """Legacy — replace flow uses confirm dialog instead of blocking."""
 
 
+class UploadModalMissingError(RuntimeError):
+    """Upload modal absent — refuse page-wide file input."""
+
+
+async def _upload_modal_root(page: Page) -> Locator | None:
+    overlays = page.locator('[data-state="open"].fixed, [role="dialog"]')
+    for i in range(await overlays.count()):
+        ov = overlays.nth(i)
+        if not await ov.is_visible():
+            continue
+        if _UPLOAD_TITLE.search(await ov.inner_text()):
+            return ov
+    title = page.get_by_text(_UPLOAD_TITLE)
+    if await title.count() and await title.first.is_visible():
+        parent = title.first.locator(
+            "xpath=ancestor::*[@data-state='open' or @role='dialog'][1]"
+        )
+        if await parent.count():
+            return parent.first
+    return None
+
+
 async def _upload_modal_open(page: Page) -> bool:
-    title = page.get_by_text("Upload skill", exact=True)
-    if not await title.count():
-        return False
-    return await title.first.is_visible()
+    return await _upload_modal_root(page) is not None
+
+
+async def _modal_file_input(page: Page) -> Locator:
+    root = await _upload_modal_root(page)
+    if root is None:
+        raise UploadModalMissingError(
+            "Upload modal not open — refusing page-wide file input"
+        )
+    inp = root.locator('input[type="file"]')
+    if not await inp.count():
+        raise UploadModalMissingError("Upload modal has no scoped file input")
+    return inp.first
 
 
 async def _modals_blocking(page: Page) -> bool:
     return await _upload_modal_open(page) or await replace_confirm_open(page)
+
+
+async def _table_rows_text(page: Page) -> list[str]:
+    rows = page.locator("table tbody tr")
+    return [(await rows.nth(i).inner_text()).strip() for i in range(await rows.count())]
 
 
 async def _upload_verified(
@@ -54,29 +95,43 @@ async def _upload_verified(
     *,
     replacing: bool,
     replace_confirmed: bool,
+    network: UploadResult | None,
+    row_snapshot: str | None,
 ) -> bool:
-    if replace_confirmed:
+    if network is not None and network.ok and network.slug_echoed:
         return True
+    if network is not None and network.status and not (200 <= network.status < 300):
+        return False
+
+    if replace_confirmed and network is None:
+        current = await snapshot_slug_row(page, slug)
+        if current and row_snapshot and current != row_snapshot:
+            return True
+        if current:
+            return True
+
     if await slug_in_skills_table(page, slug):
-        return True
+        if network is None and not replacing:
+            return await page.locator("table tbody tr").count() > rows_before
+        return False
+
     if replacing:
         return False
-    return await page.locator("table tbody tr").count() > rows_before
+    if network is None:
+        return await page.locator("table tbody tr").count() > rows_before
+    return False
 
 
-async def _open_upload_dialog(page: Page) -> Locator:
-    """Add → Upload a skill → return file input.
-
-    Claude.ai's Add menu is flaky (menuitem detaches / never stable). Retry with
-    force/JS click rather than failing the whole replace batch on one slug.
-    """
+async def _open_upload_dialog(
+    page: Page,
+    context,
+    *,
+    nav_gate: NavigationGate | None,
+) -> Locator:
     if await _upload_modal_open(page):
-        ready = await _file_input(page)
-        if ready:
-            return ready
+        return await _modal_file_input(page)
 
     await _dismiss_modals(page)
-
     add_btn = await _find_add_button(page)
     if not add_btn:
         raise RuntimeError(
@@ -84,27 +139,25 @@ async def _open_upload_dialog(page: Page) -> Locator:
         )
 
     last_err: Exception | None = None
-    print("OPEN_UPLOAD_DIALOG patched-retry path", file=sys.stderr)
     for attempt in range(5):
         try:
-            print(f"OPEN_UPLOAD_DIALOG attempt={attempt}", file=sys.stderr)
             await add_btn.click()
             await page.wait_for_timeout(700 + 200 * attempt)
 
-            # Prefer aria-controls menu root — Playwright's menuitem click is flaky
-            # (detaches / never stable) on claude.ai Customize → Skills.
+            handle = await add_btn.element_handle()
             js_clicked = await page.evaluate(
-                """() => {
-                  const btn = document.querySelector('button[aria-label="Add skill"]')
+                """(btn) => {
+                  const el = btn || document.querySelector('button[aria-label="Add skill"]')
                     || document.querySelector('button[aria-haspopup="menu"]');
-                  const menuId = btn && btn.getAttribute('aria-controls');
+                  const menuId = el && el.getAttribute('aria-controls');
                   const root = (menuId && document.getElementById(menuId)) || document;
                   const items = [...root.querySelectorAll('[role=menuitem]')];
-                  const target = items.find(el => /upload a skill/i.test(el.innerText || ''));
+                  const target = items.find(e => /upload a skill/i.test(e.innerText || ''));
                   if (!target) return {ok: false, n: items.length};
                   target.click();
                   return {ok: true, n: items.length};
-                }"""
+                }""",
+                handle,
             )
             if not js_clicked.get("ok"):
                 upload_item = page.get_by_role("menuitem", name=_UPLOAD_MENU)
@@ -117,37 +170,42 @@ async def _open_upload_dialog(page: Page) -> Locator:
                 try:
                     await upload_item.first.click(force=True, timeout=5_000)
                 except Exception as click_exc:
-                    print(
-                        f"OPEN_UPLOAD_DIALOG force-click failed: {click_exc!r}; JS click",
-                        file=sys.stderr,
-                    )
-                    handle = await upload_item.first.element_handle()
-                    if handle is None:
+                    print(f"OPEN_UPLOAD_DIALOG force-click failed: {click_exc!r}", file=sys.stderr)
+                    item_handle = await upload_item.first.element_handle()
+                    if item_handle is None:
                         raise
-                    await page.evaluate("(el) => el.click()", handle)
+                    await page.evaluate("(el) => el.click()", item_handle)
 
-            inp = page.locator('input[type="file"]')
-            await inp.first.wait_for(state="attached", timeout=15_000)
-            return inp.first
+            for _ in range(30):
+                if await _upload_modal_open(page):
+                    return await _modal_file_input(page)
+                await page.wait_for_timeout(500)
+            raise RuntimeError("Upload modal did not open within 15s")
         except Exception as exc:
             last_err = exc
             print(f"OPEN_UPLOAD_DIALOG attempt={attempt} err={exc!r}", file=sys.stderr)
             await page.keyboard.press("Escape")
             await page.wait_for_timeout(400)
-            add_btn = await _find_add_button(page) or add_btn
+            add_btn = await _find_add_button(page)
+            if add_btn is None:
+                page = await open_skills_panel(page, context, nav_gate=nav_gate)
+                add_btn = await _find_add_button(page)
+                if add_btn is None:
+                    break
 
+    summary = await panel_state_summary(page, context)
     raise RuntimeError(
-        f"Add → Upload a skill failed after retries: {last_err}"
+        f"Add → Upload a skill failed after retries: {last_err}\n{summary}"
     )
 
 
 async def _modal_error_text(page: Page) -> str | None:
     if not await _upload_modal_open(page):
         return None
-    overlay = page.locator('[data-state="open"].fixed')
-    if not await overlay.count():
+    root = await _upload_modal_root(page)
+    if root is None:
         return None
-    text = await overlay.first.inner_text()
+    text = await root.inner_text()
     if "Drag and drop or click to upload" in text and len(text) < 600:
         if not _REJECT_RE.search(text):
             return None
@@ -157,9 +215,12 @@ async def _modal_error_text(page: Page) -> str | None:
 
 
 async def _select_file_in_modal(page: Page, skill_path: Path) -> None:
-    """Pick a file via the visible drop zone (hidden input alone often does not bind)."""
+    root = await _upload_modal_root(page)
+    if root is None:
+        raise UploadModalMissingError("Cannot select file — upload modal absent")
+
     resolved = str(skill_path.resolve())
-    drop = page.locator("[data-state='open'].fixed").filter(has_text=_DROP_ZONE)
+    drop = root.filter(has_text=_DROP_ZONE)
     if await drop.count():
         trigger = drop.first.get_by_text(_DROP_ZONE)
         if await trigger.count():
@@ -169,9 +230,9 @@ async def _select_file_in_modal(page: Page, skill_path: Path) -> None:
             await chooser.set_files(resolved)
             return
 
-    inp = page.locator('input[type="file"]')
+    inp = root.locator('input[type="file"]')
     if not await inp.count():
-        raise RuntimeError("Upload modal has no file input or drop zone")
+        raise UploadModalMissingError("Upload modal has no file input or drop zone")
     await inp.first.set_input_files(resolved)
     await inp.first.evaluate(
         """el => {
@@ -182,19 +243,15 @@ async def _select_file_in_modal(page: Page, skill_path: Path) -> None:
 
 
 async def _wait_file_selected(page: Page, skill_path: Path) -> None:
-    """Wait until the modal reflects a chosen file (not still on empty drop zone)."""
     basename = skill_path.name
     stem = skill_path.stem
     for _ in range(40):
         if await replace_confirm_open(page):
             return
-        if not await _upload_modal_open(page):
+        root = await _upload_modal_root(page)
+        if root is None:
             return
-        overlay = page.locator('[data-state="open"].fixed')
-        if not await overlay.count():
-            await page.wait_for_timeout(300)
-            continue
-        text = await overlay.first.inner_text()
+        text = await root.inner_text()
         if basename in text or stem in text:
             return
         if "Drag and drop or click to upload" not in text:
@@ -205,21 +262,7 @@ async def _wait_file_selected(page: Page, skill_path: Path) -> None:
     )
 
 
-async def _upload_modal_root(page: Page) -> Locator | None:
-    by_title = page.locator('[data-state="open"].fixed').filter(
-        has=page.get_by_text("Upload skill", exact=True)
-    )
-    if await by_title.count():
-        return by_title.first
-    if await _upload_modal_open(page):
-        ov = page.locator('[data-state="open"].fixed')
-        if await ov.count():
-            return ov.first
-    return None
-
-
 async def _click_upload_submit(page: Page) -> None:
-    """First modal footer: Upload (scoped to upload dialog only)."""
     if await replace_confirm_open(page):
         return
     modal = await _upload_modal_root(page)
@@ -235,7 +278,6 @@ async def _click_upload_submit(page: Page) -> None:
 
 
 async def _confirm_replace_flow(page: Page) -> bool:
-    """Wait for replace confirm, click through. Returns True if replace confirm closed."""
     if not await wait_replace_confirm(page, timeout_ms=12_000):
         return False
     for _ in range(3):
@@ -253,6 +295,17 @@ async def _click_submit_if_present(page: Page, *, replacing: bool = False) -> bo
     return await _confirm_replace_flow(page)
 
 
+def _network_dict(result: UploadResult | None) -> dict | None:
+    if result is None:
+        return None
+    return {
+        "ok": result.ok,
+        "status": result.status,
+        "slug_echoed": result.slug_echoed,
+        "slug": result.slug,
+    }
+
+
 async def _wait_upload_complete(
     page: Page,
     slug: str,
@@ -262,13 +315,20 @@ async def _wait_upload_complete(
     rows_before: int = 0,
     retry_submit: object | None = None,
     replace_confirmed: bool = False,
-) -> None:
-    """Wait until modals clear and slug is verified in the skills table."""
+    oracle: UploadNetworkOracle | None = None,
+    row_snapshot: str | None = None,
+) -> UploadResult:
+    network = None
+    if oracle is not None:
+        network = await oracle.await_upload_result(slug, timeout_ms=30_000)
+
     await page.wait_for_timeout(1500)
     retried = False
     clear_ticks = 0
     for tick in range(120):
         await page.wait_for_timeout(500)
+        if oracle is not None and network is not None and not network.ok:
+            network = oracle.result_for(slug) or network
         if await replace_confirm_open(page):
             clear_ticks = 0
             if await click_replace_confirm(page):
@@ -280,17 +340,34 @@ async def _wait_upload_complete(
 
         blocking = await _modals_blocking(page)
         verified = await _upload_verified(
-            page, slug, rows_before, replacing=replacing, replace_confirmed=replace_confirmed
+            page,
+            slug,
+            rows_before,
+            replacing=replacing,
+            replace_confirmed=replace_confirmed,
+            network=network,
+            row_snapshot=row_snapshot,
         )
 
         if not blocking:
             clear_ticks += 1
             if verified and clear_ticks >= 2:
                 await _dismiss_modals(page)
-                return
+                return network or UploadResult(
+                    ok=False, status=0, slug_echoed=False, slug=slug
+                )
             if clear_ticks >= 6 and not verified:
+                rows = await _table_rows_text(page)
+                net_log = oracle.captured_log() if oracle else []
+                if network is None and rows and not await slug_in_skills_table(page, slug):
+                    raise RuntimeError(
+                        f"Upload did not verify for {slug} — no network signal, "
+                        f"rows present, slug absent.\n"
+                        f"table={rows!r}\nnetwork={net_log!r}"
+                    )
                 raise RuntimeError(
-                    f"Upload did not verify for {slug} — modals closed but slug not in table"
+                    f"Upload did not verify for {slug} — modals closed but slug not confirmed.\n"
+                    f"network={_network_dict(network)}\ntable={rows!r}"
                 )
         else:
             clear_ticks = 0
@@ -313,9 +390,9 @@ async def _wait_upload_complete(
         if modal is not None:
             hint = (await modal.inner_text())[:300]
     elif await _upload_modal_open(page):
-        overlay = page.locator('[data-state="open"].fixed')
-        if await overlay.count():
-            hint = (await overlay.first.inner_text())[:300]
+        root = await _upload_modal_root(page)
+        if root is not None:
+            hint = (await root.inner_text())[:300]
     replace_hint = " — re-upload of table skill" if replacing else ""
     over = (
         f" (description {desc_len} chars > {MAX_CLAUDE_AI_DESCRIPTION_LEN})"
@@ -323,8 +400,10 @@ async def _wait_upload_complete(
         else ""
     )
     stage = "replace confirm" if await replace_confirm_open(page) else "upload modal"
+    net_log = oracle.captured_log() if oracle else []
     raise RuntimeError(
-        f"Upload timed out for {slug}{over}{replace_hint} ({stage} still open): {hint}"
+        f"Upload timed out for {slug}{over}{replace_hint} ({stage} still open): {hint}\n"
+        f"network={_network_dict(network)}\nlog={net_log!r}"
     )
 
 
@@ -336,13 +415,23 @@ async def upload_one_skill(
     replacing: bool = False,
     screenshot_dir: Path | None = None,
     desc_len: int | None = None,
+    context=None,
+    nav_gate: NavigationGate | None = None,
+    oracle: UploadNetworkOracle | None = None,
 ) -> Page:
     rows_before = await page.locator("table tbody tr").count()
-    await _open_upload_dialog(page)
+    row_snapshot = await snapshot_slug_row(page, slug) if replacing else None
+
+    if oracle is not None:
+        oracle.expect_slug(slug)
+        oracle.attach()
+
+    await _open_upload_dialog(page, context, nav_gate=nav_gate)
     await _select_file_in_modal(page, skill_path)
     await _wait_file_selected(page, skill_path)
     replace_confirmed = await _click_submit_if_present(page, replacing=replacing)
-    await _wait_upload_complete(
+
+    network = await _wait_upload_complete(
         page,
         slug,
         replacing=replacing,
@@ -350,7 +439,18 @@ async def upload_one_skill(
         rows_before=rows_before,
         replace_confirmed=replace_confirmed,
         retry_submit=lambda: _click_submit_if_present(page, replacing=replacing),
+        oracle=oracle,
+        row_snapshot=row_snapshot,
     )
+
+    if network is not None and not (network.ok and network.slug_echoed):
+        rows = await _table_rows_text(page)
+        net_log = oracle.captured_log() if oracle else []
+        raise RuntimeError(
+            f"Upload network oracle failed for {slug}: {_network_dict(network)}\n"
+            f"table={rows!r}\nnetwork={net_log!r}"
+        )
+
     await page.wait_for_timeout(1500)
     await _dismiss_modals(page)
     if screenshot_dir:
