@@ -378,30 +378,6 @@ async def _panel_lost_mid_attempt(page: Page) -> bool:
     return not await _skills_panel_visible(page)
 
 
-async def _stability_guarded_add_click(add_btn: Locator) -> None:
-    await add_btn.scroll_into_view_if_needed()
-    await add_btn.wait_for(state="visible", timeout=3_000)
-    await add_btn.click(timeout=3_000)
-
-
-async def _js_click_upload_menuitem(page: Page, add_btn: Locator) -> dict:
-    handle = await add_btn.element_handle()
-    return await page.evaluate(
-        """(btn) => {
-          const el = btn || document.querySelector('button[aria-label="Add skill"]')
-            || document.querySelector('button[aria-haspopup="menu"]');
-          const menuId = el && el.getAttribute('aria-controls');
-          const root = (menuId && document.getElementById(menuId)) || document;
-          const items = [...root.querySelectorAll('[role=menuitem]')];
-          const target = items.find(e => /upload a skill/i.test(e.innerText || ''));
-          if (!target) return {ok: false, n: items.length};
-          target.click();
-          return {ok: true, n: items.length};
-        }""",
-        handle,
-    )
-
-
 async def _upload_modal_open(page: Page) -> bool:
     return await _upload_modal_root(page) is not None
 

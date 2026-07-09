@@ -16,16 +16,20 @@ from claude_bundles.skills_ui_confirm import (
     replace_confirm_root,
     wait_replace_confirm,
 )
+from claude_bundles.skills_ui_menu import (
+    add_menu_expanded,
+    js_click_upload_menuitem,
+    stability_guarded_add_click,
+    wait_upload_menuitem,
+)
 from claude_bundles.skills_ui_network import UploadNetworkOracle, UploadResult
 from claude_bundles.skills_ui_panel import (
     NavigationGate,
     _dismiss_modals,
     _find_add_button,
     _is_skills_url,
-    _js_click_upload_menuitem,
     _panel_lost_mid_attempt,
     _recover_panel_spa,
-    _stability_guarded_add_click,
     _upload_modal_open,
     _upload_modal_root,
     panel_state_summary,
@@ -33,7 +37,6 @@ from claude_bundles.skills_ui_panel import (
     snapshot_slug_row,
 )
 
-_UPLOAD_MENU = re.compile(r"upload a skill", re.I)
 _DROP_ZONE = re.compile(r"click to upload|drag and drop", re.I)
 _UPLOAD_BTN = re.compile(r"^upload$", re.I)
 _REJECT_RE = re.compile(
@@ -141,11 +144,17 @@ async def _open_upload_dialog(
                     raise RuntimeError("Add button not found after SPA panel recovery")
 
             try:
-                await _stability_guarded_add_click(add_btn)
+                await stability_guarded_add_click(add_btn)
             except Exception as click_exc:
-                print(f"OPEN_UPLOAD_DIALOG add-click failed: {click_exc!r}", file=sys.stderr)
-
-            await page.wait_for_timeout(400 + 150 * attempt)
+                # Menu often already open (aria-expanded) while locator is unstable —
+                # proceed if expanded; only fail when menu is closed.
+                add_btn = await _find_add_button(page) or add_btn
+                if not await add_menu_expanded(add_btn):
+                    print(
+                        f"OPEN_UPLOAD_DIALOG add-click failed: {click_exc!r}",
+                        file=sys.stderr,
+                    )
+                    raise
 
             if await _panel_lost_mid_attempt(page):
                 page = await _recover_panel_spa(page, context, nav_gate=nav_gate)
@@ -153,20 +162,21 @@ async def _open_upload_dialog(
                     raise RuntimeError("Panel not recovered after nav-away to /new")
                 continue
 
-            js_clicked = await _js_click_upload_menuitem(page, add_btn)
+            # Wait for portal menuitem before JS/locator click (fixed sleep raced).
+            upload_item = await wait_upload_menuitem(
+                page, timeout_ms=2_000 + 500 * attempt
+            )
+            js_clicked = await js_click_upload_menuitem(page, add_btn)
             if not js_clicked.get("ok"):
-                upload_item = page.get_by_role("menuitem", name=_UPLOAD_MENU)
-                if not await upload_item.count():
-                    upload_item = page.locator("[role='menuitem']").filter(
-                        has_text=_UPLOAD_MENU
-                    )
-                if not await upload_item.count():
+                if upload_item is None:
+                    upload_item = await wait_upload_menuitem(page, timeout_ms=1_500)
+                if upload_item is None:
                     raise RuntimeError("Add → Upload a skill menu item not found")
                 try:
-                    await upload_item.first.click(force=True, timeout=5_000)
+                    await upload_item.click(force=True, timeout=5_000)
                 except Exception as click_exc:
                     print(f"OPEN_UPLOAD_DIALOG force-click failed: {click_exc!r}", file=sys.stderr)
-                    item_handle = await upload_item.first.element_handle()
+                    item_handle = await upload_item.element_handle()
                     if item_handle is None:
                         raise
                     await page.evaluate("(el) => el.click()", item_handle)

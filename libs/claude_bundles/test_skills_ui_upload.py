@@ -140,3 +140,29 @@ async def test_modal_file_input_raises_when_not_on_skills_url() -> None:
     page.url = "https://claude.ai/new"
     with pytest.raises(UploadModalMissingError, match="Not on skills panel URL"):
         await _modal_file_input(page)
+
+
+@pytest.mark.asyncio
+async def test_stability_guarded_add_click_skips_when_expanded() -> None:
+    from claude_bundles.skills_ui_menu import stability_guarded_add_click
+
+    add_btn = AsyncMock()
+    add_btn.get_attribute = AsyncMock(return_value="true")
+    add_btn.scroll_into_view_if_needed = AsyncMock()
+    add_btn.wait_for = AsyncMock()
+    add_btn.click = AsyncMock()
+    await stability_guarded_add_click(add_btn)
+    add_btn.click.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_stability_guarded_add_click_clicks_when_closed() -> None:
+    from claude_bundles.skills_ui_menu import stability_guarded_add_click
+
+    add_btn = AsyncMock()
+    add_btn.get_attribute = AsyncMock(return_value="false")
+    add_btn.scroll_into_view_if_needed = AsyncMock()
+    add_btn.wait_for = AsyncMock()
+    add_btn.click = AsyncMock()
+    await stability_guarded_add_click(add_btn)
+    add_btn.click.assert_awaited_once()
