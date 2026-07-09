@@ -24,6 +24,7 @@ class SinkResult:
     uri: str
     sha256: str
     location: str
+    discards_advisory: str | None = None
 
 
 @dataclass(frozen=True)
@@ -137,10 +138,12 @@ class CortexSink:
         )
         if not isinstance(result, dict) or result.get("error"):
             raise RuntimeError(result.get("error", "recon_sidecar_write failed"))
+        advisory = result.get("discards_advisory")
         return SinkResult(
             uri=str(result["uri"]),
             sha256=str(result["sha256"]),
             location="cortex",
+            discards_advisory=str(advisory) if advisory else None,
         )
 
 
@@ -160,6 +163,7 @@ class FilesystemSink:
     ) -> SinkResult | None:
         from cortex_store.dispatch_ops._recon_sidecar import (
             content_sha256,
+            discards_advisory,
             render_recon_sidecar_markdown,
             resolve_recon_target,
         )
@@ -187,10 +191,12 @@ class FilesystemSink:
             raise ValueError("filesystem recon path escapes configured root") from exc
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(rendered, encoding="utf-8")
+        advisory = discards_advisory(body)
         return SinkResult(
             uri=f"file://{target}",
             sha256=content_sha256(body),
             location="filesystem",
+            discards_advisory=advisory,
         )
 
 

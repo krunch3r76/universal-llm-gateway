@@ -324,6 +324,20 @@ def resolve_fs_ingress(
     )
 
 
+def _bare_path_implies_cortex(rel_path: str) -> bool:
+    """True when a schemeless path is under a known cortex file-root dir.
+
+    Bare ``notes/system/specs/...`` (and other CORTEX_FILE_ROOT_DIRS prefixes)
+    live under CORTEX_FILES_ROOT, not PROJECT_ROOT. Without this, admission
+    readers that strip ``cortex://`` (or cite the bare form) resolve under
+    workspaces and spuriously report ``implement_spec_unreadable`` while
+    ``doc_validate(path=cortex://...)`` and ``fs(sandbox=cortex)`` succeed
+    (friction 23230).
+    """
+    first = rel_path.strip("/").split("/", 1)[0].lower()
+    return first in {d.lower() for d in CORTEX_FILE_ROOT_DIRS}
+
+
 def resolve_schemed_packet(
     path_or_uri: str,
     *,
@@ -331,6 +345,8 @@ def resolve_schemed_packet(
     cortex_root_override: Path | None = None,
 ) -> SchemeResolution:
     parsed = parse_schemed_path(path_or_uri)
+    if parsed.scheme is None and _bare_path_implies_cortex(parsed.rel_path):
+        parsed = ParsedSchemedPath(scheme="cortex", rel_path=parsed.rel_path)
     sandbox_root = _sandbox_root(
         parsed,
         workspaces_root_override=workspaces_root_override,

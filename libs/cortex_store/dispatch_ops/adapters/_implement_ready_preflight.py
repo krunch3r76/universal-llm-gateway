@@ -9,7 +9,6 @@ from typing import Any
 from implement_admission.dense_spec_schema import (
     DENSE_SPEC_RE,
     dense_spec_hash_uri,
-    spec_basename,
 )
 from implement_admission.gate_distillation import read_dense_spec_text
 from implement_admission.implement_ready_gate_resolve import (
@@ -118,16 +117,11 @@ def _select_cited_spec_uri(
     *,
     source_uri: str | None,
 ) -> str | None:
-    cited = [u for u in evidence if DENSE_SPEC_RE.search(u)]
-    if not cited:
-        return None
-    source_base = spec_basename(source_uri or "")
-    if source_base is None:
-        return cited[0]
-    for uri in cited:
-        if spec_basename(uri) == source_base:
-            return uri
-    return cited[0]
+    from implement_admission.implement_ready_gate_resolve import (
+        select_cited_dense_spec_uri,
+    )
+
+    return select_cited_dense_spec_uri(evidence, source_uri=source_uri)
 
 
 class _CortexOpsShim:
@@ -179,8 +173,23 @@ def _resolve_skeptic_outcome(
 
 
 def _spec_path_from_uri(uri: str) -> str | None:
+    """Return a readable dense-spec path, preserving Share URI scheme.
+
+    Historically this returned only the ``DENSE_SPEC_RE`` capture (bare
+    ``notes/system/specs/...``), which dropped ``cortex://`` and forced the
+    admission reader to guess the sandbox. Prefer the original URI when it
+    already carries a scheme; otherwise return the bare capture (resolver
+    infers cortex for CORTEX_FILE_ROOT prefixes — friction 23230).
+    """
     match = DENSE_SPEC_RE.search(uri)
-    return match.group(0) if match else None
+    if not match:
+        return None
+    stripped = uri.strip()
+    if "://" in stripped or stripped.lower().startswith(
+        ("cortex:", "workspaces:", "ws:", "files:")
+    ):
+        return stripped
+    return match.group(0)
 
 
 def _op_implement_ready_preflight(

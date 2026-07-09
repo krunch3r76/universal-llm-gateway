@@ -19,6 +19,7 @@ from ._recon_sidecar import (
     content_sha256 as recon_content_sha256,
 )
 from ._recon_sidecar import (
+    discards_advisory,
     recon_sidecar_uri,
     render_recon_sidecar_markdown,
     resolve_recon_target,
@@ -63,12 +64,16 @@ def _op_recon_sidecar_write(
         path = write_recon_sidecar_file(label, theme, md)
     except ValueError as exc:
         return {"error": str(exc)}
-    return {
+    envelope: dict[str, Any] = {
         "uri": recon_sidecar_uri(label_slug, theme_slug),
         "path": path,
         "sha256": digest,
         "body_chars": len(body),
     }
+    advisory = discards_advisory(body)
+    if advisory:
+        envelope["discards_advisory"] = advisory
+    return envelope
 
 
 def _op_thread_sidecar_write(

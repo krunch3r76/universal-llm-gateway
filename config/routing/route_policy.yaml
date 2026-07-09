@@ -31,6 +31,7 @@ routes:
   #   implement → cursor/composer-2.5 (role default)
   #   recon / investigate-emphasis light-bounded → cursor/grok-4.5 via model= override
   #   pure-mechanical inventory → Composer OK
+  #   resident task-class→model table → consult-routing § Task-class model reference
   implement:
     cursor-sdk:
       dispatch_kind: implement

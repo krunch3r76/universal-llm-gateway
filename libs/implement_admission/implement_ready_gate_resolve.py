@@ -183,9 +183,7 @@ def resolve_skeptic_ratification(
             continue
         if item.get("entity_id") != todo_id:
             continue
-        if not _predicate_matches(
-            item, target, match_claim_prefix=match_claim_prefix
-        ):
+        if not _predicate_matches(item, target, match_claim_prefix=match_claim_prefix):
             continue
         if not assertion_active(item, now_iso=now_iso):
             saw_predicate_inactive = True
@@ -229,8 +227,7 @@ def resolve_skeptic_ratification(
     return SkepticRatificationOutcome(
         ratified=False,
         reason=(
-            "no confirmed active assertion with predicate_form "
-            f"{predicate} was found"
+            f"no confirmed active assertion with predicate_form {predicate} was found"
         ),
     )
 
@@ -245,13 +242,25 @@ def select_cited_dense_spec_uri(
     cited = [u for u in evidence_uris if DENSE_SPEC_RE.search(u)]
     if not cited:
         return None
+
+    def _prefer_schemed(candidates: list[str]) -> str:
+        for uri in candidates:
+            lower = uri.strip().lower()
+            if lower.startswith("cortex://") or lower.startswith("cortex:"):
+                return uri
+        for uri in candidates:
+            lower = uri.strip().lower()
+            if "://" in lower or lower.startswith(("workspaces:", "ws:", "files:")):
+                return uri
+        return candidates[0]
+
     source_base = spec_basename(source_uri or "")
     if source_base is None:
-        return cited[0]
-    for uri in cited:
-        if spec_basename(uri) == source_base:
-            return uri
-    return None
+        return _prefer_schemed(cited)
+    matched = [uri for uri in cited if spec_basename(uri) == source_base]
+    if matched:
+        return _prefer_schemed(matched)
+    return _prefer_schemed(cited)
 
 
 def read_dense_spec_text(

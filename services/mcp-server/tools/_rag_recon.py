@@ -89,6 +89,31 @@ def _relevance_tag(chunks_found: int, content_length: int) -> str:
     return "SKIP"
 
 
+def _build_discards_section(
+    queries: list[str],
+    query_results: list[dict[str, Any]],
+) -> str:
+    lines = ["", "## Discards", ""]
+    discard_lines: list[str] = []
+    for query, result in zip(queries, query_results, strict=False):
+        if result.get("error"):
+            discard_lines.append(f"- `{query}` — search failed: {result['error']}")
+            continue
+        tag = _relevance_tag(
+            int(result.get("chunks_found") or 0),
+            int(result.get("content_length") or 0),
+        )
+        if tag == "SKIP":
+            discard_lines.append(
+                f"- `{query}` — no relevant hits (below MARGINAL threshold)"
+            )
+    if discard_lines:
+        lines.extend(discard_lines)
+    else:
+        lines.append("_None._")
+    return "\n".join(lines)
+
+
 def _build_theme_markdown(
     *,
     theme: str,
@@ -130,6 +155,7 @@ def _build_theme_markdown(
                 "",
             ]
         )
+    lines.append(_build_discards_section(queries, query_results).lstrip("\n"))
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -222,6 +248,8 @@ def execute_rag_recon(
             entry["uri"] = sink_result.uri
             entry["sha256"] = sink_result.sha256
             entry["location"] = sink_result.location
+            if sink_result.discards_advisory:
+                entry["discards_advisory"] = sink_result.discards_advisory
             evidence_uris.append(sink_result.uri)
         theme_results.append(entry)
 

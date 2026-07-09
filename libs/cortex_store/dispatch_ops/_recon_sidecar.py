@@ -12,6 +12,8 @@ from ._shared import _FILES_ROOT
 
 _RECON_SUBDIR = ("notes", "system", "recon")
 _SLUG_MAXLEN = 60
+_SKIP_TAG_RE = re.compile(r"\[SKIP\]")
+_DISCARDS_HEADING_RE = re.compile(r"^## Discards\s*$", re.MULTILINE)
 
 
 def slugify(value: str, *, default: str = "recon") -> str:
@@ -25,6 +27,18 @@ def recon_sidecar_uri(label_slug: str, theme_slug: str) -> str:
 
 def content_sha256(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+def discards_advisory(body: str) -> str | None:
+    """Return advisory when body has SKIP tags but no ## Discards heading."""
+    if _DISCARDS_HEADING_RE.search(body):
+        return None
+    if not _SKIP_TAG_RE.search(body):
+        return None
+    return (
+        "Body contains [SKIP]-tagged content but no ## Discards section; "
+        "add ## Discards (one line per SKIP anchor) for escalation veto surface."
+    )
 
 
 def _recon_root() -> Path:
