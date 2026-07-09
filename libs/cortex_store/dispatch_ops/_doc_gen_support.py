@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from . import _DEPRECATED_PARAM_NAMES, _INTERNAL_PARAMS, _OP_SPECS
-from ._session_close_doc_type import _SESSION_CLOSE_REQUIRED_FIELDS
+from ._doc_required_by_op import _DOC_REQUIRED_BY_OP
 from ._shared import _ENTITY_MUTABLE
 
 START_MARKER = "# >>> AUTOGEN:cortex-ops (do not edit) >>>"
@@ -24,16 +24,6 @@ TOOLS_PY = _PKG_ROOT / "libs/agent_seat/tools.py"
 
 ALIAS_AMBIGUOUS = "alias_canonical_ambiguous"
 _DISPATCH_PKG = "cortex_store.dispatch_ops"
-
-# Handlers keep ``= None`` defaults so ``handler(**parsed)`` yields structured
-# ``{field}.required`` errors instead of TypeError when callers omit keys.
-# Signature inspection alone therefore marks those params optional in the MCP
-# prose descriptor — override here when validation (or the Pydantic contract)
-# requires them. Friction 23129: session_close / session_close_preflight.
-_DOC_REQUIRED_BY_OP: Mapping[str, frozenset[str]] = {
-    "session_close": frozenset(_SESSION_CLOSE_REQUIRED_FIELDS),
-    "session_close_preflight": frozenset(_SESSION_CLOSE_REQUIRED_FIELDS),
-}
 
 
 @dataclass(frozen=True)

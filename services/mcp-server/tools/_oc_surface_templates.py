@@ -123,15 +123,14 @@ tools (xAI multi-agent rejects them; standard API path has no vortex). This plat
 
 CLAUDE_WEB_TOOL_SURFACE = """\
 ## ULG architecture orientation (claude-web — skill-first)
-Before findings / spec / orchestration on any universal-llm-gateway task, read BOTH
-from git SOT (Track A — `agent_skill:*` `source_uri` is `workspaces://…`):
-`fs(sandbox="workspaces", op="read", path="universal-llm-gateway/.cursor/skills/architecture-invariants/SKILL.md")` and
-`fs(sandbox="workspaces", op="read", path="universal-llm-gateway/.cursor/skills/ulg-architecture/SKILL.md")`.
-Other `required_skills` slugs: `entity_get(agent_skill:{slug})` → read `source_uri`
-(prefer `fs(workspaces, …)` when `workspaces://`). You have NO IDE `*_ws.mdc`
-auto-load backstop — `ulg-architecture` is in your manifest (partition
-`["claude-cursor","claude-web"]`) but the `fs` read is load-bearing, not optional.
-Discovery order: todo `required_skills` (resolve via `source_uri`) → ULG pair → boot manifest triggers → repo skills README → cortex agent-skills README.
+Before findings / spec / orchestration on any universal-llm-gateway task, load BOTH
+by canonical slug (platform/server injects bodies on trigger):
+`architecture-invariants` and `ulg-architecture` (`agent_skill:architecture-invariants`,
+`agent_skill:ulg-architecture`).
+Other `required_skills` slugs: **Load skill:** `{slug}` — ¬ fs-read skill markdown.
+You have NO IDE `*_ws.mdc` auto-load backstop — `ulg-architecture` is in your manifest
+(partition `["claude-cursor","claude-web"]`); the canonical slug load is load-bearing.
+Discovery order: todo `required_skills` (canonical slugs) → ULG pair → boot manifest triggers → repo skills README (index only).
 
 ## MCP binding (claude-web — read before dispatch)
 Server-primary tools are listed at boot (`tools/list` manifest line). Your

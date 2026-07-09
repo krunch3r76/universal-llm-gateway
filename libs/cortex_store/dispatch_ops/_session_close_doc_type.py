@@ -62,9 +62,9 @@ def _content_digest(data: bytes) -> str:
 
 def _resolve_skill_body_bytes(slug: str) -> bytes | None:
     from implement_admission.closeout_helpers import workspaces_root
-    from implement_admission.skill_fs_line import resolve_skill_source_uri
+    from implement_admission.skill_source_table import resolve_canonical_source_uri
 
-    uri = resolve_skill_source_uri(slug)
+    uri = resolve_canonical_source_uri(slug)
     candidates: list[str] = []
     if uri.startswith("workspaces://"):
         candidates.append(uri.removeprefix("workspaces://"))

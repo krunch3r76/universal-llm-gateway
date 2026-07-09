@@ -65,7 +65,11 @@ async def _upload_verified(
 
 
 async def _open_upload_dialog(page: Page) -> Locator:
-    """Add → Upload a skill → return file input."""
+    """Add → Upload a skill → return file input.
+
+    Claude.ai's Add menu is flaky (menuitem detaches / never stable). Retry with
+    force/JS click rather than failing the whole replace batch on one slug.
+    """
     if await _upload_modal_open(page):
         ready = await _file_input(page)
         if ready:
@@ -78,19 +82,63 @@ async def _open_upload_dialog(page: Page) -> Locator:
         raise RuntimeError(
             "Add button not found — open Customize → Skills (Browse + Add visible), then re-run"
         )
-    await add_btn.click()
-    await page.wait_for_timeout(600)
 
-    upload_item = page.get_by_role("menuitem", name=_UPLOAD_MENU)
-    if not await upload_item.count():
-        upload_item = page.locator("[role='menuitem']").filter(has_text=_UPLOAD_MENU)
-    if not await upload_item.count():
-        raise RuntimeError("Add → Upload a skill menu item not found")
-    await upload_item.first.click()
+    last_err: Exception | None = None
+    print("OPEN_UPLOAD_DIALOG patched-retry path", file=sys.stderr)
+    for attempt in range(5):
+        try:
+            print(f"OPEN_UPLOAD_DIALOG attempt={attempt}", file=sys.stderr)
+            await add_btn.click()
+            await page.wait_for_timeout(700 + 200 * attempt)
 
-    inp = page.locator('input[type="file"]')
-    await inp.first.wait_for(state="attached", timeout=15_000)
-    return inp.first
+            # Prefer aria-controls menu root — Playwright's menuitem click is flaky
+            # (detaches / never stable) on claude.ai Customize → Skills.
+            js_clicked = await page.evaluate(
+                """() => {
+                  const btn = document.querySelector('button[aria-label="Add skill"]')
+                    || document.querySelector('button[aria-haspopup="menu"]');
+                  const menuId = btn && btn.getAttribute('aria-controls');
+                  const root = (menuId && document.getElementById(menuId)) || document;
+                  const items = [...root.querySelectorAll('[role=menuitem]')];
+                  const target = items.find(el => /upload a skill/i.test(el.innerText || ''));
+                  if (!target) return {ok: false, n: items.length};
+                  target.click();
+                  return {ok: true, n: items.length};
+                }"""
+            )
+            if not js_clicked.get("ok"):
+                upload_item = page.get_by_role("menuitem", name=_UPLOAD_MENU)
+                if not await upload_item.count():
+                    upload_item = page.locator("[role='menuitem']").filter(
+                        has_text=_UPLOAD_MENU
+                    )
+                if not await upload_item.count():
+                    raise RuntimeError("Add → Upload a skill menu item not found")
+                try:
+                    await upload_item.first.click(force=True, timeout=5_000)
+                except Exception as click_exc:
+                    print(
+                        f"OPEN_UPLOAD_DIALOG force-click failed: {click_exc!r}; JS click",
+                        file=sys.stderr,
+                    )
+                    handle = await upload_item.first.element_handle()
+                    if handle is None:
+                        raise
+                    await page.evaluate("(el) => el.click()", handle)
+
+            inp = page.locator('input[type="file"]')
+            await inp.first.wait_for(state="attached", timeout=15_000)
+            return inp.first
+        except Exception as exc:
+            last_err = exc
+            print(f"OPEN_UPLOAD_DIALOG attempt={attempt} err={exc!r}", file=sys.stderr)
+            await page.keyboard.press("Escape")
+            await page.wait_for_timeout(400)
+            add_btn = await _find_add_button(page) or add_btn
+
+    raise RuntimeError(
+        f"Add → Upload a skill failed after retries: {last_err}"
+    )
 
 
 async def _modal_error_text(page: Page) -> str | None:

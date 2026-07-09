@@ -16,8 +16,8 @@ from implement_admission.admission_read import (
     compute_packet_sha256,
     replace_frontmatter_value,
 )
-from implement_admission.skill_fs_line import SkillSourceResolveError
 from implement_admission.skill_source_table import (
+    SkillSourceResolveError,
     canonical_table_key,
     resolve_canonical_source_uri,
 )
