@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 import secrets
 from datetime import UTC, datetime
@@ -30,11 +31,18 @@ def mint_session_id(
     *,
     mode: SessionMintMode = SessionMintMode.LIVE,
     at: datetime | None = None,
+    suffix: str | None = None,
 ) -> str:
-    """Mint a unique session ID: ``{seat_slug}-YYYY-MM-DD-HHMMSS-{3hex}``."""
+    """Mint a unique session ID: ``{seat_slug}-YYYY-MM-DD-HHMMSS-{3hex}``.
+
+    Pass *suffix* (3 hex chars) for deterministic derivation (JSONL start);
+    omit for a fresh random suffix (boot / live mint).
+    """
     t = at or datetime.now(UTC)
-    suffix = secrets.token_hex(2)[:3]
-    body = f"{seat_slug}-{t.strftime('%Y-%m-%d-%H%M%S')}-{suffix}"
+    hex_suffix = suffix if suffix is not None else secrets.token_hex(2)[:3]
+    if not re.fullmatch(r"[0-9a-f]{3}", hex_suffix):
+        raise ValueError(f"session_id suffix must be 3 hex chars, got {hex_suffix!r}")
+    body = f"{seat_slug}-{t.strftime('%Y-%m-%d-%H%M%S')}-{hex_suffix}"
     if mode == SessionMintMode.INSPECT:
         return f"inspect-{body}"
     return body
@@ -45,8 +53,19 @@ def session_id_time_base(session_id: str) -> str:
     return re.sub(r"-[0-9a-f]{3}$", "", session_id)
 
 
-def derive_session_id_from_timestamp(agent: str, timestamp: str) -> str:
-    """Derive a session ID from agent + ISO or date fragment timestamp."""
+def derive_session_id_from_timestamp(
+    agent: str,
+    timestamp: str,
+    *,
+    deterministic: bool = False,
+) -> str:
+    """Derive a session ID from agent + ISO or date fragment timestamp.
+
+    When *deterministic* is True and the timestamp parses, the 3-hex suffix is
+    a stable hash of ``agent|iso`` so successive JSONL-start derivations do not
+    flap (friction 23205). Unparseable timestamps still fall through to a live
+    wall-clock mint unless the caller refuses that path.
+    """
     match = _TIMESTAMP_PARSE_RE.search(timestamp)
     if match:
         year, mon, day, hour, minute, second = match.groups()
@@ -59,5 +78,9 @@ def derive_session_id_from_timestamp(agent: str, timestamp: str) -> str:
             int(second or "0"),
             tzinfo=UTC,
         )
+        if deterministic:
+            iso = at.strftime("%Y-%m-%d-%H%M%S")
+            digest = hashlib.sha256(f"{agent}|{iso}".encode()).hexdigest()[:3]
+            return mint_session_id(agent, at=at, suffix=digest)
         return mint_session_id(agent, at=at)
     return mint_session_id(agent)

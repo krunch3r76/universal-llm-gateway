@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from agent_seat.session_id import session_id_time_base
 from fastapi import HTTPException
 from universal_logging import get_logger
 
@@ -298,21 +297,27 @@ def _op_session_close_preflight(
         from_jsonl = derive_session_id_from_jsonl_start(
             jsonl_path=jsonl_resolved, agent=agent
         )
-        preflight["session_id_from_jsonl_start"] = from_jsonl
-        if session_id_time_base(session_id) != session_id_time_base(from_jsonl):
-            preflight["session_id"] = from_jsonl
+        if from_jsonl is not None:
+            preflight["session_id_from_jsonl_start"] = from_jsonl
+            # Boot-held / caller session_id is authoritative (friction 23205).
+            # Expose JSONL-start for the no-boot copy-paste path; do not
+            # overwrite the supplied ID or fail validate on a time-base delta.
+        else:
+            # No <timestamp> tag and no st_birthtime — keep boot-held
+            # session_id. Never mint from st_mtime (Linux append race).
+            preflight["jsonl_start_reason"] = "missing_jsonl_start_timestamp"
         prior_suggestion = derive_prior_session_id_from_jsonl_path(
             jsonl_path=jsonl_resolved, agent=agent
         )
         if prior_suggestion:
             preflight["prior_session_id_suggestion"] = prior_suggestion
-        timing_hint = session_id_timing_hint(
+        timing_note = session_id_timing_hint(
             session_id=session_id,
             jsonl_path=jsonl_resolved,
             agent=agent,
         )
-        if timing_hint:
-            preflight["warnings"] = [*structural_warnings, timing_hint]
+        if timing_note:
+            preflight["session_id_timing_note"] = timing_note
     todo_recon = todo_reconciliation_preflight_fields(entity_ids)
     preflight.update(todo_recon)
     if todo_recon.get("todo_reconciliation_warning"):
