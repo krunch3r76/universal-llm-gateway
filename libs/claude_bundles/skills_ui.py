@@ -9,6 +9,7 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
+from playwright.async_api import Page
 from universal_logging import get_logger
 
 from claude_bundles.skills_api import (
@@ -16,6 +17,7 @@ from claude_bundles.skills_api import (
     prepare_ui_upload_artifact,
 )
 from claude_bundles.skills_ui_evidence import (
+    ComposerPollutedError,
     RunReport,
     capture_failure_state,
     composer_has_attachments,
@@ -65,7 +67,16 @@ def _network_status(oracle: UploadNetworkOracle | None, slug: str) -> dict | Non
         "ok": result.ok,
         "status": result.status,
         "slug_echoed": result.slug_echoed,
+        "skill_upload_url": result.skill_upload_url or oracle.skill_upload_url,
     }
+
+
+async def _assert_composer_clean(page: Page, slug: str) -> None:
+    if await composer_has_attachments(page):
+        raise ComposerPollutedError(
+            f"Composer polluted after {slug} upload — attachment chips detected; "
+            "operator chat was not mutated"
+        )
 
 
 async def run_preflight_session(cdp_url: str) -> None:
@@ -188,9 +199,15 @@ async def upload_skills(
                         oracle=oracle,
                     )
                     nav_gate.network_verified = True
+                    await _assert_composer_clean(page, slug)
                     uploaded.append(slug)
                     table_before.add(slug.lower())
-                    report.record_success(slug, mode=mode, network_status=_network_status(oracle, slug))
+                    report.record_success(
+                        slug,
+                        mode=mode,
+                        network_status=_network_status(oracle, slug),
+                        skill_upload_url=oracle.skill_upload_url,
+                    )
                     print(f"OK {slug}", file=sys.stderr)
                     last_exc = None
                     break
@@ -201,6 +218,23 @@ async def upload_skills(
                     await _dismiss_modals(page)
                     if continue_on_error:
                         break
+                    raise
+                except ComposerPollutedError as exc:
+                    last_exc = exc
+                    print(f"ERROR {slug} (composer polluted): {exc}", file=sys.stderr)
+                    evidence = await capture_failure_state(page, slug, effective_run_dir, oracle)
+                    report.composer_polluted = True
+                    report.record_failure(
+                        slug,
+                        mode=mode,
+                        error=str(exc),
+                        attempts=attempts,
+                        evidence=evidence,
+                        network_status=_network_status(oracle, slug) if oracle else None,
+                    )
+                    await _dismiss_modals(page)
+                    if continue_on_error:
+                        continue
                     raise
                 except Exception as exc:
                     last_exc = exc
@@ -252,6 +286,10 @@ async def upload_skills(
                 if child.is_dir():
                     child.rmdir()
             staging.rmdir()
+        if report.composer_polluted:
+            raise ComposerPollutedError(
+                "Composer polluted at end of run — attachment chips detected"
+            )
     return uploaded
 
 

@@ -56,7 +56,7 @@ def _append_skills_mount_tool(body: dict[str, Any], req: FrontierRequest, *, ven
 
 
 class RemoteMcpUnsupportedError(RuntimeError):
-    """Raised when remote_mcp=True is requested for a vendor that does not support it.
+    """Raised when remote_mcp=True is blocked for this vendor by capability policy.
 
     Distinct from RemoteMcpEnvMissingError (misconfiguration) and NotImplementedError
     (unplanned gap) so callers can catch-and-degrade to the local tool loop.
@@ -181,8 +181,12 @@ class ResponsesAPIAdapter:
 
         if req.remote_mcp:
             if self._vendor == "xai":
+                # Vendor supports type:"mcp"; raise is policy while the card keeps
+                # mcp_remote_connector=False (production driver = client-side loop).
                 raise RemoteMcpUnsupportedError(
-                    'xAI does not yet support remote MCP (type:"mcp" tool entries)'
+                    'xAI remote MCP (type:"mcp") is disabled by capability policy '
+                    "(mcp_remote_connector=False); use the client-side tool loop "
+                    "or flip the card after a separate design gate"
                 )
             if req.mcp_tool_loop:
                 raise ValueError(

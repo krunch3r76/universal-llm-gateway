@@ -87,6 +87,7 @@ tests/
 !libs/cortex_store/test_entity_update_trait_write.py
 !libs/cortex_store/tests/test_register_skill_substrate.py
 !libs/cortex_store/dispatch_ops/test_mcp_doc_parity.py
+!libs/claude_bundles/test_skills_ui_upload.py
 !services/universal-stargate/systems/frontier_consult/test_implement_admission_materialize.py
 !services/universal-stargate/systems/frontier_consult/test_handoff_enrich.py
 # Root-anchored: rsync --filter=:- .gitignore ignores git ! negations.

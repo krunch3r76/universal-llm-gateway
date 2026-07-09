@@ -20,6 +20,10 @@ if TYPE_CHECKING:
 _UPLOAD_TITLE = __import__("re").compile(r"upload\s+skill", __import__("re").I)
 
 
+class ComposerPollutedError(RuntimeError):
+    """Chat composer has attachment chips — upload path must not mutate operator chat."""
+
+
 async def composer_has_attachments(page: Page) -> bool:
     """Detect file/skill chips in the chat composer (pollution probe)."""
     selectors = (
@@ -138,6 +142,7 @@ class SlugOutcome:
     error: str | None = None
     evidence_paths: dict[str, str] = field(default_factory=dict)
     network_status: dict[str, Any] | None = None
+    skill_upload_url: str | None = None
     composer_polluted: bool = False
 
 
@@ -148,14 +153,30 @@ class RunReport:
     finished_at: str | None = None
     outcomes: list[SlugOutcome] = field(default_factory=list)
     composer_polluted: bool = False
+    skill_upload_url: str | None = None
     uploaded: list[str] = field(default_factory=list)
     failed: list[str] = field(default_factory=list)
     skipped: int = 0
 
-    def record_success(self, slug: str, *, mode: str, network_status: dict | None) -> None:
+    def record_success(
+        self,
+        slug: str,
+        *,
+        mode: str,
+        network_status: dict | None,
+        skill_upload_url: str | None = None,
+    ) -> None:
         self.uploaded.append(slug)
+        if skill_upload_url:
+            self.skill_upload_url = skill_upload_url
         self.outcomes.append(
-            SlugOutcome(slug=slug, ok=True, mode=mode, network_status=network_status)
+            SlugOutcome(
+                slug=slug,
+                ok=True,
+                mode=mode,
+                network_status=network_status,
+                skill_upload_url=skill_upload_url,
+            )
         )
 
     def record_failure(

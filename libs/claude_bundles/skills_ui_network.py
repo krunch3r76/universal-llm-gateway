@@ -7,14 +7,22 @@ import json
 import re
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import urlparse
 
 from playwright.async_api import Page, Request, Response
 
-_SKILL_UPLOAD_URL = re.compile(
-    r"(?:/api/|graphql|/skills?|skill[_-]?upload|createSkill|uploadSkill|customize)",
+_POST_METHODS = frozenset({"POST", "PUT", "PATCH"})
+_NOISE_HOST_RE = re.compile(
+    r"(?:\.datadoghq\.com$|^browser-intake-|a-api\.anthropic\.com$)",
     re.I,
 )
-_POST_METHODS = frozenset({"POST", "PUT", "PATCH"})
+_NOISE_PATH_FRAGMENTS = (
+    "/api/v2/rum",
+    "/v1/b",
+    "/v1/m",
+    "/api/event_logging",
+)
+_SKILLS_NS_RE = re.compile(r"/api/organizations/[^/]+/skills", re.I)
 
 
 @dataclass
@@ -23,6 +31,7 @@ class UploadResult:
     status: int
     slug_echoed: bool
     slug: str
+    skill_upload_url: str | None = None
     log: list[dict[str, Any]] = field(default_factory=list)
 
 
@@ -44,20 +53,50 @@ def _slug_in_text(text: str, slug: str) -> bool:
     return stem in low
 
 
-def _is_upload_request(request: Request, slug: str) -> bool:
-    if request.method not in _POST_METHODS:
+def _is_noise_url(url: str) -> bool:
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    path = parsed.path or ""
+    if _NOISE_HOST_RE.search(host):
+        return True
+    return any(frag in path for frag in _NOISE_PATH_FRAGMENTS)
+
+
+def _is_skills_namespace_path(url: str) -> bool:
+    parsed = urlparse(url)
+    if (parsed.hostname or "").lower() != "claude.ai":
         return False
-    url = request.url
-    if not _SKILL_UPLOAD_URL.search(url):
-        post = request.post_data or ""
-        if not _slug_in_text(post, slug) and "skill" not in post.lower():
-            return False
-    else:
-        post = request.post_data or ""
-        if post and not _slug_in_text(post, slug) and "skill" not in post.lower():
-            if "graphql" not in url.lower():
-                return False
-    return True
+    path = parsed.path or ""
+    if _SKILLS_NS_RE.search(path):
+        return True
+    low_path = path.lower()
+    return "graphql" in low_path and "skill" in low_path
+
+
+def _is_skills_upload(
+    url: str,
+    method: str,
+    post_data: str,
+    body: str,
+    slug: str,
+) -> bool:
+    if method not in _POST_METHODS:
+        return False
+    if _is_noise_url(url):
+        return False
+    if not _is_skills_namespace_path(url):
+        return False
+    return _slug_in_text(post_data, slug) or _slug_in_text(body, slug)
+
+
+def _is_upload_request(request: Request, slug: str) -> bool:
+    return _is_skills_upload(
+        request.url,
+        request.method,
+        request.post_data or "",
+        "",
+        slug,
+    )
 
 
 class UploadNetworkOracle:
@@ -69,9 +108,14 @@ class UploadNetworkOracle:
         self._results: dict[str, UploadResult] = {}
         self._waiters: dict[str, list[asyncio.Future[UploadResult]]] = {}
         self._expected_slug: str | None = None
+        self._skill_upload_url: str | None = None
         self._attached = False
         self._on_request = self._handle_request
         self._on_response = self._handle_response
+
+    @property
+    def skill_upload_url(self) -> str | None:
+        return self._skill_upload_url
 
     def expect_slug(self, slug: str) -> None:
         self._expected_slug = slug
@@ -153,23 +197,24 @@ class UploadNetworkOracle:
             }
             self._log.append(entry)
 
-            if request.method not in _POST_METHODS:
-                return
-            if not _SKILL_UPLOAD_URL.search(response.url):
-                post = request.post_data or ""
-                if "skill" not in post.lower() and "graphql" not in response.url.lower():
-                    return
-
             slug = self._expected_slug or self._infer_slug(request, body)
             if not slug:
                 return
-            slug_echoed = _slug_in_text(body, slug) or (200 <= status < 300)
+            post_data = request.post_data or ""
+            if not _is_skills_upload(response.url, request.method, post_data, body, slug):
+                return
+
+            slug_echoed = _slug_in_text(post_data, slug) or _slug_in_text(body, slug)
             ok = 200 <= status < 300 and slug_echoed
+            upload_url = response.url if ok else None
+            if upload_url:
+                self._skill_upload_url = upload_url
             result = UploadResult(
                 ok=ok,
                 status=status,
                 slug_echoed=slug_echoed,
                 slug=slug,
+                skill_upload_url=upload_url,
                 log=self.captured_log(),
             )
             self._resolve_waiters(slug, result)

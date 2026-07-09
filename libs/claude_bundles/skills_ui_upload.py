@@ -21,14 +21,19 @@ from claude_bundles.skills_ui_panel import (
     NavigationGate,
     _dismiss_modals,
     _find_add_button,
-    open_skills_panel,
+    _is_skills_url,
+    _js_click_upload_menuitem,
+    _panel_lost_mid_attempt,
+    _recover_panel_spa,
+    _stability_guarded_add_click,
+    _upload_modal_open,
+    _upload_modal_root,
     panel_state_summary,
     slug_in_skills_table,
     snapshot_slug_row,
 )
 
 _UPLOAD_MENU = re.compile(r"upload a skill", re.I)
-_UPLOAD_TITLE = re.compile(r"upload\s+skill", re.I)
 _DROP_ZONE = re.compile(r"click to upload|drag and drop", re.I)
 _UPLOAD_BTN = re.compile(r"^upload$", re.I)
 _REJECT_RE = re.compile(
@@ -45,34 +50,21 @@ class UploadModalMissingError(RuntimeError):
     """Upload modal absent — refuse page-wide file input."""
 
 
-async def _upload_modal_root(page: Page) -> Locator | None:
-    overlays = page.locator('[data-state="open"].fixed, [role="dialog"]')
-    for i in range(await overlays.count()):
-        ov = overlays.nth(i)
-        if not await ov.is_visible():
-            continue
-        if _UPLOAD_TITLE.search(await ov.inner_text()):
-            return ov
-    title = page.get_by_text(_UPLOAD_TITLE)
-    if await title.count() and await title.first.is_visible():
-        parent = title.first.locator(
-            "xpath=ancestor::*[@data-state='open' or @role='dialog'][1]"
+async def _assert_upload_modal_scoped(page: Page) -> Locator:
+    if not _is_skills_url(page.url):
+        raise UploadModalMissingError(
+            f"Not on skills panel URL — refusing file input ({page.url})"
         )
-        if await parent.count():
-            return parent.first
-    return None
-
-
-async def _upload_modal_open(page: Page) -> bool:
-    return await _upload_modal_root(page) is not None
-
-
-async def _modal_file_input(page: Page) -> Locator:
     root = await _upload_modal_root(page)
     if root is None:
         raise UploadModalMissingError(
             "Upload modal not open — refusing page-wide file input"
         )
+    return root
+
+
+async def _modal_file_input(page: Page) -> Locator:
+    root = await _assert_upload_modal_scoped(page)
     inp = root.locator('input[type="file"]')
     if not await inp.count():
         raise UploadModalMissingError("Upload modal has no scoped file input")
@@ -141,24 +133,27 @@ async def _open_upload_dialog(
     last_err: Exception | None = None
     for attempt in range(5):
         try:
-            await add_btn.click()
-            await page.wait_for_timeout(700 + 200 * attempt)
+            add_btn = await _find_add_button(page)
+            if add_btn is None:
+                page = await _recover_panel_spa(page, context, nav_gate=nav_gate)
+                add_btn = await _find_add_button(page)
+                if add_btn is None:
+                    raise RuntimeError("Add button not found after SPA panel recovery")
 
-            handle = await add_btn.element_handle()
-            js_clicked = await page.evaluate(
-                """(btn) => {
-                  const el = btn || document.querySelector('button[aria-label="Add skill"]')
-                    || document.querySelector('button[aria-haspopup="menu"]');
-                  const menuId = el && el.getAttribute('aria-controls');
-                  const root = (menuId && document.getElementById(menuId)) || document;
-                  const items = [...root.querySelectorAll('[role=menuitem]')];
-                  const target = items.find(e => /upload a skill/i.test(e.innerText || ''));
-                  if (!target) return {ok: false, n: items.length};
-                  target.click();
-                  return {ok: true, n: items.length};
-                }""",
-                handle,
-            )
+            try:
+                await _stability_guarded_add_click(add_btn)
+            except Exception as click_exc:
+                print(f"OPEN_UPLOAD_DIALOG add-click failed: {click_exc!r}", file=sys.stderr)
+
+            await page.wait_for_timeout(400 + 150 * attempt)
+
+            if await _panel_lost_mid_attempt(page):
+                page = await _recover_panel_spa(page, context, nav_gate=nav_gate)
+                if await _find_add_button(page) is None:
+                    raise RuntimeError("Panel not recovered after nav-away to /new")
+                continue
+
+            js_clicked = await _js_click_upload_menuitem(page, add_btn)
             if not js_clicked.get("ok"):
                 upload_item = page.get_by_role("menuitem", name=_UPLOAD_MENU)
                 if not await upload_item.count():
@@ -186,11 +181,11 @@ async def _open_upload_dialog(
             print(f"OPEN_UPLOAD_DIALOG attempt={attempt} err={exc!r}", file=sys.stderr)
             await page.keyboard.press("Escape")
             await page.wait_for_timeout(400)
-            add_btn = await _find_add_button(page)
-            if add_btn is None:
-                page = await open_skills_panel(page, context, nav_gate=nav_gate)
-                add_btn = await _find_add_button(page)
-                if add_btn is None:
+            if await _panel_lost_mid_attempt(page):
+                page = await _recover_panel_spa(page, context, nav_gate=nav_gate)
+            if await _find_add_button(page) is None:
+                page = await _recover_panel_spa(page, context, nav_gate=nav_gate)
+                if await _find_add_button(page) is None:
                     break
 
     summary = await panel_state_summary(page, context)
@@ -215,21 +210,22 @@ async def _modal_error_text(page: Page) -> str | None:
 
 
 async def _select_file_in_modal(page: Page, skill_path: Path) -> None:
-    root = await _upload_modal_root(page)
-    if root is None:
-        raise UploadModalMissingError("Cannot select file — upload modal absent")
+    root = await _assert_upload_modal_scoped(page)
 
     resolved = str(skill_path.resolve())
     drop = root.filter(has_text=_DROP_ZONE)
     if await drop.count():
         trigger = drop.first.get_by_text(_DROP_ZONE)
         if await trigger.count():
+            root = await _assert_upload_modal_scoped(page)
             async with page.expect_file_chooser(timeout=15_000) as fc_info:
                 await trigger.first.click()
             chooser = await fc_info.value
+            root = await _assert_upload_modal_scoped(page)
             await chooser.set_files(resolved)
             return
 
+    root = await _assert_upload_modal_scoped(page)
     inp = root.locator('input[type="file"]')
     if not await inp.count():
         raise UploadModalMissingError("Upload modal has no file input or drop zone")
@@ -303,6 +299,7 @@ def _network_dict(result: UploadResult | None) -> dict | None:
         "status": result.status,
         "slug_echoed": result.slug_echoed,
         "slug": result.slug,
+        "skill_upload_url": result.skill_upload_url,
     }
 
 

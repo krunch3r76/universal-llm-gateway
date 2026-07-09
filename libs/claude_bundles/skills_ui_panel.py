@@ -100,6 +100,8 @@ async def _skills_panel_visible(page: Page) -> bool:
 
 
 async def _find_add_button(page: Page) -> Locator | None:
+    if not await _skills_panel_visible(page):
+        return None
     for loc in (
         page.get_by_role("button", name=re.compile(r"add skill", re.I)),
         page.locator('button[aria-label="Add skill"]'),
@@ -216,12 +218,23 @@ async def listed_skill_names(page: Page) -> set[str]:
 
 
 async def _reopen_skills_from_hash(page: Page) -> None:
-    customize = page.get_by_role("link", name=re.compile(r"customize", re.I))
-    if await customize.count() and await customize.first.is_visible():
-        await customize.first.click()
-        await page.wait_for_timeout(800)
+    # Hash alone no longer mounts Settings (2026-07 live): Customize is a
+    # sidebar *button*, not a link. Click it first so Skills/Connectors nav appears.
+    for customize in (
+        page.get_by_role("button", name=re.compile(r"customize", re.I)),
+        page.get_by_role("link", name=re.compile(r"customize", re.I)),
+        page.locator("a, button, [role='button'], [role='menuitem']").filter(
+            has_text=re.compile(r"^customize$", re.I)
+        ),
+    ):
+        btn = await _first_visible(customize)
+        if btn:
+            await btn.click()
+            await page.wait_for_timeout(1200)
+            break
 
     for skills in (
+        page.get_by_role("button", name=_SKILLS_NAV),
         page.get_by_role("tab", name=_SKILLS_NAV),
         page.get_by_role("link", name=_SKILLS_NAV),
         page.locator("a, button, [role='button'], [role='menuitem'], [role='tab']").filter(
@@ -247,6 +260,8 @@ async def _remount_skills(page: Page) -> None:
     await page.wait_for_timeout(1500)
     await page.goto(SKILLS_URL, wait_until="domcontentloaded")
     await page.wait_for_timeout(2500)
+    # Hash URL alone no longer mounts the Settings dialog — click Customize→Skills.
+    await _reopen_skills_from_hash(page)
 
 
 async def open_skills_panel(
@@ -323,16 +338,72 @@ async def run_preflight(page: Page, context: BrowserContext) -> None:
         )
 
 
-async def _upload_modal_open(page: Page) -> bool:
+async def _upload_modal_root(page: Page) -> Locator | None:
     overlays = page.locator('[data-state="open"].fixed, [role="dialog"]')
     for i in range(await overlays.count()):
         ov = overlays.nth(i)
         if not await ov.is_visible():
             continue
         if _UPLOAD_TITLE.search(await ov.inner_text()):
-            return True
+            return ov
     title = page.get_by_text(_UPLOAD_TITLE)
-    return bool(await title.count() and await title.first.is_visible())
+    if await title.count() and await title.first.is_visible():
+        parent = title.first.locator(
+            "xpath=ancestor::*[@data-state='open' or @role='dialog'][1]"
+        )
+        if await parent.count():
+            return parent.first
+    return None
+
+
+async def _recover_panel_spa(
+    page: Page,
+    context: BrowserContext,
+    *,
+    nav_gate: NavigationGate | None,
+) -> Page:
+    await _reopen_skills_from_hash(page)
+    await page.wait_for_timeout(1500)
+    if not await _skills_panel_visible(page):
+        await _hash_cycle(page)
+        await page.wait_for_timeout(1500)
+    if not await _skills_panel_visible(page):
+        page = await open_skills_panel(page, context, nav_gate=nav_gate)
+    return page
+
+
+async def _panel_lost_mid_attempt(page: Page) -> bool:
+    if page.url.rstrip("/").endswith("/new") and not _is_skills_url(page.url):
+        return True
+    return not await _skills_panel_visible(page)
+
+
+async def _stability_guarded_add_click(add_btn: Locator) -> None:
+    await add_btn.scroll_into_view_if_needed()
+    await add_btn.wait_for(state="visible", timeout=3_000)
+    await add_btn.click(timeout=3_000)
+
+
+async def _js_click_upload_menuitem(page: Page, add_btn: Locator) -> dict:
+    handle = await add_btn.element_handle()
+    return await page.evaluate(
+        """(btn) => {
+          const el = btn || document.querySelector('button[aria-label="Add skill"]')
+            || document.querySelector('button[aria-haspopup="menu"]');
+          const menuId = el && el.getAttribute('aria-controls');
+          const root = (menuId && document.getElementById(menuId)) || document;
+          const items = [...root.querySelectorAll('[role=menuitem]')];
+          const target = items.find(e => /upload a skill/i.test(e.innerText || ''));
+          if (!target) return {ok: false, n: items.length};
+          target.click();
+          return {ok: true, n: items.length};
+        }""",
+        handle,
+    )
+
+
+async def _upload_modal_open(page: Page) -> bool:
+    return await _upload_modal_root(page) is not None
 
 
 async def _dismiss_modals(page: Page) -> None:

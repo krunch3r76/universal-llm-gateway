@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import logging
 import os
 import re
 import subprocess
@@ -34,6 +35,8 @@ from _skill_terms import (  # noqa: E402
     derive_trigger_match_terms_from_vocab,
 )
 from transport_utils import DEFAULT_CORTEX_URL, make_sync_client  # noqa: E402
+
+_log = logging.getLogger(__name__)
 
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---", re.DOTALL)
 _PRESERVE_SLUGS = frozenset(
@@ -118,7 +121,8 @@ def _skill_paths(slug: str, root: Path) -> tuple[Path | None, Path | None]:
 def _existing_frontmatter_terms(path: Path) -> list[str] | None:
     try:
         text = path.read_text(encoding="utf-8")
-    except OSError:
+    except OSError as exc:
+        _log.warning("failed to read skill frontmatter at %s: %s", path, exc)
         return None
     fm = parse_frontmatter(text)
     terms = fm.get("trigger_match_terms")
