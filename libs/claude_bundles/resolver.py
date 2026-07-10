@@ -132,6 +132,7 @@ _CLAUDE_BUNDLE_D: list[str] = [
     "lawyer-stance",
     "document-review-timeline-linkage-audit",
     "psych-framework-counsel",
+    "writing-discipline-outbound",
 ]
 
 CLAUDE_BUNDLE_SLUGS: list[str] = _CLAUDE_BUNDLE_U + _CLAUDE_BUNDLE_E + _CLAUDE_BUNDLE_D
