@@ -32,6 +32,14 @@ CANONICAL_SLUG_ALIASES: dict[str, str] = {
 # Slugs that must persist without a resolvable live source_uri (slug → uri).
 _REQUIRED_EXTRA_SLUGS: dict[str, str] = {}
 
+# Committed slugs intentionally removed from live — generator skips UNEXPECTED_DROP.
+_ACCEPTED_DROPS: frozenset[str] = frozenset(
+    {
+        # retired per operator ruling a:23069 (2026-07-08)
+        "claudeburst-shadow-ops",
+    }
+)
+
 _EXIT_BYTE_DRIFT = 1
 _EXIT_LIVE_READ_FAILURE = 2
 _EXIT_INVARIANT_VIOLATION = 3
@@ -146,7 +154,7 @@ def _check_unexpected_drop(live: dict[str, str]) -> None:
     live_keys = {canonical_table_key(slug) for slug in live}
     extra_keys = {canonical_table_key(slug) for slug in _REQUIRED_EXTRA_SLUGS}
     committed_keys = set(CANONICAL_SKILL_SOURCE_URIS)
-    dropped = committed_keys - (live_keys | extra_keys)
+    dropped = committed_keys - (live_keys | extra_keys | _ACCEPTED_DROPS)
     if dropped:
         _fail(
             "UNEXPECTED_DROP",

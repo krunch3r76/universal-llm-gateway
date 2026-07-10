@@ -23,11 +23,11 @@ CANONICAL_SLUG_ALIASES: Final[dict[str, str]] = {
 # Generated from live Cortex entities — prefer substantiated ``rule:`` ``source_uri``.
 CANONICAL_SKILL_SOURCE_URIS: Final[dict[str, str]] = {
     "add-mcp-tool": "workspaces://universal-llm-gateway/.cursor/skills/add-mcp-tool/SKILL.md",
-    "advisor-timing": "workspaces://universal-llm-gateway/.cursor/skills/advisor-timing/SKILL.md",
+    "advisor-timing": "docs/agent-guides/rules/advisor-timing.md",
     "agent-bus-discipline": "workspaces://universal-llm-gateway/.cursor/skills/agent-bus-discipline/SKILL.md",
     "agent-bus-multitask": "workspaces://universal-llm-gateway/.cursor/skills/agent-bus-multitask/SKILL.md",
     "agent-guidance-writing": "workspaces://universal-llm-gateway/.cursor/skills/agent-guidance-writing/SKILL.md",
-    "agent-identity-signoff": "workspaces://universal-llm-gateway/.cursor/skills/agent-identity-signoff/SKILL.md",
+    "agent-identity-signoff": "docs/agent-guides/rules/agent-identity-signoff.md",
     "architecture-invariants": "workspaces://universal-llm-gateway/.cursor/skills/architecture-invariants/SKILL.md",
     "auditor-validatable-confidence": "workspaces://universal-llm-gateway/.cursor/skills/auditor-validatable-confidence/SKILL.md",
     "boot-execution-discipline": "workspaces://universal-llm-gateway/.cursor/skills/boot-execution-discipline/SKILL.md",
@@ -35,7 +35,6 @@ CANONICAL_SKILL_SOURCE_URIS: Final[dict[str, str]] = {
     "case-evidence-retrieval": "workspaces://universal-llm-gateway/.cursor/skills/case-evidence-retrieval/SKILL.md",
     "cheap-recon-before-escalation": "workspaces://universal-llm-gateway/.cursor/skills/cheap-recon-before-escalation/SKILL.md",
     "claude-ai-bundle-sync": "workspaces://universal-llm-gateway/.cursor/skills/claude-ai-bundle-sync/SKILL.md",
-    "claudeburst-shadow-ops": "agent-skills/claudeburst-shadow-ops.md",
     "commit-and-git-scope": "workspaces://universal-llm-gateway/.cursor/skills/commit-and-git-scope/SKILL.md",
     "completion-provenance-discipline": "workspaces://universal-llm-gateway/.cursor/skills/completion-provenance-discipline/SKILL.md",
     "consensus-steelman-posture": "workspaces://universal-llm-gateway/.cursor/skills/consensus-steelman-posture/SKILL.md",
@@ -74,7 +73,7 @@ CANONICAL_SKILL_SOURCE_URIS: Final[dict[str, str]] = {
     "fs": "workspaces://universal-llm-gateway/.cursor/skills/fs/SKILL.md",
     "git-posture": "workspaces://universal-llm-gateway/.cursor/skills/git-posture/SKILL.md",
     "handoff-packet-authoring": "workspaces://universal-llm-gateway/.cursor/skills/handoff-packet-authoring/SKILL.md",
-    "handoff-pickup": "workspaces://universal-llm-gateway/.cursor/skills/handoff-pickup/SKILL.md",
+    "handoff-pickup": "docs/agent-guides/rules/handoff-pickup.md",
     "handoff-prompt-authoring": "workspaces://universal-llm-gateway/.cursor/skills/handoff-prompt-authoring/SKILL.md",
     "image-video-generation": "workspaces://universal-llm-gateway/.cursor/skills/image-video-generation/SKILL.md",
     "implement-todo": "workspaces://universal-llm-gateway/.cursor/skills/implement-todo/SKILL.md",
@@ -129,9 +128,10 @@ CANONICAL_SKILL_SOURCE_URIS: Final[dict[str, str]] = {
     "w2-ingestion": "workspaces://universal-llm-gateway/.cursor/skills/w2-ingestion/SKILL.md",
     "web-generate-substrate": "workspaces://universal-llm-gateway/.cursor/skills/web-generate-substrate/SKILL.md",
     "web-transcript-preprocessing": "workspaces://universal-llm-gateway/.cursor/skills/web-transcript-preprocessing/SKILL.md",
+    "writing-discipline-outbound": "workspaces://universal-llm-gateway/.cursor/skills/writing-discipline-outbound/SKILL.md",
 }
 
-TABLE_DIGEST: Final[str] = "sha256:04661c9a0ec86a6f076894d17e95392f58f1680ad31856b162c02684602742f1"
+TABLE_DIGEST: Final[str] = "sha256:0a85d4814b4c4c2ed74721a72612d55aaa2e874901bb1b89a66e9c9ff5056001"
 # fmt: on
 
 
