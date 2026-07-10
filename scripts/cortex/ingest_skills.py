@@ -8,7 +8,7 @@ retype — ``_skill_projection._upsert`` skips slugs already migrated to
 todo:skills-ingest-role-aware.
 
 Workspace: ``.cursor/skills/*/SKILL.md`` (description, applicable_agents, …).
-Cortex SOT: ``$CORTEX_FILES_ROOT/agent-skills/*.md`` (description, declared attrs, …).
+SOT bodies: ``.cursor/skills/{slug}/SKILL.md`` (description, declared attrs, …).
 
 Steady-state companion graph sync (attribute + ``references`` edges) is **always**
 ``python scripts/cortex/ingest_skills.py`` after editing a declared companion list.
@@ -184,9 +184,9 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     scanned = _scan_skills(args.root.resolve())
-    cortex_meta = _scan_cortex_sot_metadata()
-    cortex_declared = _scan_cortex_sot_declared()
-    cortex_sot = _scan_cortex_sot_skills()
+    cortex_meta = _scan_cortex_sot_metadata(args.root.resolve())
+    cortex_declared = _scan_cortex_sot_declared(args.root.resolve())
+    cortex_sot = _scan_cortex_sot_skills(args.root.resolve())
 
     try:
         client = make_sync_client(DEFAULT_CORTEX_URL)
@@ -222,7 +222,7 @@ def main(argv: list[str] | None = None) -> int:
         return _audit_terms(client, scanned)
 
     if args.audit_parity:
-        lines = _audit_parity(scanned)
+        lines = _audit_parity(scanned, args.root.resolve())
         print(f"Parity: {len(lines)} cross-surface gap(s)")
         for line in lines:
             print(f"  - {line}")
@@ -268,9 +268,9 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print(f"Ingesting {len(scanned)} workspace skills")
     if cortex_sot:
-        print(f"Cortex SOT projection rows: {len(cortex_sot)} skill(s)")
+        print(f"Cursor skills SOT projection rows: {len(cortex_sot)} skill(s)")
     if cortex_meta:
-        print(f"Cortex SOT metadata sync: {len(cortex_meta)} skill(s)")
+        print(f"Cursor skills SOT metadata sync: {len(cortex_meta)} skill(s)")
     if args.dry_run:
         print("DRY RUN — no writes will be issued")
     print()

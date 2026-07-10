@@ -5,16 +5,19 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-_CORTEX_SOT_RE = re.compile(
+_CURSOR_SKILLS_SOT_RE = re.compile(
     r"SOT:[\s`*]*"
-    r"(?:cortex://agent-skills/"
+    r"(?:workspaces://universal-llm-gateway/\.cursor/skills/"
+    r"|\.cursor/skills/"
+    r"|cortex://agent-skills/"
     r'|fs\(sandbox="cortex",\s*op="read",\s*path="agent-skills/)'
-    r"([A-Za-z0-9_-]+)\.md"
+    r"([A-Za-z0-9_-]+)(?:/SKILL\.md|\.md)?"
 )
+# Legacy alias — importers use _CORTEX_SOT_RE name; pattern now resolves .cursor/skills SOT.
+_CORTEX_SOT_RE = _CURSOR_SKILLS_SOT_RE
 _SUPPRESSED = frozenset({"deprecated", "retired"})
-# claudeburst-shadow-ops = operator hold-out ruling 22969 (intentionally cortex-tier source_uri)
 # todo-lifecycle = third-home docs/agent-guides/rules/todo-lifecycle.md hold-out
-_SOT_DRIFT_HOLDOUTS = frozenset({"claudeburst-shadow-ops", "todo-lifecycle"})
+_SOT_DRIFT_HOLDOUTS = frozenset({"todo-lifecycle"})
 # temporary — cleared by the 4559 hygiene wave
 # cortex-v24 = cortex source_uri pending refresh (charter D4 residual #1)
 # writing-discipline-outbound = graph-only anomaly pending D2 disposition (census anomaly 1)

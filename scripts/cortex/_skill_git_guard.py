@@ -94,6 +94,9 @@ def check_cortex_sot_only_slugs(repo_root: Path) -> list[str]:
     ``run_cortex_cursor_body_drift_check`` (not gated on ``sot: cortex`` frontmatter).
     """
     problems: list[str] = []
+    slugs = cortex_sot_only_slugs()
+    if not slugs:
+        return problems
     if not CORTEX_SOT_ROOT.is_dir():
         problems.append(
             f"cortex SOT mount missing ({CORTEX_SOT_ROOT}) — "
@@ -101,7 +104,7 @@ def check_cortex_sot_only_slugs(repo_root: Path) -> list[str]:
         )
         return problems
     cortex_root = CORTEX_SOT_ROOT.resolve()
-    for slug in sorted(cortex_sot_only_slugs()):
+    for slug in sorted(slugs):
         try:
             sot_path, label = resolve_sot(slug, repo_root)
         except FileNotFoundError as exc:

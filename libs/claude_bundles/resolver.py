@@ -201,56 +201,16 @@ def is_cortex_sot_frontmatter(text: str) -> bool:
 @lru_cache(maxsize=1)
 def cortex_sot_only_slugs() -> frozenset[str]:
     """Slugs whose authoritative SOT is cortex-mount only (``sot: cortex`` frontmatter)."""
-    if _cortex_mount_missing():
-        return frozenset()
-    slugs: set[str] = set()
-    for path in CORTEX_SOT_ROOT.glob("*.md"):
-        if path.stem == "README":
-            continue
-        try:
-            text = path.read_text(encoding="utf-8")
-        except OSError:
-            continue
-        if is_cortex_sot_frontmatter(text):
-            slugs.add(path.stem)
-    return frozenset(slugs)
-
-
-def _cortex_mount_missing() -> bool:
-    return not CORTEX_SOT_ROOT.is_dir()
+    # cortex mirror severed — D3 Phase 1b, thread 4559
+    return frozenset()
 
 
 def resolve_sot(slug: str, repo_root: Path) -> tuple[Path, str]:
     """Return the first existing SOT path and a short root label for reporting."""
-    docs_skills = repo_root / ".cursor" / "skills" / slug / "SKILL.md"
-    cortex_sot = CORTEX_SOT_ROOT / f"{slug}.md"
-    docs_defer_cortex = False
-    if _cortex_mount_missing() and (slug in CURSOR_INDEXED_SLUGS):
-        pass  # .cursor is primary; mount optional for indexed slugs
-    if docs_skills.is_file() and cortex_sot.is_file() and docs_defer_cortex:
-        return cortex_sot, "cortex/agent-skills"
-    if docs_defer_cortex and not cortex_sot.is_file():
-        raise FileNotFoundError(
-            f"no SOT for {slug!r} — docs stub defers to missing {cortex_sot}"
-        )
-    candidates: list[tuple[str, Path]] = [
-        (
-            ".cursor/skills",
-            repo_root / ".cursor" / "skills" / slug / "SKILL.md",
-        ),
-        ("cortex/agent-skills", cortex_sot),
-        (
-            "docs/agent-guides/rules",
-            repo_root / "docs/agent-guides/rules" / f"{slug}.md",
-        ),
-    ]
-    if docs_defer_cortex:
-        candidates = [c for c in candidates if c[0] != "docs/agent-guides/rules"]
-    for label, path in candidates:
-        if path.is_file():
-            return path, label
-    searched = ", ".join(str(p) for _, p in candidates)
-    raise FileNotFoundError(f"no SOT for {slug!r} — searched: {searched}")
+    sot_path = repo_root / ".cursor" / "skills" / slug / "SKILL.md"
+    if sot_path.is_file():
+        return sot_path, ".cursor/skills"
+    raise FileNotFoundError(f"no SOT for {slug!r} — searched: {sot_path}")
 
 
 def _strip_pointer_fences(body: str) -> str:

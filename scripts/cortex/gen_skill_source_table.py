@@ -65,13 +65,27 @@ def canonical_table_key(slug_or_entity_id: str) -> str:
     return CANONICAL_SLUG_ALIASES.get(slug, slug)
 
 
+_WS = "workspaces://universal-llm-gateway"
+
+
+def _workspace_source_uri(slug: str) -> str:
+    return f"{_WS}/.cursor/skills/{slug}/SKILL.md"
+
+
 def _normalize_committed_uri(source_uri: str) -> str:
     uri = source_uri.strip().removeprefix("files://")
     if uri.startswith("cortex://"):
         uri = uri.removeprefix("cortex://")
+    ws_prefix = f"{_WS}/.cursor/skills/"
+    if uri.startswith(ws_prefix) and uri.endswith("/SKILL.md"):
+        return uri
     marker = "/agent-skills/"
-    if marker in uri:
-        return f"agent-skills/{uri.split(marker, 1)[1].lstrip('/')}"
+    if marker in uri or uri.startswith("agent-skills/"):
+        stem = uri.split(marker, 1)[-1] if marker in uri else uri.removeprefix("agent-skills/")
+        slug = Path(stem).stem
+        return _workspace_source_uri(slug)
+    if uri.startswith("workspaces://"):
+        return uri
     return uri
 
 

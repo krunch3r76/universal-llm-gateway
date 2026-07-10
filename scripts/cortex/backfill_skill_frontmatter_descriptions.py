@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
-"""One-shot bootstrap: entity.description → cortex SOT frontmatter ``description:``.
+"""One-shot bootstrap: entity.description → workspace SOT frontmatter ``description:``.
 
 Steady-state sync is file → entity via ``ingest_skills.py``; this script fills
-empty/missing frontmatter on resolvable ``agent-skills/<slug>.md`` files only.
+empty/missing frontmatter on resolvable ``.cursor/skills/<slug>/SKILL.md`` files only.
 """
 
 from __future__ import annotations
 
 import argparse
-import os
 import re
 import sys
 import urllib.parse
@@ -36,12 +35,6 @@ from transport_utils import DEFAULT_CORTEX_URL, make_sync_client  # noqa: E402
 
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---", re.DOTALL)
 _SUPPRESSED = frozenset({"deprecated", "retired", "merged"})
-
-
-def _cortex_files_root() -> Path:
-    return Path(
-        os.environ.get("CORTEX_FILES_ROOT", "/mnt/torus/mcp-data/files")
-    ).expanduser()
 
 
 def _request(
@@ -79,14 +72,12 @@ def _fetch_active_skills(client: object) -> list[dict]:
     return rows
 
 
-def _resolve_cortex_sot_path(source_uri: str | None, slug: str) -> Path | None:
-    if source_uri and source_uri.startswith("agent-skills/"):
-        candidate = _cortex_files_root() / source_uri
-        if candidate.is_file():
-            return candidate
-    fallback = _cortex_files_root() / "agent-skills" / f"{slug}.md"
-    if fallback.is_file() and (not source_uri or source_uri.startswith("agent-skills/")):
-        return fallback
+def _resolve_workspace_sot_path(source_uri: str | None, slug: str) -> Path | None:
+    candidate = _REPO / ".cursor" / "skills" / slug / "SKILL.md"
+    if candidate.is_file():
+        return candidate
+    if source_uri and ".cursor/skills/" in source_uri:
+        return None
     return None
 
 
@@ -188,7 +179,7 @@ def main(argv: list[str] | None = None) -> int:
         entity_id = str(row.get("id") or "")
         slug = entity_id.removeprefix("agent_skill:")
         source_uri = str(row.get("source_uri") or "")
-        path = _resolve_cortex_sot_path(source_uri, slug)
+        path = _resolve_workspace_sot_path(source_uri, slug)
         if path is None:
             skipped_unresolvable.append(entity_id)
             continue

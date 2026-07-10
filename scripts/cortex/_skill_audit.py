@@ -237,15 +237,17 @@ def stub_critical_field_verdict(
 
 def parity_verdict(
     scanned: dict[str, dict[str, object]],
+    repo_root: Path | None = None,
 ) -> tuple[VerdictStatus, list[str]]:
-    lines = _audit_parity(scanned)
+    root = repo_root or Path(__file__).resolve().parent.parent.parent
+    lines = _audit_parity(scanned, root)
     if lines:
         return "dirty", lines
     return "clean", []
 
 
-def _audit_parity(scanned: dict[str, dict[str, object]]) -> list[str]:
-    cortex_slugs = cortex_sot_slugs()
+def _audit_parity(scanned: dict[str, dict[str, object]], repo_root: Path) -> list[str]:
+    cortex_slugs = cortex_sot_slugs(repo_root)
     stub_slugs = set(scanned)
     allowlist = _allowlist_keys()
     cortex_only = sorted(cortex_slugs - stub_slugs - allowlist)
@@ -312,7 +314,7 @@ def _audit(client: object, scanned: dict[str, dict[str, object]], root: Path) ->
         print(f"AUDIT FAIL: GET /entities guidance types {status}", file=sys.stderr)
         return 2
     live_by_id = {row["id"]: row for row in stubs}
-    cortex_declared = _scan_cortex_sot_declared()
+    cortex_declared = _scan_cortex_sot_declared(root)
     drifted = _drifts(client, scanned, live_by_id, cortex_declared=cortex_declared)
     file_gone = [
         eid
@@ -330,7 +332,7 @@ def _audit(client: object, scanned: dict[str, dict[str, object]], root: Path) ->
     print(f"  File-gone (report only)  : {len(file_gone)}")
     for eid in sorted(file_gone):
         print(f"    - {eid}")
-    parity = _audit_parity(scanned)
+    parity = _audit_parity(scanned, root)
     print(f"  Parity gaps (report only) : {len(parity)}")
     for line in parity:
         print(f"    - {line}")

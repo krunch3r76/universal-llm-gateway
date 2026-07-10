@@ -63,7 +63,7 @@ VERDICT_ORDER = (
 
 def _edge_drift_verdict(client: object, repo_root: Path) -> tuple[str, list[str]]:
     scanned = _scan_skills(repo_root.resolve())
-    cortex_declared = _scan_cortex_sot_declared()
+    cortex_declared = _scan_cortex_sot_declared(repo_root)
     drifted = _drifts(client, scanned, cortex_declared=cortex_declared)
     if drifted:
         return "dirty", drifted
@@ -120,7 +120,7 @@ def run_check(
     edge_status, edge_lines = _edge_drift_verdict(client, repo_root)
     sot_status, sot_lines = _sot_drift_verdict(client, repo_root)
     critical_status, critical_lines, _ = stub_critical_field_verdict(client, repo_root)
-    parity_status, parity_lines = parity_verdict(scanned)
+    parity_status, parity_lines = parity_verdict(scanned, repo_root)
     if critical_status == "error":
         stub_status = "error"
         stub_lines = critical_lines + parity_lines

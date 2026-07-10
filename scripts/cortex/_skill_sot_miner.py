@@ -1,4 +1,4 @@
-"""Deterministic skill→skill reference extraction from cortex agent-skills SOT bodies."""
+"""Deterministic skill→skill reference extraction from repo .cursor/skills SOT bodies."""
 
 from __future__ import annotations
 
@@ -17,10 +17,14 @@ _RELATED_SKILLS_SECTION_RE = re.compile(
 _FENCE_RE = re.compile(r"```.*?```", re.DOTALL)
 
 _REF_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(
+        r"workspaces://universal-llm-gateway/\.cursor/skills/([a-z0-9-]+)/SKILL\.md",
+        re.I,
+    ),
+    re.compile(r"(?<![\w/])\.cursor/skills/([a-z0-9-]+)/SKILL\.md", re.I),
     re.compile(r"cortex://agent-skills/([a-z0-9-]+)\.md", re.I),
     re.compile(r"(?<![\w/])agent-skills/([a-z0-9-]+)\.md", re.I),
     re.compile(r"agent_skill:([a-z0-9-]+)", re.I),
-    re.compile(r"\.cursor/skills/([a-z0-9-]+)/SKILL\.md", re.I),
     re.compile(r"\]\(([a-z0-9-]+)\.md(?:#[^)]*)?\)"),
 )
 
@@ -35,6 +39,8 @@ SKIP_TARGET_SLUGS = frozenset(
 )
 INVARIANT_TARGETS = frozenset({"architecture-invariants", "ulg-architecture"})
 
+_REPO_DEFAULT = Path(__file__).resolve().parent.parent.parent
+
 
 @dataclass(frozen=True)
 class MinedEdge:
@@ -45,10 +51,8 @@ class MinedEdge:
     role: str | None = "sot_pointer"
 
 
-def default_sot_root() -> Path:
-    return Path(
-        os.environ.get("CORTEX_FILES_ROOT", "/mnt/torus/mcp-data/files")
-    ).expanduser()
+def default_repo_root() -> Path:
+    return _REPO_DEFAULT
 
 
 def default_workspaces_root() -> Path:
@@ -93,8 +97,8 @@ def _parse_related_section(text: str) -> list[str]:
     return slugs
 
 
-def _target_exists(slug: str, *, sot_root: Path, ws_root: Path) -> bool:
-    if (sot_root / f"{slug}.md").exists():
+def _target_exists(slug: str, *, skills_root: Path, ws_root: Path) -> bool:
+    if (skills_root / slug / "SKILL.md").exists():
         return True
     return (
         ws_root / "universal-llm-gateway" / ".cursor" / "skills" / slug / "SKILL.md"
@@ -107,10 +111,11 @@ def _infer_role(target: str) -> str:
     return "sot_pointer"
 
 
-def iter_sot_paths(sot_root: Path) -> list[Path]:
+def iter_sot_paths(repo_root: Path) -> list[Path]:
+    skills_dir = repo_root / ".cursor" / "skills"
     paths: list[Path] = []
-    for path in sorted(sot_root.glob("*.md")):
-        if path.stem in SKIP_SOURCE_NAMES:
+    for path in sorted(skills_dir.glob("*/SKILL.md")):
+        if path.parent.name in SKIP_SOURCE_NAMES:
             continue
         paths.append(path)
     return paths
@@ -119,11 +124,11 @@ def iter_sot_paths(sot_root: Path) -> list[Path]:
 def mine_sot_file(
     path: Path,
     *,
-    sot_root: Path,
+    skills_root: Path,
     ws_root: Path,
     valid_targets: set[str] | None = None,
 ) -> set[str]:
-    source = path.stem
+    source = path.parent.name
     text = path.read_text(encoding="utf-8", errors="replace")
     targets: set[str] = set()
     for slug in (
@@ -132,7 +137,7 @@ def mine_sot_file(
     ):
         if slug != source and slug not in SKIP_TARGET_SLUGS:
             if valid_targets is None or slug in valid_targets:
-                if _target_exists(slug, sot_root=sot_root, ws_root=ws_root):
+                if _target_exists(slug, skills_root=skills_root, ws_root=ws_root):
                     targets.add(slug)
     body = _strip_fences(text)
     for pattern in _REF_PATTERNS:
@@ -142,27 +147,30 @@ def mine_sot_file(
                 continue
             if valid_targets is not None and slug not in valid_targets:
                 continue
-            if _target_exists(slug, sot_root=sot_root, ws_root=ws_root):
+            if _target_exists(slug, skills_root=skills_root, ws_root=ws_root):
                 targets.add(slug)
     return targets
 
 
 def mine_all_sot_edges(
     *,
-    sot_root: Path | None = None,
+    repo_root: Path | None = None,
     ws_root: Path | None = None,
     valid_targets: set[str] | None = None,
 ) -> dict[str, set[str]]:
-    root = sot_root or default_sot_root()
-    skills_dir = root / "agent-skills"
+    root = repo_root or default_repo_root()
+    skills_dir = root / ".cursor" / "skills"
     workspace = ws_root or default_workspaces_root()
     mined: dict[str, set[str]] = {}
-    for path in iter_sot_paths(skills_dir):
+    for path in iter_sot_paths(root):
         targets = mine_sot_file(
-            path, sot_root=skills_dir, ws_root=workspace, valid_targets=valid_targets
+            path,
+            skills_root=skills_dir,
+            ws_root=workspace,
+            valid_targets=valid_targets,
         )
         if targets:
-            mined[path.stem] = targets
+            mined[path.parent.name] = targets
     return mined
 
 

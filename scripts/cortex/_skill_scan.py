@@ -1,8 +1,7 @@
-"""Filesystem scan helpers for workspace stubs and cortex SOT bodies."""
+"""Filesystem scan helpers for workspace stubs and cursor skill SOT bodies."""
 
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 
@@ -14,33 +13,37 @@ from _skill_constants import (
 )
 from _skill_related_parse import declared_related_skills, parse_frontmatter
 
-
-def _cortex_files_root() -> Path:
-    return Path(
-        os.environ.get("CORTEX_FILES_ROOT", "/mnt/torus/mcp-data/files")
-    ).expanduser()
+_REPO_DEFAULT = Path(__file__).resolve().parent.parent.parent
 
 
-def cortex_sot_slugs() -> set[str]:
-    """Every ``*.md`` stem under cortex ``agent-skills/`` minus skipped names."""
-    skills_dir = _cortex_files_root() / "agent-skills"
+def _cursor_skills_dir(repo_root: Path | None = None) -> Path:
+    return (repo_root or _REPO_DEFAULT) / ".cursor" / "skills"
+
+
+def _workspace_source_uri(slug: str) -> str:
+    return f"{_WS}/.cursor/skills/{slug}/SKILL.md"
+
+
+def cortex_sot_slugs(repo_root: Path | None = None) -> set[str]:
+    """Every slug under repo ``.cursor/skills/*/SKILL.md`` minus skipped names."""
+    skills_dir = _cursor_skills_dir(repo_root)
     if not skills_dir.is_dir():
         return set()
     return {
-        path.stem
-        for path in skills_dir.glob("*.md")
-        if path.stem not in _SKIP_CORTEX_SOT
+        path.parent.name
+        for path in skills_dir.glob("*/SKILL.md")
+        if path.parent.name not in _SKIP_CORTEX_SOT
     }
 
 
-def _scan_cortex_sot_metadata() -> dict[str, dict[str, object]]:
-    """Declared frontmatter from cortex ``agent-skills/*.md`` (not workspace stubs)."""
-    skills_dir = _cortex_files_root() / "agent-skills"
+def _scan_cortex_sot_metadata(repo_root: Path | None = None) -> dict[str, dict[str, object]]:
+    """Declared frontmatter from repo ``.cursor/skills/*/SKILL.md``."""
+    skills_dir = _cursor_skills_dir(repo_root)
     if not skills_dir.is_dir():
         return {}
     found: dict[str, dict[str, object]] = {}
-    for path in sorted(skills_dir.glob("*.md")):
-        slug = path.stem
+    for path in sorted(skills_dir.glob("*/SKILL.md")):
+        slug = path.parent.name
         if slug in _SKIP_CORTEX_SOT:
             continue
         try:
@@ -63,8 +66,8 @@ def _scan_cortex_sot_metadata() -> dict[str, dict[str, object]]:
     return found
 
 
-def _scan_cortex_sot_declared() -> dict[str, list[str]]:
-    meta = _scan_cortex_sot_metadata()
+def _scan_cortex_sot_declared(repo_root: Path | None = None) -> dict[str, list[str]]:
+    meta = _scan_cortex_sot_metadata(repo_root)
     return {
         slug: list(meta["related_skills"])
         for slug, meta in meta.items()
@@ -72,18 +75,18 @@ def _scan_cortex_sot_declared() -> dict[str, list[str]]:
     }
 
 
-def _scan_cortex_sot_skills() -> dict[str, dict[str, object]]:
-    """Projection-ready rows for cortex ``agent-skills/*.md`` (not workspace stubs).
+def _scan_cortex_sot_skills(repo_root: Path | None = None) -> dict[str, dict[str, object]]:
+    """Projection-ready rows for repo ``.cursor/skills/*/SKILL.md``.
 
     Empty or missing frontmatter ``description:`` still yields a row — that state
     is SOT drift surfaced via ``_matches`` downstream, not a scan skip.
     """
-    skills_dir = _cortex_files_root() / "agent-skills"
+    skills_dir = _cursor_skills_dir(repo_root)
     if not skills_dir.is_dir():
         return {}
     found: dict[str, dict[str, object]] = {}
-    for path in sorted(skills_dir.glob("*.md")):
-        slug = path.stem
+    for path in sorted(skills_dir.glob("*/SKILL.md")):
+        slug = path.parent.name
         if slug in _SKIP_CORTEX_SOT:
             continue
         try:
@@ -97,7 +100,7 @@ def _scan_cortex_sot_skills() -> dict[str, dict[str, object]]:
             "slug": slug,
             "frontmatter": fm,
             "description": description,
-            "source_uri": f"agent-skills/{slug}.md",
+            "source_uri": _workspace_source_uri(slug),
             "related_skills": declared_related_skills(text, fm),
         }
     return found
@@ -116,8 +119,8 @@ def _create_lifecycle(fm: dict[str, object]) -> str:
 def _source_uri(slug: str, body: str, root: Path) -> str:
     sot = _CORTEX_SOT_RE.search(body)
     if sot:
-        return f"agent-skills/{sot.group(1)}.md"
-    return f"{_WS}/.cursor/skills/{slug}/SKILL.md"
+        return _workspace_source_uri(sot.group(1))
+    return _workspace_source_uri(slug)
 
 
 def _scan_skills(root: Path) -> dict[str, dict[str, object]]:

@@ -110,18 +110,7 @@ def render_stub(slug: str, fields: dict[str, Any]) -> str:
     lines.append(f"<!-- {GENERATED_HEADER} -->")
     lines.append("")
     source_uri = str(fields.get("source_uri") or "")
-    if source_uri.startswith("agent-skills/"):
-        lines.extend(
-            [
-                "**SOT:**",
-                "",
-                "```",
-                f'fs(sandbox="cortex", op="read", path="{source_uri}")',
-                "```",
-                "",
-            ]
-        )
-    elif source_uri:
+    if source_uri:
         lines.extend([f"**Source:** `{source_uri}`", ""])
     pointer = str(fields.get("paired_rule_pointer") or "").strip()
     if pointer:
