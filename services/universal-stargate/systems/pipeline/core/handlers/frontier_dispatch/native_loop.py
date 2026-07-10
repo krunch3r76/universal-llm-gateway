@@ -253,22 +253,24 @@ async def run_dispatch_loop(
                 exhaustion_summary=exhaustion_summary,
             )
     else:
-        publish(
-            PipelineFrontierDispatchCompleted(
-                agent=agent,
-                execution_id=context.execution_id,
-                turns_used=result.turns_used,
-                tool_calls_made=result.tool_calls_made,
-                reasoning_present=result.reasoning is not None,
-                prompt_tokens=result.usage.get("input_tokens", 0),
-                completion_tokens=result.usage.get("output_tokens", 0),
-                provider=result.provider,
-                model_entity_id=model_entity_id,
-                op=opts.get("op", ""),
-                finish_reason=finish_reason,
-                block_reason=block_reason,
-            )
-        )
+        completed_kwargs: dict[str, Any] = {
+            "agent": agent,
+            "execution_id": context.execution_id,
+            "turns_used": result.turns_used,
+            "tool_calls_made": result.tool_calls_made,
+            "reasoning_present": result.reasoning is not None,
+            "prompt_tokens": result.usage.get("input_tokens", 0),
+            "completion_tokens": result.usage.get("output_tokens", 0),
+            "provider": result.provider,
+            "model_entity_id": model_entity_id,
+            "op": opts.get("op", ""),
+            "finish_reason": finish_reason,
+            "block_reason": block_reason,
+        }
+        cached_tokens = result.usage.get("cached_tokens")
+        if cached_tokens is not None:
+            completed_kwargs["cached_tokens"] = cached_tokens
+        publish(PipelineFrontierDispatchCompleted(**completed_kwargs))
         # F3: detect silent empty-completion on the non-exhausted branch and
         # convert terminal state to failed. Exhausted empty content is handled
         # above as a distinct tool-loop budget failure. Originally surfaced by

@@ -43,6 +43,7 @@ from universal_logging import get_logger
 
 from ._frontier_intake import (
     normalize_dispatch_model,
+    reject_pointer_body_on_generate,
     reject_unsupported_packet_inputs,
     require_dispatch_thread_id,
     require_explicit_cursor_seat_for_handoff,
@@ -417,6 +418,10 @@ def register_frontier_tools(mcp: FastMCP) -> None:
           persisted (the result-thread subject is auto-derived); the response
           carries a ``subject_ignored_on_generate`` warning. Use ``op="to_thread"``
           to actually set a thread subject (friction 19803).
+          ``pointer_body`` is handoff-only and rejects with a validation
+          error on ``op="generate"``/``op="to_thread"`` — the dispatch-thread
+          latest turn is the prompt channel (friction 23301; previously
+          silently dropped).
           Manual seats (``claude-web``, ``claude-cursor``) are rejected with 422
           ``web_seat_not_generate_target``. The SDK auto seat ``cursor-sdk`` is
           admitted on ``op=generate`` (``auto_dispatchable`` substrate=sdk). Use API roles with optional
@@ -597,6 +602,10 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                     "message": "role is required when op='generate' or op='to_thread'",
                 }
             }
+
+        pointer_body_err = reject_pointer_body_on_generate(op, pointer_body)
+        if pointer_body_err is not None:
+            return pointer_body_err
 
         # Intake normalization + validation (F16655/F16656/F16657) — see
         # tools/_frontier_intake.py. Each guard returns an error envelope the

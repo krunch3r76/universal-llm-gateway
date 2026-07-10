@@ -78,10 +78,10 @@ async def test_hydrate_skeptic_with_explicit_gemini_clears_capability_tier(
 
 
 @pytest.mark.asyncio
-async def test_hydrate_skeptic_default_gpt_55_is_mcp_capable(
+async def test_hydrate_skeptic_default_grok_45_is_mcp_capable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """skeptic default openai/gpt-5.5 is MCP-capable (standard card)."""
+    """skeptic default xai/grok-4.5 is MCP-capable (standard card)."""
     monkeypatch.setattr(_hyd, "_cortex_get", _Scripted({"/": {}}))
     monkeypatch.setattr(_hyd, "_bus_get", _Scripted({}))
 
@@ -128,16 +128,16 @@ async def test_hydrate_skeptic_gemini_capability_vs_mcp_authorization(
 
 
 @pytest.mark.asyncio
-async def test_hydrate_skeptic_no_explicit_model_uses_default_gpt_55(
+async def test_hydrate_skeptic_no_explicit_model_uses_default_grok_45(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """skeptic without model= uses role default openai/gpt-5.5 → MCP-capable."""
+    """skeptic without model= uses role default xai/grok-4.5 → MCP-capable."""
     monkeypatch.setattr(_hyd, "_cortex_get", _Scripted({"/": {}}))
     monkeypatch.setattr(_hyd, "_bus_get", _Scripted({}))
 
     bundle = await hydrate_agent("skeptic")
 
-    assert bundle.agent_meta.default_model == "openai/gpt-5.5"
+    assert bundle.agent_meta.default_model == "xai/grok-4.5"
     assert bundle.inline_only is False
 
 
@@ -151,7 +151,7 @@ async def test_hydrate_effective_none_boot_role_default_fallback_unchanged(
 
     bundle = await hydrate_agent("skeptic", model=None)
 
-    assert bundle.agent_meta.default_model == "openai/gpt-5.5"
+    assert bundle.agent_meta.default_model == "xai/grok-4.5"
     assert bundle.inline_only is False
     assert bundle.agent_meta.capability_tier != "inline-only"
 

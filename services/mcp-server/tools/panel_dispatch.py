@@ -15,6 +15,7 @@ import os
 from typing import TYPE_CHECKING, Any, Literal
 
 from agent_seat.panel_dispatch import (
+    TIEBREAKER_ROLE,
     PanelAdmissionPlan,
     admit_panel_plan,
     build_panel_poll_summary,
@@ -175,6 +176,7 @@ def register_panel_dispatch_tools(mcp: FastMCP) -> None:
         timeout_seconds: int | None = None,
         source_ref: str | None = None,
         panel_request_id: str | None = None,
+        member_models: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         """Run the consensus-steelman panel member dispatches (Phase 2 helper).
 
@@ -224,7 +226,9 @@ def register_panel_dispatch_tools(mcp: FastMCP) -> None:
             system: Optional extra system prefix for all panel members.
             reasoning_effort: Requested reasoning knob; actual resolution is
                 reported in ``member_knob_resolution``. No parity claim by default.
-            generation_options: Provider generation pass-through per member.
+            generation_options: Provider generation params forwarded to every
+                member identically. NOT a model-override channel — per-member
+                model rebinding goes in ``member_models``.
             max_tool_turns: Tool-loop cap per member.
             transcript_id: Provenance-only session id per member dispatch.
             timeout_seconds: Pipeline wall-clock cap per member.
@@ -233,10 +237,35 @@ def register_panel_dispatch_tools(mcp: FastMCP) -> None:
             panel_request_id: Opt-in idempotency key; same id + equivalent inputs
                 within the dedupe window returns the prior envelope without a
                 second paid member fan-out.
+            member_models: Optional role → ``provider/model`` overrides for the
+                fixed roster (e.g. ``{"skeptic": "xai/grok-4.5"}``). Honored by
+                the ≥2-family gate and forwarded per member. Do NOT smuggle
+                model overrides through ``generation_options`` — those are
+                provider generation params and are invisible to family
+                resolution (friction 23301).
         """
+        if generation_options:
+            roster_keys = sorted(
+                {"skeptic", "reviewer", TIEBREAKER_ROLE} & set(generation_options)
+            )
+            if roster_keys:
+                record("mcp.panel.dispatch.rejected", reason="options_role_keys")
+                return {
+                    "error": {
+                        "code": "validation_error",
+                        "message": (
+                            f"generation_options contains roster role keys "
+                            f"{roster_keys!r}; per-member model overrides go in "
+                            "member_models (role → provider/model), not "
+                            "generation_options (provider generation params)"
+                        ),
+                    },
+                    "field": "generation_options",
+                }
         admitted = admit_panel_plan(
             disposition=disposition,
             include_synthesizer=include_synthesizer,
+            member_models=member_models,
         )
         if isinstance(admitted, dict):
             record("mcp.panel.dispatch.rejected", reason="admission")
@@ -262,6 +291,7 @@ def register_panel_dispatch_tools(mcp: FastMCP) -> None:
                 generation_options=generation_options,
                 max_tool_turns=max_tool_turns,
                 timeout_seconds=timeout_seconds,
+                member_models=member_models,
             )
             idem = check_or_reserve(panel_request_id, fingerprint)
             if idem.kind == "conflict":

@@ -39,7 +39,9 @@ logger = get_logger("cortex-api.assertions")
 # renderer extracts for the "Your Notes" prefix (e.g. "[web-2026-04-30-0528]").
 # Surfaced as a dedicated `session_tag` field on the compact projection so
 # `evidence` itself can be dropped on the wire without losing the prefix.
-_SESSION_TAG_RE = re.compile(r"(cursor|web|api|bard)-\d{4}-\d{2}-\d{2}-\d{4}")
+_SESSION_TAG_RE = re.compile(
+    r"\b(?:(?:web|api)-[a-z]+|cursor|web|api|bard)-\d{4}-\d{2}-\d{2}-\d{4,6}\b"
+)
 
 
 def _log_search_access(items: list) -> None:

@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
-import logging
 from pathlib import Path
+
+from universal_logging import get_logger
 
 from services.rag.events.indexing import rag_file_deleted
 from services.rag.models import DeleteResult
 
-from . import state
+from .. import state
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 async def _enqueue_for_extraction(source: str) -> None:
@@ -53,7 +54,7 @@ async def _delete_file_impl(source: str) -> DeleteResult:
 
 async def _delete_file(file_path: Path) -> DeleteResult:
     """Delete all indexed chunks for a removed file under per-source gate."""
-    from .source_path_gate import acquire_source_path, release_source_path
+    from ..source_path_gate import acquire_source_path, release_source_path
 
     source = str(file_path.resolve())
     await acquire_source_path(source)

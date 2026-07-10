@@ -20,7 +20,7 @@ from services.rag.events.lifecycle import (
     rag_orphan_purged,
     rag_pending_reconciled,
 )
-from services.rag.rag_service._indexing_failure_ops import _classify_http_status_error
+from services.rag.indexing_failure_classifier import classify_http_status_error
 
 from . import indexing, state
 from .lifecycle_constants import RECONCILE_FILE_TIMEOUT_S
@@ -98,7 +98,7 @@ async def _reconcile_pending(config: RagConfig) -> None:
                 )
                 failed_transient += 1
             except httpx.HTTPStatusError as e:
-                category, _reason = _classify_http_status_error(e)
+                category, _reason = classify_http_status_error(e)
                 if category == "transient":
                     logger.warning(
                         "Transient %d reconciling %s; will retry on next sweep",

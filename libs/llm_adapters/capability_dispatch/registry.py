@@ -114,6 +114,9 @@ _GOOGLE_CONTEXT_WINDOW = 1_000_000
 # Ordered most-specific first; substring match mirrors the Anthropic tables.
 # Manually extend when adding a model (see MODEL_ADD_CHECKLIST.md).
 _RESPONSES_CONTEXT_WINDOWS: tuple[tuple[str, int], ...] = (
+    ("gpt-5.6-sol", 1_050_000),
+    ("gpt-5.6-terra", 1_050_000),
+    ("gpt-5.6-luna", 1_050_000),
     ("gpt-5.5", 1_050_000),
     ("gpt-5.4", 1_050_000),
     ("grok-4.20", 1_000_000),

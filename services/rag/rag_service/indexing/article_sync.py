@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+from universal_logging import get_logger
 
 from services.rag.article_registry import get_entry as get_article_entry
 from services.rag.events.articles import (
     rag_article_content_hash_mismatch,
     rag_article_path_moved,
 )
-from services.rag.rag_service._indexing_helpers import _derive_subdirectory
+
+from .source_identity import _derive_subdirectory
 
 if TYPE_CHECKING:
     from universal_event_bus import EventBus
@@ -19,7 +21,7 @@ if TYPE_CHECKING:
     from services.rag.config import RagConfig
     from services.rag.property_index import PropertyIndex
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 async def _run_article_sync_phase(

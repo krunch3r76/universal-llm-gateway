@@ -2,21 +2,31 @@
 
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+from universal_logging import get_logger
 
 if TYPE_CHECKING:
     pass
 
-from services.rag.events.articles import rag_article_path_moved
+from services.rag.events.articles import (
+    rag_article_auto_created,
+    rag_article_path_moved,
+)
 from services.rag.events.indexing import rag_file_deleted, rag_file_skipped
-from services.rag.indexing_helpers import check_pdf_duplicate, migrate_chroma_source
+from services.rag.indexing_helpers import (
+    all_ids_match_prefix,
+    check_pdf_duplicate,
+    migrate_chroma_source,
+)
 from services.rag.models import IndexResult
 
-from . import state
+from .. import state
+from .delete import _enqueue_for_extraction
+from .source_identity import _derive_subdirectory
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 async def _handle_pdf_duplicate_or_move(
@@ -141,3 +151,69 @@ async def _handle_empty_chunks(
     return IndexResult(
         deleted=len(existing_ids), indexed=0, unchanged=False, file=source
     )
+
+
+async def _handle_unchanged_prefix_skip(
+    *,
+    source: str,
+    file_path: Path,
+    existing_ids: list[str],
+    prefix: str,
+    prop_index: object,
+    source_stat: object,
+    source_hash: str,
+    schema_version: int,
+    extraction_model: str | None,
+    force: bool,
+    emit_skip_event: bool,
+    correlation_id: str,
+    operation: str | None,
+) -> IndexResult | None:
+    """Return IndexResult when existing Chroma IDs already match content-hash prefix.
+
+    Refreshes indexed_sources / article structural fields and enqueues extraction
+    when a property index is available. Returns None when the caller should continue
+    with full re-chunk/embed.
+    """
+    if force or not existing_ids or not all_ids_match_prefix(existing_ids, prefix):
+        return None
+    if prop_index is not None:
+        await prop_index.upsert_indexed_source(
+            source=source,
+            mtime_ns=source_stat.st_mtime_ns,
+            size_bytes=source_stat.st_size,
+            extraction_schema_version=schema_version,
+            extraction_model=extraction_model,
+            source_hash=source_hash,
+        )
+        if not prop_index.article_exists(source):
+            if state._config is None:
+                raise RuntimeError("RAG service configuration not loaded.")
+            scope = state._config.get_scope_for_path(source)
+            subdirectory = _derive_subdirectory(source, state._config)
+            created = await prop_index.sync_article_structural_fields(
+                source_path=source,
+                filename=file_path.name,
+                content_hash=source_hash,
+                scope=scope,
+                subdirectory=subdirectory,
+            )
+            if created and state._event_bus is not None:
+                await state._event_bus.publish_nowait(
+                    rag_article_auto_created(
+                        source_path=source,
+                        content_hash=source_hash,
+                        scope=scope,
+                    )
+                )
+        await _enqueue_for_extraction(source)
+    if emit_skip_event and state._event_bus is not None:
+        await state._event_bus.publish_nowait(
+            rag_file_skipped(
+                file=source,
+                reason="unchanged",
+                operation_id=correlation_id,
+                operation=operation,
+            )
+        )
+    return IndexResult(deleted=0, indexed=0, unchanged=True, file=source)

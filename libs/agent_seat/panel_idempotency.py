@@ -50,6 +50,7 @@ def build_panel_request_fingerprint(
     generation_options: dict[str, Any] | None,
     max_tool_turns: int | None,
     timeout_seconds: int | None,
+    member_models: dict[str, str] | None = None,
 ) -> str:
     """SHA256 hex over canonical JSON of admission-cost-determining inputs."""
     payload = {
@@ -63,6 +64,7 @@ def build_panel_request_fingerprint(
         "generation_options": generation_options,
         "max_tool_turns": max_tool_turns,
         "timeout_seconds": timeout_seconds,
+        "member_models": member_models,
     }
     return hashlib.sha256(_canonical_json(payload).encode("utf-8")).hexdigest()
 

@@ -26,6 +26,7 @@ from model_id import ModelId
 from transport_utils import DEFAULT_AGENT_BUS_URL, make_async_client
 
 from .events import DispatchCapabilityCardMissing, FrontierEndpointRejected
+from .probe_caller_guard import reject_probe_on_reviewer
 
 EventPublisher = Callable[[Any], None]
 
@@ -249,16 +250,28 @@ def enforce_team_dispatch_generate_admit(
     *,
     request_id: str,
     event_publisher: EventPublisher | None = None,
+    caller_agent: str | None = None,
 ) -> None:
     """Reject ``op=generate`` / ``op=to_thread`` when profile does not admit generate.
 
     Admission predicate (FOL):
       admit_generate(role) ⟺ profile.admits_generate() is True
+      ¬(role=reviewer ∧ is_mcp_probe_caller(caller_agent))
 
     Web/manual seats (``claude/web``, ``grok/web``, …) and roles whose default
     platform is manual_handoff (``web-consult``, ``web-implement``, …) raise 422 with
     code ``web_seat_not_generate_target``. Explicit ``model=`` does not bypass.
+
+    Probe callers (``mcp-l*-probe``, ``mcp-trace-matrix``) on ``role=reviewer``
+    raise 422 ``probe_reviewer_forbidden`` — use chat ``-mcp`` or artisan/skeptic.
     """
+    reject_probe_on_reviewer(
+        role,
+        request_id=request_id,
+        caller_agent=caller_agent,
+        event_publisher=event_publisher,
+    )
+
     to_agent, _family, _platform, profile = _resolve_role_or_seat_profile(
         role, request_id=request_id
     )

@@ -218,6 +218,14 @@ def validate_packet(
 
     text = candidate.read_text(encoding="utf-8", errors="replace")
 
+    from .diff_text_guard import assert_packet_free_of_diff_text
+
+    assert_packet_free_of_diff_text(
+        request_id=request_id,
+        packet_path=packet_path,
+        text=text,
+    )
+
     missing = [tag for tag in _REQUIRED_PACKET_TAGS if tag not in text]
     if to_agent in _mcp_packet_seats() and _MCP_CAPABILITIES_TAG not in text:
         missing.append(_MCP_CAPABILITIES_TAG)

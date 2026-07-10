@@ -121,22 +121,23 @@ def record_success(
     exit_code: int | None = None
     if output.json and isinstance(output.json.get("exit_code"), int):
         exit_code = output.json["exit_code"]
-    publish_event(
-        obs,
-        BusStepCompleted(
-            pipeline_id=pipeline_id,
-            execution_id=execution_id,
-            step_name=node.step.name,
-            duration_seconds=duration,
-            output_length=output_length,
-            prompt_tokens=output.prompt_tokens,
-            completion_tokens=output.completion_tokens,
-            model_call_count=getattr(output, "model_call_count", 0),
-            model_id=output.model_id,
-            exit_code=exit_code,
-            json_output_keys=(list(output.json.keys()) if output.json else None),
-        ),
-    )
+    step_completed_kwargs: dict[str, object] = {
+        "pipeline_id": pipeline_id,
+        "execution_id": execution_id,
+        "step_name": node.step.name,
+        "duration_seconds": duration,
+        "output_length": output_length,
+        "prompt_tokens": output.prompt_tokens,
+        "completion_tokens": output.completion_tokens,
+        "model_call_count": getattr(output, "model_call_count", 0),
+        "model_id": output.model_id,
+        "exit_code": exit_code,
+        "json_output_keys": (list(output.json.keys()) if output.json else None),
+    }
+    cached_tokens = getattr(output, "cached_tokens", None)
+    if cached_tokens is not None:
+        step_completed_kwargs["cached_tokens"] = cached_tokens
+    publish_event(obs, BusStepCompleted(**step_completed_kwargs))
 
 
 def record_failure(

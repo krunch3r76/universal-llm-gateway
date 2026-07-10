@@ -2,22 +2,17 @@
 
 from __future__ import annotations
 
-import logging
+from universal_logging import get_logger
 
-from services.rag.indexing_failure_classifier import (
-    classify_http_status_error as _classify_http_status_error,
-)
-from services.rag.indexing_failure_classifier import (
-    classify_indexing_failure as _classify_indexing_failure,
-)
 from services.rag.events.indexing import (
     rag_file_indexing_failure_recorded,
     rag_indexing_failure_persist_failed,
 )
+from services.rag.indexing_failure_classifier import classify_indexing_failure
 
-from . import state
+from .. import state
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 async def _record_indexing_failure_best_effort(
@@ -33,7 +28,7 @@ async def _record_indexing_failure_best_effort(
     if state._property_index is None:
         return
     try:
-        category, reason = _classify_indexing_failure(exc, chunk_count=chunk_count)
+        category, reason = classify_indexing_failure(exc, chunk_count=chunk_count)
         error_type = type(exc).__qualname__
         error_message = str(exc) or error_type
         attempt_count = await state._property_index.record_indexing_failure(

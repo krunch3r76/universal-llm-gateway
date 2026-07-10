@@ -11,8 +11,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from .observability import emit_post_loop_observability
 from ..protocol import StepOutput
+from .observability import emit_post_loop_observability
 
 if TYPE_CHECKING:
     from ..protocol import PipelineContext
@@ -62,6 +62,7 @@ def build_dispatch_output(
         for tc in result.tool_calls
     ]
 
+    cached_tokens = result.usage.get("cached_tokens")
     output = StepOutput(
         raw=result.content,
         reasoning=result.reasoning,
@@ -72,6 +73,7 @@ def build_dispatch_output(
         step_id=step.id,
         system_prompt=system,
         user_prompt=admission.user_prompt,
+        cached_tokens=cached_tokens if cached_tokens is not None else None,
     )
     output.json = {
         "content": result.content,
@@ -90,4 +92,6 @@ def build_dispatch_output(
         "reasoning": result.reasoning,
         "raw_response": result.raw,
     }
+    if cached_tokens is not None:
+        output.json["cached_tokens"] = cached_tokens
     return output

@@ -11,9 +11,9 @@ from enum import Enum
 SESSION_ID_RE_SOURCE = r"^[a-z]+(-[a-z]+)*-\d{4}-\d{2}-\d{2}-\d{6}-[0-9a-f]{3}$"
 SESSION_ID_RE = re.compile(SESSION_ID_RE_SOURCE)
 SESSION_ID_EXAMPLES = (
-    "claude-cursor-2026-05-17-045830-abc",
-    "claude-web-2026-05-17-045830-1a2",
-    "inspect-claude-cursor-2026-05-17-045830-f00",
+    "cursor-2026-05-17-045830-abc",
+    "web-anthropic-2026-05-17-045830-1a2",
+    "inspect-web-anthropic-2026-05-17-045830-f00",
 )
 
 _TIMESTAMP_PARSE_RE = re.compile(

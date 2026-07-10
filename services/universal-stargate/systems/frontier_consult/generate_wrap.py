@@ -89,8 +89,20 @@ def prepare_implement_packet(
         cortex=cortex,
     )
 
-    if packet_path is not None or source_ref is None:
+    if packet_path is not None:
+        packet_file = _resolve_packet_file(workspaces_root.resolve(), packet_path)
+        if packet_file is not None:
+            from .diff_text_guard import assert_packet_free_of_diff_text
+
+            assert_packet_free_of_diff_text(
+                request_id=request_id,
+                packet_path=packet_path,
+                text=packet_file.read_text(encoding="utf-8", errors="replace"),
+            )
         return GenerateWrapResult(packet_path=packet_path)
+
+    if source_ref is None:
+        return GenerateWrapResult(packet_path=None)
 
     # MASTER RATIFICATION (materialization sub-path only): the unified-admission
     # decision must be ratified before invoking the materialization machinery —
@@ -116,8 +128,21 @@ def prepare_implement_packet(
             gated=True,
             gated_reason=bridge.gated_reason,
         )
+    materialized_path = bridge.packet_path
+    if materialized_path is not None:
+        materialized_file = _resolve_packet_file(
+            workspaces_root.resolve(), materialized_path
+        )
+        if materialized_file is not None:
+            from .diff_text_guard import assert_packet_free_of_diff_text
+
+            assert_packet_free_of_diff_text(
+                request_id=request_id,
+                packet_path=materialized_path,
+                text=materialized_file.read_text(encoding="utf-8", errors="replace"),
+            )
     return GenerateWrapResult(
-        packet_path=bridge.packet_path,
+        packet_path=materialized_path,
         materialized=True,
         warnings=list(bridge.warnings),
         implement_spec_hash=bridge.implement_spec_hash,

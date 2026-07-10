@@ -30,7 +30,8 @@ GENERATOR_VERSION = "1.0.0"
 REMEDIATION_CMD = "make skill-graph-reconcile"
 MANIFEST_FILENAME = ".generated-manifest.json"
 GENERATED_HEADER = (
-    "GENERATED — DO NOT EDIT (cortex agent_skill SOT; "
+    "GENERATED — DO NOT EDIT (stub/frontmatter from agent_skill metadata; "
+    "body SOT = .cursor/skills/<slug>/SKILL.md; "
     f"regen: {REMEDIATION_CMD})"
 )
 

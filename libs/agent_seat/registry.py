@@ -60,6 +60,10 @@ def _dispatch_aliases() -> dict[str, str]:
     Derived entries: underscore normalization of every canonical seat slug
     ({family}-{platform} profile cell) and every role slug. New seats/roles
     resolve without touching any hand-maintained list (assertion 13585 class).
+
+    Provider-scoped bus addresses (``web-anthropic``, ``api-openai``, …) alias to
+    their capability cells so capability-keyed queries resolve post-mint address
+    forms. Bare ``cursor`` is excluded (non-injective fold — legacy alias only).
     """
     derived: dict[str, str] = {}
     for family, platform in load_profiles():
@@ -73,7 +77,27 @@ def _dispatch_aliases() -> dict[str, str]:
             f"_LEGACY_ALIASES shadows derivable spellings: {sorted(overlap)} — "
             "remove them; derivation owns these keys."
         )
-    return {**_LEGACY_ALIASES, **derived}
+    merged: dict[str, str] = {**_LEGACY_ALIASES, **derived}
+    address_aliases: dict[str, str] = {}
+    for cell, addr in _bus_address_map().items():
+        if addr == "cursor":
+            continue
+        norm_addr = _normalize_agent_key(addr)
+        if norm_addr in address_aliases and address_aliases[norm_addr] != cell:
+            raise RuntimeError(
+                f"_dispatch_aliases non-injective address alias: {addr!r} "
+                f"← {address_aliases[norm_addr]!r} and {cell!r}"
+            )
+        address_aliases[norm_addr] = cell
+    for norm_addr, cell in address_aliases.items():
+        existing = merged.get(norm_addr)
+        if existing is not None and existing != cell:
+            raise RuntimeError(
+                f"_dispatch_aliases address alias shadows canonical: {norm_addr!r} "
+                f"→ {cell!r} conflicts with existing {existing!r}"
+            )
+        merged[norm_addr] = cell
+    return merged
 
 
 @functools.cache

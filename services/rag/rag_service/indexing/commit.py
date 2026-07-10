@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-import logging
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+from universal_logging import get_logger
 
 if TYPE_CHECKING:
     from services.rag.chunkers import Chunk
@@ -22,16 +23,16 @@ from services.rag.events.indexing import (
     rag_source_commit_completed,
     rag_source_commit_started,
 )
-from services.rag.rag_service._indexing_contextualize import (
+
+from .. import state
+from .contextualize_cache import (
     _store_cached_contexts_best_effort,
 )
-from services.rag.rag_service._indexing_failure_ops import (
+from .failure_ops import (
     _record_indexing_failure_best_effort,
 )
 
-from . import state
-
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 async def _run_commit_phase(

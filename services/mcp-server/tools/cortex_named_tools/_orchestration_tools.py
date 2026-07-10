@@ -99,11 +99,12 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
                           unless the slug does not parse as {family}-{platform}.
           family        — model family: claude / gpt / grok / gemini (default: claude)
           platform      — platform surface: cursor / api / web (default: cursor)
-          role          — optional functional team seat: lead / reviewer / gatherer /
-                          synthesizer / artisan / skeptic.
-                          Role does NOT change the seat slug — it annotates the session
-                          and scopes the role memory anchor. The session_id is always
-                          {family}-{platform}-YYYY-MM-DD-HHMMSS-{3hex} regardless of role.
+          role          — accepted for back-compat; no longer scopes boot output. Boot
+                          output is seat-predicated: duties are properties of the seat
+                          (family+platform cell), not assignments to the reader.
+                          Session IDs mint as ``{bus-address}-YYYY-MM-DD-HHMMSS-{3hex}``
+                          where bus-address ∈ ``cursor | web-{provider} | api-{provider}``;
+                          capability resolution remains seat-cell-keyed.
           transcript_id — if provided, loads continuation context for that transcript.
                           The transcript entity must already exist in Cortex, which means
                           the session it references must have already closed. When a
@@ -173,7 +174,9 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
           agent         — seat slug (same semantics as cortex_boot)
           family        — model family: claude / gpt / grok / gemini
           platform      — platform surface: cursor / api / web
-          role          — optional functional team seat
+          role          — accepted for back-compat; no longer scopes boot output. Boot
+                          output is seat-predicated: duties are properties of the seat
+                          (family+platform cell), not assignments to the reader.
           transcript_id — optional continuation transcript context for primary
           diff_with     — optional secondary seat slug ({family}-{platform}, e.g.
                           "claude-web", "grok-api") to diff against primary

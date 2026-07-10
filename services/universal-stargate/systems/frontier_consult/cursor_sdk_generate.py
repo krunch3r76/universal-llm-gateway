@@ -339,6 +339,13 @@ async def dispatch_cursor_sdk_generate(
             )
         if packet_file is not None:
             packet_text = packet_file.read_text(encoding="utf-8", errors="replace")
+            from .diff_text_guard import assert_packet_free_of_diff_text
+
+            assert_packet_free_of_diff_text(
+                request_id=request_id,
+                packet_path=worker_packet,
+                text=packet_text,
+            )
         prompt_preamble = derive_cursor_sdk_prompt_preamble(
             handoff_contract=handoff_contract,
             pointer=preamble_pointer,

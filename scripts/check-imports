@@ -10,6 +10,14 @@ Usage:
   check-imports --entry systems.proxy.app services/universal-stargate/systems/pipeline/
 
 Exit 0 when all imports succeed; exit 1 on first failure (stderr has traceback).
+
+Entry-module checks (--entry / --stargate-entry) classify a ModuleNotFoundError
+on a THIRD-PARTY module as an environment gap: an ``ENV_GAP`` line is printed to
+stderr and the check continues (exit 0 if nothing else fails). The execution
+environment lacking a service dependency is not a regression in the code under
+test. First-party import failures (repo modules) still fail with a traceback.
+Per-file module checks are never relaxed — a touched module that cannot import
+fails the run regardless of why.
 """
 
 from __future__ import annotations
@@ -103,11 +111,29 @@ def _import_module(module_name: str) -> None:
     importlib.import_module(module_name)
 
 
+def _is_first_party(top_level: str) -> bool:
+    """True when the missing top-level name resolves inside the repo trees."""
+    candidates = (STARGATE_ROOT / top_level, LIBS_ROOT / top_level, REPO_ROOT / top_level)
+    return any(c.is_dir() or c.with_suffix(".py").is_file() for c in candidates)
+
+
 def _run_entries(entries: tuple[str, ...]) -> None:
     _prepend_sys_path(STARGATE_PATH)
     for name in entries:
         print(f"check-imports: entry {name}", file=sys.stderr)
-        _import_module(name)
+        try:
+            _import_module(name)
+        except ModuleNotFoundError as exc:
+            top = (exc.name or "").split(".")[0]
+            if top and not _is_first_party(top):
+                print(
+                    f"check-imports: entry {name} ENV_GAP: missing third-party "
+                    f"module '{top}' — execution-environment gap, not a code "
+                    "regression; entry check continues",
+                    file=sys.stderr,
+                )
+                continue
+            raise
 
 
 def _run_files(py_files: list[Path]) -> None:

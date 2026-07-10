@@ -163,6 +163,41 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
         default_variant={"context": "1m", "reasoning": "medium", "fast": "false"},
         instruction_profile="reasoner",
     ),
+    # GPT-5.6 family (GA 2026-07-09) — knobs mirrored from gpt-5.5 until live
+    # ListModels widens accepted sets. Prefer explicit tier ids; bare gpt-5.6 → Sol.
+    "gpt-5.6-sol": ModelCapability(
+        knobs={
+            "context": KnobSpec(accepted=("272k", "1m")),
+            "reasoning": KnobSpec(
+                accepted=("none", "low", "medium", "high", "extra-high")
+            ),
+            "fast": KnobSpec(accepted=("false", "true")),
+        },
+        default_variant={"context": "1m", "reasoning": "medium", "fast": "false"},
+        instruction_profile="reasoner",
+    ),
+    "gpt-5.6-terra": ModelCapability(
+        knobs={
+            "context": KnobSpec(accepted=("272k", "1m")),
+            "reasoning": KnobSpec(
+                accepted=("none", "low", "medium", "high", "extra-high")
+            ),
+            "fast": KnobSpec(accepted=("false", "true")),
+        },
+        default_variant={"context": "1m", "reasoning": "medium", "fast": "false"},
+        instruction_profile="reasoner",
+    ),
+    "gpt-5.6-luna": ModelCapability(
+        knobs={
+            "context": KnobSpec(accepted=("272k", "1m")),
+            "reasoning": KnobSpec(
+                accepted=("none", "low", "medium", "high", "extra-high")
+            ),
+            "fast": KnobSpec(accepted=("false", "true")),
+        },
+        default_variant={"context": "1m", "reasoning": "medium", "fast": "false"},
+        instruction_profile="reasoner",
+    ),
     # Cursor Grok 4.5 — replaces all Grok 4.x cursor-sdk / picker / subagent slugs
     # (operator 2026-07-08). Default non-fast (unlike composer-2.5). Effort Low/Medium/High
     # operator-confirmed; Extra High / Max and context ladder unverified — keep accepted

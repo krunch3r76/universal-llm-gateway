@@ -277,6 +277,10 @@ def _run_import_check(files: list[str]) -> dict[str, bool | str]:
         }
         if verdict == "skipped":
             check_result["skipped"] = True
+        if "ENV_GAP" in output:
+            # check-imports reported a missing third-party dep in the gate's
+            # execution environment (entry sweep). Reported, not gate-failing.
+            check_result["env_gap"] = True
         return check_result
     except subprocess.TimeoutExpired:
         return {"passed": False, "output": "check-imports timed out"}

@@ -173,6 +173,28 @@ def reject_unsupported_packet_inputs(
     return None
 
 
+def reject_pointer_body_on_generate(
+    op: str,
+    pointer_body: str | None,
+) -> dict[str, Any] | None:
+    """Reject pointer_body outside op='handoff' (friction 23301).
+
+    Previously accepted and silently dropped on generate/to_thread — the
+    4741/4742 blind-panel briefs never reached the model. The generate/
+    to_thread prompt contract is the latest turn on dispatch_thread_id; there
+    is no pointer_body channel on these ops.
+    """
+    if op == "handoff" or pointer_body is None:
+        return None
+    return _validation_error(
+        "pointer_body is handoff-only. On op='generate'/'to_thread' the latest "
+        "turn on dispatch_thread_id is the model prompt verbatim — post the "
+        "brief as a bus turn on that thread (or use panel_dispatch messages[] "
+        "for panel briefs) instead of pointer_body.",
+        field="pointer_body",
+    )
+
+
 # Manual-handoff alias table for claude-cursor (mirrors admission.py resolve_handoff_seat).
 # Do NOT import Stargate modules into MCP intake.
 _CLAUDE_CURSOR_SEAT_ALIASES: frozenset[str] = frozenset(

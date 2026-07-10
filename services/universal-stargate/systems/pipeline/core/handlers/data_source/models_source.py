@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 from model_id import ModelId
+from transport_utils import DEFAULT_STARGATE_URL, make_async_client
 from universal_logging import get_logger
 
 if TYPE_CHECKING:
@@ -21,6 +22,8 @@ if TYPE_CHECKING:
     from ..protocol import PipelineContext
 
 logger = get_logger(__name__)
+
+_MODELS_PATH = "/v1/models"
 
 
 async def run_available_models(
@@ -50,9 +53,9 @@ async def run_available_models(
         params: dict[str, str] = {"type": "model"}
         if source:
             params["source"] = source
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with make_async_client(DEFAULT_STARGATE_URL, timeout=30.0) as client:
             resp = await client.get(
-                "http://localhost:9999/v1/models",
+                _MODELS_PATH,
                 params=params,
             )
             resp.raise_for_status()

@@ -441,6 +441,7 @@ async def build_dispatch_body(
             req.role,
             request_id=request_id,
             event_publisher=event_publisher,
+            caller_agent=req.caller_agent,
         )
 
     effective_model = _resolve_pre_hydration_effective_model(

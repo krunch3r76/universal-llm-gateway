@@ -143,7 +143,11 @@ async def dispatch_api_role_generate(
             status_code=422,
         )
 
-    enforce_team_dispatch_generate_admit(role, request_id=request_id)
+    enforce_team_dispatch_generate_admit(
+        role,
+        request_id=request_id,
+        caller_agent=body.caller_agent,
+    )
 
     contract = body.contract
     validate_generate_density_intake(

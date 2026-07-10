@@ -6,9 +6,11 @@ cannot tolerate multi-minute synchronous waits spawn pipelines via
 `POST /api/v1/pipelines/dispatch` and poll results via
 `GET /api/v1/pipelines/executions/{execution_id}`.
 
-Phase 1 introduces the **transport boundary**: admission, in-process tracker,
-polling endpoint, and MCP tool pair. Phase 2 will add push delivery via
-`result_delivery`.
+Phase 1 introduced the **transport boundary**: admission, in-process tracker,
+polling endpoint, and MCP tool pair. Push delivery is shipped: the tracker
+invokes `async_tracker_delivery.deliver_result` at terminal transition,
+routing to the legacy `result_delivery` envelope post or the bus-mode
+on-behalf post (`op="to_thread"`). See [Result Delivery](#result-delivery-phase-b3).
 
 ## Topology
 

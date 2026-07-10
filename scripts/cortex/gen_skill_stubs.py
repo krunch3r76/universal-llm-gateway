@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Generate and verify ``.cursor/skills/`` stubs from cortex agent_skill SOT."""
+"""Generate and verify ``.cursor/skills/`` frontmatter/thin stubs from entity metadata.
+
+Body authorship SOT is ``.cursor/skills/{slug}/SKILL.md`` (see skill-document-writing
+§ SOT authority chain). This script projects/verifies stub frontmatter + pointers from
+``agent_skill`` fields — it does not author full skill bodies. Cortex entities point at
+file SOT via ``source_uri``; they are not a parallel body store.
+"""
 
 from __future__ import annotations
 

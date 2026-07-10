@@ -21,7 +21,9 @@ defensively, ``_format_for_prompt``) propagates through
 - ``render_user_prompt`` — validate template placeholders against the
   built context (raising ``ValueError`` with diagnostic detail on empty,
   missing, or unfilled placeholders) and run
-  ``prompt_builder.render_safe``. Takes ``build_context`` as injected dep
+  ``prompt_builder.render_safe``. Placeholders listed in
+  ``PromptConfig.optional_placeholders`` are exempt from the non-empty
+  check (they must still resolve). Takes ``build_context`` as injected dep
   so domain handler overrides of ``_build_prompt_context`` propagate.
 """
 
@@ -218,7 +220,14 @@ def render_user_prompt(
             f"dependency steps have completed."
         )
 
+    # Placeholders declared optional on the prompt may resolve to an
+    # empty/whitespace-only value (e.g. doc_generate draft's existing_doc on
+    # a first run, where no architecture doc exists yet). They must still
+    # resolve — unresolvable placeholders were already rejected above.
+    optional_placeholders = set(prompt_config.optional_placeholders)
     for placeholder in required_placeholders:
+        if placeholder in optional_placeholders:
+            continue
         value = prompt_builder._resolve_path(placeholder, prompt_context)
         if value is None or (isinstance(value, str) and not value.strip()):
             raise ValueError(

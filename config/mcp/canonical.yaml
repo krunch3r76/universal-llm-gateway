@@ -2227,16 +2227,16 @@ tools:
   fol_descriptor: |
     ∀ worktree ∈ ArcWorktrees:
       git_diff(worktree) ⟹
-        diff_sha256 ∈ SHA256Hex ∧ diffstat ∈ DiffStat ∧ branch ∈ str ∧ diff ∈ str.
-      git_diff(worktree, include_full_diff=false) ⟹ compact envelope (no inline diff).
-    Read-only. Default includes full unified diff (legacy callers); compact via
-    include_full_diff=false (friction 11511). Fingerprint feeds git_integrate approval binding.
+        diff_sha256 ∈ SHA256Hex ∧ diffstat ∈ DiffStat ∧ branch ∈ str.
+      git_diff(worktree, include_full_diff=true) ⟹ diff ∈ str.
+    Read-only. Default compact (no inline diff); pass include_full_diff=true to
+    opt in to the full unified diff body. Fingerprint feeds git_integrate approval binding.
   json_schema:
     type: object
     properties:
       worktree_path: {type: string}
       path_filter: {type: string, default: ""}
-      include_full_diff: {type: boolean, default: true}
+      include_full_diff: {type: boolean, default: false}
     required: [worktree_path]
   # headless/arc-only (see git_integrate note). Off mcp_claude → overflow for Claude.
   seat_visibility: [mcp]
@@ -2645,6 +2645,8 @@ tools:
       mcp (optional, present in json_schema): reserve for genuine codebase investigation; omit for self-contained consults to avoid the self-post failure mode.
       skills (optional, present in json_schema): unified skills input path; capability-selected delivery.
       server_tools (optional, present in json_schema): omit for default ALL server-side built-ins; set false to suppress card-derived provider built-ins.
+      ¬pointer_body on generate/to_thread (validation_error — handoff-only; the dispatch-thread latest turn is the prompt; previously silently dropped, friction 23301).
+      A dispatch-thread latest turn that is a server-posted pointer/failure envelope rejects 422 dispatch_thread_latest_is_pointer — post a fresh prompt turn or pass split_thread=true.
     GenerateRoles = generate/to_thread roles (reviewer/synthesizer/artisan/skeptic).
     cursor-sdk ∈ GenerateTargets via auto_dispatchable (substrate=sdk); ¬ cloud CapabilityDispatch.
       Default output_contract=thread for sdk; packet_path honored for cursor-sdk generate across {light-bounded,pure-mechanical,implement}; source_ref implement-only; dispatch-thread latest turn is fallback when no packet;
@@ -2778,6 +2780,9 @@ tools:
         panel_executions ∧ panel_families ∧ per-role dispatches
         ∧ member_knob_resolution ∈ Response ∧ parity ∉ {claimed_by_default}.
     Runs skeptic + reviewer (≥2 provider families) via team_dispatch admission.
+    member_models (role→provider/model, optional) rebinds roster member models and is honored
+    by the ≥2-family gate; values validate against role allowed_models. ¬model overrides via
+    generation_options (rejected when roster role keys present — friction 23301).
     Lead adjudication + Menu D assert NON-offloadable (Guard 2). Mutating.
     See agent_skill:consensus-steelman-posture.
   json_schema:
@@ -2796,6 +2801,7 @@ tools:
       max_tool_turns: {type: integer}
       transcript_id: {type: string}
       timeout_seconds: {type: integer}
+      member_models: {type: object, description: "role → provider/model override; honored by the ≥2-family gate"}
     required: [messages, dispatch_thread_id]
   skill_uri: rule:consensus-steelman-posture
   seat_visibility: [mcp, mcp_claude]

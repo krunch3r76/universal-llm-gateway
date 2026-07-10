@@ -29,7 +29,7 @@ _PROVIDER_FAMILY_LABEL: dict[str, str] = {
 
 DEFAULT_PANEL_MEMBERS: tuple[tuple[str, str | None], ...] = (
     ("skeptic", None),
-    ("reviewer", "openai/gpt-5.5"),
+    ("reviewer", "openai/gpt-5.6-terra"),
 )
 
 TIEBREAKER_ROLE = "synthesizer"
@@ -73,12 +73,19 @@ def resolve_panel_members(
     *,
     include_synthesizer: bool = False,
     extra_members: list[tuple[str, str | None]] | None = None,
+    member_models: dict[str, str] | None = None,
 ) -> tuple[PanelMemberSpec, ...]:
     """Build the default 3-family panel roster (skeptic + reviewer [+ synthesizer]).
 
     ``extra_members`` is a **library-only** hook for programmatic callers. The MCP
     ``panel_dispatch`` tool intentionally does NOT expose or pass it — the MCP
     surface stays a fixed roster (skeptic + reviewer [+ synthesizer]).
+
+    ``member_models`` (role → provider/model) overrides the model bound to a
+    roster member without changing the roster itself. Overrides participate in
+    family resolution (friction 23301: per-role overrides were previously
+    invisible to the ≥2-family gate). Keys must name roster roles; values are
+    validated against role ``allowed_models`` in ``admit_panel_plan``.
     """
     specs: list[PanelMemberSpec] = [
         PanelMemberSpec(role=role, model=model) for role, model in DEFAULT_PANEL_MEMBERS
@@ -87,6 +94,11 @@ def resolve_panel_members(
         specs.append(PanelMemberSpec(role=TIEBREAKER_ROLE, model=None))
     if extra_members:
         specs.extend(PanelMemberSpec(role=r, model=m) for r, m in extra_members)
+    if member_models:
+        specs = [
+            PanelMemberSpec(role=s.role, model=member_models.get(s.role, s.model))
+            for s in specs
+        ]
     return tuple(specs)
 
 
@@ -225,12 +237,16 @@ def admit_panel_plan(
     *,
     disposition: str,
     include_synthesizer: bool = False,
+    member_models: dict[str, str] | None = None,
 ) -> PanelAdmissionPlan | dict[str, Any]:
     """Validate disposition and return member plan, or an error envelope.
 
     The MCP ``panel_dispatch`` tool calls this with the fixed roster only —
     ``extra_members`` (a ``resolve_panel_members`` library-only hook) is never
-    threaded through the MCP surface.
+    threaded through the MCP surface. ``member_models`` (role → model) IS an
+    MCP-exposed override: it rebinds models on roster members and is honored
+    by the ≥2-family gate below (friction 23301). Unknown roles and models
+    outside a role's ``allowed_models`` reject before any paid admission.
     """
     if disposition != "panel":
         return {
@@ -242,7 +258,41 @@ def admit_panel_plan(
                 ),
             }
         }
-    members = resolve_panel_members(include_synthesizer=include_synthesizer)
+    members = resolve_panel_members(
+        include_synthesizer=include_synthesizer,
+        member_models=member_models,
+    )
+    if member_models:
+        roster_roles = {m.role for m in members}
+        unknown = sorted(set(member_models) - roster_roles)
+        if unknown:
+            return {
+                "error": {
+                    "code": "validation_error",
+                    "message": (
+                        f"member_models names non-roster roles {unknown!r}; "
+                        f"roster is {sorted(roster_roles)!r}"
+                    ),
+                },
+                "field": "member_models",
+            }
+        for role, model in member_models.items():
+            try:
+                role_profile = get_role(role)
+            except KeyError:
+                role_profile = None
+            allowed = role_profile.allowed_models if role_profile else None
+            if allowed and model not in allowed:
+                return {
+                    "error": {
+                        "code": "validation_error",
+                        "message": (
+                            f"member_models[{role!r}]={model!r} is not in the "
+                            f"role's allowed_models {list(allowed)!r}"
+                        ),
+                    },
+                    "field": "member_models",
+                }
     models = {m.role: effective_model_for_member(m) for m in members}
     families = panel_provider_families(models)
     if len(families) < MIN_PANEL_PROVIDER_FAMILIES:

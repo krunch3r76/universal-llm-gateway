@@ -3,24 +3,29 @@
 Called at step init time. Results are cached for the execution lifetime.
 Falls back gracefully when the endpoint is unavailable.
 
-∀ async callers: use `async_resolve_model_requirements` — it uses httpx.AsyncClient
-so the event loop is never blocked. The sync variant exists only for non-async call
-sites (DAG pre-analysis, step config introspection).
+Transport is delegated to transport_utils (DEFAULT_STARGATE_URL resolution:
+STARGATE_UNIX_SOCKET, then STARGATE_URL, then localhost:STARGATE_PORT) — the
+same idiom as ProxyClient.
+
+∀ async callers: use `async_resolve_model_requirements` — it uses an async
+client so the event loop is never blocked. The sync variant exists only for
+non-async call sites (DAG pre-analysis, step config introspection).
 """
 
 from __future__ import annotations
 
-import logging
 from time import monotonic
 from typing import Any
 
 import httpx
+from transport_utils import DEFAULT_STARGATE_URL, make_async_client, make_sync_client
+from universal_logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # 15s was still too tight under concurrent pipeline load.
 _DEFAULT_TIMEOUT = 45.0
-_LOOPBACK_URL = "http://localhost:9999"
+_SELECT_PATH = "/v1/models/select"
 
 
 async def async_resolve_model_requirements(
@@ -47,8 +52,10 @@ async def async_resolve_model_requirements(
     started_at = monotonic()
 
     try:
-        async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT) as client:
-            resp = await client.post(f"{_LOOPBACK_URL}/v1/models/select", json=payload)
+        async with make_async_client(
+            DEFAULT_STARGATE_URL, timeout=_DEFAULT_TIMEOUT
+        ) as client:
+            resp = await client.post(_SELECT_PATH, json=payload)
         resp.raise_for_status()
         data = resp.json()
         model_ids = [m["id"] for m in data.get("models", []) if isinstance(m, dict)]
@@ -128,8 +135,8 @@ def resolve_model_requirements(
     started_at = monotonic()
 
     try:
-        with httpx.Client(timeout=_DEFAULT_TIMEOUT) as client:
-            resp = client.post(f"{_LOOPBACK_URL}/v1/models/select", json=payload)
+        with make_sync_client(DEFAULT_STARGATE_URL, timeout=_DEFAULT_TIMEOUT) as client:
+            resp = client.post(_SELECT_PATH, json=payload)
         resp.raise_for_status()
         data = resp.json()
         model_ids = [m["id"] for m in data.get("models", []) if isinstance(m, dict)]

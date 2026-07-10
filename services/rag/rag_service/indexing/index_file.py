@@ -10,18 +10,16 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import logging
 import time
 from pathlib import Path
 from uuid import uuid4
 
-from services.rag.chunk_filters import chunk_metadata_is_noise
+from universal_logging import get_logger
+
 from services.rag.chunkers import chunk_file
 from services.rag.embeddings import require_healthy
 from services.rag.events.indexing import (
-    rag_file_indexed,
     rag_file_indexing_failed,
-    rag_file_indexing_failure_cleared,
     rag_file_indexing_gated,
     rag_file_skipped,
     rag_html_normalization_completed,
@@ -29,32 +27,31 @@ from services.rag.events.indexing import (
     rag_html_normalization_started,
     rag_property_index_unavailable,
 )
-from services.rag.indexing_helpers import all_ids_match_prefix, file_hash
+from services.rag.indexing_helpers import file_hash
 from services.rag.models import IndexResult
-from services.rag.rag_service._indexing_article_sync import _run_article_sync_phase
-from services.rag.rag_service._indexing_commit import _run_commit_phase
-from services.rag.rag_service._indexing_delete import (
+
+from .. import state
+from .article_sync import _run_article_sync_phase
+from .commit import _run_commit_phase
+from .delete import (
     _delete_file as _delete_file,
 )
-from services.rag.rag_service._indexing_delete import (
-    _enqueue_for_extraction,
-)
-from services.rag.rag_service._indexing_embed import _run_embed_phase
-from services.rag.rag_service._indexing_failure_ops import (
+from .embed import _run_embed_phase
+from .failure_ops import (
     _record_indexing_failure_best_effort,
 )
-from services.rag.rag_service._indexing_file_guards import (
+from .file_guards import (
     _handle_empty_chunks,
     _handle_pdf_duplicate_or_move,
+    _handle_unchanged_prefix_skip,
 )
-from services.rag.rag_service._indexing_helpers import (
+from .finalize import _finalize_index_success
+from .source_identity import (
     _derive_subdirectory,
     _should_skip_cached_source,
 )
 
-from . import state
-
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 _CHARS_PER_TOKEN = 4
 
@@ -70,7 +67,7 @@ async def _index_file(
     operation: str | None = None,
 ) -> IndexResult:
     """Index a file under a per-source gate to avoid watcher/API races."""
-    from .source_path_gate import acquire_source_path, release_source_path
+    from ..source_path_gate import acquire_source_path, release_source_path
 
     source = str(file_path.resolve())
     await acquire_source_path(source)
@@ -200,49 +197,23 @@ async def _index_file_impl(
         )
 
     try:
-        if not force and existing_ids and all_ids_match_prefix(existing_ids, prefix):
-            if prop_index is not None:
-                await prop_index.upsert_indexed_source(
-                    source=source,
-                    mtime_ns=source_stat.st_mtime_ns,
-                    size_bytes=source_stat.st_size,
-                    extraction_schema_version=schema_version,
-                    extraction_model=extraction_model,
-                    source_hash=source_hash,
-                )
-                if not prop_index.article_exists(source):
-                    scope = state._config.get_scope_for_path(source)
-                    subdirectory = _derive_subdirectory(source, state._config)
-                    created = await prop_index.sync_article_structural_fields(
-                        source_path=source,
-                        filename=file_path.name,
-                        content_hash=source_hash,
-                        scope=scope,
-                        subdirectory=subdirectory,
-                    )
-                    if created and state._event_bus is not None:
-                        from services.rag.events.articles import (
-                            rag_article_auto_created,
-                        )
-
-                        await state._event_bus.publish_nowait(
-                            rag_article_auto_created(
-                                source_path=source,
-                                content_hash=source_hash,
-                                scope=scope,
-                            )
-                        )
-                await _enqueue_for_extraction(source)
-            if emit_skip_event and state._event_bus is not None:
-                await state._event_bus.publish_nowait(
-                    rag_file_skipped(
-                        file=source,
-                        reason="unchanged",
-                        operation_id=correlation_id,
-                        operation=operation,
-                    )
-                )
-            return IndexResult(deleted=0, indexed=0, unchanged=True, file=source)
+        prefix_skip = await _handle_unchanged_prefix_skip(
+            source=source,
+            file_path=file_path,
+            existing_ids=existing_ids,
+            prefix=prefix,
+            prop_index=prop_index,
+            source_stat=source_stat,
+            source_hash=source_hash,
+            schema_version=schema_version,
+            extraction_model=extraction_model,
+            force=force,
+            emit_skip_event=emit_skip_event,
+            correlation_id=correlation_id,
+            operation=operation,
+        )
+        if prefix_skip is not None:
+            return prefix_skip
 
         existing_timestamps: dict[str, str] = {
             meta["chunk_hash"]: meta["indexed_at"]
@@ -354,44 +325,12 @@ async def _index_file_impl(
         operation_id=correlation_id,
     )
 
-    if state._property_index is not None:
-        cleared = await state._property_index.clear_indexing_failure(source)
-        if cleared and state._event_bus is not None:
-            await state._event_bus.publish_nowait(
-                rag_file_indexing_failure_cleared(
-                    file=source, reason="indexed_successfully"
-                )
-            )
-
-    await _enqueue_for_extraction(source)
-
-    logger.info(
-        "Index complete: file=%s deleted=%d indexed=%d",
-        source,
-        len(stale_ids),
-        len(chunks),
-    )
-    if state._event_bus is not None:
-        n_noise = sum(1 for m in metadatas if chunk_metadata_is_noise(m))
-        await state._event_bus.publish_nowait(
-            rag_file_indexed(
-                file=source,
-                deleted=len(stale_ids),
-                indexed=len(chunks),
-                duration_seconds=time.monotonic() - start,
-                noise_chunks=n_noise,
-                document_metadata=(
-                    state._article_event_kwargs(state._registry, source)
-                    if state._registry is not None
-                    else None
-                ),
-                operation_id=correlation_id,
-                operation=operation,
-            )
-        )
-    return IndexResult(
-        deleted=len(stale_ids),
-        indexed=len(chunks),
-        unchanged=False,
-        file=source,
+    return await _finalize_index_success(
+        source=source,
+        chunks=chunks,
+        stale_ids=stale_ids,
+        metadatas=metadatas,
+        start=start,
+        correlation_id=correlation_id,
+        operation=operation,
     )

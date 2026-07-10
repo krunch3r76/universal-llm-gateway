@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import hashlib
-import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+from universal_logging import get_logger
 
 from services.rag.chunk_filters import (
     chunk_metadata_is_noise,
@@ -23,8 +24,9 @@ from services.rag.events.indexing import (
     rag_property_write_completed,
     rag_property_write_started,
 )
-from services.rag.rag_service._indexing_chroma import _upsert_chroma_chunk_batches
-from services.rag.rag_service._indexing_contextualize import (
+
+from .chroma import _upsert_chroma_chunk_batches
+from .contextualize import (
     _run_contextualization_phase,
 )
 
@@ -35,7 +37,7 @@ if TYPE_CHECKING:
     from services.rag.config import RagConfig
     from services.rag.property_index import PropertyIndex
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 @dataclass

@@ -86,6 +86,9 @@ class StepOutput:
     # of ``completion_tokens``, exposed separately so consumers can distinguish
     # reasoning spend from visible output.
     reasoning_tokens: int = 0
+    # Provider-reported cache hits (``usage.cached_tokens``). ``None`` when the
+    # provider did not report the field — never coerced to zero.
+    cached_tokens: int | None = None
 
     # Embedded provenance (auto-populated from model_id + step_id)
     provenance: dict[str, Any] | None = None
@@ -140,6 +143,8 @@ class StepOutput:
             "temperature": self.temperature,
             "max_tokens": self.max_tokens,
         }
+        if self.cached_tokens is not None:
+            metadata["cached_tokens"] = self.cached_tokens
         # Remove None values for cleaner storage
         metadata = {k: v for k, v in metadata.items() if v is not None}
 

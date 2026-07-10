@@ -218,12 +218,23 @@ class PipelineAccessor:
 
         system_prompt_value = obj.get("system_prompt")
 
+        optional_placeholders = obj.get("optional_placeholders", [])
+        if not isinstance(optional_placeholders, list) or not all(
+            isinstance(name, str) for name in optional_placeholders
+        ):
+            raise ValueError(
+                f"Prompt '{prompt_ref}': 'optional_placeholders' must be a "
+                f"list of placeholder name strings, got "
+                f"{type(optional_placeholders).__name__}"
+            )
+
         prompt_name = prompt_ref.split(".")[-1]
         return PromptConfig(
             name=prompt_name,
             description=obj.get("description", ""),
             system_prompt=system_prompt_value,
             template=obj["template"],
+            optional_placeholders=optional_placeholders,
         )
 
     @property

@@ -113,6 +113,8 @@ _CLAUDE_BUNDLE_E: list[str] = [
     # IDE-authored SOT under .cursor/skills/ (no separate docs/cortex body)
     "add-mcp-tool",
     "produce-uml",
+    # Operator-confirmed 2026-07-09 (a:23206) — was orphaned on claude.ai UI
+    "overhaul-program",
 ]
 
 # Domain / matter skills — flat-upload-safe after E1 remediation (agent-bus 4559 / 4649).

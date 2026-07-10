@@ -7,7 +7,7 @@ Step-level schemas live in `step_config.py`.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -219,12 +219,18 @@ class PromptConfig:
         description: Human-readable description
         system_prompt: Optional system message for model
         template: User prompt template with {placeholders}
+        optional_placeholders: Placeholder names whose resolved value may be
+            empty/whitespace-only. They must still resolve in the prompt
+            context (an unresolvable placeholder is always an error); only
+            the non-empty-value check is skipped. Default: none — every
+            placeholder is strict.
     """
 
     name: str
     description: str = ""
     system_prompt: str | None = None
     template: str = ""
+    optional_placeholders: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         """Validate configuration after initialization."""

@@ -129,7 +129,6 @@ def render_operational_context(
     agent: str,
     family: str,
     platform: str,
-    role: str | None = None,
     unread_count: int = 0,
     review_total: int | None = None,
 ) -> str:

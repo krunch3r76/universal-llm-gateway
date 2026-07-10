@@ -11,7 +11,8 @@ Domain fields (from pipeline YAML step config):
     consumer_model_ref: str — model alias resolved at runtime via models.yaml;
         injected as ``consumer_model`` into pipeline_options so the callee
         can apply model-specific retrieval profiles (optional)
-    stargate_url: str — Stargate base URL (default: http://localhost:9999)
+    stargate_url: str — Stargate base URL
+        (default: transport_utils.DEFAULT_STARGATE_URL)
 
 Forwards rag_*, scope_*, and rerank_* keys from context.options so callers
 can tune retrieval and reranking via the end-to-end path (e.g. rag-answer →
@@ -23,7 +24,7 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, Any, override
 
-import httpx
+from transport_utils import DEFAULT_STARGATE_URL, make_async_client
 from universal_logging import get_logger
 
 from ..dag import PipelineExecutionError
@@ -36,7 +37,7 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
-DEFAULT_STARGATE_URL = "http://localhost:9999"
+_CHAT_COMPLETIONS_PATH = "/v1/chat/completions"
 
 
 def _inject_rag_context_options(merged_options: dict[str, Any], step_id: str) -> None:
@@ -100,7 +101,6 @@ class PipelineCallHandler(AbstractStepHandler):
             raise ValueError(f"Step '{step.id}': missing required 'pipeline_id' field")
 
         stargate_url: str = step.get_domain_field("stargate_url", DEFAULT_STARGATE_URL)
-        url = f"{stargate_url.rstrip('/')}/v1/chat/completions"
 
         step_options: dict[str, Any] = step.get_domain_field("pipeline_options", {})
         forwarded: dict[str, Any] = {
@@ -160,8 +160,8 @@ class PipelineCallHandler(AbstractStepHandler):
         timeout = (step.handler_timeout_seconds or step.timeout_seconds or 60) + 10
 
         start = time.monotonic()
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.post(url, json=body)
+        async with make_async_client(stargate_url, timeout=timeout) as client:
+            response = await client.post(_CHAT_COMPLETIONS_PATH, json=body)
         latency_ms = (time.monotonic() - start) * 1000
 
         if response.is_error:

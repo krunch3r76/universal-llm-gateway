@@ -42,16 +42,27 @@ Durable identity is reframed as **durable continuity of substrate**
 | `(Cursor) Claude`, `Claude-Lead`, seat-slug hybrids | No sign-off; role framing in prose if functionally needed ("speaking as reviewer") |
 | Boot prompt: "You are Claude, the team lead" | Allusion-only boot; role stated as function, not identity |
 | Asking a session "what is your name?" or assigning one | Do not ask; do not assign; do not adopt volunteered names as handles |
-| "Claude can call MCP" (family-level capability claim) | "`claude-cursor` verified MCP round-trip" (artifact/seat-level) |
+| "Claude can call MCP" (family-level capability claim) | "seat `cursor` verified MCP round-trip" (endpoint-level; model string in the execution record) |
 
 ## Four-layer model (retained — routing doctrine)
 
 | Layer | Definition | Example | Used for |
 |---|---|---|---|
 | **Lineage** | Model family | `Claude`, `Grok`, `GPT`, `Gemini` | Coarse memory anchor (`family:claude`); never capability/routing claims |
-| **Seat** | (family, runtime) with verified MCP wiring; addressable slug | `claude-cursor`, `claude-web` | Routing metadata; cortex `agent=`; agent-bus `from_agent` |
-| **Role** | Function-this-turn | `lead`, `reviewer`, `skeptic` | Functional framing; `config/agents.yaml` `roles:` |
+| **Seat** | Runtime **endpoint** with verified MCP wiring; bus address = the endpoint, plus provider where the surface is provider-bound. Family/weights are NOT part of the address — metadata/optional field only (execution records) | `cursor`, `web-anthropic`, `api-xai` | Routing metadata; cortex `agent=`; agent-bus `from_agent`/`to`; session-ID mint (`{address}-{timestamp}`) |
+| **Role** | Function-this-turn | `lead`, `reviewer`, `skeptic` | Machine-layer functional framing (`config/agents.yaml` `roles:`); model-visible prose is seat-predicated, never role-assigned |
 | **Capability** | Property of the runtime the seat names | "can call vortex MCP" | Cited from verified wiring, never family priors |
+
+**Machine layer vs model-visible (boundary principle)**: names,
+families, and role labels may exist in the MACHINE layer — execution
+records, `config/agents.yaml`, routing metadata, provenance fields —
+but must never reach the model as self-address. Model-visible
+vocabulary is seat-predicated: "this seat carries X duty", never
+"you are X" / "you are the lead". Role/lead framing assigns identity
+to the model reading the prompt; seat framing attaches the property
+to the endpoint/chair. Extends clause 2. Legacy family-bearing seat
+slugs (`claude-cursor`, `claude-web`) remain permanent aliases in the
+machine layer (alias-first migration, no flag-day).
 
 **Seat gating criterion**: runtime is a seat ⟺ it can perform
 `cortex(tool="assert", ...)` under its own slug. API dispatch targets

@@ -11,6 +11,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from agent_seat.profiles import get_profile, resolve_seat
+from agent_seat.registry import normalize_bus_address
 from agent_seat.session_id import SessionMintMode, mint_session_id
 from mcp_events import record
 from universal_logging import get_logger
@@ -301,8 +302,9 @@ def run_cortex_boot(
     Args:
         family       — model family: claude / gpt / grok / gemini (default: claude)
         platform     — platform surface: cursor / api / web (default: cursor)
-        role         — optional functional team seat: lead / reviewer / gatherer /
-                       synthesizer / artisan / skeptic
+        role         — accepted for back-compat; no longer scopes boot output. Boot
+                       output is seat-predicated: duties are properties of the seat
+                       (family+platform cell), not assignments to the reader.
         transcript_id — if provided, loads continuation context for that transcript
         mode         — LIVE (default) writes op-context to disk; INSPECT is side-effect-free
         views        — optional list of entity IDs to materialize as subgraph views
@@ -359,7 +361,7 @@ def run_cortex_boot(
 
     t_boot = datetime.now(UTC)
     session_id = mint_session_id(
-        seat_slug,
+        normalize_bus_address(seat_slug),
         mode=SessionMintMode.LIVE if mode == BootMode.LIVE else SessionMintMode.INSPECT,
         at=t_boot,
     )
@@ -375,14 +377,9 @@ def run_cortex_boot(
     }
     # Family anchor replaces the old self_entity_id (persona role entity).
     # The boot data fetch uses this to scope self-reflection assertions.
-    from agent_seat.profiles import family_anchor, role_anchor
+    from agent_seat.profiles import family_anchor
 
     self_entity_id = family_anchor(resolved_family)
-    if role is not None:
-        # When a role is supplied, also scope reflections to the role anchor.
-        # For now we use the family anchor as primary; role anchor is available
-        # for future expansion. Record both in the profile dict.
-        profile_dict["role_entity_id"] = role_anchor(role)
     profile_dict["self_entity_id"] = self_entity_id
     if principal:
         profile_dict["principal"] = principal
@@ -404,7 +401,6 @@ def run_cortex_boot(
         agent=seat_slug,
         family=resolved_family,
         platform=resolved_platform,
-        role=role,
         unread_count=len(extracted["unread_turns"]),
         review_total=extracted["review_total"],
     )

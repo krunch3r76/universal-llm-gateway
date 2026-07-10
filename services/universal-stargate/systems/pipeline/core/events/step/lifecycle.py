@@ -91,6 +91,7 @@ def StepCompleted(  # noqa: N802
     model_id: str | None = None,
     exit_code: int | None = None,
     json_output_keys: list[str] | None = None,
+    cached_tokens: int | None = None,
 ) -> Event:
     """Emitted when step completes successfully.
 
@@ -106,6 +107,8 @@ def StepCompleted(  # noqa: N802
         model_id: Resolved model actually invoked (None for non-generate steps)
         exit_code: Optional shell_v1 exit code (present even when 0)
         json_output_keys: Optional top-level JSON output keys for observability
+        cached_tokens: Provider-reported cache hits when available; omitted when
+            the provider did not report the field.
     """
     payload: dict[str, Any] = {
         "pipeline_id": pipeline_id,
@@ -123,6 +126,8 @@ def StepCompleted(  # noqa: N802
         payload["exit_code"] = exit_code
     if json_output_keys is not None:
         payload["json_output_keys"] = json_output_keys
+    if cached_tokens is not None:
+        payload["cached_tokens"] = cached_tokens
     return Event(
         signal="pipeline.step.completed",
         payload=payload,

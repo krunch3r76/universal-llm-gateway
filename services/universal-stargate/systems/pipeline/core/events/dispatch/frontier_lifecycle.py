@@ -124,6 +124,7 @@ def PipelineFrontierDispatchCompleted(  # noqa: N802
     op: str = "",
     finish_reason: str | None = None,
     block_reason: str | None = None,
+    cached_tokens: int | None = None,
 ) -> Event:
     """Emitted when the native tool loop returns final content.
 
@@ -141,23 +142,28 @@ def PipelineFrontierDispatchCompleted(  # noqa: N802
             (``tool_calls`` or ``length`` with empty content) without parsing
             the raw envelope.
         block_reason: Provider-native block reason, if any (Google safety stops).
+        cached_tokens: Provider-reported cache hits when available; omitted when
+            the provider did not report the field.
     """
+    payload: dict[str, object] = {
+        "agent": agent,
+        "execution_id": execution_id,
+        "turns_used": turns_used,
+        "tool_calls_made": tool_calls_made,
+        "reasoning_present": reasoning_present,
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "provider": provider,
+        "model_entity_id": model_entity_id,
+        "op": op,
+        "finish_reason": finish_reason,
+        "block_reason": block_reason,
+    }
+    if cached_tokens is not None:
+        payload["cached_tokens"] = cached_tokens
     return Event(
         signal="pipeline.frontier.dispatch.completed",
-        payload={
-            "agent": agent,
-            "execution_id": execution_id,
-            "turns_used": turns_used,
-            "tool_calls_made": tool_calls_made,
-            "reasoning_present": reasoning_present,
-            "prompt_tokens": prompt_tokens,
-            "completion_tokens": completion_tokens,
-            "provider": provider,
-            "model_entity_id": model_entity_id,
-            "op": op,
-            "finish_reason": finish_reason,
-            "block_reason": block_reason,
-        },
+        payload=payload,
         scope="node",
     )
 

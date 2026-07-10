@@ -217,9 +217,42 @@ async def listed_skill_names(page: Page) -> set[str]:
     return {n.lower() for n in names}
 
 
+async def _dismiss_bottom_tray(page: Page) -> None:
+    """Clear composer/bottom-tray overlays that intercept Customize clicks.
+
+    Live failure (2026-07-09 thread 4736): ``df-bottom-tray`` sits above the
+    sidebar Customize button and Playwright's actionability check times out
+    even though the button is visible. Escape + hide is enough; force-click
+    remains a backstop in ``_reopen_skills_from_hash``.
+    """
+    for _ in range(3):
+        tray = page.locator("div.df-bottom-tray")
+        if not await tray.count():
+            return
+        visible = False
+        try:
+            visible = await tray.first.is_visible()
+        except Exception:
+            visible = False
+        if not visible:
+            return
+        await page.keyboard.press("Escape")
+        await page.wait_for_timeout(400)
+        await page.evaluate(
+            """() => {
+              document.querySelectorAll('div.df-bottom-tray').forEach((el) => {
+                el.style.pointerEvents = 'none';
+                el.style.visibility = 'hidden';
+              });
+            }"""
+        )
+        await page.wait_for_timeout(200)
+
+
 async def _reopen_skills_from_hash(page: Page) -> None:
     # Hash alone no longer mounts Settings (2026-07 live): Customize is a
     # sidebar *button*, not a link. Click it first so Skills/Connectors nav appears.
+    await _dismiss_bottom_tray(page)
     for customize in (
         page.get_by_role("button", name=re.compile(r"customize", re.I)),
         page.get_by_role("link", name=re.compile(r"customize", re.I)),
@@ -229,7 +262,7 @@ async def _reopen_skills_from_hash(page: Page) -> None:
     ):
         btn = await _first_visible(customize)
         if btn:
-            await btn.click()
+            await btn.click(force=True)
             await page.wait_for_timeout(1200)
             break
 
@@ -243,7 +276,7 @@ async def _reopen_skills_from_hash(page: Page) -> None:
     ):
         btn = await _first_visible(skills)
         if btn:
-            await btn.click()
+            await btn.click(force=True)
             await page.wait_for_timeout(1500)
             return
 

@@ -201,16 +201,15 @@ def register_git_integrate_tools(mcp: FastMCP) -> None:
     async def git_diff(
         worktree_path: str,
         path_filter: str = "",
-        include_full_diff: bool = True,
+        include_full_diff: bool = False,
     ) -> dict[str, Any]:
         """Compact change-set envelope of what would land, plus ``diff_sha256``.
 
-        Read-only; does not acquire the integrate gate. By default returns the
-        full unified diff inline (legacy callers) plus ``diff_sha256``,
-        ``diffstat``, ``branch``, and ``includes_uncommitted``. Pass
-        ``include_full_diff=false`` for the compact envelope only — enough for
-        approval binding without replaying the full body across review loops
-        (friction 11511). The fingerprint and diffstat always cover the full
+        Read-only; does not acquire the integrate gate. By default returns a
+        compact envelope (``diff`` empty) plus ``diff_sha256``, ``diffstat``,
+        ``branch``, and ``includes_uncommitted``. Pass ``include_full_diff=true``
+        for the full unified diff inline when a human or non-model consumer
+        explicitly opts in. The fingerprint and diffstat always cover the full
         arc-vs-master change set regardless of this flag.
 
         Pass ``diff_sha256`` and operator ``approval`` into ``git_land`` after review.
@@ -221,18 +220,19 @@ def register_git_integrate_tools(mcp: FastMCP) -> None:
                 only, requires full diff; fingerprint and diffstat use the full
                 arc-vs-master change set).
             include_full_diff: Include the full unified diff body inline
-                (``full_diff_included=true`` in the response). Default true.
+                (``full_diff_included=true`` in the response). Default false.
 
         Returns:
             Worker ``DiffResponse`` (``diff_sha256``, ``diffstat``, ``branch``,
             ``includes_uncommitted``, ``full_diff_included``, ``diff`` when
             requested, ``status``, …).
         """
-        params: dict[str, Any] = {"worktree_path": worktree_path}
+        params: dict[str, Any] = {
+            "worktree_path": worktree_path,
+            "include_full_diff": include_full_diff,
+        }
         if path_filter:
             params["path_filter"] = path_filter
-        if not include_full_diff:
-            params["include_full_diff"] = False
         return await _relay(
             "GET",
             "/api/v1/git/diff",

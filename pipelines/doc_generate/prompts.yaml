@@ -1,6 +1,11 @@
 prompts:
   draft:
     description: "Draft architecture doc from docstring inventory and prior authored sections"
+    # existing_doc is legitimately empty on a first run (no
+    # docs/architecture/{basename}.md yet) — extract emits "" and
+    # doc_generate_architecture_notfound. It must still resolve.
+    optional_placeholders:
+      - existing_doc
     system_prompt: |
       You generate architecture documentation grounded strictly in extracted Python
       docstrings and signatures.
