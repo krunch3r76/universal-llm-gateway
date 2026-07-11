@@ -79,7 +79,6 @@ INTENTIONAL_OVERFLOW: frozenset[str] = frozenset(
         "extract_directory",
         "extract_document",
         "js_analyze",
-        "llm_generate",
         "markdown",
         "model_status",
         "promote_document_to_evidence",

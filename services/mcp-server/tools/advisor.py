@@ -1,9 +1,9 @@
 """MCP tool — inline advisor consultation via a higher-tier model.
 
 Sends a focused problem description to a high-intelligence model (Opus by
-default) through Stargate, with a system prompt constraining output to concise,
-actionable guidance. No tools, no Cortex, no RAG — pure reasoning over the
-provided context.
+default) through the chat-dispatch pipeline, with a system prompt constraining
+output to concise, actionable guidance. No tools, no Cortex, no RAG — pure
+reasoning over the provided context.
 
 Designed for the advisor timing pattern: checkpoint 1 (before substantive
 work), checkpoint 3 (recurring failure), and lightweight checkpoint 2 (before
@@ -13,24 +13,21 @@ or ``/consult-*``. This is a consult checkpoint, not a ``team_dispatch`` role.
 
 from __future__ import annotations
 
-import json
-import os
 from typing import TYPE_CHECKING, Any
 
-import httpx
 from mcp_events import monotonic_now, record
 from universal_logging import get_logger
+
+from tools.pipeline import _pipeline_run
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
 
 logger = get_logger(__name__)
 
-STARGATE_URL = os.environ.get("STARGATE_URL", "http://io:9999")
-_TIMEOUT = httpx.Timeout(connect=10.0, read=120.0, write=30.0, pool=10.0)
-
 _DEFAULT_MODEL = "anthropic/claude-opus-4-6"
 _MAX_ADVICE_TOKENS = 1024
+_ADVISOR_PIPELINE_TIMEOUT = 120.0
 
 _ADVISOR_SYSTEM = """\
 You are a senior engineering advisor. Review the problem context provided and \
@@ -118,55 +115,41 @@ def register_advisor_tools(mcp: FastMCP) -> None:
         if context:
             user_content = f"{problem}\n\n---\nContext:\n{context}"
 
-        body: dict[str, Any] = {
+        messages = [
+            {"role": "system", "content": _ADVISOR_SYSTEM},
+            {"role": "user", "content": user_content},
+        ]
+        options: dict[str, Any] = {
             "model": model,
-            "messages": [
-                {"role": "system", "content": _ADVISOR_SYSTEM},
-                {"role": "user", "content": user_content},
-            ],
             "max_tokens": max_tokens,
             "temperature": 0.2,
-            "stream": False,
         }
 
-        url = f"{STARGATE_URL}/v1/chat/completions"
-        try:
-            with httpx.Client(timeout=_TIMEOUT) as client:
-                resp = client.post(url, json=body)
-        except httpx.TimeoutException:
-            record("mcp.advisor.error", error="timeout", model=model)
-            return {"error": "Advisor timeout — model may be overloaded"}
-        except httpx.RequestError as exc:
-            logger.error("Advisor request failed: %s", exc)
-            record("mcp.advisor.error", error="connection", model=model)
-            return {"error": "Stargate connection failed"}
+        result = _pipeline_run(
+            "chat-dispatch",
+            messages,
+            options,
+            _ADVISOR_PIPELINE_TIMEOUT,
+        )
 
-        if resp.status_code >= 400:
-            logger.warning("Advisor returned %d for model=%s", resp.status_code, model)
-            record(
-                "mcp.advisor.error",
-                error=f"http_{resp.status_code}",
-                model=model,
-            )
-            return {
-                "error": f"Advisor error ({resp.status_code})",
-                "detail": resp.text[:500],
-            }
-
-        try:
-            data = resp.json()
-        except json.JSONDecodeError:
-            return {"error": "Stargate returned invalid JSON"}
-        if not isinstance(data, dict):
-            return {"error": "Stargate returned non-object JSON"}
+        if "error" in result:
+            err_text = str(result["error"])
+            if "timed out" in err_text.lower():
+                record("mcp.advisor.error", error="timeout", model=model)
+                return {"error": "Advisor timeout — model may be overloaded"}
+            record("mcp.advisor.error", error="pipeline", model=model)
+            detail = result.get("detail")
+            if detail:
+                return {
+                    "error": "Advisor error — pipeline failed",
+                    "detail": str(detail)[:500],
+                }
+            return {"error": "Advisor error — pipeline failed"}
 
         duration = monotonic_now() - t0
-        choices = data.get("choices") or []
-        choice = choices[0] if choices else {}
-        msg = choice.get("message") or {}
-        usage_raw = data.get("usage") or {}
-        advice = msg.get("content", "")
-        returned_model = data.get("model", model)
+        usage_raw = result.get("usage") or {}
+        returned_model = result.get("model", model)
+        advice = result.get("content", "")
 
         record(
             "mcp.advisor.completed",

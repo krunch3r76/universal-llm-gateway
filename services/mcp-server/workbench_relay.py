@@ -1,9 +1,9 @@
-"""Workbench relay — server-side proxy to Anthropic Messages API with MCP tools.
+"""Workbench relay — server-side proxy to Anthropic Messages via Stargate.
 
 Accepts ``{system, user_msg, max_tokens}`` from the Cortex Workbench artifact,
-calls Anthropic with the Vortex MCP server attached, and returns the full
-response.  Keeps the Anthropic API key and ``mcp_servers`` config server-side
-so the browser artifact never needs direct API access or MCP connector auth.
+calls providers-native Anthropic Messages with the Vortex MCP server attached,
+and returns the full response.  Keeps ``mcp_servers`` config server-side so the
+browser artifact never needs direct API access or MCP connector auth.
 """
 
 from __future__ import annotations
@@ -17,13 +17,14 @@ from llm_adapters.capability_dispatch import resolve_dispatch
 from mcp_events import monotonic_now, record
 from starlette.requests import Request
 from starlette.responses import JSONResponse
+from transport_utils import DEFAULT_STARGATE_URL, make_async_client
 
 logger = logging.getLogger(__name__)
 
-_ANTHROPIC_API_URL = os.getenv("ANTHROPIC_BASE_URL", "https://api.anthropic.com")
 _ANTHROPIC_VERSION = "2023-06-01"
 _ANTHROPIC_BETA = "mcp-client-2025-11-20"
-_DEFAULT_MODEL = "claude-sonnet-4-20250514"
+_DEFAULT_MODEL = "claude-sonnet-5"
+_PROVIDERS_ANTHROPIC_MESSAGES = "/api/v1/providers/anthropic/messages"
 _MCP_SERVER_NAME = "vortex"
 _MCP_SERVER_URL = os.environ.get("MCP_SERVER_URL", "").strip()
 _ALLOWED_ORIGIN = "*"
@@ -37,11 +38,6 @@ _CORS_HEADERS: dict[str, str] = {
     "access-control-max-age": "86400",
     "vary": "Origin",
 }
-
-
-def _get_api_key() -> str | None:
-    """Resolve the Anthropic API key from environment."""
-    return os.environ.get("ANTHROPIC_API_KEY", "").strip() or None
 
 
 def _get_mcp_auth_token() -> str:
@@ -61,15 +57,6 @@ async def handle_relay(request: Request) -> JSONResponse:
     Returns:
         JSONResponse with the Anthropic API response or an error envelope.
     """
-    api_key = _get_api_key()
-    if not api_key:
-        logger.error("ANTHROPIC_API_KEY not set — relay unavailable")
-        return JSONResponse(
-            {"error": "Relay not configured (missing API key)"},
-            status_code=503,
-            headers=_CORS_HEADERS,
-        )
-
     if not _MCP_SERVER_URL:
         logger.error("MCP_SERVER_URL not set — relay unavailable")
         return JSONResponse(
@@ -139,11 +126,10 @@ async def handle_relay(request: Request) -> JSONResponse:
     )
 
     try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+        async with make_async_client(DEFAULT_STARGATE_URL, timeout=_TIMEOUT) as client:
             resp = await client.post(
-                f"{_ANTHROPIC_API_URL}/v1/messages",
+                _PROVIDERS_ANTHROPIC_MESSAGES,
                 headers={
-                    "x-api-key": api_key,
                     "anthropic-version": _ANTHROPIC_VERSION,
                     "anthropic-beta": _ANTHROPIC_BETA,
                     "content-type": "application/json",

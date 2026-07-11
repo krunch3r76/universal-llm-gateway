@@ -103,6 +103,28 @@ async def _post_api_role_dispatch_failure_turn(
         )
 
 
+def _read_api_role_packet_body(
+    *,
+    request_id: str,
+    packet_path: str,
+) -> str:
+    from .handoff import _resolve_packet_file, _workspaces_root
+
+    packet_file = _resolve_packet_file(_workspaces_root().resolve(), packet_path)
+    if packet_file is None:
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="packet_path",
+            reason=(
+                f"packet_path {packet_path!r} not found or unreadable under "
+                "workspaces/cortex sandbox"
+            ),
+            status_code=422,
+            code="packet_path_unreadable",
+        )
+    return packet_file.read_text(encoding="utf-8", errors="replace")
+
+
 async def dispatch_api_role_generate(
     *,
     request_id: str,
@@ -111,18 +133,6 @@ async def dispatch_api_role_generate(
 ) -> dict[str, Any]:
     """Auto-provision bus thread and admit API-role generate on to_thread contract."""
     role = body.role
-    if getattr(body, "packet_path", None) is not None:
-        raise FrontierEndpointError(
-            request_id=request_id,
-            field="packet_path",
-            reason=(
-                "API-role generate consumes dispatch-thread context; packet_path/"
-                "source_ref are honored only by the cursor-sdk worker lane "
-                "(role=cursor-sdk)"
-            ),
-            status_code=422,
-            code="packet_not_supported_for_api_role",
-        )
     if getattr(body, "source_ref", None) is not None:
         raise FrontierEndpointError(
             request_id=request_id,
@@ -168,10 +178,17 @@ async def dispatch_api_role_generate(
             status_code=422,
         )
 
-    last_user = await read_latest_dispatch_thread_body(
-        request_id=request_id,
-        dispatch_thread_id=body.dispatch_thread_id,
-    )
+    packet_path = getattr(body, "packet_path", None)
+    if packet_path is not None:
+        last_user = _read_api_role_packet_body(
+            request_id=request_id,
+            packet_path=packet_path,
+        )
+    else:
+        last_user = await read_latest_dispatch_thread_body(
+            request_id=request_id,
+            dispatch_thread_id=body.dispatch_thread_id,
+        )
 
     thread_subject = f"{role} generate — {request_id}"
     reply_subject = f"{role} reply — {request_id[:8]}"

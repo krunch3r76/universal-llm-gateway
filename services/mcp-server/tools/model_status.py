@@ -41,7 +41,7 @@ def register_model_status_tools(mcp: FastMCP) -> None:
 
         Calls Stargate ``GET /v1/models`` — the same catalog a human client
         or any OpenAI-compatible tool would see.  Use this to discover model
-        IDs before calling ``llm_generate`` or ``team_dispatch``.
+        IDs before calling ``pipeline(chat-dispatch)`` or ``team_dispatch``.
 
         Args:
             filter: Optional provider prefix to narrow results.

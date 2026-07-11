@@ -21,12 +21,11 @@ from universal_logging import get_logger
 
 logger = get_logger(__name__)
 
-# F16655. The ``-mcp`` suffix is a load-bearing feature of the *llm_generate*
-# tool (``tools/llm.py``): appending it makes the cloud proxy inject Cortex/RAG
-# tool definitions for a caller-driven manual tool loop. ``team_dispatch`` runs
-# the tool loop automatically, so the suffix is meaningless here and otherwise
-# leaks into the model id sent downstream (silently routed to the compat shunt).
-# Strip it at THIS intake only — never in llm.py, where the suffix is intended.
+# F16655. The ``-mcp`` suffix is a cloud-proxy model-id variant for agentic
+# clients on ``/v1/chat/completions`` (see cloud catalog synthetic rows).
+# ``team_dispatch`` runs the tool loop automatically, so the suffix is
+# meaningless here and otherwise leaks into the model id sent downstream
+# (silently routed to the compat shunt). Strip it at THIS intake only.
 _MCP_SUFFIX = "-mcp"
 _CURSOR_SDK_ROLE = "cursor-sdk"
 

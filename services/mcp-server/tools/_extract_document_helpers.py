@@ -26,7 +26,8 @@ from ocr_core import has_text_layer, ocr_pages
 from ._extraction_profile import DefaultProfile
 from ._sidecar_naming import ArgsHash, PageSpec
 from ._sidecar_schema import SIDECAR_SUFFIX, parse_leading_frontmatter
-from .llm import STARGATE_URL
+
+STARGATE_URL = os.environ.get("STARGATE_URL", "http://io:9999")
 
 # ─── Module-level constants ──────────────────────────────────────────────────
 

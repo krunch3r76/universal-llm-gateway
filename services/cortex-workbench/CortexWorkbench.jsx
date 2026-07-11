@@ -16,7 +16,7 @@ const MCP_SERVER = { type: "url", url: "https://mcp.k-1.me/mcp", name: "vortex" 
 // Model tiering — cheap models for structured tasks, capable models for nuance
 const MODELS = {
   haiku: "claude-haiku-4-5-20251001",   // MCP ops, JSON extraction
-  sonnet: "claude-sonnet-4-20250514",   // Description generation
+  sonnet: "claude-sonnet-5",   // Description generation
 };
 
 const TYPE_META = {

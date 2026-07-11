@@ -285,7 +285,7 @@ team_dispatch(op="handoff", role="web-implement",
 ```
 
 Chat-Completions-only OpenAI search models (`openai/*-search-api`) are rejected
-on dispatch. Use `llm_generate` for those.
+on dispatch. Use `pipeline(op="run"|"async", pipeline_id="chat-dispatch", …)` for those.
 
 **Provider-specific consult without handoff** — pick an API role and optional
 `model=` override (must be in the role's `allowed_models`):

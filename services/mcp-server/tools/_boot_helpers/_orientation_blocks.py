@@ -71,7 +71,7 @@ To consult a MODEL (any provider, incl. grok) you do NOT use a build harness. Wh
 - **Recon+investigate (cursor-sdk limb)** → `team_dispatch(op=generate, role=cursor-sdk, model=cursor/grok-4.5, contract=light-bounded, …)` for judgment / root-cause / suggest / densify inputs. Pure mechanical inventory (grep/list only) may omit the override (Composer OK). Do not conflate with API `xai/grok-4.5`.
 - **Manual-seat handoff (consult default)** → `team_dispatch(op=handoff, seat=claude-web|claude-cursor, source_ref=…|packet_path=…, subject=…)`; handoff seat-map: web-consult, web-implement → web-anthropic; cursor-consult, cursor-implement → cursor. web→operator push, cursor→IDE thread. The handoff IS the delivery — never instruct a manual copy-paste.
 - **Panel** (≥2 families) → `panel_dispatch(messages=[…], dispatch_thread_id="…", disposition="panel")`.
-- **Strategic advice** → `dispatch(tool="advisor", …)` [overflow]. **Named pipeline** → `pipeline(op=run|async)`.
+- **Strategic advice** → `dispatch(tool="advisor", …)` [overflow]. **Role-less CC one-shot** → `pipeline(op=run|async, pipeline_id="chat-dispatch", pipeline_options={"model": ...}, messages=[...])`. **Named pipeline** → `pipeline(op=run|async)`.
 ⚠ A build harness is not a model picker: "want a grok answer" → `team_dispatch(op=generate, role=artisan, model="xai/grok-4.5")`.
 Full shapes + wrap/contract semantics + executor tiers: skill `consult-routing` (canonical slug)."""
 

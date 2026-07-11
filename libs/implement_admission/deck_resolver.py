@@ -15,6 +15,8 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from implement_admission.admission_read import read_packet
+from implement_admission.dense_spec_schema import DENSE_SPEC_RE
 from implement_admission.source_ref import SourceRef, SourceRefError
 
 _ULG_REPO_DIRNAME = "universal-llm-gateway"
@@ -106,11 +108,52 @@ def _disambiguate(candidates: list[Path], attrs: dict) -> Path | None:
     return None
 
 
+def _dense_spec_pointer(attrs: dict, source_uri: str | None) -> str | None:
+    dense_uri = attrs.get("dense_spec_uri")
+    if dense_uri is not None and str(dense_uri).strip():
+        return str(dense_uri).strip()
+    if source_uri is not None and str(source_uri).strip():
+        uri = str(source_uri).strip().removeprefix("files://")
+        if DENSE_SPEC_RE.search(uri):
+            return uri
+    return None
+
+
+def _resolve_dense_spec_deck(
+    ref: SourceRef,
+    *,
+    pointer: str,
+    workspaces_root: Path,
+) -> NormalizedDeck:
+    try:
+        packet = read_packet(pointer, workspaces_root=workspaces_root)
+    except SourceRefError as exc:
+        raise SourceRefError(
+            code="phase_doc_not_found",
+            source_ref=ref.external_ref,
+            rule=f"dense-spec pointer {pointer!r} unreadable",
+            message=str(exc),
+        ) from exc
+
+    body = packet.text.replace("\r\n", "\n").replace("\r", "\n")
+    sha = f"sha256:{hashlib.sha256(body.encode('utf-8')).hexdigest()}"
+    return NormalizedDeck(
+        body=body,
+        sha256=sha,
+        rel_path=pointer,
+        files_expected=_lift_expected_files(body),
+        acceptance=_lift_verification(body),
+        objective=_lift_objective(body),
+        open_design=_detect_open_design(body, {}),
+    )
+
+
 def resolve_phase_deck(
     ref: SourceRef,
     *,
     workspaces_root: Path,
     entity_attrs: dict | None = None,
+    source_uri: str | None = None,
 ) -> NormalizedDeck:
     """Resolve ``plan_phase:{slug}/phase-N`` to its on-disk deck and normalize it.
 
@@ -139,12 +182,19 @@ def resolve_phase_deck(
     candidates = [c for c in candidates if c.is_file() and _path_contained_in(c, base)]
 
     if not candidates:
+        pointer = _dense_spec_pointer(attrs, source_uri)
+        if pointer is not None:
+            return _resolve_dense_spec_deck(
+                ref,
+                pointer=pointer,
+                workspaces_root=workspaces_root,
+            )
         raise SourceRefError(
             code="phase_doc_not_found",
             source_ref=ref.external_ref,
             rule=(
                 f"no phase-{phase_num}-*.md or phase-{phase_num}.md under "
-                f"{deck_dir.as_posix()!r}"
+                f"{deck_dir.as_posix()!r} and no dense-spec pointer on entity"
             ),
         )
     if len(candidates) > 1:

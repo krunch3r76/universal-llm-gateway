@@ -69,7 +69,6 @@ from tools.filesystem._paths import FS_WORKFLOW_HINTS
 from tools.frontier import register_frontier_tools
 from tools.frontier_imagine import register_imagine_tools
 from tools.git_integrate import register_git_integrate_tools
-from tools.llm import register_llm_tools
 from tools.manage import register_manage_tools
 from tools.markdown_tool import register_markdown_tools
 from tools.model_status import register_model_status_tools
@@ -310,7 +309,6 @@ def _build_server() -> tuple[
     register_agent_bus_read_tool(mcp)
     register_cortex_tools(mcp)
     register_cortex_named_tools(mcp)
-    register_llm_tools(mcp)
     register_advisor_tools(mcp)
     register_imagine_tools(mcp)
     register_security_tools(mcp)

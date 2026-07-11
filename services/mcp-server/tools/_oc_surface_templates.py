@@ -205,8 +205,8 @@ Edge protocol: entities only as edge nodes, never assertion IDs. `superseded_by`
 
 Inference routing (pick by capability — see boot briefing):
 - `team_dispatch(op=..., role=..., dispatch_thread_id="<agent-bus-thread>", contract=..., model=..., ...)` — consult by API role (`reviewer`, `artisan`, `skeptic`, …). Optional `model=` override within role `allowed_models`. Role briefing + contract from `role:{slug}`; MCP on by default for non-xAI models. The latest prompt body is read from the caller-owned dispatch thread; `messages[]` is not accepted.
-- `llm_generate(model=..., messages=...)` — universal chat/completions path for any model ID (including `google/gemini-2.5-pro`); no dispatch role/tools/transcript_id surface.
-- OpenRouter and local models → use `llm_generate`, not provider-native dispatch tools"""
+- `pipeline(op="run"|"async", pipeline_id="chat-dispatch", pipeline_options={"model": ...}, messages=[...])` — role-less chat/completions one-shot for any model ID (including `google/gemini-2.5-pro` via OpenRouter); no dispatch role/tools/transcript_id surface.
+- OpenRouter and local models → use `pipeline(chat-dispatch)`, not provider-native dispatch tools"""
 
 TEAM_CONSULTATION = """\
 ## Team Consultation

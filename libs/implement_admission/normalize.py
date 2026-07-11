@@ -146,6 +146,13 @@ def _normalize_entity(
     name = entity.get("name") or entity_id
     content_hash = attrs.get("content_hash") or entity.get("content_hash")
 
+    raw_uri = entity.get("source_uri")
+    source_uri: str | None = None
+    if raw_uri is not None:
+        stripped = str(raw_uri).strip()
+        if stripped:
+            source_uri = stripped.removeprefix("files://")
+
     kind = ref.source_kind
     multi_phase = False
     trips_threshold = False
@@ -179,6 +186,7 @@ def _normalize_entity(
                 ref,
                 workspaces_root=Path(workspaces_root),
                 entity_attrs=attrs,
+                source_uri=source_uri,
             )
 
     if kind == SourceKind.TODO.value:
@@ -223,12 +231,6 @@ def _normalize_entity(
         )
 
     adapter = _adapter_for_kind(kind)
-    raw_uri = entity.get("source_uri")
-    source_uri: str | None = None
-    if raw_uri is not None:
-        stripped = str(raw_uri).strip()
-        if stripped:
-            source_uri = stripped.removeprefix("files://")
     source = Source(
         source_ref=ref.external_ref,
         canonical_ref=ref.canonical_ref,

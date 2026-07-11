@@ -1,20 +1,14 @@
 """LLM proxy — multi-provider passthrough with credential injection.
 
 Accepts Anthropic-shaped JSON at ``POST /llm/v1/messages`` (messages, optional
-system, max_tokens). Routes by model ID: Anthropic Messages API, or xAI/OpenAI
-Responses API. Clients authenticate with the Vortex bearer token; provider keys
-never leave the server.
-
-MCP tool calling is NOT injected here.  API calls use client-side tool
-resolution via ``team_dispatch``.
-The Connector pattern (``mcp_servers``) only passes through if the caller
-explicitly includes it in the request body.
+system, max_tokens). Routes by model ID: Anthropic Messages via Stargate
+providers-native, or xAI/OpenAI Responses API direct. Clients authenticate with
+the Vortex bearer token; provider keys never leave the server.
 """
 
 from __future__ import annotations
 
 import json
-import os
 
 import httpx
 from llm_adapters import (
@@ -28,15 +22,14 @@ from mcp_events import monotonic_now, record
 from model_id import ModelId
 from starlette.requests import Request
 from starlette.responses import JSONResponse
+from transport_utils import DEFAULT_STARGATE_URL, make_async_client
 from universal_logging import get_logger
 
 logger = get_logger(__name__)
 
 _ANTHROPIC_VERSION = "2023-06-01"
 _ANTHROPIC_BETA = "mcp-client-2025-11-20"
-_ANTHROPIC_BASE = os.getenv("ANTHROPIC_BASE_URL", "https://api.anthropic.com").rstrip(
-    "/"
-)
+_PROVIDERS_ANTHROPIC_MESSAGES = "/api/v1/providers/anthropic/messages"
 
 _TIMEOUT = httpx.Timeout(connect=10.0, read=180.0, write=30.0, pool=10.0)
 
@@ -134,31 +127,33 @@ async def handle_llm_proxy(request: Request) -> JSONResponse:
     record("mcp.llm.proxy.called", model=model, provider=provider_key)
 
     try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-            if isinstance(adapter, AnthropicAdapter):
-                upstream_headers = {
-                    "x-api-key": os.environ.get("ANTHROPIC_API_KEY", "").strip(),
-                    "anthropic-version": _ANTHROPIC_VERSION,
-                    "content-type": "application/json",
-                }
-                if body.get("mcp_servers"):
-                    upstream_headers["anthropic-beta"] = _ANTHROPIC_BETA
-                body.pop("stream", None)
+        if isinstance(adapter, AnthropicAdapter):
+            upstream_headers = {
+                "anthropic-version": _ANTHROPIC_VERSION,
+                "content-type": "application/json",
+            }
+            if body.get("mcp_servers"):
+                upstream_headers["anthropic-beta"] = _ANTHROPIC_BETA
+            body.pop("stream", None)
+            async with make_async_client(
+                DEFAULT_STARGATE_URL, timeout=_TIMEOUT
+            ) as client:
                 resp = await client.post(
-                    f"{_ANTHROPIC_BASE}/v1/messages",
+                    _PROVIDERS_ANTHROPIC_MESSAGES,
                     headers=upstream_headers,
                     json=body,
                 )
-            elif isinstance(adapter, ResponsesAPIAdapter):
-                llm_req = body_to_llm_request(body, model)
-                url, headers, json_body = adapter.build_request(llm_req)
+        elif isinstance(adapter, ResponsesAPIAdapter):
+            llm_req = body_to_llm_request(body, model)
+            url, headers, json_body = adapter.build_request(llm_req)
+            async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
                 resp = await client.post(url, headers=headers, json=json_body)
-            else:
-                return JSONResponse(
-                    {"error": "Unsupported adapter type"},
-                    status_code=500,
-                    headers=_CORS_HEADERS,
-                )
+        else:
+            return JSONResponse(
+                {"error": "Unsupported adapter type"},
+                status_code=500,
+                headers=_CORS_HEADERS,
+            )
     except httpx.TimeoutException:
         duration = monotonic_now() - t0
         record(

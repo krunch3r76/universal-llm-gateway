@@ -562,7 +562,7 @@ async def build_dispatch_body(
     provider_mount_slugs: frozenset[str] = frozenset()
     caller_layer_c_ids: tuple[str, ...] = ()
     cursor_sdk_model = ModelId.parse(effective_model).backend_type == "cursor_sdk"
-    # CC-only generate branch is persona-free / skills-free (llm_generate envelope).
+    # CC-only generate branch is persona-free / skills-free (chat-dispatch respond_cc envelope).
     # Skip partition — uncarded search-api models have no skills_mount_backend.
     if effective_skills and not cursor_sdk_model and not cc_only:
         try:
