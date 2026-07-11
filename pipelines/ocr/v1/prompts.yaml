@@ -1,0 +1,10 @@
+prompts:
+  extract:
+    description: >
+      Prose OCR extraction prompt passed to ocr_core per file. Empty template
+      uses the handler default (ocr_core.DEFAULT_OCR_PROMPT).
+    system_prompt: |
+      You are a document OCR specialist. Extract text faithfully from the image.
+    template: |
+      Extract all text from this document. Preserve tables, columns, and
+      structure. Return the text as-is, no interpretation.

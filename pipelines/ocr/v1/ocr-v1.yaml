@@ -1,0 +1,57 @@
+# ocr — batch/directory prose OCR via map fan-out over input files.
+#
+# Library-first: per-file extraction calls ocr_core.ocr_pages (resize/token-budget
+# owned by ocr_core). Additive surface — does not replace extract_document or
+# cortex-api POST /documents/ocr/*.
+#
+# Invocation (explicit file list):
+#   pipeline(op="run", pipeline_id="ocr",
+#            messages=[{"role":"user","content":"ocr"}],
+#            options={
+#              "files": ["dropbox/doc1.pdf", "dropbox/doc2.png"],
+#              "prompt": "",
+#              "dpi": 200,
+#              "model": "",
+#              "token_budget": null,
+#            })
+#
+# Invocation (directory — one level deep, scannable suffixes only):
+#   pipeline(op="run", pipeline_id="ocr",
+#            messages=[{"role":"user","content":"ocr"}],
+#            options={
+#              "directory": "dropbox/legal_docs/",
+#              "prompt": "",
+#              "dpi": 200,
+#            })
+
+schema_version: 6
+id: ocr
+version: "1.0"
+type: ocr
+description: >
+  Batch/directory prose OCR. Fans out over input files via map step; each
+  iteration calls ocr_core for vision extraction. Partial per-file failure
+  allowed (min 50% must succeed).
+output: extract
+output_format: json_array
+
+options:
+  timeout_seconds: 3600
+
+steps:
+  - name: list_files
+    type: ocr_extract_v1
+    mode: list
+
+  - name: extract
+    type: ocr_extract_v1
+    model_ref: vision
+    prompt_ref: ocr.v1.extract
+    map_over:
+      file: list_files.json.files
+    map_inputs:
+      path: mapNs.iteration.value
+    max_concurrency: 4
+    min_success_threshold: 0.5
+    timeout_seconds: 900
+    handler_timeout_seconds: 450

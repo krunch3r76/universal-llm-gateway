@@ -12,7 +12,9 @@ from typing import TYPE_CHECKING
 
 from universal_logging import get_logger
 
+from implement_admission.closeout_helpers import cortex_files_root
 from implement_admission.closeout_models import ImplementCloseout, Verification
+from implement_admission.scheme_resolve import parse_schemed_path
 from implement_admission.spec import ImplementSpec, Source, SourceKind
 
 if TYPE_CHECKING:
@@ -62,11 +64,27 @@ def _repo_expected_paths(files_expected: list[str]) -> list[str]:
     return [p for p in files_expected if not _is_cortex_expected_path(p)]
 
 
+def _cortex_expected_paths(files_expected: list[str]) -> list[str]:
+    return [p for p in files_expected if _is_cortex_expected_path(p)]
+
+
 def _expected_repo_path_on_disk(source_repo: Path, raw: str) -> bool:
     """Mirror cortex pinned-deliverable resolver: ``Path.is_file()`` only."""
     rel = _normalize_expected_path(raw)
     try:
         return (source_repo / rel).is_file()
+    except OSError:
+        return False
+
+
+def _expected_cortex_path_on_disk(raw: str, cortex_root: Path | None = None) -> bool:
+    """Mirror repo resolver: ``Path.is_file()`` only against cortex sandbox root."""
+    parsed = parse_schemed_path(_normalize_expected_path(raw))
+    if parsed.scheme != "cortex":
+        return False
+    root = (cortex_root or cortex_files_root()).resolve()
+    try:
+        return (root / parsed.rel_path).is_file()
     except OSError:
         return False
 
@@ -98,6 +116,7 @@ def evaluate_deliverable_verification(
     baseline_dirty_in_expected: bool = False,
     files_expected: list[str] | None = None,
     source_repo: Path | None = None,
+    cortex_root: Path | None = None,
 ) -> list[Verification]:
     """Mechanical deliverable checks for Gate D (fail-soft; always records entries)."""
     entries: list[Verification] = []
@@ -126,13 +145,18 @@ def evaluate_deliverable_verification(
     changed = _changed_path_set(closeout)
     if expected and not _paths_intersect(expected, changed):
         repo_expected = _repo_expected_paths(expected)
-        uncaptured_on_disk = (
-            source_repo is not None
-            and repo_expected
-            and any(
+        cortex_expected = _cortex_expected_paths(expected)
+        uncaptured_on_disk = False
+        if source_repo is not None and repo_expected:
+            uncaptured_on_disk = any(
                 _expected_repo_path_on_disk(source_repo, path) for path in repo_expected
             )
-        )
+        if not uncaptured_on_disk and cortex_expected:
+            resolved_cortex_root = cortex_root or cortex_files_root()
+            uncaptured_on_disk = any(
+                _expected_cortex_path_on_disk(path, resolved_cortex_root)
+                for path in cortex_expected
+            )
         if uncaptured_on_disk:
             entries.append(
                 build_gate_d_verification(
@@ -208,6 +232,7 @@ def check_deliverable_verification(
         spec=spec,
         closeout=closeout,
         sidecar_resolvable=sidecar_ok,
+        source_repo=workspaces_root,
     )
     passed = all(v.exit_code == 0 for v in entries)
     reason = next(
@@ -258,6 +283,7 @@ def apply_closeout_gate_d(
         spec=spec,
         closeout=closeout,
         sidecar_resolvable=sidecar_ok,
+        source_repo=workspaces_root,
     )
     deviation = result.detail or result.reason or "drift_gate_d"
     status = closeout.status

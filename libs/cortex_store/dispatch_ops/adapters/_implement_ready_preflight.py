@@ -16,10 +16,11 @@ from implement_admission.implement_ready_gate_resolve import (
     resolve_skeptic_ratification,
 )
 from implement_admission.implement_ready_preflight import preflight_implement_ready
-from implement_admission.recon_waiver import parse_recon_waiver, recon_waived_bool
+from implement_admission.recon_waiver import resolve_effective_recon_waived
 from implement_admission.source_ref import parse_source_ref
 from implement_admission.spec import SourceKind
 
+from ...event_publisher import cortex_implement_recon_waived
 from ..ops_assertions import _op_assertion_get, _op_assertions
 from ..ops_entities import _op_entity_get
 
@@ -282,8 +283,17 @@ def _op_implement_ready_preflight(
         )
 
     raw_waived = attrs.get("recon_waived")
-    recon_waived = recon_waived_bool(raw_waived)
-    recon_waiver = parse_recon_waiver(raw_waived)
+    recon_waived, recon_waiver, stale_discarded = resolve_effective_recon_waived(
+        raw_waived,
+        spec_hash_uri,
+    )
+    if stale_discarded and recon_waiver is not None:
+        cortex_implement_recon_waived(
+            todo_id=todo_id,
+            stale=True,
+            stale_reason="spec_sha256_mismatch",
+            **recon_waiver.event_payload(),
+        )
 
     # Dispatch-parity evidence grounding (friction 22906): evaluate the same
     # FILE_EVIDENCE_PATHS sub-checks the implement dispatch enforces where the

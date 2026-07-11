@@ -31,7 +31,7 @@ from implement_admission.recon_waiver import (
     WaiverInfo,
     build_structured_waiver,
     parse_recon_waiver,
-    recon_waived_bool,
+    resolve_effective_recon_waived,
     validate_recon_waive_reason_code,
 )
 from universal_logging import get_logger
@@ -213,7 +213,17 @@ def _evaluate_from_persisted(
         skeptic_outcome = SkepticRatificationOutcome(ratified=False)
 
     raw_waived = attrs.get("recon_waived")
-    recon_waived = recon_waived_bool(raw_waived)
+    recon_waived, recon_waiver, stale_discarded = resolve_effective_recon_waived(
+        raw_waived,
+        spec_hash_uri,
+    )
+    if stale_discarded and recon_waiver is not None:
+        cortex_implement_recon_waived(
+            todo_id=entity_id,
+            stale=True,
+            stale_reason="spec_sha256_mismatch",
+            **recon_waiver.event_payload(),
+        )
 
     return evaluate_implement_ready(
         todo_id=entity_id,

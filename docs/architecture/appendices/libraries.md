@@ -126,9 +126,19 @@ See workspace rule `modelid.mdc` for the full invariant set.
 ## `libs/ocr_core`
 
 Shared OCR and vision-resize helpers: PDF/image page rendering, adaptive resize to
-token budgets, Stargate vision calls (`ocr_pages`, `ocr_directory`). Used by the
-MCP server's document OCR tools and related ingest paths; keeps OCR logic out of
-`services/mcp-server/tools/` as a thin relay layer.
+token budgets, and vision extraction (`ocr_pages`, `ocr_directory`). Stargate
+chat transport is delegated to `libs/stargate_chat`. Used by the MCP server's
+document OCR tools, the `pipelines/ocr` pipeline, and related ingest paths;
+keeps OCR logic out of `services/mcp-server/tools/` as a thin relay layer.
+
+---
+
+## `libs/stargate_chat`
+
+Shared Stargate `/v1/chat/completions` transport (`call_stargate`,
+`extract_stargate_text`). Callers pass an explicit `stargate_url`; this module
+owns HTTP transport (UDS/TCP via `transport_utils`), not URL resolution. Used by
+`ocr_core` and other vision/chat callers.
 
 ---
 

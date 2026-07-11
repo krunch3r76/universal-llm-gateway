@@ -615,20 +615,27 @@ def cortex_implement_recon_waived(
     reason: str | None,
     spec_sha256: str | None,
     waived_at: str | None,
+    stale: bool = False,
+    stale_reason: str | None = None,
 ) -> Event:
     """cortex.implement.recon.waived — audited skeptic-gate recon waiver applied."""
+    payload: dict[str, Any] = {
+        "todo_id": todo_id,
+        "waived_by": waived_by,
+        "reason_code": reason_code,
+        "reason": reason,
+        "spec_sha256": spec_sha256,
+        "waived_at": waived_at,
+    }
+    if stale:
+        payload["stale"] = True
+        if stale_reason is not None:
+            payload["stale_reason"] = stale_reason
     ev = Event(
         signal="cortex.implement.recon.waived",
         role="observation",
         scope="global",
-        payload={
-            "todo_id": todo_id,
-            "waived_by": waived_by,
-            "reason_code": reason_code,
-            "reason": reason,
-            "spec_sha256": spec_sha256,
-            "waived_at": waived_at,
-        },
+        payload=payload,
     )
     record(ev.signal, **ev.payload)
     return ev

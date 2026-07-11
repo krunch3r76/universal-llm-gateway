@@ -110,6 +110,49 @@ def recon_waived_bool(raw: Any) -> bool:
     return info is not None and info.waived
 
 
+_SPEC_SHA256_PREFIX = "spec_sha256:"
+
+
+def _bare_spec_hex(hash_value: str | None) -> str | None:
+    if hash_value is None:
+        return None
+    text = str(hash_value).strip()
+    if not text:
+        return None
+    if text.lower().startswith(_SPEC_SHA256_PREFIX):
+        text = text[len(_SPEC_SHA256_PREFIX) :]
+    return text or None
+
+
+def waiver_matches_current_spec(
+    waiver: WaiverInfo,
+    current_spec_hash_uri: str | None,
+) -> bool:
+    """True only when the waiver's spec_sha256 matches the current dense spec."""
+    if not waiver.waived:
+        return False
+    current_hex = _bare_spec_hex(current_spec_hash_uri)
+    if current_hex is None:
+        return False
+    waiver_hex = _bare_spec_hex(waiver.spec_sha256)
+    if waiver_hex is None:
+        return False
+    return waiver_hex == current_hex
+
+
+def resolve_effective_recon_waived(
+    raw: Any,
+    current_spec_hash_uri: str | None,
+) -> tuple[bool, WaiverInfo | None, bool]:
+    """Return (effective_waived, parsed_waiver, stale_discarded)."""
+    waiver = parse_recon_waiver(raw)
+    if not recon_waived_bool(raw) or waiver is None:
+        return False, waiver, False
+    if waiver_matches_current_spec(waiver, current_spec_hash_uri):
+        return True, waiver, False
+    return False, waiver, True
+
+
 def validate_recon_waive_reason_code(code: str | None) -> dict[str, Any] | None:
     """Return {error, code} when invalid; None when absent or valid."""
     if code is None:
@@ -149,5 +192,7 @@ __all__ = [
     "build_structured_waiver",
     "parse_recon_waiver",
     "recon_waived_bool",
+    "resolve_effective_recon_waived",
     "validate_recon_waive_reason_code",
+    "waiver_matches_current_spec",
 ]

@@ -23,11 +23,13 @@ Constants:
     OCR_SYSTEM, DEFAULT_OCR_PROMPT — default prompts
 
 Internal helpers (re-exported for ``extract_document_structured``):
-``_call_stargate``, ``_call_vision``,
-``_build_image_blocks``, ``_extract_text_from_response``,
-``_image_file_to_base64``, ``_pdf_page_to_base64``, ``_pdf_page_count``,
-``_MAX_PAGES_PER_BATCH``, ``_OCR_MODEL``, ``_OCR_SYSTEM``,
-``_DEFAULT_OCR_PROMPT``, ``_IMAGE_SUFFIXES``.
+``_call_vision``, ``_build_image_blocks``, ``_image_file_to_base64``,
+``_pdf_page_to_base64``, ``_pdf_page_count``, ``_MAX_PAGES_PER_BATCH``,
+``_OCR_MODEL``, ``_OCR_SYSTEM``, ``_DEFAULT_OCR_PROMPT``, ``_IMAGE_SUFFIXES``.
+
+Stargate chat transport lives in :mod:`stargate_chat` — ``ocr_core`` calls it
+internally via ``_call_vision``. Shared with cortex-api via
+``POST /documents/ocr/*`` (``libs/cortex_store/routes/documents.py``).
 """
 
 from ._core import (
@@ -38,9 +40,7 @@ from ._core import (
     _OCR_SYSTEM,
     _SCANNABLE_SUFFIXES,
     _build_image_blocks,
-    _call_stargate,
     _call_vision,
-    _extract_text_from_response,
     _image_file_to_base64,
     _pdf_page_count,
     _pdf_page_to_base64,
@@ -84,10 +84,8 @@ __all__ = [
     "_OCR_MODEL",
     "_OCR_SYSTEM",
     "_DEFAULT_OCR_PROMPT",
-    "_call_stargate",
     "_call_vision",
     "_build_image_blocks",
-    "_extract_text_from_response",
     "_image_file_to_base64",
     "_pdf_page_to_base64",
     "_pdf_page_count",
