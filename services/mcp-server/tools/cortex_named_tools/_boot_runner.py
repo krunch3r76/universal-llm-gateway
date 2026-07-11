@@ -114,7 +114,8 @@ def _gate_only_skills_card(card_md: str | None, skills_index_ref: str | None) ->
                     f"> **Full index**: all active skills (concise) live in "
                     f"`{ref}` (LIVE boot writes it; `skills_index_ref`). Only ⚑ "
                     f"required-gate skills are enumerated on-card; discover the "
-                    f"rest via `skill_suggest`."
+                    f"rest via the full index at that path (native discovery; "
+                    f"`skill_suggest` is deprecated — do not call)."
                 )
                 pointer_injected = True
             continue

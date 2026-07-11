@@ -19,7 +19,6 @@ SKILL_MCP_PREDICATED: Final[dict[str, bool]] = {
     "agent-bus-discipline": True,
     "agent-bus-multitask": True,
     "agent-guidance-writing": False,
-    "agent-identity-signoff": False,
     "architecture-invariants": False,
     "auditor-validatable-confidence": True,
     "boot-execution-discipline": True,
@@ -101,7 +100,6 @@ SKILL_MCP_PREDICATED: Final[dict[str, bool]] = {
     "session-close-reflective-journal": True,
     "session-close-transcript": True,
     "skill-document-writing": False,
-    "skill-suggest-utilization": True,
     "srm": False,
     "subgraph-render": True,
     "task-grouping-discipline": False,
@@ -115,7 +113,7 @@ SKILL_MCP_PREDICATED: Final[dict[str, bool]] = {
     "yaml-reference": False,
 }
 
-CLASSIFICATION_DIGEST: Final[str] = 'sha256:5c68cf7ee605f4f27c29cd577e4082ab6e185c0678e5b74f6d9ad1f217c1bff4'
+CLASSIFICATION_DIGEST: Final[str] = 'sha256:47d4e2d4890493d6daddeb8f2ac32200a2b42c400bbe76ba4f683040b0fd0dc9'
 
 DISPOSITION_SOURCE_SHA256: Final[str] = 'sha256:ed1ccc90b5ca3ce57ec24ad4eb472e6fb5d625badda8b98e657f71b9948b0d8f'
 

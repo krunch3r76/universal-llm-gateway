@@ -53,6 +53,15 @@ def is_event_log_entity(entity_id: str) -> bool:
     return entity_id.startswith(_EVENT_LOG_ANCHOR_PREFIXES)
 
 
+def predicate_functor(predicate_form: str | None) -> str | None:
+    """Return the predicate head (text before first ``(``), or None when absent."""
+    if not predicate_form:
+        return None
+    head, _sep, _rest = predicate_form.partition("(")
+    head = head.strip()
+    return head or None
+
+
 # ── Entity-Scoped Hybrid Search ──────────────────────────────────────────
 
 
@@ -64,6 +73,7 @@ class SimilarAssertion:
     similarity: float
     entity_id: str
     retrieval_source: str
+    predicate_form: str | None = None
 
 
 def _entity_fts_search(
@@ -79,7 +89,7 @@ def _entity_fts_search(
     try:
         return db_query(
             conn,
-            "SELECT a.id, a.claim, a.confidence, a.entity_id, rank "
+            "SELECT a.id, a.claim, a.confidence, a.entity_id, a.predicate_form, rank "
             "FROM assertions_fts f "
             "JOIN assertions a ON a.id = f.assertion_id "
             "WHERE f.indexed_text MATCH ? AND a.entity_id = ? "
@@ -135,6 +145,7 @@ def _entity_hybrid_search(
             "claim": row.get("claim", ""),
             "confidence": row.get("confidence", ""),
             "entity_id": entity_id,
+            "predicate_form": row.get("predicate_form"),
             "bm25": bm25,
             "cosine": None,
             "similarity": bm25,
@@ -155,6 +166,7 @@ def _entity_hybrid_search(
                 "claim": "",
                 "confidence": "",
                 "entity_id": entity_id,
+                "predicate_form": None,
                 "bm25": None,
                 "cosine": cosine,
                 "similarity": cosine,
@@ -166,7 +178,7 @@ def _entity_hybrid_search(
         ph = ",".join("?" for _ in vo_ids)
         rows = db_query(
             conn,
-            f"SELECT id, claim, confidence FROM assertions WHERE id IN ({ph})",
+            f"SELECT id, claim, confidence, predicate_form FROM assertions WHERE id IN ({ph})",
             tuple(vo_ids),
         )
         by_id = {r["id"]: r for r in rows}
@@ -174,6 +186,7 @@ def _entity_hybrid_search(
             if aid in by_id:
                 merged[aid]["claim"] = by_id[aid]["claim"]
                 merged[aid]["confidence"] = by_id[aid]["confidence"]
+                merged[aid]["predicate_form"] = by_id[aid].get("predicate_form")
 
     sorted_items = sorted(
         merged.values(), key=lambda x: x.get("similarity", 0.0), reverse=True
@@ -186,6 +199,7 @@ def _entity_hybrid_search(
             similarity=round(item["similarity"], 4),
             entity_id=item["entity_id"],
             retrieval_source=item["source"],
+            predicate_form=item.get("predicate_form"),
         )
         for item in sorted_items[:limit]
     ]
@@ -207,6 +221,7 @@ def analyze_assertion_impact(
     entity_id: str,
     claim: str,
     confidence: str,
+    predicate_form: str | None = None,
 ) -> ImpactAnalysis:
     """Compute semantic impact of a proposed assertion before commit.
 
@@ -220,11 +235,15 @@ def analyze_assertion_impact(
     touched = [s for s in similar if s.similarity >= TOUCHED_COSINE_THRESHOLD]
 
     conf_rank = _CONFIDENCE_RANK.get(confidence, 0)
+    incoming_functor = predicate_functor(predicate_form)
     likely_supersedes = [
         s.assertion_id
         for s in similar
         if s.similarity >= SUPERSEDE_COSINE_THRESHOLD
         and _CONFIDENCE_RANK.get(s.confidence, 0) <= conf_rank
+        and incoming_functor is not None
+        and predicate_functor(s.predicate_form) is not None
+        and predicate_functor(s.predicate_form) == incoming_functor
     ]
 
     mentioned = extract_entity_ids(claim)

@@ -336,7 +336,7 @@ def _op_session_close_preflight(
         preflight.update(handoff_preview)
         if not handoff_preview.get("handoff_valid", True):
             preflight["ok"] = False
-            preflight["reason"] = "handoff.missing_transcript_anchor"
+            preflight["reason"] = handoff_preview.get("reason") or "handoff.invalid"
     return preflight
 
 
@@ -497,7 +497,7 @@ def _op_session_close(
             if not dry_payload.get("handoff_valid", True):
                 dry_payload.pop("would_succeed", None)
                 dry_payload["would_fail"] = True
-                dry_payload["reason"] = "handoff.missing_transcript_anchor"
+                dry_payload["reason"] = dry_payload.get("reason") or "handoff.invalid"
         todo_recon = todo_reconciliation_preflight_fields(entity_ids)
         dry_payload.update(todo_recon)
         if todo_recon.get("todo_reconciliation_warning"):

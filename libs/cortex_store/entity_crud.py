@@ -19,10 +19,12 @@ import sqlite3
 from collections.abc import Callable
 
 from fastapi import HTTPException, status
+from pydantic import ValidationError
 from universal_logging import get_logger
 
+from .attributes_coerce import entity_payload_validation_exception
 from .card import get_entity_card
-from .confidence_field import DISCOVERABLE_SKILL_LIFECYCLE
+from .confidence_field import DISCOVERABLE_SKILL_LIFECYCLE, confidence_field
 from .db import cortex_conn, decode_row, json_encode
 from .db import query as db_query
 from .entity_aliases import sync_entity_aliases
@@ -37,6 +39,7 @@ from .models import (
     EntityCreate,
     EntityDetail,
     EntitySummary,
+    EntityUpdate,
 )
 from .seat_applicability import (
     canonical_seat_or_422,
@@ -204,6 +207,9 @@ def _build_field_projection(
             if trait_cols and not trait_selected:
                 select_parts.extend(trait_cols)
                 trait_selected = True
+            for axis_col in ("type", "workflow_state"):
+                if axis_col in table_cols and axis_col not in select_parts:
+                    select_parts.append(axis_col)
             continue
         out_keys.append(name)
         if name in _PROJECTABLE_COLUMNS:
@@ -324,7 +330,8 @@ def list_entities_impl(
         for row in rows:
             item = _project_row(row, out_keys)
             if "status" in item:
-                item["status"] = project_status_field_value(row)
+                cf = confidence_field(conn, str(row.get("type", "")))
+                item["status"] = project_status_field_value(row, confidence_field=cf)
             items.append(item)
         return {"items": items}
 
@@ -332,7 +339,12 @@ def list_entities_impl(
     sql = f"SELECT {list_cols} FROM entities{where} ORDER BY created_at DESC LIMIT ?"
     params.append(limit)
     rows = db_query(conn, sql, tuple(params))
-    projected = [apply_option_c_read_projection(row) for row in rows]
+    projected = [
+        apply_option_c_read_projection(
+            row, confidence_field=confidence_field(conn, str(row.get("type", "")))
+        )
+        for row in rows
+    ]
     return {"items": [EntitySummary(**row).model_dump() for row in projected]}
 
 
@@ -377,6 +389,15 @@ def update_entity_impl(
                 "valid_status": sorted(_VALID_ENTITY_STATUS),
             },
         )
+
+    if "attributes" in updates and updates["attributes"] is not None:
+        try:
+            validated_attrs = EntityUpdate.model_validate(
+                {"attributes": updates["attributes"]}
+            )
+        except ValidationError as exc:
+            raise entity_payload_validation_exception(exc) from exc
+        updates = {**updates, "attributes": validated_attrs.attributes}
 
     # Trait cutover: map legacy ``status`` payloads to trait columns; never
     # UPDATE entities.status when Phase 0 columns exist.
@@ -559,8 +580,10 @@ def update_entity_impl(
         # get_entity_impl — it commits for entity_access_log and would
         # break the outer transaction.
         rows = db_query(conn, "SELECT * FROM entities WHERE id = ?", (entity_id,))
+        decoded = decode_row(rows[0], ENTITY_JSON_FIELDS)
         detail_row = apply_option_c_read_projection(
-            decode_row(rows[0], ENTITY_JSON_FIELDS)
+            decoded,
+            confidence_field=confidence_field(conn, str(decoded.get("type", ""))),
         )
         return EntityDetail(**detail_row, assertions=[]).model_dump(mode="json")
 
@@ -663,7 +686,10 @@ def _gate_condition_admission(conn: sqlite3.Connection, body: EntityCreate) -> N
 def create_entity_impl(
     conn: sqlite3.Connection, payload: dict[str, object], commit: bool = True
 ) -> dict[str, object]:
-    body = EntityCreate.model_validate(payload)
+    try:
+        body = EntityCreate.model_validate(payload)
+    except ValidationError as exc:
+        raise entity_payload_validation_exception(exc) from exc
     body = body.model_copy(update={"id": canonicalize_entity_id(body.id, body.type)})
     now = datetime.datetime.now(tz=datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -803,7 +829,11 @@ def create_entity_impl(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Entity created but could not be read back",
         )
-    detail_row = apply_option_c_read_projection(decode_row(rows[0], ENTITY_JSON_FIELDS))
+    decoded = decode_row(rows[0], ENTITY_JSON_FIELDS)
+    detail_row = apply_option_c_read_projection(
+        decoded,
+        confidence_field=confidence_field(conn, str(decoded.get("type", ""))),
+    )
     return EntityDetail(**detail_row, assertions=[]).model_dump(mode="json")
 
 

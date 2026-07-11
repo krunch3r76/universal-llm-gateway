@@ -31,7 +31,7 @@ second opinion, hand off reasoning, **or hand off a bound implementation**.
    `consult-routing.md` before a dispatch is a protocol violation — the same
    severity as skipping the packet protocol reads.
 2. Complete the **mandatory preflight** (consult AND implement handoffs):
-   1. Load skill: `consult-routing` (canonical slug — platform trigger; do not fs-read skill body) — transport + authority map
+   1. Use the `consult-routing` skill (canonical slug — seat self-fetches; ¬ fs-read skill body) — transport + authority map
    2. `fs(workspaces, .cursor/rules/architecture-handoff-protocol.mdc)` — md_read § The Six Required Blocks (rule artifact — read)
    3. `fs(workspaces, .cursor/rules/handoff-dispatchers.mdc)` — § target seat (rule artifact — read)
 

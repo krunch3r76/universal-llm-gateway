@@ -47,13 +47,6 @@ def _resolve_skill_body_bytes(slug: str) -> bytes | None:
     candidates: list[str] = []
     if uri.startswith("workspaces://"):
         candidates.append(uri.removeprefix("workspaces://"))
-    elif uri.startswith("agent-skills/"):
-        candidates.extend(
-            [
-                uri,
-                f"universal-llm-gateway/{uri}",
-            ]
-        )
     else:
         candidates.append(uri)
     root = workspaces_root()
@@ -75,7 +68,7 @@ def _skill_digest(slug: str) -> str:
     body = _resolve_skill_body_bytes(slug)
     if body is not None:
         return _content_digest(body)
-    return _content_digest(f"agent-skills/{slug}.md".encode())
+    return _content_digest(f".cursor/skills/{slug}/SKILL.md".encode())
 
 
 def _pedagogy_digest(*parts: str) -> str:
@@ -112,7 +105,7 @@ _HYBRID_PEDAGOGY_INLINE = """\
 def _hybrid_pedagogy_pointer(*, skill_slug: str, skill_digest: str) -> str:
     return (
         "## Canonical skill pointer\n\n"
-        f"Load skill: `{skill_slug}`\n"
+        f"Use the `{skill_slug}` skill\n"
         f"Skill digest: `{skill_digest}`\n"
         "Dense-spec accepted-pattern SOT: "
         "implement_admission.dense_spec_schema.validate_dense_spec\n"

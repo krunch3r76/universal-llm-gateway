@@ -17,6 +17,7 @@ from typing import Any
 from universal_logging import get_logger
 
 from .card_adapters import get_adapter
+from .confidence_field import confidence_field
 from .db import query
 from .event_publisher import (
     cortex_subgraph_walk_called,
@@ -404,11 +405,14 @@ def _build_nodes(
     root_predicate = _root_predicate_summary(conn, root) if root in visited else ""
     root_status: dict[str, Any] | None = None
     if root in entity_rows:
+        root_row = entity_rows[root]
+        root_cf = confidence_field(conn, str(root_row.get("type", "")))
         root_status = card_status_summary_option_c(
-            entity_rows[root],
+            root_row,
+            confidence_field=root_cf,
             extra={
-                "workflow_state": entity_rows[root].get("workflow_state"),
-                "updated_at": entity_rows[root].get("updated_at"),
+                "workflow_state": root_row.get("workflow_state"),
+                "updated_at": root_row.get("updated_at"),
             },
         )
 

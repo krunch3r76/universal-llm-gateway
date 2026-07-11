@@ -106,7 +106,6 @@ PARTITION: dict[str, list[str]] = {
         "agent_skill:completion-provenance-discipline",
         "agent_skill:git-posture",
         "agent_skill:advisor-timing",
-        "agent_skill:agent-identity-signoff",
         "agent_skill:model-tier-awareness-web",
         "agent_skill:modularize-discipline",
         "agent_skill:operator-posture",
@@ -187,6 +186,7 @@ RETIRED_BOOT_SKILLS: tuple[str, ...] = (
     "agent_skill:grokbuild-v2",
     "agent_skill:grok-build-dispatch",
     "agent_skill:claude-web-boot",
+    "agent_skill:agent-identity-signoff",
 )
 
 

@@ -52,6 +52,7 @@ from claude_bundles.skills_ui_status import (  # noqa: E402
     print_parity_report,
     scan_ui_parity,
 )
+from claude_bundles.skills_ui_uninstall import uninstall_skills  # noqa: E402
 
 logger = get_logger(__name__)
 
@@ -165,6 +166,11 @@ def main() -> int:
         action="store_true",
         help="Scan local bundles vs claude.ai Skills table (no upload)",
     )
+    parser.add_argument(
+        "--uninstall",
+        action="store_true",
+        help="Uninstall --slugs from Customize → Skills (retired extras)",
+    )
     parser.add_argument("--json", action="store_true", help="Machine-readable JSON output (with --status)")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--screenshots", metavar="DIR")
@@ -204,6 +210,23 @@ def main() -> int:
         if args.json:
             return _emit_status_json(report)
         return print_parity_report(report)
+    if args.uninstall:
+        slugs = _parse_slugs(args.slugs)
+        if not slugs:
+            parser.error("--uninstall requires --slugs")
+        results = asyncio.run(
+            uninstall_skills(
+                cdp_url=args.cdp_url,
+                slugs=slugs,
+                continue_on_error=args.continue_on_error,
+            )
+        )
+        failed = 0
+        for result in results:
+            print(f"{result.status.upper()} {result.slug}" + (f": {result.detail}" if result.detail else ""))
+            if result.status == "failed":
+                failed += 1
+        return 1 if failed else 0
 
     if args.zip_dir and args.bundles_dir:
         parser.error("Use --zip-dir OR --bundles-dir, not both")

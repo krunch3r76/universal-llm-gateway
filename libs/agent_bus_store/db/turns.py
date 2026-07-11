@@ -32,6 +32,36 @@ class UnreadTurnsExist(Exception):  # noqa: N818
 class TurnAlreadyAcknowledged(Exception):  # noqa: N818
     """Raised when attempting to modify a turn whose read_at is already set."""
 
+    def __init__(
+        self,
+        *,
+        read_at: str | None = None,
+        thread: str | None = None,
+        turn_number: int | None = None,
+    ) -> None:
+        self.read_at = read_at
+        self.thread = thread
+        self.turn_number = turn_number
+        super().__init__("Turn already acknowledged")
+
+    def to_detail(self, *, action: str = "modify") -> dict[str, Any]:
+        message = (
+            "Turn already acknowledged - cannot modify"
+            if action == "modify"
+            else "Turn already acknowledged - use force=true to delete"
+        )
+        detail: dict[str, Any] = {
+            "error": "turn_already_acknowledged",
+            "message": message,
+        }
+        if self.read_at is not None:
+            detail["read_at"] = self.read_at
+        if self.thread is not None:
+            detail["thread"] = self.thread
+        if self.turn_number is not None:
+            detail["turn_number"] = self.turn_number
+        return detail
+
 
 # ── Attachment helpers ───────────────────────────────────────────────
 
@@ -421,7 +451,11 @@ def update_turn(
         if row is None:
             return None
         if row["read_at"] is not None:
-            raise TurnAlreadyAcknowledged
+            raise TurnAlreadyAcknowledged(
+                read_at=row["read_at"],
+                thread=row["thread"],
+                turn_number=row["turn_number"],
+            )
 
         sets: list[str] = []
         params: list[Any] = []
@@ -480,7 +514,11 @@ def delete_turn(turn_id: int, *, force: bool = False) -> dict[str, Any]:
             raise KeyError(f"Turn {turn_id} not found")
 
         if not force and row["read_at"] is not None:
-            raise TurnAlreadyAcknowledged
+            raise TurnAlreadyAcknowledged(
+                read_at=row["read_at"],
+                thread=row["thread"],
+                turn_number=row["turn_number"],
+            )
 
         thread_id = row["thread"]
         turn_number = row["turn_number"]

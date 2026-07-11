@@ -39,7 +39,7 @@ _DEPENDENCY_EDGE_TYPES = (
 )
 
 _ENTITY_ID_PATTERN = re.compile(
-    r"\b([a-z][a-z_]*:[a-z0-9][a-z0-9_-]*)\b", re.IGNORECASE
+    r"(?<![\w-])([a-z][a-z_]*:[a-z0-9][a-z0-9_-]*)\b", re.IGNORECASE
 )
 
 

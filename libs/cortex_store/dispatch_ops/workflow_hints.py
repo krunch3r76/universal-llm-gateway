@@ -12,13 +12,13 @@ from typing import Any
 
 from ._shared import record
 
-# Name-only skill refs — platform/server injects bodies; ¬ fs-read skill paths
-# (friction 23128 zoom-out; agent-skills/ mirror retired by D3).
+# Name-only skill refs — Use the `<slug>` skill; seat self-fetches; ¬ fs-read
+# (friction 23128 / agent-bus:4888; agent-skills/ mirror retired by D3).
 _SESSION_CLOSE_PROTOCOL = (
-    "Load before close: skill `session-close-kernel` "
-    "(web/API/subagent; platform/server inject) or session-close.mdc (Cursor). "
-    "Web/API: also skill `session-close-audit` before invoking session_close. "
-    "claude-web: skill `web-transcript-preprocessing` before assembling transcript_md."
+    "Before close: Use the `session-close-kernel` skill "
+    "(web/API/subagent; seat self-fetches) or session-close.mdc (Cursor). "
+    "Web/API: also Use the `session-close-audit` skill before invoking session_close. "
+    "claude-web: Use the `web-transcript-preprocessing` skill before assembling transcript_md."
 )
 
 _SESSION_CLOSE_TOOLS = frozenset({"session_close", "session_close_preflight"})

@@ -248,10 +248,10 @@ async def update_turn_route(turn_id: int, body: TurnUpdate) -> Turn:
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
-    except TurnAlreadyAcknowledged:
+    except TurnAlreadyAcknowledged as e:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Turn already acknowledged - cannot modify",
+            detail=e.to_detail(action="modify"),
         )
     if row is None:
         raise HTTPException(
@@ -299,10 +299,10 @@ async def delete_turn_route(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Turn {turn_id} not found",
         )
-    except TurnAlreadyAcknowledged:
+    except TurnAlreadyAcknowledged as e:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Turn already acknowledged - use force=true to delete",
+            detail=e.to_detail(action="delete"),
         )
 
 

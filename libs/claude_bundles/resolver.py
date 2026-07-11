@@ -27,6 +27,9 @@ _CLAUDE_BUNDLE_U: list[str] = [
     "engagement-stance",
 ]
 
+# Trimmed 2026-07-11 per todo:skill-pool-dedupe judgment (agent-bus:4891) + dual-lead
+# correction: universal mis-bucketed D slugs stay on UI; matter/_D cleared from standing
+# Claude.ai catalog; demote_ui_only / merge / retire removed from this allowlist.
 _CLAUDE_BUNDLE_E: list[str] = [
     "cortex",
     "fs",
@@ -45,95 +48,51 @@ _CLAUDE_BUNDLE_E: list[str] = [
     "boot-execution-discipline",
     "operator-posture",
     "advisor-timing",
-    "agent-identity-signoff",
     "consensus-steelman-posture",
     "cheap-recon-before-escalation",
     "task-grouping-discipline",
     "planning-promotion-ladder",
     "required-skills-pickup",
-    "skill-suggest-utilization",
+    "web-skill-body-activation",
     "handoff-pickup",
     "implement-todo",
     "friction-review",
-    "descriptor-authoring-discipline",
     "model-tier-awareness-web",
-    "session-close",
     "session-close-audit",
-    "lead-agent-git-integration",
     "lead-seat-boot",
-    "cursor-sdk-instruction-standard",
     "agent-guidance-writing",
     "skill-document-writing",
-    "commit-and-git-scope",
     "git-posture",
     "session-close-kernel",
     "session-close-transcript",
     "session-close-handoff",
     "session-close-reflective-journal",
     "cortex-entity-restructure",
-    "subgraph-render",
     "handoff-packet-authoring",
     "handoff-prompt-authoring",
-    "dispatch-prompt-house-style",
     "implementation-plan-workflow",
-    "implement-work-item",
     "multi-model-review",
-    "agent-bus-multitask",
-    "research-article-ingest",
-    "research-article-search",
-    "document-ingestion",
-    "rag-canonical-reference-reminder",
-    "docx-ingestion",
-    "image-video-generation",
-    "thirdparty-api-mirror",
     "web-generate-substrate",
     "web-transcript-preprocessing",
-    "review-task-guidance",
     "email-tool-dispatch",
     "email-bridge-mailbox",
-    "document-lifecycle-tracking",
     "architecture-invariants",
-    "corpus-map-authoring",
     "corpus-grounded-skill-authoring",
     "todo-lifecycle",
-    # Repo / operational SOT — rendered to .claude for parity (cursor hardlink unchanged)
-    "build-pipeline",
-    "corpus-cross-reference-discipline",
-    "cursor-rule-authoring",
-    "debug-with-events",
-    "mcp-surface-change",
-    "mcp-tool-loop-trace-matrix",
     "orchestrator-workflow",
-    "pipeline-substrate-capabilities",
     "pre-deploy-gate-discipline",
-    "provenance-granularity",
-    "refine-pipeline",
-    "service-lifecycle",
-    "ulg-architecture",
-    # IDE-authored SOT under .cursor/skills/ (no separate docs/cortex body)
-    "add-mcp-tool",
-    "produce-uml",
-    # Operator-confirmed 2026-07-09 (a:23206) — was orphaned on claude.ai UI
     "overhaul-program",
-]
-
-# Domain / matter skills — flat-upload-safe after E1 remediation (agent-bus 4559 / 4649).
-# A distinct class from universal-reasoning (_U) and engineering (_E); the static
-# allowlist historically omitted the domain class entirely. Added tactically pending
-# the CLAUDE_BUNDLE allowlist->denylist inversion investigation.
-_CLAUDE_BUNDLE_D: list[str] = [
-    "tax",
-    "w2-ingestion",
-    "legal-opinion-corpus-ingestion",
-    "crypto-trading-research",
+    # Dual-lead correction — universal procedure reclassed out of retired _D
     "financial-reasoning",
     "named-entity-verification-gate",
-    "case-evidence-retrieval",
-    "lawyer-stance",
     "document-review-timeline-linkage-audit",
-    "psych-framework-counsel",
-    "writing-discipline-outbound",
 ]
+
+# Matter / domain playbooks — out of standing Claude.ai Customize catalog
+# (decision:skill-guidance-universal-procedure-only). Bodies remain under
+# .cursor/skills/ for Cursor + case-scoped attach. Allowlist→denylist inversion
+# (todo:claude-bundle-slugs-retire) still deferred.
+_CLAUDE_BUNDLE_D: list[str] = []
 
 CLAUDE_BUNDLE_SLUGS: list[str] = _CLAUDE_BUNDLE_U + _CLAUDE_BUNDLE_E + _CLAUDE_BUNDLE_D
 
@@ -145,8 +104,49 @@ WORKSPACE_SOT_SLUGS: frozenset[str] = frozenset(
     }
 )
 
-# Indexed for cursor hardlink but excluded from .claude render (matter playbook — retiring).
-CURSOR_ONLY_SLUGS: list[str] = []
+# Indexed for cursor hardlink but excluded from Claude.ai standing catalog
+# (demote_ui_only + matter case_document). Merged/retired slugs are NOT listed —
+# their SOT becomes a RETIRED/MERGED stub and drops from CURSOR_INDEXED.
+CURSOR_ONLY_SLUGS: list[str] = [
+    # demote_ui_only (E) — Cursor + case attach; ¬ Claude.ai Customize
+    "add-mcp-tool",
+    "agent-bus-multitask",
+    "build-pipeline",
+    "corpus-cross-reference-discipline",
+    "corpus-map-authoring",
+    "cursor-rule-authoring",
+    "cursor-sdk-instruction-standard",
+    "debug-with-events",
+    "descriptor-authoring-discipline",
+    "document-ingestion",
+    "document-lifecycle-tracking",
+    "docx-ingestion",
+    "image-video-generation",
+    "implement-work-item",
+    "lead-agent-git-integration",
+    "mcp-surface-change",
+    "mcp-tool-loop-trace-matrix",
+    "pipeline-substrate-capabilities",
+    "produce-uml",
+    "provenance-granularity",
+    "rag-canonical-reference-reminder",
+    "refine-pipeline",
+    "research-article-ingest",
+    "research-article-search",
+    "review-task-guidance",
+    "service-lifecycle",
+    "subgraph-render",
+    "thirdparty-api-mirror",
+    "ulg-architecture",
+    # matter case_document — Cursor + case attach; ¬ standing Claude.ai
+    "tax",
+    "w2-ingestion",
+    "legal-opinion-corpus-ingestion",
+    "crypto-trading-research",
+    "case-evidence-retrieval",
+    "lawyer-stance",
+    "psych-framework-counsel",
+]
 
 # Back-compat alias (removed next commit window).
 CURSOR_SOT_DIRECT_SLUGS: list[str] = CURSOR_ONLY_SLUGS
@@ -155,8 +155,6 @@ CURSOR_SOT_DIRECT_SLUGS: list[str] = CURSOR_ONLY_SLUGS
 CURSOR_INDEXED_SLUGS: list[str] = list(
     dict.fromkeys([*CLAUDE_BUNDLE_SLUGS, *CURSOR_ONLY_SLUGS])
 )
-
-CORTEX_SOT_ROOT = Path("/mnt/torus/mcp-data/files/agent-skills")
 
 _SOT_LINE_RE = re.compile(r"^\*\*SOT")
 _SOURCE_LINE_RE = re.compile(r"^\*\*Source:\*\*")

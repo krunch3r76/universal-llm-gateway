@@ -16,6 +16,7 @@ from typing import Any
 
 from .card import get_entity_card
 from .card_adapters import get_adapter
+from .confidence_field import confidence_field
 from .db import json_decode, query
 from .status_trait_read import synthesize_status_display
 from .subgraph_neighbor_fidelity import (
@@ -117,7 +118,7 @@ def augment_entity_columns(
     table_cols = {
         row[1] for row in conn.execute("PRAGMA table_info(entities)").fetchall()
     }
-    select_cols = ["id", "description"]
+    select_cols = ["id", "description", "type", "workflow_state"]
     for col in ("lifecycle", "confidence_band", "adoption"):
         if col in table_cols:
             select_cols.append(col)
@@ -132,7 +133,8 @@ def augment_entity_columns(
     for row in rows:
         eid = str(row["id"])
         descriptions[eid] = str(row["description"] or "")
-        display = synthesize_status_display(row)
+        cf = confidence_field(conn, str(row.get("type", "")))
+        display = synthesize_status_display(row, confidence_field=cf)
         statuses[eid] = display if display is not None else ""
     return descriptions, statuses
 

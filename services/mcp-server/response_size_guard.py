@@ -34,6 +34,7 @@ from request_profile import (
     current_request_metadata,
     current_structured_capable,
 )
+from response_overflow_manifest import try_markdown_overflow_replacement
 from tool_access import CURSOR_SAFE_PROFILE
 
 if TYPE_CHECKING:
@@ -871,6 +872,17 @@ def _replacement_result(
         )
         return ToolResult(content="\n".join(note_lines), structured_content=manifest)
 
+    markdown_replacement = try_markdown_overflow_replacement(
+        ref_id,
+        tool_name,
+        size,
+        threshold,
+        result,
+        measure_result=_measure_result,
+    )
+    if markdown_replacement is not None:
+        return markdown_replacement
+
     note = (
         f"Response exceeded size limit "
         f"({size // 1024}KB > {threshold // 1024}KB threshold).\n"
@@ -1055,18 +1067,28 @@ class ResponseSizeGuard(Middleware):
             )
             return _lean_content(result, tool_name=tool_name)
 
-        record(
-            "mcp.response.guarded",
-            tool_name=tool_name,
-            profile=current_profile(),
-            original_bytes=size,
-            threshold_bytes=threshold,
-            reasoning_target_bytes=reasoning_target,
-            ref_id=ref_id,
-            store_count=len(_store),
-            semantic_guard=needs_semantic_guard and size <= threshold,
-        )
-        return _replacement_result(ref_id, tool_name, size, threshold, result)
+        replacement = _replacement_result(ref_id, tool_name, size, threshold, result)
+        guarded_kwargs: dict[str, Any] = {
+            "tool_name": tool_name,
+            "profile": current_profile(),
+            "original_bytes": size,
+            "threshold_bytes": threshold,
+            "reasoning_target_bytes": reasoning_target,
+            "ref_id": ref_id,
+            "store_count": len(_store),
+            "semantic_guard": needs_semantic_guard and size <= threshold,
+        }
+        structured = replacement.structured_content
+        if (
+            isinstance(structured, dict)
+            and structured.get("kind") == "markdown_structure"
+        ):
+            guarded_kwargs["structure_rows"] = structured.get("structure_rows")
+            guarded_kwargs["structure_truncated"] = structured.get(
+                "structure_truncated"
+            )
+        record("mcp.response.guarded", **guarded_kwargs)
+        return replacement
 
     @staticmethod
     def _estimate_size(

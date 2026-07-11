@@ -428,14 +428,14 @@ _CONTRACT_LINES: dict[str, str] = {
 # Platform-seat skill load reminder for MCP consult handoffs (claude-cursor).
 # Web uses _WEB_CONSULT_PRIMING instead (2235).
 _CONSULT_ARCH_READ = (
-    "Before findings: load skills named in packet <invariants> by canonical slug "
-    "(platform triggers on claude-cursor). Do not fs-read agent-skills/*.md for "
+    "Before findings: Use skills named in packet <invariants> by canonical slug "
+    "(native skill use on claude-cursor). Do not fs-read agent-skills/*.md for "
     "skill bodies on platform seats."
 )
 
 _WEB_CONSULT_PRIMING = (
-    "Before findings: load skills named in packet <invariants> by canonical slug "
-    "(platform triggers on claude-web). agent_bus(fetch) each related_thread_ids "
+    "Before findings: Use skills named in packet <invariants> by canonical slug "
+    "(native skill use on claude-web). agent_bus(fetch) each related_thread_ids "
     "thread per packet <mcp_capabilities>. Do not fs-read agent-skills/*.md for "
     "skill bodies on platform seats."
 )

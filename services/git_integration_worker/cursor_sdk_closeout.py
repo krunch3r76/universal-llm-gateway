@@ -49,12 +49,14 @@ from services.git_integration_worker.cursor_sdk_events import (
 )
 from services.git_integration_worker.cursor_sdk_manifest import (
     CaptureBranch,
+    collect_expected_cortex_deliverable_uris,
     compact_manifest_for_body,
     cortex_surface_has_write_op,
     harvest_cortex_assertion_ids,
     manifest_offgit_deliverable_uris,
     merge_wrapper_manifest,
     no_capture_degraded_reason,
+    oob_cortex_write_findings,
     registered_repo_roots,
     repo_change_set_from_manifest,
     resolve_mount_root,
@@ -164,9 +166,7 @@ def capture_wt_baseline_with_hashes(source_repo: Path) -> dict[str, Any] | None:
         if digest is not None:
             hashes[path] = digest
     mount = resolve_mount_root(source_repo)
-    outside = sorted(
-        snapshot_outside_repo_paths(mount, registered_repo_roots(mount))
-    )
+    outside = sorted(snapshot_outside_repo_paths(mount, registered_repo_roots(mount)))
     return {"codes": codes, "hashes": hashes, "outside_repo": outside}
 
 
@@ -194,9 +194,13 @@ def run_touched_files_lint(
             timeout=60,
         )
     except FileNotFoundError:
-        return Verification(command=command, exit_code=0), "verification:lint_unavailable"
+        return Verification(
+            command=command, exit_code=0
+        ), "verification:lint_unavailable"
     except subprocess.TimeoutExpired:
-        return Verification(command=command, exit_code=0), "verification:lint_unavailable"
+        return Verification(
+            command=command, exit_code=0
+        ), "verification:lint_unavailable"
     return Verification(command=command, exit_code=proc.returncode), None
 
 
@@ -402,7 +406,9 @@ def finalize_closeout_body(
         reduced["evidence_uris"] = payload["evidence_uris"]
     verification = payload.get("verification") or []
     failed_verification = [
-        item for item in verification if isinstance(item, dict) and item.get("exit_code")
+        item
+        for item in verification
+        if isinstance(item, dict) and item.get("exit_code")
     ]
     if failed_verification:
         reduced["verification"] = failed_verification
@@ -423,6 +429,10 @@ def finalize_closeout_body(
     if offgit:
         reduced["files_offgit_produced_total"] = len(offgit)
         reduced["files_offgit_produced"] = list(offgit[:_CLOSEOUT_FILE_HEAD])
+    dropped = payload.get("dropped_non_file_entries") or []
+    if dropped:
+        reduced["dropped_non_file_entries_total"] = len(dropped)
+        reduced["dropped_non_file_entries"] = list(dropped[:_CLOSEOUT_FILE_HEAD])
     if payload.get("deviations"):
         reduced["deviations"] = list(payload["deviations"][:_CLOSEOUT_FILE_HEAD])
     if body_relocated is not None:
@@ -476,6 +486,7 @@ def build_implement_closeout_body(
     files_untracked_or_ignored: list[str] | None = None,
     files_outside_repo: list[str] | None = None,
     offgit_deliverable_uris: list[str] | None = None,
+    dropped_non_file_entries: list[dict[str, str]] | None = None,
 ) -> str:
     """Build a compact, valid ImplementCloseout JSON turn body.
 
@@ -511,9 +522,8 @@ def build_implement_closeout_body(
         sidecar_appendix=sidecar_appendix,
     )
     cortex_assertions = harvest_cortex_assertion_ids(manifest_source)
-    cortex_writes_unattributed = (
-        not cortex_assertions
-        and cortex_surface_has_write_op(manifest_source)
+    cortex_writes_unattributed = not cortex_assertions and cortex_surface_has_write_op(
+        manifest_source
     )
     if cortex_writes_unattributed:
         cortex_assertions = None
@@ -555,6 +565,8 @@ def build_implement_closeout_body(
             payload["files_outside_repo"] = files_outside_repo
         if offgit_deliverable_uris:
             payload["files_offgit_produced"] = offgit_deliverable_uris
+        if dropped_non_file_entries:
+            payload["dropped_non_file_entries"] = dropped_non_file_entries
         if manifest_value is not None and not isinstance(
             manifest_value, EffectsManifest
         ):
@@ -722,10 +734,12 @@ def _assemble_closeout_delivery(
     )
     offgit_uris = manifest_offgit_deliverable_uris(manifest, sidecar_ref=sidecar_ref)
     mount = resolve_mount_root(source_repo)
-    manifest_cs, manifest_outside, non_file_dropped = repo_change_set_from_manifest(
-        manifest,
-        source_repo=source_repo,
-        mount_root=mount,
+    manifest_cs, manifest_outside, dropped_non_file_entries = (
+        repo_change_set_from_manifest(
+            manifest,
+            source_repo=source_repo,
+            mount_root=mount,
+        )
     )
     if manifest_cs is None:
         manifest_cs = ChangeSet(created=(), modified=(), deleted=())
@@ -747,9 +761,7 @@ def _assemble_closeout_delivery(
         modified=tuple(filter_manifest_swamp(repo_change_set.modified)),
         deleted=tuple(filter_manifest_swamp(repo_change_set.deleted)),
     )
-    all_outside_repo = tuple(
-        dict.fromkeys([*outside_repo_paths, *manifest_outside])
-    )
+    all_outside_repo = tuple(dict.fromkeys([*outside_repo_paths, *manifest_outside]))
     verification_cs = build_verification_change_set(
         repo_change_set, gate_d_created_rels
     )
@@ -790,9 +802,28 @@ def _assemble_closeout_delivery(
         )
     )
     deviations = [*baseline_deviations, *(deviations or [])]
-    if non_file_dropped:
+    if dropped_non_file_entries:
         deviations = [*(deviations or []), "capture:non_file_manifest_entry_dropped"]
-    if manifest_git_divergence and "divergence:manifest_vs_git_labels" not in deviations:
+    expected_cortex_uris = collect_expected_cortex_deliverable_uris(
+        light_bounded_expected_paths=light_bounded_expected_paths,
+        files_expected=files_expected,
+        cortex_artifact_paths=cortex_artifact_paths,
+    )
+    oob_deviations, oob_divergence = oob_cortex_write_findings(
+        expected_cortex_uris=expected_cortex_uris,
+        offgit_uris=offgit_uris,
+        cortex_root=cortex_files_root(),
+    )
+    if oob_deviations:
+        deviations = [*deviations, *oob_deviations]
+        if capture_status == "complete":
+            capture_status = "partial"
+        if divergence_reason is None:
+            divergence_reason = oob_divergence
+    if (
+        manifest_git_divergence
+        and "divergence:manifest_vs_git_labels" not in deviations
+    ):
         deviations = [*(deviations or []), "divergence:manifest_vs_git_labels"]
         if divergence_reason is None:
             divergence_reason = "divergence:manifest_vs_git_labels"
@@ -817,6 +848,7 @@ def _assemble_closeout_delivery(
         files_untracked_or_ignored=list(files_untracked_or_ignored),
         files_outside_repo=list(all_outside_repo),
         offgit_deliverable_uris=offgit_uris,
+        dropped_non_file_entries=dropped_non_file_entries,
     )
     if sidecar_appendix:
         appendix = "\n\n## effects_manifest\n\n" + "\n".join(sidecar_appendix)

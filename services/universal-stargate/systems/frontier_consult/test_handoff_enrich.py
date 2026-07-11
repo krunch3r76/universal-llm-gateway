@@ -34,10 +34,10 @@ contract: consult
 """
 
 _DENSIFY_INVARIANTS = (
-    "- Load skill: `consult-routing` "
-    "(canonical slug — platform trigger; do not fs-read skill body)\n"
-    "- Load skill: `lead-seat-boot` "
-    "(canonical slug — platform trigger; do not fs-read skill body)"
+    "- Use the `consult-routing` skill "
+    "(canonical slug — seat self-fetches; ¬ fs-read skill body)\n"
+    "- Use the `lead-seat-boot` skill "
+    "(canonical slug — seat self-fetches; ¬ fs-read skill body)"
 )
 
 

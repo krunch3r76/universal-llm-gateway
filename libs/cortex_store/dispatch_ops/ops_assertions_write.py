@@ -83,6 +83,7 @@ def _op_assert(
     force: bool = False,
     supersedes_id: int | None = None,
     acknowledge_audit_gaps: list[str] | None = None,
+    dry_run: bool = False,
     attributes: dict[str, Any] | None = None,
     resolve_aliases: bool = True,
     raw_id: bool = False,
@@ -113,7 +114,11 @@ def _op_assert(
         canonical_entity_id = resolved.entity_id if not raw_id else entity_id
         try:
             write_nudge = build_assert_nudge(
-                conn, canonical_entity_id, claim, confidence or "believed"
+                conn,
+                canonical_entity_id,
+                claim,
+                confidence or "believed",
+                predicate_form=predicate_form,
             )
         except Exception:  # noqa: BLE001 — advisory nudge must never block the write
             logger.warning(
@@ -163,6 +168,8 @@ def _op_assert(
         body["supersedes_id"] = supersedes_id
     if acknowledge_audit_gaps is not None:
         body["acknowledge_audit_gaps"] = acknowledge_audit_gaps
+    if dry_run:
+        body["dry_run"] = True
     if attributes is not None:
         body["attributes"] = attributes
     if derivation_type is None or confidence_score is None:
@@ -181,6 +188,10 @@ def _op_assert(
             result["seeded_by_input"] = seeded_by
             result["seeded_by"] = body["seeded_by"]
             result["seeded_by_projection"] = projection_tag
+        if result.get("dry_run"):
+            if write_nudge is not None:
+                attach_write_discipline(result, write_nudge)
+            return result
         logger.info("cortex assert: %s — %s (%s)", entity_id, claim[:60], confidence)
         record(
             "mcp.cortex.assertion.seeded", entity_id=entity_id, confidence=confidence

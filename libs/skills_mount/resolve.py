@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from claude_bundles.bundle_description import parse_frontmatter
-from claude_bundles.resolver import CORTEX_SOT_ROOT, render_bundle
+from claude_bundles.resolver import render_bundle
 from implement_admission.skill_source_table import (
     canonical_table_key,
     resolve_canonical_source_uri,
@@ -32,20 +32,12 @@ class ResolvedSkillBundle:
     data_base64: str
 
 
-def _cortex_files_root(cortex_sot_root: Path) -> Path:
-    return cortex_sot_root.parent
-
-
 def _resolve_source_path(
     source_uri: str,
     *,
-    cortex_sot_root: Path,
     workspaces_root: Path,
 ) -> Path | None:
     uri = source_uri.strip()
-    if uri.startswith("agent-skills/"):
-        path = _cortex_files_root(cortex_sot_root) / uri
-        return path if path.is_file() else None
     if uri.startswith(_WS_PREFIX):
         rel = uri.removeprefix(_WS_PREFIX)
         path = workspaces_root / rel
@@ -78,14 +70,12 @@ def _description_from_rendered(rendered: str, *, fallback_slug: str) -> str:
 def resolve_skill_bundles(
     skill_ids: list[str],
     *,
-    cortex_sot_root: Path | None = None,
     workspaces_root: Path | None = None,
 ) -> list[ResolvedSkillBundle]:
     """Resolve canonical table ids to inline zip bundles for provider mount."""
     if not skill_ids:
         return []
 
-    cortex_root = (cortex_sot_root or CORTEX_SOT_ROOT).resolve()
     ws_root = (workspaces_root or Path(__file__).resolve().parents[2]).resolve()
 
     bundles: list[ResolvedSkillBundle] = []
@@ -103,7 +93,6 @@ def resolve_skill_bundles(
 
         path = _resolve_source_path(
             source_uri,
-            cortex_sot_root=cortex_root,
             workspaces_root=ws_root,
         )
         if path is None:

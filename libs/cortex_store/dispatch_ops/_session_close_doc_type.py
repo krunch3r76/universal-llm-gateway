@@ -68,8 +68,6 @@ def _resolve_skill_body_bytes(slug: str) -> bytes | None:
     candidates: list[str] = []
     if uri.startswith("workspaces://"):
         candidates.append(uri.removeprefix("workspaces://"))
-    elif uri.startswith("agent-skills/"):
-        candidates.extend([uri, f"universal-llm-gateway/{uri}"])
     else:
         candidates.append(uri)
     root = workspaces_root()
@@ -91,13 +89,13 @@ def skill_digest(slug: str) -> str:
     body = _resolve_skill_body_bytes(slug)
     if body is not None:
         return _content_digest(body)
-    return _content_digest(f"agent-skills/{slug}.md".encode())
+    return _content_digest(f".cursor/skills/{slug}/SKILL.md".encode())
 
 
 def _skill_pointer_block() -> str:
     lines = ["## Canonical skill pointers\n"]
     for slug in _SESSION_CLOSE_SKILLS:
-        lines.append(f"- Load skill: `{slug}`")
+        lines.append(f"- Use the `{slug}` skill")
         lines.append(f"  Skill digest: `{skill_digest(slug)}`")
     return "\n".join(lines) + "\n"
 

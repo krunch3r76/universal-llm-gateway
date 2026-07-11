@@ -115,8 +115,9 @@ _SKILL_PATH_RE = re.compile(
     r"(?:agent-skills|agent_skills)/([a-z0-9][-a-z0-9_]*)\.md",
     re.IGNORECASE,
 )
+# Canonical (4888): Use the `slug` skill. Legacy: Use the `slug` skill.
 _LOAD_SKILL_RE = re.compile(
-    r"Load skill:\s*`([a-z0-9][-a-z0-9_]*)`",
+    r"(?:Use the\s+`|Load skill:\s*`)([a-z0-9][-a-z0-9_]*)`(?:\s+skill)?",
     re.IGNORECASE,
 )
 _INVARIANTS_BLOCK_RE = re.compile(
@@ -360,9 +361,11 @@ def _fetch_registry_entry(
 
 
 def _index_entry(slug: str, entity_id: str) -> str:
+    from agent_seat.body_injection import skill_use_instruction
+
     return (
         f"\n\n<!-- injected-index:{slug} entity_id={entity_id} -->"
-        f"\n- `{slug}` — Load skill: `{slug}`"
+        f"\n- `{slug}` — {skill_use_instruction(slug)}"
     )
 
 

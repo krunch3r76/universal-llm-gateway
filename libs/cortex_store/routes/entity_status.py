@@ -13,6 +13,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query, status
 from universal_logging import get_logger
 
+from ..confidence_field import confidence_field
 from ..db import cortex_conn, decode_row, json_decode, query
 from ..entity_crud import (
     ENTITY_JSON_FIELDS as _ENTITY_JSON_FIELDS,
@@ -96,6 +97,7 @@ def get_entity_status(
     """
     now = datetime.datetime.now(tz=datetime.UTC)
     conn = None
+    display_confidence_field: str | None = None
     try:
         conn = cortex_conn()
         entities = query(conn, "SELECT * FROM entities WHERE id = ?", (entity_id,))
@@ -105,6 +107,9 @@ def get_entity_status(
                 detail=f"Entity not found: {entity_id}",
             )
         entity_row = decode_row(entities[0], _ENTITY_JSON_FIELDS)
+        display_confidence_field = confidence_field(
+            conn, str(entity_row.get("type", ""))
+        )
 
         active_rows = query(
             conn,
@@ -239,7 +244,8 @@ def get_entity_status(
     )
 
     entity_read = apply_option_c_read_projection(
-        decode_row(entity_row, _ENTITY_JSON_FIELDS)
+        entity_row,
+        confidence_field=display_confidence_field,
     )
     return EntityStatusResponse(
         entity=StatusEntity(

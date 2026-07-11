@@ -150,7 +150,7 @@ def build_manifest(
     if skills:
         hint = (
             "Index on briefing_card ## Agent Skills. "
-            "Bodies: platform/server injects by canonical slug "
+            "Bodies: say Use the `<slug>` skill — seat self-fetches by canonical slug "
             "(`agent_skill:<slug>` / skill `<slug>`) — do NOT fs-read skill paths "
             "(`agent-skills/` retired). "
             "Refresh entity list: cortex(tool='entities', "

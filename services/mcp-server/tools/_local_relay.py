@@ -8,6 +8,8 @@ from __future__ import annotations
 import json as _json
 import logging
 import os
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from typing import Any
 
 import httpx
@@ -71,6 +73,49 @@ def resolve_timeout(service: str, method: str, path: str) -> float:
         if service == svc and method == mth and path_no_query.endswith(suffix):
             return timeout
     return _REQUEST_TIMEOUT
+
+
+def _request_with_wall_clock(
+    client: httpx.Client,
+    *,
+    method: str,
+    path: str,
+    json_body: dict[str, Any] | None,
+    headers: dict[str, str],
+    wall_clock_s: float,
+) -> httpx.Response:
+    """Run ``client.request`` under a hard wall-clock ceiling.
+
+    httpx timeouts usually abort idle reads, but friction 23653 showed an
+    intermittent orphan where ``mcp.local.api.called`` never gained a twin
+    ``completed``/``failed`` despite agent-bus logging HTTP 200 for ``/wait``.
+    ``Future.result(timeout=…)`` returns to the MCP tool even if the worker
+    thread remains stuck; closing the client best-effort unblocks that thread.
+    ``shutdown(wait=False)`` keeps the MCP tool path from blocking on the
+    orphaned worker during executor teardown.
+    """
+
+    def _call() -> httpx.Response:
+        return client.request(method, path, json=json_body, headers=headers)
+
+    pool = ThreadPoolExecutor(max_workers=1)
+    try:
+        fut = pool.submit(_call)
+        try:
+            return fut.result(timeout=wall_clock_s)
+        except FuturesTimeoutError:
+            try:
+                client.close()
+            except Exception:
+                logger.warning(
+                    "wall-clock timeout: client.close() failed for %s %s",
+                    method,
+                    path,
+                    exc_info=True,
+                )
+            raise
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
 
 
 def relay(
@@ -138,73 +183,86 @@ def relay(
         timeout_s=request_timeout,
     )
 
+    client: httpx.Client | None = None
     try:
-        with make_sync_client(service_url, timeout=request_timeout) as client:
-            response = client.request(
-                method,
-                path,
-                json=body,
-                headers=headers,
-            )
-            duration = monotonic_now() - t0
-
-            if response.status_code >= 400:
-                _record_failed(
-                    error="http_error",
-                    status=response.status_code,
-                    duration=duration,
-                )
-                err: dict[str, Any] = {
-                    "error": f"HTTP {response.status_code}",
-                    "status_code": response.status_code,
-                    "body": response.text,
-                }
-                # Surface structured FastAPI `detail` payloads (e.g. 413
-                # body_too_large) so callers can discriminate on `reason`
-                # without parsing the body string.
-                try:
-                    parsed_err = response.json()
-                except Exception:
-                    parsed_err = None
-                if isinstance(parsed_err, dict):
-                    detail_value = parsed_err.get("detail")
-                    if detail_value is not None:
-                        err["detail"] = detail_value
-                return err
-
-            try:
-                parsed = response.json()
-            except Exception as exc:
-                logger.warning(
-                    "Failed to parse JSON response from %s %s %s: %s",
-                    service,
-                    method,
-                    path,
-                    exc,
-                    exc_info=True,
-                )
-                _record_failed(
-                    error="invalid_json",
-                    status=response.status_code,
-                    duration=duration,
-                    detail=str(exc),
-                )
-                return {
-                    "error": "Invalid JSON response",
-                    "detail": str(exc),
-                    "text": response.text,
-                }
-
-            record(
-                "mcp.local.api.completed",
-                service=service,
+        client = make_sync_client(service_url, timeout=request_timeout)
+        try:
+            response = _request_with_wall_clock(
+                client,
                 method=method,
                 path=path,
-                status=response.status_code,
-                duration_s=round(duration, 3),
-                timeout_s=request_timeout,
+                json_body=body,
+                headers=headers,
+                wall_clock_s=request_timeout,
             )
-            return parsed
+        except FuturesTimeoutError as exc:
+            duration = monotonic_now() - t0
+            _record_failed(
+                error="wall_clock_timeout",
+                duration=duration,
+                detail=str(exc) or f"no twin within {request_timeout}s",
+            )
+            return {"error": f"Request to {service} timed out"}
+
+        duration = monotonic_now() - t0
+
+        if response.status_code >= 400:
+            _record_failed(
+                error="http_error",
+                status=response.status_code,
+                duration=duration,
+            )
+            err: dict[str, Any] = {
+                "error": f"HTTP {response.status_code}",
+                "status_code": response.status_code,
+                "body": response.text,
+            }
+            # Surface structured FastAPI `detail` payloads (e.g. 413
+            # body_too_large) so callers can discriminate on `reason`
+            # without parsing the body string.
+            try:
+                parsed_err = response.json()
+            except Exception:
+                parsed_err = None
+            if isinstance(parsed_err, dict):
+                detail_value = parsed_err.get("detail")
+                if detail_value is not None:
+                    err["detail"] = detail_value
+            return err
+
+        try:
+            parsed = response.json()
+        except Exception as exc:
+            logger.warning(
+                "Failed to parse JSON response from %s %s %s: %s",
+                service,
+                method,
+                path,
+                exc,
+                exc_info=True,
+            )
+            _record_failed(
+                error="invalid_json",
+                status=response.status_code,
+                duration=duration,
+                detail=str(exc),
+            )
+            return {
+                "error": "Invalid JSON response",
+                "detail": str(exc),
+                "text": response.text,
+            }
+
+        record(
+            "mcp.local.api.completed",
+            service=service,
+            method=method,
+            path=path,
+            status=response.status_code,
+            duration_s=round(duration, 3),
+            timeout_s=request_timeout,
+        )
+        return parsed
 
     except httpx.RequestError as exc:
         duration = monotonic_now() - t0
@@ -221,3 +279,9 @@ def relay(
         logger.error("local_api relay to %s failed: %s", service, exc, exc_info=True)
         _record_failed(error="unexpected_error", duration=duration, detail=str(exc))
         return {"error": f"Relay to {service} failed: {exc}"}
+    finally:
+        if client is not None:
+            try:
+                client.close()
+            except Exception:
+                pass

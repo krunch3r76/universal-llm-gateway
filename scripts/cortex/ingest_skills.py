@@ -52,6 +52,25 @@ from _skill_scan import (  # noqa: E402
 )
 from transport_utils import DEFAULT_CORTEX_URL, make_sync_client  # noqa: E402
 
+try:
+    from claude_bundles.bundle_description import MAX_SKILL_DESCRIPTION_LEN
+except ImportError:  # pragma: no cover — libs on PYTHONPATH in normal venv
+    MAX_SKILL_DESCRIPTION_LEN = 200
+
+
+def _description_length_failures(
+    scanned: dict[str, dict[str, object]],
+) -> list[str]:
+    """Fleet SOT ceiling: YAML description must be ≤ MAX_SKILL_DESCRIPTION_LEN."""
+    fails: list[str] = []
+    for slug, entry in sorted(scanned.items()):
+        desc = str(entry.get("description") or "").strip()
+        if desc and len(desc) > MAX_SKILL_DESCRIPTION_LEN:
+            fails.append(
+                f"{slug}: description_len={len(desc)} > {MAX_SKILL_DESCRIPTION_LEN}"
+            )
+    return fails
+
 
 def _resolve_slug(
     client: object,
@@ -248,6 +267,7 @@ def main(argv: list[str] | None = None) -> int:
                             [str(v) for v in declared],
                         )
                     )
+        desc_fails = _description_length_failures(scanned)
         report = build_drift_report(drifted)
         if args.report:
             print(json.dumps(report, sort_keys=True))
@@ -259,6 +279,15 @@ def main(argv: list[str] | None = None) -> int:
                 f"{remediation_hint()}",
                 file=sys.stderr,
             )
+        if desc_fails:
+            for line in desc_fails:
+                print(f"DESCRIPTION: {line}", file=sys.stderr)
+            print(
+                f"CHECK FAIL: {len(desc_fails)} description(s) over "
+                f"{MAX_SKILL_DESCRIPTION_LEN}-char fleet SOT ceiling",
+                file=sys.stderr,
+            )
+        if drifted or desc_fails:
             return 1
         print("OK ingest_skills --check")
         return 0

@@ -78,7 +78,12 @@ def prepare_claude_ai_upload_md(
     *,
     slug: str | None = None,
 ) -> tuple[Path, bool, int]:
-    """Stage a claude.ai-safe copy when description exceeds 200 chars.
+    """Stage a fleet-safe copy when description exceeds the SOT ceiling (200).
+
+    Fleet policy caps YAML ``description`` at 200 for Cursor SOT, Customize UI,
+    and future Skills API inject (API/spec allow 1024; unused). See
+    ``MAX_SKILL_DESCRIPTION_LEN`` and
+    ``decision:claude-ai-skill-description-limits-by-surface``.
 
     Returns ``(upload_path, was_truncated, original_len)``.
     """

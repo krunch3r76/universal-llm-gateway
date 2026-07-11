@@ -15,7 +15,6 @@ from .renderer import render_skill_bundle
 # Overlap slugs cleared by STEP-0 reconcile (todo-lifecycle deferred — divergent body).
 AGENT_SURFACE_SKILL_SLUGS: tuple[str, ...] = (
     "advisor-timing",
-    "agent-identity-signoff",
     "handoff-pickup",
 )
 

@@ -550,6 +550,8 @@ def _op_entity_create(
     try:
         with cortex_conn() as conn:
             result = _create_entity_impl(conn, payload)
+    except HTTPException as exc:
+        return _http_error_dict(exc)
     except sqlite3.IntegrityError:
         logger.warning("entity_create conflict for id=%s", id)
         try:
@@ -665,12 +667,15 @@ def _op_entity_update(
             )
         except HTTPException as exc:
             return _http_error_dict(exc)
-        result = _update_entity_impl(
-            conn,
-            entity_id=canonical_id if not raw_id else entity_id,
-            updates=updates,
-            intent=intent,
-        )
+        try:
+            result = _update_entity_impl(
+                conn,
+                entity_id=canonical_id if not raw_id else entity_id,
+                updates=updates,
+                intent=intent,
+            )
+        except HTTPException as exc:
+            return _http_error_dict(exc)
     if "error" not in result:
         logger.info("cortex entity_update: %s", entity_id)
     return result

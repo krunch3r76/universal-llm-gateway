@@ -27,7 +27,6 @@ CANONICAL_SKILL_SOURCE_URIS: Final[dict[str, str]] = {
     "agent-bus-discipline": "workspaces://universal-llm-gateway/.cursor/skills/agent-bus-discipline/SKILL.md",
     "agent-bus-multitask": "workspaces://universal-llm-gateway/.cursor/skills/agent-bus-multitask/SKILL.md",
     "agent-guidance-writing": "workspaces://universal-llm-gateway/.cursor/skills/agent-guidance-writing/SKILL.md",
-    "agent-identity-signoff": "docs/agent-guides/rules/agent-identity-signoff.md",
     "architecture-invariants": "workspaces://universal-llm-gateway/.cursor/skills/architecture-invariants/SKILL.md",
     "auditor-validatable-confidence": "workspaces://universal-llm-gateway/.cursor/skills/auditor-validatable-confidence/SKILL.md",
     "boot-execution-discipline": "workspaces://universal-llm-gateway/.cursor/skills/boot-execution-discipline/SKILL.md",
@@ -117,7 +116,6 @@ CANONICAL_SKILL_SOURCE_URIS: Final[dict[str, str]] = {
     "session-close-reflective-journal": "workspaces://universal-llm-gateway/.cursor/skills/session-close-reflective-journal/SKILL.md",
     "session-close-transcript": "workspaces://universal-llm-gateway/.cursor/skills/session-close-transcript/SKILL.md",
     "skill-document-writing": "workspaces://universal-llm-gateway/.cursor/skills/skill-document-writing/SKILL.md",
-    "skill-suggest-utilization": "workspaces://universal-llm-gateway/.cursor/skills/skill-suggest-utilization/SKILL.md",
     "srm": "workspaces://universal-llm-gateway/.cursor/skills/srm/SKILL.md",
     "subgraph-render": "workspaces://universal-llm-gateway/.cursor/skills/subgraph-render/SKILL.md",
     "task-grouping-discipline": "workspaces://universal-llm-gateway/.cursor/skills/task-grouping-discipline/SKILL.md",
@@ -131,7 +129,7 @@ CANONICAL_SKILL_SOURCE_URIS: Final[dict[str, str]] = {
     "writing-discipline-outbound": "workspaces://universal-llm-gateway/.cursor/skills/writing-discipline-outbound/SKILL.md",
 }
 
-TABLE_DIGEST: Final[str] = "sha256:0a85d4814b4c4c2ed74721a72612d55aaa2e874901bb1b89a66e9c9ff5056001"
+TABLE_DIGEST: Final[str] = "sha256:654b3d399243924ec1272d6a33a0daabbb3046679ce31df80f8e66271e1cf662"
 # fmt: on
 
 

@@ -6,14 +6,21 @@ import json
 from collections.abc import Callable
 from typing import Any
 
+from cortex_store.dispatch_ops._recon_sidecar import (
+    recon_sidecar_frontmatter_line_count,
+)
 from durable_sink import ResolvedDurableSink, resolve_durable_sink
 from mcp_events import monotonic_now, record
 from provider_model_limits import rag_pipeline_timeout
 from universal_logging import get_logger
 
+from ._rag_recon_manifest import build_theme_markdown, relevance_tag
+
 logger = get_logger(__name__)
 
 DispatchFn = Callable[[str, dict[str, Any]], dict[str, Any]]
+
+_SKIP_NOTE = "no relevant hits (below MARGINAL threshold)"
 
 
 def _cortex_dispatch(tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -82,11 +89,7 @@ def _run_theme_search(
 
 
 def _relevance_tag(chunks_found: int, content_length: int) -> str:
-    if chunks_found >= 3 or content_length >= 1200:
-        return "RELEVANT"
-    if chunks_found >= 1 or content_length >= 200:
-        return "MARGINAL"
-    return "SKIP"
+    return relevance_tag(chunks_found, content_length)
 
 
 def _build_discards_section(
@@ -104,9 +107,7 @@ def _build_discards_section(
             int(result.get("content_length") or 0),
         )
         if tag == "SKIP":
-            discard_lines.append(
-                f"- `{query}` — no relevant hits (below MARGINAL threshold)"
-            )
+            discard_lines.append(f"- `{query}` — {_SKIP_NOTE}")
     if discard_lines:
         lines.extend(discard_lines)
     else:
@@ -120,43 +121,17 @@ def _build_theme_markdown(
     scopes: list[str],
     queries: list[str],
     query_results: list[dict[str, Any]],
-) -> str:
-    lines = [
-        f"# Theme: {theme}",
-        "",
-        "## Scopes",
-        *[f"- {scope}" for scope in scopes],
-        "",
-        "## Queries",
-    ]
-    for idx, query in enumerate(queries, start=1):
-        lines.append(f"{idx}. {query}")
-    lines.extend(["", "## Results", ""])
-    for query, result in zip(queries, query_results, strict=False):
-        if result.get("error"):
-            lines.extend(
-                [
-                    f"### Query: {query}",
-                    "",
-                    f"_Search failed: {result['error']}_",
-                    "",
-                ]
-            )
-            continue
-        tag = _relevance_tag(
-            int(result.get("chunks_found") or 0),
-            int(result.get("content_length") or 0),
-        )
-        lines.extend(
-            [
-                f"### Query: {query} [{tag}]",
-                "",
-                result.get("context") or "_No results._",
-                "",
-            ]
-        )
-    lines.append(_build_discards_section(queries, query_results).lstrip("\n"))
-    return "\n".join(lines).rstrip() + "\n"
+    frontmatter_line_count: int = 0,
+) -> tuple[str, list[dict[str, Any]]]:
+    discards = _build_discards_section(queries, query_results).lstrip("\n")
+    return build_theme_markdown(
+        theme=theme,
+        scopes=scopes,
+        queries=queries,
+        query_results=query_results,
+        discards_section=discards,
+        frontmatter_line_count=frontmatter_line_count,
+    )
 
 
 def execute_rag_recon(
@@ -188,6 +163,7 @@ def execute_rag_recon(
     except RuntimeError as exc:
         return {"error": str(exc)}
 
+    fm_line_count = recon_sidecar_frontmatter_line_count()
     theme_results: list[dict[str, Any]] = []
     evidence_uris: list[str] = []
 
@@ -218,17 +194,19 @@ def execute_rag_recon(
             continue
 
         query_results = [_run_theme_search(q, scopes, top_k=top_k) for q in queries]
-        body = _build_theme_markdown(
+        body, source_manifest = _build_theme_markdown(
             theme=theme_name,
             scopes=scopes,
             queries=queries,
             query_results=query_results,
+            frontmatter_line_count=fm_line_count,
         )
         total_chunks = sum(int(r.get("chunks_found") or 0) for r in query_results)
         entry: dict[str, Any] = {
             "theme": theme_name,
             "query_count": len(queries),
             "chunks_found": total_chunks,
+            "source_manifest": source_manifest,
         }
         try:
             sink_result = resolved.sink.write_recon_sidecar(

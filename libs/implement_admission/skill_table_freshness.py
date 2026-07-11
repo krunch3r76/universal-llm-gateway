@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -20,9 +19,6 @@ from implement_admission.skill_source_table import (
 )
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_CORTEX_FILES_ROOT = Path(
-    os.environ.get("CORTEX_FILES_ROOT", "/mnt/torus/mcp-data/files")
-).expanduser()
 _WS_PREFIX = "workspaces://universal-llm-gateway/"
 
 
@@ -54,9 +50,6 @@ def _entity_source_uri(entity: dict[str, Any]) -> str | None:
 
 def _resolve_body_path(source_uri: str) -> Path | None:
     uri = source_uri.strip()
-    if uri.startswith("agent-skills/"):
-        path = _CORTEX_FILES_ROOT / uri
-        return path if path.is_file() else None
     if uri.startswith(_WS_PREFIX):
         rel = uri.removeprefix(_WS_PREFIX)
         path = _REPO_ROOT / rel

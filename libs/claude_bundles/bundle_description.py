@@ -9,7 +9,12 @@ from typing import Any
 import yaml
 
 MIN_BUNDLE_DESCRIPTION_LEN = 50
-MAX_CLAUDE_AI_DESCRIPTION_LEN = 200
+# Fleet policy — one ceiling for Cursor SOT, claude.ai Customize uploads, and any
+# future Anthropic Skills API inject (simplicity over surface-specific budgets).
+# Anthropic Help Center (Customize web) = 200; Agent Skills API/spec allow 1024 —
+# we do not use the 1024 headroom. decision:claude-ai-skill-description-limits-by-surface
+MAX_SKILL_DESCRIPTION_LEN = 200
+MAX_CLAUDE_AI_DESCRIPTION_LEN = MAX_SKILL_DESCRIPTION_LEN  # alias — prefer MAX_SKILL_DESCRIPTION_LEN
 
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---", re.DOTALL)
 _TRIGGER_LINE_RE = re.compile(r"^\*\*Trigger(?::\*\*|\*\*:)\s*(.+)$", re.MULTILINE)
@@ -52,7 +57,7 @@ def _description_scalar_raw(block: str) -> str | None:
 
 
 def lint_frontmatter_description(slug: str, text: str) -> str | None:
-    """Fail-loud when SOT ``description:`` is unsafe for YAML or claude.ai."""
+    """Fail-loud when SOT ``description:`` is unsafe for YAML or fleet length policy."""
     match = _FRONTMATTER_RE.match(text)
     if not match:
         return None
@@ -66,9 +71,15 @@ def lint_frontmatter_description(slug: str, text: str) -> str | None:
         if description_has_xml_tags(raw_value):
             return f"FRONTMATTER: {slug} token_class=angle_brackets"
     try:
-        parse_frontmatter(text)
+        fm, _ = parse_frontmatter(text)
     except FrontmatterParseError as exc:
         return f"FRONTMATTER: {slug} token_class={exc.token_class}"
+    desc = str(fm.get("description") or "").strip()
+    if desc and len(desc) > MAX_SKILL_DESCRIPTION_LEN:
+        return (
+            f"FRONTMATTER: {slug} description_len={len(desc)} "
+            f"> {MAX_SKILL_DESCRIPTION_LEN} (fleet SOT ceiling)"
+        )
     return None
 
 
@@ -207,7 +218,13 @@ def fit_claude_ai_description(
     *,
     max_len: int = MAX_CLAUDE_AI_DESCRIPTION_LEN,
 ) -> str:
-    """Truncate to claude.ai Customize upload limit (word boundary when possible)."""
+    """Truncate to fleet skill-description ceiling (word boundary when possible).
+
+    Default ``max_len`` is ``MAX_SKILL_DESCRIPTION_LEN`` (200) — Cursor SOT,
+    claude.ai Customize, and future Anthropic Skills API inject share this
+    ceiling (API/spec allow 1024; we do not use that headroom).
+    See ``decision:claude-ai-skill-description-limits-by-surface``.
+    """
     desc = description.strip()
     if len(desc) <= max_len:
         return desc

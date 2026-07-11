@@ -14,6 +14,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from ..attributes_coerce import coerce_attributes_input
 from ._shared import AssertionConfidence, reject_cortex_dropbox_source_uri
 from .assertions import ActionHint, AssertionItem, CompactionProjection
 from .edges import EdgeItem
@@ -30,6 +31,11 @@ class _EntityCommon(BaseModel):
     _validate_source_uri = field_validator("source_uri")(
         reject_cortex_dropbox_source_uri
     )
+
+    @field_validator("attributes", mode="before")
+    @classmethod
+    def _coerce_attributes(cls, value: object) -> dict[str, Any] | None:
+        return coerce_attributes_input(value)
 
 
 # Confidence axis: unsubstantiated/provisional/confirmed — DERIVED from backing
@@ -119,6 +125,11 @@ class EntityUpdate(BaseModel):
     _validate_source_uri = field_validator("source_uri")(
         reject_cortex_dropbox_source_uri
     )
+
+    @field_validator("attributes", mode="before")
+    @classmethod
+    def _coerce_attributes(cls, value: object) -> dict[str, Any] | None:
+        return coerce_attributes_input(value)
 
 
 class EntityList(BaseModel):

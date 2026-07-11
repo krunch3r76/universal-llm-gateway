@@ -200,7 +200,7 @@ def render_briefing_card(
                 "see /data/files/dropbox/ for full listing*"
             )
         parts.append(
-            "→ Load skill `document-lifecycle-tracking` before handling"
+            "→ Use the `document-lifecycle-tracking` skill before handling"
             " — dropbox ingest required."
         )
 
@@ -326,22 +326,26 @@ def render_briefing_card(
             "*Entities with new assertions or newly created — "
             "retrieve before making claims*"
         )
-        for m in recent_mentions[:10]:
+        for m in recent_mentions[:5]:
             name = m.get("entity_name", m.get("entity_id", "?"))
             etype = m.get("entity_type", "?")
-            entity_id = m.get("entity_id", "")
             cnt = m.get("inserted_count", 0)
             last_mentioned = m.get("last_mentioned_at")
             rel = relative_time(last_mentioned, now) if last_mentioned else "?"
             cnt_tag = f", {cnt} new" if cnt else ", new entity"
-            id_tag = f" `{entity_id}`" if entity_id else ""
-            parts.append(f"- **{name}**{id_tag} ({etype}) — {rel}{cnt_tag}")
+            parts.append(f"- **{name}** ({etype}) — {rel}{cnt_tag}")
+        if len(recent_mentions) > 5:
+            parts.append(
+                f"- *…{len(recent_mentions) - 5} more — "
+                "GET /boot-recent-mentions via cortex-api*"
+            )
 
     if self_reflections:
         recent_reflections = filter_recent_self_reflections(self_reflections, now)
         if recent_reflections:
+            notes_show = recent_reflections[:3]
             parts.append(f"\n## Your Notes ({len(recent_reflections)})")
-            for a in recent_reflections:
+            for a in notes_show:
                 # Compact projection ships a pre-extracted `session_tag`
                 # (e.g. "web-2026-04-30-0528") so the briefing can render the
                 # "[...]" prefix without carrying the full `evidence` payload.

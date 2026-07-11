@@ -38,8 +38,6 @@ def skill_relpath(skill: dict[str, Any]) -> str:
     if uri.startswith("workspaces://"):
         rel = uri.split("universal-llm-gateway/", 1)[-1]
         return rel
-    if uri.startswith("agent-skills/"):
-        return uri
     if uri.startswith(".cursor/skills/"):
         return f"universal-llm-gateway/{uri}"
     raise SkillSourceResolveError(f"unsupported boot source_uri: {uri!r}")

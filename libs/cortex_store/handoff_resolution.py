@@ -47,6 +47,23 @@ def _handoff_finding(kind: str, subject: str, detail: str) -> dict[str, Any]:
     return _finding(kind, subject, detail)
 
 
+_FINDING_TO_REASON: dict[str, str] = {
+    "handoff_missing_transcript_anchor": "handoff.missing_transcript_anchor",
+    "handoff_section_unresolved": "handoff.section_unresolved",
+    "handoff_section_ambiguous": "handoff.section_ambiguous",
+}
+
+
+def handoff_failure_reason(findings: list[dict[str, Any]]) -> str | None:
+    """Map the first matching handoff finding kind to a session-close reason."""
+    for kind, reason in _FINDING_TO_REASON.items():
+        if any(f.get("kind") == kind for f in findings):
+            return reason
+    if findings:
+        return "handoff.invalid"
+    return None
+
+
 def _raise_handoff_conflict(
     *,
     reason: str,
@@ -325,13 +342,13 @@ def handoff_dry_run_preview(
 
         anchor_finding = check_handoff_transcript_anchor(
             session_id=session_id,
-            handoff_prompt=handoff_prompt,
+            handoff_prompt=resolution.handoff_prompt,
             handoff_source_path=handoff_source_path,
         )
         if anchor_finding is not None:
             findings = [*findings, anchor_finding]
             handoff_valid = False
-    return {
+    preview: dict[str, Any] = {
         "derived_handoff_prompt": resolution.derived_handoff_prompt,
         "handoff_provenance_preview": resolution.provenance,
         "handoff_surface_preview": build_handoff_surface_preview(
@@ -342,6 +359,9 @@ def handoff_dry_run_preview(
         "handoff_valid": handoff_valid,
         "findings": findings,
     }
+    if not handoff_valid:
+        preview["reason"] = handoff_failure_reason(findings)
+    return preview
 
 
 def handoff_post_close_findings(

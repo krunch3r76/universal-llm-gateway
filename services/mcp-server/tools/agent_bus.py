@@ -141,15 +141,47 @@ def _unread_turns_remediation(detail: dict[str, Any]) -> str:
     )
 
 
+def _turn_already_acknowledged_remediation(detail: dict[str, Any]) -> str:
+    """Build remediation for 409 turn_already_acknowledged on update/delete."""
+    thread = detail.get("thread")
+    turn_number = detail.get("turn_number")
+    read_at = detail.get("read_at")
+    read_hint = f" (read_at={read_at})" if read_at else ""
+    if thread is not None and turn_number is not None:
+        return (
+            f"Turn {turn_number} in thread {thread} was marked read{read_hint}; "
+            "in-place edits are blocked once read_at is set. "
+            f'Remediation: post follow-up content with send(thread="{thread}", ...) '
+            "or reply instead of update; read_at cannot be cleared."
+        )
+    return (
+        "Turn was marked read; in-place edits are blocked once read_at is set. "
+        "Remediation: post follow-up content with send/reply instead of update; "
+        "read_at cannot be cleared."
+    )
+
+
+def _normalize_relay_detail(detail: Any) -> tuple[Any, str | None]:
+    """Normalize relay detail into a dict + machine reason when possible."""
+    if isinstance(detail, dict):
+        return detail, detail.get("error")
+    if isinstance(detail, str) and "already acknowledged" in detail.lower():
+        normalized = {
+            "error": "turn_already_acknowledged",
+            "message": detail,
+        }
+        return normalized, "turn_already_acknowledged"
+    return detail, None
+
+
 def _structured_relay_error(
     result: dict[str, Any], *, op: str
 ) -> dict[str, Any] | None:
     """Preserve relay ``status_code`` and structured ``detail`` for MCP callers."""
     status_code = result.get("status_code")
-    detail = _relay_detail(result)
+    detail, reason = _normalize_relay_detail(_relay_detail(result))
     if status_code is None and detail is None:
         return None
-    reason = detail.get("error") if isinstance(detail, dict) else None
     base_error = result.get("error", "request failed")
     message = f"{op}: {base_error}"
     if reason:
@@ -162,6 +194,10 @@ def _structured_relay_error(
     }
     if reason == "unread_turns_exist" and isinstance(detail, dict):
         remediation = _unread_turns_remediation(detail)
+        envelope["error"] = f"{message}. {remediation}"
+        envelope["remediation"] = remediation
+    elif reason == "turn_already_acknowledged" and isinstance(detail, dict):
+        remediation = _turn_already_acknowledged_remediation(detail)
         envelope["error"] = f"{message}. {remediation}"
         envelope["remediation"] = remediation
     return envelope
@@ -696,6 +732,9 @@ def _update_impl(
 
     patch_result = _relay("agent-bus", "PATCH", f"/turns/{turn_id}", body=patch_body)
     if isinstance(patch_result, dict) and "error" in patch_result:
+        structured = _structured_relay_error(patch_result, op="update")
+        if structured is not None:
+            return structured
         return {"error": f"agent-bus error: {patch_result['error']}"}
 
     logger.info(
@@ -741,6 +780,9 @@ def _delete_turn_impl(*, thread: str, turn_number: int, force: bool) -> dict[str
     path = f"/turns/{turn_id}?{force_params}" if force_params else f"/turns/{turn_id}"
     delete_result = _relay("agent-bus", "DELETE", path)
     if isinstance(delete_result, dict) and "error" in delete_result:
+        structured = _structured_relay_error(delete_result, op="delete_turn")
+        if structured is not None:
+            return structured
         return {"error": f"agent-bus error: {delete_result['error']}"}
     logger.info(
         "agent_bus delete_turn: thread=%s turn=%d id=%d force=%s",
@@ -1233,15 +1275,24 @@ def _wait_dispatch(
         params.append(("from_agent", from_agent))
     qs = urlencode(params)
     record("mcp.agentbus.wait.called", thread=thread, completion=completion)
-    result = _relay("agent-bus", "GET", f"/threads/{thread}/wait?{qs}")
-    if isinstance(result, dict) and "error" in result:
-        return {"error": f"agent-bus error: {result['error']}"}
-    record(
-        "mcp.agentbus.wait.completed",
-        thread=thread,
-        status=str(result.get("status", "")) if isinstance(result, dict) else "",
-    )
-    return result
+    # Always emit a terminal sibling (friction 23653 / class of 17003): even
+    # relay-error returns must not leave wait.called without wait.completed.
+    terminal_status = "error"
+    try:
+        result = _relay("agent-bus", "GET", f"/threads/{thread}/wait?{qs}")
+        if isinstance(result, dict) and "error" in result:
+            terminal_status = "relay_error"
+            return {"error": f"agent-bus error: {result['error']}"}
+        terminal_status = (
+            str(result.get("status", "")) if isinstance(result, dict) else ""
+        )
+        return result
+    finally:
+        record(
+            "mcp.agentbus.wait.completed",
+            thread=thread,
+            status=terminal_status,
+        )
 
 
 AGENT_BUS_OPS: dict[str, Callable[..., Any]] = {
@@ -1306,7 +1357,7 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
           post          (slug, to, subject, body, from_agent, summary?, attachments?, tags?, allow_long_body?) — start a new thread (atomic: creates thread + first turn). from_agent is REQUIRED — name the seat authoring the turn (e.g. "cursor", "claude-web", "gpt-cursor", "claude-api"); there is no default. DEPRECATED 2026-06-14 — use send(new_slug=..., ...) instead; removed 2026-09-01.
           send          (new_slug XOR thread, to, subject, body, from_agent, summary?, tags?, lifecycle_state?, after_turn?, status?, mark_read?, close?, attachments?, allow_long_body?) — unified post/reply surface. Exactly one of new_slug (new thread) or thread (continue) required; slug uniqueness enforced on new_slug path (409 slug_exists on collision). from_agent is REQUIRED.
           reply         (thread, to, subject, body, after_turn, from_agent, status?, mark_read?, close?, attachments?, allow_long_body?) — reply to a thread; allow_long_body=true explicitly bypasses the 8k briefing limit for rare inline long-form messages; close=true posts this as the final turn and closes the thread (marks all turns read). from_agent is REQUIRED — name the seat authoring the turn; there is no default. DEPRECATED 2026-06-14 — use send(thread=..., ...) instead; removed 2026-09-01.
-          update        (thread, turn_number, body?, append?, subject?) — edit or append to an existing turn
+          update        (thread, turn_number, body?, append?, subject?) — edit or append to an existing turn while read_at is null; 409 turn_already_acknowledged once marked read (use send/reply for follow-up)
           mark_read     (thread, turn_number)                           — mark a turn as read
           wait          (thread, after_turn?, wait_seconds?, completion?, from_agent?) — server-side short-block until consult posts a bus turn after the pointer (completion=first_reply_from + canonical from_agent; alias-aware) or thread closes (completion=thread_closed); wait_seconds clamped <=60 (0=snapshot). Returns {thread_id, complete, status, push_required, suggested_next (object: consult_turn_posted + steps fetch/apply/close when complete and thread still active), qualifying_reply_turn, thread_status, ...}. first_reply_from complete means a consult bus turn exists, not findings applied. Re-call to keep polling — one HTTP call, not a client loop.
           update_thread (thread, status?, summary?, tags?, from_agent?) — patch thread metadata (tags: omit=keep, []=clear, [...]=replace)

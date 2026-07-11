@@ -163,6 +163,27 @@ def create_assertion(
             }
         )
 
+    if body.dry_run:
+        conn = cortex_conn()
+        try:
+            entities = query(
+                conn, "SELECT id FROM entities WHERE id = ?", (body.entity_id,)
+            )
+            if not entities:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Entity not found: {body.entity_id}",
+                )
+        finally:
+            conn.close()
+        return AssertionCreateResponse(
+            was_new=False,
+            item=None,
+            dry_run=True,
+            would_write=True,
+            validation_warnings=validation_warnings,
+        )
+
     claim_hash = compute_claim_hash(body.entity_id, body.claim)
 
     conn = cortex_conn()

@@ -9,6 +9,7 @@
 #   scripts/cortex/claude-ai-sync-jupiter status
 #   scripts/cortex/claude-ai-sync-jupiter upload --slugs my-skill --continue-on-error
 #   scripts/cortex/claude-ai-sync-jupiter upload --all --continue-on-error
+#   scripts/cortex/claude-ai-sync-jupiter uninstall --slugs retired-skill
 #   scripts/cortex/claude-ai-sync-jupiter restore-connector
 #
 # Env: CLAUDE_AI_SSH_HOST (default jupiter), CLAUDE_AI_SSH_USER (default krunch3r)
@@ -25,7 +26,7 @@ PROFILE='$HOME/.gateway/claude-ai-chrome-profile'
 usage() {
   sed -n '2,14p' "$0" | sed 's/^# \?//'
   echo ""
-  echo "Commands: ensure-chrome | status | upload (pass-through args) | restore-connector"
+  echo "Commands: ensure-chrome | status | upload | uninstall | restore-connector"
   exit "${1:-0}"
 }
 
@@ -85,6 +86,10 @@ case "$cmd" in
   upload)
     ensure_chrome
     remote_ui "$@"
+    ;;
+  uninstall)
+    ensure_chrome
+    remote_ui --uninstall "$@"
     ;;
   restore-connector)
     ensure_chrome

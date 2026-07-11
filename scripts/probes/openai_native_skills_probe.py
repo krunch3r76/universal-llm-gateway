@@ -52,9 +52,9 @@ def main() -> int:
     args = parser.parse_args()
 
     prompt = (
-        "Use the mounted agent-identity-signoff skill inside the hosted shell. "
+        "Use the mounted advisor-timing skill inside the hosted shell. "
         "Read its SKILL.md, then reply with a one-sentence summary quoting the "
-        "forbidden sign-off rule about seat slugs."
+        "mandatory preflight before any team_dispatch."
     )
     body = {
         "op": "generate",
@@ -62,7 +62,7 @@ def main() -> int:
         "dispatch_thread_id": f"probe-skills-{uuid.uuid4().hex[:12]}",
         "model": args.model,
         "contract": "light-bounded",
-        "skills": ["agent-identity-signoff"],
+        "skills": ["advisor-timing"],
         "messages": [{"role": "user", "content": prompt}],
         "mcp": False,
     }

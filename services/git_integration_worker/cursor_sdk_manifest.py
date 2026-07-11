@@ -9,7 +9,7 @@ import re
 import subprocess
 from collections.abc import Iterable, Mapping
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, TypedDict
 
 from implement_admission.closeout_models import (
     EffectEntry,
@@ -28,6 +28,15 @@ from services.git_integration_worker.cursor_sdk_stream_capture import (
 )
 
 CaptureBranch = Literal["A", "B", "NO_CAPTURE"]
+
+
+class DroppedNonFileEntry(TypedDict):
+    surface: str
+    op: str
+    target: str
+    reason: str
+
+
 DetailCap = 500
 ResultCap = 2000
 MAX_MANIFEST_BODY_PROBE = 4_000
@@ -180,7 +189,9 @@ def build_effects_manifest(
         if section.entries
     }
     service_section = surfaces.get("service")
-    if service_section and any(entry.op == "dispatch" for entry in service_section.entries):
+    if service_section and any(
+        entry.op == "dispatch" for entry in service_section.entries
+    ):
         coverage["service"] = "partial"
     return EffectsManifest(
         dispatch_id=dispatch_id,
@@ -211,27 +222,45 @@ def manifest_repo_paths(
     return paths
 
 
+def _dedupe_dropped_non_file_entries(
+    entries: list[DroppedNonFileEntry],
+) -> list[DroppedNonFileEntry]:
+    seen: set[tuple[str, str, str, str]] = set()
+    ordered: list[DroppedNonFileEntry] = []
+    for entry in entries:
+        key = (entry["surface"], entry["op"], entry["target"], entry["reason"])
+        if key in seen:
+            continue
+        seen.add(key)
+        ordered.append(entry)
+    return ordered
+
+
 def repo_change_set_from_manifest(
     manifest: EffectsManifest | None,
     *,
     source_repo: Path | None = None,
     mount_root: Path | None = None,
-) -> tuple[ChangeSet | None, tuple[str, ...], bool]:
+) -> tuple[ChangeSet | None, tuple[str, ...], list[DroppedNonFileEntry]]:
     """Manifest op-intent projection — cross-check input for closeout files_* categories.
 
-    Returns ``(change_set, outside_repo_paths, non_file_entries_dropped)``.
+    Returns ``(change_set, outside_repo_paths, dropped_non_file_entries)``.
     """
     if manifest is None:
-        return None, (), False
+        return None, (), []
     section = manifest.surfaces.get("repo")
     if section is None:
-        return ChangeSet(created=(), modified=(), deleted=()), (), False
-    mount = (mount_root or resolve_mount_root(source_repo)).resolve() if source_repo else None
+        return ChangeSet(created=(), modified=(), deleted=()), (), []
+    mount = (
+        (mount_root or resolve_mount_root(source_repo)).resolve()
+        if source_repo
+        else None
+    )
     created: list[str] = []
     modified: list[str] = []
     deleted: list[str] = []
     outside_repo: list[str] = []
-    dropped_non_file = False
+    dropped: list[DroppedNonFileEntry] = []
     for entry in section.entries:
         classification = _classify_manifest_repo_entry(
             entry.target,
@@ -239,7 +268,16 @@ def repo_change_set_from_manifest(
             mount_root=mount,
         )
         if classification is None:
-            dropped_non_file = True
+            raw_target = str(entry.target or "").strip()
+            if raw_target and raw_target != ".":
+                dropped.append(
+                    {
+                        "surface": "repo",
+                        "op": str(entry.op or ""),
+                        "target": raw_target,
+                        "reason": "non_file",
+                    }
+                )
             continue
         kind, path = classification
         if kind == "outside_repo":
@@ -260,7 +298,7 @@ def repo_change_set_from_manifest(
             deleted=tuple(dict.fromkeys(deleted)),
         ),
         tuple(dict.fromkeys(outside_repo)),
-        dropped_non_file,
+        _dedupe_dropped_non_file_entries(dropped),
     )
 
 
@@ -526,7 +564,9 @@ def merge_wrapper_manifest(
             cross_check=existing.cross_check,
         )
     sources = list(dict.fromkeys([*base.capture_sources, *wrapper.capture_sources]))
-    return base.model_copy(update={"surfaces": merged_surfaces, "capture_sources": sources})
+    return base.model_copy(
+        update={"surfaces": merged_surfaces, "capture_sources": sources}
+    )
 
 
 def resolve_repo_change_set(
@@ -554,9 +594,7 @@ def resolve_repo_change_set(
         | set(git_change_set.deleted)
     )
     manifest_paths = (
-        set(manifest_cs.created)
-        | set(manifest_cs.modified)
-        | set(manifest_cs.deleted)
+        set(manifest_cs.created) | set(manifest_cs.modified) | set(manifest_cs.deleted)
     )
     extra_modified: list[str] = []
     extra_untracked: list[str] = []
@@ -824,7 +862,9 @@ def _entry_from_tool_call(message: Mapping[str, Any]) -> EffectEntry | None:
     return EffectEntry(op=tool_type, target=_string_arg(args, "path"), detail=detail)
 
 
-def _surface_for_tool_call(message: Mapping[str, Any], entry: EffectEntry) -> str | None:
+def _surface_for_tool_call(
+    message: Mapping[str, Any], entry: EffectEntry
+) -> str | None:
     tool_type = str(message.get("type") or "")
     if tool_type in _REPO_FILE_OPS or tool_type == _REPO_SHELL_OP:
         return "repo"
@@ -1072,7 +1112,9 @@ def classify_mount_path(
     source_repo: Path,
     mount_root: Path,
     repo_roots: list[Path] | None = None,
-) -> Literal["source_repo", "other_repo", "shared_cursor", "unknown_root_child", "outside_mount"]:
+) -> Literal[
+    "source_repo", "other_repo", "shared_cursor", "unknown_root_child", "outside_mount"
+]:
     resolved = path.resolve()
     rel = mount_relative_path(mount_root, resolved)
     if rel is None:
@@ -1181,6 +1223,63 @@ def _is_excluded_offgit_uri(uri: str, *, sidecar_ref: str) -> bool:
     if "tmp/reviews/closeouts/" in lower:
         return True
     return False
+
+
+def normalize_expected_cortex_deliverable_uri(raw: str) -> str | None:
+    """Return canonical ``cortex://`` URI when *raw* is cortex-shaped; else None.
+
+    Repo-relative paths are never inferred as cortex URIs (OOB policy).
+    """
+    stripped = raw.strip()
+    if not stripped:
+        return None
+    lower = stripped.lower()
+    if lower.startswith("cortex://"):
+        return f"cortex://{stripped[9:].lstrip('/')}"
+    if lower.startswith("cortex:"):
+        return f"cortex://{stripped.split(':', 1)[1].lstrip('/')}"
+    return None
+
+
+def collect_expected_cortex_deliverable_uris(
+    *,
+    light_bounded_expected_paths: tuple[str, ...] = (),
+    files_expected: list[str] | None = None,
+    cortex_artifact_paths: list[str] | None = None,
+) -> list[str]:
+    """Deduped cortex:// deliverables from pinned, light-bounded, and files_expected."""
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for raw in (
+        *(cortex_artifact_paths or []),
+        *light_bounded_expected_paths,
+        *(files_expected or []),
+    ):
+        uri = normalize_expected_cortex_deliverable_uri(raw)
+        if uri and uri not in seen:
+            seen.add(uri)
+            ordered.append(uri)
+    return ordered
+
+
+def oob_cortex_write_findings(
+    *,
+    expected_cortex_uris: list[str],
+    offgit_uris: list[str],
+    cortex_root: Path,
+) -> tuple[list[str], str | None]:
+    """OOB deviations when a landed cortex deliverable is absent from fs write-capture."""
+    offgit_set = set(offgit_uris)
+    deviations: list[str] = []
+    for uri in expected_cortex_uris:
+        if uri in offgit_set:
+            continue
+        rel = uri[9:].lstrip("/") if uri.lower().startswith("cortex://") else uri
+        if not (cortex_root / rel).exists():
+            continue
+        deviations.append(f"capture:oob_cortex_write_unobserved:{uri}")
+    divergence_reason = "capture:oob_cortex_write_unobserved" if deviations else None
+    return deviations, divergence_reason
 
 
 def manifest_offgit_deliverable_uris(

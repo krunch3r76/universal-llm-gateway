@@ -12,8 +12,8 @@ from typing import Any
 from .routes.boot._skill_trigger import canonical_skill_summary
 
 _LOAD_CONTRACT_LINE = (
-    "> **Load a body**: platform/server injects skill bodies by canonical slug "
-    "(`agent_skill:<slug>` / skill `<slug>`). Do NOT fs-read skill paths — "
+    "> **Use a body**: say `Use the <slug> skill` — seat self-fetches by canonical "
+    "slug (`agent_skill:<slug>`). Do NOT fs-read skill paths — "
     "`agent-skills/` is retired. Optional REST: "
     "`GET /skills/body?id=agent_skill:<slug>&expected_digest=<digest>`."
 )
@@ -179,17 +179,15 @@ def render_skills_card_section(
     lines: list[str] = [
         f"\n## Agent Skills ({len(items)} active — concise manifest)",
         (
-            "> **Bodies**: platform/server seats receive full SKILL.md by canonical "
-            "slug on trigger (`agent_skill:<slug>` / skill `<slug>`) — do NOT "
+            "> **Bodies**: say `Use the <slug> skill` — seat self-fetches full "
+            "SKILL.md by canonical slug (`agent_skill:<slug>`) — do NOT "
             "fs-read skill bodies. `agent-skills/` path refs are retired."
         ),
         (
             "> **Discovery (native)**: skill discovery is native — resident boot "
             "index, description-gated `<available_skills>` / `.cursor/skills` stubs "
-            "(Cursor), and boot manifest orientation. Optionally call "
-            "`skill_suggest(loaded=[], conversation_context=…)` for explicit "
-            "delta-ranking when context shifts; not required before scanning this "
-            "manifest."
+            "(Cursor), and boot manifest orientation. Do not call `skill_suggest` "
+            "(deprecated indefinitely)."
         ),
         "> `⚑` = required gate.",
     ]

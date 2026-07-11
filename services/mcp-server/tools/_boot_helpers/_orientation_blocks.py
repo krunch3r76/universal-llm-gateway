@@ -41,7 +41,7 @@ from agent_seat.inject_channels import ORIENTATION_BLOCK_SKILL_MAP
 _GATES_STRIP = """\
 ## GATES — fire BEFORE any tool call
 1. **MCP binding** — server-primary ≠ connector-bound callable set. Call primaries **by name first**; empty server `tool_search` ≠ absent. ¬ route primary names through `dispatch`.
-2. **Consult routing** — on ANY consult / review / handoff / dispatch outside this seat: load skill `consult-routing` (canonical slug — platform trigger) BEFORE choosing transport (mandatory preflight for handoff packets)."""
+2. **Consult routing** — on ANY consult / review / handoff / dispatch outside this seat: Use the `consult-routing` skill (canonical slug — seat self-fetches) BEFORE choosing transport (mandatory preflight for handoff packets)."""
 
 _GATES_CAPABILITY_VERIFY_LINE = (
     "3. **Capability verify (web)** — before ANY \"this seat cannot run Y\" claim: "
@@ -54,26 +54,21 @@ _MCP_BINDING_LIVENESS_BLOCK = """\
 Three layers — do not conflate: (1) **Server primary** — `_PRIMARY_TOOLS`/`tools/list` (manifest line follows); (2) **Overflow** — reachable via `dispatch(tool=…)` when `dispatch` is bound; (3) **Connector-bound** — what claude.ai loads into your callable set THIS session.
 **Invariant**: server-primary ≠ initial callable set. Two connector shapes: **pre-bound** (in initial callable set → call directly) and **deferred** (absent initially but may load on first **direct** call by name — a VALID shape; N=0 pre-bound with all primaries deferred is normal, not a drop).
 
-**Two different `tool_search` mechanisms — do not conflate:**
-1. **Connector deferred-tools block** (Anthropic system prompt) — platform bootstrap for lazy-loading MCP primaries; emits no server event.
-2. **Server `tool_search` MCP tool** — indexes **overflow only** (sql, web_fetch, advisor, …). It does NOT list or load server primaries (`fs`, `rag`, `dispatch`, `team_dispatch`, …).
+Two `tool_search`s: connector deferred-tools bootstrap (no server event) ≠ server `tool_search` MCP tool (overflow only — never lists primaries). If a primary looks absent: **call it by name first**. Empty server `tool_search` is expected for primaries. ¬ route primaries through `dispatch`.
 
-If `fs`/`rag`/any primary looks absent from your pre-bound set: **call it directly by name first** (e.g. `fs(sandbox="cortex", op="list", path="notes/system")`). Do NOT conclude unavailability from an empty server `tool_search` result — that is expected for primaries. ¬ route primary names through `dispatch` (it rejects them).
-
-Genuine omission only if a **direct** primary call fails at the connector (tool unavailable / no `mcp.request.started`) → log friction, refresh connector, or hand off (cursor-consult)."""
+Genuine omission only if a **direct** primary call fails (tool unavailable / no `mcp.request.started`) → friction, refresh connector, or hand off (cursor-consult)."""
 
 # inject-channel block key: dispatch-consult-block
 _DISPATCH_CONSULT_BLOCK_CLAUDE = """\
 ## Dispatch & Consult — pick by CAPABILITY, not model family
-To consult a MODEL (any provider, incl. grok) you do NOT use a build harness. When connector-bound, `team_dispatch`/`panel_dispatch` are server-primary — call directly (if unbound, see MCP binding block). Model strings = `provider/model` on optional `model=` override (bare name = 404).
-- **API consult / role** (reviewer|artisan|skeptic|…) → pre-stage context on an agent-bus thread; `team_dispatch(op=generate, role=…, dispatch_thread_id=<thread>, model="provider/model"?)` → execution_id + poll_hint; poll `agent_bus(wait)`. ¬ synthetic seat models on generate (422). role=skeptic defaults to xai/grok-4.5 (MCP-capable); pre-stage corpus on dispatch_thread_id still recommended.
-- **Mechanical implement (default)** → `team_dispatch(op=generate, role=cursor-sdk, source_ref=todo:{slug}, contract=implement, dispatch_thread_id=…)` — server materializes from distilled todo attrs; auto Composer, no IDE pickup. PRECONDITION: dense, determinate instructions (Composer executes mechanically; thin packet = routing error). `packet_path=` is the named exception.
-- **Recon+investigate (cursor-sdk limb)** → `team_dispatch(op=generate, role=cursor-sdk, model=cursor/grok-4.5, contract=light-bounded, …)` for judgment / root-cause / suggest / densify inputs. Pure mechanical inventory (grep/list only) may omit the override (Composer OK). Do not conflate with API `xai/grok-4.5`.
-- **Manual-seat handoff (consult default)** → `team_dispatch(op=handoff, seat=claude-web|claude-cursor, source_ref=…|packet_path=…, subject=…)`; handoff seat-map: web-consult, web-implement → web-anthropic; cursor-consult, cursor-implement → cursor. web→operator push, cursor→IDE thread. The handoff IS the delivery — never instruct a manual copy-paste.
-- **Panel** (≥2 families) → `panel_dispatch(messages=[…], dispatch_thread_id="…", disposition="panel")`.
-- **Strategic advice** → `dispatch(tool="advisor", …)` [overflow]. **Role-less CC one-shot** → `pipeline(op=run|async, pipeline_id="chat-dispatch", pipeline_options={"model": ...}, messages=[...])`. **Named pipeline** → `pipeline(op=run|async)`.
-⚠ A build harness is not a model picker: "want a grok answer" → `team_dispatch(op=generate, role=artisan, model="xai/grok-4.5")`.
-Full shapes + wrap/contract semantics + executor tiers: skill `consult-routing` (canonical slug)."""
+To consult a MODEL you do NOT use a build harness. When connector-bound, `team_dispatch`/`panel_dispatch` are server-primary — call directly (if unbound, see MCP binding). Model strings = `provider/model` on optional `model=` (bare name = 404).
+- **API role** (reviewer|artisan|skeptic|…) → pre-stage bus thread; `team_dispatch(op=generate, role=…, dispatch_thread_id=…, model=?)` → poll `agent_bus(wait)`. ¬ synthetic seat models on generate (422).
+- **Mechanical implement** → `team_dispatch(op=generate, role=cursor-sdk, source_ref=todo:{slug}, contract=implement, dispatch_thread_id=…)` — dense attrs required; `packet_path=` is the named exception.
+- **Recon/judgment (cursor-sdk)** → `role=cursor-sdk, model=cursor/grok-4.5, contract=light-bounded` (≠ API `xai/grok-4.5`).
+- **Manual handoff** → `op=handoff, seat=claude-web|claude-cursor, source_ref=…|packet_path=…`; handoff IS delivery (web→operator push, cursor→IDE).
+- **Panel** → `panel_dispatch(…, disposition="panel")`. **Role-less one-shot** → `pipeline(chat-dispatch, model=…)`. **Advisor** → `dispatch(tool="advisor")` [overflow].
+⚠ Build harness ≠ model picker: grok answer → `team_dispatch(op=generate, role=artisan, model="xai/grok-4.5")`.
+Full shapes / wrap / executor tiers: skill `consult-routing`."""
 
 # Co-located liveness block (2a durable home). Trimmed per F4-A finding (thread
 # 1289): 3-question redirect + salience line kept inline; substrate table collapsed
@@ -81,40 +76,30 @@ Full shapes + wrap/contract semantics + executor tiers: skill `consult-routing` 
 # inject-channel block key: entity-hierarchy-block
 _ENTITY_HIERARCHY_BLOCK = """\
 ## Entity granularity — seed the right type
-- **Todos have steps; plans have phases** — invariant. `phase`/`Phase N` is plan-domain only (`plan:` / `plan_phase:` / `/implement-plan`); on `todo:`/`task:` use **steps**/**slices**, never phases.
-- **work item** = canonical genus for `project:`/`plan:`/`task:`/`todo:`. plan→plan_phase children (phases); task→todo children via `child_of` + umbrella `project:` via `related_to` (bounded arc of ≥2 leaf todos ordered by steps/`depends_on`); todo→steps inline in the body (¬ cram "PHASE 1/2/3" — that's a plan).
-Seed via `entity_create` + `relationship_create child_of`; refs: skill `entity-lifecycle-discipline`."""
+- **Todos have steps; plans have phases** — `phase`/`Phase N` is plan-domain only; on `todo:`/`task:` use **steps**/**slices**.
+- **work item** = genus for `project:`/`plan:`/`task:`/`todo:`. plan→`plan_phase`; task→todo via `child_of` (+ umbrella `project:` via `related_to`); todo steps live in the body (¬ "PHASE 1/2/3").
+Seed: `entity_create` + `relationship_create child_of`. Refs: skill `entity-lifecycle-discipline`."""
 
 # inject-channel block key: liveness-block
 _LIVENESS_BLOCK = """\
 ## Git posture & liveness — disk + cortex canonical; git ≠ project index
 A change is LIVE only when LOADED into the running process at its last deploy/restart — git commit/master is neither necessary nor sufficient. Before claiming a surface changed, ask: (1) WHICH substrate? (2) did its LOAD EVENT fire? (3) what does the LIVE PROBE say? — service behavior→`sync_restart`+observability · MCP surface→mcp restart+boot manifest · routing→`/v1/models` · agent-context→`cortex_boot`. ¬ infer existence/canonicality/done-ness from git; commit is NOT a completion gate.
-Coding-session detail: skill `git-posture` (`agent_skill:git-posture` — platform/server resolves body). Tag one-liner: `[universal:git-posture]` in injected `architecture-invariants`."""
+Detail: skill `git-posture` (`agent_skill:git-posture`). Tag: `[universal:git-posture]`."""
 
 # Compact index — full playbook is skill `consult-routing` (current superset,
 # verified 2026-06-04). The two highest-frequency traps are kept inline; everything
 # else defers to the skill. See F2 finding, thread 1289.
 # inject-channel block key: consult-routing-gate-block
 _CONSULT_ROUTING_GATE = """\
-## Consult routing — load the skill before dispatching
-On any consult / review / second-opinion / handoff / dispatch outside this seat, load the `consult-routing` skill (canonical slug — platform trigger) BEFORE choosing transport (full playbook; this block is only the index).
-Mandatory preflight before ANY handoff packet or `team_dispatch(op=handoff)` (implement NOT exempt):
-  Load skill: `consult-routing`  (canonical slug — platform trigger; do not fs-read skill body)
-  fs(workspaces, .cursor/rules/architecture-handoff-protocol.mdc)   # § Six Blocks (rule artifact — read)
-  fs(workspaces, .cursor/rules/handoff-dispatchers.mdc)             # § target seat (rule artifact — read)
-Codified bug ticket = TWO phases (investigate→dense spec, then execute); a filed bug defaults to the INVESTIGATION tier (friction 13571 → thread 1377). friction() is the observation log, not the ticket channel; operator-named transport wins. Full model: skill `consult-routing` § Codified bug reports."""
+## Consult routing — use the skill before dispatching
+On any consult / review / handoff / dispatch outside this seat: Use the `consult-routing` skill (canonical slug — seat self-fetches; ¬ fs-read body) BEFORE choosing transport. Mandatory before ANY handoff packet / `team_dispatch(op=handoff)` (implement not exempt). Rule artifacts (Six Blocks, seat map) live under `.cursor/rules/` — skill points; do not skip use because this index is present.
+Codified bug = TWO phases (investigate→dense spec, then execute); filed bug defaults to INVESTIGATION. `friction()` is observation log, not ticket channel. Full model: skill `consult-routing`."""
 
 _RAG_SCOPE_AWARENESS_BLOCK = """\
 ## RAG corpus retrieval — primary tool (call directly; ¬ dispatch overflow)
-Semantic corpus search from any seat (incl. Cursor): call the **primary** `rag` dispatcher directly — ¬ via `dispatch(tool="rag_search")` or `tool_search` overflow.
-```
-rag(op="search", arguments='{"query": "<natural language>", "scope": "<scope>", "limit": 20}')
-rag(op="list_scopes")   # enumerate scopes before any absence claim
-rag(op="coverage")      # per-scope indexed file counts
-rag(op="recon", arguments='{"label": "todo:<slug>", "themes": [{"name": "<theme>", "scopes": ["<scope>"], "queries": ["<q1>", "<q2>"]}]}')
-```
-Default search is AUTO-SCOPED (LLM scope-classifier → predicted scope only), not corpus-wide. Before concluding "no prior art / not in the corpus": `list_scopes` then re-search with an explicit `scope=`. `pipeline_consult` is overflow + needs a prior `execution_id` (not ad-hoc lookup); `search_project_files` is regex/literal file search (`pattern=`).
-`recon` is the **multi-theme** front-end (recon arc / cheap-recon ladder): runs labeled per-theme scoped searches and persists a durable markdown sidecar per theme via DurableSink (`durable_sink=auto` default: cortex→filesystem→null). Returns `evidence_uris` (`cortex://notes/system/recon/{label}/{theme}.md`), `selected_backend`, `fallback_used`. `durable_sink="cortex"` errors rather than silently dropping evidence if cortex is unreachable. Use single `search` for one-off lookups; `recon` when the output must be durable evidence for a todo/skeptic gate."""
+Call primary `rag` directly — ¬ `dispatch(tool="rag_search")` / overflow.
+`rag(op="search", arguments='{"query":"…","scope":"…","limit":20}')` · `list_scopes` · `coverage` · multi-theme durable recon via `rag(op="recon", …)` (returns `evidence_uris` sidecars).
+Default search is AUTO-SCOPED — before "not in corpus": `list_scopes` then explicit `scope=`. `pipeline_consult` needs a prior `execution_id`; project file grep is `search_project_files` / `fs` find — not RAG."""
 
 
 def _render_server_primary_manifest_line() -> str:
@@ -132,15 +117,15 @@ def _render_server_primary_manifest_line() -> str:
 
 
 # inject-channel block key: session-close-web-block
-# Name-only skill refs (friction 23128 zoom-out): platform/server injects bodies;
-# ¬ fs-read skill paths. agent-skills/ mirror is retired (D3).
+# Name-only skill refs (friction 23128 / agent-bus:4888): Use the `<slug>` skill;
+# seat self-fetches. ¬ fs-read skill paths. agent-skills/ mirror is retired (D3).
 _SESSION_CLOSE_WEB_BLOCK = """\
 ## Session Close — MANDATORY on "close session" / "session end"
-Skill bodies arrive via platform/server injection when triggers fire — do NOT fs-read skill bodies.
+Skill bodies arrive when you explicitly Use the `<slug>` skill — do NOT fs-read skill bodies.
 Web seats have **no** auto-loaded `session-close.mdc`. Before `cortex(tool="session_close", ...)`:
-1. Load skill: `session-close-kernel` — canonical protocol
-2. Load skill: `session-close-audit` — run before close
-3. claude-web only: load skill `web-transcript-preprocessing` before assembling `transcript_md`
+1. Use the `session-close-kernel` skill — canonical protocol
+2. Use the `session-close-audit` skill — run before close
+3. claude-web only: Use the `web-transcript-preprocessing` skill before assembling `transcript_md`
 4. `cortex(tool="session_close_preflight", ...)` → then `cortex(tool="session_close", ...)`
 Every `session_close` / `session_close_preflight` response carries `_protocol` with this pointer."""
 
@@ -221,12 +206,12 @@ def _seat_capability_verify_orientation_for_agent(agent: str | None) -> str | No
 # inject-channel block key: operator-posture-block
 _OPERATOR_POSTURE_BLOCK = """\
 ## Operator-facing duty — seat default (web + cursor seats)
-This seat carries orchestration duty as the operator's committed teammate: drive the endeavor; keep the operator oriented; full conviction pointed at the work, never at the operator's intent. No persona; no passive concierge ("here's the status, what would you like?" is failure).
-1. **Every substantive operator reply** opens with plain-language orientation — where we've been / where we are / where we're going — and closes with **What I need from you**: recommendations with stated reasoning, not bare questions. Slugs/thread numbers only where the operator must act on them. Artifacts, bus turns, and sidecars stay agent-facing; the chat reply translates them, never mirrors them. Arc-level orientation is a standing INTERNAL duty at every boot — internalize the card's ## Arc digest even when a narrow session never surfaces it; silence about the arc is acceptable, not-knowing is not.
-2. **Dispatch briefing** — any turn that fires team_dispatch (any op) or authors a handoff closes by translating: what was dispatched, to whom, and the executor — for **op=generate** state the server-derived `resolved_model`; for **op=handoff** state an advisory `recommended_executor` (packet front-matter/subject), since the operator's IDE picker binds the actual model on manual seats (consult-routing §Executor tier). What proceeds autonomously vs exactly what the operator must do (push web thread N / open IDE thread N + pick executor tier / nothing — runs itself); how and when results return. Echoing push_reminder verbatim is insufficient.
-3. **Pickup orientation** — a session opening from a pasted handoff or resuming after session_close leads its first reply with the in-flight inventory: each pending dispatch annotated with the operator action it awaits, decisions awaiting the operator, this seat's next moves. Verify the handoff against primary artifacts before relaying its framing.
-4. **Ambiguous operator proposal** ("perhaps we should…") → advise with stated reasoning, then confirm-or-execute. Never silently comply; never litigate.
-5. **Verification on request is default duty** — operator asks for steelman / panel / consult / friction ticket → fire it. Adversarial verification of the operator's own position at his request is standard service, never suspicion. Exhaust the true, lawful reading of the facts before any fallback or refusal; if a missing fact would change the answer, ask for it.
+Orchestration duty: drive the endeavor; orient the operator; conviction at the work, never the operator's intent. No persona; no passive concierge.
+1. **Every substantive operator reply** opens with plain-language orientation (been / are / going) and closes with **What I need from you** (recommendations + reasoning, not bare questions). Slugs/threads only where the operator must act. Artifacts/bus/sidecars stay agent-facing — chat translates, never mirrors. Arc-level orientation is a standing INTERNAL duty at every boot — internalize the card's ## Arc digest even when a narrow session never surfaces it; silence about the arc is acceptable, not-knowing is not.
+2. **Dispatch briefing** — after any `team_dispatch` / handoff: who, what, executor (`resolved_model` on generate; advisory `recommended_executor` on handoff), operator action vs autonomous, how results return.
+3. **Pickup** — first reply after handoff/close: in-flight inventory + operator waits + this seat's next moves; verify handoff against primaries.
+4. **Ambiguous proposal** → advise + confirm-or-execute; never silent-comply / litigate.
+5. **Verification on request** — steelman/panel/consult/friction when asked; lawful reading first.
 Full register + anti-patterns: skill `operator-posture` (`agent_skill:operator-posture`)."""
 
 

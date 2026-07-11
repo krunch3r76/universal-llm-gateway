@@ -8,6 +8,7 @@ from typing import Any, Literal
 from agent_seat.session_id import derive_session_id_from_timestamp
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from ..attributes_coerce import coerce_attributes_input
 from ._shared import (
     AssertionConfidence,
     reject_cortex_dropbox_source_uri,
@@ -94,6 +95,13 @@ class AssertionCreate(BaseModel):
     # F1 (1211): per-assertion metadata JSON, primarily Menu D consensus
     # disposition stamps (consensus-steelman-posture §3.1 — assertion SOT).
     attributes: dict[str, Any] | None = None
+    dry_run: bool = Field(
+        False,
+        description=(
+            "When true, run pre-INSERT validation and return validation_warnings "
+            "without creating an assertion row."
+        ),
+    )
 
     _validate_artifact_uri = field_validator("artifact_uri")(
         reject_cortex_dropbox_source_uri
@@ -101,6 +109,11 @@ class AssertionCreate(BaseModel):
     _validate_evidence_uris = field_validator("evidence_uris")(
         reject_cortex_dropbox_uri_list
     )
+
+    @field_validator("attributes", mode="before")
+    @classmethod
+    def _coerce_attributes(cls, value: object) -> dict[str, Any] | None:
+        return coerce_attributes_input(value)
 
     @field_validator("predicate_form")
     @classmethod
@@ -248,6 +261,11 @@ class SupersedeRequest(BaseModel):
         reject_cortex_dropbox_uri_list
     )
 
+    @field_validator("attributes", mode="before")
+    @classmethod
+    def _coerce_attributes(cls, value: object) -> dict[str, Any] | None:
+        return coerce_attributes_input(value)
+
     @model_validator(mode="before")
     @classmethod
     def _default_session_context(cls, data: Any) -> Any:
@@ -324,7 +342,9 @@ class PredicateFormNormalize(BaseModel):
 
 class AssertionCreateResponse(BaseModel):
     was_new: bool
-    item: AssertionItem
+    item: AssertionItem | None = None
+    dry_run: bool = False
+    would_write: bool | None = None
     near_duplicate_warning: NearDuplicateWarning | None = None
     validation_warnings: list[dict[str, str]] | None = None
     contradiction_warnings: list[ContradictionConflict] | None = None

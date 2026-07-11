@@ -3,12 +3,17 @@
 ``status`` on API read projections is a synthesized human-readable string
 combining confidence_band, lifecycle, and adoption without conflating axes.
 Trait keys are exposed separately when a value is present on the trait columns.
+
+Axis-aware synthesis (Option A, ``decision:todo-status-display-axis-aware``):
+types whose auditable confidence rides ``workflow_state`` lead the display
+string with ``workflow_state`` instead of ``confidence_band``.
 """
 
 from __future__ import annotations
 
 import sqlite3
 
+from .confidence_field import confidence_field as lookup_confidence_field
 from .trait_vocabulary import (
     CONFIDENCE_BAND_VALUES,
     LIFECYCLE_VALUES,
@@ -43,12 +48,40 @@ def effective_adoption(row: dict[str, object]) -> str | None:
     return str(adoption) if adoption is not None else None
 
 
-def synthesize_status_display(row: dict[str, object]) -> str | None:
-    """Human-readable display: band · lifecycle · adoption (omit empty parts)."""
+def resolve_display_confidence_field(
+    row: dict[str, object],
+    *,
+    conn: sqlite3.Connection | None = None,
+    confidence_field: str | None = None,
+) -> str | None:
+    """Resolve the auditable-confidence axis for display synthesis."""
+    if confidence_field is not None:
+        return confidence_field
+    entity_type = row.get("type")
+    if conn is not None and entity_type is not None:
+        return lookup_confidence_field(conn, str(entity_type))
+    return None
+
+
+def synthesize_status_display(
+    row: dict[str, object],
+    *,
+    conn: sqlite3.Connection | None = None,
+    confidence_field: str | None = None,
+) -> str | None:
+    """Human-readable display: axis-aware band or workflow_state · lifecycle · adoption."""
+    axis = resolve_display_confidence_field(
+        row, conn=conn, confidence_field=confidence_field
+    )
     parts: list[str] = []
-    band = effective_confidence_band(row)
-    if band is not None:
-        parts.append(band)
+    if axis == "workflow_state":
+        workflow_state = row.get("workflow_state")
+        if workflow_state is not None:
+            parts.append(str(workflow_state))
+    else:
+        band = effective_confidence_band(row)
+        if band is not None:
+            parts.append(band)
     lifecycle = effective_lifecycle(row)
     if lifecycle is not None:
         parts.append(lifecycle)
@@ -75,30 +108,50 @@ def trait_keys_when_present(row: dict[str, object]) -> dict[str, str]:
     return out
 
 
-def apply_option_c_read_projection(row: dict[str, object]) -> dict[str, object]:
+def apply_option_c_read_projection(
+    row: dict[str, object],
+    *,
+    conn: sqlite3.Connection | None = None,
+    confidence_field: str | None = None,
+) -> dict[str, object]:
     """Return a copy with synthesized ``status`` and trait keys when present."""
     out = dict(row)
     out.update(trait_keys_when_present(row))
-    out["status"] = synthesize_status_display(row)
+    out["status"] = synthesize_status_display(
+        row, conn=conn, confidence_field=confidence_field
+    )
     return out
 
 
 def card_status_summary_option_c(
     entity: dict[str, object],
     *,
+    conn: sqlite3.Connection | None = None,
+    confidence_field: str | None = None,
     extra: dict[str, object] | None = None,
 ) -> dict[str, object]:
     """Card v0 ``status_summary`` core: synthesized display + traits + extras."""
-    summary: dict[str, object] = {"status": synthesize_status_display(entity)}
+    summary: dict[str, object] = {
+        "status": synthesize_status_display(
+            entity, conn=conn, confidence_field=confidence_field
+        )
+    }
     summary.update(trait_keys_when_present(entity))
     if extra:
         summary.update(extra)
     return {k: v for k, v in summary.items() if v is not None}
 
 
-def project_status_field_value(row: dict[str, object]) -> str | None:
+def project_status_field_value(
+    row: dict[str, object],
+    *,
+    conn: sqlite3.Connection | None = None,
+    confidence_field: str | None = None,
+) -> str | None:
     """Value for a projected ``status`` field in list_entities ``fields=`` queries."""
-    return synthesize_status_display(row)
+    return synthesize_status_display(
+        row, conn=conn, confidence_field=confidence_field
+    )
 
 
 def lifecycle_axis_status_value(value: str) -> bool:

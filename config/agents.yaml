@@ -178,8 +178,9 @@ profiles:
   gemini/api:
     # CANDIDATE SEAT — declared tool_surface=mcp. MCP tool loop verified by
     # smoke (catalog=15, cortex round-trip) but seat-attributed wiring not
-    # confirmed under the gemini-api slug. See agent-identity-signoff.mdc
-    # "Four-layer model" for the seat ≡ MCP-wired runtime criterion.
+    # confirmed under the gemini-api slug. Seat ≡ MCP-wired runtime:
+    # see `.cursor/rules/agent-identity-signoff.mdc` +
+    # `decision:identity-doctrine-endpoint-provenance`.
     # Gemini MCP ON: full catalog (inc. writes); model discretion applies.
     provider: google
     default_model: google/gemini-3.5-flash
@@ -223,7 +224,8 @@ profiles:
     # CANDIDATE SEAT — tool_surface=mcp is ASPIRATIONAL until a round-trip MCP
     # call is verified under the gemini-web slug. Gemini's web app
     # (gemini.google.com) remote-MCP/connector support is unconfirmed; treat as
-    # candidate, not seat. See agent-identity-signoff.mdc "Four-layer model".
+    # candidate, not seat. Criterion: `.cursor/rules/agent-identity-signoff.mdc`
+    # + `decision:identity-doctrine-endpoint-provenance`.
     provider: google
     default_model: null
     tool_surface: mcp

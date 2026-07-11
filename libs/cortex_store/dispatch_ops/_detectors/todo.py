@@ -202,7 +202,59 @@ def detect_todo_dense_spec_attributes_unpopulated(
     return findings
 
 
+def detect_done_entity_unsubstantiated_band_mismatch(
+    conn, subject: str | None = None
+) -> list[dict[str, Any]]:
+    """Axis-aware done + unsubstantiated-band audit (Option A).
+
+    Per ``decision:todo-status-display-axis-aware``: types whose auditable
+    confidence rides ``workflow_state`` (e.g. todo) are **excluded** — a done
+    todo with birth-default ``confidence_band=unsubstantiated`` and backing
+    assertions is expected registry behavior, not a substantiation gap.
+
+    For ``confidence_band``-axis types only: flag ``workflow_state='done'``
+    with ``confidence_band='unsubstantiated'`` when derived substantiation
+    from backing assertions is not ``unsubstantiated`` (band-led false alarm
+    class after Option A display synthesis).
+    """
+    from ...confidence_field import confidence_field, uses_confidence_band_axis
+    from .substantiation import UNSUBSTANTIATED, derive_substantiation_state
+
+    sql = (
+        "SELECT id, type, name, workflow_state, confidence_band FROM entities "
+        "WHERE workflow_state = 'done' AND confidence_band = 'unsubstantiated'"
+    )
+    params: tuple = ()
+    if subject:
+        sql += " AND id = ?"
+        params = (subject,)
+    rows = query(conn, sql, params)
+    findings: list[dict[str, Any]] = []
+    for r in rows:
+        cf = confidence_field(conn, str(r["type"]))
+        if cf == "workflow_state":
+            continue
+        if not uses_confidence_band_axis(cf):
+            continue
+        derived = derive_substantiation_state(conn, r["id"])
+        if derived == UNSUBSTANTIATED:
+            continue
+        findings.append(
+            _finding(
+                "done_entity_unsubstantiated_band_mismatch",
+                r["id"],
+                f"{r['type']} '{r['name']}' is workflow_state=done with "
+                f"confidence_band=unsubstantiated but derived substantiation "
+                f"is {derived!r} — band-axis display may mislead. "
+                f"Workflow_state-axis types are excluded (Option A). "
+                f"See decision:todo-status-display-axis-aware.",
+            )
+        )
+    return findings
+
+
 __all__ = [
+    "detect_done_entity_unsubstantiated_band_mismatch",
     "detect_todo_dense_spec_attributes_unpopulated",
     "detect_todo_implementation_seed_incomplete",
 ]

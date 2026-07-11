@@ -60,6 +60,7 @@ def build_assert_nudge(
     entity_id: str,
     claim: str,
     confidence: str,
+    predicate_form: str | None = None,
 ) -> dict[str, Any] | None:
     """Pre-write advisory for assert — dedup hint + child-entity routing."""
     entity_type, assertion_count, relationship_count = _entity_graph_stats(
@@ -69,7 +70,9 @@ def build_assert_nudge(
     suggestions: list[str] = []
     analyze_hint: dict[str, Any] = {}
 
-    impact = analyze_assertion_impact(conn, entity_id, claim, confidence)
+    impact = analyze_assertion_impact(
+        conn, entity_id, claim, confidence, predicate_form=predicate_form
+    )
     if impact.likely_supersedes:
         reasons.append("likely_reassertion")
         ids = impact.likely_supersedes[:5]

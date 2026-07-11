@@ -99,7 +99,7 @@ asserted-then-superseded pair.
 
 ## Subgraph Materialization
 
-For session-open canvas: `cortex(tool="render_subgraph", arguments='{"root": "project:slug", "hops": 1, "top_k_assertions": 10}')`. Size gate ≤40KB; compaction path if exceeded. Full guidance: load skill `cortex-orientation`.
+For session-open canvas: `cortex(tool="render_subgraph", arguments='{"root": "project:slug", "hops": 1, "top_k_assertions": 10}')`. Size gate ≤40KB; compaction path if exceeded. Full guidance: Use the `cortex-orientation` skill.
 
 ## Deep Reference
 

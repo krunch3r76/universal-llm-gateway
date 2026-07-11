@@ -17,10 +17,7 @@ if str(_SCRIPTS_CORTEX) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_CORTEX))
 
 from _skill_entity_reconcile import run_entity_reconcile_check  # noqa: E402
-from _skill_git_guard import (  # noqa: E402
-    run_cortex_cursor_body_drift_check,
-    run_skill_git_guard,
-)
+from _skill_git_guard import run_skill_git_guard  # noqa: E402
 from claude_bundles.bundle_description import (  # noqa: E402
     MAX_CLAUDE_AI_DESCRIPTION_LEN,
     MIN_BUNDLE_DESCRIPTION_LEN,
@@ -255,7 +252,6 @@ def run_check(root: Path) -> int:
     fail = 0
     client = _cortex_client()
     entity_descriptions = _fetch_entity_descriptions(client) if client else {}
-    fail |= run_cortex_cursor_body_drift_check(root, CLAUDE_BUNDLE_SLUGS)
     fail |= _check_frontmatter_lint(root)
     for slug in CLAUDE_BUNDLE_SLUGS:
         try:

@@ -410,7 +410,7 @@ tools:
         transcript_entity_id ∈ Cortex ∧ journal_row_id ∈ ℕ ∧ content_hash ∈ sha256.
     Atomic. Mutating. Idempotent by session_id (second close → 422 session.already_closed).
     Requires validate_attestation from doc_validate(session_close) PASS before atomic write.
-    BEFORE close: load skill `session-close-kernel` (+ skill `session-close-audit` for web/API).
+    BEFORE close: Use the `session-close-kernel` skill (+ skill `session-close-audit` for web/API).
     Cursor: session-close.mdc. See agent_skill:session-close-kernel.
   json_schema:
     type: object

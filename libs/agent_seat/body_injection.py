@@ -87,16 +87,30 @@ def select_skill_delivery_channel(
     return SkillDeliveryChannel.LAYER_A_FS
 
 
-def emit_layer_a_fs_line(slug_or_entity_id: str) -> str:
-    """Layer-A skill load instruction for MCP-capable dispatch roles.
+def skill_use_instruction(
+    slug_or_entity_id: str,
+    *,
+    leading_newline: bool = False,
+    bullet: bool = False,
+) -> str:
+    """Explicit skill-invoke cue (agent-bus:4888).
 
-    Name-only (canonical slug). Platform/server injects bodies — do NOT emit
-    ``fs(...)`` skill paths (``agent-skills/`` retired; friction 23128 zoom-out).
+    Verb ``use`` + canonical slug — seats self-fetch the body (claude-web
+    Customize→Skills; Cursor ``<available_skills>``). Do NOT emit ``fs(...)``
+    skill paths (``agent-skills/`` retired; friction 23128).
     """
     from implement_admission.skill_source_table import canonical_table_key
 
     slug = canonical_table_key(slug_or_entity_id)
-    return f"\nLoad skill: `{slug}`"
+    line = f"Use the `{slug}` skill"
+    if bullet:
+        line = f"- {line}"
+    return f"\n{line}" if leading_newline else line
+
+
+def emit_layer_a_fs_line(slug_or_entity_id: str) -> str:
+    """Layer-A skill-use instruction for MCP-capable dispatch roles."""
+    return skill_use_instruction(slug_or_entity_id, leading_newline=True)
 
 
 def filter_double_load_excluded(

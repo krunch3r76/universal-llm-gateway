@@ -75,10 +75,10 @@ class EnrichResult:
 
 
 def _canonical_skill_invariant_line(slug: str) -> str:
-    """One Block-2 line naming a skill by canonical slug (platform-trigger load)."""
+    """One Block-2 line: Use the `<slug>` skill (agent-bus:4888)."""
     return (
-        f"- Load skill: `{slug}` "
-        f"(canonical slug — platform trigger; do not fs-read skill body)"
+        f"- Use the `{slug}` skill "
+        f"(canonical slug — seat self-fetches; ¬ fs-read skill body)"
     )
 
 

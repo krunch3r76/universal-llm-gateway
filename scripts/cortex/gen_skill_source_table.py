@@ -37,6 +37,10 @@ _ACCEPTED_DROPS: frozenset[str] = frozenset(
     {
         # retired per operator ruling a:23069 (2026-07-08)
         "claudeburst-shadow-ops",
+        # retired 2026-07-11 — always-on stub + decision doctrine only
+        "agent-identity-signoff",
+        # retired 2026-07-11 — skill_suggest deprecated; native discovery only
+        "skill-suggest-utilization",
     }
 )
 

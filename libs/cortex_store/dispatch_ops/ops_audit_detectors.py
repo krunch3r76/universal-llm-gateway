@@ -76,7 +76,11 @@ from ._detectors.skill_binding import (
     detect_skill_binding_missing,
     detect_skill_binding_tool_unknown,
 )
+from ._detectors.skill_revision_candidate import (
+    detect_agent_skill_revision_candidate_unadjudicated,
+)
 from ._detectors.todo import (
+    detect_done_entity_unsubstantiated_band_mismatch,
     detect_todo_dense_spec_attributes_unpopulated,
     detect_todo_implementation_seed_incomplete,
 )
@@ -111,6 +115,7 @@ GRAPH_ONLY_KINDS = {
     # project / plan / plan_phase / todo).
     "project_required_skills_no_relationship",
     "agent_skill_related_skills_no_relationship",
+    "agent_skill_revision_candidate_unadjudicated",
     # v1.3.1 normalization ledger Path 2 detector
     "unresolved_bare_token_in_predicate_form",
     # skill_binding substrate (thread 1067)
@@ -124,6 +129,9 @@ GRAPH_ONLY_KINDS = {
     "todo_implementation_seed_incomplete",
     "todo_dense_spec_attributes_unpopulated",
     "todo_implement_readiness_risk",
+    # Axis-aware done + unsubstantiated-band (Option A); workflow_state-axis
+    # types excluded — see decision:todo-status-display-axis-aware.
+    "done_entity_unsubstantiated_band_mismatch",
     # Condition stewardship detectors (migration 060 / thread 3279).
     # Conditions are closure_audit_exempt — never in open-debt output.
     # Stewardship fires on suppressed edges, stale reveal, conflict, recurrence.
@@ -184,6 +192,7 @@ def get_all_detectors() -> dict[str, Any]:
         "panel_falsifier_phase3_metric": detect_panel_falsifier_phase3_metric,
         "project_required_skills_no_relationship": detect_project_required_skills_no_relationship,
         "agent_skill_related_skills_no_relationship": detect_agent_skill_related_skills_no_relationship,
+        "agent_skill_revision_candidate_unadjudicated": detect_agent_skill_revision_candidate_unadjudicated,
         "entity_source_uri_unresolved": detect_entity_source_uri_unresolved,
         "agent_skill_not_in_canonical_sandbox": detect_agent_skill_not_in_canonical_sandbox,
         "unregistered_document_in_markdown": detect_unregistered_document_in_markdown,
@@ -198,6 +207,7 @@ def get_all_detectors() -> dict[str, Any]:
         "todo_implementation_seed_incomplete": detect_todo_implementation_seed_incomplete,
         "todo_dense_spec_attributes_unpopulated": detect_todo_dense_spec_attributes_unpopulated,
         "todo_implement_readiness_risk": detect_todo_implement_readiness_risk,
+        "done_entity_unsubstantiated_band_mismatch": detect_done_entity_unsubstantiated_band_mismatch,
         "landed_claim_not_on_master": detect_landed_claim_not_on_master,
         "provenance_cites_staging": detect_provenance_cites_staging,
         "implement_ready_spec_unvalidated": lambda c, s=None: [],  # DISABLED 2026-06-20: cortex_api audit context cannot read repo tasks/specs directly, so this false-positived every implement_ready (incl. the valid 20197). Template landed_claim_not_on_master routes repo reads via the git-worker; this read fs directly. Code + tests retained; needs repo-aware redesign (friction 20198 follow-up).
@@ -300,6 +310,7 @@ __all__ = [
     "detect_todo_dense_spec_attributes_unpopulated",
     "detect_todo_implementation_seed_incomplete",
     "detect_todo_implement_readiness_risk",
+    "detect_done_entity_unsubstantiated_band_mismatch",
     "detect_unregistered_document_in_markdown",
     "get_all_detectors",
     "run_detectors",

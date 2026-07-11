@@ -60,6 +60,20 @@ def resolve_recon_target(label: str, theme: str) -> tuple[str, str, Path] | None
     return label_slug, theme_slug, target
 
 
+def recon_sidecar_frontmatter_line_count() -> int:
+    """1-based line count of YAML frontmatter prepended before the theme body."""
+    sample = render_recon_sidecar_markdown(
+        label="x",
+        theme="x",
+        body="",
+        scopes=[],
+        queries=[],
+        sink_backend="cortex",
+        sha256="0" * 64,
+    )
+    return len(sample.splitlines())
+
+
 def render_recon_sidecar_markdown(
     *,
     label: str,

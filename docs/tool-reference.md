@@ -642,7 +642,7 @@ Inter-agent message bus — threads, turns, read/reply coordination.
 |---|---|---|
 | `threads` | status?, to?, limit? | List threads. status: active/archived/all |
 | `fetch` | thread, last?, compact?, mark_read? | Get turns from a thread (fallback / inspection). compact=true strips markdown. For handoff completion use `wait`, not fetch loops. |
-| `wait` | thread, after_turn?, wait_seconds?, completion?, from_agent? | **Canonical handoff retrieval** — server-side short-block until the consult posts a **bus turn** after the pointer (`completion=first_reply_from` + canonical `from_agent`; alias-aware). `wait_seconds` clamped ≤60 (0=snapshot). Returns `{complete, status, push_required, suggested_next, qualifying_reply_turn, thread_status, ...}`. When `complete=true` and `thread_status=active`, `suggested_next` is an object (`phase=consult_turn_posted`, `consult_turn`, `steps`: fetch → apply → close) — not arc completion. Re-call to poll — one HTTP call per invocation. |
+| `wait` | thread, after_turn?, wait_seconds?, completion?, from_agent? | **Canonical handoff retrieval** — server-side short-block until the consult posts a **bus turn** after the pointer (`completion=first_reply_from` + canonical `from_agent`; alias-aware). `wait_seconds` clamped ≤60 (0=snapshot). Returns `{complete, status, push_required, suggested_next, qualifying_reply_turn, thread_status, ...}`. When `complete=true` and `thread_status=active`, `suggested_next` is an object (`phase=consult_turn_posted`, `consult_turn`, `steps`: fetch → apply → close) — not arc completion. Re-call to poll — one HTTP call per invocation. **Cursor IDE interim (friction 23653 / class of 17003):** prefer `wait_seconds=0` snapshots (or re-call short waits) over a single long block when polling `cursor-sdk` closeouts — a rare MCP↔agent-bus `/wait` relay orphan left the IDE tools/call open past the 75s budget with no `wait.completed`; wall-clock abort now hardens the relay, but snapshot polling remains the safest Cursor recipe until the intermittent class is retired. |
 | `get` | thread, turn_number | Get one specific turn |
 | `post` | slug, to, subject, body, from_agent, tags? | Start a new thread |
 | `reply` | thread, to, subject, body, after_turn?, from_agent | Reply to a thread |
@@ -923,7 +923,7 @@ skill `consult-routing` (doc-only guidance; no backing `agent_skill` entity for 
 | `briefing_card` | Compact Markdown briefing (~3–8KB target): deadlines, bus, todos, skills index, … |
 | `sections_available` | Manifest of deeper-pull sections with fetch hints |
 | `operational_context_ref` | Path to operational context file (read on demand via `fs md_read`) |
-| `seat_preloaded` | Slugs merged into `skill_suggest` loaded set (web orientation/inject channels) |
+| `seat_preloaded` | Slugs preloaded for the seat (web orientation/inject channels) |
 | `injected_artifacts` | Byte ledger: `name`, `mode`, `source`, `bytes`, `sha256`, `path`, `fetches` |
 | `audit_dump_path` | Per-boot audit sidecar (`{agent}-YYYY-MM-DD-HHMMSS.md`); filename decoupled from `session_id` (which adds a 3-hex suffix for uniqueness); LIVE mode only; `null` on failure |
 
@@ -958,21 +958,6 @@ write, and no `mcp.cortex.boot*` event emission.
 | `audit_dump_path` | Always `null` in inspect mode |
 | `injected_artifacts` | Same manifest schema as `cortex_boot`; `operational_context` artifact is `mode: inline` in inspect mode |
 | `diff` | Present only when `diff_with` is set. Contains `artifacts_only_in_primary`, `artifacts_only_in_secondary`, and `artifacts_with_delta` (`kind: inline_canonical_text` or `sha256_mismatch`) |
-
-## skill_suggest
-
-In-session skill delta for web/API seats. Ranked slugs **not** already in `loaded[]` ∪ `seat_preloaded`.
-
-### Args
-
-| Arg | Required | Description |
-|---|---|---|
-| `loaded` | **yes** | Slugs fetched this session (maintain list across calls). Server merges `seat_preloaded` for web. |
-| `conversation_context` | no | Task read (≤16k chars). Omit → `insufficient_context`. |
-| `limit` | no | Max suggestions (default 8) |
-| `agent` | no | Seat slug when session resolution fails |
-
-See `.cursor/skills/skill-suggest-utilization/SKILL.md` and skill `consult-routing`.
 
 ## rag
 

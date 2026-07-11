@@ -88,7 +88,8 @@ def packet_is_sufficient(text: str) -> bool:
     corpus = _extract_block(text, "corpus") or ""
 
     mcp_ok = (
-        "Load skill:" in mcp
+        "Use the `" in mcp
+        or "Load skill:" in mcp  # legacy packets
         or "agent_skill:" in mcp
         or "fs(" in mcp
         or "cortex" in mcp
@@ -105,15 +106,17 @@ def _extract_block(text: str, tag: str) -> str | None:
 
 
 def _skill_read(slug: str) -> str:
-    """Name-only skill load line for implement packets (¬ fs path)."""
+    """Name-only skill-use line for implement packets (¬ fs path)."""
     try:
-        # Validate slug resolves in the committed table; emit name-only instruction.
+        # Validate slug resolves in the committed table; emit use+slug cue.
         resolve_canonical_source_uri(slug)
     except SkillSourceResolveError as exc:
         raise SkillSourceResolveError(
             f"packet materialize blocked — unresolved skill slug {slug!r}: {exc}"
         ) from exc
-    return f"Load skill: `{slug}`"
+    from agent_seat.body_injection import skill_use_instruction
+
+    return skill_use_instruction(slug)
 
 
 def assert_skill_table_fresh_for_dispatch(*, enforce_live: bool = False) -> None:

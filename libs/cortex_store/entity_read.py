@@ -19,7 +19,7 @@ from .assertion_deserialize_telemetry import (
     emit_assertion_deserialize_skipped,
 )
 from .compaction import apply_compaction_filter
-from .confidence_field import agent_skill_is_discoverable
+from .confidence_field import agent_skill_is_discoverable, confidence_field
 from .db import decode_row, query
 from .handoff_surface import apply_handoff_read_projection
 from .models import (
@@ -157,7 +157,11 @@ def get_entity_impl(
     relationships = [RelationshipItem(**row) for row in rel_rows]
     edges = [EdgeItem(**row) for row in edge_rows]
     hints = detect_expired_unresolved([a.model_dump() for a in assertions])
-    detail_row = apply_option_c_read_projection(decode_row(entity, ENTITY_JSON_FIELDS))
+    decoded = decode_row(entity, ENTITY_JSON_FIELDS)
+    detail_row = apply_option_c_read_projection(
+        decoded,
+        confidence_field=confidence_field(conn, str(decoded.get("type", ""))),
+    )
     detail_row, hints = apply_handoff_read_projection(
         detail_row,
         existing_hints=hints or None,

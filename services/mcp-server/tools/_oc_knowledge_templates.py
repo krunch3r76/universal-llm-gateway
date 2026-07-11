@@ -106,7 +106,7 @@ Never treat "too large" as "skip" — it means "navigate differently.\""""
 
 JOURNALING_PROTOCOL = """\
 ## Session Journaling
-On claude-web, skill bodies arrive via the platform skill layer when triggers fire — do NOT fs-read skill bodies.
+On claude-web, skill bodies arrive when you Use the `<slug>` skill — do NOT fs-read skill bodies.
 Session close: see skill `session-close-kernel` (canonical protocol for all \
 agents; per-agent bindings — `agent` field, session_id prefix — in the bindings \
 table at end of that skill)."""

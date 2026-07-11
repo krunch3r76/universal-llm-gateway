@@ -113,17 +113,13 @@ _DISPATCH_PRIMARY_HINT = (
 )
 _DISPATCH_QUERY_TOKENS: frozenset[str] = frozenset({"dispatch", "overflow"})
 
-_SKILL_SUGGEST_PRIMARY_CALL = (
-    'skill_suggest(loaded=["<slug>", ...], conversation_context="<task context>")'
-)
 _SKILL_SUGGEST_PRIMARY_HINT = (
-    "skill_suggest is a server-primary tool — call directly (e.g. "
-    f"{_SKILL_SUGGEST_PRIMARY_CALL}). Server tool_search indexes overflow only; "
-    'the bare query tool_search("skill_suggest") returns 0 overflow matches — '
-    "that is expected, not evidence skill_suggest is unavailable. "
-    "If unbound from your connector, use broad keywords "
-    'tool_search("skill suggest skills loaded delta") to surface the bind path, '
-    "then call skill_suggest directly."
+    "skill_suggest is deprecated indefinitely (operator ruling 2026-07-11) — "
+    "do not call it. Discover skills via native boot index / "
+    "`<available_skills>` stubs / description-gated rules only. "
+    "Server tool_search indexes overflow only; empty overflow matches for "
+    'tool_search("skill_suggest") are expected and do not mean a replacement '
+    "tool should be invented."
 )
 _SKILL_SUGGEST_QUERY_TOKENS: frozenset[str] = frozenset(
     {

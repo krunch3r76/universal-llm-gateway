@@ -95,7 +95,7 @@ def test_parse_packet_invariant_skill_ids_name_only_and_legacy() -> None:
     name_only = """
 <invariants>
 - agent_skill:sentinel-dispatch-inject-19887
-- Load skill: `architecture-invariants`
+- Use the `architecture-invariants` skill
 </invariants>
 """
     assert parse_packet_invariant_skill_ids(name_only) == (

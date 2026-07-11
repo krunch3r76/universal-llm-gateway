@@ -18,12 +18,12 @@ Cursor's local enforcement surfaces (`.cursor/commands/session-end.md`, \
 `.cursor/rules/session-close.mdc`) implement the canonical protocol."""
 
 WEB_TRANSCRIPT_PREPROCESSING = """\
-On claude-web, skill bodies arrive via the platform skill layer when triggers fire — do NOT fs-read skill bodies.
+On claude-web, skill bodies arrive when you Use the `<slug>` skill — do NOT fs-read skill bodies.
 Web's close discipline is skill `session-close-kernel` (canonical; transcript/handoff siblings at gate). Web also applies \
 skill `web-transcript-preprocessing` to trim raw tool payloads before `session_close`."""
 
 WEB_SESSION_CLOSE_GENERIC = """\
-On claude-web, skill bodies arrive via the platform skill layer when triggers fire — do NOT fs-read skill bodies.
+On claude-web, skill bodies arrive when you Use the `<slug>` skill — do NOT fs-read skill bodies.
 Session close (web platform): write transcript markdown to \
 `notes/system/transcripts/web-YYYY-MM-DD-HHmm.md`, seed assertions, \
 create transcript entity, write journal row, post to agent-activity-journal \
@@ -123,11 +123,11 @@ tools (xAI multi-agent rejects them; standard API path has no vortex). This plat
 
 CLAUDE_WEB_TOOL_SURFACE = """\
 ## ULG architecture orientation (claude-web — skill-first)
-Before findings / spec / orchestration on any universal-llm-gateway task, load BOTH
-by canonical slug (platform/server injects bodies on trigger):
+Before findings / spec / orchestration on any universal-llm-gateway task, Use BOTH
+by canonical slug (seat self-fetches on explicit use):
 `architecture-invariants` and `ulg-architecture` (`agent_skill:architecture-invariants`,
 `agent_skill:ulg-architecture`).
-Other `required_skills` slugs: **Load skill:** `{slug}` — ¬ fs-read skill markdown.
+Other `required_skills` slugs: **Use the** `{slug}` **skill** — ¬ fs-read skill markdown.
 You have NO IDE `*_ws.mdc` auto-load backstop — `ulg-architecture` is in your manifest
 (partition `["claude-cursor","claude-web"]`); the canonical slug load is load-bearing.
 Discovery order: todo `required_skills` (canonical slugs) → ULG pair → boot manifest triggers → repo skills README (index only).
@@ -154,7 +154,7 @@ When connector-bound: team_dispatch + panel_dispatch are server-primary — call
 - strategic advice / in-pipeline RAG → dispatch(tool="advisor" | "pipeline_consult", …)  [overflow]
 - bounded determinate task → team_dispatch(op=generate, role=cursor-sdk, dispatch_thread_id="<thread>", contract=light-bounded|pure-mechanical|implement, packet_path?=…)
 - deprecated: op=handoff,seat=cursor-sdk normalizes to generate with a warning
-Read skill `dispatch-workflow` §0a before first dispatch. Source: claude-web-dispatch-decision-table.md (§2/§3/§4)."""
+Use the `dispatch-workflow` skill §0a before first dispatch. Source: claude-web-dispatch-decision-table.md (§2/§3/§4)."""
 
 GEMINI_WEB_TOOL_SURFACE = """\
 ## Gemini App Tool Surface (gemini-web — CANDIDATE seat)
@@ -291,7 +291,7 @@ agent bus — the next session picks it up.
 
 **Three guards (thread 1206 panel):** (1) capability binds to **effective model** — gemini inline-only on any role; Stargate sets `mcp=False` at admission + hydration suppresses the tool loop (¬ admission reject for explicit `model=`). (2) **Offload boundary** — legwork offloadable; steelman + falsifier adjudication + adjudicating-caller review of panelist writes + `panel_adjudication_artifact` NON-offloadable. The **adjudicating caller** (any seat invoking the panel) is distinct from the `web-consult` handoff role. (3) **Audit binding (landed)** — session-close gate runs `panel_disposition_incomplete` on scoped session entities; `validate_panel_assert_attributes` / `build_panel_assert_attributes` remain helper-only schema checks ahead of assert.
 
-**Post-panel assert (Menu D — assertion SOT):** pass `attributes=build_panel_assert_attributes(...)` directly to `assert` alongside `evidence_uris` (`agent-bus:T`, ≥2 `execution:E`). Per skill §3.1: `assertion.attributes` is the source of truth; `entity_update(attributes=...)` is optional as a derived read cache only — audits and session-close detectors query the non-superseded assertion, NEVER the entity blob. Required `attributes` keys: `consensus_disposition`, `panel_families`, `panel_executions`, `decisive_falsifier`, `panel_adjudication_artifact`, `material`. `panel` without an adjudication artifact ⟹ stamp `steelman-only`. (`lead_adjudication_artifact` is accepted as a deprecated read alias.) **Falsifier metric** (cadence §3.3 — not per-close): fraction of material `panel` decisions lacking `panel_adjudication_artifact` over N≥20; cadence runner (every-10/monthly) still TODO. Full skill: `agent_skill:consensus-steelman-posture` (canonical slug — platform/server inject)."""
+**Post-panel assert (Menu D — assertion SOT):** pass `attributes=build_panel_assert_attributes(...)` directly to `assert` alongside `evidence_uris` (`agent-bus:T`, ≥2 `execution:E`). Per skill §3.1: `assertion.attributes` is the source of truth; `entity_update(attributes=...)` is optional as a derived read cache only — audits and session-close detectors query the non-superseded assertion, NEVER the entity blob. Required `attributes` keys: `consensus_disposition`, `panel_families`, `panel_executions`, `decisive_falsifier`, `panel_adjudication_artifact`, `material`. `panel` without an adjudication artifact ⟹ stamp `steelman-only`. (`lead_adjudication_artifact` is accepted as a deprecated read alias.) **Falsifier metric** (cadence §3.3 — not per-close): fraction of material `panel` decisions lacking `panel_adjudication_artifact` over N≥20; cadence runner (every-10/monthly) still TODO. Full skill: `agent_skill:consensus-steelman-posture` (canonical slug — Use the `consensus-steelman-posture` skill)."""
 
 FRONTIER_MODEL_ROUTING = """\
 ## Team Dispatch Routing
