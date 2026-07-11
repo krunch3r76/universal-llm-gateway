@@ -43,6 +43,22 @@ _CORTEX_WRITE_OPS = frozenset({"assert", "supersede", "observe", "friction"})
 _ASSERTION_IDENTITY_RE = re.compile(r"^assertion:(\d+)$")
 _AGENT_BUS_TOOLS = frozenset({"agent_bus", "agent_bus_read"})
 _FS_TOOLS = frozenset({"fs"})
+_FS_WRITE_OPS = frozenset(
+    {
+        "write",
+        "append",
+        "prepend",
+        "insert_at_line",
+        "replace",
+        "md_replace",
+        "md_append",
+        "md_insert",
+        "write_binary",
+        "append_binary",
+        "copy",
+        "move",
+    }
+)
 _RAG_TOOLS = frozenset({"rag"})
 _SERVICE_TOOLS = frozenset(
     {
@@ -791,6 +807,8 @@ def _entry_from_tool_call(message: Mapping[str, Any]) -> EffectEntry | None:
                 merged_detail["dispatched_tool"] = dispatched
                 target = dispatched
             detail = merged_detail
+        elif tool_name in _FS_TOOLS:
+            detail = _fs_compact_detail(effective)
         return EffectEntry(
             op=tool_name,
             target=target,
@@ -875,6 +893,20 @@ def _surface_coverage(section: SurfaceSection) -> str:
     if section.cross_check:
         return "partial"
     return "complete"
+
+
+def _fs_compact_detail(effective: Mapping[str, Any]) -> dict[str, Any] | None:
+    detail: dict[str, Any] = {}
+    op = _string_arg(effective, "op")
+    sandbox = _string_arg(effective, "sandbox")
+    path = _string_arg(effective, "path")
+    if op:
+        detail["op"] = op
+    if sandbox:
+        detail["sandbox"] = sandbox
+    if path:
+        detail["path"] = path
+    return detail or None
 
 
 def _bounded_detail(value: Mapping[str, Any] | None) -> dict[str, Any] | None:
@@ -1072,6 +1104,100 @@ def manifest_fs_targets(manifest: EffectsManifest | None) -> list[str]:
         if target:
             targets.append(target)
     return targets
+
+
+def _fs_entry_write_op(entry: EffectEntry) -> str | None:
+    detail = entry.detail if isinstance(entry.detail, Mapping) else None
+    if detail:
+        op = detail.get("op")
+        if isinstance(op, str) and op in _FS_WRITE_OPS:
+            return op
+    return None
+
+
+def _fs_entry_path(entry: EffectEntry) -> str | None:
+    detail = entry.detail if isinstance(entry.detail, Mapping) else None
+    if detail:
+        path = detail.get("path")
+        if isinstance(path, str) and path.strip():
+            return path.strip()
+    target = entry.target or entry.identity
+    return target.strip() if isinstance(target, str) and target.strip() else None
+
+
+def _fs_entry_sandbox(entry: EffectEntry) -> str | None:
+    detail = entry.detail if isinstance(entry.detail, Mapping) else None
+    if not detail:
+        return None
+    sandbox = detail.get("sandbox")
+    return sandbox.strip() if isinstance(sandbox, str) and sandbox.strip() else None
+
+
+def manifest_fs_write_targets(
+    manifest: EffectsManifest | None,
+) -> list[tuple[str | None, str]]:
+    if manifest is None:
+        return []
+    section = manifest.surfaces.get("fs")
+    if section is None:
+        return []
+    targets: list[tuple[str | None, str]] = []
+    for entry in section.entries:
+        if _fs_entry_write_op(entry) is None:
+            continue
+        path = _fs_entry_path(entry)
+        if not path:
+            continue
+        targets.append((_fs_entry_sandbox(entry), path))
+    return targets
+
+
+def _normalize_offgit_uri(sandbox: str | None, path: str) -> str:
+    raw = path.strip()
+    lower = raw.lower()
+    if lower.startswith("cortex://"):
+        return raw
+    if lower.startswith("workspaces://"):
+        return raw
+    if lower.startswith("cortex:"):
+        return f"cortex://{raw.split(':', 1)[1].lstrip('/')}"
+    sandbox_key = (sandbox or "").strip().lower()
+    if sandbox_key == "cortex":
+        return f"cortex://{raw.lstrip('/')}"
+    if sandbox_key == "workspaces":
+        return f"workspaces://{raw.lstrip('/')}"
+    if ":" in raw and not lower.startswith(("cortex", "workspaces")):
+        prefix, _, rest = raw.partition(":")
+        if prefix.lower() in {"cortex", "workspaces"} and rest:
+            scheme = prefix.lower()
+            return f"{scheme}://{rest.lstrip('/')}"
+    return f"workspaces://{raw.lstrip('/')}"
+
+
+def _is_excluded_offgit_uri(uri: str, *, sidecar_ref: str) -> bool:
+    if uri == sidecar_ref:
+        return True
+    lower = uri.lower()
+    if "tmp/reviews/closeouts/" in lower:
+        return True
+    return False
+
+
+def manifest_offgit_deliverable_uris(
+    manifest: EffectsManifest | None,
+    *,
+    sidecar_ref: str,
+) -> list[str]:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for sandbox, path in manifest_fs_write_targets(manifest):
+        uri = _normalize_offgit_uri(sandbox, path)
+        if _is_excluded_offgit_uri(uri, sidecar_ref=sidecar_ref):
+            continue
+        if uri not in seen:
+            seen.add(uri)
+            ordered.append(uri)
+    return ordered
 
 
 def snapshot_outside_repo_paths(

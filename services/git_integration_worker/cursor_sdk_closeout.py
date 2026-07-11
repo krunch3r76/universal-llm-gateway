@@ -52,6 +52,7 @@ from services.git_integration_worker.cursor_sdk_manifest import (
     compact_manifest_for_body,
     cortex_surface_has_write_op,
     harvest_cortex_assertion_ids,
+    manifest_offgit_deliverable_uris,
     merge_wrapper_manifest,
     no_capture_degraded_reason,
     registered_repo_roots,
@@ -418,6 +419,10 @@ def finalize_closeout_body(
     if ignored:
         reduced["files_untracked_or_ignored_total"] = len(ignored)
         reduced["files_untracked_or_ignored"] = list(ignored[:_CLOSEOUT_FILE_HEAD])
+    offgit = payload.get("files_offgit_produced") or []
+    if offgit:
+        reduced["files_offgit_produced_total"] = len(offgit)
+        reduced["files_offgit_produced"] = list(offgit[:_CLOSEOUT_FILE_HEAD])
     if payload.get("deviations"):
         reduced["deviations"] = list(payload["deviations"][:_CLOSEOUT_FILE_HEAD])
     if body_relocated is not None:
@@ -470,6 +475,7 @@ def build_implement_closeout_body(
     cortex_first: bool = False,
     files_untracked_or_ignored: list[str] | None = None,
     files_outside_repo: list[str] | None = None,
+    offgit_deliverable_uris: list[str] | None = None,
 ) -> str:
     """Build a compact, valid ImplementCloseout JSON turn body.
 
@@ -490,6 +496,11 @@ def build_implement_closeout_body(
     )
     if degraded_reason:
         summary = f"{summary} (degraded: {degraded_reason})"
+    if offgit_deliverable_uris:
+        summary = (
+            f"{summary}; off-git deliverables: {len(offgit_deliverable_uris)} "
+            f"({offgit_deliverable_uris[0]})"
+        )
     status = _map_closeout_status(degraded_reason)
     if verification and any(v.exit_code for v in verification):
         status = CloseoutStatus.PARTIAL
@@ -530,6 +541,7 @@ def build_implement_closeout_body(
                     sidecar_ref,
                     cortex_artifact_paths or [],
                     cortex_first=cortex_first,
+                    offgit_deliverable_uris=offgit_deliverable_uris or [],
                 ),
                 bus_threads=[thread_id],
                 dispatch_ids=[dispatch_id],
@@ -541,6 +553,8 @@ def build_implement_closeout_body(
             payload["files_untracked_or_ignored"] = files_untracked_or_ignored
         if files_outside_repo:
             payload["files_outside_repo"] = files_outside_repo
+        if offgit_deliverable_uris:
+            payload["files_offgit_produced"] = offgit_deliverable_uris
         if manifest_value is not None and not isinstance(
             manifest_value, EffectsManifest
         ):
@@ -706,6 +720,7 @@ def _assemble_closeout_delivery(
         cortex_artifact_paths=cortex_artifact_paths,
         git_change_set=git_change_set,
     )
+    offgit_uris = manifest_offgit_deliverable_uris(manifest, sidecar_ref=sidecar_ref)
     mount = resolve_mount_root(source_repo)
     manifest_cs, manifest_outside, non_file_dropped = repo_change_set_from_manifest(
         manifest,
@@ -801,6 +816,7 @@ def _assemble_closeout_delivery(
         cortex_first=cortex_authoritative,
         files_untracked_or_ignored=list(files_untracked_or_ignored),
         files_outside_repo=list(all_outside_repo),
+        offgit_deliverable_uris=offgit_uris,
     )
     if sidecar_appendix:
         appendix = "\n\n## effects_manifest\n\n" + "\n".join(sidecar_appendix)

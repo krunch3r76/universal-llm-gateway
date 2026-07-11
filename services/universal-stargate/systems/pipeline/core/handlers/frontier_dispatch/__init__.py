@@ -45,7 +45,7 @@ Caller::
     POST /api/v1/team/dispatch      # role-envelope
 
     # Raw escape hatch (advanced — bypasses canonical admission):
-    pipeline(op="async", pipeline_id="frontier-dispatch",
+    pipeline(op="async", pipeline_id="chat-dispatch",
              pipeline_options={"model": "openai/gpt-5.4", "role": "gatherer"},
              messages=[{"role": "user", "content": "..."}])
 """

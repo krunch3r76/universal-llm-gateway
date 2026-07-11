@@ -254,11 +254,15 @@ silent coercion in `resolve_dispatch_tool_set`.
 - Analytical synthesis, evidence extraction, or MCP-heavy execution
 - Uncertainty about whether your framing is sound (consult the perspective most likely to disagree)
 
-**Pipeline composition (advanced)**:
-`pipeline(op="async", pipeline_id="frontier-dispatch", ...)` is the underlying
-pipeline-composition entry point. Use it ONLY when you need explicit pipeline
-composition; it silently drops keys it does not recognize. For agent consults, prefer `team_dispatch` — validates upstream (MCP gating,
-model consistency, role contract, MCP gating).
+**Direct model one-shot (role-less)**:
+`pipeline(op="async", pipeline_id="chat-dispatch", pipeline_options={"model": ...}, messages=[...])`
+is the FIRST-CLASS surface for persona-free one-shot calls to any frontier
+chat model over its native endpoint (renamed from `frontier-dispatch`).
+Unknown pipeline_options keys are hard-rejected with structured errors.
+Chat modality only — text / tool / structured output; not image/audio/video
+generation (those live on the imagine tools). For ROLE-based consults
+prefer `team_dispatch` — role contract, default_model resolution, and
+briefing assembly validate upstream.
 
 **When not to:**
 - Routine tasks where your judgment is sufficient
@@ -312,9 +316,10 @@ on the callee's behalf — no `agent_bus.reply` required from the dispatched mod
 MCP: `team_dispatch` enables client-side tools by default (non-xAI); some
 providers suppress client-side function tools — see `resolve_dispatch_tool_set`.
 
-Pipeline composition entry point:
-`pipeline(op="async", pipeline_id="frontier-dispatch", pipeline_options={...}, messages=[...])`
-— internal Stargate pipeline only; agents use `team_dispatch`.
+Direct role-less one-shot (first-class agent surface):
+`pipeline(op="async", pipeline_id="chat-dispatch", pipeline_options={"model": ...}, messages=[...])`
+— any frontier chat model, native endpoint, no role/thread machinery
+(renamed from `frontier-dispatch`). Role consults stay on `team_dispatch`.
 
 Role definitions live on cortex (`role:{slug}` entities) and `config/agents.yaml`;
 tools surface as universal catalog with silent provider coercion — keep this

@@ -104,7 +104,9 @@ from services.git_integration_worker.cursor_sdk_gate import (
     release_sdk_dispatch_slot_sync,
 )
 from services.git_integration_worker.cursor_sdk_light_bounded_capture import (
-    extract_named_paths,
+    extract_instructed_paths,
+    first_landed_fs_uri,
+    fs_write_landed,
     light_bounded_deliverable_present,
 )
 from services.git_integration_worker.cursor_sdk_manifest import (
@@ -1239,6 +1241,7 @@ async def _finalize_success(
     controller: WorkAdmissionController,
 ) -> None:
     packet_text = _read_packet_text(req, source_repo) if req.packet_path else ""
+    instruction_text = packet_text if req.packet_path else (req.message or "")
     inferred_contract = (
         infer_contract_from_text(packet_text)
         if (not req.handoff_contract and not req.message and packet_text)
@@ -1256,24 +1259,30 @@ async def _finalize_success(
     # machinery — see light_bounded_expected_paths threading into
     # resolve_closeout_capture_fields.
     light_bounded_expected_paths = (
-        extract_named_paths(packet_text) if contract == LIGHT_BOUNDED_CONTRACT else ()
+        extract_instructed_paths(instruction_text)
+        if contract == LIGHT_BOUNDED_CONTRACT
+        else ()
     )
-    # Sidecar-write detection gap (todo:cursor-sdk-sidecar-write-detection-gap,
-    # assertion 22423): the light-bounded stated_intent_no_write / choke reason is
-    # inferred from outcome.tool_calls alone, which is blind to cortex sidecar
-    # fs.writes the SDK stream never surfaced (cf. 22454 zero_tool_calls). Filesystem
-    # ground truth overrides: when every declared deliverable is present on
-    # disk/cortex the degrade is suppressed at birth. Named-paths only (no tree
-    # scan) so background/non-agent writes are never attributed.
-    deliverable_present = (
+    cortex_root = cortex_files_root()
+    path_present = (
         light_bounded_deliverable_present(
             light_bounded_expected_paths,
             source_repo=source_repo,
-            cortex_root=cortex_files_root(),
+            cortex_root=cortex_root,
         )
         if contract == LIGHT_BOUNDED_CONTRACT
         else False
     )
+    manifest_landed = (
+        fs_write_landed(
+            outcome.effects_manifest,
+            source_repo=source_repo,
+            cortex_root=cortex_root,
+        )
+        if contract == LIGHT_BOUNDED_CONTRACT
+        else False
+    )
+    deliverable_present = path_present or manifest_landed
     # Empty-output invariant (friction 19819) applies to ALL contracts: a finished
     # run whose captured body (after transcript reconstruction in resolve_run_body)
     # is empty must never report status:complete + 0B. Implement-specific reasons
@@ -1299,15 +1308,20 @@ async def _finalize_success(
                 contract=contract,
             )
             if suppressed_reason is not None:
+                verifying_path = (
+                    light_bounded_expected_paths[0]
+                    if path_present and light_bounded_expected_paths
+                    else first_landed_fs_uri(
+                        outcome.effects_manifest,
+                        source_repo=source_repo,
+                        cortex_root=cortex_root,
+                    )
+                )
                 emit_sdk_closeout_reconciled(
                     dispatch_id=req.dispatch_id,
                     thread_id=req.thread_id,
                     suppressed_reason=suppressed_reason,
-                    verifying_path=(
-                        light_bounded_expected_paths[0]
-                        if light_bounded_expected_paths
-                        else ""
-                    ),
+                    verifying_path=verifying_path,
                 )
     await _deliver_sdk_closeout(
         req=req,

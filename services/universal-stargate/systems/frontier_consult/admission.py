@@ -31,10 +31,10 @@ from .probe_caller_guard import reject_probe_on_reviewer
 EventPublisher = Callable[[Any], None]
 
 # Models that only support the Chat Completions API and are unavailable on the
-# OpenAI Responses API path used by frontier-dispatch pipeline steps. Callers must use
-# llm_generate (which routes through /v1/chat/completions) for these models.
-# ∀ new Chat-Completions-only OpenAI models: add to this set AND update
-# llm_generate docstring in services/mcp-server/tools/llm.py.
+# OpenAI Responses API path used by chat-dispatch respond (frontier_dispatch_v1).
+# Role-less callers reach them via chat-dispatch respond_cc (generate →
+# /v1/chat/completions). Role-carrying team_dispatch still rejects.
+# ∀ new Chat-Completions-only OpenAI models: add to this set.
 _CHAT_COMPLETIONS_ONLY_MODELS: frozenset[str] = frozenset(
     {
         "openai/gpt-5-search-api",

@@ -1,9 +1,12 @@
 """
 Primary model resolution for the generate handler.
 
-Encapsulates the 5-tier resolution chain that ``GenericGenerateHandler.execute``
+Encapsulates the resolution chain that ``GenericGenerateHandler.execute``
 runs before invoking a model:
 
+0. Step-gated ``honor_options_model`` (domain field): when true, resolve
+   ``pipeline_options.model`` first. Opt-in only — global generate behavior
+   is unchanged (chat-dispatch ``respond_cc`` is the sole caller today).
 1. Executor-level override (``context._step_model_override`` — DAGExecutor's
    step-level fallback for timeouts / arbitrary errors). Full ID; no
    ResolvedTargetModel is built so handler-level fallback is skipped.
@@ -45,7 +48,7 @@ async def resolve_primary_model(
 ) -> tuple[str, str | None, ResolvedTargetModel | None]:
     """Resolve ``(model_id, model_profile, primary_resolution)`` for the step.
 
-    Implements the 5-tier chain documented at the module level. Logs the
+    Implements the resolution chain documented at the module level. Logs the
     same informational lines (runtime override, auto-select, raw model_ref)
     that the original inline branches in ``execute`` emitted, so log-driven
     diagnostics are unchanged.
@@ -81,6 +84,30 @@ async def resolve_primary_model(
 
     if executor_override:
         return executor_override, None, None
+
+    # Tier-0 (step-gated): honor pipeline_options.model when the step opts in.
+    # Global generate steps without honor_options_model still ignore options.model.
+    if bool(step.get_domain_field("honor_options_model")):
+        opts_model = context.options.get("model")
+        if isinstance(opts_model, str):
+            opts_model = opts_model.strip()
+            if opts_model and opts_model != "default":
+                primary_resolution = ResolvedTargetModel.build(
+                    opts_model,
+                    resolution_source="pipeline_options_model",
+                    model_ref=step.model_ref,
+                    requirements_source=get_requirements_source(step),
+                )
+                logger.info(
+                    "[%s] Using pipeline_options.model (honor_options_model): %s",
+                    step.name,
+                    opts_model,
+                )
+                return opts_model, None, primary_resolution
+        raise ValueError(
+            f"Step '{step.name}': honor_options_model requires a non-empty "
+            "pipeline_options.model"
+        )
 
     if runtime_override:
         primary_resolution = ResolvedTargetModel.build(

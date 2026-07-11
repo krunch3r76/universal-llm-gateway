@@ -281,6 +281,24 @@ def extract_runtime_options(
             pipeline.id,
             orig_keys,
         )
+
+    # Single source for chat-completions-only branch conditions (chat-dispatch
+    # respond vs respond_cc). Import the admission predicate — do not re-derive
+    # the -search-api suffix rule in YAML or a second helper.
+    caller_model = runtime_options.get("model")
+    if isinstance(caller_model, str):
+        caller_model = caller_model.strip()
+    else:
+        caller_model = ""
+    if caller_model:
+        from systems.frontier_consult.admission import is_chat_completions_only
+
+        runtime_options["chat_completions_only"] = is_chat_completions_only(
+            caller_model
+        )
+    else:
+        runtime_options["chat_completions_only"] = False
+
     return runtime_options
 
 

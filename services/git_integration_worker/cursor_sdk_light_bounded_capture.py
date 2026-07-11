@@ -6,9 +6,9 @@ packet carries, so the baseline-diff capture machinery in
 ``cursor_sdk_capture_status`` never applies to them — admit-time git-baseline
 capture is implement-only, so ``baseline`` is unconditionally ``None`` for a
 light-bounded dispatch. This module is the independent signal for that case:
-extract path-like tokens conservatively from the dispatch prose, then answer
-completeness by checking whether each named path exists on disk (source repo)
-or in the cortex sandbox post-dispatch — no git diff involved.
+extract path-like tokens from write-imperative windows in dispatch prose, then
+answer completeness by checking whether each named path exists on disk (source
+repo) or in the cortex sandbox post-dispatch — no git diff involved.
 """
 
 from __future__ import annotations
@@ -16,13 +16,17 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from implement_admission.closeout_models import EffectsManifest
+
 from services.git_integration_worker.cursor_sdk_deliverable_truth import (
     LIGHT_BOUNDED_CONTRACT,
 )
 
 __all__ = [
     "LIGHT_BOUNDED_CONTRACT",
-    "extract_named_paths",
+    "extract_instructed_paths",
+    "first_landed_fs_uri",
+    "fs_write_landed",
     "light_bounded_capture_status",
     "light_bounded_deliverable_present",
 ]
@@ -51,37 +55,211 @@ _PREFIXED_PATH_RE = re.compile(
 _EXTENSION_PATH_RE = re.compile(
     r"[\w][\w./-]*\.(?:" + "|".join(_DURABLE_EXTENSIONS) + r")\b", re.IGNORECASE
 )
+_SCHEME_PATH_RE = re.compile(r"(?:cortex|workspaces)://[\w./-]+", re.IGNORECASE)
+_IMPERATIVE_RE = re.compile(
+    r"(?i)\b("
+    r"write|writes|written|create|creates|save|saves|persist|persists|"
+    r"append|appends|produce|produces|emit|emits|output|outputs|"
+    r"deliverable|deliverables|files_expected"
+    r")\b"
+)
+_BULLET_PREFIX_RE = re.compile(r"^[-*]\s+")
 
 
 def _normalize_match(raw: str) -> str:
     return raw.strip().rstrip(_TRAILING_PUNCTUATION).lstrip("/")
 
 
-def extract_named_paths(prose: str) -> tuple[str, ...]:
-    """Conservative path-like token extraction from dispatch prose.
+def _normalize_scheme_path(raw: str) -> str:
+    normalized = _normalize_match(raw)
+    match = re.match(r"(?i)(?:cortex|workspaces)://(.+)", normalized)
+    if not match:
+        return normalized
+    rest = match.group(1)
+    if normalized.lower().startswith("workspaces://"):
+        parts = rest.split("/", 1)
+        return parts[1] if len(parts) > 1 else rest
+    return rest
 
-    Two independent, verb-agnostic signals — a known sandbox-prefix path or a
-    bare token carrying a durable file extension — either is sufficient; no
-    write-verb proximity is required. This reads the *request* packet naming
-    an expected output, distinct from ``cursor_sdk_deliverable_truth``'s
-    write-verb-proximate intent tell over the *response* body.
-    """
-    if not prose:
-        return ()
+
+def _path_patterns() -> tuple[re.Pattern[str], ...]:
+    return (_SCHEME_PATH_RE, _PREFIXED_PATH_RE, _EXTENSION_PATH_RE)
+
+
+def _extract_paths_from_line(line: str, *, leading_token_only: bool) -> list[str]:
+    stripped = line.strip()
+    if not stripped:
+        return []
+    content = _BULLET_PREFIX_RE.sub("", stripped) if leading_token_only else stripped
+    if leading_token_only:
+        for pattern in _path_patterns():
+            match = pattern.match(content)
+            if match:
+                return [_normalize_scheme_path(_normalize_match(match.group(0)))]
+        return []
     seen: set[str] = set()
     ordered: list[str] = []
-    for pattern in (_PREFIXED_PATH_RE, _EXTENSION_PATH_RE):
-        for match in pattern.finditer(prose):
-            normalized = _normalize_match(match.group(0))
+    for pattern in _path_patterns():
+        for match in pattern.finditer(content):
+            normalized = _normalize_scheme_path(_normalize_match(match.group(0)))
             if normalized and normalized not in seen:
                 seen.add(normalized)
                 ordered.append(normalized)
+    return ordered
+
+
+def _is_path_block_line(line: str) -> bool:
+    stripped = line.strip()
+    if not stripped:
+        return False
+    content = _BULLET_PREFIX_RE.sub("", stripped)
+    return any(pattern.match(content) for pattern in _path_patterns())
+
+
+def extract_instructed_paths(prose: str) -> tuple[str, ...]:
+    """Extract deliverable paths from write-imperative windows in dispatch prose.
+
+    Candidates come only from lines matching a write-family imperative, the
+    immediately following line, and an optional path block (contiguous lines
+    whose leading token is path-shaped, after skipping at most one blank line).
+    Citation-only prose outside those windows is ignored.
+    """
+    if not prose:
+        return ()
+    lines = prose.splitlines()
+    seen: set[str] = set()
+    ordered: list[str] = []
+
+    def _record(paths: list[str]) -> None:
+        for path in paths:
+            if path and path not in seen:
+                seen.add(path)
+                ordered.append(path)
+
+    for index, line in enumerate(lines):
+        if not _IMPERATIVE_RE.search(line):
+            continue
+        _record(_extract_paths_from_line(line, leading_token_only=False))
+        if index + 1 < len(lines):
+            _record(_extract_paths_from_line(lines[index + 1], leading_token_only=False))
+        block_start = index + 1
+        if block_start < len(lines) and not lines[block_start].strip():
+            block_start = index + 2
+        cursor = block_start
+        while cursor < len(lines):
+            candidate = lines[cursor]
+            if not candidate.strip():
+                break
+            if not _is_path_block_line(candidate):
+                break
+            _record(_extract_paths_from_line(candidate, leading_token_only=True))
+            cursor += 1
     return tuple(ordered)
 
 
 def _path_present(rel_path: str, *, source_repo: Path, cortex_root: Path) -> bool:
     rel = rel_path.lstrip("/")
     return (source_repo / rel).exists() or (cortex_root / rel).exists()
+
+
+def _resolve_fs_target_path(
+    raw_target: str,
+    *,
+    source_repo: Path,
+    cortex_root: Path,
+    mount_root: Path,
+) -> Path | None:
+    raw = raw_target.strip()
+    if not raw:
+        return None
+    lower = raw.lower()
+    if lower.startswith("cortex://"):
+        rel = _normalize_scheme_path(raw).lstrip("/")
+        return cortex_root / rel
+    if lower.startswith("cortex:"):
+        rel = raw.split(":", 1)[1].lstrip("/")
+        return cortex_root / rel
+    if lower.startswith("workspaces://"):
+        rel = _normalize_scheme_path(raw).lstrip("/")
+        return mount_root / rel
+    if lower.startswith("workspaces:"):
+        rel = raw.split(":", 1)[1].lstrip("/")
+        return mount_root / rel
+    if ":" in raw:
+        sandbox, _, path = raw.partition(":")
+        sandbox_key = sandbox.strip().lower()
+        rel = path.strip().lstrip("/")
+        if sandbox_key == "cortex":
+            return cortex_root / rel
+        if sandbox_key == "workspaces":
+            return mount_root / rel
+    rel = raw.lstrip("/")
+    repo_path = source_repo / rel
+    if repo_path.exists():
+        return repo_path
+    cortex_path = cortex_root / rel
+    if cortex_path.exists():
+        return cortex_path
+    return None
+
+
+def _landed_fs_write_uris(
+    manifest: EffectsManifest | None,
+    *,
+    source_repo: Path,
+    cortex_root: Path,
+) -> list[str]:
+    if manifest is None:
+        return []
+    from services.git_integration_worker.cursor_sdk_manifest import (
+        _normalize_offgit_uri,
+        manifest_fs_write_targets,
+        resolve_mount_root,
+    )
+
+    mount_root = resolve_mount_root(source_repo)
+    uris: list[str] = []
+    for sandbox, path in manifest_fs_write_targets(manifest):
+        lookup = f"{sandbox}:{path}" if sandbox else path
+        resolved = _resolve_fs_target_path(
+            lookup,
+            source_repo=source_repo,
+            cortex_root=cortex_root,
+            mount_root=mount_root,
+        )
+        if resolved is not None and resolved.exists():
+            uris.append(_normalize_offgit_uri(sandbox, path))
+    return uris
+
+
+def fs_write_landed(
+    manifest: EffectsManifest | None,
+    *,
+    source_repo: Path,
+    cortex_root: Path,
+) -> bool:
+    """True when a write-family fs manifest entry targets an existing path."""
+    return bool(
+        _landed_fs_write_uris(
+            manifest,
+            source_repo=source_repo,
+            cortex_root=cortex_root,
+        )
+    )
+
+
+def first_landed_fs_uri(
+    manifest: EffectsManifest | None,
+    *,
+    source_repo: Path,
+    cortex_root: Path,
+) -> str:
+    uris = _landed_fs_write_uris(
+        manifest,
+        source_repo=source_repo,
+        cortex_root=cortex_root,
+    )
+    return uris[0] if uris else ""
 
 
 def light_bounded_capture_status(

@@ -77,7 +77,8 @@ from .events import (
 )
 from .handoff import _resolve_packet_file, _workspaces_root
 
-_FRONTIER_DISPATCH_PIPELINE_ID = "frontier-dispatch"
+# renamed from frontier-dispatch (F-A, 2026-07-10)
+_CHAT_DISPATCH_PIPELINE_ID = "chat-dispatch"
 _TEAM_DISPATCH_PIPELINE_ID = "team-dispatch"
 
 
@@ -447,11 +448,31 @@ async def build_dispatch_body(
     effective_model = _resolve_pre_hydration_effective_model(
         req, request_id=request_id
     )
-    assert_model_carded(
-        effective_model,
-        request_id=request_id,
-        event_publisher=event_publisher,
-    )
+    # CC-only models have no Responses-native capability card; they route via
+    # chat-dispatch respond_cc (generate → /v1/chat/completions). Role-carrying
+    # rejects immediately (persona-free envelope only). Role-less skips the
+    # card gate so admission reaches the generate branch.
+    cc_only = is_chat_completions_only(effective_model)
+    if req.role is not None and cc_only:
+        raise emit_rejection(
+            request_id=request_id,
+            agent=req.role,
+            field="model",
+            reason=(
+                f"{effective_model!r} is a Chat Completions-only model — "
+                "unavailable on the OpenAI Responses API used by "
+                "role-carrying team_dispatch. Dispatch role-less via "
+                "chat-dispatch (pipeline_options.model) for the Chat "
+                "Completions branch, or choose a Responses-capable model."
+            ),
+            event_publisher=event_publisher,
+        )
+    if not cc_only:
+        assert_model_carded(
+            effective_model,
+            request_id=request_id,
+            event_publisher=event_publisher,
+        )
 
     inject_profile = _inject_profile_for_generate(req)
     code_touching = _code_touching_generate(req)
@@ -460,7 +481,10 @@ async def build_dispatch_body(
     )
     platform = _resolve_platform_for_generate(req)
 
-    if req.role is not None:
+    if cc_only:
+        # Generate-branch envelope is inline one-shot (no MCP tool loop).
+        mcp_enabled = False
+    elif req.role is not None:
         mcp_enabled = mcp_enabled_for_team_dispatch(
             effective_model,
             req.mcp,
@@ -538,7 +562,9 @@ async def build_dispatch_body(
     provider_mount_slugs: frozenset[str] = frozenset()
     caller_layer_c_ids: tuple[str, ...] = ()
     cursor_sdk_model = ModelId.parse(effective_model).backend_type == "cursor_sdk"
-    if effective_skills and not cursor_sdk_model:
+    # CC-only generate branch is persona-free / skills-free (llm_generate envelope).
+    # Skip partition — uncarded search-api models have no skills_mount_backend.
+    if effective_skills and not cursor_sdk_model and not cc_only:
         try:
             skill_partition = partition_skill_channels(
                 effective_skills,
@@ -812,7 +838,7 @@ async def build_dispatch_body(
             event_publisher=event_publisher,
         )
 
-    if corpus_inline_gated(effective_model):
+    if not cc_only and corpus_inline_gated(effective_model):
         corpus_result = inline_corpus_for_packet(
             _packet_text_for_invariants(req),
             budget_bytes=CORPUS_BODY_BUDGET_BYTES,
@@ -862,21 +888,6 @@ async def build_dispatch_body(
         explicit_model=req.model is not None,
         event_publisher=event_publisher,
     )
-    if is_chat_completions_only(effective_model):
-        raise emit_rejection(
-            request_id=request_id,
-            agent=req.role,
-            field="model",
-            reason=(
-                f"{effective_model!r} is a Chat Completions-only model — "
-                "it is unavailable on the OpenAI Responses API that "
-                "team_dispatch and frontier-dispatch pipeline steps use. "
-                f"Use llm_generate(model={effective_model!r}, messages=...) instead "
-                "(note: llm_generate has a narrower surface — no role, tools, "
-                "or transcript_id)."
-            ),
-            event_publisher=event_publisher,
-        )
     generation_options = dict(req.generation_options or {})
     if req.reasoning_effort is not None:
         generation_options.setdefault("reasoning_effort", req.reasoning_effort)
@@ -965,7 +976,7 @@ async def build_dispatch_body(
             )
 
     pipeline_id = (
-        _TEAM_DISPATCH_PIPELINE_ID if req.role else _FRONTIER_DISPATCH_PIPELINE_ID
+        _TEAM_DISPATCH_PIPELINE_ID if req.role else _CHAT_DISPATCH_PIPELINE_ID
     )
 
     if req.role:

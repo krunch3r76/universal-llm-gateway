@@ -87,6 +87,7 @@ def artifact_paths_for_closeout(
     cortex_uris: list[str],
     *,
     cortex_first: bool = False,
+    offgit_deliverable_uris: list[str] | None = None,
 ) -> list[str]:
     if cortex_first and cortex_uris:
         paths: list[str] = []
@@ -99,10 +100,18 @@ def artifact_paths_for_closeout(
                 seen.add(uri)
         if sidecar_ref not in seen:
             paths.append(sidecar_ref)
+        for uri in offgit_deliverable_uris or []:
+            if uri not in seen:
+                paths.append(uri)
+                seen.add(uri)
         return paths
     paths = [sidecar_ref]
     seen = {sidecar_ref}
     for uri in cortex_uris:
+        if uri not in seen:
+            paths.append(uri)
+            seen.add(uri)
+    for uri in offgit_deliverable_uris or []:
         if uri not in seen:
             paths.append(uri)
             seen.add(uri)

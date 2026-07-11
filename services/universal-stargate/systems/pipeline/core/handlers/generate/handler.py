@@ -403,8 +403,15 @@ class GenericGenerateHandler(BaseHandler):
             Validation error messages (empty when valid).
         """
         errors = []
-        if not step.model_ref and not step.model_requirements:
-            errors.append(f"Step '{step.id}' needs model_ref or model_requirements")
+        if (
+            not step.model_ref
+            and not step.model_requirements
+            and not step.get_domain_field("honor_options_model")
+        ):
+            errors.append(
+                f"Step '{step.id}' needs model_ref, model_requirements, "
+                "or honor_options_model"
+            )
         if not step.prompt_ref:
             errors.append(f"Step '{step.id}' missing prompt_ref")
         return errors

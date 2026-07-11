@@ -464,9 +464,13 @@ def register_pipeline_tools(mcp: FastMCP) -> None:
           ``result_delivery`` (``{bus_thread, bus_from_agent, bus_to_agent,
           bus_subject[, bus_brief_summary, bus_lifecycle]}`` — posts a
           pointer envelope at completion; receive then call ``op="result"``).
-          For role-based or direct frontier consults, prefer
-          ``team_dispatch`` (the handler returns a
-          redirect hint when called with ``pipeline_id="frontier-dispatch"``).
+          Direct role-less model one-shots are FIRST-CLASS here:
+          ``pipeline_id="chat-dispatch"`` (any frontier chat model via its
+          native endpoint; ``options.model`` required; text / tool /
+          structured output — not image/audio/video generation). For
+          ROLE-based consults prefer ``team_dispatch`` (role contracts,
+          default_model resolution, briefing assembly; the handler returns
+          a redirect hint when a role is passed to ``chat-dispatch`` raw).
 
         - ``"result"`` — fetch or short-block on async-dispatched pipeline
           result. Returns tracker shape: ``{execution_id, pipeline, status,

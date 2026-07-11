@@ -497,6 +497,8 @@ def resolve_closeout_capture_fields(
             cortex_root=cortex_root,
         )
         deviations = [divergence_reason] if divergence_reason else []
+        if deliverables_expected and manifest and _repo_has_shell_entry(manifest):
+            deviations.append("capture:shell_repo_writes_unverified")
         return capture_status, divergence_reason, deviations, manifest
     baseline_has_hashes = dirty_expected_hashes_available(baseline, files_expected)
     manifest = apply_surface_cross_checks(

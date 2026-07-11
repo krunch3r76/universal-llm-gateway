@@ -19,7 +19,7 @@ class UnknownPipelineOptionsError(PipelineError):
     """Raised by ``frontier_dispatch_v1`` when the caller supplies
     ``pipeline_options`` keys outside the handler's accepted set.
 
-    The raw ``frontier-dispatch`` path silently dropped unrecognized keys
+    The raw ``frontier-dispatch`` (now ``chat-dispatch``) path silently dropped unrecognized keys
     historically (e.g. top-level ``effort: \"high\"`` instead of the canonical
     ``generation_parameters.reasoning_effort``). That class of bug burned
     hours of agent debugging when reasoning levers appeared to be ignored.

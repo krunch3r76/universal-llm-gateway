@@ -244,7 +244,7 @@ Body is a JSON document:
 ```json
 {
   "execution_id": "...",
-  "pipeline": "frontier-dispatch",
+  "pipeline": "chat-dispatch",
   "status": "completed",
   "completed_at": "2026-04-19T00:00:10Z",
   "content": "...",
@@ -295,7 +295,7 @@ durability must re-dispatch after restart with the original request body.
 
 ## Frontier-Dispatch Pipeline
 
-One unified pipeline — `frontier-dispatch` — serves all frontier providers
+One unified pipeline — `chat-dispatch` — serves all frontier providers
 and all trAId personas. The pipeline routes directly to Stargate's
 provider-native endpoints (Anthropic messages, OpenAI/xAI responses, Google
 generateContent) via the in-process `CloudProxyClient` forwarder, runs a
@@ -307,7 +307,7 @@ Pipeline caller shape:
 
 ```json
 {
-  "pipeline_id": "frontier-dispatch",
+  "pipeline_id": "chat-dispatch",
   "pipeline_options": {
     "model": "openai/gpt-5.4",
     "role": "gatherer",
@@ -412,7 +412,7 @@ All five carry `provider`; the four non-hydrated signals carry
 
 ```
 pipelines.local/
-  frontier_dispatch/  v1/  frontier-dispatch-v1.yaml
+  frontier_dispatch/  v1/  chat-dispatch-v1.yaml
                       models.yaml     # empty — caller supplies model
 ```
 

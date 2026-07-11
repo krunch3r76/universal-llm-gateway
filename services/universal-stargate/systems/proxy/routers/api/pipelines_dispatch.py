@@ -47,47 +47,98 @@ router = APIRouter(tags=["pipelines-dispatch"])
 
 _MAX_WAIT_SECONDS = 60.0
 
-# Pipeline ID of the raw native-frontier dispatch path. Bare callers that reach
-# it are bypassing the persona/raw split at the canonical doors:
-# ``/api/v1/team/dispatch`` (persona) and ``/api/v1/frontier/dispatch`` (raw),
-# both of which set ``_endpoint_request_id`` on outgoing pipeline_options. We
-# attach a ``hint`` to the 202 envelope so callers see the right tool on the
-# response that returned ``execution_id``.
-_FRONTIER_DISPATCH_PIPELINE_ID = "frontier-dispatch"
+# Pipeline ID of the raw native chat-dispatch path (renamed from
+# frontier-dispatch, 2026-07-10, plan:model-dispatch-consolidation phase-1
+# fork F-A). ROLE-carrying callers that reach it bare are bypassing role
+# admission at the canonical door ``/api/v1/team/dispatch`` (which sets
+# ``_endpoint_request_id`` on outgoing pipeline_options); we attach a
+# ``hint`` to the 202 envelope so those callers see the right tool on the
+# response that returned ``execution_id``. Role-LESS one-shots are
+# first-class on this pipeline id — no redirect (reversal of the
+# 4765-flagged nudge: role admission adds nothing to a role-less call).
+_CHAT_DISPATCH_PIPELINE_ID = "chat-dispatch"
 _TEAM_GENERATE_HINT = (
     "role-based consults are best dispatched via `team_dispatch` — role "
     "contracts (allowed_models / allowed_options / mcp_required / "
     "capability_tier), default_model resolution, and birth + briefing "
-    'assembly are bypassed on the raw `pipeline(pipeline_id="frontier-dispatch")` '
+    'assembly are bypassed on the raw `pipeline(pipeline_id="chat-dispatch")` '
     "path."
-)
-_FRONTIER_GENERATE_HINT = (
-    "persona-free dispatches: agents use `team_dispatch(op=generate, "
-    "role=synthesizer, dispatch_thread_id=…)`; pipeline authors use "
-    "`POST /api/v1/frontier/dispatch` or "
-    '`pipeline(pipeline_id="frontier-dispatch")` with structured admission. '
-    'Bare `pipeline(pipeline_id="frontier-dispatch")` without '
-    "`_endpoint_request_id` skips the canonical admission gate."
 )
 
 
 def _canonical_dispatch_hint_for(dispatch: DispatchRequest) -> str | None:
     """Return the canonical-door hint when applicable, else ``None``.
 
-    Triggers iff the dispatch targets ``frontier-dispatch`` AND lacks the
-    ``_endpoint_request_id`` marker that canonical dispatch routes inject.
-    The hint branches on role presence: with ``role`` recommend MCP
-    ``team_dispatch``; without ``role`` recommend ``team_dispatch`` with
-    ``role=synthesizer`` or internal ``/api/v1/frontier/dispatch``.
+    Triggers iff the dispatch targets ``chat-dispatch``, carries a ``role``
+    in pipeline_options, AND lacks the ``_endpoint_request_id`` marker that
+    canonical dispatch routes inject — role admission is being bypassed.
+    Role-less direct one-shots are the endorsed shape on this pipeline id
+    and receive no hint.
     """
-    if dispatch.model != _FRONTIER_DISPATCH_PIPELINE_ID:
+    if dispatch.model != _CHAT_DISPATCH_PIPELINE_ID:
         return None
     opts = dispatch.pipeline_options or {}
     if opts.get("_endpoint_request_id"):
         return None
     if opts.get("role"):
         return _TEAM_GENERATE_HINT
-    return _FRONTIER_GENERATE_HINT
+    return None
+
+
+def _capability_knob_echo(pipeline_options: dict[str, Any]) -> dict[str, Any] | None:
+    """Minimal capabilities + knob_resolution echo when ``options.model`` present.
+
+    Additive F-D preview for raw ``/api/v1/pipelines/dispatch`` callers.
+    Returns ``None`` when model is absent (fixed-model pipelines stay
+    byte-identical). Never raises — card/catalog misses degrade to
+    inline-only / rejected knob projection.
+    """
+    raw_model = pipeline_options.get("model")
+    if not isinstance(raw_model, str):
+        return None
+    resolved = raw_model.strip()
+    if not resolved:
+        return None
+
+    from agent_seat.profiles import client_side_mcp_tool_loop_admitted
+    from llm_adapters.capability_dispatch import project_knob_resolution
+    from model_capabilities import CapabilityCardError
+
+    try:
+        tool_loop = client_side_mcp_tool_loop_admitted(resolved)
+    except CapabilityCardError:
+        tool_loop = False
+
+    gen_params = pipeline_options.get("generation_parameters")
+    effort: str | None = None
+    max_out: int | None = None
+    if isinstance(gen_params, dict):
+        raw_effort = gen_params.get("reasoning_effort")
+        if isinstance(raw_effort, str) and raw_effort.strip():
+            effort = raw_effort.strip()
+        raw_max = gen_params.get("max_tokens")
+        if isinstance(raw_max, int):
+            max_out = raw_max
+
+    knob = project_knob_resolution(
+        resolved_model=resolved,
+        requested_effort=effort,
+        requested_max_output=max_out,
+    )
+    return {
+        "capabilities": {
+            "resolved_model": resolved,
+            "inline_only": not tool_loop,
+            "tool_surface": "mcp" if tool_loop else "inline-only",
+        },
+        "knob_resolution": {
+            "value_kind": knob.get("value_kind"),
+            "reasoning_native": knob.get("reasoning_native"),
+            "status": knob.get("status"),
+            "parity": knob.get("parity"),
+            "notes": knob.get("notes"),
+        },
+    }
 
 
 class ResultDeliveryConfig(BaseModel):
@@ -374,6 +425,10 @@ async def dispatch_pipeline(
     hint = _canonical_dispatch_hint_for(dispatch)
     if hint is not None:
         response_body["hint"] = hint
+
+    echo = _capability_knob_echo(dispatch.pipeline_options or {})
+    if echo is not None:
+        response_body.update(echo)
 
     return JSONResponse(status_code=202, content=response_body)
 

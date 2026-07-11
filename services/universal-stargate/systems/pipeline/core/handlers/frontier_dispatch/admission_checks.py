@@ -221,10 +221,14 @@ def warn_caller_mcp_disabled(
 # caller-meaningful pipeline_options. ``stream`` is surfaced from the outer
 # request body (coerced at proxy ingress by ``_coerce_stream_flag`` and folded
 # into runtime_options by ``extract_runtime_options``) for the generate
-# handler's stream-passthrough branch. Frontier dispatch is non-streaming and
-# does not accept it as a caller option, so it must be excluded from the
-# unknown-key computation rather than rejected.
-_FRAMEWORK_INJECTED_RUNTIME_OPTION_KEYS: frozenset[str] = frozenset({"stream"})
+# handler's stream-passthrough branch. ``chat_completions_only`` is derived
+# at preparation from ``pipeline_options.model`` via ``is_chat_completions_only``
+# for chat-dispatch branch conditions (respond vs respond_cc). Frontier
+# dispatch is non-streaming and does not accept either as a caller option, so
+# they must be excluded from the unknown-key computation rather than rejected.
+_FRAMEWORK_INJECTED_RUNTIME_OPTION_KEYS: frozenset[str] = frozenset(
+    {"stream", "chat_completions_only"}
+)
 
 
 def reject_unknown_runtime_options(

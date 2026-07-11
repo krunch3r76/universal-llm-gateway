@@ -361,6 +361,13 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         ``role`` is required for generate/to_thread. Each role carries a default
         provider model used when ``model`` is omitted on those ops.
 
+        **No role? Different tool.** A role-LESS direct model one-shot does
+        not go through team_dispatch — it is first-class on the pipeline
+        surface: ``pipeline(op="async", pipeline_id="chat-dispatch",
+        pipeline_options={"model": ...}, messages=[...])`` (any frontier
+        chat model via its native endpoint; renamed from
+        ``frontier-dispatch``).
+
         **Contract (REQUIRED — generate/to_thread):** ``contract`` is REQUIRED
         on ``op="generate"`` and ``op="to_thread"``; there is NO derivation on
         these paths.         ``op="generate"`` accepts
