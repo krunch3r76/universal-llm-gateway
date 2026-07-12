@@ -134,16 +134,35 @@ class ScopeCoverage(BaseModel):
     total_indexed: int
 
 
+class ArticleStatusRow(BaseModel):
+    """Article metadata row surfaced on pipeline status reads."""
+
+    source_path: str
+    filename: str = ""
+    title: str = ""
+    authors: str = ""
+    venue: str = ""
+    published_date: str = ""
+    doi: str = ""
+    scope: str = "all"
+    content_hash: str = ""
+    subdirectory: str = ""
+
+
 class SourceStatusItem(BaseModel):
     """Pipeline state for one source file."""
 
     source_path: str
     pipeline_stage: PipelineStage
+    # Precise extraction_queue state when pipeline_stage == "queued", else None.
+    queue_state: str | None
     queue_position: int | None
     queue_attempts: int
     last_error: str | None
     indexed_at: str | None
     contextualized_chunks: int
+    file_exists: bool
+    article: ArticleStatusRow | None = None
 
 
 class SourceStatusResponse(BaseModel):

@@ -55,6 +55,54 @@ class _PropertyIndexPart09:
             "comments": _row_str(row[11]),
         }
 
+    def resolve_source_paths(
+        self,
+        *,
+        source_paths: list[str] | None = None,
+        arxiv_ids: list[str] | None = None,
+        filenames: list[str] | None = None,
+    ) -> list[str]:
+        """Resolve status-query identifiers to canonical source_path values."""
+        resolved: list[str] = []
+        seen: set[str] = set()
+
+        def add(path: str) -> None:
+            if path and path not in seen:
+                seen.add(path)
+                resolved.append(path)
+
+        for source_path in source_paths or []:
+            add(source_path)
+
+        conn = self._ensure_conn()
+        for filename in filenames or []:
+            for row in conn.execute(
+                "SELECT source_path FROM articles WHERE filename = ?",
+                (filename,),
+            ).fetchall():
+                add(_row_str(row[0]))
+            suffix = f"/{filename}"
+            for row in conn.execute(
+                "SELECT source FROM indexed_sources WHERE source LIKE ?",
+                (f"%{suffix}",),
+            ).fetchall():
+                path = _row_str(row[0])
+                if path.endswith(filename):
+                    add(path)
+
+        for arxiv_id in arxiv_ids or []:
+            bare = arxiv_id.strip()
+            normalized = bare.replace("/", "-")
+            for pattern in (f"%{bare}%", f"%arxiv-{normalized}%"):
+                for row in conn.execute(
+                    "SELECT source_path FROM articles"
+                    " WHERE source_path LIKE ? OR filename LIKE ?",
+                    (pattern, pattern),
+                ).fetchall():
+                    add(_row_str(row[0]))
+
+        return resolved
+
     def find_latest_article_by_filename(
         self,
         filename: str,

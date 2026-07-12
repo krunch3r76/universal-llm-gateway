@@ -174,7 +174,7 @@ def build_manifest(
                     "count": len(skills),
                     "hint": (
                         f"notes/system/boot/skills-index-{agent}.md "
-                        "(LIVE boot writes; see cortex_boot skills_index_ref)"
+                        "(LIVE brief writes; see cortex_brief skills_index_ref)"
                     ),
                 }
             )

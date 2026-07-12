@@ -83,7 +83,7 @@ Seed: `entity_create` + `relationship_create child_of`. Refs: skill `entity-life
 # inject-channel block key: liveness-block
 _LIVENESS_BLOCK = """\
 ## Git posture & liveness — disk + cortex canonical; git ≠ project index
-A change is LIVE only when LOADED into the running process at its last deploy/restart — git commit/master is neither necessary nor sufficient. Before claiming a surface changed, ask: (1) WHICH substrate? (2) did its LOAD EVENT fire? (3) what does the LIVE PROBE say? — service behavior→`sync_restart`+observability · MCP surface→mcp restart+boot manifest · routing→`/v1/models` · agent-context→`cortex_boot`. ¬ infer existence/canonicality/done-ness from git; commit is NOT a completion gate.
+A change is LIVE only when LOADED into the running process at its last deploy/restart — git commit/master is neither necessary nor sufficient. Before claiming a surface changed, ask: (1) WHICH substrate? (2) did its LOAD EVENT fire? (3) what does the LIVE PROBE say? — service behavior→`sync_restart`+observability · MCP surface→mcp restart+boot manifest · routing→`/v1/models` · agent-context→`cortex_brief`. ¬ infer existence/canonicality/done-ness from git; commit is NOT a completion gate.
 Detail: skill `git-posture` (`agent_skill:git-posture`). Tag: `[universal:git-posture]`."""
 
 # Compact index — full playbook is skill `consult-routing` (current superset,

@@ -64,6 +64,7 @@ from .type_schemas import (
     validate_required_attributes,
     validate_surface_visibility,
 )
+from .type_taxonomy import CATEGORY_SPECIES, category_species
 from .workflow_state import (
     emit_todo_closure_gap_if_needed,
     validate_workflow_state,
@@ -241,6 +242,7 @@ def list_entities_impl(
     conn: sqlite3.Connection,
     *,
     entity_type: str | None = None,
+    category: str | None = None,
     workflow_state: str | None = None,
     limit: int = 50,
     for_agent: str | None = None,
@@ -248,13 +250,32 @@ def list_entities_impl(
     content_hash: str | None = None,
     fields: list[str] | None = None,
     include_non_active: bool = False,
-) -> dict[str, list[dict[str, object]]]:
+) -> dict[str, object]:
+    if category is not None:
+        species = category_species(category)
+        if species is None:
+            known = sorted(CATEGORY_SPECIES.keys())
+            return {"error": f"Unknown category {category!r}; known: {known}"}
+        if entity_type is not None:
+            if entity_type not in species:
+                return {"items": []}
+        else:
+            placeholders = ", ".join("?" * len(species))
+            entity_type_filter = f"type IN ({placeholders})"
+            species_params: list[str] = sorted(species)
+    else:
+        entity_type_filter = None
+        species_params = []
+
     clauses: list[str] = []
     params: list[object] = []
 
     if entity_type:
         clauses.append("type = ?")
         params.append(entity_type)
+    elif entity_type_filter:
+        clauses.append(entity_type_filter)
+        params.extend(species_params)
 
     if workflow_state is not None:
         clauses.append("workflow_state = ?")

@@ -96,7 +96,7 @@ def _render_briefing(
     """
     today = datetime.now(UTC).astimezone(_LA)
     parts: list[str] = [
-        f"# Boot Briefing — {agent} — {today.strftime('%Y-%m-%dT%H:%M:%S%z')}",
+        f"# Briefing — {agent} — {today.strftime('%Y-%m-%dT%H:%M:%S%z')}",
     ]
 
     if skills:

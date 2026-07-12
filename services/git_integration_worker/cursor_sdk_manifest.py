@@ -47,7 +47,7 @@ _REPO_SHELL_OP = "shell"
 _MCP_OP = "mcp"
 _VORTEX_SERVER = "user-vortex"
 
-_CORTEX_TOOLS = frozenset({"cortex", "cortex_boot"})
+_CORTEX_TOOLS = frozenset({"cortex", "cortex_brief"})
 _CORTEX_WRITE_OPS = frozenset({"assert", "supersede", "observe", "friction"})
 _ASSERTION_IDENTITY_RE = re.compile(r"^assertion:(\d+)$")
 _AGENT_BUS_TOOLS = frozenset({"agent_bus", "agent_bus_read"})

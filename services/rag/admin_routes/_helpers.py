@@ -27,6 +27,59 @@ from services.rag.models import PipelineStage
 logger = logging.getLogger(__name__)
 
 
+def _article_status_row(row: dict[str, str] | None):
+    from services.rag.models import ArticleStatusRow
+
+    if row is None:
+        return None
+    return ArticleStatusRow(
+        source_path=row.get("source_path", ""),
+        filename=row.get("filename", ""),
+        title=row.get("title", ""),
+        authors=row.get("authors", ""),
+        venue=row.get("venue", ""),
+        published_date=row.get("published_date", ""),
+        doi=row.get("doi", ""),
+        scope=row.get("scope", "all"),
+        content_hash=row.get("content_hash", ""),
+        subdirectory=row.get("subdirectory", ""),
+    )
+
+
+def _build_source_status_item(source_path: str, prop_idx: PropertyIndex):
+    from services.rag.models import SourceStatusItem
+
+    data = prop_idx.get_source_item_data(source_path)
+    stage, queue_state, _ = _get_pipeline_stage(source_path, prop_idx)
+    queue_row = data.get("queue_row")
+    return SourceStatusItem(
+        source_path=source_path,
+        pipeline_stage=stage,
+        queue_state=queue_state,
+        queue_position=queue_row["position"] if queue_row else None,
+        queue_attempts=queue_row["attempts"] if queue_row else 0,
+        last_error=queue_row["last_error"] if queue_row else None,
+        indexed_at=data.get("indexed_at"),
+        contextualized_chunks=data["contextualized_chunks"],
+        file_exists=Path(source_path).is_file(),
+        article=_article_status_row(prop_idx.get_article_row(source_path)),
+    )
+
+
+def _resolve_source_status_paths(
+    prop_idx: PropertyIndex,
+    *,
+    sources: list[str] | None,
+    arxiv_ids: list[str] | None,
+    filenames: list[str] | None,
+) -> list[str]:
+    return prop_idx.resolve_source_paths(
+        source_paths=sources,
+        arxiv_ids=arxiv_ids,
+        filenames=filenames,
+    )
+
+
 def _get_pipeline_stage(
     source_path: str, prop_idx: PropertyIndex
 ) -> tuple[PipelineStage, str | None, int]:

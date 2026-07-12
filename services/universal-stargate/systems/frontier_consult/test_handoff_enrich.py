@@ -19,7 +19,7 @@ from .handoff_packet_enrich import (
 _THIN_WEB_PACKET = """\
 ---
 active_project_tag: project:test
-cortex_boot_confirmed: true
+cortex_brief_confirmed: true
 related_thread_ids: ["2235", "2229"]
 todo: todo:sample-todo
 contract: consult

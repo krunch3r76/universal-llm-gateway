@@ -36,7 +36,7 @@ _REPO = Path(__file__).resolve().parent.parent.parent
 if str(_REPO / "libs") not in sys.path:
     sys.path.insert(0, str(_REPO / "libs"))
 
-from claude_bundles.resolver import CLAUDE_BUNDLE_SLUGS  # noqa: E402
+from claude_bundles.resolver import UI_TARGET_SLUGS  # noqa: E402
 from claude_bundles.skills_api import validate_bundle_dir  # noqa: E402
 from claude_bundles.skills_ui import (  # noqa: E402
     DEFAULT_CDP_URL,
@@ -77,7 +77,7 @@ def _resolve_slugs(args: argparse.Namespace) -> list[str] | None:
     if args.slugs:
         return _parse_slugs(args.slugs)
     if args.all:
-        return list(CLAUDE_BUNDLE_SLUGS)
+        return list(UI_TARGET_SLUGS)
     if args.gap:
         return list(_load_gap_slugs())
     return None
@@ -130,7 +130,7 @@ def main() -> int:
     parser.add_argument("--bundles-dir", metavar="DIR")
     parser.add_argument("--zip-dir", metavar="DIR")
     scope = parser.add_mutually_exclusive_group()
-    scope.add_argument("--all", action="store_true", help="All CLAUDE_BUNDLE_SLUGS (~90)")
+    scope.add_argument("--all", action="store_true", help="All UI_TARGET_SLUGS (31)")
     scope.add_argument("--gap", action="store_true", help="39-skill gap list")
     parser.add_argument("--slugs", help="Comma-separated slug subset")
     parser.add_argument("--limit", type=int)

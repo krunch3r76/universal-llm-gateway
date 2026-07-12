@@ -117,14 +117,17 @@ class AuthMiddleware:
             return None
         return token.strip()
 
-    def _build_www_authenticate_header(self) -> str | None:
-        """Return the 'WWW-Authenticate' header value for 401 responses, including OAuth resource metadata hint if OAuth is enabled. The format is 'Bearer realm="mcp", resource_metadata="<URL>"'."""
+    def _build_www_authenticate_header(self, request_path: str = "") -> str | None:
+        """Return WWW-Authenticate for 401s, with path-scoped OAuth metadata when dual-endpoint."""
         if self._oauth_service is None:
             return None
-        return (
-            'Bearer realm="mcp", '
-            f'resource_metadata="{self._oauth_service.resource_metadata_url}"'
-        )
+        from dual_endpoint_http import is_mcp_endpoint_path  # noqa: PLC0415
+
+        if is_mcp_endpoint_path(request_path):
+            meta_url = self._oauth_service.resource_metadata_url_for(request_path)
+        else:
+            meta_url = self._oauth_service.resource_metadata_url
+        return f'Bearer realm="mcp", resource_metadata="{meta_url}"'
 
     def _resolve_profile(self, auth_header: str) -> str:
         """Map static bearer tokens to MCP request profiles.
@@ -363,7 +366,7 @@ class AuthMiddleware:
             reason="no_valid_token",
         )
         headers: dict[str, str] = {}
-        if www_authenticate := self._build_www_authenticate_header():
+        if www_authenticate := self._build_www_authenticate_header(path):
             headers["WWW-Authenticate"] = www_authenticate
         response = JSONResponse(
             {"error": "Unauthorized"}, status_code=401, headers=headers

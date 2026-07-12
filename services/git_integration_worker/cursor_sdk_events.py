@@ -355,6 +355,60 @@ def emit_sdk_worker_timeout(
     )
 
 
+@event_factory
+def FrontierSdkWorkerOrphaned(  # noqa: N802
+    dispatch_id: str,
+    thread_id: str,
+    execution_id: str,
+    resolved_model: str,
+    timeout_s: float,
+    bridge_aborted: bool,
+) -> Event:
+    return Event(
+        signal="frontier.sdk.worker.orphaned",
+        payload={
+            "dispatch_id": dispatch_id,
+            "thread_id": thread_id,
+            "execution_id": execution_id,
+            "resolved_model": resolved_model,
+            "timeout_s": timeout_s,
+            "bridge_aborted": bridge_aborted,
+            "terminal_status": "failed",
+        },
+        scope="node",
+    )
+
+
+def emit_sdk_worker_orphaned(
+    *,
+    dispatch_id: str,
+    thread_id: str,
+    execution_id: str,
+    resolved_model: str,
+    timeout_s: float,
+    bridge_aborted: bool,
+) -> None:
+    _emit(
+        FrontierSdkWorkerOrphaned(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            execution_id=execution_id,
+            resolved_model=resolved_model,
+            timeout_s=timeout_s,
+            bridge_aborted=bridge_aborted,
+        )
+    )
+    logger.error(
+        "cursor sdk worker orphaned: dispatch_id=%s thread_id=%s model=%s "
+        "timeout_s=%s bridge_aborted=%s",
+        dispatch_id,
+        thread_id,
+        resolved_model,
+        timeout_s,
+        bridge_aborted,
+    )
+
+
 def emit_sdk_worker_failed(
     *,
     dispatch_id: str,

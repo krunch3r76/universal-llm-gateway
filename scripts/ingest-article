@@ -165,7 +165,11 @@ def main() -> int:
     parser.add_argument(
         "--index",
         action="store_true",
-        help="Trigger immediate indexing via POST /index (requires RAG running)",
+        help=(
+            "Trigger immediate indexing via POST /index (requires RAG running). "
+            "Single-file/out-of-band only — batch cursor-sdk dispatches must omit "
+            "this flag and let the file-watcher index async (friction 23842)."
+        ),
     )
     parser.add_argument(
         "--stargate-url",

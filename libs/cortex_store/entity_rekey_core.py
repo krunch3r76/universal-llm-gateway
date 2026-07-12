@@ -15,6 +15,7 @@ from .entity_aliases import sync_entity_aliases
 from .entity_id_norm import canonicalize_entity_id
 from .entity_id_registry import _ENTITY_ID_REFERENCES
 from .salience import compute_all_salience
+from .type_taxonomy import MATTER_SPECIES
 
 _NOW_FMT = "%Y-%m-%dT%H:%M:%SZ"
 
@@ -362,6 +363,8 @@ def entity_retype_impl(
     conn: sqlite3.Connection,
     entity_id: str,
     new_type: str,
+    *,
+    force: bool = False,
 ) -> dict[str, Any]:
     """Change an entity's type, re-prefixing its id under the new type.
 
@@ -382,6 +385,17 @@ def entity_retype_impl(
                 "detail": f"Entity {entity_id!r} is already type {new_type!r}",
                 "hint": "entity_retype changes the type; use entity_rekey for a "
                 "same-type slug change.",
+            },
+        )
+    if not force and old_type in MATTER_SPECIES and new_type != old_type:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            {
+                "error": "matter_genus_retype_blocked",
+                "entity_type": old_type,
+                "hint": "genus is immutable at birth (matter-playbook §4.0); "
+                "use entity_merge for duplicate handles or force=true for "
+                "deliberate remediation",
             },
         )
     old_id = str(old_row["id"])

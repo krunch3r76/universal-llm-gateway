@@ -1,0 +1,69 @@
+{
+  "profile": "matter_doctrine",
+  "version": 1,
+  "sections": [
+    {
+      "section_id": "halt_canary",
+      "title": "Halt canary",
+      "order": 1,
+      "core": true,
+      "derivation": {"primitive": "doctrine_rows", "params": {"kind": "halt_canary"}},
+      "watched_set": {"entity_scope": "root_subgraph"},
+      "repair_template": "doctrine_rows(root, halt_canary)"
+    },
+    {
+      "section_id": "disambiguation",
+      "title": "Disambiguation tables",
+      "order": 2,
+      "core": true,
+      "derivation": {"primitive": "doctrine_rows", "params": {"kind": "disambiguation"}},
+      "watched_set": {"entity_scope": "root_subgraph"},
+      "repair_template": "doctrine_rows(root, disambiguation)"
+    },
+    {
+      "section_id": "decision_structures",
+      "title": "Decision structures",
+      "order": 3,
+      "core": true,
+      "derivation": {"primitive": "assertions", "params": {}},
+      "watched_set": {"entity_scope": "root_subgraph"},
+      "repair_template": "decision_assertions(root)"
+    },
+    {
+      "section_id": "counterparty_map",
+      "title": "Counterparty-position map",
+      "order": 4,
+      "core": true,
+      "derivation": {"primitive": "walk_subgraph", "params": {"hops": 1}},
+      "watched_set": {"entity_scope": "root_subgraph"},
+      "repair_template": "walk_subgraph(root, hops=1)"
+    },
+    {
+      "section_id": "channel_discipline",
+      "title": "Channel discipline",
+      "order": 5,
+      "core": true,
+      "derivation": {"primitive": "doctrine_rows", "params": {"kind": "channel"}},
+      "watched_set": {"entity_scope": "root_subgraph"},
+      "repair_template": "doctrine_rows(root, channel)"
+    },
+    {
+      "section_id": "verification_gate",
+      "title": "Verification gate",
+      "order": 6,
+      "core": true,
+      "derivation": {"primitive": "doctrine_rows", "params": {"kind": "verification"}},
+      "watched_set": {"entity_scope": "root_subgraph"},
+      "repair_template": "doctrine_rows(root, verification)"
+    },
+    {
+      "section_id": "documents_evidence",
+      "title": "Documents in evidence",
+      "order": 7,
+      "core": true,
+      "derivation": {"primitive": "walk_subgraph", "params": {"hops": 1}},
+      "watched_set": {"entity_scope": "root_subgraph", "edge_types": ["keystone_of"]},
+      "repair_template": "evidence_docs(root)"
+    }
+  ]
+}

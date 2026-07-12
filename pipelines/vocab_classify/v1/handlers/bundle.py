@@ -106,6 +106,39 @@ def filter_noise_terms(terms: list[str]) -> list[str]:
     return clean
 
 
+def _truncate_sample_retrieval(
+    sample: dict[str, Any],
+    *,
+    max_chunks: int,
+    max_chunk_chars: int,
+) -> dict[str, Any]:
+    """Keep only lean chunk text so local-slot prompts stay under budget."""
+    chunks_raw = sample.get("chunks")
+    if not isinstance(chunks_raw, list):
+        return {"chunks": []}
+    lean: list[dict[str, str]] = []
+    for item in chunks_raw[:max_chunks]:
+        if isinstance(item, str):
+            text = item
+        elif isinstance(item, dict):
+            text = str(
+                item.get("text")
+                or item.get("content")
+                or item.get("chunk")
+                or item.get("body")
+                or ""
+            )
+        else:
+            continue
+        text = " ".join(text.split())
+        if not text:
+            continue
+        if len(text) > max_chunk_chars:
+            text = text[: max_chunk_chars - 1].rstrip() + "…"
+        lean.append({"text": text})
+    return {"chunks": lean}
+
+
 # ── Handler ──────────────────────────────────────────────────────────────────
 
 
@@ -134,15 +167,25 @@ class VocabClassifyBundleV1Handler:
         if len(s_out) != n:
             raise ValueError(f"bundle: length mismatch hints={n} samples={len(s_out)}")
 
+        max_terms = int(step.get_domain_field("max_terms", 40))
+        max_chunk_chars = int(step.get_domain_field("max_chunk_chars", 600))
+        max_chunks = int(step.get_domain_field("max_chunks", 2))
+
         merged: list[dict[str, Any]] = []
         for i in range(n):
             base = dict(rows[i])
             raw_terms = base.get("terms") or []
             if isinstance(raw_terms, list):
-                base["terms"] = filter_noise_terms(
+                cleaned = filter_noise_terms(
                     [str(t).strip() for t in raw_terms if str(t).strip()]
                 )
-            base["sample_retrieval"] = s_out[i].json or {}
+                base["terms"] = cleaned[:max_terms]
+            sample = s_out[i].json if isinstance(s_out[i].json, dict) else {}
+            base["sample_retrieval"] = _truncate_sample_retrieval(
+                sample,
+                max_chunks=max_chunks,
+                max_chunk_chars=max_chunk_chars,
+            )
             merged.append(base)
 
         payload = {"scopes": merged}

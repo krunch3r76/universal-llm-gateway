@@ -103,12 +103,30 @@ class OAuthService:
     def registration_endpoint(self) -> str:
         return f"{self._config.issuer}{self._config.registration_path}"
 
-    def build_protected_resource_metadata(self) -> dict[str, object]:
+    def build_protected_resource_metadata(
+        self, *, resource_path: str | None = None
+    ) -> dict[str, object]:
+        """RFC 9728 protected-resource metadata.
+
+        When ``resource_path`` is set (e.g. ``mcp/life`` from
+        ``/.well-known/oauth-protected-resource/{resource_path}``), advertise
+        that exact resource URL so dual-endpoint OAuth clients bind correctly.
+        """
+        if resource_path and resource_path.strip():
+            resource = f"{self._config.issuer}/{resource_path.strip().lstrip('/')}"
+        else:
+            resource = self._config.resource_server_url
         return {
-            "resource": self._config.resource_server_url,
+            "resource": resource,
             "authorization_servers": [self._config.issuer],
             "bearer_methods_supported": ["header"],
         }
+
+    def resource_metadata_url_for(self, mcp_path: str) -> str:
+        """Return path-scoped resource-metadata URL for a MCP mount (``/mcp/life``)."""
+        suffix = mcp_path.strip().lstrip("/")
+        base = f"{self._config.issuer}{self._config.resource_metadata_path}"
+        return f"{base}/{suffix}" if suffix else base
 
     def build_authorization_server_metadata(self) -> dict[str, object]:
         return {
@@ -124,19 +142,21 @@ class OAuthService:
         }
 
     def register_dynamic_client(self, payload: dict[str, object]) -> dict[str, object]:
-        """Register a public OAuth client for MCP connector onboarding.
+        """Register an OAuth client for MCP connector onboarding (RFC 7591).
 
-        Dynamic registration is intentionally narrow: PKCE public clients only,
-        authorization-code flow only, and redirect hosts constrained by config.
+        Accepts public PKCE clients (``token_endpoint_auth_method=none``) and
+        confidential clients (``client_secret_post``). Claude.ai picks the latter
+        when AS metadata advertises both — reject-only-``none`` breaks Connect.
+        Authorization-code + PKCE only; redirect hosts constrained by config.
         """
         redirect_uris = self._parse_redirect_uris(payload.get("redirect_uris"))
         token_auth_method = str(
             payload.get("token_endpoint_auth_method", "none") or "none"
         )
-        if token_auth_method != "none":
+        if token_auth_method not in {"none", "client_secret_post"}:
             raise OAuthError(
                 "invalid_client_metadata",
-                "token_endpoint_auth_method must be none",
+                "token_endpoint_auth_method must be none or client_secret_post",
             )
 
         grant_types = payload.get("grant_types", ["authorization_code"])
@@ -154,28 +174,35 @@ class OAuthService:
             )
 
         client_id = f"dyn-{secrets.token_urlsafe(24)}"
+        client_secret: str | None = None
+        if token_auth_method == "client_secret_post":
+            client_secret = secrets.token_urlsafe(32)
         self._store.save_client(
             RegisteredClient(
                 client_id=client_id,
-                client_secret=None,
+                client_secret=client_secret,
                 redirect_uris=redirect_uris,
             )
         )
         record(
             "mcp.oauth.dynamic_client.registered",
             client_id=client_id,
+            token_endpoint_auth_method=token_auth_method,
             redirect_hosts=sorted(
                 {urlparse(uri).hostname or "" for uri in redirect_uris}
             ),
         )
-        return {
+        registration: dict[str, object] = {
             "client_id": client_id,
             "client_id_issued_at": int(time.time()),
             "redirect_uris": redirect_uris,
             "grant_types": ["authorization_code"],
             "response_types": ["code"],
-            "token_endpoint_auth_method": "none",
+            "token_endpoint_auth_method": token_auth_method,
         }
+        if client_secret is not None:
+            registration["client_secret"] = client_secret
+        return registration
 
     def validate_authorization_request(
         self,

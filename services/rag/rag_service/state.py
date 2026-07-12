@@ -100,8 +100,12 @@ async def _maybe_update_corpus_hints() -> None:
     if _property_index is None:
         return
     try:
+        from services.rag.vocabulary._scope_helpers import configured_scopes_map
+
+        cs_map = configured_scopes_map(_config) if _config is not None else None
         await update_corpus_hints(
             _property_index,
+            configured_scopes=cs_map,
             event_bus=_event_bus,
         )
     except Exception as e:

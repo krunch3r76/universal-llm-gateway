@@ -228,11 +228,20 @@ async def get_rag_indexing_status(
 
 @router.get("/rag/source-status")
 async def get_source_status(
-    sources: list[str] = Query(...),
+    sources: list[str] | None = Query(None),
+    arxiv_ids: list[str] | None = Query(None),
+    filenames: list[str] | None = Query(None),
     _current_user: dict[str, object] = Depends(get_auth_dependency),
 ) -> dict[str, Any]:
     """Proxy source pipeline status query to the RAG service."""
     rag_url = resolve_rag_base_url()
+    params: dict[str, list[str]] = {}
+    if sources:
+        params["sources"] = sources
+    if arxiv_ids:
+        params["arxiv_ids"] = arxiv_ids
+    if filenames:
+        params["filenames"] = filenames
     return await _proxy_rag_request(
         rag_url=rag_url,
         method="GET",
@@ -241,5 +250,5 @@ async def get_source_status(
         action_name="source status",
         unavailable_detail="RAG source-status unavailable via Stargate passthrough.",
         invalid_payload_detail="Invalid RAG source-status response payload.",
-        params={"sources": sources},
+        params=params or None,
     )

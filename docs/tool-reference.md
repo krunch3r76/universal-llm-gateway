@@ -394,7 +394,7 @@ subsequent turns — no need to re-search the same tool.
 
 The demoted set covers pipelines, dispatch surfaces (team/frontier/grok),
 service control (`manage`), observability/debugging, data (`sql`, `rag`,
-`web_fetch`, `web_search`), session boot (`cortex_boot`, `boot_inspect`),
+`web_fetch`, `web_search`), session boot (`cortex_brief`, `boot_inspect`),
 code quality (`quality_gate`), private domain tools (`tools.local/`), plus
 low-level filesystem helpers used internally by the `fs` wrapper. Use
 `tool_search` to enumerate — the manifest is auto-derived at startup and
@@ -890,7 +890,7 @@ Query model load/busy/loading status across all Stargate nodes.
 | `model_id` | Optional specific model. Omit for all. |
 | `status_filter` | Optional: loaded, busy, loading, available (all-models only) |
 
-## cortex_boot
+## cortex_brief
 
 Unified boot briefing for session start. Seat-scoped: each `{family}-{platform}` slug gets tailored content.
 
@@ -910,7 +910,7 @@ All parameters optional. **Default seat when nothing is passed:** `family=claude
 | `profile` | — | `"dispatch"` for dispatch-scoped inject |
 | `packet_text` | — | Packet text for `<invariants>` skill parse when `profile="dispatch"` |
 
-**Web lead:** `cortex_boot(agent="claude-web", role="lead")`.
+**Web lead:** `cortex_brief(agent="claude-web", role="lead")`.
 
 Bound ULG coding sessions may **skip** boot when task + skill preload suffice — see
 skill `consult-routing` (doc-only guidance; no backing `agent_skill` entity for `web-boot-lead`).
@@ -934,7 +934,7 @@ audit dumps; MCP response uses `briefing_card` + `sections_available`.
 
 Read-only inspection surface for boot payload auditing and profile diffs.
 
-`boot_inspect` runs the same fetch/render graph as `cortex_boot`, but in inspect
+`boot_inspect` runs the same fetch/render graph as `cortex_brief`, but in inspect
 mode (`mode="inspect"`): no operational-context file write, no audit dump file
 write, and no `mcp.cortex.boot*` event emission.
 
@@ -942,7 +942,7 @@ write, and no `mcp.cortex.boot*` event emission.
 
 | Arg | Default | Description |
 |---|---|---|
-| `agent` | — | Seat slug (same semantics as `cortex_boot`); use with `family`/`platform` when omitted |
+| `agent` | — | Seat slug (same semantics as `cortex_brief`); use with `family`/`platform` when omitted |
 | `family` | `claude` | Primary family when `agent` absent |
 | `platform` | `cursor` | Primary platform when `agent` absent |
 | `transcript_id` | `""` | Optional continuation transcript for primary profile |
@@ -956,7 +956,7 @@ write, and no `mcp.cortex.boot*` event emission.
 | `operational_context_inline` | Full rendered operational context text (inline, never written in inspect mode) |
 | `operational_context_ref` | Always `null` in inspect mode |
 | `audit_dump_path` | Always `null` in inspect mode |
-| `injected_artifacts` | Same manifest schema as `cortex_boot`; `operational_context` artifact is `mode: inline` in inspect mode |
+| `injected_artifacts` | Same manifest schema as `cortex_brief`; `operational_context` artifact is `mode: inline` in inspect mode |
 | `diff` | Present only when `diff_with` is set. Contains `artifacts_only_in_primary`, `artifacts_only_in_secondary`, and `artifacts_with_delta` (`kind: inline_canonical_text` or `sha256_mismatch`) |
 
 ## rag
@@ -972,10 +972,32 @@ RAG knowledge retrieval and index management.
 | `list_scopes` | — | List scopes with prefixes and coverage |
 | `coverage` | — | Per-scope indexed file counts |
 | `upsert_article` | url (REQUIRED), title?, scope? | Index article |
+| `source_status` | source_paths?, arxiv_ids?, filenames? | Per-source pipeline stage (read). At least one identifier required. Aliases: `article_status`, `pipeline_status`. |
 | `delete_source` | source_hash (REQUIRED) | Delete indexed source |
 | `refresh_hints` | scope? | Regenerate discriminative vocabulary hints |
 | `orphaned_articles` | — | Find articles not in any scope |
 | `delete_directory` | directory (REQUIRED) | Delete all indexed content under a path |
+
+### Pipeline status (`source_status` / `article_status` / `pipeline_status`)
+
+Read per-source ingest progress after download/register or during incident triage.
+Do **not** infer per-file progress from global `/indexing/status` or gate health alone.
+
+| `pipeline_stage` | Meaning |
+|---|---|
+| `registered` | Metadata and/or filesystem only; not yet embedded in ChromaDB |
+| `queued` | Extraction/contextualization pending — inspect `queue_state` |
+| `chunked` | Embedded in ChromaDB but not yet contextualized |
+| `contextualized` | Fully indexed; ready to query |
+
+When `pipeline_stage == "queued"`, `queue_state` is one of:
+`ready`, `in_flight`, `cooling_off`, `capacity_blocked`, `exhausted`.
+
+Example:
+```
+rag(op="source_status", arguments='{"arxiv_ids": ["2402.16667"]}')
+rag(op="source_status", arguments='{"source_paths": ["/path/to/paper.pdf"]}')
+```
 
 ## quality_gate
 

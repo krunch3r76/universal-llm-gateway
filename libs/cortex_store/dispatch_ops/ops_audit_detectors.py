@@ -85,6 +85,10 @@ from ._detectors.todo import (
     detect_todo_implementation_seed_incomplete,
 )
 from ._detectors.todo_density_risk import detect_todo_implement_readiness_risk
+from ._detectors.views import (
+    detect_playbook_stale,
+    detect_view_core_hash_mismatch,
+)
 from ._detectors.workflow_coherence import (
     detect_decision_deprecated_not_terminal,
     detect_decision_workflow_state_incoherent,
@@ -145,6 +149,8 @@ GRAPH_ONLY_KINDS = {
     # missing_handoff retired — handoffs are optional artifacts for manual
     # copy-paste at end of chat; absence is not a gap (assertion 8384,
     # session web-2026-05-04-1057).
+    # Derived-view Tier-0 staleness (todo:cortex-spec-derived-views-contract).
+    "playbook_stale",
 }
 
 FS_TOUCHING_KINDS = {
@@ -160,6 +166,8 @@ FS_TOUCHING_KINDS = {
     "landed_claim_not_on_master",
     # Staging provenance in durable docs / entity attrs (friction 20345).
     "provenance_cites_staging",
+    # Derived-view hand-edited core detection (todo:cortex-spec-derived-views-contract).
+    "view_core_hash_mismatch",
 }
 
 INFO_KINDS = {
@@ -219,6 +227,8 @@ def get_all_detectors() -> dict[str, Any]:
         "advice_failure_recurrence": detect_advice_failure_recurrence,
         "entity_vocabulary_grammar": detect_entity_vocabulary_grammar,
         "entity_structural_antipattern": detect_entity_structural_antipattern,
+        "playbook_stale": detect_playbook_stale,
+        "view_core_hash_mismatch": detect_view_core_hash_mismatch,
     }
 
 
@@ -312,6 +322,8 @@ __all__ = [
     "detect_todo_implement_readiness_risk",
     "detect_done_entity_unsubstantiated_band_mismatch",
     "detect_unregistered_document_in_markdown",
+    "detect_playbook_stale",
+    "detect_view_core_hash_mismatch",
     "get_all_detectors",
     "run_detectors",
     # Condition stewardship

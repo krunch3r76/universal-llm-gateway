@@ -11,7 +11,7 @@ read subset and carrying ``ToolAnnotations(readOnlyHint=True)`` so the harness
 auto-approves reads. All ops delegate to the same ``_*_dispatch`` impls in
 ``agent_bus.py`` — no logic is duplicated. Mutating ops stay on ``agent_bus``.
 
-Claude/web surface only: registered on the main ``/mcp`` FastMCP instance.
+Claude/web surface only: registered on the main life/code FastMCP instance.
 """
 
 from __future__ import annotations

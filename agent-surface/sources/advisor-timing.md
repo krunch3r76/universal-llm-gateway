@@ -26,7 +26,7 @@ preflight exactly like a consult handoff.
 **Trigger**: you are about to route ANY work off-seat — consult, review,
 second opinion, hand off reasoning, **or hand off a bound implementation**.
 
-1. If `cortex_boot` ran this session: the briefing card **Consult routing gate**
+1. If `cortex_brief` ran this session: the briefing card **Consult routing gate**
    (`_CONSULT_ROUTING_GATE`) is **binding**, not orientation fluff. Skipping
    `consult-routing.md` before a dispatch is a protocol violation — the same
    severity as skipping the packet protocol reads.
@@ -160,7 +160,7 @@ bouncing between two incompatible approaches.
 | Use handoff for thin implement ping | `agent_bus(post, to=claude-cursor, …)` + spec/tags |
 | Poll `pipeline(op=result)` after handoff | `agent_bus(wait)` from `poll_hint` — handoff has no `execution_id` |
 | Override operator `team_dispatch` with `agent_bus`, citing the thin-ping row | Operator-named transport wins; obey it or stop and ask — never silently substitute |
-| `cursor-implement` as the first hop on a bug with open root cause / design (friction 13571 → thread 1377) | investigate + decide (`cursor-consult`/`web-consult`) → distill attrs at investigate close → execute default `cursor-sdk` + `source_ref`; `cursor-implement` = fallback |
+| `cursor-implement` as the first hop on a bug with open root cause / design (friction 13571 → thread 1377) | recon/investigate first — code-lane `judgment_required` → autonomous spine (`decision:autonomous-work-item-spine`); attended `web-consult`/`cursor-consult` = opt-in/escalate; then distill attrs → execute default `cursor-sdk` + `source_ref`; `cursor-implement` = fallback |
 | Composer / `cursor-implement` authors its own dispatch-ready spec (`cortex://notes/system/specs/{slug}.md`) | Reasoning tier (`web-consult` / `cursor-consult` / Opus) authors spec + todo seed; mechanical tier executes — never the reverse (`handoff-packet-authoring.md` § Dispatch lifecycle) |
 | Open a codified bug report with redesign / graph-walk before investigate/fix/report | Run the bug cycle first; secondary findings belong in the closeout |
 | Treat a codified bug report as file+friction only (no fix) | Bound implement: investigate, fix, verify, report |

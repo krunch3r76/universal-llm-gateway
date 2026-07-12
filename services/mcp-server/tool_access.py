@@ -12,7 +12,13 @@ Also enforces a hard server-side allowlist for the dedicated
 
 from __future__ import annotations
 
-from typing import Any, Final
+from typing import Any, Final, Literal
+
+from _derive import derive_cortex_surface
+from cortex_gate_events import McpCortexOpRejected
+from mcp_events import record
+
+Surface = Literal["life", "code"]
 
 CURSOR_SAFE_PROFILE: Final[str] = "cursor_safe"
 DEFAULT_PROFILE: Final[str] = "default"
@@ -28,6 +34,78 @@ GROK_CONNECTOR_ALLOWED_TOOLS: Final[frozenset[str]] = frozenset(
     {"cortex", "agent_bus_read"}
 )
 GROK_CONNECTOR_CORTEX_OPS: Final[frozenset[str]] = frozenset({"stats"})
+
+_LifeSpecCache: Any | None = None
+_CodeSpecCache: Any | None = None
+
+
+def reset_endpoint_op_cache() -> None:
+    """Test helper — invalidate module-level surface spec caches."""
+    global _LifeSpecCache, _CodeSpecCache
+    _LifeSpecCache = None
+    _CodeSpecCache = None
+
+
+def _surface_spec(surface: Surface):
+    global _LifeSpecCache, _CodeSpecCache
+    if surface == "life":
+        if _LifeSpecCache is None:
+            _LifeSpecCache = derive_cortex_surface("life")
+        return _LifeSpecCache
+    if _CodeSpecCache is None:
+        _CodeSpecCache = derive_cortex_surface("code")
+    return _CodeSpecCache
+
+
+def _overflow_hint(family: str, op: str) -> str:
+    if family == "admin":
+        return (
+            f"Op {op!r} is admin-family — not admitted on this surface. "
+            "Use dispatch/tool_search overflow on the code seat."
+        )
+    return (
+        f"Op {op!r} ({family} family) is not on this surface's cortex enum. "
+        "Use dispatch/tool_search overflow on the code seat."
+    )
+
+
+def endpoint_op_allowed(
+    surface: str,
+    tool_name: str,
+    op: str,
+) -> tuple[bool, dict[str, Any] | None]:
+    """Return (allowed, rejection_payload) for a cortex op on a surface."""
+    if tool_name != "cortex":
+        return True, None
+
+    op = str(op or "").strip()
+    if not op:
+        return True, None
+
+    if surface not in ("life", "code"):
+        return True, None
+
+    spec = _surface_spec(surface)  # type: ignore[arg-type]
+    family = spec.families.get(op)
+    if family is None:
+        return True, None
+
+    if op in spec.ops_enum:
+        return True, None
+
+    payload: dict[str, Any] = {
+        "family": family,
+        "surface": surface,
+        "status_code": 422,
+        "hint": _overflow_hint(family, op),
+    }
+    record(
+        McpCortexOpRejected(surface=surface, family=family, op=op).signal,
+        surface=surface,
+        family=family,
+        op=op,
+    )
+    return False, payload
 
 
 def is_dispatch_tool_allowed(profile: str, tool_name: str) -> bool:

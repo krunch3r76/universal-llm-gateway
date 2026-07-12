@@ -1,4 +1,4 @@
-"""Manifest of artifacts injected into agent context at cortex_boot.
+"""Manifest of artifacts injected into agent context at cortex_brief.
 
 The manifest is the canonical answer to 'what bytes reach the agent at
 boot?' Each InjectedArtifact carries mode, source, bytes, sha256, and
@@ -65,7 +65,7 @@ class FetchRecord:
 # ---------------------------------------------------------------------------
 
 _HEADER_TS_RE = re.compile(
-    r"(# Boot Briefing — )\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{4}"
+    r"(# Briefing — )\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{4}"
 )
 _RELATIVE_AGE_RE = re.compile(r"\b\d+[mhd] ago\b")
 # Matches "(80d)" and "(**2d OVERDUE**)" — deadline_line() uses ** for overdue

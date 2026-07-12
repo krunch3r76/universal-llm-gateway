@@ -10,11 +10,11 @@ API ``type: "mcp"``) bypass this entirely — the provider connects back to
 the MCP server and runs its own tool loop.
 
 System-prompt boot directive: when the first system message contains a
-``cortex_boot(...)`` call with primary params (``agent`` and/or
+``cortex_brief(...)`` call with primary params (``agent`` and/or
 ``family`` / ``platform`` / optional ``role``), the executor pre-calls
 the MCP tool and replaces the directive span with the briefing card so
 the model starts with operational context rather than an opaque
-instruction. Resolution precedence matches the MCP ``cortex_boot`` tool:
+instruction. Resolution precedence matches the MCP ``cortex_brief`` tool:
 ``agent`` overrides explicit ``family`` / ``platform`` when the slug
 parses as ``{family}-{platform}``.
 """
@@ -336,12 +336,12 @@ class McpToolExecutor:
         return json.dumps(_restart_error_payload())
 
     async def _resolve_boot_directive(self, messages: list[dict[str, Any]]) -> None:
-        """Pre-execute ``cortex_boot(...)`` when primary params appear in system prompt.
+        """Pre-execute ``cortex_brief(...)`` when primary params appear in system prompt.
 
         Supported directive shapes mirror the MCP tool's primary params:
         ``agent="<seat-slug>"`` (hyphenated slugs), and/or
         ``family="..."``, ``platform="..."``, optional ``role="..."``.
-        Unrecognized or param-less ``cortex_boot(...)`` spans are left unchanged.
+        Unrecognized or param-less ``cortex_brief(...)`` spans are left unchanged.
         """
         if not messages:
             return
@@ -355,7 +355,7 @@ class McpToolExecutor:
         matched_span, directive_kwargs = parsed
         boot_args = boot_tool_arguments(directive_kwargs)
         logger.info("McpToolExecutor: resolving boot directive %s", boot_args)
-        result = await self.execute_tool("cortex_boot", boot_args)
+        result = await self.execute_tool("cortex_brief", boot_args)
         try:
             boot_data = json.loads(result)
             briefing = boot_data.get("briefing_card", result)

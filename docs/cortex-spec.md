@@ -176,6 +176,8 @@ Two independent time axes:
 Supersession ≠ validity-end: superseding corrects the *record*; setting
 `valid_until` marks that the *world* changed. These are different events.
 
+Views inherit both axes at document scale — see §12.5.
+
 ### 3.3 Credibility Ψ (v2.5)
 
 `credibility` is **external** trust — how much we trust *where a claim came
@@ -329,6 +331,8 @@ traversal can follow it (e.g. `requires`, `depends_on`). The substrate is
 determined by which API created the link (`relationship_create` vs
 `edge_create`) and which table a query reads, not by the type string alone.
 
+Structural `derived_from` registration for derived views is specified in §12.1.
+
 ---
 
 ## 9. Reasoning edge model
@@ -438,6 +442,8 @@ Behavioral conformance is validated against the postulate suite — see
 [`docs/agm-compliance-report.md`](agm-compliance-report.md) (25/25 tests;
 Recovery intentionally rejected).
 
+Document-scale refresh conformance rides a KM-grounded postulate suite — §12.8.
+
 ---
 
 ## 11. Forward-looking provenance (v3)
@@ -456,9 +462,140 @@ Generation is async and non-blocking: if it fails, the assertion still commits;
 the projection is backfilled during consolidation. The full contract for these
 fields is in the provenance-substrate spec (§4.7).
 
+Document-scale derivation provenance is specified in §12.4.
+
 ---
 
-## 12. Version history
+## 12. Derived views (v3.1)
+
+A *view* is a registered `document:` entity that is a derived projection of graph
+state — deterministic **core** (linear verbalization: canonically serialized,
+hashed) + cited **narrative** (model-authored; every non-obvious claim cites
+`[assertion:N]` or a source URI). A registered view is invalid without a derivation
+recipe + refresh contract (P1). Views are STORED/materialized with staleness
+detection; salience remains computed (G8; consistent with DQ8). Materialization is
+an economics decision — the matter stage gate (S0/S1/S2, see
+`matter-playbook-lifecycle`) *is* view-selection policy, formally (P1). The
+cortex-spec owns the artifact class, storage grain, op contract, detector taxonomy,
+stamp/PROV shapes, refresh postulates, and profile registry-as-data;
+`matter-playbook-lifecycle` keeps lifecycle *procedure* (when to render, stage
+gates, insight routing, ring/RESUME).
+
+### 12.1 Registration & storage grain
+
+`derived_from` structural relationship (document → root; registered type; mirrors
+the §9 reasoning-edge type per §8's dual-substrate note) + document attributes
+`view_profile`, `derivation_recipe`, `derived_from_snapshot {max_assertion_id,
+as_of}`, `view_rev`, `core_hash`, `section_stamps`, `prior_revision_uri`. Index
+profiles are selector-scoped and may omit the root edge. Note: `derived_from`
+participates in `impact`'s propagating union (§9) — changing a root surfaces its
+views as impacted.
+
+### 12.2 Graph-canonical vs view-authored facts
+
+**Graph-canonical** (must resolve to assertions/edges; views render with
+citation): deadlines/dates · amounts/figures · counterparty names/roles/contacts ·
+case/work-order/reference numbers · dispositions + closing assertions · commitments
++ `resolution_status` · entity/thread/document identifiers · mode/stage.
+
+**View-authored** (narrative): synthesis, emphasis, ordering rationale, strategy
+framing, lesson narratives — cited per the grammar.
+
+**Core fields** (deterministic, hashed): handle id · mode · stage · ring id · case
+ids · view doc ids · `imprint_rev` · `derived_from_snapshot` · open-front rows
+{item, next move, owner, deadline, source assertion ids} · deadline rows · cast
+rows {entity id, role} · ruled-out rows {item, closing assertion id} ·
+open-commitment rows {assertion id, due}.
+
+### 12.3 View profiles
+
+Each derivation row doubles as the section's **watched set** (Tier-0 localization
++ anti-amnesia boundary); the render op records watched sets in the derivation
+stamp.
+
+**Charter** (`view_profile=matter_charter`):
+
+| Section | Derivation source (= watched set) |
+|---|---|
+| Header block (core) | handle card: id, genus, mode, stage, ring, cases, `imprint_rev`, snapshot |
+| ▶ FRONT LINE | open-front assertions on handle/cases + deadline entities + open commitments (`resolution_status=pending`) |
+| TIMELINE SPINE | dated assertions (`valid_from`) + event chains on cases, ordered |
+| ✗ RULED OUT / disagreements | superseded chains + closing assertions + `contradicts` (reasoning) |
+| CAST & ROUTING | `involves`/`correspondence_with`/`employed_by` edges → person:/organization: cards + role labels (walk_subgraph 1-hop) |
+| ⚠ LESSONS & FRICTIONS | live lesson assertions on the handle |
+| OPEN THREADS | pending commitments + unanswered counterparty items (`resolution_status=pending`) |
+| DOCTRINE pointer | `has_playbook` → doctrine view (never inlined) |
+| ENTITY MAP | walk_subgraph(handle, 1–2 hops) — every row a live id |
+| Narrative layer | authored synthesis over the above; every claim cites; persona-free |
+
+**Doctrine** (`view_profile=matter_doctrine`): halt-canary table · disambiguation
+tables · decision structures (owner/threshold/fallback) · counterparty-position map ·
+channel discipline · verification gate · documents-in-evidence keystones — all
+matter-specific rows graph-cited; stale rows are Tier-0 (v1) / Tier-1 (v2)
+findings.
+
+**Index** (`view_profile=matter_index`): deterministic row set over a selector
+(e.g. active cases/handles): {entity id, name, stage/status, next deadline, view
+doc id} — core-only profile (no narrative layer).
+
+### 12.4 Derivation provenance
+
+Per-instance qualified stamp
+`{used: [derived_from_snapshot, watched-set refs, prior_revision_uri], activity:
+{op: view_render, recipe: recipe:{profile}/v{n}, mode, agent, session_id},
+generated: {document_id, view_rev, core_hash, content_hash}, time}` — PROV-DM
+qualified-derivation shape. Granularity policy: per-instance stamp +
+per-section watched-set stamps **by default**; per-row source-assertion ids on core
+rows only. `content_hash` re-stamps on every state-changing render.
+
+### 12.5 Bitemporal view versioning
+
+Each render is a versioned instance chained by revision; system-time axis ships v1
+(archived independent instances at
+`notes/system/views/revisions/{doc-slug}/rev-{N}.md`; `read_asof(as_of_system)` =
+instance lookup); valid-time axis (`as_of_valid` graph replay) is a named deferred
+extension.
+
+### 12.6 `view_render` op contract
+
+`view_render(document_id, mode ∈ {register, refresh, full, read_asof}, root_id,
+view_profile, narrative_sections, as_of_system, as_of_valid, agent, session_id)`.
+
+The op renders/repairs the deterministic CORE only; narrative is preserved
+verbatim on refresh. Typed errors: `document_not_found`, `view_not_registered`,
+`view_root_required`, `unknown_view_profile`, `recipe_profile_mismatch`,
+`anti_amnesia_violation`, `citation_grammar_violation`, `as_of_valid_unsupported`,
+`as_of_instance_not_found`.
+
+### 12.7 Staleness detection (two-tier)
+
+Tier-0 structural = snapshot high-water + citation-liveness + core-hash,
+**localized per section via watched sets**; finding payload
+`{view_span, verdict, source_ids}` rides `detail` in the registry finding shape;
+surfaced via the audit channel. Tier-1 claim-level (NLI/QA over narrative) = v2,
+named interface `view_narrative_unsupported`, deliberately unimplemented.
+
+### 12.8 Refresh semantics as a postulate suite
+
+KM revision (record was wrong → repair rendering in place) vs update (world changed
+→ row moves between sections); Independence/anti-amnesia postulate (a refresh
+triggered by change to source A must not alter content whose watched set excludes
+A); localized repair default, full re-render on broad mismatch; typed
+Create/Update/Delete deltas with tombstone propagation on retire/rekey/merge (P7).
+Conformance is behavioral (test suite) with deliberate rejections documented.
+
+### 12.9 Architecture naming
+
+Assertions + supersession = the event-sourced write model; views = read models
+(CQRS split named); per-matter journal = single-publisher append-only event log;
+charter = **checkpointed fold** over (journal + graph); refresh = replay of the
+delta since `derived_from_snapshot`; full replay reserved for recovery; session
+close = the batch-commit/checkpoint boundary (hook implementation owned by
+`todo:session-close-playbook-hook`, cited not built).
+
+---
+
+## 13. Version history
 
 | Version | Changes |
 |---|---|
@@ -469,3 +606,4 @@ fields is in the provenance-substrate spec (§4.7).
 | v2.4 | Write-time enforcement, commitment tracking, ingest tooling |
 | v2.5 | Status-trait normalization Phase 0 (migration 050): nullable `lifecycle` / `confidence_band` / `confidence_score` / `adoption` entity traits + assertion `credibility`, shadow-populated, `status` still read-authoritative; per-type `type_confidence_fields` registry (migration 047). See `cortex:notes/system/specs/cortex-status-trait-normalization-spec-2026-06-02.md` and confidence-derivation/v2 policy. |
 | v3.0 | URI scheme, BYO-storage, prospective indexing, event extraction, 2 new edge types |
+| v3.1 | Derived views: view artifact class, view_render op, Tier-0 staleness detectors, derived_from structural registration, PROV qualified stamps + revision chain, view profiles as data recipes |

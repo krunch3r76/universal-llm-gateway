@@ -26,6 +26,7 @@ from .db import check_cortex_db, cortex_conn, run_migrations
 from .routes import (
     assertions,
     boot,
+    close_draft,
     deadlines,
     dispatch,
     documents,
@@ -35,6 +36,7 @@ from .routes import (
     extraction_runs,
     gated,
     graph,
+    graph_imprint,
     reaper,
     reflective_journal,
     relationships,
@@ -235,6 +237,8 @@ def create_app(*, db_path: str | None = None) -> FastAPI:
     app.include_router(resolve.router)
     app.include_router(tags.router)
     app.include_router(graph.router)
+    app.include_router(graph_imprint.router)
+    app.include_router(close_draft.router)
     app.include_router(subgraph.router)
     app.include_router(reaper.router)
     app.include_router(reflective_journal.router)

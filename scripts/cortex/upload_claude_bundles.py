@@ -23,7 +23,7 @@ if str(_REPO / "libs") not in sys.path:
 
 import httpx  # noqa: E402
 
-from claude_bundles.resolver import CLAUDE_BUNDLE_SLUGS  # noqa: E402
+from claude_bundles.resolver import UI_TARGET_SLUGS  # noqa: E402
 from claude_bundles.skills_api import (  # noqa: E402
     _API_BASE,
     build_slug_index,
@@ -123,7 +123,7 @@ def _resolve_targets(args: argparse.Namespace) -> list[str]:
         return list(PILOT_SLUGS)
     if args.gap:
         return list(GAP_SLUGS)
-    return list(CLAUDE_BUNDLE_SLUGS)
+    return list(UI_TARGET_SLUGS)
 
 
 def _validate_targets(root: Path, targets: list[str], *, skip_invalid: bool = False) -> list[str]:

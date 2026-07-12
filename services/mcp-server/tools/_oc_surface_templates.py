@@ -165,14 +165,15 @@ and file / Drive upload. This set is Google-native and differs from other web
 platforms — do not assume the grok.com or Anthropic builtin sets apply here.
 
 **MCP vortex catalog — UNCONFIRMED on this platform.** Whether the Gemini app
-exposes remote-MCP / connector access to the `user-vortex` `/mcp` surface has not
-been verified end-to-end. `tool_surface: mcp` on this seat is ASPIRATIONAL until a
-round-trip MCP call is confirmed under the gemini-web slug
+exposes remote-MCP / connector access to vortex dual endpoints (`/mcp/life`,
+`/mcp/code`) has not been verified end-to-end. `tool_surface: mcp` on this seat
+is ASPIRATIONAL until a round-trip MCP call is confirmed under the gemini-web slug
 (`todo:gemini-web-mcp-wiring-verify` / shared verification arc). Until then, treat
 vortex tool access as candidate, not guaranteed.
 
 **If MCP is available** (verify before relying on it):
-- The shared surface is `user-vortex` `/mcp` — no Gemini-specific MCP endpoint exists.
+- Live mounts are `/mcp/life` and `/mcp/code` only — bare `/mcp` is defunct (404).
+  No Gemini-specific MCP endpoint exists.
 - Load deferred tools before calling:
 ```
 tool_search(query="agent_bus")   # → enables agent_bus(tool="fetch", ...)
@@ -184,7 +185,7 @@ tool_search(query="pipeline")    # → enables pipeline(op="result", ...)
 - bounded determinate task → team_dispatch(op=generate, role=cursor-sdk, dispatch_thread_id="<thread>", contract=light-bounded|pure-mechanical|implement, packet_path?=…)
 - deprecated: op=handoff,seat=cursor-sdk normalizes to generate with a warning
 
-On the shared `/mcp` surface `team_dispatch` is primary — call directly.
+On the code surface (`/mcp/code`) `team_dispatch` is primary — call directly.
 Optional `model=` must be `provider/model` (bare name = 404). A build harness
 is not a model picker.
 

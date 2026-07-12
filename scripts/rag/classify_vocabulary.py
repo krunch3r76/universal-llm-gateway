@@ -92,9 +92,30 @@ async def _main_async(args: argparse.Namespace) -> int:
         return 1
 
     exclude = set(args.exclude or [])
-    scope_names = sorted(
-        s for s in hints_map if s not in exclude and hints_map.get(s, "").strip()
+    configured = set(config.scopes)
+    # Pipeline rag_corpus_hints only iterates rag.yaml scopes — orphan hints
+    # (present in corpus_hints but absent from config) cannot be classified.
+    orphan_hints = sorted(
+        s
+        for s in hints_map
+        if s not in configured
+        and s not in exclude
+        and (hints_map.get(s) or "").strip()
     )
+    scope_names = sorted(
+        s
+        for s in hints_map
+        if s in configured
+        and s not in exclude
+        and (hints_map.get(s) or "").strip()
+    )
+
+    if orphan_hints:
+        print(
+            f"WARNING: {len(orphan_hints)} hint scope(s) missing from rag.yaml "
+            f"(skipped): {', '.join(orphan_hints)}",
+            file=sys.stderr,
+        )
 
     if not scope_names:
         print("No scopes to classify.", file=sys.stderr)
@@ -174,8 +195,19 @@ async def _main_async(args: argparse.Namespace) -> int:
             )
             rc |= 1
         else:
+            print(
+                f"\nPOST local classify ({len(local_scopes)} scope(s))"
+                f" via {local_model} …",
+                flush=True,
+            )
             rc |= await _run_pipeline(local_scopes, "local", local_model, args.force)
     if frontier_scopes:
+        model_label = frontier_model or "frontier_classify"
+        print(
+            f"\nPOST frontier classify ({len(frontier_scopes)} scope(s))"
+            f" via {model_label} …",
+            flush=True,
+        )
         rc |= await _run_pipeline(
             frontier_scopes, "frontier", frontier_model, args.force
         )

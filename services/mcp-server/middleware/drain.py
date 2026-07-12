@@ -183,7 +183,9 @@ class DrainMiddleware:
                 await _send_json(send, status=200, payload={"status": "draining"})
                 return
 
-            if path == "/mcp" and method == "POST":
+            from dual_endpoint_http import is_mcp_endpoint_path  # noqa: PLC0415
+
+            if is_mcp_endpoint_path(path) and method == "POST":
                 body = await _read_body(receive)
                 jsonrpc_id, mcp_method, tool_name = _parse_jsonrpc_request(body)
                 record(
@@ -201,7 +203,7 @@ class DrainMiddleware:
                 )
                 return
 
-            # Non-/mcp, non-/health request during drain — close politely.
+            # Non-MCP-endpoint, non-/health request during drain — close politely.
             await _send_json(
                 send,
                 status=503,

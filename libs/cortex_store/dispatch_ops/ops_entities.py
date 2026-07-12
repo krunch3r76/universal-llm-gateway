@@ -332,6 +332,7 @@ def _entity_get_batch(
 
 def _op_entities(
     type: str | None = None,
+    category: str | None = None,
     workflow_state: str | None = None,
     limit: int | None = None,
     query: str | None = None,
@@ -346,6 +347,7 @@ def _op_entities(
         return _list_entities_impl(
             conn,
             entity_type=type,
+            category=category,
             workflow_state=workflow_state,
             limit=limit or 50,
             query=query,
@@ -702,6 +704,7 @@ def _op_entity_rekey(
 def _op_entity_retype(
     entity_id: str | None = None,
     new_type: str | None = None,
+    force: bool = False,
     **_: object,
 ) -> dict[str, Any]:
     if not entity_id:
@@ -710,7 +713,7 @@ def _op_entity_retype(
         return {"error": "new_type is required"}
     try:
         with WRITE_LOCK, cortex_conn() as conn:
-            result = entity_retype_impl(conn, entity_id, new_type)
+            result = entity_retype_impl(conn, entity_id, new_type, force=force)
     except HTTPException as exc:
         return _http_error_dict(exc)
     logger.info("cortex entity_retype: %s -> %s", entity_id, result["new_id"])

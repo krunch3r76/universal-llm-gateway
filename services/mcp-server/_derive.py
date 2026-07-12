@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from universal_logging import get_logger
 
@@ -222,6 +223,162 @@ def derive_claude_manifest(
         names_sha256=names_sha256,
     )
     return manifest
+
+
+# ── Cortex per-surface op partition (Option C) ────────────────────────────────
+
+Surface = Literal["life", "code"]
+_CORTEX_CENSUS_SIZE = 72
+_FOL_MARKERS = frozenset({"∀", "∃", "⟹", "¬", "∈"})
+
+
+@dataclass(frozen=True)
+class CortexSurfaceSpec:
+    """Derived cortex op partition for one MCP endpoint surface."""
+
+    ops_enum: tuple[str, ...]
+    families: dict[str, str]
+    tier1_rows: dict[str, str]
+
+
+def _reconciled_fol(text: str) -> bool:
+    stripped = text.strip()
+    return bool(stripped) and any(m in stripped for m in _FOL_MARKERS)
+
+
+def _curated_cortex_rows(data: dict[str, Any]) -> list[dict[str, Any]]:
+    return [t for t in data.get("tools", []) if t.get("domain") == "cortex"]
+
+
+def _build_cortex_families(data: dict[str, Any]) -> dict[str, str]:
+    """Classify every census op exactly once; raise on conflict or gap."""
+    cf = data.get("cortex_families") or {}
+    uncurated: dict[str, list[str]] = cf.get("uncurated") or {}
+    families: dict[str, str] = {}
+
+    for fam, ops in uncurated.items():
+        for op in ops:
+            if op in families:
+                raise RuntimeError(
+                    f"Cortex census duplicate op {op!r} in uncurated family {fam!r}"
+                )
+            families[op] = fam
+
+    for row in _curated_cortex_rows(data):
+        op = row["dispatcher_call_shape"]["dispatch_value"]
+        row_family = row.get("family")
+        if not row_family:
+            continue
+        if op in families and families[op] != row_family:
+            raise RuntimeError(
+                f"Cortex family conflict for {op!r}: "
+                f"uncurated={families[op]!r} curated={row_family!r}"
+            )
+        families[op] = row_family
+
+    if len(families) != _CORTEX_CENSUS_SIZE:
+        raise RuntimeError(
+            f"Cortex census size mismatch: got {len(families)}, "
+            f"expected {_CORTEX_CENSUS_SIZE}"
+        )
+    return families
+
+
+def _endpoint_visibility(row: dict[str, Any]) -> list[str] | None:
+    vis = row.get("endpoint_visibility")
+    if vis is None:
+        return None
+    if isinstance(vis, list):
+        return vis
+    return None
+
+
+def _fol_by_op(data: dict[str, Any]) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for row in _curated_cortex_rows(data):
+        op = row["dispatcher_call_shape"]["dispatch_value"]
+        fol = (row.get("fol_descriptor") or "").strip()
+        if fol:
+            out[op] = fol
+    return out
+
+
+def _visibility_by_op(data: dict[str, Any]) -> dict[str, list[str]]:
+    out: dict[str, list[str]] = {}
+    for row in _curated_cortex_rows(data):
+        op = row["dispatcher_call_shape"]["dispatch_value"]
+        vis = _endpoint_visibility(row)
+        if vis is not None:
+            out[op] = vis
+    return out
+
+
+def _ops_enum_for_surface(
+    surface: Surface,
+    *,
+    families: dict[str, str],
+    fol_by_op: dict[str, str],
+    defaults: dict[str, list[str]],
+    visibility_by_op: dict[str, list[str]],
+) -> tuple[str, ...]:
+    admitted: list[str] = []
+    for op in sorted(families):
+        fam = families[op]
+        if fam == "admin":
+            continue
+        endpoints = visibility_by_op.get(op) or defaults.get(fam, [])
+        if surface == "life" and "life" not in endpoints:
+            continue
+        if surface == "code" and "code" not in endpoints:
+            continue
+        if surface == "life" and fam == "write" and not _reconciled_fol(
+            fol_by_op.get(op, "")
+        ):
+            continue
+        admitted.append(op)
+    return tuple(admitted)
+
+
+def derive_cortex_surface(
+    surface: Surface,
+    canonical_yaml_path: Path | None = None,
+) -> CortexSurfaceSpec:
+    """Derive per-surface cortex op enum + family map from canonical.yaml.
+
+    Init-time only. Enforces 72-op census completeness and family conflicts.
+    """
+    path = canonical_yaml_path or _DEFAULT_CANONICAL
+    data = _load_registry(path)
+    families = _build_cortex_families(data)
+    cf = data.get("cortex_families") or {}
+    defaults: dict[str, list[str]] = cf.get("defaults") or {}
+    fol_by_op = _fol_by_op(data)
+    visibility_by_op = _visibility_by_op(data)
+
+    ops_enum = _ops_enum_for_surface(
+        surface,
+        families=families,
+        fol_by_op=fol_by_op,
+        defaults=defaults,
+        visibility_by_op=visibility_by_op,
+    )
+
+    tier1_rows = {
+        op: fol
+        for op, fol in fol_by_op.items()
+        if families.get(op) in {"write", "session"} and _reconciled_fol(fol)
+    }
+
+    _logger.info(
+        "cortex_surface_boot surface=%s op_count=%d",
+        surface,
+        len(ops_enum),
+    )
+    return CortexSurfaceSpec(
+        ops_enum=ops_enum,
+        families=dict(families),
+        tier1_rows=tier1_rows,
+    )
 
 
 def get_claude_manifest(

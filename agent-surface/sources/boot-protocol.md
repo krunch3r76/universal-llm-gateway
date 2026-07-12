@@ -8,9 +8,9 @@ alwaysApply: false
 ## Mode Selection
 
 Every IDE-resident Cursor agent operates in one of three modes per session. Select the
-`agent` parameter for `cortex_boot` based on the active model family:
+`agent` parameter for `cortex_brief` based on the active model family:
 
-| Active model family | `cortex_boot(agent=...)` value |
+| Active model family | `cortex_brief(agent=...)` value |
 |---|---|
 | Anthropic Claude (Sonnet / Opus) | `"claude-cursor"` |
 | OpenAI GPT family | `"gpt-cursor"` |
@@ -21,7 +21,7 @@ Every IDE-resident Cursor agent operates in one of three modes per session. Sele
 |---|---|---|
 | **Code** (default) | Engineering tasks, debugging, code review | Minimal — MCP tool reference only |
 | **Continue** | Opening message contains `transcript:cursor-YYYY-MM-DD-HHmm` | One targeted transcript read — Session Summary only |
-| **Universal** | User says "universal mode" or opens with non-engineering topic | Full — `cortex_boot(agent=<family>)` per the table above + `notes/system/shared/boot-sequence.md` |
+| **Universal** | User says "universal mode" or opens with non-engineering topic | Full — `cortex_brief(agent=<family>)` per the table above + `notes/system/shared/boot-sequence.md` |
 
 ## Continue Mode — Lightweight Transcript Resume (MANDATORY)
 
@@ -30,7 +30,7 @@ When the opening message contains a `transcript:cursor-YYYY-MM-DD-HHmm` ID:
 Execute the Continue Mode protocol from `mcp-tool-awareness_ws.mdc` — three
 parallel `CallMcpTool` reads (session summary, activity journal, recent transcripts).
 
-**Do NOT**: call `cortex_boot`, load full transcripts, or read the boot narrative.
+**Do NOT**: call `cortex_brief`, load full transcripts, or read the boot narrative.
 **Cost**: ~5-10KB total. Fast enough to not waste context before work starts.
 
 This mode activates on the transcript ID alone — no `@cortex-essentials.mdc`
@@ -45,19 +45,19 @@ On the **first MCP tool call** beyond basic `fs` ops, if you need deeper tool
 knowledge, read the canonical reference:
 
 ```
-CallMcpTool(server="user-vortex", toolName="fs", arguments={
+CallMcpTool(server="vortex-code", toolName="fs", arguments={
   "op": "md_read", "sandbox": "workspaces",
   "path": "universal-llm-gateway/docs/tool-reference.md", "section": "fs"
 })
 ```
 
 **Skip if**: the session already has tool context from a prior turn, or from
-`cortex_boot`, or from reading `docs/tool-reference.md` directly.
+`cortex_brief`, or from reading `docs/tool-reference.md` directly.
 
 ## Universal Mode — Slim Boot
 
 When Universal Mode activates:
-1. `cortex_boot(agent="claude-cursor")` (or appropriate seat slug) —
+1. `cortex_brief(agent="claude-cursor")` (or appropriate seat slug) —
    returns `briefing_card` (~3-5KB), `sections_available` manifest, and
    `operational_context_ref`
 2. Render `briefing_card` and surface open_items as agenda

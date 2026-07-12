@@ -1,0 +1,97 @@
+{
+  "profile": "matter_charter",
+  "version": 1,
+  "sections": [
+    {
+      "section_id": "header_block",
+      "title": "Header block",
+      "order": 1,
+      "core": true,
+      "derivation": {"primitive": "entity_card", "params": {}},
+      "watched_set": {"entity_scope": "root_subgraph", "edge_types": []},
+      "repair_template": "entity_card(root)"
+    },
+    {
+      "section_id": "front_line",
+      "title": "FRONT LINE",
+      "order": 2,
+      "core": true,
+      "derivation": {"primitive": "assertions", "params": {"pending_only": true}},
+      "watched_set": {"entity_scope": "root_subgraph", "assertion_predicates": ["pending"]},
+      "repair_template": "assertions(root, pending_only=true)"
+    },
+    {
+      "section_id": "timeline_spine",
+      "title": "TIMELINE SPINE",
+      "order": 3,
+      "core": true,
+      "derivation": {"primitive": "assertions", "params": {}},
+      "watched_set": {"entity_scope": "root_subgraph"},
+      "repair_template": "assertions(root, dated=true)"
+    },
+    {
+      "section_id": "ruled_out",
+      "title": "RULED OUT",
+      "order": 4,
+      "core": true,
+      "derivation": {"primitive": "assertions", "params": {}},
+      "watched_set": {"entity_scope": "root_subgraph"},
+      "repair_template": "superseded_chains(root)"
+    },
+    {
+      "section_id": "cast_routing",
+      "title": "CAST & ROUTING",
+      "order": 5,
+      "core": true,
+      "derivation": {"primitive": "walk_subgraph", "params": {"hops": 1}},
+      "watched_set": {"entity_scope": "root_subgraph", "edge_types": ["involves", "correspondence_with", "employed_by"]},
+      "repair_template": "walk_subgraph(root, hops=1)"
+    },
+    {
+      "section_id": "lessons_frictions",
+      "title": "LESSONS & FRICTIONS",
+      "order": 6,
+      "core": true,
+      "derivation": {"primitive": "assertions", "params": {}},
+      "watched_set": {"entity_scope": "root_subgraph"},
+      "repair_template": "lesson_assertions(root)"
+    },
+    {
+      "section_id": "open_threads",
+      "title": "OPEN THREADS",
+      "order": 7,
+      "core": true,
+      "derivation": {"primitive": "assertions", "params": {"pending_only": true}},
+      "watched_set": {"entity_scope": "root_subgraph", "assertion_predicates": ["pending"]},
+      "repair_template": "pending_commitments(root)"
+    },
+    {
+      "section_id": "doctrine_pointer",
+      "title": "DOCTRINE pointer",
+      "order": 8,
+      "core": true,
+      "derivation": {"primitive": "entity_card", "params": {}},
+      "watched_set": {"entity_scope": "root_subgraph", "edge_types": ["has_playbook"]},
+      "repair_template": "has_playbook(root)"
+    },
+    {
+      "section_id": "entity_map",
+      "title": "ENTITY MAP",
+      "order": 9,
+      "core": true,
+      "derivation": {"primitive": "walk_subgraph", "params": {"hops": 2}},
+      "watched_set": {"entity_scope": "root_subgraph"},
+      "repair_template": "walk_subgraph(root, hops=2)"
+    },
+    {
+      "section_id": "narrative_layer",
+      "title": "Narrative layer",
+      "order": 10,
+      "core": false,
+      "derivation": {"primitive": "assertions", "params": {}},
+      "watched_set": {"entity_scope": "root_subgraph"},
+      "repair_template": "narrative_preserved",
+      "citation_exempt": false
+    }
+  ]
+}

@@ -7,7 +7,7 @@ use only the **read/plan** column.
 
 | Command | Cursor | web-claude / MCP seat | No-cortex (connector) |
 |---|---|---|---|
-| `/cortex-boot` | `.cursor/commands/cortex-boot.md` → `cortex_boot(agent=<family>-cursor)` + TIER-2 rules | `cortex_boot(agent="claude-web", …)`; `agent-guides/web-agent-orientation.md` | Static boot: `AGENTS.md` router + `docs/agent-guides/no-cortex.md` |
+| `/cortex-boot` | `.cursor/commands/cortex-boot.md` → `cortex_brief(agent=<family>-cursor)` + TIER-2 rules | `cortex_brief(agent="claude-web", …)`; `agent-guides/web-agent-orientation.md` | Static boot: `AGENTS.md` router + `docs/agent-guides/no-cortex.md` |
 | `/agent-bus` | `.cursor/commands/agent-bus.md` → `scripts/agent-bus` or `agent_bus` MCP | `agent_bus(threads/fetch/post/reply/wait, …)` + cortex sidecars | Out of scope (writes); findings via operator paste |
 | `/session-end` | `.cursor/commands/session-end.md` → `cortex(session_close, transcript_jsonl_path=…)` | `cortex(session_close, transcript_md=…)` | Out of scope |
 | `/todo` | `.cursor/commands/todo.md` → `cortex(todo_candidates)` / `entity_create(type=todo)`; **`/todo pickup {slug}`** loads `implement-todo` skill | same cortex ops; **`Pick up todo:{slug}`** loads `implement-todo` skill | Read spec/todo entities only if inlined in packet |

@@ -90,10 +90,12 @@ SEVERITY = {
     "stale_reveal_level": "warning",
     "unresolved_safety_conflict": "critical",
     "advice_failure_recurrence": "warning",
-    # Entity-lifecycle grammar / structural anti-patterns (Wave-3 mechanical bin;
-    # todo:entity-lifecycle-structural-validators). Graph-only WARNING advisory.
+    # Entity-lifecycle grammar / structural anti-patterns (Wave-3).
     "entity_vocabulary_grammar": "warning",
     "entity_structural_antipattern": "warning",
+    # Derived-view Tier-0 staleness (todo:cortex-spec-derived-views-contract).
+    "playbook_stale": "warning",
+    "view_core_hash_mismatch": "warning",
 }
 
 # Identifier-shaped attribute value: alphanumerics + ``-._:/`` only. Used by

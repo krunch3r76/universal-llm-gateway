@@ -50,7 +50,7 @@ _KEYWORD_BOOSTS: dict[str, set[str]] = {
     "web_fetch": {"url", "page", "fetch", "http", "html"},
     "model_status": {"models", "list", "status"},
     "boot_inspect": {"boot", "audit", "card", "briefing"},
-    "cortex_boot": {"boot", "session", "warmup", "start"},
+    "cortex_brief": {"brief", "session", "warmup", "start"},
     "quality_gate": {"lint", "ruff", "test", "compile", "ci", "format"},
     "email": {
         "mailbox",

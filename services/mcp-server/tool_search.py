@@ -4,7 +4,7 @@ The MCP catalog advertises a compact primary set (≤24 domain dispatchers from
 ``config/mcp/canonical.yaml`` via ``_derive.get_claude_manifest``): ``agent_bus``,
 ``cortex``, ``dispatch``, ``fs``, ``manage``, ``observability``,
 ``pipeline``, ``rag``, ``retrieve``, ``tool_search``. All other tools registered
-at boot — ``cortex_boot``, ``sql``, ``web_fetch``, ``quality_gate``, etc. — are
+at session start — ``cortex_brief``, ``sql``, ``web_fetch``, ``quality_gate``, etc. — are
 pruned from ``tools/list`` but kept in the overflow registry. Gitignored
 ``tools.local`` surfaces (e.g. ``email`` → email-bridge UDS relay) follow the
 same path when present: ``tool_search`` then ``dispatch(tool="email", ...)``.
@@ -35,6 +35,7 @@ from __future__ import annotations
 from typing import Any
 
 from _derive import get_claude_manifest
+from endpoint_surface import Surface, filter_overflow_metadata_for_surface
 from fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 from mcp_events import record
@@ -59,8 +60,14 @@ PRIMARY_TOOLS_FROZEN: frozenset[str] = frozenset(
 _MANIFEST: dict[str, ManifestEntry] = {}
 
 
-def execute_tool_search(query: str, limit: int = 5) -> dict[str, Any]:
-    """Core tool_search response builder (uses module ``_MANIFEST`` cache)."""
+def execute_tool_search(
+    query: str,
+    limit: int = 5,
+    *,
+    manifest: dict[str, ManifestEntry] | None = None,
+) -> dict[str, Any]:
+    """Core tool_search response builder."""
+    active_manifest = manifest if manifest is not None else _MANIFEST
     record("mcp.tool.search.called", query=query, limit=limit)
     if not query or not query.strip():
         record("mcp.tool.search.empty")
@@ -69,7 +76,7 @@ def execute_tool_search(query: str, limit: int = 5) -> dict[str, Any]:
             "query": query,
             "results": [],
             "total_matches": 0,
-            "available_tools_summary": _all_manifest_summary(_MANIFEST),
+            "available_tools_summary": _all_manifest_summary(active_manifest),
             "server_primary_note": primary_note,
             "_next": (
                 "Empty query. See available_tools_summary for overflow tools; "
@@ -77,7 +84,7 @@ def execute_tool_search(query: str, limit: int = 5) -> dict[str, Any]:
                 f"{primary_note}"
             ),
         }
-    results = search_manifest(_MANIFEST, query, limit=limit)
+    results = search_manifest(active_manifest, query, limit=limit)
     if not results:
         record("mcp.tool.search.miss", query=query)
         primary_note = server_primary_empty_search_note()
@@ -86,7 +93,7 @@ def execute_tool_search(query: str, limit: int = 5) -> dict[str, Any]:
             "query": query,
             "results": [],
             "total_matches": 0,
-            "available_tools_summary": _all_manifest_summary(_MANIFEST),
+            "available_tools_summary": _all_manifest_summary(active_manifest),
             "server_primary_note": primary_note,
         }
         if primary_hint:
@@ -137,6 +144,8 @@ __all__ = [
 def register_tool_search_tool(
     mcp: FastMCP,
     overflow_metadata: dict[str, tuple[str, dict[str, Any]]],
+    *,
+    surface: Surface = "code",
 ) -> None:
     """Build the manifest from pre-captured metadata and register ``tool_search``.
 
@@ -144,7 +153,8 @@ def register_tool_search_tool(
     the tools removed by pruning would otherwise return empty descriptions.
     """
     global _MANIFEST
-    _MANIFEST = build_manifest_from_metadata(overflow_metadata)
+    filtered = filter_overflow_metadata_for_surface(overflow_metadata, surface)
+    manifest = build_manifest_from_metadata(filtered)
 
     @mcp.tool(
         title="Tool Search (Discovery)",
@@ -171,4 +181,6 @@ def register_tool_search_tool(
           tool_search(query="raw sql")
           tool_search(query="query events")
         """
-        return execute_tool_search(query, limit=limit)
+        return execute_tool_search(query, limit=limit, manifest=manifest)
+
+    _MANIFEST = manifest

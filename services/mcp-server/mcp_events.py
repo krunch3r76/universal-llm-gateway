@@ -143,6 +143,9 @@ def record(signal: str, *, role: str = "observation", **payload: Any) -> None:
       mcp.cortex.boot                    — boot completed (agent)
       mcp.cortex.boot.manifest.assembled — manifest built (agent, artifact_count, total_bytes)
       mcp.cortex.boot.fetch.failed       — byte-count serialization failed (error, error_type)
+
+    Request lifecycle events (``mcp.request.*``) may carry a ``surface`` attribute
+    (``life`` | ``code``) when served from dual MCP mounts.
     """
     if _publisher is None:
         return

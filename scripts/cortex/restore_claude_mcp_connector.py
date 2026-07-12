@@ -1,14 +1,25 @@
 #!/usr/bin/env python3
-"""Restore claude.ai MCP connector via Playwright + CDP (Jupiter Chrome session).
+"""Restore / rename claude.ai MCP connector via Playwright + CDP (Jupiter).
 
-Opens Customize → Connectors, clicks Connect for the vortex MCP connector, approves
-the OAuth consent page on mcp.k-1.me, and verifies claude.ai reports connected.
+Opens Customize → Connectors, ensures the life-surface connector exists under
+the desired display name (default ``toys``), Connect/Reconnect + OAuth Approve
+on mcp.k-1.me when needed.
 
-Usage (on CDP host, typically Jupiter):
-  BROWSER_CDP_URL=http://127.0.0.1:9222 python scripts/cortex/restore_claude_mcp_connector.py
+If the life URL is already connected under a different display name (e.g.
+``vortex``), removes that row and re-adds as ``--connector-name`` (claude.ai
+has no in-UI rename — only Remove).
+
+Default URL: https://mcp.k-1.me/mcp/life
+
+Playbook: agent_skill:claude-ai-mcp-connect → .cursor/skills/claude-ai-mcp-connect/SKILL.md
+
+Usage (CDP host / Jupiter):
+  BROWSER_CDP_URL=http://127.0.0.1:9222 python scripts/cortex/restore_claude_mcp_connector.py \\
+    --mcp-url 'https://mcp.k-1.me/mcp/life' --connector-name toys
 
 From Cursor / remote seat:
-  scripts/cortex/claude-ai-sync-jupiter restore-connector
+  scripts/cortex/claude-ai-sync-jupiter restore-connector \\
+    --mcp-url 'https://mcp.k-1.me/mcp/life' --connector-name toys
 """
 
 from __future__ import annotations
@@ -27,10 +38,19 @@ if str(_REPO / "libs") not in sys.path:
 from claude_bundles.skills_ui_panel import DEFAULT_CDP_URL, connect_cdp  # noqa: E402
 from playwright.async_api import Page, TimeoutError as PlaywrightTimeout  # noqa: E402
 
-DEFAULT_MCP_URL = "https://mcp.k-1.me/mcp"
-DEFAULT_CONNECTOR_NAME = "vortex"
+from restore_claude_mcp_connector_mutate import (  # noqa: E402
+    add_custom_connector,
+    remove_named_connector,
+)
+DEFAULT_MCP_URL = "https://mcp.k-1.me/mcp/life"
+DEFAULT_CONNECTOR_NAME = "toys"
+_LEGACY_NAMES = ("vortex",)
 _OAUTH_AUTHORIZE = re.compile(r"https://mcp\.k-1\.me/oauth/authorize")
 _CONNECTION_ISSUE = re.compile(r"connection (issue|expired)", re.I)
+
+
+def _host(mcp_url: str) -> str:
+    return mcp_url.replace("https://", "").replace("http://", "").split("/")[0]
 
 
 async def _ensure_settings_open(page: Page) -> None:
@@ -39,19 +59,30 @@ async def _ensure_settings_open(page: Page) -> None:
         return
 
     for sel in (
-        "button:has-text(\"Kaywan\")",
-        "[data-testid=\"user-menu-button\"]",
+        '[data-testid="user-menu-button"]',
+        'button:has-text("Kaywan")',
     ):
         menu = page.locator(sel)
         if await menu.count() and await menu.first.is_visible():
-            await menu.first.click()
+            await menu.first.click(force=True)
             await page.wait_for_timeout(1000)
             break
 
-    settings = page.locator("text=Settings")
+    settings = page.get_by_role("menuitem", name=re.compile(r"settings", re.I))
+    if not await settings.count():
+        settings = page.locator("text=Settings")
     if await settings.count() and await settings.first.is_visible():
-        await settings.first.click()
+        await settings.first.click(force=True)
         await page.wait_for_timeout(2000)
+
+
+async def _connectors_panel_ready(page: Page) -> bool:
+    if await page.locator("tr").filter(
+        has_text=re.compile(r"vortex|toys|mcp\.k-1", re.I)
+    ).count():
+        return True
+    add = page.get_by_role("button", name=re.compile(r"^add\b", re.I))
+    return bool(await add.count() and await add.first.is_visible())
 
 
 async def _open_connectors_panel(page: Page) -> Page:
@@ -76,12 +107,25 @@ async def _open_connectors_panel(page: Page) -> Page:
 
     connectors_btn = page.locator('button:has-text("Connectors")')
     if await connectors_btn.count() and await connectors_btn.first.is_visible():
-        await connectors_btn.first.click()
+        await connectors_btn.first.click(force=True)
         await page.wait_for_timeout(2000)
 
-    if not await page.locator("tr").filter(
-        has_text=re.compile(r"vortex|mcp\.k-1", re.I)
-    ).count():
+    if await _connectors_panel_ready(page):
+        return page
+
+    # Retry: settings may have failed silently (hash alone ≠ Settings modal).
+    await _ensure_settings_open(page)
+    await page.evaluate(
+        "() => { window.location.hash = 'settings/customize-connectors'; "
+        "window.dispatchEvent(new HashChangeEvent('hashchange')); }"
+    )
+    await page.wait_for_timeout(2000)
+    connectors_btn = page.locator('button:has-text("Connectors")')
+    if await connectors_btn.count() and await connectors_btn.first.is_visible():
+        await connectors_btn.first.click(force=True)
+        await page.wait_for_timeout(2000)
+
+    if not await _connectors_panel_ready(page):
         raise RuntimeError(
             "Connectors panel not open — in Jupiter Chrome: open Settings → "
             "Customize → Connectors, then re-run."
@@ -89,33 +133,92 @@ async def _open_connectors_panel(page: Page) -> Page:
     return page
 
 
+async def _row_matching(page: Page, *needles: str):
+    for needle in needles:
+        row = page.locator("tr").filter(has_text=re.compile(re.escape(needle), re.I))
+        if await row.count():
+            return row.first
+    return None
+
+
+async def _back_to_list(page: Page) -> Page:
+    back = page.get_by_role("button", name=re.compile(r"connectors", re.I))
+    if await back.count() and await back.first.is_visible():
+        await back.first.click(force=True)
+        await page.wait_for_timeout(1500)
+    return page
+
+
 async def _open_connector_detail(page: Page, connector_name: str, mcp_url: str) -> Page:
-    host = mcp_url.replace("https://", "").replace("http://", "").split("/")[0]
+    host = _host(mcp_url)
     if await page.get_by_text(mcp_url, exact=False).count() or await page.get_by_text(
         host, exact=False
     ).count():
-        return page
+        # Already on a detail that shows the URL (or list with URL visible).
+        disconnect = page.get_by_role("button", name=re.compile(r"^disconnect$", re.I))
+        if await disconnect.count():
+            return page
 
-    row = page.locator("tr").filter(
-        has_text=re.compile(re.escape(connector_name), re.I)
-    )
-    if not await row.count():
-        row = page.locator("tr").filter(has_text=re.compile(re.escape(host), re.I))
-    if not await row.count():
-        back = page.get_by_role("button", name=re.compile(r"connectors", re.I))
-        if await back.count() and await back.first.is_visible():
-            await back.first.click()
-            await page.wait_for_timeout(1500)
-            row = page.locator("tr").filter(
-                has_text=re.compile(re.escape(connector_name), re.I)
-            )
-    if not await row.count():
+    row = await _row_matching(page, connector_name, mcp_url, host, *_LEGACY_NAMES)
+    if row is None:
+        page = await _back_to_list(page)
+        row = await _row_matching(page, connector_name, mcp_url, host, *_LEGACY_NAMES)
+    if row is None:
         raise RuntimeError(
             f"Connector row not found for {connector_name!r} / {mcp_url}"
         )
-    await row.first.click()
+    await row.click(force=True)
     await page.wait_for_timeout(2000)
     return page
+
+
+async def _approve_oauth(page: Page, context, timeout_ms: int) -> Page:
+    await page.bring_to_front()
+    approve = page.locator('button[type="submit"]').filter(
+        has_text=re.compile(r"approve", re.I)
+    )
+    if not await approve.count():
+        approve = page.get_by_role("button", name=re.compile(r"approve", re.I))
+    if not await approve.count():
+        raise RuntimeError("OAuth Approve button not found")
+    await approve.first.click()
+    await page.wait_for_url(re.compile(r"https://claude\.ai/"), timeout=timeout_ms)
+    await page.wait_for_timeout(4000)
+    body = await page.locator("body").inner_text()
+    if _CONNECTION_ISSUE.search(body):
+        raise RuntimeError("claude.ai still shows connection issue after OAuth")
+    return page
+
+
+async def _click_connect_and_oauth(page: Page, context, timeout_ms: int) -> str:
+    connect_btn = page.get_by_role(
+        "button", name=re.compile(r"^(connect|reconnect)$", re.I)
+    )
+    if not await connect_btn.count():
+        body = await page.locator("body").inner_text()
+        mcp_visible = "mcp.k-1.me" in body
+        if not _CONNECTION_ISSUE.search(body) and mcp_visible:
+            return "already_connected"
+        raise RuntimeError("Connect/Reconnect button not found")
+
+    oauth_page = page
+    try:
+        async with page.expect_navigation(url=_OAUTH_AUTHORIZE, timeout=timeout_ms):
+            await connect_btn.first.click(force=True)
+        oauth_page = page
+    except PlaywrightTimeout:
+        await connect_btn.first.click(force=True)
+        await page.wait_for_timeout(2000)
+        for tab in context.pages:
+            if "mcp.k-1.me/oauth/authorize" in tab.url:
+                oauth_page = tab
+                break
+        else:
+            await page.wait_for_url(_OAUTH_AUTHORIZE, timeout=timeout_ms)
+            oauth_page = page
+
+    await _approve_oauth(oauth_page, context, timeout_ms)
+    return "restored"
 
 
 async def restore_connector(
@@ -129,58 +232,53 @@ async def restore_connector(
     timeout_ms = int(timeout_s * 1000)
     try:
         page = await _open_connectors_panel(page)
-        page = await _open_connector_detail(page, connector_name, mcp_url)
+        desired = await _row_matching(page, connector_name)
+        legacy_found: str | None = None
+        for legacy_name in _LEGACY_NAMES:
+            if legacy_name.lower() == connector_name.lower():
+                continue
+            if await _row_matching(page, legacy_name) is not None:
+                legacy_found = legacy_name
+                break
 
+        if desired is None and legacy_found is not None:
+            # Display rename: no in-UI rename — remove legacy, re-add as desired.
+            page = await remove_named_connector(
+                page,
+                legacy_found,
+                back_to_list=_back_to_list,
+                row_matching=_row_matching,
+                open_connectors_panel=_open_connectors_panel,
+            )
+            return await add_custom_connector(
+                page,
+                connector_name=connector_name,
+                mcp_url=mcp_url,
+                context=context,
+                timeout_ms=timeout_ms,
+                back_to_list=_back_to_list,
+                approve_oauth=_approve_oauth,
+                click_connect_and_oauth=_click_connect_and_oauth,
+            )
+
+        if desired is None and legacy_found is None:
+            url_row = await _row_matching(page, mcp_url, _host(mcp_url))
+            if url_row is None:
+                return await add_custom_connector(
+                    page,
+                    connector_name=connector_name,
+                    mcp_url=mcp_url,
+                    context=context,
+                    timeout_ms=timeout_ms,
+                    back_to_list=_back_to_list,
+                    approve_oauth=_approve_oauth,
+                    click_connect_and_oauth=_click_connect_and_oauth,
+                )
+
+        page = await _open_connector_detail(page, connector_name, mcp_url)
         if not await page.get_by_text(mcp_url, exact=False).count():
             raise RuntimeError(f"Connector detail for {mcp_url} not visible")
-
-        connect_btn = page.get_by_role(
-            "button", name=re.compile(r"^(connect|reconnect)$", re.I)
-        )
-        if not await connect_btn.count():
-            body = await page.locator("body").inner_text()
-            if not _CONNECTION_ISSUE.search(body) and mcp_url in body:
-                return "already_connected"
-            raise RuntimeError("Connect/Reconnect button not found")
-
-        oauth_page = page
-        try:
-            async with page.expect_navigation(url=_OAUTH_AUTHORIZE, timeout=timeout_ms):
-                await connect_btn.first.click()
-            oauth_page = page
-        except PlaywrightTimeout:
-            await connect_btn.first.click()
-            await page.wait_for_timeout(2000)
-            for tab in context.pages:
-                if "mcp.k-1.me/oauth/authorize" in tab.url:
-                    oauth_page = tab
-                    break
-            else:
-                await page.wait_for_url(_OAUTH_AUTHORIZE, timeout=timeout_ms)
-                oauth_page = page
-
-        await oauth_page.bring_to_front()
-        approve = oauth_page.locator('button[type="submit"]').filter(
-            has_text=re.compile(r"approve", re.I)
-        )
-        if not await approve.count():
-            approve = oauth_page.get_by_role(
-                "button", name=re.compile(r"approve", re.I)
-            )
-        if not await approve.count():
-            raise RuntimeError("OAuth Approve button not found")
-        await approve.first.click()
-
-        await oauth_page.wait_for_url(
-            re.compile(r"https://claude\.ai/"), timeout=timeout_ms
-        )
-        await oauth_page.wait_for_timeout(4000)
-
-        body = await oauth_page.locator("body").inner_text()
-        if _CONNECTION_ISSUE.search(body):
-            raise RuntimeError("claude.ai still shows connection issue after OAuth")
-
-        return "restored"
+        return await _click_connect_and_oauth(page, context, timeout_ms)
     finally:
         await pw.stop()
 

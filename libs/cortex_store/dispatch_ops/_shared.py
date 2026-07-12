@@ -199,7 +199,8 @@ def _derive_session_id_local(agent: str, timestamp: str) -> str:
 
 
 _SKILL_SOT_WS_PREFIX = "workspaces://universal-llm-gateway/"
-_SKILL_SOT_REL_PREFIX = ".cursor/skills/"
+_SKILL_SOT_CURSOR_REL = ".cursor/skills/"
+_SKILL_SOT_CLAUDE_REL = ".claude/skills/"
 
 
 def _workspaces_repo_root() -> Path:
@@ -209,22 +210,39 @@ def _workspaces_repo_root() -> Path:
     return nested if nested.is_dir() else root
 
 
-def _canonical_skill_sot_uri(slug: str) -> str:
-    return f"{_SKILL_SOT_WS_PREFIX}{_SKILL_SOT_REL_PREFIX}{slug}/SKILL.md"
+def _canonical_cursor_skill_sot_uri(slug: str) -> str:
+    return f"{_SKILL_SOT_WS_PREFIX}{_SKILL_SOT_CURSOR_REL}{slug}/SKILL.md"
 
 
-def _validate_skill_registration_path(skill_id: str, skill_path: str) -> str:
+def _canonical_life_local_skill_sot_uri(slug: str) -> str:
+    return f"{_SKILL_SOT_WS_PREFIX}{_SKILL_SOT_CLAUDE_REL}{slug}/SKILL.md"
+
+
+def _validate_skill_registration_path(
+    skill_id: str,
+    skill_path: str,
+    *,
+    surface_class: str | None = None,
+) -> str:
     """Validate register_skill_substrate path; return canonical workspace SOT URI.
 
-    New registrations must target ``workspaces://universal-llm-gateway/.cursor/skills/{slug}/SKILL.md``.
-    Legacy ``agent-skills/`` and ``cortex://agent-skills/`` paths are rejected with an
-    error naming the workspace SOT (mirror is generated/legacy — todo:consolidate-skill-sot).
+    ``shared_sync`` / ``cursor_only`` registrations target
+    ``workspaces://universal-llm-gateway/.cursor/skills/{slug}/SKILL.md``.
+    ``life_local`` registrations target
+    ``workspaces://universal-llm-gateway/.claude/skills/{slug}/SKILL.md``.
     """
     candidate = skill_path.strip()
     if not candidate:
         raise ValueError("skill_path is empty")
 
-    canonical = _canonical_skill_sot_uri(skill_id)
+    sc = (surface_class or "shared_sync").strip().lower()
+    if sc == "life_local":
+        rel_prefix = _SKILL_SOT_CLAUDE_REL
+        canonical = _canonical_life_local_skill_sot_uri(skill_id)
+    else:
+        rel_prefix = _SKILL_SOT_CURSOR_REL
+        canonical = _canonical_cursor_skill_sot_uri(skill_id)
+
     bare = candidate.removeprefix("cortex://")
     if bare.startswith("agent-skills/"):
         raise ValueError(
@@ -235,22 +253,24 @@ def _validate_skill_registration_path(skill_id: str, skill_path: str) -> str:
 
     if candidate.startswith(_SKILL_SOT_WS_PREFIX):
         rel = candidate.removeprefix(_SKILL_SOT_WS_PREFIX)
-    elif candidate.startswith(f"universal-llm-gateway/{_SKILL_SOT_REL_PREFIX}"):
+    elif candidate.startswith(f"universal-llm-gateway/{rel_prefix}"):
         rel = candidate.removeprefix("universal-llm-gateway/")
-    elif candidate.startswith(_SKILL_SOT_REL_PREFIX):
+    elif candidate.startswith(rel_prefix):
+        rel = candidate
+    elif sc != "life_local" and candidate.startswith(_SKILL_SOT_CURSOR_REL):
         rel = candidate
     else:
         raise ValueError(
             f"skill_path {skill_path!r} is outside workspace skill SOT; "
-            f"expected {canonical} or {_SKILL_SOT_REL_PREFIX}{{slug}}/SKILL.md"
+            f"expected {canonical} or {rel_prefix}{{slug}}/SKILL.md"
         )
 
-    if not rel.startswith(_SKILL_SOT_REL_PREFIX) or not rel.endswith("/SKILL.md"):
+    if not rel.startswith(rel_prefix) or not rel.endswith("/SKILL.md"):
         raise ValueError(
-            f"skill_path {skill_path!r} must be {_SKILL_SOT_REL_PREFIX}{{slug}}/SKILL.md"
+            f"skill_path {skill_path!r} must be {rel_prefix}{{slug}}/SKILL.md"
         )
 
-    slug_from_path = rel[len(_SKILL_SOT_REL_PREFIX) : -len("/SKILL.md")]
+    slug_from_path = rel[len(rel_prefix) : -len("/SKILL.md")]
     if slug_from_path != skill_id:
         raise ValueError(
             f"skill_path slug {slug_from_path!r} does not match skill_id {skill_id!r}"
@@ -263,6 +283,10 @@ def _validate_skill_registration_path(skill_id: str, skill_path: str) -> str:
         )
 
     return canonical
+
+
+def _canonical_skill_sot_uri(slug: str) -> str:
+    return _canonical_cursor_skill_sot_uri(slug)
 
 
 def _validate_canonical_sandbox_path(

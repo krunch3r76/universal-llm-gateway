@@ -119,6 +119,36 @@ def description_has_xml_tags(description: str) -> bool:
     return bool(_XML_TAG_RE.search(description))
 
 
+_H1_ARTIFACT_RE = re.compile(r"^#\s+.+")
+_SKILL_PLAYBOOK_HINT_RE = re.compile(
+    r"(?i)skill|playbook|design\s+memo|procedure|discipline|lifecycle|stance|reasoning|orientation|posture|gate|dispatch|kernel|audit|routing|boot|protocol|mode|srm|mailbox|verification|linkage|financial|matter|prose|engagement|entity|review|inference|consensus|advisor|operator|tier|model|close|handoff|required|provenance|completion|consult|fs\b"
+)
+
+
+def lint_h1_artifact_label(slug: str, text: str, *, strict: bool = False) -> str | None:
+    """Fail when the first body line is not an H1 artifact label (assertion 23894)."""
+    _, body = parse_frontmatter(text)
+    for line in body.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("<!--"):
+            continue
+        if not _H1_ARTIFACT_RE.match(stripped):
+            return (
+                f"H1: {slug} first body line must be an H1 artifact label, "
+                f"got {stripped[:60]!r}"
+            )
+        title = stripped.lstrip("#").strip()
+        if strict and not _SKILL_PLAYBOOK_HINT_RE.search(title):
+            return (
+                f"H1: {slug} H1 must name the artifact as skill/playbook "
+                f"(got {title[:60]!r})"
+            )
+        return None
+    return f"H1: {slug} body is empty after frontmatter"
+
+
 def _sanitize_description(description: str) -> str:
     """Strip angle-bracket tags and collapse whitespace.
 

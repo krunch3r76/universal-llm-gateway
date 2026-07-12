@@ -6,12 +6,15 @@ import sys
 from pathlib import Path
 
 from _skill_constants import (
+    _CLAUDE_SKILLS_REL,
     _CORTEX_SOT_RE,
     _CREATE_SUPPRESSED_LIFECYCLES,
+    _CURSOR_SKILLS_REL,
     _SKIP_CORTEX_SOT,
     _WS,
 )
 from _skill_related_parse import declared_related_skills, parse_frontmatter
+from claude_bundles.resolver import LIFE_LOCAL_SLUGS, surface_class_for_slug
 
 _REPO_DEFAULT = Path(__file__).resolve().parent.parent.parent
 
@@ -20,8 +23,45 @@ def _cursor_skills_dir(repo_root: Path | None = None) -> Path:
     return (repo_root or _REPO_DEFAULT) / ".cursor" / "skills"
 
 
+def _claude_skills_dir(repo_root: Path | None = None) -> Path:
+    return (repo_root or _REPO_DEFAULT) / ".claude" / "skills"
+
+
 def _workspace_source_uri(slug: str) -> str:
-    return f"{_WS}/.cursor/skills/{slug}/SKILL.md"
+    return f"{_WS}/{_CURSOR_SKILLS_REL}{slug}/SKILL.md"
+
+
+def _life_local_source_uri(slug: str) -> str:
+    return f"{_WS}/{_CLAUDE_SKILLS_REL}{slug}/SKILL.md"
+
+
+def _scan_life_local_skills(repo_root: Path | None = None) -> dict[str, dict[str, object]]:
+    """Projection-ready rows for life-local ``.claude/skills/*/SKILL.md`` SOTs."""
+    skills_dir = _claude_skills_dir(repo_root)
+    if not skills_dir.is_dir():
+        return {}
+    found: dict[str, dict[str, object]] = {}
+    for slug in LIFE_LOCAL_SLUGS:
+        path = skills_dir / slug / "SKILL.md"
+        if not path.is_file():
+            print(f"ERROR: missing life-local SOT: {path}", file=sys.stderr)
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            print(f"ERROR: unreadable {path}", file=sys.stderr)
+            continue
+        fm = parse_frontmatter(text)
+        description = str(fm.get("description") or "").strip()
+        found[slug] = {
+            "slug": slug,
+            "frontmatter": fm,
+            "description": description,
+            "source_uri": _life_local_source_uri(slug),
+            "related_skills": declared_related_skills(text, fm),
+            "surface_class": surface_class_for_slug(slug),
+        }
+    return found
 
 
 def cortex_sot_slugs(repo_root: Path | None = None) -> set[str]:
@@ -102,6 +142,7 @@ def _scan_cortex_sot_skills(repo_root: Path | None = None) -> dict[str, dict[str
             "description": description,
             "source_uri": _workspace_source_uri(slug),
             "related_skills": declared_related_skills(text, fm),
+            "surface_class": "shared_sync",
         }
     return found
 
@@ -131,6 +172,8 @@ def _scan_skills(root: Path) -> dict[str, dict[str, object]]:
     found: dict[str, dict[str, object]] = {}
     for skill_path in sorted(skills_dir.glob("*/SKILL.md")):
         slug = skill_path.parent.name
+        if slug in LIFE_LOCAL_SLUGS:
+            continue
         try:
             text = skill_path.read_text(encoding="utf-8")
         except OSError:
@@ -147,5 +190,6 @@ def _scan_skills(root: Path) -> dict[str, dict[str, object]]:
             "description": description,
             "source_uri": _source_uri(slug, text, root),
             "related_skills": declared_related_skills(text, fm),
+            "surface_class": surface_class_for_slug(slug),
         }
     return found

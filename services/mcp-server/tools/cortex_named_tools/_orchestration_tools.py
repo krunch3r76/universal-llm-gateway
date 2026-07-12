@@ -63,8 +63,8 @@ def _resolve_boot_family_platform(
 def register_orchestration_tools(mcp: FastMCP) -> None:
     """Register boot and session-close tools on *mcp*."""
 
-    @mcp.tool(title="Cortex Boot")
-    def cortex_boot(
+    @mcp.tool(title="Cortex Brief")
+    def cortex_brief(
         agent: str | None = None,
         family: str | None = None,
         platform: str | None = None,
@@ -76,15 +76,19 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
         packet_text: str | None = None,
         domain: str | None = None,
     ) -> dict[str, Any]:
-        """Slim boot briefing for session start. Returns a compact briefing card
-        (soft target ≤ ~8KB inline) with priority signals and a section manifest for on-demand pulls.
+        """Mints the session id and returns the briefing card + section manifest.
+
+        Session-opening primary for any seat. The briefing card is a compact Markdown
+        summary (soft target ≤ ~8KB inline) with priority signals and a section
+        manifest for on-demand pulls — available for you to call directly when you
+        need continuity context.
 
         The briefing card contains: deadlines, unread bus summary, review queue
         count, last session summary, top todos, self-observations, temporal
         alerts, and an agent-skills **index** (slug + trigger + fs md_read hint —
         full SKILL.md bodies are not inlined). The Last Session block renders the
         session summary; handoff prose is NOT auto-surfaced (handoffs are user-facing artifacts for
-        manual copy-paste at end of chat, not boot orientation material — see
+        manual copy-paste at end of chat, not orientation material — see
         assertion 8384, session web-2026-05-04-1057). The section manifest
         includes a `continuity` entry pointing at `GET /boot-continuity via
         cortex-api` for explicit fetches when an agent wants the prior
@@ -99,8 +103,8 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
                           unless the slug does not parse as {family}-{platform}.
           family        — model family: claude / gpt / grok / gemini (default: claude)
           platform      — platform surface: cursor / api / web (default: cursor)
-          role          — accepted for back-compat; no longer scopes boot output. Boot
-                          output is seat-predicated: duties are properties of the seat
+          role          — accepted for back-compat; no longer scopes briefing output. Output
+                          is seat-predicated: duties are properties of the seat
                           (family+platform cell), not assignments to the reader.
                           Session IDs mint as ``{bus-address}-YYYY-MM-DD-HHMMSS-{3hex}``
                           where bus-address ∈ ``cursor | web-{provider} | api-{provider}``;
@@ -109,7 +113,7 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
                           The transcript entity must already exist in Cortex, which means
                           the session it references must have already closed. When a
                           dispatcher passes its own *in-progress* session ID (a
-                          forward-reference), the entity does not yet exist — boot
+                          forward-reference), the entity does not yet exist — the call
                           proceeds without continuation context and surfaces a
                           ``transcript_id_note`` in the response. This is expected
                           behavior, not a failure.
@@ -128,7 +132,7 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
                           scoped injection. ``views=["dispatch"]`` is a backward-compat alias.
           packet_text   — optional packet text for ``<invariants>`` skill parsing when
                           ``profile="dispatch"``.
-          domain        — optional boot axis: ``coding`` | ``life`` | ``mixed-minimal``
+          domain        — optional axis: ``coding`` | ``life`` | ``mixed-minimal``
                           (default when omitted). Soft-reorders card STATE.
 
         Key response fields:
@@ -163,19 +167,19 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
         views: list[str] | None = None,
         principal: str | None = None,
     ) -> dict[str, Any]:
-        """Read-only inspection of the boot surface without boot side effects.
+        """Read-only inspection of the briefing surface without side effects.
 
-        Runs the same fetch/render graph as `cortex_boot`, but in INSPECT mode:
+        Runs the same fetch/render graph as `cortex_brief`, but in INSPECT mode:
         no operational-context file write, no audit dump write, and no
         `mcp.cortex.boot*` event emissions. Use this for audit/review and
-        profile diffs without mutating boot state.
+        profile diffs without mutating briefing state.
 
         Args:
-          agent         — seat slug (same semantics as cortex_boot)
+          agent         — seat slug (same semantics as cortex_brief)
           family        — model family: claude / gpt / grok / gemini
           platform      — platform surface: cursor / api / web
-          role          — accepted for back-compat; no longer scopes boot output. Boot
-                          output is seat-predicated: duties are properties of the seat
+          role          — accepted for back-compat; no longer scopes briefing output. Output
+                          is seat-predicated: duties are properties of the seat
                           (family+platform cell), not assignments to the reader.
           transcript_id — optional continuation transcript context for primary
           diff_with     — optional secondary seat slug ({family}-{platform}, e.g.

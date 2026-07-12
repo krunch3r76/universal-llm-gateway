@@ -36,8 +36,8 @@ Capabilities beyond the foundational belief revision primitives. Classified by o
 
 | ID | Capability | Classification | Implementation | REST Endpoint | MCP Dispatch Op |
 |---|---|---|---|---|---|
-| X1 | Multi-Agent Coordination | coordination | 4+ agent personas with distinct boot profiles, `agent`+`session_id` on edges | Boot profiles in `cortex_named_tools.py` | `cortex_boot(agent=...)` |
-| X2 | Salience-Driven Boot | retrieval | `salience.py`, `scoring.py`, `routes/boot.py`, EST dual-track gating | `GET /boot-sections`, `GET /boot-temporal`, `GET /boot-todos` | `cortex_boot` |
+| X1 | Multi-Agent Coordination | coordination | 4+ agent personas with distinct boot profiles, `agent`+`session_id` on edges | Boot profiles in `cortex_named_tools.py` | `cortex_brief(agent=...)` |
+| X2 | Salience-Driven Boot | retrieval | `salience.py`, `scoring.py`, `routes/boot.py`, EST dual-track gating | `GET /boot-sections`, `GET /boot-temporal`, `GET /boot-todos` | `cortex_brief` |
 | X3 | Confidence Derivation Types | operational | `derivation_type` column: direct, agent_observation, inference, compression, quotation, stated, commitment | On assertions | `assert` field |
 | X4 | Write-Time Quality Validation | operational | `assertion_quality.py`, hard rejects (422), soft warnings (staging), quality scores | Automatic at `POST /assertions` | Automatic |
 | X5 | Bitemporal Bounds | operational | `valid_from`/`valid_until` (world-time), `observed_at`/`created_at` (system-time), `GET /boot-temporal` | `GET /boot-temporal`, `GET /assertions?valid_at=...&known_at=...` | Assertion filters |
@@ -59,8 +59,8 @@ Capabilities beyond the foundational belief revision primitives. Classified by o
 
 | ID | Capability | Classification | Implementation | REST Endpoint | MCP Dispatch Op |
 |---|---|---|---|---|---|
-| X14 | Boot Activation Pass | retrieval | `_boot_activation_pass()` in `cortex_named_tools.py` — spreading activation + hybrid search from continuation context at boot time | Via `cortex_boot` response (`activated_context`) | `cortex_boot` |
-| X15 | Domain Depth Detection | coordination | `_detect_boot_domains()` in `cortex_named_tools.py` — keyword detection of employment/legal/financial domains from continuation state | Via `cortex_boot` response (`domain_depth_hints`) | `cortex_boot` |
+| X14 | Boot Activation Pass | retrieval | `_boot_activation_pass()` in `cortex_named_tools.py` — spreading activation + hybrid search from continuation context at boot time | Via `cortex_brief` response (`activated_context`) | `cortex_brief` |
+| X15 | Domain Depth Detection | coordination | `_detect_boot_domains()` in `cortex_named_tools.py` — keyword detection of employment/legal/financial domains from continuation state | Via `cortex_brief` response (`domain_depth_hints`) | `cortex_brief` |
 | X16 | Notes-to-Self Protocol | operational | Session close protocol in `_operational_context.py` — agents seed 2-5 effectiveness observations before journaling | Via `observe` | `observe` |
 
 ### Post-v3 (Ephemeral Entities, 2026-04-07)

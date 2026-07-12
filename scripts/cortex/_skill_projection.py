@@ -74,6 +74,11 @@ def _projection(
         attrs["related_skills"] = declared
     elif live is not None and "related_skills" in live_attrs:
         attrs["related_skills"] = live_attrs["related_skills"]
+    surface_class = scanned.get("surface_class")
+    if isinstance(surface_class, str):
+        attrs["surface_class"] = surface_class
+    elif live is not None and isinstance(live_attrs.get("surface_class"), str):
+        attrs["surface_class"] = live_attrs["surface_class"]
     result: dict[str, object] = {
         "id": f"agent_skill:{slug}",
         "type": "agent_skill",
@@ -96,6 +101,20 @@ def _matches(live: dict, expected: dict[str, object]) -> tuple[bool, str]:
             return False, f"{field} live={live.get(field)!r}"
     if attrs.get("applicable_agents") != exp.get("applicable_agents"):
         return False, f"applicable_agents live={attrs.get('applicable_agents')!r}"
+    if exp.get("surface_class") == "life_local":
+        if attrs.get("surface_class") != exp.get("surface_class"):
+            return (
+                False,
+                f"surface_class live={attrs.get('surface_class')!r} "
+                f"expected={exp.get('surface_class')!r}",
+            )
+    live_sc = attrs.get("surface_class")
+    exp_sc = exp.get("surface_class")
+    if live_sc is not None and exp_sc and live_sc != exp_sc:
+        return (
+            False,
+            f"surface_class live={live_sc!r} expected={exp_sc!r}",
+        )
     live_related = attrs.get("related_skills")
     exp_related = exp.get("related_skills")
     if live_related is not None or exp_related is not None:

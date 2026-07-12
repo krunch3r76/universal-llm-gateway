@@ -1,5 +1,8 @@
 """Tool-search manifest construction — pre-prune metadata capture + entry building.
 
+Surface-filtered overflow rows are applied in ``endpoint_surface`` before
+``build_manifest_from_metadata`` (see ``tool_search.register_tool_search_tool``).
+
 Lifted out of ``tool_search.py`` to keep that module under the 300-line SLOC
 budget. ``ManifestEntry`` is the wire-facing dataclass; the build pipeline
 runs ``capture_overflow_metadata`` BEFORE ``_prune_to_primary`` removes

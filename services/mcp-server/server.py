@@ -22,7 +22,13 @@ from typing import TYPE_CHECKING, Any, override
 
 import uvicorn
 from auth_middleware import AuthMiddleware
+from dual_endpoint_http import build_dual_endpoint_app
 from edge_telemetry_middleware import EdgeTelemetryMiddleware
+from endpoint_surface import (
+    Surface,
+    derive_surface_primary_tools,
+    filter_overflow_metadata_for_surface,
+)
 from fastmcp import FastMCP
 from mcp_events import flush, record
 from mcp_request_middleware import McpRequestEventsMiddleware
@@ -41,22 +47,12 @@ from request_profile import current_profile
 from response_size_guard import register_response_guard
 from schema_compact import register_compact_schema_transform
 from starlette.middleware.gzip import GZipMiddleware
+from surface_enum import register_surface_enum_transform
+from surface_registration import register_tools_for_surface
 from tool_access import dispatch_denial_reason, is_dispatch_tool_allowed
 from tool_error_enricher import fs_missing_sandbox_hint, register_tool_error_enricher
 from tool_search import capture_overflow_metadata, register_tool_search_tool
-from tools._agent_bus_read import register_agent_bus_read_tool
 from tools._agent_tools import JsonArgStr
-from tools.advisor import register_advisor_tools
-from tools.agent_bus import register_agent_bus_tools
-from tools.browse import register_browse_tool
-from tools.browser import register_browser_tools
-from tools.context import register_context_tools
-from tools.cortex import register_cortex_tools
-from tools.cortex_named_tools import register_cortex_named_tools
-from tools.events import register_event_tools
-from tools.extract_directory import register_extract_directory_tools
-from tools.extract_document import register_extract_document_tools
-from tools.filesystem import register_filesystem_tools
 from tools.filesystem._cross_sandbox import copy_between_sandboxes_impl
 from tools.filesystem._fs_dispatch import (
     SEARCH_MODES,
@@ -66,29 +62,6 @@ from tools.filesystem._fs_dispatch import (
     validate_op_params,
 )
 from tools.filesystem._paths import FS_WORKFLOW_HINTS
-from tools.frontier import register_frontier_tools
-from tools.frontier_imagine import register_imagine_tools
-from tools.git_integrate import register_git_integrate_tools
-from tools.manage import register_manage_tools
-from tools.markdown_tool import register_markdown_tools
-from tools.model_status import register_model_status_tools
-from tools.panel_dispatch import register_panel_dispatch_tools
-from tools.pipeline import register_pipeline_tools
-from tools.pipeline_consult import register_pipeline_consult_tools
-from tools.project import register_project_tools
-from tools.promote_document_to_evidence import (
-    register_promote_document_to_evidence_tools,
-)
-from tools.quality import register_quality_tools
-from tools.rag import register_rag_tools
-from tools.rag_articles import register_rag_article_tools
-from tools.security import register_security_tools
-from tools.security_js import register_security_js_tools
-from tools.skill_suggest import register_skill_suggest_tools
-from tools.sqlite import register_sqlite_tools
-from tools.topology import register_topology_tools
-from tools.web import register_web_tools
-from tools.x_dm import register_x_dm_tools
 from universal_logging import get_logger
 
 if TYPE_CHECKING:
@@ -197,7 +170,7 @@ from _derive import (  # noqa: E402, I001
 )
 
 _claude_manifest = _derive_claude_manifest()
-_PRIMARY_TOOLS: set[str] = {e["tool_name"] for e in _claude_manifest}
+_PRIMARY_TOOLS: set[str] = set(derive_surface_primary_tools("code"))
 
 
 def _discover_private_tools(
@@ -257,12 +230,14 @@ async def _tool_names(mcp: FastMCP) -> set[str]:
     return {t.name for t in await mcp.list_tools()}
 
 
-def _build_server() -> tuple[
+def _build_server(
+    surface: Surface = "code",
+) -> tuple[
     FastMCP,
     dict[str, tuple[str, dict[str, Any]]],
     dict[str, Any],
 ]:
-    """Construct the FastMCP server, register tool surfaces, and prune exports.
+    """Construct a surface-scoped FastMCP server and prune exports.
 
     The resulting server advertises a primary tool set and routes non-primary
     tools through `dispatch` for clients with limited tool enumeration capacity.
@@ -271,50 +246,11 @@ def _build_server() -> tuple[
         Tuple of (mcp, overflow_metadata, overflow_registry).
         overflow_registry: callables for rag and other demoted inline wrappers.
     """
-    mcp: FastMCP = FastMCP("gateway-tools")
-    register_filesystem_tools(mcp)
-    register_markdown_tools(mcp)
-    register_manage_tools(mcp)
-    register_model_status_tools(mcp)
-    register_topology_tools(mcp)
-    register_project_tools(mcp)
-    register_web_tools(mcp)
-    register_x_dm_tools(mcp)
-    register_browse_tool(mcp)
-    register_rag_tools(mcp)
-    register_rag_article_tools(mcp)
-    tool_configs = {
-        "ENABLE_CONTEXT_TOOLS": (register_context_tools, True, "Context tools"),
-        "ENABLE_BROWSER_TOOLS": (register_browser_tools, False, "Browser tools"),
-    }
-
-    for env_var, (register_fn, default_enabled, tool_name) in tool_configs.items():
-        if _env_truthy(env_var, default=default_enabled):
-            register_fn(mcp)
-        else:
-            logger.info(f"{tool_name} disabled ({env_var}=false)")
-    register_sqlite_tools(mcp)
-    register_event_tools(mcp)
-    register_extract_document_tools(mcp)
-    register_promote_document_to_evidence_tools(mcp)
-    register_extract_directory_tools(mcp)
-    register_pipeline_tools(mcp)
-    register_pipeline_consult_tools(mcp)
-    register_frontier_tools(mcp)
-    register_panel_dispatch_tools(mcp)
-    register_git_integrate_tools(mcp)
-    register_quality_tools(mcp)
-    register_skill_suggest_tools(mcp)
-    register_agent_bus_tools(mcp)
-    register_agent_bus_read_tool(mcp)
-    register_cortex_tools(mcp)
-    register_cortex_named_tools(mcp)
-    register_advisor_tools(mcp)
-    register_imagine_tools(mcp)
-    register_security_tools(mcp)
-    register_security_js_tools(mcp)
-
-    _discover_private_tools(mcp)
+    primary_tools = set(derive_surface_primary_tools(surface))
+    mcp: FastMCP = FastMCP(f"gateway-tools-{surface}")
+    register_tools_for_surface(mcp, surface)
+    if surface == "code":
+        _discover_private_tools(mcp)
 
     @mcp.tool(title="Server Health Check")
     def health() -> dict[str, str]:
@@ -337,22 +273,26 @@ def _build_server() -> tuple[
         record("mcp.response.guard.init.failed", error="see server logs")
 
     register_compact_schema_transform(mcp)
+    register_surface_enum_transform(mcp, surface)
 
     # Capture descriptions BEFORE pruning — _prune_to_primary removes the
     # underlying Tool objects, so post-prune metadata reads return empty.
     overflow_metadata = asyncio.run(
-        capture_overflow_metadata(mcp, frozenset(_PRIMARY_TOOLS))
+        capture_overflow_metadata(mcp, frozenset(primary_tools))
     )
+    overflow_metadata = filter_overflow_metadata_for_surface(overflow_metadata, surface)
     from _coherence_allowlist import INTENTIONAL_OVERFLOW  # noqa: PLC0415
     from _derive import run_startup_tool_coherence_checks  # noqa: PLC0415
 
     run_startup_tool_coherence_checks(
-        _PRIMARY_TOOLS,
-        _PRIMARY_TOOLS | set(overflow_metadata.keys()),
+        primary_tools,
+        primary_tools | set(overflow_metadata.keys()),
         allowlist=INTENTIONAL_OVERFLOW,
     )
-    overflow_registry: dict[str, Callable[..., Any]] = _prune_to_primary(mcp)
-    register_tool_search_tool(mcp, overflow_metadata)
+    overflow_registry: dict[str, Callable[..., Any]] = _prune_to_primary(
+        mcp, primary_tools
+    )
+    register_tool_search_tool(mcp, overflow_metadata, surface=surface)
 
     valid_sandboxes = {"cortex", "workspaces"}
     sandbox_tool: dict[str, str] = {
@@ -748,7 +688,7 @@ def _build_server() -> tuple[
             from tool_search_matcher import dispatch_rejection_for_primary_tool
 
             primary_rejection = dispatch_rejection_for_primary_tool(
-                tool, primary_tools=_PRIMARY_TOOLS
+                tool, primary_tools=primary_tools
             )
             if primary_rejection is not None:
                 record(
@@ -814,16 +754,17 @@ def _build_server() -> tuple[
     # close over overflow_registry. They leak into the advertised catalog
     # unless explicitly demoted to overflow here. ∀ inline wrapper not in
     # _PRIMARY_TOOLS: capture metadata + callable, then remove from mcp.
-    _demote_inline_wrappers(mcp, overflow_registry, overflow_metadata)
+    _demote_inline_wrappers(mcp, overflow_registry, overflow_metadata, primary_tools)
     import tool_search as _ts_module  # noqa: PLC0415
     from tool_search import build_manifest_from_metadata as _build_mf  # noqa: PLC0415
 
     _ts_module._MANIFEST = _build_mf(overflow_metadata)
 
-    primary_count = len(_PRIMARY_TOOLS)
+    primary_count = len(primary_tools)
     overflow_count = len(overflow_registry)
     logger.info(
-        "Tool pruning: %d primary (advertised), %d overflow (via dispatch)",
+        "Tool pruning [%s]: %d primary (advertised), %d overflow (via dispatch)",
+        surface,
         primary_count,
         overflow_count,
     )
@@ -839,6 +780,7 @@ def _demote_inline_wrappers(
     mcp: FastMCP,
     overflow_registry: dict[str, Callable[..., Any]],
     overflow_metadata: dict[str, tuple[str, dict[str, Any]]],
+    primary_tools: set[str] | frozenset[str],
 ) -> None:
     """Move any post-prune inline wrappers (e.g. rag) out of the advertised catalog.
 
@@ -851,7 +793,7 @@ def _demote_inline_wrappers(
 
     async def _capture_and_remove() -> None:
         for tool in await mcp.list_tools():
-            if tool.name in _PRIMARY_TOOLS or tool.name in overflow_registry:
+            if tool.name in primary_tools or tool.name in overflow_registry:
                 continue
             tool_obj = await mcp.get_tool(tool.name)
             overflow_registry[tool.name] = tool_obj.fn
@@ -870,12 +812,15 @@ def _demote_inline_wrappers(
         for name in list(overflow_metadata):
             if name not in current_tool_names:
                 continue
-            if name in _PRIMARY_TOOLS:
+            if name in primary_tools:
                 continue
             mcp.remove_tool(name)
 
 
-def _prune_to_primary(mcp: FastMCP) -> dict[str, Callable[..., Any]]:
+def _prune_to_primary(
+    mcp: FastMCP,
+    primary_tools: set[str] | frozenset[str] | None = None,
+) -> dict[str, Callable[..., Any]]:
     """Remove non-primary tools from the exported MCP catalog.
 
     Returns a registry of removed callables so `dispatch` can still invoke
@@ -883,11 +828,13 @@ def _prune_to_primary(mcp: FastMCP) -> dict[str, Callable[..., Any]]:
     """
     import asyncio
 
+    keep = set(primary_tools if primary_tools is not None else _PRIMARY_TOOLS)
+
     async def _collect() -> dict[str, Callable[..., Any]]:
         registry: dict[str, Callable[..., Any]] = {}
         all_tools = await mcp.list_tools()
         for t in all_tools:
-            if t.name not in _PRIMARY_TOOLS:
+            if t.name not in keep:
                 tool_obj = await mcp.get_tool(t.name)
                 registry[t.name] = tool_obj.fn
         return registry
@@ -1002,13 +949,16 @@ def main() -> None:
     auth_token = _require_env(_AUTH_TOKEN_ENV)
     oauth_config = load_oauth_config()
     oauth_service = _build_oauth_service(oauth_config)
-    mcp, overflow_metadata, overflow_registry = _build_server()
+    life_mcp, _, _ = _build_server("life")
+    code_mcp, _, _ = _build_server("code")
 
-    # stateless_http=True: each POST is self-contained (no session ID tracking).
-    # Anthropic's API client creates a new session per interaction rather than
-    # reusing Mcp-Session-Id across the SSE stream and tool call POSTs, so
-    # stateful mode silently drops all tool calls (routed to empty sessions).
-    asgi_app = mcp.http_app(transport="streamable-http", stateless_http=True)
+    # Dual mounts /mcp/life + /mcp/code (bare /mcp absent). stateless_http=True:
+    # each POST is self-contained — Anthropic's client creates a new session per
+    # interaction rather than reusing Mcp-Session-Id, so stateful mode drops calls.
+    asgi_app = build_dual_endpoint_app(life_mcp, code_mcp)
+    from dual_endpoint_http import SurfaceStampMiddleware  # noqa: PLC0415
+
+    stamped_app = SurfaceStampMiddleware(asgi_app)
 
     if oauth_service is not None:
         for route in build_oauth_routes(oauth_service):
@@ -1031,7 +981,7 @@ def main() -> None:
     # CORS preflights) and traffic from external probes still produces an
     # mcp.edge.request.observed record.  Rejected tokens still terminate
     # before mcp.request.started fires.
-    compressed_app = GZipMiddleware(asgi_app, minimum_size=500)
+    compressed_app = GZipMiddleware(stamped_app, minimum_size=500)
     accept_app = _AcceptNormalizeMiddleware(compressed_app)
     evented_app = McpRequestEventsMiddleware(accept_app)
     protected_app = AuthMiddleware(

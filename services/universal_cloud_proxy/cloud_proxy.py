@@ -664,7 +664,7 @@ async def chat_completions(request: Request) -> Response:
     if _injected_effort is not None and "effort" not in body.get("reasoning", {}):
         body.setdefault("reasoning", {})["effort"] = _injected_effort
 
-    # Resolve cortex_boot directives in system prompt before any MCP path.
+    # Resolve cortex_brief directives in system prompt before any MCP path.
     # The proxy-side loop does this inside run_tool_loop; the Responses API
     # bridge bypasses that, so we resolve here for the bridge path.
     if _xai_responses_api:

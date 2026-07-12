@@ -73,11 +73,6 @@ _WORKFLOW_HINTS: dict[str, str] = {
         "and the old one is marked superseded; "
         "tag_assign to pin the new assertion as 'current' if it is the canonical state"
     ),
-    "journal_write": (
-        "DEPRECATED: Use session_close instead. session_close atomically writes "
-        "the transcript file, creates the entity, journal row, and continues edge "
-        "in one call — preventing the stub-only failures that journal_write allows."
-    ),
     "session_close": (
         "after close: seed content assertions on relevant entities (decisions, observations); "
         "post to agent bus thread 480 with session debrief; "
@@ -231,7 +226,6 @@ _CORTEX_LARGE_PAYLOAD_OPS: frozenset[str] = frozenset(
         "session_close",
         "session_close_preflight",
         "session_handoff_upsert",
-        "journal_write",
     }
 )
 

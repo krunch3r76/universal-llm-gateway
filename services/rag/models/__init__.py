@@ -23,6 +23,7 @@ from .articles_ops import (
     ScopeCoverage,
     ScopeRegisterRequest,
     ScopeRegisterResponse,
+    ArticleStatusRow,
     SourceStatusItem,
     SourceStatusResponse,
 )
@@ -70,6 +71,7 @@ __all__ = [
     "RECENCY_DECAY_LAMBDA",
     "ArticleListingItem",
     "ArticleListingResponse",
+    "ArticleStatusRow",
     "ArticleUpsertRequest",
     "ArticleUpsertResponse",
     "ChunkByIndexItem",

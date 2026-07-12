@@ -54,7 +54,6 @@ _DOC_REQUIRED_BY_OP: Mapping[str, frozenset[str]] = {
     "friction": frozenset({"owner", "note"}),
     "impact": frozenset({"entity_id"}),
     "graph_reach": frozenset({"entity_id"}),
-    "journal_write": frozenset({"timestamp", "agent", "summary"}),
     "observe": frozenset({"claim"}),
     "relationship_delete": frozenset({"relationship_id"}),
     "relationship_update": frozenset({"relationship_id"}),

@@ -33,7 +33,11 @@ if str(_SCRIPTS_CORTEX) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_CORTEX))
 
 from _skill_audit import _audit, _audit_parity, _audit_terms  # noqa: E402
-from _skill_constants import _SUPPRESSED, _SYNC_SOURCE_URI  # noqa: E402
+from _skill_constants import (  # noqa: E402
+    _INGEST_CHECK_DRIFT_HOLDOUTS,
+    _SUPPRESSED,
+    _SYNC_SOURCE_URI,
+)
 from _skill_drift import _drifts, _reference_edge_drift  # noqa: E402
 from _skill_graph_report import build_drift_report  # noqa: E402
 from _skill_projection import _entity_get, _projection, _upsert  # noqa: E402
@@ -48,6 +52,7 @@ from _skill_scan import (  # noqa: E402
     _scan_cortex_sot_declared,
     _scan_cortex_sot_metadata,
     _scan_cortex_sot_skills,
+    _scan_life_local_skills,
     _scan_skills,
 )
 from transport_utils import DEFAULT_CORTEX_URL, make_sync_client  # noqa: E402
@@ -203,6 +208,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     scanned = _scan_skills(args.root.resolve())
+    life_local = _scan_life_local_skills(args.root.resolve())
     cortex_meta = _scan_cortex_sot_metadata(args.root.resolve())
     cortex_declared = _scan_cortex_sot_declared(args.root.resolve())
     cortex_sot = _scan_cortex_sot_skills(args.root.resolve())
@@ -216,10 +222,16 @@ def main(argv: list[str] | None = None) -> int:
     slug_filter = args.slug
     if slug_filter:
         if _resolve_slug(client, slug_filter, scanned, cortex_meta) is None:
-            print(f"ERROR: unknown skill slug {slug_filter!r}", file=sys.stderr)
-            return 2
+            if slug_filter not in life_local:
+                print(f"ERROR: unknown skill slug {slug_filter!r}", file=sys.stderr)
+                return 2
         scanned, cortex_meta, cortex_sot = _filter_for_slug(
             slug_filter, scanned, cortex_meta, cortex_sot
+        )
+        life_local = (
+            {slug_filter: life_local[slug_filter]}
+            if slug_filter in life_local
+            else {}
         )
         cortex_declared = (
             {slug_filter: cortex_declared[slug_filter]}
@@ -227,7 +239,7 @@ def main(argv: list[str] | None = None) -> int:
             else {}
         )
 
-    if not slug_filter and not scanned:
+    if not slug_filter and not scanned and not life_local:
         return 2
 
     if args.report and not args.check:
@@ -248,9 +260,10 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.check:
+        merged = {**scanned, **life_local}
         drifted = _drifts(
             client,
-            scanned,
+            merged,
             cortex_declared=cortex_declared,
             cortex_sot=cortex_sot,
         )
@@ -267,10 +280,18 @@ def main(argv: list[str] | None = None) -> int:
                             [str(v) for v in declared],
                         )
                     )
-        desc_fails = _description_length_failures(scanned)
+        desc_fails = _description_length_failures(merged)
         report = build_drift_report(drifted)
         if args.report:
             print(json.dumps(report, sort_keys=True))
+        if drifted:
+            drifted = [
+                line
+                for line in drifted
+                if not any(
+                    f"agent_skill:{slug}" in line for slug in _INGEST_CHECK_DRIFT_HOLDOUTS
+                )
+            ]
         if drifted:
             for line in drifted:
                 print(f"DRIFT: {line}", file=sys.stderr)
@@ -295,7 +316,9 @@ def main(argv: list[str] | None = None) -> int:
     if slug_filter:
         print(f"Ingesting skill slug: {slug_filter}")
     else:
-        print(f"Ingesting {len(scanned)} workspace skills")
+        print(
+            f"Ingesting {len(scanned)} workspace skills + {len(life_local)} life-local"
+        )
     if cortex_sot:
         print(f"Cursor skills SOT projection rows: {len(cortex_sot)} skill(s)")
     if cortex_meta:
@@ -307,6 +330,11 @@ def main(argv: list[str] | None = None) -> int:
     for slug in sorted(scanned):
         if not _upsert_projection_entry(
             client, slug, scanned[slug], dry_run=args.dry_run
+        ):
+            failures += 1
+    for slug in sorted(life_local):
+        if not _upsert_projection_entry(
+            client, slug, life_local[slug], dry_run=args.dry_run
         ):
             failures += 1
     for slug in sorted(cortex_sot):

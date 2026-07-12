@@ -92,10 +92,7 @@ _PARITY_ALLOWLIST: dict[str, dict[str, str]] = {
         "temporary working notebook, sunset when Phase 3 ships",
         temporary="temporary",
     ),
-    "skill-authoring": _meta(
-        "deprecated (superseded by skill-document-writing v3.0)",
-        temporary="temporary",
-    ),
+    "skill-authoring": _meta("skill writing load-order router; defers to skill-document-writing"),
     "add-mcp-tool": _meta(
         "workspace-only stub (no cortex SOT file)", directionality="stub-only"
     ),

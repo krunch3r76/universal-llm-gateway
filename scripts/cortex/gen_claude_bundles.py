@@ -25,11 +25,14 @@ from claude_bundles.bundle_description import (  # noqa: E402
     description_has_xml_tags,
     extract_rendered_description,
     lint_frontmatter_description,
+    lint_h1_artifact_label,
 )
 from claude_bundles.resolver import (  # noqa: E402
-    CLAUDE_BUNDLE_SLUGS,
     CURSOR_INDEXED_SLUGS,
     CURSOR_ONLY_SLUGS,
+    LIFE_LOCAL_SLUGS,
+    SHARED_SYNC_SLUGS,
+    is_claude_sot_frontmatter,
     render_bundle,
     resolve_sot,
 )
@@ -109,6 +112,17 @@ def run_check_cursor_sot(root: Path) -> int:
     return fail
 
 
+def _check_registry_disjointness() -> int:
+    overlap = sorted(set(SHARED_SYNC_SLUGS) & set(LIFE_LOCAL_SLUGS))
+    if not overlap:
+        return 0
+    print(
+        f"REGISTRY: SHARED_SYNC ∩ LIFE_LOCAL must be empty; overlap={overlap}",
+        file=sys.stderr,
+    )
+    return 1
+
+
 def _fetch_entity_descriptions(client: object | None) -> dict[str, str]:
     if client is None:
         return {}
@@ -156,12 +170,71 @@ def _load_rendered(
     return sot_path, root_label, rendered
 
 
+def _check_life_local_files(root: Path) -> int:
+    fail = 0
+    for slug in LIFE_LOCAL_SLUGS:
+        claude_path, _ = _bundle_paths(root, slug)
+        cursor_path = root / ".cursor" / "skills" / slug / "SKILL.md"
+        if cursor_path.is_file():
+            print(
+                f"LIFE-LOCAL: {slug} must not remain under .cursor/skills",
+                file=sys.stderr,
+            )
+            fail = 1
+        if not claude_path.is_file():
+            print(
+                f"LIFE-LOCAL: {slug} missing SOT at {claude_path}",
+                file=sys.stderr,
+            )
+            fail = 1
+            continue
+        text = claude_path.read_text(encoding="utf-8")
+        if not is_claude_sot_frontmatter(text):
+            print(
+                f"LIFE-LOCAL: {slug} missing frontmatter sot: claude",
+                file=sys.stderr,
+            )
+            fail = 1
+        msg = lint_frontmatter_description(slug, text)
+        if msg:
+            print(msg, file=sys.stderr)
+            fail = 1
+        h1_msg = lint_h1_artifact_label(slug, text, strict=True)
+        if h1_msg:
+            print(h1_msg, file=sys.stderr)
+            fail = 1
+        desc = extract_rendered_description(text)
+        if len(desc) < MIN_BUNDLE_DESCRIPTION_LEN:
+            print(
+                f"DESCRIPTION: {slug} too short ({len(desc)} < "
+                f"{MIN_BUNDLE_DESCRIPTION_LEN}): {desc!r}",
+                file=sys.stderr,
+            )
+            fail = 1
+        elif len(desc) > MAX_CLAUDE_AI_DESCRIPTION_LEN:
+            print(
+                f"DESCRIPTION: {slug} too long ({len(desc)} > "
+                f"{MAX_CLAUDE_AI_DESCRIPTION_LEN}): {desc!r}",
+                file=sys.stderr,
+            )
+            fail = 1
+        elif description_has_xml_tags(desc):
+            print(
+                f"DESCRIPTION: {slug} contains XML tags (claude.ai rejects): {desc!r}",
+                file=sys.stderr,
+            )
+            fail = 1
+    if fail == 0 and LIFE_LOCAL_SLUGS:
+        print("OK life-local-files", flush=True)
+    return fail
+
+
 def run_dry_run(root: Path) -> int:
     print("DRY RUN — no writes will be issued")
     print()
     fail = 0
     entity_descriptions = _fetch_entity_descriptions(_cortex_client())
-    for slug in CLAUDE_BUNDLE_SLUGS:
+    for slug in SHARED_SYNC_SLUGS:
         try:
             sot_path, root_label, _ = _load_rendered(
                 slug, root, entity_descriptions=entity_descriptions
@@ -192,6 +265,10 @@ def run_dry_run(root: Path) -> int:
             print(f"  OK (sot-linked) {cursor_path.relative_to(root)}")
         else:
             print(f"  SOT-LINK {cursor_path.relative_to(root)}")
+    for slug in LIFE_LOCAL_SLUGS:
+        claude_path, _ = _bundle_paths(root, slug)
+        print(f"{slug:32s}  life-local  REFUSED (no render)")
+        print(f"  SKIP  {claude_path.relative_to(root)}")
     return fail
 
 
@@ -199,7 +276,7 @@ def _check_bundle_descriptions(
     root: Path, entity_descriptions: dict[str, str]
 ) -> int:
     fail = 0
-    for slug in CLAUDE_BUNDLE_SLUGS:
+    for slug in SHARED_SYNC_SLUGS:
         try:
             _, _, rendered = _load_rendered(
                 slug, root, entity_descriptions=entity_descriptions
@@ -234,26 +311,30 @@ def _check_bundle_descriptions(
 
 def _check_frontmatter_lint(root: Path) -> int:
     fail = 0
-    for slug in CLAUDE_BUNDLE_SLUGS:
+    for slug in SHARED_SYNC_SLUGS:
         try:
             sot_path, _ = resolve_sot(slug, root)
         except FileNotFoundError:
             continue
-        msg = lint_frontmatter_description(
-            slug, sot_path.read_text(encoding="utf-8")
-        )
+        text = sot_path.read_text(encoding="utf-8")
+        msg = lint_frontmatter_description(slug, text)
         if msg:
             print(msg, file=sys.stderr)
+            fail = 1
+        h1_msg = lint_h1_artifact_label(slug, text)
+        if h1_msg:
+            print(h1_msg, file=sys.stderr)
             fail = 1
     return fail
 
 
 def run_check(root: Path) -> int:
     fail = 0
+    fail |= _check_registry_disjointness()
     client = _cortex_client()
     entity_descriptions = _fetch_entity_descriptions(client) if client else {}
     fail |= _check_frontmatter_lint(root)
-    for slug in CLAUDE_BUNDLE_SLUGS:
+    for slug in SHARED_SYNC_SLUGS:
         try:
             _, _, rendered = _load_rendered(
                 slug, root, entity_descriptions=entity_descriptions
@@ -283,6 +364,7 @@ def run_check(root: Path) -> int:
             print(diff, end="")
             print(f"DRIFT: {claude_path} out of sync with SOT", file=sys.stderr)
             fail = 1
+    fail |= _check_life_local_files(root)
     fail |= run_check_cursor_sot(root)
     fail |= run_skill_git_guard(root)
     fail |= _check_bundle_descriptions(root, entity_descriptions)
@@ -301,7 +383,7 @@ def run_check(root: Path) -> int:
 def run_generate(root: Path) -> int:
     fail = 0
     entity_descriptions = _fetch_entity_descriptions(_cortex_client())
-    for slug in CLAUDE_BUNDLE_SLUGS:
+    for slug in SHARED_SYNC_SLUGS:
         try:
             sot_path, _, rendered = _load_rendered(
                 slug, root, entity_descriptions=entity_descriptions
@@ -311,6 +393,15 @@ def run_generate(root: Path) -> int:
             fail = 1
             continue
         claude_path, cursor_path = _bundle_paths(root, slug)
+        if claude_path.is_file():
+            existing = claude_path.read_text(encoding="utf-8")
+            if is_claude_sot_frontmatter(existing):
+                print(
+                    f"REFUSED: {claude_path} carries sot: claude (life-local)",
+                    file=sys.stderr,
+                )
+                fail = 1
+                continue
         claude_path.parent.mkdir(parents=True, exist_ok=True)
         if (
             not claude_path.is_file()

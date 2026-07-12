@@ -83,7 +83,7 @@ def render_briefing_card(
     local_now = now.astimezone(_LA)
     today = local_now.date()
     parts: list[str] = [
-        f"# Boot Briefing — {local_now.strftime('%Y-%m-%dT%H:%M:%S%z')}"
+        f"# Briefing — {local_now.strftime('%Y-%m-%dT%H:%M:%S%z')}"
     ]
 
     compact_dedup_ids: set[int] = set()

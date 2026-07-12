@@ -6,9 +6,13 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from claude_bundles.resolver import CLAUDE_BUNDLE_SLUGS
+from claude_bundles.resolver import UI_TARGET_SLUGS
 from claude_bundles.skills_api import validate_bundle_dir
-from claude_bundles.skills_ui_panel import connect_cdp, listed_skill_names, open_skills_panel
+from claude_bundles.skills_ui_panel import (
+    connect_cdp,
+    listed_skill_names,
+    open_skills_panel,
+)
 
 
 @dataclass(frozen=True)
@@ -30,12 +34,12 @@ async def scan_ui_parity(
     cdp_url: str,
     bundles_dir: Path,
 ) -> ParityReport:
-    """Compare ``CLAUDE_BUNDLE_SLUGS`` to Customize → Skills table + local bundles."""
-    target = {s.lower() for s in CLAUDE_BUNDLE_SLUGS}
+    """Compare ``UI_TARGET_SLUGS`` to Customize → Skills table + local bundles."""
+    target = {s.lower() for s in UI_TARGET_SLUGS}
 
     invalid: list[tuple[str, str]] = []
     stale: list[str] = []
-    for slug in CLAUDE_BUNDLE_SLUGS:
+    for slug in UI_TARGET_SLUGS:
         bundle_dir = bundles_dir / slug
         md = bundle_dir / "SKILL.md"
         if not md.is_file():
@@ -65,6 +69,11 @@ async def scan_ui_parity(
     )
 
 
+def _uninstall_command(extra: tuple[str, ...]) -> str:
+    slugs = ",".join(extra)
+    return f"claude-ai-sync-jupiter uninstall --slugs {slugs} --continue-on-error"
+
+
 def print_parity_report(report: ParityReport) -> int:
     """Emit human-readable status; return exit code (0 = in sync)."""
     print(f"target={report.target_count} on_ui={len(report.on_ui)}", file=sys.stderr)
@@ -76,6 +85,7 @@ def print_parity_report(report: ParityReport) -> int:
         print(f"extra_on_ui ({len(report.extra_on_ui)}):", file=sys.stderr)
         for slug in report.extra_on_ui:
             print(f"  {slug}", file=sys.stderr)
+        print(_uninstall_command(report.extra_on_ui), file=sys.stderr)
     if report.invalid_local:
         print(f"invalid_local ({len(report.invalid_local)}):", file=sys.stderr)
         for slug, err in report.invalid_local:
@@ -84,7 +94,10 @@ def print_parity_report(report: ParityReport) -> int:
         print("OK parity in sync", file=sys.stderr)
         return 0
     if report.in_sync:
-        print("OK parity (extra UI slugs only — manual cleanup optional)", file=sys.stderr)
-        return 0
+        print(
+            "DRIFT detected — run uninstall command above, then re-scan",
+            file=sys.stderr,
+        )
+        return 1
     print("DRIFT detected — regen then upload missing slugs", file=sys.stderr)
     return 1

@@ -43,7 +43,7 @@ _CORTEX_OPS_DOC = (
     "  activate (entity_ids, depth?, max_results?, exclude_ids?, suppress_hubs?, decay_factor?)\n"
     "  analyze_impact (entity_id, claim, confidence?, resolve_aliases?, raw_id?) (aliases: claim_alignment)\n"
     "  assemble_transcript (jsonl_path, session_id, agent?, assistant_label?) — Assemble a verbatim transcript layer from a Cursor JSONL. Args: jsonl_path: path under ``CURSOR_AGENT_TRANSCRIPTS_ROOT`` (absolute or relative to the root).  Sandbox-enforced — paths outside the root return ``{\"error\", \"reason\": \"path_outside_root\"}``. session_id: ``{agent}-YYYY-MM-DD-HHMMSS-{3hex}`` — appears in the H1 line. agent: cosmetic; echoed in the response. assistant_label: heading label for assistant blocks; default ``\"Assistant\"``. Returns: ``{\"transcript_md\", \"turn_count\", \"byte_count\", \"agent\"}`` on success, ``{\"error\", \"reason\"}`` otherwise.  ``transcript_md`` here is the verbatim layer ONLY — the dispatch caller (debug / probe) is expected to inspect it, NOT to pass it back as a `session_close` argument (that path is dead — see Phase 2 of session-close-server-side-transcript).\n"
-    "  assert (entity_id, claim, confidence, evidence, evidence_uris?, seeded_by?, derivation_type?, confidence_score?, observed_at?, valid_from?, chunk_id?, reasoning_summary?, prospective_summary?, events_json?, artifact_uri?, artifact_storage?, predicate_form?, force?, supersedes_id?, acknowledge_audit_gaps?, attributes?, resolve_aliases?, raw_id?)\n"
+    "  assert (entity_id, claim, confidence, evidence, evidence_uris?, seeded_by?, derivation_type?, confidence_score?, observed_at?, valid_from?, chunk_id?, reasoning_summary?, prospective_summary?, events_json?, artifact_uri?, artifact_storage?, predicate_form?, force?, supersedes_id?, acknowledge_audit_gaps?, dry_run?, attributes?, resolve_aliases?, raw_id?)\n"
     "  assertion_get (assertion_id) — Read a single assertion by id. Used by `pipelines/predicate_extract/` for the §6.7 idempotency check (predicate_form IS NULL sentinel) without forcing a list-and-filter round trip. Returns the same shape as `_create_assertion_impl`'s `item` field — `predicate_form` included.\n"
     "  assertion_state (entity_id, resolve_aliases?, raw_id?) — Lightweight ratification/count projection for a single entity.\n"
     "  assertion_update (assertion_id, superseded_by?, valid_until?, confidence?, confidence_score?, review_status?, reviewer?, reviewed_at?, review_notes?, predicate_form?, force?)\n"
@@ -60,14 +60,14 @@ _CORTEX_OPS_DOC = (
     "  edge_types ()\n"
     "  edge_update (edge_id, strength?, context?, prompt?, metadata?)\n"
     "  edges (from_node?, to_node?, edge_type?, agent?, session_id?, include_retired?, limit?)\n"
-    "  entities (type?, workflow_state?, limit?, query?, for_agent?, fields?, include_non_active?)\n"
+    "  entities (type?, category?, workflow_state?, limit?, query?, for_agent?, fields?, include_non_active?)\n"
     "  entities_bulk_upsert (entities?, if_exists?)\n"
     "  entities_by_content_hash (type?, limit?) — Dedicated content-hash lookup op. Requires content_hash; defaults limit=5.\n"
     "  entity_create (id, type, name, description?, workflow_state?, notes?, aliases?, attributes?, source_uri?)\n"
     "  entity_get (entity_id, entity_ids?, include_edges?, edge_limit?, intent?, include_superseded?, debug?, top_k?, resolve_aliases?, raw_id?, section?, full_body?) — Dispatch surface for entity_get (v2.4 §6.1). intent=\"full\" — EntityDetail with active assertions + superseded breadcrumb. intent=\"full-historical\" — all rows with full enrichment (audit path). intent=\"card\" — Card v0 via projection-aware fetch (§6.3). intent=\"card-md\" — comprehension-first markdown render (root-only). intent=\"body\" — source_uri markdown (not the KG card). Params: ``section`` (md_read one heading), ``full_body`` (``false``=section manifest only). Default (no section, ``full_body`` unset): whole body. Response includes ``render_mode`` (``\"full\"`` | ``\"manifest\"``). intent in {\"cluster\",\"impact\"} — reserved; rejected until later phases. ``entity_ids`` — batch read; same ``intent``/options for every id; returns ``{\"items\": [...], \"count\": N}`` (batch mode supports ``body`` and ``card`` only).\n"
     "  entity_merge (source_id, target_id)\n"
     "  entity_rekey (old_id, new_id)\n"
-    "  entity_retype (entity_id, new_type)\n"
+    "  entity_retype (entity_id, new_type, force?)\n"
     "  entity_update (entity_id, resolve_aliases?, raw_id?, intent?, adoption?, aliases?, attributes?, confidence_band?, description?, lifecycle?, name?, notes?, source_uri?, workflow_state?)\n"
     "  fill_gaps (findings, subject?, include_filesystem?) — Return suggested fills for audit findings. Accepts a findings list (from audit/case_audit/session_audit) or a subject to re-run case_audit and generate advice. Advisory only — does not modify state. include_filesystem defaults to False — fast advisory path. Pass True to include filesystem detectors before generating suggestions.\n"
     "  friction (owner, category?, note, suggestion?, agent?)\n"
@@ -76,7 +76,6 @@ _CORTEX_OPS_DOC = (
     "  impact (entity_id, depth?) (aliases: graph_reach)\n"
     "  implement_ready_preflight (source_ref?) — Non-writing preflight for todo-sourced implement dispatch.\n"
     "  journal_read (limit?, agent?)\n"
-    "  journal_write (timestamp, agent, summary, domains?, decisions?, open_items?, entity_ids?, file_path?, session_id?, prior_session_id?, markdown_content?)\n"
     "  observe (entity_id?, claim, confidence?, agent?, evidence?)\n"
     "  pinned_deliverable_write (rel_path, content, write_if_absent?, dispatch_id?, thread_id?)\n"
     "  prose_fact_scan (principal?, paths?, tier?, dry_run?, unsafe_full_scan?)\n"
@@ -112,6 +111,7 @@ _CORTEX_OPS_DOC = (
     "  todo_candidates (q?, query?, limit?, workflow_state?, priority?, domain?, domain_exclude?, context?)\n"
     "  todo_close_sidecar (todo_id?, summary?, evidence?, reasoning_summary?, references?, agent?, session_id?, closed_at?) — Write the standardized closure markdown sidecar + set the entity pointer. Produces ``notes/system/todos/{slug}-closure.md`` under the cortex sandbox and sets ``attributes.closure_summary_uri`` on the todo entity (merge — existing attributes are preserved). Returns the canonical URI so the caller can cite it in the closure assertion's ``evidence_uris``.\n"
     "  todo_distill_implement_gate (todo_id?, files_expected?, acceptance_criteria?, required_skills?, claim?, evidence?, agent?, session_id?, seeded_by?, density_triage?, source_uri?, recon_waive_reason_code?, recon_waive_reason?) — Wire implement-admission gate fields atomically at Gate-2 close.\n"
+    "  view_render (document_id?, mode?, root_id?, view_profile?, narrative_sections?, as_of_system?, as_of_valid?, agent?, session_id?) — Render or refresh a derived view document from graph state and recipe data.\n"
     "  walk_subgraph (root?, hops?, edge_types?, direction?, entity_cap?, include_counts?, promote_hubs?, hub_rel_threshold?) — Walk a subgraph — lean topology without assertion canvas.\n"
 )
 # <<< AUTOGEN:cortex-ops <<<
@@ -130,7 +130,7 @@ CORTEX_TOOL_DEFINITION: dict[str, Any] = _fn(
             "type": "string",
             "description": (
                 "Operation name (e.g. entity_get, assert, observe, "
-                "search, journal_write, session_close, edge_create)"
+                "search, session_close, edge_create)"
             ),
         },
         "arguments": {

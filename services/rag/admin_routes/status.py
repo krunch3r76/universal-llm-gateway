@@ -20,13 +20,16 @@ if TYPE_CHECKING:
 from services.rag.admin_routes._extraction_export import (
     register_extraction_export_route,
 )
-from services.rag.admin_routes._helpers import _coverage_sources, _get_pipeline_stage
+from services.rag.admin_routes._helpers import (
+    _build_source_status_item,
+    _coverage_sources,
+    _resolve_source_status_paths,
+)
 from services.rag.models import (
     CoverageResponse,
     IndexingStatusResponse,
     PrefixCoverage,
     ScopeCoverage,
-    SourceStatusItem,
     SourceStatusResponse,
     WatcherStatusItem,
 )
@@ -232,14 +235,24 @@ def register_status_routes(
 
     @router.get("/source-status", response_model=SourceStatusResponse)
     def get_source_status(
-        sources: list[str] = Query(..., description="source_path values to query"),
+        sources: list[str] | None = Query(
+            None, description="source_path values to query"
+        ),
+        arxiv_ids: list[str] | None = Query(
+            None, description="arXiv IDs to resolve (e.g. 2402.16667)"
+        ),
+        filenames: list[str] | None = Query(
+            None, description="Basenames to resolve via articles.filename"
+        ),
     ) -> SourceStatusResponse:
         """Return point-in-time pipeline status for one or more source files.
 
-        For each requested source, derives the pipeline stage from live SQLite
-        state and returns queue details, indexing timestamp, and contextualized
-        chunk count. Also returns aggregate queue depth and stale vocabulary
-        scope count for classify_vocabulary readiness signalling.
+        Accepts explicit ``source_path`` values and/or resolves ``arxiv_ids`` and
+        ``filenames`` to paths before deriving pipeline stage from live SQLite
+        state. Returns queue details, article metadata, filesystem presence,
+        indexing timestamp, and contextualized chunk count. Also returns aggregate
+        queue depth and stale vocabulary scope count for classify_vocabulary
+        readiness signalling.
 
         Sources not found in any table are returned with pipeline_stage='registered'.
         """
@@ -247,25 +260,21 @@ def register_status_routes(
         if prop_idx is None:
             raise HTTPException(status_code=503, detail="Property index not available")
 
-        queue_depth: int = prop_idx.get_extraction_queue_count()
-        items: list[SourceStatusItem] = []
-        for source_path in sources:
-            data = prop_idx.get_source_item_data(source_path)
-            stage, _, _ = _get_pipeline_stage(source_path, prop_idx)
-            queue_row = data.get("queue_row")
-            ctx_count: int = data["contextualized_chunks"]
-            items.append(
-                SourceStatusItem(
-                    source_path=source_path,
-                    pipeline_stage=stage,
-                    queue_position=queue_row["position"] if queue_row else None,
-                    queue_attempts=queue_row["attempts"] if queue_row else 0,
-                    last_error=queue_row["last_error"] if queue_row else None,
-                    indexed_at=data.get("indexed_at"),
-                    contextualized_chunks=ctx_count,
-                )
+        if not any((sources, arxiv_ids, filenames)):
+            raise HTTPException(
+                status_code=422,
+                detail="Provide at least one of: sources, arxiv_ids, filenames",
             )
 
+        resolved_paths = _resolve_source_status_paths(
+            prop_idx,
+            sources=sources,
+            arxiv_ids=arxiv_ids,
+            filenames=filenames,
+        )
+
+        queue_depth: int = prop_idx.get_extraction_queue_count()
+        items = [_build_source_status_item(path, prop_idx) for path in resolved_paths]
         stale_corpus_hints_count: int = prop_idx.count_scopes_with_stale_corpus_hints()
         return SourceStatusResponse(
             sources=items,

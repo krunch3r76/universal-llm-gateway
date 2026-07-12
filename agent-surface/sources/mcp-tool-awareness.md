@@ -1,5 +1,5 @@
 <!-- frontmatter:cursor
-description: MCP tool calling convention for Cursor — CallMcpTool/user-vortex syntax, fs markdown ops (md_read/md_replace/md_append), sandbox routing (cortex/context/workspaces), response-store flagged-payload semantics. Load before invoking any MCP tool (cortex, fs, agent_bus, observability, rag, pipeline, dispatch, team_dispatch).
+description: MCP tool calling convention for Cursor — CallMcpTool vortex-code/vortex-life syntax, fs markdown ops (md_read/md_replace/md_append), sandbox routing (cortex/context/workspaces), response-store flagged-payload semantics. Load before invoking any MCP tool (cortex, fs, agent_bus, observability, rag, pipeline, dispatch, team_dispatch).
 alwaysApply: false
 -->
 <!-- target:cursor -->
@@ -7,21 +7,33 @@ alwaysApply: false
 
 ## Calling Convention
 
-All MCP tools live on the `user-vortex` server. In Cursor, call via:
+Cursor has **two** vortex MCP bridges (mcp.json keys = CallMcpTool `server=` ids):
+
+| Server id | Mount | Use |
+|---|---|---|
+| `vortex-code` | `/mcp/code` | Default coding seat — cortex, team_dispatch, manage, … |
+| `vortex-life` | `/mcp/life` | Life-lead only — thin life surface |
+
+Legacy monolithic `user-vortex` is **retired**. Prefer `vortex-code` unless life-leading.
+
+**Cursor harness note:** mcp.json keys are `vortex-code` / `vortex-life`. The live CallMcpTool
+`server=` id may appear as `user-vortex-code` / `user-vortex-life` (Cursor `user-` prefix on
+configured servers). Match the session catalog; do not invent a bare `user-vortex`.
 
 ```
-CallMcpTool(server="user-vortex", toolName="<tool>", arguments={...})
+CallMcpTool(server="vortex-code", toolName="<tool>", arguments={...})
+# if catalog lists user-vortex-code, use that string instead
 ```
 
 When rules or docs use shorthand like `fs(sandbox="cortex", op="read", path="...")`,
-translate to `CallMcpTool(server="user-vortex", toolName="fs", arguments={"sandbox": "cortex", "op": "read", "path": "..."})`.
+translate to `CallMcpTool(server="vortex-code", toolName="fs", arguments={"sandbox": "cortex", "op": "read", "path": "..."})`.
 
 **Dispatch-style tools** (`cortex`, `agent_bus`, `dispatch`, `rag`): the outer
 `CallMcpTool` envelope is an object, but the inner `arguments` field MUST be a
 **JSON string**, not a nested object. See skill `dispatch-shape`.
 
 ```
-CallMcpTool(server="user-vortex", toolName="agent_bus", arguments={
+CallMcpTool(server="vortex-code", toolName="agent_bus", arguments={
   "tool": "fetch",
   "arguments": "{\"thread\": \"111\", \"last\": 3, \"compact\": true}"
 })
@@ -77,7 +89,7 @@ When the opening message contains `transcript:cursor-YYYY-MM-DD-HHmm`, run
 three parallel calls: (1) `fs md_read` the session summary section, (2)
 `agent_bus fetch thread=480` for activity journal, (3) `cortex entities
 type=transcript limit=6` for session arc. Present a ~5-line orientation,
-then ask what to work on. Do NOT call `cortex_boot`.
+then ask what to work on. Do NOT call `cortex_brief`.
 <!-- /target:cursor -->
 <!-- target:* -->
 ## Response Store — NOT a failure signal

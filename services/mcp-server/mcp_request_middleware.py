@@ -22,6 +22,8 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
+from dual_endpoint_http import is_mcp_endpoint_path
+from endpoint_surface import surface_from_path
 from mcp_events import monotonic_now, record
 from request_profile import bind_request
 from starlette.requests import Request
@@ -37,18 +39,21 @@ _SUSPECTED_TIMEOUT_MIN_DURATION_S = 25.0
 _SUSPECTED_TIMEOUT_MAX_RESPONSE_BYTES = 100
 
 # Paths handled by this middleware; everything else is passed through unchanged.
-_MCP_CLAUDE_PATH = "/mcp"
+_MCP_SEAT_BY_PATH = {
+    "/mcp/life": "claude",
+    "/mcp/code": "cursor",
+    "/mcp": "claude",  # legacy bare path (absent after dual-endpoint cutover)
+}
 
 
 def _seat_class_from_path(path: str) -> str:
     """Return the seat_class tag for the given request path.
 
-    /mcp    → "claude"   (Cursor / Anthropic API surface)
-    other   → "unknown"
+    /mcp/life → "claude" (claude.ai toys / life surface)
+    /mcp/code → "cursor" (Cursor IDE / code surface)
+    other     → "unknown"
     """
-    if path == _MCP_CLAUDE_PATH:
-        return "claude"
-    return "unknown"
+    return _MCP_SEAT_BY_PATH.get(path, "unknown")
 
 
 def _extract_jsonrpc_id(body: bytes) -> Any:
@@ -109,7 +114,7 @@ def _summarize_tool_args(tool_name: str, args: dict[str, Any]) -> str:
         op = args.get("op", "")
         path = args.get("path", "")
         return f"op={op} path={path}" if op else ""
-    if tool_name == "cortex_boot":
+    if tool_name == "cortex_brief":
         agent = args.get("agent", "cursor")
         return f"agent={agent}"
     if tool_name == "web_search":
@@ -178,11 +183,13 @@ class McpRequestEventsMiddleware:
 
         request = Request(scope, receive)
         path = request.url.path
-        if path != _MCP_CLAUDE_PATH:
+
+        if not is_mcp_endpoint_path(path):
             await self._app(scope, receive, send)
             return
 
         seat_class = _seat_class_from_path(path)
+        surface = str(scope.get("mcp_surface") or surface_from_path(path) or "")
 
         client_ip = request.client.host if request.client else "unknown"
         method = request.method
@@ -230,6 +237,7 @@ class McpRequestEventsMiddleware:
             "mcp_method": mcp_method,
             "auth_mode": auth_mode,
             "seat_class": seat_class,
+            **({"surface": surface} if surface else {}),
             **({"tool_name": tool_name} if tool_name else {}),
             **({"caller_identity": caller_identity} if caller_identity else {}),
         }
@@ -243,6 +251,7 @@ class McpRequestEventsMiddleware:
             "mcp_method": mcp_method,
             "auth_mode": auth_mode,
             "seat_class": seat_class,
+            **({"surface": surface} if surface else {}),
         }
         if correlation_hdr:
             transport_started["cloudproxy_correlation_id"] = correlation_hdr
@@ -325,6 +334,7 @@ class McpRequestEventsMiddleware:
             mcp_method=mcp_method,
             tool_name=tool_name or None,
             seat_class=seat_class,
+            surface=surface or None,
             jsonrpc_id=jsonrpc_id,
             cloudproxy_correlation_id=correlation_hdr or None,
             caller_identity=caller_identity or None,
@@ -346,6 +356,7 @@ class McpRequestEventsMiddleware:
                     "mcp_method": mcp_method,
                     "response_bytes": response_bytes,
                     "seat_class": seat_class,
+                    **({"surface": surface} if surface else {}),
                 }
                 if tool_name:
                     failed_payload["tool_name"] = tool_name
@@ -386,6 +397,7 @@ class McpRequestEventsMiddleware:
                     "auth_mode": auth_mode,
                     "response_bytes": response_bytes,
                     "seat_class": seat_class,
+                    **({"surface": surface} if surface else {}),
                     **({"tool_name": tool_name} if tool_name else {}),
                     **({"caller_identity": caller_identity} if caller_identity else {}),
                 }

@@ -1,0 +1,98 @@
+# cortex.life/v1 — closed vocabulary for imprint(propose).
+# Census verified 2026-07-12 against head-schema migrations (tmp-copy DB).
+# related_to dropped: absent from relationship_types on fresh migrate (F-6).
+
+version: "1"
+context_id: "cortex.life/v1"
+
+entity_types:
+  - person
+  - organization
+  - matter
+  - document
+  - todo
+  - account
+  - property
+  - condition
+
+predicates:
+  a:
+    class: typing
+    aliases: ["@type"]
+    cortex_op: entity_create
+    description: "Declare entity type (JSON-LD @type or `a`)"
+  child_of:
+    class: relationship
+    cortex_op: relationship_create
+    domain: null
+    range: null
+  sibling_of:
+    class: relationship
+    cortex_op: relationship_create
+    domain: null
+    range: null
+  references:
+    class: relationship
+    cortex_op: relationship_create
+    domain: null
+    range: null
+  pertains_to:
+    class: relationship
+    cortex_op: relationship_create
+    domain: null
+    range: null
+  evidence_for:
+    class: relationship
+    cortex_op: relationship_create
+    domain: null
+    range: null
+  correspondence_with:
+    class: relationship
+    cortex_op: relationship_create
+    domain: null
+    range: null
+  issued_by:
+    class: relationship
+    cortex_op: relationship_create
+    domain: account
+    range: organization
+  recipient_of:
+    class: relationship
+    cortex_op: relationship_create
+    domain: null
+    range: null
+  noted:
+    class: literal
+    literal_type: string
+    cortex_op: assert
+    description: "Belief/assertion on an entity"
+  due:
+    class: literal
+    literal_type: date
+    cortex_op: entity_update
+    allowlisted_attribute: deadline_date
+    description: "Deadline date (todo deadline_date attribute)"
+  priority:
+    class: literal
+    literal_type: enum
+    enum_values: [low, medium, high]
+    cortex_op: entity_update
+    allowlisted_attribute: priority
+    description: "Todo priority — only allowlisted attribute in v0"
+
+# Cortex ops that imprint must never plan or accept as patch predicates.
+refuse_list:
+  - entity_merge
+  - entity_rekey
+  - entity_retype
+  - entities_bulk_upsert
+  - relationships_bulk_upsert
+  - relationship_delete
+  - register_skill_substrate
+  - supersede
+  - session_close
+  - journal_read
+  - edge_create
+  - edge_delete
+  - delegate
+  - dispatch

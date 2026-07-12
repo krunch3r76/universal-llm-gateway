@@ -21,8 +21,13 @@ def build_oauth_routes(oauth_service: OAuthService) -> list[Route]:
 
     async def resource_metadata(request: Request) -> Response:
         _record_oauth_route("resource_metadata", request)
+        resource_path = request.path_params.get("resource_path")
+        if not isinstance(resource_path, str):
+            resource_path = None
         return JSONResponse(
-            oauth_service.build_protected_resource_metadata(),
+            oauth_service.build_protected_resource_metadata(
+                resource_path=resource_path
+            ),
             headers={"cache-control": "public, max-age=3600"},
         )
 

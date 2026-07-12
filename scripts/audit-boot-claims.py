@@ -2,9 +2,9 @@
 """Audit boot-injection claims against actual code behavior.
 
 Scans operational-context render output, on-demand pointer targets,
-docs/tool-reference.md cortex_boot params, operational-lessons.md
+docs/tool-reference.md cortex_brief params, operational-lessons.md
 preamble, and shared markdown for self-claims that contradict the actual
-cortex_boot implementation. Also checks that files agents are instructed
+cortex_brief implementation. Also checks that files agents are instructed
 to read on-demand are actually surfaced via the renderer's pointer block.
 
 Exit code: 0 if no drift, 1 if drift found.
@@ -78,30 +78,30 @@ class AuditReport:
         return "\n".join(out)
 
 
-# === Check 1: cortex_boot tool signature vs documented params ===
+# === Check 1: cortex_brief tool signature vs documented params ===
 
 
-def extract_cortex_boot_params() -> set[str]:
-    """Parse the cortex_boot tool decorator function and return param names."""
+def extract_cortex_brief_params() -> set[str]:
+    """Parse the cortex_brief tool decorator function and return param names."""
     src = BOOT_TOOL_PATH.read_text()
     tree = ast.parse(src)
     for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef) and node.name == "cortex_boot":
+        if isinstance(node, ast.FunctionDef) and node.name == "cortex_brief":
             return {arg.arg for arg in node.args.args if arg.arg != "self"}
-    raise RuntimeError(f"cortex_boot function not found in {BOOT_TOOL_PATH}")
+    raise RuntimeError(f"cortex_brief function not found in {BOOT_TOOL_PATH}")
 
 
 def extract_documented_boot_params() -> set[str] | None:
-    """Parse docs/tool-reference.md for the cortex_boot params table.
+    """Parse docs/tool-reference.md for the cortex_brief params table.
 
     Returns:
-      None  — cortex_boot section not found at all (docs missing)
+      None  — cortex_brief section not found at all (docs missing)
       set() — section found, but params table failed to parse (regex no-op)
       {...} — params successfully extracted
     """
     text = TOOL_REFERENCE_PATH.read_text()
     boot_section = re.search(
-        r"##\s+cortex_boot\b.*?(?=\n##\s+\w|\Z)",
+        r"##\s+cortex_brief\b.*?(?=\n##\s+\w|\Z)",
         text,
         re.DOTALL,
     )
@@ -119,16 +119,16 @@ def extract_documented_boot_params() -> set[str] | None:
 
 
 def check_documented_vs_actual_params(report: AuditReport) -> None:
-    actual = extract_cortex_boot_params()
+    actual = extract_cortex_brief_params()
     documented = extract_documented_boot_params()
     if documented is None:
         report.add(
             Finding(
                 severity="warning",
-                category="cortex_boot section not found in tool-reference.md",
+                category="cortex_brief section not found in tool-reference.md",
                 location=str(TOOL_REFERENCE_PATH.relative_to(REPO_ROOT)),
-                claim="docs/tool-reference.md should document cortex_boot",
-                reality="No `### cortex_boot` (or `## cortex_boot`) section located — drift check skipped.",
+                claim="docs/tool-reference.md should document cortex_brief",
+                reality="No `### cortex_brief` (or `## cortex_brief`) section located — drift check skipped.",
             )
         )
         return
@@ -136,9 +136,9 @@ def check_documented_vs_actual_params(report: AuditReport) -> None:
         report.add(
             Finding(
                 severity="info",
-                category="cortex_boot params table failed to parse",
+                category="cortex_brief params table failed to parse",
                 location=str(TOOL_REFERENCE_PATH.relative_to(REPO_ROOT)),
-                claim="cortex_boot section was found",
+                claim="cortex_brief section was found",
                 reality=(
                     "Section located but the params table regex returned zero rows. "
                     "Either the table format changed or the params table was removed. "
@@ -154,7 +154,7 @@ def check_documented_vs_actual_params(report: AuditReport) -> None:
                 severity="critical",
                 category="Documented param does not exist",
                 location=str(TOOL_REFERENCE_PATH.relative_to(REPO_ROOT)),
-                claim=f"cortex_boot accepts `{param}`",
+                claim=f"cortex_brief accepts `{param}`",
                 reality=f"`{param}` not in tool signature {sorted(actual)}",
             )
         )

@@ -27,6 +27,16 @@ _SOT_DRIFT_KNOWN_RESIDUALS = frozenset(
 _CREATE_SUPPRESSED_LIFECYCLES = frozenset({"deprecated", "retired", "merged"})
 _WS = "workspaces://universal-llm-gateway"
 _SYNC_SOURCE_URI = f"{_WS}/.cursor/skills/skill-document-writing/SKILL.md"
+_CLAUDE_SKILLS_REL = ".claude/skills/"
+_CURSOR_SKILLS_REL = ".cursor/skills/"
+_INGEST_CHECK_DRIFT_HOLDOUTS = frozenset(
+    {
+        "handoff-packet-authoring",
+        "implementation-plan-workflow",
+        "multi-model-review",
+        "refine-pipeline",
+    }
+)
 _SKIP_CORTEX_SOT = frozenset({"README"})
 
 GENERATOR_VERSION = "1.0.0"

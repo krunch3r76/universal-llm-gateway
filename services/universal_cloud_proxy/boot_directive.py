@@ -1,11 +1,11 @@
-"""Parse ``cortex_boot(...)`` directives embedded in cloud-proxy system prompts."""
+"""Parse ``cortex_brief(...)`` directives embedded in cloud-proxy system prompts."""
 
 from __future__ import annotations
 
 import re
 from typing import Any
 
-_BOOT_CALL_RE = re.compile(r"""cortex_boot\s*\(\s*(?P<args>[^)]*)\s*\)""")
+_BOOT_CALL_RE = re.compile(r"""cortex_brief\s*\(\s*(?P<args>[^)]*)\s*\)""")
 
 _KWARG_RE = re.compile(
     r"""(agent|family|platform|role)\s*=\s*(["'])([\w-]+)\2""",
@@ -16,11 +16,11 @@ _PRIMARY_KEYS = ("agent", "family", "platform", "role")
 
 
 def parse_boot_directive(content: str) -> tuple[str, dict[str, str]] | None:
-    """Extract the first ``cortex_boot(...)`` call and its primary kwargs.
+    """Extract the first ``cortex_brief(...)`` call and its primary kwargs.
 
-    Recognized shapes (aligned with MCP ``cortex_boot`` primary params):
-      - ``cortex_boot(agent="<seat-slug>")`` — hyphenated slugs allowed
-      - ``cortex_boot(family="...", platform="...", role="...")`` — role optional
+    Recognized shapes (aligned with MCP ``cortex_brief`` primary params):
+      - ``cortex_brief(agent="<seat-slug>")`` — hyphenated slugs allowed
+      - ``cortex_brief(family="...", platform="...", role="...")`` — role optional
 
     Returns ``(matched_span, kwargs)`` when ``agent`` or ``family`` is present;
     otherwise ``None`` (prompt unchanged).
@@ -40,5 +40,5 @@ def parse_boot_directive(content: str) -> tuple[str, dict[str, str]] | None:
 
 
 def boot_tool_arguments(kwargs: dict[str, str]) -> dict[str, Any]:
-    """Build ``execute_tool("cortex_boot", ...)`` kwargs from parsed directive."""
+    """Build ``execute_tool("cortex_brief", ...)`` kwargs from parsed directive."""
     return {key: kwargs[key] for key in _PRIMARY_KEYS if key in kwargs}

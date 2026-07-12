@@ -16,9 +16,13 @@ def entity_rekey(conn: sqlite3.Connection, old_id: str, new_id: str) -> dict[str
 
 
 def entity_retype(
-    conn: sqlite3.Connection, entity_id: str, new_type: str
+    conn: sqlite3.Connection,
+    entity_id: str,
+    new_type: str,
+    *,
+    force: bool = False,
 ) -> dict[str, Any]:
-    return entity_retype_impl(conn, entity_id, new_type)
+    return entity_retype_impl(conn, entity_id, new_type, force=force)
 
 
 def entity_merge(

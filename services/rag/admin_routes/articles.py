@@ -156,7 +156,9 @@ def register_article_routes(
         request: RefreshCorpusHintsRequest,
     ) -> RefreshCorpusHintsResponse:
         """Refresh corpus hints, optionally for a single scope with tuning params."""
+        from services.rag.config import load_config
         from services.rag.corpus_hints import update_corpus_hints
+        from services.rag.vocabulary._scope_helpers import configured_scopes_map
 
         prop_idx = get_property_index_fn()
         if prop_idx is None:
@@ -170,9 +172,19 @@ def register_article_routes(
         if request.extra_blocklist:
             extra_bl = frozenset(t.lower() for t in request.extra_blocklist)
 
+        # Match CLI / freshness-repair: prefix-match via configured scopes so
+        # umbrella scopes refresh correctly (leaf files, not stored scope col).
+        cs_map = configured_scopes_map(load_config())
+        if request.scope is not None and request.scope not in cs_map:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown scope '{request.scope}' (not in rag.yaml)",
+            )
+
         result = await update_corpus_hints(
             prop_idx,
             scope=request.scope,
+            configured_scopes=cs_map,
             entity_boost_hyphen=request.entity_boost_hyphen,
             entity_boost_single=request.entity_boost_single,
             blocklist_override=bl_override,

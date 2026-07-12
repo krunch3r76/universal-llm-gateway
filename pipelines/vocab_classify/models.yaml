@@ -3,8 +3,14 @@
 # Override frontier_classify at runtime via pipeline_options:
 #   model_ref_overrides: {"classify": "openai/gpt-5.4"}
 models:
+  # Local vocab must fit Jupiter VRAM (~32GB). qwen3-5-27b-q8-0-32768 needs
+  # ~30.9GB and stalls in capacity.pool.waiting. qwen3-14b fits (~15.7GB) and
+  # matches extraction. Effective context = context_length // parallel_slots
+  # (live: GET /v1/models?include_metadata=true → effective_context_per_slot).
+  # qwen3-14b-q4-k-m-40960 currently advertises effective_context_per_slot=8192
+  # (40960/5). Keep classify prompts under that budget; do not assume 20k.
   domain_discovery:
-    model: qwen3-5-27b-q8-0-32768
+    model: qwen3-14b-q4-k-m-40960
     profile: qwen3-instruct
 
   frontier_classify:

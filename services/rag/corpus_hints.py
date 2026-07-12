@@ -597,30 +597,20 @@ async def update_corpus_hints(
                         )
     else:
         for prefix in prefixes:
-            # If scope is provided, filter at the source if possible, or iterate only for that scope
-            if scope is not None:
-                # Assuming PropertyIndex has a method to get terms for a specific scope
-                # If not, the current filtering is necessary but less efficient.
-                for (
-                    term,
-                    chunk_count,
-                    doc_count,
-                ) in property_index.get_term_counts_for_scope(prefix, scope):
-                    if term:
-                        scope_prefix_terms[scope][prefix].append(
-                            (term, chunk_count, doc_count)
-                        )
-            else:
-                for (
-                    scope_name,
-                    term,
-                    chunk_count,
-                    doc_count,
-                ) in property_index.get_term_counts_by_scope(prefix):
-                    if term:
-                        scope_prefix_terms[scope_name][prefix].append(
-                            (term, chunk_count, doc_count)
-                        )
+            # PropertyIndex has no single-scope term API — filter the by-scope
+            # aggregation when a scope is requested (admin refresh path).
+            for (
+                scope_name,
+                term,
+                chunk_count,
+                doc_count,
+            ) in property_index.get_term_counts_by_scope(prefix):
+                if scope is not None and scope_name != scope:
+                    continue
+                if term:
+                    scope_prefix_terms[scope_name][prefix].append(
+                        (term, chunk_count, doc_count)
+                    )
 
     rows_for_db: list[tuple[str, str, float, str]] = []
     result: dict[str, str] = {}

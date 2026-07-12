@@ -6,8 +6,10 @@
 # Each scope is classified independently — fault isolation, parallelism,
 # per-scope skip_fresh, and ~4-18k tokens per call (vs 82-91k monolithic).
 #
-# For local models, use scripts/rag/classify_vocabulary.py --mode local which
-# classifies per-scope without the pipeline (fits in 8-32k context).
+# Local mode: scripts/rag/classify_vocabulary.py posts mode=local with
+# model_ref_overrides.classify = domain_discovery (qwen3-14b-40960). Live
+# effective_context_per_slot for that id is currently 8192 — bundle truncates
+# terms/chunks and max_tokens stays small enough to leave generation headroom.
 schema_version: 6
 id: vocab-classify-v1
 version: "2.0"
@@ -34,13 +36,17 @@ steps:
     map_inputs:
       query: mapNs.iteration.value.terms
       scope: mapNs.iteration.value.scope
-    top_k: 5
+    # Keep RAG grounding lean — local 14b slot context is ~8k.
+    top_k: 2
 
   - name: bundle
     type: vocab_classify_bundle_v1
     bundle_upstream_steps:
       - load_hints
       - retrieve_samples
+    max_terms: 40
+    max_chunk_chars: 600
+    max_chunks: 2
 
   - name: classify
     type: generate
@@ -52,7 +58,8 @@ steps:
     prompt_ref: vocab_classify.v1.classify_scope
     generation_parameters:
       temperature: 0.2
-      max_tokens: 32768
+      # Classification JSON is small; 32k left no generation space under 8k slots.
+      max_tokens: 2048
       response_format:
         type: json_object
         schema:

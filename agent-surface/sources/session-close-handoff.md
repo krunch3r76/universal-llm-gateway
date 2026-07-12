@@ -16,7 +16,7 @@ Boot does **not** auto-surface handoffs (assertion 8384). Without an explicit an
 ```markdown
 **Closing session:** `transcript:{session_id}`
 **Load context:** `fs(cortex, op=read, path=notes/system/transcripts/{session_id}.md)`
-  — or `cortex_boot(agent="{agent}", transcript_id="{session_id}")`
+  — or `cortex_brief(agent="{agent}", transcript_id="{session_id}")`
 ```
 
 Then § State at close, § Deferred inventory, § Await operator (see below). ¬ § Next

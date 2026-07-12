@@ -13,88 +13,64 @@ from claude_bundles.bundle_description import (
     resolve_bundle_description,
 )
 
-# claude.ai bundle = all CURSOR_INDEXED skills (matter playbooks retired → case documents).
-_CLAUDE_BUNDLE_U: list[str] = [
-    "orchestrator-core",
-    "markdown-navigation",
-    "modularize-discipline",
-    "investigation-economy",
-    "no-silent-inference",
-    "frontier-reasoning-discipline",
-    "frontier-model-instructions",
-    "prose-discipline",
-    "srm",
-    "engagement-stance",
-]
-
-# Trimmed 2026-07-11 per todo:skill-pool-dedupe judgment (agent-bus:4891) + dual-lead
-# correction: universal mis-bucketed D slugs stay on UI; matter/_D cleared from standing
-# Claude.ai catalog; demote_ui_only / merge / retire removed from this allowlist.
-_CLAUDE_BUNDLE_E: list[str] = [
-    "cortex",
+# Shared-sync: cursor-SOT, rendered to .claude/skills by gen_claude_bundles.
+_SHARED_SYNC_BRIDGE: list[str] = [
     "fs",
     "cortex-orientation",
     "dispatch-shape",
-    "dispatch-workflow",
-    "consult-routing",
     "agent-bus-discipline",
-    "entity-lifecycle-discipline",
-    "entity-creation-discipline",
-    "cortex-provenance-discipline",
-    "auditor-validatable-confidence",
-    "completion-provenance-discipline",
-    "evidence-review-discipline",
-    "enrichment-quality-discipline",
-    "boot-execution-discipline",
-    "operator-posture",
-    "advisor-timing",
-    "consensus-steelman-posture",
-    "cheap-recon-before-escalation",
-    "task-grouping-discipline",
-    "planning-promotion-ladder",
-    "required-skills-pickup",
-    "web-skill-body-activation",
-    "handoff-pickup",
-    "implement-todo",
-    "friction-review",
-    "model-tier-awareness-web",
-    "session-close-audit",
-    "lead-seat-boot",
-    "agent-guidance-writing",
-    "skill-document-writing",
-    "git-posture",
     "session-close-kernel",
-    "session-close-transcript",
-    "session-close-handoff",
-    "session-close-reflective-journal",
-    "cortex-entity-restructure",
-    "handoff-packet-authoring",
-    "handoff-prompt-authoring",
-    "implementation-plan-workflow",
-    "multi-model-review",
-    "web-generate-substrate",
-    "web-transcript-preprocessing",
-    "email-tool-dispatch",
-    "email-bridge-mailbox",
-    "architecture-invariants",
-    "corpus-grounded-skill-authoring",
-    "todo-lifecycle",
-    "orchestrator-workflow",
-    "pre-deploy-gate-discipline",
-    "overhaul-program",
-    # Dual-lead correction — universal procedure reclassed out of retired _D
-    "financial-reasoning",
-    "named-entity-verification-gate",
-    "document-review-timeline-linkage-audit",
+    "session-close-audit",
+    "handoff-pickup",
+    "required-skills-pickup",
+    "completion-provenance-discipline",
+    "cortex-provenance-discipline",
+    "consult-routing",
+    "model-tier-awareness-web",
+    "lead-seat-boot",
 ]
 
-# Matter / domain playbooks — out of standing Claude.ai Customize catalog
-# (decision:skill-guidance-universal-procedure-only). Bodies remain under
-# .cursor/skills/ for Cursor + case-scoped attach. Allowlist→denylist inversion
-# (todo:claude-bundle-slugs-retire) still deferred.
-_CLAUDE_BUNDLE_D: list[str] = []
+_SHARED_SYNC_POSTURE: list[str] = [
+    "operator-posture",
+    "frontier-reasoning-discipline",
+    "no-silent-inference",
+    "consensus-steelman-posture",
+    "advisor-timing",
+]
 
-CLAUDE_BUNDLE_SLUGS: list[str] = _CLAUDE_BUNDLE_U + _CLAUDE_BUNDLE_E + _CLAUDE_BUNDLE_D
+_SHARED_SYNC_LIFE_MATTER: list[str] = [
+    "evidence-review-discipline",
+    "entity-creation-discipline",
+    "entity-lifecycle-discipline",
+]
+
+_SHARED_SYNC_META: list[str] = [
+    "claude-ai-skill-uninstall",
+]
+
+SHARED_SYNC_SLUGS: list[str] = (
+    _SHARED_SYNC_BRIDGE
+    + _SHARED_SYNC_POSTURE
+    + _SHARED_SYNC_LIFE_MATTER
+    + _SHARED_SYNC_META
+)
+
+# Life-local: .claude/skills SOT — hand-edit, upload, never cursor-indexed.
+LIFE_LOCAL_SLUGS: list[str] = [
+    "matter-playbook-lifecycle",
+    "financial-reasoning",
+    "email-bridge-mailbox",
+    "email-tool-dispatch",
+    "document-review-timeline-linkage-audit",
+    "named-entity-verification-gate",
+    "engagement-stance",
+    "srm",
+    "prose-discipline",
+]
+
+UI_TARGET_SLUGS: list[str] = list(
+    dict.fromkeys([*SHARED_SYNC_SLUGS, *LIFE_LOCAL_SLUGS])
+)
 
 # IDE-authored SOT under .cursor/skills/ (authoritative body, not a defer stub).
 WORKSPACE_SOT_SLUGS: frozenset[str] = frozenset(
@@ -104,11 +80,8 @@ WORKSPACE_SOT_SLUGS: frozenset[str] = frozenset(
     }
 )
 
-# Indexed for cursor hardlink but excluded from Claude.ai standing catalog
-# (demote_ui_only + matter case_document). Merged/retired slugs are NOT listed —
-# their SOT becomes a RETIRED/MERGED stub and drops from CURSOR_INDEXED.
+# Indexed for cursor hardlink but excluded from Claude.ai standing catalog.
 CURSOR_ONLY_SLUGS: list[str] = [
-    # demote_ui_only (E) — Cursor + case attach; ¬ Claude.ai Customize
     "add-mcp-tool",
     "agent-bus-multitask",
     "build-pipeline",
@@ -138,7 +111,6 @@ CURSOR_ONLY_SLUGS: list[str] = [
     "subgraph-render",
     "thirdparty-api-mirror",
     "ulg-architecture",
-    # matter case_document — Cursor + case attach; ¬ standing Claude.ai
     "tax",
     "w2-ingestion",
     "legal-opinion-corpus-ingestion",
@@ -148,12 +120,8 @@ CURSOR_ONLY_SLUGS: list[str] = [
     "psych-framework-counsel",
 ]
 
-# Back-compat alias (removed next commit window).
-CURSOR_SOT_DIRECT_SLUGS: list[str] = CURSOR_ONLY_SLUGS
-
-# Single rule: every indexed cursor skill hardlinks to authoritative SOT.
 CURSOR_INDEXED_SLUGS: list[str] = list(
-    dict.fromkeys([*CLAUDE_BUNDLE_SLUGS, *CURSOR_ONLY_SLUGS])
+    dict.fromkeys([*SHARED_SYNC_SLUGS, *CURSOR_ONLY_SLUGS])
 )
 
 _SOT_LINE_RE = re.compile(r"^\*\*SOT")
@@ -162,16 +130,19 @@ _GENERATED_COMMENT_RE = re.compile(r"GENERATED\s*[—-]\s*DO NOT EDIT")
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---", re.DOTALL)
 
 
-def _frontmatter_sot_cortex(text: str) -> bool:
+def _frontmatter_sot_value(text: str) -> str | None:
     match = _FRONTMATTER_RE.match(text)
     if not match:
-        return False
+        return None
     for line in match.group(1).splitlines():
         if not line.strip().startswith("sot:"):
             continue
-        value = line.split(":", 1)[1].strip().strip("\"'")
-        return value == "cortex"
-    return False
+        return line.split(":", 1)[1].strip().strip("\"'")
+    return None
+
+
+def _frontmatter_sot_cortex(text: str) -> bool:
+    return _frontmatter_sot_value(text) == "cortex"
 
 
 def _docs_defers_to_cortex(docs_text: str) -> bool:
@@ -197,15 +168,35 @@ def is_cortex_sot_frontmatter(text: str) -> bool:
     return _frontmatter_sot_cortex(text)
 
 
+def is_claude_sot_frontmatter(text: str) -> bool:
+    """True when YAML frontmatter declares ``sot: claude`` (life-local marker)."""
+    return _frontmatter_sot_value(text) == "claude"
+
+
+def surface_class_for_slug(slug: str) -> str:
+    """Registry surface class for *slug* (unlisted cursor skills → cursor_only)."""
+    if slug in LIFE_LOCAL_SLUGS:
+        return "life_local"
+    if slug in SHARED_SYNC_SLUGS:
+        return "shared_sync"
+    return "cursor_only"
+
+
 @lru_cache(maxsize=1)
 def cortex_sot_only_slugs() -> frozenset[str]:
     """Slugs whose authoritative SOT is cortex-mount only (``sot: cortex`` frontmatter)."""
-    # cortex mirror severed — D3 Phase 1b, thread 4559
     return frozenset()
 
 
 def resolve_sot(slug: str, repo_root: Path) -> tuple[Path, str]:
     """Return the first existing SOT path and a short root label for reporting."""
+    if slug in LIFE_LOCAL_SLUGS:
+        sot_path = repo_root / ".claude" / "skills" / slug / "SKILL.md"
+        if sot_path.is_file():
+            return sot_path, ".claude/skills"
+        raise FileNotFoundError(
+            f"no life-local SOT for {slug!r} — searched: {sot_path}"
+        )
     sot_path = repo_root / ".cursor" / "skills" / slug / "SKILL.md"
     if sot_path.is_file():
         return sot_path, ".cursor/skills"

@@ -12,6 +12,8 @@
 #   scripts/cortex/claude-ai-sync-jupiter uninstall --slugs retired-skill
 #   scripts/cortex/claude-ai-sync-jupiter restore-connector
 #
+# MCP connector playbook: agent_skill:claude-ai-mcp-connect
+# (life URL, OAuth DCR, dual-endpoint cutover)
 # Env: CLAUDE_AI_SSH_HOST (default jupiter), CLAUDE_AI_SSH_USER (default krunch3r)
 
 set -euo pipefail

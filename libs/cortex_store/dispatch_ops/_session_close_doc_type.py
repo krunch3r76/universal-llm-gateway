@@ -173,36 +173,7 @@ def check_session_close_validate_attestation(
     session_id: str,
     validate_attestation: list[str] | None,
 ) -> dict[str, Any] | None:
-    """Return an error dict when attestation is missing or mismatched."""
-    if not validate_attestation:
-        return {
-            "error": (
-                "session_close requires doc_validate PASS attestation — run "
-                "doc_validate(doc_type=\"session_close\", …) first, then pass "
-                "attestation_tokens as validate_attestation"
-            ),
-            "reason": "session_close_validate_attestation_missing",
-            "status_code": 422,
-        }
-    tokens = [t for t in validate_attestation if isinstance(t, str)]
-    if _SESSION_CLOSE_VALIDATE_PASS not in tokens:
-        return {
-            "error": (
-                "validate_attestation must include session_close_validate:pass "
-                "from doc_validate PASS"
-            ),
-            "reason": "session_close_validate_attestation_missing",
-            "status_code": 422,
-        }
-    expected_session = f"{_SESSION_ID_PREFIX}{session_id}"
-    if expected_session not in tokens:
-        return {
-            "error": (
-                f"validate_attestation session_id mismatch — expected {expected_session!r}"
-            ),
-            "reason": "session_close_validate_session_mismatch",
-            "status_code": 422,
-        }
+    """Attestation retired — close(op=check) gates commit; kept for import stability."""
     return None
 
 

@@ -420,14 +420,12 @@ def persist_session_close(
         content_hash,
         body.transcript_depth,
     )
-    record(
-        "mcp.session.close.atomic",
-        agent=body.agent,
+    from ..events_close import close_commit_completed
+
+    close_commit_completed(
         session_id=body.session_id,
-        transcript_path=ctx.transcript_path,
-        content_hash=content_hash,
-        turn_count=ctx.turn_count,
-        byte_count=byte_count,
+        agent=body.agent,
+        journal_row_id=journal_row_id,
         transcript_depth=body.transcript_depth,
     )
 

@@ -92,6 +92,7 @@ from services.git_integration_worker.cursor_sdk_events import (
     emit_sdk_worker_completed,
     emit_sdk_worker_delivery_failed,
     emit_sdk_worker_failed,
+    emit_sdk_worker_orphaned,
     emit_sdk_worker_progress,
     emit_sdk_worker_queued,
     emit_sdk_worker_timeout,
@@ -108,6 +109,13 @@ from services.git_integration_worker.cursor_sdk_light_bounded_capture import (
     first_landed_fs_uri,
     fs_write_landed,
     light_bounded_deliverable_present,
+)
+from services.git_integration_worker.cursor_sdk_orphan import (
+    abort_orphaned_bridge,
+    clear_dispatch_orphan_state,
+    is_dispatch_orphaned,
+    mark_dispatch_orphaned,
+    register_active_client,
 )
 from services.git_integration_worker.cursor_sdk_manifest import (
     build_effects_manifest,
@@ -451,6 +459,8 @@ def _start_heartbeat(
 
     def _loop() -> None:
         while not stop.wait(_SDK_HEARTBEAT_S):
+            if is_dispatch_orphaned(dispatch_id=dispatch_id):
+                break
             elapsed = time.monotonic() - started
             try:
                 emit_sdk_worker_progress(
@@ -545,6 +555,7 @@ def _run_sdk_sync(
                         backoff,
                     )
                     time.sleep(backoff)
+            register_active_client(dispatch_id=dispatch_id, client=client)
             live_counter = _LiveToolCallCounter()
             hb_thread, hb_stop = _start_heartbeat(
                 dispatch_id=dispatch_id,
@@ -673,7 +684,9 @@ def _run_sdk_sync(
             finally:
                 hb_stop.set()
                 hb_thread.join(timeout=5.0)
-                client.close()
+                if client is not None:
+                    client.close()
+                clear_dispatch_orphan_state(dispatch_id=dispatch_id)
     finally:
         # Release the capacity slot from this thread — not from the async
         # coroutine — so a timed-out orphan thread holds the slot until exit.
@@ -1056,19 +1069,38 @@ async def _run_sdk_dispatch_gated(
     if not done:
         # Do NOT cancel worker_task. The thread is non-cancellable and owns the
         # gate slot until its finally block runs release_sdk_dispatch_slot_sync.
-        worker_task.add_done_callback(
-            lambda fut: logger.warning(
-                "late cursor-sdk worker completed after timeout: dispatch_id=%s exc=%r",
-                req.dispatch_id,
-                fut.exception() if fut.done() and not fut.cancelled() else None,
-            )
-        )
+        # Mark orphaned first so heartbeats stop misleading observability, then
+        # hard-kill the bridge — active tool legs reset the httpx read deadline
+        # so read-timeout alone may never unblock (friction 23851).
+        orphan_client = mark_dispatch_orphaned(dispatch_id=req.dispatch_id)
         emit_sdk_worker_timeout(
             dispatch_id=req.dispatch_id,
             thread_id=req.thread_id,
             execution_id=req.execution_id,
             resolved_model=req.model,
             timeout_s=outer_timeout_s,
+        )
+        bridge_aborted = await asyncio.to_thread(
+            abort_orphaned_bridge,
+            dispatch_id=req.dispatch_id,
+            client=orphan_client,
+        )
+        emit_sdk_worker_orphaned(
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            execution_id=req.execution_id,
+            resolved_model=req.model,
+            timeout_s=outer_timeout_s,
+            bridge_aborted=bridge_aborted,
+        )
+        worker_task.add_done_callback(
+            lambda fut: logger.warning(
+                "late cursor-sdk worker completed after timeout: dispatch_id=%s "
+                "bridge_aborted=%s exc=%r",
+                req.dispatch_id,
+                bridge_aborted,
+                fut.exception() if fut.done() and not fut.cancelled() else None,
+            )
         )
         env = error_envelope(
             code="CURSOR_SDK_TIMEOUT",

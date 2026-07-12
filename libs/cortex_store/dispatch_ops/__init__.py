@@ -82,7 +82,6 @@ _OP_SPECS: dict[str, str] = {
     "deadlines": "ops_journals:_op_deadlines",
     "deadline_resolve": "ops_journals:_op_deadline_resolve",
     "journal_read": "ops_journals:_op_journal_read",
-    "journal_write": "ops_journals:_op_journal_write",
     "session_close": "ops_session_close:_op_session_close",
     "session_close_preflight": "ops_session_close:_op_session_close_preflight",
     "implement_ready_preflight": (
@@ -129,6 +128,7 @@ _OP_SPECS: dict[str, str] = {
     "render_subgraph": "ops_subgraph:_op_render_subgraph",
     "walk_subgraph": "ops_subgraph:_op_walk_subgraph",
     "prose_fact_scan": "ops_prose_fact_scan:_op_prose_fact_scan",
+    "view_render": "ops_views:_op_view_render",
 }
 
 

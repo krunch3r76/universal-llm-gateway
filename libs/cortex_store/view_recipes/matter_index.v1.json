@@ -1,0 +1,21 @@
+{
+  "profile": "matter_index",
+  "version": 1,
+  "sections": [
+    {
+      "section_id": "index_rows",
+      "title": "Index rows",
+      "order": 1,
+      "core": true,
+      "derivation": {
+        "primitive": "entity_selector",
+        "params": {"type_selector": ["case", "matter"], "lifecycle": "active"}
+      },
+      "watched_set": {
+        "entity_scope": "type_selector",
+        "selector": {"types": ["case", "matter"], "lifecycle": "active"}
+      },
+      "repair_template": "entity_selector(types=[case,matter], lifecycle=active)"
+    }
+  ]
+}

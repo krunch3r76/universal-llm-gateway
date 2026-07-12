@@ -85,6 +85,7 @@ CANONICAL_SKILL_SOURCE_URIS: Final[dict[str, str]] = {
     "lead-seat-boot": "workspaces://universal-llm-gateway/.cursor/skills/lead-seat-boot/SKILL.md",
     "legal-opinion-corpus-ingestion": "workspaces://universal-llm-gateway/.cursor/skills/legal-opinion-corpus-ingestion/SKILL.md",
     "markdown-navigation": "workspaces://universal-llm-gateway/.cursor/skills/markdown-navigation/SKILL.md",
+    "matter-playbook-lifecycle": "workspaces://universal-llm-gateway/.cursor/skills/matter-playbook-lifecycle/SKILL.md",
     "mcp-surface-change": "workspaces://universal-llm-gateway/.cursor/skills/mcp-surface-change/SKILL.md",
     "mcp-tool-loop-trace-matrix": "workspaces://universal-llm-gateway/.cursor/skills/mcp-tool-loop-trace-matrix/SKILL.md",
     "model-tier-awareness-web": "workspaces://universal-llm-gateway/.cursor/skills/model-tier-awareness-web/SKILL.md",
@@ -129,7 +130,7 @@ CANONICAL_SKILL_SOURCE_URIS: Final[dict[str, str]] = {
     "writing-discipline-outbound": "workspaces://universal-llm-gateway/.cursor/skills/writing-discipline-outbound/SKILL.md",
 }
 
-TABLE_DIGEST: Final[str] = "sha256:654b3d399243924ec1272d6a33a0daabbb3046679ce31df80f8e66271e1cf662"
+TABLE_DIGEST: Final[str] = "sha256:c6d596e2171e74debd734e1607a758999cee9227cd19016f5c513802e3aadac1"
 # fmt: on
 
 

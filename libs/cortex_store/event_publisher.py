@@ -639,3 +639,32 @@ def cortex_implement_recon_waived(
     )
     record(ev.signal, **ev.payload)
     return ev
+
+
+@event_factory
+def cortex_view_rendered(
+    document_id: str,
+    view_rev: int,
+    mode: str,
+    sections_repaired_count: int,
+    delta_create_count: int,
+    delta_update_count: int,
+    delta_delete_count: int,
+) -> Event:
+    """cortex.view.rendered — emitted on register/refresh/full view_render."""
+    ev = Event(
+        signal="cortex.view.rendered",
+        role="observation",
+        scope="global",
+        payload={
+            "document_id": document_id,
+            "view_rev": view_rev,
+            "mode": mode,
+            "sections_repaired_count": sections_repaired_count,
+            "delta_create_count": delta_create_count,
+            "delta_update_count": delta_update_count,
+            "delta_delete_count": delta_delete_count,
+        },
+    )
+    record(ev.signal, **ev.payload)
+    return ev

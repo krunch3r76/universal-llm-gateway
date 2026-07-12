@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Iterable
 
-from claude_bundles.resolver import CURSOR_INDEXED_SLUGS
+from claude_bundles.resolver import CURSOR_INDEXED_SLUGS, LIFE_LOCAL_SLUGS
 
 # Active cortex rows expected outside build membership (web-only, retired, etc.).
 _ENTITY_NOT_INDEXED_ALLOWLIST: frozenset[str] = frozenset(
@@ -16,6 +16,9 @@ _ENTITY_NOT_INDEXED_ALLOWLIST: frozenset[str] = frozenset(
         "document-ocr",
         "document-review-timeline-linkage-audit",
         "docx-ingestion",
+        "email-bridge-mailbox",
+        "email-tool-dispatch",
+        "engagement-stance",
         "grok-build-dispatch",
         "grok-web-dispatch",
         "grokbuild",
@@ -24,10 +27,13 @@ _ENTITY_NOT_INDEXED_ALLOWLIST: frozenset[str] = frozenset(
         "implement-todo",
         "jupiter-browser-via-mcp",
         "lead-agent-git-integration",
+        "matter-playbook-lifecycle",
         "mode-b-web-orchestrator",
         "named-entity-verification-gate",
+        "prose-discipline",
         "review-protocol-mandatory-chronology-verification",
         "skill-authoring",
+        "srm",
         "superheavy-dispatch",
         # Matter/domain skills not in CURSOR_INDEXED (wave D or universal scrub pending).
         "case-evidence-retrieval",
@@ -37,8 +43,48 @@ _ENTITY_NOT_INDEXED_ALLOWLIST: frozenset[str] = frozenset(
         "legal-opinion-corpus-ingestion",
         "tax",
         "w2-ingestion",
+        # Dropped from SHARED_SYNC / UI thin-set — active entities, not cursor-indexed.
+        "agent-guidance-writing",
+        "architecture-invariants",
+        "auditor-validatable-confidence",
+        "boot-execution-discipline",
+        "cheap-recon-before-escalation",
+        "claude-ai-bundle-sync",
+        "claude-ai-mcp-connect",
+        "corpus-grounded-skill-authoring",
+        "cortex",
+        "cortex-entity-restructure",
+        "cortex-v24-implementation-arc",
+        "dispatch-workflow",
+        "enrichment-quality-discipline",
+        "friction-review",
+        "frontier-model-instructions",
+        "git-posture",
+        "handoff-packet-authoring",
+        "handoff-prompt-authoring",
+        "implementation-plan-workflow",
+        "investigation-economy",
+        "markdown-navigation",
+        "modularize-discipline",
+        "multi-model-review",
+        "orchestrator-core",
+        "orchestrator-workflow",
+        "overhaul-program",
+        "planning-promotion-ladder",
+        "pre-deploy-gate-discipline",
+        "refine-pipeline",
+        "service-lifecycle",
+        "session-close-handoff",
+        "session-close-reflective-journal",
+        "session-close-transcript",
+        "skill-document-writing",
+        "task-grouping-discipline",
+        "todo-lifecycle",
+        "web-generate-substrate",
+        "web-skill-body-activation",
+        "web-transcript-preprocessing",
     }
-)
+) | frozenset(LIFE_LOCAL_SLUGS)
 
 
 def _fetch_active_agent_skill_slugs(client: object) -> tuple[set[str] | None, str | None]:
