@@ -17,11 +17,15 @@ from ..events_imprint import (
     graph_imprint_proposed,
     graph_imprint_received,
     graph_imprint_rejected,
+    graph_imprint_remember_received,
+    graph_imprint_remember_rejected,
+    graph_imprint_remembered,
 )
 from ..life_imprint.apply import ImprintCommitError, commit_imprint_proposal
 from ..life_imprint.op_plan import build_op_plan, normalize_patch
 from ..life_imprint.proposal_store import create_proposal
 from ..life_imprint.registry import load_registry
+from ..life_imprint.remember import RememberPreviewResult, run_remember
 from ..life_imprint.shape_check import shape_check_patch
 
 router = APIRouter(prefix="/graph/imprint", tags=["graph-imprint"])
@@ -64,6 +68,15 @@ class ImprintCommitRequest(BaseModel):
 class ImprintCommitResponse(BaseModel):
     proposal_id: str
     applied: list[dict[str, Any]]
+    context: str = Field(default="cortex.life/v1")
+
+
+class ImprintRememberSuccessResponse(BaseModel):
+    proposal_id: str
+    committed: bool = True
+    applied: list[dict[str, Any]]
+    normalized_patch: dict[str, Any]
+    deduped: bool = False
     context: str = Field(default="cortex.life/v1")
 
 
@@ -167,3 +180,70 @@ def imprint_commit(body: ImprintCommitRequest) -> ImprintCommitResponse:
         applied_count=len(result.get("applied") or []),
     )
     return ImprintCommitResponse.model_validate(result)
+
+
+@router.post("/remember", response_model=None)
+def imprint_remember(body: ImprintProposeRequest):
+    """Validate like propose; auto-commit when commit-eligible."""
+    registry = _registry()
+    patch = body.patch
+    stmt_count = _statement_count(patch)
+
+    graph_imprint_remember_received(statement_count=stmt_count, context=registry.context_id)
+
+    try:
+        result = run_remember(patch, registry=registry)
+    except ImprintCommitError as exc:
+        graph_imprint_remember_rejected(
+            statement_count=stmt_count,
+            reject_count=1,
+            reject_codes=[exc.code],
+            proposal_id=exc.data.get("proposal_id"),
+        )
+        return JSONResponse(
+            status_code=exc.status,
+            content={
+                "code": exc.code,
+                "message": exc.message,
+                "source": exc.source,
+                "retryable": exc.retryable,
+                "data": exc.data,
+            },
+        )
+
+    if isinstance(result, RememberPreviewResult):
+        reject_codes = sorted({r.code for r in result.rejects})
+        graph_imprint_remember_rejected(
+            statement_count=stmt_count,
+            reject_count=len(result.rejects) or len(result.candidates),
+            reject_codes=reject_codes,
+        )
+        return ImprintProposeResponse(
+            normalized_patch=result.normalized_patch,
+            op_plan=result.op_plan,
+            rejects=[
+                ShapeRejectModel(
+                    statement_idx=r.statement_idx,
+                    code=r.code,
+                    detail=r.detail,
+                )
+                for r in result.rejects
+            ],
+            candidates=result.candidates,
+            proposal_id=None,
+            context=result.context,
+        )
+
+    graph_imprint_remembered(
+        proposal_id=result.proposal_id,
+        applied_count=len(result.applied),
+        deduped=result.deduped,
+    )
+    return ImprintRememberSuccessResponse(
+        proposal_id=result.proposal_id,
+        committed=True,
+        applied=result.applied,
+        normalized_patch=result.normalized_patch,
+        deduped=result.deduped,
+        context=result.context,
+    )

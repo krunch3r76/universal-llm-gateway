@@ -65,7 +65,7 @@ To consult a MODEL you do NOT use a build harness. When connector-bound, `team_d
 - **API role** (reviewer|artisan|skeptic|…) → pre-stage bus thread; `team_dispatch(op=generate, role=…, dispatch_thread_id=…, model=?)` → poll `agent_bus(wait)`. ¬ synthetic seat models on generate (422).
 - **Mechanical implement** → `team_dispatch(op=generate, seat=cursor-sdk, source_ref=todo:{slug}, contract=implement, dispatch_thread_id=…)` — dense attrs required; `packet_path=` is the named exception.
 - **Recon/judgment (cursor-sdk)** → `seat=cursor-sdk, model=cursor/grok-4.5, contract=light-bounded` (≠ API `xai/grok-4.5`).
-- **Manual handoff** → `op=handoff, seat=claude-web|claude-cursor, source_ref=…|packet_path=…`; handoff IS delivery (web→operator push, cursor→IDE).
+- **Manual handoff** → `op=handoff, seat=web-anthropic|cursor, source_ref=…|packet_path=…`; handoff IS delivery (web→operator push, cursor→IDE). Legacy aliases `claude-web`/`claude-cursor` still resolve.
 - **Panel** → `panel_dispatch(…, disposition="panel")`. **Role-less one-shot** → `pipeline(chat-dispatch, model=…)`. **Advisor** → `dispatch(tool="advisor")` [overflow].
 ⚠ Build harness ≠ model picker: grok answer → `team_dispatch(op=generate, role=artisan, model="xai/grok-4.5")`.
 Full shapes / wrap / executor tiers: skill `consult-routing`."""

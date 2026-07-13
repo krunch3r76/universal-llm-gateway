@@ -38,6 +38,7 @@ from .handoff_response import (
     build_sdk_generate_result,
     resolve_poll_wait_seconds,
 )
+from .poll_hint_events import emit_poll_hint_from_handoff
 
 CURSOR_SDK_REPLY_SEAT = "cursor-sdk"
 
@@ -419,6 +420,12 @@ async def dispatch_cursor_sdk_generate(
         # cursor-sdk closeouts are always polled by the attended Cursor IDE lead
         # (friction 24081) — recommend snapshot polling, not a 60s block.
         poll_wait_seconds=resolve_poll_wait_seconds(poller_is_cursor_ide=True),
+    )
+    emit_poll_hint_from_handoff(
+        request_id=request_id,
+        thread_id=thread_id,
+        caller_agent=caller_agent or "cursor",
+        handoff_fields=handoff_fields,
     )
     result = build_sdk_generate_result(
         role=role,

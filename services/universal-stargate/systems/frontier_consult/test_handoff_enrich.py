@@ -7,7 +7,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from agent_seat.inject_budget import HANDOFF_INLINE_BUDGET_BYTES
 from implement_admission.skill_delivery_channels import (
+    InlineBodyResolution,
     SkillInlineBudgetExceeded,
     enforce_inline_budget,
     format_inline_skill_block,
@@ -135,7 +137,7 @@ def test_enrich_injects_handoff_packet_authoring_by_default() -> None:
 
 
 def test_enrich_reports_already_wired_not_readded() -> None:
-    """Pre-existing canonical slug lines land in skills_already_wired, not skills_added."""
+    """Pre-existing slug lines land in skills_already_wired, not skills_added."""
     cortex = _StubCortex()
     first = enrich_handoff_packet(_THIN_WEB_PACKET, cortex=cortex)
     second = enrich_handoff_packet(first.text, cortex=cortex)
@@ -424,6 +426,43 @@ def test_enrich_non_web_byte_identical_without_skill_delivery() -> None:
     assert baseline.skills_added == cursor.skills_added
 
 
+def _synthetic_inline_resolution(slug: str, byte_len: int) -> InlineBodyResolution:
+    body = "x" * byte_len
+    return InlineBodyResolution(
+        slug=slug,
+        body=body,
+        digest="sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        source_uri="workspaces://universal-llm-gateway/.cursor/skills/x/SKILL.md",
+        rev="table:test",
+        byte_len=byte_len,
+    )
+
+
+def test_enforce_inline_budget_admits_at_exact_limit() -> None:
+    half = HANDOFF_INLINE_BUDGET_BYTES // 2
+    enforce_inline_budget(
+        [
+            _synthetic_inline_resolution("a", half),
+            _synthetic_inline_resolution("b", half),
+        ],
+        HANDOFF_INLINE_BUDGET_BYTES,
+    )
+
+
+def test_enforce_inline_budget_rejects_one_byte_over_limit() -> None:
+    half = HANDOFF_INLINE_BUDGET_BYTES // 2
+    with pytest.raises(SkillInlineBudgetExceeded) as exc_info:
+        enforce_inline_budget(
+            [
+                _synthetic_inline_resolution("a", half),
+                _synthetic_inline_resolution("b", half + 1),
+            ],
+            HANDOFF_INLINE_BUDGET_BYTES,
+        )
+    assert exc_info.value.total_bytes == HANDOFF_INLINE_BUDGET_BYTES + 1
+    assert exc_info.value.budget_bytes == HANDOFF_INLINE_BUDGET_BYTES
+
+
 def test_enrich_inline_budget_exceeded() -> None:
     resolved = resolve_inline_bodies(
         (
@@ -443,6 +482,35 @@ def test_enrich_inline_budget_exceeded() -> None:
     )
     with pytest.raises(SkillInlineBudgetExceeded):
         enforce_inline_budget(resolved, budget_bytes=1)
+
+
+def test_validate_inline_rejects_missing_closing_fence() -> None:
+    resolved = resolve_inline_bodies(("consult-routing",))
+    block = format_inline_skill_block(
+        resolved[0].slug,
+        source_uri=resolved[0].source_uri,
+        rev=resolved[0].rev,
+        body=resolved[0].body,
+    )
+    open_fence = block.index("```markdown\n") + len("```markdown\n")
+    text = f"<invariants>[scope]</invariants>{block[:open_fence]}"
+    violation = validate_inline_skill_hashes(text)
+    assert violation is not None
+    assert violation.code == "skill_inline_malformed"
+
+
+def test_validate_inline_rejects_duplicate_marker() -> None:
+    resolved = resolve_inline_bodies(("consult-routing",))
+    block = format_inline_skill_block(
+        resolved[0].slug,
+        source_uri=resolved[0].source_uri,
+        rev=resolved[0].rev,
+        body=resolved[0].body,
+    )
+    text = f"<invariants>[scope]</invariants>{block}{block}"
+    violation = validate_inline_skill_hashes(text)
+    assert violation is not None
+    assert violation.code == "skill_inline_malformed"
 
 
 def test_validate_inline_rejects_altered_payload() -> None:
@@ -514,7 +582,10 @@ def test_mirror_preserves_skill_inline_source_uri() -> None:
     )
     mirrored, rewrites = mirror_workspaces_pointers_for_web(packet)
     assert rewrites
-    assert "workspaces://universal-llm-gateway/.cursor/skills/consult-routing" in mirrored
+    mirrored_uri = (
+        "workspaces://universal-llm-gateway/.cursor/skills/consult-routing"
+    )
+    assert mirrored_uri in mirrored
     assert validate_inline_skill_hashes(mirrored) is None
 
 
@@ -530,6 +601,21 @@ def test_build_pointer_includes_skill_inline_gate_line() -> None:
     )
     assert "Skill-inline gate" in body
     assert "load before findings" in body
+
+
+def test_enrich_web_anthropic_bus_address_materializes_inline() -> None:
+    """Canonical bus address web-anthropic must hit inline_authoritative enrich."""
+    cortex = _StubCortex()
+    result = enrich_handoff_packet(
+        _THIN_WEB_PACKET,
+        cortex=cortex,
+        to_agent="web-anthropic",
+        skill_delivery="inline_authoritative",
+    )
+    assert result.inline_materialized
+    blocks = parse_inline_skill_blocks(result.text)
+    assert blocks
+    assert validate_inline_skill_hashes(result.text) is None
 
 
 def test_validate_enriched_inline_packet(tmp_path: Path) -> None:

@@ -301,8 +301,9 @@ def register_frontier_tools(mcp: FastMCP) -> None:
 
         **``op="handoff"``** — manual seats; select ``seat``:
 
-        - ``seat="claude-web"`` → operator pushes bus message
-        - ``seat="claude-cursor"`` → open IDE thread
+        - ``seat="web-anthropic"`` → operator pushes bus message
+        - ``seat="cursor"`` → open IDE thread
+        - Legacy aliases ``claude-web`` / ``claude-cursor`` still resolve
 
         **Contract (authority grant) — handoff only:** for ``op="handoff"`` the
         ``contract`` param is OPTIONAL and, when supplied, is the

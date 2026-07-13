@@ -8,6 +8,7 @@ from urllib.parse import urlencode
 
 from mcp_events import record
 
+from .._agent_bus_author import resolve_dispatch_from_agent
 from ._shared import _structured_relay_error, relay
 from .read_state import _resolve_turn_id
 
@@ -138,12 +139,15 @@ def _update_thread_dispatch(
     status: str | None = None,
     summary: str | None = None,
     tags: list[str] | None = None,
-    from_agent: str = "cursor",
+    from_agent: str = "",
 ) -> dict[str, Any]:
     if isinstance(thread, int):
         thread = str(thread)
     if not thread:
         return {"error": "update_thread requires: thread (str)"}
+    from_agent, author_err = resolve_dispatch_from_agent(from_agent)
+    if author_err is not None:
+        return author_err
     effective_status = status if (status and status != "open") else None
     return _update_thread_impl(
         thread=thread,
@@ -200,7 +204,14 @@ def _wait_dispatch(
     qs = urlencode(params)
     import tools.agent_bus as pkg
 
-    pkg.record("mcp.agentbus.wait.called", thread=thread, completion=completion)
+    wait_called_payload: dict[str, Any] = {
+        "thread": thread,
+        "completion": completion,
+        "wait_seconds": wait_clamped,
+    }
+    if from_agent:
+        wait_called_payload["from_agent"] = from_agent
+    pkg.record("mcp.agentbus.wait.called", **wait_called_payload)
     terminal_status = "error"
     try:
         result = relay("agent-bus", "GET", f"/threads/{thread}/wait?{qs}")
@@ -270,8 +281,9 @@ def _triage_dispatch(
     dry_run: bool = True,
     confirm_token: str | None = None,
 ) -> dict[str, Any]:
-    if not from_agent:
-        return {"error": "triage requires: from_agent (str)"}
+    from_agent, author_err = resolve_dispatch_from_agent(from_agent)
+    if author_err is not None:
+        return author_err
     if not older_than:
         return {"error": "triage requires: older_than (str, e.g. '7d' or ISO8601)"}
     if action not in ("mark_read", "close"):

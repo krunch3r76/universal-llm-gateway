@@ -12,6 +12,7 @@ _VALID_TURN_STATUSES = ("open", "resolved", "superseded", "waiting")
 # Common wrong keys → canonical accepted key. Surfaced as a "did you mean"
 # hint on the unknown-argument gate so callers do not have to discover the
 # rename by trial (friction 16615: thread_id→thread, agent→from_agent).
+# Prefer ``from=`` on the wire; ``from_agent`` is the permanent alias.
 _ARG_ALIASES: dict[str, str] = {
     "thread_id": "thread",
     "threadid": "thread",

@@ -138,7 +138,7 @@ class InlineBodyResolution:
 
 
 @dataclass(frozen=True, slots=True)
-class SkillInlineBudgetExceeded(Exception):
+class SkillInlineBudgetExceeded(Exception):  # noqa: N818
     total_bytes: int
     budget_bytes: int
     per_slug_bytes: dict[str, int]

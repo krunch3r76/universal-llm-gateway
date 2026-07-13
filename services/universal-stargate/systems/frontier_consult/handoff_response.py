@@ -78,17 +78,34 @@ _CURSOR_IDE_POLL_WAIT_SECONDS = 0
 _DEFAULT_POLL_WAIT_SECONDS = 60
 
 
+def _caller_is_cursor_ide_poller(caller_agent: str | None) -> bool:
+    """True when ``caller_agent`` resolves to a Cursor-IDE platform seat.
+
+    Uses the bus-address → capability-cell registry so aliases and family
+    seats that share the IDE MCP transport (``cursor``, ``claude-cursor``,
+    ``gpt-cursor``, …) all get the snapshot hint — not just the bare
+    ``cursor`` mailbox label (Fable F1 / friction 24081).
+    """
+    agent = (caller_agent or "").strip()
+    if not agent:
+        return False
+    from agent_seat.registry import resolve_capability_cell_from_bus_address
+
+    cell = resolve_capability_cell_from_bus_address(agent)
+    return cell is not None and cell[1] == "cursor"
+
+
 def resolve_poll_wait_seconds(
     *, caller_agent: str | None = None, poller_is_cursor_ide: bool = False
 ) -> int:
     """Wait window to recommend to the polling seat via ``poll_hint``.
 
-    Cursor-attended pollers get a 0s snapshot; every other seat keeps the 60s
-    server-side block. ``poller_is_cursor_ide`` forces the snapshot for surfaces
-    whose poller is definitionally the Cursor IDE lead (e.g. cursor-sdk generate)
-    regardless of the agent-supplied ``caller_agent``.
+    Cursor-IDE-platform pollers get a 0s snapshot; every other seat keeps the
+    60s server-side block. ``poller_is_cursor_ide`` forces the snapshot for
+    surfaces whose poller is definitionally the Cursor IDE lead (e.g.
+    cursor-sdk generate) regardless of the agent-supplied ``caller_agent``.
     """
-    if poller_is_cursor_ide or (caller_agent or "").strip().lower() == "cursor":
+    if poller_is_cursor_ide or _caller_is_cursor_ide_poller(caller_agent):
         return _CURSOR_IDE_POLL_WAIT_SECONDS
     return _DEFAULT_POLL_WAIT_SECONDS
 

@@ -283,6 +283,8 @@ def _op_session_close_preflight(
     structural_warnings = _validate_transcript_structure(
         composed, summary_len=len(summary), transcript_depth=transcript_depth
     )
+    from ._session_summary_path import summary_path_hint
+
     preflight: dict[str, Any] = {
         "ok": True,
         "audit": summarize_audit_outcome(audit_outcome),
@@ -292,6 +294,9 @@ def _op_session_close_preflight(
         ),
         "warnings": structural_warnings,
         "transcript_depth": transcript_depth,
+        # Teaching hint so path-param footguns don't need a failed close first
+        # (friction a24129 / agent-bus:5065 cut 4).
+        "summary_path_hint": summary_path_hint(session_id=session_id),
     }
     if jsonl_resolved is not None:
         from_jsonl = derive_session_id_from_jsonl_start(

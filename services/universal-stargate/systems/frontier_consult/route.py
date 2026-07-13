@@ -87,6 +87,7 @@ from .pinned_deliverable_ingress import (
     PinnedDeliverableBody,
     write_pinned_deliverable_via_cortex,
 )
+from .poll_hint_events import emit_poll_hint_from_handoff
 from .service import (
     FrontierEndpointError,
     FrontierGenerateRequest,
@@ -681,7 +682,10 @@ async def team_handoff(
         )
 
         enrich_result = None
-        if to_agent in _mcp_packet_seats():
+        enrich_eligible = to_agent in _mcp_packet_seats() or is_life_web_receiver(
+            to_agent
+        )
+        if enrich_eligible:
             packet_file = _resolve_packet_file(workspaces_root.resolve(), packet_path)
             if packet_file is not None:
                 original = packet_file.read_text(encoding="utf-8", errors="replace")
@@ -906,6 +910,17 @@ async def team_handoff(
         )
         return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
 
+    handoff_fields = build_handoff_result(
+        thread_id=thread_id,
+        to_agent=to_agent,
+        poll_wait_seconds=resolve_poll_wait_seconds(caller_agent=body.caller_agent),
+    )
+    emit_poll_hint_from_handoff(
+        request_id=request_id,
+        thread_id=thread_id,
+        caller_agent=body.caller_agent,
+        handoff_fields=handoff_fields,
+    )
     result: dict[str, Any] = {
         "thread_id": thread_id,
         "subject": body.subject,
@@ -920,13 +935,7 @@ async def team_handoff(
             platform=platform,
             handoff_contract=handoff_contract,
         ),
-        **build_handoff_result(
-            thread_id=thread_id,
-            to_agent=to_agent,
-            poll_wait_seconds=resolve_poll_wait_seconds(
-                caller_agent=body.caller_agent
-            ),
-        ),
+        **handoff_fields,
         **executor_fields,
         **build_executor_recommendation_field(
             handoff_contract=handoff_contract,

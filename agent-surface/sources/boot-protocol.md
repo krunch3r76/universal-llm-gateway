@@ -8,9 +8,9 @@ alwaysApply: false
 ## Mode Selection
 
 Every IDE-resident Cursor agent operates in one of three modes per session. Select the
-`agent` parameter for `cortex_brief` based on the active model family:
+`seat` parameter for `cortex_brief` based on the active model family:
 
-| Active model family | `cortex_brief(agent=...)` value |
+| Active model family | `cortex_brief(seat=...)` value |
 |---|---|
 | Anthropic Claude (Sonnet / Opus) | `"claude-cursor"` |
 | OpenAI GPT family | `"gpt-cursor"` |
@@ -21,7 +21,7 @@ Every IDE-resident Cursor agent operates in one of three modes per session. Sele
 |---|---|---|
 | **Code** (default) | Engineering tasks, debugging, code review | Minimal — MCP tool reference only |
 | **Continue** | Opening message contains `transcript:cursor-YYYY-MM-DD-HHmm` | One targeted transcript read — Session Summary only |
-| **Universal** | User says "universal mode" or opens with non-engineering topic | Full — `cortex_brief(agent=<family>)` per the table above + `notes/system/shared/boot-sequence.md` |
+| **Universal** | User says "universal mode" or opens with non-engineering topic | Full — `cortex_brief(seat=<family>)` per the table above + `notes/system/shared/boot-sequence.md` |
 
 ## Continue Mode — Lightweight Transcript Resume (MANDATORY)
 
@@ -57,7 +57,7 @@ CallMcpTool(server="vortex-code", toolName="fs", arguments={
 ## Universal Mode — Slim Boot
 
 When Universal Mode activates:
-1. `cortex_brief(agent="claude-cursor")` (or appropriate seat slug) —
+1. `cortex_brief(seat="claude-cursor")` (or appropriate seat slug) —
    returns `briefing_card` (~3-5KB), `sections_available` manifest, and
    `operational_context_ref`
 2. Render `briefing_card` and surface open_items as agenda

@@ -10,12 +10,12 @@ API ``type: "mcp"``) bypass this entirely — the provider connects back to
 the MCP server and runs its own tool loop.
 
 System-prompt boot directive: when the first system message contains a
-``cortex_brief(...)`` call with primary params (``agent`` and/or
+``cortex_brief(...)`` call with primary params (``seat`` / alias ``agent`` and/or
 ``family`` / ``platform`` / optional ``role``), the executor pre-calls
 the MCP tool and replaces the directive span with the briefing card so
 the model starts with operational context rather than an opaque
 instruction. Resolution precedence matches the MCP ``cortex_brief`` tool:
-``agent`` overrides explicit ``family`` / ``platform`` when the slug
+``seat`` / ``agent`` override explicit ``family`` / ``platform`` when the slug
 parses as ``{family}-{platform}``.
 """
 
@@ -75,11 +75,11 @@ _DISPATCH_COMPAT_TOOL_DEFS: dict[str, dict[str, Any]] = {
 
 
 def _boot_seat_slug(kwargs: dict[str, str]) -> str | None:
-    agent = kwargs.get("agent")
-    if agent:
+    seat = kwargs.get("seat") or kwargs.get("agent")
+    if seat:
         from agent_seat.registry import normalize_agent_slug
 
-        return normalize_agent_slug(agent)
+        return normalize_agent_slug(seat)
     family = (kwargs.get("family") or "claude").lower()
     platform = (kwargs.get("platform") or "cursor").lower()
     return f"{family}-{platform}"

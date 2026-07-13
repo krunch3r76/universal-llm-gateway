@@ -76,7 +76,7 @@ A *directive* means implement now. A *ticket* or *todo* means deferred work. Ack
 - Thread **ID** (e.g. `"1140"`) → `reply` only, field `thread`. Never put a thread ID in `post.slug`.
 - Thread **slug** (e.g. `"grokbuild-deterministic-commit-op"`) is a human label at creation; it is NOT a routing key for append.
 - **`post` always creates** a new thread. To continue thread N: `reply(thread="N", after_turn=<last turn you read>)`.
-- Author field: **`from_agent`** (seat slug). The route accepts `from` as an alias; prefer `from_agent`.
+- Author field: prefer **`from=`** (seat bus address). **`from_agent`** is a permanent alias. When omitted on `/mcp/life` or `/mcp/code`, the server autofills `web-anthropic` or `cursor` respectively.
 - On `dispatch.rejected` with unknown fields — do not retry by swapping names into the wrong op; re-read accepted params for that op.
 
 **Code refs in bus messages (verification):**

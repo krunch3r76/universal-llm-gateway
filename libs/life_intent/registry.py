@@ -56,6 +56,24 @@ class LifeIntentRegistry:
     def render_verb_enum(self) -> list[str]:
         return sorted(self.verbs.keys())
 
+    def render_intent_input_schema(self) -> dict[str, Any]:
+        """JSON Schema for propose intent fields; verb enum is registry-backed."""
+        return {
+            "type": "object",
+            "required": ["verb", "subject", "detail"],
+            "properties": {
+                "verb": {"type": "string", "enum": self.render_verb_enum()},
+                "subject": {"type": "string", "minLength": 3, "maxLength": 120},
+                "detail": {"type": "string", "minLength": 10, "maxLength": 2000},
+                "refs": {"type": "array", "items": {"type": "string"}},
+                "urgency": {
+                    "type": "string",
+                    "enum": sorted(self.urgency_values),
+                    "default": "normal",
+                },
+            },
+        }
+
 
 def _registry_path() -> Path:
     for env in ("ULG_WORKSPACE_ROOT", "WORKSPACE_ROOT", "PROJECT_ROOT"):

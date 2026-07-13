@@ -7,6 +7,7 @@ from typing import Any
 
 from mcp_events import record
 
+from .._agent_bus_author import resolve_dispatch_from_agent
 from .._agent_bus_post_guard import structured_route_guard
 from ._shared import (
     _format_agent_bus_error,
@@ -172,6 +173,10 @@ def _post_dispatch(
     tags: list[str] | None = None,
     allow_long_body: bool = False,
 ) -> dict[str, Any]:
+    from_agent, author_err = resolve_dispatch_from_agent(from_agent)
+    if author_err is not None:
+        return author_err
+
     missing: list[str] = []
     if not slug:
         missing.append("slug (str)")
@@ -183,8 +188,8 @@ def _post_dispatch(
         missing.append("body (str)")
     if not from_agent:
         missing.append(
-            "from_agent (str, REQUIRED — no default; name the seat authoring "
-            'this turn, e.g. "cursor", "claude-web", "gpt-cursor", "claude-api")'
+            "from (str) or from_agent (str) — omit only on /mcp/life or /mcp/code "
+            "for surface autofill (web-anthropic | cursor)"
         )
     if missing:
         return {
@@ -229,6 +234,10 @@ def _reply_dispatch(
     if isinstance(thread, int):
         thread = str(thread)
 
+    from_agent, author_err = resolve_dispatch_from_agent(from_agent)
+    if author_err is not None:
+        return author_err
+
     missing: list[str] = []
     if not thread:
         missing.append('thread (str, e.g. "480")')
@@ -242,8 +251,8 @@ def _reply_dispatch(
         missing.append("after_turn (int >= 0; 0 skips the unread-concurrency check)")
     if not from_agent:
         missing.append(
-            "from_agent (str, REQUIRED — no default; name the seat authoring "
-            'this turn, e.g. "cursor", "claude-web", "gpt-cursor", "claude-api")'
+            "from (str) or from_agent (str) — omit only on /mcp/life or /mcp/code "
+            "for surface autofill (web-anthropic | cursor)"
         )
     if missing:
         return {

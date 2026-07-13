@@ -208,7 +208,7 @@ def commit_imprint_proposal(proposal_id: str) -> dict[str, Any]:
                     ) from exc
                 applied.append({"op": entry.get("op"), "result": result})
 
-            if not mark_committed(conn, proposal_id):
+            if not mark_committed(conn, proposal_id, applied=applied):
                 conn.rollback()
                 raise ImprintCommitError(
                     "proposal_already_committed",

@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 from mcp_events import record  # re-exported for tests patching tools.agent_bus.record
 from mcp_toolprogress import toolprogress_begin, toolprogress_end
 
+from .._agent_bus_author import AUTHOR_AUTOFILL_OPS, reconcile_author_arguments
 from .._agent_bus_post_guard import reconcile_post_arguments, reconcile_send_arguments
 from .._agent_tools import JsonArgStr
 from .._local_relay import relay as _relay
@@ -169,9 +170,9 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
           fetch_unread  (to?, thread?, mark_read?, compact?, active_since?, limit?, all?) — recipient scope (to set, thread unset): enriched per-thread unread digest (slug, last_subject, last_activity_at; default 14d window, limit 50; unwindowed totals in response). thread scope: that thread's full unread turn list (no count cap; compact controls bodies). At least one of to/thread required.
           fetch         (to?, thread?, last?, unread?, compact?, mark_read?, all?)  — get turns; at least one of to/thread required; all=true fetches every turn (no limit); unread=true fetches all unread (last ignored; prefer fetch_unread); last caps windowed fetches (default 10, unread default false); compact default false (bodies projected) — pass compact=true for metadata-only
           get           (thread, turn_number)                           — get one specific turn; turn_number may be int or "latest"
-          post          (slug, to, subject, body, from_agent, summary?, attachments?, tags?, allow_long_body?) — start a new thread (atomic: creates thread + first turn). from_agent is REQUIRED — name the seat authoring the turn (e.g. "cursor", "claude-web", "gpt-cursor", "claude-api"); there is no default. DEPRECATED 2026-06-14 — use send(new_slug=..., ...) instead; removed 2026-09-01.
-          send          (new_slug XOR thread, to, subject, body, from_agent, summary?, tags?, lifecycle_state?, after_turn?, status?, mark_read?, close?, attachments?, allow_long_body?, sidecar_content?, sidecar_slug?) — unified post/reply surface. Exactly one of new_slug (new thread) or thread (continue) required; slug uniqueness enforced on new_slug path (409 slug_exists on collision). When sidecar_content is set the server writes cortex://notes/system/threads/<thread_id>-<slug>.md before inserting the turn, appends a trailing Sidecar: pointer to the body, and returns sidecar_uri + sidecar_sha256. sidecar_content cap 256KB. from_agent is REQUIRED.
-          reply         (thread, to, subject, body, after_turn, from_agent, status?, mark_read?, close?, attachments?, allow_long_body?) — reply to a thread; allow_long_body=true explicitly bypasses the 8k briefing limit for rare inline long-form messages; close=true posts this as the final turn and closes the thread (marks all turns read). from_agent is REQUIRED — name the seat authoring the turn; there is no default. DEPRECATED 2026-06-14 — use send(thread=..., ...) instead; removed 2026-09-01.
+          post          (slug, to, subject, body, from?, from_agent?, summary?, attachments?, tags?, allow_long_body?) — start a new thread (atomic: creates thread + first turn). Prefer ``from=``; ``from_agent`` is a permanent alias. When omitted on ``/mcp/life`` or ``/mcp/code``, the server autofills ``web-anthropic`` or ``cursor`` respectively. DEPRECATED 2026-06-14 — use send(new_slug=..., ...) instead; removed 2026-09-01.
+          send          (new_slug XOR thread, to, subject, body, from?, from_agent?, summary?, tags?, lifecycle_state?, after_turn?, status?, mark_read?, close?, attachments?, allow_long_body?, sidecar_content?, sidecar_slug?) — unified post/reply surface. Exactly one of new_slug (new thread) or thread (continue) required; slug uniqueness enforced on new_slug path (409 slug_exists on collision). When sidecar_content is set the server writes cortex://notes/system/threads/<thread_id>-<slug>.md before inserting the turn, appends a trailing Sidecar: pointer to the body, and returns sidecar_uri + sidecar_sha256. sidecar_content cap 256KB. Prefer ``from=``; surface autofill matches post.
+          reply         (thread, to, subject, body, after_turn, from?, from_agent?, status?, mark_read?, close?, attachments?, allow_long_body?) — reply to a thread; allow_long_body=true explicitly bypasses the 8k briefing limit for rare inline long-form messages; close=true posts this as the final turn and closes the thread (marks all turns read). Prefer ``from=``; surface autofill matches post. DEPRECATED 2026-06-14 — use send(thread=..., ...) instead; removed 2026-09-01.
           update        (thread, turn_number, body?, append?, subject?) — edit or append to an existing turn while read_at is null; 409 turn_already_acknowledged once marked read (use send/reply for follow-up)
           mark_read     (thread, turn_numbers[] XOR through_turn, agent?) — bulk mark read; through_turn requires agent
           wait          (thread, after_turn?, wait_seconds?, completion?, from_agent?) — server-side short-block until consult posts a bus turn after the pointer (completion=first_reply_from + canonical from_agent; alias-aware) or thread closes (completion=thread_closed); wait_seconds clamped <=60 (0=snapshot). Returns {thread_id, complete, status, push_required, suggested_next (object: consult_turn_posted + steps fetch/apply/close when complete and thread still active), qualifying_reply_turn, thread_status, ...}. first_reply_from complete means a consult bus turn exists, not findings applied. Re-call to keep polling — one HTTP call, not a client loop.
@@ -179,7 +180,7 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
           close         (thread, summary?, mark_all_read?)              — close a thread (atomic: marks all turns read by default)
           delete_turn   (thread, turn_number, force?)                   — delete a single turn
           delete_thread (thread, force?)                                — delete an entire thread
-          triage        (from_agent, older_than, status?, action=mark_read|close, dry_run=true, confirm_token?) — bulk inbox hygiene (agent_bus only). Preview with dry_run=true returns candidates + confirm_token; execute with dry_run=false + confirm_token. Floors: mark_read ≥24h, close ≥7d. Cap 50 threads/call.
+          triage        (from?, from_agent?, older_than, status?, action=mark_read|close, dry_run=true, confirm_token?) — bulk inbox hygiene (agent_bus only). Preview with dry_run=true returns candidates + confirm_token; execute with dry_run=false + confirm_token. Floors: mark_read ≥24h, close ≥7d. Cap 50 threads/call. Prefer ``from=``; surface autofill matches post.
 
         Thread response fields (ThreadDetail):
           id, slug, status, summary, turn_count, unread_count, tags, created_at, updated_at
@@ -216,10 +217,10 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
 
         Examples:
           agent_bus(tool="fetch", arguments='{"thread": "111", "last": 3, "compact": true}')
-          agent_bus(tool="reply", arguments='{"thread": "111", "to": "web", "subject": "Re: topic", "body": "## Reply\\n...", "after_turn": 5, "from_agent": "cursor"}')
+          agent_bus(tool="reply", arguments='{"thread": "111", "to": "web", "subject": "Re: topic", "body": "## Reply\\n...", "after_turn": 5, "from": "cursor"}')
           agent_bus(tool="reply", arguments='{"thread": "111", "to": "web", "subject": "Re: long-form handoff", "body": "...", "after_turn": 5, "from_agent": "cursor", "allow_long_body": true}')
           fs(sandbox="cortex", op="write", path="notes/system/threads/review-bug-details.md", content="...")
-          agent_bus(tool="post", arguments='{"slug": "review-bug", "to": "cursor", "subject": "Bug found", "body": "Details: cortex:notes/system/threads/review-bug-details.md", "from_agent": "claude-web", "tags": ["project:ulg", "type:bug"]}')
+          agent_bus(tool="post", arguments='{"slug": "review-bug", "to": "cursor", "subject": "Bug found", "body": "Details: cortex:notes/system/threads/review-bug-details.md", "from": "web-anthropic", "tags": ["project:ulg", "type:bug"]}')
           agent_bus(tool="threads", arguments='{"tags": ["project:claudeburst", "type:bug"]}')
           agent_bus(tool="threads", arguments='{"lifecycle_state": "pending"}')
           agent_bus(tool="create_thread", arguments='{"slug": "my-workflow", "lifecycle_state": "pending", "tags": ["project:ulg"]}')
@@ -254,6 +255,15 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
                 parsed, alias_error = reconcile_send_arguments(parsed)
                 if alias_error is not None:
                     return alias_error
+            if tool in AUTHOR_AUTOFILL_OPS:
+                parsed, author_error = reconcile_author_arguments(parsed)
+                if author_error is not None:
+                    record(
+                        "mcp.agentbus.dispatch.rejected",
+                        tool=tool,
+                        reason=str(author_error.get("reason", "")),
+                    )
+                    return author_error
             accepted = set(inspect.signature(handler).parameters)
             unknown = [k for k in parsed if k not in accepted]
             if unknown:

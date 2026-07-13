@@ -14,8 +14,8 @@ In Cursor: `CallMcpTool(server="user-vortex", toolName="cortex", arguments={...}
 ## Session continuity brief
 
 ```
-cortex_brief(agent="cursor")  # slim briefing card; returns session_id + sections_available
-cortex_brief(agent="cursor", transcript_id="cursor-2026-04-07-0818")  # continuation brief
+cortex_brief(seat="cursor")  # slim briefing card; returns session_id + sections_available
+cortex_brief(seat="cursor", transcript_id="cursor-2026-04-07-0818")  # continuation brief
 ```
 
 Hold `session_id` from `cortex_brief` for the full session — pass to `supersede`, `edge_create`, `relationship_create`.

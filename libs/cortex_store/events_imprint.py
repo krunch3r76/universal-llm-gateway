@@ -126,3 +126,69 @@ def graph_imprint_commit_rejected(
     )
     record(ev.signal, **ev.payload)
     return ev
+
+
+@event_factory
+def graph_imprint_remember_received(
+    *,
+    statement_count: int,
+    context: str,
+) -> Event:
+    """graph.imprint.remember.received — remember request accepted for processing."""
+    ev = Event(
+        signal="graph.imprint.remember.received",
+        role="observation",
+        scope="global",
+        payload={
+            "statement_count": statement_count,
+            "context": context,
+        },
+    )
+    record(ev.signal, **ev.payload)
+    return ev
+
+
+@event_factory
+def graph_imprint_remembered(
+    *,
+    proposal_id: str,
+    applied_count: int,
+    deduped: bool,
+) -> Event:
+    """graph.imprint.remembered — fully-resolved patch auto-committed or deduped."""
+    ev = Event(
+        signal="graph.imprint.remembered",
+        role="observation",
+        scope="global",
+        payload={
+            "proposal_id": proposal_id,
+            "applied_count": applied_count,
+            "deduped": deduped,
+        },
+    )
+    record(ev.signal, **ev.payload)
+    return ev
+
+
+@event_factory
+def graph_imprint_remember_rejected(
+    *,
+    statement_count: int,
+    reject_count: int,
+    reject_codes: list[str],
+    proposal_id: str | None = None,
+) -> Event:
+    """graph.imprint.remember.rejected — degraded preview or typed reject."""
+    ev = Event(
+        signal="graph.imprint.remember.rejected",
+        role="observation",
+        scope="global",
+        payload={
+            "statement_count": statement_count,
+            "reject_count": reject_count,
+            "reject_codes": reject_codes,
+            "proposal_id": proposal_id,
+        },
+    )
+    record(ev.signal, **ev.payload)
+    return ev

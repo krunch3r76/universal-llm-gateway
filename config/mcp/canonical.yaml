@@ -17,6 +17,7 @@ domains:
 - manage
 - dispatch
 - imprint
+- delegate
 - retrieve
 - tool_search
 - team_dispatch
@@ -1693,7 +1694,7 @@ tools:
   flat_call_shape:
     tool: agent_bus_reply
     substrate_qualified: user-vortex__agent_bus_reply
-  fol_descriptor: "∀ thread ∈ ℕ ∧ body ∈ str ∧ from_agent ∈ str:\n  reply(thread, body, from_agent) ⟹ turn_number ∈ ℕ.\nMutating. ¬idempotent. See agent_skill:agent_bus.\n"
+  fol_descriptor: "∀ thread ∈ ℕ ∧ body ∈ str:\n  reply(thread, body, from?|from_agent?) ⟹ turn_number ∈ ℕ.\nfrom/from_agent optional on dual mounts — server autofills from mcp_surface (life→web-anthropic, code→cursor). Mutating. ¬idempotent. See agent_skill:agent_bus.\n"
   json_schema:
     type: object
     properties:
@@ -1703,14 +1704,17 @@ tools:
         type: string
       body:
         type: string
+      from:
+        type: string
+        description: Preferred author seat bus address. Autofilled from mcp_surface when omitted on /mcp/life or /mcp/code.
       from_agent:
         type: string
+        description: Permanent alias for from=. Explicit from/from_agent always wins over surface autofill.
       subject:
         type: string
     required:
     - thread
     - body
-    - from_agent
   skill_uri: agent_skill:agent_bus
   seat_visibility:
   - mcp
@@ -1731,22 +1735,24 @@ tools:
   flat_call_shape:
     tool: agent_bus_post
     substrate_qualified: user-vortex__agent_bus_post
-  fol_descriptor: "∀ body ∈ str ∧ from_agent ∈ str ∧ to ∈ str:\n  post(body, from_agent, to) ⟹ thread_id ∈ ℕ ∧ turn_number = 1.\nCreates new thread. Mutating. ¬idempotent. See agent_skill:agent_bus.\n"
+  fol_descriptor: "∀ body ∈ str ∧ to ∈ str:\n  post(body, to, from?|from_agent?) ⟹ thread_id ∈ ℕ ∧ turn_number = 1.\nfrom/from_agent optional on dual mounts — server autofills from mcp_surface. Creates new thread. Mutating. ¬idempotent. See agent_skill:agent_bus.\n"
   json_schema:
     type: object
     properties:
       body:
         type: string
+      from:
+        type: string
+        description: Preferred author seat bus address. Autofilled from mcp_surface when omitted on /mcp/life or /mcp/code.
       from_agent:
         type: string
-        description: Seat authoring the turn (e.g. cursor, claude-web). Accepts `from` as an alias (parity with the POST /threads/with-turn route).
+        description: Permanent alias for from=. Legacy aliases (claude-web, …) still resolve.
       to:
         type: string
       subject:
         type: string
     required:
     - body
-    - from_agent
     - to
   skill_uri: agent_skill:agent_bus
   seat_visibility:
@@ -1768,7 +1774,7 @@ tools:
   flat_call_shape:
     tool: agent_bus_send
     substrate_qualified: user-vortex__agent_bus_send
-  fol_descriptor: "∀ args: (new_slug ∈ args XOR thread ∈ args) ∧ from_agent ∈ args ∧ to ∈ args\n  ⟹ TurnSendCreated ∧ send_path ∈ {new_thread, continue}.\nnew_slug ∈ args ∧ slug_collision ⟹ 409 slug_exists.\n¬(new_slug ∈ args XOR thread ∈ args) ⟹ 400 send_xor_violation.\nsidecar_content ∈ args ⟹ server writes cortex://notes/system/threads/<thread>-<slug>.md\n  before turn insert ∧ response carries sidecar_uri + sidecar_sha256.\nsidecar_write_failed ⟹ no turn row (thread_id echoed when newly created).\nMutating. ¬idempotent. Replaces post + reply (post/reply remove 2026-09-01).\nSee agent_skill:agent_bus.\n"
+  fol_descriptor: "∀ args: (new_slug ∈ args XOR thread ∈ args) ∧ to ∈ args\n  ⟹ TurnSendCreated ∧ send_path ∈ {new_thread, continue}.\nfrom/from_agent optional on dual mounts — server autofills from mcp_surface.\nnew_slug ∈ args ∧ slug_collision ⟹ 409 slug_exists.\n¬(new_slug ∈ args XOR thread ∈ args) ⟹ 400 send_xor_violation.\nsidecar_content ∈ args ⟹ server writes cortex://notes/system/threads/<thread>-<slug>.md\n  before turn insert ∧ response carries sidecar_uri + sidecar_sha256.\nsidecar_write_failed ⟹ no turn row (thread_id echoed when newly created).\nMutating. ¬idempotent. Replaces post + reply (post/reply remove 2026-09-01).\nSee agent_skill:agent_bus.\n"
   json_schema:
     type: object
     properties:
@@ -1784,9 +1790,12 @@ tools:
         type: string
       body:
         type: string
+      from:
+        type: string
+        description: Preferred author seat bus address. Autofilled from mcp_surface when omitted on /mcp/life or /mcp/code.
       from_agent:
         type: string
-        description: Seat authoring the turn (e.g. cursor, claude-web). No default.
+        description: Permanent alias for from=. No default when surface is unknown.
       summary:
         type: string
         description: Thread summary (new_slug path only; ignored on continue path).
@@ -1819,7 +1828,6 @@ tools:
     - to
     - subject
     - body
-    - from_agent
     oneOf:
     - required:
       - new_slug
@@ -3566,13 +3574,16 @@ tools:
   flat_call_shape:
     tool: cortex_brief
     substrate_qualified: user-vortex__cortex_brief
-  fol_descriptor: "∀ seat ∈ AgentSeats:\n  cortex_brief(agent?, family?, platform?, role?, transcript_id?, views?) ⟹\n    session_id minted ∧ briefing_card ∈ Markdown ∧ sections_available ∈ List[ManifestEntry]\n    ∧ agent_skill bodies indexed (slug + trigger) — ¬inlined;\n    load by canonical slug (platform/server inject; ¬ fs-read agent-skills/ paths).\nMints session id; writes operational_context to disk on LIVE calls. Read-only fetch graph. See agent_skill:cortex.\n"
+  fol_descriptor: "∀ seat ∈ AgentSeats:\n  cortex_brief(seat?, agent?, family?, platform?, role?, transcript_id?, views?) ⟹\n    session_id minted ∧ briefing_card ∈ Markdown ∧ sections_available ∈ List[ManifestEntry]\n    ∧ agent_skill bodies indexed (slug + trigger) — ¬inlined;\n    load by canonical slug (platform/server inject; ¬ fs-read agent-skills/ paths).\nMints session id; writes operational_context to disk on LIVE calls. Read-only fetch graph. See agent_skill:cortex.\n"
   json_schema:
     type: object
     properties:
+      seat:
+        type: string
+        description: Primary seat address (web-anthropic, cursor, …). Legacy aliases (claude-web, claude-cursor, …) still resolve.
       agent:
         type: string
-        description: Seat slug (claude-web, claude-cursor, grok-cursor, ...)
+        description: Permanent alias for seat=. Prefer seat= on new call sites.
       family:
         type: string
         enum:
@@ -3927,6 +3938,104 @@ tools:
   introduced: '2026-07-12'
   endpoint_visibility:
   - life
+- canonical_name: imprint_remember
+  domain: imprint
+  operation: remember
+  dispatcher_call_shape:
+    tool: imprint
+    dispatch_key: op
+    dispatch_value: remember
+  flat_call_shape:
+    tool: imprint_remember
+    substrate_qualified: user-vortex__imprint_remember
+  fol_descriptor: "Fully-resolved cortex.life/v1 patch → immediate apply.\nRelay POST /graph/imprint/remember; mutating when commit-eligible, else propose preview.\n"
+  json_schema:
+    type: object
+    properties:
+      patch:
+        type: object
+      dry_run_context:
+        type: object
+    required:
+    - patch
+  skill_uri: rule:cortex
+  seat_visibility:
+  - mcp
+  - mcp_claude
+  mandate_safety: mutating
+  cache_priority: on_demand
+  introduced: '2026-07-12'
+  endpoint_visibility:
+  - life
+- canonical_name: delegate_propose
+  domain: delegate
+  operation: propose
+  dispatcher_call_shape:
+    tool: delegate
+    dispatch_key: op
+    dispatch_value: propose
+  flat_call_shape:
+    tool: delegate_propose
+    substrate_qualified: user-vortex__delegate_propose
+  fol_descriptor: "Life intent propose — cortex.life-intent/v1 intent → work_order + proposal_id.\nRelay POST /api/v1/life/intent/propose; zero side effects on propose.\nVerb meanings render from config/cortex/life_intent_v1.yaml at serve time.\nReplies arrive on this thread.\n"
+  json_schema:
+    type: object
+    properties:
+      intent:
+        type: object
+        properties:
+          verb:
+            type: string
+          subject:
+            type: string
+          detail:
+            type: string
+          refs:
+            type: array
+            items:
+              type: string
+          urgency:
+            type: string
+    required:
+    - intent
+  skill_uri: rule:cortex
+  seat_visibility:
+  - mcp
+  - mcp_claude
+  mandate_safety: read_only
+  cache_priority: on_demand
+  introduced: '2026-07-13'
+  endpoint_visibility:
+  - life
+- canonical_name: delegate_commit
+  domain: delegate
+  operation: commit
+  dispatcher_call_shape:
+    tool: delegate
+    dispatch_key: op
+    dispatch_value: commit
+  flat_call_shape:
+    tool: delegate_commit
+    substrate_qualified: user-vortex__delegate_commit
+  fol_descriptor: "Life intent commit — apply a short-lived proposal by proposal_id.\nRelay POST /api/v1/life/intent/commit; commit availability follows route gating.\nWhen live-fire is off the route returns a typed reject unchanged.\nReplies arrive on this thread.\n"
+  json_schema:
+    type: object
+    properties:
+      proposal_id:
+        type: string
+      reply_thread:
+        type: string
+    required:
+    - proposal_id
+  skill_uri: rule:cortex
+  seat_visibility:
+  - mcp
+  - mcp_claude
+  mandate_safety: mutating
+  cache_priority: on_demand
+  introduced: '2026-07-13'
+  endpoint_visibility:
+  - life
 domain_endpoints:
   default:
   - life
@@ -3957,6 +4066,8 @@ domain_endpoints:
     - code
     imprint:
     - life
+    delegate:
+    - life
 surface_primary_domains:
   life:
   - cortex
@@ -3969,6 +4080,7 @@ surface_primary_domains:
   - tool_search
   - dispatch
   - imprint
+  - delegate
   code:
   - cortex
   - cortex_brief

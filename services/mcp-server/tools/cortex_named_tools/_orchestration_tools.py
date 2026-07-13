@@ -35,24 +35,36 @@ def _parse_seat_slug(slug: str) -> tuple[str | None, str | None]:
     return None, None
 
 
+def _coalesce_seat_param(
+    *,
+    seat: str | None = None,
+    agent: str | None = None,
+) -> str | None:
+    """``seat=`` is primary; ``agent=`` is a permanent alias. Explicit seat wins."""
+    return seat or agent
+
+
 def _resolve_boot_family_platform(
     *,
+    seat: str | None = None,
     agent: str | None = None,
     family: str | None = None,
     platform: str | None = None,
 ) -> tuple[str, str]:
     """Map boot call axes to canonical (family, platform).
 
-    ``agent`` is the primary seat slug or bus address (``web-anthropic``,
-    ``cursor``, legacy ``claude-web``). Explicit ``family`` / ``platform`` apply
-    only when ``agent`` is absent or does not resolve to a capability cell.
+    ``seat`` (or alias ``agent``) is the seat slug or bus address
+    (``web-anthropic``, ``cursor``, legacy ``claude-web``). Explicit
+    ``family`` / ``platform`` apply only when no seat slug is given or the slug
+    does not resolve to a capability cell.
     """
-    if agent:
-        bus_addr = normalize_bus_address(agent)
+    resolved_seat = _coalesce_seat_param(seat=seat, agent=agent)
+    if resolved_seat:
+        bus_addr = normalize_bus_address(resolved_seat)
         resolved = resolve_capability_cell_from_bus_address(bus_addr)
         if resolved is not None:
             return resolved
-        slug = normalize_agent_slug(agent)
+        slug = normalize_agent_slug(resolved_seat)
         parsed = _parse_seat_slug(slug)
         if parsed[0] is not None:
             return parsed
@@ -65,6 +77,7 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(title="Cortex Brief")
     def cortex_brief(
+        seat: str | None = None,
         agent: str | None = None,
         family: str | None = None,
         platform: str | None = None,
@@ -97,10 +110,11 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
         contents) is NOT inlined — pull on demand via manifest hints.
 
         Args:
-          agent         — seat slug (primary): cursor, claude-web, grok-cursor, etc.
+          seat          — seat slug (primary): web-anthropic, cursor, claude-web, etc.
                           Legacy aliases (cursor → claude-cursor) normalize via
                           agent_seat.registry. When set, overrides family/platform
                           unless the slug does not parse as {family}-{platform}.
+          agent         — permanent alias for ``seat``; prefer ``seat=`` on new call sites.
           family        — model family: claude / gpt / grok / gemini (default: claude)
           platform      — platform surface: cursor / api / web (default: cursor)
           role          — accepted for back-compat; no longer scopes briefing output. Output
@@ -142,7 +156,7 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
           operational_context_ref — path to operational context file (read on demand)
         """
         boot_family, boot_platform = _resolve_boot_family_platform(
-            agent=agent, family=family, platform=platform
+            seat=seat, agent=agent, family=family, platform=platform
         )
         return run_cortex_brief(
             family=boot_family,
@@ -158,6 +172,7 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(title="Boot Inspect")
     def boot_inspect(
+        seat: str | None = None,
         agent: str | None = None,
         family: str | None = None,
         platform: str | None = None,
@@ -175,7 +190,8 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
         profile diffs without mutating briefing state.
 
         Args:
-          agent         — seat slug (same semantics as cortex_brief)
+          seat          — seat slug (primary; same semantics as cortex_brief)
+          agent         — permanent alias for ``seat``
           family        — model family: claude / gpt / grok / gemini
           platform      — platform surface: cursor / api / web
           role          — accepted for back-compat; no longer scopes briefing output. Output
@@ -186,7 +202,7 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
                           "claude-web", "grok-api") to diff against primary
         """
         boot_family, boot_platform = _resolve_boot_family_platform(
-            agent=agent, family=family, platform=platform
+            seat=seat, agent=agent, family=family, platform=platform
         )
         primary = run_cortex_brief(
             family=boot_family,

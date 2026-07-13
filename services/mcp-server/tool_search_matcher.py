@@ -84,7 +84,7 @@ _RAG_QUERY_TOKENS: frozenset[str] = frozenset(
 
 _CORTEX_BRIEF_PRIMARY_HINT = (
     "cortex_brief is the session-opening server-primary tool — call it directly "
-    'by name (for example, cortex_brief(agent="claude-web", role="lead")). '
+    'by name (for example, cortex_brief(seat="web-anthropic", role="lead")). '
     "boot_inspect is read-only and does not mint the session_id, so it is not "
     "a session-opening substitute."
 )

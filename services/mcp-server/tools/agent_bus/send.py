@@ -6,6 +6,7 @@ from typing import Any
 
 from mcp_events import record
 
+from .._agent_bus_author import resolve_dispatch_from_agent
 from .._agent_bus_post_guard import structured_slug_exists
 from ._shared import (
     _format_agent_bus_error,
@@ -122,6 +123,10 @@ def _send_dispatch(
     if isinstance(thread, int):
         thread = str(thread)
 
+    from_agent, author_err = resolve_dispatch_from_agent(from_agent)
+    if author_err is not None:
+        return author_err
+
     has_new_slug = new_slug is not None
     has_thread = bool(thread)
     if has_new_slug and has_thread:
@@ -156,8 +161,8 @@ def _send_dispatch(
         missing.append("body (str)")
     if not from_agent:
         missing.append(
-            "from_agent (str, REQUIRED — no default; name the seat authoring "
-            'this turn, e.g. "cursor", "claude-web", "gpt-cursor", "claude-api")'
+            "from (str) or from_agent (str) — omit only on /mcp/life or /mcp/code "
+            "for surface autofill (web-anthropic | cursor)"
         )
     if missing:
         return {

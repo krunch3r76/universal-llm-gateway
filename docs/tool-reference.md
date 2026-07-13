@@ -73,7 +73,7 @@ For `team_dispatch(op="handoff")` only: returns synchronously with
   `contract=implement`. See skill `consult-routing` § Implement lane — source_ref.
 - `"to_thread"` — bus mode when caller already owns `thread`; Stargate posts the
   role's reply on its behalf after dispatch completes.
-- `"handoff"` (**team_dispatch only**) — manual-seat handoff (`web-consult` → `claude-web`, `web-implement` → `claude-web` (bound implement), `cursor-consult` / `cursor-implement` → `claude-cursor`). Creates an agent-bus thread with a packet pointer synchronously. Returns `{thread_id, subject, to_agent, resolved_handoff_seat, handoff_contract, handoff_contract_source, push_reminder, result_handle, handoff_status, poll_hint}`. No model dispatch; web seats need operator push; Cursor seats need opening the thread in the IDE.
+- `"handoff"` (**team_dispatch only**) — manual-seat handoff (`web-consult` → `web-anthropic`, `web-implement` → `web-anthropic` (bound implement), `cursor-consult` / `cursor-implement` → `cursor`). Legacy aliases `claude-web` / `claude-cursor` still resolve. Creates an agent-bus thread with a packet pointer synchronously. Returns `{thread_id, subject, to_agent, resolved_handoff_seat, handoff_contract, handoff_contract_source, push_reminder, result_handle, handoff_status, poll_hint}`. No model dispatch; web seats need operator push; Cursor seats need opening the thread in the IDE.
 
 See skill `consult-routing` § team_dispatch / direct vs bus mode for decision rules.
 
@@ -132,14 +132,14 @@ only handoff on `team_dispatch` (not `generate`).
 
 | Intent | Role | Seat | Operator |
 |--------|------|------|----------|
-| Web consult / dialectic | `web-consult` | `claude-web` | push bus message |
-| Cursor consult / architecture | `cursor-consult` | `claude-cursor` | open IDE thread |
-| **Bound implement** (→ Cursor) | `cursor-implement` | `claude-cursor` | open IDE thread |
-| **Bound implement** (→ Web) | `web-implement` | `claude-web` | push bus message |
+| Web consult / dialectic | `web-consult` | `web-anthropic` | push bus message |
+| Cursor consult / architecture | `cursor-consult` | `cursor` | open IDE thread |
+| **Bound implement** (→ Cursor) | `cursor-implement` | `cursor` | open IDE thread |
+| **Bound implement** (→ Web) | `web-implement` | `web-anthropic` | push bus message |
 
 **Bound implement has two seats** (contract derived from the role slug; `handoff_contract=implement`
-in the response): `role=cursor-implement` → `claude-cursor` (open IDE thread), and
-`role=web-implement` → `claude-web` (operator push). Both require acceptance criteria in
+in the response): `role=cursor-implement` → `cursor` (open IDE thread), and
+`role=web-implement` → `web-anthropic` (operator push). Both require acceptance criteria in
 `<task_guidance>`; the implement guardrails (acceptance-criteria lint, implement pointer line,
 `contract:implement` tag) key on the derived contract + seat, not on a role name. Distinct from
 the `*-consult` reasoning roles (which derive `consult` — they cannot raise the implement
@@ -150,8 +150,8 @@ fresh-thread handoff: `Pick up todo:{slug}` (loads `implement-todo` skill).
 See `projects/.cursor/rules/handoff-dispatchers.mdc` (§ web-claude for `role=web-consult`, §
 `cursor-claude` for `role=cursor-consult`); consult index skill `consult-routing`.
 
-Creates an agent-bus thread (e.g. `web-consult` / `web-implement` → `claude-web`,
-`cursor-consult` / `cursor-implement` → `claude-cursor`)
+Creates an agent-bus thread (e.g. `web-consult` / `web-implement` → `web-anthropic`,
+`cursor-consult` / `cursor-implement` → `cursor`)
 and returns `{thread_id, subject, to_agent, resolved_handoff_seat, handoff_contract,
 handoff_contract_source, push_reminder, result_handle, handoff_status,
 poll_hint}` synchronously — no model is dispatched and no `execution_id` is minted.
@@ -169,7 +169,7 @@ endpoint enforces that the role resolves to a manual-handoff seat
 are rejected with `handoff_requires_web_seat` 422.
 
 **Self-handoff:** a manual seat may call `op="handoff"` with the matching roster
-role (`claude-web` → `role=web-consult` or `role=web-implement`; `claude-cursor` → `role=cursor-consult` or `role=cursor-implement`) to open
+role (`web-anthropic` → `role=web-consult` or `role=web-implement`; `cursor` → `role=cursor-consult` or `role=cursor-implement`) to open
 a new agent-bus thread with packet-booted context. This is **supported** — distinct
 from `op="generate"` to the same seat (422 `web_seat_not_generate_target`).
 Authority: `projects/.cursor/rules/handoff-dispatchers.mdc` § Self-handoff;
@@ -193,7 +193,9 @@ when the handoff thread stays open and web must act (see `agent-bus-push-reminde
    string from `poll_hint.arguments` / `result_handle` fields (`thread`, `after_turn`,
    `completion=first_reply_from`, `from_agent`).
    Re-call with `wait_seconds` 0 (snapshot) or up to 60 (server-side block) until
-   `complete=true` and `status=complete`.
+   `complete=true` and `status=complete`. Prefer `poll_hint.arguments_json` —
+   Cursor-IDE seats receive `wait_seconds=0`; web/API keep 60 (friction 24081).
+   Attended spinner >2 min on wait → interrupt and re-poll with `wait_seconds=0`.
 
 `agent_bus(tool="fetch")` is a **fallback** for manual inspection of thread turns —
 not the primary handoff poll path.
@@ -245,30 +247,30 @@ team_dispatch(
     caller_agent="cursor",
 )
 
-# Handoff mode — fresh-WEB dispatch to claude-web; operator push required
+# Handoff mode — fresh-WEB dispatch to web-anthropic; operator push required
 team_dispatch(op="handoff", role="web-consult",
-              packet_path="universal-llm-gateway/tmp/reviews/<task>-claude-web-packet.md",
+              packet_path="universal-llm-gateway/tmp/reviews/<task>-web-anthropic-packet.md",
               subject="<Task> handoff — <subject>")
-# → {thread_id, subject, to_agent: "claude-web", push_reminder,
+# → {thread_id, subject, to_agent: "web-anthropic", push_reminder,
 #     result_handle, handoff_status: "awaiting_first_reply", poll_hint}
 # poll_hint.tool == "wait"; poll_hint.arguments_json is the MCP wire form
 agent_bus(tool="wait", arguments=poll_hint.arguments_json)  # not poll_hint.arguments (object)
 
-# Equivalent literal:
+# Equivalent literal (web/API poller — 60s block). Cursor-IDE seats: wait_seconds=0.
 agent_bus(tool="wait", arguments='{"thread": "<thread_id>", "after_turn": 1,
-  "wait_seconds": 60, "completion": "first_reply_from", "from_agent": "claude-web"}')
+  "wait_seconds": 60, "completion": "first_reply_from", "from_agent": "web-anthropic"}')
 
 # Handoff mode — dedicated Cursor thread (e.g. Opus); attend in IDE — no web push
-team_dispatch(op="handoff", seat="claude-cursor",
+team_dispatch(op="handoff", seat="cursor",
               packet_path="universal-llm-gateway/tmp/reviews/<task>-cursor-packet.md",
               subject="<Task> handoff — <subject>")
-# → {to_agent: "claude-cursor", push_reminder mentions Cursor / agent-bus}
+# → {to_agent: "cursor", push_reminder mentions Cursor / agent-bus}
 
 # Bound implement (→ Cursor) — open IDE thread; PREFER source_ref (Stargate materializes the packet)
-team_dispatch(op="handoff", seat="claude-cursor", contract="implement",
+team_dispatch(op="handoff", seat="cursor", contract="implement",
               source_ref="todo:<slug>",   # primary; Stargate normalize→materialize from the todo spec
               subject="Implement <task>")
-# → {to_agent: "claude-cursor", handoff_contract: "implement", push_reminder mentions Cursor}
+# → {to_agent: "cursor", handoff_contract: "implement", push_reminder mentions Cursor}
 # (Legacy hand-authored alternative: packet_path="…/<task>-implement-packet.md")
 
 # Bound implement (→ Cursor SDK) — DEFAULT; auto Composer, no IDE pickup
@@ -277,11 +279,11 @@ team_dispatch(op="generate", seat="cursor-sdk", contract="implement",
 # → poll agent_bus(wait) from poll_hint; server materializes from todo attributes
 # (Legacy hand-authored alternative: packet_path="tmp/reviews/<task>-implement-packet.md")
 
-# Bound implement (→ Web) — operator push; claude-web implements via fs
+# Bound implement (→ Web) — operator push; web-anthropic implements via fs
 team_dispatch(op="handoff", role="web-implement",
               source_ref="todo:<slug>",
               subject="Implement <task>")
-# → {to_agent: "claude-web", handoff_contract: "implement", push_reminder mentions web push}
+# → {to_agent: "web-anthropic", handoff_contract: "implement", push_reminder mentions web push}
 ```
 
 Chat-Completions-only OpenAI search models (`openai/*-search-api`) are rejected
@@ -642,10 +644,10 @@ Inter-agent message bus — threads, turns, read/reply coordination.
 |---|---|---|
 | `threads` | status?, to?, limit? | List threads. status: active/archived/all |
 | `fetch` | thread, last?, compact?, mark_read? | Get turns from a thread (fallback / inspection). compact=true strips markdown. For handoff completion use `wait`, not fetch loops. |
-| `wait` | thread, after_turn?, wait_seconds?, completion?, from_agent? | **Canonical handoff retrieval** — server-side short-block until the consult posts a **bus turn** after the pointer (`completion=first_reply_from` + canonical `from_agent`; alias-aware). `wait_seconds` clamped ≤60 (0=snapshot). Returns `{complete, status, push_required, suggested_next, qualifying_reply_turn, thread_status, ...}`. When `complete=true` and `thread_status=active`, `suggested_next` is an object (`phase=consult_turn_posted`, `consult_turn`, `steps`: fetch → apply → close) — not arc completion. Re-call to poll — one HTTP call per invocation. **Cursor IDE (friction 23653 / 24081 / class of 17003):** `poll_hint` is now **seat-aware** — the attended Cursor IDE lead (cursor-sdk generate, or any handoff with `caller_agent="cursor"`) receives `wait_seconds=0` (snapshot) so a rare Cursor MCP client-transport orphan cannot leave a long `agent_bus(wait)` tools/call open (server relay is hardened by the wall-clock abort + orphan-slot reclamation; the residual is a client-side transport stall on long blocking calls). Web/API seats keep the 60s server-side block. When hand-building a wait for a Cursor seat, prefer `wait_seconds=0` and re-call; `agent_bus(fetch)` is the manual fallback. |
+| `wait` | thread, after_turn?, wait_seconds?, completion?, from_agent? | **Canonical handoff retrieval** — server-side short-block until the consult posts a **bus turn** after the pointer (`completion=first_reply_from` + canonical `from_agent`; alias-aware). `wait_seconds` clamped ≤60 (0=snapshot). Returns `{complete, status, push_required, suggested_next, qualifying_reply_turn, thread_status, ...}`. When `complete=true` and `thread_status=active`, `suggested_next` is an object (`phase=consult_turn_posted`, `consult_turn`, `steps`: fetch → apply → close) — not arc completion. Re-call to poll — one HTTP call per invocation. **Cursor IDE (friction 23653 / 24081 / class of 17003):** `poll_hint` is **seat-aware** via the bus-address → capability-cell registry — any Cursor-IDE-platform poller (`cursor`, `claude-cursor`, `gpt-cursor`, …) or cursor-sdk generate receives `wait_seconds=0` (snapshot) so a rare Cursor MCP client-transport orphan cannot leave a long `agent_bus(wait)` tools/call open (server relay is hardened by the wall-clock abort + orphan-slot reclamation; the residual is a client-side transport stall on long blocking calls — label as inference from one specimen, not established intermittent pattern). Web/API seats keep the 60s server-side block. When hand-building a wait for a Cursor-IDE seat, prefer `wait_seconds=0` and re-call; attended spinner >2 min → interrupt and re-poll snapshot. `agent_bus(fetch)` is the manual fallback. Triage: wait-hang → check `mcp.agentbus.wait.called` presence — absent → client-transport class (24081); present-without-completed → relay class (23653). |
 | `get` | thread, turn_number | Get one specific turn |
-| `post` | slug, to, subject, body, from_agent, tags? | Start a new thread |
-| `reply` | thread, to, subject, body, after_turn?, from_agent | Reply to a thread |
+| `post` | slug, to, subject, body, from?, from_agent?, tags? | Start a new thread. Prefer `from=`; omit on `/mcp/life`→`web-anthropic` or `/mcp/code`→`cursor` |
+| `reply` | thread, to, subject, body, after_turn?, from?, from_agent? | Reply to a thread |
 | `read` | thread, turn_number | Mark a turn as read |
 | `archive` | thread | Archive a thread |
 | `summary` | — | Unread counts per agent |
@@ -654,8 +656,8 @@ Inter-agent message bus — threads, turns, read/reply coordination.
 
 ```
 agent_bus(tool="fetch", arguments='{"thread": "111", "last": 3, "compact": true}')
-agent_bus(tool="wait", arguments='{"thread": "111", "after_turn": 1, "wait_seconds": 30, "completion": "first_reply_from", "from_agent": "claude-web"}')
-agent_bus(tool="post", arguments='{"slug": "review-bug", "to": "cursor", "subject": "Bug found", "body": "## Details\n...", "from_agent": "grok"}')
+agent_bus(tool="wait", arguments='{"thread": "111", "after_turn": 1, "wait_seconds": 30, "completion": "first_reply_from", "from_agent": "web-anthropic"}')
+agent_bus(tool="post", arguments='{"slug": "review-bug", "to": "cursor", "subject": "Bug found", "body": "## Details\n...", "from": "web-anthropic"}')
 ```
 
 ## observability
@@ -896,11 +898,12 @@ Unified boot briefing for session start. Seat-scoped: each `{family}-{platform}`
 
 ### Args
 
-All parameters optional. **Default seat when nothing is passed:** `family=claude`, `platform=cursor` → **`claude-cursor`**.
+All parameters optional. **Default seat when nothing is passed:** `family=claude`, `platform=cursor` → bus address **`cursor`** (capability cell `claude-cursor`).
 
 | Arg | Default | Description |
 |---|---|---|
-| `agent` | — | Primary seat slug: `claude-web`, `web` (→ `claude-web`), `claude-cursor`, `cursor` (→ `claude-cursor`), … Overrides `family`/`platform` when slug parses as `{family}-{platform}`. |
+| `seat` | — | Primary seat address: `web-anthropic`, `web` / `claude-web` (→ `web-anthropic`), `cursor` / `claude-cursor` (→ `cursor`), … Overrides `family`/`platform` when slug parses. |
+| `agent` | — | Permanent alias for `seat`; prefer `seat=` on new call sites. |
 | `family` | `claude` | Model family: `claude`, `gpt`, `grok`, `gemini` |
 | `platform` | `cursor` | Surface: `cursor`, `web`, `api` |
 | `role` | — | Functional annotation: `lead`, `reviewer`, `gatherer`, … Does **not** change seat slug or default to `lead`. |
@@ -910,7 +913,7 @@ All parameters optional. **Default seat when nothing is passed:** `family=claude
 | `profile` | — | `"dispatch"` for dispatch-scoped inject |
 | `packet_text` | — | Packet text for `<invariants>` skill parse when `profile="dispatch"` |
 
-**Web lead:** `cortex_brief(agent="claude-web", role="lead")`.
+**Web lead:** `cortex_brief(seat="web-anthropic", role="lead")`.
 
 Bound ULG coding sessions may **skip** boot when task + skill preload suffice — see
 skill `consult-routing` (doc-only guidance; no backing `agent_skill` entity for `web-boot-lead`).
@@ -942,11 +945,12 @@ write, and no `mcp.cortex.boot*` event emission.
 
 | Arg | Default | Description |
 |---|---|---|
-| `agent` | — | Seat slug (same semantics as `cortex_brief`); use with `family`/`platform` when omitted |
-| `family` | `claude` | Primary family when `agent` absent |
-| `platform` | `cursor` | Primary platform when `agent` absent |
+| `seat` | — | Seat slug (same semantics as `cortex_brief`); use with `family`/`platform` when omitted |
+| `agent` | — | Permanent alias for `seat` |
+| `family` | `claude` | Primary family when `seat` / `agent` absent |
+| `platform` | `cursor` | Primary platform when `seat` / `agent` absent |
 | `transcript_id` | `""` | Optional continuation transcript for primary profile |
-| `diff_with` | `""` | Optional secondary seat slug (`claude-web`, …) → returns `primary`, `secondary`, `diff` |
+| `diff_with` | `""` | Optional secondary seat slug (`web-anthropic`, …) → returns `primary`, `secondary`, `diff` |
 
 ### Response fields (key selection)
 
@@ -1017,7 +1021,7 @@ When any path in `files` touches `libs/llm_adapters/` or `libs/model_id/`, `test
 `"no offline-closure files touched; skipped"`.
 
 Outside Lane A, pytest is not invokable via this tool — use it for lint/compile/import closure;
-`claude-web` (lead seat) closes liveness via `manage` without a Cursor handoff for verify-only.
+`web-anthropic` (lead seat) closes liveness via `manage` without a Cursor handoff for verify-only.
 
 ## retrieve
 

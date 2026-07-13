@@ -45,6 +45,12 @@ def test_registry_fail_closed_missing_version(tmp_path: Path) -> None:
         load_registry(path)
 
 
+def test_render_intent_input_schema() -> None:
+    reg = load_registry()
+    schema = reg.render_intent_input_schema()
+    assert schema["properties"]["verb"]["enum"] == reg.render_verb_enum()
+
+
 def test_render_verb_enum() -> None:
     reg = load_registry()
     assert reg.render_verb_enum() == ["build", "change", "fix", "investigate"]

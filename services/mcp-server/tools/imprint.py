@@ -12,17 +12,20 @@ if TYPE_CHECKING:
 
 _PROPOSE_OP = "propose"
 _COMMIT_OP = "commit"
-_OPS = frozenset({_PROPOSE_OP, _COMMIT_OP})
+_REMEMBER_OP = "remember"
+_OPS = frozenset({_PROPOSE_OP, _COMMIT_OP, _REMEMBER_OP})
 
 
 def register_imprint_tools(mcp: FastMCP) -> None:
     @mcp.tool(title="Imprint")
     def imprint(op: str, arguments: JsonArgStr = "{}") -> Any:
-        """Life imprint — propose (zero-write plan) or commit (apply by proposal_id).
+        """Life imprint — propose (zero-write plan), commit (apply by proposal_id),
+        or remember (propose∘commit when fully resolved).
 
         op=propose accepts a hand-authored patch and returns normalized_patch,
         op_plan, rejects, candidates, and proposal_id without graph writes.
         op=commit applies a frozen proposal by proposal_id.
+        op=remember auto-commits commit-eligible patches in one call.
         """
         parsed = parse_dispatch_arguments(arguments)
         if parsed is None:
@@ -34,4 +37,6 @@ def register_imprint_tools(mcp: FastMCP) -> None:
             }
         if op == _PROPOSE_OP:
             return cx("POST", "/graph/imprint/propose", parsed)
-        return cx("POST", "/graph/imprint/commit", parsed)
+        if op == _COMMIT_OP:
+            return cx("POST", "/graph/imprint/commit", parsed)
+        return cx("POST", "/graph/imprint/remember", parsed)

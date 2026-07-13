@@ -40,6 +40,7 @@ from .handoff_response import (
     build_handoff_result,
     resolve_poll_wait_seconds,
 )
+from .poll_hint_events import emit_poll_hint_from_handoff
 from .service import FrontierGenerateRequest
 
 if TYPE_CHECKING:
@@ -336,6 +337,12 @@ async def dispatch_api_role_generate(
         to_agent=role,
         after_turn=after_turn,
         poll_wait_seconds=resolve_poll_wait_seconds(caller_agent=body.caller_agent),
+    )
+    emit_poll_hint_from_handoff(
+        request_id=request_id,
+        thread_id=thread_id,
+        caller_agent=body.caller_agent,
+        handoff_fields=handoff_fields,
     )
     result = build_api_generate_result(
         role=role,

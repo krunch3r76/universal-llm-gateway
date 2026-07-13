@@ -115,8 +115,8 @@ def _summarize_tool_args(tool_name: str, args: dict[str, Any]) -> str:
         path = args.get("path", "")
         return f"op={op} path={path}" if op else ""
     if tool_name == "cortex_brief":
-        agent = args.get("agent", "cursor")
-        return f"agent={agent}"
+        seat = args.get("seat") or args.get("agent", "cursor")
+        return f"seat={seat}"
     if tool_name == "web_search":
         q = str(args.get("query", ""))[:60]
         return f"q={q}" if q else ""

@@ -16,6 +16,10 @@ CORTEX_FILE_ROOT_DIRS: frozenset[str] = frozenset(
         "trash",
         "agent-skills",
         ".shared-images",
+        # Life/web handoff mirrors (todo:life-handoff-ephemeral-prefix Option B).
+        # Egress mints cortex://ephemeral/handoffs/…; ingress must accept the same
+        # top-level dir or turn-1 mirror URIs reject on both /mcp and /mcp/life.
+        "ephemeral",
     }
 )
 

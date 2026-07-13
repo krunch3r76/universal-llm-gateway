@@ -36,7 +36,7 @@ Capabilities beyond the foundational belief revision primitives. Classified by o
 
 | ID | Capability | Classification | Implementation | REST Endpoint | MCP Dispatch Op |
 |---|---|---|---|---|---|
-| X1 | Multi-Agent Coordination | coordination | 4+ agent personas with distinct boot profiles, `agent`+`session_id` on edges | Boot profiles in `cortex_named_tools.py` | `cortex_brief(agent=...)` |
+| X1 | Multi-Agent Coordination | coordination | 4+ agent personas with distinct boot profiles, `agent`+`session_id` on edges | Boot profiles in `cortex_named_tools.py` | `cortex_brief(seat=...)` |
 | X2 | Salience-Driven Boot | retrieval | `salience.py`, `scoring.py`, `routes/boot.py`, EST dual-track gating | `GET /boot-sections`, `GET /boot-temporal`, `GET /boot-todos` | `cortex_brief` |
 | X3 | Confidence Derivation Types | operational | `derivation_type` column: direct, agent_observation, inference, compression, quotation, stated, commitment | On assertions | `assert` field |
 | X4 | Write-Time Quality Validation | operational | `assertion_quality.py`, hard rejects (422), soft warnings (staging), quality scores | Automatic at `POST /assertions` | Automatic |

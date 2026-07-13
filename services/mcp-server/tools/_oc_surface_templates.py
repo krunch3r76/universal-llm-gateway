@@ -145,8 +145,8 @@ a pre-bound-set or event check.
 ## Dispatch & Consult (claude-web /mcp seat)
 Pick by CAPABILITY, not model family. To consult a MODEL (any provider, incl. grok) you do NOT use a build harness.
 When connector-bound: team_dispatch + panel_dispatch are server-primary — call directly.
-- local file/entity work (you ARE claude-web) → fs / cortex / agent_bus directly — ¬ team_dispatch(op="generate"|"to_thread", model="claude-web") (422)
-- manual seat handoff → team_dispatch(op="handoff", seat=claude-web|claude-cursor, packet_path=…|source_ref=…, subject=…) — shorthands accepted; handoff seat-map: web-consult, web-implement → web-anthropic; cursor-consult, cursor-implement → cursor.
+- local file/entity work (you ARE the web-anthropic seat) → fs / cortex / agent_bus directly — ¬ team_dispatch(op="generate"|"to_thread", model="web-anthropic") (422)
+- manual seat handoff → team_dispatch(op="handoff", seat=web-anthropic|cursor, packet_path=…|source_ref=…, subject=…) — shorthands accepted; handoff seat-map: web-consult, web-implement → web-anthropic; cursor-consult, cursor-implement → cursor. Legacy aliases `claude-web`/`claude-cursor` still resolve.
 - API consult (any provider) → pre-stage context on an agent-bus thread, then team_dispatch(op="generate", role="reviewer"|"artisan"|…, dispatch_thread_id="<thread>", contract="light-bounded", model="provider/model"?) → execution_id + poll_hint
 - forbidden on generate → synthetic seat models (web-anthropic, cursor) — use op="handoff" with role= instead
 - handoff roles: web-consult, web-implement, cursor-consult, cursor-implement (complete roster)
@@ -283,7 +283,7 @@ agent bus — the next session picks it up.
 
 | Situation | Transport | Role / target | Tier | Notes |
 |---|---|---|---|---|
-| Lead dialectic + adjudication | agent-bus + operator push | `claude-web` (`web-consult`) | full MCP, reliable writes | NON-offloadable synthesis (Guard 2) |
+| Lead dialectic + adjudication | agent-bus + operator push | `web-anthropic` (`web-consult`) | full MCP, reliable writes | NON-offloadable synthesis (Guard 2) |
 | Automated review, closes w/o push | `team_dispatch(op=generate, role=reviewer)` | gpt-5.5 | full MCP | reviewer family MUST be gpt/claude — never gemini (Guard 1) |
 | Adversarial panel member | `team_dispatch` or `panel_dispatch` | `role=skeptic` | inline (non-multi-agent grok may get MCP) | must cite a decisive falsifier |
 | Analysis / RAG, NO writes | `team_dispatch(role=synthesizer)` | gemini | inline-only (enforced) | lead-adjudicated input only |

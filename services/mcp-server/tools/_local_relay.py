@@ -143,10 +143,11 @@ def _route_requires_orphan_cap(service: str, method: str, path: str) -> bool:
 def _reclaim_expired_orphans() -> None:
     """Drop dead orphan workers and reclaim slots held past the lifetime cap.
 
-    Dead workers already released their slot in ``_relay_worker``'s finally
-    (release is idempotent), so we only forget them. A worker still alive past
-    ``_ORPHAN_MAX_LIFETIME_S`` is treated as permanently stuck: its admission
-    slot is reclaimed so the /wait route recovers capacity.
+    Dead workers normally released their slot in ``_relay_worker``'s finally;
+    we still call ``slot.release()`` (idempotent) so a finally-skipped death
+    cannot leak a permit. A worker still alive past ``_ORPHAN_MAX_LIFETIME_S``
+    is treated as permanently stuck: its admission slot is reclaimed so the
+    /wait route recovers capacity.
     """
     now = monotonic_now()
     with _orphan_lock:
@@ -154,9 +155,17 @@ def _reclaim_expired_orphans() -> None:
         for worker in _orphan_workers:
             meta = _orphan_meta.get(worker)
             if meta is None:
+                logger.warning(
+                    "orphan worker missing meta bookkeeping; dropping %s",
+                    worker.name,
+                )
                 continue
             orphaned_at, slot = meta
             if not worker.is_alive():
+                # Idempotent: normally finally already released; belt-and-braces
+                # if the worker died without running finally (Fable F4).
+                if slot is not None:
+                    slot.release()
                 _orphan_meta.pop(worker, None)
                 continue
             if now - orphaned_at >= _ORPHAN_MAX_LIFETIME_S:
@@ -261,7 +270,15 @@ def _request_with_wall_clock(
         },
         daemon=True,
     )
-    worker.start()
+    try:
+        worker.start()
+    except BaseException:
+        # Acquire→start failure must not leak the admission permit (Fable F5):
+        # the worker never runs finally, and the sweep never sees an unregistered
+        # worker, so release here or the slot is gone until restart.
+        if slot is not None:
+            slot.release()
+        raise
 
     try:
         kind, payload = result_queue.get(timeout=wall_clock_s)
