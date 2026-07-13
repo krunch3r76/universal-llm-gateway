@@ -1,0 +1,90 @@
+i01_investigate_reminder:
+  expected_verb: investigate
+  expected_lane: recon
+  expect_reject: null
+  expect_questions: false
+i02_fix_login:
+  expected_verb: fix
+  expected_lane: bug_recon
+  expect_reject: null
+  expect_questions: false
+i03_build_export:
+  expected_verb: build
+  expected_lane: feature_recon
+  expect_reject: null
+  expect_questions: false
+i04_change_sort:
+  expected_verb: change
+  expected_lane: change_recon
+  expect_reject: null
+  expect_questions: false
+i05_hard_out_restart:
+  expected_verb: null
+  expected_lane: null
+  expect_reject: hard_out
+  expect_questions: false
+i06_refused_dispatch_vocab:
+  expected_verb: null
+  expected_lane: null
+  expect_reject: hard_out
+  expect_questions: false
+i07_ambiguous_thing:
+  expected_verb: investigate
+  expected_lane: recon
+  expect_reject: null
+  expect_questions: true
+i08_investigate_email:
+  expected_verb: investigate
+  expected_lane: recon
+  expect_reject: null
+  expect_questions: false
+i09_fix_crash:
+  expected_verb: fix
+  expected_lane: bug_recon
+  expect_reject: null
+  expect_questions: false
+i10_build_webhook:
+  expected_verb: build
+  expected_lane: feature_recon
+  expect_reject: null
+  expect_questions: false
+i11_change_limit:
+  expected_verb: change
+  expected_lane: change_recon
+  expect_reject: null
+  expect_questions: false
+i12_hard_out_delete:
+  expected_verb: null
+  expected_lane: null
+  expect_reject: hard_out
+  expect_questions: false
+i13_refused_model:
+  expected_verb: null
+  expected_lane: null
+  expect_reject: refused_vocabulary
+  expect_questions: false
+i14_investigate_sync:
+  expected_verb: investigate
+  expected_lane: recon
+  expect_reject: null
+  expect_questions: false
+i15_fix_typo:
+  expected_verb: fix
+  expected_lane: bug_recon
+  expect_reject: null
+  expect_questions: false
+i16_build_report:
+  expected_verb: build
+  expected_lane: feature_recon
+  expect_reject: null
+  expect_questions: false
+i17_change_color:
+  expected_verb: change
+  expected_lane: change_recon
+  expect_reject: null
+  expect_questions: false
+i18_bad_ref:
+  expected_verb: null
+  expected_lane: null
+  expect_reject: bad_ref
+  expect_questions: false

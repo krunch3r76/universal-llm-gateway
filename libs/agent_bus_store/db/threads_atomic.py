@@ -81,7 +81,11 @@ def create_thread_with_turn(
                 (thread_id, *inbox_params, after_turn),
             ).fetchall()
             if unread_rows:
-                raise UnreadTurnsExist([dict(r) for r in unread_rows])
+                raise UnreadTurnsExist(
+                    [dict(r) for r in unread_rows],
+                    latest_turn_number=0,
+                    provided_after_turn=after_turn,
+                )
 
         turn_number = 1
         cur = conn.execute(

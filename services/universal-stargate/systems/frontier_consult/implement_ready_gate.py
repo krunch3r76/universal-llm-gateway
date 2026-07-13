@@ -39,6 +39,9 @@ def require_implement_ready(
             "evidence_mode": outcome.mode,
         }
 
+    def _fetch_bus_turn(thread: str, turn_number: int) -> dict[str, Any] | None:
+        return cortex.bus_turn_get(thread, turn_number)
+
     try:
         _require_implement_ready(
             request_id=request_id,
@@ -46,6 +49,7 @@ def require_implement_ready(
             cortex=cortex,
             workspaces_root=root,
             resolve_skeptic=_resolve_skeptic,
+            fetch_bus_turn=_fetch_bus_turn,
         )
     except ImplementReadyGateError as exc:
         raise FrontierEndpointError(

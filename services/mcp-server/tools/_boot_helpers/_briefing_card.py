@@ -35,6 +35,9 @@ def render_briefing_card(
     *,
     deadlines: list[dict[str, Any]] | None = None,
     unread_count: int = 0,
+    unread_thread_total: int | None = None,
+    unread_turn_total: int | None = None,
+    unread_window_label: str | None = None,
     unread_threads: list[dict[str, Any]] | None = None,
     review_total: int | None = None,
     review_top: list[dict[str, Any]] | None = None,
@@ -65,6 +68,8 @@ def render_briefing_card(
     agent: str | None = None,
     domain: str | None = None,
     cross_domain_sentinel: str | None = None,
+    life_suppressed: bool = False,
+    life_lane_sentinel: str | None = None,
 ) -> tuple[str, list[dict[str, Any]]]:
     """Render a compact briefing card and section manifest.
 
@@ -185,7 +190,7 @@ def render_briefing_card(
     if skills_card_markdown:
         parts.extend(skills_card_markdown.split("\n"))
 
-    if dropbox_files:
+    if dropbox_files and not life_suppressed:
         n = len(dropbox_files)
         parts.append(f"\n## ⚠ Dropbox Pending ({n} file(s))")
         # Cap inline listing per the ≤~8KB card target (render_briefing_card
@@ -204,7 +209,7 @@ def render_briefing_card(
             " — dropbox ingest required."
         )
 
-    if deadlines is not None:
+    if deadlines is not None and not life_suppressed:
         # Drop rows without a real deadline date — they carry no urgency signal.
         dated = [
             d
@@ -240,7 +245,7 @@ def render_briefing_card(
             "arguments='{\"old_assertion_id\": <id>, ...}')`"
         )
 
-    if temporal_active:
+    if temporal_active and not life_suppressed:
         scoped_active = (
             [a for a in temporal_active if a.get("id") not in compact_dedup_ids]
             if compact_dedup_ids
@@ -278,18 +283,22 @@ def render_briefing_card(
                         pass
                 parts.append(f"- **{name}**{tag} — {a.get('claim', '')[:120]}")
 
-    if unread_count > 0:
+    if unread_count > 0 or (unread_thread_total or 0) > 0:
         _uthreads = unread_threads or []
         thread_slugs = ", ".join(t.get("slug", t.get("id", "?")) for t in _uthreads)
-        _thread_count = len(_uthreads)
-        # Show both metrics when they differ (turns vs threads) — header/body
-        # mismatch caused confabulation in boot audit claude-web-lead-2026-05-12.
-        if _thread_count and _thread_count != unread_count:
+        sample_threads = unread_count
+        total_threads = unread_thread_total if unread_thread_total is not None else sample_threads
+        total_turns = unread_turn_total if unread_turn_total is not None else sample_threads
+        window = unread_window_label or "14d window"
+        if total_threads > sample_threads:
             _count_label = (
-                f"{_thread_count} thread(s) with unread ({unread_count} turn(s))"
+                f"{sample_threads} of {total_threads} threads unread "
+                f"({total_turns} turns; {window})"
             )
+        elif total_turns != sample_threads:
+            _count_label = f"{sample_threads} thread(s) with unread ({total_turns} turns; {window})"
         else:
-            _count_label = f"{unread_count} unread"
+            _count_label = f"{sample_threads} unread ({window})"
         parts.append(f"\n## Agent Bus — {_count_label}")
         if thread_slugs:
             parts.append(f"Threads with unread: {thread_slugs}")
@@ -300,6 +309,9 @@ def render_briefing_card(
             reason = item.get("reason", "")
             name = item.get("name", item.get("id", "?"))
             parts.append(f"- [{reason}] {name}")
+
+    if life_lane_sentinel:
+        parts.append(f"\n*{life_lane_sentinel}*")
 
     if todos:
         parts.append(f"\n## Todos — {todo_total} open")

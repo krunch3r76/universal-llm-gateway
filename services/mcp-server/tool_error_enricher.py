@@ -28,7 +28,9 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
-_FS_AMBIGUOUS_PREFIXES = frozenset({"notes", "tasks", "tmp", "agent-skills", "services"})
+_FS_AMBIGUOUS_PREFIXES = frozenset(
+    {"notes", "tasks", "tmp", "agent-skills", "services"}
+)
 
 _FS_SANDBOX_HINT = (
     "sandbox is required when path has no Share URI scheme. "
@@ -70,6 +72,19 @@ def fs_missing_sandbox_hint(path: str = "") -> str:
                 "exists under BOTH stores; use cortex:// or workspaces:// scheme."
             )
     return f"{_FS_SANDBOX_HINT}"
+
+
+def life_workspaces_fs_refusal() -> dict[str, str]:
+    """Explicit /mcp/life boundary when callers target the workspaces sandbox."""
+    return {
+        "error": (
+            "sandbox='workspaces' is not available on the /mcp/life surface. "
+            "Repository source reads and edits are served on /mcp/code only. "
+            "For agent-process artifacts (specs, packets, closeouts, sidecars), "
+            "use sandbox='cortex' or a cortex:// Share URI. "
+            "Life-seat handoff packets must carry a cortex:// sidecar mirror."
+        )
+    }
 
 
 # Per-session invocation tracker for Signal 5 (first_invocation_this_session).
@@ -218,9 +233,7 @@ class ToolErrorEnricher(Middleware):
                             _call_payload_path(err.get("input"))
                         )
                     else:
-                        entry["hint"] = (
-                            f"'{param}' is required (expects {type_hint})."
-                        )
+                        entry["hint"] = f"'{param}' is required (expects {type_hint})."
                 else:
                     prop_schema_raw = schema_props.get(param, {})
                     prop_schema = (

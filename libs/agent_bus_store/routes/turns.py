@@ -11,7 +11,10 @@ from ..auth import require_token
 from ..db import (
     TurnAlreadyAcknowledged,
     UnreadTurnsExist,
+    bulk_mark_read_state,
     delete_turn,
+    get_latest_turn,
+    get_thread_turn_count,
     get_turn_by_number,
     get_turns,
     get_unread_thread_toc,
@@ -28,11 +31,15 @@ from ..turns_models import (
     TurnCreate,
     TurnCreated,
     TurnList,
+    TurnReadStateBulk,
+    TurnReadStateBulkResult,
     TurnStatus,
     TurnStatusUpdate,
     TurnUpdate,
     UnreadThreadToc,
     UnreadThreadTocRow,
+    active_since_window_label,
+    parse_active_since,
     turn_body_limit_error,
 )
 
@@ -96,11 +103,7 @@ async def create_turn(turn: TurnCreate) -> TurnCreated:
     except UnreadTurnsExist as e:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "error": "unread_turns_exist",
-                "message": "Read all turns addressed to you before posting",
-                "unread_turns": e.unread,
-            },
+            detail=e.to_detail(),
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
@@ -186,30 +189,49 @@ async def list_turns(
 async def list_unread_thread_toc(
     to: AgentName = Query(...),
     mark_read_flag: bool = Query(False, alias="mark_read"),
-    limit: int | None = Query(None),
+    active_since: str | None = Query(None),
+    limit: int = Query(50, ge=1, le=500),
+    all_flag: bool = Query(False, alias="all"),
 ) -> UnreadThreadToc:
-    """Recipient-scoped unread inbox digest: one row per thread with unread
-    turns addressed to ``to``.
-
-    Bounded by thread count so the post-boot catch-up read stays under the MCP
-    inline response guard regardless of unread volume (friction 16835). Use
-    GET /turns?thread=…&unread=true for the full unread turn list of a single
-    thread. ``mark_read=true`` marks every matching unread turn read.
-    """
-    rows, marked = get_unread_thread_toc(to=to, mark_read=mark_read_flag, limit=limit)
+    """Recipient-scoped unread inbox digest: enriched, windowed, bounded."""
+    try:
+        cutoff = None if all_flag else parse_active_since(active_since)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "code": "invalid_active_since",
+                "message": f"Invalid active_since value: {active_since!r}",
+            },
+        )
+    rows, marked, total_threads, total_turns, truncated = get_unread_thread_toc(
+        to=to,
+        mark_read=mark_read_flag,
+        active_since=cutoff,
+        limit=limit,
+        all_threads=all_flag,
+    )
     toc_rows = [
         UnreadThreadTocRow(
             thread=r["thread"],
             unread_count=r["unread_count"],
             latest_turn_number=r["latest_turn_number"],
+            slug=r["slug"],
+            last_subject=r.get("last_subject"),
+            last_activity_at=datetime.fromisoformat(r["last_activity_at"]),
         )
         for r in rows
     ]
+    window_label = active_since if active_since is not None else None
+    if window_label is None and not all_flag:
+        window_label = active_since_window_label(None)
     return UnreadThreadToc(
         threads=toc_rows,
-        total_unread_threads=len(toc_rows),
-        total_unread_turns=sum(r.unread_count for r in toc_rows),
+        total_unread_threads=total_threads,
+        total_unread_turns=total_turns,
         marked_read=marked,
+        truncated=truncated,
+        active_since=window_label,
     )
 
 
@@ -312,14 +334,79 @@ async def delete_turn_route(
 )
 async def get_turn_by_number_route(
     thread: str = Query(...),
-    turn_number: int = Query(...),
+    turn_number: str = Query(...),
 ) -> Turn:
-    """Look up a single turn by thread + turn_number directly."""
+    """Look up a single turn by thread + turn_number (or ``latest``)."""
     thread = normalize_thread_id(thread)
-    row = get_turn_by_number(thread, turn_number)
+    if turn_number == "latest":
+        turn_count = get_thread_turn_count(thread)
+        if turn_count == 0:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={
+                    "code": "empty_thread",
+                    "message": f"No turns in thread {thread}",
+                    "data": {"turn_count": 0},
+                },
+            )
+        row = get_latest_turn(thread)
+    else:
+        try:
+            tn = int(turn_number)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "code": "invalid_turn_number",
+                    "message": f"turn_number must be int or 'latest', got {turn_number!r}",
+                },
+            )
+        row = get_turn_by_number(thread, tn)
     if row is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Turn {turn_number} not found in thread {thread}",
         )
     return _turn_from_row(row)
+
+
+@router.patch(
+    "/threads/{thread_id}/turns/read-state",
+    response_model=TurnReadStateBulkResult,
+)
+async def bulk_mark_read_state_route(
+    thread_id: str, body: TurnReadStateBulk
+) -> TurnReadStateBulkResult:
+    """Bulk mark read — ``turn_numbers[]`` XOR ``through_turn`` (+ ``agent``)."""
+    has_list = body.turn_numbers is not None
+    has_through = body.through_turn is not None
+    if has_list == has_through:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "code": "read_state_xor_violation",
+                "message": "Provide exactly one of turn_numbers or through_turn",
+            },
+        )
+    if has_through and body.agent is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "code": "through_turn_requires_agent",
+                "message": "through_turn requires agent",
+            },
+        )
+    thread_id = normalize_thread_id(thread_id)
+    try:
+        marked = bulk_mark_read_state(
+            thread=thread_id,
+            turn_numbers=body.turn_numbers,
+            through_turn=body.through_turn,
+            agent=body.agent,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        )
+    return TurnReadStateBulkResult(marked_read=marked)

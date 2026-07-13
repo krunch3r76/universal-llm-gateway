@@ -97,7 +97,7 @@ SUPPRESSED_SKILL_LIFECYCLES: tuple[str, ...] = (
     "merged",
 )
 
-# Positive filter for boot /skills / skill_suggest — only graduated active skills.
+# Positive filter for boot /skills — only graduated active skills.
 DISCOVERABLE_SKILL_LIFECYCLE: str = "active"
 
 

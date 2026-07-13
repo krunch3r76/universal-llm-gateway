@@ -1,8 +1,7 @@
 """Seat-applicability vocabulary for skill/rule entity writes and discovery params.
 
 Canonical seat enum (derived from agent_seat config), seat-slug validation/normalization,
-and capability filtering for GET /skills. ``applicable_agents`` is informational metadata
-only — discovery does not filter on it.
+and capability filtering for GET /skills. Seat-name applicable_agents filtering is retired.
 """
 
 from __future__ import annotations

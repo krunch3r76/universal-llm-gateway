@@ -82,6 +82,14 @@ _RAG_QUERY_TOKENS: frozenset[str] = frozenset(
     {"rag", "corpus", "retrieval", "semantic", "research", "scope", "index"}
 )
 
+_CORTEX_BRIEF_PRIMARY_HINT = (
+    "cortex_brief is the session-opening server-primary tool — call it directly "
+    'by name (for example, cortex_brief(agent="claude-web", role="lead")). '
+    "boot_inspect is read-only and does not mint the session_id, so it is not "
+    "a session-opening substitute."
+)
+_CORTEX_BRIEF_QUERY_TOKENS: frozenset[str] = frozenset({"cortex_brief"})
+
 _FS_PRIMARY_CALL = 'fs(sandbox="cortex", op="md_list", path="agent-skills/<slug>.md")'
 _FS_PRIMARY_HINT = (
     "fs is a server-primary tool — call directly (e.g. "
@@ -112,26 +120,6 @@ _DISPATCH_PRIMARY_HINT = (
     "hand off (cursor-consult)."
 )
 _DISPATCH_QUERY_TOKENS: frozenset[str] = frozenset({"dispatch", "overflow"})
-
-_SKILL_SUGGEST_PRIMARY_HINT = (
-    "skill_suggest is deprecated indefinitely (operator ruling 2026-07-11) — "
-    "do not call it. Discover skills via native boot index / "
-    "`<available_skills>` stubs / description-gated rules only. "
-    "Server tool_search indexes overflow only; empty overflow matches for "
-    'tool_search("skill_suggest") are expected and do not mean a replacement '
-    "tool should be invented."
-)
-_SKILL_SUGGEST_QUERY_TOKENS: frozenset[str] = frozenset(
-    {
-        "skill_suggest",
-        "skill",
-        "suggest",
-        "skills",
-        "loaded",
-        "delta",
-        "discovery",
-    }
-)
 
 # Manifest overrides for overflow tools whose live schema/docstring under-specify
 # the dispatch wire shape (op + nested JSON ``arguments`` string).
@@ -393,8 +381,6 @@ def dispatch_rejection_for_primary_tool(
         return _OVERFLOW_PRIMARY_ALIASES[tool]
     if tool == "fs":
         return _FS_PRIMARY_HINT
-    if tool == "skill_suggest":
-        return _SKILL_SUGGEST_PRIMARY_HINT
     if tool == "dispatch":
         return _DISPATCH_PRIMARY_HINT
     if tool in primary_tools:
@@ -411,6 +397,8 @@ def primary_tool_hint_for_search(
 ) -> str | None:
     """Return a primary-tool redirect when overflow search would mislead agents."""
     tokens = set(_tokenize(query))
+    if tokens & _CORTEX_BRIEF_QUERY_TOKENS:
+        return _CORTEX_BRIEF_PRIMARY_HINT
     rag_query = bool(tokens & _RAG_QUERY_TOKENS) or any(
         t in {"rag", "corpus", "retrieval"} for t in tokens
     )
@@ -421,6 +409,4 @@ def primary_tool_hint_for_search(
         return _FS_PRIMARY_HINT
     if tokens & _DISPATCH_QUERY_TOKENS:
         return _DISPATCH_PRIMARY_HINT
-    if tokens & _SKILL_SUGGEST_QUERY_TOKENS:
-        return _SKILL_SUGGEST_PRIMARY_HINT
     return None

@@ -27,11 +27,10 @@ from ._recon_sidecar import (
 )
 from ._shared import record
 from ._thread_sidecar import (
-    _slugify,
-    content_sha256,
-    render_thread_sidecar_markdown,
-    thread_sidecar_uri,
-    write_thread_sidecar,
+    MAX_SIDECAR_CONTENT_CHARS,
+    SidecarContentTooLargeError,
+    SidecarWriteError,
+    write_thread_sidecar_for_send,
 )
 
 logger = get_logger("cortex-api.dispatch_ops.misc")
@@ -83,26 +82,32 @@ def _op_thread_sidecar_write(
     from_agent: str | None = None,
     execution_id: str | None = None,
     oversized: bool = False,
+    sidecar_slug: str | None = None,
     **_: object,
 ) -> dict[str, Any]:
-    slug = _slugify(subject)
-    digest = content_sha256(content)
-    md = render_thread_sidecar_markdown(
-        thread=thread,
-        subject=subject,
-        content=content,
-        from_agent=from_agent,
-        execution_id=execution_id,
-        sha256=digest,
-        body_chars=len(content),
-        oversized=oversized,
-    )
-    path = write_thread_sidecar(thread, slug, md)
+    try:
+        result = write_thread_sidecar_for_send(
+            thread=thread,
+            subject=subject,
+            content=content,
+            from_agent=from_agent or "dispatch",
+            sidecar_slug=sidecar_slug,
+            execution_id=execution_id,
+            oversized=oversized,
+        )
+    except SidecarContentTooLargeError as exc:
+        return {
+            "error": "sidecar_content_too_large",
+            "limit_chars": MAX_SIDECAR_CONTENT_CHARS,
+            "body_chars": exc.body_chars,
+        }
+    except SidecarWriteError as exc:
+        return {"error": f"sidecar_write_failed: {exc}"}
     return {
-        "uri": thread_sidecar_uri(thread, slug),
-        "path": path,
-        "sha256": digest,
-        "body_chars": len(content),
+        "uri": result.uri,
+        "path": result.path,
+        "sha256": result.sha256,
+        "body_chars": result.body_chars,
     }
 
 

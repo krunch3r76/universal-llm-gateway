@@ -8,8 +8,9 @@ from __future__ import annotations
 import json as _json
 import logging
 import os
-from concurrent.futures import ThreadPoolExecutor
+import threading
 from concurrent.futures import TimeoutError as FuturesTimeoutError
+from queue import Empty, Queue
 from typing import Any
 
 import httpx
@@ -24,6 +25,7 @@ from transport_utils import (
 logger = logging.getLogger(__name__)
 
 _REQUEST_TIMEOUT = 30.0
+_MAX_ORPHAN_WORKERS = 4
 _ROUTE_TIMEOUTS: dict[tuple[str, str, str], float] = {
     ("email-bridge", "POST", "/ingest"): 120.0,
     ("email-bridge", "POST", "/pull"): 120.0,
@@ -57,6 +59,53 @@ _SERVICES: dict[str, dict[str, str]] = {
     },
 }
 
+_orphan_workers: list[threading.Thread] = []
+_orphan_lock = threading.Lock()
+# Admission cap applies only to agent-bus long-poll wait routes where timed-out
+# workers may remain alive until server-side wait completes; other relay traffic
+# is not throttled by this reservation.
+_orphan_slot_semaphore = threading.Semaphore(_MAX_ORPHAN_WORKERS)
+# Per-orphan bookkeeping: worker -> (orphaned_at_monotonic, slot_token|None).
+# A slot token is released exactly once (worker finally OR reclaim sweep),
+# never both, so the semaphore permit count stays consistent.
+_orphan_meta: dict[threading.Thread, tuple[float, _SlotToken | None]] = {}
+# A worker whose httpx call neither completes nor raises (SF1, friction 23653)
+# would hold its admission slot forever and, after _MAX_ORPHAN_WORKERS such
+# leaks, wedge every /wait behind relay_capacity_exhausted until restart. Cap
+# how long a slot may be held; past this, reclaim the permit (the leaked daemon
+# thread is accepted, but the admission slot self-heals).
+_ORPHAN_MAX_LIFETIME_S: float = float(
+    os.getenv("MCP_RELAY_ORPHAN_MAX_LIFETIME_S", "300")
+)
+
+
+class RelayCapacityError(Exception):
+    """Timed-out relay workers still alive and at the orphan cap."""
+
+
+class _SlotToken:
+    """Idempotent handle for one orphan-cap semaphore permit.
+
+    Both the relay worker's ``finally`` and the reclaim sweep may try to release
+    the same permit; ``release`` returns True only for the first caller so the
+    permit is returned to the semaphore at most once.
+    """
+
+    __slots__ = ("_sem", "_released", "_lock")
+
+    def __init__(self, sem: threading.Semaphore) -> None:
+        self._sem = sem
+        self._released = False
+        self._lock = threading.Lock()
+
+    def release(self) -> bool:
+        with self._lock:
+            if self._released:
+                return False
+            self._released = True
+        self._sem.release()
+        return True
+
 
 def resolve_timeout(service: str, method: str, path: str) -> float:
     """Return the client budget for a local relay route.
@@ -75,47 +124,156 @@ def resolve_timeout(service: str, method: str, path: str) -> float:
     return _REQUEST_TIMEOUT
 
 
-def _request_with_wall_clock(
-    client: httpx.Client,
+def _reset_orphan_workers_for_tests() -> None:
+    """Clear timed-out worker registry and orphan-slot reservations (tests only)."""
+    global _orphan_workers, _orphan_slot_semaphore, _orphan_meta
+    with _orphan_lock:
+        _orphan_workers = []
+        _orphan_meta = {}
+    _orphan_slot_semaphore = threading.Semaphore(_MAX_ORPHAN_WORKERS)
+
+
+def _route_requires_orphan_cap(service: str, method: str, path: str) -> bool:
+    """Return True for agent-bus GET long-poll wait routes under the orphan cap."""
+    if service != "agent-bus" or method.upper() != "GET":
+        return False
+    return path.split("?", 1)[0].endswith("/wait")
+
+
+def _reclaim_expired_orphans() -> None:
+    """Drop dead orphan workers and reclaim slots held past the lifetime cap.
+
+    Dead workers already released their slot in ``_relay_worker``'s finally
+    (release is idempotent), so we only forget them. A worker still alive past
+    ``_ORPHAN_MAX_LIFETIME_S`` is treated as permanently stuck: its admission
+    slot is reclaimed so the /wait route recovers capacity.
+    """
+    now = monotonic_now()
+    with _orphan_lock:
+        survivors: list[threading.Thread] = []
+        for worker in _orphan_workers:
+            meta = _orphan_meta.get(worker)
+            if meta is None:
+                continue
+            orphaned_at, slot = meta
+            if not worker.is_alive():
+                _orphan_meta.pop(worker, None)
+                continue
+            if now - orphaned_at >= _ORPHAN_MAX_LIFETIME_S:
+                if slot is not None:
+                    slot.release()
+                _orphan_meta.pop(worker, None)
+                continue
+            survivors.append(worker)
+        _orphan_workers[:] = survivors
+
+
+def _acquire_orphan_slot() -> _SlotToken:
+    _reclaim_expired_orphans()
+    sem = _orphan_slot_semaphore
+    if not sem.acquire(blocking=False):
+        raise RelayCapacityError(
+            f"relay orphan worker cap reached ({_MAX_ORPHAN_WORKERS})"
+        )
+    return _SlotToken(sem)
+
+
+def _register_orphan_worker(worker: threading.Thread, slot: _SlotToken | None) -> None:
+    with _orphan_lock:
+        _orphan_workers.append(worker)
+        _orphan_meta[worker] = (monotonic_now(), slot)
+
+
+def _relay_worker(
     *,
+    service_url: str,
+    request_timeout: float,
+    method: str,
+    path: str,
+    json_body: dict[str, Any] | None,
+    headers: dict[str, str],
+    result_queue: Queue[tuple[str, Any]],
+    slot: _SlotToken | None,
+) -> None:
+    client: httpx.Client | None = None
+    kind: str | None = None
+    payload: Any = None
+    try:
+        client = make_sync_client(service_url, timeout=request_timeout)
+        try:
+            response = client.request(method, path, json=json_body, headers=headers)
+            kind = "ok"
+            payload = response
+        except BaseException as exc:
+            kind = "err"
+            payload = exc
+    finally:
+        if client is not None:
+            try:
+                client.close()
+            except Exception:
+                logger.warning(
+                    "relay worker: client.close() failed for %s %s",
+                    method,
+                    path,
+                    exc_info=True,
+                )
+        if kind is not None:
+            result_queue.put((kind, payload))
+        if slot is not None:
+            slot.release()
+
+
+def _request_with_wall_clock(
+    *,
+    service_url: str,
+    request_timeout: float,
     method: str,
     path: str,
     json_body: dict[str, Any] | None,
     headers: dict[str, str],
     wall_clock_s: float,
+    enforce_orphan_cap: bool = False,
 ) -> httpx.Response:
-    """Run ``client.request`` under a hard wall-clock ceiling.
+    """Run a blocking relay under a hard wall-clock ceiling.
 
-    httpx timeouts usually abort idle reads, but friction 23653 showed an
-    intermittent orphan where ``mcp.local.api.called`` never gained a twin
-    ``completed``/``failed`` despite agent-bus logging HTTP 200 for ``/wait``.
-    ``Future.result(timeout=…)`` returns to the MCP tool even if the worker
-    thread remains stuck; closing the client best-effort unblocks that thread.
-    ``shutdown(wait=False)`` keeps the MCP tool path from blocking on the
-    orphaned worker during executor teardown.
+    A daemon worker owns ``make_sync_client``, ``client.request``, and
+    ``client.close``. The caller returns or raises at ``wall_clock_s`` without
+    synchronously closing the client or joining a timed-out worker. Timed-out
+    workers remain tracked until they exit; agent-bus long-poll wait routes
+    reserve an orphan slot before worker start so concurrent timeouts cannot
+    exceed ``_MAX_ORPHAN_WORKERS`` live workers.
     """
+    slot = _acquire_orphan_slot() if enforce_orphan_cap else None
 
-    def _call() -> httpx.Response:
-        return client.request(method, path, json=json_body, headers=headers)
+    result_queue: Queue[tuple[str, Any]] = Queue(maxsize=1)
+    worker = threading.Thread(
+        target=_relay_worker,
+        kwargs={
+            "service_url": service_url,
+            "request_timeout": request_timeout,
+            "method": method,
+            "path": path,
+            "json_body": json_body,
+            "headers": headers,
+            "result_queue": result_queue,
+            "slot": slot,
+        },
+        daemon=True,
+    )
+    worker.start()
 
-    pool = ThreadPoolExecutor(max_workers=1)
     try:
-        fut = pool.submit(_call)
-        try:
-            return fut.result(timeout=wall_clock_s)
-        except FuturesTimeoutError:
-            try:
-                client.close()
-            except Exception:
-                logger.warning(
-                    "wall-clock timeout: client.close() failed for %s %s",
-                    method,
-                    path,
-                    exc_info=True,
-                )
-            raise
-    finally:
-        pool.shutdown(wait=False, cancel_futures=True)
+        kind, payload = result_queue.get(timeout=wall_clock_s)
+    except Empty:
+        _register_orphan_worker(worker, slot)
+        raise FuturesTimeoutError(
+            f"relay wall-clock budget exceeded ({wall_clock_s}s)"
+        ) from None
+
+    if kind == "err":
+        raise payload
+    return payload
 
 
 def relay(
@@ -183,18 +341,26 @@ def relay(
         timeout_s=request_timeout,
     )
 
-    client: httpx.Client | None = None
     try:
-        client = make_sync_client(service_url, timeout=request_timeout)
         try:
             response = _request_with_wall_clock(
-                client,
+                service_url=service_url,
+                request_timeout=request_timeout,
                 method=method,
                 path=path,
                 json_body=body,
                 headers=headers,
                 wall_clock_s=request_timeout,
+                enforce_orphan_cap=_route_requires_orphan_cap(service, method, path),
             )
+        except RelayCapacityError as exc:
+            duration = monotonic_now() - t0
+            _record_failed(
+                error="relay_capacity_exhausted",
+                duration=duration,
+                detail=str(exc),
+            )
+            return {"error": "Local relay capacity exhausted; retry later"}
         except FuturesTimeoutError as exc:
             duration = monotonic_now() - t0
             _record_failed(
@@ -279,9 +445,3 @@ def relay(
         logger.error("local_api relay to %s failed: %s", service, exc, exc_info=True)
         _record_failed(error="unexpected_error", duration=duration, detail=str(exc))
         return {"error": f"Relay to {service} failed: {exc}"}
-    finally:
-        if client is not None:
-            try:
-                client.close()
-            except Exception:
-                pass

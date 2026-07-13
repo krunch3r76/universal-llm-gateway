@@ -287,6 +287,12 @@ def parse_packet_invariant_skill_ids(packet_text: str) -> tuple[str, ...]:
     """Extract skill entity ids from a packet ``<invariants>`` block."""
     if not packet_text:
         return ()
+    from implement_admission.skill_delivery_channels import _INLINE_SKILL_HEADER_RE
+
+    inlined = {
+        found.group("slug").lower()
+        for found in _INLINE_SKILL_HEADER_RE.finditer(packet_text)
+    }
     match = _INVARIANTS_BLOCK_RE.search(packet_text)
     block = match.group(1) if match else packet_text
     seen: set[str] = set()
@@ -294,6 +300,8 @@ def parse_packet_invariant_skill_ids(packet_text: str) -> tuple[str, ...]:
     for pattern in (_AGENT_SKILL_TOKEN_RE, _LOAD_SKILL_RE, _SKILL_PATH_RE):
         for found in pattern.finditer(block):
             slug = found.group(1).lower()
+            if slug in inlined:
+                continue
             entity_id = f"agent_skill:{slug}"
             if entity_id not in seen:
                 seen.add(entity_id)
@@ -686,7 +694,7 @@ def injected_skill_slugs(
     code_touching: bool = False,
     include_loaded_set: bool = False,
 ) -> tuple[str, ...]:
-    """Registry-derived slug set for skill_suggest loaded-set accounting."""
+    """Registry-derived slug set for injected-skill loaded-set accounting."""
     candidates = _candidate_entries(
         role=role,
         platform=platform,

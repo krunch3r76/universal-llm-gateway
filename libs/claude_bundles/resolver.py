@@ -1,4 +1,7 @@
-"""SOT resolution and inline transform for claude.ai skill bundles."""
+"""SOT resolution and inline transform for claude.ai skill bundles.
+
+Placement authority: ``config/skills.yaml`` via ``claude_bundles.catalog``.
+"""
 
 from __future__ import annotations
 
@@ -12,117 +15,7 @@ from claude_bundles.bundle_description import (
     parse_frontmatter,
     resolve_bundle_description,
 )
-
-# Shared-sync: cursor-SOT, rendered to .claude/skills by gen_claude_bundles.
-_SHARED_SYNC_BRIDGE: list[str] = [
-    "fs",
-    "cortex-orientation",
-    "dispatch-shape",
-    "agent-bus-discipline",
-    "session-close-kernel",
-    "session-close-audit",
-    "handoff-pickup",
-    "required-skills-pickup",
-    "completion-provenance-discipline",
-    "cortex-provenance-discipline",
-    "consult-routing",
-    "model-tier-awareness-web",
-    "lead-seat-boot",
-]
-
-_SHARED_SYNC_POSTURE: list[str] = [
-    "operator-posture",
-    "frontier-reasoning-discipline",
-    "no-silent-inference",
-    "consensus-steelman-posture",
-    "advisor-timing",
-]
-
-_SHARED_SYNC_LIFE_MATTER: list[str] = [
-    "evidence-review-discipline",
-    "entity-creation-discipline",
-    "entity-lifecycle-discipline",
-]
-
-_SHARED_SYNC_META: list[str] = [
-    "claude-ai-skill-uninstall",
-]
-
-SHARED_SYNC_SLUGS: list[str] = (
-    _SHARED_SYNC_BRIDGE
-    + _SHARED_SYNC_POSTURE
-    + _SHARED_SYNC_LIFE_MATTER
-    + _SHARED_SYNC_META
-)
-
-# Life-local: .claude/skills SOT — hand-edit, upload, never cursor-indexed.
-LIFE_LOCAL_SLUGS: list[str] = [
-    "matter-playbook-lifecycle",
-    "financial-reasoning",
-    "email-bridge-mailbox",
-    "email-tool-dispatch",
-    "document-review-timeline-linkage-audit",
-    "named-entity-verification-gate",
-    "engagement-stance",
-    "srm",
-    "prose-discipline",
-]
-
-UI_TARGET_SLUGS: list[str] = list(
-    dict.fromkeys([*SHARED_SYNC_SLUGS, *LIFE_LOCAL_SLUGS])
-)
-
-# IDE-authored SOT under .cursor/skills/ (authoritative body, not a defer stub).
-WORKSPACE_SOT_SLUGS: frozenset[str] = frozenset(
-    {
-        "add-mcp-tool",
-        "produce-uml",
-    }
-)
-
-# Indexed for cursor hardlink but excluded from Claude.ai standing catalog.
-CURSOR_ONLY_SLUGS: list[str] = [
-    "add-mcp-tool",
-    "agent-bus-multitask",
-    "build-pipeline",
-    "corpus-cross-reference-discipline",
-    "corpus-map-authoring",
-    "cursor-rule-authoring",
-    "cursor-sdk-instruction-standard",
-    "debug-with-events",
-    "descriptor-authoring-discipline",
-    "document-ingestion",
-    "document-lifecycle-tracking",
-    "docx-ingestion",
-    "image-video-generation",
-    "implement-work-item",
-    "lead-agent-git-integration",
-    "mcp-surface-change",
-    "mcp-tool-loop-trace-matrix",
-    "pipeline-substrate-capabilities",
-    "produce-uml",
-    "provenance-granularity",
-    "rag-canonical-reference-reminder",
-    "refine-pipeline",
-    "research-article-ingest",
-    "research-article-search",
-    "review-task-guidance",
-    "service-lifecycle",
-    "subgraph-render",
-    "thirdparty-api-mirror",
-    "ulg-architecture",
-    "tax",
-    "w2-ingestion",
-    "legal-opinion-corpus-ingestion",
-    "crypto-trading-research",
-    "case-evidence-retrieval",
-    "lawyer-stance",
-    "psych-framework-counsel",
-]
-
-CURSOR_INDEXED_SLUGS: list[str] = list(
-    dict.fromkeys([*SHARED_SYNC_SLUGS, *CURSOR_ONLY_SLUGS])
-)
+from claude_bundles.catalog import get_skill_catalog
 
 _SOT_LINE_RE = re.compile(r"^\*\*SOT")
 _SOURCE_LINE_RE = re.compile(r"^\*\*Source:\*\*")
@@ -174,12 +67,8 @@ def is_claude_sot_frontmatter(text: str) -> bool:
 
 
 def surface_class_for_slug(slug: str) -> str:
-    """Registry surface class for *slug* (unlisted cursor skills → cursor_only)."""
-    if slug in LIFE_LOCAL_SLUGS:
-        return "life_local"
-    if slug in SHARED_SYNC_SLUGS:
-        return "shared_sync"
-    return "cursor_only"
+    """Catalog surface class for *slug*."""
+    return get_skill_catalog().surface_class_for(slug)
 
 
 @lru_cache(maxsize=1)
@@ -190,17 +79,27 @@ def cortex_sot_only_slugs() -> frozenset[str]:
 
 def resolve_sot(slug: str, repo_root: Path) -> tuple[Path, str]:
     """Return the first existing SOT path and a short root label for reporting."""
-    if slug in LIFE_LOCAL_SLUGS:
-        sot_path = repo_root / ".claude" / "skills" / slug / "SKILL.md"
-        if sot_path.is_file():
-            return sot_path, ".claude/skills"
-        raise FileNotFoundError(
-            f"no life-local SOT for {slug!r} — searched: {sot_path}"
-        )
-    sot_path = repo_root / ".cursor" / "skills" / slug / "SKILL.md"
-    if sot_path.is_file():
-        return sot_path, ".cursor/skills"
-    raise FileNotFoundError(f"no SOT for {slug!r} — searched: {sot_path}")
+    return get_skill_catalog().resolve_sot(slug, repo_root)
+
+
+def shared_sync_slugs() -> list[str]:
+    return get_skill_catalog().shared_sync_slugs()
+
+
+def life_local_slugs() -> list[str]:
+    return get_skill_catalog().life_local_slugs()
+
+
+def cursor_only_slugs() -> list[str]:
+    return get_skill_catalog().cursor_only_slugs()
+
+
+def cursor_indexed_slugs() -> list[str]:
+    return get_skill_catalog().cursor_indexed_slugs()
+
+
+def claude_ai_target_slugs() -> list[str]:
+    return get_skill_catalog().claude_ai_targets()
 
 
 def _strip_pointer_fences(body: str) -> str:

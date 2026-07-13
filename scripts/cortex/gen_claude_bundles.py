@@ -28,13 +28,13 @@ from claude_bundles.bundle_description import (  # noqa: E402
     lint_h1_artifact_label,
 )
 from claude_bundles.resolver import (  # noqa: E402
-    CURSOR_INDEXED_SLUGS,
-    CURSOR_ONLY_SLUGS,
-    LIFE_LOCAL_SLUGS,
-    SHARED_SYNC_SLUGS,
+    cursor_indexed_slugs,
+    cursor_only_slugs,
     is_claude_sot_frontmatter,
+    life_local_slugs,
     render_bundle,
     resolve_sot,
+    shared_sync_slugs,
 )
 from gen_rules.check import diff_against  # noqa: E402
 
@@ -78,7 +78,9 @@ def _link_cursor_to_sot(slug: str, root: Path) -> tuple[int, str | None]:
     except FileNotFoundError as exc:
         print(f"ERROR: {slug}: {exc}", file=sys.stderr)
         return 1, None
-    _, cursor_path = _bundle_paths(root, slug)
+    # Cursor index path is the resolved SOT (may use sot_dirname ≠ catalog slug).
+    # Never create a second .cursor/skills/{slug} tree for entity aliases.
+    cursor_path = sot_path
     action = _install_cursor_sot_hardlink(sot_path, cursor_path)
     if action == "hardlinked":
         print(f"sot-linked {cursor_path} ← {label} ({sot_path})")
@@ -87,7 +89,7 @@ def _link_cursor_to_sot(slug: str, root: Path) -> tuple[int, str | None]:
 
 def run_link_cursor_indexed(root: Path, *, slugs: list[str] | None = None) -> int:
     fail = 0
-    for slug in slugs or CURSOR_INDEXED_SLUGS:
+    for slug in slugs or cursor_indexed_slugs():
         code, _ = _link_cursor_to_sot(slug, root)
         fail |= code
     return fail
@@ -95,29 +97,25 @@ def run_link_cursor_indexed(root: Path, *, slugs: list[str] | None = None) -> in
 
 def run_check_cursor_sot(root: Path) -> int:
     fail = 0
-    for slug in CURSOR_INDEXED_SLUGS:
+    for slug in cursor_indexed_slugs():
         try:
             sot_path, _ = resolve_sot(slug, root)
         except FileNotFoundError as exc:
             print(f"ERROR: {slug}: {exc}", file=sys.stderr)
             fail = 1
             continue
-        _, cursor_path = _bundle_paths(root, slug)
-        if not _same_inode(sot_path, cursor_path):
-            print(
-                f"DRIFT: {cursor_path} not hardlinked to SOT {sot_path}",
-                file=sys.stderr,
-            )
+        if not sot_path.is_file():
+            print(f"DRIFT: missing SOT for {slug}: {sot_path}", file=sys.stderr)
             fail = 1
     return fail
 
 
 def _check_registry_disjointness() -> int:
-    overlap = sorted(set(SHARED_SYNC_SLUGS) & set(LIFE_LOCAL_SLUGS))
+    overlap = sorted(set(shared_sync_slugs()) & set(life_local_slugs()))
     if not overlap:
         return 0
     print(
-        f"REGISTRY: SHARED_SYNC ∩ LIFE_LOCAL must be empty; overlap={overlap}",
+        f"REGISTRY: shared_sync ∩ life_local must be empty; overlap={overlap}",
         file=sys.stderr,
     )
     return 1
@@ -172,7 +170,7 @@ def _load_rendered(
 
 def _check_life_local_files(root: Path) -> int:
     fail = 0
-    for slug in LIFE_LOCAL_SLUGS:
+    for slug in life_local_slugs():
         claude_path, _ = _bundle_paths(root, slug)
         cursor_path = root / ".cursor" / "skills" / slug / "SKILL.md"
         if cursor_path.is_file():
@@ -224,7 +222,7 @@ def _check_life_local_files(root: Path) -> int:
                 file=sys.stderr,
             )
             fail = 1
-    if fail == 0 and LIFE_LOCAL_SLUGS:
+    if fail == 0 and life_local_slugs():
         print("OK life-local-files", flush=True)
     return fail
 
@@ -234,7 +232,7 @@ def run_dry_run(root: Path) -> int:
     print()
     fail = 0
     entity_descriptions = _fetch_entity_descriptions(_cortex_client())
-    for slug in SHARED_SYNC_SLUGS:
+    for slug in shared_sync_slugs():
         try:
             sot_path, root_label, _ = _load_rendered(
                 slug, root, entity_descriptions=entity_descriptions
@@ -252,7 +250,7 @@ def run_dry_run(root: Path) -> int:
             print(f"  REPLACE+SOT-LINK {cursor_path.relative_to(root)}")
         else:
             print(f"  SOT-LINK {cursor_path.relative_to(root)}")
-    for slug in CURSOR_ONLY_SLUGS:
+    for slug in cursor_only_slugs():
         try:
             sot_path, root_label = resolve_sot(slug, root)
         except FileNotFoundError as exc:
@@ -265,7 +263,7 @@ def run_dry_run(root: Path) -> int:
             print(f"  OK (sot-linked) {cursor_path.relative_to(root)}")
         else:
             print(f"  SOT-LINK {cursor_path.relative_to(root)}")
-    for slug in LIFE_LOCAL_SLUGS:
+    for slug in life_local_slugs():
         claude_path, _ = _bundle_paths(root, slug)
         print(f"{slug:32s}  life-local  REFUSED (no render)")
         print(f"  SKIP  {claude_path.relative_to(root)}")
@@ -276,7 +274,7 @@ def _check_bundle_descriptions(
     root: Path, entity_descriptions: dict[str, str]
 ) -> int:
     fail = 0
-    for slug in SHARED_SYNC_SLUGS:
+    for slug in shared_sync_slugs():
         try:
             _, _, rendered = _load_rendered(
                 slug, root, entity_descriptions=entity_descriptions
@@ -311,7 +309,7 @@ def _check_bundle_descriptions(
 
 def _check_frontmatter_lint(root: Path) -> int:
     fail = 0
-    for slug in SHARED_SYNC_SLUGS:
+    for slug in shared_sync_slugs():
         try:
             sot_path, _ = resolve_sot(slug, root)
         except FileNotFoundError:
@@ -334,7 +332,7 @@ def run_check(root: Path) -> int:
     client = _cortex_client()
     entity_descriptions = _fetch_entity_descriptions(client) if client else {}
     fail |= _check_frontmatter_lint(root)
-    for slug in SHARED_SYNC_SLUGS:
+    for slug in shared_sync_slugs():
         try:
             _, _, rendered = _load_rendered(
                 slug, root, entity_descriptions=entity_descriptions
@@ -383,7 +381,7 @@ def run_check(root: Path) -> int:
 def run_generate(root: Path) -> int:
     fail = 0
     entity_descriptions = _fetch_entity_descriptions(_cortex_client())
-    for slug in SHARED_SYNC_SLUGS:
+    for slug in shared_sync_slugs():
         try:
             sot_path, _, rendered = _load_rendered(
                 slug, root, entity_descriptions=entity_descriptions
@@ -392,7 +390,7 @@ def run_generate(root: Path) -> int:
             print(f"ERROR: {slug}: {exc}", file=sys.stderr)
             fail = 1
             continue
-        claude_path, cursor_path = _bundle_paths(root, slug)
+        claude_path, _ = _bundle_paths(root, slug)
         if claude_path.is_file():
             existing = claude_path.read_text(encoding="utf-8")
             if is_claude_sot_frontmatter(existing):
@@ -409,10 +407,7 @@ def run_generate(root: Path) -> int:
         ):
             claude_path.write_text(rendered, encoding="utf-8")
             print(f"wrote {claude_path}")
-        action = _install_cursor_sot_hardlink(sot_path, cursor_path)
-        if action == "hardlinked":
-            print(f"sot-linked {cursor_path}")
-    fail |= run_link_cursor_indexed(root, slugs=CURSOR_ONLY_SLUGS)
+    fail |= run_link_cursor_indexed(root, slugs=cursor_only_slugs())
     return fail
 
 

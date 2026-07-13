@@ -1,0 +1,338 @@
+# config/skills.yaml — authoritative skill placement + MCP surface catalog
+#
+# One row per active SOT slug. surface_class selects SOT home and delivery targets;
+# mcp_surface_required gates runtime compatibility (code ⊇ life).
+# Optional aliases canonicalize filesystem/entity name variants.
+# Optional delivery_priority (lower = earlier) relocates former backfill overrides.
+#
+# Loader: libs/claude_bundles/catalog.py
+
+skills:
+  add-mcp-tool:
+    surface_class: cursor_only
+    mcp_surface_required: code
+  advisor-timing:
+    surface_class: shared_sync
+    mcp_surface_required: life
+  agent-bus-discipline:
+    surface_class: shared_sync
+    mcp_surface_required: life
+  agent-bus-multitask:
+    surface_class: cursor_only
+    mcp_surface_required: code
+  agent-guidance-writing:
+    surface_class: cursor_only
+    mcp_surface_required: none
+  architecture-invariants:
+    surface_class: cursor_only
+    mcp_surface_required: none
+    delivery_priority: 0
+  auditor-validatable-confidence:
+    surface_class: cursor_only
+    mcp_surface_required: life
+  boot-execution-discipline:
+    surface_class: cursor_only
+    mcp_surface_required: life
+  build-pipeline:
+    surface_class: cursor_only
+    mcp_surface_required: code
+  case-evidence-retrieval:
+    surface_class: cursor_only
+    mcp_surface_required: none
+  cheap-recon-before-escalation:
+    surface_class: cursor_only
+    mcp_surface_required: code
+  claude-ai-bundle-sync:
+    surface_class: cursor_only
+    mcp_surface_required: none
+  claude-ai-mcp-connect:
+    surface_class: cursor_only
+    mcp_surface_required: none
+  claude-ai-skill-uninstall:
+    surface_class: cursor_only
+    mcp_surface_required: none
+  completion-provenance-discipline:
+    surface_class: shared_sync
+    mcp_surface_required: none
+  consensus-steelman-posture:
+    surface_class: shared_sync
+    mcp_surface_required: life
+  consult-routing:
+    surface_class: cursor_only
+    mcp_surface_required: life
+  corpus-cross-reference-discipline:
+    surface_class: cursor_only
+    mcp_surface_required: code
+  corpus-grounded-skill-authoring:
+    surface_class: cursor_only
+    mcp_surface_required: none
+  corpus-map-authoring:
+    surface_class: cursor_only
+    mcp_surface_required: code
+  cortex:
+    surface_class: cursor_only
+    mcp_surface_required: life
+  cortex-entity-restructure:
+    surface_class: cursor_only
+    mcp_surface_required: code
+  cortex-orientation:
+    surface_class: shared_sync
+    mcp_surface_required: life
+  cortex-provenance-discipline:
+    surface_class: shared_sync
+    mcp_surface_required: none
+  cortex-v24-implementation-arc:
+    surface_class: cursor_only
+    mcp_surface_required: none
+  crypto-trading-research:
+    surface_class: cursor_only
+    mcp_surface_required: none
+  cursor-rule-authoring:
+    surface_class: cursor_only
+    mcp_surface_required: none
+  cursor-sdk-instruction-standard:
+    surface_class: cursor_only
+    mcp_surface_required: none
+  debug-with-events:
+    surface_class: cursor_only
+    mcp_surface_required: code
+  descriptor-authoring-discipline:
+    surface_class: cursor_only
+    mcp_surface_required: none
+  dispatch-shape:
+    surface_class: shared_sync
+    mcp_surface_required: life
+  dispatch-workflow:
+    surface_class: cursor_only
+    mcp_surface_required: life
+  document-ingestion:
+    surface_class: cursor_only
+    mcp_surface_required: code
+  document-lifecycle-tracking:
+    surface_class: cursor_only
+    mcp_surface_required: code
+  document-review-timeline-linkage-audit:
+    surface_class: life_local
+    mcp_surface_required: none
+  docx-ingestion:
+    surface_class: cursor_only
+    mcp_surface_required: code
+  email-bridge-mailbox:
+    surface_class: life_local
+    mcp_surface_required: none
+  email-tool-dispatch:
+    surface_class: life_local
+    mcp_surface_required: life
+  engagement-stance:
+    surface_class: life_local
+    mcp_surface_required: none
+  enrichment-quality-discipline:
+    surface_class: cursor_only
+    mcp_surface_required: life
+  entity-creation-discipline:
+    surface_class: shared_sync
+    mcp_surface_required: life
+  entity-lifecycle-discipline:
+    surface_class: shared_sync
+    mcp_surface_required: none
+  evidence-review-discipline:
+    surface_class: shared_sync
+    mcp_surface_required: none
+  financial-reasoning:
+    surface_class: life_local
+    mcp_surface_required: none
+  friction-review:
+    surface_class: cursor_only
+    mcp_surface_required: life
+  frontier-model-instructions:
+    surface_class: cursor_only
+    mcp_surface_required: none
+  frontier-reasoning-discipline:
+    surface_class: shared_sync
+    mcp_surface_required: none
+  fs:
+    surface_class: shared_sync
+    mcp_surface_required: life
+  git-posture:
+    surface_class: cursor_only
+    mcp_surface_required: none
+  handoff-packet-authoring:
+    surface_class: cursor_only
+    mcp_surface_required: code
+  handoff-pickup:
+    surface_class: shared_sync
+    mcp_surface_required: life
+  handoff-prompt-authoring:
+    surface_class: cursor_only
+    mcp_surface_required: none
+  image-video-generation:
+    surface_class: cursor_only
+    mcp_surface_required: code
+  implement-todo:
+    surface_class: cursor_only
+    mcp_surface_required: code
+  implement-work-item:
+    surface_class: cursor_only
+    mcp_surface_required: code
+  implementation-plan-workflow:
+    surface_class: cursor_only
+    mcp_surface_required: code
+  investigation-economy:
+    surface_class: cursor_only
+    mcp_surface_required: none
+  jupiter-browser-via-mcp:
+    surface_class: cursor_only
+    mcp_surface_required: none
+  lawyer-stance:
+    surface_class: cursor_only
+    mcp_surface_required: none
+  lead-agent-git-integration:
+    surface_class: cursor_only
+    mcp_surface_required: none
+  lead-seat-boot:
+    surface_class: shared_sync
+    mcp_surface_required: life
+  legal-opinion-corpus-ingestion:
+    surface_class: cursor_only
+    mcp_surface_required: none
+  life-handoff-corpus:
+    surface_class: shared_sync
+    mcp_surface_required: life
+  markdown-navigation:
+    surface_class: cursor_only
+    mcp_surface_required: life
+  matter-playbook-lifecycle:
+    surface_class: life_local
+    mcp_surface_required: none
+  mcp-surface-change:
+    surface_class: cursor_only
+    mcp_surface_required: code
+  mcp-tool-loop-trace-matrix:
+    surface_class: cursor_only
+    mcp_surface_required: code
+  model-tier-awareness-web:
+    surface_class: shared_sync
+    mcp_surface_required: none
+  modularize-discipline:
+    surface_class: cursor_only
+    mcp_surface_required: none
+  multi-model-review:
+    surface_class: cursor_only
+    mcp_surface_required: life
+  named-entity-verification-gate:
+    surface_class: life_local
+    mcp_surface_required: none
+  no-silent-inference:
+    surface_class: shared_sync
+    mcp_surface_required: none
+  operator-posture:
+    surface_class: shared_sync
+    mcp_surface_required: none
+  orchestrator-core:
+    surface_class: cursor_only
+    mcp_surface_required: none
+  orchestrator-workflow:
+    surface_class: cursor_only
+    mcp_surface_required: code
+  overhaul-program:
+    surface_class: cursor_only
+    mcp_surface_required: life
+  pipeline-substrate-capabilities:
+    surface_class: cursor_only
+    mcp_surface_required: code
+  planning-promotion-ladder:
+    surface_class: cursor_only
+    mcp_surface_required: none
+  pre-deploy-gate-discipline:
+    surface_class: cursor_only
+    mcp_surface_required: none
+  produce-uml:
+    surface_class: cursor_only
+    mcp_surface_required: none
+  prose-discipline:
+    surface_class: life_local
+    mcp_surface_required: none
+  provenance-granularity:
+    surface_class: cursor_only
+    mcp_surface_required: none
+  psych-framework-counsel:
+    surface_class: cursor_only
+    mcp_surface_required: none
+  rag-canonical-reference-reminder:
+    surface_class: cursor_only
+    mcp_surface_required: none
+  refine-pipeline:
+    surface_class: cursor_only
+    mcp_surface_required: code
+  required-skills-pickup:
+    surface_class: shared_sync
+    mcp_surface_required: life
+  research-article-ingest:
+    surface_class: cursor_only
+    mcp_surface_required: code
+  research-article-search:
+    surface_class: cursor_only
+    mcp_surface_required: code
+  review-task-guidance:
+    surface_class: cursor_only
+    mcp_surface_required: none
+  service-lifecycle:
+    surface_class: cursor_only
+    mcp_surface_required: code
+  session-close-audit:
+    surface_class: shared_sync
+    mcp_surface_required: life
+  session-close-handoff:
+    surface_class: cursor_only
+    mcp_surface_required: life
+  session-close-kernel:
+    surface_class: shared_sync
+    mcp_surface_required: none
+    aliases:
+      - session-close
+  session-close-reflective-journal:
+    surface_class: cursor_only
+    mcp_surface_required: life
+  session-close-transcript:
+    surface_class: cursor_only
+    mcp_surface_required: life
+  skill-authoring:
+    surface_class: cursor_only
+    mcp_surface_required: none
+  skill-document-writing:
+    surface_class: cursor_only
+    mcp_surface_required: none
+  srm:
+    surface_class: life_local
+    mcp_surface_required: none
+  subgraph-render:
+    surface_class: cursor_only
+    mcp_surface_required: code
+  task-grouping-discipline:
+    surface_class: cursor_only
+    mcp_surface_required: none
+  tax:
+    surface_class: cursor_only
+    mcp_surface_required: none
+  thirdparty-api-mirror:
+    surface_class: cursor_only
+    mcp_surface_required: code
+  todo-lifecycle:
+    surface_class: cursor_only
+    mcp_surface_required: none
+  ulg-architecture:
+    surface_class: cursor_only
+    mcp_surface_required: none
+    delivery_priority: 1
+  w2-ingestion:
+    surface_class: cursor_only
+    mcp_surface_required: none
+  web-generate-substrate:
+    surface_class: cursor_only
+    mcp_surface_required: none
+  web-skill-body-activation:
+    surface_class: cursor_only
+    mcp_surface_required: none
+  web-transcript-preprocessing:
+    surface_class: cursor_only
+    mcp_surface_required: life

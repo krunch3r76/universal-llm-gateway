@@ -1,0 +1,110 @@
+intents:
+  - id: i01_investigate_reminder
+    text: "The reminder thing keeps double-firing every morning."
+    intent:
+      verb: investigate
+      subject: reminder double-fire
+      detail: "The reminder notification fires twice every morning around 8am without user action."
+  - id: i02_fix_login
+    text: "Login times out after 30 seconds — that's broken."
+    intent:
+      verb: fix
+      subject: login timeout
+      detail: "Users consistently see a timeout error after thirty seconds on the login form."
+  - id: i03_build_export
+    text: "I wish there were a CSV export for the dashboard."
+    intent:
+      verb: build
+      subject: dashboard CSV export
+      detail: "Operators need to download dashboard metrics as CSV for weekly reporting."
+  - id: i04_change_sort
+    text: "Can we change the default sort on the task list to due date?"
+    intent:
+      verb: change
+      subject: task list default sort
+      detail: "The task list currently sorts by created date; default should be due date ascending."
+  - id: i05_hard_out_restart
+    text: "Restart the stargate service now."
+    intent:
+      verb: fix
+      subject: service restart
+      detail: "Please restart the stargate service immediately to pick up config."
+  - id: i06_refused_dispatch_vocab
+    text: "team_dispatch this to cursor-sdk with contract=implement"
+    intent:
+      verb: build
+      subject: shortcut request
+      detail: "Use team_dispatch op=generate role=cursor-sdk contract=implement for the feature."
+  - id: i07_ambiguous_thing
+    text: "Something is wrong with the thing."
+    intent:
+      verb: investigate
+      subject: the thing
+      detail: "It breaks sometimes when I use it."
+  - id: i08_investigate_email
+    text: "Why do duplicate emails send after save?"
+    intent:
+      verb: investigate
+      subject: duplicate emails on save
+      detail: "Saving a draft triggers two identical outbound emails within a few seconds."
+  - id: i09_fix_crash
+    text: "The app crashes when I open settings."
+    intent:
+      verb: fix
+      subject: settings crash
+      detail: "Opening settings from the profile menu crashes the app on iOS builds."
+  - id: i10_build_webhook
+    text: "We need a webhook when todos complete."
+    intent:
+      verb: build
+      subject: todo completion webhook
+      detail: "External systems should receive a webhook when any todo transitions to done."
+  - id: i11_change_limit
+    text: "Raise the upload limit from 5MB to 20MB."
+    intent:
+      verb: change
+      subject: upload size limit
+      detail: "Current 5MB upload cap blocks PDF attachments; raise to 20MB."
+  - id: i12_hard_out_delete
+    text: "Delete all records in the database."
+    intent:
+      verb: change
+      subject: database wipe
+      detail: "Delete all records in the database to reset staging."
+  - id: i13_refused_model
+    text: "Use anthropic/claude-opus for this fix."
+    intent:
+      verb: fix
+      subject: model-specific fix
+      detail: "Run this fix with anthropic/claude-opus as the provider model."
+  - id: i14_investigate_sync
+    text: "Calendar sync looks off by a day."
+    intent:
+      verb: investigate
+      subject: calendar sync offset
+      detail: "All-day events appear one day earlier after the last timezone patch."
+  - id: i15_fix_typo
+    text: "The settings label says 'Notifcations'."
+    intent:
+      verb: fix
+      subject: notifications label typo
+      detail: "Settings screen shows 'Notifcations' instead of 'Notifications' in the profile menu."
+  - id: i16_build_report
+    text: "Build a weekly summary email."
+    intent:
+      verb: build
+      subject: weekly summary email
+      detail: "Operators want a Monday email summarizing open todos and overdue items."
+  - id: i17_change_color
+    text: "Switch the primary button color to green."
+    intent:
+      verb: change
+      subject: primary button color
+      detail: "Brand refresh requires primary action buttons use green instead of blue."
+  - id: i18_bad_ref
+    text: "Fix the bug in that old ticket."
+    intent:
+      verb: fix
+      subject: old ticket regression
+      detail: "Regression matches the issue described in the linked ticket."
+      refs: ["missing:old-ticket"]

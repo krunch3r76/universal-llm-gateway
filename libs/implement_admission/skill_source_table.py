@@ -1,8 +1,8 @@
-"""Build-time generated canonical skill slug → source_uri table (D1).
+"""Build-time generated canonical skill slug → source_uri table.
 
 Hot paths (packet render, boot, materialize) read this table only — never live
-``entity_get``. Generation-time validation and ``skill_table_freshness`` compare
-against live Cortex entities (F1).
+``entity_get``. Generated from ``config/skills.yaml`` + SOT files
+(``scripts/cortex/gen_skill_source_table.py``).
 """
 
 from __future__ import annotations
@@ -15,15 +15,15 @@ from cortex_store.guidance_entity import entity_slug_from_id
 # fmt: off
 TEMPLATE_VERSION: Final[str] = "1"
 
-# slug synonyms → canonical table key (``entity_slug_from_id`` output may differ)
+# slug synonyms → canonical table key
 CANONICAL_SLUG_ALIASES: Final[dict[str, str]] = {
-    "session-close-kernel": "session-close",
+    "session-close": "session-close-kernel",
 }
 
-# Generated from live Cortex entities — prefer substantiated ``rule:`` ``source_uri``.
+# Generated from skill catalog + SOT paths.
 CANONICAL_SKILL_SOURCE_URIS: Final[dict[str, str]] = {
     "add-mcp-tool": "workspaces://universal-llm-gateway/.cursor/skills/add-mcp-tool/SKILL.md",
-    "advisor-timing": "docs/agent-guides/rules/advisor-timing.md",
+    "advisor-timing": "workspaces://universal-llm-gateway/.cursor/skills/advisor-timing/SKILL.md",
     "agent-bus-discipline": "workspaces://universal-llm-gateway/.cursor/skills/agent-bus-discipline/SKILL.md",
     "agent-bus-multitask": "workspaces://universal-llm-gateway/.cursor/skills/agent-bus-multitask/SKILL.md",
     "agent-guidance-writing": "workspaces://universal-llm-gateway/.cursor/skills/agent-guidance-writing/SKILL.md",
@@ -34,7 +34,8 @@ CANONICAL_SKILL_SOURCE_URIS: Final[dict[str, str]] = {
     "case-evidence-retrieval": "workspaces://universal-llm-gateway/.cursor/skills/case-evidence-retrieval/SKILL.md",
     "cheap-recon-before-escalation": "workspaces://universal-llm-gateway/.cursor/skills/cheap-recon-before-escalation/SKILL.md",
     "claude-ai-bundle-sync": "workspaces://universal-llm-gateway/.cursor/skills/claude-ai-bundle-sync/SKILL.md",
-    "commit-and-git-scope": "workspaces://universal-llm-gateway/.cursor/skills/commit-and-git-scope/SKILL.md",
+    "claude-ai-mcp-connect": "workspaces://universal-llm-gateway/.cursor/skills/claude-ai-mcp-connect/SKILL.md",
+    "claude-ai-skill-uninstall": "workspaces://universal-llm-gateway/.cursor/skills/claude-ai-skill-uninstall/SKILL.md",
     "completion-provenance-discipline": "workspaces://universal-llm-gateway/.cursor/skills/completion-provenance-discipline/SKILL.md",
     "consensus-steelman-posture": "workspaces://universal-llm-gateway/.cursor/skills/consensus-steelman-posture/SKILL.md",
     "consult-routing": "workspaces://universal-llm-gateway/.cursor/skills/consult-routing/SKILL.md",
@@ -51,28 +52,27 @@ CANONICAL_SKILL_SOURCE_URIS: Final[dict[str, str]] = {
     "cursor-sdk-instruction-standard": "workspaces://universal-llm-gateway/.cursor/skills/cursor-sdk-instruction-standard/SKILL.md",
     "debug-with-events": "workspaces://universal-llm-gateway/.cursor/skills/debug-with-events/SKILL.md",
     "descriptor-authoring-discipline": "workspaces://universal-llm-gateway/.cursor/skills/descriptor-authoring-discipline/SKILL.md",
-    "dispatch-prompt-house-style": "workspaces://universal-llm-gateway/.cursor/skills/dispatch-prompt-house-style/SKILL.md",
     "dispatch-shape": "workspaces://universal-llm-gateway/.cursor/skills/dispatch-shape/SKILL.md",
     "dispatch-workflow": "workspaces://universal-llm-gateway/.cursor/skills/dispatch-workflow/SKILL.md",
     "document-ingestion": "workspaces://universal-llm-gateway/.cursor/skills/document-ingestion/SKILL.md",
     "document-lifecycle-tracking": "workspaces://universal-llm-gateway/.cursor/skills/document-lifecycle-tracking/SKILL.md",
-    "document-review-timeline-linkage-audit": "workspaces://universal-llm-gateway/.cursor/skills/document-review-timeline-linkage-audit/SKILL.md",
+    "document-review-timeline-linkage-audit": "workspaces://universal-llm-gateway/.claude/skills/document-review-timeline-linkage-audit/SKILL.md",
     "docx-ingestion": "workspaces://universal-llm-gateway/.cursor/skills/docx-ingestion/SKILL.md",
-    "email-bridge-mailbox": "workspaces://universal-llm-gateway/.cursor/skills/email-bridge-mailbox/SKILL.md",
-    "email-tool-dispatch": "workspaces://universal-llm-gateway/.cursor/skills/email-tool-dispatch/SKILL.md",
-    "engagement-stance": "workspaces://universal-llm-gateway/.cursor/skills/engagement-stance/SKILL.md",
+    "email-bridge-mailbox": "workspaces://universal-llm-gateway/.claude/skills/email-bridge-mailbox/SKILL.md",
+    "email-tool-dispatch": "workspaces://universal-llm-gateway/.claude/skills/email-tool-dispatch/SKILL.md",
+    "engagement-stance": "workspaces://universal-llm-gateway/.claude/skills/engagement-stance/SKILL.md",
     "enrichment-quality-discipline": "workspaces://universal-llm-gateway/.cursor/skills/enrichment-quality-discipline/SKILL.md",
     "entity-creation-discipline": "workspaces://universal-llm-gateway/.cursor/skills/entity-creation-discipline/SKILL.md",
     "entity-lifecycle-discipline": "workspaces://universal-llm-gateway/.cursor/skills/entity-lifecycle-discipline/SKILL.md",
     "evidence-review-discipline": "workspaces://universal-llm-gateway/.cursor/skills/evidence-review-discipline/SKILL.md",
-    "financial-reasoning": "workspaces://universal-llm-gateway/.cursor/skills/financial-reasoning/SKILL.md",
+    "financial-reasoning": "workspaces://universal-llm-gateway/.claude/skills/financial-reasoning/SKILL.md",
     "friction-review": "workspaces://universal-llm-gateway/.cursor/skills/friction-review/SKILL.md",
     "frontier-model-instructions": "workspaces://universal-llm-gateway/.cursor/skills/frontier-model-instructions/SKILL.md",
     "frontier-reasoning-discipline": "workspaces://universal-llm-gateway/.cursor/skills/frontier-reasoning-discipline/SKILL.md",
     "fs": "workspaces://universal-llm-gateway/.cursor/skills/fs/SKILL.md",
     "git-posture": "workspaces://universal-llm-gateway/.cursor/skills/git-posture/SKILL.md",
     "handoff-packet-authoring": "workspaces://universal-llm-gateway/.cursor/skills/handoff-packet-authoring/SKILL.md",
-    "handoff-pickup": "docs/agent-guides/rules/handoff-pickup.md",
+    "handoff-pickup": "workspaces://universal-llm-gateway/.cursor/skills/handoff-pickup/SKILL.md",
     "handoff-prompt-authoring": "workspaces://universal-llm-gateway/.cursor/skills/handoff-prompt-authoring/SKILL.md",
     "image-video-generation": "workspaces://universal-llm-gateway/.cursor/skills/image-video-generation/SKILL.md",
     "implement-todo": "workspaces://universal-llm-gateway/.cursor/skills/implement-todo/SKILL.md",
@@ -85,13 +85,13 @@ CANONICAL_SKILL_SOURCE_URIS: Final[dict[str, str]] = {
     "lead-seat-boot": "workspaces://universal-llm-gateway/.cursor/skills/lead-seat-boot/SKILL.md",
     "legal-opinion-corpus-ingestion": "workspaces://universal-llm-gateway/.cursor/skills/legal-opinion-corpus-ingestion/SKILL.md",
     "markdown-navigation": "workspaces://universal-llm-gateway/.cursor/skills/markdown-navigation/SKILL.md",
-    "matter-playbook-lifecycle": "workspaces://universal-llm-gateway/.cursor/skills/matter-playbook-lifecycle/SKILL.md",
+    "matter-playbook-lifecycle": "workspaces://universal-llm-gateway/.claude/skills/matter-playbook-lifecycle/SKILL.md",
     "mcp-surface-change": "workspaces://universal-llm-gateway/.cursor/skills/mcp-surface-change/SKILL.md",
     "mcp-tool-loop-trace-matrix": "workspaces://universal-llm-gateway/.cursor/skills/mcp-tool-loop-trace-matrix/SKILL.md",
     "model-tier-awareness-web": "workspaces://universal-llm-gateway/.cursor/skills/model-tier-awareness-web/SKILL.md",
     "modularize-discipline": "workspaces://universal-llm-gateway/.cursor/skills/modularize-discipline/SKILL.md",
     "multi-model-review": "workspaces://universal-llm-gateway/.cursor/skills/multi-model-review/SKILL.md",
-    "named-entity-verification-gate": "workspaces://universal-llm-gateway/.cursor/skills/named-entity-verification-gate/SKILL.md",
+    "named-entity-verification-gate": "workspaces://universal-llm-gateway/.claude/skills/named-entity-verification-gate/SKILL.md",
     "no-silent-inference": "workspaces://universal-llm-gateway/.cursor/skills/no-silent-inference/SKILL.md",
     "operator-posture": "workspaces://universal-llm-gateway/.cursor/skills/operator-posture/SKILL.md",
     "orchestrator-core": "workspaces://universal-llm-gateway/.cursor/skills/orchestrator-core/SKILL.md",
@@ -101,7 +101,7 @@ CANONICAL_SKILL_SOURCE_URIS: Final[dict[str, str]] = {
     "planning-promotion-ladder": "workspaces://universal-llm-gateway/.cursor/skills/planning-promotion-ladder/SKILL.md",
     "pre-deploy-gate-discipline": "workspaces://universal-llm-gateway/.cursor/skills/pre-deploy-gate-discipline/SKILL.md",
     "produce-uml": "workspaces://universal-llm-gateway/.cursor/skills/produce-uml/SKILL.md",
-    "prose-discipline": "workspaces://universal-llm-gateway/.cursor/skills/prose-discipline/SKILL.md",
+    "prose-discipline": "workspaces://universal-llm-gateway/.claude/skills/prose-discipline/SKILL.md",
     "provenance-granularity": "workspaces://universal-llm-gateway/.cursor/skills/provenance-granularity/SKILL.md",
     "psych-framework-counsel": "workspaces://universal-llm-gateway/.cursor/skills/psych-framework-counsel/SKILL.md",
     "rag-canonical-reference-reminder": "workspaces://universal-llm-gateway/.cursor/skills/rag-canonical-reference-reminder/SKILL.md",
@@ -111,26 +111,27 @@ CANONICAL_SKILL_SOURCE_URIS: Final[dict[str, str]] = {
     "research-article-search": "workspaces://universal-llm-gateway/.cursor/skills/research-article-search/SKILL.md",
     "review-task-guidance": "workspaces://universal-llm-gateway/.cursor/skills/review-task-guidance/SKILL.md",
     "service-lifecycle": "workspaces://universal-llm-gateway/.cursor/skills/service-lifecycle/SKILL.md",
-    "session-close": "workspaces://universal-llm-gateway/.cursor/skills/session-close-kernel/SKILL.md",
     "session-close-audit": "workspaces://universal-llm-gateway/.cursor/skills/session-close-audit/SKILL.md",
     "session-close-handoff": "workspaces://universal-llm-gateway/.cursor/skills/session-close-handoff/SKILL.md",
+    "session-close-kernel": "workspaces://universal-llm-gateway/.cursor/skills/session-close-kernel/SKILL.md",
     "session-close-reflective-journal": "workspaces://universal-llm-gateway/.cursor/skills/session-close-reflective-journal/SKILL.md",
     "session-close-transcript": "workspaces://universal-llm-gateway/.cursor/skills/session-close-transcript/SKILL.md",
+    "skill-authoring": "workspaces://universal-llm-gateway/.cursor/skills/skill-authoring/SKILL.md",
     "skill-document-writing": "workspaces://universal-llm-gateway/.cursor/skills/skill-document-writing/SKILL.md",
-    "srm": "workspaces://universal-llm-gateway/.cursor/skills/srm/SKILL.md",
+    "srm": "workspaces://universal-llm-gateway/.claude/skills/srm/SKILL.md",
     "subgraph-render": "workspaces://universal-llm-gateway/.cursor/skills/subgraph-render/SKILL.md",
     "task-grouping-discipline": "workspaces://universal-llm-gateway/.cursor/skills/task-grouping-discipline/SKILL.md",
     "tax": "workspaces://universal-llm-gateway/.cursor/skills/tax/SKILL.md",
     "thirdparty-api-mirror": "workspaces://universal-llm-gateway/.cursor/skills/thirdparty-api-mirror/SKILL.md",
-    "todo-lifecycle": "docs/agent-guides/rules/todo-lifecycle.md",
+    "todo-lifecycle": "workspaces://universal-llm-gateway/.cursor/skills/todo-lifecycle/SKILL.md",
     "ulg-architecture": "workspaces://universal-llm-gateway/.cursor/skills/ulg-architecture/SKILL.md",
     "w2-ingestion": "workspaces://universal-llm-gateway/.cursor/skills/w2-ingestion/SKILL.md",
     "web-generate-substrate": "workspaces://universal-llm-gateway/.cursor/skills/web-generate-substrate/SKILL.md",
+    "web-skill-body-activation": "workspaces://universal-llm-gateway/.cursor/skills/web-skill-body-activation/SKILL.md",
     "web-transcript-preprocessing": "workspaces://universal-llm-gateway/.cursor/skills/web-transcript-preprocessing/SKILL.md",
-    "writing-discipline-outbound": "workspaces://universal-llm-gateway/.cursor/skills/writing-discipline-outbound/SKILL.md",
 }
 
-TABLE_DIGEST: Final[str] = "sha256:c6d596e2171e74debd734e1607a758999cee9227cd19016f5c513802e3aadac1"
+TABLE_DIGEST: Final[str] = "sha256:abd1be44296db63fdd7d941dd3eda652c8290e52e479fffe4562805e25f13e7f"
 # fmt: on
 
 
@@ -151,7 +152,7 @@ def canonical_agent_skill_id(slug_or_entity_id: str) -> str:
 
 
 def resolve_canonical_source_uri(slug_or_entity_id: str) -> str:
-    """Map slug/entity id → ``source_uri`` via the committed table (D1)."""
+    """Map slug/entity id → ``source_uri`` via the committed table."""
     key = canonical_table_key(slug_or_entity_id)
     uri = CANONICAL_SKILL_SOURCE_URIS.get(key)
     if not uri:

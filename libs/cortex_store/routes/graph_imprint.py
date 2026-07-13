@@ -1,20 +1,26 @@
-"""POST /graph/imprint/propose — zero-write op planning for cortex.life/v1 patches."""
+"""POST /graph/imprint/propose + commit — life imprint write surface."""
 
 from __future__ import annotations
 
 from typing import Any
 
 from fastapi import APIRouter
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from universal_logging import get_logger
 
 from ..db import cortex_conn
 from ..events_imprint import (
+    graph_imprint_commit_received,
+    graph_imprint_commit_rejected,
+    graph_imprint_committed,
     graph_imprint_proposed,
     graph_imprint_received,
     graph_imprint_rejected,
 )
+from ..life_imprint.apply import ImprintCommitError, commit_imprint_proposal
 from ..life_imprint.op_plan import build_op_plan, normalize_patch
+from ..life_imprint.proposal_store import create_proposal
 from ..life_imprint.registry import load_registry
 from ..life_imprint.shape_check import shape_check_patch
 
@@ -47,6 +53,17 @@ class ImprintProposeResponse(BaseModel):
     op_plan: list[dict[str, Any]]
     rejects: list[ShapeRejectModel]
     candidates: list[dict[str, Any]]
+    proposal_id: str | None = None
+    context: str = Field(default="cortex.life/v1")
+
+
+class ImprintCommitRequest(BaseModel):
+    proposal_id: str
+
+
+class ImprintCommitResponse(BaseModel):
+    proposal_id: str
+    applied: list[dict[str, Any]]
     context: str = Field(default="cortex.life/v1")
 
 
@@ -88,6 +105,7 @@ def imprint_propose(body: ImprintProposeRequest) -> ImprintProposeResponse:
                 for r in rejects
             ],
             candidates=[],
+            proposal_id=None,
             context=registry.context_id,
         )
 
@@ -103,10 +121,49 @@ def imprint_propose(body: ImprintProposeRequest) -> ImprintProposeResponse:
         candidate_count=len(candidates),
     )
 
+    proposal_id = None
+    if not candidates and op_plan:
+        proposal_id = create_proposal(
+            normalized_patch=normalized,
+            op_plan=op_plan,
+            rejects=[],
+            candidates=[],
+        )
+
     return ImprintProposeResponse(
         normalized_patch=normalized,
         op_plan=op_plan,
         rejects=[],
         candidates=candidates,
+        proposal_id=proposal_id,
         context=registry.context_id,
     )
+
+
+@router.post("/commit", response_model=None)
+def imprint_commit(body: ImprintCommitRequest) -> ImprintCommitResponse:
+    """Apply a short-lived proposal by id — frozen op_plan, no patch edits."""
+    graph_imprint_commit_received(proposal_id=body.proposal_id)
+    try:
+        result = commit_imprint_proposal(body.proposal_id)
+    except ImprintCommitError as exc:
+        graph_imprint_commit_rejected(
+            proposal_id=body.proposal_id,
+            reject_codes=[exc.code],
+        )
+        return JSONResponse(
+            status_code=exc.status,
+            content={
+                "code": exc.code,
+                "message": exc.message,
+                "source": exc.source,
+                "retryable": exc.retryable,
+                "data": exc.data,
+            },
+        )
+
+    graph_imprint_committed(
+        proposal_id=body.proposal_id,
+        applied_count=len(result.get("applied") or []),
+    )
+    return ImprintCommitResponse.model_validate(result)

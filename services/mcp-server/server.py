@@ -50,7 +50,11 @@ from starlette.middleware.gzip import GZipMiddleware
 from surface_enum import register_surface_enum_transform
 from surface_registration import register_tools_for_surface
 from tool_access import dispatch_denial_reason, is_dispatch_tool_allowed
-from tool_error_enricher import fs_missing_sandbox_hint, register_tool_error_enricher
+from tool_error_enricher import (
+    fs_missing_sandbox_hint,
+    life_workspaces_fs_refusal,
+    register_tool_error_enricher,
+)
 from tool_search import capture_overflow_metadata, register_tool_search_tool
 from tools._agent_tools import JsonArgStr
 from tools.filesystem._cross_sandbox import copy_between_sandboxes_impl
@@ -309,16 +313,41 @@ def _build_server(
     }
 
     _fs_standard_ops_doc = sandbox_op_doc()
+    if surface == "life":
+        _fs_sandbox_intro = (
+            "File I/O for the cortex sandbox on /mcp/life. `op` is REQUIRED; "
+            "`sandbox` defaults to cortex and is optional when `path` carries a "
+            "cortex:// Share URI. Repository source (`workspaces`) is not "
+            "available on this surface — use /mcp/code for workspaces:// paths; "
+            "mirror agent-process artifacts to cortex:// for life-seat handoffs.\n\n"
+            "Share URI grammar (canonical cross-resident refs on this surface):\n"
+            "  cortex://{rel}             — notes, agent-skills, dropbox, uploads\n\n"
+            "Examples:\n"
+            '  fs(op="read", path="cortex://notes/system/specs/foo.md")\n'
+            '  fs(sandbox="cortex", op="read", path="notes/system/specs/foo.md")\n\n'
+        )
+        _fs_find_blurb = (
+            "``find`` and workspaces-scoped ``search`` filename mode are "
+            "/mcp/code surface capabilities only.\n\n"
+        )
+    else:
+        _fs_sandbox_intro = (
+            "File I/O across sandboxes (cortex, workspaces). `op` is REQUIRED; "
+            "`sandbox` is optional when `path` carries a Share URI scheme.\n\n"
+            "Share URI grammar (canonical cross-resident refs):\n"
+            "  workspaces://{repo}/{rel}  — repository source, tasks, docs\n"
+            "  cortex://{rel}             — notes, agent-skills, dropbox, uploads\n\n"
+            "Examples:\n"
+            '  fs(op="read", path="cortex://notes/system/specs/foo.md")\n'
+            '  fs(op="read", path="workspaces://universal-llm-gateway/tasks/specs/foo.md")  # legacy back-compat\n'
+            '  fs(sandbox="workspaces", op="read", path="universal-llm-gateway/libs/foo.py")\n\n'
+        )
+        _fs_find_blurb = (
+            "``find`` (workspaces only): locate files by name/glob — use instead of\n"
+            "``search`` for filenames. ``search`` scans file *contents* with a regex.\n\n"
+        )
     _fs_tool_description = (
-        "File I/O across sandboxes (cortex, workspaces). `op` is REQUIRED; "
-        "`sandbox` is optional when `path` carries a Share URI scheme.\n\n"
-        "Share URI grammar (canonical cross-resident refs):\n"
-        "  workspaces://{repo}/{rel}  — repository source, tasks, docs\n"
-        "  cortex://{rel}             — notes, agent-skills, dropbox, uploads\n\n"
-        "Examples:\n"
-        '  fs(op="read", path="cortex://notes/system/specs/foo.md")\n'
-        '  fs(op="read", path="workspaces://universal-llm-gateway/tasks/specs/foo.md")  # legacy back-compat\n'
-        '  fs(sandbox="workspaces", op="read", path="universal-llm-gateway/libs/foo.py")\n\n'
+        f"{_fs_sandbox_intro}"
         "`read` is unified across sandboxes: source files plus text-oriented\n"
         "document formats such as PDF, DOCX, ODT, EML, and HTML can be read in\n"
         "text mode from `cortex` or `workspaces`. Optional `offset` (0-based lines\n"
@@ -346,8 +375,7 @@ def _build_server(
         "Host mount paths are accepted at ingress and normalized with an advisory;\n"
         "egress never returns absolute mount paths.\n\n"
         'Use op="list" for directories; op="read" on a directory path returns an error.\n\n'
-        "``find`` (workspaces only): locate files by name/glob — use instead of\n"
-        "``search`` for filenames. ``search`` scans file *contents* with a regex.\n\n"
+        f"{_fs_find_blurb}"
         "Write responses (``write``, ``replace``, ``append``, ``prepend``,\n"
         "``insert_at_line``, ``write_binary``) include ``written_sha256``: bare\n"
         "lowercase hex of the resulting file bytes (``write_binary`` hashes the\n"
@@ -474,6 +502,10 @@ def _build_server(
                     f"got {target_sandbox!r}"
                 )
             }
+        if surface == "life" and (
+            effective_sandbox == "workspaces" or target_sandbox == "workspaces"
+        ):
+            return life_workspaces_fs_refusal()
 
         # Uniform param-contract guard (todo:fs-dispatch-param-contract-audit):
         # reject confusable selector params an op does not consume, and missing

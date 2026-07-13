@@ -1,0 +1,14 @@
+{
+  "ranked": [
+    {
+      "slug": "consult-routing",
+      "description": "Route consult and handoff requests to the correct transport.",
+      "reason": "consult handoff routing"
+    },
+    {
+      "slug": "session-close",
+      "description": "Close agent sessions with provenance and handoff discipline.",
+      "reason": "session close protocol"
+    }
+  ]
+}

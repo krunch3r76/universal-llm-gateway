@@ -238,3 +238,103 @@ def emit_dispatch_orphaned(
         age_s=age_s,
     )
     _publish(event.signal, event.payload)
+
+
+@event_factory
+def AgentBusDispatchOrphanDemoted(  # noqa: N802
+    thread_id: str,
+    orphan_turn_id: int,
+    closeout_turn_id: int,
+) -> Event:
+    """Signal: mcp.agentbus.dispatch.orphan.demoted"""
+    return Event(
+        signal="mcp.agentbus.dispatch.orphan.demoted",
+        payload={
+            "thread_id": thread_id,
+            "orphan_turn_id": orphan_turn_id,
+            "closeout_turn_id": closeout_turn_id,
+        },
+        role="coordination",
+    )
+
+
+def emit_dispatch_orphan_demoted(
+    *,
+    thread_id: str,
+    orphan_turn_id: int,
+    closeout_turn_id: int,
+) -> None:
+    """Build and publish a dispatch.orphan.demoted event."""
+    event = AgentBusDispatchOrphanDemoted(
+        thread_id=thread_id,
+        orphan_turn_id=orphan_turn_id,
+        closeout_turn_id=closeout_turn_id,
+    )
+    _publish(event.signal, event.payload, role=event.role)
+
+
+@event_factory
+def AgentBusSidecarWritten(  # noqa: N802
+    thread: str,
+    turn_number: int,
+    uri: str,
+    sha256: str,
+    bytes_written: int,
+) -> Event:
+    """Signal: mcp.agentbus.sidecar.written"""
+    return Event(
+        signal="mcp.agentbus.sidecar.written",
+        payload={
+            "thread": thread,
+            "turn_number": turn_number,
+            "uri": uri,
+            "sha256": sha256,
+            "bytes": bytes_written,
+        },
+        role="coordination",
+    )
+
+
+@event_factory
+def AgentBusSidecarOrphaned(  # noqa: N802
+    uri: str,
+    error: str,
+    thread_id: str | None = None,
+) -> Event:
+    """Signal: mcp.agentbus.sidecar.orphaned"""
+    payload: dict[str, object] = {"uri": uri, "error": error}
+    if thread_id is not None:
+        payload["thread_id"] = thread_id
+    return Event(
+        signal="mcp.agentbus.sidecar.orphaned",
+        payload=payload,
+        role="coordination",
+    )
+
+
+def emit_sidecar_written(
+    *,
+    thread: str,
+    turn_number: int,
+    uri: str,
+    sha256: str,
+    bytes_written: int,
+) -> None:
+    event = AgentBusSidecarWritten(
+        thread=thread,
+        turn_number=turn_number,
+        uri=uri,
+        sha256=sha256,
+        bytes_written=bytes_written,
+    )
+    _publish(event.signal, event.payload, role=event.role)
+
+
+def emit_sidecar_orphaned(
+    *,
+    uri: str,
+    error: str,
+    thread_id: str | None = None,
+) -> None:
+    event = AgentBusSidecarOrphaned(uri=uri, error=error, thread_id=thread_id)
+    _publish(event.signal, event.payload, role=event.role)

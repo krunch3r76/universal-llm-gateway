@@ -1,4 +1,4 @@
-"""run_cortex_boot orchestrator — coordinates transcript, fetch, render, and return."""
+"""run_cortex_brief orchestrator — coordinates transcript, fetch, render, and return."""
 
 from __future__ import annotations
 
@@ -80,7 +80,9 @@ def _resolve_web_auto_inject_skills(
     return block.strip(), injected
 
 
-def _gate_only_skills_card(card_md: str | None, skills_index_ref: str | None) -> str | None:
+def _gate_only_skills_card(
+    card_md: str | None, skills_index_ref: str | None
+) -> str | None:
     """De-dup the on-card Agent Skills enumeration down to its ⚑ required-gates.
 
     The full ~98-skill concise listing (~14KB) duplicates the materialized skills
@@ -114,8 +116,7 @@ def _gate_only_skills_card(card_md: str | None, skills_index_ref: str | None) ->
                     f"> **Full index**: all active skills (concise) live in "
                     f"`{ref}` (LIVE boot writes it; `skills_index_ref`). Only ⚑ "
                     f"required-gate skills are enumerated on-card; discover the "
-                    f"rest via the full index at that path (native discovery; "
-                    f"`skill_suggest` is deprecated — do not call)."
+                    f"rest via the full index at that path (native discovery)."
                 )
                 pointer_injected = True
             continue
@@ -191,8 +192,8 @@ def _build_artifacts(
 ) -> list[InjectedArtifact]:
     """Assemble the InjectedArtifact list for a boot.
 
-    Shared between LIVE mode (run_cortex_boot) and INSPECT mode
-    (boot_inspect → run_cortex_boot with mode=INSPECT). The
+    Shared between LIVE mode (run_cortex_brief) and INSPECT mode
+    (boot_inspect → run_cortex_brief with mode=INSPECT). The
     operational_context artifact is recorded as `written_file` with `path`
     set to the canonical on-disk location regardless of whether THIS boot
     wrote the file. INSPECT does not perform the disk write (preserving
@@ -286,7 +287,7 @@ def _materialize_views(
     return results
 
 
-def run_cortex_boot(
+def run_cortex_brief(
     family: str | None = None,
     platform: str | None = None,
     role: str | None = None,
@@ -336,7 +337,15 @@ def run_cortex_boot(
 
     from agent_seat.inject_registry import parse_packet_invariant_skill_ids
 
-    from ._boot_domain import normalize_boot_domain
+    from ._boot_domain import (
+        count_life_lane_card_items,
+        filter_life_lane_deadlines,
+        filter_life_lane_temporal,
+        filter_life_lane_todos,
+        life_lane_sentinel,
+        life_suppressed,
+        normalize_boot_domain,
+    )
 
     packet_invariant_ids = ()
     if inject_profile == "dispatch" and packet_text:
@@ -402,7 +411,7 @@ def run_cortex_boot(
         agent=seat_slug,
         family=resolved_family,
         platform=resolved_platform,
-        unread_count=len(extracted["unread_turns"]),
+        unread_count=extracted["unread_turn_total"],
         review_total=extracted["review_total"],
     )
     op_ctx_written = False
@@ -442,10 +451,38 @@ def run_cortex_boot(
             "handoff_surface": tc.get("handoff_surface"),
         }
 
-    unread_threads = build_unread_threads(extracted["threads"])
+    unread_threads = build_unread_threads(extracted["unread_toc_threads"])
     review_top = build_review_top(extracted["staging_items"])
 
-    dropbox_files: list[str] = _list_files("dropbox/").get("files", [])
+    boot_domain = profile_dict.get("domain")
+    suppress_life = life_suppressed(boot_domain)
+    raw_dropbox_files = _list_files("dropbox/").get("files", [])
+    dropbox_files: list[str] | None = raw_dropbox_files or None
+
+    card_deadlines = (
+        extracted["deadlines"]
+        if profile_dict.get("include_deadlines", True)
+        else None
+    )
+    card_todos = extracted["todos"] or None
+    card_temporal = extracted["temporal_active"] or None
+    card_in_flight = extracted["in_flight_todos"] or None
+    life_hidden_count = 0
+    life_lane_sentinel_line: str | None = None
+    if suppress_life:
+        life_hidden_count = count_life_lane_card_items(
+            todos=card_todos,
+            deadlines=card_deadlines,
+            temporal_active=card_temporal,
+            dropbox_files=dropbox_files,
+            in_flight_todos=card_in_flight,
+        )
+        card_todos = filter_life_lane_todos(card_todos)
+        card_deadlines = filter_life_lane_deadlines(card_deadlines)
+        card_temporal = filter_life_lane_temporal(card_temporal)
+        card_in_flight = filter_life_lane_todos(card_in_flight)
+        life_lane_sentinel_line = life_lane_sentinel(life_hidden_count)
+        dropbox_files = None
 
     views_data: list[dict[str, Any]] = _materialize_views(views) if views else []
 
@@ -457,10 +494,11 @@ def run_cortex_boot(
     )
 
     card, manifest = render_briefing_card(
-        deadlines=extracted["deadlines"]
-        if profile_dict.get("include_deadlines", True)
-        else None,
-        unread_count=len(extracted["unread_turns"]),
+        deadlines=card_deadlines,
+        unread_count=len(extracted["unread_toc_threads"]),
+        unread_thread_total=extracted["unread_thread_total"],
+        unread_turn_total=extracted["unread_turn_total"],
+        unread_window_label=extracted["unread_window_label"],
         unread_threads=unread_threads,
         review_total=extracted["review_total"],
         review_top=review_top,
@@ -468,9 +506,9 @@ def run_cortex_boot(
         or (extracted["sessions"][0] if extracted["sessions"] else None),
         continuity=extracted.get("continuity") or None,
         self_reflections=extracted["self_reflections"] or None,
-        todos=extracted["todos"] or None,
-        todo_total=len(extracted["todos"]),
-        temporal_active=extracted["temporal_active"] or None,
+        todos=card_todos,
+        todo_total=len(card_todos or []),
+        temporal_active=card_temporal,
         # Expired-unresolved is intentionally NOT rendered on the briefing card.
         # The bucket is dominated by stale temporal-ledger rows (Chase statement
         # periods, PG&E billing cycles) that aged past `valid_until` but have no
@@ -490,9 +528,9 @@ def run_cortex_boot(
             extracted.get("skills_card_markdown"), skills_index_ref
         ),
         plan_phases=extracted["plan_phases"] or None,
-        in_flight_todos=extracted["in_flight_todos"] or None,
+        in_flight_todos=card_in_flight,
         open_arcs=extracted.get("open_arcs") or None,
-        dropbox_files=dropbox_files or None,
+        dropbox_files=dropbox_files,
         views_data=views_data or None,
         async_dispatches=extracted.get("async_dispatches") or None,
         audit_counters=extracted.get("audit_counters") or None,
@@ -500,9 +538,13 @@ def run_cortex_boot(
         # → dispatch-route (OVERFLOW). See _orientation_blocks (thread 1167).
         family=resolved_family,
         agent=seat_slug,
-        domain=profile_dict.get("domain"),
+        domain=boot_domain,
         principal_context=extracted.get("principal_context") or None,
-        cross_domain_sentinel=extracted.get("cross_domain_sentinel"),
+        cross_domain_sentinel=(
+            None if suppress_life else extracted.get("cross_domain_sentinel")
+        ),
+        life_suppressed=suppress_life,
+        life_lane_sentinel=life_lane_sentinel_line,
     )
 
     card_bytes = len(card.encode("utf-8"))
@@ -574,7 +616,7 @@ def run_cortex_boot(
         )
 
         logger.info(
-            "cortex_boot: seat=%s card_size=%d manifest_sections=%d",
+            "cortex_brief: seat=%s card_size=%d manifest_sections=%d",
             seat_slug,
             len(card),
             len(manifest),

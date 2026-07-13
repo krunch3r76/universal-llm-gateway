@@ -90,8 +90,6 @@ services:
       # Cortex DB paths — ~/.cortex is mounted at /data/cortex.
       - CORTEX_DB_PATH=/data/cortex/cortex.db
       - TODOS_DB_PATH=/data/cortex/todos.db
-      # Comma-separated seats for worker-hop dispatch (0/false/off = direct /skills/suggest).
-      - SKILL_SUGGEST_DISPATCH_ENABLED=${SKILL_SUGGEST_DISPATCH_ENABLED:-0}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     deploy:

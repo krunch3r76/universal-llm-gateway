@@ -10,17 +10,17 @@ _UNREAD_THREAD_CAP = 10
 def build_unread_threads(threads: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Extract threads with unread counts for the briefing card.
 
-    Capped at _UNREAD_THREAD_CAP — the briefing card surfaces a navigation
-    pointer, not the full inbox. Agents pull the rest via the bus manifest hint.
+    Accepts ThreadDetail rows (id/slug/unread_count) or unread-toc rows
+    (thread/slug/unread_count). Capped at _UNREAD_THREAD_CAP.
     """
     unread = [
         {
-            "id": t.get("id", ""),
+            "id": t.get("id") or t.get("thread", ""),
             "slug": t.get("slug", ""),
-            "unread": t.get("unread_count", 0),
+            "unread": t.get("unread_count", t.get("unread", 0)),
         }
         for t in threads
-        if t.get("unread_count", 0) > 0
+        if (t.get("unread_count", t.get("unread", 0)) or 0) > 0
     ]
     return unread[:_UNREAD_THREAD_CAP]
 

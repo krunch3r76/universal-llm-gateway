@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from claude_bundles.resolver import CURSOR_INDEXED_SLUGS
+from claude_bundles.resolver import cursor_indexed_slugs
 
 from .agent_guides import AGENT_GUIDES_RULE_SLUGS, normalize_rule_entry
 from .check import diff_against
@@ -19,13 +19,13 @@ AGENT_SURFACE_SKILL_SLUGS: tuple[str, ...] = (
 )
 
 _GUIDES_KEYS = frozenset(AGENT_GUIDES_RULE_SLUGS)
-_INDEXED = frozenset(CURSOR_INDEXED_SLUGS)
+_INDEXED = frozenset(cursor_indexed_slugs())
 assert set(AGENT_SURFACE_SKILL_SLUGS) <= _GUIDES_KEYS, (
     f"AGENT_SURFACE_SKILL_SLUGS must be subset of AGENT_GUIDES_RULE_SLUGS; "
     f"extra={set(AGENT_SURFACE_SKILL_SLUGS) - _GUIDES_KEYS}"
 )
 assert set(AGENT_SURFACE_SKILL_SLUGS) <= _INDEXED, (
-    f"AGENT_SURFACE_SKILL_SLUGS must be subset of CURSOR_INDEXED_SLUGS; "
+    f"AGENT_SURFACE_SKILL_SLUGS must be subset of cursor_indexed_slugs(); "
     f"extra={set(AGENT_SURFACE_SKILL_SLUGS) - _INDEXED}"
 )
 

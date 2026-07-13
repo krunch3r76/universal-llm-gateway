@@ -1,20 +1,44 @@
-"""Render + persist on-behalf thread sidecar markdown under cortex _FILES_ROOT."""
+"""Render + persist thread sidecar markdown under cortex _FILES_ROOT."""
 
 from __future__ import annotations
 
 import hashlib
 import re
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from ._shared import _FILES_ROOT
 
 _SIDECAR_SUBDIR = ("notes", "system", "threads")
 _SLUG_MAXLEN = 60
+MAX_SIDECAR_CONTENT_CHARS = 256 * 1024
+
+
+class SidecarContentTooLargeError(Exception):
+    """Raised when sidecar_content exceeds MAX_SIDECAR_CONTENT_CHARS."""
+
+    def __init__(self, *, body_chars: int) -> None:
+        self.body_chars = body_chars
+        super().__init__(
+            f"sidecar_content exceeds {MAX_SIDECAR_CONTENT_CHARS:,} chars "
+            f"({body_chars:,} provided)"
+        )
+
+
+class SidecarWriteError(Exception):
+    """Raised when the durable sidecar file could not be written."""
 
 
 def _slugify(subject: str) -> str:
     s = re.sub(r"[^a-z0-9]+", "-", (subject or "reply").lower()).strip("-")
     return (s[:_SLUG_MAXLEN].rstrip("-")) or "reply"
+
+
+def resolve_sidecar_slug(*, sidecar_slug: str | None, subject: str) -> str:
+    """Resolve the filename slug for ``<thread>-<slug>.md``."""
+    if sidecar_slug is not None and sidecar_slug.strip():
+        return _slugify(sidecar_slug)
+    return _slugify(subject)
 
 
 def thread_sidecar_uri(thread: str, slug: str) -> str:
@@ -23,6 +47,14 @@ def thread_sidecar_uri(thread: str, slug: str) -> str:
 
 def content_sha256(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+def append_sidecar_pointer_line(body: str, *, sidecar_uri: str) -> str:
+    """Append the deterministic E4 trailing pointer line to a turn body."""
+    trimmed = body.rstrip()
+    if trimmed:
+        return f"{trimmed}\n\nSidecar: {sidecar_uri}"
+    return f"Sidecar: {sidecar_uri}"
 
 
 def render_thread_sidecar_markdown(
@@ -59,3 +91,51 @@ def write_thread_sidecar(thread: str, slug: str, file_content: str) -> str:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(file_content, encoding="utf-8")
     return str(path)
+
+
+@dataclass(frozen=True)
+class ThreadSidecarWriteResult:
+    uri: str
+    sha256: str
+    path: str
+    body_chars: int
+    slug: str
+
+
+def write_thread_sidecar_for_send(
+    *,
+    thread: str,
+    subject: str,
+    content: str,
+    from_agent: str,
+    sidecar_slug: str | None = None,
+    execution_id: str | None = None,
+    oversized: bool = False,
+) -> ThreadSidecarWriteResult:
+    """Hoisted writer primitive shared by send, on_behalf, and cortex ops."""
+    if len(content) > MAX_SIDECAR_CONTENT_CHARS:
+        raise SidecarContentTooLargeError(body_chars=len(content))
+
+    slug = resolve_sidecar_slug(sidecar_slug=sidecar_slug, subject=subject)
+    digest = content_sha256(content)
+    md = render_thread_sidecar_markdown(
+        thread=thread,
+        subject=subject,
+        content=content,
+        from_agent=from_agent,
+        execution_id=execution_id,
+        sha256=digest,
+        body_chars=len(content),
+        oversized=oversized,
+    )
+    try:
+        path = write_thread_sidecar(thread, slug, md)
+    except OSError as exc:
+        raise SidecarWriteError(str(exc)) from exc
+    return ThreadSidecarWriteResult(
+        uri=thread_sidecar_uri(thread, slug),
+        sha256=digest,
+        path=path,
+        body_chars=len(content),
+        slug=slug,
+    )

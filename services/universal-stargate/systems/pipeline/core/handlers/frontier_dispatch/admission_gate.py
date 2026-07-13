@@ -118,7 +118,14 @@ async def run_admission_gate(
     server_tools_val = opts.get("server_tools")
     server_tools_enabled = True if server_tools_val is None else bool(server_tools_val)
     remote_mcp = resolve_remote_mcp(model=model, mcp_enabled=mcp_enabled)
-    raw_turns = opts.get("max_tool_turns", step.get_domain_field("max_tool_turns", 100))
+    from agent_seat.tool_loop_budget import API_DEFAULT_MAX_TOOL_TURNS
+
+    # API native loop only. cursor-sdk / cursor/* agents are unbounded and
+    # never enter this admission path.
+    raw_turns = opts.get(
+        "max_tool_turns",
+        step.get_domain_field("max_tool_turns", API_DEFAULT_MAX_TOOL_TURNS),
+    )
     max_turns = int(raw_turns)
     if max_turns < 1:
         raise ValueError(f"max_tool_turns must be >= 1, got {max_turns}")

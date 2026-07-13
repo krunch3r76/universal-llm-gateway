@@ -49,12 +49,6 @@ def _projection(
     if not isinstance(live_attrs, dict):
         live_attrs = {}
     attrs: dict[str, object] = {}
-    if "applicable_agents" in fm:
-        attrs["applicable_agents"] = fm["applicable_agents"]
-    elif live is None:
-        attrs["applicable_agents"] = ["*"]
-    else:
-        attrs["applicable_agents"] = live_attrs.get("applicable_agents", ["*"])
     for key in ("skill_category", "trigger_short", "trigger_match_terms"):
         if key in fm:
             attrs[key] = fm[key]
@@ -79,6 +73,18 @@ def _projection(
         attrs["surface_class"] = surface_class
     elif live is not None and isinstance(live_attrs.get("surface_class"), str):
         attrs["surface_class"] = live_attrs["surface_class"]
+    from claude_bundles.catalog import get_skill_catalog
+
+    catalog = get_skill_catalog()
+    slug_key = str(scanned["slug"])
+    priority = catalog.delivery_priority_for(slug_key)
+    if priority is not None:
+        attrs["delivery_priority"] = priority
+    elif live is not None and "delivery_priority" in live_attrs:
+        attrs["delivery_priority"] = live_attrs["delivery_priority"]
+    # capabilities_required is derived from catalog.mcp_surface_required at
+    # ingest after cortex-api admits mcp_life/mcp_code (CAPABILITY_TOKENS).
+    # Until that deploy, leave live capability attrs untouched.
     result: dict[str, object] = {
         "id": f"agent_skill:{slug}",
         "type": "agent_skill",
@@ -99,8 +105,6 @@ def _matches(live: dict, expected: dict[str, object]) -> tuple[bool, str]:
     for field in ("source_uri", "description"):
         if live.get(field) != expected[field]:
             return False, f"{field} live={live.get(field)!r}"
-    if attrs.get("applicable_agents") != exp.get("applicable_agents"):
-        return False, f"applicable_agents live={attrs.get('applicable_agents')!r}"
     if exp.get("surface_class") == "life_local":
         if attrs.get("surface_class") != exp.get("surface_class"):
             return (

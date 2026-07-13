@@ -71,6 +71,16 @@ def materialize(
     out_path = out_dir / f"implement-{slug}.md"
 
     pending_text = _render_packet(spec, spec_hash=spec_hash)
+    from implement_admission.skill_delivery_channels import (
+        validate_exactly_one_skill_channel,
+    )
+
+    channel_violation = validate_exactly_one_skill_channel(pending_text)
+    if channel_violation is not None:
+        raise RuntimeError(
+            f"packet materialize blocked — {channel_violation.code}: "
+            f"{channel_violation.reason}"
+        )
     digest = compute_packet_sha256(pending_text)
     text = replace_frontmatter_value(pending_text, "packet_sha256", digest)
     out_path.write_text(text, encoding="utf-8")

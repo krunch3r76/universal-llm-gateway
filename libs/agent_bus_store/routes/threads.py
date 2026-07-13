@@ -15,15 +15,20 @@ from ..db import (
     admit_dispatch,
     claim_and_post_turn,
     close_thread,
+    consume_triage_confirm_token,
     create_thread,
     create_thread_with_turn,
     create_turn,
     delete_thread,
+    execute_triage_close,
+    execute_triage_mark_read,
     get_dispatch_link_by_execution_id,
     get_thread,
     get_thread_summary,
     get_thread_turns_asc,
+    issue_triage_confirm_token,
     list_threads_v2,
+    list_triage_candidates,
     normalize_thread_id,
     rename_thread,
     terminate_dispatch,
@@ -31,6 +36,7 @@ from ..db import (
 )
 from ..db.turns import UnreadTurnsExist
 from ..turns_models import (
+    TRIAGE_THREAD_CAP,
     DispatchAdmit,
     DispatchClaimAndPost,
     DispatchLinkByExecution,
@@ -43,13 +49,21 @@ from ..turns_models import (
     ThreadRename,
     ThreadStatus,
     ThreadSummaryResponse,
+    ThreadTriageCandidate,
+    ThreadTriageDryRun,
+    ThreadTriageExecuted,
+    ThreadTriageRequest,
     ThreadUpdate,
     ThreadWithTurnCreate,
     ThreadWithTurnCreated,
     TurnCreated,
     TurnSendCreate,
     TurnSendCreated,
+    parse_older_than,
     post_continuation_misuse_error,
+    sidecar_content_limit_error,
+    sidecar_write_failed_envelope,
+    triage_floor_error,
     turn_body_limit_error,
 )
 
@@ -118,6 +132,13 @@ async def list_threads_route(
             "the full active-thread set."
         ),
     ),
+    query: str | None = Query(
+        None,
+        description=(
+            "Case-insensitive substring match over slug, summary, and "
+            "last_subject. Clamped to 200 characters server-side."
+        ),
+    ),
 ) -> ThreadListResponse:
     """List threads with optional status + AND-tag + lifecycle_state filtering.
 
@@ -129,6 +150,9 @@ async def list_threads_route(
 
     `has_unread` + `limit`: compact attention projection.
     Example: `GET /threads?status=active&has_unread=true&limit=10`.
+
+    `query`: free-text lookup composed with other filters.
+    Example: `GET /threads?query=wave-b&status=active`.
     """
     rows = list_threads_v2(
         status=thread_status,
@@ -136,6 +160,7 @@ async def list_threads_route(
         lifecycle_state=lifecycle_state,
         has_unread=has_unread,
         limit=limit,
+        query=query,
     )
     return ThreadListResponse(threads=[_thread_detail(r) for r in rows])
 
@@ -317,11 +342,7 @@ async def create_thread_with_turn_route(
     except UnreadTurnsExist as e:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "error": "unread_turns_exist",
-                "message": "Read all turns addressed to you before posting",
-                "unread_turns": e.unread,
-            },
+            detail=e.to_detail(),
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
@@ -353,6 +374,194 @@ def _send_xor_violation(*, provided: list[str]) -> dict[str, object]:
     }
 
 
+def _send_with_sidecar(body: TurnSendCreate) -> TurnSendCreated:
+    """E4 send path: thread id → sidecar write → turn insert."""
+    from cortex_store.dispatch_ops._thread_sidecar import (
+        SidecarWriteError,
+        append_sidecar_pointer_line,
+        write_thread_sidecar_for_send,
+    )
+
+    from ..db.connection import connect
+    from ..db.turns import UnreadTurnsExist, insert_turn, mark_sender_unread_in_thread
+    from ..events.lifecycle import emit_sidecar_orphaned, emit_sidecar_written
+
+    if error_detail := sidecar_content_limit_error(body.sidecar_content or ""):
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=error_detail,
+        )
+
+    has_new_slug = body.new_slug is not None
+    att_dicts = [a.model_dump() for a in body.attachments] if body.attachments else None
+    thread_id: str | None = None
+    send_path: str
+
+    if has_new_slug:
+        if body.after_turn is not None and body.after_turn > 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "error": "after_turn > 0 is invalid on the new_slug (new-thread) path",
+                    "reason": "after_turn_not_valid_on_new_thread",
+                },
+            )
+        with connect() as conn:
+            existing = conn.execute(
+                "SELECT id FROM threads WHERE slug = ? LIMIT 1",
+                (body.new_slug,),
+            ).fetchone()
+            if existing is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "error": "slug_exists",
+                        "slug": body.new_slug,
+                        "existing_thread_id": existing["id"],
+                        "message": (
+                            f"A thread with slug {body.new_slug!r} already exists "
+                            f"(thread {existing['id']}). "
+                            "Use send(thread=<id>, ...) to continue it or choose "
+                            "a different new_slug."
+                        ),
+                    },
+                )
+        thread_row = create_thread(
+            thread_id=None,
+            slug=body.new_slug,
+            summary=body.summary,
+            tags=body.tags or [],
+            lifecycle_state=body.lifecycle_state,
+        )
+        if thread_row is None:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to create thread for sidecar send",
+            )
+        thread_id = thread_row["id"]
+        send_path = "new_thread"
+    else:
+        thread_id = normalize_thread_id(body.thread)
+        if get_thread(thread_id) is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Thread {thread_id} not found",
+            )
+        if body.lifecycle_state is not None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "error": (
+                        "lifecycle_state is only valid on the new_slug (new-thread) path"
+                    ),
+                    "reason": "lifecycle_state_not_valid_on_continue",
+                },
+            )
+        send_path = "continue"
+
+    assert thread_id is not None
+    try:
+        sidecar = write_thread_sidecar_for_send(
+            thread=thread_id,
+            subject=body.subject,
+            content=body.sidecar_content or "",
+            from_agent=body.from_agent,
+            sidecar_slug=body.sidecar_slug,
+        )
+    except SidecarWriteError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=sidecar_write_failed_envelope(
+                thread_id=thread_id,
+                error=str(exc),
+            ),
+        ) from exc
+
+    final_body = append_sidecar_pointer_line(body.body, sidecar_uri=sidecar.uri)
+    if error_detail := turn_body_limit_error(
+        final_body,
+        allow_long_body=body.allow_long_body,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=error_detail,
+        )
+
+    effective_after = body.after_turn if body.after_turn and body.after_turn > 0 else None
+    try:
+        turn_id, ts, turn_number = insert_turn(
+            thread=thread_id,
+            from_agent=body.from_agent,
+            to_agent=body.to,
+            subject=body.subject,
+            body=final_body,
+            status=body.status,
+            after_turn=effective_after,
+            attachments=att_dicts,
+        )
+    except UnreadTurnsExist as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=exc.to_detail(),
+        ) from exc
+    except Exception as exc:
+        emit_sidecar_orphaned(
+            uri=sidecar.uri,
+            error=str(exc),
+            thread_id=thread_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "code": "turn_insert_failed",
+                "reason": "turn_insert_failed",
+                "message": "Turn insert failed after sidecar write; sidecar file may be orphaned.",
+                "retryable": True,
+                "source": "agent_bus_store.send",
+                "data": {"thread_id": thread_id, "sidecar_uri": sidecar.uri},
+            },
+        ) from exc
+
+    marked_read = 0
+    if body.mark_read:
+        through = effective_after if effective_after else turn_number - 1
+        marked_read = mark_sender_unread_in_thread(
+            thread=thread_id,
+            from_agent=body.from_agent,
+            through_turn=through,
+        )
+    if body.close:
+        close_thread(thread_id, mark_all_read=True)
+
+    emit_sidecar_written(
+        thread=thread_id,
+        turn_number=turn_number,
+        uri=sidecar.uri,
+        sha256=sidecar.sha256,
+        bytes_written=sidecar.body_chars,
+    )
+
+    thread_row = get_thread(thread_id)
+    if thread_row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Thread {thread_id} not found",
+        )
+    return TurnSendCreated(
+        send_path=send_path,  # type: ignore[arg-type]
+        thread=_thread_detail(thread_row),
+        turn=TurnCreated(
+            id=turn_id,
+            thread=thread_id,
+            turn_number=turn_number,
+            created_at=datetime.fromisoformat(ts),
+        ),
+        marked_read=marked_read,
+        sidecar_uri=sidecar.uri,
+        sidecar_sha256=sidecar.sha256,
+    )
+
+
 @router.post(
     "/threads/send",
     status_code=status.HTTP_201_CREATED,
@@ -372,6 +581,8 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=_send_xor_violation(provided=[]),
         )
+    if body.sidecar_content is not None:
+        return _send_with_sidecar(body)
     if error_detail := turn_body_limit_error(
         body.body,
         allow_long_body=body.allow_long_body,
@@ -424,11 +635,7 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
         except UnreadTurnsExist as e:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail={
-                    "error": "unread_turns_exist",
-                    "message": "Read all turns addressed to you before posting",
-                    "unread_turns": e.unread,
-                },
+                detail=e.to_detail(),
             )
         except ValueError as e:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
@@ -456,7 +663,7 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
 
     thread_id = normalize_thread_id(body.thread)
     try:
-        thread_row, turn_id, ts, turn_number = create_turn(
+        thread_row, turn_id, ts, turn_number, marked_read = create_turn(
             thread_id=thread_id,
             from_agent=body.from_agent,
             to_agent=body.to,
@@ -471,11 +678,7 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
     except UnreadTurnsExist as e:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "error": "unread_turns_exist",
-                "message": "Read all turns addressed to you before posting",
-                "unread_turns": e.unread,
-            },
+            detail=e.to_detail(),
         )
     except KeyError:
         raise HTTPException(
@@ -491,6 +694,7 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
             turn_number=turn_number,
             created_at=datetime.fromisoformat(ts),
         ),
+        marked_read=marked_read,
     )
 
 
@@ -647,6 +851,159 @@ async def dispatch_terminate_route(
     if closed is not None:
         row = closed
     return _thread_detail(row)
+
+
+def _triage_confirm_error(code: str, message: str) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "code": code,
+            "message": message,
+            "retryable": code == "confirm_token_expired",
+            "source": "agent_bus_store.triage",
+        },
+    )
+
+
+def _emit_triage_event(signal: str, payload: dict[str, object]) -> None:
+    from ..events.publisher import emit
+
+    emit(signal, payload, role="coordination")
+
+
+@router.post(
+    "/threads/triage",
+    response_model=ThreadTriageDryRun | ThreadTriageExecuted,
+)
+async def triage_threads_route(body: ThreadTriageRequest) -> ThreadTriageDryRun | ThreadTriageExecuted:
+    """Bulk inbox hygiene — preview (dry_run) or execute with confirm_token."""
+    if floor := triage_floor_error(body.action, body.older_than):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=floor)
+
+    try:
+        activity_cutoff = parse_older_than(body.older_than)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "code": "invalid_older_than",
+                "message": str(exc),
+                "retryable": False,
+                "source": "agent_bus_store.triage",
+            },
+        ) from exc
+
+    all_rows, total_candidates = list_triage_candidates(
+        agent=body.from_agent,
+        activity_cutoff=activity_cutoff,
+        action=body.action,
+        status=body.status.value if body.status is not None else None,
+    )
+    capped = total_candidates > TRIAGE_THREAD_CAP
+    preview_rows = all_rows[:TRIAGE_THREAD_CAP]
+    candidate_ids = [str(row["id"]) for row in preview_rows]
+
+    if body.dry_run:
+        confirm_token, expires_at = issue_triage_confirm_token(
+            agent=body.from_agent,
+            action=body.action,
+            older_than=body.older_than,
+            status=body.status.value if body.status is not None else None,
+            candidate_ids=candidate_ids,
+        )
+        _emit_triage_event(
+            "mcp.agentbus.triage.dry_run",
+            {
+                "agent": body.from_agent,
+                "filter": {
+                    "older_than": body.older_than,
+                    "status": body.status.value if body.status else None,
+                    "action": body.action,
+                },
+                "total_candidates": total_candidates,
+                "capped": capped,
+                "confirm_token_id": confirm_token,
+            },
+        )
+        return ThreadTriageDryRun(
+            candidates=[
+                ThreadTriageCandidate(
+                    id=row["id"],
+                    slug=row["slug"],
+                    last_activity_at=datetime.fromisoformat(row["last_activity_at"]),
+                    unread_count=int(row["unread_count"]),
+                )
+                for row in preview_rows
+            ],
+            total_candidates=total_candidates,
+            capped=capped,
+            confirm_token=confirm_token,
+            expires_at=expires_at,
+        )
+
+    if not body.confirm_token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "confirm_token_required",
+                "message": "dry_run=false requires confirm_token from the preview call",
+                "retryable": True,
+                "source": "agent_bus_store.triage",
+            },
+        )
+
+    token_status = consume_triage_confirm_token(
+        token_id=body.confirm_token,
+        agent=body.from_agent,
+        action=body.action,
+        older_than=body.older_than,
+        status=body.status.value if body.status is not None else None,
+        candidate_ids=candidate_ids,
+    )
+    if token_status == "invalid":
+        raise _triage_confirm_error(
+            "confirm_token_invalid",
+            "confirm_token is invalid or already used",
+        )
+    if token_status == "expired":
+        raise _triage_confirm_error(
+            "confirm_token_expired",
+            "confirm_token expired (10 minute TTL); re-run dry_run",
+        )
+    if token_status == "filter_mismatch":
+        raise _triage_confirm_error(
+            "confirm_token_filter_mismatch",
+            "confirm_token does not match the current filter or candidate set",
+        )
+
+    marked_read = 0
+    closed = 0
+    if body.action == "mark_read":
+        marked_read = execute_triage_mark_read(
+            agent=body.from_agent,
+            thread_ids=candidate_ids,
+        )
+    else:
+        closed = execute_triage_close(thread_ids=candidate_ids)
+
+    _emit_triage_event(
+        "mcp.agentbus.triage.executed",
+        {
+            "agent": body.from_agent,
+            "action": body.action,
+            "thread_count": len(candidate_ids),
+            "confirm_token_id": body.confirm_token,
+            "marked_read": marked_read,
+            "closed": closed,
+        },
+    )
+    return ThreadTriageExecuted(
+        action=body.action,
+        thread_count=len(candidate_ids),
+        marked_read=marked_read,
+        closed=closed,
+        confirm_token_id=body.confirm_token,
+    )
 
 
 @router.delete("/threads/{thread_id}")

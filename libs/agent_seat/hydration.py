@@ -1,6 +1,6 @@
 """Async Cortex hydration for dispatched agents.
 
-Mirrors the slim-briefing shape of MCP's ``run_cortex_boot`` but async-native
+Mirrors the slim-briefing shape of MCP's ``run_cortex_brief`` but async-native
 and self-contained: no filesystem side effects, no import of MCP-server-private
 helpers. Parallel fetch of journals / deadlines / todos / bus threads /
 self-assertions / reflective journal / temporal, then renders a compact

@@ -1,0 +1,126 @@
+# cortex.life-intent/v1 — closed verb registry for delegate(propose|commit).
+# Life-facing strings must never echo dispatch vocabulary (see refuse_list).
+
+version: "1"
+context_id: "cortex.life-intent/v1"
+
+intent_schema:
+  verb:
+    type: enum
+    required: true
+    values: [investigate, fix, build, change]
+  subject:
+    type: string
+    required: true
+    min_length: 3
+    max_length: 120
+  detail:
+    type: string
+    required: true
+    min_length: 10
+    max_length: 2000
+  refs:
+    type: array
+    required: false
+    item_type: string
+  urgency:
+    type: enum
+    required: false
+    values: [normal, soon]
+    default: normal
+
+verbs:
+  investigate:
+    lane: recon
+    creates_work_item: false
+    entity_kind: null
+    density_triage_at_birth: null
+    required_skills_seed: []
+    priority_from_urgency:
+      normal: medium
+      soon: high
+  fix:
+    lane: bug_recon
+    creates_work_item: true
+    entity_kind: todo
+    density_triage_at_birth: judgment_required
+    required_skills_seed: [friction-review, consult-routing]
+    priority_from_urgency:
+      normal: medium
+      soon: high
+  build:
+    lane: feature_recon
+    creates_work_item: true
+    entity_kind: todo
+    density_triage_at_birth: judgment_required
+    required_skills_seed: [consult-routing, architecture-invariants]
+    priority_from_urgency:
+      normal: medium
+      soon: high
+  change:
+    lane: change_recon
+    creates_work_item: true
+    entity_kind: todo
+    density_triage_at_birth: judgment_required
+    required_skills_seed: [consult-routing]
+    priority_from_urgency:
+      normal: medium
+      soon: high
+
+# Scanned case-insensitively across verb+subject+detail. Typed reject: refused_vocabulary.
+refuse_list:
+  - team_dispatch
+  - team dispatch
+  - "op:"
+  - "role:"
+  - "contract:"
+  - "model:"
+  - contract=implement
+  - contract=light-bounded
+  - contract=pure-mechanical
+  - cursor-sdk
+  - web-claude
+  - web-consult
+  - cursor-consult
+  - generate
+  - handoff
+  - implement
+  - densify
+  - sync_restart
+  - entity_merge
+  - entity_rekey
+  - entity_retype
+  - entities_bulk_upsert
+  - relationships_bulk_upsert
+  - relationship_delete
+  - session_close
+  - journal_read
+  - register_skill_substrate
+  - supersede
+  - edge_delete
+  - schema migration
+  - ddl
+  - drop table
+  - force push
+  - hard reset
+  - worktree reset
+  - delete all
+  - anthropic/
+  - openai/
+  - provider default
+  - billing
+  - payment
+  - api key
+  - secret rotation
+
+# Hard-out classes — typed reject: hard_out (no questions round).
+hard_out_patterns:
+  - pattern: "\\b(restart|reboot|shutdown)\\b.*\\b(service|server|mcp|stargate)\\b"
+    code: hard_out
+    detail: "Service restarts are not available through life delegate."
+  - pattern: "\\b(delete|remove|drop)\\b.*\\b(all|every|database|schema)\\b"
+    code: hard_out
+    detail: "Destructive bulk operations are not available through life delegate."
+  - pattern: "\\b(implement|gate-?2|dense spec)\\b"
+    code: hard_out
+    detail: "Direct implementation entry is not available through life delegate."

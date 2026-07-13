@@ -35,6 +35,7 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "libs"))
 
 from agent_seat.dispatch_role_catalog import (  # noqa: E402
+    auto_seat_clause,
     generate_comma_clause,
     generate_slash_clause,
     handoff_bare_comma_clause,
@@ -73,6 +74,7 @@ def _sub(
 
 def _render_canonical(text: str) -> str:
     slash = generate_slash_clause()
+    auto_seats = auto_seat_clause()
     seat_map = handoff_seat_map_clause()
     negation = handoff_slash_clause()
     bare = handoff_bare_comma_clause()
@@ -80,7 +82,7 @@ def _render_canonical(text: str) -> str:
 
     text = _sub(
         r"generate/to_thread roles \([^)]*\)",
-        f"generate/to_thread roles ({slash})",
+        f"generate/to_thread roles ({slash}); auto seats ({auto_seats})",
         text,
         2,
         "canonical generate/to_thread roles",
@@ -136,13 +138,14 @@ def _render_canonical(text: str) -> str:
 
 def _render_frontier(text: str) -> str:
     comma = generate_comma_clause()
+    auto_seats = auto_seat_clause()
     handoff = handoff_comma_clause()
     bare = handoff_bare_comma_clause()
     seat_roster = ", ".join(handoff_seats())
 
     text = _sub(
         r"generate/to_thread roles: [^\n]*",
-        f"generate/to_thread roles: {comma}",
+        f"generate/to_thread roles: {comma}; auto seats: {auto_seats}",
         text,
         2,
         "frontier generate/to_thread roles",

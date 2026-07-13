@@ -58,9 +58,7 @@ def render_concise_skill_index(
     if title:
         lines.append(title)
         lines.append("")
-    lines.append(
-        f"Seat-filtered manifest ({len(rows)} skills). Bodies load on demand."
-    )
+    lines.append(f"Seat-filtered manifest ({len(rows)} skills). Bodies load on demand.")
     if include_source_hint:
         lines.append("")
         lines.append(_LOAD_CONTRACT_LINE)
@@ -132,6 +130,7 @@ _TIER1_GATE_SLUGS: frozenset[str] = frozenset(
     }
 )
 
+
 def _skill_trigger_display(row: Mapping[str, Any]) -> str:
     """Listing trigger: trigger_short first; short description fallback only."""
     return canonical_skill_summary(
@@ -186,23 +185,20 @@ def render_skills_card_section(
         (
             "> **Discovery (native)**: skill discovery is native — resident boot "
             "index, description-gated `<available_skills>` / `.cursor/skills` stubs "
-            "(Cursor), and boot manifest orientation. Do not call `skill_suggest` "
-            "(deprecated indefinitely)."
+            "(Cursor), and boot manifest orientation."
         ),
         "> `⚑` = required gate.",
     ]
     by_domain: dict[str, list[Mapping[str, Any]]] = {}
     for row in items:
-        by_domain.setdefault(str(row.get("skill_category") or "uncategorized"), []).append(
-            row
-        )
+        by_domain.setdefault(
+            str(row.get("skill_category") or "uncategorized"), []
+        ).append(row)
     for domain in sorted(by_domain):
         bucket = by_domain[domain]
         lines.append(f"\n**{domain} ({len(bucket)})**")
         for row in sorted(bucket, key=_row_slug):
-            _append_skill_line_flat(
-                lines, row, is_gate=_row_slug(row) in gate_ids
-            )
+            _append_skill_line_flat(lines, row, is_gate=_row_slug(row) in gate_ids)
 
     return "\n".join(lines)
 

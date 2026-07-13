@@ -27,6 +27,10 @@ from cortex_store._test_db_bootstrap import (  # noqa: E402
     materialize_head_schema_template,
     open_migrated_connection,
 )
+from cortex_store.dispatch_ops import execute_op  # noqa: E402
+from cortex_store.life_imprint.op_plan import build_op_plan  # noqa: E402
+from cortex_store.life_imprint.registry import load_registry  # noqa: E402
+from cortex_store.life_imprint.shape_check import shape_check_patch  # noqa: E402
 from cortex_store.main import create_app  # noqa: E402
 
 CORPUS_DIR = ROOT / "tests" / "cortex" / "life_imprint_corpus"
@@ -66,45 +70,73 @@ def _seed_corpus_db(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
-def _score_arm_a(
-    prompt: dict[str, Any],
-    golden: dict[str, Any] | None,
-    response: dict[str, Any],
+def _require_golden(prompt: dict[str, Any], goldens: dict[str, Any]) -> dict[str, Any]:
+    pid = prompt["id"]
+    golden = goldens.get(pid)
+    if golden is None:
+        raise ValueError(f"Missing golden op plan for prompt {pid!r}")
+    return golden
+
+
+def _score_bundle(
+    golden: dict[str, Any],
+    *,
+    op_names: list[str],
+    rejects: list[dict[str, Any]],
+    candidates: list[dict[str, Any]],
+    unwanted_write: float,
 ) -> dict[str, float]:
     metrics = {
         "correct_op_selection": 0.0,
         "id_resolution_accuracy": 1.0,
-        "unwanted_write_rate": 0.0,
+        "unwanted_write_rate": unwanted_write,
         "reject_validity": 1.0,
     }
-    if golden is None:
-        return metrics
 
     if golden.get("expected_reject"):
-        codes = [r.get("code") for r in response.get("rejects", [])]
-        metrics["correct_op_selection"] = (
+        codes = [r.get("code") for r in rejects]
+        metrics["reject_validity"] = (
             1.0 if golden["expected_reject"] in codes else 0.0
         )
-        metrics["reject_validity"] = metrics["correct_op_selection"]
         metrics["correct_op_selection"] = (
             1.0
-            if not response.get("op_plan") and metrics["reject_validity"] == 1.0
+            if not op_names and metrics["reject_validity"] == 1.0
             else 0.0
         )
         return metrics
 
     if golden.get("expect_candidates"):
-        metrics["reject_validity"] = 1.0 if response.get("candidates") else 0.0
+        metrics["reject_validity"] = 1.0 if candidates else 0.0
         metrics["correct_op_selection"] = metrics["reject_validity"]
         return metrics
 
     expected_ops = golden.get("expected_ops") or []
-    actual_ops = [e.get("op") for e in response.get("op_plan", [])]
     if not expected_ops:
         return metrics
-    hits = sum(1 for op in expected_ops if op in actual_ops)
+    hits = sum(1 for op in expected_ops if op in op_names)
     metrics["correct_op_selection"] = hits / len(expected_ops)
     return metrics
+
+
+def _score_arm_a(
+    prompt: dict[str, Any],
+    golden: dict[str, Any] | None,
+    response: dict[str, Any],
+) -> dict[str, float]:
+    if golden is None:
+        return {
+            "correct_op_selection": 0.0,
+            "id_resolution_accuracy": 1.0,
+            "unwanted_write_rate": 0.0,
+            "reject_validity": 1.0,
+        }
+    return _score_bundle(
+        golden,
+        op_names=[e.get("op") for e in response.get("op_plan", [])],
+        rejects=response.get("rejects", []),
+        candidates=response.get("candidates", []),
+        unwanted_write=0.0,
+    )
 
 
 def _run_arm_a(
@@ -128,11 +160,8 @@ def _run_arm_a(
 
     for prompt in prompts:
         pid = prompt["id"]
-        golden = goldens.get(pid)
-        patch = (golden or {}).get("patch") or {
-            "@context": "cortex.life/v1",
-            "@graph": [{"@id": "todo:ship", "noted": prompt["text"][:80]}],
-        }
+        golden = _require_golden(prompt, goldens)
+        patch = golden["patch"]
         before = open_migrated_connection(db_path)
         ent_before = before.execute("SELECT COUNT(*) FROM entities").fetchone()[0]
         before.close()
@@ -173,30 +202,108 @@ def _run_arm_a(
     }
 
 
-def _run_arm_b_stub(
+def _execute_op_plan(op_plan: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    from fastapi import HTTPException
+
+    traces: list[dict[str, Any]] = []
+    for entry in op_plan:
+        op = entry["op"]
+        try:
+            result = execute_op(op, entry.get("args") or {})
+        except HTTPException as exc:
+            detail = exc.detail if isinstance(exc.detail, (dict, str)) else str(exc.detail)
+            result = {"error": detail, "status_code": exc.status_code}
+        traces.append({"op": op, "args": entry.get("args"), "result": result})
+        if isinstance(result, dict) and result.get("error"):
+            break
+    return traces
+
+
+def _run_arm_b(
     prompts: list[dict[str, Any]],
-    tmp_dir: Path,
+    goldens: dict[str, Any],
+    db_path: Path,
 ) -> dict[str, Any]:
-    """Arm B tmp-copy bootstrap — megatool comparator scaffold (no live writes)."""
-    template = tmp_dir / "template.db"
-    materialize_head_schema_template(template)
-    copy_path = tmp_dir / "arm_b.db"
-    copy_template_db(template, copy_path)
-    conn = open_migrated_connection(copy_path)
+    """Arm B — execute megatool-equivalent ops on tmp-copy DB only (F-5)."""
+    db._CORTEX_DB = db_path
+    conn = open_migrated_connection(db_path)
     _seed_corpus_db(conn)
-    ent_count = conn.execute("SELECT COUNT(*) FROM entities").fetchone()[0]
     conn.close()
 
-    return {
-        "arm": "B",
-        "prompt_count": len(prompts),
+    registry = load_registry()
+    bundles: list[dict[str, Any]] = []
+    totals = {
         "correct_op_selection": 0.0,
         "id_resolution_accuracy": 0.0,
         "unwanted_write_rate": 0.0,
         "reject_validity": 0.0,
-        "db_path": str(copy_path),
-        "entity_count": ent_count,
-        "note": "Arm B megatool trace scoring deferred to lead blinded review",
+    }
+
+    for prompt in prompts:
+        pid = prompt["id"]
+        golden = _require_golden(prompt, goldens)
+        patch = golden["patch"]
+
+        before = open_migrated_connection(db_path)
+        ent_before = before.execute("SELECT COUNT(*) FROM entities").fetchone()[0]
+        before.close()
+
+        rejects = [
+            {"statement_idx": r.statement_idx, "code": r.code, "detail": r.detail}
+            for r in shape_check_patch(patch, registry)
+        ]
+        op_plan: list[dict[str, Any]] = []
+        candidates: list[dict[str, Any]] = []
+        traces: list[dict[str, Any]] = []
+
+        if not rejects:
+            plan_conn = open_migrated_connection(db_path)
+            try:
+                op_plan, candidates = build_op_plan(patch, registry, plan_conn)
+            finally:
+                plan_conn.close()
+            if not candidates and op_plan:
+                traces = _execute_op_plan(op_plan)
+
+        after = open_migrated_connection(db_path)
+        ent_after = after.execute("SELECT COUNT(*) FROM entities").fetchone()[0]
+        after.close()
+        unwanted = 1.0 if ent_after != ent_before else 0.0
+
+        executed_ops = [t["op"] for t in traces if not t.get("result", {}).get("error")]
+        metrics = _score_bundle(
+            golden,
+            op_names=executed_ops,
+            rejects=rejects,
+            candidates=candidates,
+            unwanted_write=unwanted,
+        )
+        for key in totals:
+            totals[key] += metrics[key]
+        bundles.append(
+            {
+                "prompt_id": pid,
+                "arm": "B",
+                "prompt_text": prompt["text"],
+                "patch": patch,
+                "rejects": rejects,
+                "op_plan": op_plan,
+                "candidates": candidates,
+                "executed_traces": traces,
+                "metrics": metrics,
+            }
+        )
+
+    n = len(prompts) or 1
+    return {
+        "arm": "B",
+        "prompt_count": len(prompts),
+        "correct_op_selection": totals["correct_op_selection"] / n,
+        "id_resolution_accuracy": totals["id_resolution_accuracy"] / n,
+        "unwanted_write_rate": totals["unwanted_write_rate"] / n,
+        "reject_validity": totals["reject_validity"] / n,
+        "bundles": bundles,
+        "db_path": str(db_path),
         "rubric_path": str(RUBRIC_PATH),
     }
 
@@ -225,12 +332,17 @@ def main() -> int:
         arm_a_db = tmp_dir / "arm_a.db"
         materialize_head_schema_template(arm_a_db)
 
+        arm_b_template = tmp_dir / "arm_b_template.db"
+        materialize_head_schema_template(arm_b_template)
+        arm_b_db = tmp_dir / "arm_b.db"
+        copy_template_db(arm_b_template, arm_b_db)
+
         report = {
             "version": prompts_data.get("version", "1"),
             "prompt_count": len(prompts),
             "arms": {
                 "A": _run_arm_a(prompts, goldens, arm_a_db),
-                "B": _run_arm_b_stub(prompts, tmp_dir),
+                "B": _run_arm_b(prompts, goldens, arm_b_db),
             },
         }
         args.output.write_text(json.dumps(report, indent=2), encoding="utf-8")

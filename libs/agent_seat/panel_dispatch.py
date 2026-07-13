@@ -20,6 +20,7 @@ from agent_seat.registry import resolve_agent_model
 from agent_seat.role_entity_sync import resolve_dispatch_capabilities
 
 # Guard 3: independent family := distinct provider (display labels for asserts).
+# Google/Gemini is optional third-family — not required for default panel coverage.
 _PROVIDER_FAMILY_LABEL: dict[str, str] = {
     "anthropic": "Claude",
     "openai": "GPT",

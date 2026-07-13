@@ -6,7 +6,7 @@ import asyncio
 import json
 import uuid
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any
 
 from fastapi import Response
 from universal_logging import get_logger
@@ -17,13 +17,14 @@ from .densify_triage import COMPOSER_DRAFT_SENTINEL, REASONING_TRACE_SENTINEL
 from .events import FrontierReviewChildContextMissing, FrontierSdkReviewChildSpawned
 from .generate_admission_context_store import (
     AdmissionContext,
+    delete_admission_context,
+    finalize_spawn_state,
+    list_pending_spawn_states,
     read_admission_context,
     read_spawn_state,
     try_claim_spawn_pending,
-    finalize_spawn_state,
-    delete_admission_context,
-    list_pending_spawn_states,
 )
+from .light_bounded_ac_observer import GENERATE_LANE_AC_OBSERVER_FOOTER
 from .skill_suggest_durable_state import DurableTerminalEvent, durable_catch_up_terminal
 
 logger = get_logger(__name__)
@@ -89,7 +90,7 @@ def select_cross_family_reviewer(resolved_model: str) -> ReviewerSelection | Non
 
 
 def _reviewer_model_admitted(model: str) -> bool:
-    from model_id import resolve_wire_model_id, WireModelResolutionError
+    from model_id import WireModelResolutionError, resolve_wire_model_id
 
     try:
         resolve_wire_model_id(model, require_cloud=True)
@@ -140,10 +141,11 @@ async def _build_generate_lane_review_prompt(
     trace_body = (
         f"{REASONING_TRACE_SENTINEL}\n# auto review child for generate/cursor-sdk"
     )
-    return build_reviewer_prompt(
+    prompt = build_reviewer_prompt(
         staged_draft_body=draft_body,
         reasoning_trace_body=trace_body,
     )
+    return f"{prompt}\n\n{GENERATE_LANE_AC_OBSERVER_FOOTER}"
 
 
 async def spawn_generate_lane_review_child(
@@ -153,17 +155,31 @@ async def spawn_generate_lane_review_child(
     parent_thread_id: str,
     reviewer: ReviewerSelection,
 ) -> dict[str, Any]:
+    """Spawn review child onto the still-open coord/dispatch thread.
+
+    ``parent_thread_id`` is the worker completion thread (may already be closed
+    by cursor-sdk closeout). Delivery must use coord ``dispatch_thread_id``,
+    matching densify_candidate_ready — never the worker thread alone.
+    """
     from .route import TeamDispatchToThreadBody, team_dispatch
 
+    delivery_thread = ctx.dispatch_thread_id or ctx.parent_dispatch_thread_id
+    if not delivery_thread:
+        logger.warning(
+            "review_child spawn fail-closed: no coord dispatch_thread_id "
+            "(worker=%s)",
+            parent_thread_id,
+        )
+        return {}
     prompt = await _build_generate_lane_review_prompt(
         request_id=request_id,
-        parent_dispatch_thread_id=ctx.dispatch_thread_id or ctx.parent_dispatch_thread_id,
+        parent_dispatch_thread_id=delivery_thread,
     )
     child_body = TeamDispatchToThreadBody(
         op=_TO_THREAD_OP,
         role=_REVIEWER_ROLE,
-        dispatch_thread_id=ctx.dispatch_thread_id or parent_thread_id,
-        thread=parent_thread_id,
+        dispatch_thread_id=delivery_thread,
+        thread=delivery_thread,
         subject=f"generate cross-family review — {request_id[:8]}",
         contract="light-bounded",
         model=reviewer.model,
@@ -186,8 +202,8 @@ async def spawn_generate_lane_review_child(
                 op=_TO_THREAD_OP,
                 role=_REVIEWER_ROLE,
                 resolved_model=reviewer.model,
-                parent_dispatch_thread_id=ctx.dispatch_thread_id,
-                dispatch_thread_id=ctx.dispatch_thread_id or parent_thread_id,
+                parent_dispatch_thread_id=delivery_thread,
+                dispatch_thread_id=delivery_thread,
                 spawn_template_provenance=_SPAWN_PROVENANCE,
             )
     return result if isinstance(result, dict) else {}

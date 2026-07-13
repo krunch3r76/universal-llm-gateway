@@ -39,7 +39,7 @@ def detect_prior_session_id_omitted(
 
     Suppressed when the close did not claim continuation (no ``**Continues:**``
     in the structural layer and no ``handoff_prompt``) — omission is expected
-    for fresh sessions without ``cortex_boot``.
+    for fresh sessions without ``cortex_brief``.
     """
     sql = """
         SELECT sj.session_id, sj.agent, sj.handoff_prompt, sj.file_path

@@ -55,7 +55,6 @@ RENDERER_INPUT_FIELDS: tuple[str, ...] = (
     "references",
     "aliases",
     "source_uri",
-    "applicable_agents",
     "paired_rule_pointer",
 )
 

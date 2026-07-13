@@ -14,7 +14,7 @@ from _skill_constants import (
     _WS,
 )
 from _skill_related_parse import declared_related_skills, parse_frontmatter
-from claude_bundles.resolver import LIFE_LOCAL_SLUGS, surface_class_for_slug
+from claude_bundles.resolver import life_local_slugs, surface_class_for_slug
 
 _REPO_DEFAULT = Path(__file__).resolve().parent.parent.parent
 
@@ -41,7 +41,7 @@ def _scan_life_local_skills(repo_root: Path | None = None) -> dict[str, dict[str
     if not skills_dir.is_dir():
         return {}
     found: dict[str, dict[str, object]] = {}
-    for slug in LIFE_LOCAL_SLUGS:
+    for slug in life_local_slugs():
         path = skills_dir / slug / "SKILL.md"
         if not path.is_file():
             print(f"ERROR: missing life-local SOT: {path}", file=sys.stderr)
@@ -142,7 +142,7 @@ def _scan_cortex_sot_skills(repo_root: Path | None = None) -> dict[str, dict[str
             "description": description,
             "source_uri": _workspace_source_uri(slug),
             "related_skills": declared_related_skills(text, fm),
-            "surface_class": "shared_sync",
+            "surface_class": surface_class_for_slug(slug),
         }
     return found
 
@@ -172,7 +172,7 @@ def _scan_skills(root: Path) -> dict[str, dict[str, object]]:
     found: dict[str, dict[str, object]] = {}
     for skill_path in sorted(skills_dir.glob("*/SKILL.md")):
         slug = skill_path.parent.name
-        if slug in LIFE_LOCAL_SLUGS:
+        if slug in life_local_slugs():
             continue
         try:
             text = skill_path.read_text(encoding="utf-8")

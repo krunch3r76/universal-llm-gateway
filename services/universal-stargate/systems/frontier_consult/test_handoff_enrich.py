@@ -2,13 +2,24 @@
 
 from __future__ import annotations
 
+import copy
 from pathlib import Path
 from typing import Any
 
 import pytest
+from implement_admission.skill_delivery_channels import (
+    SkillInlineBudgetExceeded,
+    enforce_inline_budget,
+    format_inline_skill_block,
+    parse_inline_skill_blocks,
+    resolve_inline_bodies,
+    validate_exactly_one_skill_channel,
+    validate_inline_skill_hashes,
+)
 
 from .admission import FrontierEndpointError
 from .handoff import build_pointer_body, validate_packet
+from .handoff_life_mirror import mirror_workspaces_pointers_for_web
 from .handoff_packet_enrich import (
     EnrichResult,
     _canonical_skill_invariant_line,
@@ -182,6 +193,29 @@ def test_validate_web_skips_arch_refs_with_densify_floor(tmp_path: Path) -> None
     )
 
 
+def test_validate_web_anthropic_alias_skips_arch_refs(tmp_path: Path) -> None:
+    """Canonical bus address must take the same web densify path (a24046)."""
+    rel = "universal-llm-gateway/tmp/reviews/web-anthropic-thin.md"
+    packet = _THIN_WEB_PACKET.replace(
+        "<invariants>[scope] traces to task.</invariants>",
+        f"<invariants>[scope] traces to task.\n{_DENSIFY_INVARIANTS}</invariants>",
+    ).replace(
+        "<mcp_capabilities>1. fs(read) primary file</mcp_capabilities>",
+        "<mcp_capabilities>1. agent_bus(fetch, thread=2235, last=3)\n"
+        "2. agent_bus(fetch, thread=2229, last=3)</mcp_capabilities>",
+    )
+    dest = tmp_path / rel
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(packet, encoding="utf-8")
+    validate_packet(
+        request_id="req-web-anthropic-skip-arch",
+        packet_path=rel,
+        to_agent="web-anthropic",
+        handoff_contract="consult",
+        workspaces_root=tmp_path,
+    )
+
+
 def test_validate_cursor_still_requires_arch_refs(tmp_path: Path) -> None:
     rel = "universal-llm-gateway/tmp/reviews/cursor-thin.md"
     packet = _THIN_WEB_PACKET.replace(
@@ -227,7 +261,7 @@ def test_validate_cursor_requires_densify_floor(tmp_path: Path) -> None:
 def test_build_pointer_web_consult_uses_canonical_slug_priming() -> None:
     body = build_pointer_body(
         request_id="req-ptr-web",
-        packet_path="tmp/reviews/foo.md",
+        packet_path="cortex://ephemeral/handoffs/foo.md",
         subject="review topic",
         pointer_body=None,
         handoff_contract="consult",
@@ -236,6 +270,8 @@ def test_build_pointer_web_consult_uses_canonical_slug_priming() -> None:
     assert "canonical slug" in body
     assert "skill_suggest" not in body.lower()
     assert 'path="agent-skills/' not in body
+    assert 'sandbox="workspaces"' not in body
+    assert "cortex://" in body
 
 
 def test_build_pointer_cursor_consult_uses_canonical_slug_priming() -> None:
@@ -297,5 +333,221 @@ def test_enrich_recognizes_legacy_fs_lines_as_already_wired() -> None:
     result = enrich_handoff_packet(legacy, cortex=cortex)
     assert "consult-routing" in result.skills_already_wired
     assert "consult-routing" not in result.skills_added
-    invariants = result.text.split("<invariants>")[1].split("</invariants>")[0]
+    invariants = result.text.split("<invariants>", 1)[1].rsplit("</invariants>", 1)[0]
     assert "`consult-routing`" not in invariants
+
+
+def test_enrich_inline_authoritative_materializes_allowlist_skills() -> None:
+    cortex = _StubCortex(todo_skills=["mcp-surface-change"])
+    result = enrich_handoff_packet(
+        _THIN_WEB_PACKET,
+        cortex=cortex,
+        to_agent="claude-web",
+        skill_delivery="inline_authoritative",
+    )
+    assert result.inline_materialized
+    assert "mcp-surface-change" in result.inline_slugs
+    assert "lead-seat-boot" in result.skills_added
+    blocks = parse_inline_skill_blocks(result.text)
+    inlined = {block.slug for block in blocks}
+    assert "consult-routing" in inlined
+    assert "handoff-packet-authoring" in inlined
+    assert "architecture-invariants" in inlined
+    assert validate_exactly_one_skill_channel(result.text) is None
+    assert validate_inline_skill_hashes(result.text) is None
+
+
+def test_enrich_inline_rewrites_pointer_lines_to_orientation() -> None:
+    packet = _THIN_WEB_PACKET.replace(
+        "<invariants>[scope] traces to task.</invariants>",
+        (
+            "<invariants>[scope] traces to task.\n"
+            "- Use the `consult-routing` skill "
+            "(canonical slug — seat self-fetches; ¬ fs-read skill body)</invariants>"
+        ),
+    )
+    cortex = _StubCortex()
+    result = enrich_handoff_packet(
+        packet,
+        cortex=cortex,
+        skill_delivery="inline_authoritative",
+    )
+    invariants = result.text.split("<invariants>", 1)[1].rsplit("</invariants>", 1)[0]
+    assert "bodies inlined below" in invariants
+    from implement_admission.skill_delivery_channels import (
+        text_without_inline_payload_regions,
+    )
+    scan = text_without_inline_payload_regions(result.text)
+    assert "- Use the `consult-routing` skill (canonical slug" not in scan
+    assert "Use the `lead-seat-boot` skill" in invariants
+
+
+def test_enrich_inline_idempotent_and_rebuilds_stale_digest() -> None:
+    cortex = _StubCortex()
+    first = enrich_handoff_packet(
+        _THIN_WEB_PACKET,
+        cortex=cortex,
+        skill_delivery="inline_authoritative",
+    )
+    second = enrich_handoff_packet(
+        first.text,
+        cortex=cortex,
+        skill_delivery="inline_authoritative",
+    )
+    assert not second.changed
+    assert second.skills_inlined == []
+    blocks = parse_inline_skill_blocks(first.text)
+    stale = first.text.replace(blocks[0].digest, "sha256:deadbeef", 1)
+    third = enrich_handoff_packet(
+        stale,
+        cortex=cortex,
+        skill_delivery="inline_authoritative",
+    )
+    assert third.changed
+    assert blocks[0].slug in third.skills_inlined
+    assert validate_inline_skill_hashes(third.text) is None
+
+
+def test_enrich_non_web_byte_identical_without_skill_delivery() -> None:
+    cortex = _StubCortex(todo_skills=["mcp-surface-change"])
+
+    def _run(to_agent: str | None) -> EnrichResult:
+        return enrich_handoff_packet(
+            _THIN_WEB_PACKET,
+            cortex=copy.deepcopy(cortex),
+            to_agent=to_agent,
+        )
+
+    baseline = _run(None)
+    cursor = _run("claude-cursor")
+    assert baseline.text == cursor.text
+    assert baseline.skills_added == cursor.skills_added
+
+
+def test_enrich_inline_budget_exceeded() -> None:
+    resolved = resolve_inline_bodies(
+        (
+            "architecture-invariants",
+            "ulg-architecture",
+            "consult-routing",
+            "handoff-packet-authoring",
+            "implement-work-item",
+            "implement-todo",
+            "modularize-discipline",
+            "mcp-surface-change",
+            "build-pipeline",
+            "debug-with-events",
+            "service-lifecycle",
+            "dispatch-workflow",
+        )
+    )
+    with pytest.raises(SkillInlineBudgetExceeded):
+        enforce_inline_budget(resolved, budget_bytes=1)
+
+
+def test_validate_inline_rejects_altered_payload() -> None:
+    resolved = resolve_inline_bodies(("consult-routing",))
+    block = format_inline_skill_block(
+        resolved[0].slug,
+        source_uri=resolved[0].source_uri,
+        rev=resolved[0].rev,
+        body=resolved[0].body,
+    )
+    tampered = block.replace("TAMPER_ME", "TAMPER_ME", 1)
+    payload_start = tampered.index("```markdown\n") + len("```markdown\n")
+    close = tampered.index("\n```", payload_start)
+    tampered = (
+        tampered[:payload_start]
+        + "CORRUPTED\n"
+        + tampered[payload_start:close]
+        + tampered[close:]
+    )
+    violation = validate_inline_skill_hashes(
+        f"<invariants>[scope]</invariants>{tampered}"
+    )
+    assert violation is not None
+    assert violation.code in {"skill_hash_mismatch", "skill_inline_malformed"}
+
+
+def test_validate_dual_channel_ignores_body_local_skill_refs() -> None:
+    resolved = resolve_inline_bodies(("handoff-packet-authoring",))
+    block = format_inline_skill_block(
+        resolved[0].slug,
+        source_uri=resolved[0].source_uri,
+        rev=resolved[0].rev,
+        body=resolved[0].body,
+    )
+    text = f"<invariants>[scope]</invariants>{block}"
+    assert validate_exactly_one_skill_channel(text) is None
+
+
+def test_validate_dual_channel_rejects_outer_pointer_for_inlined_slug() -> None:
+    resolved = resolve_inline_bodies(("consult-routing",))
+    block = format_inline_skill_block(
+        resolved[0].slug,
+        source_uri=resolved[0].source_uri,
+        rev=resolved[0].rev,
+        body=resolved[0].body,
+    )
+    text = (
+        f"<invariants>[scope]\n"
+        "- Use the `consult-routing` skill "
+        "(canonical slug — seat self-fetches; ¬ fs-read skill body)\n"
+        f"{block}</invariants>"
+    )
+    violation = validate_exactly_one_skill_channel(text)
+    assert violation is not None
+    assert violation.code == "skill_dual_channel"
+
+
+def test_mirror_preserves_skill_inline_source_uri() -> None:
+    resolved = resolve_inline_bodies(("consult-routing",))
+    block = format_inline_skill_block(
+        resolved[0].slug,
+        source_uri=resolved[0].source_uri,
+        rev=resolved[0].rev,
+        body=resolved[0].body,
+    )
+    packet = (
+        "<corpus>spec at workspaces://universal-llm-gateway/tmp/reviews/foo.md</corpus>"
+        f"<invariants>{block}</invariants>"
+    )
+    mirrored, rewrites = mirror_workspaces_pointers_for_web(packet)
+    assert rewrites
+    assert "workspaces://universal-llm-gateway/.cursor/skills/consult-routing" in mirrored
+    assert validate_inline_skill_hashes(mirrored) is None
+
+
+def test_build_pointer_includes_skill_inline_gate_line() -> None:
+    body = build_pointer_body(
+        request_id="req-inline-ptr",
+        packet_path="cortex://ephemeral/handoffs/foo.md",
+        subject="review topic",
+        pointer_body=None,
+        handoff_contract="consult",
+        to_agent="claude-web",
+        skill_inline_materialized=True,
+    )
+    assert "Skill-inline gate" in body
+    assert "load before findings" in body
+
+
+def test_validate_enriched_inline_packet(tmp_path: Path) -> None:
+    cortex = _StubCortex(todo_skills=["mcp-surface-change"])
+    enriched = enrich_handoff_packet(
+        _THIN_WEB_PACKET,
+        cortex=cortex,
+        to_agent="claude-web",
+        skill_delivery="inline_authoritative",
+    )
+    rel = "universal-llm-gateway/tmp/reviews/web-inline.md"
+    dest = tmp_path / rel
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(enriched.text, encoding="utf-8")
+    validate_packet(
+        request_id="req-web-inline",
+        packet_path=rel,
+        to_agent="claude-web",
+        handoff_contract="consult",
+        workspaces_root=tmp_path,
+    )

@@ -1,0 +1,14 @@
+{
+  "ranked": [
+    {
+      "slug": "fs",
+      "description": "Filesystem MCP operations.",
+      "reason": "already loaded"
+    },
+    {
+      "slug": "consult-routing",
+      "description": "Route consult and handoff requests.",
+      "reason": "valid after loaded drop"
+    }
+  ]
+}

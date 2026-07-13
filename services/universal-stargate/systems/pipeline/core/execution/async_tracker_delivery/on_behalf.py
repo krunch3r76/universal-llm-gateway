@@ -12,11 +12,18 @@ Stargate now posts ``record.result.content`` to ``record.target_thread``
 on behalf of the dispatched role/model — delivery is deterministic
 regardless of the model's tool surface or tool-budget consumption.
 
-Every delivery writes a durable cortex sidecar first. Within the bus body
+Every delivery writes a durable cortex sidecar first via the hoisted
+``write_thread_sidecar_for_send`` primitive in
+``libs/cortex_store/dispatch_ops/_thread_sidecar.py``. Within the bus body
 limit the turn carries full content plus a durable-copy footer; above the
 limit it carries a relocation pointer (URI + sha256 + summary). The only
 terminal failure without POST is oversized content when the sidecar write
 also fails.
+
+F4b latency guard: synchronous cross-store sidecar writes on ``send`` share
+this primitive. If ``send`` p95 exceeds 2× baseline, demote to async
+on_behalf-style delivery or reject ``sidecar_content`` — see
+``agent-bus-api-ergonomics.md`` §E4.
 
 Invariant ladder (each branch emits exactly one event and returns a
 distinct ``DeliveryOutcome``):

@@ -67,13 +67,45 @@ def build_result_handle(*, thread_id: str, after_turn: int = 1) -> dict[str, Any
     }
 
 
+# friction 23653 / 24081: the attended Cursor IDE MCP client can orphan a long
+# blocking agent_bus(wait) tools/call — the server completes and emits
+# wait.completed within the 75s relay budget, but the IDE spinner stays open
+# (client-transport orphan) until the operator interrupts (~30 min). A 0s
+# snapshot returns in milliseconds, so the IDE never holds the call open long
+# enough to orphan; re-polling is instant. Web/API seats do not share this
+# transport failure mode and keep the 60s server-side block (fewer round-trips).
+_CURSOR_IDE_POLL_WAIT_SECONDS = 0
+_DEFAULT_POLL_WAIT_SECONDS = 60
+
+
+def resolve_poll_wait_seconds(
+    *, caller_agent: str | None = None, poller_is_cursor_ide: bool = False
+) -> int:
+    """Wait window to recommend to the polling seat via ``poll_hint``.
+
+    Cursor-attended pollers get a 0s snapshot; every other seat keeps the 60s
+    server-side block. ``poller_is_cursor_ide`` forces the snapshot for surfaces
+    whose poller is definitionally the Cursor IDE lead (e.g. cursor-sdk generate)
+    regardless of the agent-supplied ``caller_agent``.
+    """
+    if poller_is_cursor_ide or (caller_agent or "").strip().lower() == "cursor":
+        return _CURSOR_IDE_POLL_WAIT_SECONDS
+    return _DEFAULT_POLL_WAIT_SECONDS
+
+
 def build_poll_hint_wait(
-    *, thread_id: str, from_agent: str, after_turn: int = 1
+    *,
+    thread_id: str,
+    from_agent: str,
+    after_turn: int = 1,
+    wait_seconds: int = _DEFAULT_POLL_WAIT_SECONDS,
 ) -> dict[str, Any]:
     """Canonical poll_hint (Phase 2+): server-side wait args.
 
     fetch is now only a fallback; the wait op is the documented retrieval path.
     ``from_agent`` is the web seat whose first reply completes the handoff.
+    ``wait_seconds`` is the recommended server-side block; resolve it with
+    ``resolve_poll_wait_seconds`` so Cursor-attended pollers get a 0s snapshot.
 
     ``arguments`` is a dict for human inspection; ``arguments_json`` is the
     MCP wire form (``agent_bus.arguments`` must be a JSON string).
@@ -81,7 +113,7 @@ def build_poll_hint_wait(
     wait_args = {
         "thread": thread_id,
         "after_turn": after_turn,
-        "wait_seconds": 60,
+        "wait_seconds": wait_seconds,
         "completion": "first_reply_from",
         "from_agent": from_agent,
     }
@@ -214,12 +246,16 @@ def build_handoff_result(
     to_agent: str,
     reply_from_agent: str | None = None,
     after_turn: int = 1,
+    poll_wait_seconds: int = _DEFAULT_POLL_WAIT_SECONDS,
 ) -> dict[str, Any]:
     """Assemble the three additive handoff-response fields.
 
     ``to_agent`` is the bus recipient address for the dispatch turn.
     ``reply_from_agent`` is the predicted closeout author for ``poll_hint``;
     defaults to ``to_agent`` when omitted (manual handoff / API-role generate).
+    ``poll_wait_seconds`` is the recommended server-side wait window for the
+    polling seat (``resolve_poll_wait_seconds``): 0 for the Cursor-attended IDE
+    lead, 60 for web/API seats.
 
     The returned dict includes a top-level ``reply_from_agent`` scalar
     (``reply_from_agent or to_agent``) that exactly matches
@@ -236,6 +272,7 @@ def build_handoff_result(
             thread_id=thread_id,
             from_agent=reply_from_agent or to_agent,
             after_turn=after_turn,
+            wait_seconds=poll_wait_seconds,
         ),
     }
 

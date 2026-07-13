@@ -1,4 +1,4 @@
-"""Web boot inject-channel skill maps for skill_suggest loaded_set accounting."""
+"""Web boot inject-channel skill maps for injected-skill loaded-set accounting."""
 
 from __future__ import annotations
 
@@ -97,7 +97,7 @@ def web_seat_injected_skill_slugs(
     family: str | None = None,
     platform: str | None = None,
 ) -> tuple[str, ...]:
-    """Boot-card channel slugs for skill_suggest loaded_set accounting."""
+    """Boot-card channel slugs for injected-skill loaded-set accounting."""
     parts = agent.split("-", 1)
     resolved_family = family if family is not None else (parts[0] if parts else agent)
     resolved_platform = platform

@@ -30,7 +30,7 @@ When the opening message contains a `transcript:cursor-YYYY-MM-DD-HHmm` ID:
 Execute the Continue Mode protocol from `mcp-tool-awareness_ws.mdc` — three
 parallel `CallMcpTool` reads (session summary, activity journal, recent transcripts).
 
-**Do NOT**: call `cortex_brief`, load full transcripts, or read the boot narrative.
+**Do NOT**: call `cortex_brief`, load full transcripts, or read the briefing card.
 **Cost**: ~5-10KB total. Fast enough to not waste context before work starts.
 
 This mode activates on the transcript ID alone — no `@cortex-essentials.mdc`

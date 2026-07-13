@@ -943,7 +943,10 @@ async def build_dispatch_body(
     if req.max_tool_turns is not None:
         pipeline_options["max_tool_turns"] = req.max_tool_turns
     elif req.role is not None:
-        pipeline_options["max_tool_turns"] = 100
+        from agent_seat.tool_loop_budget import API_DEFAULT_MAX_TOOL_TURNS
+
+        # API native tool loop only — cursor-sdk does not consume this knob.
+        pipeline_options["max_tool_turns"] = API_DEFAULT_MAX_TOOL_TURNS
     if skills_mount is not None:
         pipeline_options["skills_mount"] = skills_mount
     if req.server_tools is not None:

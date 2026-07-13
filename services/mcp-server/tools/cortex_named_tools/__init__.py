@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ._boot_runner import run_cortex_boot
+from ._boot_runner import run_cortex_brief
 from ._data_tools import register_data_tools
 from ._orchestration_tools import register_orchestration_tools
 from ._staging_tools import register_staging_tools
@@ -28,6 +28,6 @@ def register_cortex_named_tools(mcp: FastMCP, *, surface: str = "life") -> None:
 
 __all__ = [
     "register_cortex_named_tools",
-    "run_cortex_boot",
+    "run_cortex_brief",
     "render_cortex_tool_description",
 ]

@@ -1,12 +1,52 @@
 from __future__ import annotations
 
-from datetime import datetime
+import re
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from .models import AgentName
+
+_DEFAULT_ACTIVE_SINCE_DAYS = 14
+_ACTIVE_SINCE_DAY_RE = re.compile(r"^(\d+)d$", re.IGNORECASE)
+
+
+def parse_active_since(
+    value: str | datetime | None,
+    *,
+    default_days: int = _DEFAULT_ACTIVE_SINCE_DAYS,
+) -> datetime:
+    """Normalize ``active_since`` query input to a UTC cutoff datetime.
+
+    Accepts ISO8601 UTC strings or ``<int>d`` shorthand (e.g. ``14d``).
+    ``None`` ⇒ now − ``default_days``.
+    """
+    if value is None:
+        return datetime.now(UTC) - timedelta(days=default_days)
+    if isinstance(value, datetime):
+        return value.astimezone(UTC) if value.tzinfo else value.replace(tzinfo=UTC)
+    raw = value.strip()
+    day_match = _ACTIVE_SINCE_DAY_RE.match(raw)
+    if day_match:
+        days = int(day_match.group(1))
+        return datetime.now(UTC) - timedelta(days=days)
+    parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    return parsed.astimezone(UTC) if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+def active_since_window_label(value: str | datetime | None) -> str:
+    """Human label for the active_since window (boot digest)."""
+    if value is None:
+        return f"{_DEFAULT_ACTIVE_SINCE_DAYS}d window"
+    if isinstance(value, datetime):
+        return value.isoformat()
+    raw = value.strip()
+    day_match = _ACTIVE_SINCE_DAY_RE.match(raw)
+    if day_match:
+        return f"{day_match.group(1)}d window"
+    return raw
 
 # Self-addressed guard removed — root cause fixed (fix-1, todo:agent-bus-from-attribution-root-cause).
 
@@ -21,6 +61,48 @@ from .models import AgentName
 # pre-staged prompt context; that lane is still hard-capped.
 MAX_TURN_BODY_CHARS = 8_000
 MAX_LONG_TURN_BODY_CHARS = 64_000
+MAX_SIDECAR_CONTENT_CHARS = 256 * 1024
+
+
+def sidecar_content_too_large_envelope(*, body_chars: int) -> dict[str, object]:
+    """Structured 413 detail for oversized sidecar_content."""
+    return {
+        "code": "sidecar_content_too_large",
+        "reason": "sidecar_content_too_large",
+        "limit_chars": MAX_SIDECAR_CONTENT_CHARS,
+        "body_chars": body_chars,
+        "message": (
+            f"sidecar_content exceeds {MAX_SIDECAR_CONTENT_CHARS:,} chars. "
+            "Split the artifact or trim before retrying send."
+        ),
+        "retryable": True,
+        "source": "agent_bus_store.send",
+    }
+
+
+def sidecar_write_failed_envelope(
+    *,
+    thread_id: str | None,
+    error: str,
+) -> dict[str, object]:
+    """Structured error when the durable sidecar write fails before turn insert."""
+    data: dict[str, object] = {"error": error}
+    if thread_id is not None:
+        data["thread_id"] = thread_id
+    return {
+        "code": "sidecar_write_failed",
+        "reason": "sidecar_write_failed",
+        "message": "Durable sidecar write failed; turn was not inserted.",
+        "retryable": True,
+        "source": "agent_bus_store.send",
+        "data": data,
+    }
+
+
+def sidecar_content_limit_error(content: str) -> dict[str, object] | None:
+    if len(content) <= MAX_SIDECAR_CONTENT_CHARS:
+        return None
+    return sidecar_content_too_large_envelope(body_chars=len(content))
 
 
 def body_too_large_envelope(*, limit: int, body_chars: int) -> dict[str, object]:
@@ -182,30 +264,53 @@ class TurnList(BaseModel):
 
 
 class UnreadThreadTocRow(BaseModel):
-    """One thread's sparse unread-digest entry for a recipient-scoped
-    fetch_unread. Descriptive fields are intentionally omitted so the digest
-    stays bounded across many threads — expand a thread on demand via
-    fetch_unread(thread=N), get(thread, turn_number), or threads(has_unread=true).
-    """
+    """One thread's unread-digest entry for recipient-scoped fetch_unread."""
 
     thread: str
     unread_count: int
     latest_turn_number: int
+    slug: str
+    last_subject: str | None = None
+    last_activity_at: datetime
 
 
 class UnreadThreadToc(BaseModel):
-    """Recipient-scoped unread inbox digest — bounded, one row per thread.
+    """Recipient-scoped unread inbox digest — windowed, enriched, bounded.
 
     Returned by GET /turns/unread-toc and by recipient-scoped fetch_unread
     (``to`` set, ``thread`` unset). Thread-scoped fetch_unread returns TurnList.
-    Bounded by thread count so the catch-up read stays under the MCP inline
-    response guard regardless of unread turn volume (friction 16835).
+    ``total_*`` counts are unwindowed; ``threads`` respects active_since + limit.
     """
 
     threads: list[UnreadThreadTocRow]
     total_unread_threads: int
     total_unread_turns: int
     marked_read: int = 0
+    truncated: bool = False
+    active_since: str | None = None
+
+
+class TurnReadStateBulk(BaseModel):
+    """Bulk read-state patch — XOR turn_numbers vs through_turn."""
+
+    turn_numbers: list[int] | None = None
+    through_turn: int | None = None
+    agent: str | None = None
+
+    @field_validator("turn_numbers")
+    @classmethod
+    def _positive_turn_numbers(cls, value: list[int] | None) -> list[int] | None:
+        if value is None:
+            return None
+        if not value:
+            raise ValueError("turn_numbers must be non-empty when provided")
+        if any(n < 1 for n in value):
+            raise ValueError("turn_numbers must be >= 1")
+        return value
+
+
+class TurnReadStateBulkResult(BaseModel):
+    marked_read: int
 
 
 class TurnUpdate(BaseModel):
@@ -335,6 +440,9 @@ class TurnSendCreate(BaseModel):
 
     Exactly one of new_slug (new-thread path) or thread (continue path) required.
     Both or neither → 400 send_xor_violation (validated in route, not here).
+
+    When ``sidecar_content`` is set the server writes the durable cortex sidecar
+    after the thread id is known and before the turn row is inserted.
     """
 
     model_config = {"populate_by_name": True}
@@ -345,6 +453,8 @@ class TurnSendCreate(BaseModel):
     to: AgentName
     subject: str
     body: str
+    sidecar_content: str | None = None
+    sidecar_slug: str | None = None
     allow_long_body: bool = False
     summary: str | None = None
     tags: list[str] = Field(default_factory=list)
@@ -362,6 +472,9 @@ class TurnSendCreated(BaseModel):
     send_path: Literal["new_thread", "continue"]
     thread: ThreadDetail
     turn: TurnCreated
+    marked_read: int = 0
+    sidecar_uri: str | None = None
+    sidecar_sha256: str | None = None
 
 
 class ThreadClose(BaseModel):
@@ -397,3 +510,113 @@ class DispatchClaimAndPost(BaseModel):
     to_agent: str
     subject: str
     body: str
+
+
+TRIAGE_THREAD_CAP = 50
+TRIAGE_MARK_READ_FLOOR_HOURS = 24
+TRIAGE_CLOSE_FLOOR_DAYS = 7
+TRIAGE_CONFIRM_TTL_SECONDS = 600
+_BROADCAST_TO_AGENTS = frozenset({"all", "team"})
+
+
+def parse_older_than(value: str | datetime, *, anchor: datetime | None = None) -> datetime:
+    """Normalize ``older_than`` to a UTC cutoff (threads at or before qualify)."""
+    ref = anchor if anchor is not None else datetime.now(UTC)
+    if isinstance(value, datetime):
+        return value.astimezone(UTC) if value.tzinfo else value.replace(tzinfo=UTC)
+    raw = value.strip()
+    if not raw:
+        raise ValueError("older_than is required")
+    day_match = _ACTIVE_SINCE_DAY_RE.match(raw)
+    if day_match:
+        days = int(day_match.group(1))
+        return ref - timedelta(days=days)
+    hour_match = re.match(r"^(\d+)h$", raw, re.IGNORECASE)
+    if hour_match:
+        hours = int(hour_match.group(1))
+        return ref - timedelta(hours=hours)
+    parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    return parsed.astimezone(UTC) if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+def older_than_age(value: str | datetime) -> timedelta:
+    """Wall-clock age implied by ``older_than`` (now − cutoff)."""
+    now_ts = datetime.now(UTC)
+    return now_ts - parse_older_than(value, anchor=now_ts)
+
+
+def older_than_below_floor_envelope(
+    *,
+    action: str,
+    older_than: str,
+    floor_label: str,
+) -> dict[str, object]:
+    return {
+        "code": "older_than_below_floor",
+        "message": (
+            f"triage action {action!r} requires older_than >= {floor_label}; "
+            f"got {older_than!r}"
+        ),
+        "retryable": False,
+        "source": "agent_bus_store.triage",
+        "data": {"action": action, "older_than": older_than, "floor": floor_label},
+    }
+
+
+def triage_floor_error(action: str, older_than: str) -> dict[str, object] | None:
+    """Return 422 envelope when ``older_than`` is below the action floor."""
+    now_ts = datetime.now(UTC)
+    cutoff = parse_older_than(older_than, anchor=now_ts)
+    if action == "close":
+        floor_cutoff = now_ts - timedelta(days=TRIAGE_CLOSE_FLOOR_DAYS)
+        if cutoff > floor_cutoff:
+            return older_than_below_floor_envelope(
+                action=action,
+                older_than=older_than,
+                floor_label=f"{TRIAGE_CLOSE_FLOOR_DAYS}d",
+            )
+    if action == "mark_read":
+        floor_cutoff = now_ts - timedelta(hours=TRIAGE_MARK_READ_FLOOR_HOURS)
+        if cutoff > floor_cutoff:
+            return older_than_below_floor_envelope(
+                action=action,
+                older_than=older_than,
+                floor_label=f"{TRIAGE_MARK_READ_FLOOR_HOURS}h",
+            )
+    return None
+
+
+class ThreadTriageRequest(BaseModel):
+    """Bulk inbox hygiene — POST /threads/triage (agent_bus only)."""
+
+    model_config = {"populate_by_name": True}
+
+    from_agent: AgentName = Field(alias="from")
+    older_than: str
+    status: ThreadStatus | None = None
+    action: Literal["mark_read", "close"] = "mark_read"
+    dry_run: bool = True
+    confirm_token: str | None = None
+
+
+class ThreadTriageCandidate(BaseModel):
+    id: str
+    slug: str
+    last_activity_at: datetime
+    unread_count: int
+
+
+class ThreadTriageDryRun(BaseModel):
+    candidates: list[ThreadTriageCandidate]
+    total_candidates: int
+    capped: bool
+    confirm_token: str
+    expires_at: datetime
+
+
+class ThreadTriageExecuted(BaseModel):
+    action: Literal["mark_read", "close"]
+    thread_count: int
+    marked_read: int = 0
+    closed: int = 0
+    confirm_token_id: str

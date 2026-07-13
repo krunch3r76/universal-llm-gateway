@@ -40,7 +40,7 @@ def get_boot_legal_contacts() -> dict[str, Any]:
     """Entities connected to active legal_matter entities via reasoning edges.
 
     For each connected entity, returns top 3 assertions by recency.
-    Used by cortex_boot to expand visibility of legal matter participants.
+    Used by cortex_brief to expand visibility of legal matter participants.
     """
     conn = cortex_conn()
     try:

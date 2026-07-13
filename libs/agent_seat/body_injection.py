@@ -135,7 +135,7 @@ def web_auto_inject_skill_slugs() -> tuple[str, ...]:
     return ()
 
 
-# Channel-2/3 maps: agent_seat.inject_channels (shared-lib SOT for skill_suggest).
+# Channel-2/3 maps: agent_seat.inject_channels (shared-lib SOT for inject-channel maps).
 
 
 def is_web_seat_slug(seat: str) -> bool:

@@ -27,6 +27,12 @@ from transport_utils import DEFAULT_AGENT_BUS_URL, make_async_client
 from universal_logging import get_logger
 
 from .admission import FrontierEndpointError
+from .handoff_life_mirror import (
+    build_life_mirror_pointer_body,
+    build_workspaces_pointer_body,
+    is_life_web_receiver,
+    packet_mirror_uri,
+)
 
 logger = get_logger(__name__)
 
@@ -226,6 +232,22 @@ def validate_packet(
         text=text,
     )
 
+    from implement_admission.skill_delivery_channels import (
+        validate_exactly_one_skill_channel,
+        validate_inline_skill_hashes,
+    )
+
+    for validator in (validate_exactly_one_skill_channel, validate_inline_skill_hashes):
+        violation = validator(text)
+        if violation is not None:
+            raise FrontierEndpointError(
+                request_id=request_id,
+                field="packet_path",
+                reason=violation.reason,
+                status_code=422,
+                code=violation.code,
+            )
+
     missing = [tag for tag in _REQUIRED_PACKET_TAGS if tag not in text]
     if to_agent in _mcp_packet_seats() and _MCP_CAPABILITIES_TAG not in text:
         missing.append(_MCP_CAPABILITIES_TAG)
@@ -262,7 +284,7 @@ def validate_packet(
                 status_code=422,
                 code="handoff_packet_missing_densify_floor",
             )
-        if to_agent != _WEB_RECEIVER_AGENT:
+        if not is_life_web_receiver(to_agent):
             missing_refs = _missing_arch_skill_refs(text)
             if missing_refs:
                 reason = (
@@ -400,18 +422,6 @@ def _extract_block(text: str, tag: str) -> str | None:
     return match.group(1) if match else None
 
 
-_POINTER_TEMPLATE = """\
-{subject}
-
-Read the packet:
-  fs(sandbox="workspaces", op="read", path="{packet_path}")
-
-The packet contains all six required blocks:
-  <scope>, <invariants>, <task_guidance>, <mcp_capabilities>,
-  <output_format>, <corpus>
-
-Reply on this thread with findings. Use <need> only as last resort."""
-
 # One-line contract annotation appended to the default pointer template after
 # the subject. Skipped when the caller overrides pointer_body.
 _CONTRACT_LINES: dict[str, str] = {
@@ -440,9 +450,6 @@ _WEB_CONSULT_PRIMING = (
     "skill bodies on platform seats."
 )
 
-_WEB_RECEIVER_AGENT = "claude-web"
-
-
 def build_pointer_body(
     *,
     request_id: str,
@@ -452,22 +459,40 @@ def build_pointer_body(
     handoff_contract: str,
     materialization_fallback: bool = False,
     to_agent: str | None = None,
+    skill_inline_materialized: bool = False,
 ) -> str:
     """Return the bus turn body.
 
     Uses caller override if given, else the standard handoff-dispatchers.mdc
     pointer template with a one-line ``Contract:`` annotation derived from
-    ``handoff_contract``. Enforces ≤ _POINTER_MAX_LINES lines on the final body
-    regardless of which path produced it.
+    ``handoff_contract``. Life/web receivers get a cortex:// read instruction
+    (a23964); workspaces-capable seats keep the workspaces template.
+    Enforces ≤ _POINTER_MAX_LINES lines on the final body regardless of path.
     """
     if pointer_body is not None:
         body = pointer_body
     else:
         contract_line = _CONTRACT_LINES.get(handoff_contract, "")
-        body = _POINTER_TEMPLATE.format(
-            subject=f"{subject}\n{contract_line}" if contract_line else subject,
-            packet_path=packet_path,
+        subject_block = (
+            f"{subject}\n{contract_line}" if contract_line else subject
         )
+        if is_life_web_receiver(to_agent):
+            packet_uri = (
+                packet_path
+                if packet_path.startswith("cortex://")
+                else packet_mirror_uri(packet_path)
+            )
+            body = build_life_mirror_pointer_body(
+                subject=subject_block, packet_uri=packet_uri
+            )
+        elif packet_path.startswith("cortex://"):
+            body = build_life_mirror_pointer_body(
+                subject=subject_block, packet_uri=packet_path
+            )
+        else:
+            body = build_workspaces_pointer_body(
+                subject=subject_block, packet_path=packet_path
+            )
         if materialization_fallback:
             body += (
                 "\n\nFallback: re-read via source_ref frontmatter if packet "
@@ -476,10 +501,15 @@ def build_pointer_body(
         if handoff_contract == "consult":
             priming = (
                 _WEB_CONSULT_PRIMING
-                if to_agent == _WEB_RECEIVER_AGENT
+                if is_life_web_receiver(to_agent)
                 else _CONSULT_ARCH_READ
             )
             body += f"\n\n{priming}"
+        if skill_inline_materialized:
+            body += (
+                "\n\nSkill-inline gate: full skill bodies are inlined in the "
+                "mirrored packet — load before findings."
+            )
     lines = body.splitlines()
     if len(lines) > _POINTER_MAX_LINES:
         raise FrontierEndpointError(

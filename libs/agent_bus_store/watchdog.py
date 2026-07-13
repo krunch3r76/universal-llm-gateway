@@ -171,6 +171,9 @@ def _sweep() -> None:
     _reap_pending(_cutoff_for_ttl(_PENDING_TTL))
     _reap_admitted(_cutoff_for_ttl(_ADMITTED_TTL))
     _reap_active(_cutoff_for_ttl(_ACTIVE_ABANDON_TTL))
+    from .reconcile import reconcile_orphaned_dispatches
+
+    reconcile_orphaned_dispatches()
 
 
 async def run_watchdog() -> None:

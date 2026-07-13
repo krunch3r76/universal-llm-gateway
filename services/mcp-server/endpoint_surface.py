@@ -85,7 +85,9 @@ def _tool_domain_map(
     return mapping
 
 
-def domain_endpoints_for(domain: str, *, canonical_yaml_path: Path | None = None) -> list[str]:
+def domain_endpoints_for(
+    domain: str, *, canonical_yaml_path: Path | None = None
+) -> list[str]:
     """Return endpoint visibility for a registry domain."""
     path_key = str(canonical_yaml_path or _DEFAULT_CANONICAL)
     table = _domain_endpoints_map(path_key)
@@ -99,7 +101,9 @@ def derive_surface_primary_tools(
     """Primary ``tools/list`` names for one MCP mount."""
     path = canonical_yaml_path or _DEFAULT_CANONICAL
     data = _load_registry(path)
-    domains: list[str] = list((data.get("surface_primary_domains") or {}).get(surface) or [])
+    domains: list[str] = list(
+        (data.get("surface_primary_domains") or {}).get(surface) or []
+    )
     manifest = derive_claude_manifest(path)
     domain_to_tool = {e["domain"]: e["tool_name"] for e in manifest}
     tools: set[str] = set()
@@ -116,6 +120,8 @@ def overflow_tool_allowed_on_surface(
     canonical_yaml_path: Path | None = None,
 ) -> bool:
     """Whether an overflow catalog row may appear on ``tool_search`` for *surface*."""
+    if tool_name == "skill_suggest":
+        return False
     if surface == "code":
         return True
     if tool_name.startswith("git_"):
@@ -124,12 +130,12 @@ def overflow_tool_allowed_on_surface(
         return False
     if tool_name in _CORTEX_ADMIN_OVERFLOW_TOOLS:
         return False
-    if tool_name == "skill_suggest":
-        return False
     path_key = str(canonical_yaml_path or _DEFAULT_CANONICAL)
     domain = _tool_domain_map(path_key).get(tool_name)
     if domain:
-        return "life" in domain_endpoints_for(domain, canonical_yaml_path=canonical_yaml_path)
+        return "life" in domain_endpoints_for(
+            domain, canonical_yaml_path=canonical_yaml_path
+        )
     return True
 
 
@@ -139,9 +145,7 @@ def filter_overflow_metadata_for_surface(
     *,
     canonical_yaml_path: Path | None = None,
 ) -> dict[str, tuple[str, dict[str, Any]]]:
-    """Drop code-only overflow rows from a life-surface manifest."""
-    if surface == "code":
-        return overflow_metadata
+    """Drop surface-disallowed overflow rows (life-only filters + hidden tombstones)."""
     return {
         name: meta
         for name, meta in overflow_metadata.items()

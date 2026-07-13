@@ -11,6 +11,7 @@ from implement_admission.dense_spec_schema import (
     dense_spec_hash_uri,
 )
 from implement_admission.gate_distillation import read_dense_spec_text
+from implement_admission.implement_ready_gate6_resolve import resolve_gate6_ratification
 from implement_admission.implement_ready_gate_resolve import (
     SkepticRatificationOutcome,
     resolve_skeptic_ratification,
@@ -274,13 +275,6 @@ def _op_implement_ready_preflight(
     acceptance_criteria = raw_acs if isinstance(raw_acs, list) else []
 
     spec_hash_uri = dense_spec_hash_uri(spec_text) if spec_text else None
-    skeptic_outcome = SkepticRatificationOutcome(ratified=False)
-    if triage == "judgment_required":
-        skeptic_outcome = _resolve_skeptic_ratification_outcome(
-            todo_id=todo_id,
-            spec_hash_uri=spec_hash_uri,
-            now_iso=now_iso,
-        )
 
     raw_waived = attrs.get("recon_waived")
     recon_waived, recon_waiver, stale_discarded = resolve_effective_recon_waived(
@@ -295,6 +289,40 @@ def _op_implement_ready_preflight(
             **recon_waiver.event_payload(),
         )
 
+    skeptic_outcome = SkepticRatificationOutcome(ratified=False)
+    if triage == "judgment_required":
+        skeptic_outcome = _resolve_skeptic_ratification_outcome(
+            todo_id=todo_id,
+            spec_hash_uri=spec_hash_uri,
+            now_iso=now_iso,
+        )
+        if (
+            skeptic_outcome.assertion is None
+            and not skeptic_outcome.ratified
+            and not recon_waived
+            and assertion is not None
+        ):
+            try:
+                from implement_admission.closeout_helpers import workspaces_root
+
+                from .._doc_validate_skeptic import DispatchSkepticBusReader
+
+                reader = DispatchSkepticBusReader()
+                fetch_bus_turn = reader.bus_turn_get
+                ws_root = workspaces_root()
+            except Exception:
+                fetch_bus_turn = None
+                ws_root = None
+            gate6_outcome = resolve_gate6_ratification(
+                todo_attrs=attrs,
+                implement_ready_assertion=assertion,
+                spec_hash_uri=spec_hash_uri,
+                fetch_bus_turn=fetch_bus_turn,
+                workspaces_root=ws_root,
+            )
+            if gate6_outcome.ratified:
+                skeptic_outcome = gate6_outcome
+
     # Dispatch-parity evidence grounding (friction 22906): evaluate the same
     # FILE_EVIDENCE_PATHS sub-checks the implement dispatch enforces where the
     # skeptic bus turn is fetchable; the lib falls back to an explicit warning
@@ -302,26 +330,27 @@ def _op_implement_ready_preflight(
     evidence_grounded: bool | None = None
     evidence_unresolved: list[str] | None = None
     evidence_mode: str | None = None
-    if (
-        skeptic_outcome.ratified
-        and not recon_waived
-        and skeptic_outcome.assertion is not None
-    ):
-        try:
-            from implement_admission.closeout_helpers import workspaces_root
+    if skeptic_outcome.ratified and not recon_waived:
+        if skeptic_outcome.evidence_grounded is not None:
+            evidence_grounded = skeptic_outcome.evidence_grounded
+            evidence_unresolved = skeptic_outcome.evidence_unresolved
+            evidence_mode = skeptic_outcome.evidence_mode
+        elif skeptic_outcome.assertion is not None:
+            try:
+                from implement_admission.closeout_helpers import workspaces_root
 
-            from .._doc_validate_skeptic import evaluate_skeptic_grounding
+                from .._doc_validate_skeptic import evaluate_skeptic_grounding
 
-            grounding = evaluate_skeptic_grounding(
-                skeptic_assertion=skeptic_outcome.assertion,
-                ws_root=workspaces_root(),
-            )
-        except Exception:
-            grounding = {"deferred_to_stargate": True}
-        if not grounding.get("deferred_to_stargate"):
-            evidence_grounded = grounding.get("evidence_grounded")
-            evidence_unresolved = grounding.get("evidence_unresolved")
-            evidence_mode = grounding.get("evidence_mode")
+                grounding = evaluate_skeptic_grounding(
+                    skeptic_assertion=skeptic_outcome.assertion,
+                    ws_root=workspaces_root(),
+                )
+            except Exception:
+                grounding = {"deferred_to_stargate": True}
+            if not grounding.get("deferred_to_stargate"):
+                evidence_grounded = grounding.get("evidence_grounded")
+                evidence_unresolved = grounding.get("evidence_unresolved")
+                evidence_mode = grounding.get("evidence_mode")
 
     report = preflight_implement_ready(
         todo_id=todo_id,

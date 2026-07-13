@@ -12,7 +12,7 @@ from agent_seat.registry import (
 )
 
 from ._boot_diff import build_boot_diff
-from ._boot_runner import BootMode, run_cortex_boot
+from ._boot_runner import BootMode, run_cortex_brief
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -144,7 +144,7 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
         boot_family, boot_platform = _resolve_boot_family_platform(
             agent=agent, family=family, platform=platform
         )
-        return run_cortex_boot(
+        return run_cortex_brief(
             family=boot_family,
             platform=boot_platform,
             role=role,
@@ -188,7 +188,7 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
         boot_family, boot_platform = _resolve_boot_family_platform(
             agent=agent, family=family, platform=platform
         )
-        primary = run_cortex_boot(
+        primary = run_cortex_brief(
             family=boot_family,
             platform=boot_platform,
             role=role,
@@ -201,7 +201,7 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
             return primary
 
         diff_family, diff_platform = _parse_seat_slug(diff_with)
-        secondary = run_cortex_boot(
+        secondary = run_cortex_brief(
             family=diff_family,
             platform=diff_platform,
             transcript_id="",

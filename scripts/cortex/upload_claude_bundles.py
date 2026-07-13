@@ -22,8 +22,7 @@ if str(_REPO / "libs") not in sys.path:
     sys.path.insert(0, str(_REPO / "libs"))
 
 import httpx  # noqa: E402
-
-from claude_bundles.resolver import UI_TARGET_SLUGS  # noqa: E402
+from claude_bundles.resolver import claude_ai_target_slugs  # noqa: E402
 from claude_bundles.skills_api import (  # noqa: E402
     _API_BASE,
     build_slug_index,
@@ -37,51 +36,8 @@ from claude_bundles.skills_api import (  # noqa: E402
     md_zip_entry_name,
     multipart_files,
     validate_bundle_dir,
-    write_skill_zip,
     write_md_zip,
-)
-
-# Thread 4049 turn 4 — skills indexed locally but not yet on claude.ai.
-GAP_SLUGS: tuple[str, ...] = (
-    "add-mcp-tool",
-    "build-pipeline",
-    "corpus-cross-reference-discipline",
-    "corpus-grounded-skill-authoring",
-    "corpus-map-authoring",
-    "cursor-rule-authoring",
-    "debug-with-events",
-    "document-lifecycle-tracking",
-    "docx-ingestion",
-    "email-tool-dispatch",
-    "enrichment-quality-discipline",
-    "entity-creation-discipline",
-    "entity-lifecycle-discipline",
-    "evidence-review-discipline",
-    "friction-review",
-    "fs",
-    "git-posture",
-    "handoff-packet-authoring",
-    "handoff-pickup",
-    "handoff-prompt-authoring",
-    "image-video-generation",
-    "implement-todo",
-    "implement-work-item",
-    "implementation-plan-workflow",
-    "lead-seat-boot",
-    "mcp-surface-change",
-    "mcp-tool-loop-trace-matrix",
-    "orchestrator-workflow",
-    "pipeline-substrate-capabilities",
-    "pre-deploy-gate-discipline",
-    "produce-uml",
-    "provenance-granularity",
-    "refine-pipeline",
-    "required-skills-pickup",
-    "research-article-ingest",
-    "service-lifecycle",
-    "session-close-audit",
-    "session-close-kernel",
-    "ulg-architecture",
+    write_skill_zip,
 )
 
 PILOT_SLUGS: tuple[str, ...] = ("fs", "session-close-kernel", "add-mcp-tool")
@@ -121,12 +77,18 @@ def _resolve_targets(args: argparse.Namespace) -> list[str]:
         return _parse_slugs(args.slugs)
     if args.pilot:
         return list(PILOT_SLUGS)
-    if args.gap:
-        return list(GAP_SLUGS)
-    return list(UI_TARGET_SLUGS)
+    return list(claude_ai_target_slugs())
 
 
-def _validate_targets(root: Path, targets: list[str], *, skip_invalid: bool = False) -> list[str]:
+def missing_claude_ai_uploads(observed_customize_skills: set[str]) -> list[str]:
+    """Desired catalog Claude.ai targets minus observed Customize UI names."""
+    observed = {s.lower() for s in observed_customize_skills}
+    return [slug for slug in claude_ai_target_slugs() if slug.lower() not in observed]
+
+
+def _validate_targets(
+    root: Path, targets: list[str], *, skip_invalid: bool = False
+) -> list[str]:
     valid: list[str] = []
     errors = 0
     for slug in targets:
@@ -144,7 +106,9 @@ def _validate_targets(root: Path, targets: list[str], *, skip_invalid: bool = Fa
     return valid
 
 
-def _write_md_zip(root: Path, targets: list[str], out_path: Path, *, name_pattern: str) -> int:
+def _write_md_zip(
+    root: Path, targets: list[str], out_path: Path, *, name_pattern: str
+) -> int:
     skills_root = root / ".claude" / "skills"
     path = write_md_zip(targets, skills_root, out_path, name_pattern=name_pattern)
     import zipfile
@@ -223,19 +187,26 @@ def _run_api_upload(args: argparse.Namespace, root: Path, targets: list[str]) ->
         for slug in targets:
             name, description = validate_bundle_dir(slug, _bundle_dir(root, slug))
             nfiles = len(multipart_files(slug, _bundle_dir(root, slug)))
-            print(f"DRY-RUN {slug}: ok name={name} desc_len={len(description)} files={nfiles}")
+            print(
+                f"DRY-RUN {slug}: ok name={name} desc_len={len(description)} files={nfiles}"
+            )
         print(f"OK dry-run ({len(targets)} skills)")
         print("NOTE: --api uploads do NOT appear in claude.ai Customize → Skills")
         return 0
 
     api_key = load_api_key()
     if not api_key:
-        print("ERROR: ANTHROPIC_API_KEY not set and ~/.gateway/secrets.env missing", file=sys.stderr)
+        print(
+            "ERROR: ANTHROPIC_API_KEY not set and ~/.gateway/secrets.env missing",
+            file=sys.stderr,
+        )
         return 1
 
     stats = {"create": 0, "version": 0}
     errors = 0
-    with httpx.Client(base_url=_API_BASE, headers=default_headers(api_key), timeout=120.0) as client:
+    with httpx.Client(
+        base_url=_API_BASE, headers=default_headers(api_key), timeout=120.0
+    ) as client:
         if args.delete_api_pilot:
             errors += _delete_api_pilot(client)
             if not targets:
@@ -258,7 +229,10 @@ def _run_api_upload(args: argparse.Namespace, root: Path, targets: list[str]) ->
                 stats[action] += 1
             except httpx.HTTPStatusError as exc:
                 body = exc.response.text[:500]
-                print(f"ERROR {slug}: HTTP {exc.response.status_code} {body}", file=sys.stderr)
+                print(
+                    f"ERROR {slug}: HTTP {exc.response.status_code} {body}",
+                    file=sys.stderr,
+                )
                 errors += 1
             except ValueError as exc:
                 print(f"ERROR: {exc}", file=sys.stderr)
@@ -293,13 +267,22 @@ def main() -> int:
         action="store_true",
         help="Upload via Skills API (Messages API only — NOT claude.ai Customize)",
     )
-    parser.add_argument("--dry-run", action="store_true", help="Validate only; no writes")
-    parser.add_argument("--pilot", action="store_true", help=f"Target slugs {PILOT_SLUGS}")
-    parser.add_argument("--gap", action="store_true", help="Target 39-skill gap list")
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Validate only; no writes"
+    )
+    parser.add_argument(
+        "--pilot", action="store_true", help=f"Target slugs {PILOT_SLUGS}"
+    )
     parser.add_argument("--slugs", help="Comma-separated slug list")
-    parser.add_argument("--regen", action="store_true", help="Run gen_claude_bundles.py first")
-    parser.add_argument("--sleep", type=float, default=1.0, help="Seconds between API uploads")
-    parser.add_argument("--force-create", action="store_true", help="API: always POST /v1/skills")
+    parser.add_argument(
+        "--regen", action="store_true", help="Run gen_claude_bundles.py first"
+    )
+    parser.add_argument(
+        "--sleep", type=float, default=1.0, help="Seconds between API uploads"
+    )
+    parser.add_argument(
+        "--force-create", action="store_true", help="API: always POST /v1/skills"
+    )
     parser.add_argument(
         "--skip-invalid",
         action="store_true",
@@ -312,11 +295,20 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    if not args.write_zips and not args.write_md_zip and not args.api and not args.delete_api_pilot:
+    if (
+        not args.write_zips
+        and not args.write_md_zip
+        and not args.api
+        and not args.delete_api_pilot
+    ):
         parser.error("Specify --write-md-zip FILE, --write-zips DIR, or --api")
 
     root = _workspace_root()
-    targets = _resolve_targets(args) if not args.delete_api_pilot or args.gap or args.pilot or args.slugs else []
+    targets = (
+        _resolve_targets(args)
+        if not args.delete_api_pilot or args.pilot or args.slugs
+        else []
+    )
 
     if args.regen:
         subprocess.check_call(

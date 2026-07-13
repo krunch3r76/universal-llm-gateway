@@ -82,6 +82,7 @@ INTENTIONAL_OVERFLOW: frozenset[str] = frozenset(
         "markdown",
         "model_status",
         "promote_document_to_evidence",
+        "skill_suggest",
         "topology",
         # Web / HTTP tools not yet canonicalized
         "http_diff",

@@ -7,15 +7,19 @@ turn read; this sweep remains orphan-only and does not replace that path.
 
 from __future__ import annotations
 
+import logging
 import os
 from datetime import UTC, datetime
 from typing import Any
 
-from .db.connection import connect
+from .db.connection import connect, now
 from .db.lifecycle import _transition_lifecycle_state
 from .db.threads_atomic import terminate_dispatch
 from .db.turns import get_turns, insert_turn
 from .events.lifecycle import emit_dispatch_orphaned
+from .sdk_liveness import LivenessVerdict, evaluate_link_liveness
+
+logger = logging.getLogger("agent-bus.reconcile")
 
 # Phase 2 raises this so resume can claim links first; Phase 1 = immediate.
 RECONCILE_RESUME_GRACE_S: int = int(
@@ -60,6 +64,62 @@ def _orphan_recipient(thread_id: str, caller_agent: str | None) -> str:
     if row is not None:
         return str(row["to_agent"])
     return "dispatch"
+
+
+def _stamp_liveness_deferred(
+    *,
+    thread_id: str,
+    execution_id: str,
+    reason: str,
+) -> None:
+    with connect() as conn:
+        conn.execute(
+            "UPDATE thread_dispatch_links "
+            "SET liveness_probe_deferred_at = ?, liveness_probe_deferred_reason = ? "
+            "WHERE thread_id = ? AND execution_id = ?",
+            (now(), reason, thread_id, execution_id),
+        )
+
+
+def _clear_liveness_deferred(*, thread_id: str, execution_id: str) -> None:
+    with connect() as conn:
+        conn.execute(
+            "UPDATE thread_dispatch_links "
+            "SET liveness_probe_deferred_at = NULL, liveness_probe_deferred_reason = NULL "
+            "WHERE thread_id = ? AND execution_id = ?",
+            (thread_id, execution_id),
+        )
+
+
+def _backfill_terminal_link(
+    link: dict[str, Any],
+    *,
+    status: str,
+) -> bool:
+    thread_id = link["thread_id"]
+    execution_id = link["execution_id"]
+    terminate_dispatch(
+        thread_id=thread_id,
+        terminal_status=status,
+        execution_id=execution_id,
+    )
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT bus_lifecycle_state FROM threads WHERE id = ?",
+            (thread_id,),
+        ).fetchone()
+        current = row["bus_lifecycle_state"] if row is not None else None
+        if current == "active":
+            _transition_lifecycle_state(
+                conn,
+                thread_id,
+                "completed" if status == "completed" else "failed",
+                "watchdog_reap",
+            )
+        elif current == "admitted":
+            _transition_lifecycle_state(conn, thread_id, "abandoned", "watchdog_reap")
+    _clear_liveness_deferred(thread_id=thread_id, execution_id=execution_id)
+    return True
 
 
 def _reap_orphan_link(link: dict[str, Any]) -> bool:
@@ -121,6 +181,28 @@ def _reap_orphan_link(link: dict[str, Any]) -> bool:
         ).fetchone()
         if link_row is None or link_row["terminal_status"] is not None:
             return False
+
+    verdict, reason, terminal_status = evaluate_link_liveness(
+        thread_id=thread_id,
+        link_execution_id=execution_id,
+    )
+    if verdict is LivenessVerdict.SKIP_LIVE:
+        _clear_liveness_deferred(thread_id=thread_id, execution_id=execution_id)
+        return False
+    if verdict is LivenessVerdict.DEFER:
+        _stamp_liveness_deferred(
+            thread_id=thread_id,
+            execution_id=execution_id,
+            reason=reason,
+        )
+        return False
+    if verdict is LivenessVerdict.TERMINAL_BACKFILL:
+        assert terminal_status is not None
+        return _backfill_terminal_link(
+            link,
+            status=terminal_status,
+        )
+    _clear_liveness_deferred(thread_id=thread_id, execution_id=execution_id)
 
     recipient = _orphan_recipient(thread_id, caller_agent)
     body = (

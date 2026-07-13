@@ -16,7 +16,7 @@ regenerates those clauses from here so docs stay in lockstep with the role roste
 
 from __future__ import annotations
 
-from .profiles import CapabilityProfile, get_profile, load_roles
+from .profiles import CapabilityProfile, get_profile, load_profiles, load_roles
 from .registry import normalize_bus_address
 
 # Roles documented as legacy in agent-facing docs. Currently empty — machinery
@@ -32,6 +32,23 @@ def is_legacy_role(role: str) -> bool:
 def _resolved_profile(role: str) -> CapabilityProfile:
     rp = load_roles()[role]
     return get_profile(rp.default_family, rp.default_platform)
+
+
+def auto_seats() -> list[str]:
+    """Bus-address slugs for ``auto_dispatchable`` profiles (``op=generate`` via ``seat=``)."""
+    seats: list[str] = []
+    for (family, platform), prof in load_profiles().items():
+        if not prof.auto_dispatchable:
+            continue
+        seat = normalize_bus_address(f"{family}-{platform}")
+        if seat not in seats:
+            seats.append(seat)
+    return seats
+
+
+def auto_seat_clause() -> str:
+    """Comma-joined auto-seat roster, e.g. ``cursor-sdk``."""
+    return ", ".join(auto_seats())
 
 
 def generate_roles() -> list[str]:

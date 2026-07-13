@@ -12,3 +12,16 @@ def recipient_in_clause(seat: str, *, include_team: bool) -> tuple[str, list[str
     placeholders = ",".join("?" * (len(recipients) + len(extras)))
     clause = f"(to_agent IN ({placeholders}))"
     return clause, [*recipients, *extras]
+
+
+def sender_auto_mark_clause(seat: str) -> tuple[str, list[str]]:
+    """Alias-resolved ``to_agent`` match for send/through_turn auto-mark.
+
+    Mirrors ``expand_recipient_slugs`` (same vocabulary as ``wait`` inbox
+    matching) but excludes broadcast ``all`` — global read_at would clobber
+    every other recipient's unread signal.
+    """
+    recipients = expand_recipient_slugs(seat)
+    placeholders = ",".join("?" * len(recipients))
+    clause = f"(to_agent IN ({placeholders}))"
+    return clause, list(recipients)

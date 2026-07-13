@@ -97,6 +97,15 @@ task without hard-coding model IDs.
 
 ---
 
+## `libs/life_intent`
+
+Life-domain intent dispatch: registry-backed verb check, work-order render,
+proposal store, commit apply, and response firewall. Emits `life.intent.*`
+lifecycle events. Consumed by Stargate frontier-consult life-intent routes and
+MCP imprint / handoff mirror paths. Config: `config/cortex/life_intent_v1.yaml`.
+
+---
+
 ## `libs/llm_adapters`
 
 Provider adapters for frontier LLM calls. Owns provider-native

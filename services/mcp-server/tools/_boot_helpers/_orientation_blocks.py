@@ -12,7 +12,7 @@ manual edits (assertion 11520). Renderer source survives the next boot.
 
 Block text is operator-approved (2026-05-31); the grok model string is
 ``xai/grok-4.5`` per operator. Spec:
-``cortex:notes/system/threads/part2-cortex-boot-capability-axis-handoff.md`` and
+capability-axis handoff notes under ``cortex:notes/system/threads/`` and
 ``claude-web-dispatch-decision-table.md`` §4.
 """
 
@@ -63,8 +63,8 @@ _DISPATCH_CONSULT_BLOCK_CLAUDE = """\
 ## Dispatch & Consult — pick by CAPABILITY, not model family
 To consult a MODEL you do NOT use a build harness. When connector-bound, `team_dispatch`/`panel_dispatch` are server-primary — call directly (if unbound, see MCP binding). Model strings = `provider/model` on optional `model=` (bare name = 404).
 - **API role** (reviewer|artisan|skeptic|…) → pre-stage bus thread; `team_dispatch(op=generate, role=…, dispatch_thread_id=…, model=?)` → poll `agent_bus(wait)`. ¬ synthetic seat models on generate (422).
-- **Mechanical implement** → `team_dispatch(op=generate, role=cursor-sdk, source_ref=todo:{slug}, contract=implement, dispatch_thread_id=…)` — dense attrs required; `packet_path=` is the named exception.
-- **Recon/judgment (cursor-sdk)** → `role=cursor-sdk, model=cursor/grok-4.5, contract=light-bounded` (≠ API `xai/grok-4.5`).
+- **Mechanical implement** → `team_dispatch(op=generate, seat=cursor-sdk, source_ref=todo:{slug}, contract=implement, dispatch_thread_id=…)` — dense attrs required; `packet_path=` is the named exception.
+- **Recon/judgment (cursor-sdk)** → `seat=cursor-sdk, model=cursor/grok-4.5, contract=light-bounded` (≠ API `xai/grok-4.5`).
 - **Manual handoff** → `op=handoff, seat=claude-web|claude-cursor, source_ref=…|packet_path=…`; handoff IS delivery (web→operator push, cursor→IDE).
 - **Panel** → `panel_dispatch(…, disposition="panel")`. **Role-less one-shot** → `pipeline(chat-dispatch, model=…)`. **Advisor** → `dispatch(tool="advisor")` [overflow].
 ⚠ Build harness ≠ model picker: grok answer → `team_dispatch(op=generate, role=artisan, model="xai/grok-4.5")`.
@@ -119,15 +119,17 @@ def _render_server_primary_manifest_line() -> str:
 # inject-channel block key: session-close-web-block
 # Name-only skill refs (friction 23128 / agent-bus:4888): Use the `<slug>` skill;
 # seat self-fetches. ¬ fs-read skill paths. agent-skills/ mirror is retired (D3).
+# Seat-routed with session-close-kernel (a24077 follow-up): life/web → close(op=…);
+# Cursor → session_close (exception only — not web primary).
 _SESSION_CLOSE_WEB_BLOCK = """\
 ## Session Close — MANDATORY on "close session" / "session end"
 Skill bodies arrive when you explicitly Use the `<slug>` skill — do NOT fs-read skill bodies.
-Web seats have **no** auto-loaded `session-close.mdc`. Before `cortex(tool="session_close", ...)`:
+Web seats have **no** auto-loaded `session-close.mdc`. Seat-routed (kernel SOT):
 1. Use the `session-close-kernel` skill — canonical protocol
-2. Use the `session-close-audit` skill — run before close
-3. claude-web only: Use the `web-transcript-preprocessing` skill before assembling `transcript_md`
-4. `cortex(tool="session_close_preflight", ...)` → then `cortex(tool="session_close", ...)`
-Every `session_close` / `session_close_preflight` response carries `_protocol` with this pointer."""
+2. **Life/web primary:** `close(op=stage|draft|check|commit)` then optional `close(op=handoff)` — ¬ `cortex(tool="session_close")` as primary
+3. claude-web verbatim: Use the `web-transcript-preprocessing` skill before `draft(transcript_md_path=…)`
+4. **Cursor exception only:** `session_close_preflight` → `session_close` (Use the `session-close-audit` skill on that path — not web primary)
+Kernel skill is SOT; `_protocol` on cortex `session_close` responses also points here."""
 
 
 def _render_op_skill_bindings_line() -> str | None:
@@ -230,7 +232,8 @@ def render_orientation_blocks(
     ``(claude, cursor)`` seat.
 
     ``domain`` soft-reorders blocks (coding | life | mixed-minimal); bodies are
-    never hard-suppressed except model-tier (pointer-only on web).
+    never hard-suppressed here — life hard-suppression is enforced in
+    ``_boot_domain`` fetch/todo partition and ``render_briefing_card`` assembly.
 
     Emitted above the skills list by ``render_briefing_card()``. Each element
     carries a leading newline so the card's ``"\\n".join(parts)`` produces a

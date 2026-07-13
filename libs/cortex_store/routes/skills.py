@@ -1,11 +1,11 @@
 """GET /skills — skill manifest over HTTP (HTTP-first agent substrate PoC).
 
-Serves the INDEX envelope — id, name, trigger, `source_uri` + body `digest`,
-`applicable_agents` (informational metadata) — so an agent with only `curl` can
-discover the full active skill set. ``for_agent`` is accepted for back-compat and
-slug validation only; capability filtering still applies when set. Bodies stay
-pull-on-demand via `source_uri` (preserves the 1637 trim).
-todo:skills-http-endpoint / decision:http-first-agent-substrate.
+Serves the INDEX envelope — id, name, trigger, `source_uri` + body `digest` —
+so an agent with only `curl` can discover the full active skill set.
+``for_agent`` is accepted for back-compat and slug validation only; capability
+filtering still applies when set. Bodies stay pull-on-demand via `source_uri`
+(preserves the 1637 trim). todo:skills-http-endpoint /
+decision:http-first-agent-substrate.
 """
 
 from __future__ import annotations
@@ -63,7 +63,6 @@ _SKILLS_MANIFEST_SQL = f"""
     SELECT id, name, description, source_uri,
            json_extract(attributes, '$.trigger_short') AS trigger_short,
            json_extract(attributes, '$.skill_category') AS skill_category,
-           json_extract(attributes, '$.applicable_agents') AS applicable_agents_json,
            COALESCE(CAST(json_extract(attributes, '$.delivery_priority') AS INTEGER), 100)
                AS delivery_priority,
            json_extract(attributes, '$.delivery_criticality') AS delivery_criticality
@@ -93,7 +92,6 @@ def _manifest_row(row: dict[str, Any]) -> dict[str, Any]:
         "name": row.get("name"),
         "trigger": skill_description_text(row),
         "skill_category": row.get("skill_category"),
-        "applicable_agents": _decode_list(row.get("applicable_agents_json")),
         "delivery_priority": (
             100
             if row.get("delivery_priority") is None
@@ -178,9 +176,9 @@ def get_skills(
         None,
         description=(
             "Seat slug for back-compat and capability filtering. Unknown slugs "
-            "return HTTP 422. Does not filter on `applicable_agents` "
-            "(informational metadata only). Only `lifecycle=active` skills "
-            "are listed."
+            "return HTTP 422. Capability filtering still applies when set. "
+            "Seat-name applicable_agents filtering is retired. "
+            "Only discoverable-lifecycle skills are listed."
         ),
     ),
     view: Annotated[
@@ -370,13 +368,12 @@ def _public_stage_a_result(
     return {k: v for k, v in result.items() if k not in omit}
 
 
-@router.post("/suggest")
 async def post_skill_suggest(
     request: Request,
     x_cortex_transport: Annotated[str | None, Header()] = None,
     x_skill_include_all: Annotated[str | None, Header()] = None,
 ) -> dict[str, Any]:
-    """Seat-gated deterministic skill delta suggestions with optional rerank."""
+    """Dormant skill-suggest implementation (route unregistered pending redesign)."""
     data = await request.json()
     if not isinstance(data, dict):
         raise HTTPException(

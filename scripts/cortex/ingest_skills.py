@@ -7,7 +7,7 @@ retype — ``_skill_projection._upsert`` skips slugs already migrated to
 ``scripts/cortex/consolidate_skill_to_agent_skill.py``. Role-aware ingest:
 todo:skills-ingest-role-aware.
 
-Workspace: ``.cursor/skills/*/SKILL.md`` (description, applicable_agents, …).
+Workspace: ``.cursor/skills/*/SKILL.md`` (description, surface_class, …).
 SOT bodies: ``.cursor/skills/{slug}/SKILL.md`` (description, declared attrs, …).
 
 Steady-state companion graph sync (attribute + ``references`` edges) is **always**

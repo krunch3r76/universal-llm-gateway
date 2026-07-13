@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from agent_seat.tool_loop_budget import API_DEFAULT_MAX_TOOL_TURNS
 from cursor_capabilities import supported_knobs
 from dispatch_knob_policy import recommend_knobs
 
@@ -31,7 +32,12 @@ class KnobOutcome:
 
 @dataclass(frozen=True, slots=True)
 class Warning:
-    code: Literal["sdk_cost_risk", "knob_dropped", "reasoning_effort_ignored"]
+    code: Literal[
+        "sdk_cost_risk",
+        "knob_dropped",
+        "reasoning_effort_ignored",
+        "max_tool_turns_ignored",
+    ]
     message: str
     model: str | None = None
     contract: str | None = None
@@ -162,6 +168,7 @@ def align_cursor_knobs(
     suppress_cost_warning: bool = False,
     cost_intent_reason: str | None = None,
     reasoning_effort: str | None = None,
+    max_tool_turns: int | None = None,
     request_id: str | None = None,
     execution_id: str | None = None,
 ) -> AlignmentResult:
@@ -188,6 +195,21 @@ def align_cursor_knobs(
                 message=(
                     "reasoning_effort is not forwarded on cursor-sdk dispatches; "
                     "use model_knobs instead"
+                ),
+                model=model_id,
+                contract=contract,
+            )
+        )
+
+    if max_tool_turns is not None:
+        warnings.append(
+            Warning(
+                code="max_tool_turns_ignored",
+                message=(
+                    "max_tool_turns is not forwarded on cursor-sdk / cursor/* "
+                    "dispatches — the agent loop is unbounded (completion or "
+                    "outer timeout only); API roles default to "
+                    f"{API_DEFAULT_MAX_TOOL_TURNS}"
                 ),
                 model=model_id,
                 contract=contract,

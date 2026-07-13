@@ -919,6 +919,32 @@ async def _deliver_sdk_closeout(
     )
 
     if bus_result.status_code < 400:
+        contract = (req.handoff_contract or "consult").lower()
+        try:
+            from systems.frontier_consult.cursor_sdk_role_delivery import (
+                post_role_labeled_check_turn,
+                resolve_delivery_from_role,
+                should_bridge_cursor_check_review,
+            )
+
+            if should_bridge_cursor_check_review(
+                contract=contract,
+                resolved_model=req.model,
+            ):
+                delivery_role = resolve_delivery_from_role(req.model)
+                if delivery_role:
+                    bridge_source = (outcome.body or delivery.body or "").strip()
+                    await post_role_labeled_check_turn(
+                        thread_id=req.thread_id,
+                        to_agent=reply_to,
+                        delivery_from_role=delivery_role,
+                        closeout_body=bridge_source,
+                    )
+        except Exception:
+            logger.exception(
+                "cursor check/review role bridge failed: dispatch_id=%s",
+                req.dispatch_id,
+            )
         emit_sdk_worker_completed(
             dispatch_id=req.dispatch_id,
             thread_id=req.thread_id,

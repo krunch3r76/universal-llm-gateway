@@ -16,12 +16,12 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from .db import init_db
+from .reconcile import reconcile_orphaned_dispatches
 from .routes.messages import router as messages_router
 from .routes.threads import router as threads_router
 from .routes.turns import router as turns_router
 from .routes.wait import router as wait_router
 from .turns_models import MAX_TURN_BODY_CHARS, body_too_large_envelope
-from .reconcile import reconcile_orphaned_dispatches
 from .watchdog import run_watchdog
 
 logger = logging.getLogger("agent-bus")

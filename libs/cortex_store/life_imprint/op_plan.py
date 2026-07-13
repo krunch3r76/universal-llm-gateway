@@ -80,14 +80,63 @@ def _search_matches(conn: sqlite3.Connection, mention: str) -> list[dict[str, st
     ]
 
 
+def _alias_matches(conn: sqlite3.Connection, mention: str) -> list[dict[str, str]]:
+    rows = query(
+        conn,
+        "SELECT entity_id, entity_type, alias FROM entity_aliases "
+        "WHERE alias = ? ORDER BY entity_id",
+        (mention,),
+    )
+    return [
+        {
+            "entity_id": str(row["entity_id"]),
+            "entity_type": str(row["entity_type"]),
+            "alias": str(row["alias"]),
+        }
+        for row in rows
+    ]
+
+
+def _dedupe_matches(matches: list[dict[str, str]]) -> list[dict[str, str]]:
+    seen: set[str] = set()
+    out: list[dict[str, str]] = []
+    for match in matches:
+        eid = match.get("entity_id", "")
+        if not eid or eid in seen:
+            continue
+        seen.add(eid)
+        out.append(match)
+    return out
+
+
+def _bare_ref_matches(conn: sqlite3.Connection, ref: str) -> list[dict[str, str]]:
+    """Collect candidate matches for refs without a type prefix (D2)."""
+    return _dedupe_matches(
+        _surface_form_matches(conn, ref)
+        + _alias_matches(conn, ref)
+        + _search_matches(conn, ref)
+    )
+
+
 def resolve_entity_id(
     conn: sqlite3.Connection,
     ref: str,
     *,
     statement_idx: int,
     field: str,
+    planned_ids: frozenset[str] | None = None,
 ) -> tuple[str | None, CandidateMatch | None, dict[str, Any] | None]:
     """Resolve ref to canonical id, or return ambiguity candidate."""
+    if planned_ids and ref in planned_ids:
+        return ref, None, {"input": ref, "entity_id": ref, "via": "planned_create"}
+
+    if ":" not in ref:
+        return (
+            None,
+            CandidateMatch(statement_idx, field, ref, _bare_ref_matches(conn, ref)),
+            None,
+        )
+
     rows = query(conn, "SELECT id FROM entities WHERE id = ?", (ref,))
     if rows:
         return str(rows[0]["id"]), None, None
@@ -154,10 +203,12 @@ def build_op_plan(
     """Return (op_plan, candidates). Skips statements with unresolved ambiguity."""
     plan: list[dict[str, Any]] = []
     candidates: list[dict[str, Any]] = []
+    planned_ids: set[str] = set()
 
     for idx, stmt in enumerate(_iter_statements(patch)):
         subject = stmt["@id"]
         typing_key = "@type" if "@type" in stmt else ("a" if "a" in stmt else None)
+        planned = frozenset(planned_ids)
 
         if typing_key:
             plan.append(
@@ -166,17 +217,23 @@ def build_op_plan(
                     args=_typing_args(stmt, subject),
                 ).as_dict()
             )
-            continue
+            planned_ids.add(subject)
 
         for key, value in stmt.items():
-            if key in _METADATA_KEYS or key.startswith("@"):
+            if key in _METADATA_KEYS or key.startswith("@") or key in {"@type", "a"}:
+                continue
+            if typing_key and key in _TYPED_ENTITY_ATTRS:
                 continue
             spec = registry.predicate_for_key(key)
             if spec is None:
                 continue
 
             subj_id, subj_cand, subj_note = resolve_entity_id(
-                conn, subject, statement_idx=idx, field="subject"
+                conn,
+                subject,
+                statement_idx=idx,
+                field="subject",
+                planned_ids=planned,
             )
             if subj_cand:
                 candidates.append(subj_cand.as_dict())
@@ -197,7 +254,11 @@ def build_op_plan(
                 if obj_ref is None:
                     continue
                 tgt_id, tgt_cand, tgt_note = resolve_entity_id(
-                    conn, obj_ref, statement_idx=idx, field="object"
+                    conn,
+                    obj_ref,
+                    statement_idx=idx,
+                    field="object",
+                    planned_ids=planned,
                 )
                 if tgt_cand:
                     candidates.append(tgt_cand.as_dict())
@@ -233,6 +294,8 @@ def build_op_plan(
                             "claim": value,
                             "confidence": "believed",
                             "evidence": "operator-stated via imprint",
+                            "derivation_type": "user_statement",
+                            "confidence_score": 0.9,
                         },
                         resolves={"subject": subj_note} if subj_note else None,
                     ).as_dict()

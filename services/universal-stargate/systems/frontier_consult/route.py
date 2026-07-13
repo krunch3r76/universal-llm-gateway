@@ -10,32 +10,33 @@ from typing import Annotated, Any, Literal, Self
 
 import httpx
 from agent_seat.profiles import get_profile
-from agent_seat.registry import normalize_agent_slug
 from fastapi import APIRouter, Response
 from fastapi.responses import JSONResponse
 from implement_admission.preflight import (
     DecisionNotAssertedError,
     require_decision_asserted,
 )
+from implement_admission.skill_delivery_channels import SkillInlineBudgetExceeded
 from implement_admission.source_ref import SourceRefError, parse_source_ref
 from pydantic import BaseModel, Field, model_validator
 from transport_utils import DEFAULT_STARGATE_URL, make_async_client
 from universal_logging import get_logger
 
 from .admission import (
+    enforce_generate_role_seat_exclusive,
+    enforce_handoff_seat_not_auto,
     is_cursor_sdk_generate_admission,
+    reject_role_cursor_sdk_on_generate,
     resolve_handoff_seat,
     resolve_handoff_target,
 )
 from .closeout_reply import parse_closeout_payload, run_implement_closeout_pipeline
 from .contract_derivation import derive_contract
-from .cursor_sdk_generate import dispatch_cursor_sdk_generate
 from .densify_triage import DensityTriage
 from .deploy_state_gate import require_deploy_state
 from .dispatch_thread_context import as_user_message, read_latest_dispatch_thread_body
 from .events import (
     FrontierHandoffCreated,
-    FrontierHandoffDeprecatedAlias,
     FrontierHandoffExecutorOverride,
     FrontierHandoffMaterializationIncomplete,
     FrontierHandoffPacketEnriched,
@@ -55,7 +56,16 @@ from .handoff import (
     create_handoff_thread,
     validate_packet,
 )
-from .handoff_packet_enrich import enrich_handoff_packet
+from .handoff_life_mirror import (
+    WEB_RECIPIENT_REACHABILITY,
+    is_life_web_receiver,
+    mirror_packet_file_to_cortex,
+)
+from .handoff_packet_enrich import (
+    HandoffSkillInlineBudgetExceeded,
+    HandoffSkillInlineMaterialized,
+    enrich_handoff_packet,
+)
 from .handoff_response import (
     build_executor_recommendation_field,
     build_handoff_result,
@@ -63,6 +73,7 @@ from .handoff_response import (
     build_recommended_executor,
     build_recommended_review,
     build_seat_capability,
+    resolve_poll_wait_seconds,
 )
 from .implement_admission_bridge import (
     BridgeResult,
@@ -115,14 +126,16 @@ class TeamDispatchGenerateBody(_DispatchCommon):
 
     API functional roles auto-provision an agent-bus thread and admit
     ``output_contract=thread`` (poll ``poll_hint``, not inline-only
-    ``pipeline(op=result)``). ``cursor-sdk`` uses the dedicated SDK orchestrator.
+    ``pipeline(op=result)``). Auto-dispatch seats (``cursor-sdk``) use
+    ``seat=`` and the dedicated SDK orchestrator.
 
     ``dispatch_thread_id`` binds server-owned thread persistence on the
     team-dispatch pipeline (distinct from ``transcript_id`` provenance-only).
     """
 
     op: Literal["generate"]
-    role: str
+    role: str | None = None
+    seat: str | None = None
     dispatch_thread_id: str | None = None
     model: str | None = None
     # Caller inline-intent knob. ``None`` keeps the team default (tools-on for
@@ -277,8 +290,10 @@ def _normalize_op_body(
     # variant that declares it: the frontier (role-free) surface defaults it to
     # False, the team variants default it to None (team default tools-on, unless
     # the caller opts out) — see service.build_dispatch_body + admission.
-    if hasattr(body, "role"):
+    if hasattr(body, "role") and body.role is not None:
         common["role"] = body.role
+    if hasattr(body, "seat") and body.seat is not None:
+        common["seat"] = body.seat
     if hasattr(body, "dispatch_thread_id"):
         common["dispatch_thread_id"] = body.dispatch_thread_id
     if hasattr(body, "model"):
@@ -392,16 +407,33 @@ async def team_dispatch(
     """
     request_id = uuid.uuid4().hex[:12]
     role = getattr(body, "role", None)
+    seat = getattr(body, "seat", None)
     model = getattr(body, "model", None)
+    if body.op == "generate":
+        try:
+            enforce_generate_role_seat_exclusive(
+                role, seat, request_id=request_id
+            )
+        except FrontierEndpointError as exc:
+            return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
+        if role is not None:
+            try:
+                reject_role_cursor_sdk_on_generate(role, request_id=request_id)
+            except FrontierEndpointError as exc:
+                return JSONResponse(
+                    status_code=exc.status_code, content=exc.to_dict()
+                )
     if (
         body.op == "generate"
-        and role is not None
-        and is_cursor_sdk_generate_admission(role, model=model, request_id=request_id)
+        and is_cursor_sdk_generate_admission(
+            role=role, seat=seat, model=model, request_id=request_id
+        )
     ):
+        sdk_seat = seat or "cursor-sdk"
         return await dispatch_cursor_sdk_generate_route(
             request_id=request_id,
             body=body,
-            role=role,
+            seat=sdk_seat,
             response=response,
         )
 
@@ -410,7 +442,7 @@ async def team_dispatch(
         and getattr(body, "contract", None) == "wrap"
         and role is not None
         and not is_cursor_sdk_generate_admission(
-            role, model=model, request_id=request_id
+            role=role, seat=seat, model=model, request_id=request_id
         )
     ):
         return JSONResponse(
@@ -613,50 +645,16 @@ async def team_handoff(
             event_bus.publish_from_sync(event)
 
         if body.seat is not None:
-            if normalize_agent_slug(body.seat) == "cursor-sdk":
-                # DEPRECATED ALIAS: op=handoff,seat=cursor-sdk normalizes to the
-                # canonical generate path. packet_path is already resolved above
-                # (source_ref bridge + `assert packet_path is not None`) and
-                # require_decision_asserted has already run, so route straight to
-                # the SDK generate orchestrator. It creates the thread and
-                # dispatches the worker itself — do NOT duplicate either here.
-                result = await dispatch_cursor_sdk_generate(
-                    request_id=request_id,
-                    role="cursor-sdk",
-                    model=None,
-                    subject=body.subject,
-                    caller_agent=body.caller_agent,
-                    contract="implement",
-                    packet_path=packet_path,
-                    message_text=body.pointer_body,
-                    reuse_thread=getattr(body, "reuse_thread", None),
-                    bus_lifecycle=getattr(body, "bus_lifecycle", None),
+            try:
+                enforce_handoff_seat_not_auto(body.seat, request_id=request_id)
+            except FrontierEndpointError as exc:
+                return JSONResponse(
+                    status_code=exc.status_code, content=exc.to_dict()
                 )
-                result["deprecated_alias"] = {
-                    "normalized_from": "op=handoff,seat=cursor-sdk",
-                    "use_instead": "team_dispatch(op=generate, role=cursor-sdk, …)",
-                }
-                result["warnings"] = (
-                    list(result.get("warnings") or [])
-                    + warnings
-                    + [
-                        "op=handoff,seat=cursor-sdk is deprecated — use "
-                        "team_dispatch(op=generate, role=cursor-sdk, …)"
-                    ]
-                )
-                _publish(
-                    FrontierHandoffDeprecatedAlias(
-                        request_id=request_id,
-                        normalized_op="generate",
-                        seat="cursor-sdk",
-                    )
-                )
-                return result
-            else:
-                to_agent, family, platform, resolved_model = resolve_handoff_seat(
-                    seat=body.seat,
-                    request_id=request_id,
-                )
+            to_agent, family, platform, resolved_model = resolve_handoff_seat(
+                seat=body.seat,
+                request_id=request_id,
+            )
         else:
             to_agent, family, platform, resolved_model = resolve_handoff_target(
                 role=body.role or "",
@@ -682,14 +680,45 @@ async def team_handoff(
             workspaces_root=workspaces_root,
         )
 
+        enrich_result = None
         if to_agent in _mcp_packet_seats():
             packet_file = _resolve_packet_file(workspaces_root.resolve(), packet_path)
             if packet_file is not None:
                 original = packet_file.read_text(encoding="utf-8", errors="replace")
-                enrich_result = enrich_handoff_packet(
-                    original,
-                    cortex=reader,
+                skill_delivery = (
+                    WEB_RECIPIENT_REACHABILITY.skill_delivery
+                    if is_life_web_receiver(to_agent)
+                    else None
                 )
+                try:
+                    enrich_result = enrich_handoff_packet(
+                        original,
+                        cortex=reader,
+                        to_agent=to_agent,
+                        skill_delivery=skill_delivery,
+                    )
+                except SkillInlineBudgetExceeded as exc:
+                    _publish(
+                        HandoffSkillInlineBudgetExceeded(
+                            request_id=request_id,
+                            packet_path=packet_path,
+                            total_bytes=exc.total_bytes,
+                            budget_bytes=exc.budget_bytes,
+                            per_slug_bytes=exc.per_slug_bytes,
+                        )
+                    )
+                    raise FrontierEndpointError(
+                        request_id=request_id,
+                        field="packet_path",
+                        reason=exc.reason,
+                        status_code=422,
+                        code="skill_inline_budget_exceeded",
+                        details={
+                            "total_bytes": exc.total_bytes,
+                            "budget_bytes": exc.budget_bytes,
+                            "per_slug_bytes": exc.per_slug_bytes,
+                        },
+                    ) from exc
                 if enrich_result.changed:
                     packet_file.write_text(enrich_result.text, encoding="utf-8")
                     _publish(
@@ -700,6 +729,15 @@ async def team_handoff(
                             skills_added=enrich_result.skills_added,
                             skills_already_wired=enrich_result.skills_already_wired,
                             threads_added=enrich_result.threads_added,
+                        )
+                    )
+                if enrich_result.inline_materialized:
+                    _publish(
+                        HandoffSkillInlineMaterialized(
+                            request_id=request_id,
+                            packet_path=packet_path,
+                            slugs=enrich_result.inline_slugs,
+                            total_bytes=enrich_result.inline_total_bytes,
                         )
                     )
 
@@ -745,14 +783,32 @@ async def team_handoff(
                 )
             )
 
+        pointer_packet_path = packet_path
+        if is_life_web_receiver(to_agent):
+            life_packet = _resolve_packet_file(
+                workspaces_root.resolve(), packet_path
+            )
+            if life_packet is not None:
+                pointer_packet_path = await loop.run_in_executor(
+                    None,
+                    partial(
+                        mirror_packet_file_to_cortex,
+                        life_packet,
+                        packet_path=packet_path,
+                    ),
+                )
+
         pointer = build_pointer_body(
             request_id=request_id,
-            packet_path=packet_path,
+            packet_path=pointer_packet_path,
             subject=body.subject,
             pointer_body=body.pointer_body,
             handoff_contract=handoff_contract,
             materialization_fallback=materialization_present is False,
             to_agent=to_agent,
+            skill_inline_materialized=bool(
+                enrich_result and enrich_result.inline_materialized
+            ),
         )
 
         thread_id = await create_handoff_thread(
@@ -864,7 +920,13 @@ async def team_handoff(
             platform=platform,
             handoff_contract=handoff_contract,
         ),
-        **build_handoff_result(thread_id=thread_id, to_agent=to_agent),
+        **build_handoff_result(
+            thread_id=thread_id,
+            to_agent=to_agent,
+            poll_wait_seconds=resolve_poll_wait_seconds(
+                caller_agent=body.caller_agent
+            ),
+        ),
         **executor_fields,
         **build_executor_recommendation_field(
             handoff_contract=handoff_contract,

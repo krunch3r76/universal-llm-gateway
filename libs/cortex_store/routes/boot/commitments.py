@@ -31,7 +31,7 @@ def get_boot_commitments(
 ) -> dict[str, Any]:
     """Open commitments (resolution_status='pending') for boot briefings.
 
-    Returns count + top N by age (oldest first). Used by cortex_boot
+    Returns count + top N by age (oldest first). Used by cortex_brief
     to surface unresolved promises alongside open investigations.
     """
     conn = cortex_conn()

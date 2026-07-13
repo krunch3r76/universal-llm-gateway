@@ -452,3 +452,35 @@ def verify_consult_routing_policy_drift(
         return False
     embedded = text[start : end + len(_POLICY_MARKER_END)]
     return embedded.strip() == expected.strip()
+
+
+def verify_role_substrate_vocab_conformance(
+    *,
+    policy_path: Path | None = None,
+) -> list[str]:
+    """Conformance gate for default_seat / platform:sdk dispatch_lane keys (AC5)."""
+    policy = load_route_policy(policy_path)
+    errors: list[str] = []
+    if policy.get("default_seat") != "cursor-sdk":
+        errors.append("default_seat must be 'cursor-sdk'")
+    code_lane = (policy.get("dispatch_lane") or {}).get("code") or {}
+    if code_lane.get("platform") != "sdk":
+        errors.append("dispatch_lane.code.platform must be 'sdk'")
+    if code_lane.get("seat") != "cursor-sdk":
+        errors.append("dispatch_lane.code.seat must be 'cursor-sdk'")
+    return errors
+
+
+def verify_check_review_default_policy(
+    *,
+    policy_path: Path | None = None,
+) -> list[str]:
+    """Conformance gate for check_review_default_model (AC9)."""
+    from implement_admission.check_review_substrate import (
+        verify_check_review_default_conformance,
+    )
+
+    path = policy_path or _DEFAULT_POLICY_PATH
+    policy = load_route_policy(path)
+    policy_text = path.read_text(encoding="utf-8")
+    return verify_check_review_default_conformance(policy, policy_text=policy_text)

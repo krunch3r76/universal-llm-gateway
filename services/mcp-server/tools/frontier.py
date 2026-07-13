@@ -7,7 +7,7 @@ execution contract in Cortex. Optional ``model=`` overrides within
 ``allowed_models``. Rosters are op-scoped (regenerate via
 ``scripts/gen-mcp-dispatch-role-docs`` — do not hand-edit the two lines below):
 
-  generate/to_thread roles: reviewer, synthesizer, artisan, skeptic
+  generate/to_thread roles: reviewer, synthesizer, artisan, skeptic; auto seats: cursor-sdk
   handoff roles: web-consult, web-implement, cursor-consult, cursor-implement
 
 Op enum: "generate" (auto result thread; on-behalf delivery), "to_thread" (reply
@@ -356,9 +356,9 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         **``op="generate"`` / ``op="to_thread"``** — API functional roles via
         ``role`` (regenerate roster via ``scripts/gen-mcp-dispatch-role-docs``):
 
-        generate/to_thread roles: reviewer, synthesizer, artisan, skeptic
+        generate/to_thread roles: reviewer, synthesizer, artisan, skeptic; auto seats: cursor-sdk
 
-        ``role`` is required for generate/to_thread. Each role carries a default
+        exactly one of ``role`` or ``seat`` is required for generate/to_thread. Each role carries a default
         provider model used when ``model`` is omitted on those ops.
 
         **No role? Different tool.** A role-LESS direct model one-shot does
@@ -373,12 +373,12 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         these paths.         ``op="generate"`` accepts
         ``light-bounded | pure-mechanical | implement | wrap`` (``implement`` and
         ``wrap`` are generate-only — the ``cursor-sdk`` packet lane); ``contract=wrap`` is
-        also generate-only on ``role=cursor-sdk`` — server-side gate-then-
+        also generate-only on ``seat=cursor-sdk`` — server-side gate-then-
         materialize via ``prepare_implement_packet``, returns HTTP 200 with
         ``packet_path`` + provenance (no SDK worker); requires ``source_ref``,
         forbids ``packet_path``, exempts ``dispatch_thread_id``; rejects
         gating-misleading knobs (``density_triage``, ``review_opt_out_reason_code``,
-        ``auto_review_child``). For ``role=cursor-sdk`` generate,
+        ``auto_review_child``). For ``seat=cursor-sdk`` generate,
         ``packet_path`` is honored across ``light-bounded``, ``pure-mechanical``,
         and ``implement``; ``source_ref`` is implement-only (and ``wrap``).
         When no ``packet_path`` is supplied, prompt context is read from the
@@ -430,9 +430,12 @@ def register_frontier_tools(mcp: FastMCP) -> None:
           latest turn is the prompt channel (friction 23301; previously
           silently dropped).
           Manual seats (``claude-web``, ``claude-cursor``) are rejected with 422
-          ``web_seat_not_generate_target``. The SDK auto seat ``cursor-sdk`` is
+          ``web_seat_not_generate_target``. The SDK auto seat ``cursor-sdk`` (``seat=``) is
           admitted on ``op=generate`` (``auto_dispatchable`` substrate=sdk). Use API roles with optional
-          ``model=`` override for provider-specific consults.
+          ``model=`` override for provider-specific consults. Check/review default remains
+          ``openai/gpt-5.6-terra`` (``check_review_default_model``); supported cursor-sdk
+          option for the same work is ``seat=cursor-sdk`` + ``model=cursor/gpt-5.6-*`` or
+          ``cursor/grok-4.5`` — poll ``reply_from_agent`` (reviewer/skeptic), not ``cursor-sdk``.
         - ``op="to_thread"``: admits dispatch; Stargate posts the role's
           reply to ``thread`` on its behalf after the dispatch completes
           (system-on-behalf delivery). Tracker terminal status reflects
@@ -474,7 +477,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         ``op=generate`` — wrap materializes from ``source_ref`` only and never
         reads the dispatch thread. Prompt context for other generate/to_thread
         contracts without ``packet_path`` is read from the latest turn body on
-        this agent-bus thread; for ``role=cursor-sdk`` generate with
+        this agent-bus thread; for ``seat=cursor-sdk`` generate with
         ``packet_path``, the packet is the instruction channel (bus turn
         ignored when both are present). ``messages[]`` is not a
         team_dispatch parameter. Distinct from ``thread`` (agent-bus
@@ -488,12 +491,12 @@ def register_frontier_tools(mcp: FastMCP) -> None:
 
         ``reasoning_effort`` — requested reasoning knob; actual resolution is
         reported in ``knob_resolution``. No parity claim by default. NOTE:
-        ``reasoning_effort`` is NOT forwarded on ``role="cursor-sdk"`` dispatches
+        ``reasoning_effort`` is NOT forwarded on ``seat="cursor-sdk"`` dispatches
         (it is dropped with a ``reasoning_effort_ignored`` warning) — use
         ``model_knobs`` instead.
 
         ``model_knobs`` — cursor-sdk model-variant knobs (``op="generate"``,
-        ``role="cursor-sdk"``) aligned against the resolved Cursor model's
+        ``seat="cursor-sdk"``) aligned against the resolved Cursor model's
         capability descriptor (``libs/cursor_capabilities``). E.g. on
         ``model="cursor/claude-opus-4-8"`` pass
         ``model_knobs={"effort": "low", "thinking": "false"}``. Unsupported or
@@ -507,7 +510,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                         "code": "validation_error",
                         "message": (
                             "contract=wrap is only valid with op='generate', "
-                            "role='cursor-sdk'"
+                            "seat='cursor-sdk'"
                         ),
                     },
                     "field": "contract",
@@ -602,12 +605,38 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                 record_prefix="mcp.team.handoff",
             )
 
-        if not role:
+        if not role and not seat:
             return {
                 "error": {
                     "code": "validation_error",
-                    "message": "role is required when op='generate' or op='to_thread'",
-                }
+                    "message": (
+                        "exactly one of role or seat is required when "
+                        "op='generate' or op='to_thread'"
+                    ),
+                },
+                "field": "role",
+            }
+        if role and seat:
+            return {
+                "error": {
+                    "code": "validation_error",
+                    "message": (
+                        "role and seat are mutually exclusive when "
+                        "op='generate' or op='to_thread'"
+                    ),
+                },
+                "field": "role",
+            }
+        if role == "cursor-sdk":
+            return {
+                "error": {
+                    "code": "role_is_not_a_seat",
+                    "message": (
+                        "'cursor-sdk' names an executor seat (platform=sdk), "
+                        'not a functional role. Use seat="cursor-sdk".'
+                    ),
+                },
+                "field": "role",
             }
 
         pointer_body_err = reject_pointer_body_on_generate(op, pointer_body)
@@ -621,10 +650,13 @@ def register_frontier_tools(mcp: FastMCP) -> None:
 
         body: dict[str, Any] = {
             "op": op,
-            "role": role,
             "dispatch_thread_id": dispatch_thread_id,
             "system": system,
         }
+        if role is not None:
+            body["role"] = role
+        if seat is not None:
+            body["seat"] = seat
         if contract is None:
             return {
                 "error": {
@@ -636,11 +668,11 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                 },
                 "field": "contract",
             }
-        role_is_sdk = role == "cursor-sdk"
+        seat_is_sdk = seat == "cursor-sdk"
         wrap_err = validate_wrap_inputs(
             op,
             contract,
-            role_is_sdk,
+            seat_is_sdk or role == "cursor-sdk",
             packet_path,
             source_ref,
             density_triage=density_triage,
@@ -706,7 +738,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                         "code": "validation_error",
                         "message": (
                             f"contract={contract} is only valid with "
-                            "op='generate', role='cursor-sdk'"
+                            "op='generate', seat='cursor-sdk'"
                         ),
                     },
                     "field": "contract",

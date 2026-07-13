@@ -152,7 +152,7 @@ When connector-bound: team_dispatch + panel_dispatch are server-primary — call
 - handoff roles: web-consult, web-implement, cursor-consult, cursor-implement (complete roster)
 - consensus panel → panel_dispatch(messages=[…], dispatch_thread_id="…", disposition="panel") → panel_executions; lead adjudication NON-offloadable
 - strategic advice / in-pipeline RAG → dispatch(tool="advisor" | "pipeline_consult", …)  [overflow]
-- bounded determinate task → team_dispatch(op=generate, role=cursor-sdk, dispatch_thread_id="<thread>", contract=light-bounded|pure-mechanical|implement, packet_path?=…)
+- bounded determinate task → team_dispatch(op=generate, seat=cursor-sdk, dispatch_thread_id="<thread>", contract=light-bounded|pure-mechanical|implement, packet_path?=…)
 - deprecated: op=handoff,seat=cursor-sdk normalizes to generate with a warning
 Use the `dispatch-workflow` skill §0a before first dispatch. Source: claude-web-dispatch-decision-table.md (§2/§3/§4)."""
 
@@ -182,7 +182,7 @@ tool_search(query="pipeline")    # → enables pipeline(op="result", ...)
 
 **Dispatch & Consult — pick by CAPABILITY, not model family:**
 - API consult → pre-stage context on an agent-bus thread, then `team_dispatch(op="generate", role=..., dispatch_thread_id="<thread>", contract="light-bounded", model="provider/model"?)`
-- bounded determinate task → team_dispatch(op=generate, role=cursor-sdk, dispatch_thread_id="<thread>", contract=light-bounded|pure-mechanical|implement, packet_path?=…)
+- bounded determinate task → team_dispatch(op=generate, seat=cursor-sdk, dispatch_thread_id="<thread>", contract=light-bounded|pure-mechanical|implement, packet_path?=…)
 - deprecated: op=handoff,seat=cursor-sdk normalizes to generate with a warning
 
 On the code surface (`/mcp/code`) `team_dispatch` is primary — call directly.

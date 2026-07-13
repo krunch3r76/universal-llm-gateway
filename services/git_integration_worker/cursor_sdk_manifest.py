@@ -76,7 +76,6 @@ _SERVICE_TOOLS = frozenset(
         "observability",
         "team_dispatch",
         "panel_dispatch",
-        "skill_suggest",
         "retrieve",
         "tool_search",
         "dispatch",

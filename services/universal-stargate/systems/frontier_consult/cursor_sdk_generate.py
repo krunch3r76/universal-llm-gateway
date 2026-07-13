@@ -15,6 +15,10 @@ from .cursor_sdk_generate_signals import (
     emit_sdk_thread_created,
     emit_sdk_worker_outcome,
 )
+from .cursor_sdk_role_delivery import (
+    resolve_delivery_from_role,
+    should_bridge_cursor_check_review,
+)
 from .cursor_sdk_worker_dispatch import (
     derive_cursor_sdk_prompt_preamble,
     dispatch_cursor_sdk_worker,
@@ -29,7 +33,11 @@ from .handoff import (
     extract_generate_pointer_summary,
     post_pointer_turn,
 )
-from .handoff_response import build_handoff_result, build_sdk_generate_result
+from .handoff_response import (
+    build_handoff_result,
+    build_sdk_generate_result,
+    resolve_poll_wait_seconds,
+)
 
 CURSOR_SDK_REPLY_SEAT = "cursor-sdk"
 
@@ -79,12 +87,27 @@ async def dispatch_cursor_sdk_generate(
     suppress_cost_warning: bool = False,
     cost_intent_reason: str | None = None,
     reasoning_effort: str | None = None,
+    max_tool_turns: int | None = None,
 ) -> dict[str, Any]:
     """Execute cursor-sdk generate with to_thread default delivery.
 
     Packet present: worker gets ``packet_path=`` (durable instruction channel).
     No packet: dispatch-thread text → worker gets ``message=`` (bus-turn fallback).
     """
+    from .light_bounded_ac_observer import (
+        prepare_lb_auto_review_for_generate,
+        validate_generate_contract_packet_rules,
+    )
+
+    effective_auto_review_child, auto_review_defaulted, early_packet_text = (
+        prepare_lb_auto_review_for_generate(
+            contract=contract,
+            auto_review_child=auto_review_child,
+            packet_path=packet_path,
+            message_text=message_text,
+        )
+    )
+
     from .densify_triage import validate_generate_density_intake
 
     validate_generate_density_intake(
@@ -92,7 +115,12 @@ async def dispatch_cursor_sdk_generate(
         contract=contract,
         density_triage=density_triage,
         review_opt_out_reason_code=review_opt_out_reason_code,
-        auto_review_child=auto_review_child,
+        auto_review_child=effective_auto_review_child,
+    )
+    from .admission import enforce_check_review_substrate_admission
+
+    enforce_check_review_substrate_admission(
+        role, model, request_id=request_id
     )
     to_agent, family, platform, resolved_model = resolve_cursor_sdk_generate_target(
         role, model=model, request_id=request_id
@@ -108,6 +136,7 @@ async def dispatch_cursor_sdk_generate(
         suppress_cost_warning=suppress_cost_warning,
         cost_intent_reason=cost_intent_reason,
         reasoning_effort=reasoning_effort,
+        max_tool_turns=max_tool_turns,
         request_id=request_id,
         execution_id=execution_id,
     )
@@ -119,38 +148,12 @@ async def dispatch_cursor_sdk_generate(
     to_agent = f"cursor-sdk:dispatch:{execution_id}"
     thread_subject = subject or f"cursor-sdk generate — {execution_id[:8]}"
 
-    if contract == "implement" and packet_path is None:
-        from .admission import FrontierEndpointError
-
-        raise FrontierEndpointError(
-            request_id=request_id,
-            field="packet_path",
-            reason="contract=implement requires packet_path",
-            status_code=422,
-        )
-
-    if read_only and contract == "implement":
-        from .admission import FrontierEndpointError
-
-        raise FrontierEndpointError(
-            request_id=request_id,
-            field="read_only",
-            reason="read_only=true is incompatible with contract=implement",
-            status_code=422,
-        )
-
-    if contract == "pure-mechanical" and packet_path is not None:
-        from .admission import FrontierEndpointError
-
-        raise FrontierEndpointError(
-            request_id=request_id,
-            field="packet_path",
-            reason=(
-                "contract=pure-mechanical is packet-free; use contract=implement "
-                "or light-bounded for packet-based dispatches"
-            ),
-            status_code=422,
-        )
+    validate_generate_contract_packet_rules(
+        request_id=request_id,
+        contract=contract,
+        packet_path=packet_path,
+        read_only=read_only,
+    )
 
     if packet_path is not None:
         pointer_body = f"SDK {contract} dispatch — see packet `{packet_path}`."
@@ -291,7 +294,7 @@ async def dispatch_cursor_sdk_generate(
 
     write_admission_context(
         execution_id=execution_id,
-        auto_review_child=auto_review_child,
+        auto_review_child=effective_auto_review_child,
         op="generate",
         role=role,
         resolved_model=resolved_model,
@@ -314,11 +317,15 @@ async def dispatch_cursor_sdk_generate(
         preamble_pointer = pointer_body
         if handoff_contract == "implement" and "Contract:" not in pointer_body:
             preamble_pointer = f"Contract: implement.\n{pointer_body}"
-        packet_text = ""
+        packet_text = early_packet_text or ""
         from .handoff import _resolve_packet_file, _workspaces_root
 
-        packet_file = _resolve_packet_file(_workspaces_root().resolve(), worker_packet)
-        if worker_packet is not None and packet_file is None:
+        packet_file = (
+            _resolve_packet_file(_workspaces_root().resolve(), worker_packet)
+            if not packet_text
+            else None
+        )
+        if worker_packet is not None and not packet_text and packet_file is None:
             from .admission import FrontierEndpointError
 
             probe_root = str(_workspaces_root().resolve())
@@ -337,8 +344,9 @@ async def dispatch_cursor_sdk_generate(
                 status_code=422,
                 code="CURSOR_MATERIALIZATION_INCOMPLETE",
             )
-        if packet_file is not None:
+        if not packet_text and packet_file is not None:
             packet_text = packet_file.read_text(encoding="utf-8", errors="replace")
+        if packet_text:
             from .diff_text_guard import assert_packet_free_of_diff_text
 
             assert_packet_free_of_diff_text(
@@ -395,10 +403,22 @@ async def dispatch_cursor_sdk_generate(
     )
 
     profile = get_profile(family, platform)
+    delivery_from_role = resolve_delivery_from_role(resolved_model)
+    reply_from = (
+        delivery_from_role
+        if should_bridge_cursor_check_review(
+            contract=handoff_contract, resolved_model=resolved_model
+        )
+        and delivery_from_role
+        else CURSOR_SDK_REPLY_SEAT
+    )
     handoff_fields = build_handoff_result(
         thread_id=thread_id,
         to_agent=to_agent,
-        reply_from_agent=CURSOR_SDK_REPLY_SEAT,
+        reply_from_agent=reply_from,
+        # cursor-sdk closeouts are always polled by the attended Cursor IDE lead
+        # (friction 24081) — recommend snapshot polling, not a 60s block.
+        poll_wait_seconds=resolve_poll_wait_seconds(poller_is_cursor_ide=True),
     )
     result = build_sdk_generate_result(
         role=role,
@@ -413,8 +433,10 @@ async def dispatch_cursor_sdk_generate(
         durable=admitted,
         density_triage=density_triage,
         review_opt_out_reason_code=review_opt_out_reason_code,
-        auto_review_child=auto_review_child,
+        auto_review_child=effective_auto_review_child,
     )
+    if auto_review_defaulted:
+        result["auto_review_defaulted"] = True
     result["knob_resolution"] = alignment.knob_resolution_as_dicts()
     if queued:
         ticket = worker_detail.get("ticket") or {}

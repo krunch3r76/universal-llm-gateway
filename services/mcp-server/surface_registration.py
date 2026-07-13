@@ -22,6 +22,7 @@ from tools.filesystem import register_filesystem_tools
 from tools.frontier import register_frontier_tools
 from tools.frontier_imagine import register_imagine_tools
 from tools.git_integrate import register_git_integrate_tools
+from tools.imprint import register_imprint_tools
 from tools.manage import register_manage_tools
 from tools.markdown_tool import register_markdown_tools
 from tools.model_status import register_model_status_tools
@@ -87,6 +88,9 @@ def register_tools_for_surface(mcp: FastMCP, surface: Surface) -> None:
     register_advisor_tools(mcp)
     register_close_tools(mcp)
     register_skill_suggest_tools(mcp)
+
+    if surface == "life":
+        register_imprint_tools(mcp)
 
     if surface == "code":
         register_manage_tools(mcp)

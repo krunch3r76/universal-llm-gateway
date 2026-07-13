@@ -418,9 +418,9 @@ async def test_sentinel_in_dispatch_boot_and_hydrate_paths(
     packet_ids = parse_packet_invariant_skill_ids(packet)
 
     _stub_boot_runner(monkeypatch, tmp_path)
-    from tools.cortex_named_tools._boot_runner import BootMode, run_cortex_boot
+    from tools.cortex_named_tools._boot_runner import BootMode, run_cortex_brief
 
-    boot_result = run_cortex_boot(
+    boot_result = run_cortex_brief(
         family="claude",
         platform="web",
         mode=BootMode.INSPECT,
@@ -488,9 +488,9 @@ async def test_lead_web_boot_skips_static_auto_inject(
     )
 
     _stub_boot_runner(monkeypatch, tmp_path)
-    from tools.cortex_named_tools._boot_runner import BootMode, run_cortex_boot
+    from tools.cortex_named_tools._boot_runner import BootMode, run_cortex_brief
 
-    boot_result = run_cortex_boot(
+    boot_result = run_cortex_brief(
         family="claude",
         platform="web",
         role="lead",
@@ -606,7 +606,9 @@ def test_caller_mcp_predicated_stripped_from_mandatory_no_budget_raise(
         budget_bytes=1000,
         exclude_mcp_predicated=True,
     )
-    assert any(item.get("reason") == "mcp_predicated_skip" for item in resolution.dropped)
+    assert any(
+        item.get("reason") == "mcp_predicated_skip" for item in resolution.dropped
+    )
     assert "x" * 100 not in resolution.block_md
 
 
@@ -642,10 +644,7 @@ def test_merged_overlap_provider_mounted_regression(
     )
     injected_ids = {str(item.get("id") or "") for item in resolution.injected}
     assert "agent_skill:architecture-invariants" not in injected_ids
-    assert any(
-        item.get("reason") == "provider_mounted"
-        for item in resolution.dropped
-    )
+    assert any(item.get("reason") == "provider_mounted" for item in resolution.dropped)
 
 
 def test_exclude_mcp_predicated_drops_predicated_entry(
@@ -662,9 +661,7 @@ def test_exclude_mcp_predicated_drops_predicated_entry(
         budget_bytes=None,
         exclude_mcp_predicated=True,
     )
-    dropped_reasons = {
-        item["id"]: item["reason"] for item in resolution.dropped
-    }
+    dropped_reasons = {item["id"]: item["reason"] for item in resolution.dropped}
     assert dropped_reasons.get("rule:cortex-orientation") == "mcp_predicated_skip"
     assert "orientation-body" not in resolution.block_md
     assert "provenance-body" in resolution.block_md
@@ -685,8 +682,7 @@ def test_exclude_mcp_predicated_critical_tier_no_required_body_unresolved(
     )
     assert resolution.injected == []
     assert any(
-        item.get("reason") == "mcp_predicated_skip"
-        for item in resolution.dropped
+        item.get("reason") == "mcp_predicated_skip" for item in resolution.dropped
     )
 
 

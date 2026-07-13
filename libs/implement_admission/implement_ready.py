@@ -237,12 +237,16 @@ def evaluate_implement_ready(
     # (a20966; consensus-steelman-posture). Mechanical todos returned admitted above.
     if not skeptic_ratified and not recon_waived:
         reason = (
-            f"{todo_id}: judgment_required (material) decision needs a skeptic "
-            f"ratification before implement — record a confirmed status({todo_id}, "
-            "skeptic_ratified, current) assertion citing the skeptic/panel thread "
-            "AND the spec_sha256:<hex> URI of the current dense-spec content in "
-            "evidence_uris (run the axis-2 skeptic pass per "
-            "cheap-recon-before-escalation)."
+            f"{todo_id}: judgment_required (material) decision needs axis-2 "
+            "ratification before implement — record a confirmed "
+            f"status({todo_id}, skeptic_ratified, current) assertion citing the "
+            "skeptic/panel thread AND the spec_sha256:<hex> URI of the current "
+            "dense-spec content in evidence_uris, or set "
+            "attributes.gate6_ratification_uri=agent-bus:{tid}#turn-N on the "
+            "todo (with that turn carrying an affirmative verdict, the same "
+            "spec_sha256 token, and resolvable FILE_EVIDENCE_PATHS), or set a "
+            "hash-matched attributes.recon_waived JSON (run the axis-2 skeptic "
+            "pass per cheap-recon-before-escalation)."
         )
         if skeptic_unratified_reason:
             reason += f" Unmet subcondition: {skeptic_unratified_reason}"

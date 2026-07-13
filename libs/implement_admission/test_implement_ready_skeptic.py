@@ -358,3 +358,313 @@ def test_resolver_claim_prefix_fallback_is_opt_in() -> None:
         match_claim_prefix=True,
     )
     assert fallback.ratified
+
+
+_SPEC_HASH = dense_spec_hash_uri(_VALID_DENSE_SPEC)
+_GATE6_EVIDENCE_PATH = (
+    "workspaces://universal-llm-gateway/libs/implement_admission/implement_ready.py"
+)
+
+
+def _gate6_turn_body(
+    *,
+    verdict: str = "RATIFY",
+    spec_hash: str = _SPEC_HASH,
+    evidence_path: str = _GATE6_EVIDENCE_PATH,
+    extra_agent_bus: str | None = None,
+) -> str:
+    lines = [
+        f"## Verdict: **{verdict}**",
+        "",
+        spec_hash,
+        "",
+        "FILE_EVIDENCE_PATHS:",
+        evidence_path,
+    ]
+    if extra_agent_bus:
+        lines.extend(["", f"See also {extra_agent_bus}"])
+    return "\n".join(lines)
+
+
+def _gate6_fetch(turns: dict[tuple[str, int], dict[str, object]]) -> object:
+    def _fetch(thread: str, turn_number: int) -> dict[str, object] | None:
+        return turns.get((thread, turn_number))
+
+    return _fetch
+
+
+def _implement_ready_assertion(**over: object) -> dict[str, object]:
+    base: dict[str, object] = {
+        "entity_id": "todo:sample",
+        "evidence_uris": [_SPEC, _SPEC_HASH],
+    }
+    base.update(over)
+    return base
+
+
+@pytest.mark.offline
+def test_gate6_happy_path_ratifies_and_grounds() -> None:
+    from implement_admission.implement_ready_gate6_resolve import (
+        resolve_gate6_ratification,
+    )
+
+    outcome = resolve_gate6_ratification(
+        todo_attrs={"gate6_ratification_uri": "agent-bus:5012#turn-3"},
+        implement_ready_assertion=_implement_ready_assertion(),
+        spec_hash_uri=_SPEC_HASH,
+        fetch_bus_turn=_gate6_fetch(
+            {
+                ("5012", 3): {
+                    "body": _gate6_turn_body(),
+                    "from": "reviewer",
+                }
+            }
+        ),
+    )
+    assert outcome.ratified
+    assert outcome.evidence_grounded is True
+
+
+@pytest.mark.offline
+def test_gate6_non_affirmative_turn_rejects() -> None:
+    from implement_admission.implement_ready_gate6_resolve import (
+        resolve_gate6_ratification,
+    )
+
+    outcome = resolve_gate6_ratification(
+        todo_attrs={"gate6_ratification_uri": "agent-bus:5012#turn-3"},
+        implement_ready_assertion=_implement_ready_assertion(),
+        spec_hash_uri=_SPEC_HASH,
+        fetch_bus_turn=_gate6_fetch(
+            {
+                ("5012", 3): {
+                    "body": _gate6_turn_body(verdict="REJECT"),
+                    "from": "reviewer",
+                }
+            }
+        ),
+    )
+    assert not outcome.ratified
+    assert outcome.reason is not None and "affirmative verdict" in outcome.reason
+
+
+@pytest.mark.offline
+def test_gate6_spec_hash_mismatch_in_turn_rejects() -> None:
+    from implement_admission.implement_ready_gate6_resolve import (
+        resolve_gate6_ratification,
+    )
+
+    outcome = resolve_gate6_ratification(
+        todo_attrs={"gate6_ratification_uri": "agent-bus:5012#turn-3"},
+        implement_ready_assertion=_implement_ready_assertion(),
+        spec_hash_uri=_SPEC_HASH,
+        fetch_bus_turn=_gate6_fetch(
+            {
+                ("5012", 3): {
+                    "body": _gate6_turn_body(spec_hash="spec_sha256:stale"),
+                    "from": "reviewer",
+                }
+            }
+        ),
+    )
+    assert not outcome.ratified
+    assert outcome.reason is not None and "spec_sha256 token" in outcome.reason
+
+
+@pytest.mark.offline
+def test_gate6_unresolved_paths_fail_grounding() -> None:
+    from implement_admission.implement_ready_gate6_resolve import (
+        resolve_gate6_ratification,
+    )
+
+    outcome = resolve_gate6_ratification(
+        todo_attrs={"gate6_ratification_uri": "agent-bus:5012#turn-3"},
+        implement_ready_assertion=_implement_ready_assertion(),
+        spec_hash_uri=_SPEC_HASH,
+        fetch_bus_turn=_gate6_fetch(
+            {
+                ("5012", 3): {
+                    "body": _gate6_turn_body(
+                        evidence_path="workspaces://universal-llm-gateway/missing.py"
+                    ),
+                    "from": "reviewer",
+                }
+            }
+        ),
+    )
+    assert outcome.ratified
+    assert outcome.evidence_grounded is False
+    assert outcome.evidence_unresolved
+
+
+@pytest.mark.offline
+def test_gate6_missing_attr_rejects() -> None:
+    from implement_admission.implement_ready_gate6_resolve import (
+        resolve_gate6_ratification,
+    )
+
+    outcome = resolve_gate6_ratification(
+        todo_attrs={},
+        implement_ready_assertion=_implement_ready_assertion(),
+        spec_hash_uri=_SPEC_HASH,
+        fetch_bus_turn=_gate6_fetch({}),
+    )
+    assert not outcome.ratified
+    assert outcome.reason is not None and "gate6_ratification_uri" in outcome.reason
+
+
+@pytest.mark.offline
+def test_gate6_designated_uri_only_not_first_implement_ready_bus() -> None:
+    from implement_admission.implement_ready_gate6_resolve import (
+        resolve_gate6_ratification,
+    )
+
+    outcome = resolve_gate6_ratification(
+        todo_attrs={"gate6_ratification_uri": "agent-bus:5012#turn-3"},
+        implement_ready_assertion=_implement_ready_assertion(
+            evidence_uris=[
+                "agent-bus:9999#turn-1",
+                _SPEC,
+                _SPEC_HASH,
+            ]
+        ),
+        spec_hash_uri=_SPEC_HASH,
+        fetch_bus_turn=_gate6_fetch(
+            {
+                ("5012", 3): {
+                    "body": _gate6_turn_body(extra_agent_bus="agent-bus:9999#turn-1"),
+                    "from": "reviewer",
+                }
+            }
+        ),
+    )
+    assert outcome.ratified
+    assert outcome.evidence_grounded is True
+
+
+@pytest.mark.offline
+def test_gate6_evaluate_implement_ready_admits() -> None:
+    from implement_admission.implement_ready_gate6_resolve import (
+        resolve_gate6_ratification,
+    )
+
+    gate6 = resolve_gate6_ratification(
+        todo_attrs={"gate6_ratification_uri": "agent-bus:5012#turn-3"},
+        implement_ready_assertion=_implement_ready_assertion(),
+        spec_hash_uri=_SPEC_HASH,
+        fetch_bus_turn=_gate6_fetch(
+            {
+                ("5012", 3): {
+                    "body": _gate6_turn_body(),
+                    "from": "reviewer",
+                }
+            }
+        ),
+    )
+    verdict = evaluate_implement_ready(
+        **_ready_kwargs(
+            skeptic_ratified=gate6.ratified,
+            skeptic_evidence_grounded=gate6.evidence_grounded,
+            skeptic_evidence_unresolved=gate6.evidence_unresolved,
+            skeptic_evidence_mode=gate6.evidence_mode,
+        )
+    )
+    assert verdict.admitted
+
+
+@pytest.mark.offline
+def test_gate6_does_not_fallback_when_skeptic_stamp_fails_grounding() -> None:
+    from implement_admission.implement_ready_gate6_resolve import (
+        resolve_gate6_ratification,
+    )
+    from implement_admission.implement_ready_gate_resolve import (
+        SkepticRatificationOutcome,
+        resolve_skeptic_ratification,
+    )
+
+    skeptic = resolve_skeptic_ratification(
+        todo_id="todo:sample",
+        cortex=_FakeCortex([_skeptic_item()]),
+        now_iso=_NOW,
+        spec_hash_uri="spec_sha256:abc",
+        resolve_skeptic=lambda assertion: SkepticRatificationOutcome(
+            ratified=True,
+            evidence_grounded=False,
+            evidence_mode="reasoning_only",
+            assertion=assertion,
+        ),
+    )
+    assert skeptic.assertion is not None
+    assert skeptic.evidence_grounded is False
+
+    gate6 = resolve_gate6_ratification(
+        todo_attrs={"gate6_ratification_uri": "agent-bus:5012#turn-3"},
+        implement_ready_assertion=_implement_ready_assertion(
+            evidence_uris=[_SPEC, dense_spec_hash_uri(_VALID_DENSE_SPEC)]
+        ),
+        spec_hash_uri=dense_spec_hash_uri(_VALID_DENSE_SPEC),
+        fetch_bus_turn=_gate6_fetch(
+            {
+                ("5012", 3): {
+                    "body": _gate6_turn_body(
+                        spec_hash=dense_spec_hash_uri(_VALID_DENSE_SPEC)
+                    ),
+                    "from": "reviewer",
+                }
+            }
+        ),
+    )
+    assert gate6.ratified and gate6.evidence_grounded is True
+
+    verdict = evaluate_implement_ready(
+        **_ready_kwargs(
+            skeptic_ratified=skeptic.ratified,
+            skeptic_evidence_grounded=skeptic.evidence_grounded,
+            skeptic_evidence_mode=skeptic.evidence_mode,
+        )
+    )
+    assert not verdict.admitted
+    assert verdict.code == "skeptic_evidence_missing"
+
+
+@pytest.mark.offline
+def test_preflight_gate6_parity_with_evaluate() -> None:
+    from implement_admission.implement_ready_gate6_resolve import (
+        resolve_gate6_ratification,
+    )
+    from implement_admission.implement_ready_preflight import preflight_implement_ready
+
+    gate6 = resolve_gate6_ratification(
+        todo_attrs={"gate6_ratification_uri": "agent-bus:5012#turn-3"},
+        implement_ready_assertion=_implement_ready_assertion(),
+        spec_hash_uri=_SPEC_HASH,
+        fetch_bus_turn=_gate6_fetch(
+            {
+                ("5012", 3): {
+                    "body": _gate6_turn_body(),
+                    "from": "reviewer",
+                }
+            }
+        ),
+    )
+    kwargs = _ready_kwargs(
+        skeptic_ratified=gate6.ratified,
+        skeptic_evidence_grounded=gate6.evidence_grounded,
+        skeptic_evidence_unresolved=gate6.evidence_unresolved,
+        skeptic_evidence_mode=gate6.evidence_mode,
+    )
+    verdict = evaluate_implement_ready(**kwargs)
+    report = preflight_implement_ready(**kwargs)
+    assert verdict.admitted
+    assert report.admitted
+    assert report.gates[13].status.value == "passed"
+
+
+@pytest.mark.offline
+def test_skeptic_pass_missing_reason_names_gate6_alternate() -> None:
+    verdict = evaluate_implement_ready(**_ready_kwargs(skeptic_ratified=False))
+    assert not verdict.admitted
+    assert verdict.code == "skeptic_pass_missing"
+    assert verdict.reason is not None
+    assert "gate6_ratification_uri" in verdict.reason
+    assert "recon_waived" in verdict.reason

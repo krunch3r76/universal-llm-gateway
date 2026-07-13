@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime
 from typing import Any
 
-from ..recipients import recipient_in_clause
+from ..recipients import recipient_in_clause, sender_auto_mark_clause
 from .connection import connect, now
 from .threads import _next_auto_id
 
@@ -24,9 +25,26 @@ class SlugExists(Exception):  # noqa: N818
 class UnreadTurnsExist(Exception):  # noqa: N818
     """Raised when after_turn check finds unread turns addressed to the poster."""
 
-    def __init__(self, unread: list[dict[str, Any]]) -> None:
+    def __init__(
+        self,
+        unread: list[dict[str, Any]],
+        *,
+        latest_turn_number: int = 0,
+        provided_after_turn: int | None = None,
+    ) -> None:
         self.unread = unread
+        self.latest_turn_number = latest_turn_number
+        self.provided_after_turn = provided_after_turn
         super().__init__(f"{len(unread)} unread turn(s) exist")
+
+    def to_detail(self) -> dict[str, Any]:
+        return {
+            "error": "unread_turns_exist",
+            "message": "Read all turns addressed to you before posting",
+            "unread_turns": self.unread,
+            "latest_turn_number": self.latest_turn_number,
+            "provided_after_turn": self.provided_after_turn,
+        }
 
 
 class TurnAlreadyAcknowledged(Exception):  # noqa: N818
@@ -174,6 +192,12 @@ def insert_turn(
             if target is None:
                 raise ValueError(f"supersedes_turn {supersedes_turn} does not exist")
 
+        max_row = conn.execute(
+            "SELECT MAX(turn_number) AS max_tn FROM turns WHERE thread = ?",
+            (thread,),
+        ).fetchone()
+        latest_turn_number = max_row["max_tn"] or 0
+
         if after_turn is not None:
             # Mirror get_turns inbox semantics (legacy short to_agent slugs included).
             include_team = from_agent != "kaywan"
@@ -187,13 +211,13 @@ def insert_turn(
                 (thread, *inbox_params, after_turn),
             ).fetchall()
             if unread_rows:
-                raise UnreadTurnsExist([dict(r) for r in unread_rows])
+                raise UnreadTurnsExist(
+                    [dict(r) for r in unread_rows],
+                    latest_turn_number=latest_turn_number,
+                    provided_after_turn=after_turn,
+                )
 
-        max_row = conn.execute(
-            "SELECT MAX(turn_number) AS max_tn FROM turns WHERE thread = ?",
-            (thread,),
-        ).fetchone()
-        turn_number = (max_row["max_tn"] or 0) + 1
+        turn_number = latest_turn_number + 1
 
         cur = conn.execute(
             "INSERT INTO turns "
@@ -228,7 +252,15 @@ def insert_turn(
         if attachments:
             _insert_attachments(conn, turn_id, attachments)
 
-        return turn_id, ts, turn_number
+    from ..orphan_demote import maybe_demote_orphans_after_insert
+
+    maybe_demote_orphans_after_insert(
+        thread_id=thread,
+        from_agent=from_agent,
+        subject=subject,
+        turn_id=turn_id,
+    )
+    return turn_id, ts, turn_number
 
 
 def get_turns(
@@ -316,66 +348,171 @@ def get_unread_thread_toc(
     *,
     to: str,
     mark_read: bool = False,
-    limit: int | None = None,
-) -> tuple[list[dict[str, Any]], int]:
-    """Recipient-scoped unread inbox digest — one row per thread with unread
-    turns addressed to ``to``.
+    active_since: datetime | None = None,
+    limit: int = 50,
+    all_threads: bool = False,
+) -> tuple[list[dict[str, Any]], int, int, int, bool]:
+    """Recipient-scoped unread inbox digest — enriched, windowed, bounded.
 
-    Mirrors get_turns' recipient/unread/non-superseded filter
-    (recipient_in_clause + read_at IS NULL + status != 'superseded') so each
-    row's unread_count reflects turns THIS seat must read — not the
-    thread-global unread_count carried on ThreadDetail.
-
-    The result is bounded by thread count (O(threads)) and each row is sparse
-    (thread id, recipient-scoped unread_count, head turn_number) — descriptive
-    fields are omitted so the digest stays small even across hundreds of
-    threads (friction 16835: the flat List[Turn] form overflowed at routine
-    fan-out). Agents expand a thread on demand via fetch_unread(thread=N),
-    get(thread, turn_number), or threads(has_unread=true).
-
-    When ``mark_read`` is True, every matching unread turn is marked read in the
-    same transaction (preserves the fetch_unread(to=…, mark_read=true)
-    "clear all" contract relied on by the 409 unread_turns_exist remediation).
-
-    Returns ``(rows, marked_read_count)``; marked_read_count is 0 unless
-    mark_read is True.
+    Returns ``(rows, marked_read, total_unread_threads, total_unread_turns,
+    truncated)``. Totals are unwindowed; ``rows`` respect active_since (unless
+    ``all_threads``) and ``limit``. Ordered by ``last_activity_at DESC``.
     """
     inbox_clause, inbox_params = recipient_in_clause(to, include_team=to != "kaywan")
-    where = f"{inbox_clause} AND turns.read_at IS NULL AND turns.status != 'superseded'"
-    limit_clause = f"LIMIT {int(limit)}" if limit is not None else ""
-    # Sparse rows: thread id + recipient-scoped unread_count + head turn number.
-    # Descriptive fields (slug, subject, participants) are intentionally omitted
-    # so the digest stays bounded across hundreds of threads — agents expand a
-    # thread on demand (fetch_unread(thread=N) / get / threads). Ordered by most
-    # recent unread turn.
+    inbox_clause_t2 = inbox_clause.replace("to_agent", "t2.to_agent")
+    base_where = (
+        f"{inbox_clause} AND turns.read_at IS NULL AND turns.status != 'superseded'"
+    )
+
+    totals_sql = f"""
+        SELECT
+            COUNT(DISTINCT turns.thread) AS total_threads,
+            COUNT(*) AS total_turns
+        FROM turns
+        WHERE {base_where}
+    """
+    last_subject_sql = f"""
+        (SELECT t2.subject FROM turns t2
+         WHERE t2.thread = turns.thread AND t2.read_at IS NULL
+           AND t2.status != 'superseded' AND {inbox_clause_t2}
+         ORDER BY t2.created_at DESC LIMIT 1)
+    """
     select_sql = f"""
         SELECT
             turns.thread AS thread,
+            th.slug AS slug,
             COUNT(*) AS unread_count,
-            MAX(turns.turn_number) AS latest_turn_number
+            MAX(turns.turn_number) AS latest_turn_number,
+            {last_subject_sql} AS last_subject,
+            MAX(turns.created_at) AS last_activity_at
         FROM turns
-        WHERE {where}
+        JOIN threads th ON th.id = turns.thread
+        WHERE {base_where}
         GROUP BY turns.thread
-        ORDER BY MAX(turns.created_at) DESC
-        {limit_clause}
+        ORDER BY last_activity_at DESC
     """
     close_candidates: list[str] = []
     with connect() as conn:
-        rows = [dict(row) for row in conn.execute(select_sql, inbox_params).fetchall()]
+        totals_row = conn.execute(totals_sql, inbox_params).fetchone()
+        total_threads = int(totals_row["total_threads"] or 0)
+        total_turns = int(totals_row["total_turns"] or 0)
+
+        rows = [
+            dict(row)
+            for row in conn.execute(select_sql, [*inbox_params, *inbox_params]).fetchall()
+        ]
+
+        if not all_threads and active_since is not None:
+            cutoff = active_since.isoformat()
+            rows = [r for r in rows if r["last_activity_at"] >= cutoff]
+
+        truncated = len(rows) > limit
+        if limit > 0:
+            rows = rows[:limit]
+
         marked = 0
         if mark_read:
             ts = now()
             cur = conn.execute(
-                f"UPDATE turns SET read_at = ? WHERE {where}",
+                f"UPDATE turns SET read_at = ? WHERE {base_where}",
                 [ts, *inbox_params],
             )
             marked = max(cur.rowcount, 0)
             if marked:
-                close_candidates = [str(thread_row["thread"]) for thread_row in rows]
-        result = rows, marked
+                close_candidates = [str(r["thread"]) for r in rows]
+        result = rows, marked, total_threads, total_turns, truncated
     for thread_id in close_candidates:
         _maybe_close_generate_thread_on_read(thread_id)
     return result
+
+
+def get_thread_turn_count(thread: str) -> int:
+    """Return turn count for a thread (0 when thread missing or empty)."""
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS cnt FROM turns WHERE thread = ?", (thread,)
+        ).fetchone()
+        return int(row["cnt"] or 0)
+
+
+def get_latest_turn_number(thread: str) -> int:
+    """Return max turn_number for thread, or 0 when empty."""
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT MAX(turn_number) AS max_tn FROM turns WHERE thread = ?",
+            (thread,),
+        ).fetchone()
+        return int(row["max_tn"] or 0)
+
+
+def get_latest_turn(thread: str) -> dict[str, Any] | None:
+    """Return the head turn for a thread, or None when empty."""
+    latest = get_latest_turn_number(thread)
+    if latest < 1:
+        return None
+    return get_turn_by_number(thread, latest)
+
+
+def mark_sender_unread_in_thread(
+    *,
+    thread: str,
+    from_agent: str,
+    through_turn: int,
+) -> int:
+    """Mark unread-to-sender turns with turn_number <= through_turn.
+
+    Excludes broadcast ``all`` (global read_at clobber). Does not mark the
+    outgoing turn — caller passes through_turn below the new turn number.
+    """
+    mark_clause, mark_params = sender_auto_mark_clause(from_agent)
+    ts = now()
+    with connect() as conn:
+        cur = conn.execute(
+            f"UPDATE turns SET read_at = ? "
+            f"WHERE thread = ? AND {mark_clause} "
+            f"AND turn_number <= ? AND read_at IS NULL "
+            f"AND status != 'superseded'",
+            [ts, thread, *mark_params, through_turn],
+        )
+        marked = max(cur.rowcount, 0)
+    if marked:
+        _maybe_close_generate_thread_on_read(thread)
+    return marked
+
+
+def bulk_mark_read_state(
+    *,
+    thread: str,
+    turn_numbers: list[int] | None = None,
+    through_turn: int | None = None,
+    agent: str | None = None,
+) -> int:
+    """Bulk mark read — enumerated turn_numbers XOR through_turn+agent."""
+    ts = now()
+    with connect() as conn:
+        if turn_numbers is not None:
+            placeholders = ",".join("?" * len(turn_numbers))
+            cur = conn.execute(
+                f"UPDATE turns SET read_at = ? "
+                f"WHERE thread = ? AND turn_number IN ({placeholders}) "
+                f"AND read_at IS NULL",
+                [ts, thread, *turn_numbers],
+            )
+        else:
+            if agent is None or through_turn is None:
+                raise ValueError("through_turn requires agent")
+            mark_clause, mark_params = sender_auto_mark_clause(agent)
+            cur = conn.execute(
+                f"UPDATE turns SET read_at = ? "
+                f"WHERE thread = ? AND {mark_clause} "
+                f"AND turn_number <= ? AND read_at IS NULL "
+                f"AND status != 'superseded'",
+                [ts, thread, *mark_params, through_turn],
+            )
+        marked = max(cur.rowcount, 0)
+    if marked:
+        _maybe_close_generate_thread_on_read(thread)
+    return marked
 
 
 def mark_turn_read(turn_id: int) -> str | None:
@@ -576,8 +713,14 @@ def create_turn(
         attachments=attachments,
     )
 
+    marked_read = 0
     if mark_read:
-        mark_turn_read(turn_id)
+        through = effective_after if effective_after else turn_number - 1
+        marked_read = mark_sender_unread_in_thread(
+            thread=thread_id,
+            from_agent=from_agent,
+            through_turn=through,
+        )
 
     if close:
         close_thread(thread_id, mark_all_read=True)
@@ -585,4 +728,4 @@ def create_turn(
     thread_row = get_thread_with_links(thread_id)
     if thread_row is None:
         raise KeyError(thread_id)
-    return thread_row, turn_id, ts, turn_number
+    return thread_row, turn_id, ts, turn_number, marked_read

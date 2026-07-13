@@ -305,6 +305,14 @@ def _validate_session_close_args(
     }
     for field, val in required.items():
         if not val:
+            hint = f"Supply a non-empty {field} on the session_close call."
+            if field == "summary":
+                hint = (
+                    "session_close_preflight / session_close require summary "
+                    "(and session_summary_md). Not an ID-only probe — placeholders "
+                    "are OK for session_id resolution (session-close.mdc §0b / "
+                    "/session-end Step 0b)."
+                )
             return {
                 "error": f"{field} is required",
                 "reason": f"{field}.required",
@@ -312,7 +320,7 @@ def _validate_session_close_args(
                 "received": val,
                 "expected": "non-empty string",
                 "examples": [],
-                "hint": (f"Supply a non-empty {field} on the session_close call."),
+                "hint": hint,
             }
     # session_summary_md may be omitted when session_summary_md_path was
     # resolved earlier (path wins if both set). Callers must resolve the path

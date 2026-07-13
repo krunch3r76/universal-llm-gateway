@@ -366,7 +366,7 @@ def check_claim_brevity(
 
     Suppressed for ``service:`` entities whose claims begin with ``[`` (friction
     observation pattern) — these entities are consumed by LLM ranking pipelines
-    (skill_suggest, etc.) that use the full claim text for matching. Shortening
+    (ranking pipelines, etc.) that use the full claim text for matching. Shortening
     those claims would degrade ranking quality rather than improve it (#20155).
 
     Per-assert opt-out: pass ``acknowledge_audit_gaps=['long_claim_beneficial']``

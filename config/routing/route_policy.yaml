@@ -3,13 +3,23 @@ policy_source: consult-routing
 policy_version: "2026-07-06"
 lead_claim_authority: server_contract_overrides_packet_prose
 
+# Auto-dispatch default seat for code-lane generate (seat= selector, not role=).
+default_seat: cursor-sdk
+
+# Check/review default *model family* (F1 — assertion:23920 / decision:autonomous-work-item-spine).
+# Explicit model= overrides this key. Substrate is NOT selected by this key alone —
+# `openai/…` on role=reviewer ⇒ API; live-source / Gate-6 with workspaces:// citations
+# ⇒ seat=cursor-sdk + model=cursor/gpt-5.6-terra|sol|luna (or cursor/grok-4.5)
+# (friction a24082 / todo:gate6-code-lane-substrate). code_on_api = fully pre-staged only.
+check_review_default_model: openai/gpt-5.6-terra
+
 # Doc-layer dispatch_lane (advisory, not a RoleProfile or hard gate).
-# Derive code vs non-code from substrate: cursor-sdk ⇒ code (checkout present);
+# Derive code vs non-code from platform: sdk ⇒ code (checkout present);
 # API roles (reviewer/skeptic/synthesizer/artisan) ⇒ non-code.
 dispatch_lane:
   code:
-    substrate: cursor-sdk
-    default_role: cursor-sdk
+    platform: sdk
+    seat: cursor-sdk
     work: [recon, review-on-source, implement, light-bounded, pure-mechanical]
   non_code:
     substrate: api
@@ -23,12 +33,13 @@ dispatch_lane:
   substrate_guard:
     rule: cursor/* models never appear under allowed_models on API roles
     enforcement: >-
-      route ordering → is_cursor_sdk_generate_admission →
-      resolve_cursor_sdk_generate_target → sdk_substrate_required (422)
+      route ordering → is_auto_seat_generate_admission →
+      resolve_auto_seat_generate_target → sdk_substrate_required (422) when
+      seat= is absent and cursor/* is requested on an API role
 
 routes:
   # Advisory preferred_model (doc/comment only — resolver does not enforce):
-  #   implement → cursor/composer-2.5 (role default)
+  #   implement → cursor/composer-2.5 (seat default)
   #   recon / investigate-emphasis light-bounded → cursor/grok-4.5 via model= override
   #   pure-mechanical inventory → Composer OK
   #   resident task-class→model table → consult-routing § Task-class model reference

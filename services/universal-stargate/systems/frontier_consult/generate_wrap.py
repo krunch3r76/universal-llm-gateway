@@ -156,12 +156,13 @@ async def dispatch_cursor_sdk_generate_route(
     *,
     request_id: str,
     body: TeamDispatchGenerateBody,
-    role: str,
+    seat: str,
     response: Response,
 ) -> dict[str, Any] | JSONResponse:
     """Cursor-sdk generate branch: gate-then-materialize + SDK orchestrator."""
     from .admission import FrontierEndpointError
 
+    role = seat
     try:
         source_ref = getattr(body, "source_ref", None)
         if body.contract == "wrap":
@@ -322,6 +323,7 @@ async def dispatch_cursor_sdk_generate_route(
             suppress_cost_warning=getattr(body, "suppress_cost_warning", False),
             cost_intent_reason=getattr(body, "cost_intent_reason", None),
             reasoning_effort=getattr(body, "reasoning_effort", None),
+            max_tool_turns=getattr(body, "max_tool_turns", None),
         )
         if isinstance(result, dict):
             split_warning = consolidation_split_warning(

@@ -77,8 +77,11 @@ prompts/
 **/*_test.py
 **/_test_*.py
 **/conftest.py
-tests/
+tests/*
 **/tests/
+!tests/
+!tests/life_intent_corpus/
+!tests/life_intent_corpus/**
 # Lane-A contract tests (todo:track-implement-admission-tests-ci)
 !libs/implement_admission/test_skill_fs_line.py
 !libs/implement_admission/test_materialize.py
@@ -90,6 +93,8 @@ tests/
 !libs/claude_bundles/test_skills_ui_upload.py
 !services/universal-stargate/systems/frontier_consult/test_implement_admission_materialize.py
 !services/universal-stargate/systems/frontier_consult/test_handoff_enrich.py
+!services/universal-stargate/systems/frontier_consult/test_life_intent_routes.py
+!libs/life_intent/test_*.py
 # Root-anchored: rsync --filter=:- .gitignore ignores git ! negations.
 # Use /foo/ not foo/ when foo/ also appears as a source directory elsewhere in the tree.
 /templates/

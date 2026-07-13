@@ -6,7 +6,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from claude_bundles.resolver import UI_TARGET_SLUGS
+from claude_bundles.resolver import claude_ai_target_slugs
 from claude_bundles.skills_api import validate_bundle_dir
 from claude_bundles.skills_ui_panel import (
     connect_cdp,
@@ -34,12 +34,12 @@ async def scan_ui_parity(
     cdp_url: str,
     bundles_dir: Path,
 ) -> ParityReport:
-    """Compare ``UI_TARGET_SLUGS`` to Customize → Skills table + local bundles."""
-    target = {s.lower() for s in UI_TARGET_SLUGS}
+    """Compare ``claude_ai_target_slugs()`` to Customize → Skills table + local bundles."""
+    target = {s.lower() for s in claude_ai_target_slugs()}
 
     invalid: list[tuple[str, str]] = []
     stale: list[str] = []
-    for slug in UI_TARGET_SLUGS:
+    for slug in claude_ai_target_slugs():
         bundle_dir = bundles_dir / slug
         md = bundle_dir / "SKILL.md"
         if not md.is_file():

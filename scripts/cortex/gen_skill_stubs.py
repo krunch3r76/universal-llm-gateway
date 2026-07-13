@@ -26,11 +26,9 @@ from _skill_audit import (  # noqa: E402
     parity_verdict,
     stub_critical_field_verdict,
 )
-from claude_bundles.resolver import (  # noqa: E402
-    CURSOR_INDEXED_SLUGS,
-)
+from claude_bundles.resolver import cursor_indexed_slugs  # noqa: E402
 
-_CURSOR_PRIMARY_SLUGS = set(CURSOR_INDEXED_SLUGS)
+_CURSOR_PRIMARY_SLUGS = set(cursor_indexed_slugs())
 from _skill_constants import (  # noqa: E402
     _SOT_DRIFT_HOLDOUTS,
     _SOT_DRIFT_KNOWN_RESIDUALS,

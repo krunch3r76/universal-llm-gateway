@@ -2,10 +2,42 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import sqlite3
-from typing import Any
+import threading
+import uuid
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from typing import Any, Literal
 
+from agent_seat.registry import expand_recipient_slugs
+
+from ..turns_models import (
+    _BROADCAST_TO_AGENTS,
+    TRIAGE_CONFIRM_TTL_SECONDS,
+)
 from .connection import connect, now
+
+_QUERY_MAX_LEN = 200
+
+
+def _escape_like_literal(text: str) -> str:
+    return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _like_substring_pattern(substring: str) -> str:
+    return f"%{_escape_like_literal(substring)}%"
+
+
+def _normalize_query(query: str | None) -> str | None:
+    """Strip, clamp to 200 chars, return None when empty."""
+    if query is None:
+        return None
+    cleaned = query.strip()
+    if not cleaned:
+        return None
+    return cleaned[:_QUERY_MAX_LEN]
 
 
 class ThreadHasReadTurns(Exception):  # noqa: N818
@@ -147,6 +179,7 @@ def list_threads_v2(
     lifecycle_state: str | None = None,
     has_unread: bool | None = None,
     limit: int | None = None,
+    query: str | None = None,
 ) -> list[dict[str, Any]]:
     """List threads with optional status + lifecycle_state + AND-tag filter.
 
@@ -157,6 +190,8 @@ def list_threads_v2(
         filter (default; preserves prior behaviour).
     `limit`: cap result count. None = no cap. Applied after ORDER BY so the
         most recently updated threads are returned first.
+    `query`: case-insensitive substring over slug, summary, and last_subject.
+        Clamped to 200 chars; empty/whitespace-only is treated as no filter.
     """
     base = _thread_detail_sql()
     params: list[Any] = []
@@ -167,6 +202,20 @@ def list_threads_v2(
     if lifecycle_state is not None:
         wheres.append("t.bus_lifecycle_state = ?")
         params.append(lifecycle_state)
+    normalized_query = _normalize_query(query)
+    if normalized_query is not None:
+        pattern = _like_substring_pattern(normalized_query.lower())
+        wheres.append(
+            "("
+            "lower(t.slug) LIKE ? ESCAPE '\\' OR "
+            "lower(coalesce(t.summary, '')) LIKE ? ESCAPE '\\' OR "
+            "lower(coalesce(("
+            "  SELECT subject FROM turns "
+            "  WHERE thread = t.id ORDER BY turn_number DESC LIMIT 1"
+            "), '')) LIKE ? ESCAPE '\\'"
+            ")"
+        )
+        params.extend([pattern, pattern, pattern])
     tag_list = _normalize_tags(tags)
     if tag_list:
         # AND match: join thread_tags and require all N tags matched.
@@ -457,3 +506,213 @@ def delete_thread(thread_id: str, *, force: bool = False) -> dict[str, Any]:
         conn.execute("DELETE FROM threads WHERE id = ?", (thread_id,))
 
     return {"deleted_turns": deleted_turns, "thread": thread_id}
+
+
+def _triage_owned_recipients(agent: str) -> list[str]:
+    return [
+        slug
+        for slug in expand_recipient_slugs(agent)
+        if slug not in _BROADCAST_TO_AGENTS
+    ]
+
+
+def _triage_filter_hash(
+    *,
+    agent: str,
+    action: str,
+    older_than: str,
+    status: str | None,
+    candidate_ids: list[str],
+) -> str:
+    payload = {
+        "agent": agent,
+        "action": action,
+        "older_than": older_than,
+        "status": status,
+        "candidate_ids": sorted(candidate_ids),
+    }
+    raw = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+@dataclass
+class _TriageConfirmEntry:
+    token_id: str
+    agent: str
+    action: str
+    older_than: str
+    status: str | None
+    candidate_ids: list[str]
+    filter_hash: str
+    expires_at: datetime
+    used: bool = False
+
+
+_triage_tokens: dict[str, _TriageConfirmEntry] = {}
+_triage_tokens_lock = threading.Lock()
+
+
+def _prune_expired_triage_tokens(now_ts: datetime) -> None:
+    expired = [
+        token_id
+        for token_id, entry in _triage_tokens.items()
+        if entry.expires_at <= now_ts or entry.used
+    ]
+    for token_id in expired:
+        _triage_tokens.pop(token_id, None)
+
+
+def issue_triage_confirm_token(
+    *,
+    agent: str,
+    action: str,
+    older_than: str,
+    status: str | None,
+    candidate_ids: list[str],
+) -> tuple[str, datetime]:
+    """Mint a single-use confirm token bound to filter + candidate set."""
+    token_id = uuid.uuid4().hex
+    expires_at = datetime.now(UTC) + timedelta(seconds=TRIAGE_CONFIRM_TTL_SECONDS)
+    filter_hash = _triage_filter_hash(
+        agent=agent,
+        action=action,
+        older_than=older_than,
+        status=status,
+        candidate_ids=candidate_ids,
+    )
+    with _triage_tokens_lock:
+        _prune_expired_triage_tokens(datetime.now(UTC))
+        _triage_tokens[token_id] = _TriageConfirmEntry(
+            token_id=token_id,
+            agent=agent,
+            action=action,
+            older_than=older_than,
+            status=status,
+            candidate_ids=list(candidate_ids),
+            filter_hash=filter_hash,
+            expires_at=expires_at,
+        )
+    return token_id, expires_at
+
+
+def consume_triage_confirm_token(
+    *,
+    token_id: str,
+    agent: str,
+    action: str,
+    older_than: str,
+    status: str | None,
+    candidate_ids: list[str],
+) -> Literal["ok", "invalid", "expired", "filter_mismatch"]:
+    """Validate and consume a confirm token (single-use)."""
+    filter_hash = _triage_filter_hash(
+        agent=agent,
+        action=action,
+        older_than=older_than,
+        status=status,
+        candidate_ids=candidate_ids,
+    )
+    now_ts = datetime.now(UTC)
+    with _triage_tokens_lock:
+        entry = _triage_tokens.get(token_id)
+        if entry is None:
+            return "invalid"
+        if entry.expires_at <= now_ts:
+            _triage_tokens.pop(token_id, None)
+            return "expired"
+        if entry.used:
+            return "invalid"
+        if (
+            entry.agent != agent
+            or entry.action != action
+            or entry.older_than != older_than
+            or entry.status != status
+            or entry.filter_hash != filter_hash
+        ):
+            return "filter_mismatch"
+        entry.used = True
+        _triage_tokens.pop(token_id, None)
+    return "ok"
+
+
+def list_triage_candidates(
+    *,
+    agent: str,
+    activity_cutoff: datetime,
+    action: str,
+    status: str | None = None,
+) -> tuple[list[dict[str, Any]], int]:
+    """Return owned unread threads older than cutoff (full set before cap)."""
+    _ = action  # floors enforced at route layer; action reserved for filter binding
+    owned = _triage_owned_recipients(agent)
+    if not owned:
+        return [], 0
+    owned_placeholders = ",".join("?" * len(owned))
+    params: list[Any] = []
+    status_clause = ""
+    if status is not None:
+        status_clause = "AND t.status = ?"
+        params.append(status)
+
+    sql = f"""
+        SELECT
+            t.id AS id,
+            t.slug AS slug,
+            t.status AS status,
+            t.bus_lifecycle_state AS bus_lifecycle_state,
+            MAX(turns.created_at) AS last_activity_at,
+            COUNT(*) AS unread_count
+        FROM threads t
+        INNER JOIN turns ON turns.thread = t.id
+        WHERE turns.read_at IS NULL
+          AND turns.status != 'superseded'
+          AND t.status NOT IN ('blocked')
+          AND (t.bus_lifecycle_state IS NULL
+               OR t.bus_lifecycle_state NOT IN ('pending', 'admitted'))
+          {status_clause}
+        GROUP BY t.id
+        HAVING MAX(turns.created_at) <= ?
+           AND SUM(CASE WHEN turns.to_agent NOT IN ({owned_placeholders})
+                        OR turns.to_agent IN ('all', 'team')
+                   THEN 1 ELSE 0 END) = 0
+           AND SUM(CASE WHEN turns.to_agent IN ({owned_placeholders})
+                   THEN 1 ELSE 0 END) > 0
+        ORDER BY last_activity_at ASC
+    """
+    cutoff_iso = activity_cutoff.isoformat()
+    query_params = [*params, cutoff_iso, *owned, *owned]
+    with connect() as conn:
+        rows = [dict(row) for row in conn.execute(sql, query_params).fetchall()]
+    return rows, len(rows)
+
+
+def execute_triage_mark_read(*, agent: str, thread_ids: list[str]) -> int:
+    """Mark caller-owned unread turns read (skips broadcast recipients)."""
+    owned = _triage_owned_recipients(agent)
+    if not owned or not thread_ids:
+        return 0
+    owned_placeholders = ",".join("?" * len(owned))
+    thread_placeholders = ",".join("?" * len(thread_ids))
+    ts = now()
+    with connect() as conn:
+        cur = conn.execute(
+            f"UPDATE turns SET read_at = ? "
+            f"WHERE thread IN ({thread_placeholders}) "
+            f"AND to_agent IN ({owned_placeholders}) "
+            f"AND read_at IS NULL AND status != 'superseded'",
+            [ts, *thread_ids, *owned],
+        )
+        marked = max(cur.rowcount, 0)
+    return marked
+
+
+def execute_triage_close(*, thread_ids: list[str]) -> int:
+    """Close triage candidate threads (all unread are caller-owned)."""
+    from .threads_atomic import close_thread
+
+    closed = 0
+    for thread_id in thread_ids:
+        row = close_thread(thread_id, mark_all_read=True)
+        if row is not None:
+            closed += 1
+    return closed

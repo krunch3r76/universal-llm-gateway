@@ -15,10 +15,13 @@ from ._shared import record
 # Name-only skill refs — Use the `<slug>` skill; seat self-fetches; ¬ fs-read
 # (friction 23128 / agent-bus:4888; agent-skills/ mirror retired by D3).
 _SESSION_CLOSE_PROTOCOL = (
-    "Before close: Use the `session-close-kernel` skill "
-    "(web/API/subagent; seat self-fetches) or session-close.mdc (Cursor). "
-    "Web/API: also Use the `session-close-audit` skill before invoking session_close. "
-    "claude-web: Use the `web-transcript-preprocessing` skill before assembling transcript_md."
+    "Before close: Use the `session-close-kernel` skill (seat-routed). "
+    "Cursor: session-close.mdc + cortex(tool=session_close) — ¬ close(op=…), "
+    "¬ retired cortex skill-mirror paths. "
+    "Life/web primary: close(op=stage|draft|check|commit) then optional close(op=handoff). "
+    "Transitional cortex session_close on web: also Use the `session-close-audit` skill. "
+    "claude-web verbatim: Use the `web-transcript-preprocessing` skill before transcript_md. "
+    "Load before close."
 )
 
 _SESSION_CLOSE_TOOLS = frozenset({"session_close", "session_close_preflight"})
@@ -81,7 +84,9 @@ _WORKFLOW_HINTS: dict[str, str] = {
     ),
     "session_close_preflight": (
         "on ok=true: proceed to session_close with same args. "
-        "on ok=false: fix per skill `session-close-kernel` before retrying close."
+        "on ok=false: fix per skill `session-close-kernel` before retrying close. "
+        "ID probe is NOT ID-only — supply session_id, agent, summary, and "
+        "session_summary_md (placeholders OK); see session-close.mdc §0b."
     ),
     "session_handoff_upsert": (
         "next: entity_get on transcript_entity_id (or journal row via session_id) "
@@ -179,7 +184,7 @@ _FRICTION_TICKET_NEXT = (
     "Actionable friction = codified bug ticket (NOT friction() alone), routed as the investigate→execute fix cycle: "
     "investigate+decide (cursor: role=cursor-consult; web: role=web-consult) → dense spec + attribute distillation "
     "at investigate close (files_expected, acceptance_criteria, implement-ready assertion + spec_sha256); "
-    "execute default = team_dispatch(op=generate, role=cursor-sdk, contract=implement, source_ref=todo:{slug}) "
+    "execute default = team_dispatch(op=generate, seat=cursor-sdk, contract=implement, source_ref=todo:{slug}) "
     "(server-materialized once attrs distilled); cursor-implement / web-inline = named fallback. "
     "DEFAULT to investigate unless operator says mechanical-only or a dense implement spec exists — "
     "do NOT make cursor-implement the first hop on a bug with open root cause/design. "

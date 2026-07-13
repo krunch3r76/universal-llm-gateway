@@ -1,0 +1,19 @@
+{
+  "ranked": [
+    {
+      "slug": "consult-routing",
+      "description": "Route consult and handoff requests.",
+      "reason": "valid slug"
+    },
+    {
+      "slug": "hallucinated-skill",
+      "description": "Should never appear.",
+      "reason": "should drop"
+    },
+    {
+      "slug": "session-close",
+      "description": "Close sessions with provenance discipline.",
+      "reason": "also valid"
+    }
+  ]
+}

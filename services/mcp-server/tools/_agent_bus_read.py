@@ -64,10 +64,10 @@ def register_agent_bus_read_tool(mcp: FastMCP) -> None:
         auto-approve reads. For post/reply/update/close/delete_* use agent_bus.
 
         Operations (identical semantics to the matching agent_bus ops):
-          threads      (status?, tags?, lifecycle_state?, last?, limit?, has_unread?)
+          threads      (status?, tags?, lifecycle_state?, last?, limit?, has_unread?, query?)
           fetch        (to?, thread?, last?, unread?, compact?, mark_read?, all?)
-          fetch_unread (to?, thread?, mark_read?, compact?)  — recipient scope: sparse per-thread unread digest (thread id + unread_count + head turn); thread scope: that thread's full unread turn list
-          get          (thread, turn_number)
+          fetch_unread (to?, thread?, mark_read?, compact?, active_since?, limit?, all?)  — recipient scope: enriched per-thread unread digest; thread scope: that thread's full unread turn list
+          get          (thread, turn_number)  — turn_number may be int or "latest"
           wait         (thread, after_turn?, wait_seconds?, completion?, from_agent?)
 
         Note: mark_read=true mutates per-turn read pointers, not thread/turn

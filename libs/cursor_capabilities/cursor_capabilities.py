@@ -98,6 +98,23 @@ def catalog_divergences(
     return errors
 
 
+def is_judgment_profile_mismatch(*, role: str, model: str) -> bool:
+    """True when a mechanical cursor model is requested on a judgment role."""
+    from implement_admission.check_review_substrate import (
+        CheckReviewAdmissionReject,
+        evaluate_check_review_admission,
+    )
+
+    verdict = evaluate_check_review_admission(
+        role,
+        model,
+        api_role_with_cursor_on_api_profile=True,
+    )
+    return isinstance(verdict, CheckReviewAdmissionReject) and verdict.code == (
+        "profile_mismatch"
+    )
+
+
 CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
     "composer-2.5": ModelCapability(
         knobs={

@@ -2,7 +2,7 @@
 
 Merges canonical skill slugs into <invariants>, mirrors related_thread_ids as
 agent_bus(fetch) steps. Platform seats load skill bodies via native triggers —
-not fs(agent-skills/…) lines or skill_suggest.
+not fs(agent-skills/…) lines.
 """
 
 from __future__ import annotations
@@ -12,15 +12,48 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from agent_seat.inject_budget import HANDOFF_INLINE_BUDGET_BYTES
 from cortex_store.guidance_entity import entity_slug_from_id
 from implement_admission.admission_read import frontmatter_value
+from implement_admission.skill_delivery_channels import (
+    InlineBodyResolution,
+    SkillInlineBudgetExceeded,
+    SkillInlineResolveError,
+    _outer_invariants_close_index,
+    declared_inline_digests,
+    enforce_inline_budget,
+    format_inline_skill_block,
+    parse_inline_skill_blocks,
+    partition_web_skill_channels,
+    replace_inline_block_for_slug,
+    resolve_inline_bodies,
+    text_without_inline_payload_regions,
+)
+from universal_event_bus import Event, event_factory
 from universal_logging import get_logger
 
 from .handoff import _extract_block
+from .handoff_life_mirror import (
+    WEB_RECEIVER_AGENT,
+    WEB_RECIPIENT_REACHABILITY,
+    RecipientReachability,
+    is_life_web_receiver,
+    mirror_workspaces_pointers_for_web,
+)
 
 logger = get_logger(__name__)
 
-WEB_RECEIVER_AGENT = "claude-web"
+__all__ = [
+    "WEB_RECEIVER_AGENT",
+    "WEB_RECIPIENT_REACHABILITY",
+    "RecipientReachability",
+    "mirror_workspaces_pointers_for_web",
+    "enrich_handoff_packet",
+    "has_densify_floor",
+    "EnrichResult",
+    "HandoffSkillInlineMaterialized",
+    "HandoffSkillInlineBudgetExceeded",
+]
 
 # Always-wired densify floor for MCP-seat handoffs (claude-web + claude-cursor).
 # architecture-invariants + ulg-architecture are injected unconditionally so the
@@ -61,6 +94,17 @@ KNOWN_TASK_CLASS_SLUGS: frozenset[str] = frozenset(
     }
 )
 
+_CANONICAL_POINTER_LINE_RE = re.compile(
+    r"- Use the `(?P<slug>[a-z0-9][-a-z0-9_]*)` skill "
+    r"\(canonical slug — seat self-fetches; ¬ fs-read skill body\)",
+    re.IGNORECASE,
+)
+
+_ORIENTATION_PREFIX = (
+    "Skill names for orientation (bodies inlined below — skill-inline gate):"
+)
+
+
 class CortexEntityReader(Protocol):
     def entity_get(self, entity_id: str, **kwargs: Any) -> dict[str, Any]: ...
 
@@ -70,8 +114,52 @@ class EnrichResult:
     text: str
     skills_added: list[str] = field(default_factory=list)
     skills_already_wired: list[str] = field(default_factory=list)
+    skills_inlined: list[str] = field(default_factory=list)
+    inline_slugs: list[str] = field(default_factory=list)
     threads_added: list[str] = field(default_factory=list)
     changed: bool = False
+    inline_materialized: bool = False
+    inline_total_bytes: int = 0
+
+
+@event_factory
+def HandoffSkillInlineMaterialized(  # noqa: N802
+    request_id: str,
+    packet_path: str,
+    slugs: list[str],
+    total_bytes: int,
+) -> Event:
+    return Event(
+        signal="handoff.skill.inline.materialized",
+        payload={
+            "request_id": request_id,
+            "packet_path": packet_path,
+            "slugs": slugs,
+            "total_bytes": total_bytes,
+        },
+        scope="node",
+    )
+
+
+@event_factory
+def HandoffSkillInlineBudgetExceeded(  # noqa: N802
+    request_id: str,
+    packet_path: str,
+    total_bytes: int,
+    budget_bytes: int,
+    per_slug_bytes: dict[str, int],
+) -> Event:
+    return Event(
+        signal="handoff.skill.inline.budget.exceeded",
+        payload={
+            "request_id": request_id,
+            "packet_path": packet_path,
+            "total_bytes": total_bytes,
+            "budget_bytes": budget_bytes,
+            "per_slug_bytes": per_slug_bytes,
+        },
+        scope="node",
+    )
 
 
 def _canonical_skill_invariant_line(slug: str) -> str:
@@ -80,6 +168,142 @@ def _canonical_skill_invariant_line(slug: str) -> str:
         f"- Use the `{slug}` skill "
         f"(canonical slug — seat self-fetches; ¬ fs-read skill body)"
     )
+
+
+def _orientation_line(inline_slugs: tuple[str, ...]) -> str:
+    return f"- {_ORIENTATION_PREFIX} {', '.join(inline_slugs)}"
+
+
+def _invariants_body(text: str) -> str | None:
+    open_idx = text.find("<invariants>")
+    if open_idx < 0:
+        return None
+    close_idx = _outer_invariants_close_index(text)
+    if close_idx is None or close_idx <= open_idx:
+        return None
+    return text[open_idx + len("<invariants>") : close_idx]
+
+
+def _replace_invariants_body(text: str, body: str) -> str:
+    open_idx = text.find("<invariants>")
+    if open_idx < 0:
+        return text
+    close_idx = _outer_invariants_close_index(text)
+    if close_idx is None or close_idx <= open_idx:
+        return text
+    return (
+        text[: open_idx + len("<invariants>")]
+        + body
+        + text[close_idx:]
+    )
+
+
+def _packet_tag_span(text: str, tag: str) -> tuple[int, int] | None:
+    """Locate outer packet tag boundaries, ignoring examples inside inlined bodies."""
+    if tag == "invariants":
+        open_idx = text.find("<invariants>")
+        if open_idx < 0:
+            return None
+        close_idx = _outer_invariants_close_index(text)
+        if close_idx is None or close_idx <= open_idx:
+            return None
+        return open_idx, close_idx + len("</invariants>")
+    scan = text_without_inline_payload_regions(text)
+    open_marker = f"<{tag}>"
+    close_marker = f"</{tag}>"
+    open_idx = scan.find(open_marker)
+    if open_idx < 0:
+        return None
+    close_idx = scan.find(close_marker, open_idx + len(open_marker))
+    if close_idx < 0:
+        return None
+    return open_idx, close_idx + len(close_marker)
+
+
+def _packet_tag_body(text: str, tag: str) -> str | None:
+    span = _packet_tag_span(text, tag)
+    if span is None:
+        return None
+    open_idx, close_idx = span
+    open_marker = f"<{tag}>"
+    close_marker = f"</{tag}>"
+    inner_start = open_idx + len(open_marker)
+    inner_end = close_idx - len(close_marker)
+    return text[inner_start:inner_end]
+
+
+def _replace_packet_tag_body(text: str, tag: str, body: str) -> str:
+    span = _packet_tag_span(text, tag)
+    if span is None:
+        return text
+    open_idx, close_idx = span
+    open_marker = f"<{tag}>"
+    close_marker = f"</{tag}>"
+    return (
+        text[: open_idx + len(open_marker)]
+        + body
+        + text[close_idx - len(close_marker) :]
+    )
+
+
+def _rewrite_inline_pointer_lines(text: str, inline_slugs: set[str]) -> str:
+    if not inline_slugs:
+        return text
+
+    def _drop(match: re.Match[str]) -> str:
+        slug = match.group("slug").lower()
+        if slug in inline_slugs:
+            return ""
+        return match.group(0)
+
+    block = _invariants_body(text)
+    if block is None:
+        return text
+    merged = _CANONICAL_POINTER_LINE_RE.sub(_drop, block).rstrip()
+    orientation = _orientation_line(tuple(sorted(inline_slugs)))
+    if orientation not in merged:
+        merged = f"{merged}\n{orientation}"
+    return _replace_invariants_body(text, merged)
+
+
+def _existing_inline_digests(text: str) -> dict[str, str]:
+    parsed = {block.slug: block.digest for block in parse_inline_skill_blocks(text)}
+    for slug, digest in declared_inline_digests(text).items():
+        parsed.setdefault(slug, digest)
+    return parsed
+
+
+def _append_inline_blocks(
+    text: str,
+    *,
+    to_materialize: list[InlineBodyResolution],
+) -> str:
+    if not to_materialize:
+        return text
+    additions = [
+        format_inline_skill_block(
+            item.slug,
+            source_uri=item.source_uri,
+            rev=item.rev,
+            body=item.body,
+        )
+        for item in to_materialize
+    ]
+    close_idx = _outer_invariants_close_index(text)
+    if close_idx is None:
+        return text
+    insert_at = close_idx + len("</invariants>")
+    return text[:insert_at] + "".join(additions) + text[insert_at:]
+
+
+def _replace_stale_inline_block(text: str, item: InlineBodyResolution) -> str:
+    fresh = format_inline_skill_block(
+        item.slug,
+        source_uri=item.source_uri,
+        rev=item.rev,
+        body=item.body,
+    )
+    return replace_inline_block_for_slug(text, item.slug, fresh)
 
 
 def _parse_related_thread_ids(text: str) -> list[str]:
@@ -178,6 +402,16 @@ def _collect_skill_slugs(text: str, cortex: CortexEntityReader) -> list[str]:
     return slugs
 
 
+def _pointer_slug_represented(text: str, slug: str) -> bool:
+    scan = text_without_inline_payload_regions(text)
+    pattern = re.compile(
+        rf"- Use the `{re.escape(slug)}` skill "
+        r"\(canonical slug — seat self-fetches; ¬ fs-read skill body\)",
+        re.IGNORECASE,
+    )
+    return bool(pattern.search(scan))
+
+
 def _slug_represented_in_text(text: str, slug: str) -> bool:
     """Return True when slug is already wired in canonical or legacy packet form."""
     lowered = text.lower()
@@ -186,13 +420,15 @@ def _slug_represented_in_text(text: str, slug: str) -> bool:
         return True
     if f"`{needle}`" in lowered:
         return True
-    # Legacy fs-line packets (idempotent re-enrich)
     if f"agent-skills/{needle}.md" in lowered:
         return True
     if f"/{needle}/skill.md" in lowered:
         return True
     if f"/{needle}.md" in lowered:
         return True
+    for block in parse_inline_skill_blocks(text):
+        if block.slug == needle:
+            return True
     return False
 
 
@@ -201,7 +437,7 @@ def _merge_block_lines(
 ) -> tuple[str, list[str]]:
     if not new_lines:
         return text, []
-    block = _extract_block(text, tag)
+    block = _packet_tag_body(text, tag)
     if block is None:
         return text, []
     added: list[str] = []
@@ -214,9 +450,7 @@ def _merge_block_lines(
         added.append(stripped)
     if not added:
         return text, []
-    replacement = f"<{tag}>{merged}</{tag}>"
-    pattern = rf"<{tag}>.*?</{tag}>"
-    return re.sub(pattern, replacement, text, count=1, flags=re.DOTALL), added
+    return _replace_packet_tag_body(text, tag, merged), added
 
 
 def _agent_bus_fetch_line(thread_id: str) -> str:
@@ -232,44 +466,164 @@ def _next_mcp_step_number(mcp_block: str) -> int:
     return max(numbers, default=0) + 1
 
 
+@dataclass(frozen=True, slots=True)
+class _InlineMaterializeResult:
+    text: str
+    skills_inlined: list[str]
+    pointer_skills_added: list[str]
+    skills_already_wired: list[str]
+    inline_slugs: list[str]
+    total_bytes: int
+    had_inline_slugs: bool
+
+
+def _materialize_inline_skills(
+    text: str,
+    skill_slugs: list[str],
+    *,
+    budget_bytes: int,
+) -> _InlineMaterializeResult:
+    inline_slugs, pointer_slugs = partition_web_skill_channels(set(skill_slugs))
+    if not inline_slugs:
+        pointer_added: list[str] = []
+        for slug in pointer_slugs:
+            if not _slug_represented_in_text(text, slug):
+                pointer_added.append(slug)
+        if pointer_added:
+            lines = [_canonical_skill_invariant_line(slug) for slug in pointer_added]
+            text, _ = _merge_block_lines(text, "invariants", lines)
+        already = [slug for slug in skill_slugs if slug not in pointer_added]
+        return _InlineMaterializeResult(
+            text=text,
+            skills_inlined=[],
+            pointer_skills_added=pointer_added,
+            skills_already_wired=already,
+            inline_slugs=[],
+            total_bytes=0,
+            had_inline_slugs=False,
+        )
+    resolved = resolve_inline_bodies(inline_slugs)
+    enforce_inline_budget(resolved, budget_bytes)
+    text = _rewrite_inline_pointer_lines(text, set(inline_slugs))
+    existing = _existing_inline_digests(text)
+    to_add: list[InlineBodyResolution] = []
+    skills_inlined: list[str] = []
+    for item in resolved:
+        prior = existing.get(item.slug)
+        if prior == item.digest:
+            continue
+        if prior is not None:
+            text = _replace_stale_inline_block(text, item)
+            skills_inlined.append(item.slug)
+            continue
+        to_add.append(item)
+        skills_inlined.append(item.slug)
+    text = _append_inline_blocks(text, to_materialize=to_add)
+    pointer_added = [
+        slug for slug in pointer_slugs if not _pointer_slug_represented(text, slug)
+    ]
+    if pointer_added:
+        lines = [_canonical_skill_invariant_line(slug) for slug in pointer_added]
+        text, _ = _merge_block_lines(text, "invariants", lines)
+    already = [
+        slug
+        for slug in skill_slugs
+        if slug not in skills_inlined and slug not in pointer_added
+    ]
+    total_bytes = sum(item.byte_len for item in resolved)
+    return _InlineMaterializeResult(
+        text=text,
+        skills_inlined=skills_inlined,
+        pointer_skills_added=pointer_added,
+        skills_already_wired=already,
+        inline_slugs=list(inline_slugs),
+        total_bytes=total_bytes,
+        had_inline_slugs=True,
+    )
+
+
 def enrich_handoff_packet(
     text: str,
     *,
     cortex: CortexEntityReader,
+    to_agent: str | None = None,
+    thread_id: str | None = None,
+    skill_delivery: str | None = None,
 ) -> EnrichResult:
     """Non-destructively enrich an MCP-seat handoff packet (web or cursor) in memory."""
     skill_slugs = _collect_skill_slugs(text, cortex)
-    invariant_lines: list[str] = []
-    skills_added: list[str] = []
-    skills_already_wired: list[str] = []
-    for slug in skill_slugs:
-        if _slug_represented_in_text(text, slug):
-            skills_already_wired.append(slug)
-        else:
-            invariant_lines.append(_canonical_skill_invariant_line(slug))
-            skills_added.append(slug)
+    inline_materialized = False
+    inline_total_bytes = 0
+    skills_inlined: list[str] = []
 
-    text, _ = _merge_block_lines(text, "invariants", invariant_lines)
+    if skill_delivery == "inline_authoritative":
+        try:
+            mat = _materialize_inline_skills(
+                text,
+                skill_slugs,
+                budget_bytes=HANDOFF_INLINE_BUDGET_BYTES,
+            )
+        except SkillInlineBudgetExceeded:
+            raise
+        except SkillInlineResolveError as exc:
+            raise RuntimeError(f"{exc.code}: {exc.reason}") from exc
+        text = mat.text
+        skills_inlined = mat.skills_inlined
+        skills_added = mat.pointer_skills_added
+        skills_already_wired = mat.skills_already_wired
+        inline_slugs = mat.inline_slugs
+        inline_materialized = mat.had_inline_slugs
+        inline_total_bytes = mat.total_bytes
+    else:
+        inline_slugs = []
+        invariant_lines: list[str] = []
+        skills_added: list[str] = []
+        skills_already_wired: list[str] = []
+        for slug in skill_slugs:
+            if _slug_represented_in_text(text, slug):
+                skills_already_wired.append(slug)
+            else:
+                invariant_lines.append(_canonical_skill_invariant_line(slug))
+                skills_added.append(slug)
+        text, _ = _merge_block_lines(text, "invariants", invariant_lines)
 
-    mcp_block = _extract_block(text, "mcp_capabilities") or ""
+    mcp_block = _packet_tag_body(text, "mcp_capabilities") or ""
     mcp_additions: list[str] = []
     threads_added: list[str] = []
 
-    for thread_id in _parse_related_thread_ids(text):
-        fetch_snippet = f"agent_bus(fetch, thread={thread_id}"
+    for related_thread_id in _parse_related_thread_ids(text):
+        fetch_snippet = f"agent_bus(fetch, thread={related_thread_id}"
         if fetch_snippet not in text:
             step = _next_mcp_step_number(mcp_block) + len(mcp_additions)
-            mcp_additions.append(f"{step}. {_agent_bus_fetch_line(thread_id)}")
-            threads_added.append(thread_id)
+            mcp_additions.append(f"{step}. {_agent_bus_fetch_line(related_thread_id)}")
+            threads_added.append(related_thread_id)
 
     text, _ = _merge_block_lines(text, "mcp_capabilities", mcp_additions)
-    changed = bool(skills_added or threads_added or mcp_additions)
+
+    corpus_rewritten = False
+    if is_life_web_receiver(to_agent):
+        text, rewrites = mirror_workspaces_pointers_for_web(
+            text, thread_id=thread_id
+        )
+        corpus_rewritten = bool(rewrites)
+
+    changed = bool(
+        skills_added
+        or skills_inlined
+        or threads_added
+        or mcp_additions
+        or corpus_rewritten
+    )
     return EnrichResult(
         text=text,
         skills_added=skills_added,
         skills_already_wired=skills_already_wired,
+        skills_inlined=skills_inlined,
+        inline_slugs=inline_slugs,
         threads_added=threads_added,
         changed=changed,
+        inline_materialized=inline_materialized or bool(skills_inlined),
+        inline_total_bytes=inline_total_bytes,
     )
 
 
@@ -298,5 +652,5 @@ def _has_task_class_skill_ref(text: str) -> bool:
 
 
 def _has_agent_bus_fetch_for_threads(text: str, thread_ids: list[str]) -> bool:
-    mcp = _extract_block(text, "mcp_capabilities") or text
+    mcp = _packet_tag_body(text, "mcp_capabilities") or text
     return all(f"thread={tid}" in mcp or f"thread: {tid}" in mcp for tid in thread_ids)

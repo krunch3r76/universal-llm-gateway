@@ -50,7 +50,7 @@ _TEMPORAL_UPCOMING_SQL = """
 """
 
 # Recently-resolved work (superseded assertions + closed todos) is sourced via
-# open_items.resolution_index so cortex_boot and the control tower share one
+# open_items.resolution_index so cortex_brief and the control tower share one
 # definition of "resolved" — used to suppress stale open_items that still
 # reference completed matters as pending.
 
@@ -97,7 +97,7 @@ def get_boot_temporal(
 
     Recently resolved: unified resolved-record set (superseded assertions of any
     type + done/cancelled todos) from the last 30 days, sourced via
-    open_items.resolution_index. Used by cortex_boot AND the control tower to
+    open_items.resolution_index. Used by cortex_brief AND the control tower to
     reconcile stale open_items in session journals that still reference completed
     matters as pending.
 

@@ -94,13 +94,10 @@ def build_futures_spec(
     wrapped_cx = recorder.wrap("cortex", cortex_cx)
     relay = recorder.wrap("agent-bus", _relay)
 
-    unread_turns_qs = urlencode(
-        {"to": agent, "unread": "true", "last": 10, "compact": "true"}
+    unread_toc_qs = urlencode(
+        {"to": agent, "active_since": "14d", "limit": 10}
     )
-    # Boot card displays at most 10 unread threads (briefing card §
-    # "Agent Bus — N unread"). The full active-thread set runs into the
-    # hundreds; ask the API for the projection we render and stop paying
-    # ~60 KB UDS per boot to filter client-side.
+    # Boot card uses windowed unread-toc sample + unwindowed totals (Q6).
     threads_qs = urlencode({"status": "active", "has_unread": "true", "limit": 10})
     session_qs_parts: dict[str, str | int] = {"limit": profile.get("session_limit", 3)}
     if profile.get("session_agent_filter"):
@@ -112,7 +109,7 @@ def build_futures_spec(
     # - sessions: GET /session-journals?...            -> list-only read
     # - continuity: GET /boot-continuity?agent=...     -> list-only read
     # - threads: GET /threads?status=active            -> list-only read
-    # - unread_turns: GET /turns?...                   -> read-only (no mark_read)
+    # - unread_toc: GET /turns/unread-toc?...              -> read-only digest
     # - deadlines: GET /deadlines                      -> list-only read
     # - staging: GET /staging?status=pending&limit=5   -> list-only read
     # - todos: GET /boot-todos?...                     -> list-only read
@@ -135,8 +132,8 @@ def build_futures_spec(
         ),
         # read-only: compact attention list — has_unread=true&limit=10
         "threads": (relay, "agent-bus", "GET", f"/threads?{threads_qs}"),
-        # read-only: unread lookup only; query does not include mark_read
-        "unread_turns": (relay, "agent-bus", "GET", f"/turns?{unread_turns_qs}"),
+        # read-only: windowed unread digest with unwindowed totals (E1/Q6)
+        "unread_toc": (relay, "agent-bus", "GET", f"/turns/unread-toc?{unread_toc_qs}"),
     }
 
     if profile.get("include_deadlines", True):
@@ -179,9 +176,9 @@ def build_futures_spec(
     # Reflective journal is seat-keyed (e.g. `claude-web`, `grok-cursor`,
     # `claude-cursor`) — pass the full seat slug. Stripping to the family
     # slug returned 0 rows for every seat in the current data set
-    # (todo:cortex-boot-reflective-journal-seat-lookup, discovered
-    # claude-web-2026-05-24-0754). Cross-seat family-register lookup still
-    # works for callers that pass `agent=<family>` directly.
+    # (reflective-journal seat-lookup discovery, claude-web-2026-05-24-0754).
+    # Cross-seat family-register lookup still works for callers that pass
+    # `agent=<family>` directly.
     futures_spec["reflective_journal"] = (
         wrapped_cx,
         "GET",
@@ -260,7 +257,27 @@ def extract_boot_results(
     sessions: list[dict[str, Any]] = safe_list(raw["sessions"])
     deadlines: list[dict[str, Any]] = safe_list(raw.get("deadlines", []))
     threads: list[dict[str, Any]] = safe_list(raw["threads"], "threads")
-    unread_turns: list[dict[str, Any]] = safe_list(raw["unread_turns"], "turns")
+    unread_toc_raw = raw.get("unread_toc", {})
+    unread_toc_threads: list[dict[str, Any]] = (
+        safe_list(unread_toc_raw.get("threads", []), "threads")
+        if isinstance(unread_toc_raw, dict)
+        else []
+    )
+    unread_thread_total = (
+        int(unread_toc_raw.get("total_unread_threads", 0) or 0)
+        if isinstance(unread_toc_raw, dict)
+        else 0
+    )
+    unread_turn_total = (
+        int(unread_toc_raw.get("total_unread_turns", 0) or 0)
+        if isinstance(unread_toc_raw, dict)
+        else 0
+    )
+    unread_window_label = (
+        str(unread_toc_raw.get("active_since") or "14d window")
+        if isinstance(unread_toc_raw, dict)
+        else "14d window"
+    )
     staging_items: list[dict[str, Any]] = safe_list(raw.get("staging", []))
     todos: list[dict[str, Any]] = safe_list(raw.get("todos", []))
     self_reflections: list[dict[str, Any]] = safe_list(raw.get("self_reflections", []))
@@ -364,7 +381,10 @@ def extract_boot_results(
         else {},
         "deadlines": deadlines,
         "threads": threads,
-        "unread_turns": unread_turns,
+        "unread_toc_threads": unread_toc_threads,
+        "unread_thread_total": unread_thread_total,
+        "unread_turn_total": unread_turn_total,
+        "unread_window_label": unread_window_label,
         "staging_items": staging_items,
         "todos": todos,
         "self_reflections": self_reflections,

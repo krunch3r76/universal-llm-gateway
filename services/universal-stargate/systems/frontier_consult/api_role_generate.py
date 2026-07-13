@@ -19,6 +19,7 @@ from universal_logging import get_logger
 
 from .admission import (
     FrontierEndpointError,
+    enforce_check_review_substrate_admission,
     enforce_team_dispatch_generate_admit,
     is_cursor_sdk_generate_role,
 )
@@ -34,7 +35,11 @@ from .handoff import (
     extract_generate_pointer_summary,
     post_pointer_turn,
 )
-from .handoff_response import build_api_generate_result, build_handoff_result
+from .handoff_response import (
+    build_api_generate_result,
+    build_handoff_result,
+    resolve_poll_wait_seconds,
+)
 from .service import FrontierGenerateRequest
 
 if TYPE_CHECKING:
@@ -140,7 +145,7 @@ async def dispatch_api_role_generate(
             reason=(
                 "API-role generate consumes dispatch-thread context; packet_path/"
                 "source_ref are honored only by the cursor-sdk worker lane "
-                "(role=cursor-sdk)"
+                "(seat=cursor-sdk)"
             ),
             status_code=422,
             code="packet_not_supported_for_api_role",
@@ -158,8 +163,21 @@ async def dispatch_api_role_generate(
         request_id=request_id,
         caller_agent=body.caller_agent,
     )
+    enforce_check_review_substrate_admission(
+        role,
+        getattr(body, "model", None),
+        request_id=request_id,
+    )
 
     contract = body.contract
+    from implement_admission.check_review_substrate import (
+        is_check_review_api_role,
+        resolve_check_review_model,
+    )
+
+    effective_model = getattr(body, "model", None)
+    if is_check_review_api_role(role) and effective_model is None:
+        effective_model = resolve_check_review_model(role, None).resolved_model
     validate_generate_density_intake(
         request_id=request_id,
         contract=contract,
@@ -257,7 +275,7 @@ async def dispatch_api_role_generate(
 
     req = FrontierGenerateRequest(
         messages=as_user_message(last_user),
-        model=body.model,
+        model=effective_model,
         role=role,
         system=body.system,
         mcp=getattr(body, "mcp", None),
@@ -314,7 +332,10 @@ async def dispatch_api_role_generate(
         role, request_id=request_id
     )
     handoff_fields = build_handoff_result(
-        thread_id=thread_id, to_agent=role, after_turn=after_turn
+        thread_id=thread_id,
+        to_agent=role,
+        after_turn=after_turn,
+        poll_wait_seconds=resolve_poll_wait_seconds(caller_agent=body.caller_agent),
     )
     result = build_api_generate_result(
         role=role,

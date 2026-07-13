@@ -105,7 +105,7 @@ def validate_wrap_inputs(
         return None
     if op != "generate":
         return _validation_error(
-            "contract=wrap is only valid with op='generate', role='cursor-sdk'",
+            "contract=wrap is only valid with op='generate', seat='cursor-sdk'",
             field="contract",
         )
     if not role_is_sdk:

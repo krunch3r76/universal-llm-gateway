@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import importlib.util
 import json
 import sys
 from dataclasses import asdict
@@ -36,7 +35,7 @@ _REPO = Path(__file__).resolve().parent.parent.parent
 if str(_REPO / "libs") not in sys.path:
     sys.path.insert(0, str(_REPO / "libs"))
 
-from claude_bundles.resolver import UI_TARGET_SLUGS  # noqa: E402
+from claude_bundles.resolver import claude_ai_target_slugs  # noqa: E402
 from claude_bundles.skills_api import validate_bundle_dir  # noqa: E402
 from claude_bundles.skills_ui import (  # noqa: E402
     DEFAULT_CDP_URL,
@@ -63,23 +62,11 @@ def _parse_slugs(raw: str | None) -> list[str] | None:
     return [s.strip() for s in raw.split(",") if s.strip()]
 
 
-def _load_gap_slugs() -> tuple[str, ...]:
-    path = _REPO / "scripts" / "cortex" / "upload_claude_bundles.py"
-    spec = importlib.util.spec_from_file_location("upload_claude_bundles", path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"Cannot load {path}")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return tuple(mod.GAP_SLUGS)
-
-
 def _resolve_slugs(args: argparse.Namespace) -> list[str] | None:
     if args.slugs:
         return _parse_slugs(args.slugs)
     if args.all:
-        return list(UI_TARGET_SLUGS)
-    if args.gap:
-        return list(_load_gap_slugs())
+        return list(claude_ai_target_slugs())
     return None
 
 
@@ -130,8 +117,7 @@ def main() -> int:
     parser.add_argument("--bundles-dir", metavar="DIR")
     parser.add_argument("--zip-dir", metavar="DIR")
     scope = parser.add_mutually_exclusive_group()
-    scope.add_argument("--all", action="store_true", help="All UI_TARGET_SLUGS (31)")
-    scope.add_argument("--gap", action="store_true", help="39-skill gap list")
+    scope.add_argument("--all", action="store_true", help="All catalog Claude.ai targets")
     parser.add_argument("--slugs", help="Comma-separated slug subset")
     parser.add_argument("--limit", type=int)
     parser.add_argument("--sleep", type=float, default=6.0, help="Seconds between uploads (default 6)")
@@ -230,8 +216,8 @@ def main() -> int:
 
     if args.zip_dir and args.bundles_dir:
         parser.error("Use --zip-dir OR --bundles-dir, not both")
-    if not args.all and not args.gap and not args.slugs and not args.zip_dir:
-        parser.error("Specify --all, --gap, --slugs, or --zip-dir")
+    if not args.all and not args.slugs and not args.zip_dir:
+        parser.error("Specify --all, --slugs, or --zip-dir")
 
     if args.strict:
         args.skip_invalid = True

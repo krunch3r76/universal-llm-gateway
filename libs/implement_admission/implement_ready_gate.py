@@ -24,6 +24,7 @@ from implement_admission.doc_validate_attestation import (
     extract_doc_validate_attestation,
 )
 from implement_admission.implement_ready import evaluate_implement_ready
+from implement_admission.implement_ready_gate6_resolve import resolve_gate6_ratification
 from implement_admission.implement_ready_gate_resolve import (
     ImplementReadyCortex,
     SkepticRatificationOutcome,
@@ -79,6 +80,7 @@ def require_implement_ready(
     workspaces_root: Any | None = None,
     skip_doc_validate_guard: bool = False,
     resolve_skeptic: Any | None = None,
+    fetch_bus_turn: Any | None = None,
 ) -> None:
     """Hard gate for todo-sourced implement dispatch. No-op for non-todo sources."""
     if source_ref is None:
@@ -127,6 +129,11 @@ def require_implement_ready(
     acceptance_criteria = raw_acs if isinstance(raw_acs, list) else []
 
     spec_hash_uri = dense_spec_hash_uri(dense_spec_text) if dense_spec_text else None
+
+    raw_waived = attrs.get("recon_waived")
+    recon_waived = recon_waived_bool(raw_waived)
+    recon_waiver = parse_recon_waiver(raw_waived)
+
     if triage == "judgment_required":
         skeptic_outcome = resolve_skeptic_ratification(
             todo_id=ref.canonical_ref,
@@ -135,12 +142,23 @@ def require_implement_ready(
             spec_hash_uri=spec_hash_uri,
             resolve_skeptic=resolve_skeptic,
         )
+        if (
+            skeptic_outcome.assertion is None
+            and not skeptic_outcome.ratified
+            and not recon_waived
+            and assertion is not None
+        ):
+            gate6_outcome = resolve_gate6_ratification(
+                todo_attrs=attrs,
+                implement_ready_assertion=assertion,
+                spec_hash_uri=spec_hash_uri,
+                fetch_bus_turn=fetch_bus_turn,
+                workspaces_root=workspaces_root,
+            )
+            if gate6_outcome.ratified:
+                skeptic_outcome = gate6_outcome
     else:
         skeptic_outcome = SkepticRatificationOutcome(ratified=False)
-
-    raw_waived = attrs.get("recon_waived")
-    recon_waived = recon_waived_bool(raw_waived)
-    recon_waiver = parse_recon_waiver(raw_waived)
 
     verdict = evaluate_implement_ready(
         todo_id=ref.canonical_ref,

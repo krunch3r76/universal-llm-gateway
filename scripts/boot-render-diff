@@ -10,7 +10,7 @@ every deploy.
 
 What it does
 ------------
-For each agent profile (`cursor`, `web`, …), runs `run_cortex_boot` in
+For each agent profile (`cursor`, `web`, …), runs `run_cortex_brief` in
 INSPECT mode and writes a canonical manifest containing:
 
 * One entry per ``injected_artifact`` with its ``name``, ``bytes``, and
@@ -83,7 +83,7 @@ def _import_boot_runner() -> Any:
     try:
         from tools.cortex_named_tools._boot_runner import (  # type: ignore[import-not-found]
             BootMode,
-            run_cortex_boot,
+            run_cortex_brief,
         )
     except ImportError as exc:
         print(
@@ -92,7 +92,7 @@ def _import_boot_runner() -> Any:
             file=sys.stderr,
         )
         raise SystemExit(1) from exc
-    return run_cortex_boot, BootMode
+    return run_cortex_brief, BootMode
 
 
 def _canonical_manifest(agent: str, result: dict[str, Any]) -> dict[str, Any]:
@@ -171,7 +171,7 @@ def _write_baseline(agent: str, manifest_text: str) -> None:
 
 
 def _parse_agent_slug(agent: str) -> tuple[str | None, str | None]:
-    """Resolve an agent slug to (family, platform) for run_cortex_boot().
+    """Resolve an agent slug to (family, platform) for run_cortex_brief().
 
     Accepts two forms:
       '{family}-{platform}'  e.g. "claude-cursor" → ("claude", "cursor")
@@ -186,12 +186,12 @@ def _parse_agent_slug(agent: str) -> tuple[str | None, str | None]:
 
 
 def _render_manifest(agent: str) -> dict[str, Any]:
-    run_cortex_boot, boot_mode = _import_boot_runner()
+    run_cortex_brief, boot_mode = _import_boot_runner()
     family, platform = _parse_agent_slug(agent)
     # Silence INFO-level httpx fetch chatter — the manifest is enough.
     logging.disable(logging.WARNING)
     try:
-        result = run_cortex_boot(
+        result = run_cortex_brief(
             family=family,
             platform=platform,
             transcript_id="",

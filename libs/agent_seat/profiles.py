@@ -41,6 +41,7 @@ class CapabilityProfile:
     provider: Literal["anthropic", "openai", "xai", "google", "cursor"]
     default_model: str | None
     tool_surface: Literal["mcp", "inline-only", "sdk"]
+    mcp_surface: Literal["none", "life", "code"]
     delivery: Literal["auto", "manual"]
     include_deadlines: bool
     include_review_queue: bool
@@ -107,6 +108,7 @@ def load_profiles() -> dict[tuple[str, str], CapabilityProfile]:
             provider=entry["provider"],
             default_model=entry.get("default_model"),
             tool_surface=entry["tool_surface"],
+            mcp_surface=entry.get("mcp_surface") or "none",
             delivery=entry["delivery"],
             include_deadlines=entry["include_deadlines"],
             include_review_queue=entry["include_review_queue"],
@@ -148,11 +150,20 @@ def load_roles() -> dict[str, RoleProfile]:
     roles: dict[str, RoleProfile] = {}
     for slug, entry in raw.items():
         allowed_opts_raw = entry.get("allowed_options")
+        default_family = entry["default_family"]
+        default_platform = entry["default_platform"]
+        profile = get_profile(default_family, default_platform)
+        if profile.auto_dispatchable:
+            raise ValueError(
+                f"agents.yaml role {slug!r}: default profile "
+                f"({default_family!r}, {default_platform!r}) is auto_dispatchable — "
+                "auto seats are addressed via seat= on op=generate, not the role roster"
+            )
         roles[slug] = RoleProfile(
             role=slug,
             description=entry["description"],
-            default_family=entry["default_family"],
-            default_platform=entry["default_platform"],
+            default_family=default_family,
+            default_platform=default_platform,
             default_model=entry.get("default_model"),
             allowed_models=tuple(entry.get("allowed_models") or []),
             allowed_options=(
@@ -256,8 +267,10 @@ def known_families() -> frozenset[str]:
 def seat_capabilities(profile: CapabilityProfile) -> frozenset[str]:
     """Closed capability-token set derived from the profile axes (no second table)."""
     toks: set[str] = set()
-    if profile.tool_surface == "mcp":
-        toks.add("mcp_fs")
+    if profile.mcp_surface == "life":
+        toks.add("mcp_life")
+    elif profile.mcp_surface == "code":
+        toks.update({"mcp_life", "mcp_code"})
     if profile.tool_surface in ("mcp", "sdk"):
         toks.add("local_fs_write")
     if profile.tool_surface == "sdk":
@@ -266,7 +279,7 @@ def seat_capabilities(profile: CapabilityProfile) -> frozenset[str]:
 
 
 CAPABILITY_TOKENS: frozenset[str] = frozenset(
-    {"mcp_fs", "local_fs_write", "git_worktree"}
+    {"mcp_life", "mcp_code", "local_fs_write", "git_worktree"}
 )
 
 

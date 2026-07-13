@@ -45,10 +45,6 @@ def extract_renderer_fields(entity: dict[str, Any], slug: str) -> dict[str, Any]
     trigger_match_terms = (
         sorted(str(v) for v in terms) if isinstance(terms, list) else []
     )
-    agents = attrs.get("applicable_agents")
-    applicable_agents = (
-        [str(v) for v in agents] if isinstance(agents, list) else ["*"]
-    )
     pointer = attrs.get("paired_rule_pointer")
     if pointer is None:
         pointer = entity.get("paired_rule_pointer")
@@ -59,7 +55,6 @@ def extract_renderer_fields(entity: dict[str, Any], slug: str) -> dict[str, Any]
         "references": outgoing_refs,
         "aliases": aliases,
         "source_uri": str(entity.get("source_uri") or "").strip(),
-        "applicable_agents": applicable_agents,
         "paired_rule_pointer": str(pointer).strip() if pointer else "",
     }
 
@@ -92,9 +87,6 @@ def render_stub(slug: str, fields: dict[str, Any]) -> str:
     terms = fields.get("trigger_match_terms") or []
     if terms:
         lines.append(f"trigger_match_terms: {_yaml_list(list(terms))}")
-    agents = fields.get("applicable_agents") or ["*"]
-    if agents != ["*"]:
-        lines.append(f"applicable_agents: {_yaml_list(list(agents))}")
     lines.append(f"generator_version: {_yaml_quote(GENERATOR_VERSION)}")
     lines.append("---")
     lines.append("")

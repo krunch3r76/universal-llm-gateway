@@ -11,14 +11,15 @@ All Cortex CRUD via `cortex(tool=..., arguments='...')`. Arguments is a JSON str
 
 In Cursor: `CallMcpTool(server="user-vortex", toolName="cortex", arguments={...})`
 
-## Session Boot
+## Session continuity brief
 
 ```
 cortex_brief(agent="cursor")  # slim briefing card; returns session_id + sections_available
-cortex_brief(agent="cursor", transcript_id="cursor-2026-04-07-0818")  # continuation boot
+cortex_brief(agent="cursor", transcript_id="cursor-2026-04-07-0818")  # continuation brief
 ```
 
-Hold `session_id` from boot for the full session — pass to `supersede`, `edge_create`, `relationship_create`.
+Hold `session_id` from `cortex_brief` for the full session — pass to `supersede`, `edge_create`, `relationship_create`.
+`cortex_brief` is a continuity briefing card + session_id mint — not a mode switch into Cortex.
 
 ## 4 Canonical Ops
 

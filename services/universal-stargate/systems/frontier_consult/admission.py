@@ -9,6 +9,9 @@ from typing import Any
 import httpx
 from agent_seat import AgentMeta
 from agent_seat.dispatch_role_catalog import (
+    auto_seats,
+    generate_comma_clause,
+    generate_roles,
     handoff_roles,
     handoff_seat_map_clause,
     is_legacy_role,
@@ -29,6 +32,90 @@ from .events import DispatchCapabilityCardMissing, FrontierEndpointRejected
 from .probe_caller_guard import reject_probe_on_reviewer
 
 EventPublisher = Callable[[Any], None]
+
+_ROLE_IS_NOT_A_SEAT_MESSAGE = (
+    "'cursor-sdk' names an executor seat (platform=sdk), not a functional role. "
+    'Use seat="cursor-sdk". role= is reserved for functions: '
+    f"{generate_comma_clause()}."
+)
+
+
+def _generate_teaching_data(expected_axis: str) -> dict[str, Any]:
+    return {
+        "expected_axis": expected_axis,
+        "valid_seats": auto_seats(),
+        "valid_roles": generate_roles(),
+    }
+
+
+def enforce_generate_role_seat_exclusive(
+    role: str | None,
+    seat: str | None,
+    *,
+    request_id: str,
+) -> None:
+    """Exactly-one FOL for ``role`` vs ``seat`` on generate/to_thread."""
+    has_role = bool(role and str(role).strip())
+    has_seat = bool(seat and str(seat).strip())
+    if not has_role and not has_seat:
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="role",
+            reason="generate requires exactly one of role or seat",
+            status_code=422,
+            code="role_or_seat_required",
+            details=_generate_teaching_data("role|seat"),
+        )
+    if has_role and has_seat:
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="role",
+            reason="role and seat are mutually exclusive on generate/to_thread",
+            status_code=422,
+            code="role_seat_exclusive",
+            details=_generate_teaching_data("role|seat"),
+        )
+
+
+def reject_role_cursor_sdk_on_generate(
+    role: str,
+    *,
+    request_id: str,
+) -> None:
+    """Teaching 422 when ``role=cursor-sdk`` is used instead of ``seat=``."""
+    if normalize_agent_slug(role) != "cursor-sdk":
+        return
+    raise FrontierEndpointError(
+        request_id=request_id,
+        field="role",
+        reason=_ROLE_IS_NOT_A_SEAT_MESSAGE,
+        status_code=422,
+        code="role_is_not_a_seat",
+        details=_generate_teaching_data("seat"),
+    )
+
+
+def enforce_handoff_seat_not_auto(
+    seat: str,
+    *,
+    request_id: str,
+) -> None:
+    """Reject handoff to auto-dispatch seats (use op=generate with seat=)."""
+    if normalize_agent_slug(seat) not in auto_seats():
+        return
+    raise FrontierEndpointError(
+        request_id=request_id,
+        field="seat",
+        reason=(
+            f"seat {seat!r} is auto-dispatchable — use "
+            f'team_dispatch(op="generate", seat="{normalize_agent_slug(seat)}", …) '
+            "instead of handoff"
+        ),
+        status_code=422,
+        code="seat_not_manual",
+        details=_generate_teaching_data("seat"),
+    )
+
 
 # Models that only support the Chat Completions API and are unavailable on the
 # OpenAI Responses API path used by chat-dispatch respond (frontier_dispatch_v1).
@@ -245,6 +332,36 @@ def _resolve_role_or_seat_profile(
     return to_agent, family, platform, profile
 
 
+def enforce_check_review_substrate_admission(
+    role: str,
+    model: str | None,
+    *,
+    request_id: str,
+) -> None:
+    """Role×substrate matrix for check/review dispatches (F3/F4)."""
+    from implement_admission.check_review_substrate import (
+        CheckReviewAdmissionReject,
+        evaluate_check_review_admission,
+    )
+
+    _to, _fam, _plat, profile = _resolve_role_or_seat_profile(
+        role, request_id=request_id
+    )
+    verdict = evaluate_check_review_admission(
+        role,
+        model,
+        api_role_with_cursor_on_api_profile=not is_sdk_substrate_profile(profile),
+    )
+    if isinstance(verdict, CheckReviewAdmissionReject):
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field=verdict.field,
+            reason=verdict.reason,
+            status_code=422,
+            code=verdict.code,
+        )
+
+
 def enforce_team_dispatch_generate_admit(
     role: str,
     *,
@@ -255,16 +372,26 @@ def enforce_team_dispatch_generate_admit(
     """Reject ``op=generate`` / ``op=to_thread`` when profile does not admit generate.
 
     Admission predicate (FOL):
-      admit_generate(role) ⟺ profile.admits_generate() is True
+      admit_generate(role) ⟺ role ∈ generate_roles()
       ¬(role=reviewer ∧ is_mcp_probe_caller(caller_agent))
 
-    Web/manual seats (``claude/web``, ``grok/web``, …) and roles whose default
-    platform is manual_handoff (``web-consult``, ``web-implement``, …) raise 422 with
-    code ``web_seat_not_generate_target``. Explicit ``model=`` does not bypass.
-
-    Probe callers (``mcp-l*-probe``, ``mcp-trace-matrix``) on ``role=reviewer``
-    raise 422 ``probe_reviewer_forbidden`` — use chat ``-mcp`` or artisan/skeptic.
+    Auto-dispatch seats (``cursor-sdk``, …) must use ``seat=``, not ``role=``.
     """
+    reject_role_cursor_sdk_on_generate(role, request_id=request_id)
+    canonical = normalize_agent_slug(role)
+    if canonical not in generate_roles():
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="role",
+            reason=(
+                f"role {role!r} is not api-dispatchable on op=generate/to_thread; "
+                f"valid roles: {generate_comma_clause()}"
+            ),
+            status_code=422,
+            code="role_not_api_dispatchable",
+            details=_generate_teaching_data("role"),
+        )
+
     reject_probe_on_reviewer(
         role,
         request_id=request_id,
@@ -478,30 +605,90 @@ def is_sdk_substrate_profile(profile: CapabilityProfile) -> bool:
     )
 
 
-def resolve_cursor_sdk_generate_target(
-    role: str,
+def _resolve_auto_seat_profile(
+    seat: str, *, request_id: str
+) -> tuple[str, str, str, CapabilityProfile]:
+    """Return ``(to_agent_slug, family, platform, profile)`` for an auto seat slug."""
+    canonical = normalize_agent_slug(seat)
+    if canonical not in auto_seats():
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="seat",
+            reason=f"Unknown auto-dispatch seat {seat!r}",
+            status_code=422,
+            code="seat_unknown",
+            details=_generate_teaching_data("seat"),
+        )
+    if canonical == "cursor-sdk":
+        profile = get_profile("cursor", "sdk")
+        return "cursor-sdk", "cursor", "sdk", profile
+    family = seat_to_family(canonical)
+    parts = canonical.split("-", 1)
+    if family is None or len(parts) != 2:
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="seat",
+            reason=f"Unknown auto-dispatch seat {seat!r}",
+            status_code=422,
+            code="seat_unknown",
+            details=_generate_teaching_data("seat"),
+        )
+    platform = parts[1]
+    try:
+        profile = get_profile(family, platform)
+    except KeyError:
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="seat",
+            reason=f"Unknown auto-dispatch seat {seat!r}",
+            status_code=422,
+            code="seat_unknown",
+            details=_generate_teaching_data("seat"),
+        )
+    if not profile.auto_dispatchable:
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="seat",
+            reason=f"seat {seat!r} is not auto-dispatchable",
+            status_code=422,
+            code="seat_not_auto_dispatchable",
+            details=_generate_teaching_data("seat"),
+        )
+    to_agent = normalize_bus_address(f"{family}-{platform}")
+    return to_agent, family, platform, profile
+
+
+def resolve_auto_seat_generate_target(
+    seat: str,
     *,
     model: str | None,
     request_id: str,
 ) -> tuple[str, str, str, str]:
-    """Resolve cursor-sdk generate target.
+    """Resolve auto-dispatch seat generate target (``seat=cursor-sdk``, …).
 
     Admission predicate (FOL):
-      admit(role, model) ⟺ profile.auto_dispatchable
-                 ∧ family=cursor ∧ platform=sdk
+      admit(seat, model) ⟺ profile.auto_dispatchable
 
-    Accepts role slug ``cursor-sdk`` or explicit ``model=cursor/…`` when role
-    resolves to cursor/sdk. Returns ``(to_agent, family, platform, resolved_model)``.
+    Returns ``(to_agent, family, platform, resolved_model)``.
     """
-    to_agent, family, platform, profile = _resolve_role_or_seat_profile(
-        role, request_id=request_id
+    to_agent, family, platform, profile = _resolve_auto_seat_profile(
+        seat, request_id=request_id
     )
+    if profile.manual_handoff:
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="seat",
+            reason=f"seat {seat!r} requires op=handoff, not generate",
+            status_code=422,
+            code="seat_not_auto_dispatchable",
+            details=_generate_teaching_data("seat"),
+        )
     if not is_sdk_substrate_profile(profile):
         raise FrontierEndpointError(
             request_id=request_id,
-            field="role",
+            field="seat",
             reason=(
-                f"role {role!r} resolved to ({family!r}, {platform!r}) which is "
+                f"seat {seat!r} resolved to ({family!r}, {platform!r}) which is "
                 f"not an SDK auto-dispatch substrate"
             ),
             status_code=422,
@@ -546,31 +733,66 @@ def resolve_cursor_sdk_generate_target(
             status_code=422,
             code="sdk_generate_model_invalid",
         )
-    return "cursor-sdk", family, platform, resolved_model
+    return to_agent, family, platform, resolved_model
 
 
-def is_cursor_sdk_generate_role(role: str, *, request_id: str) -> bool:
-    """True when role/seat slug resolves to cursor/sdk auto_dispatchable profile."""
-    try:
-        _to, _fam, _plat, profile = _resolve_role_or_seat_profile(
-            role, request_id=request_id
-        )
-    except FrontierEndpointError:
-        return False
-    return is_sdk_substrate_profile(profile)
-
-
-def is_cursor_sdk_generate_admission(
+def resolve_cursor_sdk_generate_target(
     role: str,
     *,
     model: str | None,
     request_id: str,
+) -> tuple[str, str, str, str]:
+    """Backward-compat wrapper — use resolve_auto_seat_generate_target(seat=…)."""
+    return resolve_auto_seat_generate_target(
+        role, model=model, request_id=request_id
+    )
+
+
+def is_auto_seat_generate_admission(
+    *,
+    seat: str | None = None,
+    role: str | None = None,
+    model: str | None,
+    request_id: str,
+) -> bool:
+    """True when ``op=generate`` should enter the auto-seat SDK handler branch."""
+    if seat is not None and str(seat).strip():
+        try:
+            _resolve_auto_seat_profile(seat, request_id=request_id)
+        except FrontierEndpointError:
+            return False
+        return True
+    if role is not None and normalize_agent_slug(role) == "cursor-sdk":
+        return False
+    return False
+
+
+def is_cursor_sdk_generate_role(role: str, *, request_id: str) -> bool:
+    """True when seat slug resolves to cursor/sdk auto_dispatchable profile."""
+    try:
+        _resolve_auto_seat_profile(role, request_id=request_id)
+    except FrontierEndpointError:
+        return False
+    return is_sdk_substrate_profile(
+        get_profile("cursor", "sdk")
+    )
+
+
+def is_cursor_sdk_generate_admission(
+    role: str | None = None,
+    *,
+    seat: str | None = None,
+    model: str | None = None,
+    request_id: str,
 ) -> bool:
     """True when ``op=generate`` should enter the cursor-sdk handler branch."""
-    if is_cursor_sdk_generate_role(role, request_id=request_id):
-        return True
-    if model:
-        return ModelId.parse(model).backend_type == "cursor_sdk"
+    del model  # model-only admission rejected (Option B)
+    if role is not None and normalize_agent_slug(role) == "cursor-sdk":
+        return False
+    if seat is not None and str(seat).strip():
+        return is_auto_seat_generate_admission(
+            seat=seat, role=None, model=None, request_id=request_id
+        )
     return False
 
 
