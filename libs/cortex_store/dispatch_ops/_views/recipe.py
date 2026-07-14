@@ -8,7 +8,9 @@ import re
 from typing import Any
 
 _RECIPE_ID_RE = re.compile(r"^recipe:(?P<profile>[a-z_]+)/v(?P<version>\d+)$")
-_KNOWN_PROFILES = frozenset({"matter_charter", "matter_doctrine", "matter_index"})
+_KNOWN_PROFILES = frozenset(
+    {"matter_charter", "matter_doctrine", "matter_index", "matter_entities"}
+)
 _REQUIRED_SECTION_KEYS = frozenset(
     {"section_id", "title", "order", "core", "derivation", "watched_set"}
 )

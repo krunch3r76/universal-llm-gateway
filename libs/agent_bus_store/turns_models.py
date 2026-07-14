@@ -461,6 +461,7 @@ class TurnSendCreate(BaseModel):
     lifecycle_state: str | None = None
     after_turn: int | None = None
     status: TurnStatus = TurnStatus.OPEN
+    supersedes_turn: int | None = None
     mark_read: bool = False
     close: bool = False
     attachments: list[AttachmentCreate] | None = None

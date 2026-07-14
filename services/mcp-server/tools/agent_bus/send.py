@@ -36,6 +36,7 @@ def _send_impl(
     allow_long_body: bool,
     sidecar_content: str | None = None,
     sidecar_slug: str | None = None,
+    supersedes_turn: int | None = None,
 ) -> dict[str, Any]:
     """Relay to POST /threads/send."""
     payload: dict[str, Any] = {
@@ -69,6 +70,8 @@ def _send_impl(
         payload["sidecar_content"] = sidecar_content
     if sidecar_slug is not None:
         payload["sidecar_slug"] = sidecar_slug
+    if supersedes_turn is not None:
+        payload["supersedes_turn"] = supersedes_turn
 
     result = relay("agent-bus", "POST", "/threads/send", body=payload)
     if "error" in result:
@@ -119,6 +122,7 @@ def _send_dispatch(
     allow_long_body: bool = False,
     sidecar_content: str | None = None,
     sidecar_slug: str | None = None,
+    supersedes_turn: int | None = None,
 ) -> dict[str, Any]:
     if isinstance(thread, int):
         thread = str(thread)
@@ -186,6 +190,14 @@ def _send_dispatch(
             "reason": "lifecycle_state_not_valid_on_continue",
         }
 
+    if has_new_slug and supersedes_turn is not None:
+        return {
+            "error": (
+                "send: supersedes_turn is only valid on the continue (thread=) path"
+            ),
+            "reason": "supersedes_turn_not_valid_on_new_thread",
+        }
+
     return _send_impl(
         new_slug=new_slug,
         thread=thread,
@@ -204,4 +216,5 @@ def _send_dispatch(
         allow_long_body=allow_long_body,
         sidecar_content=sidecar_content,
         sidecar_slug=sidecar_slug,
+        supersedes_turn=supersedes_turn,
     )

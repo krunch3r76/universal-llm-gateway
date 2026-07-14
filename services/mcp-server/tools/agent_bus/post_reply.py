@@ -101,6 +101,7 @@ def _reply_impl(
     close: bool,
     attachments: list[dict[str, Any]] | None = None,
     allow_long_body: bool = False,
+    supersedes_turn: int | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "thread": thread,
@@ -112,6 +113,8 @@ def _reply_impl(
     }
     if after_turn > 0:
         payload["after_turn"] = after_turn
+    if supersedes_turn is not None:
+        payload["supersedes_turn"] = supersedes_turn
     if attachments:
         payload["attachments"] = attachments
     if allow_long_body:
@@ -230,6 +233,7 @@ def _reply_dispatch(
     close: bool = False,
     attachments: list[dict[str, Any]] | None = None,
     allow_long_body: bool = False,
+    supersedes_turn: int | None = None,
 ) -> dict[str, Any]:
     if isinstance(thread, int):
         thread = str(thread)
@@ -271,6 +275,7 @@ def _reply_dispatch(
         close=close,
         attachments=attachments,
         allow_long_body=allow_long_body,
+        supersedes_turn=supersedes_turn,
     )
     if "error" not in result:
         result["_deprecated"] = {

@@ -686,6 +686,7 @@ def create_turn(
     body: str,
     status: str = "open",
     after_turn: int | None = None,
+    supersedes_turn: int | None = None,
     attachments: list[dict[str, Any]] | None = None,
     close: bool = False,
     mark_read: bool = False,
@@ -710,6 +711,7 @@ def create_turn(
         body=body,
         status=status,
         after_turn=effective_after,
+        supersedes_turn=supersedes_turn,
         attachments=attachments,
     )
 

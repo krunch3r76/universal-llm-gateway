@@ -19,13 +19,11 @@ _OPS = frozenset({_PROPOSE_OP, _COMMIT_OP, _REMEMBER_OP})
 def register_imprint_tools(mcp: FastMCP) -> None:
     @mcp.tool(title="Imprint")
     def imprint(op: str, arguments: JsonArgStr = "{}") -> Any:
-        """Life imprint — propose (zero-write plan), commit (apply by proposal_id),
-        or remember (propose∘commit when fully resolved).
+        """Life imprint — propose / commit / remember (life surface).
 
-        op=propose accepts a hand-authored patch and returns normalized_patch,
-        op_plan, rejects, candidates, and proposal_id without graph writes.
-        op=commit applies a frozen proposal by proposal_id.
-        op=remember auto-commits commit-eligible patches in one call.
+        When/how: natural save/pin → remember if entity ids fully resolved;
+        propose if fuzzy/multi-match; commit only by proposal_id after preview.
+        Patch = cortex.life/v1 JSON-LD. See agent_skill:life-imprint-when-how.
         """
         parsed = parse_dispatch_arguments(arguments)
         if parsed is None:

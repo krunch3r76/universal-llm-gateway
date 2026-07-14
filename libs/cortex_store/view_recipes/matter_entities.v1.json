@@ -1,0 +1,43 @@
+{
+  "profile": "matter_entities",
+  "version": 1,
+  "notes": "v1 stub — manual/fs-authored entities.md is authoritative until view_render derives CAST from walk_subgraph. See cortex://notes/system/specs/matter-playbook-two-markdown-faces.md",
+  "sections": [
+    {
+      "section_id": "header_block",
+      "title": "Header block",
+      "order": 1,
+      "core": true,
+      "derivation": {"primitive": "entity_card", "params": {}},
+      "watched_set": {"entity_scope": "root_subgraph", "edge_types": []},
+      "repair_template": "entity_card(root)"
+    },
+    {
+      "section_id": "activate_first",
+      "title": "Activate first",
+      "order": 2,
+      "core": true,
+      "derivation": {"primitive": "walk_subgraph", "params": {"hops": 1}},
+      "watched_set": {"entity_scope": "root_subgraph", "edge_types": ["involves", "related_to"]},
+      "repair_template": "walk_subgraph(root, hops=1)"
+    },
+    {
+      "section_id": "cast",
+      "title": "Cast",
+      "order": 3,
+      "core": true,
+      "derivation": {"primitive": "walk_subgraph", "params": {"hops": 2}},
+      "watched_set": {"entity_scope": "root_subgraph", "edge_types": ["involves", "correspondence_with", "secured_by", "related_to"]},
+      "repair_template": "walk_subgraph(root, hops=2)"
+    },
+    {
+      "section_id": "journal_pointer",
+      "title": "Journal",
+      "order": 4,
+      "core": true,
+      "derivation": {"primitive": "relationships", "params": {"type_id": "references"}},
+      "watched_set": {"entity_scope": "root", "edge_types": ["references"]},
+      "repair_template": "relationships(root, work_journal)"
+    }
+  ]
+}

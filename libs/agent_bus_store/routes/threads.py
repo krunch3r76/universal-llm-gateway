@@ -406,6 +406,16 @@ def _send_with_sidecar(body: TurnSendCreate) -> TurnSendCreated:
                     "reason": "after_turn_not_valid_on_new_thread",
                 },
             )
+        if body.supersedes_turn is not None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "error": (
+                        "supersedes_turn is only valid on the continue (thread=) path"
+                    ),
+                    "reason": "supersedes_turn_not_valid_on_new_thread",
+                },
+            )
         with connect() as conn:
             existing = conn.execute(
                 "SELECT id FROM threads WHERE slug = ? LIMIT 1",
@@ -497,6 +507,7 @@ def _send_with_sidecar(body: TurnSendCreate) -> TurnSendCreated:
             body=final_body,
             status=body.status,
             after_turn=effective_after,
+            supersedes_turn=body.supersedes_turn,
             attachments=att_dicts,
         )
     except UnreadTurnsExist as exc:
@@ -602,6 +613,16 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
                     "reason": "after_turn_not_valid_on_new_thread",
                 },
             )
+        if body.supersedes_turn is not None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "error": (
+                        "supersedes_turn is only valid on the continue (thread=) path"
+                    ),
+                    "reason": "supersedes_turn_not_valid_on_new_thread",
+                },
+            )
         try:
             thread_row, turn_id, ts, turn_number = create_thread_with_turn(
                 slug=body.new_slug,
@@ -671,6 +692,7 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
             body=body.body,
             status=body.status,
             after_turn=body.after_turn,
+            supersedes_turn=body.supersedes_turn,
             attachments=att_dicts,
             close=body.close,
             mark_read=body.mark_read,

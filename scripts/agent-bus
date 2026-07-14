@@ -15,6 +15,7 @@ Usage:
   agent-bus post --slug "my-topic" --to web --subject "Title" --body-file /tmp/body.md --allow-long-body
   agent-bus post --slug "my-topic" --to web --subject "Title" --body "text" --attach /tmp/file.json
   agent-bus reply --thread 049 --to web --subject "done" --body "Phase 1 shipped" --after-turn 3
+  agent-bus reply --thread 049 --to web --subject "CHECKPOINT v2" --body-file /tmp/cp.md --after-turn 153 --supersedes-turn 153
   agent-bus reply --thread 049 --to web --subject "done" --body-file /tmp/reply.md --after-turn 3 --allow-long-body
   agent-bus reply --thread 049 --to web --subject "done" --body-file /tmp/reply.md --after-turn 3 --attach /tmp/results.csv
   agent-bus threads
@@ -216,6 +217,15 @@ def _cmd_fetch_unread(args: argparse.Namespace, token: str) -> None:
     print(json.dumps(result, indent=indent, default=str))
 
 
+def _resolve_supersedes_turn_id(
+    thread: str, turn_number: int, token: str
+) -> int:
+    """Map a thread-local turn_number to the store turn id for supersedes_turn."""
+    qs = urlencode({"thread": thread, "turn_number": turn_number})
+    turn = _request("GET", f"/turns/by-number?{qs}", token)
+    return int(turn["id"])
+
+
 def _resolve_attachments(paths: list[str] | None) -> list[dict[str, Any]] | None:
     """Build attachment metadata from file paths, computing sha256 + size."""
     if not paths:
@@ -269,6 +279,8 @@ def _cmd_post(args: argparse.Namespace, token: str) -> None:
 
 
 def _cmd_reply(args: argparse.Namespace, token: str) -> None:
+    import httpx
+
     if args.body_file:
         body_text = Path(args.body_file).read_text(encoding="utf-8")
     elif args.body:
@@ -285,6 +297,24 @@ def _cmd_reply(args: argparse.Namespace, token: str) -> None:
         "status": args.status,
         "after_turn": args.after_turn,
     }
+    if args.supersedes_turn is not None:
+        try:
+            payload["supersedes_turn"] = _resolve_supersedes_turn_id(
+                args.thread, args.supersedes_turn, token
+            )
+        except httpx.HTTPStatusError as e:
+            detail = ""
+            try:
+                detail = e.response.json().get("detail", "")
+            except Exception:
+                pass
+            msg = detail or f"HTTP {e.response.status_code}"
+            print(
+                f"reply: --supersedes-turn {args.supersedes_turn} not found "
+                f"in thread {args.thread}: {msg}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
     if args.allow_long_body:
         payload["allow_long_body"] = True
     atts = _resolve_attachments(args.attach)
@@ -514,6 +544,15 @@ def _build_parser() -> argparse.ArgumentParser:
         action="append",
         metavar="PATH",
         help="Attach a file (repeatable); auto-computes filename, size, sha256",
+    )
+    r.add_argument(
+        "--supersedes-turn",
+        type=int,
+        metavar="TURN_NUMBER",
+        help=(
+            "Turn number in this thread to supersede structurally "
+            "(sets turns.status=superseded and links supersedes_turn)"
+        ),
     )
 
     # append

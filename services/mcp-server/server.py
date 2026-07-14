@@ -51,6 +51,7 @@ from surface_enum import register_surface_enum_transform
 from surface_registration import register_tools_for_surface
 from tool_access import dispatch_denial_reason, is_dispatch_tool_allowed
 from tool_error_enricher import (
+    apply_life_sandbox_default,
     fs_missing_sandbox_hint,
     life_workspaces_fs_refusal,
     register_tool_error_enricher,
@@ -315,15 +316,17 @@ def _build_server(
     _fs_standard_ops_doc = sandbox_op_doc()
     if surface == "life":
         _fs_sandbox_intro = (
-            "File I/O for the cortex sandbox on /mcp/life. `op` is REQUIRED; "
-            "`sandbox` defaults to cortex and is optional when `path` carries a "
-            "cortex:// Share URI. Repository source (`workspaces`) is not "
-            "available on this surface — use /mcp/code for workspaces:// paths; "
-            "mirror agent-process artifacts to cortex:// for life-seat handoffs.\n\n"
+            "File I/O for the cortex sandbox on /mcp/life. `op` is REQUIRED.\n"
+            "On this surface, an unqualified relative path defaults to cortex "
+            "when `sandbox` is omitted; `cortex://{rel}` is the canonical form. "
+            "Repository source (`workspaces`) is not available here — use "
+            "/mcp/code for workspaces:// paths; mirror agent-process artifacts "
+            "to cortex:// for life-seat handoffs.\n\n"
             "Share URI grammar (canonical cross-resident refs on this surface):\n"
             "  cortex://{rel}             — notes, agent-skills, dropbox, uploads\n\n"
             "Examples:\n"
-            '  fs(op="read", path="cortex://notes/system/specs/foo.md")\n'
+            '  fs(op="write", path="cortex://notes/system/threads/foo.md", content="...")\n'
+            '  fs(op="write", path="notes/system/threads/foo.md", content="...")  # sandbox defaults to cortex\n'
             '  fs(sandbox="cortex", op="read", path="notes/system/specs/foo.md")\n\n'
         )
         _fs_find_blurb = (
@@ -474,7 +477,11 @@ def _build_server(
             }
 
         ingress_meta: dict[str, Any] = {}
-        effective_sandbox = sandbox.strip()
+        effective_sandbox = apply_life_sandbox_default(
+            surface=surface,
+            sandbox=sandbox,
+            path=path,
+        )
         effective_path = path
         if path.strip():
             from implement_admission.scheme_resolve import resolve_fs_ingress
@@ -494,7 +501,7 @@ def _build_server(
                 ingress_meta["normalization_advisory"] = ingress.normalization_advisory
 
         if effective_sandbox not in valid_sandboxes:
-            return {"error": fs_missing_sandbox_hint(path)}
+            return {"error": fs_missing_sandbox_hint(path, surface=surface)}
         if target_sandbox and target_sandbox not in valid_sandboxes:
             return {
                 "error": (

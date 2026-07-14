@@ -29,7 +29,9 @@ from ._views import (
 )
 from ._views.recipe import ViewRecipeError
 
-_ROOT_REQUIRED_PROFILES = frozenset({"matter_charter", "matter_doctrine"})
+_ROOT_REQUIRED_PROFILES = frozenset(
+    {"matter_charter", "matter_doctrine", "matter_entities"}
+)
 _VALID_MODES = frozenset({"register", "refresh", "full", "read_asof"})
 
 

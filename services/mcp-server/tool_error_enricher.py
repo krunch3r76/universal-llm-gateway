@@ -38,6 +38,11 @@ _FS_SANDBOX_HINT = (
     "or pass sandbox=cortex|workspaces explicitly."
 )
 
+_FS_LIFE_SANDBOX_HINT = (
+    "On /mcp/life, omit sandbox (defaults to cortex) or use a cortex:// Share URI. "
+    "sandbox='workspaces' is not available here — use /mcp/code for repository paths."
+)
+
 
 def _known_workspaces_repo_names() -> set[str]:
     try:
@@ -56,8 +61,39 @@ def _call_payload_path(payload: Any) -> str:
     return ""
 
 
-def fs_missing_sandbox_hint(path: str = "") -> str:
-    """Advisory hint when fs is called without sandbox (no inference)."""
+def apply_life_sandbox_default(
+    *,
+    surface: str,
+    sandbox: str,
+    path: str,
+) -> str:
+    """Life one-store default: blank sandbox + schemeless relative path ⇒ cortex.
+
+    Not path-shape inference across stores — /mcp/life has one durable file store.
+    Absolute paths are left alone so host-mount ingress can still resolve.
+    Recognized Share URI schemes are left alone (workspaces:// still refuses later).
+    """
+    cleaned = sandbox.strip()
+    if surface != "life" or cleaned:
+        return cleaned
+    raw = path.strip()
+    if not raw:
+        return "cortex"
+    from pathlib import Path
+
+    from implement_admission.scheme_resolve import parse_schemed_path
+
+    if parse_schemed_path(raw).scheme is not None:
+        return cleaned
+    if Path(raw).is_absolute():
+        return cleaned
+    return "cortex"
+
+
+def fs_missing_sandbox_hint(path: str = "", *, surface: str = "") -> str:
+    """Advisory hint when fs is called without sandbox (no inference on code)."""
+    if surface == "life":
+        return _FS_LIFE_SANDBOX_HINT
     parts = [part for part in path.strip().strip("/").split("/") if part]
     if parts:
         first = parts[0]
@@ -81,7 +117,7 @@ def life_workspaces_fs_refusal() -> dict[str, str]:
             "sandbox='workspaces' is not available on the /mcp/life surface. "
             "Repository source reads and edits are served on /mcp/code only. "
             "For agent-process artifacts (specs, packets, closeouts, sidecars), "
-            "use sandbox='cortex' or a cortex:// Share URI. "
+            "omit sandbox (defaults to cortex) or use a cortex:// Share URI. "
             "Life-seat handoff packets must carry a cortex:// sidecar mirror."
         )
     }
@@ -230,7 +266,8 @@ class ToolErrorEnricher(Middleware):
                     type_hint = exp_type or "valid input"
                     if tool_name == "fs" and param == "sandbox":
                         entry["hint"] = fs_missing_sandbox_hint(
-                            _call_payload_path(err.get("input"))
+                            _call_payload_path(err.get("input")),
+                            surface=str(meta.get("surface") or ""),
                         )
                     else:
                         entry["hint"] = f"'{param}' is required (expects {type_hint})."

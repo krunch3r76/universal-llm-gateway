@@ -198,6 +198,9 @@ skills:
   life-handoff-corpus:
     surface_class: shared_sync
     mcp_surface_required: life
+  life-imprint-when-how:
+    surface_class: life_local
+    mcp_surface_required: life
   markdown-navigation:
     surface_class: cursor_only
     mcp_surface_required: life
