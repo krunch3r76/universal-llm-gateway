@@ -6,13 +6,13 @@
 **Invariant**: ∀ `@mcp.tool()` params: type ∈ {`str`, `int`, `float`, `bool`} for optional params.
 ¬`list[str]`, ¬`list[int]`, ¬`dict`, ¬`Any` as optional param types.
 
-Claude.ai's MCP client silently drops optional params with `"type": "array"` or
+Anthropic web MCP client silently drops optional params with `"type": "array"` or
 `anyOf` JSON Schema from tool definitions. The params become invisible and
 unusable — callers cannot pass them.
 
 ## Safe Types
 
-| Type | Schema | Claude.ai | Use |
+| Type | Schema | Anthropic web | Use |
 |---|---|---|---|
 | `str = "web"` | `{"type": "string"}` | ✅ visible | All optional params |
 | `int = 5` | `{"type": "integer"}` | ✅ visible | Numeric defaults |
@@ -21,7 +21,7 @@ unusable — callers cannot pass them.
 
 ## Unsafe Types (FORBIDDEN for optional params)
 
-| Type | Schema | Claude.ai | Why |
+| Type | Schema | Anthropic web | Why |
 |---|---|---|---|
 | `list[str] = []` | `{"type": "array"}` | ❌ dropped | Optional array invisible |
 | `list[str] \| None = None` | `anyOf[array, null]` | ❌ dropped | Union type dropped |
@@ -33,7 +33,7 @@ Required array params (in JSON Schema `required` list) MAY work. Optional ones d
 ## Pattern: Lists as Comma-Separated Strings
 
 ```python
-# ❌ Invisible to Claude.ai
+# ❌ Invisible to Anthropic web MCP client
 @mcp.tool()
 def my_tool(paths: list[str] = []) -> dict: ...
 

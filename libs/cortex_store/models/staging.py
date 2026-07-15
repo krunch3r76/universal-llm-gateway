@@ -7,7 +7,7 @@ from typing import Any, Literal
 from pydantic import BaseModel
 
 StagingStatus = Literal["pending", "approved", "rejected", "merged"]
-ProposalType = Literal["entity", "assertion"]
+ProposalType = Literal["entity", "assertion", "relationship"]
 ProposalAction = Literal["add", "revise", "remove"]
 
 

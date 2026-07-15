@@ -277,8 +277,9 @@ profiles:
     auto_dispatchable: true
     # F-2: intentional empty — cursor/sdk admission checks CURSOR_DENIED_MODELS only
     # (deny-list, admit-rest); knob trust lives on CURSOR_MODEL_CAPABILITIES, not here.
-    # Trusted cursor-sdk models include cursor/grok-4.5 (default non-fast) — see
+    # Trusted cursor-sdk models include cursor/grok-4.5 — see
     # libs/cursor_capabilities/cursor_capabilities.py (replaces all Grok 4.x).
+    # Live catalog default is fast=true; pass model_knobs={"fast":"false"} for non-fast.
     # WHEN to override model=: recon+investigate (judgment / root-cause / suggest /
     # densify inputs) → model=cursor/grok-4.5, typically contract=light-bounded.
     # Keep default Composer for contract=implement and pure mechanical inventory

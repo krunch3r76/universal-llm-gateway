@@ -15,10 +15,6 @@ from .cursor_sdk_generate_signals import (
     emit_sdk_thread_created,
     emit_sdk_worker_outcome,
 )
-from .cursor_sdk_role_delivery import (
-    resolve_delivery_from_role,
-    should_bridge_cursor_check_review,
-)
 from .cursor_sdk_worker_dispatch import (
     derive_cursor_sdk_prompt_preamble,
     dispatch_cursor_sdk_worker,
@@ -404,19 +400,14 @@ async def dispatch_cursor_sdk_generate(
     )
 
     profile = get_profile(family, platform)
-    delivery_from_role = resolve_delivery_from_role(resolved_model)
-    reply_from = (
-        delivery_from_role
-        if should_bridge_cursor_check_review(
-            contract=handoff_contract, resolved_model=resolved_model
-        )
-        and delivery_from_role
-        else CURSOR_SDK_REPLY_SEAT
-    )
+    # poll_hint must predict the always-present closeout author (cursor-sdk).
+    # The check/review role bridge may post a second from=reviewer|skeptic turn,
+    # but it is fail-closed (non_conforming_closeout) and must not be the wait
+    # identity — friction 24229 regresses todo:fix-cursor-sdk-poll-hint-author.
     handoff_fields = build_handoff_result(
         thread_id=thread_id,
         to_agent=to_agent,
-        reply_from_agent=reply_from,
+        reply_from_agent=CURSOR_SDK_REPLY_SEAT,
         # cursor-sdk closeouts are always polled by the attended Cursor IDE lead
         # (friction 24081) — recommend snapshot polling, not a 60s block.
         poll_wait_seconds=resolve_poll_wait_seconds(poller_is_cursor_ide=True),

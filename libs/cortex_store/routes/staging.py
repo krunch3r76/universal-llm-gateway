@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import datetime
-from typing import TYPE_CHECKING
+import sqlite3
 
 from fastapi import APIRouter, HTTPException, Query, status
 from universal_logging import get_logger
@@ -16,10 +16,9 @@ from ..models import (
     StagingBatchCreate,
     StagingItem,
     StagingList,
+    StagingProposalCreate,
 )
-
-if TYPE_CHECKING:
-    import sqlite3
+from .staging_relationship_apply import apply_relationship_add
 
 logger = get_logger("cortex-api.staging")
 router = APIRouter(prefix="/staging", tags=["staging"])
@@ -135,32 +134,40 @@ def get_staging(staging_id: int) -> StagingItem:
     return _decode_staging_row(rows[0])
 
 
+def create_staging_batch_on_conn(
+    conn: sqlite3.Connection,
+    proposals: list[StagingProposalCreate],
+) -> list[int]:
+    """Insert staging proposals on *conn*; caller owns commit."""
+    created_ids: list[int] = []
+    for p in proposals:
+        cur = conn.execute(
+            "INSERT INTO extraction_staging "
+            "(source_uri, proposal_type, proposal_action, target_id, "
+            " proposal_json, chunk_id) VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                p.source_uri,
+                p.proposal_type,
+                p.proposal_action,
+                p.target_id,
+                json_encode(p.proposal_json),
+                p.chunk_id,
+            ),
+        )
+        if cur.lastrowid is None:
+            raise HTTPException(
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "Staging insert returned no row id",
+            )
+        created_ids.append(int(cur.lastrowid))
+    return created_ids
+
+
 @router.post("/batch", response_model=StagingList, status_code=status.HTTP_201_CREATED)
 def create_staging_batch(body: StagingBatchCreate) -> StagingList:
     """Create multiple staging proposals in one request."""
     with cortex_conn() as conn:
-        created_ids: list[int] = []
-        for p in body.proposals:
-            cur = conn.execute(
-                "INSERT INTO extraction_staging "
-                "(source_uri, proposal_type, proposal_action, target_id, "
-                " proposal_json, chunk_id) VALUES (?, ?, ?, ?, ?, ?)",
-                (
-                    p.source_uri,
-                    p.proposal_type,
-                    p.proposal_action,
-                    p.target_id,
-                    json_encode(p.proposal_json),
-                    p.chunk_id,
-                ),
-            )
-            if cur.lastrowid is None:
-                logger.warning("No lastrowid returned after inserting staging item.")
-                # Depending on desired behavior, could raise an error or skip
-                # For now, we'll append -1 or handle it as an int
-                created_ids.append(-1)  # Or raise an exception
-            else:
-                created_ids.append(cur.lastrowid)
+        created_ids = create_staging_batch_on_conn(conn, body.proposals)
         conn.commit()
 
         placeholders = ",".join("?" * len(created_ids))
@@ -329,6 +336,9 @@ def _apply_proposal(conn: sqlite3.Connection, proposal: dict) -> str:
             (now, target_id),
         )
         return f"removed:{target_id}"
+
+    if ptype == "relationship" and action == "add":
+        return apply_relationship_add(conn, pj, chunk_id=chunk_id, now=now)
 
     raise HTTPException(
         status.HTTP_400_BAD_REQUEST, f"Unsupported: type={ptype}, action={action}"

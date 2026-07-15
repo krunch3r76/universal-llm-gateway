@@ -20,7 +20,7 @@ __all__ = [
     "to_model_card_dict",
 ]
 
-DESCRIPTOR_VERSION: Final[str] = "2026-07-08"
+DESCRIPTOR_VERSION: Final[str] = "2026-07-14"
 
 # Emergency denylist for cursor-sdk substrate admission. Entries are bare wire ids
 # (no cursor/ prefix); membership is checked after prefix strip + lowercase.
@@ -165,6 +165,21 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
         },
         instruction_profile="reasoner",
     ),
+    # Live ListModels probe 2026-07-14 — same knob surface as claude-sonnet-5
+    # (thinking/context/effort; no fast; no cyber fixed_param).
+    "claude-fable-5": ModelCapability(
+        knobs={
+            "thinking": KnobSpec(accepted=("false", "true")),
+            "context": KnobSpec(accepted=("300k", "1m")),
+            "effort": KnobSpec(accepted=("low", "medium", "high", "xhigh", "max")),
+        },
+        default_variant={
+            "thinking": "true",
+            "context": "1m",
+            "effort": "high",
+        },
+        instruction_profile="reasoner",
+    ),
     # Routed-but-untrusted consult models (team_dispatch reviewer/skeptic/cheap-recon
     # targets) promoted into the trusted dispatch allowlist. Allowlist = trust/route
     # boundary, not a catalog mirror — narrow set wins on reversibility + trust hygiene
@@ -215,22 +230,17 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
         default_variant={"context": "1m", "reasoning": "medium", "fast": "false"},
         instruction_profile="reasoner",
     ),
-    # Cursor Grok 4.5 — replaces all Grok 4.x cursor-sdk / picker / subagent slugs
-    # (operator 2026-07-08). Default non-fast (unlike composer-2.5). Effort Low/Medium/High
-    # operator-confirmed; Extra High / Max and context ladder unverified — keep accepted
-    # set conservative until a live ListModels probe widens it.
+    # Cursor Grok 4.5 — live ListModels 2026-07-14: effort + fast only
+    # (no thinking/context knobs). Catalog default is fast=true; override via
+    # model_knobs when non-fast is wanted.
     "grok-4.5": ModelCapability(
         knobs={
-            "thinking": KnobSpec(accepted=("false", "true"), default="true"),
             "effort": KnobSpec(accepted=("low", "medium", "high"), default="high"),
-            "context": KnobSpec(accepted=("200k",), default="200k"),
-            "fast": KnobSpec(accepted=("false", "true"), default="false"),
+            "fast": KnobSpec(accepted=("false", "true"), default="true"),
         },
         default_variant={
-            "thinking": "true",
             "effort": "high",
-            "context": "200k",
-            "fast": "false",
+            "fast": "true",
         },
         instruction_profile="reasoner",
     ),

@@ -52,6 +52,7 @@ _CORTEX_OPS_DOC = (
     "  case_audit (subject, include_filesystem?) — Full audit for a case entity — graph-only + fs-touching detectors by default. Manual invocation path: includes filesystem detectors (include_filesystem=True default) since the caller expects a wait and needs the complete gap profile. Set include_filesystem=False to scope to graph-only if speed matters.\n"
     "  deadline_resolve (deadline_id, resolution_note, resolved_at, evidence?, fulfilling_assertion_id?, outcome?) — Atomically close a deadline entity: write confirmed assertion + set outcome. ∀ deadline entity: two writes are required to stop it surfacing in deadlines() — a confirmed RESOLVED assertion on the deadline entity AND outcome in its attributes JSON. Agents historically forget the second write; this op performs both reliably.\n"
     "  deadlines ()\n"
+    "  digest (journal_entity_id, entry_anchor, entry_text, journal_uri?) — Watermark → extract → verify → attach/map → dedup → stage → ledger.\n"
     "  doc_template (doc_type?) — Return a dense-spec skeleton that round-trips validate_dense_spec when filled.\n"
     "  doc_validate (doc_type?, text?, path?, source_ref?) — Aggregate implement-ready gate report over resolved dense-spec bytes.\n"
     "  edge_create (session_id, agent, from_node, to_node, edge_type, strength?, edge_source?, context?, prompt?, seeded_by?, metadata?)\n"

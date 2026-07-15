@@ -10,13 +10,19 @@ Sidecar-first text loading (``load_searchable_text``) satisfies
 
 from __future__ import annotations
 
+import os
 import re
+from pathlib import Path
 from typing import Any
 
 from mcp_events import record
 
-from .._file_helpers import load_searchable_text
-from .._search_helpers import SearchBudgetState, load_text_for_search_file
+from .._search_helpers import (
+    SEARCH_SKIP_DIRS,
+    SearchBudgetState,
+    build_search_warnings,
+    load_text_for_search_file,
+)
 from ._paths import SANDBOX_ROOT, safe_path
 
 DEFAULT_MAX_RESULTS = 50
@@ -64,6 +70,19 @@ def search_in_text(
     return False
 
 
+def _finalize_search_response(
+    response: dict[str, Any],
+    state: SearchBudgetState,
+    *,
+    wall_truncated: bool,
+) -> dict[str, Any]:
+    response["skipped_oversized"] = state.skipped_oversized
+    warning = build_search_warnings(state, wall_truncated=wall_truncated)
+    if warning:
+        response["_warning"] = warning
+    return response
+
+
 def search_file_impl(
     path: str,
     pattern: str,
@@ -72,9 +91,8 @@ def search_file_impl(
 ) -> dict[str, Any]:
     """Search a single cortex file (text or converted document).
 
-    Sidecar-first text load via ``load_searchable_text``. Returns the unified
-    search envelope with ``mode="file"`` (the ``file`` per-match key is omitted
-    in this mode; ``path`` and ``extraction_method`` are top-level).
+    Size-cap and converted budget/cap route through ``load_text_for_search_file``.
+    Returns the unified search envelope with ``mode="file"``.
     """
     src = safe_path(path)
     if not src.exists():
@@ -83,11 +101,19 @@ def search_file_impl(
         raise ValueError(f"Path is not a file: {path!r}")
 
     compiled = compile_pattern(pattern)
-    text, method = load_searchable_text(src)
-    matches: list[dict[str, Any]] = []
-    truncated = search_in_text(
-        text, compiled, matches, rel_path=None, max_results=max_results
+    state = SearchBudgetState()
+    text, method = load_text_for_search_file(
+        src,
+        state,
+        budget_s=SEARCH_CONVERTED_BUDGET_S,
+        file_cap=SEARCH_CONVERTED_FILE_CAP,
     )
+    matches: list[dict[str, Any]] = []
+    truncated = False
+    if text is not None:
+        truncated = search_in_text(
+            text, compiled, matches, rel_path=None, max_results=max_results
+        )
     extraction_method = method or "native_text"
     record(
         "mcp.fs.search.file",
@@ -96,15 +122,17 @@ def search_file_impl(
         matches=len(matches),
         extraction_method=extraction_method,
         truncated=truncated,
+        skipped_oversized=state.skipped_oversized,
     )
-    return {
+    response: dict[str, Any] = {
         "path": path,
         "mode": "file",
         "matches": matches,
         "truncated": truncated,
-        "skipped_converted": 0,
+        "skipped_converted": state.skipped_converted,
         "extraction_method": extraction_method,
     }
+    return _finalize_search_response(response, state, wall_truncated=False)
 
 
 def search_directory_impl(
@@ -118,9 +146,10 @@ def search_directory_impl(
     Converted-file extraction is bounded by an aggregate wall-clock budget
     (``SEARCH_CONVERTED_BUDGET_S``) and a converted-file count cap
     (``SEARCH_CONVERTED_FILE_CAP``); converted files beyond either bound are
-    counted in ``skipped_converted`` and not extracted (F1). Truly-binary
-    files are skipped via ``SEARCH_BINARY_SUFFIXES`` (converted formats are
-    searched first). Native text is searched unbounded (cheap).
+    counted in ``skipped_converted`` and not extracted (F1). Native text
+    files above ``SEARCH_NATIVE_MAX_BYTES`` increment ``skipped_oversized``.
+    Overall enumeration + scan is bounded by ``SEARCH_WALL_BUDGET_S`` (24276).
+    ``tmp/`` and ``.runtime/`` are pruned during the walk.
     """
     base = safe_path(path) if path else SANDBOX_ROOT
     if not base.is_dir():
@@ -130,24 +159,44 @@ def search_directory_impl(
     matches: list[dict[str, Any]] = []
     state = SearchBudgetState()
     truncated = False
+    wall_truncated = False
+    stop = False
 
-    for fpath in sorted(base.rglob("*")):
-        if not fpath.is_file():
-            continue
-        rel = str(fpath.relative_to(SANDBOX_ROOT))
-        text, _method = load_text_for_search_file(
-            fpath,
-            state,
-            budget_s=SEARCH_CONVERTED_BUDGET_S,
-            file_cap=SEARCH_CONVERTED_FILE_CAP,
-        )
-        if text is None:
-            continue
-
-        if search_in_text(
-            text, compiled, matches, rel_path=rel, max_results=max_results
-        ):
+    for dirpath_str, dirnames, filenames in os.walk(base):
+        if state.wall_exceeded():
+            wall_truncated = True
             truncated = True
+            break
+        dirnames[:] = [
+            d for d in sorted(dirnames) if d not in SEARCH_SKIP_DIRS
+        ]
+        dirpath = Path(dirpath_str)
+        for fname in sorted(filenames):
+            if state.wall_exceeded():
+                wall_truncated = True
+                truncated = True
+                stop = True
+                break
+            fpath = dirpath / fname
+            if not fpath.is_file():
+                continue
+            rel = str(fpath.relative_to(SANDBOX_ROOT))
+            text, _method = load_text_for_search_file(
+                fpath,
+                state,
+                budget_s=SEARCH_CONVERTED_BUDGET_S,
+                file_cap=SEARCH_CONVERTED_FILE_CAP,
+            )
+            if text is None:
+                continue
+
+            if search_in_text(
+                text, compiled, matches, rel_path=rel, max_results=max_results
+            ):
+                truncated = True
+                stop = True
+                break
+        if stop:
             break
 
     record(
@@ -157,7 +206,9 @@ def search_directory_impl(
         matches=len(matches),
         converted_extracted=state.converted_extracted,
         skipped_converted=state.skipped_converted,
+        skipped_oversized=state.skipped_oversized,
         truncated=truncated,
+        wall_truncated=wall_truncated,
     )
     response: dict[str, Any] = {
         "path": path,
@@ -169,14 +220,7 @@ def search_directory_impl(
         if state.methods
         else "native_text",
     }
-    if state.skipped_converted:
-        response["_warning"] = (
-            f"{state.skipped_converted} converted document(s) were NOT "
-            "searched (extraction budget/cap) — results are NOT exhaustive "
-            "over this tree. Do not certify 'zero remaining hits' from this "
-            "response. (friction 23000)"
-        )
-    return response
+    return _finalize_search_response(response, state, wall_truncated=wall_truncated)
 
 
 def search_path_impl(

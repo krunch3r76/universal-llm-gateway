@@ -23,6 +23,14 @@ _RESOLVED_OUTCOMES = frozenset({"defaulted", "met", "withdrawn", "superseded"})
 # ∀ entity d with type-relationship 'deadline_for' m: d.id is needed so
 # _has_resolved_assertion() can check confirmed RESOLVED assertions on d directly.
 #
+# UNION arm 1 surfaces any entity that a deadline points at via `deadline_for`.
+# The join key is the relationship type, NOT the target entity type: a deadline's
+# subject can be a legal_matter, case, person, finance, or any future type. A
+# `m.type = 'legal_matter'` filter here silently dropped case/person/finance
+# deadlines from every read-back surface (op, route, boot card) even though they
+# were durably written (friction 24249). The `matter_id`/`matter_name` aliases are
+# retained for render-shape stability but now generalize to the deadline's subject.
+#
 # UNION arm 2 surfaces todo entities that carry their own `deadline_date`
 # attribute (and aren't already routed through a linked deadline entity).
 # Per agent-bus thread 882 (option A): one unified ranked list of date-bearing
@@ -45,7 +53,6 @@ _DEADLINES_SQL = """
     FROM entities m
     JOIN relationships r ON r.to_entity = m.id AND r.type = 'deadline_for'
     JOIN entities d ON r.from_entity = d.id
-    WHERE m.type = 'legal_matter'
 
     UNION ALL
 

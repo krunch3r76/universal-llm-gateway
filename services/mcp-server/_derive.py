@@ -228,7 +228,7 @@ def derive_claude_manifest(
 # ── Cortex per-surface op partition (Option C) ────────────────────────────────
 
 Surface = Literal["life", "code"]
-_CORTEX_CENSUS_SIZE = 72
+_CORTEX_CENSUS_SIZE = 73
 _FOL_MARKERS = frozenset({"∀", "∃", "⟹", "¬", "∈"})
 
 
@@ -345,7 +345,7 @@ def derive_cortex_surface(
 ) -> CortexSurfaceSpec:
     """Derive per-surface cortex op enum + family map from canonical.yaml.
 
-    Init-time only. Enforces 72-op census completeness and family conflicts.
+    Init-time only. Enforces 73-op census completeness and family conflicts.
     """
     path = canonical_yaml_path or _DEFAULT_CANONICAL
     data = _load_registry(path)

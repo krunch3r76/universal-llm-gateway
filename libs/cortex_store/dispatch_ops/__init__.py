@@ -81,6 +81,7 @@ _OP_SPECS: dict[str, str] = {
     "surface_forms": "ops_misc:_op_surface_forms",
     "deadlines": "ops_journals:_op_deadlines",
     "deadline_resolve": "ops_journals:_op_deadline_resolve",
+    "digest": "ops_digest:_op_digest",
     "journal_read": "ops_journals:_op_journal_read",
     "session_close": "ops_session_close:_op_session_close",
     "session_close_preflight": "ops_session_close:_op_session_close_preflight",

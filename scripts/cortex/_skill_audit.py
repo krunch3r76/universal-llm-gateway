@@ -56,11 +56,11 @@ _PARITY_ALLOWLIST: dict[str, dict[str, str]] = {
         temporary="temporary",
     ),
     "boe19p-appeal-discipline": _meta(
-        "RETIRED 2026-07-02 → document:boe19p-appeal-discipline (has_playbook)"
+        "RETIRED 2026-07-02 → document:boe19p-appeal-discipline (playbook doc archived, arc 4917)"
     ),
     "case-evidence-retrieval": _meta("legal domain skill"),
     "chase-escrow-discipline": _meta(
-        "RETIRED 2026-07-02 → document:chase-escrow-discipline (has_playbook)"
+        "RETIRED 2026-07-02 → document:chase-escrow-discipline (playbook doc archived, arc 4917)"
     ),
     "chase-escrow-statement-ingestion": _meta(
         "RETIRED 2026-07-02 — folded into chase-escrow playbook"
@@ -75,7 +75,7 @@ _PARITY_ALLOWLIST: dict[str, dict[str, str]] = {
     "engagement-stance": _meta("legal domain skill"),
     "financial-reasoning": _meta("finance domain skill"),
     "flintridge-case-navigation": _meta(
-        "RETIRED 2026-07-02 → document:flintridge-case-navigation (has_playbook)"
+        "RETIRED 2026-07-02 → document:flintridge-case-navigation (playbook doc archived, arc 4917)"
     ),
     "hei-application-discipline": _meta(
         "RETIRED 2026-07-02 → document:hei-discipline (archived case)"

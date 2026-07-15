@@ -12,7 +12,7 @@ Every IDE-resident Cursor agent operates in one of three modes per session. Sele
 
 | Active model family | `cortex_brief(seat=...)` value |
 |---|---|
-| Anthropic Claude (Sonnet / Opus) | `"claude-cursor"` |
+| Anthropic (Sonnet / Opus) | `"cursor"` |
 | OpenAI GPT family | `"gpt-cursor"` |
 | xAI Grok family | `"grok-cursor"` |
 | Google Gemini family | `"gemini-cursor"` |
@@ -57,7 +57,7 @@ CallMcpTool(server="vortex-code", toolName="fs", arguments={
 ## Universal Mode — Slim Boot
 
 When Universal Mode activates:
-1. `cortex_brief(seat="claude-cursor")` (or appropriate seat slug) —
+1. `cortex_brief(seat="cursor")` (or appropriate seat slug) —
    returns `briefing_card` (~3-5KB), `sections_available` manifest, and
    `operational_context_ref`
 2. Render `briefing_card` and surface open_items as agenda
@@ -77,7 +77,7 @@ For reliable closes (post 2026-05-16 server-side refactor), resolve the
 current session's Cursor agent-transcripts JSONL path and compose the
 kilobyte-scale structural layer (`session_summary_md`), then call the
 atomic `cortex(tool="session_close", arguments='{"session_id": "...",
-"agent": "claude-cursor", "transcript_jsonl_path": "<path>",
+"agent": "cursor", "transcript_jsonl_path": "<path>",
 "session_summary_md": "## Session Summary\n\n...", "summary": "..."}')`.
 cortex-api reads the JSONL, assembles the verbatim layer
 server-side, writes the file, and performs the validated atomic DB

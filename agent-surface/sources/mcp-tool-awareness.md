@@ -66,7 +66,7 @@ For large markdown files, prefer section-level access over full reads:
 
 `workspaces` paths MUST include repo name prefix. `context` paths are relative to `tasks/`.
 
-**Surface rule:** `/mcp/code` — bare paths require an explicit `sandbox` or a Share URI (`cortex://` / `workspaces://`). `/mcp/life` (claude.ai toys) — durable writes default to cortex when `sandbox` is omitted; prefer `cortex://notes/...`; `workspaces` is not available.
+**Surface rule:** `/mcp/code` — bare paths require an explicit `sandbox` or a Share URI (`cortex://` / `workspaces://`). `/mcp/life` (life / web-anthropic toys) — durable writes default to cortex when `sandbox` is omitted; prefer `cortex://notes/...`; `workspaces` is not available.
 <!-- /target:* -->
 <!-- target:* -->
 ## Descriptor Reads — Stub-First (context discipline)

@@ -3813,6 +3813,40 @@ tools:
   mandate_safety: write
   cache_priority: on_demand
   introduced: '2026-07-12'
+- canonical_name: cortex_digest
+  domain: cortex
+  operation: digest
+  family: write
+  dispatcher_call_shape:
+    tool: cortex
+    dispatch_key: op
+    dispatch_value: digest
+  flat_call_shape:
+    tool: cortex_digest
+    substrate_qualified: user-vortex__cortex_digest
+  fol_descriptor: "Journal entry digest: extract, verify, stage, ledger watermark.\n    See agent_skill:cortex.\n"
+  json_schema:
+    type: object
+    properties:
+      journal_entity_id:
+        type: string
+      entry_anchor:
+        type: string
+      entry_text:
+        type: string
+      journal_uri:
+        type: string
+    required:
+    - journal_entity_id
+    - entry_anchor
+    - entry_text
+  skill_uri: rule:cortex
+  seat_visibility:
+  - mcp
+  - mcp_claude
+  mandate_safety: write
+  cache_priority: on_demand
+  introduced: '2026-07-14'
 - canonical_name: cortex_friction_close
   domain: cortex
   operation: friction_close
@@ -4333,6 +4367,7 @@ cortex_families:
     write:
     - assert
     - assertion_update
+    - digest
     - edge_create
     - entity_create
     - entity_update

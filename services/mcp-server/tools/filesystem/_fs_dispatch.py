@@ -63,7 +63,8 @@ OP_DOC: dict[str, tuple[str, str]] = {
         "regex content search; mode ∈ auto|content|filename (default auto: "
         "bare ext-suffixed filenames reroute to find, annotated; content "
         "forces content search; filename = glob find, workspaces only); "
-        "non-exhaustive when skipped_converted>0",
+        "non-exhaustive when skipped_converted>0, skipped_oversized>0, "
+        "or wall budget hit",
     ),
     "move": ("(path, target)", "rename/relocate file"),
     "copy": (

@@ -29,6 +29,7 @@ from ._session_close_doc_type import check_session_close_validate_attestation
 from ._session_objective_promote import promote_session_objectives
 from ._session_summary_path import resolve_session_summary_md
 from ._session_todo_reconciliation import todo_reconciliation_preflight_fields
+from ..digest_dispatch import dispatch_digest_background
 from ._shared import _FILES_ROOT, record
 from .ops_audit_detectors import run_detectors
 from .ops_review_gate import _run_session_audit_or_block, summarize_audit_outcome
@@ -372,6 +373,7 @@ def _op_session_close(
     promote_todos: list[dict[str, Any]] | None = None,
     validate_attestation: list[str] | None = None,
     dry_run: bool = False,
+    digest: dict[str, Any] | None = None,
     **_: object,
 ) -> dict[str, Any]:
     """Atomic session close (server-side transcript derivation).
@@ -609,6 +611,9 @@ def _op_session_close(
     )
     if promoted:
         result["promoted_todos"] = promoted
+
+    if digest:
+        dispatch_digest_background(digest, session_id=session_id)
 
     return result
 

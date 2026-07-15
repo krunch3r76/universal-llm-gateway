@@ -24,6 +24,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -36,7 +37,7 @@ from ._durable_write import (
     verify_persisted,
     write_verify_error_dict,
 )
-from ._file_helpers import load_searchable_text, read_file_result
+from ._file_helpers import read_file_result
 from ._project_paths import (
     multi_repo_root_unscoped,
     normalize_directory_arg,
@@ -46,7 +47,10 @@ from ._project_paths import (
 )
 from ._search_helpers import (
     SEARCH_BINARY_SUFFIXES,
+    SEARCH_SKIP_DIRS,
+    SEARCH_WALL_BUDGET_S,
     SearchBudgetState,
+    build_search_warnings,
     load_text_for_search_file,
 )
 from .file_editor import perform_edit
@@ -208,6 +212,8 @@ def _filesystem_listing(
     *,
     skip_binary: bool = True,
     cap: int | None = _LIST_CAP,
+    extra_skip_dirs: frozenset[str] | None = None,
+    deadline: float | None = None,
 ) -> tuple[list[str], list[str], bool]:
     """Return files and directories via filesystem walk.
 
@@ -239,12 +245,16 @@ def _filesystem_listing(
         ".mypy_cache",
         ".pytest_cache",
     }
+    if extra_skip_dirs:
+        skip_dirs = skip_dirs | set(extra_skip_dirs)
     base_depth = len(base.parts)
     files: list[str] = []
     directories: list[str] = []
     total_entries = 0
 
     for dirpath_str, dirnames, filenames in os.walk(base):
+        if deadline is not None and time.monotonic() >= deadline:
+            return files, directories, True
         dirpath = Path(dirpath_str)
         dirnames[:] = [d for d in sorted(dirnames) if d not in skip_dirs]
 
@@ -258,6 +268,8 @@ def _filesystem_listing(
             dirnames.clear()
 
         for fname in sorted(filenames):
+            if deadline is not None and time.monotonic() >= deadline:
+                return files, directories, True
             fpath = dirpath / fname
             file_depth = len(fpath.parts) - base_depth
             if max_depth is not None and file_depth > max_depth:
@@ -273,16 +285,25 @@ def _filesystem_listing(
     return files, directories, False
 
 
-def _git_tracked_files(directory: str = "") -> list[str]:
+def _git_tracked_files(
+    directory: str = "",
+    *,
+    deadline: float | None = None,
+) -> tuple[list[str], bool]:
     """Return git-tracked file paths relative to PROJECT_ROOT.
 
     Handles both single-repo and multi-repo project roots. For multi-repo,
     discovers child repos and aggregates results with repo-relative prefixes.
+
+    When *deadline* is set and exceeded during enumeration, returns partial
+    results with ``truncated=True``.
     """
+    if deadline is not None and time.monotonic() >= deadline:
+        return [], True
     resolved_root = _PROJECT_ROOT.resolve()
     repos = _discover_repos()
     if not repos:
-        return []
+        return [], False
 
     all_files: list[str] = []
     for repo in repos:
@@ -302,8 +323,10 @@ def _git_tracked_files(directory: str = "") -> list[str]:
         files = _git_ls_files_in_repo(repo, sub_dir)
         prefix = "" if is_root_repo else f"{repo_rel}/"
         all_files.extend(f"{prefix}{f}" for f in files)
+        if deadline is not None and time.monotonic() >= deadline:
+            return all_files, True
 
-    return all_files
+    return all_files, False
 
 
 def _tracked_parent_directories(
@@ -518,7 +541,7 @@ def register_project_tools(mcp: FastMCP) -> None:
                 skip_binary=False,
             )
         else:
-            tracked = _git_tracked_files(directory)
+            tracked, _ = _git_tracked_files(directory)
             base_path_obj = (
                 _safe_project_path(directory) if directory else _PROJECT_ROOT.resolve()
             )
@@ -729,15 +752,23 @@ def register_project_tools(mcp: FastMCP) -> None:
             if not target.exists():
                 raise FileNotFoundError(f"Path not found: {directory!r}")
             if target.is_file():
-                text, method = load_searchable_text(target)
-                matches: list[dict[str, str | int]] = []
-                truncated = search_in_text(
-                    text,
-                    compiled,
-                    matches,
-                    rel_path=None,
-                    max_results=max_results,
+                state = SearchBudgetState()
+                text, method = load_text_for_search_file(
+                    target,
+                    state,
+                    budget_s=SEARCH_CONVERTED_BUDGET_S,
+                    file_cap=SEARCH_CONVERTED_FILE_CAP,
                 )
+                matches: list[dict[str, str | int]] = []
+                truncated = False
+                if text is not None:
+                    truncated = search_in_text(
+                        text,
+                        compiled,
+                        matches,
+                        rel_path=None,
+                        max_results=max_results,
+                    )
                 extraction_method = method or "native_text"
                 logger.info(
                     "search_project_files: pattern=%r file=%s → %d matches%s",
@@ -746,31 +777,49 @@ def register_project_tools(mcp: FastMCP) -> None:
                     len(matches),
                     " (truncated)" if truncated else "",
                 )
-                return {
+                response: dict[str, Any] = {
                     "path": directory,
                     "mode": "file",
                     "matches": matches,
                     "truncated": truncated,
-                    "skipped_converted": 0,
+                    "skipped_converted": state.skipped_converted,
+                    "skipped_oversized": state.skipped_oversized,
                     "extraction_method": extraction_method,
                 }
+                warning = build_search_warnings(state, wall_truncated=False)
+                if warning:
+                    response["_warning"] = warning
+                return response
             if not target.is_dir():
                 raise ValueError(f"Path is not a file or directory: {directory!r}")
 
         # Enumeration layer (F2/188): skip_binary=False so converted formats
         # enter the candidate list; load_text_for_search_file filters per file.
+        state = SearchBudgetState()
+        deadline = state.budget_start + SEARCH_WALL_BUDGET_S
+        enum_truncated = False
         if include_untracked:
-            candidates, _, _ = _filesystem_listing(
-                directory, skip_binary=False, cap=None
+            candidates, _, enum_truncated = _filesystem_listing(
+                directory,
+                skip_binary=False,
+                cap=None,
+                extra_skip_dirs=SEARCH_SKIP_DIRS,
+                deadline=deadline,
             )
         else:
-            candidates = _git_tracked_files(directory)
+            candidates, enum_truncated = _git_tracked_files(
+                directory, deadline=deadline
+            )
 
         matches = []
-        state = SearchBudgetState()
-        truncated = False
+        truncated = enum_truncated
+        wall_truncated = enum_truncated
 
         for rel_path in candidates:
+            if state.wall_exceeded():
+                wall_truncated = True
+                truncated = True
+                break
             abs_path = resolved_root / rel_path
             text, _method = load_text_for_search_file(
                 abs_path,
@@ -789,12 +838,13 @@ def register_project_tools(mcp: FastMCP) -> None:
 
         logger.info(
             "search_project_files: pattern=%r dir=%s → %d matches "
-            "(converted=%d, skipped_converted=%d)%s",
+            "(converted=%d, skipped_converted=%d, skipped_oversized=%d)%s",
             pattern,
             directory or "/",
             len(matches),
             state.converted_extracted,
             state.skipped_converted,
+            state.skipped_oversized,
             " (truncated)" if truncated else "",
         )
         response: dict[str, Any] = {
@@ -804,18 +854,14 @@ def register_project_tools(mcp: FastMCP) -> None:
             "match_count": len(matches),
             "truncated": truncated,
             "skipped_converted": state.skipped_converted,
+            "skipped_oversized": state.skipped_oversized,
             "extraction_method": "+".join(sorted(state.methods))
             if state.methods
             else "native_text",
         }
-        if state.skipped_converted:
-            response["_warning"] = (
-                f"{state.skipped_converted} converted document(s) were NOT "
-                "searched (extraction budget/cap) — results are NOT "
-                "exhaustive over this tree. Do not certify 'zero remaining "
-                "hits' from this response; use an in-checkout ripgrep/git "
-                "grep for authoritative closure. (friction 23000)"
-            )
+        warning = build_search_warnings(state, wall_truncated=wall_truncated)
+        if warning:
+            response["_warning"] = warning
         return response
 
     @mcp.tool(title="Write Project File")

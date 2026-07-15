@@ -5,9 +5,9 @@ Ratified MVW (`decision:agent-workflow-parity-mvw`). Slash commands are **Cursor
 affordances**; MCP seats use the equivalent tool calls directly. No-cortex seats
 use only the **read/plan** column.
 
-| Command | Cursor | web-claude / MCP seat | No-cortex (connector) |
+| Command | Cursor | web-anthropic / MCP seat | No-cortex (connector) |
 |---|---|---|---|
-| `/cortex-brief` | `.cursor/commands/cortex-brief.md` → continuity brief (`cortex_brief` + TIER-2 stubs; ¬ boot-into Cortex) | `cortex_brief(seat="claude-web", …)`; `agent-guides/web-agent-orientation.md` | Static orientation: `AGENTS.md` router + `docs/agent-guides/no-cortex.md` |
+| `/cortex-brief` | `.cursor/commands/cortex-brief.md` → continuity brief (`cortex_brief` + TIER-2 stubs; ¬ boot-into Cortex) | `cortex_brief(seat="web-anthropic", …)`; `agent-guides/web-agent-orientation.md` | Static orientation: `AGENTS.md` router + `docs/agent-guides/no-cortex.md` |
 | `/agent-bus` | `.cursor/commands/agent-bus.md` → `scripts/agent-bus` or `agent_bus` MCP | `agent_bus(threads/fetch/post/reply/wait, …)` + cortex sidecars | Out of scope (writes); findings via operator paste |
 | `/session-end` | `.cursor/commands/session-end.md` → `cortex(session_close, transcript_jsonl_path=…)` | `cortex(session_close, transcript_md=…)` | Out of scope |
 | `/todo` | `.cursor/commands/todo.md` → `cortex(todo_candidates)` / `entity_create(type=todo)`; **`/todo pickup {slug}`** loads `implement-todo` skill | same cortex ops; **`Pick up todo:{slug}`** loads `implement-todo` skill | Read spec/todo entities only if inlined in packet |

@@ -524,7 +524,7 @@ stamp.
 | CAST & ROUTING | `involves`/`correspondence_with`/`employed_by` edges → person:/organization: cards + role labels (walk_subgraph 1-hop) |
 | ⚠ LESSONS & FRICTIONS | live lesson assertions on the handle |
 | OPEN THREADS | pending commitments + unanswered counterparty items (`resolution_status=pending`) |
-| DOCTRINE pointer | `has_playbook` → doctrine view (never inlined) |
+| DOCTRINE pointer | live doctrine = hop-0 handle/case assertions; archived bodies via `search` / orientation-pointer clause (no typed playbook edge — `has_playbook` retired, arc 4917) |
 | ENTITY MAP | walk_subgraph(handle, 1–2 hops) — every row a live id |
 | Narrative layer | authored synthesis over the above; every claim cites; persona-free |
 

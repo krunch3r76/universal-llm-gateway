@@ -41,6 +41,9 @@ _DOC_REQUIRED_BY_OP: Mapping[str, frozenset[str]] = {
     "deadline_resolve": frozenset(
         {"deadline_id", "resolution_note", "resolved_at"}
     ),
+    "digest": frozenset(
+        {"journal_entity_id", "entry_anchor", "entry_text"}
+    ),
     "edge_retire": frozenset({"edge_id"}),
     "edge_traverse": frozenset({"node"}),
     "edge_update": frozenset({"edge_id"}),

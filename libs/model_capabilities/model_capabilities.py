@@ -21,7 +21,7 @@ __all__ = [
     "skills_mount_backend",
 ]
 
-CARD_VERSION: Final[str] = "2026-07-09"
+CARD_VERSION: Final[str] = "2026-07-14"
 
 ReasonCode = Literal["capability_card_missing", "capability_card_field_missing"]
 SkillsMountBackend = Literal["openai_container", "none"]
@@ -90,6 +90,7 @@ _GEMINI_API = ModelCapabilityCard(
 MODEL_CAPABILITY_CARDS: Final[dict[str, ModelCapabilityCard]] = {
     "anthropic/claude-sonnet-4-6": _ANTHROPIC_API,
     "anthropic/claude-opus-4-8": _ANTHROPIC_API,
+    "anthropic/claude-fable-5": _ANTHROPIC_API,
     "anthropic/claude-opus-4": _ANTHROPIC_API,
     "anthropic/claude-3-5-sonnet": _ANTHROPIC_API,
     "openai/gpt-5.6-sol": _OPENAI_API,

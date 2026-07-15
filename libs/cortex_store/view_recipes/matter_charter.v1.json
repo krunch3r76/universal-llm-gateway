@@ -70,9 +70,9 @@
       "title": "DOCTRINE pointer",
       "order": 8,
       "core": true,
-      "derivation": {"primitive": "entity_card", "params": {}},
-      "watched_set": {"entity_scope": "root_subgraph", "edge_types": ["has_playbook"]},
-      "repair_template": "has_playbook(root)"
+      "derivation": {"primitive": "assertions", "params": {}},
+      "watched_set": {"entity_scope": "root_subgraph"},
+      "repair_template": "doctrine_assertions(root)"
     },
     {
       "section_id": "entity_map",

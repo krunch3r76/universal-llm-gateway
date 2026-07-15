@@ -746,13 +746,18 @@ Response envelope (single shape, `mode` discriminator):
   ],
   "truncated": false,
   "skipped_converted": 0,
+  "skipped_oversized": 0,
   "extraction_method": "sidecar_markdown | pymupdf_plaintext | converted | native_text"
 }
 ```
 
 Directory search bounds converted-file extraction by an aggregate wall-clock
 budget and a converted-file cap; files beyond either bound increment
-`skipped_converted`. Truly-binary files are skipped (`_BINARY_SUFFIXES`
+`skipped_converted`. Native text files above 2MiB increment `skipped_oversized`
+without a full read. An overall 20s wall budget covers enumeration and scan;
+when exceeded, `truncated=true` and a wall-budget `_warning` is emitted.
+Search directory walks prune `tmp/` and `.runtime/` (list/find unchanged).
+Prefer a narrow `path=` for large trees. Truly-binary files are skipped (`_BINARY_SUFFIXES`
 unchanged — converted ≠ truly-binary, narrowing decision:mcp-list-include-binary-paths).
 
 ### Markdown section ops (for large docs >5k chars)

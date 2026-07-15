@@ -28,6 +28,7 @@ logger = get_logger(__name__)
 _DEFAULT_MODEL = "anthropic/claude-opus-4-6"
 _MAX_ADVICE_TOKENS = 1024
 _ADVISOR_PIPELINE_TIMEOUT = 120.0
+_ADVISOR_TEMPERATURE = 0.2
 
 _ADVISOR_SYSTEM = """\
 You are a senior engineering advisor. Review the problem context provided and \
@@ -42,6 +43,26 @@ Rules:
 - If the problem is trivial and needs no advice, say "Proceed as planned" \
 and nothing else.\
 """
+
+
+def build_advisor_pipeline_options(
+    model: str,
+    max_tokens: int = _MAX_ADVICE_TOKENS,
+) -> dict[str, Any]:
+    """Build ``pipeline_options`` for the chat-dispatch advisor path.
+
+    ``max_tokens`` / ``temperature`` must nest under ``generation_parameters`` —
+    top-level keys are rejected by ``frontier_dispatch_v1`` admission
+    (``UnknownPipelineOptionsError``).
+    """
+    return {
+        "model": model,
+        "mcp": False,
+        "generation_parameters": {
+            "max_tokens": max_tokens,
+            "temperature": _ADVISOR_TEMPERATURE,
+        },
+    }
 
 
 def register_advisor_tools(mcp: FastMCP) -> None:
@@ -119,11 +140,7 @@ def register_advisor_tools(mcp: FastMCP) -> None:
             {"role": "system", "content": _ADVISOR_SYSTEM},
             {"role": "user", "content": user_content},
         ]
-        options: dict[str, Any] = {
-            "model": model,
-            "max_tokens": max_tokens,
-            "temperature": 0.2,
-        }
+        options = build_advisor_pipeline_options(model, max_tokens)
 
         result = _pipeline_run(
             "chat-dispatch",
