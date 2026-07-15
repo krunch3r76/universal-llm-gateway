@@ -103,9 +103,26 @@ def extract_text(
     email parser, plain text via direct read).
     """
     if fmt == "text_pdf":
+        # When pages= is set, per-page gate: thin+image pages → OCR;
+        # text-rich selected pages stay on pymupdf (friction 24428).
+        # Full-document path (pages is None) stays on read_pdf.
+        if pages:
+            from ._extract_document_page_gate import extract_text_pdf_selected_pages
+
+            return extract_text_pdf_selected_pages(
+                path,
+                pages,
+                stargate_url=STARGATE_URL,
+                dpi=dpi,
+                model=model,
+                prompt=prompt,
+            )
         from ._file_helpers import read_pdf
 
-        return read_pdf(path), None
+        # read_pdf returns (text, method); extract_document only needs text.
+        # Friction 24427: never nest the tuple (`return read_pdf(path), None`).
+        text, _method = read_pdf(path)
+        return text, None
 
     if fmt in ("scanned_pdf", "image"):
         kwargs: dict[str, Any] = {"stargate_url": STARGATE_URL, "dpi": dpi}
