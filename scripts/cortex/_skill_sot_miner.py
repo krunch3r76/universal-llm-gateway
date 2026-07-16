@@ -31,9 +31,6 @@ _REF_PATTERNS: tuple[re.Pattern[str], ...] = (
 SKIP_SOURCE_NAMES = frozenset({"README"})
 SKIP_TARGET_SLUGS = frozenset(
     {
-        "grokbuild",
-        "grokbuild-v1",
-        "grokbuild-v2",
         "presence-discipline",
     }
 )

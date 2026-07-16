@@ -119,7 +119,9 @@ def artifact_paths_for_closeout(
 
 
 def closeout_cortex_sidecar_rel_path(thread_id: str, dispatch_id: str) -> str:
-    return f"{_CLOSEOUT_CORTEX_REL_DIR}/{thread_id}-cursor-sdk-closeout-{dispatch_id}.md"
+    return (
+        f"{_CLOSEOUT_CORTEX_REL_DIR}/{thread_id}-cursor-sdk-closeout-{dispatch_id}.md"
+    )
 
 
 def body_relocated_meta(
@@ -288,6 +290,9 @@ async def resolve_cortex_pinned_deliverables(
         try:
             cortex_path = root / rel
             repo_path = source_repo / rel
+            if cortex_path.is_dir() or repo_path.is_dir():
+                divergent.append(f"pinned_deliverable_invalid_target:{rel}")
+                continue
             cortex_is_file = cortex_path.is_file()
             repo_is_file = repo_path.is_file()
         except OSError as exc:

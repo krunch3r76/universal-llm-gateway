@@ -17,7 +17,16 @@ surface the misconfiguration via a dedicated signal.
 
 from __future__ import annotations
 
+import logging
 import os
+
+logger = logging.getLogger(__name__)
+
+# Bare ``…/mcp`` is a retired dual-endpoint mount (404). Live mounts are
+# ``/mcp/code`` (coding/API bridge) and ``/mcp/life`` (claude.ai life bridge).
+# Stargate agent_seat client-side injection must hit a live mount or tools/list
+# returns empty and falls back to STATIC_TOOL_FALLBACK (cortex+agent_bus, no fs).
+_DEFUNCT_BARE_MCP_SUFFIX = "/mcp"
 
 
 class RemoteMcpEnvMissingError(RuntimeError):
@@ -35,12 +44,40 @@ class RemoteMcpEnvMissingError(RuntimeError):
         self.missing = missing
 
 
+def normalize_mcp_public_url(url: str) -> str:
+    """Rewrite defunct bare ``/mcp`` and ensure a live mount has a trailing slash.
+
+    Friction 24366: Stargate with ``MCP_PUBLIC_URL=…/mcp`` discovered zero tools
+    and silently fell back to a cortex+agent_bus surface, so API reviewers lacked
+    ``fs``. Bare ``…/mcp`` is 404; ``…/mcp/code`` without a trailing slash 307s to
+    ``…/mcp/code/`` and ``McpToolExecutor`` (no redirect follow) treats that as
+    discovery failure. Explicit ``/mcp/life`` and ``/mcp/code`` mounts are kept
+    and slash-normalized.
+    """
+    stripped = url.strip().rstrip("/")
+    if not stripped:
+        return url
+    if stripped.endswith("/mcp/code") or stripped.endswith("/mcp/life"):
+        return f"{stripped}/"
+    if stripped.endswith(_DEFUNCT_BARE_MCP_SUFFIX):
+        rewritten = f"{stripped}/code/"
+        logger.warning(
+            "MCP_PUBLIC_URL bare mount %r is defunct; rewriting to %r "
+            "(live mounts are /mcp/code/ and /mcp/life/)",
+            url,
+            rewritten,
+        )
+        return rewritten
+    return stripped
+
+
 def resolve_mcp_env() -> tuple[str, str]:
     """Return (MCP_PUBLIC_URL, MCP_AUTH_TOKEN) or raise RemoteMcpEnvMissingError.
 
     Both env vars MUST be set for remote MCP to work. The cloud-proxy
     container gets them via its yaml config; the Stargate container gets
     them via docker-compose env passthrough (see Phase 0 compose change).
+    Bare ``…/mcp`` is normalized to ``…/mcp/code`` (see ``normalize_mcp_public_url``).
     """
     url = os.environ.get("MCP_PUBLIC_URL", "").strip()
     token = os.environ.get("MCP_AUTH_TOKEN", "").strip()
@@ -51,7 +88,7 @@ def resolve_mcp_env() -> tuple[str, str]:
         if not token:
             missing.append("MCP_AUTH_TOKEN")
         raise RemoteMcpEnvMissingError(missing)
-    return url, token
+    return normalize_mcp_public_url(url), token
 
 
 def anthropic_mcp_server_entry(

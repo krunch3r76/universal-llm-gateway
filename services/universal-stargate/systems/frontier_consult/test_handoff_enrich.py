@@ -15,6 +15,7 @@ from implement_admission.skill_delivery_channels import (
     format_inline_skill_block,
     parse_inline_skill_blocks,
     resolve_inline_bodies,
+    text_without_inline_payload_regions,
     validate_exactly_one_skill_channel,
     validate_inline_skill_hashes,
 )
@@ -180,7 +181,9 @@ def test_validate_web_skips_arch_refs_with_densify_floor(tmp_path: Path) -> None
         f"<invariants>[scope] traces to task.\n{_DENSIFY_INVARIANTS}</invariants>",
     ).replace(
         "<mcp_capabilities>1. fs(read) primary file</mcp_capabilities>",
-        "<mcp_capabilities>1. agent_bus(fetch, thread=2235, last=3)\n"
+        "<mcp_capabilities>LIFE/CORTEX MCP: ON\n"
+        "CODE/VORTEX MCP: OFF\n"
+        "1. agent_bus(fetch, thread=2235, last=3)\n"
         "2. agent_bus(fetch, thread=2229, last=3)</mcp_capabilities>",
     )
     dest = tmp_path / rel
@@ -203,7 +206,9 @@ def test_validate_web_anthropic_alias_skips_arch_refs(tmp_path: Path) -> None:
         f"<invariants>[scope] traces to task.\n{_DENSIFY_INVARIANTS}</invariants>",
     ).replace(
         "<mcp_capabilities>1. fs(read) primary file</mcp_capabilities>",
-        "<mcp_capabilities>1. agent_bus(fetch, thread=2235, last=3)\n"
+        "<mcp_capabilities>LIFE/CORTEX MCP: ON\n"
+        "CODE/VORTEX MCP: OFF\n"
+        "1. agent_bus(fetch, thread=2235, last=3)\n"
         "2. agent_bus(fetch, thread=2229, last=3)</mcp_capabilities>",
     )
     dest = tmp_path / rel
@@ -269,11 +274,13 @@ def test_build_pointer_web_consult_uses_canonical_slug_priming() -> None:
         handoff_contract="consult",
         to_agent="claude-web",
     )
-    assert "canonical slug" in body
+    assert "LIFE/CORTEX MCP ON" in body
+    assert "CODE/VORTEX MCP OFF" in body
     assert "skill_suggest" not in body.lower()
     assert 'path="agent-skills/' not in body
     assert 'sandbox="workspaces"' not in body
     assert "cortex://" in body
+    assert "bus reply" in body
 
 
 def test_build_pointer_cursor_consult_uses_canonical_slug_priming() -> None:
@@ -376,12 +383,25 @@ def test_enrich_inline_rewrites_pointer_lines_to_orientation() -> None:
     )
     invariants = result.text.split("<invariants>", 1)[1].rsplit("</invariants>", 1)[0]
     assert "bodies inlined below" in invariants
-    from implement_admission.skill_delivery_channels import (
-        text_without_inline_payload_regions,
-    )
     scan = text_without_inline_payload_regions(result.text)
     assert "- Use the `consult-routing` skill (canonical slug" not in scan
     assert "Use the `lead-seat-boot` skill" in invariants
+
+
+def test_enrich_inline_removes_task_guidance_skill_pointer() -> None:
+    packet = _THIN_WEB_PACKET.replace(
+        "<task_guidance>Review risks.</task_guidance>",
+        "<task_guidance>Use the `consult-routing` skill.</task_guidance>",
+    )
+    result = enrich_handoff_packet(
+        packet,
+        cortex=_StubCortex(),
+        skill_delivery="inline_authoritative",
+    )
+    assert "Use the `consult-routing` skill" not in text_without_inline_payload_regions(
+        result.text
+    )
+    assert validate_exactly_one_skill_channel(result.text) is None
 
 
 def test_enrich_inline_idempotent_and_rebuilds_stale_digest() -> None:
@@ -439,6 +459,7 @@ def _synthetic_inline_resolution(slug: str, byte_len: int) -> InlineBodyResoluti
 
 
 def test_enforce_inline_budget_admits_at_exact_limit() -> None:
+    assert HANDOFF_INLINE_BUDGET_BYTES == 131_072
     half = HANDOFF_INLINE_BUDGET_BYTES // 2
     enforce_inline_budget(
         [
@@ -450,6 +471,7 @@ def test_enforce_inline_budget_admits_at_exact_limit() -> None:
 
 
 def test_enforce_inline_budget_rejects_one_byte_over_limit() -> None:
+    assert HANDOFF_INLINE_BUDGET_BYTES == 131_072
     half = HANDOFF_INLINE_BUDGET_BYTES // 2
     with pytest.raises(SkillInlineBudgetExceeded) as exc_info:
         enforce_inline_budget(
@@ -460,6 +482,7 @@ def test_enforce_inline_budget_rejects_one_byte_over_limit() -> None:
             HANDOFF_INLINE_BUDGET_BYTES,
         )
     assert exc_info.value.total_bytes == HANDOFF_INLINE_BUDGET_BYTES + 1
+    assert exc_info.value.total_bytes == 131_073
     assert exc_info.value.budget_bytes == HANDOFF_INLINE_BUDGET_BYTES
 
 
@@ -582,9 +605,7 @@ def test_mirror_preserves_skill_inline_source_uri() -> None:
     )
     mirrored, rewrites = mirror_workspaces_pointers_for_web(packet)
     assert rewrites
-    mirrored_uri = (
-        "workspaces://universal-llm-gateway/.cursor/skills/consult-routing"
-    )
+    mirrored_uri = "workspaces://universal-llm-gateway/.cursor/skills/consult-routing"
     assert mirrored_uri in mirrored
     assert validate_inline_skill_hashes(mirrored) is None
 
@@ -637,3 +658,65 @@ def test_validate_enriched_inline_packet(tmp_path: Path) -> None:
         handoff_contract="consult",
         workspaces_root=tmp_path,
     )
+
+
+def test_enrich_web_defaults_life_on_code_off() -> None:
+    """Life/web handoff stamps the split and keeps life-safe thread fetches."""
+    from .handoff_web_mcp_default import (
+        LIFE_ONLY_MCP_BODY,
+        has_explicit_life_code_split,
+    )
+
+    cortex = _StubCortex(todo_skills=["mcp-surface-change"])
+    result = enrich_handoff_packet(
+        _THIN_WEB_PACKET,
+        cortex=cortex,
+        to_agent="web-anthropic",
+    )
+    body = result.text
+    mcp = None
+    start = body.find("<mcp_capabilities>")
+    end = body.find("</mcp_capabilities>")
+    assert start >= 0 and end > start
+    mcp = body[start + len("<mcp_capabilities>") : end]
+    assert has_explicit_life_code_split(mcp)
+    assert "NONE" not in mcp
+    assert LIFE_ONLY_MCP_BODY.splitlines()[0] in mcp
+    assert "Life-surface writes require explicit task/output authority." in mcp
+    assert "agent_bus(fetch, thread=2235" in mcp
+    assert "2235" in result.threads_added
+    assert has_densify_floor(result.text)
+
+
+def test_validate_web_rejects_ambiguous_mcp_grant(tmp_path: Path) -> None:
+    """Direct validation rejects generic MCP wording before other floor checks."""
+    rel = "universal-llm-gateway/tmp/reviews/web-ambiguous-mcp.md"
+    packet = _THIN_WEB_PACKET.replace(
+        "1. fs(read) primary file",
+        "You have MCP. Cite tool calls.",
+    )
+    dest = tmp_path / rel
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(packet, encoding="utf-8")
+    with pytest.raises(FrontierEndpointError) as exc_info:
+        validate_packet(
+            request_id="req-web-ambiguous-mcp",
+            packet_path=rel,
+            to_agent="claude-web",
+            handoff_contract="consult",
+            workspaces_root=tmp_path,
+        )
+    assert exc_info.value.code == "handoff_packet_web_mcp_split_required"
+
+
+def test_has_densify_floor_requires_fetch_for_life_mcp() -> None:
+    packet = f"""---
+related_thread_ids: ["99"]
+---
+<invariants>{_DENSIFY_INVARIANTS}</invariants>
+<mcp_capabilities>
+LIFE/CORTEX MCP: ON — cortex(entity_get/search).
+CODE/VORTEX MCP: OFF — no workspaces or code-only tools.
+</mcp_capabilities>
+"""
+    assert not has_densify_floor(packet)

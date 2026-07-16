@@ -121,6 +121,7 @@ _RESPONSES_CONTEXT_WINDOWS: tuple[tuple[str, int], ...] = (
     ("gpt-5.4", 1_050_000),
     ("grok-4.20", 1_000_000),
     ("grok-4.5", 500_000),
+    ("grok-4.3", 500_000),
     ("grok-4-1", 1_000_000),
     ("grok-4", 1_000_000),
     ("grok-3", 1_000_000),
@@ -149,7 +150,7 @@ _ANTHROPIC_ADAPTIVE_FAMILIES: frozenset[str] = frozenset(
 # Budget-mode (pre-adaptive Anthropic) token map.
 _REASONING_BUDGET_MAP: dict[str, int] = {"low": 2048, "medium": 8192, "high": 24000}
 # Implicit default reasoning_effort by ``provider/model`` key.
-_DEFAULT_HIGH_EFFORT: frozenset[str] = frozenset({"xai/grok-4.5"})
+_DEFAULT_HIGH_EFFORT: frozenset[str] = frozenset({"xai/grok-4.5", "xai/grok-4.3"})
 
 # ── Responses / Google surface-uniform max-output ────────────────────────────
 _RESPONSES_FLOOR = 16384
@@ -233,6 +234,7 @@ def xai_supports_reasoning_effort(model: str) -> bool:
         for prefix in (
             "grok-3-mini",
             "grok-3",
+            "grok-4.3",
             "grok-4.5",
             "grok-4.20-multi-agent",
         )

@@ -16,6 +16,7 @@ from life_intent.events import (
 from life_intent.intent_check import check_intent
 from life_intent.proposal_store import create_proposal
 from life_intent.registry import load_registry
+from life_intent.response_firewall import assert_life_facing_firewall
 from life_intent.work_order import render_work_order
 from pydantic import BaseModel, Field
 from universal_logging import get_logger
@@ -79,10 +80,16 @@ class CommitRequest(BaseModel):
 class CommitResponse(BaseModel):
     committed: bool
     entity_id: str | None = None
-    dispatch_ref: str | None = None
+    recon_ref: str | None = None
     reply_thread: str | None = None
     rejects: list[RejectModel] = Field(default_factory=list)
     context: str = Field(default="cortex.life-intent/v1")
+
+
+def _firewall_checked(model: BaseModel) -> BaseModel:
+    """Fail closed if the serialized life-facing body leaks dispatch vocabulary."""
+    assert_life_facing_firewall(response_payloads=[model.model_dump()])
+    return model
 
 
 def _default_ref_resolver(ref: str) -> bool:
@@ -118,21 +125,27 @@ async def intent_propose(body: ProposeRequest) -> ProposeResponse:
             reject_codes=codes,
         )
         _publish_event(ev)
-        return ProposeResponse(
-            proposal_id=None,
-            normalized_intent=result.normalized_intent,
-            work_order=None,
-            questions=[],
-            rejects=[RejectModel(code=r.code, detail=r.detail) for r in result.rejects],
+        return _firewall_checked(
+            ProposeResponse(
+                proposal_id=None,
+                normalized_intent=result.normalized_intent,
+                work_order=None,
+                questions=[],
+                rejects=[
+                    RejectModel(code=r.code, detail=r.detail) for r in result.rejects
+                ],
+            )
         )
 
     if result.questions:
-        return ProposeResponse(
-            proposal_id=None,
-            normalized_intent=result.normalized_intent,
-            work_order=None,
-            questions=list(result.questions),
-            rejects=[],
+        return _firewall_checked(
+            ProposeResponse(
+                proposal_id=None,
+                normalized_intent=result.normalized_intent,
+                work_order=None,
+                questions=list(result.questions),
+                rejects=[],
+            )
         )
 
     assert result.normalized_intent is not None
@@ -151,12 +164,14 @@ async def intent_propose(body: ProposeRequest) -> ProposeResponse:
     )
     _publish_event(ev)
 
-    return ProposeResponse(
-        proposal_id=proposal_id,
-        normalized_intent=result.normalized_intent,
-        work_order=work_order,
-        questions=[],
-        rejects=[],
+    return _firewall_checked(
+        ProposeResponse(
+            proposal_id=proposal_id,
+            normalized_intent=result.normalized_intent,
+            work_order=work_order,
+            questions=[],
+            rejects=[],
+        )
     )
 
 
@@ -175,22 +190,26 @@ async def intent_commit(body: CommitRequest) -> CommitResponse | JSONResponse:
             reject_codes=[outcome.code],
         )
         _publish_event(ev)
-        return CommitResponse(
-            committed=False,
-            rejects=[RejectModel(code=outcome.code, detail=outcome.detail)],
+        return _firewall_checked(
+            CommitResponse(
+                committed=False,
+                rejects=[RejectModel(code=outcome.code, detail=outcome.detail)],
+            )
         )
 
     ev = life_intent_committed(
         verb=verb,
         proposal_id=outcome.proposal_id,
         entity_id=outcome.entity_id,
-        dispatch_ref=outcome.dispatch_ref,
+        dispatch_ref=outcome.recon_ref,
     )
     _publish_event(ev)
 
-    return CommitResponse(
-        committed=True,
-        entity_id=outcome.entity_id,
-        dispatch_ref=outcome.dispatch_ref,
-        reply_thread=outcome.reply_thread,
+    return _firewall_checked(
+        CommitResponse(
+            committed=True,
+            entity_id=outcome.entity_id,
+            recon_ref=outcome.recon_ref,
+            reply_thread=outcome.reply_thread,
+        )
     )

@@ -4440,8 +4440,6 @@ overflow_register_surfaces:
   - code
   pipeline_consult:
   - code
-  grokbuild:
-  - code
   claudeburst:
   - code
   boot_inspect:

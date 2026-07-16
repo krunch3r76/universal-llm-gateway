@@ -24,6 +24,11 @@ from __future__ import annotations
 from typing import Any
 
 from ..db import cortex_conn
+from ..endeavor_birth.audit import (
+    detect_endeavor_birth_audit,
+    detect_endeavor_cowork_project_stale,
+    detect_endeavor_legacy_thread_keys,
+)
 from ._detectors._shared import SEVERITY
 from ._detectors.agent_skill import detect_agent_skill_related_skills_no_relationship
 from ._detectors.auditor import (
@@ -133,6 +138,11 @@ GRAPH_ONLY_KINDS = {
     "todo_implementation_seed_incomplete",
     "todo_dense_spec_attributes_unpopulated",
     "todo_implement_readiness_risk",
+    # Endeavor birth gate (todo:endeavor-birth-gate) — T1 resume-key audit.
+    "endeavor_birth_audit_finding",
+    "endeavor_legacy_thread_key",
+    # Birth-hook absorb — T3 advisory cowork_project stale UUID.
+    "endeavor_cowork_project_stale",
     # Axis-aware done + unsubstantiated-band (Option A); workflow_state-axis
     # types excluded — see decision:todo-status-display-axis-aware.
     "done_entity_unsubstantiated_band_mismatch",
@@ -213,6 +223,9 @@ def get_all_detectors() -> dict[str, Any]:
         "decision_workflow_state_incoherent": detect_decision_workflow_state_incoherent,
         "decision_deprecated_not_terminal": detect_decision_deprecated_not_terminal,
         "todo_implementation_seed_incomplete": detect_todo_implementation_seed_incomplete,
+        "endeavor_birth_audit_finding": detect_endeavor_birth_audit,
+        "endeavor_legacy_thread_key": detect_endeavor_legacy_thread_keys,
+        "endeavor_cowork_project_stale": detect_endeavor_cowork_project_stale,
         "todo_dense_spec_attributes_unpopulated": detect_todo_dense_spec_attributes_unpopulated,
         "todo_implement_readiness_risk": detect_todo_implement_readiness_risk,
         "done_entity_unsubstantiated_band_mismatch": detect_done_entity_unsubstantiated_band_mismatch,

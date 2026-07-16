@@ -25,6 +25,12 @@ subject). Bus `from`/`to` use endpoint addresses (`web-anthropic`,
 `cursor`), never `claude` as a name. Model artifact strings and permanent
 aliases remain.
 
+**Bus subjects / WIP / cover letters (recurrence — friction 24421):**
+✗ `chain Claude` · `Claude final` · `push Claude` · `Claude already executed`
+✓ `chain to web-anthropic` · `web-anthropic final` · `push web-anthropic`
+`claude.ai` only when the third-party product UI itself is the subject
+(e.g. Customize Skills upload), never as a seat shorthand.
+
 Do not load this skill for turn closure. Substrate already projects seat→family
 on `seeded_by`; bus addressing carries `from_agent`/`to`.
 <!-- /target:* -->

@@ -28,7 +28,7 @@ from .cursor_sdk_thread_reuse import (
     resolve_generate_thread_targets,
 )
 from .densify_triage import validate_generate_density_intake
-from .dispatch_thread_context import as_user_message, read_latest_dispatch_thread_body
+from .dispatch_thread_context import as_user_message, resolve_generate_prompt_body
 from .handoff import (
     build_generate_dispatch_pointer,
     create_handoff_thread,
@@ -109,28 +109,6 @@ async def _post_api_role_dispatch_failure_turn(
         )
 
 
-def _read_api_role_packet_body(
-    *,
-    request_id: str,
-    packet_path: str,
-) -> str:
-    from .handoff import _resolve_packet_file, _workspaces_root
-
-    packet_file = _resolve_packet_file(_workspaces_root().resolve(), packet_path)
-    if packet_file is None:
-        raise FrontierEndpointError(
-            request_id=request_id,
-            field="packet_path",
-            reason=(
-                f"packet_path {packet_path!r} not found or unreadable under "
-                "workspaces/cortex sandbox"
-            ),
-            status_code=422,
-            code="packet_path_unreadable",
-        )
-    return packet_file.read_text(encoding="utf-8", errors="replace")
-
-
 async def dispatch_api_role_generate(
     *,
     request_id: str,
@@ -198,16 +176,14 @@ async def dispatch_api_role_generate(
         )
 
     packet_path = getattr(body, "packet_path", None)
-    if packet_path is not None:
-        last_user = _read_api_role_packet_body(
-            request_id=request_id,
-            packet_path=packet_path,
-        )
-    else:
-        last_user = await read_latest_dispatch_thread_body(
-            request_id=request_id,
-            dispatch_thread_id=body.dispatch_thread_id,
-        )
+    last_user = await resolve_generate_prompt_body(
+        request_id=request_id,
+        role=role,
+        dispatch_thread_id=body.dispatch_thread_id,
+        packet_path=packet_path,
+        prompt=getattr(body, "prompt", None),
+        sidecar_ref=getattr(body, "sidecar_ref", None),
+    )
 
     thread_subject = f"{role} generate — {request_id}"
     reply_subject = f"{role} reply — {request_id[:8]}"
@@ -298,6 +274,10 @@ async def dispatch_api_role_generate(
             if reuse_id is not None
             else getattr(body, "bus_lifecycle", None)
         ),
+        cost_intent=getattr(body, "cost_intent", None),
+        suppress_cost_warning=getattr(body, "suppress_cost_warning", False),
+        cost_intent_reason=getattr(body, "cost_intent_reason", None),
+        spawn_review_provenance=getattr(body, "spawn_review_provenance", None),
     )
 
     from .route import _dispatch

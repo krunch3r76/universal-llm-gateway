@@ -64,6 +64,9 @@ SEVERITY = {
     # Fires on open/in_progress todos missing source_uri, required_skills, or a
     # context edge to a non-agent_skill entity.
     "todo_implementation_seed_incomplete": "warning",
+    "endeavor_birth_audit_finding": "warning",
+    "endeavor_legacy_thread_key": "warning",
+    "endeavor_cowork_project_stale": "warning",
     "todo_dense_spec_attributes_unpopulated": "warning",
     "todo_implement_readiness_risk": "warning",
     # Handoff prompt ⊄ source file — warn-only at close (thread 1188;

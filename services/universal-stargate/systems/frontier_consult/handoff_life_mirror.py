@@ -51,13 +51,12 @@ Reply on this thread with findings. Use <need> only as last resort."""
 _POINTER_TEMPLATE_CORTEX = """\
 {subject}
 
-Read the packet (life surface — cortex mirror; ¬ workspaces):
+Packet posture: LIFE/CORTEX MCP ON; CODE/VORTEX MCP OFF.
+Read the cortex mirror through the life surface:
   fs(op="read", path="{packet_uri}")
 
-The packet contains all six required blocks:
-  <scope>, <invariants>, <task_guidance>, <mcp_capabilities>,
-  <output_format>, <corpus>
-
+Six blocks present; <mcp_capabilities> names permitted life-safe calls.
+No workspaces sandbox, checkout/source access, or code-only tools.
 Reply on this thread with findings. Use <need> only as last resort."""
 
 
@@ -192,6 +191,4 @@ def build_workspaces_pointer_body(
     packet_path: str,
 ) -> str:
     """Bus pointer body for workspaces-capable receivers (cursor / code)."""
-    return _POINTER_TEMPLATE_WORKSPACES.format(
-        subject=subject, packet_path=packet_path
-    )
+    return _POINTER_TEMPLATE_WORKSPACES.format(subject=subject, packet_path=packet_path)

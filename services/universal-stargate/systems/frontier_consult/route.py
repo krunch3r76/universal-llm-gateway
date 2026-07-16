@@ -34,7 +34,11 @@ from .closeout_reply import parse_closeout_payload, run_implement_closeout_pipel
 from .contract_derivation import derive_contract
 from .densify_triage import DensityTriage
 from .deploy_state_gate import require_deploy_state
-from .dispatch_thread_context import as_user_message, read_latest_dispatch_thread_body
+from .dispatch_thread_context import (
+    as_user_message,
+    resolve_generate_prompt_body,
+    validate_explicit_prompt_sources,
+)
 from .events import (
     FrontierHandoffCreated,
     FrontierHandoffExecutorOverride,
@@ -146,6 +150,9 @@ class TeamDispatchGenerateBody(_DispatchCommon):
     mcp: bool | None = None
     packet_path: str | None = None
     source_ref: str | None = None
+    # Inline prompt (SF1): bypass thread latch — prefer over bus-turn-only dispatch.
+    prompt: str | None = None
+    sidecar_ref: str | None = None
     # When set and packet_path is absent (contract=implement|wrap), the server
     # materializes the six-block packet via resolve_source_ref_to_packet
     # (first-class wrap). Grammar: todo:/plan:/plan_phase:/agent-bus:/packet:.
@@ -168,6 +175,17 @@ class TeamDispatchGenerateBody(_DispatchCommon):
     cost_intent_reason: str | None = None
     # thread / subject MUST NOT appear — extra="forbid" rejects any caller that
     # supplies them (schema-level enforcement per Phase 0 contract).
+
+    @model_validator(mode="after")
+    def _validate_inline_prompt_sources(self) -> Self:
+        validate_explicit_prompt_sources(
+            contract=self.contract,
+            packet_path=self.packet_path,
+            source_ref=self.source_ref,
+            prompt=self.prompt,
+            sidecar_ref=self.sidecar_ref,
+        )
+        return self
 
     @model_validator(mode="after")
     def _require_dispatch_thread_id_unless_wrap(self) -> Self:
@@ -213,11 +231,27 @@ class TeamDispatchToThreadBody(_DispatchCommon):
     # Caller inline-intent knob (see ``TeamDispatchGenerateBody.mcp``).
     mcp: bool | None = None
     contract: Literal["light-bounded", "pure-mechanical", "implement"]
+    prompt: str | None = None
+    sidecar_ref: str | None = None
     auto_review_child: bool = False
     read_only: bool = False
     spawn_review_provenance: Literal["generate_review_child"] | None = None
+    cost_intent: Literal["deliberate_high_cost"] | None = None
+    suppress_cost_warning: bool = False
+    cost_intent_reason: str | None = None
     # result_delivery MUST NOT appear — derived from thread + role; extra="forbid"
     # rejects any caller that supplies it.
+
+    @model_validator(mode="after")
+    def _validate_inline_prompt_sources(self) -> Self:
+        validate_explicit_prompt_sources(
+            contract=self.contract,
+            packet_path=None,
+            source_ref=None,
+            prompt=self.prompt,
+            sidecar_ref=self.sidecar_ref,
+        )
+        return self
 
 
 # FastAPI resolves the union via the ``op`` discriminator key.
@@ -309,6 +343,14 @@ def _normalize_op_body(
         common["review_opt_out_reason_code"] = body.review_opt_out_reason_code
     if hasattr(body, "auto_review_child"):
         common["auto_review_child"] = body.auto_review_child
+    if hasattr(body, "spawn_review_provenance"):
+        common["spawn_review_provenance"] = body.spawn_review_provenance
+    if hasattr(body, "cost_intent"):
+        common["cost_intent"] = body.cost_intent
+    if hasattr(body, "suppress_cost_warning"):
+        common["suppress_cost_warning"] = body.suppress_cost_warning
+    if hasattr(body, "cost_intent_reason"):
+        common["cost_intent_reason"] = body.cost_intent_reason
     if hasattr(body, "packet_path"):
         common["packet_path"] = body.packet_path
     if hasattr(body, "skills"):
@@ -474,9 +516,12 @@ async def team_dispatch(
             response.status_code = 202
         return result
 
-    source_text = await read_latest_dispatch_thread_body(
+    source_text = await resolve_generate_prompt_body(
         request_id=request_id,
+        role=role or "synthesizer",
         dispatch_thread_id=body.dispatch_thread_id,
+        prompt=getattr(body, "prompt", None),
+        sidecar_ref=getattr(body, "sidecar_ref", None),
     )
     req = FrontierGenerateRequest(**_normalize_op_body(body, source_text=source_text))
     return await _dispatch(req, response)

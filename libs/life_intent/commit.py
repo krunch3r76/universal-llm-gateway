@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
-import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -14,13 +14,23 @@ from .packet_fill import entity_seed_payload, fill_recon_packet, slug_from_subje
 from .proposal_store import (
     PROPOSAL_KIND_LIFE_INTENT,
     StoredProposal,
-    claim_proposal,
+    begin_apply,
     commit_reject_code,
     get_proposal,
+    mark_completed,
+    mark_failed,
+    mark_indeterminate,
+    record_dispatch_handle,
+    record_entity,
+    record_packet,
 )
 
 _CORTEX_TIMEOUT = 15.0
 _RECON_MODEL = "cursor/grok-4.5"
+
+
+class WorkerAdmissionIndeterminateError(Exception):
+    """Worker call outcome uncertain — do not remint; mark indeterminate."""
 
 
 @dataclass(frozen=True)
@@ -33,7 +43,7 @@ class CommitReject:
 class CommitResult:
     committed: bool
     entity_id: str | None
-    dispatch_ref: str
+    recon_ref: str
     reply_thread: str
     proposal_id: str
 
@@ -67,6 +77,10 @@ def _cortex_dispatch(tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
         return body if isinstance(body, dict) else {"result": body}
 
 
+def _request_id_for(proposal_id: str) -> str:
+    return hashlib.sha256(proposal_id.encode()).hexdigest()[:12]
+
+
 def _create_entity(seed: dict[str, Any]) -> str:
     entity_id = str(seed["id"])
     args: dict[str, Any] = {
@@ -80,6 +94,31 @@ def _create_entity(seed: dict[str, Any]) -> str:
     return entity_id
 
 
+def _entity_exists(entity_id: str) -> bool:
+    try:
+        body = _cortex_dispatch("entity_get", {"entity_id": entity_id})
+    except Exception:
+        return False
+    if not isinstance(body, dict):
+        return False
+    if body.get("error"):
+        return False
+    return bool(body.get("id") or body.get("entity_id") or body.get("item"))
+
+
+def _ensure_entity(seed: dict[str, Any]) -> str:
+    entity_id = str(seed["id"])
+    if _entity_exists(entity_id):
+        return entity_id
+    try:
+        return _create_entity(seed)
+    except Exception as exc:
+        text = str(exc).lower()
+        if "already exists" in text or "409" in text:
+            return entity_id
+        raise
+
+
 def _create_context_edge(entity_id: str, thread_id: str) -> None:
     _cortex_dispatch(
         "relationship_create",
@@ -91,18 +130,20 @@ def _create_context_edge(entity_id: str, thread_id: str) -> None:
     )
 
 
-async def _fire_recon_dispatch(
+async def _prepare_recon_handle(
     *,
     request_id: str,
     packet_path: str,
     subject: str,
     reply_thread: str,
-) -> str:
-    from systems.frontier_consult.cursor_sdk_generate import (  # noqa: I001
-        dispatch_cursor_sdk_generate,
+    execution_id: str | None = None,
+    dispatch_id: str | None = None,
+) -> Any:
+    from systems.frontier_consult.cursor_sdk_generate_prepare import (  # noqa: I001
+        prepare_cursor_sdk_generate,
     )
 
-    result = await dispatch_cursor_sdk_generate(
+    return await prepare_cursor_sdk_generate(
         request_id=request_id,
         role="cursor-sdk",
         model=_RECON_MODEL,
@@ -114,8 +155,37 @@ async def _fire_recon_dispatch(
         reuse_thread=None,
         bus_lifecycle="persistent",
         parent_dispatch_thread_id=reply_thread,
+        execution_id=execution_id,
+        dispatch_id=dispatch_id,
     )
-    dispatch_ref = str(result.get("dispatch_thread_id") or result.get("thread_id") or request_id)
+
+
+async def _submit_prepared_handle(handle: Any) -> str:
+    from systems.frontier_consult.cursor_sdk_generate import (  # noqa: I001
+        dispatch_prepared_cursor_sdk,
+    )
+    from systems.frontier_consult.admission import FrontierEndpointError
+
+    try:
+        result = await dispatch_prepared_cursor_sdk(handle)
+    except FrontierEndpointError as exc:
+        code = str(getattr(exc, "code", "") or "")
+        status = int(getattr(exc, "status_code", 0) or 0)
+        if status == 599 or code in {
+            "CURSOR_WORKER_UNREACHABLE",
+            "CURSOR_WORKER_DISPATCH_FAILED",
+        }:
+            raise WorkerAdmissionIndeterminateError(str(exc)) from exc
+        raise
+    except TimeoutError as exc:
+        raise WorkerAdmissionIndeterminateError(str(exc)) from exc
+
+    dispatch_ref = str(
+        result.get("dispatch_thread_id")
+        or result.get("thread_id")
+        or handle.thread_id
+        or handle.request_id
+    )
     return dispatch_ref
 
 
@@ -123,7 +193,7 @@ def validate_commit(proposal_id: str) -> CommitReject | StoredProposal:
     if not commit_live_enabled():
         return CommitReject(
             "commit_gated",
-            "Commit is gated until imprint F1 evidence and F2 Arm-A clearance.",
+            "Commit is gated; set LIFE_INTENT_COMMIT_LIVE=1 to enable.",
         )
     row = get_proposal(proposal_id)
     code = commit_reject_code(row)
@@ -143,47 +213,90 @@ async def apply_commit(
     *,
     reply_thread: str | None = None,
 ) -> CommitResult | CommitReject:
-    """Apply frozen proposal — at most one entity and one scout dispatch."""
+    """Apply frozen proposal — at most one entity and one scout admission."""
     if not commit_live_enabled():
         return CommitReject(
             "commit_gated",
-            "Commit is gated until imprint F1 evidence and F2 Arm-A clearance.",
+            "Commit is gated; set LIFE_INTENT_COMMIT_LIVE=1 to enable.",
         )
 
-    row, reject_code = claim_proposal(proposal_id)
+    row, reject_code = begin_apply(proposal_id)
     if reject_code:
         return CommitReject(reject_code, f"Proposal cannot be committed: {reject_code}")
     assert row is not None
 
-    normalized = row.normalized_intent
-    slug = slug_from_subject(normalized["subject"])
-    packet_text = fill_recon_packet(normalized)
-    packet_path = _write_packet(packet_text, slug)
+    try:
+        normalized = row.normalized_intent
+        slug = slug_from_subject(normalized["subject"])
 
-    entity_id: str | None = None
-    seed = entity_seed_payload(normalized)
-    if seed is not None:
-        entity_id = _create_entity(seed)
+        packet_path = row.packet_path
+        if packet_path is None:
+            packet_path = _write_packet(fill_recon_packet(normalized), slug)
+            record_packet(proposal_id, packet_path)
 
-    request_id = uuid.uuid4().hex[:12]
-    thread = reply_thread or f"agent-bus:life-intent-{slug}"
-    dispatch_ref = await _fire_recon_dispatch(
-        request_id=request_id,
-        packet_path=packet_path,
-        subject=normalized["subject"],
-        reply_thread=thread,
-    )
+        entity_id = row.entity_id
+        if entity_id is None:
+            seed = entity_seed_payload(normalized)
+            if seed is not None:
+                entity_id = _ensure_entity(seed)
+                record_entity(proposal_id, entity_id)
 
-    if entity_id and dispatch_ref:
-        try:
-            _create_context_edge(entity_id, dispatch_ref)
-        except Exception:
-            pass
+        thread = row.reply_thread or reply_thread or f"agent-bus:life-intent-{slug}"
+        handle_data = row.dispatch_handle
+        from systems.frontier_consult.cursor_sdk_generate_prepare import (
+            handle_from_dict,
+            handle_to_dict,
+        )
 
-    return CommitResult(
-        committed=True,
-        entity_id=entity_id,
-        dispatch_ref=dispatch_ref,
-        reply_thread=thread,
-        proposal_id=proposal_id,
-    )
+        if handle_data is None:
+            handle = await _prepare_recon_handle(
+                request_id=_request_id_for(proposal_id),
+                packet_path=packet_path,
+                subject=normalized["subject"],
+                reply_thread=thread,
+            )
+            handle_data = handle_to_dict(handle)
+            record_dispatch_handle(proposal_id, handle_data, reply_thread=thread)
+        else:
+            handle = handle_from_dict(handle_data)
+
+        if row.dispatch_ref is None:
+            dispatch_ref = await _submit_prepared_handle(handle)
+            record_dispatch_handle(
+                proposal_id,
+                handle_to_dict(handle),
+                reply_thread=thread,
+            )
+            from .proposal_store import record_dispatch
+
+            record_dispatch(proposal_id, dispatch_ref, thread)
+            if entity_id and dispatch_ref:
+                try:
+                    _create_context_edge(entity_id, dispatch_ref)
+                except Exception:
+                    pass
+        else:
+            dispatch_ref = row.dispatch_ref
+
+        mark_completed(proposal_id)
+        return CommitResult(
+            committed=True,
+            entity_id=entity_id,
+            recon_ref=dispatch_ref,
+            reply_thread=thread,
+            proposal_id=proposal_id,
+        )
+    except WorkerAdmissionIndeterminateError as exc:
+        mark_indeterminate(proposal_id, repr(exc))
+        return CommitReject(
+            "commit_indeterminate",
+            "Worker admission outcome uncertain; retry the same proposal_id "
+            "to resume with the stored handle.",
+        )
+    except Exception as exc:
+        mark_failed(proposal_id, repr(exc))
+        return CommitReject(
+            "commit_incomplete",
+            "Commit interrupted before completion; retry the same proposal_id "
+            "to resume.",
+        )

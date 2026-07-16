@@ -46,6 +46,7 @@ from skills_mount.resolve import default_workspaces_root
 from .admission import (
     EventPublisher,
     FrontierEndpointError,
+    _resolve_role_or_seat_profile,
     _translate_capability_card_error,
     assert_model_carded,
     emit_rejection,
@@ -57,6 +58,7 @@ from .admission import (
     mcp_enabled_for_team_dispatch,
     verify_thread_writable,
 )
+from .anthropic_override_gate import enforce_anthropic_override
 from .corpus_inline import (
     CORPUS_BODY_BUDGET_BYTES,
     corpus_inline_gated,
@@ -120,6 +122,10 @@ class FrontierGenerateRequest:
     packet_path: str | None = None
     skills: list[str] | None = None
     server_tools: bool | None = None
+    cost_intent: Literal["deliberate_high_cost"] | None = None
+    suppress_cost_warning: bool = False
+    cost_intent_reason: str | None = None
+    spawn_review_provenance: Literal["generate_review_child"] | None = None
 
 
 def _resolve_pre_hydration_effective_model(
@@ -472,6 +478,20 @@ async def build_dispatch_body(
             effective_model,
             request_id=request_id,
             event_publisher=event_publisher,
+        )
+
+    if req.role and req.model is not None:
+        _to, _family, _platform, profile = _resolve_role_or_seat_profile(
+            req.role, request_id=request_id
+        )
+        enforce_anthropic_override(
+            request_id=request_id,
+            model=req.model,
+            profile_provider=profile.provider,
+            profile_allowed_models=profile.allowed_models,
+            cost_intent=req.cost_intent,
+            cost_intent_reason=req.cost_intent_reason,
+            spawn_review_provenance=req.spawn_review_provenance,
         )
 
     inject_profile = _inject_profile_for_generate(req)

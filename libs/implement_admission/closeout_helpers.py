@@ -14,6 +14,9 @@ _SOURCE_REF_IN_PACKET = re.compile(
     re.MULTILINE | re.IGNORECASE,
 )
 _ULG_DIRNAME = "universal-llm-gateway"
+# MCP container volume target (docker/compose/mcp-server.yml). Prefer when
+# present so admission reads share the same root as fs(sandbox=cortex).
+_MCP_CONTAINER_CORTEX_ROOT = Path("/data/files")
 
 
 def workspaces_root() -> Path:
@@ -24,9 +27,19 @@ def workspaces_root() -> Path:
 
 
 def cortex_files_root() -> Path:
+    """Resolve the cortex file sandbox root.
+
+    Preference order:
+    1. ``CORTEX_FILES_ROOT`` when set
+    2. ``/data/files`` when that directory exists (MCP container mount;
+       matches ``services/mcp-server`` ``SANDBOX_ROOT`` — friction a24515)
+    3. ``~/mcp-data/files`` (host default)
+    """
     raw = os.environ.get("CORTEX_FILES_ROOT")
     if raw:
         return Path(raw).resolve()
+    if _MCP_CONTAINER_CORTEX_ROOT.is_dir():
+        return _MCP_CONTAINER_CORTEX_ROOT.resolve()
     return (Path.home() / "mcp-data" / "files").resolve()
 
 

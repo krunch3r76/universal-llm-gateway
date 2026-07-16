@@ -11,6 +11,7 @@
 #   scripts/cortex/claude-ai-sync-jupiter upload --all --continue-on-error
 #   scripts/cortex/claude-ai-sync-jupiter uninstall --slugs retired-skill
 #   scripts/cortex/claude-ai-sync-jupiter restore-connector
+#   scripts/cortex/claude-ai-sync-jupiter project-chrome ensure|destroy|get|render-prompt …
 #
 # MCP connector playbook: agent_skill:claude-ai-mcp-connect
 # (life URL, OAuth DCR, dual-endpoint cutover)
@@ -28,7 +29,7 @@ PROFILE='$HOME/.gateway/claude-ai-chrome-profile'
 usage() {
   sed -n '2,14p' "$0" | sed 's/^# \?//'
   echo ""
-  echo "Commands: ensure-chrome | status | upload | uninstall | restore-connector"
+  echo "Commands: ensure-chrome | status | upload | uninstall | restore-connector | project-chrome"
   exit "${1:-0}"
 }
 
@@ -76,6 +77,17 @@ restore_connector() {
   ssh "$SSH" "cd ${REMOTE_REPO} && PROJECT_ROOT=${REMOTE_REPO} PYTHONPATH=${REMOTE_REPO}/libs BROWSER_CDP_URL=http://127.0.0.1:9222 ${PY} scripts/cortex/restore_claude_mcp_connector.py $*"
 }
 
+remote_project_chrome() {
+  # Quote each arg for remote bash (names often contain spaces / ·).
+  local qargs=()
+  local a
+  for a in "$@"; do
+    qargs+=("$(printf '%q' "$a")")
+  done
+  # shellcheck disable=SC2029
+  ssh "$SSH" "cd ${REMOTE_REPO} && PROJECT_ROOT=${REMOTE_REPO} PYTHONPATH=${REMOTE_REPO}/libs BROWSER_CDP_URL=http://127.0.0.1:9222 ${PY} scripts/cortex/cowork_project_chrome.py ${qargs[*]}"
+}
+
 cmd="${1:-}"
 shift || true
 
@@ -96,6 +108,10 @@ case "$cmd" in
   restore-connector)
     ensure_chrome
     restore_connector "$@"
+    ;;
+  project-chrome)
+    ensure_chrome
+    remote_project_chrome "$@"
     ;;
   -h|--help|help|'') usage 0 ;;
   *)

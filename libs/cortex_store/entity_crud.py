@@ -34,6 +34,7 @@ from .entity_exhibit_lint import (
 )
 from .entity_id_norm import canonicalize_entity_id
 from .entity_read import get_entity_impl
+from .entity_source_uri_write import normalize_create_write, normalize_update_write
 from .event_publisher import cortex_entity_source_changed
 from .models import (
     EntityCreate,
@@ -411,6 +412,7 @@ def update_entity_impl(
             },
         )
 
+    supplied_attributes: dict[str, object] | None = None
     if "attributes" in updates and updates["attributes"] is not None:
         try:
             validated_attrs = EntityUpdate.model_validate(
@@ -419,6 +421,8 @@ def update_entity_impl(
         except ValidationError as exc:
             raise entity_payload_validation_exception(exc) from exc
         updates = {**updates, "attributes": validated_attrs.attributes}
+        if validated_attrs.attributes is not None:
+            supplied_attributes = dict(validated_attrs.attributes)
 
     # Trait cutover: map legacy ``status`` payloads to trait columns; never
     # UPDATE entities.status when Phase 0 columns exist.
@@ -461,6 +465,11 @@ def update_entity_impl(
     if "attributes" in updates and isinstance(updates["attributes"], dict):
         updates = {**updates, "attributes": merged["attributes"]}
 
+    updates = normalize_update_write(prior=prior, updates=updates)
+    for normalized_field in ("attributes", "source_uri", "content_hash"):
+        if normalized_field in updates:
+            merged[normalized_field] = updates[normalized_field]
+
     if str(prior.get("type")) == "role":
         _enforce_role_entity_lint(
             entity_id=str(merged["id"]),
@@ -493,7 +502,7 @@ def update_entity_impl(
         validate_distilled_attributes(
             conn,
             str(prior["type"]),
-            attrs if isinstance(attrs, dict) else None,
+            supplied_attributes,
         )
 
     if str(prior.get("type")) in ("agent_skill", "rule", "skill"):
@@ -707,11 +716,20 @@ def _gate_condition_admission(conn: sqlite3.Connection, body: EntityCreate) -> N
 def create_entity_impl(
     conn: sqlite3.Connection, payload: dict[str, object], commit: bool = True
 ) -> dict[str, object]:
+    source_uri_set = "source_uri" in payload
+    content_hash_set = "content_hash" in payload
     try:
         body = EntityCreate.model_validate(payload)
     except ValidationError as exc:
         raise entity_payload_validation_exception(exc) from exc
     body = body.model_copy(update={"id": canonicalize_entity_id(body.id, body.type)})
+
+    body = normalize_create_write(
+        body,
+        source_uri_supplied=source_uri_set,
+        content_hash_supplied=content_hash_set,
+    )
+
     now = datetime.datetime.now(tz=datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     if body.type == "role":

@@ -133,6 +133,7 @@ async def _build_generate_lane_review_prompt(
             thread_body = await read_latest_dispatch_thread_body(
                 request_id=request_id,
                 dispatch_thread_id=thread_id,
+                role="reviewer",
             )
             if thread_body.strip():
                 draft_body = f"{COMPOSER_DRAFT_SENTINEL}\n{thread_body}"

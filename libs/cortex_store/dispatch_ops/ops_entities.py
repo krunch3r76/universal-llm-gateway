@@ -11,6 +11,10 @@ from universal_logging import get_logger
 from ..card import CARD_INTENTS_DEFERRED as _CARD_INTENTS_DEFERRED
 from ..card import CARD_TOP_K_DEFAULT as _CARD_TOP_K_DEFAULT
 from ..db import WRITE_LOCK, cortex_conn
+from ..endeavor_birth.gate import (
+    attach_endeavor_birth_warning,
+    check_endeavor_birth_incomplete,
+)
 from ..entity_aliases import resolve_entity_reference
 from ..entity_collision import attach_collision_warning, check_entity_collision
 from ..entity_rekey import entity_merge_impl, entity_rekey_impl, entity_retype_impl
@@ -613,6 +617,22 @@ def _op_entity_create(
                 id,
                 exc_info=True,
             )
+        try:
+            with cortex_conn() as conn:
+                birth_warning = check_endeavor_birth_incomplete(
+                    conn,
+                    entity_id=str(id),
+                    entity_type=str(type),
+                    attrs=attributes if isinstance(attributes, dict) else None,
+                )
+            if birth_warning is not None:
+                attach_endeavor_birth_warning(result, birth_warning)
+        except Exception:  # noqa: BLE001 — advisory warning must never block create
+            logger.warning(
+                "entity_create endeavor_birth_warning failed for %s — proceeding",
+                id,
+                exc_info=True,
+            )
     return result
 
 
@@ -678,9 +698,26 @@ def _op_entity_update(
             )
         except HTTPException as exc:
             return _http_error_dict(exc)
-    if "error" not in result:
-        logger.info("cortex entity_update: %s", entity_id)
-    return result
+        if "error" not in result:
+            logger.info("cortex entity_update: %s", entity_id)
+            try:
+                attrs = updates.get("attributes")
+                entity_type = str(result.get("type") or "")
+                birth_warning = check_endeavor_birth_incomplete(
+                    conn,
+                    entity_id=canonical_id if not raw_id else entity_id,
+                    entity_type=entity_type,
+                    attrs=attrs if isinstance(attrs, dict) else result.get("attributes"),
+                )
+                if birth_warning is not None:
+                    attach_endeavor_birth_warning(result, birth_warning)
+            except Exception:  # noqa: BLE001 — advisory warning must never block update
+                logger.warning(
+                    "entity_update endeavor_birth_warning failed for %s — proceeding",
+                    entity_id,
+                    exc_info=True,
+                )
+        return result
 
 
 def _op_entity_rekey(

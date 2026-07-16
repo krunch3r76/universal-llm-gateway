@@ -325,7 +325,11 @@ profiles:
 #     consult-only; it cannot raise the implement guardrails).
 #   Review / MCP writes (automated): team_dispatch role=reviewer → gpt-5.6-terra.
 #   Analysis (no substrate writes): role=synthesizer → gemini-3.1-pro-preview (MCP tool loop).
-#   Reliable MCP writers: web-anthropic, gpt-5.6-terra, anthropic API. Anthropic API last (cost).
+#   Reliable MCP writers (automated generate): gpt-5.6-terra, anthropic API (last — cost).
+#   web-anthropic: /mcp/life is ON and /mcp/code is OFF. Handoff packets must name
+#   that split explicitly: life reads/writes are available when packet-authorized;
+#   workspaces, checkout/source access, and code-only tools are not
+#   (todo:web-anthropic-handoff-mcp-off-default).
 
 roles:
 
@@ -358,7 +362,7 @@ roles:
     default_contract: implement
 
   reviewer:
-    description: "Review and audit with reliable MCP writes. Preferred: web-anthropic via agent-bus. Automated team_dispatch: gpt-5.6-terra. Anthropic API last resort (cost). gpt-5.5 special-case only."
+    description: "Review and audit with reliable MCP writes. Preferred automated: gpt-5.6-terra. Anthropic API last resort (cost). web-anthropic via agent-bus is a life/Cortex MCP writer with code/workspaces MCP off. gpt-5.5 special-case only."
     default_family: gpt
     default_platform: api
     default_model: openai/gpt-5.6-terra
@@ -373,7 +377,7 @@ roles:
       - google/gemini-2.5-pro
 
   synthesizer:
-    description: "Analysis/synthesis via MCP tools. Full catalog access; writes allowed by model discretion. For guaranteed durable writes use reviewer (gpt-5.6-terra) or web-anthropic."
+    description: "Analysis/synthesis via MCP tools. Full catalog access; writes allowed by model discretion. For guaranteed code-surface writes use reviewer (gpt-5.6-terra). web-anthropic can write through life/Cortex MCP but has no code/workspaces surface."
     default_family: gemini
     default_platform: api
     default_model: google/gemini-3.5-flash

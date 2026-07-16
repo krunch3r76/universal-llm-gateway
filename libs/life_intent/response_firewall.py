@@ -11,17 +11,21 @@ import yaml
 from .registry import LifeIntentRegistry, load_registry
 from .work_order import render_work_order
 
+# Substring scan (case-insensitive). Colon forms match registry refuse_list
+# (life_intent_v1.yaml); equals forms cover the parallel wire shape. Keep
+# both — Sol F1: colon-only refuse_list was not mirrored here (a4917).
 FORBIDDEN_TOKENS = (
     "dispatch",
     "team_dispatch",
     "op=",
+    "op:",
     "role=",
+    "role:",
     "contract=",
+    "contract:",
+    "model=",
+    "model:",
     "cursor-sdk",
-)
-
-_LIFE_FACING_RESPONSE_KEYS = frozenset(
-    {"work_order", "questions", "context", "subject", "detail", "verb"}
 )
 
 _REGISTRY_PATH = (
@@ -88,26 +92,25 @@ def scan_texts(texts: Iterable[str]) -> dict[str, list[str]]:
     return violations
 
 
+def _walk_payload_strings(node: Any) -> list[str]:
+    """Collect every key name and string value from a JSON-like payload."""
+    strings: list[str] = []
+    if isinstance(node, dict):
+        for key, value in node.items():
+            strings.append(str(key))
+            strings.extend(_walk_payload_strings(value))
+    elif isinstance(node, list):
+        for item in node:
+            strings.extend(_walk_payload_strings(item))
+    elif isinstance(node, str):
+        strings.append(node)
+    return strings
+
+
 def collect_response_field_strings(payloads: Iterable[dict[str, Any]]) -> list[str]:
     strings: list[str] = []
     for payload in payloads:
-        for key, value in payload.items():
-            if key == "rejects" and isinstance(value, list):
-                for item in value:
-                    if isinstance(item, dict) and isinstance(item.get("detail"), str):
-                        strings.append(item["detail"])
-                continue
-            if key == "normalized_intent" and isinstance(value, dict):
-                for sub_key, sub_val in value.items():
-                    if sub_key in _LIFE_FACING_RESPONSE_KEYS and isinstance(sub_val, str):
-                        strings.append(sub_val)
-                continue
-            if key not in _LIFE_FACING_RESPONSE_KEYS:
-                continue
-            if isinstance(value, str):
-                strings.append(value)
-            elif isinstance(value, list):
-                strings.extend(item for item in value if isinstance(item, str))
+        strings.extend(_walk_payload_strings(payload))
     return strings
 
 

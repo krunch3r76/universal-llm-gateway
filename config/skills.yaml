@@ -183,6 +183,9 @@ skills:
   jupiter-browser-via-mcp:
     surface_class: cursor_only
     mcp_surface_required: none
+  journal-digest:
+    surface_class: shared_sync
+    mcp_surface_required: none
   lawyer-stance:
     surface_class: cursor_only
     mcp_surface_required: none
@@ -200,6 +203,9 @@ skills:
     mcp_surface_required: life
   life-imprint-when-how:
     surface_class: life_local
+    mcp_surface_required: life
+  life-to-code-request-lane:
+    surface_class: shared_sync
     mcp_surface_required: life
   markdown-navigation:
     surface_class: cursor_only

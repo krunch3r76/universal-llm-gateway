@@ -43,8 +43,6 @@ _PARITY_ALLOWLIST: dict[str, dict[str, str]] = {
     "claude-web-boot": _meta("web-only boot sequence"),
     "claudeburst-shadow-ops": _meta("web-only shadow ops"),
     "grok-build-dispatch": _meta("grok-build harness (retired)", temporary="temporary"),
-    "grokbuild-v1": _meta("grokbuild v1 (retired harness)", temporary="temporary"),
-    "grokbuild-v2": _meta("grokbuild v2 (retired harness)", temporary="temporary"),
     "grok-web-dispatch": _meta("grok web dispatch (web-only)"),
     "jupiter-browser-via-mcp": _meta("browser automation via web MCP"),
     "lead-agent-git-integration": _meta("arc worktree Lane B (web/API only)"),

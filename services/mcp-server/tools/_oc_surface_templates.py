@@ -122,39 +122,23 @@ tools (xAI multi-agent rejects them; standard API path has no vortex). This plat
 (grok.com) has the full vortex MCP catalog available — use it."""
 
 CLAUDE_WEB_TOOL_SURFACE = """\
-## ULG architecture orientation (claude-web — skill-first)
-Before findings / spec / orchestration on any universal-llm-gateway task, Use BOTH
-by canonical slug (seat self-fetches on explicit use):
-`architecture-invariants` and `ulg-architecture` (`agent_skill:architecture-invariants`,
-`agent_skill:ulg-architecture`).
-Other `required_skills` slugs: **Use the** `{slug}` **skill** — ¬ fs-read skill markdown.
-You have NO IDE `*_ws.mdc` auto-load backstop — `ulg-architecture` is in your manifest
-(partition `["claude-cursor","claude-web"]`); the canonical slug load is load-bearing.
-Discovery order: todo `required_skills` (canonical slugs) → ULG pair → boot manifest triggers → repo skills README (index only).
+## Web-anthropic life surface
+`/mcp/life` is ON. Use `cortex`, `cortex_brief`, `agent_bus`,
+`agent_bus_read`, cortex-sandbox `fs`, `rag`, and `retrieve`.
 
-## MCP binding (claude-web — read before dispatch)
-Server-primary tools are listed at boot (`tools/list` manifest line). Your
-connector-bound callable set may differ — probe with a direct call; do not trust
-prior-session assertions or this doc over a live attempt. `tool_search` returns
-overflow relay templates only; they require bound `dispatch`.
-`tool_search` itself is the always-present connector-side bootstrap (no server
-event, never pre-bound as a function): if a primary looks absent, run
-`tool_search(query="<tool>")` FIRST — never conclude tool_search is missing from
-a pre-bound-set or event check.
+`/mcp/code` is OFF. Do not use the workspaces sandbox, checkout/source paths,
+`team_dispatch`, `panel_dispatch`, `pipeline`, `manage`, or `observability`.
+Handoff defaults are read/coordination + bus reply. Graph walks or durable life
+writes require explicit task/output authority; they are not inferred from MCP-on.
 
-## Dispatch & Consult (claude-web /mcp seat)
-Pick by CAPABILITY, not model family. To consult a MODEL (any provider, incl. grok) you do NOT use a build harness.
-When connector-bound: team_dispatch + panel_dispatch are server-primary — call directly.
-- local file/entity work (you ARE the web-anthropic seat) → fs / cortex / agent_bus directly — ¬ team_dispatch(op="generate"|"to_thread", model="web-anthropic") (422)
-- manual seat handoff → team_dispatch(op="handoff", seat=web-anthropic|cursor, packet_path=…|source_ref=…, subject=…) — shorthands accepted; handoff seat-map: web-consult, web-implement → web-anthropic; cursor-consult, cursor-implement → cursor. Legacy aliases `claude-web`/`claude-cursor` still resolve.
-- API consult (any provider) → pre-stage context on an agent-bus thread, then team_dispatch(op="generate", role="reviewer"|"artisan"|…, dispatch_thread_id="<thread>", contract="light-bounded", model="provider/model"?) → execution_id + poll_hint
-- forbidden on generate → synthetic seat models (web-anthropic, cursor) — use op="handoff" with role= instead
-- handoff roles: web-consult, web-implement, cursor-consult, cursor-implement (complete roster)
-- consensus panel → panel_dispatch(messages=[…], dispatch_thread_id="…", disposition="panel") → panel_executions; lead adjudication NON-offloadable
-- strategic advice / in-pipeline RAG → dispatch(tool="advisor" | "pipeline_consult", …)  [overflow]
-- bounded determinate task → team_dispatch(op=generate, seat=cursor-sdk, dispatch_thread_id="<thread>", contract=light-bounded|pure-mechanical|implement, packet_path?=…)
-- deprecated: op=handoff,seat=cursor-sdk normalizes to generate with a warning
-Use the `dispatch-workflow` skill §0a before first dispatch. Source: claude-web-dispatch-decision-table.md (§2/§3/§4)."""
+## Handoff guidance
+Treat `<mcp_capabilities>` as authoritative only when it explicitly says
+`LIFE/CORTEX MCP: ON` and `CODE/VORTEX MCP: OFF`. Reject generic “You have MCP”
+or total-`NONE` wording. Read packet/evidence mirrors only from `cortex://`.
+
+Customize carries life procedure, not code skills. Code/architecture handoffs
+must inline the required skill bodies in the packet; do not fetch `.cursor/skills`
+or `workspaces://` paths. Missing code-side action returns `<need>` for a code seat."""
 
 GEMINI_WEB_TOOL_SURFACE = """\
 ## Gemini App Tool Surface (gemini-web — CANDIDATE seat)
@@ -181,7 +165,7 @@ tool_search(query="pipeline")    # → enables pipeline(op="result", ...)
 ```
 
 **Dispatch & Consult — pick by CAPABILITY, not model family:**
-- API consult → pre-stage context on an agent-bus thread, then `team_dispatch(op="generate", role=..., dispatch_thread_id="<thread>", contract="light-bounded", model="provider/model"?)`
+- API consult → `team_dispatch(op="generate", role=..., dispatch_thread_id="<thread>", contract="light-bounded", prompt="<brief>"|sidecar_ref="cortex://…", model="provider/model"?)`; latest bus turn is fallback only
 - bounded determinate task → team_dispatch(op=generate, seat=cursor-sdk, dispatch_thread_id="<thread>", contract=light-bounded|pure-mechanical|implement, packet_path?=…)
 - deprecated: op=handoff,seat=cursor-sdk normalizes to generate with a warning
 
@@ -205,7 +189,7 @@ Edge protocol: entities only as edge nodes, never assertion IDs. `superseded_by`
   Always call this before guessing a model ID — wrong format → 404.
 
 Inference routing (pick by capability — see boot briefing):
-- `team_dispatch(op=..., role=..., dispatch_thread_id="<agent-bus-thread>", contract=..., model=..., ...)` — consult by API role (`reviewer`, `artisan`, `skeptic`, …). Optional `model=` override within role `allowed_models`. Role briefing + contract from `role:{slug}`; MCP on by default for non-xAI models. The latest prompt body is read from the caller-owned dispatch thread; `messages[]` is not accepted.
+- `team_dispatch(op=..., role=..., dispatch_thread_id="<agent-bus-thread>", contract=..., prompt="<brief>"|sidecar_ref="cortex://…", model=..., ...)` — consult by API role (`reviewer`, `artisan`, `skeptic`, …). Optional `model=` override within role `allowed_models`. Role briefing + contract from `role:{slug}`; MCP on by default for non-xAI models. Prefer atomic `prompt`/`sidecar_ref`; the role-gated latest thread turn is fallback. `messages[]` is not accepted.
 - `pipeline(op="run"|"async", pipeline_id="chat-dispatch", pipeline_options={"model": ...}, messages=[...])` — role-less chat/completions one-shot for any model ID (including `google/gemini-2.5-pro` via OpenRouter); no dispatch role/tools/transcript_id surface.
 - OpenRouter and local models → use `pipeline(chat-dispatch)`, not provider-native dispatch tools"""
 
@@ -216,8 +200,8 @@ natural part of how you work, not an exceptional event.
 
 **Pick by capability** (same axis as the boot briefing — not "always team first"):
 - Consult via **API role** (`reviewer`, `artisan`, `skeptic`, `gatherer`, …) →
-  pre-stage context on an agent-bus thread, then
-  `team_dispatch(op=generate|to_thread, role=…, dispatch_thread_id=<thread>, contract=light-bounded|pure-mechanical, …)`.
+  `team_dispatch(op=generate|to_thread, role=…, dispatch_thread_id=<thread>, contract=light-bounded|pure-mechanical, prompt=<brief>|sidecar_ref=cortex://…, …)`.
+  The role-gated latest thread turn remains fallback for legacy callers.
 - Override model within role `allowed_models` → add `model="provider/model"`.
   **Not** seat slugs (`claude-web`) — web seats have no `default_model` on `generate`.
 

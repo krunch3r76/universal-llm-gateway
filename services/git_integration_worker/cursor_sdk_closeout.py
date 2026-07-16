@@ -298,6 +298,18 @@ def _files_expected_from_packet(packet_text: str | None) -> list[str]:
     return _files_from_packet(packet_text)
 
 
+def _files_expected_for_pinning(
+    packet_text: str | None,
+    deliverables_expected: bool,
+    light_bounded_expected_paths: tuple[str, ...],
+) -> list[str]:
+    if light_bounded_expected_paths:
+        return list(light_bounded_expected_paths)
+    if deliverables_expected:
+        return _files_expected_from_packet(packet_text)
+    return []
+
+
 def verify_deliverables(
     *,
     spec: ImplementSpec | None,
@@ -367,6 +379,26 @@ def empty_output_degraded_reason(outcome: SdkRunOutcome) -> str | None:
     """
     if outcome.status == "finished" and not outcome.body.strip():
         return "empty_terminal_output"
+    return None
+
+
+def empty_assistant_turn_reason(outcome: SdkRunOutcome) -> str | None:
+    """Hollow-model-no-op guard for friction 24299 — contract- and status-independent.
+
+    A run whose captured body is empty AND which made zero tool calls produced
+    nothing: an empty assistant turn (``content: []``). This is a run-health
+    failure that must outrank downstream deliverable-completeness reasons
+    (``pinned_deliverable_*``), otherwise a secondary pin-write miss becomes the
+    primary ``degraded_reason`` operators see and the model no-op is misdiagnosed.
+
+    Distinct from ``empty_output_degraded_reason`` (finished-gated, body-only, so
+    it misses a non-``finished`` empty stop) and from ``degraded_implement_reason``'s
+    ``zero_tool_calls`` (implement-only). This fires for every contract and every
+    status, closing the hole that let a light-bounded/consult hollow no-op reach
+    the pin path with ``degraded_reason=None``.
+    """
+    if not outcome.body.strip() and outcome.tool_call_count == 0:
+        return "empty_assistant_turn"
     return None
 
 
@@ -640,7 +672,11 @@ async def prepare_closeout_delivery_async(
     post_closeout_sidecar_fn: Callable[..., Any] | None = None,
 ) -> CloseoutDelivery:
     """Write sidecar, resolve pinned cortex deliverables, build closeout JSON."""
-    files_expected = _files_expected_from_packet(packet_text)
+    files_expected = _files_expected_for_pinning(
+        packet_text,
+        deliverables_expected,
+        light_bounded_expected_paths,
+    )
     text = full_result_text(outcome.body, degraded_reason)
     pinned = await resolve_cortex_pinned_deliverables(
         files_expected=files_expected,

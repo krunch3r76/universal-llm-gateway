@@ -26,11 +26,14 @@ from life_intent.packet_fill import (
 from life_intent.proposal_store import (
     PROPOSAL_TTL_SECONDS,
     StoredProposal,
+    begin_apply,
     clear_store,
     commit_reject_code,
     create_proposal,
     get_proposal,
-    mark_committed,
+    mark_completed,
+    mark_failed,
+    mark_indeterminate,
 )
 from life_intent.registry import LifeIntentRegistry, VerbSpec, load_registry
 from life_intent.work_order import lookup_lane, lookup_verb_spec, render_work_order
@@ -45,6 +48,7 @@ __all__ = [
     "StoredProposal",
     "VerbSpec",
     "apply_commit",
+    "begin_apply",
     "check_intent",
     "clear_store",
     "commit_live_enabled",
@@ -60,7 +64,9 @@ __all__ = [
     "load_registry",
     "lookup_lane",
     "lookup_verb_spec",
-    "mark_committed",
+    "mark_completed",
+    "mark_failed",
+    "mark_indeterminate",
     "normalize_intent",
     "render_work_order",
     "slug_from_subject",

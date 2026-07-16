@@ -40,6 +40,7 @@ from .handoff_life_mirror import (
     is_life_web_receiver,
     mirror_workspaces_pointers_for_web,
 )
+from .handoff_web_mcp_default import apply_web_mcp_default
 
 logger = get_logger(__name__)
 
@@ -94,9 +95,9 @@ KNOWN_TASK_CLASS_SLUGS: frozenset[str] = frozenset(
     }
 )
 
-_CANONICAL_POINTER_LINE_RE = re.compile(
-    r"- Use the `(?P<slug>[a-z0-9][-a-z0-9_]*)` skill "
-    r"\(canonical slug — seat self-fetches; ¬ fs-read skill body\)",
+_SKILL_POINTER_LINE_RE = re.compile(
+    r"(?:-\s+)?Use the `(?P<slug>[a-z0-9][-a-z0-9_]*)` skill"
+    r"(?: \([^<\n]*\))?",
     re.IGNORECASE,
 )
 
@@ -191,11 +192,7 @@ def _replace_invariants_body(text: str, body: str) -> str:
     close_idx = _outer_invariants_close_index(text)
     if close_idx is None or close_idx <= open_idx:
         return text
-    return (
-        text[: open_idx + len("<invariants>")]
-        + body
-        + text[close_idx:]
-    )
+    return text[: open_idx + len("<invariants>")] + body + text[close_idx:]
 
 
 def _packet_tag_span(text: str, tag: str) -> tuple[int, int] | None:
@@ -250,16 +247,18 @@ def _rewrite_inline_pointer_lines(text: str, inline_slugs: set[str]) -> str:
     if not inline_slugs:
         return text
 
-    def _drop(match: re.Match[str]) -> str:
-        slug = match.group("slug").lower()
-        if slug in inline_slugs:
-            return ""
-        return match.group(0)
-
+    scan = text_without_inline_payload_regions(text)
+    pointer_lines = [
+        match
+        for match in _SKILL_POINTER_LINE_RE.finditer(scan)
+        if match.group("slug").lower() in inline_slugs
+    ]
+    for match in reversed(pointer_lines):
+        text = text[: match.start()] + text[match.end() :]
     block = _invariants_body(text)
     if block is None:
         return text
-    merged = _CANONICAL_POINTER_LINE_RE.sub(_drop, block).rstrip()
+    merged = block.rstrip()
     orientation = _orientation_line(tuple(sorted(inline_slugs)))
     if orientation not in merged:
         merged = f"{merged}\n{orientation}"
@@ -587,6 +586,13 @@ def enrich_handoff_packet(
                 skills_added.append(slug)
         text, _ = _merge_block_lines(text, "invariants", invariant_lines)
 
+    text, web_mcp_stamped = apply_web_mcp_default(
+        text,
+        to_agent=to_agent,
+        current_body=_packet_tag_body(text, "mcp_capabilities"),
+        replace_body=_replace_packet_tag_body,
+    )
+
     mcp_block = _packet_tag_body(text, "mcp_capabilities") or ""
     mcp_additions: list[str] = []
     threads_added: list[str] = []
@@ -597,14 +603,11 @@ def enrich_handoff_packet(
             step = _next_mcp_step_number(mcp_block) + len(mcp_additions)
             mcp_additions.append(f"{step}. {_agent_bus_fetch_line(related_thread_id)}")
             threads_added.append(related_thread_id)
-
     text, _ = _merge_block_lines(text, "mcp_capabilities", mcp_additions)
 
     corpus_rewritten = False
     if is_life_web_receiver(to_agent):
-        text, rewrites = mirror_workspaces_pointers_for_web(
-            text, thread_id=thread_id
-        )
+        text, rewrites = mirror_workspaces_pointers_for_web(text, thread_id=thread_id)
         corpus_rewritten = bool(rewrites)
 
     changed = bool(
@@ -612,6 +615,7 @@ def enrich_handoff_packet(
         or skills_inlined
         or threads_added
         or mcp_additions
+        or web_mcp_stamped
         or corpus_rewritten
     )
     return EnrichResult(
@@ -628,7 +632,11 @@ def enrich_handoff_packet(
 
 
 def has_densify_floor(text: str) -> bool:
-    """Return True when the web densify admission floor is satisfied."""
+    """Return True when the web densify admission floor is satisfied.
+
+    Related-thread context must remain fetchable on every MCP-capable seat,
+    including life-only web receivers.
+    """
     if not _has_task_class_skill_ref(text):
         return False
     thread_ids = _parse_related_thread_ids(text)

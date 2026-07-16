@@ -47,6 +47,7 @@ from ._frontier_intake import (
     reject_unsupported_packet_inputs,
     require_dispatch_thread_id,
     require_explicit_cursor_seat_for_handoff,
+    validate_inline_prompt_inputs,
     validate_wrap_inputs,
 )
 
@@ -293,9 +294,15 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         executor_override_reason_code: str | None = None,
         executor_override_reason: str | None = None,
         pointer_body: str | None = None,
+        prompt: str | None = None,
+        sidecar_ref: str | None = None,
         tags: list[str] | None = None,
         skills: list[str] | None = None,
         server_tools: bool | None = None,
+        cost_intent: Literal["deliberate_high_cost"] | None = None,
+        suppress_cost_warning: bool = False,
+        cost_intent_reason: str | None = None,
+        spawn_review_provenance: Literal["generate_review_child"] | None = None,
     ) -> dict[str, Any]:
         """Team-seat dispatch with explicit op discrimination.
 
@@ -383,9 +390,12 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         ``packet_path`` is honored across ``light-bounded``, ``pure-mechanical``,
         and ``implement``; ``source_ref`` is implement-only (and ``wrap``).
         When no ``packet_path`` is supplied, prompt context is read from the
-        latest turn on ``dispatch_thread_id`` (bus-turn fallback). When both
-        ``packet_path`` and a non-empty dispatch-thread turn are present,
-        ``packet_path`` wins (bus turn ignored). ``op="to_thread"`` accepts ``light-bounded |
+        latest turn on ``dispatch_thread_id`` (bus-turn fallback). Prefer
+        ``prompt=`` or ``sidecar_ref=`` (cortex:// or workspaces path) to
+        supply the brief on the admit call so it cannot desync from the latest
+        bus turn (friction 24391). Exactly one of ``packet_path``, ``prompt``,
+        or ``sidecar_ref`` may be explicit; otherwise the role-gated latest bus
+        turn is fallback. ``op="to_thread"`` accepts ``light-bounded |
         pure-mechanical``. An omitted ``contract`` is
         rejected with ``validation_error`` "contract is required for
         op='generate'/'to_thread'". The legacy ``consult`` contract is DROPPED
@@ -412,7 +422,8 @@ def register_frontier_tools(mcp: FastMCP) -> None:
           reply on its behalf (system-on-behalf delivery); poll via
           ``agent_bus(tool="wait", ...)`` from ``poll_hint``
           (``pipeline(op="result")`` is metadata fallback). The
-          ``dispatch_thread_id`` latest turn becomes the model prompt verbatim:
+          Without an explicit ``prompt`` / ``sidecar_ref`` / ``packet_path``,
+          the role-gated ``dispatch_thread_id`` latest turn becomes the prompt:
           do NOT instruct the model to "reply on this thread" — with
           ``mcp=true`` that triggers a redundant model self-post on top of
           on-behalf delivery (friction #17396).
@@ -427,9 +438,9 @@ def register_frontier_tools(mcp: FastMCP) -> None:
           carries a ``subject_ignored_on_generate`` warning. Use ``op="to_thread"``
           to actually set a thread subject (friction 19803).
           ``pointer_body`` is handoff-only and rejects with a validation
-          error on ``op="generate"``/``op="to_thread"`` — the dispatch-thread
-          latest turn is the prompt channel (friction 23301; previously
-          silently dropped).
+          error on ``op="generate"``/``op="to_thread"``. Use ``prompt`` or
+          ``sidecar_ref`` for atomic brief+admit; the dispatch-thread latest
+          turn is fallback only (friction 23301; previously silently dropped).
           Manual seats (``claude-web``, ``claude-cursor``) are rejected with 422
           ``web_seat_not_generate_target``. The SDK auto seat ``cursor-sdk`` (``seat=``) is
           admitted on ``op=generate`` (``auto_dispatchable`` substrate=sdk). Use API roles with optional
@@ -504,6 +515,12 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         invalid knob values are dropped with a ``knob_dropped`` warning; the
         per-knob outcome is echoed in ``knob_resolution``. Ignored on API roles.
         """
+        prompt_input_err = validate_inline_prompt_inputs(
+            op, contract, packet_path, source_ref, prompt, sidecar_ref
+        )
+        if prompt_input_err is not None:
+            return prompt_input_err
+
         if op == "handoff":
             if contract == "wrap":
                 return {
@@ -722,6 +739,10 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                 body["packet_path"] = packet_path
             if source_ref is not None:
                 body["source_ref"] = source_ref
+            if prompt is not None:
+                body["prompt"] = prompt
+            if sidecar_ref is not None:
+                body["sidecar_ref"] = sidecar_ref
             if contract is not None:
                 body["contract"] = contract
             if density_triage is not None:
@@ -730,6 +751,8 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                 body["review_opt_out_reason_code"] = review_opt_out_reason_code
             if auto_review_child:
                 body["auto_review_child"] = auto_review_child
+            if spawn_review_provenance is not None:
+                body["spawn_review_provenance"] = spawn_review_provenance
             if reuse_thread is not None:
                 body["reuse_thread"] = reuse_thread
         else:
@@ -754,9 +777,15 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             body["thread"] = thread
             if subject is not None:
                 body["subject"] = subject
+            if prompt is not None:
+                body["prompt"] = prompt
+            if sidecar_ref is not None:
+                body["sidecar_ref"] = sidecar_ref
             body["contract"] = contract
             if auto_review_child:
                 body["auto_review_child"] = auto_review_child
+            if spawn_review_provenance is not None:
+                body["spawn_review_provenance"] = spawn_review_provenance
 
         for key, val in (
             ("model", model),
@@ -771,6 +800,9 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             ("caller_agent", caller_agent),
             ("timeout_seconds", timeout_seconds),
             ("bus_lifecycle", bus_lifecycle),
+            ("cost_intent", cost_intent),
+            ("cost_intent_reason", cost_intent_reason),
+            ("suppress_cost_warning", suppress_cost_warning if suppress_cost_warning else None),
         ):
             if val is not None:
                 body[key] = val

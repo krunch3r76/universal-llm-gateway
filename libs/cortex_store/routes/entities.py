@@ -372,7 +372,7 @@ def create_entity(body: EntityCreate) -> EntityDetail:
     """
     with cortex_conn() as conn:
         try:
-            result = create_entity_impl(conn, body.model_dump())
+            result = create_entity_impl(conn, body.model_dump(exclude_unset=True))
         except sqlite3.IntegrityError:
             logger.warning("Entity create conflict for id=%s", body.id)
             raise HTTPException(

@@ -172,6 +172,61 @@ def reject_unsupported_packet_inputs(
     return None
 
 
+def validate_inline_prompt_inputs(
+    op: str,
+    contract: str | None,
+    packet_path: str | None,
+    source_ref: str | None,
+    prompt: str | None,
+    sidecar_ref: str | None,
+) -> dict[str, Any] | None:
+    """Reject explicit prompt inputs that would be ignored or ambiguous."""
+    inline_fields = [
+        field
+        for field, value in (("prompt", prompt), ("sidecar_ref", sidecar_ref))
+        if value is not None
+    ]
+    if op == "handoff" and inline_fields:
+        field = inline_fields[0]
+        return _validation_error(
+            f"{field} is only supported on op='generate'/'to_thread'; "
+            "handoff uses packet_path or source_ref",
+            field=field,
+            code="inline_prompt_not_supported",
+        )
+    if contract in ("implement", "wrap") and inline_fields:
+        field = inline_fields[0]
+        return _validation_error(
+            f"{field} is not supported with contract={contract!r}; "
+            "use packet_path or source_ref for implement/wrap",
+            field=field,
+            code="inline_prompt_not_supported",
+        )
+    if source_ref is not None and inline_fields:
+        return _validation_error(
+            "source_ref cannot be combined with prompt or sidecar_ref",
+            field=inline_fields[0],
+            code="multiple_prompt_sources",
+        )
+    explicit_fields = [
+        field
+        for field, value in (
+            ("packet_path", packet_path),
+            ("prompt", prompt),
+            ("sidecar_ref", sidecar_ref),
+        )
+        if value is not None
+    ]
+    if len(explicit_fields) > 1:
+        return _validation_error(
+            "explicit prompt sources are mutually exclusive; pass exactly one "
+            f"of packet_path, prompt, or sidecar_ref (received {explicit_fields})",
+            field=explicit_fields[1],
+            code="multiple_prompt_sources",
+        )
+    return None
+
+
 def reject_pointer_body_on_generate(
     op: str,
     pointer_body: str | None,
@@ -179,17 +234,17 @@ def reject_pointer_body_on_generate(
     """Reject pointer_body outside op='handoff' (friction 23301).
 
     Previously accepted and silently dropped on generate/to_thread — the
-    4741/4742 blind-panel briefs never reached the model. The generate/
-    to_thread prompt contract is the latest turn on dispatch_thread_id; there
-    is no pointer_body channel on these ops.
+    4741/4742 blind-panel briefs never reached the model. Those ops use an
+    explicit prompt source or a role-gated latest-turn fallback; neither has a
+    pointer_body channel.
     """
     if op == "handoff" or pointer_body is None:
         return None
     return _validation_error(
-        "pointer_body is handoff-only. On op='generate'/'to_thread' the latest "
-        "turn on dispatch_thread_id is the model prompt verbatim — post the "
-        "brief as a bus turn on that thread (or use panel_dispatch messages[] "
-        "for panel briefs) instead of pointer_body.",
+        "pointer_body is handoff-only. On op='generate'/'to_thread', pass the "
+        "brief atomically via prompt or sidecar_ref; packet_path is also "
+        "supported on generate. The role-gated dispatch-thread latest turn is "
+        "fallback only. Use panel_dispatch messages[] for panel briefs.",
         field="pointer_body",
     )
 

@@ -64,6 +64,7 @@ from services.git_integration_worker.cursor_sdk_closeout import (
     capture_wt_baseline_with_hashes,
     count_tool_calls,
     degraded_implement_reason,
+    empty_assistant_turn_reason,
     empty_output_degraded_reason,
     format_delivery_fallback_body,
     prepare_closeout_delivery_async,
@@ -1341,6 +1342,13 @@ async def _finalize_success(
         else False
     )
     deliverable_present = path_present or manifest_landed
+    # Hollow-no-op invariant (friction 24299) applies to ALL contracts and ALL
+    # run statuses: an empty body with zero tool calls is a model no-op that must
+    # outrank the downstream pinned_deliverable_* reason derived in
+    # prepare_closeout_delivery_async, else a secondary pin-write miss becomes the
+    # primary degraded_reason and the no-op is misdiagnosed. Checked first so it
+    # closes the gap left by the finished-gated empty_output guard and the
+    # implement-only zero_tool_calls reason.
     # Empty-output invariant (friction 19819) applies to ALL contracts: a finished
     # run whose captured body (after transcript reconstruction in resolve_run_body)
     # is empty must never report status:complete + 0B. Implement-specific reasons
@@ -1349,13 +1357,15 @@ async def _finalize_success(
     # must not claim complete when a named deliverable never landed. Holds
     # regardless of whether the #1/#2 write-path instrumentation saw the choke.
     if degraded_reason is None:
-        degraded_reason = empty_output_degraded_reason(
-            outcome
-        ) or light_bounded_deliverable_reason(
-            body=outcome.body,
-            tool_calls=outcome.tool_calls,
-            contract=contract,
-            deliverable_present=deliverable_present,
+        degraded_reason = (
+            empty_assistant_turn_reason(outcome)
+            or empty_output_degraded_reason(outcome)
+            or light_bounded_deliverable_reason(
+                body=outcome.body,
+                tool_calls=outcome.tool_calls,
+                contract=contract,
+                deliverable_present=deliverable_present,
+            )
         )
         # Observability: if filesystem ground truth suppressed a would-be
         # light-bounded degrade, surface it (frontier.sdk.closeout.reconciled).

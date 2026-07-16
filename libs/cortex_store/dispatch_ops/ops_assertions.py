@@ -11,6 +11,7 @@ without caring about the split.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from fastapi import HTTPException
@@ -317,6 +318,41 @@ def _op_review_queue(
         if not staged_resp.get("error")
         else []
     )
+    endeavor_pending = []
+    try:
+        with cortex_conn() as conn:
+            rows = query(
+                conn,
+                "SELECT id, entity_id, claim, predicate_form, attributes, "
+                "resolution_status, review_status "
+                "FROM assertions "
+                "WHERE superseded_by IS NULL AND resolution_status = 'pending' "
+                "AND predicate_form LIKE 'endeavor_strategy_row(%' "
+                "LIMIT ?",
+                (lim,),
+            )
+        for a in rows:
+            attrs_raw = a.get("attributes")
+            attrs = {}
+            if isinstance(attrs_raw, str):
+                try:
+                    attrs = json.loads(attrs_raw) if attrs_raw else {}
+                except json.JSONDecodeError:
+                    attrs = {}
+            elif isinstance(attrs_raw, dict):
+                attrs = attrs_raw
+            endeavor_pending.append(
+                {
+                    **a,
+                    "priority": 0,
+                    "reason": "endeavor_strategy_row_pending",
+                    "host": a.get("entity_id"),
+                    "row_id": attrs.get("row_id"),
+                    "affects": attrs.get("affects"),
+                }
+            )
+    except Exception:  # noqa: BLE001 — review_queue must stay best-effort
+        logger.warning("endeavor pending row surfacing failed", exc_info=True)
 
     low_conf = []
     if not low_conf_resp.get("error"):
@@ -338,7 +374,8 @@ def _op_review_queue(
                 )
 
     total = (
-        len(flagged)
+        len(endeavor_pending)
+        + len(flagged)
         + len(staged)
         + len(provisional)
         + len(low_conf)
@@ -348,6 +385,7 @@ def _op_review_queue(
         "provisional_entities": provisional,
         "flagged_assertions": flagged,
         "staged_assertions": staged,
+        "endeavor_pending_rows": endeavor_pending,
         "low_confidence_assertions": low_conf,
         "thin_descriptions": thin_descriptions,
         "total": total,

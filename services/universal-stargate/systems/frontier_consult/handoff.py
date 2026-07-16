@@ -215,7 +215,9 @@ def validate_packet(
             field="packet_path",
             reason=(
                 f"Packet file not found at Share URI {tried!r} "
-                f"(input {packet_path!r}). "
+                f"(input {packet_path!r}; sandbox_root={resolution.sandbox_root}). "
+                "Cortex packets resolve under CORTEX_FILES_ROOT "
+                "(MCP: /data/files; host: ~/mcp-data/files). "
                 f"Write the six-block packet before calling handoff. {_PROTOCOL_HINT}"
             ),
             status_code=422,
@@ -233,6 +235,7 @@ def validate_packet(
     )
 
     from implement_admission.skill_delivery_channels import (
+        text_without_inline_payload_regions,
         validate_exactly_one_skill_channel,
         validate_inline_skill_hashes,
     )
@@ -262,6 +265,26 @@ def validate_packet(
             status_code=422,
             code="handoff_packet_invalid",
         )
+
+    if is_life_web_receiver(to_agent):
+        from .handoff_web_mcp_default import has_explicit_life_code_split
+
+        packet_text = text_without_inline_payload_regions(text)
+        if not has_explicit_life_code_split(
+            _extract_block(packet_text, "mcp_capabilities")
+        ):
+            raise FrontierEndpointError(
+                request_id=request_id,
+                field="packet_path",
+                reason=(
+                    f"Packet {packet_path!r} has ambiguous web MCP capabilities. "
+                    "Block 5 must explicitly state both 'LIFE/CORTEX MCP: ON' "
+                    "and 'CODE/VORTEX MCP: OFF'; generic 'You have MCP' and "
+                    "total-MCP-off wording are rejected."
+                ),
+                status_code=422,
+                code="handoff_packet_web_mcp_split_required",
+            )
 
     if to_agent in _mcp_packet_seats():
         from .handoff_packet_enrich import has_densify_floor
@@ -445,11 +468,13 @@ _CONSULT_ARCH_READ = (
 )
 
 _WEB_CONSULT_PRIMING = (
-    "Before findings: Use skills named in packet <invariants> by canonical slug "
-    "(native skill use on claude-web). agent_bus(fetch) each related_thread_ids "
-    "thread per packet <mcp_capabilities>. Do not fs-read agent-skills/*.md for "
-    "skill bodies on platform seats."
+    "Before findings: skills are skill-inlined in the packet. Life/Cortex MCP "
+    "is ON; code/vortex MCP is OFF. Follow the life-safe cortex, agent_bus, and "
+    "cortex-sandbox fs steps in <mcp_capabilities>; life writes require explicit "
+    "task/output authority. Never use workspaces or code-only tools. Deliverable: "
+    "bus reply on this thread. Do not fs-read agent-skills/*.md."
 )
+
 
 def build_pointer_body(
     *,
@@ -474,9 +499,7 @@ def build_pointer_body(
         body = pointer_body
     else:
         contract_line = _CONTRACT_LINES.get(handoff_contract, "")
-        subject_block = (
-            f"{subject}\n{contract_line}" if contract_line else subject
-        )
+        subject_block = f"{subject}\n{contract_line}" if contract_line else subject
         if is_life_web_receiver(to_agent):
             packet_uri = (
                 packet_path
@@ -732,9 +755,7 @@ async def post_pointer_turn(
         pass
     try:
         async with make_async_client(DEFAULT_AGENT_BUS_URL, timeout=10.0) as client:
-            thread_resp = await client.get(
-                f"/threads/{thread_id}", headers=headers
-            )
+            thread_resp = await client.get(f"/threads/{thread_id}", headers=headers)
         if thread_resp.status_code == 200:
             thread_payload = thread_resp.json()
             return int(thread_payload.get("turn_count") or 0)

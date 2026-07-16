@@ -79,6 +79,10 @@ async def _get_mcp_executor() -> McpToolExecutor | None:
             )
             return None
 
+        from llm_adapters._mcp_entry import normalize_mcp_public_url
+
+        url = normalize_mcp_public_url(url)
+
         try:
             from services.universal_cloud_proxy.mcp_executor import McpToolExecutor
         except ImportError as exc:

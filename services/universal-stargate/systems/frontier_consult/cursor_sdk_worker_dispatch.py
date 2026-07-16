@@ -14,6 +14,7 @@ from universal_logging import get_logger
 
 logger = get_logger(__name__)
 
+
 def _worker_read_timeout_s() -> float:
     """Friction 23001: read timeout on the worker admission POST.
 
@@ -145,9 +146,7 @@ def derive_cursor_sdk_prompt_preamble(
     )
     if not resolution.block_md:
         return preamble
-    injected_section = (
-        "## Injected invariant bodies\n" f"{resolution.block_md.strip()}\n"
-    )
+    injected_section = f"## Injected invariant bodies\n{resolution.block_md.strip()}\n"
     if preamble:
         return f"{injected_section}\n{preamble}"
     return injected_section.strip()
@@ -208,14 +207,20 @@ async def dispatch_cursor_sdk_worker(
     model_knobs: dict[str, str] | None = None,
     read_only: bool = False,
     close_contract: CloseContract = "auto",
+    dispatch_id: str | None = None,
 ) -> tuple[bool, dict[str, Any]]:
-    """POST ``/api/v1/cursor/dispatch``; return structured ``(ok, detail)``."""
-    dispatch_id = f"{request_id}-{uuid.uuid4().hex[:8]}"
+    """POST ``/api/v1/cursor/dispatch``; return structured ``(ok, detail)``.
+
+    When ``dispatch_id`` is supplied (prepared-handle path), reuse it so
+    retries share the ledger idempotency key. Legacy/unprepared callers
+    still mint ``{request_id}-{uuid8}``.
+    """
+    effective_dispatch_id = dispatch_id or f"{request_id}-{uuid.uuid4().hex[:8]}"
     payload: dict[str, object] = {
         "thread_id": thread_id,
         "model": model,
         "packet_path": packet_path,
-        "dispatch_id": dispatch_id,
+        "dispatch_id": effective_dispatch_id,
         "execution_id": execution_id,
         "handoff_contract": handoff_contract,
         "prompt_preamble": prompt_preamble,
@@ -240,7 +245,9 @@ async def dispatch_cursor_sdk_worker(
             thread_id,
             exc,
         )
-        return False, _transport_failure_detail(dispatch_id=dispatch_id, exc=exc)
+        return False, _transport_failure_detail(
+            dispatch_id=effective_dispatch_id, exc=exc
+        )
     if resp.status_code in (200, 202):
         logger.info(
             "cursor-sdk worker admit: request_id=%s status=%s body=%s",
@@ -248,14 +255,16 @@ async def dispatch_cursor_sdk_worker(
             resp.status_code,
             resp.text[:300],
         )
-        return True, _parse_worker_success(resp)
+        detail = _parse_worker_success(resp)
+        detail.setdefault("dispatch_id", effective_dispatch_id)
+        return True, detail
     logger.warning(
         "cursor-sdk worker rejected dispatch: request_id=%s status=%s body=%s",
         request_id,
         resp.status_code,
         resp.text[:200],
     )
-    return False, _parse_worker_error(resp, dispatch_id=dispatch_id)
+    return False, _parse_worker_error(resp, dispatch_id=effective_dispatch_id)
 
 
 async def dispatch_cursor_sdk_worker_message(
@@ -268,14 +277,15 @@ async def dispatch_cursor_sdk_worker_message(
     caller_agent: str | None = None,
     model_knobs: dict[str, str] | None = None,
     read_only: bool = False,
+    dispatch_id: str | None = None,
 ) -> tuple[bool, dict[str, Any]]:
     """POST ``/api/v1/cursor/dispatch`` with ``message`` (consult path)."""
-    dispatch_id = f"{request_id}-{uuid.uuid4().hex[:8]}"
+    effective_dispatch_id = dispatch_id or f"{request_id}-{uuid.uuid4().hex[:8]}"
     payload = {
         "thread_id": thread_id,
         "model": model,
         "message": message,
-        "dispatch_id": dispatch_id,
+        "dispatch_id": effective_dispatch_id,
         "execution_id": execution_id,
     }
     if caller_agent is not None:
@@ -295,10 +305,14 @@ async def dispatch_cursor_sdk_worker_message(
             request_id,
             exc,
         )
-        return False, _transport_failure_detail(dispatch_id=dispatch_id, exc=exc)
+        return False, _transport_failure_detail(
+            dispatch_id=effective_dispatch_id, exc=exc
+        )
     if resp.status_code in (200, 202):
-        return True, _parse_worker_success(resp)
-    return False, _parse_worker_error(resp, dispatch_id=dispatch_id)
+        detail = _parse_worker_success(resp)
+        detail.setdefault("dispatch_id", effective_dispatch_id)
+        return True, detail
+    return False, _parse_worker_error(resp, dispatch_id=effective_dispatch_id)
 
 
 async def post_worker_failure_turn(

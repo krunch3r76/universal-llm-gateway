@@ -229,6 +229,7 @@ class McpToolExecutor:
         """Fetch tool schemas from the MCP server via JSON-RPC ``tools/list``."""
         self._client = httpx.AsyncClient(
             timeout=httpx.Timeout(connect=10.0, read=30.0, write=10.0, pool=10.0),
+            follow_redirects=True,
         )
         try:
             resp = await self._client.post(

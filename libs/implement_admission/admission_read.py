@@ -111,10 +111,18 @@ def read_packet(path_or_uri: str, *, workspaces_root: Path | None = None) -> Pac
         )
 
     if resolution.resolved_file is None:
+        root = resolution.sandbox_root
         raise SourceRefError(
             code="handoff_packet_missing",
             source_ref=f"packet:{path_or_uri}",
-            rule=f"packet file not found under {_sandbox_label(parsed.scheme)} root",
+            rule=(
+                f"packet file not found under {_sandbox_label(parsed.scheme)} "
+                f"root ({root}). "
+                "Cortex packet paths must resolve under CORTEX_FILES_ROOT "
+                "(MCP container: /data/files; host default: ~/mcp-data/files). "
+                "Allowed cortex file-root prefixes include notes/, ephemeral/, "
+                "dropbox/, uploads/, exports/, trash/, agent-skills/."
+            ),
         )
 
     data = resolution.resolved_file.read_bytes()

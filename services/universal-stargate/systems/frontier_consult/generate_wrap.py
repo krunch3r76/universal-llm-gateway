@@ -22,7 +22,7 @@ from .cursor_sdk_thread_reuse import (
     consolidation_split_warning,
     resolve_cursor_sdk_thread_targets,
 )
-from .dispatch_thread_context import read_latest_dispatch_thread_body
+from .dispatch_thread_context import resolve_generate_prompt_body
 from .handoff import _resolve_packet_file, _workspaces_root
 from .implement_admission_bridge import (
     StargateCortexReader,
@@ -286,9 +286,12 @@ async def dispatch_cursor_sdk_generate_route(
         source_text = (
             ""
             if (body.contract == "implement" or has_packet)
-            else await read_latest_dispatch_thread_body(
+            else await resolve_generate_prompt_body(
                 request_id=request_id,
+                role=role,
                 dispatch_thread_id=body.dispatch_thread_id,
+                prompt=getattr(body, "prompt", None),
+                sidecar_ref=getattr(body, "sidecar_ref", None),
             )
         )
         (

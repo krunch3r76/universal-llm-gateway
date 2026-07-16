@@ -9,6 +9,7 @@ from fastapi import HTTPException, status
 
 from ..db import cortex_conn, decode_row, query
 from ..entity_id_norm import canonicalize_entity_id
+from ..entity_source_uri import stranded_nested_source_uri
 from ._shared import (
     _ENTITY_MUTABLE,
     _VALID_STATUS,
@@ -62,6 +63,16 @@ def _entity_updates_changed(
     existing: dict[str, Any],
     updates: dict[str, object],
 ) -> bool:
+    if stranded_nested_source_uri(
+        existing.get("attributes"),
+        existing.get("source_uri"),
+    ):
+        return True
+    attrs_update = updates.get("attributes")
+    if isinstance(attrs_update, dict):
+        nested = attrs_update.get("source_uri")
+        if isinstance(nested, str) and nested.strip():
+            return True
     for key, value in updates.items():
         if key == "attributes" and isinstance(value, dict):
             merged = dict(existing.get("attributes") or {})

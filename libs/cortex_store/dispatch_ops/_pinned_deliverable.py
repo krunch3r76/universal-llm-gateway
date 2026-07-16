@@ -39,7 +39,9 @@ def pinned_deliverable_uri(rel: str, *, sandbox: str = "cortex") -> str:
     return to_share_uri(sandbox, rel.lstrip("/"))
 
 
-def _resolved_target(rel_path: str, *, sandbox: str = "cortex") -> tuple[str, Path] | None:
+def _resolved_target(
+    rel_path: str, *, sandbox: str = "cortex"
+) -> tuple[str, Path] | None:
     rel = normalize_share_rel(rel_path, sandbox=sandbox)
     if rel is None:
         return None
@@ -62,6 +64,8 @@ def write_pinned_deliverable_impl(
     if resolved is None:
         return {"error": "invalid or unsafe rel_path"}
     rel, target = resolved
+    if target.is_dir():
+        return {"error": "rel_path resolves to a directory"}
     if write_if_absent and target.is_file():
         existing = target.read_text(encoding="utf-8")
         return {

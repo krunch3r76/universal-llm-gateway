@@ -336,6 +336,19 @@ def get_entity_card(
     payload = card.model_dump(mode="json")
     if str(e["type"]) in ("agent_skill", "skill"):
         payload["discoverable"] = agent_skill_is_discoverable(e.get("lifecycle"))  # type: ignore[arg-type]
+    if str(e["type"]) == "document":
+        from .card_adapters.document import ocr_companion_next_hint
+
+        status = payload.get("status_summary")
+        hint = ocr_companion_next_hint(
+            status if isinstance(status, dict) else None
+        )
+        if hint:
+            # Handler-set _next wins over static entity_get workflow hint.
+            existing = payload.get("_next")
+            payload["_next"] = (
+                f"{existing}; {hint}" if isinstance(existing, str) and existing else hint
+            )
     return payload
 
 

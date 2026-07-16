@@ -15,6 +15,7 @@ from tools.close import register_close_tools
 from tools.context import register_context_tools
 from tools.cortex import register_cortex_tools
 from tools.cortex_named_tools import register_cortex_named_tools
+from tools.delegate import register_delegate_schema_transform, register_delegate_tools
 from tools.events import register_event_tools
 from tools.extract_directory import register_extract_directory_tools
 from tools.extract_document import register_extract_document_tools
@@ -22,7 +23,6 @@ from tools.filesystem import register_filesystem_tools
 from tools.frontier import register_frontier_tools
 from tools.frontier_imagine import register_imagine_tools
 from tools.git_integrate import register_git_integrate_tools
-from tools.delegate import register_delegate_schema_transform, register_delegate_tools
 from tools.imprint import register_imprint_tools
 from tools.manage import register_manage_tools
 from tools.markdown_tool import register_markdown_tools
