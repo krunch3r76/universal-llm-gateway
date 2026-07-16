@@ -22,6 +22,16 @@ from typing import Any, TypedDict
 
 from universal_logging import get_logger
 
+from .restart_window_store import (
+    DEFAULT_FLEET_TTL_S,
+    DEFAULT_SERVICE_TTL_S,
+    FLEET_WINDOW_SERVICES,
+    RETRY_AFTER_S,
+    RestartWindow,
+    RestartWindowStore,
+    RestartWindowView,
+    window_status_view,
+)
 from .service_config import GATEWAY_DIR
 
 logger = get_logger(__name__)
@@ -163,6 +173,7 @@ class RestartIntentStore:
         self._db_path: Path = db_path or _default_path()
         with self._connect() as conn:
             conn.executescript(_DDL)
+        self._windows = RestartWindowStore(self._db_path, self._connect)
 
     def _connect(self) -> sqlite3.Connection:
         return _connect(self._db_path)
@@ -270,3 +281,49 @@ class RestartIntentStore:
                 (service, *_NON_TERMINAL),
             ).fetchone()
         return _row_to_intent(row) if row is not None else None
+
+    # ---------------------------------------------------------- restart windows
+    def open_window(
+        self,
+        *,
+        scope: str,
+        service_set: list[str],
+        deadline_at: str,
+        reason: str,
+    ) -> RestartWindow:
+        return self._windows.open_window(
+            scope=scope,
+            service_set=service_set,
+            deadline_at=deadline_at,
+            reason=reason,
+        )
+
+    def clear_window(self, window_id: str) -> RestartWindow | None:
+        return self._windows.clear_window(window_id)
+
+    def clear_open_for_service(self, service: str) -> list[RestartWindow]:
+        return self._windows.clear_open_for_service(service)
+
+    def clear_open_fleet_windows(self) -> list[RestartWindow]:
+        return self._windows.clear_open_fleet_windows()
+
+    def sweep_expired_windows(
+        self, *, now: datetime | None = None
+    ) -> list[RestartWindow]:
+        return self._windows.sweep_expired_windows(now=now)
+
+    def active_windows(self) -> list[RestartWindow]:
+        return self._windows.active_windows()
+
+    def window_for_service(
+        self, service: str, *, now: datetime | None = None
+    ) -> RestartWindow | None:
+        return self._windows.window_for_service(service, now=now)
+
+    def restart_window_projection(self, *, now: datetime | None = None) -> dict:
+        return self._windows.projection(now=now)
+
+    def restart_window_for_service(
+        self, service: str, *, now: datetime | None = None
+    ) -> RestartWindowView | None:
+        return self._windows.service_projection(service, now=now)

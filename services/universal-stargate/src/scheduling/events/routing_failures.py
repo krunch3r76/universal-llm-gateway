@@ -104,7 +104,13 @@ Payload: {
     "model_id": str,
     "gateway_id": str,
     "reason": str,
-    "failed_constraints": list[str]
+    "failed_constraints": list[str],
+    "verdict_class": str | None,
+    "needed_mb": int | None,
+    "footprint_est_mb": int | None,
+    "margin_mb": int | None,
+    "attainable_mb": int | None,
+    "reserved_mb": int | None,
 }
 """
 
@@ -314,6 +320,12 @@ def RoutingEvictionInsufficientPermanent(
     gateway_id: str,
     reason: str,
     failed_constraints: list[str],
+    verdict_class: str | None = None,
+    needed_mb: int | None = None,
+    footprint_est_mb: int | None = None,
+    margin_mb: int | None = None,
+    attainable_mb: int | None = None,
+    reserved_mb: int | None = None,
 ) -> Event:
     """
     Create ROUTING_EVICTION_INSUFFICIENT_PERMANENT event.
@@ -328,15 +340,25 @@ def RoutingEvictionInsufficientPermanent(
     Returns:
         Event with RoutingEvictionInsufficientPermanent signal
     """
+    payload = {
+        "request_id": request_id,
+        "model_id": model_id,
+        "gateway_id": gateway_id,
+        "reason": reason,
+        "failed_constraints": failed_constraints,
+    }
+    admission_fields = {
+        "verdict_class": verdict_class,
+        "needed_mb": needed_mb,
+        "footprint_est_mb": footprint_est_mb,
+        "margin_mb": margin_mb,
+        "attainable_mb": attainable_mb,
+        "reserved_mb": reserved_mb,
+    }
+    payload.update({k: v for k, v in admission_fields.items() if v is not None})
     return Event(
         signal=ROUTING_EVICTION_INSUFFICIENT_PERMANENT,
-        payload={
-            "request_id": request_id,
-            "model_id": model_id,
-            "gateway_id": gateway_id,
-            "reason": reason,
-            "failed_constraints": failed_constraints,
-        },
+        payload=payload,
     )
 
 

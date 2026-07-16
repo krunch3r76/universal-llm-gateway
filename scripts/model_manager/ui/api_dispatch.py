@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -21,6 +22,7 @@ from .controller.restart_drain import (
     run_gated_drain_supervised,
 )
 from .controller.restart_intent_store import intent_status_view
+from .controller.restart_window_ctl import lifecycle_with_restart_window
 
 if TYPE_CHECKING:
     from universal_event_bus import EventBus
@@ -122,7 +124,12 @@ async def execute(
                 "stop",
                 service,
                 force=force,
-                lifecycle=lambda: _stop(ctl, service),
+                lifecycle=lambda: _lifecycle_with_restart_window(
+                    ctl,
+                    service,
+                    "stop",
+                    lambda: _stop(ctl, service),
+                ),
             )
 
         case "restart":
@@ -146,7 +153,12 @@ async def execute(
                 "restart",
                 service,
                 force=force,
-                lifecycle=lambda: _restart_cycle(ctl, service),
+                lifecycle=lambda: _lifecycle_with_restart_window(
+                    ctl,
+                    service,
+                    "restart",
+                    lambda: _restart_cycle(ctl, service),
+                ),
             )
 
         case "rebuild":
@@ -191,7 +203,12 @@ async def execute(
                 "sync_restart",
                 service,
                 force=force,
-                lifecycle=lambda: _sync_restart(ctl, service),
+                lifecycle=lambda: _lifecycle_with_restart_window(
+                    ctl,
+                    service,
+                    "sync_restart",
+                    lambda: _sync_restart(ctl, service),
+                ),
             )
 
         case "busy_status":
@@ -254,18 +271,22 @@ async def _busy_status(ctl: ServiceController) -> dict[str, Any]:
     """
     report = await ctl.restart_gate.busy_report(sorted(SYNC_RESTART_SERVICES))
     now = datetime.now(UTC)
+    store = ctl.restart_intent_store
+    store.sweep_expired_windows(now=now)
     live_intents = {
-        intent.service: intent for intent in ctl.restart_intent_store.pending_intents()
+        intent.service: intent for intent in store.pending_intents()
     }
     for service, entry in report.items():
         intent = live_intents.get(service)
         entry["restart_intent"] = (
             intent_status_view(intent, now=now) if intent is not None else None
         )
+        entry["restart_window"] = store.restart_window_for_service(service, now=now)
     extra = ("build_image",) if ctl.build_running else ()
     snap = ctl.shutdown_gate.snapshot(extra_activities=extra)
     return {
         "services": report,
+        "restart_windows": store.restart_window_projection(now=now),
         "process": {
             "manage_inflight": snap.manage_inflight,
             "activities": list(snap.activities),
@@ -343,6 +364,17 @@ async def _start(ctl: ServiceController, service: str) -> str:
     if service not in VALID_SERVICES:
         raise ValueError(f"Unknown service: '{service}'")
     return await getattr(ctl, f"start_{service}")()
+
+
+async def _lifecycle_with_restart_window(
+    ctl: ServiceController,
+    service: str,
+    action: str,
+    lifecycle: Callable[[], Awaitable[str]],
+) -> str:
+    return await lifecycle_with_restart_window(
+        ctl.restart_intent_store, service, action, lifecycle
+    )
 
 
 async def _stop(ctl: ServiceController, service: str) -> str:
@@ -464,6 +496,16 @@ async def _mcp_deferred_sync_restart(
 
 async def _mcp_deferred_lifecycle(ctl: ServiceController, *, no_cache: bool) -> str:
     """Full MCP sync/restart + optional boot-render-diff (runs in background)."""
+    return await _lifecycle_with_restart_window(
+        ctl,
+        "mcp",
+        "sync_restart",
+        lambda: _mcp_deferred_lifecycle_inner(ctl, no_cache=no_cache),
+    )
+
+
+async def _mcp_deferred_lifecycle_inner(ctl: ServiceController, *, no_cache: bool) -> str:
+    """Inner MCP lifecycle without the restart-window wrapper."""
     msg = await ctl.sync_restart_mcp(no_cache=no_cache)
     diff_msg = await _run_boot_render_diff()
     if diff_msg:

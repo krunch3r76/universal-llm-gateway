@@ -18,6 +18,8 @@ from mcp_toolprogress import toolprogress_begin, toolprogress_end, toolprogress_
 from transport_utils import make_sync_client
 from universal_logging import get_logger
 
+from ._restart_probe import annotate_unreachable_error
+
 if TYPE_CHECKING:
     from fastmcp import FastMCP
 
@@ -215,7 +217,12 @@ def _pipeline_run(
     except httpx.ConnectError as e:
         tp_err = "connect_error"
         record("mcp.pipeline.run.failed", pipeline=pipeline_id, error="connect_error")
-        return {"error": f"Stargate not reachable: {e}"}
+        return annotate_unreachable_error(
+            code="stargate_unreachable",
+            message=f"Stargate not reachable: {e}",
+            service="stargate",
+            flat_error=True,
+        )
     except httpx.HTTPStatusError as e:
         tp_err = f"http_{e.response.status_code}"
         record(
@@ -297,12 +304,11 @@ def _pipeline_async(
         return data
     except httpx.ConnectError as exc:
         record("mcp.pipeline.async.failed", pipeline=pipeline_id, error="connect_error")
-        return {
-            "error": {
-                "code": "stargate_unreachable",
-                "message": f"Stargate not reachable: {exc}",
-            }
-        }
+        return annotate_unreachable_error(
+            code="stargate_unreachable",
+            message=f"Stargate not reachable: {exc}",
+            service="stargate",
+        )
     except httpx.HTTPError as exc:
         record("mcp.pipeline.async.failed", pipeline=pipeline_id, error=str(exc))
         return {"error": {"code": "http_error", "message": str(exc)}}
@@ -354,12 +360,11 @@ def _pipeline_result(execution_id: str, wait_seconds: float) -> dict[str, Any]:
                 }
         return resp.json()
     except httpx.ConnectError as exc:
-        return {
-            "error": {
-                "code": "stargate_unreachable",
-                "message": f"Stargate not reachable: {exc}",
-            }
-        }
+        return annotate_unreachable_error(
+            code="stargate_unreachable",
+            message=f"Stargate not reachable: {exc}",
+            service="stargate",
+        )
     except httpx.HTTPError as exc:
         return {"error": {"code": "http_error", "message": str(exc)}}
 

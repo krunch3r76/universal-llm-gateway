@@ -266,8 +266,8 @@ class OrchestrationConfigSchema:
     (enforced at runtime in OrchestrationConfig.__post_init__)
     """
 
-    load_timeout: int = 180
-    coalesce_wait_timeout: int = 210
+    load_timeout: int = 300
+    coalesce_wait_timeout: int = 330
     telemetry_staleness_threshold: float = 10.0
     load_retry_count: int = 2
     load_retry_delay: float = 1.0

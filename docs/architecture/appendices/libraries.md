@@ -104,6 +104,13 @@ proposal store, commit apply, and response firewall. Emits `life.intent.*`
 lifecycle events. Consumed by Stargate frontier-consult life-intent routes and
 MCP imprint / handoff mirror paths. Config: `config/cortex/life_intent_v1.yaml`.
 
+**Seat-lane posture (pointer):** web = life-matter + adjudication liaison;
+code-infra → checkout / cursor-sdk (`decision:seat-lane-split-liaison-model`).
+Imprint propose→commit and remember live on the life surface
+(`agent_skill:life-imprint-when-how`). Life→code escalate is teach + agent-bus
+`lane:life-to-code` — **no new life-intent verb**
+(`agent_skill:life-to-code-request-lane`).
+
 ---
 
 ## `libs/llm_adapters`

@@ -5,7 +5,7 @@ INVARIANT: ∀ config values: sensible defaults exist
 INVARIANT: Missing config key ⟹ default, not error
 
 TIMEOUT LAYERING:
-- load_timeout: Wall-clock authority for entire load operation
+- load_timeout: Wall-clock backstop for entire load operation (>= inner 300s)
 - coalesce_wait_timeout: Max time followers wait (>= load_timeout + buffer)
 """
 
@@ -18,6 +18,10 @@ from typing import Any
 from universal_logging import get_logger
 
 logger = get_logger(__name__)
+
+# Align with control-plane ConfigHelper.model_loading_timeout default (300s).
+MODEL_LOAD_BACKSTOP_TIMEOUT_S = 300
+_COALESCE_BUFFER_S = 30
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,11 +39,11 @@ class OrchestrationConfig:
     """
 
     # === Timeouts (seconds) ===
-    load_timeout: int = 180
-    """Max seconds for model load. Increased for large models like qwen3-32B."""
+    load_timeout: int = MODEL_LOAD_BACKSTOP_TIMEOUT_S
+    """Max seconds for model load backstop (>= control-plane inner budget)."""
 
-    coalesce_wait_timeout: int = 210
-    """Max seconds follower waits (>= load_timeout + 30s RPC buffer)."""
+    coalesce_wait_timeout: int = MODEL_LOAD_BACKSTOP_TIMEOUT_S + _COALESCE_BUFFER_S
+    """Max seconds follower waits (>= load_timeout + RPC buffer)."""
 
     # === Telemetry Trust (seconds) ===
     telemetry_staleness_threshold: float = 10.0
@@ -109,8 +113,11 @@ class OrchestrationConfig:
         """
         orch = config.get("federation", {}).get("orchestration", {})
         return cls(
-            load_timeout=orch.get("load_timeout", 180),
-            coalesce_wait_timeout=orch.get("coalesce_wait_timeout", 210),
+            load_timeout=orch.get("load_timeout", MODEL_LOAD_BACKSTOP_TIMEOUT_S),
+            coalesce_wait_timeout=orch.get(
+                "coalesce_wait_timeout",
+                MODEL_LOAD_BACKSTOP_TIMEOUT_S + _COALESCE_BUFFER_S,
+            ),
             telemetry_staleness_threshold=orch.get(
                 "telemetry_staleness_threshold", 10.0
             ),

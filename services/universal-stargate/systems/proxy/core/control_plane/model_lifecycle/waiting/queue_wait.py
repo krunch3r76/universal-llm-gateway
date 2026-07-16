@@ -266,6 +266,8 @@ async def _retry_load_loop(
             return current_gateway
 
         elif status == ModelLoadingStatus.TIMED_OUT:
+            # Inner budget comes from ConfigHelper.model_loading_timeout (default 300s);
+            # federation outer backstop is OrchestrationConfig.load_timeout (>= 300s).
             raise ModelErrorBuilder.model_loading_timeout(
                 str(model_id), config.model_loading_timeout
             )

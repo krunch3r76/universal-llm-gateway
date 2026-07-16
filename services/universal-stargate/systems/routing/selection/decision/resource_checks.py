@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 from model_id import ModelId
 from universal_logging import get_logger
 
+from .admission_verdict import AdmissionVerdict, evaluate_vram_admission
 from .types import ConstraintFailure
 
 if TYPE_CHECKING:
@@ -180,19 +181,16 @@ def _check_resources(
 
     margins = config.get("resource_margins", {}) if config else {}
     (
-        vram_needed,
+        _legacy_vram_needed,
         ram_needed,
         vram_margin_pct,
-        vram_headroom_mb,
+        _vram_headroom_mb,
         ram_margin_pct,
     ) = _calculate_required_resources(
         vram_mb=gw_vram_mb,
         ram_mb=gw_ram_mb,
         resource_margins=margins,
     )
-    vram_margin = 1.0 + vram_margin_pct / 100
-
-    # Calculate resources reserved by loading models (exclude target)
     vram_reserved = 0
     ram_reserved = 0
     loading_details: list[str] = []
@@ -241,12 +239,19 @@ def _check_resources(
             f"effective={effective_ram_free}MB (model loading in progress)"
         )
 
-    # Check VRAM with loading reservation (includes absolute headroom floor)
-    if gw_vram_mb > 0 and effective_vram_free < vram_needed:
+    admission = evaluate_vram_admission(
+        footprint_est_mb=gw_vram_mb,
+        vram_free_mb=gateway.vram_free_mb,
+        vram_total_mb=gateway.vram_total_mb,
+        reserved_mb=vram_reserved,
+        resource_margins=margins,
+    )
+
+    if gw_vram_mb > 0 and admission.verdict != AdmissionVerdict.ADMIT:
         margin_info = (
-            f" (+ {(vram_margin - 1) * 100:.0f}% margin"
-            f" + {vram_headroom_mb}MB headroom)"
-            if vram_margin > 1.0 or vram_headroom_mb > 0
+            f" (+ {admission.vram_margin_pct}% capped margin"
+            f", headroom={admission.margin_mb}MB)"
+            if admission.margin_mb > 0
             else ""
         )
         reserved_info = (
@@ -259,11 +264,12 @@ def _check_resources(
             f", hw_total={gateway.vram_total_mb}MB" if gateway.vram_total_mb > 0 else ""
         )
         logger.warning(
-            f"❌ RESOURCE CHECK FAILED (VRAM): {placement.model_id} "
-            f"on {gateway.name} | "
-            f"Need {vram_needed}MB{margin_info}, "
+            f"❌ RESOURCE CHECK FAILED (VRAM/{admission.verdict.value}): "
+            f"{placement.model_id} on {gateway.name} | "
+            f"Need {admission.needed_mb}MB{margin_info}, "
             f"Available {effective_vram_free}MB "
-            f"(hw_free={gateway.vram_free_mb}MB{total_info}{reserved_info})"
+            f"(hw_free={gateway.vram_free_mb}MB{total_info}{reserved_info}, "
+            f"attainable={admission.attainable_mb}MB)"
         )
 
         reason_total = (
@@ -272,20 +278,23 @@ def _check_resources(
         return False, ConstraintFailure(
             constraint="has_enough_vram",
             reason=(
-                f"Insufficient VRAM: {effective_vram_free}MB effective free "
+                f"Insufficient VRAM ({admission.verdict.value}): "
+                f"{effective_vram_free}MB effective free "
                 f"(hw_free={gateway.vram_free_mb}MB{reason_total}{reserved_info}) "
-                f"< {vram_needed}MB needed{margin_info}"
+                f"< {admission.needed_mb}MB needed{margin_info}"
             ),
             details={
                 "vram_free_hardware": gateway.vram_free_mb,
                 "vram_total_hardware": gateway.vram_total_mb,
                 "vram_reserved_loading": vram_reserved,
                 "vram_free_effective": effective_vram_free,
-                "vram_needed": vram_needed,
+                "vram_needed": admission.needed_mb,
                 "vram_base": gw_vram_mb,
                 "vram_margin_pct": vram_margin_pct,
                 "loading_models": [str(m) for m in gateway.loading_models],
                 "loading_details": loading_details,
+                "retryable": admission.is_retryable,
+                **admission.to_payload(),
             },
         )
 
@@ -327,7 +336,7 @@ def _check_resources(
 
     logger.info(
         f"✅ RESOURCE CHECK PASSED: {placement.model_id} on {gateway.name} | "
-        f"VRAM: {effective_vram_free}MB available >= {vram_needed}MB needed, "
+        f"VRAM: {effective_vram_free}MB available >= {admission.needed_mb}MB needed, "
         f"RAM: {effective_ram_free}MB available >= {ram_needed}MB needed"
     )
     return True, None

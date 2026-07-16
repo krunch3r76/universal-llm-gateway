@@ -329,3 +329,48 @@ async def emit_manage_restart_timeout(
             "affordances": affordances,
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# Operator restart-window visibility (friction 24630)
+# ---------------------------------------------------------------------------
+
+
+async def emit_manage_restart_window_opened(
+    *,
+    window_id: str,
+    scope: str,
+    service_set: list[str],
+    deadline_at: str,
+    reason: str,
+) -> None:
+    """Operator-authored restart window opened — MUST precede the first stop."""
+    await _emit(
+        "manage.restart.window.opened",
+        {
+            "window_id": window_id,
+            "scope": scope,
+            "service_set": service_set,
+            "deadline_at": deadline_at,
+            "reason": reason,
+        },
+    )
+
+
+async def emit_manage_restart_window_cleared(
+    *,
+    window_id: str,
+    scope: str,
+    service_set: list[str],
+    reason: str,
+) -> None:
+    """Restart window cleared (healthy, fleet completed, or TTL sweep)."""
+    await _emit(
+        "manage.restart.window.cleared",
+        {
+            "window_id": window_id,
+            "scope": scope,
+            "service_set": service_set,
+            "reason": reason,
+        },
+    )

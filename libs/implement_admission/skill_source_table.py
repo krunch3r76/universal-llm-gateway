@@ -34,6 +34,7 @@ CANONICAL_SKILL_SOURCE_URIS: Final[dict[str, str]] = {
     "case-evidence-retrieval": "workspaces://universal-llm-gateway/.cursor/skills/case-evidence-retrieval/SKILL.md",
     "cheap-recon-before-escalation": "workspaces://universal-llm-gateway/.cursor/skills/cheap-recon-before-escalation/SKILL.md",
     "claude-ai-bundle-sync": "workspaces://universal-llm-gateway/.cursor/skills/claude-ai-bundle-sync/SKILL.md",
+    "claude-ai-cdp-navigation": "workspaces://universal-llm-gateway/.cursor/skills/claude-ai-cdp-navigation/SKILL.md",
     "claude-ai-mcp-connect": "workspaces://universal-llm-gateway/.cursor/skills/claude-ai-mcp-connect/SKILL.md",
     "claude-ai-skill-uninstall": "workspaces://universal-llm-gateway/.cursor/skills/claude-ai-skill-uninstall/SKILL.md",
     "completion-provenance-discipline": "workspaces://universal-llm-gateway/.cursor/skills/completion-provenance-discipline/SKILL.md",
@@ -65,6 +66,8 @@ CANONICAL_SKILL_SOURCE_URIS: Final[dict[str, str]] = {
     "entity-creation-discipline": "workspaces://universal-llm-gateway/.cursor/skills/entity-creation-discipline/SKILL.md",
     "entity-lifecycle-discipline": "workspaces://universal-llm-gateway/.cursor/skills/entity-lifecycle-discipline/SKILL.md",
     "evidence-review-discipline": "workspaces://universal-llm-gateway/.cursor/skills/evidence-review-discipline/SKILL.md",
+    "external-prose-decompose-recompose": "workspaces://universal-llm-gateway/.cursor/skills/external-prose-decompose-recompose/SKILL.md",
+    "external-prose-rag-inject": "workspaces://universal-llm-gateway/.cursor/skills/external-prose-rag-inject/SKILL.md",
     "financial-reasoning": "workspaces://universal-llm-gateway/.claude/skills/financial-reasoning/SKILL.md",
     "friction-review": "workspaces://universal-llm-gateway/.cursor/skills/friction-review/SKILL.md",
     "frontier-model-instructions": "workspaces://universal-llm-gateway/.cursor/skills/frontier-model-instructions/SKILL.md",
@@ -79,11 +82,16 @@ CANONICAL_SKILL_SOURCE_URIS: Final[dict[str, str]] = {
     "implement-work-item": "workspaces://universal-llm-gateway/.cursor/skills/implement-work-item/SKILL.md",
     "implementation-plan-workflow": "workspaces://universal-llm-gateway/.cursor/skills/implementation-plan-workflow/SKILL.md",
     "investigation-economy": "workspaces://universal-llm-gateway/.cursor/skills/investigation-economy/SKILL.md",
+    "journal-digest": "workspaces://universal-llm-gateway/.cursor/skills/journal-digest/SKILL.md",
     "jupiter-browser-via-mcp": "workspaces://universal-llm-gateway/.cursor/skills/jupiter-browser-via-mcp/SKILL.md",
+    "jupiter-dgpu-display-blank": "workspaces://universal-llm-gateway/.cursor/skills/jupiter-dgpu-display-blank/SKILL.md",
     "lawyer-stance": "workspaces://universal-llm-gateway/.cursor/skills/lawyer-stance/SKILL.md",
     "lead-agent-git-integration": "workspaces://universal-llm-gateway/.cursor/skills/lead-agent-git-integration/SKILL.md",
     "lead-seat-boot": "workspaces://universal-llm-gateway/.cursor/skills/lead-seat-boot/SKILL.md",
     "legal-opinion-corpus-ingestion": "workspaces://universal-llm-gateway/.cursor/skills/legal-opinion-corpus-ingestion/SKILL.md",
+    "life-handoff-corpus": "workspaces://universal-llm-gateway/.cursor/skills/life-handoff-corpus/SKILL.md",
+    "life-imprint-when-how": "workspaces://universal-llm-gateway/.claude/skills/life-imprint-when-how/SKILL.md",
+    "life-to-code-request-lane": "workspaces://universal-llm-gateway/.cursor/skills/life-to-code-request-lane/SKILL.md",
     "markdown-navigation": "workspaces://universal-llm-gateway/.cursor/skills/markdown-navigation/SKILL.md",
     "matter-playbook-lifecycle": "workspaces://universal-llm-gateway/.claude/skills/matter-playbook-lifecycle/SKILL.md",
     "mcp-surface-change": "workspaces://universal-llm-gateway/.cursor/skills/mcp-surface-change/SKILL.md",
@@ -129,9 +137,10 @@ CANONICAL_SKILL_SOURCE_URIS: Final[dict[str, str]] = {
     "web-generate-substrate": "workspaces://universal-llm-gateway/.cursor/skills/web-generate-substrate/SKILL.md",
     "web-skill-body-activation": "workspaces://universal-llm-gateway/.cursor/skills/web-skill-body-activation/SKILL.md",
     "web-transcript-preprocessing": "workspaces://universal-llm-gateway/.cursor/skills/web-transcript-preprocessing/SKILL.md",
+    "writing-with-provenance": "workspaces://universal-llm-gateway/.cursor/skills/writing-with-provenance/SKILL.md",
 }
 
-TABLE_DIGEST: Final[str] = "sha256:abd1be44296db63fdd7d941dd3eda652c8290e52e479fffe4562805e25f13e7f"
+TABLE_DIGEST: Final[str] = "sha256:564f937115c7af648a83a34cfd3e8b45482971024ef33c1d7c752ec416690578"
 # fmt: on
 
 

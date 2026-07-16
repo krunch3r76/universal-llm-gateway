@@ -6,6 +6,7 @@ Remote operations (deploy, restart remotes) live on the Home topology panel.
 import asyncio
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
+from typing import Any
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -17,6 +18,11 @@ from textual.widgets import Button, Footer, Header, Select, Static
 from ...controller.operation_log import tee_with_summary
 from ...controller.restart_drain import run_gated
 from ...controller.restart_intent_store import intent_status_view
+from ...controller.restart_window_ctl import (
+    clear_service_windows,
+    open_fleet_window,
+    open_service_window,
+)
 from ...controller.service_config import (
     is_agent_bus_configured,
     is_cloud_proxy_configured,
@@ -638,7 +644,13 @@ class ServicesScreen(Screen):
         svc = self.app.service_controller  # type: ignore[attr-defined]
         force = self._force_armed
         result = await run_gated(
-            svc.restart_gate, action, service, force=force, lifecycle=lifecycle
+            svc.restart_gate,
+            action,
+            service,
+            force=force,
+            lifecycle=lambda: self._tui_lifecycle_with_window(
+                svc, service, action, lifecycle
+            ),
         )
         if result.get("status") == "deferred":
             await self._render_deferral(action, service, result)
@@ -646,6 +658,27 @@ class ServicesScreen(Screen):
         self.query_one("#svc-log", LogStream).write_line(str(result.get("message", "")))
         self._consume_force()
         return True
+
+    async def _tui_lifecycle_with_window(
+        self,
+        svc: Any,
+        service: str,
+        action: str,
+        lifecycle: Callable[[], Awaitable[str]],
+    ) -> str:
+        await open_service_window(
+            svc.restart_intent_store,
+            service,
+            reason=f"TUI {action}",
+        )
+        try:
+            return await lifecycle()
+        finally:
+            await clear_service_windows(
+                svc.restart_intent_store,
+                service,
+                reason="TUI lifecycle completed",
+            )
 
     async def _restart_local(self) -> None:
         """Stop and restart local gateway + stargate only (drain-gated)."""
@@ -665,6 +698,11 @@ class ServicesScreen(Screen):
             await self._render_deferral("restart", "gateway", gw.to_result())
             return
         try:
+            await open_fleet_window(
+                svc.restart_intent_store,
+                reason="TUI sync+restart local",
+                service_set=["gateway", "stargate"],
+            )
             log.write_line("[localhost] Stopping services...")
             log.write_line(await svc.stop_stargate())
             log.write_line(await svc.stop_gateway())
@@ -677,6 +715,16 @@ class ServicesScreen(Screen):
         finally:
             await gate.release("gateway")
             await gate.release("stargate")
+            await clear_service_windows(
+                svc.restart_intent_store,
+                "gateway",
+                reason="TUI sync+restart local completed",
+            )
+            await clear_service_windows(
+                svc.restart_intent_store,
+                "stargate",
+                reason="TUI sync+restart local completed",
+            )
         self._consume_force()
         self._refresh_status()
 

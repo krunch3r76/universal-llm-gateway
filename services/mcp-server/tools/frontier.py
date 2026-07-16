@@ -41,6 +41,8 @@ from mcp_events import record
 from transport_utils import DEFAULT_STARGATE_URL, make_async_client
 from universal_logging import get_logger
 
+from ._restart_probe import annotate_unreachable_error
+
 from ._frontier_intake import (
     normalize_dispatch_model,
     reject_pointer_body_on_generate,
@@ -149,12 +151,11 @@ async def _relay(
         except httpx.RequestError as exc:
             logger.error("%s relay transport failure: %s", record_prefix, exc)
             record(f"{record_prefix}.failed", error="transport")
-            return {
-                "error": {
-                    "code": "stargate_unreachable",
-                    "message": str(exc),
-                }
-            }
+            return annotate_unreachable_error(
+                code="stargate_unreachable",
+                message=str(exc),
+                service="stargate",
+            )
 
     try:
         payload = resp.json()

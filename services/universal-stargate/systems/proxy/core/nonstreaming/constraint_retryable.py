@@ -16,6 +16,12 @@ def constraint_failure_is_retryable(failure: Any) -> bool:
     if "retryable" in details:
         return bool(details["retryable"])
 
+    verdict_class = details.get("verdict_class")
+    if verdict_class == "insufficient_structural":
+        return False
+    if verdict_class in ("insufficient_transient", "insufficient_margin"):
+        return True
+
     constraint = getattr(failure, "constraint", None)
     if constraint == "eviction_blocked_by_busy_models":
         return True

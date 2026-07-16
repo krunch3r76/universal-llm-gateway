@@ -84,6 +84,7 @@ from ._detectors.skill_binding import (
 from ._detectors.skill_revision_candidate import (
     detect_agent_skill_revision_candidate_unadjudicated,
 )
+from ._detectors.substrate_debt import detect_substrate_debt_uri_fallback
 from ._detectors.todo import (
     detect_done_entity_unsubstantiated_band_mismatch,
     detect_todo_dense_spec_attributes_unpopulated,
@@ -176,6 +177,8 @@ FS_TOUCHING_KINDS = {
     "landed_claim_not_on_master",
     # Staging provenance in durable docs / entity attrs (friction 20345).
     "provenance_cites_staging",
+    # Named URI-fallback deferrals in DISPOSITIONS / SUBSTRATE_DEBT (WWP r3).
+    "substrate_debt_uri_fallback",
     # Derived-view hand-edited core detection (todo:cortex-spec-derived-views-contract).
     "view_core_hash_mismatch",
 }
@@ -231,6 +234,7 @@ def get_all_detectors() -> dict[str, Any]:
         "done_entity_unsubstantiated_band_mismatch": detect_done_entity_unsubstantiated_band_mismatch,
         "landed_claim_not_on_master": detect_landed_claim_not_on_master,
         "provenance_cites_staging": detect_provenance_cites_staging,
+        "substrate_debt_uri_fallback": detect_substrate_debt_uri_fallback,
         "implement_ready_spec_unvalidated": lambda c, s=None: [],  # DISABLED 2026-06-20: cortex_api audit context cannot read repo tasks/specs directly, so this false-positived every implement_ready (incl. the valid 20197). Template landed_claim_not_on_master routes repo reads via the git-worker; this read fs directly. Code + tests retained; needs repo-aware redesign (friction 20198 follow-up).
         # Condition stewardship (migration 060 / thread 3279); closure_audit_exempt
         # types are excluded from open-debt detectors upstream.

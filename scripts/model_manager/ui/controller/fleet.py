@@ -22,6 +22,8 @@ from scripts.model_manager.observation_event import (
     emit_fleet_operation_started,
 )
 
+from .restart_window_ctl import clear_fleet_windows, open_fleet_window
+
 from .fleet_local import (
     parallel_build,
     restart_local_services,
@@ -112,6 +114,11 @@ class FleetOrchestrator:
                 operation=operation, build=build, scope=scope, remotes=remotes
             )
 
+            await open_fleet_window(
+                ctl.restart_intent_store,
+                reason=f"fleet {operation}",
+            )
+
             stopped_ok = await self._stop_fleet_before_operation(
                 "rebuild" if build else "restart"
             )
@@ -127,6 +134,10 @@ class FleetOrchestrator:
                 success=not failures,
                 duration_s=elapsed,
                 failures=failures,
+            )
+            await clear_fleet_windows(
+                ctl.restart_intent_store,
+                reason="fleet.operation.completed",
             )
             ctl.shutdown_gate.set_activity("fleet_deploy", False)
 

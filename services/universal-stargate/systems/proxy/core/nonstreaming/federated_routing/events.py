@@ -167,6 +167,27 @@ async def _emit_eviction_classification_event(
             "routing.eviction.blocked.busy",
         )
     elif classification == "permanent_insufficient":
+        admission_payload: dict[str, Any] = {}
+        if trace and trace.candidates:
+            for candidate in trace.candidates:
+                for failure in candidate.constraints_failed:
+                    details = failure.details or {}
+                    if details.get("verdict_class") == "insufficient_structural":
+                        admission_payload = {
+                            k: details[k]
+                            for k in (
+                                "verdict_class",
+                                "needed_mb",
+                                "footprint_est_mb",
+                                "margin_mb",
+                                "attainable_mb",
+                                "reserved_mb",
+                            )
+                            if k in details
+                        }
+                        break
+                if admission_payload:
+                    break
         await _emit_event_safe(
             event_bus,
             RoutingEvictionInsufficientPermanent(
@@ -175,6 +196,7 @@ async def _emit_eviction_classification_event(
                 gateway_id=gateway_id,
                 reason=failure_reason,
                 failed_constraints=failed_constraints,
+                **admission_payload,
             ),
             "routing.eviction.insufficient.permanent",
         )

@@ -86,6 +86,8 @@ SEVERITY = {
     "implement_ready_spec_unvalidated": "warning",
     # Staging paths in durable docs / entity provenance attrs (friction 20345).
     "provenance_cites_staging": "warning",
+    # Named URI-fallback deferrals in DISPOSITIONS / SUBSTRATE_DEBT (WWP r3).
+    "substrate_debt_uri_fallback": "warning",
     # Condition stewardship (migration 060 / thread 3279; F6/R5).
     # Closure/open-debt detectors skip closure_audit_exempt types (conditions).
     # These stewardship detectors fire on pathology within conditions.

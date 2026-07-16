@@ -35,6 +35,8 @@ from transport_utils import make_async_client
 from universal_concurrency import FifoCapacityGate
 from universal_logging import get_logger
 
+from .restart_window_ctl import open_service_window
+
 logger = get_logger(__name__)
 
 # Vocabulary aligned with the MCP drain contract (middleware/drain.py).
@@ -459,6 +461,11 @@ async def run_gated_drain_supervised(
         # Never leak the held slot if the durable write fails.
         await gate.release(service)
         raise
+    await open_service_window(
+        store,
+        service,
+        reason=f"git-worker drain {action}",
+    )
     _spawn_supervised(gate, service, supervisor, intent)
     return _drain_deferred_result(intent)
 
@@ -504,10 +511,21 @@ async def run_gated_drain_supervised_blocking(
         await gate.release(service)
         raise
 
+    await open_service_window(
+        store,
+        service,
+        reason=f"git-worker fleet drain {action}",
+    )
+
     try:
         await supervisor.supervise(intent)
     finally:
         await gate.release(service)
+        from .restart_window_ctl import clear_service_windows
+
+        await clear_service_windows(
+            store, service, reason="git-worker supervised drain completed"
+        )
 
     final = store.get(intent.intent_id)
     # "completed" mirrors restart_intent_store.STATUS_COMPLETED; kept as a literal

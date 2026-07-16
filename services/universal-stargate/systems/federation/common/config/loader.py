@@ -353,8 +353,8 @@ def _parse_orchestration(orch_data: dict[str, Any] | None) -> OrchestrationConfi
         return OrchestrationConfigSchema()
 
     return OrchestrationConfigSchema(
-        load_timeout=orch_data.get("load_timeout", 180),
-        coalesce_wait_timeout=orch_data.get("coalesce_wait_timeout", 210),
+        load_timeout=orch_data.get("load_timeout", 300),
+        coalesce_wait_timeout=orch_data.get("coalesce_wait_timeout", 330),
         telemetry_staleness_threshold=orch_data.get(
             "telemetry_staleness_threshold", 10.0
         ),

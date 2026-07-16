@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 from model_id import ModelId
 from universal_logging import get_logger
 
+from .admission_verdict import AdmissionVerdict, evaluate_vram_admission
 from .eviction_planning import _compute_eviction_plan
 from .model_checks import _is_model_available, _is_model_loaded
 from .resource_checks import (
@@ -55,11 +56,7 @@ def _can_fit_after_eviction_including_busy(
 
     margins = resource_margins or {}
     ram_margin_pct = int(margins.get("ram_margin_pct", 3))
-    vram_margin_pct = int(margins.get("vram_margin_pct", 5))
-    vram_headroom_mb = int(margins.get("vram_headroom_mb", 2048))
     ram_needed = int(gw_ram_mb * (1.0 + ram_margin_pct / 100))
-    vram_pct = int(gw_vram_mb * (1.0 + vram_margin_pct / 100))
-    vram_needed = (vram_pct + vram_headroom_mb) if gw_vram_mb > 0 else 0
 
     # Mirror _check_resources / _compute_eviction_plan: loading models consume
     # VRAM/RAM that is NOT reclaimable by eviction. Not subtracting here caused
@@ -82,6 +79,14 @@ def _can_fit_after_eviction_including_busy(
 
     effective_vram_free = gateway.vram_free_mb - vram_reserved
     effective_ram_free = gateway.ram_free_mb - ram_reserved
+    admission = evaluate_vram_admission(
+        footprint_est_mb=gw_vram_mb,
+        vram_free_mb=gateway.vram_free_mb,
+        vram_total_mb=gateway.vram_total_mb,
+        reserved_mb=vram_reserved,
+        resource_margins=margins,
+    )
+    vram_needed = admission.needed_mb
 
     reclaimable_vram = effective_vram_free
     reclaimable_ram = effective_ram_free
@@ -113,6 +118,7 @@ def _can_fit_after_eviction_including_busy(
         "ram_deficit_mb": max(0, ram_needed - reclaimable_ram),
         "vram_reserved_loading": vram_reserved,
         "ram_reserved_loading": ram_reserved,
+        **admission.to_payload(),
     }
     return vram_ok and ram_ok, diagnostics
 
@@ -351,6 +357,7 @@ def evaluate_feasibility(
             requirements_lookup,
             policy.resource_margins,
         )
+        verdict_class = reclaimable.get("verdict_class")
         if can_fit_theoretically:
             failures.append(
                 ConstraintFailure(
@@ -372,7 +379,7 @@ def evaluate_feasibility(
                     },
                 )
             )
-        else:
+        elif verdict_class == AdmissionVerdict.INSUFFICIENT_STRUCTURAL.value:
             failures.append(
                 ConstraintFailure(
                     constraint="can_fit_with_eviction",
@@ -389,6 +396,27 @@ def evaluate_feasibility(
                         "busy_count": len(gateway.busy_models),
                         "retryable": False,
                         "classification_basis": "reclaimable_resources",
+                        **reclaimable,
+                    },
+                )
+            )
+        else:
+            failures.append(
+                ConstraintFailure(
+                    constraint="eviction_blocked_by_busy_models",
+                    reason=(
+                        "Capacity shortfall is retryable (transient reservation or "
+                        "margin); not structurally impossible on this hardware."
+                    ),
+                    details={
+                        "vram_free": gateway.vram_free_mb,
+                        "vram_total": gateway.vram_total_mb,
+                        "ram_free": gateway.ram_free_mb,
+                        "ram_total": gateway.ram_total_mb,
+                        "loaded_count": len(gateway.loaded_models),
+                        "busy_count": len(gateway.busy_models),
+                        "retryable": True,
+                        "classification_basis": "verdict_class",
                         **reclaimable,
                     },
                 )
