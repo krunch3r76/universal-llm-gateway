@@ -370,7 +370,10 @@ async def openai_http_exception_handler(request: Request, exc: HTTPException):
 
     # Check if client requested streaming by looking at request body
     # This prevents clients from waiting indefinitely for streaming data
+    # Pseudostream clients always want JSON (including error bodies).
     client_wants_streaming = await _check_if_streaming_request(request)
+    if request.query_params.get("pseudostream", "").lower() in ("1", "true", "yes"):
+        client_wants_streaming = False
 
     if client_wants_streaming and exc.status_code >= 400:
         # Return error as streaming response for proper client handling

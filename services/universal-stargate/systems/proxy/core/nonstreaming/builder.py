@@ -11,6 +11,8 @@ from typing import Any
 
 from universal_logging import get_logger
 
+from .local_reasoning import apply_local_reasoning_off
+
 logger = get_logger(__name__)
 
 
@@ -97,6 +99,20 @@ class RequestBuilder:
                     f"Applied profile '{profile_data.name}' parameters: "
                     f"{len(profile_data.params)} params"
                 )
+
+        # OpenRouter-shaped reasoning.off → local enable_thinking=false
+        # (pipelines already do this via profiles; one-shots need the body knob).
+        if apply_local_reasoning_off(
+            request_data, model_id=str(context.selected_model)
+        ):
+            context.middleware_actions.append(
+                "local_reasoning_off_mapped_to_enable_thinking_false"
+            )
+            logger.info(
+                "Mapped reasoning.effort=none → chat_template_kwargs."
+                "enable_thinking=false for local model %s",
+                context.selected_model,
+            )
 
         context.modified_request = request_data
         context.middleware_actions.append(

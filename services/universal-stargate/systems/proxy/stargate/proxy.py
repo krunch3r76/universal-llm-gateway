@@ -390,6 +390,7 @@ class StargateProxy:
         profile_override: str | None = None,
         disable_profile: bool = False,
         skip_token_counting: bool | None = None,
+        pseudostream: bool = False,
     ) -> Response:
         """Process a chat completion request through routing and execution.
 
@@ -404,6 +405,7 @@ class StargateProxy:
             profile_override=profile_override,
             disable_profile=disable_profile,
             skip_token_counting=skip_token_counting,
+            pseudostream=pseudostream,
         )
 
     async def forward_request(

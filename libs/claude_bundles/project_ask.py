@@ -15,7 +15,11 @@ from typing import Any
 
 from playwright.async_api import Page
 
-from claude_bundles.chat_model_select import select_model
+from claude_bundles.chat_model_select import (
+    label_satisfies_request,
+    parse_model_request,
+    select_model,
+)
 from claude_bundles.chat_reply_wait import harvest_assistant, wait_assistant_reply
 from claude_bundles.chat_session_hygiene import (
     delete_chat_if_active,
@@ -24,7 +28,6 @@ from claude_bundles.chat_session_hygiene import (
 )
 from claude_bundles.project_chrome import project_url
 from claude_bundles.skills_ui_panel import DEFAULT_CDP_URL, connect_cdp
-
 
 _THINKING_LINE = re.compile(
     r"^(Thinking about .+|Thinking\b.*)$",
@@ -60,20 +63,23 @@ class ProjectAskResult:
 
 
 def _attest_model(requested: str, state: dict[str, Any], selected: dict[str, Any]) -> str | None:
-    """Return attested label or None if mismatch against requested family."""
+    """Return attested label or None if mismatch against requested model.
+
+    Uses the same UI-pattern matcher as ``select_model`` (friction a24692) —
+    not a hardcoded family allowlist.
+    """
     label = (state.get("model_label") or selected.get("current_model") or "").strip()
-    req = (requested or "").lower()
     if not label:
         return None
-    if req.startswith("haiku") and not re.search(r"haiku", label, re.I):
-        raise RuntimeError(f"model attestation mismatch: wanted haiku, got {label!r}")
-    if req.startswith("fable") and not re.search(r"fable", label, re.I):
-        raise RuntimeError(f"model attestation mismatch: wanted fable, got {label!r}")
-    if req.startswith("opus") and not re.search(r"opus", label, re.I):
-        raise RuntimeError(f"model attestation mismatch: wanted opus, got {label!r}")
-    # opus-extra / prefer_extra path must not accept High as success (friction 24592).
-    if "extra" in req and not re.search(r"Extra", label, re.I):
-        raise RuntimeError(f"model attestation mismatch: wanted Opus Extra, got {label!r}")
+    req = requested or ""
+    family, effort = parse_model_request(req)
+    # Mirror select_model sealed-ask default (operator 2026-07-16: High).
+    if effort is None and family.startswith("opus"):
+        effort = "high"
+    if not label_satisfies_request(req, label, effort=effort):
+        raise RuntimeError(
+            f"model attestation mismatch: wanted {req!r}, got {label!r}"
+        )
     return label
 
 
@@ -145,6 +151,30 @@ def submit_control_names() -> tuple[str, ...]:
     return ("Start task", "Send message")
 
 
+_LEADING_SLASH_SKILL = re.compile(r"^(/[\w-]+)(?:\r?\n)+(.*)\Z", re.DOTALL)
+
+
+async def _insert_prompt_text(page: Page, text: str) -> None:
+    """Fill the composer, binding a leading ``/skill`` before the body.
+
+    Claude.ai slash skills need the token typed and confirmed with a newline
+    (menu select / chip bind) before the rest of the sealed prompt. A single
+    ``insert_text`` of ``/prose-discipline\\n\\nROLE…`` skips that bind.
+    """
+    m = _LEADING_SLASH_SKILL.match(text)
+    if m is None:
+        await page.keyboard.insert_text(text)
+        return
+    slash, rest = m.group(1), m.group(2)
+    # Character typing surfaces the slash menu; paste does not.
+    await page.keyboard.type(slash, delay=25)
+    await page.wait_for_timeout(450)
+    await page.keyboard.press("Enter")
+    await page.wait_for_timeout(350)
+    if rest:
+        await page.keyboard.insert_text(rest)
+
+
 async def send_prompt(page: Page, text: str) -> None:
     composer = await find_composer(page)
     if composer is None:
@@ -153,7 +183,7 @@ async def send_prompt(page: Page, text: str) -> None:
     await page.wait_for_timeout(300)
     await page.keyboard.press("Control+A")
     await page.keyboard.press("Backspace")
-    await page.keyboard.insert_text(text)
+    await _insert_prompt_text(page, text)
     await page.wait_for_timeout(600)
     # Prefer Start task (Cowork) before Send message (Chat). Fail closed —
     # Enter fallback left prompts unsent (900s empty harvest, 2026-07-16).

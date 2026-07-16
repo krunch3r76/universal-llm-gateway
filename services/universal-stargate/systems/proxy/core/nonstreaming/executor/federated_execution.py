@@ -267,6 +267,22 @@ async def execute_federated_request(
             release_capacity_token,
         )
 
+    if getattr(context, "pseudostream", False):
+        from .federated_pseudostream import _execute_federated_pseudostream
+
+        return await _execute_federated_pseudostream(
+            context,
+            fed_gateway,
+            request_body,
+            request_id,
+            hop_count,
+            endpoint_category,
+            hints,
+            federation_integration,
+            federation_forwarder,
+            release_capacity_token,
+        )
+
     from .federated_nonstreaming import _execute_federated_nonstreaming
 
     try:

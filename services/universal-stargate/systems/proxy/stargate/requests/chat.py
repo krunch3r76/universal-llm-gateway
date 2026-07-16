@@ -27,6 +27,8 @@ from src.scheduling.events import (
 # Import from service root to avoid "beyond top-level package" error
 from src.schemas.chat_completion import ChatCompletionRequest
 
+from ...core.nonstreaming.pseudostream_policy import validate_pseudostream_request
+
 from .pipeline_lifecycle import execute_pipeline_chat_completion
 from .retry import execute_with_retry
 
@@ -44,6 +46,7 @@ async def process_chat_completion(
     profile_override: str | None,
     disable_profile: bool,
     skip_token_counting: bool | None,
+    pseudostream: bool = False,
 ) -> Response:
     """Process a chat completion request.
 
@@ -69,6 +72,15 @@ async def process_chat_completion(
         proxy.is_pipeline_system_ready
         and target_model_for_pipeline_check is not None
         and proxy.pipeline_registry.is_pipeline(target_model_for_pipeline_check)
+    )
+
+    validate_pseudostream_request(
+        pseudostream=pseudostream,
+        client_stream=bool(
+            (getattr(chat_request, "model_extra", None) or {}).get("stream")
+        ),
+        is_pipeline=is_pipeline,
+        model=str(target_model_for_pipeline_check or ""),
     )
 
     if is_pipeline and chat_request.messages:
@@ -98,6 +110,7 @@ async def process_chat_completion(
         skip_token_counting=skip_token_counting,
         requested_model=requested_model,
     )
+    context.pseudostream = pseudostream
 
     if proxy.event_bus:
         try:

@@ -30,6 +30,14 @@ POST :9999/v1/chat/completions   {"model": "openrouter/anthropic/claude-sonnet-4
 GET  :9999/v1/models             # lists activated local + cloud models
 ```
 
+### Local one-shot default — `?pseudostream=true`
+
+`∀` agent/script/`curl` to a **local** model ID (bare, no `/`): default
+`POST :9999/v1/chat/completions?pseudostream=true` with body `stream` false/omitted.
+Forces upstream SSE, accumulates on master, returns JSON + `X-ULG-Pseudostream*` headers.
+**Never** on cloud/`openrouter/` IDs or pipeline models. True SSE clients use body
+`stream: true` without the query. Full playbook: skill `local-chat-completions`.
+
 ### Provider-native (direct Anthropic, xAI, OpenAI, Google)
 
 For native request/response formats (non-OpenAI body shape):

@@ -15,6 +15,10 @@ logger = get_logger(__name__)
 _TERMINAL_RESOLVE_SLACK_S = 2.0
 
 
+class WallClockLoadTimeout(TimeoutError):
+    """Wall-clock / backstop budget exhausted — not an inner forwarder timeout."""
+
+
 class TerminalLoadOutcome(StrEnum):
     LOADED = "loaded"
     FAILED = "failed"
@@ -34,7 +38,10 @@ def _model_matches(payload: dict[str, Any], routing_key: str) -> bool:
     if not model_id:
         return False
     model_text = str(model_id)
-    return model_text == routing_key or model_text.startswith(f"{routing_key}-")
+    if model_text == routing_key or model_text.startswith(f"{routing_key}-"):
+        return True
+    # Lifecycle telemetry often emits the base id without -hybrid / context suffix
+    return routing_key == model_text or routing_key.startswith(f"{model_text}-")
 
 
 def _gateway_matches(payload: dict[str, Any], gateway_id: str, remote_id: str) -> bool:
@@ -153,6 +160,10 @@ async def race_remote_load_with_terminal_events(
             with suppress(asyncio.CancelledError):
                 await remote_call
             return None, terminal
+        if terminal is not None and terminal.outcome == TerminalLoadOutcome.LOADED:
+            # LOADED-first must not fall through to (None, None) — that was the
+            # live deepseek false LOAD_TIMEOUT (model.loaded then 504 at ~53s).
+            return await _resolve_after_terminal_loaded(remote_call, terminal)
 
     if remote_call in done:
         if not terminal_waiter.done():
@@ -169,3 +180,74 @@ async def race_remote_load_with_terminal_events(
         with suppress(asyncio.CancelledError):
             await task
     return None, None
+
+
+async def _resolve_after_terminal_loaded(
+    remote_call: asyncio.Task[Any],
+    terminal: TerminalLoadResolution,
+) -> tuple[Any, TerminalLoadResolution]:
+    """Treat model.loaded as success; prefer HTTP ok if already finished."""
+    if remote_call.done():
+        if not remote_call.cancelled():
+            exc = remote_call.exception()
+            if exc is None:
+                return remote_call.result(), terminal
+            logger.warning(
+                "Remote load HTTP failed after model.loaded; treating load as ok",
+                extra={
+                    "error": str(exc),
+                    "gateway_name": terminal.gateway_name,
+                },
+            )
+        return {"status": "ok"}, terminal
+
+    # Do not await a possibly-hung HTTP forwarder after telemetry already
+    # reported loaded (live deepseek: LOADED then false wall-clock 504).
+    remote_call.cancel()
+    with suppress(asyncio.CancelledError):
+        await remote_call
+    return {"status": "ok"}, terminal
+
+
+async def await_remote_load_with_wall_clock(
+    *,
+    remote_call: asyncio.Task[Any],
+    event_bus: Any | None,
+    routing_key: str,
+    gateway_id: str,
+    remote_id: str,
+    backstop_timeout_s: float,
+    model_label: str,
+) -> tuple[Any | None, TerminalLoadResolution | None]:
+    """Await remote load; wall-clock expiry raises WallClockLoadTimeout."""
+    if event_bus is None:
+        try:
+            return await asyncio.wait_for(remote_call, timeout=backstop_timeout_s), None
+        except TimeoutError as exc:
+            # wait_for propagates the task's TimeoutError and also raises on
+            # budget expiry. Only the latter is wall-clock; preserve inner.
+            if remote_call.done() and not remote_call.cancelled():
+                task_exc = remote_call.exception()
+                if isinstance(task_exc, TimeoutError) and not isinstance(
+                    task_exc, WallClockLoadTimeout
+                ):
+                    raise task_exc from exc
+            raise WallClockLoadTimeout(
+                f"Remote load for {model_label} on {gateway_id} exceeded "
+                f"{backstop_timeout_s}s wall-clock"
+            ) from exc
+
+    result, terminal = await race_remote_load_with_terminal_events(
+        event_bus,
+        remote_call,
+        routing_key=routing_key,
+        gateway_id=gateway_id,
+        remote_id=remote_id,
+        backstop_timeout_s=backstop_timeout_s,
+    )
+    if result is not None or terminal is not None:
+        return result, terminal
+    raise WallClockLoadTimeout(
+        f"Remote load for {model_label} on {gateway_id} exceeded "
+        f"{backstop_timeout_s}s backstop"
+    )

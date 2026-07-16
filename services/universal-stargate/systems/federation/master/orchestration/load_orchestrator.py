@@ -25,7 +25,8 @@ from .config import DEFAULT_ORCHESTRATION_CONFIG, OrchestrationConfig
 from .load_terminal_wait import (
     TerminalLoadOutcome,
     TerminalLoadResolution,
-    race_remote_load_with_terminal_events,
+    WallClockLoadTimeout,
+    await_remote_load_with_wall_clock,
 )
 
 if TYPE_CHECKING:
@@ -66,6 +67,7 @@ def _load_error(
     retryable: bool = True,
     elapsed_ms: int | None = None,
     timeout_budget_s: float | int | None = None,
+    extra_data: dict[str, Any] | None = None,
 ) -> HTTPException:
     """Build structured HTTPException for load failures.
 
@@ -77,6 +79,8 @@ def _load_error(
         data["elapsed_ms"] = elapsed_ms
     if timeout_budget_s is not None:
         data["timeout_budget_s"] = timeout_budget_s
+    if extra_data:
+        data.update(extra_data)
 
     return HTTPException(
         status_code=get_http_status(code),
@@ -138,25 +142,20 @@ async def _await_remote_load_attempt(
             request_id=request_id,
         )
     )
-    if orchestrator._event_bus is None:
-        return await asyncio.wait_for(
-            remote_call,
-            timeout=orchestrator._config.load_timeout,
-        )
-
-    result, terminal = await race_remote_load_with_terminal_events(
-        orchestrator._event_bus,
-        remote_call,
+    result, terminal = await await_remote_load_with_wall_clock(
+        remote_call=remote_call,
+        event_bus=orchestrator._event_bus,
         routing_key=model_id.routing_key,
         gateway_id=gateway.gateway_id,
         remote_id=gateway.remote_stargate_id,
         backstop_timeout_s=orchestrator._config.load_timeout,
+        model_label=str(model_id),
     )
     if terminal is not None and terminal.outcome != TerminalLoadOutcome.LOADED:
         raise _terminal_load_error(terminal, model_id, gateway.gateway_id)
     if result is not None:
         return result
-    raise TimeoutError(
+    raise WallClockLoadTimeout(
         f"Remote load for {model_id} on {gateway.gateway_id} exceeded "
         f"{orchestrator._config.load_timeout}s backstop"
     )
@@ -892,7 +891,7 @@ class FederatedLoadOrchestrator:
             except HTTPException:
                 raise
 
-            except TimeoutError:
+            except WallClockLoadTimeout as e:
                 elapsed_ms = (time.monotonic() - attempt_start) * 1000
                 last_error = _load_error(
                     ErrorCode.LOAD_TIMEOUT,
@@ -903,10 +902,12 @@ class FederatedLoadOrchestrator:
                     gateway.gateway_id,
                     elapsed_ms=int(elapsed_ms),
                     timeout_budget_s=self._config.load_timeout,
+                    extra_data={"timeout_kind": "load_wall_clock"},
                 )
                 logger.error(
-                    f"⏱️ Load timeout for {model_id} after "
-                    f"{_format_elapsed_ms(elapsed_ms)} - "
+                    f"⏱️ Wall-clock load timeout for {model_id} after "
+                    f"{_format_elapsed_ms(elapsed_ms)} "
+                    f"(budget {self._config.load_timeout}s) - "
                     "not retrying (Remote may still be loading; "
                     "telemetry will update state)"
                 )
@@ -925,6 +926,47 @@ class FederatedLoadOrchestrator:
                     timeout_budget_s=self._config.load_timeout,
                 )
                 break  # No retry for wall-clock timeout
+
+            except TimeoutError as e:
+                # Inner/forwarder TimeoutError — not wall-clock budget exhaustion.
+                elapsed_ms = (time.monotonic() - attempt_start) * 1000
+                last_error = _load_error(
+                    ErrorCode.REQUEST_TIMEOUT,
+                    f"Inner timeout loading {model_id} on {gateway.gateway_id} "
+                    f"after {_format_elapsed_ms(elapsed_ms)} "
+                    f"({type(e).__name__}: {e})",
+                    model_id,
+                    gateway.gateway_id,
+                    elapsed_ms=int(elapsed_ms),
+                    timeout_budget_s=self._config.load_timeout,
+                    extra_data={
+                        "timeout_kind": "load_inner",
+                        "exception_type": type(e).__name__,
+                        "underlying": str(e),
+                    },
+                )
+                logger.error(
+                    f"⏱️ Inner load timeout for {model_id} after "
+                    f"{_format_elapsed_ms(elapsed_ms)} "
+                    f"({type(e).__name__}: {e}) - not retrying"
+                )
+                if self._metrics:
+                    self._metrics.record_load_operation_failure(elapsed_ms)
+                    if not exhaustion_recorded:
+                        self._metrics.record_retries_exhausted()
+                        exhaustion_recorded = True
+                await _emit_federation_load_debug(
+                    "attempt_inner_timeout",
+                    gateway.gateway_id,
+                    str(model_id),
+                    request_id,
+                    attempt=attempt_index,
+                    elapsed_ms=int(elapsed_ms),
+                    timeout_budget_s=self._config.load_timeout,
+                    exception_type=type(e).__name__,
+                    error=str(e),
+                )
+                break
 
             except httpx.TimeoutException as e:
                 # HTTP phase timeout (connect/read) = transient network issue

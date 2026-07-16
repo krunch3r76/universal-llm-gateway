@@ -33,6 +33,14 @@ async def chat_completions(
     skip_token_counting: bool | None = Query(
         None, description="Skip token counting for time-critical requests"
     ),
+    pseudostream: bool = Query(
+        False,
+        description=(
+            "Local models only: force upstream SSE generation, accumulate on "
+            "master, return one JSON chat.completion (X-ULG-Pseudostream). "
+            "Conflicts with body stream=true."
+        ),
+    ),
     proxy: StargateProxy = Depends(get_proxy),
     current_user: dict = Depends(get_auth_dependency),
 ):
@@ -48,7 +56,13 @@ async def chat_completions(
     try:
         logger.info("📨 ENDPOINT: Calling proxy.process_chat_completion")
         response = await proxy.process_chat_completion(
-            request, chat_request, model, profile, disable_profile, skip_token_counting
+            request,
+            chat_request,
+            model,
+            profile,
+            disable_profile,
+            skip_token_counting,
+            pseudostream=pseudostream,
         )
         logger.info(f"✅ ENDPOINT: Got response from proxy: {type(response)}")
         logger.info("🔍 ENDPOINT: Returning response to client")

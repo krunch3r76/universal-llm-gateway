@@ -216,6 +216,9 @@ skills:
   life-imprint-when-how:
     surface_class: life_local
     mcp_surface_required: life
+  local-chat-completions:
+    surface_class: cursor_only
+    mcp_surface_required: code
   life-to-code-request-lane:
     surface_class: shared_sync
     mcp_surface_required: life

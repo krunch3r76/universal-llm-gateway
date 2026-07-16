@@ -85,7 +85,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--model",
         default="opus-4.8",
-        help="opus-4.8 | fable-5 | leave",
+        help="live picker name/pattern (e.g. opus-4.8, sonnet-5, fable-5) | leave",
     )
     parser.add_argument(
         "--no-cowork-auto",

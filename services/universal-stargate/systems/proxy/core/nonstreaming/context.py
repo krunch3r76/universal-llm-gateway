@@ -37,6 +37,7 @@ class RequestContext:
         http_request: "Request | None" = None,
         chat_request: "ChatCompletionRequest | None" = None,
         selected_gateway: "Gateway | None" = None,
+        pseudostream: bool = False,
     ):
         self.request_id = request_id
         self.start_time = start_time
@@ -52,6 +53,8 @@ class RequestContext:
         self.http_request = http_request
         self.chat_request = chat_request
         self.selected_gateway = selected_gateway
+        # Master accumulates upstream SSE → JSON (local models only).
+        self.pseudostream = pseudostream
 
         # Will be populated during processing
         self.processed_messages: list[dict[str, Any]] | None = None
@@ -115,7 +118,12 @@ class RequestContext:
 
     @property
     def client_wants_streaming(self) -> bool:
-        return self.original_request.get("stream", False)
+        return bool(self.original_request.get("stream", False))
+
+    @property
+    def upstream_wants_streaming(self) -> bool:
+        """True when the gateway forward path must use SSE."""
+        return self.client_wants_streaming or self.pseudostream
 
     @property
     def is_federated(self) -> bool:
