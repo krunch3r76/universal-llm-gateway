@@ -130,6 +130,25 @@ def _build_parser(role_prompts: dict[str, str]) -> argparse.ArgumentParser:
     parser.add_argument(
         "--timeout", type=float, default=300.0, help="Per-model timeout in seconds"
     )
+    parser.add_argument(
+        "--require-warm",
+        action="store_true",
+        help=(
+            "Direct-query path only: probe GET /v1/models/{id}?include_status=true "
+            "and refuse cold/loading seats (try --fallback first). Prevents "
+            "latency-sensitive one-shots from hanging on large GGUF cold-load."
+        ),
+    )
+    parser.add_argument(
+        "--fallback",
+        nargs="+",
+        metavar="MODEL",
+        default=None,
+        help=(
+            "Ordered warm-seat substitutes when the primary is cold/loading "
+            "(used with --require-warm, or as soft fallbacks when probing)."
+        ),
+    )
     parser.add_argument("--list-roles", action="store_true", help="List roles and exit")
     parser.add_argument(
         "--chain",

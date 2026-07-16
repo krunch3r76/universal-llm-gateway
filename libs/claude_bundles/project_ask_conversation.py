@@ -1,0 +1,181 @@
+"""N-turn CDP consult on one claude.ai chat (Fable protocol reviews)."""
+
+from __future__ import annotations
+
+from claude_bundles.chat_model_select import select_model
+from claude_bundles.chat_reply_wait import harvest_assistant, wait_assistant_reply
+from claude_bundles.chat_session_hygiene import (
+    delete_chat_if_active,
+    goto_fresh_compose,
+    pick_chat_page,
+)
+from claude_bundles.project_ask import (
+    ProjectAskResult,
+    project_ask_on_page,
+    send_prompt,
+    strip_thinking_prefix,
+)
+from claude_bundles.project_chrome import project_url
+from claude_bundles.skills_ui_panel import DEFAULT_CDP_URL, connect_cdp
+
+
+async def project_followup_on_page(
+    page,
+    prompt: str,
+    *,
+    project_uuid: str,
+    timeout_s: int = 360,
+    min_growth: int = 50,
+    min_body: int = 40,
+) -> ProjectAskResult:
+    """Send another turn on the current chat. No navigate."""
+    dest = project_url(project_uuid) if project_uuid else "https://claude.ai/new"
+    try:
+        before = await harvest_assistant(page)
+        await send_prompt(page, prompt)
+        state = await wait_assistant_reply(
+            page,
+            before=before,
+            timeout_s=timeout_s,
+            poll_ms=500,
+            min_growth=min_growth,
+            min_body=min_body,
+        )
+        body = strip_thinking_prefix(state.get("body") or "")
+        return ProjectAskResult(
+            ok=True,
+            body=body,
+            url=str(state.get("url") or page.url),
+            project_uuid=project_uuid or "",
+            project_url=dest,
+            model={"ok": True, "step": "followup"},
+            body_len=len(body),
+            delete_after=None,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return ProjectAskResult(
+            ok=False,
+            body="",
+            url=page.url or "",
+            project_uuid=project_uuid or "",
+            project_url=dest,
+            model={},
+            body_len=0,
+            delete_after=None,
+            error=str(exc),
+        )
+
+
+async def run_project_conversation(
+    prompts: list[str],
+    *,
+    project_uuid: str = "",
+    compose_url: str | None = None,
+    model: str = "fable-5",
+    delete_after: bool = True,
+    cdp_url: str = DEFAULT_CDP_URL,
+    timeout_s: int = 600,
+    min_growth: int = 80,
+    min_body: int = 200,
+    ensure_cowork_auto: bool = True,
+) -> list[ProjectAskResult]:
+    """N-turn consult on one chat. First opens compose; later turns follow up."""
+    if not prompts:
+        raise ValueError("prompts required")
+    pw, _browser, ctx, _page0 = await connect_cdp(cdp_url)
+    results: list[ProjectAskResult] = []
+    try:
+        page = await pick_chat_page(ctx)
+        if project_uuid:
+            first = await project_ask_on_page(
+                page,
+                prompts[0],
+                project_uuid=project_uuid,
+                model=model,
+                delete_after=False,
+                timeout_s=timeout_s,
+                min_growth=min_growth,
+                min_body=min_body,
+            )
+        else:
+            url = compose_url or "https://claude.ai/new"
+            await goto_fresh_compose(
+                page,
+                compose_url=url,
+                ensure_cowork_auto=ensure_cowork_auto,
+            )
+            model_info = await select_model(page, model)
+            if not model_info.get("ok"):
+                return [
+                    ProjectAskResult(
+                        ok=False,
+                        body="",
+                        url=page.url,
+                        project_uuid="",
+                        project_url=url,
+                        model=model_info,
+                        body_len=0,
+                        delete_after=None,
+                        error=f"model select failed: {model_info}",
+                    )
+                ]
+            before = await harvest_assistant(page)
+            await send_prompt(page, prompts[0])
+            state = await wait_assistant_reply(
+                page,
+                before=before,
+                timeout_s=timeout_s,
+                poll_ms=500,
+                min_growth=min_growth,
+                min_body=min_body,
+            )
+            body = strip_thinking_prefix(state.get("body") or "")
+            first = ProjectAskResult(
+                ok=True,
+                body=body,
+                url=str(state.get("url") or page.url),
+                project_uuid="",
+                project_url=url,
+                model=model_info,
+                body_len=len(body),
+                delete_after=None,
+            )
+        results.append(first)
+        if not first.ok:
+            return results
+
+        for prompt in prompts[1:]:
+            nxt = await project_followup_on_page(
+                page,
+                prompt,
+                project_uuid=project_uuid,
+                timeout_s=timeout_s,
+                min_growth=min_growth,
+                min_body=min_body,
+            )
+            results.append(nxt)
+            if not nxt.ok:
+                break
+
+        if delete_after and results and results[-1].ok:
+            return_to = (
+                project_url(project_uuid) if project_uuid else "https://claude.ai/new"
+            )
+            delete_result = await delete_chat_if_active(page, return_to=return_to)
+            last = results[-1]
+            results[-1] = ProjectAskResult(
+                ok=last.ok,
+                body=last.body,
+                url=last.url,
+                project_uuid=last.project_uuid,
+                project_url=last.project_url,
+                model=last.model,
+                body_len=last.body_len,
+                delete_after=delete_result,
+                error=last.error,
+                archive_uri=last.archive_uri,
+                attested_model=last.attested_model,
+            )
+        return results
+    finally:
+        await pw.stop()

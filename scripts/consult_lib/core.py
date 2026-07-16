@@ -269,6 +269,8 @@ def execute_consult(
     chain_directive: str | None = None,
     cloud_only: bool = False,
     pipeline_options: dict[str, Any] | None = None,
+    require_warm: bool = False,
+    fallback_models: list[str] | None = None,
 ) -> list[ConsultResult]:
     """Execute a consultation against one or more models.
 
@@ -285,12 +287,16 @@ def execute_consult(
         models: Explicit model IDs. None triggers role-based selection.
         no_rag: Disable RAG retrieval entirely.
         use_rag_pipeline: Use rag-context pipeline (True) or direct search (False).
-        rag_top_k: When using direct search, number of chunks to request (default 5).
+        rag_top_k: When using direct RAG search, number of chunks to request (default 5).
         timeout: Per-model timeout in seconds.
         chain_directive: Custom reviewer directive for chained mode.
         cloud_only: Restrict to cloud models only.
         pipeline_options: Extra pipeline_options merged into Stargate requests.
             User-supplied keys win on conflict with code-generated keys.
+        require_warm: If True (direct-query path only), refuse cold/loading
+            local seats; try ``fallback_models`` first. Use for latency-sensitive
+            one-shots that must not hang on GGUF cold-load.
+        fallback_models: Ordered warm-seat substitutes when ``require_warm``.
 
     Returns:
         List of ConsultResult, one per model queried.
@@ -402,6 +408,8 @@ def execute_consult(
             stargate_url=stargate_url,
             timeout=timeout,
             chain_directive=chain_directive,
+            require_warm=require_warm,
+            fallback_models=fallback_models,
         )
     else:
         raw_results = query_parallel(
@@ -410,6 +418,8 @@ def execute_consult(
             user_prompt=user_prompt,
             stargate_url=stargate_url,
             timeout=timeout,
+            require_warm=require_warm,
+            fallback_models=fallback_models,
         )
 
     results = [_dict_to_result(r) for r in raw_results]

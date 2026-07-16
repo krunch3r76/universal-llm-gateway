@@ -6,15 +6,22 @@
 #
 # Usage:
 #   scripts/cortex/claude-ai-sync-jupiter ensure-chrome
+#   scripts/cortex/claude-ai-sync-jupiter ensure-chrome --port 9223 --profile-suffix ask
 #   scripts/cortex/claude-ai-sync-jupiter status
 #   scripts/cortex/claude-ai-sync-jupiter upload --slugs my-skill --continue-on-error
 #   scripts/cortex/claude-ai-sync-jupiter upload --all --continue-on-error
 #   scripts/cortex/claude-ai-sync-jupiter uninstall --slugs retired-skill
 #   scripts/cortex/claude-ai-sync-jupiter restore-connector
 #   scripts/cortex/claude-ai-sync-jupiter project-chrome ensure|destroy|get|render-prompt …
+#   scripts/cortex/claude-ai-sync-jupiter project-ask --uuid UUID --prompt-file …
+#   scripts/cortex/claude-ai-sync-jupiter project-ask --cdp-port 9223 --uuid … --prompt-file …
+#
+# Parallel seats: primary CDP is :9222 + claude-ai-chrome-profile. A second
+# session should use --port 9223 --profile-suffix ask (separate user-data-dir;
+# Chrome locks one profile per process). First ensure clones cookies from the
+# primary profile if the ask profile is empty.
 #
 # MCP connector playbook: agent_skill:claude-ai-mcp-connect
-# (life URL, OAuth DCR, dual-endpoint cutover)
 # Env: CLAUDE_AI_SSH_HOST (default jupiter), CLAUDE_AI_SSH_USER (default krunch3r)
 
 set -euo pipefail
@@ -24,94 +31,150 @@ USER="${CLAUDE_AI_SSH_USER:-krunch3r}"
 SSH="${USER}@${HOST}"
 REMOTE_REPO="/mnt/torus/projects/universal-llm-gateway"
 PY='~/.venvs/universal/bin/python'
-PROFILE='$HOME/.gateway/claude-ai-chrome-profile'
-
 usage() {
-  sed -n '2,14p' "$0" | sed 's/^# \?//'
+  sed -n '2,24p' "$0" | sed 's/^# \?//'
   echo ""
-  echo "Commands: ensure-chrome | status | upload | uninstall | restore-connector | project-chrome"
+  echo "Commands: ensure-chrome | status | upload | uninstall | restore-connector | project-chrome | project-ask"
   exit "${1:-0}"
 }
 
+# Parse optional --port / --profile-suffix / --cdp-port before subcommand args.
+CDP_PORT=9222
+PROFILE_SUFFIX=""
+parse_chrome_flags() {
+  local out=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --port|--cdp-port)
+        CDP_PORT="${2:?}"
+        shift 2
+        ;;
+      --profile-suffix)
+        PROFILE_SUFFIX="${2:?}"
+        shift 2
+        ;;
+      *)
+        out+=("$1")
+        shift
+        ;;
+    esac
+  done
+  PARSED_ARGS=("${out[@]+"${out[@]}"}")
+}
+
 ensure_chrome() {
-  ssh "$SSH" 'bash -s' <<REMOTE
+  local port="$1"
+  local suffix="${2:-}"
+  # Expand HOME on Jupiter (never pass a local-literal '$HOME/...').
+  # shellcheck disable=SC2029
+  ssh "$SSH" "PORT='${port}' SUFFIX='${suffix}' bash -s" <<'REMOTE'
 set -e
-if curl -sf http://127.0.0.1:9222/json/version >/dev/null 2>&1; then
-  echo "CDP already up: \$(curl -s http://127.0.0.1:9222/json/version | python3 -c "import sys,json; print(json.load(sys.stdin).get('Browser','?'))")"
+PORT="${PORT:-9222}"
+PRIMARY="${HOME}/.gateway/claude-ai-chrome-profile"
+if [[ -n "${SUFFIX}" ]]; then
+  PROFILE="${PRIMARY}-${SUFFIX}"
+else
+  PROFILE="${PRIMARY}"
+fi
+LOG="/tmp/chrome-cdp-claude-ai-${PORT}.log"
+
+if curl -sf "http://127.0.0.1:${PORT}/json/version" >/dev/null 2>&1; then
+  echo "CDP already up on :${PORT}: $(curl -s "http://127.0.0.1:${PORT}/json/version" | python3 -c "import sys,json; print(json.load(sys.stdin).get('Browser','?'))")"
+  echo "profile=${PROFILE}"
   exit 0
 fi
-pkill -f 'remote-debugging-port=9222' 2>/dev/null || true
+
+# Secondary profiles: clone cookies from primary once (exclude Singleton locks).
+if [[ "${PROFILE}" != "${PRIMARY}" && ! -d "${PROFILE}/Default" ]]; then
+  echo "Seeding ${PROFILE} from ${PRIMARY} (cookies/session)…"
+  mkdir -p "${PROFILE}"
+  rsync -a --exclude='Singleton*' --exclude='lockfile' --exclude='.org.chromium.*' \
+    "${PRIMARY}/" "${PROFILE}/" || true
+fi
+
+# Do NOT pkill other ports — parallel seats may own :9222.
+pkill -f "remote-debugging-port=${PORT}" 2>/dev/null || true
 sleep 1
-DISPLAY=:1 nohup google-chrome \\
-  --remote-debugging-port=9222 \\
-  --remote-allow-origins=* \\
-  --user-data-dir=${PROFILE} \\
-  --no-first-run \\
-  --no-default-browser-check \\
-  > /tmp/chrome-cdp-claude-ai.log 2>&1 &
-echo "Chrome PID: \$!"
-for i in \$(seq 1 15); do
+DISPLAY=:1 nohup google-chrome \
+  --remote-debugging-port="${PORT}" \
+  --remote-allow-origins=* \
+  --user-data-dir="${PROFILE}" \
+  --no-first-run \
+  --no-default-browser-check \
+  > "${LOG}" 2>&1 &
+echo "Chrome PID: $!  port=${PORT}  profile=${PROFILE}"
+for i in $(seq 1 20); do
   sleep 1
-  if curl -sf http://127.0.0.1:9222/json/version >/dev/null 2>&1; then
-    echo "CDP ready after \${i}s"
-    curl -s http://127.0.0.1:9222/json/version | python3 -c "import sys,json; print(json.load(sys.stdin).get('Browser','?'))"
+  if curl -sf "http://127.0.0.1:${PORT}/json/version" >/dev/null 2>&1; then
+    echo "CDP ready on :${PORT} after ${i}s"
+    curl -s "http://127.0.0.1:${PORT}/json/version" | python3 -c "import sys,json; print(json.load(sys.stdin).get('Browser','?'))"
     exit 0
   fi
 done
-echo "CDP failed — tail /tmp/chrome-cdp-claude-ai.log" >&2
-tail -10 /tmp/chrome-cdp-claude-ai.log 2>/dev/null || true
+echo "CDP failed on :${PORT} — tail ${LOG}" >&2
+tail -15 "${LOG}" 2>/dev/null || true
 exit 1
 REMOTE
 }
 
-remote_ui() {
-  # Jupiter venv does not load its site-packages sitecustomize (system
-  # /usr/lib/.../sitecustomize.py wins), so libs/ is not auto-injected.
-  # Force PYTHONPATH; PROJECT_ROOT kept for any path that does load the venv hook.
-  # shellcheck disable=SC2029
-  ssh "$SSH" "cd ${REMOTE_REPO} && PROJECT_ROOT=${REMOTE_REPO} PYTHONPATH=${REMOTE_REPO}/libs BROWSER_CDP_URL=http://127.0.0.1:9222 ${PY} scripts/cortex/upload_claude_bundles_ui.py $*"
-}
-
-restore_connector() {
-  # shellcheck disable=SC2029
-  ssh "$SSH" "cd ${REMOTE_REPO} && PROJECT_ROOT=${REMOTE_REPO} PYTHONPATH=${REMOTE_REPO}/libs BROWSER_CDP_URL=http://127.0.0.1:9222 ${PY} scripts/cortex/restore_claude_mcp_connector.py $*"
-}
-
-remote_project_chrome() {
-  # Quote each arg for remote bash (names often contain spaces / ·).
+remote_py() {
+  local script="$1"
+  shift
   local qargs=()
   local a
   for a in "$@"; do
     qargs+=("$(printf '%q' "$a")")
   done
   # shellcheck disable=SC2029
-  ssh "$SSH" "cd ${REMOTE_REPO} && PROJECT_ROOT=${REMOTE_REPO} PYTHONPATH=${REMOTE_REPO}/libs BROWSER_CDP_URL=http://127.0.0.1:9222 ${PY} scripts/cortex/cowork_project_chrome.py ${qargs[*]}"
+  ssh "$SSH" "cd ${REMOTE_REPO} && PROJECT_ROOT=${REMOTE_REPO} PYTHONPATH=${REMOTE_REPO}/libs BROWSER_CDP_URL=http://127.0.0.1:${CDP_PORT} ${PY} ${script} ${qargs[*]}"
 }
+
+parse_chrome_flags "$@"
+set -- "${PARSED_ARGS[@]+"${PARSED_ARGS[@]}"}"
 
 cmd="${1:-}"
 shift || true
 
+# Convenience: non-default CDP port defaults to a separate -ask profile.
+if [[ "${CDP_PORT}" != "9222" && -z "${PROFILE_SUFFIX}" ]]; then
+  PROFILE_SUFFIX="ask"
+fi
+
 case "$cmd" in
-  ensure-chrome) ensure_chrome ;;
+  ensure-chrome)
+    ensure_chrome "${CDP_PORT}" "${PROFILE_SUFFIX}"
+    ;;
   status)
-    ensure_chrome
-    remote_ui --status
+    ensure_chrome "${CDP_PORT}" "${PROFILE_SUFFIX}"
+    remote_py scripts/cortex/upload_claude_bundles_ui.py --status
     ;;
   upload)
-    ensure_chrome
-    remote_ui "$@"
+    ensure_chrome "${CDP_PORT}" "${PROFILE_SUFFIX}"
+    remote_py scripts/cortex/upload_claude_bundles_ui.py "$@"
     ;;
   uninstall)
-    ensure_chrome
-    remote_ui --uninstall "$@"
+    ensure_chrome "${CDP_PORT}" "${PROFILE_SUFFIX}"
+    remote_py scripts/cortex/upload_claude_bundles_ui.py --uninstall "$@"
     ;;
   restore-connector)
-    ensure_chrome
-    restore_connector "$@"
+    ensure_chrome "${CDP_PORT}" "${PROFILE_SUFFIX}"
+    remote_py scripts/cortex/restore_claude_mcp_connector.py "$@"
     ;;
   project-chrome)
-    ensure_chrome
-    remote_project_chrome "$@"
+    ensure_chrome "${CDP_PORT}" "${PROFILE_SUFFIX}"
+    remote_py scripts/cortex/cowork_project_chrome.py "$@"
+    ;;
+  project-ask)
+    ensure_chrome "${CDP_PORT}" "${PROFILE_SUFFIX}"
+    has_cdp=0
+    for a in "$@"; do
+      [[ "$a" == "--cdp-url" ]] && has_cdp=1
+    done
+    if [[ "${has_cdp}" -eq 0 ]]; then
+      remote_py scripts/cortex/cowork_project_ask.py --cdp-url "http://127.0.0.1:${CDP_PORT}" "$@"
+    else
+      remote_py scripts/cortex/cowork_project_ask.py "$@"
+    fi
     ;;
   -h|--help|help|'') usage 0 ;;
   *)

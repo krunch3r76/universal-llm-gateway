@@ -11,6 +11,7 @@ from typing import Any
 import httpx
 
 from .constants import DEFAULT_CHAIN_DIRECTIVE, MAX_PRIOR_CHARS
+from .readiness import resolve_ready_model
 
 
 def build_prompt(
@@ -51,11 +52,27 @@ def query_model(
     user_prompt: str,
     stargate_url: str,
     timeout: float,
+    *,
+    require_warm: bool = False,
+    fallback_models: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Send consultation to a single model."""
+    """Send consultation to a single model.
+
+    When ``require_warm`` is True, probes
+    ``GET /v1/models/{id}?include_status=true`` first and refuses
+    cold/loading seats (trying ``fallback_models`` if provided) so
+    latency-sensitive one-shots do not hang on GGUF cold-load.
+    """
+    ready = resolve_ready_model(
+        model_id,
+        stargate_url,
+        require_warm=require_warm,
+        fallback_models=fallback_models,
+    )
+    selected = ready["model_id"]
     url = f"{stargate_url.rstrip('/')}/v1/chat/completions"
     body: dict[str, Any] = {
-        "model": model_id,
+        "model": selected,
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
@@ -72,13 +89,19 @@ def query_model(
     choice = data.get("choices", [{}])[0]
     usage = data.get("usage", {})
     raw_response = choice.get("message", {}).get("content", "")
-    return {
-        "model_id": data.get("model", model_id),
+    result: dict[str, Any] = {
+        "model_id": data.get("model", selected),
         "response": strip_think_blocks(raw_response),
         "prompt_tokens": usage.get("prompt_tokens", 0),
         "completion_tokens": usage.get("completion_tokens", 0),
         "latency_ms": round(elapsed_ms),
     }
+    if selected != model_id:
+        result["requested_model_id"] = model_id
+        result["fallback_used"] = True
+    if ready.get("status"):
+        result["preflight_status"] = ready["status"]
+    return result
 
 
 def augment_with_prior(
@@ -105,6 +128,9 @@ def query_chain(
     stargate_url: str,
     timeout: float,
     chain_directive: str | None = None,
+    *,
+    require_warm: bool = False,
+    fallback_models: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Query models sequentially, each reviewing prior output.
 
@@ -138,7 +164,15 @@ def query_chain(
         phase_started = time.time()
         call_start = time.monotonic()
         try:
-            result = query_model(mid, system_prompt, prompt, stargate_url, timeout)
+            result = query_model(
+                mid,
+                system_prompt,
+                prompt,
+                stargate_url,
+                timeout,
+                require_warm=require_warm,
+                fallback_models=fallback_models,
+            )
             result["phase"] = phase
         except httpx.TimeoutException as exc:
             elapsed = time.monotonic() - call_start
@@ -155,6 +189,9 @@ def query_chain(
                 error_msg = f"connection error: {error_msg}"
             else:
                 error_msg = f"network error: {error_msg}"
+            result = {"model_id": mid, "error": error_msg, "phase": phase}
+        except RuntimeError as exc:
+            error_msg = str(exc)
             result = {"model_id": mid, "error": error_msg, "phase": phase}
         except Exception as exc:
             error_msg = f"unexpected error: {exc}"
@@ -178,6 +215,9 @@ def query_parallel(
     user_prompt: str,
     stargate_url: str,
     timeout: float,
+    *,
+    require_warm: bool = False,
+    fallback_models: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Query models in parallel, return results in original order."""
     results: list[dict[str, Any]] = []
@@ -190,6 +230,8 @@ def query_parallel(
                 user_prompt=user_prompt,
                 stargate_url=stargate_url,
                 timeout=timeout,
+                require_warm=require_warm,
+                fallback_models=fallback_models,
             ): mid
             for mid in models
         }

@@ -48,6 +48,9 @@ skills:
   claude-ai-mcp-connect:
     surface_class: cursor_only
     mcp_surface_required: none
+  claude-ai-cdp-navigation:
+    surface_class: cursor_only
+    mcp_surface_required: none
   claude-ai-skill-uninstall:
     surface_class: cursor_only
     mcp_surface_required: none

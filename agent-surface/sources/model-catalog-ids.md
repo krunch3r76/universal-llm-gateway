@@ -54,6 +54,24 @@ GET /v1/models/{model_id}?include_status=true
 Example: `GET /v1/models/qwen3-embedding-8b-q8-0-4096` → `{"activated": false, "available": true}`
 means the model exists in the catalog but isn't published. It may still be routable on demand.
 
+### Cold-load latency (local GGUF)
+
+`status` from `include_status=true`:
+
+| status | Meaning | Caller implication |
+|---|---|---|
+| `loaded` / `busy` | Resident on a gateway | Safe for latency-sensitive one-shots |
+| `loading` | Cold-load in progress | `POST /v1/chat/completions` will block until load finishes |
+| `available` | Catalog-ready, not resident | First CC triggers T2 load; large GGUFs (≈26B+) often take **minutes** with no mid-request progress signal |
+
+Latency-sensitive automation (fluidity passes, short consults) must not fire blind CC against a cold large local seat. Preflight:
+
+```bash
+GET /v1/models/{model_id}?include_status=true
+```
+
+`consult_lib` exposes this as `require_warm=True` / CLI `--require-warm` with optional `--fallback` models (warm 8B/12B local or cloud Gemma). Prefer a warm smaller local or cloud seat for those passes; reserve intentional cold-load for long-budget consults that omit `--require-warm`.
+
 **Diagnostic rule**: When a service reports "exists but no gateway can serve it", check
 `GET /v1/models/{model_id}` first — if `activated: false`, the configured ID is no longer
 published (activation changed). Options: update the service config to use the activated ID,
