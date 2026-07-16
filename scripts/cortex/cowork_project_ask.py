@@ -5,12 +5,12 @@ Run ON Jupiter (CDP host). From Cursor / remote seats use:
   scripts/cortex/claude-ai-sync-jupiter project-ask …
 
 Examples:
-  # Disposable sealed ask (Opus)
-  scripts/cortex/claude-ai-sync-jupiter project-ask --cdp-port 9223 \\
+  # Disposable sealed ask (Opus) — Project UUID; Chat Send or Cowork Start task
+  scripts/cortex/claude-ai-sync-jupiter project-ask --cdp-port 9223 --profile-suffix ask \\
     --uuid 019f6917-… --prompt-file sealed.md --out body.md
 
-  # N-turn Fable consult on /new (no Project)
-  scripts/cortex/claude-ai-sync-jupiter project-ask --cdp-port 9223 \\
+  # N-turn Fable consult on /new (no Project) — MUST --converse with --no-uuid
+  scripts/cortex/claude-ai-sync-jupiter project-ask --cdp-port 9223 --profile-suffix ask \\
     --converse --no-uuid --model fable-5 \\
     --prompt-file t1.md --prompt-file t2.md --prompt-file t3.md \\
     --out-dir /mnt/torus/mcp-data/files/notes/system/threads/4917-fable-review/
@@ -159,8 +159,13 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if summary["ok"] else 1
 
     # Single ask — always archives then deletes (unless --keep-chat via empty archive+keep)
+    if args.no_uuid and not args.converse:
+        parser.error(
+            "--no-uuid alone is invalid: use --converse --no-uuid for /new "
+            "(Cowork consult), or --uuid for a Project sealed ask (24611)"
+        )
     if not args.uuid:
-        parser.error("ask mode requires --uuid")
+        parser.error("ask mode requires --uuid (or --converse --no-uuid for /new)")
     prompt = prompts[0]
     archive = args.archive
     if not archive and not args.keep_chat:

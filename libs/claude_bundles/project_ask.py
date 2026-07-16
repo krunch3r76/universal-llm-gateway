@@ -132,6 +132,19 @@ async def find_composer(page: Page):
     return None
 
 
+# Cowork /new submit control is "Start task"; Chat is "Send message" (24609).
+_SUBMIT_ROLE_RES = (
+    re.compile(r"start task", re.I),
+    re.compile(r"send message", re.I),
+)
+_SUBMIT_ARIA_SUBSTRS = ("Start task", "Send")
+
+
+def submit_control_names() -> tuple[str, ...]:
+    """Ordered submit aria/role names for Cowork-first then Chat."""
+    return ("Start task", "Send message")
+
+
 async def send_prompt(page: Page, text: str) -> None:
     composer = await find_composer(page)
     if composer is None:
@@ -142,16 +155,26 @@ async def send_prompt(page: Page, text: str) -> None:
     await page.keyboard.press("Backspace")
     await page.keyboard.insert_text(text)
     await page.wait_for_timeout(600)
-    for loc in (
-        page.get_by_role("button", name=re.compile(r"send message", re.I)),
-        page.locator("button[aria-label*='Send' i]"),
-    ):
+    # Prefer Start task (Cowork) before Send message (Chat). Fail closed —
+    # Enter fallback left prompts unsent (900s empty harvest, 2026-07-16).
+    for role_re in _SUBMIT_ROLE_RES:
+        loc = page.get_by_role("button", name=role_re)
         if await loc.count():
             btn = loc.first
             if await btn.is_visible() and not await btn.is_disabled():
                 await btn.click(force=True)
                 return
-    await page.keyboard.press("Enter")
+    for aria in _SUBMIT_ARIA_SUBSTRS:
+        loc = page.locator(f"button[aria-label*='{aria}' i]")
+        if await loc.count():
+            btn = loc.first
+            if await btn.is_visible() and not await btn.is_disabled():
+                await btn.click(force=True)
+                return
+    raise RuntimeError(
+        "submit control missing: need visible Start task (Cowork) or "
+        "Send message (Chat) — refusing Enter fallback"
+    )
 
 
 async def project_ask_on_page(

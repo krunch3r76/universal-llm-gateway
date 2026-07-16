@@ -14,7 +14,9 @@
 #   scripts/cortex/claude-ai-sync-jupiter restore-connector
 #   scripts/cortex/claude-ai-sync-jupiter project-chrome ensure|destroy|get|render-prompt …
 #   scripts/cortex/claude-ai-sync-jupiter project-ask --uuid UUID --prompt-file …
-#   scripts/cortex/claude-ai-sync-jupiter project-ask --cdp-port 9223 --uuid … --prompt-file …
+#   scripts/cortex/claude-ai-sync-jupiter project-ask --cdp-port 9223 --profile-suffix ask --uuid … --prompt-file …
+#   scripts/cortex/claude-ai-sync-jupiter project-ask --cdp-port 9223 --profile-suffix ask \\
+#     --converse --no-uuid --model fable-5 --prompt-file t1.md --out-dir …
 #
 # Parallel seats: primary CDP is :9222 + claude-ai-chrome-profile. A second
 # session should use --port 9223 --profile-suffix ask (separate user-data-dir;
@@ -135,9 +137,13 @@ set -- "${PARSED_ARGS[@]+"${PARSED_ARGS[@]}"}"
 cmd="${1:-}"
 shift || true
 
-# Convenience: non-default CDP port defaults to a separate -ask profile.
+# Parallel lanes MUST name the profile (24612). Silent -ask default on
+# non-9222 ports attached the wrong user-data-dir (e.g. :9224 fable-consult).
 if [[ "${CDP_PORT}" != "9222" && -z "${PROFILE_SUFFIX}" ]]; then
-  PROFILE_SUFFIX="ask"
+  echo "error: --port/--cdp-port ${CDP_PORT} requires explicit --profile-suffix" >&2
+  echo "  examples: --port 9223 --profile-suffix ask" >&2
+  echo "            --port 9224 --profile-suffix fable-consult" >&2
+  exit 2
 fi
 
 case "$cmd" in

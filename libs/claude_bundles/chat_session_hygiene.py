@@ -151,7 +151,7 @@ async def goto_fresh_compose(
 
         result = await _ensure(page)
         if not result.get("ok"):
-            # Soft: Project-less /new without chips is a UI regression to surface.
-            page_err = result.get("mode") or result.get("approval") or result
+            # Prefer approval failure detail — mode dict is often ok:True (cowork selected).
+            page_err = result.get("approval") or result.get("mode") or result
             raise RuntimeError(f"ensure_cowork_auto failed: {page_err}")
     return page.url

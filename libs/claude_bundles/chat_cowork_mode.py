@@ -29,6 +29,26 @@ _APPROVAL_MENU = {
     "skip": re.compile(r"Skip all approvals", re.I),
 }
 
+_APPROVAL_RADIO_TOKEN = {
+    "auto": "Automatically approve",
+    "manual": "Manually approve",
+    "skip": "Skip all approvals",
+}
+
+_APPROVAL_RADIO_ALL = tuple(_APPROVAL_RADIO_TOKEN.values())
+
+
+def exclusive_radio_text_match(text: str, token: str) -> bool:
+    """True iff ``text`` names ``token`` and no sibling approval label.
+
+    Parent menu groups concatenate Manual+Auto copy; role=name matching those
+    groups mis-clicks (friction 24610). Exclusive radios pass; groups fail.
+    """
+    if not re.search(re.escape(token), text, re.I):
+        return False
+    others = [o for o in _APPROVAL_RADIO_ALL if o.lower() != token.lower()]
+    return not any(re.search(re.escape(o), text, re.I) for o in others)
+
 
 async def _chip_center(page, label: str) -> dict[str, float] | None:
     return await page.evaluate(
@@ -143,21 +163,45 @@ async def set_approval_mode(page, mode: ApprovalMode = "auto") -> dict[str, Any]
     if not opened.get("ok"):
         return {**opened, "before": before}
 
-    menu_re = _APPROVAL_MENU[mode]
-    item = page.get_by_role("menuitemradio", name=menu_re)
-    if await item.count() == 0:
-        item = page.get_by_role("menuitem", name=menu_re)
-    if await item.count() == 0:
-        item = page.get_by_text(menu_re)
-    if await item.count() == 0:
-        return {
-            "ok": False,
-            "step": "menu_item_missing",
-            "wanted": mode,
-            "opened": opened,
-            "before": before,
-        }
-    await item.first.click(force=True)
+    # Prefer the dedicated menuitemradio. Parent groups concatenate Manual+Auto
+    # copy, and radios lead with icon glyphs — so name=/Automatically approve/
+    # mis-clicks the group (2026-07-16 :9224).
+    radio_token = _APPROVAL_RADIO_TOKEN[mode]
+    exclusive = await page.evaluate(
+        """(token) => {
+          const radios = [...document.querySelectorAll('[role=menuitemradio]')];
+          const all = ['Manually approve', 'Automatically approve', 'Skip all approvals'];
+          const others = all.filter((x) => x.toLowerCase() !== token.toLowerCase());
+          for (const el of radios) {
+            const t = (el.innerText || '').replace(/\\s+/g, ' ');
+            if (!exclusiveRadioTextMatch(t, token, others)) continue;
+            el.click();
+            return {ok: true, text: t.slice(0, 120)};
+          }
+          return {ok: false, count: radios.length};
+          function exclusiveRadioTextMatch(t, token, others) {
+            if (!new RegExp(token, 'i').test(t)) return false;
+            if (others.some((o) => new RegExp(o, 'i').test(t))) return false;
+            return true;
+          }
+        }""",
+        radio_token,
+    )
+    if not exclusive.get("ok"):
+        menu_re = _APPROVAL_MENU[mode]
+        item = page.get_by_role("menuitemradio", name=menu_re)
+        if await item.count() == 0:
+            item = page.get_by_role("menuitem", name=menu_re)
+        if await item.count() == 0:
+            return {
+                "ok": False,
+                "step": "menu_item_missing",
+                "wanted": mode,
+                "opened": opened,
+                "before": before,
+                "exclusive": exclusive,
+            }
+        await item.first.click(force=True)
     await page.wait_for_timeout(1200)
     after = await compose_mode_fingerprint(page)
     ok = bool(
