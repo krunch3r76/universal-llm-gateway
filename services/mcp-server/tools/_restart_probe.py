@@ -7,7 +7,6 @@ Fallback: pinned ``/home/mcp/.gateway/restart-intents.db`` (compose mount).
 from __future__ import annotations
 
 import json
-import os
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path

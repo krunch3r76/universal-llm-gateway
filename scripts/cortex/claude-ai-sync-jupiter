@@ -9,7 +9,9 @@
 #   scripts/cortex/claude-ai-sync-jupiter ensure-chrome --port 9223 --profile-suffix ask
 #   scripts/cortex/claude-ai-sync-jupiter status
 #   scripts/cortex/claude-ai-sync-jupiter upload --slugs my-skill --continue-on-error
-#   scripts/cortex/claude-ai-sync-jupiter upload --all --continue-on-error
+#   scripts/cortex/claude-ai-sync-jupiter upload --slugs my-skill --replace --continue-on-error
+#   scripts/cortex/claude-ai-sync-jupiter upload --all --continue-on-error   # NEW slugs only
+#   # --all --replace is refused unless --force-replace-all (never the default)
 #   scripts/cortex/claude-ai-sync-jupiter uninstall --slugs retired-skill
 #   scripts/cortex/claude-ai-sync-jupiter restore-connector
 #   scripts/cortex/claude-ai-sync-jupiter project-chrome ensure|destroy|get|render-prompt …
@@ -81,8 +83,37 @@ fi
 LOG="/tmp/chrome-cdp-claude-ai-${PORT}.log"
 
 if curl -sf "http://127.0.0.1:${PORT}/json/version" >/dev/null 2>&1; then
+  # CDP already up — attest the LIVE process owning :PORT uses the expected
+  # user-data-dir. Early-exit must not trust the caller's requested profile:
+  # a lane started under one suffix, later attached with a different suffix,
+  # would bleed across cookie/account lanes (24612 residual / T1).
+  # cmdline separator varies: renderers keep NUL-separated argv, but Chrome's
+  # main (browser) process rewrites argv to a single space-joined string. Map
+  # NUL->space so both parse uniformly; profile paths carry no spaces.
+  OBSERVED_DIR=""
+  for pid in $(pgrep -f "remote-debugging-port=${PORT}" 2>/dev/null); do
+    [[ -r "/proc/${pid}/cmdline" ]] || continue
+    cmd="$(tr '\0' ' ' < "/proc/${pid}/cmdline")"
+    # Exact port (lookahead rejects a longer numeric like 92220 for 9222).
+    if grep -qP -- "--remote-debugging-port=${PORT}(?![0-9])" <<<"${cmd}"; then
+      OBSERVED_DIR="$(grep -oP -- '--user-data-dir=\K\S+' <<<"${cmd}" | head -n1)"
+      [[ -n "${OBSERVED_DIR}" ]] && break
+    fi
+  done
+  if [[ -z "${OBSERVED_DIR}" ]]; then
+    echo "error: CDP up on :${PORT} but no chrome process with --user-data-dir found — cannot attest profile" >&2
+    exit 3
+  fi
+  EXP_CANON="$(realpath -m "${PROFILE}")"
+  OBS_CANON="$(realpath -m "${OBSERVED_DIR}")"
+  if [[ "${EXP_CANON}" != "${OBS_CANON}" ]]; then
+    echo "error: CDP on :${PORT} is owned by a MISMATCHED profile — refusing to attach" >&2
+    echo "  expected user-data-dir: ${EXP_CANON}" >&2
+    echo "  observed user-data-dir: ${OBS_CANON}" >&2
+    exit 3
+  fi
   echo "CDP already up on :${PORT}: $(curl -s "http://127.0.0.1:${PORT}/json/version" | python3 -c "import sys,json; print(json.load(sys.stdin).get('Browser','?'))")"
-  echo "profile=${PROFILE}"
+  echo "profile=${PROFILE} (attested user-data-dir=${OBS_CANON})"
   exit 0
 fi
 
@@ -155,6 +186,24 @@ case "$cmd" in
     remote_py scripts/cortex/upload_claude_bundles_ui.py --status
     ;;
   upload)
+    # Soft preflight BEFORE ensure_chrome: refuse --all --replace unless
+    # --force-replace-all (Python CLI is authoritative; catch footgun early).
+    has_all=0
+    has_replace=0
+    has_force=0
+    for a in "$@"; do
+      case "$a" in
+        --all) has_all=1 ;;
+        --replace) has_replace=1 ;;
+        --force-replace-all) has_force=1 ;;
+      esac
+    done
+    if [[ "${has_all}" -eq 1 && "${has_replace}" -eq 1 && "${has_force}" -eq 0 ]]; then
+      echo "error: --all --replace is refused by default (fleet-wide re-upload)." >&2
+      echo "  Prefer: upload --slugs SLUG --replace" >&2
+      echo "  Override: upload --all --replace --force-replace-all" >&2
+      exit 2
+    fi
     ensure_chrome "${CDP_PORT}" "${PROFILE_SUFFIX}"
     remote_py scripts/cortex/upload_claude_bundles_ui.py "$@"
     ;;

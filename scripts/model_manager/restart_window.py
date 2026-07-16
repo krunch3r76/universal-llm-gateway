@@ -16,8 +16,12 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from scripts.model_manager.ui.controller.restart_intent_store import RestartIntentStore
-from scripts.model_manager.ui.controller.restart_window_store import window_status_view
+from scripts.model_manager.ui.controller.restart_intent_store import (  # noqa: E402
+    RestartIntentStore,
+)
+from scripts.model_manager.ui.controller.restart_window_store import (  # noqa: E402
+    window_status_view,
+)
 
 
 def _dump(*, pretty: bool) -> int:

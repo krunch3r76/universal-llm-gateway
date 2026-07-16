@@ -14,8 +14,10 @@ On Jupiter (or via claude-ai-sync-jupiter wrapper):
   python scripts/cortex/upload_claude_bundles_ui.py --status
   python scripts/cortex/upload_claude_bundles_ui.py --preflight
   python scripts/cortex/upload_claude_bundles_ui.py --slugs SLUG --continue-on-error
+  python scripts/cortex/upload_claude_bundles_ui.py --slugs SLUG --replace --continue-on-error
   python scripts/cortex/upload_claude_bundles_ui.py --all --continue-on-error
-  python scripts/cortex/upload_claude_bundles_ui.py --all --replace --continue-on-error
+  # Fleet-wide re-upload is NEVER default — requires --force-replace-all:
+  # python scripts/cortex/upload_claude_bundles_ui.py --all --replace --force-replace-all
 
 Skills API (--api on upload_claude_bundles.py) does **not** populate this UI.
 """
@@ -52,6 +54,7 @@ from claude_bundles.skills_ui_status import (  # noqa: E402
     scan_ui_parity,
 )
 from claude_bundles.skills_ui_uninstall import uninstall_skills  # noqa: E402
+from claude_bundles.upload_safety import reject_unsafe_replace_all  # noqa: E402
 
 logger = get_logger(__name__)
 
@@ -124,7 +127,18 @@ def main() -> int:
     parser.add_argument(
         "--replace",
         action="store_true",
-        help="Re-upload skills already in the table (default: upload NEW slugs only)",
+        help=(
+            "Re-upload skills already in the table (default: upload NEW slugs only). "
+            "Prefer --slugs SLUG --replace. Combined with --all requires --force-replace-all."
+        ),
+    )
+    parser.add_argument(
+        "--force-replace-all",
+        action="store_true",
+        help=(
+            "Required confirmation when pairing --all with --replace "
+            "(fleet-wide re-upload). Without this flag, --all --replace is refused."
+        ),
     )
     parser.add_argument(
         "--skip-existing",
@@ -218,6 +232,14 @@ def main() -> int:
         parser.error("Use --zip-dir OR --bundles-dir, not both")
     if not args.all and not args.slugs and not args.zip_dir:
         parser.error("Specify --all, --slugs, or --zip-dir")
+    reject_unsafe_replace_all(
+        all_=args.all,
+        replace=args.replace,
+        force=args.force_replace_all,
+        error=parser.error,
+    )
+    if args.force_replace_all and not (args.all and args.replace):
+        parser.error("--force-replace-all is only valid with --all --replace")
 
     if args.strict:
         args.skip_invalid = True
