@@ -125,8 +125,18 @@ if [[ "${PROFILE}" != "${PRIMARY}" && ! -d "${PROFILE}/Default" ]]; then
     "${PRIMARY}/" "${PROFILE}/" || true
 fi
 
-# Do NOT pkill other ports — parallel seats may own :9222.
-pkill -f "remote-debugging-port=${PORT}" 2>/dev/null || true
+# Fail-closed if this profile lane is ACTIVELY leased (flock held by a live
+# holder). Relaunching would kill an active session — the exact hazard the
+# lane allocator exists to prevent (Fable adjudication, thread 4917).
+LANE_LOCK="${HOME}/.gateway/cdp-lanes/${SUFFIX}.lock"
+if [[ -n "${SUFFIX}" && -e "${LANE_LOCK}" ]] && ! flock -n "${LANE_LOCK}" true 2>/dev/null; then
+  echo "error: profile '${SUFFIX}' is actively leased (${LANE_LOCK}) — refusing to relaunch an active lane" >&2
+  exit 3
+fi
+# Kill ONLY the exact listener on this port (never a broad -f substring, which
+# is one accident away from killing the wrong Chrome). Do NOT touch other ports.
+LISTENER_PID="$(ss -ltnpH "sport = :${PORT}" 2>/dev/null | grep -oP 'pid=\K[0-9]+' | head -n1)"
+[[ -n "${LISTENER_PID}" ]] && kill "${LISTENER_PID}" 2>/dev/null || true
 sleep 1
 DISPLAY=:1 nohup google-chrome \
   --remote-debugging-port="${PORT}" \
@@ -220,15 +230,25 @@ case "$cmd" in
     remote_py scripts/cortex/cowork_project_chrome.py "$@"
     ;;
   project-ask)
-    ensure_chrome "${CDP_PORT}" "${PROFILE_SUFFIX}"
+    # --intent collapses the two-call handoff (thread 4917 F1): the single
+    # Jupiter python process acquires a non-overlapping (profile, port) lane and
+    # holds the flock for its whole run. Do NOT pre-launch via ensure_chrome and
+    # do NOT inject --cdp-url — the allocator owns port selection.
+    has_intent=0
     has_cdp=0
     for a in "$@"; do
+      [[ "$a" == "--intent" ]] && has_intent=1
       [[ "$a" == "--cdp-url" ]] && has_cdp=1
     done
-    if [[ "${has_cdp}" -eq 0 ]]; then
-      remote_py scripts/cortex/cowork_project_ask.py --cdp-url "http://127.0.0.1:${CDP_PORT}" "$@"
-    else
+    if [[ "${has_intent}" -eq 1 ]]; then
       remote_py scripts/cortex/cowork_project_ask.py "$@"
+    else
+      ensure_chrome "${CDP_PORT}" "${PROFILE_SUFFIX}"
+      if [[ "${has_cdp}" -eq 0 ]]; then
+        remote_py scripts/cortex/cowork_project_ask.py --cdp-url "http://127.0.0.1:${CDP_PORT}" "$@"
+      else
+        remote_py scripts/cortex/cowork_project_ask.py "$@"
+      fi
     fi
     ;;
   -h|--help|help|'') usage 0 ;;

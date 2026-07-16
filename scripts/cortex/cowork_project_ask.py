@@ -28,6 +28,7 @@ _REPO = Path(__file__).resolve().parent.parent.parent
 if str(_REPO / "libs") not in sys.path:
     sys.path.insert(0, str(_REPO / "libs"))
 
+from claude_bundles import cdp_lane  # noqa: E402
 from claude_bundles.project_ask import run_project_ask  # noqa: E402
 from claude_bundles.project_ask_conversation import (  # noqa: E402
     run_project_conversation,
@@ -38,6 +39,27 @@ from claude_bundles.skills_ui_panel import DEFAULT_CDP_URL  # noqa: E402
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cdp-url", default=DEFAULT_CDP_URL)
+    parser.add_argument(
+        "--intent",
+        default="",
+        help=(
+            "Acquire a lane by intent (ask|fable|opus|…) instead of a fixed "
+            "--cdp-url: the allocator picks a non-overlapping (profile, port) "
+            "and holds it for this process. Overrides --cdp-url."
+        ),
+    )
+    parser.add_argument(
+        "--fresh-profile",
+        action="store_true",
+        help="With --intent: mint a fresh clone profile (escape hatch) rather "
+        "than queueing on the canonical one.",
+    )
+    parser.add_argument(
+        "--queue-timeout-s",
+        type=float,
+        default=120.0,
+        help="With --intent: seconds to wait for an actively-leased profile.",
+    )
     parser.add_argument(
         "--uuid",
         default="",
@@ -95,11 +117,37 @@ def main(argv: list[str] | None = None) -> int:
         help="Write turn-N.md bodies (converse mode)",
     )
     parser.add_argument("--ledger", default="", help="Write JSON ledger to path")
-    parser.add_argument("--timeout-s", type=int, default=360)
+    parser.add_argument(
+        "--timeout-s",
+        type=int,
+        default=360,
+        help=(
+            "Idle completion budget in seconds (default 360; converse floors "
+            "at 600). While Stop/streaming/tool_pause is present the idle "
+            "clock pauses — no wall ceiling for long Cowork tool-runs (24666)."
+        ),
+    )
     parser.add_argument("--min-body", type=int, default=40)
     parser.add_argument("--min-growth", type=int, default=50)
     args = parser.parse_args(argv)
 
+    if args.intent:
+        with cdp_lane.acquire_lane(
+            args.intent,
+            fresh=args.fresh_profile,
+            queue_timeout_s=args.queue_timeout_s,
+        ) as lane:
+            args.cdp_url = lane.cdp_url
+            print(
+                f"lane: intent={lane.intent} suffix={lane.suffix} "
+                f"port={lane.port} reused={lane.reused}",
+                flush=True,
+            )
+            return _dispatch(args, parser)
+    return _dispatch(args, parser)
+
+
+def _dispatch(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     prompts: list[str] = []
     for path in args.prompt_file:
         prompts.append(Path(path).read_text(encoding="utf-8"))
