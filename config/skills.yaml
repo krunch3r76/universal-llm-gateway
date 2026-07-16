@@ -138,6 +138,9 @@ skills:
   entity-lifecycle-discipline:
     surface_class: shared_sync
     mcp_surface_required: none
+  external-prose-decompose-recompose:
+    surface_class: shared_sync
+    mcp_surface_required: none
   evidence-review-discipline:
     surface_class: shared_sync
     mcp_surface_required: none
@@ -184,6 +187,9 @@ skills:
     surface_class: cursor_only
     mcp_surface_required: none
   jupiter-browser-via-mcp:
+    surface_class: cursor_only
+    mcp_surface_required: none
+  jupiter-dgpu-display-blank:
     surface_class: cursor_only
     mcp_surface_required: none
   journal-digest:

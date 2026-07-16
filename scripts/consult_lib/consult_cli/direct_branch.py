@@ -113,6 +113,7 @@ def _run_direct_branch(
             pipeline_options=getattr(args, "pipeline_options_parsed", None),
             require_warm=bool(getattr(args, "require_warm", False)),
             fallback_models=getattr(args, "fallback", None),
+            deadline=getattr(args, "deadline", None),
         )
     except (ValueError, RuntimeError) as exc:
         _fail_direct(

@@ -128,7 +128,24 @@ def _build_parser(role_prompts: dict[str, str]) -> argparse.ArgumentParser:
         help="With --no-rag-pipeline: number of chunks to retrieve (default 5)",
     )
     parser.add_argument(
-        "--timeout", type=float, default=300.0, help="Per-model timeout in seconds"
+        "--timeout",
+        type=float,
+        default=300.0,
+        help=(
+            "Direct path: no-progress step budget in seconds (default 300). "
+            "While admission shows queue/loading, the budget resets; "
+            "hard ceiling is --deadline."
+        ),
+    )
+    parser.add_argument(
+        "--deadline",
+        type=float,
+        default=None,
+        metavar="SECONDS",
+        help=(
+            "Direct path: hard wall-clock ceiling for a consult POST "
+            "(default max(--timeout, 900)). Covers queue wait + cold-load + decode."
+        ),
     )
     parser.add_argument(
         "--require-warm",

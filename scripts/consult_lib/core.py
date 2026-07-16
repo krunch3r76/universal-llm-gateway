@@ -271,6 +271,7 @@ def execute_consult(
     pipeline_options: dict[str, Any] | None = None,
     require_warm: bool = False,
     fallback_models: list[str] | None = None,
+    deadline: float | None = None,
 ) -> list[ConsultResult]:
     """Execute a consultation against one or more models.
 
@@ -288,7 +289,7 @@ def execute_consult(
         no_rag: Disable RAG retrieval entirely.
         use_rag_pipeline: Use rag-context pipeline (True) or direct search (False).
         rag_top_k: When using direct RAG search, number of chunks to request (default 5).
-        timeout: Per-model timeout in seconds.
+        timeout: Per-model no-progress step budget in seconds (direct path).
         chain_directive: Custom reviewer directive for chained mode.
         cloud_only: Restrict to cloud models only.
         pipeline_options: Extra pipeline_options merged into Stargate requests.
@@ -297,6 +298,8 @@ def execute_consult(
             local seats; try ``fallback_models`` first. Use for latency-sensitive
             one-shots that must not hang on GGUF cold-load.
         fallback_models: Ordered warm-seat substitutes when ``require_warm``.
+        deadline: Hard wall-clock ceiling for direct-path POSTs (seconds).
+            None derives max(timeout, 900). Pipeline path ignores this.
 
     Returns:
         List of ConsultResult, one per model queried.
@@ -410,6 +413,7 @@ def execute_consult(
             chain_directive=chain_directive,
             require_warm=require_warm,
             fallback_models=fallback_models,
+            deadline=deadline,
         )
     else:
         raw_results = query_parallel(
@@ -420,6 +424,7 @@ def execute_consult(
             timeout=timeout,
             require_warm=require_warm,
             fallback_models=fallback_models,
+            deadline=deadline,
         )
 
     results = [_dict_to_result(r) for r in raw_results]

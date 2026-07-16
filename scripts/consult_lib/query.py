@@ -11,6 +11,7 @@ from typing import Any
 import httpx
 
 from .constants import DEFAULT_CHAIN_DIRECTIVE, MAX_PRIOR_CHARS
+from .progress import ProgressAbortError, post_with_progress
 from .readiness import resolve_ready_model
 
 
@@ -55,6 +56,7 @@ def query_model(
     *,
     require_warm: bool = False,
     fallback_models: list[str] | None = None,
+    deadline: float | None = None,
 ) -> dict[str, Any]:
     """Send consultation to a single model.
 
@@ -62,6 +64,9 @@ def query_model(
     ``GET /v1/models/{id}?include_status=true`` first and refuses
     cold/loading seats (trying ``fallback_models`` if provided) so
     latency-sensitive one-shots do not hang on GGUF cold-load.
+
+    ``timeout`` is the no-progress step budget. ``deadline`` is the hard
+    wall-clock ceiling (defaults via progress.derive_deadline).
     """
     ready = resolve_ready_model(
         model_id,
@@ -81,8 +86,15 @@ def query_model(
         "temperature": 0.4,
     }
     start = time.monotonic()
-    with httpx.Client(timeout=timeout) as client:
-        resp = client.post(url, json=body, params={"disable_profile": "true"})
+    resp = post_with_progress(
+        url,
+        body,
+        model_id=selected,
+        stargate_url=stargate_url,
+        step_budget=timeout,
+        deadline=deadline,
+        params={"disable_profile": "true"},
+    )
     elapsed_ms = (time.monotonic() - start) * 1000
     resp.raise_for_status()
     data = resp.json()
@@ -131,6 +143,7 @@ def query_chain(
     *,
     require_warm: bool = False,
     fallback_models: list[str] | None = None,
+    deadline: float | None = None,
 ) -> list[dict[str, Any]]:
     """Query models sequentially, each reviewing prior output.
 
@@ -158,7 +171,8 @@ def query_chain(
             prompt = user_prompt
         phase = "analyst" if idx == 0 else "reviewer"
         print(
-            f"  Phase {idx + 1} ({phase}): {mid} (timeout={timeout:.0f}s)...",
+            f"  Phase {idx + 1} ({phase}): {mid} "
+            f"(step_budget={timeout:.0f}s)...",
             file=sys.stderr,
         )
         phase_started = time.time()
@@ -172,9 +186,10 @@ def query_chain(
                 timeout,
                 require_warm=require_warm,
                 fallback_models=fallback_models,
+                deadline=deadline,
             )
             result["phase"] = phase
-        except httpx.TimeoutException as exc:
+        except (httpx.TimeoutException, ProgressAbortError) as exc:
             elapsed = time.monotonic() - call_start
             error_msg = f"timeout after {elapsed:.0f}s: {exc}"
             result = {"model_id": mid, "error": error_msg, "phase": phase}
@@ -218,6 +233,7 @@ def query_parallel(
     *,
     require_warm: bool = False,
     fallback_models: list[str] | None = None,
+    deadline: float | None = None,
 ) -> list[dict[str, Any]]:
     """Query models in parallel, return results in original order."""
     results: list[dict[str, Any]] = []
@@ -232,6 +248,7 @@ def query_parallel(
                 timeout=timeout,
                 require_warm=require_warm,
                 fallback_models=fallback_models,
+                deadline=deadline,
             ): mid
             for mid in models
         }

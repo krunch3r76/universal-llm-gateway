@@ -71,6 +71,9 @@ def _attest_model(requested: str, state: dict[str, Any], selected: dict[str, Any
         raise RuntimeError(f"model attestation mismatch: wanted fable, got {label!r}")
     if req.startswith("opus") and not re.search(r"opus", label, re.I):
         raise RuntimeError(f"model attestation mismatch: wanted opus, got {label!r}")
+    # opus-extra / prefer_extra path must not accept High as success (friction 24592).
+    if "extra" in req and not re.search(r"Extra", label, re.I):
+        raise RuntimeError(f"model attestation mismatch: wanted Opus Extra, got {label!r}")
     return label
 
 
