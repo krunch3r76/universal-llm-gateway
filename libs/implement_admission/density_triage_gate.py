@@ -6,7 +6,7 @@ _TRIAGE_EFFECTS: tuple[tuple[str, str], ...] = (
     ("mechanical", "bypass implement-ready gates"),
     (
         "judgment_required",
-        "skeptic ratification + implement_ready assertion required",
+        "implement_ready assertion required; axis-2 check optional (path_sim_self_certify waiver or skeptic_ratified)",
     ),
     ("recon_pending", "blocked until re-triage after two-axis recon"),
 )

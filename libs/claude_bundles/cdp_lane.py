@@ -17,8 +17,10 @@ Enforcement invariants (each proven by a kernel experiment in the consult):
   * O_CLOEXEC on the lock fd so a detached Chrome never inherits the lease
   * Chrome (the resource) is detached and survives as a warm dangling lane;
     nothing that speaks CDP is ever detached — drivers die with the holder
-  * acquisition is one process: alloc.lock -> profile flock -> attest/launch ->
-    write metadata -> drop alloc.lock -> run -> exit (releases the profile flock)
+  * acquisition is one process: alloc.lock -> (fresh: NB-claim suffix+profile
+    flock, retry next -N) OR (canonical: profile flock queue OUTSIDE alloc.lock)
+    -> attest/launch under alloc.lock -> write metadata -> drop alloc.lock ->
+    run -> exit (releases the profile flock)
 
 Events are advisory over this flock SOT; a crashed holder emits no release, so
 consumers treat a missing release as UNKNOWN and re-probe ground truth.
@@ -184,6 +186,17 @@ def _alloc_lock() -> Iterator[None]:
         os.close(fd)
 
 
+def _try_profile_lock_nb(suffix: str) -> int | None:
+    """Non-blocking profile flock; returns fd on success, None if actively held."""
+    fd = _open_lock(lock_path_for(suffix))
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return fd
+    except OSError:
+        os.close(fd)
+        return None
+
+
 def _try_profile_lock(suffix: str, *, queue_timeout_s: float) -> int:
     """Acquire the profile flock (LOCK_EX|LOCK_NB), queueing until timeout."""
     fd = _open_lock(lock_path_for(suffix))
@@ -197,9 +210,49 @@ def _try_profile_lock(suffix: str, *, queue_timeout_s: float) -> int:
                 os.close(fd)
                 raise LaneBusyError(
                     f"profile '{suffix}' is actively leased "
-                    f"(queue timeout {queue_timeout_s}s)"
+                    f"(queue timeout {queue_timeout_s}s); "
+                    f"for a parallel lane use --fresh-profile"
                 ) from None
             time.sleep(0.5)
+
+
+def _claim_fresh_profile_lock(intent: str) -> tuple[int, str]:
+    """Claim a fresh clone suffix under ``alloc.lock`` (caller must hold it).
+
+    NB-acquires the profile flock and advances to the next ``-N`` index when the
+    chosen suffix is already leased — prevents concurrent fresh callers from
+    colliding on the same lowest free index (a:24854 / web review A1).
+    """
+    base = INTENT_SUFFIX.get(intent, intent)
+    if not base or "/" in base or base.startswith("."):
+        raise LaneError(f"invalid intent/suffix: {intent!r}")
+    taken = held_suffixes()
+    n = 2
+    for _ in range(512):
+        while f"{base}-{n}" in taken:
+            n += 1
+        suffix = f"{base}-{n}"
+        fd = _try_profile_lock_nb(suffix)
+        if fd is not None:
+            return fd, suffix
+        taken.add(suffix)
+        n += 1
+    raise LaneError(f"no free fresh profile for intent {intent!r}")
+
+
+def _allocate_port_for_profile(
+    suffix: str, profile: Path, *, launch: bool
+) -> tuple[int, bool]:
+    existing = chrome_port_for_profile(profile)
+    if existing is not None:
+        return existing, True
+    if not launch:
+        raise LaneError(
+            f"no live Chrome for profile '{suffix}' and launch=False"
+        )
+    port = select_free_port(is_listening, exclude=set(held_ports()))
+    _launch_chrome(port, profile)
+    return port, False
 
 
 def held_suffixes() -> set[str]:
@@ -298,32 +351,43 @@ def acquire_lane(
     is precisely the "active" lifetime. Chrome is left running on exit so the
     lane degrades to a reusable *dangling* state.
     """
-    suffix = resolve_suffix(intent, fresh=fresh, taken=held_suffixes())
-    profile = profile_for(suffix)
-    lock_fd = _try_profile_lock(suffix, queue_timeout_s=queue_timeout_s)
+    lock_fd = -1
     try:
-        with _alloc_lock():
-            existing = chrome_port_for_profile(profile)
-            if existing is not None:
-                port, reused = existing, True
-            elif launch:
-                port = select_free_port(is_listening, exclude=set(held_ports()))
-                _launch_chrome(port, profile)
-                reused = False
-            else:
-                raise LaneError(
-                    f"no live Chrome for profile '{suffix}' and launch=False"
+        if fresh:
+            with _alloc_lock():
+                lock_fd, suffix = _claim_fresh_profile_lock(intent)
+                profile = profile_for(suffix)
+                port, reused = _allocate_port_for_profile(
+                    suffix, profile, launch=launch
                 )
-            _write_metadata(
-                lock_fd,
-                {
-                    "suffix": suffix,
-                    "intent": intent,
-                    "port": port,
-                    "pid": os.getpid(),
-                    "started_at": time.time(),
-                },
-            )
+                _write_metadata(
+                    lock_fd,
+                    {
+                        "suffix": suffix,
+                        "intent": intent,
+                        "port": port,
+                        "pid": os.getpid(),
+                        "started_at": time.time(),
+                    },
+                )
+        else:
+            suffix = resolve_suffix(intent, fresh=False, taken=held_suffixes())
+            profile = profile_for(suffix)
+            lock_fd = _try_profile_lock(suffix, queue_timeout_s=queue_timeout_s)
+            with _alloc_lock():
+                port, reused = _allocate_port_for_profile(
+                    suffix, profile, launch=launch
+                )
+                _write_metadata(
+                    lock_fd,
+                    {
+                        "suffix": suffix,
+                        "intent": intent,
+                        "port": port,
+                        "pid": os.getpid(),
+                        "started_at": time.time(),
+                    },
+                )
         info = LaneInfo(
             intent=intent,
             suffix=suffix,
@@ -338,9 +402,10 @@ def acquire_lane(
         finally:
             _emit("cdp.lane.released", info)
     finally:
-        # LOCK_UN + close: the profile returns to dangling; Chrome stays warm.
-        fcntl.flock(lock_fd, fcntl.LOCK_UN)
-        os.close(lock_fd)
+        if lock_fd >= 0:
+            # LOCK_UN + close: the profile returns to dangling; Chrome stays warm.
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            os.close(lock_fd)
 
 
 def held_ports() -> list[int]:

@@ -14,6 +14,10 @@ Examples:
     --converse --no-uuid --model fable-5 \\
     --prompt-file t1.md --prompt-file t2.md --prompt-file t3.md \\
     --out-dir /mnt/torus/mcp-data/files/notes/system/threads/4917-fable-review/
+
+On converse success the CLI prints JSON plus `turn_N_chat_url=…` per turn.
+When `--out-dir` is omitted, bodies live in stdout JSON only — see
+agent_skill:claude-ai-cdp-navigation § Post-converse recovery.
 """
 
 from __future__ import annotations
@@ -190,6 +194,9 @@ def _dispatch(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
             ],
         }
         print(json.dumps(summary, indent=2))
+        for i, r in enumerate(results, start=1):
+            if r.ok and r.url:
+                print(f"turn_{i}_chat_url={r.url}", flush=True)
         if args.out_dir:
             out_dir = Path(args.out_dir)
             out_dir.mkdir(parents=True, exist_ok=True)
@@ -197,6 +204,14 @@ def _dispatch(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
                 (out_dir / f"turn-{i}.md").write_text(
                     (r.body or "") + "\n", encoding="utf-8"
                 )
+        elif summary["ok"]:
+            print(
+                "hint: converse bodies are in stdout JSON "
+                "(results[].body_preview); pass --out-dir or --ledger for "
+                "durable files (agent_skill:claude-ai-cdp-navigation "
+                "§ Post-converse recovery)",
+                flush=True,
+            )
         if args.ledger:
             led = Path(args.ledger)
             led.parent.mkdir(parents=True, exist_ok=True)

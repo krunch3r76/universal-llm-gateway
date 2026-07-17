@@ -357,6 +357,9 @@ skills:
   w2-ingestion:
     surface_class: cursor_only
     mcp_surface_required: none
+  web-anthropic-canvas-dialogue:
+    surface_class: cursor_only
+    mcp_surface_required: code
   web-generate-substrate:
     surface_class: cursor_only
     mcp_surface_required: none

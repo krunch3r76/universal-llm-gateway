@@ -12,6 +12,7 @@ RECON_WAIVE_REASON_CODES = frozenset(
         "ratified_on_prior_spec_revision",
         "design_pre_adjudicated",
         "operator_directive",
+        "path_sim_self_certify",
     }
 )
 
