@@ -8,6 +8,7 @@ from universal_event_bus import Event, event_factory
 from .routing_signal_constants_eviction_hysteresis import (
     EVICTION_COOLDOWN_APPLIED,
     EVICTION_COOLDOWN_BLOCKED,
+    EVICTION_COOLDOWN_OVERRIDDEN,
     EVICTION_DEMAND_APPLIED,
     ROUTING_EVICTION_EXECUTE_FAILED,
 )
@@ -79,6 +80,29 @@ def EvictionDemandApplied(
             "gateway_id": gateway_id,
             "protected_count": protected_count,
             "waiter_counts": waiter_counts,
+            "timestamp": timestamp,
+        },
+    )
+
+
+@event_factory
+def EvictionCooldownOverridden(
+    model: str,
+    node: str,
+    remaining_s: float,
+    requester: str,
+    gateway_id: str,
+    timestamp: float,
+) -> Event:
+    """Emit when required eviction overrides cooldown for the selected victim."""
+    return Event(
+        signal=EVICTION_COOLDOWN_OVERRIDDEN,
+        payload={
+            "model": model,
+            "node": node,
+            "remaining_s": remaining_s,
+            "requester": requester,
+            "gateway_id": gateway_id,
             "timestamp": timestamp,
         },
     )

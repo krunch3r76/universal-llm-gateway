@@ -1,0 +1,11 @@
+# Example M365 account registry for headless export (non-secret shape).
+# Copy to ~/.gateway/m365_accounts.yaml and fill mailbox UPNs.
+#
+# Credentials are NOT stored here — use env vars (see m365-export.env.example):
+#   AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET
+
+accounts:
+  kaywan@askapharmd.me:
+    tenant_hint: askapharmd
+    fetch_path: headless_export
+    notes: "AskAPharmD M365 — headless Graph export only (not on email-bridge)"

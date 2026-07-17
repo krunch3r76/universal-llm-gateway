@@ -53,6 +53,20 @@ Payload: {
 }
 """
 
+EVICTION_COOLDOWN_OVERRIDDEN = "scheduler.eviction.cooldown.overridden"
+"""
+Required eviction overrode cooldown protection for a selected victim.
+
+Payload: {
+    "model": str,
+    "node": str,
+    "remaining_s": float,
+    "requester": str,
+    "gateway_id": str,
+    "timestamp": float
+}
+"""
+
 ROUTING_EVICTION_EXECUTE_FAILED = "routing.eviction.execute.failed"
 """
 Eviction execution failed at T2 finalize after admission.

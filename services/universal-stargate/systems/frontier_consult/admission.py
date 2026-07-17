@@ -26,6 +26,7 @@ from agent_seat.profiles import (
 from agent_seat.registry import normalize_agent_slug, normalize_bus_address
 from model_capabilities import CapabilityCardError
 from model_id import ModelId
+from model_id.model_id import ROUTING_PREFIXES
 from transport_utils import DEFAULT_AGENT_BUS_URL, make_async_client
 
 from .events import DispatchCapabilityCardMissing, FrontierEndpointRejected
@@ -134,6 +135,9 @@ def is_chat_completions_only(model: str) -> bool:
     if model in _CHAT_COMPLETIONS_ONLY_MODELS:
         return True
     mid = ModelId.parse(model)
+    routing_layer = mid.routing_layer
+    if routing_layer is not None and routing_layer in ROUTING_PREFIXES:
+        return True
     return mid.provider == "openai" and mid.base_id.endswith("-search-api")
 
 

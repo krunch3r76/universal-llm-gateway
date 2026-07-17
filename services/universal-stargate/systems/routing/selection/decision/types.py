@@ -94,6 +94,9 @@ class EvictionPlanSummary:
     escape_reason: str | None = None
     escape_cooldown_remaining_s: float | None = None
     escape_model_id: str | None = None
+    cooldown_override_pending: bool = False
+    cooldown_override_victim_id: str | None = None
+    cooldown_override_remaining_s: float | None = None
 
 
 @dataclass(frozen=True, kw_only=True)

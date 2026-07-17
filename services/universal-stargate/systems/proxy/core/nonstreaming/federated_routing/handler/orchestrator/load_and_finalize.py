@@ -14,6 +14,7 @@ from universal_protocol import ErrorCode
 
 from ....selection_errors import (
     raise_capacity_error,
+    raise_eviction_blocked_error,
     raise_eviction_failed_error,
 )
 from ...wait_logic import _wait_and_retry_selection
@@ -74,7 +75,11 @@ async def finalize_selection_and_load(
     try:
         from systems.routing.selection.decision import FeasibilityTier
 
-        from ....eviction_execution import execute_master_eviction
+        from .eviction_execution import (
+            MasterEvictionOutcome,
+            execute_master_eviction,
+            result_to_error_data,
+        )
 
         selected_candidate = (
             next(
@@ -142,15 +147,23 @@ async def finalize_selection_and_load(
                 )
 
         if trace.selection_tier == FeasibilityTier.T2_FEASIBLE_EVICT:
-            eviction_ok = await execute_master_eviction(
+            eviction_result = await execute_master_eviction(
                 federation_forwarder=federation_forwarder,
                 federated_manager=federated_manager,
                 selected_gateway=selected_gateway,
                 trace=trace,
                 request_id=context.request_id,
                 event_bus=event_bus,
+                eviction_cooldown_s=eviction_cooldown_s,
             )
-            if not eviction_ok:
+            if eviction_result.outcome == MasterEvictionOutcome.BLOCKED:
+                raise_eviction_blocked_error(
+                    str(model_id),
+                    selected_gateway.name,
+                    error_data=result_to_error_data(eviction_result),
+                    gateway_url=selected_gateway.ref.remote_stargate_url,
+                )
+            if eviction_result.outcome == MasterEvictionOutcome.EXECUTION_FAILED:
                 if event_bus:
                     from src.scheduling.events.routing import (
                         RoutingEvictionExecuteFailed,

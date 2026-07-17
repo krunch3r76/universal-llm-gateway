@@ -279,3 +279,34 @@ def raise_eviction_failed_error(
             data=error_data,
         ),
     )
+
+
+def raise_eviction_blocked_error(
+    model_id: str,
+    gateway_name: str,
+    *,
+    error_data: dict[str, Any],
+    gateway_url: str | None = None,
+) -> None:
+    """Raise structured transient failure when eviction is blocked before load dispatch."""
+    payload = {
+        "model_id": str(model_id),
+        "gateway": gateway_name,
+        **error_data,
+        **({"gateway_url": gateway_url} if gateway_url else {}),
+    }
+    retryable = error_data.get("verdict_class") != "insufficient_structural"
+    message = (
+        f"Eviction blocked on {gateway_name}, cannot load {model_id}: "
+        f"{error_data.get('reason', 'blocked')}"
+    )
+    raise HTTPException(
+        status_code=get_http_status(ErrorCode.RESOURCE_UNAVAILABLE),
+        detail=error_envelope(
+            code=ErrorCode.RESOURCE_UNAVAILABLE,
+            message=message,
+            source="master",
+            retryable=retryable,
+            data=payload,
+        ),
+    )

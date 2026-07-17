@@ -21,6 +21,7 @@ from .routing_factories_decisions_overflow import (
 from .routing_factories_eviction_hysteresis import (
     EvictionCooldownApplied,
     EvictionCooldownBlocked,
+    EvictionCooldownOverridden,
     EvictionDemandApplied,
     RoutingEvictionExecuteFailed,
 )
@@ -70,6 +71,7 @@ from .routing_signal_constants_decisions import (
 from .routing_signal_constants_eviction_hysteresis import (
     EVICTION_COOLDOWN_APPLIED,
     EVICTION_COOLDOWN_BLOCKED,
+    EVICTION_COOLDOWN_OVERRIDDEN,
     EVICTION_DEMAND_APPLIED,
     ROUTING_EVICTION_EXECUTE_FAILED,
 )
@@ -103,6 +105,7 @@ from .routing_signal_constants_routing_waits import (
 __all__ = [
     "EVICTION_COOLDOWN_APPLIED",
     "EVICTION_COOLDOWN_BLOCKED",
+    "EVICTION_COOLDOWN_OVERRIDDEN",
     "EVICTION_DEMAND_APPLIED",
     "GATEWAY_PHANTOM_MODEL_CLEANED",
     "GATEWAY_PHANTOM_MODEL_DETECTED",
@@ -140,6 +143,7 @@ __all__ = [
     "TOKEN_COUNT_PRECONDITION",
     "EvictionCooldownApplied",
     "EvictionCooldownBlocked",
+    "EvictionCooldownOverridden",
     "EvictionDemandApplied",
     "ModelCapacityOverflowAssigned",
     "ModelLoadCompleted",

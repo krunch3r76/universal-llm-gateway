@@ -19,7 +19,8 @@ from dataclasses import dataclass
 _CONTEXT_PATTERN = re.compile(r"-(\d{3,6})$")
 
 # Known routing layer prefixes — tell the system HOW to reach the provider
-_ROUTING_PREFIXES = frozenset({"openrouter"})
+ROUTING_PREFIXES = frozenset({"openrouter"})
+_ROUTING_PREFIXES = ROUTING_PREFIXES  # backward-compat alias for internal refs
 
 # Bare cloud id families (no ``provider/`` prefix) — first match wins.
 BARE_CLOUD_PREFIX_RULES: tuple[tuple[str, str], ...] = (

@@ -12,6 +12,12 @@ from typing import TYPE_CHECKING
 from model_id import ModelId
 from universal_logging import get_logger
 
+from .eviction_cooldown_policy import (
+    COOLDOWN_HARD_FLOOR_S,
+    EvictionRequestClass,
+    cooldown_override_eligible,
+    remaining_cooldown_s,
+)
 from .resource_checks import _compute_loading_reservation, resolve_gateway_requirements
 from .types import ConstraintFailure, EvictionPlanSummary
 
@@ -85,6 +91,7 @@ def _compute_eviction_plan(
     eviction_cooldown_s: float = 120.0,
     has_demand: Callable[[str], bool] | None = None,
     resource_margins: dict[str, float] | None = None,
+    eviction_request_class: EvictionRequestClass = EvictionRequestClass.REQUIRED,
 ) -> EvictionPlanSummary | None:
     """Compute an eviction plan that frees enough VRAM/RAM to load a model
     with full runtime headroom margins.
@@ -252,32 +259,70 @@ def _compute_eviction_plan(
             )
         evictable = still_evictable
 
-    # Escape hatch: if both filters emptied the list but candidates exist,
-    # evict the least-harmful candidate to prevent starvation.
+    # Escape hatch: demand starvation relief; cooldown override is class-gated.
     escape_hatch_used = False
     escape_reason: str | None = None
     escape_cooldown_remaining_s: float | None = None
     escape_model_id: str | None = None
+    cooldown_override_pending = False
+    cooldown_override_victim_id: str | None = None
+    cooldown_override_remaining_s: float | None = None
 
-    if not evictable and (cooldown_protected or demand_protected):
-        # Prefer demand-only protected (less disruptive), then oldest loaded
-        all_protected = demand_protected + sorted(
-            cooldown_protected,
+    if not evictable and demand_protected:
+        escape_candidate = sorted(
+            demand_protected,
             key=lambda m: gateway.model_loaded_at.get(m, 0.0),
-        )
-        escape_candidate = all_protected[0]
+        )[0]
         evictable = [escape_candidate]
         escape_hatch_used = True
-        escape_reason = "demand" if escape_candidate in demand_protected else "cooldown"
-        remaining_cooldown = eviction_cooldown_s - (
-            now - gateway.model_loaded_at.get(escape_candidate, 0.0)
-        )
-        escape_cooldown_remaining_s = max(0.0, remaining_cooldown)
+        escape_reason = "demand"
         escape_model_id = str(escape_candidate)
         logger.warning(
-            f"⚠️ Escape hatch: all candidates protected, evicting "
-            f"{escape_candidate} (reason={escape_reason}, "
-            f"cooldown_remaining={escape_cooldown_remaining_s:.1f}s)"
+            f"⚠️ Demand escape hatch: evicting {escape_candidate} on {gateway.name}"
+        )
+
+    if not evictable and cooldown_protected:
+        if eviction_request_class == EvictionRequestClass.OPPORTUNISTIC:
+            logger.info(
+                f"🛡️ Opportunistic eviction blocked: all idle candidates in cooldown "
+                f"on {gateway.name}"
+            )
+            return None
+
+        eligible = [
+            (
+                mid,
+                remaining_cooldown_s(gateway, mid, eviction_cooldown_s, now=now),
+            )
+            for mid in cooldown_protected
+        ]
+        eligible = [
+            (mid, rem)
+            for mid, rem in eligible
+            if cooldown_override_eligible(rem, hard_floor_s=COOLDOWN_HARD_FLOOR_S)
+        ]
+        if not eligible:
+            logger.info(
+                f"🛡️ Required eviction blocked: cooldown victims at/below "
+                f"{COOLDOWN_HARD_FLOOR_S}s floor on {gateway.name}"
+            )
+            return None
+
+        escape_candidate, remaining = sorted(
+            eligible,
+            key=lambda item: gateway.model_loaded_at.get(item[0], 0.0),
+        )[0]
+        evictable = [escape_candidate]
+        escape_hatch_used = True
+        escape_reason = "cooldown"
+        escape_cooldown_remaining_s = remaining
+        escape_model_id = str(escape_candidate)
+        cooldown_override_pending = True
+        cooldown_override_victim_id = str(escape_candidate)
+        cooldown_override_remaining_s = remaining
+        logger.warning(
+            f"⚠️ Required cooldown override planned for {escape_candidate} "
+            f"(remaining={remaining:.1f}s) on {gateway.name}"
         )
 
     if not evictable:
@@ -452,4 +497,7 @@ def _compute_eviction_plan(
         escape_reason=escape_reason,
         escape_cooldown_remaining_s=escape_cooldown_remaining_s,
         escape_model_id=escape_model_id,
+        cooldown_override_pending=cooldown_override_pending,
+        cooldown_override_victim_id=cooldown_override_victim_id,
+        cooldown_override_remaining_s=cooldown_override_remaining_s,
     )

@@ -11,11 +11,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .model_id import ModelId, infer_cloud_provider_from_bare
+from .model_id import ROUTING_PREFIXES, ModelId, infer_cloud_provider_from_bare
 
 # Direct native providers (see cloud-model-routing_ws.mdc).
 KNOWN_CLOUD_PROVIDERS = frozenset(
-    {"openai", "anthropic", "xai", "google", "openrouter", "chatgpt"}
+    {"openai", "anthropic", "xai", "google", "chatgpt"}
 )
 
 # Heuristic markers for local gateway model IDs (not cloud aliases).
@@ -76,6 +76,13 @@ def _looks_like_local_model_id(model_id: str) -> bool:
 
 def _validate_prefixed_id(model_id: str) -> WireModelResolution:
     parsed = ModelId.parse(model_id)
+    routing_layer = parsed.routing_layer
+    if routing_layer is not None and routing_layer in ROUTING_PREFIXES:
+        return WireModelResolution(
+            wire_id=model_id,
+            provider=routing_layer,
+            was_bare=False,
+        )
     if parsed.provider is None:
         raise WireModelResolutionError(
             model_id,

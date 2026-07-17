@@ -13,6 +13,10 @@ from model_id import ModelId
 from universal_logging import get_logger
 
 from .admission_verdict import AdmissionVerdict, evaluate_vram_admission
+from .eviction_cooldown_policy import (
+    DEFAULT_EVICTION_COOLDOWN_S,
+    EvictionRequestClass,
+)
 from .eviction_planning import _compute_eviction_plan
 from .model_checks import _is_model_available, _is_model_loaded
 from .resource_checks import (
@@ -131,8 +135,9 @@ def evaluate_feasibility(
     sticky: bool = True,
     routing_key_tracker: RoutingKeyTracker | None = None,
     is_gateway_available_fn: Callable[[str, str], bool] | None = None,
-    eviction_cooldown_s: float = 120.0,
+    eviction_cooldown_s: float = DEFAULT_EVICTION_COOLDOWN_S,
     has_demand: Callable[[str], bool] | None = None,
+    eviction_request_class: EvictionRequestClass = EvictionRequestClass.REQUIRED,
 ) -> tuple[
     FeasibilityTier,
     tuple[ConstraintFailure, ...],
@@ -169,6 +174,8 @@ def evaluate_feasibility(
         eviction_cooldown_s: Minimum seconds since load before a model is evictable.
         has_demand: Callback returning True when routing queue has waiters for a
             routing_key.
+        eviction_request_class: Required evictions may override cooldown above the
+            hard floor; opportunistic evictions honor cooldown as an absolute veto.
     """
     logger.info(
         f"🔍 Evaluating feasibility: {placement.model_id} on {gateway.name} "
@@ -293,6 +300,7 @@ def evaluate_feasibility(
                     eviction_cooldown_s=eviction_cooldown_s,
                     has_demand=has_demand,
                     resource_margins=policy.resource_margins,
+                    eviction_request_class=eviction_request_class,
                 )
                 if eviction_plan is not None:
                     logger.info(
@@ -330,6 +338,7 @@ def evaluate_feasibility(
         eviction_cooldown_s=eviction_cooldown_s,
         has_demand=has_demand,
         resource_margins=policy.resource_margins,
+        eviction_request_class=eviction_request_class,
     )
 
     if eviction_plan is None:
