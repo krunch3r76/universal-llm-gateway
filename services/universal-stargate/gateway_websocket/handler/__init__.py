@@ -9,6 +9,7 @@ from .model_loading import (
     ModelBusyHandler,
     ModelLoadedHandler,
     ModelLoadFailedHandler,
+    ModelLoadingProgressHandler,
     ModelLoadingStartedHandler,
 )
 from .query import QueryResponseHandler
@@ -34,6 +35,7 @@ __all__ = [
     "HandlerContext",
     "HandlerRegistry",
     "ModelLoadingStartedHandler",
+    "ModelLoadingProgressHandler",
     "ModelLoadedHandler",
     "ModelLoadFailedHandler",
     "ModelBusyHandler",

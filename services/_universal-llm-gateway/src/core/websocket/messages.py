@@ -12,6 +12,7 @@ class MessageType(StrEnum):
     # Gateway → Stargate (telemetry)
     INIT = "gateway.init"
     MODEL_LOADING_STARTED = "telemetry.model.loading.started"
+    MODEL_LOADING_PROGRESS = "telemetry.model.loading.progress"
     MODEL_LOADED = "telemetry.model.loaded"
     MODEL_LOAD_FAILED = "telemetry.model.loading.failed"
     MODEL_UNLOADED = "telemetry.model.unloaded"
@@ -81,6 +82,16 @@ def create_model_loading_started_message(model_id: str) -> WebSocketMessage:
     return WebSocketMessage(
         type=MessageType.MODEL_LOADING_STARTED,
         data={"model_id": model_id},
+    )
+
+
+def create_model_loading_progress_message(
+    model_id: str, phase: str, pct: int | float
+) -> WebSocketMessage:
+    """Create MODEL_LOADING_PROGRESS heartbeat message."""
+    return WebSocketMessage(
+        type=MessageType.MODEL_LOADING_PROGRESS,
+        data={"model_id": model_id, "phase": phase, "pct": pct},
     )
 
 

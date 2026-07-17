@@ -22,6 +22,16 @@ Payload:
     model_id: str - Unique identifier for the model being loaded
 """
 
+MODEL_LOADING_PROGRESS = "model.loading.progress"
+"""
+Emitted during active model load as a heartbeat (phase + pct).
+
+Payload:
+    model_id: str - Unique identifier for the model being loaded
+    phase: str - Stable load-phase label (non-empty)
+    pct: float - Completion percentage in [0, 100]
+"""
+
 MODEL_LOADED = "model.loaded"
 """
 Emitted when a model is engine-ready: the worker process is alive AND the
@@ -437,6 +447,20 @@ def ModelLoadingStarted(model_id: str) -> Event:
         Event with ModelLoadingStarted signal
     """
     return Event(signal=MODEL_LOADING_STARTED, payload={"model_id": model_id})
+
+
+@event_factory
+def ModelLoadingProgress(model_id: str, phase: str, pct: int | float) -> Event:
+    """Create MODEL_LOADING_PROGRESS heartbeat event."""
+    if not phase or not str(phase).strip():
+        raise ValueError("phase must be a non-empty string")
+    pct_value = float(pct)
+    if not 0.0 <= pct_value <= 100.0:
+        raise ValueError(f"pct must be in [0, 100], got {pct}")
+    return Event(
+        signal=MODEL_LOADING_PROGRESS,
+        payload={"model_id": model_id, "phase": str(phase), "pct": pct_value},
+    )
 
 
 @event_factory

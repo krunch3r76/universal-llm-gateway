@@ -22,9 +22,14 @@ def _get_resource_tracker():
 
 def _get_event_classes():
     """Lazily imports and returns the event classes for model loading."""
-    from src.core.events.types import ModelLoaded, ModelLoadFailed, ModelLoadingStarted
+    from src.core.events.types import (
+        ModelLoaded,
+        ModelLoadFailed,
+        ModelLoadingProgress,
+        ModelLoadingStarted,
+    )
 
-    return ModelLoadFailed, ModelLoaded, ModelLoadingStarted
+    return ModelLoadFailed, ModelLoaded, ModelLoadingProgress, ModelLoadingStarted
 
 
 async def _publish_event(event_bus, event) -> bool:
@@ -113,7 +118,7 @@ async def emit_loading_event(
     hardware VRAM/RAM at failure time. Forensics-only — snapshot capture
     failures degrade silently and never block event emission.
     """
-    model_load_failed, _, model_loading_started = _get_event_classes()
+    model_load_failed, _, _, model_loading_started = _get_event_classes()
     event_to_publish = None
     if status == "started":
         event_to_publish = model_loading_started(model_id=model_id)
@@ -130,6 +135,20 @@ async def emit_loading_event(
         )
     if event_to_publish:
         await _publish_event(controller.event_bus, event_to_publish)
+
+
+async def emit_loading_progress(
+    controller: "WorkerController",
+    model_id: str,
+    phase: str,
+    pct: int | float,
+) -> None:
+    """Publish model.loading.progress heartbeat during active load."""
+    _, _, model_loading_progress, _ = _get_event_classes()
+    await _publish_event(
+        controller.event_bus,
+        model_loading_progress(model_id=model_id, phase=phase, pct=pct),
+    )
 
 
 def reset_state_machine(model_id: str):
@@ -345,7 +364,7 @@ async def finalize_load(
             actual_ram = r
 
     resource_tracker.update_model_resources(model_id, actual_vram, actual_ram)
-    _, model_loaded, _ = _get_event_classes()
+    _, model_loaded, _, _ = _get_event_classes()
 
     await _publish_event(
         controller.event_bus,

@@ -57,6 +57,9 @@ class HandlerContext:
     schedule_model_loading_started: Callable[[str], None] = field(
         default=lambda m: None
     )
+    schedule_model_loading_progress: Callable[[str, str, int | float], None] = field(
+        default=lambda m, p, c: None
+    )
     schedule_model_loaded: Callable[[str, int, int], None] = field(
         default=lambda m, v, r: None
     )
@@ -76,6 +79,9 @@ class HandlerContext:
     # Callbacks (scheduled fire-and-forget, never awaited in handlers)
     # Global callbacks - called for ALL models
     on_model_loading_started: Callable[[str], Awaitable[None]] | None = None
+    on_model_loading_progress: (
+        Callable[[str, str, int | float], Awaitable[None]] | None
+    ) = None
     on_model_loaded: Callable[[str, dict[str, Any]], Awaitable[None]] | None = None
     on_model_unloaded: Callable[[str], Awaitable[None]] | None = None
     on_model_load_failed: (

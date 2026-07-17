@@ -200,6 +200,44 @@ class EventPublisher:
         except Exception as e:
             logger.warning(f"Failed to emit model.loading.started for {model_id}: {e}")
 
+    def schedule_model_loading_progress(
+        self, model_id: str, phase: str, pct: int | float
+    ) -> None:
+        """Schedule model.loading.progress heartbeat emission (non-blocking)."""
+        if self._event_bus is None:
+            return
+        asyncio.create_task(
+            self._publish_model_loading_progress(model_id, phase, pct),
+            name=f"model_loading_progress_{model_id}",
+        )
+
+    async def _publish_model_loading_progress(
+        self, model_id: str, phase: str, pct: int | float
+    ) -> None:
+        try:
+            from src.scheduling.events import ModelLoadingProgress
+
+            await self._event_bus.publish_nowait(
+                ModelLoadingProgress(
+                    url=ws_url_to_http(self._ws_url),
+                    model_id=model_id,
+                    phase=phase,
+                    pct=pct,
+                    gateway_name=self._gateway_name,
+                )
+            )
+            logger.debug(
+                "Emitted MODEL_LOADING_PROGRESS for %s on %s phase=%s pct=%s",
+                model_id,
+                self._gateway_name,
+                phase,
+                pct,
+            )
+        except Exception as e:
+            logger.warning(
+                f"Failed to emit model.loading.progress for {model_id}: {e}"
+            )
+
     def schedule_model_loaded(
         self,
         model_id: str,

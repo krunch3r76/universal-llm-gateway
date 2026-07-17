@@ -12,6 +12,7 @@ Signals:
     model.loaded — model available on gateway
     model.unloaded — model removed from gateway
     model.loading.started — model load in progress
+    model.loading.progress — load heartbeat (phase + pct)
     model.load.failed — model load failed
     model.loading.stuck — model load exceeded stuck TTL
     model.execution.started — one request started execution
@@ -53,6 +54,22 @@ Model loading started on gateway
 Payload: {
     "url": str,
     "model_id": str
+}
+"""
+
+MODEL_LOADING_PROGRESS = "model.loading.progress"
+"""
+Load progress heartbeat while model is actively loading.
+
+Node loader MUST emit at most every 15 seconds while loading.
+Required fields: phase (non-empty str), pct (0–100).
+
+Payload: {
+    "url": str,
+    "model_id": str,
+    "phase": str,
+    "pct": int | float,
+    "gateway_name": str | None,
 }
 """
 
@@ -321,6 +338,47 @@ def ModelLoadingStarted(url: str, model_id: str) -> Event:
     return Event(
         signal=MODEL_LOADING_STARTED,
         payload={"url": url, "model_id": model_id},
+        role="coordination",
+    )
+
+
+@event_factory
+def ModelLoadingProgress(
+    url: str,
+    model_id: str,
+    phase: str,
+    pct: int | float,
+    gateway_name: str | None = None,
+) -> Event:
+    """Create MODEL_LOADING_PROGRESS heartbeat event.
+
+    Args:
+        url: Gateway URL
+        model_id: Model being loaded
+        phase: Stable load-phase label (non-empty)
+        pct: Completion percentage in [0, 100]
+        gateway_name: Optional gateway name for correlation
+
+    Returns:
+        Event with MODEL_LOADING_PROGRESS signal.
+    """
+    if not phase or not str(phase).strip():
+        raise ValueError("phase must be a non-empty string")
+    pct_value = float(pct)
+    if not 0.0 <= pct_value <= 100.0:
+        raise ValueError(f"pct must be in [0, 100], got {pct}")
+
+    payload = {
+        "url": url,
+        "model_id": model_id,
+        "phase": str(phase),
+        "pct": pct_value,
+        "gateway_name": gateway_name,
+    }
+    payload = {k: v for k, v in payload.items() if v is not None}
+    return Event(
+        signal=MODEL_LOADING_PROGRESS,
+        payload=payload,
         role="coordination",
     )
 

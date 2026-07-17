@@ -1270,6 +1270,8 @@ class FederatedGatewayManager(Sequential):
             gw = self._apply_resource_update(gw, parsed)
         elif msg_type == FederationMessageType.MODEL_LOADING_STARTED.value:
             gw = self._apply_model_loading_started(gw, parsed)
+        elif msg_type == FederationMessageType.MODEL_LOADING_PROGRESS.value:
+            gw = self._apply_model_loading_progress(gw, parsed)
         elif msg_type == FederationMessageType.MODEL_LOADED.value:
             gw = self._apply_model_loaded_with_logging(gw, parsed, pre_loaded_models)
         elif msg_type == FederationMessageType.MODEL_LOAD_FAILED.value:
@@ -1643,6 +1645,33 @@ class FederatedGatewayManager(Sequential):
                     ModelLoadingStarted(
                         url=gw.remote_stargate_url,
                         model_id=model_id,
+                    )
+                )
+            )
+
+        return gw
+
+    def _apply_model_loading_progress(
+        self, gw: FederatedGateway, parsed: dict[str, Any]
+    ) -> FederatedGateway:
+        """Apply MODEL_LOADING_PROGRESS heartbeat (idle-timer reset signal)."""
+        model_id = parsed.get("model_id")
+        phase = parsed.get("phase")
+        pct = parsed.get("pct")
+        if not model_id or not phase:
+            return gw
+
+        if self._event_bus:
+            from src.scheduling.events import ModelLoadingProgress
+
+            asyncio.create_task(
+                self._event_bus.publish_nowait(
+                    ModelLoadingProgress(
+                        url=gw.remote_stargate_url,
+                        model_id=model_id,
+                        phase=str(phase),
+                        pct=pct if pct is not None else 0,
+                        gateway_name=gw.gateway_id,
                     )
                 )
             )

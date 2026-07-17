@@ -62,6 +62,32 @@ class ModelLoadingStartedHandler(SyncMessageHandler):
             ctx.schedule_callback(ctx.on_model_loading_started, (model_id,))
 
 
+class ModelLoadingProgressHandler(SyncMessageHandler):
+    """Handle MODEL_LOADING_PROGRESS heartbeat during active load."""
+
+    def handle(self, data: dict[str, Any], ctx: HandlerContext) -> None:
+        model_id = data.get("model_id")
+        phase = data.get("phase")
+        pct = data.get("pct")
+        if not model_id or not phase:
+            logger.debug("MODEL_LOADING_PROGRESS missing model_id or phase")
+            return
+
+        if model_id not in ctx.loading_models:
+            logger.debug(
+                "MODEL_LOADING_PROGRESS for %s ignored — not in loading_models",
+                model_id,
+            )
+            return
+
+        ctx.schedule_model_loading_progress(model_id, str(phase), pct)
+
+        if ctx.on_model_loading_progress:
+            ctx.schedule_callback(
+                ctx.on_model_loading_progress, (model_id, str(phase), pct)
+            )
+
+
 class ModelLoadedHandler(SyncMessageHandler):
     """
     Handle MODEL_LOADED message.

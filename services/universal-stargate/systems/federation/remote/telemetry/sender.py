@@ -25,6 +25,7 @@ from universal_protocol.messages import (
     ModelIdle,
     ModelLoaded,
     ModelLoadFailed,
+    ModelLoadingProgress,
     ModelLoadingStarted,
     ModelUnloaded,
     ResourceUpdate,
@@ -381,6 +382,22 @@ class RemoteTelemetrySender:
         )
         msg = MessageEnvelope(
             type="telemetry.model.loading.started",
+            data=msg_payload.to_dict(),
+        )
+        await self.send_message(msg)
+
+    async def on_model_loading_progress(
+        self, model_id: str, phase: str, pct: int | float
+    ) -> None:
+        """Handle model loading progress heartbeat from local Gateway."""
+        msg_payload = ModelLoadingProgress(
+            model_id=model_id,
+            phase=phase,
+            pct=pct,
+            source=self._source,
+        )
+        msg = MessageEnvelope(
+            type="telemetry.model.loading.progress",
             data=msg_payload.to_dict(),
         )
         await self.send_message(msg)

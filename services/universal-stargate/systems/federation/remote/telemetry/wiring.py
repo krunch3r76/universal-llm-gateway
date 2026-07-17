@@ -90,6 +90,15 @@ def _wire_model_callbacks(
             name=f"federation-telemetry-loading-started-{model_id}",
         )
 
+    async def on_model_loading_progress(
+        model_id: str, phase: str, pct: int | float
+    ) -> None:
+        """Forward MODEL_LOADING_PROGRESS heartbeat to Master."""
+        _ = asyncio.create_task(
+            telemetry_sender.on_model_loading_progress(model_id, phase, pct),
+            name=f"federation-telemetry-loading-progress-{model_id}",
+        )
+
     async def on_model_loaded(model_id: str, _data: dict[str, Any]) -> None:
         """Forward MODEL_LOADED to Master."""
         payload = {"model_id": model_id}
@@ -128,6 +137,7 @@ def _wire_model_callbacks(
         )
 
     ws_client.on_model_loading_started(on_model_loading_started)
+    ws_client.on_model_loading_progress(on_model_loading_progress)
     ws_client.on_model_loaded(on_model_loaded)
     ws_client.on_model_load_failed(on_model_load_failed)
     ws_client.on_model_unloaded(on_model_unloaded)

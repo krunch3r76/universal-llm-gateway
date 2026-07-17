@@ -20,6 +20,7 @@ from ..handler import (
     ModelIdleHandler,
     ModelLoadedHandler,
     ModelLoadFailedHandler,
+    ModelLoadingProgressHandler,
     ModelLoadingStartedHandler,
     ModelUnloadedHandler,
     PingHandler,
@@ -51,6 +52,9 @@ def create_handler_registry() -> HandlerRegistry:
     # Model loading lifecycle
     registry.register_sync(
         MessageType.MODEL_LOADING_STARTED, ModelLoadingStartedHandler()
+    )
+    registry.register_sync(
+        MessageType.MODEL_LOADING_PROGRESS, ModelLoadingProgressHandler()
     )
     registry.register_sync(MessageType.MODEL_LOADED, ModelLoadedHandler())
     registry.register_sync(MessageType.MODEL_LOAD_FAILED, ModelLoadFailedHandler())
@@ -86,6 +90,7 @@ def create_handler_registry() -> HandlerRegistry:
     # Verify coverage (log warning on startup if missing handlers)
     expected = {
         MessageType.MODEL_LOADING_STARTED,
+        MessageType.MODEL_LOADING_PROGRESS,
         MessageType.MODEL_LOADED,
         MessageType.MODEL_LOAD_FAILED,
         MessageType.MODEL_UNLOADED,
@@ -122,6 +127,9 @@ def build_handler_context(
         None,
     ],
     on_model_loading_started: Callable[[str], Awaitable[None]] | None,
+    on_model_loading_progress: (
+        Callable[[str, str, int | float], Awaitable[None]] | None
+    ),
     on_model_loaded: Callable[[str, dict[str, Any]], Awaitable[None]] | None,
     on_model_unloaded: Callable[[str], Awaitable[None]] | None,
     on_model_load_failed: (
@@ -215,6 +223,7 @@ def build_handler_context(
         schedule_callback=schedule_callback,
         schedule_capacity_freed=event_publisher.schedule_capacity_freed,
         schedule_model_loading_started=event_publisher.schedule_model_loading_started,
+        schedule_model_loading_progress=event_publisher.schedule_model_loading_progress,
         schedule_model_loaded=event_publisher.schedule_model_loaded,
         schedule_model_load_failed=event_publisher.schedule_model_load_failed,
         capture_gateway_state_snapshot=event_publisher.capture_gateway_state_snapshot,
@@ -224,6 +233,7 @@ def build_handler_context(
         pending_queries=query_manager.pending_queries,
         # Callbacks (global)
         on_model_loading_started=on_model_loading_started,
+        on_model_loading_progress=on_model_loading_progress,
         on_model_loaded=on_model_loaded,
         on_model_unloaded=on_model_unloaded,
         on_model_load_failed=on_model_load_failed,

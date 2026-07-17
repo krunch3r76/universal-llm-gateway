@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 from universal_event_bus.events.debug import emit_debug_event
 from universal_logging import get_logger
 
-from . import load_flow, preflight
+from . import load_flow, load_progress, preflight
 
 if TYPE_CHECKING:
     from ..controller import WorkerController
@@ -274,84 +274,15 @@ class ModelLoader:
             await load_flow.emit_loading_event(self._controller, model_id, "started")
             await _emit_load_gate_debug("loading_event_started", model_id)
 
-            if self._controller.event_bus:
-                try:
-                    from src.core.events.types import WorkerLoading
-
-                    req = resource_tracker.get_model_requirements(model_id)
-                    estimated_vram = req.get("vram_required_mb") or 0
-                    await self._controller.event_bus.publish_nowait(
-                        WorkerLoading(
-                            model_id=model_id,
-                            estimated_vram_mb=estimated_vram,
-                        )
-                    )
-                except Exception as e:
-                    logger.warning("Failed to emit worker.loading: %s", e)
-
-            loading_ok = resource_tracker.set_model_loading(model_id)
-            if not loading_ok:
-                await load_flow.emit_loading_event(
-                    self._controller,
-                    model_id,
-                    "failed",
-                    "Rejected transition to LOADING (invalid worker state)",
-                )
-                await _emit_load_gate_debug("loading_transition_rejected", model_id)
-                return False
-            load_flow.reset_state_machine(model_id)
-
-            vram_before = await load_flow.measure_vram_before(model_id)
-
-            worker_started = await load_flow.start_worker_if_needed(
+            heartbeat = load_progress.LoadProgressHeartbeat(
                 self._controller, model_id
             )
-            await _emit_load_gate_debug(
-                "start_worker_if_needed_done",
-                model_id,
-                worker_started=worker_started,
-            )
-            if not worker_started:
-                return False
+            await heartbeat.start()
+            try:
+                return await self._run_load_after_started(model_id, heartbeat)
+            finally:
+                await heartbeat.stop()
 
-            config_result = await load_flow.send_model_config(
-                self._controller, model_id
-            )
-            if not config_result:
-                await _emit_load_gate_debug("send_model_config_failed", model_id)
-                return False
-
-            engine_pid = config_result.get("engine_pid")
-            if engine_pid is not None:
-                self._controller._process_state.set_engine_pid(model_id, engine_pid)
-                logger.info("Stored engine_pid=%d for %s", engine_pid, model_id)
-
-            responsive = await load_flow.verify_model_responsive(
-                self._controller, model_id
-            )
-            await _emit_load_gate_debug(
-                "verify_model_responsive_done",
-                model_id,
-                responsive=responsive,
-            )
-            if not responsive:
-                return False
-
-            engine_ready = await self._wait_for_engine_ready(model_id)
-            if not engine_ready:
-                return False
-
-            resource_tracker.set_model_loaded(model_id)
-            await _emit_load_gate_debug("tracker_set_loaded", model_id)
-
-            context_size: int | None = (
-                config_result.get("context_size") if config_result else None
-            )
-
-            await load_flow.finalize_load(
-                self._controller, model_id, vram_before, context_length=context_size
-            )
-            return True
         except Exception as e:
             error_message = str(e)
             logger.error(
@@ -359,6 +290,97 @@ class ModelLoader:
             )
             await load_flow.handle_load_exception(self._controller, model_id, e)
             return False
+
+    async def _run_load_after_started(
+        self,
+        model_id: str,
+        heartbeat: load_progress.LoadProgressHeartbeat,
+    ) -> bool:
+        """Load steps after loading.started and progress heartbeat are active."""
+        resource_tracker = _get_resource_tracker()
+
+        if self._controller.event_bus:
+            try:
+                from src.core.events.types import WorkerLoading
+
+                req = resource_tracker.get_model_requirements(model_id)
+                estimated_vram = req.get("vram_required_mb") or 0
+                await self._controller.event_bus.publish_nowait(
+                    WorkerLoading(
+                        model_id=model_id,
+                        estimated_vram_mb=estimated_vram,
+                    )
+                )
+            except Exception as e:
+                logger.warning("Failed to emit worker.loading: %s", e)
+
+        loading_ok = resource_tracker.set_model_loading(model_id)
+        if not loading_ok:
+            await load_flow.emit_loading_event(
+                self._controller,
+                model_id,
+                "failed",
+                "Rejected transition to LOADING (invalid worker state)",
+            )
+            await _emit_load_gate_debug("loading_transition_rejected", model_id)
+            return False
+        load_flow.reset_state_machine(model_id)
+
+        vram_before = await load_flow.measure_vram_before(model_id)
+
+        await heartbeat.emit_phase("worker_start")
+        worker_started = await load_flow.start_worker_if_needed(
+            self._controller, model_id
+        )
+        await _emit_load_gate_debug(
+            "start_worker_if_needed_done",
+            model_id,
+            worker_started=worker_started,
+        )
+        if not worker_started:
+            return False
+
+        await heartbeat.emit_phase("config")
+        config_result = await load_flow.send_model_config(
+            self._controller, model_id
+        )
+        if not config_result:
+            await _emit_load_gate_debug("send_model_config_failed", model_id)
+            return False
+
+        engine_pid = config_result.get("engine_pid")
+        if engine_pid is not None:
+            self._controller._process_state.set_engine_pid(model_id, engine_pid)
+            logger.info("Stored engine_pid=%d for %s", engine_pid, model_id)
+
+        responsive = await load_flow.verify_model_responsive(
+            self._controller, model_id
+        )
+        await _emit_load_gate_debug(
+            "verify_model_responsive_done",
+            model_id,
+            responsive=responsive,
+        )
+        if not responsive:
+            return False
+
+        await heartbeat.emit_phase("engine_wait")
+        engine_ready = await self._wait_for_engine_ready(model_id)
+        if not engine_ready:
+            return False
+
+        resource_tracker.set_model_loaded(model_id)
+        await _emit_load_gate_debug("tracker_set_loaded", model_id)
+
+        context_size: int | None = (
+            config_result.get("context_size") if config_result else None
+        )
+
+        await heartbeat.emit_phase("finalize")
+        await load_flow.finalize_load(
+            self._controller, model_id, vram_before, context_length=context_size
+        )
+        return True
 
     async def _validate_dependencies(self, model_id: str) -> bool:
         """Validate worker dependencies."""

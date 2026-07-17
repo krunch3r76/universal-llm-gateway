@@ -577,6 +577,9 @@ class EdgeFederationServer:
         ws_client.on_model_loading_started(
             lifecycle_callbacks["on_model_loading_started"]
         )
+        ws_client.on_model_loading_progress(
+            lifecycle_callbacks["on_model_loading_progress"]
+        )
         ws_client.on_model_loaded(lifecycle_callbacks["on_model_loaded"])
         ws_client.on_model_load_failed(lifecycle_callbacks["on_model_load_failed"])
         ws_client.on_model_unloaded(lifecycle_callbacks["on_model_unloaded"])

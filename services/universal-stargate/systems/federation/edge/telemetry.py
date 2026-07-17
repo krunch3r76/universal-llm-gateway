@@ -350,6 +350,16 @@ def create_model_lifecycle_callbacks(
             payload,
         )
 
+    async def on_model_loading_progress(
+        model_id: str, phase: str, pct: int | float
+    ) -> None:
+        """Forward MODEL_LOADING_PROGRESS heartbeat to connected peers."""
+        payload = {"model_id": model_id, "phase": phase, "pct": pct}
+        await forward_callback(
+            FederationMessageType.MODEL_LOADING_PROGRESS.value,
+            payload,
+        )
+
     async def on_model_loaded(model_id: str, data: dict[str, Any]) -> None:
         """Forward MODEL_LOADED to connected peers."""
         payload = {"model_id": model_id, **data}
@@ -406,6 +416,7 @@ def create_model_lifecycle_callbacks(
 
     return {
         "on_model_loading_started": on_model_loading_started,
+        "on_model_loading_progress": on_model_loading_progress,
         "on_model_loaded": on_model_loaded,
         "on_model_load_failed": on_model_load_failed,
         "on_model_unloaded": on_model_unloaded,

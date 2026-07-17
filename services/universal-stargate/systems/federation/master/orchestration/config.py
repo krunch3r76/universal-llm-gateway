@@ -5,7 +5,8 @@ INVARIANT: ∀ config values: sensible defaults exist
 INVARIANT: Missing config key ⟹ default, not error
 
 TIMEOUT LAYERING:
-- load_timeout: Wall-clock backstop for entire load operation (>= inner 300s)
+- load_timeout: Wall-clock backstop (> inner 300s)
+- load_idle_budget: Progress silence before idle LOAD_TIMEOUT (~60s)
 - coalesce_wait_timeout: Max time followers wait (>= load_timeout + buffer)
 """
 
@@ -20,7 +21,20 @@ from universal_logging import get_logger
 logger = get_logger(__name__)
 
 # Align with control-plane ConfigHelper.model_loading_timeout default (300s).
-MODEL_LOAD_BACKSTOP_TIMEOUT_S = 300
+MODEL_LOAD_INNER_BUDGET_S = 300
+"""Control-plane inner model_loading_timeout budget (seconds)."""
+
+MODEL_LOAD_BACKSTOP_MARGIN_S = 30
+"""Safety margin above inner budget for federation wall-clock backstop."""
+
+MODEL_LOAD_BACKSTOP_TIMEOUT_S = (
+    MODEL_LOAD_INNER_BUDGET_S + MODEL_LOAD_BACKSTOP_MARGIN_S
+)
+"""Wall-clock backstop — strictly greater than inner load budget."""
+
+MODEL_LOAD_IDLE_BUDGET_S = 60
+"""Progress silence threshold before idle LOAD_TIMEOUT (seconds)."""
+
 _COALESCE_BUFFER_S = 30
 
 
@@ -32,7 +46,8 @@ class OrchestrationConfig:
     Frozen to prevent accidental mutation after initialization.
 
     Defaults chosen for:
-    - load_timeout=120: Allows large model loads
+    - load_timeout=330: Wall-clock backstop strictly above inner 300s budget
+    - load_idle_budget=60: Idle timeout after progress silence
     - telemetry_staleness_threshold=10: Conservative freshness
     - retry=2 attempts: Handles transient failures without excessive delay
     - backoff=1.5x: Moderate exponential growth
@@ -40,7 +55,10 @@ class OrchestrationConfig:
 
     # === Timeouts (seconds) ===
     load_timeout: int = MODEL_LOAD_BACKSTOP_TIMEOUT_S
-    """Max seconds for model load backstop (>= control-plane inner budget)."""
+    """Max seconds for model load wall-clock backstop (> inner budget)."""
+
+    load_idle_budget: int = MODEL_LOAD_IDLE_BUDGET_S
+    """Progress silence (seconds) before idle LOAD_TIMEOUT."""
 
     coalesce_wait_timeout: int = MODEL_LOAD_BACKSTOP_TIMEOUT_S + _COALESCE_BUFFER_S
     """Max seconds follower waits (>= load_timeout + RPC buffer)."""
@@ -71,6 +89,16 @@ class OrchestrationConfig:
 
     def __post_init__(self) -> None:
         """Runtime assertions for configuration constraints."""
+        if self.load_timeout <= MODEL_LOAD_INNER_BUDGET_S:
+            raise ValueError(
+                f"load_timeout ({self.load_timeout}) must be > "
+                f"inner model load budget ({MODEL_LOAD_INNER_BUDGET_S}s). "
+                "Wall-clock backstop must exceed control-plane budget."
+            )
+        if self.load_idle_budget <= 0:
+            raise ValueError(
+                f"load_idle_budget must be > 0, got {self.load_idle_budget}"
+            )
         if self.coalesce_wait_timeout < self.load_timeout + 30:
             raise ValueError(
                 f"coalesce_wait_timeout ({self.coalesce_wait_timeout}) must be >= "
@@ -114,6 +142,7 @@ class OrchestrationConfig:
         orch = config.get("federation", {}).get("orchestration", {})
         return cls(
             load_timeout=orch.get("load_timeout", MODEL_LOAD_BACKSTOP_TIMEOUT_S),
+            load_idle_budget=orch.get("load_idle_budget", MODEL_LOAD_IDLE_BUDGET_S),
             coalesce_wait_timeout=orch.get(
                 "coalesce_wait_timeout",
                 MODEL_LOAD_BACKSTOP_TIMEOUT_S + _COALESCE_BUFFER_S,

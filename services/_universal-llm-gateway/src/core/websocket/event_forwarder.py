@@ -19,6 +19,7 @@ from ..events.types import (
     INFERENCE_STARTED,
     MODEL_LOAD_FAILED,
     MODEL_LOADED,
+    MODEL_LOADING_PROGRESS,
     MODEL_LOADING_STARTED,
     MODEL_UNLOADED,
     PHANTOM_MODEL_CLEANED,
@@ -40,6 +41,7 @@ from .messages import (
     create_model_idle_message,
     create_model_load_failed_message,
     create_model_loaded_message,
+    create_model_loading_progress_message,
     create_model_loading_started_message,
     create_model_unloaded_message,
     create_phantom_model_cleaned_message,
@@ -71,6 +73,7 @@ class WebSocketEventForwarder:
     # Events to forward to Stargate
     FORWARDED_EVENTS = [
         MODEL_LOADING_STARTED,
+        MODEL_LOADING_PROGRESS,
         MODEL_LOADED,
         MODEL_LOAD_FAILED,
         MODEL_UNLOADED,
@@ -246,6 +249,11 @@ class WebSocketEventForwarder:
         ] = {
             MODEL_LOADING_STARTED: lambda p: create_model_loading_started_message(
                 model_id=p.get("model_id", "unknown")
+            ),
+            MODEL_LOADING_PROGRESS: lambda p: create_model_loading_progress_message(
+                model_id=p.get("model_id", "unknown"),
+                phase=p.get("phase", "unknown"),
+                pct=p.get("pct", 0),
             ),
             MODEL_LOADED: lambda p: create_model_loaded_message(
                 model_id=p.get("model_id", "unknown"),

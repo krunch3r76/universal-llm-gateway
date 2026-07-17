@@ -15,6 +15,7 @@ from universal_protocol.messages import (
     ModelIdle,
     ModelLoaded,
     ModelLoadFailed,
+    ModelLoadingProgress,
     ModelLoadingStarted,
     ModelUnloaded,
     ResourceUpdate,
@@ -43,6 +44,7 @@ class FederationMessageType(StrEnum):
     MODEL_BUSY = "telemetry.model.busy"
     MODEL_IDLE = "telemetry.model.idle"
     MODEL_LOADING_STARTED = "telemetry.model.loading.started"
+    MODEL_LOADING_PROGRESS = "telemetry.model.loading.progress"
     MODEL_LOAD_FAILED = "telemetry.model.loading.failed"
     TELEMETRY_HEARTBEAT = "telemetry.heartbeat"
     GATEWAY_SNAPSHOT = "telemetry.gateway.snapshot"
@@ -159,6 +161,26 @@ def create_model_loading_started(
     payload = ModelLoadingStarted(model_id=model_id, source=typed_source)
     return MessageEnvelope(
         type=FederationMessageType.MODEL_LOADING_STARTED.value,
+        data=payload.to_dict(),
+    )
+
+
+def create_model_loading_progress(
+    model_id: str,
+    phase: str,
+    pct: int | float,
+    source: dict[str, Any] | None = None,
+) -> MessageEnvelope:
+    """Create MODEL_LOADING_PROGRESS heartbeat message with typed payload."""
+    typed_source = TelemetrySource.from_dict(source) if source else None
+    payload = ModelLoadingProgress(
+        model_id=model_id,
+        phase=phase,
+        pct=pct,
+        source=typed_source,
+    )
+    return MessageEnvelope(
+        type=FederationMessageType.MODEL_LOADING_PROGRESS.value,
         data=payload.to_dict(),
     )
 
@@ -374,6 +396,7 @@ def is_telemetry_type(msg_type: str) -> bool:
         FederationMessageType.MODEL_BUSY.value,
         FederationMessageType.MODEL_IDLE.value,
         FederationMessageType.MODEL_LOADING_STARTED.value,
+        FederationMessageType.MODEL_LOADING_PROGRESS.value,
         FederationMessageType.MODEL_LOAD_FAILED.value,
         FederationMessageType.TELEMETRY_HEARTBEAT.value,
         FederationMessageType.GATEWAY_SNAPSHOT.value,

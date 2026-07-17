@@ -23,6 +23,7 @@ from universal_protocol import ErrorCode, error_envelope, get_http_status
 
 from .config import DEFAULT_ORCHESTRATION_CONFIG, OrchestrationConfig
 from .load_terminal_wait import (
+    IdleLoadTimeout,
     TerminalLoadOutcome,
     TerminalLoadResolution,
     WallClockLoadTimeout,
@@ -149,6 +150,7 @@ async def _await_remote_load_attempt(
         gateway_id=gateway.gateway_id,
         remote_id=gateway.remote_stargate_id,
         backstop_timeout_s=orchestrator._config.load_timeout,
+        idle_budget_s=orchestrator._config.load_idle_budget,
         model_label=str(model_id),
     )
     if terminal is not None and terminal.outcome != TerminalLoadOutcome.LOADED:
@@ -891,7 +893,7 @@ class FederatedLoadOrchestrator:
             except HTTPException:
                 raise
 
-            except WallClockLoadTimeout as e:
+            except WallClockLoadTimeout:
                 elapsed_ms = (time.monotonic() - attempt_start) * 1000
                 last_error = _load_error(
                     ErrorCode.LOAD_TIMEOUT,
@@ -926,6 +928,48 @@ class FederatedLoadOrchestrator:
                     timeout_budget_s=self._config.load_timeout,
                 )
                 break  # No retry for wall-clock timeout
+
+            except IdleLoadTimeout as e:
+                elapsed_ms = (time.monotonic() - attempt_start) * 1000
+                info = e.info
+                last_error = _load_error(
+                    ErrorCode.LOAD_TIMEOUT,
+                    f"Progress silence loading {model_id} on {gateway.gateway_id} "
+                    f"after {info.idle_seconds:.1f}s "
+                    f"(idle budget {info.idle_budget_s}s)",
+                    model_id,
+                    gateway.gateway_id,
+                    elapsed_ms=int(elapsed_ms),
+                    timeout_budget_s=info.idle_budget_s,
+                    extra_data={
+                        "timeout_kind": "load_progress_idle",
+                        "idle_seconds": info.idle_seconds,
+                        "last_event": info.last_event,
+                        "idle_budget_s": info.idle_budget_s,
+                    },
+                )
+                logger.error(
+                    f"⏱️ Idle load timeout for {model_id} after "
+                    f"{info.idle_seconds:.1f}s progress silence "
+                    f"(budget {info.idle_budget_s}s) - not retrying"
+                )
+                if self._metrics:
+                    self._metrics.record_load_operation_failure(elapsed_ms)
+                    if not exhaustion_recorded:
+                        self._metrics.record_retries_exhausted()
+                        exhaustion_recorded = True
+                await _emit_federation_load_debug(
+                    "attempt_idle_timeout",
+                    gateway.gateway_id,
+                    str(model_id),
+                    request_id,
+                    attempt=attempt_index,
+                    elapsed_ms=int(elapsed_ms),
+                    idle_seconds=info.idle_seconds,
+                    idle_budget_s=info.idle_budget_s,
+                    last_event=info.last_event,
+                )
+                break
 
             except TimeoutError as e:
                 # Inner/forwarder TimeoutError — not wall-clock budget exhaustion.

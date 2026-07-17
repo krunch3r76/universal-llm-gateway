@@ -33,6 +33,7 @@ TELEMETRY_MODEL_UNLOADED = "telemetry.model.unloaded"
 TELEMETRY_MODEL_BUSY = "telemetry.model.busy"
 TELEMETRY_MODEL_IDLE = "telemetry.model.idle"
 TELEMETRY_MODEL_LOADING_STARTED = "telemetry.model.loading.started"
+TELEMETRY_MODEL_LOADING_PROGRESS = "telemetry.model.loading.progress"
 TELEMETRY_MODEL_LOADING_FAILED = "telemetry.model.loading.failed"
 TELEMETRY_HEARTBEAT = "telemetry.heartbeat"
 TELEMETRY_GATEWAY_SNAPSHOT = "telemetry.gateway.snapshot"
@@ -356,6 +357,42 @@ class ModelLoadingStartedPayload(TelemetryPayload):
 
 
 @dataclass(slots=True, kw_only=True)
+class ModelLoadingProgressPayload(TelemetryPayload):
+    """Payload for MODEL_LOADING_PROGRESS heartbeat telemetry."""
+
+    model_id: str
+    phase: str
+    pct: int | float
+
+    def to_dict(self) -> dict[str, Any]:
+        result = TelemetryPayload.to_dict(self)
+        result["model_id"] = self.model_id
+        result["phase"] = self.phase
+        result["pct"] = self.pct
+        return result
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> ModelLoadingProgressPayload:
+        if "model_id" not in data:
+            raise ValueError("ModelLoadingProgressPayload missing: model_id")
+        if "phase" not in data or not str(data["phase"]).strip():
+            raise ValueError("ModelLoadingProgressPayload missing: phase")
+        if "pct" not in data:
+            raise ValueError("ModelLoadingProgressPayload missing: pct")
+
+        source = None
+        if "source" in data and data["source"]:
+            source = TelemetrySource.from_dict(data["source"])
+
+        return ModelLoadingProgress(
+            model_id=data["model_id"],
+            phase=str(data["phase"]),
+            pct=data["pct"],
+            source=source,
+        )
+
+
+@dataclass(slots=True, kw_only=True)
 class ModelLoadFailedPayload(TelemetryPayload):
     """Payload for MODEL_LOAD_FAILED telemetry.
 
@@ -626,6 +663,26 @@ def ModelLoadingStarted(  # noqa: N802
 
 
 @telemetry_factory
+def ModelLoadingProgress(  # noqa: N802
+    model_id: str,
+    phase: str,
+    pct: int | float,
+    source: TelemetrySource | None = None,
+) -> ModelLoadingProgressPayload:
+    """
+    Create telemetry.model.loading.progress payload.
+
+    Signal: TELEMETRY_MODEL_LOADING_PROGRESS
+    """
+    return ModelLoadingProgressPayload(
+        model_id=model_id,
+        phase=phase,
+        pct=pct,
+        source=source,
+    )
+
+
+@telemetry_factory
 def ModelLoadFailed(  # noqa: N802
     model_id: str,
     error: str | None = None,
@@ -778,6 +835,7 @@ TELEMETRY_PAYLOAD_TYPES: dict[str, type[TelemetryPayload]] = {
     TELEMETRY_MODEL_BUSY: ModelBusyPayload,
     TELEMETRY_MODEL_IDLE: ModelIdlePayload,
     TELEMETRY_MODEL_LOADING_STARTED: ModelLoadingStartedPayload,
+    TELEMETRY_MODEL_LOADING_PROGRESS: ModelLoadingProgressPayload,
     TELEMETRY_MODEL_LOADING_FAILED: ModelLoadFailedPayload,
     TELEMETRY_HEARTBEAT: TelemetryHeartbeatPayload,
     TELEMETRY_GATEWAY_SNAPSHOT: GatewaySnapshotPayload,

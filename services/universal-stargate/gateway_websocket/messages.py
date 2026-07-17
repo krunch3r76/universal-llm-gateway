@@ -12,6 +12,7 @@ class MessageType(StrEnum):
     # Gateway → Stargate
     INIT = "gateway.init"
     MODEL_LOADING_STARTED = "telemetry.model.loading.started"
+    MODEL_LOADING_PROGRESS = "telemetry.model.loading.progress"
     MODEL_LOADED = "telemetry.model.loaded"
     MODEL_LOAD_FAILED = "telemetry.model.loading.failed"
     MODEL_UNLOADED = "telemetry.model.unloaded"

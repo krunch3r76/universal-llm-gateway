@@ -112,6 +112,9 @@ class GatewayWebSocketClient:
         self._on_connected: Callable[[], Awaitable[None]] | None = None
         self._on_disconnected: Callable[[], Awaitable[None]] | None = None
         self._on_model_loading_started: Callable[[str], Awaitable[None]] | None = None
+        self._on_model_loading_progress: (
+            Callable[[str, str, int | float], Awaitable[None]] | None
+        ) = None
         self._on_model_loaded: Callable[[str, dict], Awaitable[None]] | None = None
         self._on_model_unloaded: Callable[[str], Awaitable[None]] | None = None
         self._on_model_load_failed: (
@@ -378,6 +381,7 @@ class GatewayWebSocketClient:
             send_message=self._send_message,
             schedule_callback=self._schedule_callback,
             on_model_loading_started=self._on_model_loading_started,
+            on_model_loading_progress=self._on_model_loading_progress,
             on_model_loaded=self._on_model_loaded,
             on_model_unloaded=self._on_model_unloaded,
             on_model_load_failed=self._on_model_load_failed,
@@ -644,6 +648,12 @@ class GatewayWebSocketClient:
         its loading lifecycle.
         """
         self._on_model_loading_started = callback
+
+    def on_model_loading_progress(
+        self, callback: Callable[[str, str, int | float], Awaitable[None]]
+    ) -> None:
+        """Set callback for model-loading-progress heartbeat events."""
+        self._on_model_loading_progress = callback
 
     def on_model_loaded(self, callback: Callable[[str, dict], Awaitable[None]]) -> None:
         """

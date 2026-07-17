@@ -27,6 +27,9 @@ class ReceiptEntry:
     error: str | None = None
     imprint_status: str | None = None
     entity_id: str | None = None
+    # moved | already_archived | archive_failed | None (skipped)
+    archive_status: str | None = None
+    archive_folder: str | None = None
 
 
 @dataclass(slots=True)
@@ -62,5 +65,7 @@ class ExportReceipt:
         if any(entry.status == "imprint_failed" for entry in self.entries):
             return 1
         if any(entry.imprint_status == "imprint_failed" for entry in self.entries):
+            return 1
+        if any(entry.archive_status == "archive_failed" for entry in self.entries):
             return 1
         return 0

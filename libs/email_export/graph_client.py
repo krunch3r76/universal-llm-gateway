@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote
 
-from transport_utils import make_sync_client
+import httpx
 
 from email_export.intent import Selector
 
@@ -89,8 +89,12 @@ class GraphClient:
             self._token = _acquire_token(self._creds)
         return {"Authorization": f"Bearer {self._token}"}
 
+    def _client(self) -> httpx.Client:
+        # Public Graph HTTPS — do not use make_sync_client (defaults to RAG UDS).
+        return httpx.Client(timeout=self._timeout, trust_env=False)
+
     def _get_bytes(self, url: str) -> bytes:
-        with make_sync_client(timeout=self._timeout) as client:
+        with self._client() as client:
             response = client.get(url, headers=self._headers())
             if response.status_code == 404:
                 raise GraphNotFoundError(f"Graph resource not found: {url}")
@@ -98,7 +102,7 @@ class GraphClient:
             return response.content
 
     def _get_json(self, url: str) -> dict[str, Any]:
-        with make_sync_client(timeout=self._timeout) as client:
+        with self._client() as client:
             response = client.get(url, headers=self._headers())
             if response.status_code == 404:
                 raise GraphNotFoundError(f"Graph resource not found: {url}")
@@ -108,13 +112,14 @@ class GraphClient:
                 raise RuntimeError("Graph returned non-object JSON")
             return payload
 
-    def fetch_mime(self, mailbox_upn: str, selector: Selector) -> bytes:
+    def resolve_graph_id(self, mailbox_upn: str, selector: Selector) -> str:
+        """Resolve selector → Graph message id (for fetch + archive move)."""
         if selector.kind == "graph_item_id":
-            return self._fetch_by_graph_id(mailbox_upn, selector.value)
+            return selector.value
         if selector.kind == "message_id":
-            return self._fetch_by_message_id(mailbox_upn, selector.value)
+            return self._resolve_by_message_id(mailbox_upn, selector.value)
         if selector.kind == "conversation_id":
-            return self._fetch_by_conversation_id(
+            return self._resolve_by_conversation_id(
                 mailbox_upn, selector.value, expand=selector.expand
             )
         raise GraphNotFoundError(
@@ -122,13 +127,94 @@ class GraphClient:
             "use message_id or graph_item_id"
         )
 
+    def fetch_mime(self, mailbox_upn: str, selector: Selector) -> bytes:
+        graph_id = self.resolve_graph_id(mailbox_upn, selector)
+        return self._fetch_by_graph_id(mailbox_upn, graph_id)
+
+    def fetch_mime_by_graph_id(self, mailbox_upn: str, graph_id: str) -> bytes:
+        return self._fetch_by_graph_id(mailbox_upn, graph_id)
+
+    def ensure_mail_folder(self, mailbox_upn: str, display_name: str) -> str:
+        """Return folder id for display_name; create under mailbox root if missing."""
+        upn = quote(mailbox_upn, safe="@.")
+        name = display_name.strip()
+        if not name:
+            raise ValueError("archive folder display_name must be non-empty")
+        escaped_name = name.replace("'", "''")
+        filt = quote(f"displayName eq '{escaped_name}'", safe="='")
+        list_url = (
+            f"{GRAPH_BASE}/users/{upn}/mailFolders"
+            f"?$filter={filt}&$select=id,displayName"
+        )
+        payload = self._get_json(list_url)
+        values = payload.get("value")
+        if isinstance(values, list) and values:
+            first = values[0]
+            if isinstance(first, dict) and first.get("id"):
+                return str(first["id"])
+        create_url = f"{GRAPH_BASE}/users/{upn}/mailFolders"
+        with self._client() as client:
+            response = client.post(
+                create_url,
+                headers=self._headers(),
+                json={"displayName": name},
+            )
+            if response.status_code >= 400:
+                raise GraphAuthError(
+                    f"create mailFolder {name!r} failed: "
+                    f"{response.status_code} {response.text[:300]}"
+                )
+            created = response.json()
+        folder_id = created.get("id") if isinstance(created, dict) else None
+        if not folder_id:
+            raise RuntimeError(f"mailFolder create returned no id for {name!r}")
+        return str(folder_id)
+
+    def move_message(
+        self, mailbox_upn: str, graph_id: str, destination_folder_id: str
+    ) -> str:
+        """Move message to destination folder. Returns new graph id if changed."""
+        upn = quote(mailbox_upn, safe="@.")
+        item_id = quote(graph_id, safe="=")
+        url = f"{GRAPH_BASE}/users/{upn}/messages/{item_id}/move"
+        with self._client() as client:
+            response = client.post(
+                url,
+                headers=self._headers(),
+                json={"destinationId": destination_folder_id},
+            )
+            if response.status_code == 404:
+                raise GraphNotFoundError(
+                    f"message not found for move: {graph_id}"
+                )
+            if response.status_code >= 400:
+                raise GraphAuthError(
+                    f"move failed: {response.status_code} {response.text[:300]}"
+                )
+            payload = response.json()
+        new_id = payload.get("id") if isinstance(payload, dict) else None
+        return str(new_id or graph_id)
+
+    def message_parent_folder_id(
+        self, mailbox_upn: str, graph_id: str
+    ) -> str | None:
+        upn = quote(mailbox_upn, safe="@.")
+        item_id = quote(graph_id, safe="=")
+        url = (
+            f"{GRAPH_BASE}/users/{upn}/messages/{item_id}"
+            f"?$select=parentFolderId"
+        )
+        payload = self._get_json(url)
+        parent = payload.get("parentFolderId")
+        return str(parent) if parent else None
+
     def _fetch_by_graph_id(self, mailbox_upn: str, graph_id: str) -> bytes:
         upn = quote(mailbox_upn, safe="@.")
         item_id = quote(graph_id, safe="=")
         url = f"{GRAPH_BASE}/users/{upn}/messages/{item_id}/$value"
         return self._get_bytes(url)
 
-    def _fetch_by_message_id(self, mailbox_upn: str, message_id: str) -> bytes:
+    def _resolve_by_message_id(self, mailbox_upn: str, message_id: str) -> str:
         upn = quote(mailbox_upn, safe="@.")
         escaped = message_id.replace("'", "''")
         filt = quote(f"internetMessageId eq '{escaped}'", safe="='")
@@ -140,11 +226,11 @@ class GraphClient:
         first = values[0]
         if not isinstance(first, dict) or not first.get("id"):
             raise GraphNotFoundError(f"message_id not found: {message_id}")
-        return self._fetch_by_graph_id(mailbox_upn, str(first["id"]))
+        return str(first["id"])
 
-    def _fetch_by_conversation_id(
+    def _resolve_by_conversation_id(
         self, mailbox_upn: str, conversation_id: str, *, expand: bool
-    ) -> bytes:
+    ) -> str:
         upn = quote(mailbox_upn, safe="@.")
         escaped = conversation_id.replace("'", "''")
         filt = quote(f"conversationId eq '{escaped}'", safe="='")
@@ -168,7 +254,7 @@ class GraphClient:
             raise GraphNotFoundError(
                 f"conversation_id not found: {conversation_id}"
             )
-        return self._fetch_by_graph_id(mailbox_upn, str(first["id"]))
+        return str(first["id"])
 
 
 def fixture_mime_bytes(selector: Selector, account: str) -> bytes:
