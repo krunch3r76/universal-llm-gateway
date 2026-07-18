@@ -1730,7 +1730,8 @@ tools:
     tool: agent_bus_reply
     substrate_qualified: user-vortex__agent_bus_reply
   fol_descriptor: "∀ thread ∈ ℕ ∧ body ∈ str:\n  reply(thread, body, from?|from_agent?) ⟹ turn_number
-    ∈ ℕ.\nfrom/from_agent optional on dual mounts — server autofills from mcp_surface (life→web-anthropic,
+    ∈ ℕ.\nDEPRECATED 2026-06-14 — use agent_bus_send instead; removed 2026-09-01.\nfrom/from_agent
+    optional on dual mounts — server autofills from mcp_surface (life→web-anthropic,
     code→cursor). Mutating. ¬idempotent. See agent_skill:agent_bus.\n"
   json_schema:
     type: object
@@ -1762,7 +1763,7 @@ tools:
   - mcp
   - mcp_claude
   mandate_safety: write
-  cache_priority: always_loaded
+  cache_priority: on_demand
   introduced: 2026-05-22
   deprecated_at: 2026-06-14
   remove_at: '2026-09-01'
@@ -1778,7 +1779,8 @@ tools:
     tool: agent_bus_post
     substrate_qualified: user-vortex__agent_bus_post
   fol_descriptor: "∀ body ∈ str ∧ to ∈ str:\n  post(body, to, from?|from_agent?) ⟹ thread_id ∈ ℕ ∧ turn_number
-    = 1.\nfrom/from_agent optional on dual mounts — server autofills from mcp_surface. Creates new thread.
+    = 1.\nDEPRECATED 2026-06-14 — use agent_bus_send(new_slug=…) instead; removed 2026-09-01.\nfrom/from_agent
+    optional on dual mounts — server autofills from mcp_surface. Creates new thread.
     Mutating. ¬idempotent. See agent_skill:agent_bus.\n"
   json_schema:
     type: object

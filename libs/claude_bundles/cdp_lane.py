@@ -250,7 +250,14 @@ def _allocate_port_for_profile(
         raise LaneError(
             f"no live Chrome for profile '{suffix}' and launch=False"
         )
-    port = select_free_port(is_listening, exclude=set(held_ports()))
+    # Cross-exclude registry-reserved ports (F3 / thread 5262) so the legacy
+    # intent allocator and cdp_registry cannot TOCTOU-collide on the same port.
+    exclude = set(held_ports())
+    with contextlib.suppress(Exception):
+        from claude_bundles.cdp_registry import used_ports_snapshot
+
+        exclude |= used_ports_snapshot()
+    port = select_free_port(is_listening, exclude=exclude)
     _launch_chrome(port, profile)
     return port, False
 

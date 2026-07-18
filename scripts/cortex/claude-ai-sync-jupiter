@@ -20,10 +20,17 @@
 #   scripts/cortex/claude-ai-sync-jupiter project-ask --cdp-port 9223 --profile-suffix ask \\
 #     --converse --no-uuid --model fable-5 --prompt-file t1.md --out-dir …
 #
-# Parallel seats: primary CDP is :9222 + claude-ai-chrome-profile. A second
-# session should use --port 9223 --profile-suffix ask (separate user-data-dir;
-# Chrome locks one profile per process). First ensure clones cookies from the
-# primary profile if the ask profile is empty.
+# Parallel seats: primary CDP is :9222 + claude-ai-chrome-profile (attended).
+# Automated seats MUST use register-lane / project-ask --register (default) —
+# never hand-pick --port. See libs/claude_bundles/cdp_registry.py.
+#
+#   scripts/cortex/claude-ai-sync-jupiter register-lane --holder seat-a --purpose ask
+#   scripts/cortex/claude-ai-sync-jupiter project-ask --register --purpose ask --uuid … --prompt-file …
+#   scripts/cortex/claude-ai-sync-jupiter deregister-lane --registration-id <id>
+#   scripts/cortex/claude-ai-sync-jupiter list-lanes
+#
+# Legacy explicit warm pool (attended / --no-register only):
+#   scripts/cortex/claude-ai-sync-jupiter ensure-chrome --port 9223 --profile-suffix ask
 #
 # MCP connector playbook: agent_skill:claude-ai-mcp-connect
 # Env: CLAUDE_AI_SSH_HOST (default jupiter), CLAUDE_AI_SSH_USER (default krunch3r)
@@ -38,7 +45,9 @@ PY='~/.venvs/universal/bin/python'
 usage() {
   sed -n '2,24p' "$0" | sed 's/^# \?//'
   echo ""
-  echo "Commands: ensure-chrome | status | upload | uninstall | restore-connector | project-chrome | project-ask"
+  echo "Commands: ensure-chrome | status | upload | uninstall | restore-connector |"
+  echo "          project-chrome | project-ask |"
+  echo "          register-lane | deregister-lane | list-lanes"
   exit "${1:-0}"
 }
 
@@ -172,18 +181,61 @@ remote_py() {
   ssh "$SSH" "cd ${REMOTE_REPO} && PROJECT_ROOT=${REMOTE_REPO} PYTHONPATH=${REMOTE_REPO}/libs BROWSER_CDP_URL=http://127.0.0.1:${CDP_PORT} ${PY} ${script} ${qargs[*]}"
 }
 
+# 24911: local SSH abort trap — capture registration_id, ownership-safe cleanup.
+_project_ask_reg_id=""
+_project_ask_abort_trap() {
+  local id="${_project_ask_reg_id}"
+  [[ -z "${id}" ]] && return 0
+  remote_py scripts/cortex/cowork_project_ask.py \
+    --abort-cleanup-registration-id "${id}" >/dev/null 2>&1 || true
+}
+
+_project_ask_with_abort_trap() {
+  _project_ask_reg_id=""
+  local tmp rc
+  tmp="$(mktemp)"
+  trap '_project_ask_abort_trap' EXIT INT TERM
+  set +e
+  "$@" 2>&1 | tee "${tmp}"
+  rc="${PIPESTATUS[0]}"
+  set -e
+  _project_ask_reg_id="$(grep -m1 '^registration_id=' "${tmp}" | sed 's/^registration_id=//' || true)"
+  rm -f "${tmp}"
+  if [[ "${rc}" -eq 0 ]]; then
+    trap - EXIT INT TERM
+    _project_ask_reg_id=""
+  fi
+  return "${rc}"
+}
+
 parse_chrome_flags "$@"
 set -- "${PARSED_ARGS[@]+"${PARSED_ARGS[@]}"}"
 
 cmd="${1:-}"
 shift || true
 
-# Parallel lanes MUST name the profile (24612). Silent -ask default on
-# non-9222 ports attached the wrong user-data-dir (e.g. :9224 fable-consult).
-if [[ "${CDP_PORT}" != "9222" && -z "${PROFILE_SUFFIX}" ]]; then
+# Parallel lanes MUST name the profile (24612) when hand-picking a port.
+# Registry / --intent / --register paths own allocation — skip this gate.
+_skip_suffix_gate=0
+case "${cmd}" in
+  register-lane|deregister-lane|list-lanes) _skip_suffix_gate=1 ;;
+  project-ask)
+    for a in "$@"; do
+      case "$a" in
+        --intent|--register|--registration-id|--no-register) _skip_suffix_gate=1; break ;;
+      esac
+    done
+    # Default project-ask uses registry (no hand-picked port) — skip gate.
+    if [[ "${CDP_PORT}" == "9222" && -z "${PROFILE_SUFFIX}" ]]; then
+      _skip_suffix_gate=1
+    fi
+    ;;
+esac
+if [[ "${_skip_suffix_gate}" -eq 0 && "${CDP_PORT}" != "9222" && -z "${PROFILE_SUFFIX}" ]]; then
   echo "error: --port/--cdp-port ${CDP_PORT} requires explicit --profile-suffix" >&2
   echo "  examples: --port 9223 --profile-suffix ask" >&2
   echo "            --port 9224 --profile-suffix fable-consult" >&2
+  echo "  preferred: project-ask --register (registry allocates port+profile)" >&2
   exit 2
 fi
 
@@ -229,26 +281,43 @@ case "$cmd" in
     ensure_chrome "${CDP_PORT}" "${PROFILE_SUFFIX}"
     remote_py scripts/cortex/cowork_project_chrome.py "$@"
     ;;
+  register-lane)
+    # Usage: register-lane --holder SEAT [--purpose ask]
+    remote_py scripts/cortex/cdp_registry_cli.py register "$@"
+    ;;
+  deregister-lane)
+    # Usage: deregister-lane --registration-id ID [--kill]
+    remote_py scripts/cortex/cdp_registry_cli.py deregister "$@"
+    ;;
+  list-lanes)
+    remote_py scripts/cortex/cdp_registry_cli.py list
+    ;;
   project-ask)
-    # --intent collapses the two-call handoff (thread 4917 F1): the single
-    # Jupiter python process acquires a non-overlapping (profile, port) lane and
-    # holds the flock for its whole run. Do NOT pre-launch via ensure_chrome and
-    # do NOT inject --cdp-url — the allocator owns port selection.
+    # Default: registry owns port+profile (--register on in cowork_project_ask).
+    # Do NOT ensure_chrome / inject --cdp-url unless --no-register.
     has_intent=0
-    has_cdp=0
+    has_no_register=0
+    has_registration_id=0
     for a in "$@"; do
       [[ "$a" == "--intent" ]] && has_intent=1
-      [[ "$a" == "--cdp-url" ]] && has_cdp=1
+      [[ "$a" == "--no-register" ]] && has_no_register=1
+      [[ "$a" == "--registration-id" ]] && has_registration_id=1
     done
-    if [[ "${has_intent}" -eq 1 ]]; then
+    if [[ "${has_intent}" -eq 1 || "${has_registration_id}" -eq 1 ]]; then
       remote_py scripts/cortex/cowork_project_ask.py "$@"
-    else
+    elif [[ "${has_no_register}" -eq 1 ]]; then
       ensure_chrome "${CDP_PORT}" "${PROFILE_SUFFIX}"
+      has_cdp=0
+      for a in "$@"; do
+        [[ "$a" == "--cdp-url" ]] && has_cdp=1
+      done
       if [[ "${has_cdp}" -eq 0 ]]; then
         remote_py scripts/cortex/cowork_project_ask.py --cdp-url "http://127.0.0.1:${CDP_PORT}" "$@"
       else
         remote_py scripts/cortex/cowork_project_ask.py "$@"
       fi
+    else
+      _project_ask_with_abort_trap remote_py scripts/cortex/cowork_project_ask.py --register "$@"
     fi
     ;;
   -h|--help|help|'') usage 0 ;;

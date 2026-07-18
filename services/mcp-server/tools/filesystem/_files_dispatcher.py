@@ -179,7 +179,9 @@ def register_files_tool(mcp: FastMCP) -> None:
                     "content (identical — cortex search has no filename "
                     "heuristic)."
                 )
-            return search_path_impl(path, content)
+            result = search_path_impl(path, content)
+            result["_next"] = FS_WORKFLOW_HINTS["search"]
+            return result
         if op in ("append", "prepend"):
             if not path:
                 raise ValueError(f"'path' is required for {op}")

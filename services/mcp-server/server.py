@@ -330,8 +330,20 @@ def _build_server(
             '  fs(sandbox="cortex", op="read", path="notes/system/specs/foo.md")\n\n'
         )
         _fs_find_blurb = (
-            "``find`` and workspaces-scoped ``search`` filename mode are "
-            "/mcp/code surface capabilities only.\n\n"
+            "``find`` (filename glob) and ``search`` ``mode=filename`` are "
+            "/mcp/code (/ workspaces) capabilities only — not on /mcp/life.\n\n"
+        )
+        _fs_search_blurb = (
+            "**Literal content search (cortex):** ``op=search`` scans file "
+            "*contents* with a case-sensitive regex — NOT semantic retrieval. "
+            "Pass the pattern in ``content`` (not ``pattern``). ``path`` may "
+            "be a file or directory (e.g. ``ephemeral/handoffs/`` for "
+            "bug-class token sweeps). ``mode`` accepts ``auto`` or "
+            "``content`` only; ``filename`` is rejected on cortex. For "
+            "meaning-based lookup use ``rag(op=search, …)`` or "
+            "``cortex(tool=search, …)`` — not ``fs`` search.\n\n"
+            'Example: ``fs(op="search", path="ephemeral/handoffs/", '
+            'content="--cdp-url")``\n\n'
         )
     else:
         _fs_sandbox_intro = (
@@ -348,6 +360,12 @@ def _build_server(
         _fs_find_blurb = (
             "``find`` (workspaces only): locate files by name/glob — use instead of\n"
             "``search`` for filenames. ``search`` scans file *contents* with a regex.\n\n"
+        )
+        _fs_search_blurb = (
+            "**Literal content search:** ``op=search`` is case-sensitive regex "
+            "over file contents (cortex + workspaces) — NOT semantic retrieval. "
+            "Pattern goes in ``content=``. For meaning-based lookup use "
+            "``rag(op=search, …)`` or ``cortex(tool=search, …)``.\n\n"
         )
     _fs_tool_description = (
         f"{_fs_sandbox_intro}"
@@ -379,12 +397,19 @@ def _build_server(
         "egress never returns absolute mount paths.\n\n"
         'Use op="list" for directories; op="read" on a directory path returns an error.\n\n'
         f"{_fs_find_blurb}"
+        f"{_fs_search_blurb}"
         "Write responses (``write``, ``replace``, ``append``, ``prepend``,\n"
         "``insert_at_line``, ``write_binary``) include ``written_sha256``: bare\n"
         "lowercase hex of the resulting file bytes (``write_binary`` hashes the\n"
         "decoded bytes written). Callers compose ``sha256:`` / ``spec_sha256:``\n"
         "prefixes when citing hashes on assertions — the field itself has no prefix.\n"
-        "Read-only ops do not return ``written_sha256``.\n\n"
+        "Read-only ops do not return ``written_sha256``. Read responses (``read``)\n"
+        "include ``read_sha256``: bare lowercase hex of the on-disk source file\n"
+        "bytes, computed before text decode, format conversion, or offset/limit\n"
+        "windowing. When ``offset``/``limit`` slice the returned ``content``,\n"
+        "``read_sha256`` still covers the full source file. Callers compose\n"
+        "``sha256:`` / ``spec_sha256:`` prefixes when citing — the field itself\n"
+        "has no prefix.\n\n"
         f"{_fs_standard_ops_doc}\n\n"
         f"{md_section_op_doc()}"
     )

@@ -165,7 +165,11 @@ def write_file_impl(
 def read_file_impl(
     path: str, binary: bool = False, offset: int = 0, limit: int = 0
 ) -> dict[str, Any]:
-    """Read and return the contents of *path* from the sandboxed directory."""
+    """Read and return the contents of *path* from the sandboxed directory.
+
+    Response includes ``read_sha256``: bare lowercase hex of on-disk source bytes
+    (full file; independent of offset/limit windowing on ``content``).
+    """
     result = read_file_result(path, binary=binary, offset=offset, limit=limit)
     auto_binary = bool(result.get("auto_binary"))
     range_requested = offset > 0 or limit > 0

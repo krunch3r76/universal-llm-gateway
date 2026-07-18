@@ -9,6 +9,7 @@ from typing import Any
 
 from mcp_events import record
 
+from ._hashing import sha256_hex_of_file
 from ._line_range import apply_line_range
 from ._pdf_read import (
     PDF_LAYOUT_MAX_BYTES,
@@ -241,7 +242,11 @@ def read_file_result(
     offset: int = 0,
     limit: int = 0,
 ) -> dict[str, Any]:
-    """Read one sandboxed file and return the standard MCP payload shape."""
+    """Read one sandboxed file and return the standard MCP payload shape.
+
+    Successful responses include ``read_sha256``: bare lowercase hex SHA-256 of
+    the on-disk source file bytes, computed before decode/conversion/windowing.
+    """
     if offset < 0:
         raise ValueError("offset must be >= 0")
     if limit < 0:
@@ -254,8 +259,11 @@ def read_file_result(
     if not src.is_file():
         raise ValueError(f"Path is not a file: {path!r}")
 
+    read_sha256 = sha256_hex_of_file(src)
+
     if binary:
         result = build_binary_read_result(src)
+        result["read_sha256"] = read_sha256
         if range_requested:
             result["line_range_applied"] = False
         return result
@@ -277,6 +285,7 @@ def read_file_result(
         auto_result = None
 
     if auto_result is not None:
+        auto_result["read_sha256"] = read_sha256
         if range_requested:
             auto_result["line_range_applied"] = False
         if auto_result.get("mime_type", "").startswith("image/"):
@@ -359,6 +368,7 @@ def read_file_result(
         content, range_meta = apply_line_range(content, offset, limit)
         result["content"] = content
         result.update(range_meta)
+    result["read_sha256"] = read_sha256
     return result
 
 

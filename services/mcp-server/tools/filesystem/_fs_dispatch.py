@@ -60,9 +60,11 @@ OP_DOC: dict[str, tuple[str, str]] = {
     "delete": ("(path)", "delete file"),
     "search": (
         "(path, content, mode?)",
-        "regex content search; mode ∈ auto|content|filename (default auto: "
-        "bare ext-suffixed filenames reroute to find, annotated; content "
-        "forces content search; filename = glob find, workspaces only); "
+        "literal regex content search (case-sensitive; NOT semantic — use "
+        "rag/cortex search for meaning); content holds the regex pattern; "
+        "path = file or directory; cortex: mode ∈ auto|content only "
+        "(filename rejected); workspaces: mode ∈ auto|content|filename "
+        "(default auto reroutes bare ext-suffixed tokens to find, annotated); "
         "non-exhaustive when skipped_converted>0, skipped_oversized>0, "
         "or wall budget hit",
     ),
@@ -258,8 +260,8 @@ def md_section_op_doc() -> str:
     """Build the fs tool docstring 'Markdown section ops' section."""
     return (
         "Markdown section ops (for large docs):\n"
-        "  md_list    (path)                    — list sections/TOC (PDFs: embedded outline; others: ATX markdown)\n"
-        "  md_read    (path, section?)          — read one section; empty/absent section => full document (text/markdown; PDFs still require a section)\n"
+        "  md_list    (path)                    — list sections/TOC (PDFs: embedded outline; markdown: ATX headings plus line-anchored XML blocks such as `<scope>` / `<task_guidance>` on six-block handoff packets)\n"
+        "  md_read    (path, section?)          — read one section; empty/absent section => full document (text/markdown; PDFs still require a section). XML block keys: `<tag>` or bare `tag` (e.g. section=\"<task_guidance>\" or section=\"task_guidance\")\n"
         "  md_to_dict (path)                    — nested heading dict (PDFs: outline-driven; others: ATX sections)\n"
         "  md_replace (path, section, content)  — replace section body (text files only); content must NOT include the section heading — if it opens with a matching ATX heading, the op strips it and sets normalized_heading: true; response includes mutation (line/char delta) and _warning when body shrinks by >50%\n"
         "  md_append  (path, section, content)  — append to section body (text files only); same heading-less-content contract as md_replace\n"

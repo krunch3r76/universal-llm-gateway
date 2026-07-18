@@ -51,6 +51,9 @@ SUBDIRECTORY_TO_SCOPE: dict[str, str] = {
     "skill-compilation": "skill_compilation",
     "legal-reasoning": "legal_reasoning_llm",
     "agent-substrate": "agent_substrate",
+    "open-endedness": "open_endedness",
+    "world-models": "world_models",
+    "nas-meta-learning": "nas_meta_learning",
 }
 
 

@@ -26,7 +26,12 @@ _SKIP_NOTE = "no relevant hits (below MARGINAL threshold)"
 def _cortex_dispatch(tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
     from ._cortex_relay import cx
 
-    return cx("POST", "/dispatch", {"tool": tool, "arguments": json.dumps(arguments)})
+    return cx(
+        "POST",
+        "/dispatch",
+        {"tool": tool, "arguments": json.dumps(arguments)},
+        dispatch_tool=tool,
+    )
 
 
 def _run_theme_search(

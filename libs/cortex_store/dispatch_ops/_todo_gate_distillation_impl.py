@@ -176,16 +176,29 @@ def _evaluate_from_persisted(
     *,
     entity_id: str,
     prepared: GateDistillationInputs,
+    persisted_attrs: dict[str, Any] | None = None,
+    persisted_source_uri: str | None = None,
+    persisted_name: str | None = None,
 ) -> ImplementReadyVerdict:
-    entity = _op_entity_get(entity_id=entity_id, intent="full")
-    if "error" in entity:
-        return ImplementReadyVerdict(
-            admitted=False,
-            code="entity_missing",
-            reason=str(entity["error"]),
-        )
+    if persisted_attrs is not None:
+        attrs = persisted_attrs
+        source_uri = persisted_source_uri or prepared.spec_path
+        entity_name = persisted_name
+        spec_text = prepared.spec_text
+    else:
+        entity = _op_entity_get(entity_id=entity_id, intent="full")
+        if "error" in entity:
+            return ImplementReadyVerdict(
+                admitted=False,
+                code="entity_missing",
+                reason=str(entity["error"]),
+            )
 
-    attrs = _decode_attributes(entity.get("attributes"))
+        attrs = _decode_attributes(entity.get("attributes"))
+        source_uri = entity.get("source_uri")
+        entity_name = entity.get("name")
+        spec_text = read_dense_spec_text(prepared.spec_path)
+
     aid = _coerce_assertion_id(attrs.get("implement_ready_assertion_id"))
     assertion: dict[str, Any] | None = None
     if aid is not None:
@@ -193,7 +206,6 @@ def _evaluate_from_persisted(
         if isinstance(loaded, dict) and "error" not in loaded:
             assertion = loaded
 
-    spec_text = read_dense_spec_text(prepared.spec_path)
     raw_files = attrs.get("files_expected")
     files_expected = raw_files if isinstance(raw_files, list) else []
     raw_acs = attrs.get("acceptance_criteria")
@@ -228,7 +240,7 @@ def _evaluate_from_persisted(
     return evaluate_implement_ready(
         todo_id=entity_id,
         density_triage=attrs.get("density_triage"),
-        source_uri=entity.get("source_uri"),
+        source_uri=source_uri,
         implement_ready_assertion_id=aid,
         assertion=assertion,
         now_iso=now_iso,
@@ -236,7 +248,7 @@ def _evaluate_from_persisted(
         dense_spec_text=spec_text,
         files_expected=files_expected,
         acceptance_criteria=acceptance_criteria,
-        entity_name=entity.get("name"),
+        entity_name=entity_name,
         skeptic_ratified=skeptic_outcome.ratified,
         recon_waived=recon_waived,
         skeptic_evidence_grounded=skeptic_outcome.evidence_grounded,
@@ -469,9 +481,13 @@ def distill_todo_implement_gate(
             )
             return {"error": update["error"], "step": "entity_update"}
 
+        merged_attrs = {**prior_attrs, **attr_patch}
         verdict = _evaluate_from_persisted(
             entity_id=resolved.entity_id,
             prepared=prepared,
+            persisted_attrs=merged_attrs,
+            persisted_source_uri=prepared.spec_path,
+            persisted_name=row.get("name"),
         )
         if not verdict.admitted:
             logger.warning(

@@ -5,12 +5,20 @@ Run ON Jupiter (CDP host). From Cursor / remote seats use:
   scripts/cortex/claude-ai-sync-jupiter project-ask …
 
 Examples:
-  # Disposable sealed ask (Opus) — Project UUID; Chat Send or Cowork Start task
-  scripts/cortex/claude-ai-sync-jupiter project-ask --cdp-port 9223 --profile-suffix ask \\
+  # Automated seat — registry allocates a fresh (port, profile) lane
+  scripts/cortex/claude-ai-sync-jupiter project-ask --register --purpose ask \\
     --uuid 019f6917-… --prompt-file sealed.md --out body.md
 
+  # Reattach a held registration (same holder)
+  scripts/cortex/claude-ai-sync-jupiter project-ask \\
+    --registration-id <id> --holder seat-x --uuid … --prompt-file …
+
+  # Primary attended :9222 only — explicit opt-out of registry
+  scripts/cortex/claude-ai-sync-jupiter project-ask --no-register \\
+    --cdp-url http://127.0.0.1:9222 --uuid … --prompt-file …
+
   # N-turn Fable consult on /new (no Project) — MUST --converse with --no-uuid
-  scripts/cortex/claude-ai-sync-jupiter project-ask --cdp-port 9223 --profile-suffix ask \\
+  scripts/cortex/claude-ai-sync-jupiter project-ask --register --purpose fable \\
     --converse --no-uuid --model fable-5 \\
     --prompt-file t1.md --prompt-file t2.md --prompt-file t3.md \\
     --out-dir /mnt/torus/mcp-data/files/notes/system/threads/4917-fable-review/
@@ -25,6 +33,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -32,8 +41,13 @@ _REPO = Path(__file__).resolve().parent.parent.parent
 if str(_REPO / "libs") not in sys.path:
     sys.path.insert(0, str(_REPO / "libs"))
 
-from claude_bundles import cdp_lane  # noqa: E402
+from claude_bundles import cdp_lane, cdp_registry  # noqa: E402
 from claude_bundles.project_ask import run_project_ask  # noqa: E402
+from claude_bundles.project_ask_abort import (  # noqa: E402
+    abort_cleanup_registration_id,
+    deregister_on_exit,
+    install_abort_handlers,
+)
 from claude_bundles.project_ask_conversation import (  # noqa: E402
     run_project_conversation,
 )
@@ -42,14 +56,58 @@ from claude_bundles.skills_ui_panel import DEFAULT_CDP_URL  # noqa: E402
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--cdp-url", default=DEFAULT_CDP_URL)
+    parser.add_argument(
+        "--cdp-url",
+        default=None,
+        help=(
+            "Raw CDP URL — forbidden for automated paths unless --no-register "
+            f"(primary {DEFAULT_CDP_URL} only). Prefer --register."
+        ),
+    )
+    parser.add_argument(
+        "--register",
+        dest="register",
+        action="store_true",
+        default=True,
+        help="Acquire a never-used (port, profile) via cdp_registry (default).",
+    )
+    parser.add_argument(
+        "--no-register",
+        dest="register",
+        action="store_false",
+        help="Opt out of registry (attended :9222 / explicit --cdp-url only).",
+    )
+    parser.add_argument(
+        "--registration-id",
+        default="",
+        help="Reattach an existing active registration (same --holder).",
+    )
+    parser.add_argument(
+        "--holder",
+        default="",
+        help="Registry holder id (default: env CDP_HOLDER or project-ask-<pid>).",
+    )
+    parser.add_argument(
+        "--purpose",
+        default=None,
+        help="Registry purpose tag (e.g. ask, fable, purge).",
+    )
+    parser.add_argument(
+        "--deregister-on-exit",
+        action="store_true",
+        help="With --register: deregister the lane when this process exits.",
+    )
+    parser.add_argument(
+        "--abort-cleanup-registration-id",
+        default="",
+        help=argparse.SUPPRESS,
+    )
     parser.add_argument(
         "--intent",
         default="",
         help=(
-            "Acquire a lane by intent (ask|fable|opus|…) instead of a fixed "
-            "--cdp-url: the allocator picks a non-overlapping (profile, port) "
-            "and holds it for this process. Overrides --cdp-url."
+            "Legacy profile-keyed lane (cdp_lane). Prefer --register. "
+            "Mutually exclusive with --register / --registration-id."
         ),
     )
     parser.add_argument(
@@ -135,6 +193,34 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--min-growth", type=int, default=50)
     args = parser.parse_args(argv)
 
+    cleanup_id = args.abort_cleanup_registration_id.strip()
+    if cleanup_id:
+        return abort_cleanup_registration_id(cleanup_id)
+
+    holder = (
+        args.holder.strip()
+        or os.environ.get("CDP_HOLDER", "").strip()
+        or f"project-ask-{os.getpid()}"
+    )
+
+    if args.intent and args.registration_id:
+        parser.error("--intent is mutually exclusive with --registration-id")
+    # --intent opts into the legacy profile-keyed allocator (implies ¬register).
+    if args.intent:
+        args.register = False
+
+    if args.registration_id:
+        reg = cdp_registry.reattach(args.registration_id, holder=holder)
+        args.cdp_url = reg.cdp_url
+        _print_registration(reg)
+        if args.deregister_on_exit:
+            install_abort_handlers(reg, purpose=reg.purpose)
+        try:
+            return _dispatch(args, parser)
+        finally:
+            if args.deregister_on_exit:
+                deregister_on_exit(reg, purpose=reg.purpose)
+
     if args.intent:
         with cdp_lane.acquire_lane(
             args.intent,
@@ -148,7 +234,39 @@ def main(argv: list[str] | None = None) -> int:
                 flush=True,
             )
             return _dispatch(args, parser)
+
+    if args.register:
+        if args.cdp_url:
+            parser.error(
+                "raw --cdp-url is forbidden with --register; "
+                "omit --cdp-url, or use --no-register for primary :9222"
+            )
+        purpose = args.purpose or args.intent or "ask"
+        reg = cdp_registry.register_lane(holder=holder, purpose=purpose)
+        args.cdp_url = reg.cdp_url
+        _print_registration(reg)
+        if args.deregister_on_exit:
+            install_abort_handlers(reg, purpose=purpose)
+        try:
+            return _dispatch(args, parser)
+        finally:
+            if args.deregister_on_exit:
+                deregister_on_exit(reg, purpose=purpose)
+
+    # --no-register: attended primary or explicit URL
+    if not args.cdp_url:
+        args.cdp_url = DEFAULT_CDP_URL
     return _dispatch(args, parser)
+
+
+def _print_registration(reg: cdp_registry.Registration) -> None:
+    print(f"registration_id={reg.registration_id}", flush=True)
+    print(f"cdp_url={reg.cdp_url}", flush=True)
+    print(
+        f"registry: port={reg.port} suffix={reg.profile_suffix} "
+        f"holder={reg.holder} purpose={reg.purpose}",
+        flush=True,
+    )
 
 
 def _dispatch(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:

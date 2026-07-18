@@ -132,14 +132,80 @@ def _dispatch_record_json(req: CursorDispatchRequest) -> str:
     return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
 
+def _subject_preview(record_json: str, packet_path: str | None = None) -> str | None:
+    try:
+        data = json.loads(record_json) if record_json else {}
+    except json.JSONDecodeError:
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    message = data.get("message")
+    if isinstance(message, str) and message.strip():
+        first_line = message.strip().splitlines()[0].strip()
+        if first_line:
+            return first_line[:120]
+    path = data.get("packet_path") or packet_path
+    if isinstance(path, str) and path.strip():
+        return Path(path.strip()).name[:120]
+    return None
+
+
+def _holder_projection(row: sqlite3.Row | None) -> dict[str, Any]:
+    if row is None:
+        return {
+            "holder_dispatch_id": None,
+            "holder_thread_id": None,
+            "holder_resolved_model": None,
+            "holder_subject_preview": None,
+            "holder_status": None,
+            "holder_started_at": None,
+            "holder_last_heartbeat_at": None,
+        }
+    record_json = row["record_json"] if "record_json" in row.keys() else "{}"
+    packet_path = row["packet_path"] if "packet_path" in row.keys() else None
+    return {
+        "holder_dispatch_id": row["dispatch_id"],
+        "holder_thread_id": row["thread_id"],
+        "holder_resolved_model": row["resolved_model"],
+        "holder_subject_preview": _subject_preview(record_json or "{}", packet_path),
+        "holder_status": row["status"],
+        "holder_started_at": row["started_at"] if "started_at" in row.keys() else None,
+        "holder_last_heartbeat_at": (
+            row["last_heartbeat_at"] if "last_heartbeat_at" in row.keys() else None
+        ),
+    }
+
+
+def _fetch_active_holder_conn(
+    conn: sqlite3.Connection, *, source_repo: str | None
+) -> sqlite3.Row | None:
+    if source_repo:
+        return conn.execute(
+            "SELECT dispatch_id, thread_id, resolved_model, status, started_at, "
+            "last_heartbeat_at, record_json, packet_path, source_repo "
+            "FROM cursor_sdk_dispatches "
+            "WHERE source_repo=? AND COALESCE(read_only,0)=0 "
+            "AND status IN ('admitted','running') LIMIT 1",
+            (source_repo,),
+        ).fetchone()
+    return conn.execute(
+        "SELECT dispatch_id, thread_id, resolved_model, status, started_at, "
+        "last_heartbeat_at, record_json, packet_path, source_repo "
+        "FROM cursor_sdk_dispatches "
+        "WHERE COALESCE(read_only,0)=0 AND status IN ('admitted','running') LIMIT 1"
+    ).fetchone()
+
+
 def _response_from_row(
     row: sqlite3.Row,
     *,
     admission: CursorDispatchResponse,
     queue_position: int | None = None,
+    holder: dict[str, Any] | None = None,
 ) -> CursorDispatchResponse:
     status = row["status"]
     if status == _STATUS_QUEUED:
+        holder_fields = holder or _holder_projection(None)
         return CursorDispatchResponse(
             admitted=False,
             dispatch_id=row["dispatch_id"],
@@ -148,6 +214,7 @@ def _response_from_row(
             status="queued",
             queue_position=queue_position,
             since=row["queued_at"],
+            **holder_fields,
         )
     return CursorDispatchResponse(
         admitted=True,
@@ -335,8 +402,16 @@ class CursorDispatchLedger:
                         source_repo=existing["source_repo"],
                         worker_instance=worker_instance,
                     )
+                    holder = _holder_projection(
+                        _fetch_active_holder_conn(
+                            conn, source_repo=existing["source_repo"]
+                        )
+                    )
                     return _response_from_row(
-                        existing, admission=admission, queue_position=pos
+                        existing,
+                        admission=admission,
+                        queue_position=pos,
+                        holder=holder,
                     )
                 return _response_from_row(existing, admission=admission)
             insert_status = _STATUS_ADMITTED
@@ -397,7 +472,12 @@ class CursorDispatchLedger:
                     (req.dispatch_id,),
                 ).fetchone()
                 assert row is not None
-                return _response_from_row(row, admission=admission, queue_position=pos)
+                holder = _holder_projection(
+                    _fetch_active_holder_conn(conn, source_repo=source_repo)
+                )
+                return _response_from_row(
+                    row, admission=admission, queue_position=pos, holder=holder
+                )
         return None
 
     @staticmethod
@@ -607,33 +687,26 @@ class CursorDispatchLedger:
         """Active write-lease holder + queued depth (F-3)."""
         with self._connect() as conn:
             if source_repo:
-                holder = conn.execute(
-                    "SELECT dispatch_id, status, queued_at, started_at, source_repo "
-                    "FROM cursor_sdk_dispatches "
-                    "WHERE source_repo=? AND COALESCE(read_only,0)=0 "
-                    "AND status IN ('admitted','running') LIMIT 1",
-                    (source_repo,),
-                ).fetchone()
+                holder = _fetch_active_holder_conn(conn, source_repo=source_repo)
                 queued = conn.execute(
                     "SELECT COUNT(*) AS n FROM cursor_sdk_dispatches "
                     "WHERE source_repo=? AND COALESCE(read_only,0)=0 AND status='queued'",
                     (source_repo,),
                 ).fetchone()
             else:
-                holder = conn.execute(
-                    "SELECT dispatch_id, status, source_repo, started_at "
-                    "FROM cursor_sdk_dispatches "
-                    "WHERE COALESCE(read_only,0)=0 AND status IN ('admitted','running') "
-                    "LIMIT 1"
-                ).fetchone()
+                holder = _fetch_active_holder_conn(conn, source_repo=None)
                 queued = conn.execute(
                     "SELECT COUNT(*) AS n FROM cursor_sdk_dispatches "
                     "WHERE COALESCE(read_only,0)=0 AND status='queued'"
                 ).fetchone()
+        projection = _holder_projection(holder)
         return {
-            "holder_dispatch_id": holder["dispatch_id"] if holder else None,
-            "holder_status": holder["status"] if holder else None,
-            "holder_source_repo": holder["source_repo"] if holder else source_repo,
+            **projection,
+            "holder_source_repo": (
+                holder["source_repo"]
+                if holder is not None
+                else source_repo
+            ),
             "queue_depth": int(queued["n"]) if queued else 0,
         }
 

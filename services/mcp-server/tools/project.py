@@ -382,9 +382,10 @@ def register_project_tools(mcp: FastMCP) -> None:
                 Image, audio, video, and archive files auto-route to binary even when False.
 
         Returns:
-            Text mode: {"content": "<file contents>", "path": "<relative path>"}
+            Text mode: {"content": "<file contents>", "path": "<relative path>",
+                "read_sha256": "<hex>"}
             Binary mode: {"content_base64", "mime_type", "encoding", "bytes", "path",
-                "auto_binary": true (when auto-routed)}
+                "read_sha256": "<hex>", "auto_binary": true (when auto-routed)}
         """
         src, rel_path = _resolve_project_file_path(path)
         if not src.exists():

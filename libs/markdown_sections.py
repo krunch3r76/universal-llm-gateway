@@ -1,6 +1,7 @@
 """ATX markdown sections: parse, read/replace/append/delete, dict↔md (stdlib only).
 
-Limitations: ATX headings only; headings in blockquotes/lists count; simplified fences."""
+Navigation merges ATX headings with line-anchored XML blocks (handoff packets).
+Limitations: headings in blockquotes/lists count; simplified fences."""
 
 from __future__ import annotations
 
@@ -32,6 +33,29 @@ class Section:
 
 def _char_upto(lines: list[str], line_idx: int) -> int:
     return sum(len(lines[k]) for k in range(line_idx))
+
+
+def _document_sections(text: str) -> list[Section]:
+    """ATX sections plus XML block sections sorted by document offset."""
+    atx = parse_sections(text)
+    from markdown_xml_blocks import parse_xml_block_sections
+
+    xml = parse_xml_block_sections(text)
+    if not xml:
+        return atx
+    preamble = atx[0] if atx and atx[0].level == 0 else None
+    body = [
+        sec
+        for sec in atx
+        if sec.level > 0
+        and not any(
+            sec.start >= xml_sec.start and sec.end <= xml_sec.end for xml_sec in xml
+        )
+    ] + xml
+    body.sort(key=lambda sec: sec.start)
+    if preamble is not None:
+        return [preamble, *body]
+    return body if body else atx
 
 
 def parse_sections(text: str) -> list[Section]:
@@ -93,7 +117,9 @@ def parse_sections(text: str) -> list[Section]:
 
 
 def resolve_section(text: str, section_path: str) -> Section:
-    """Resolve by full path, suffix, or heading; empty string selects preamble."""
+    """Resolve by full path, suffix, heading, or XML block tag."""
+    from markdown_xml_blocks import resolve_xml_section
+
     sections = parse_sections(text)
     if section_path == "":
         for sec in sections:
@@ -159,6 +185,9 @@ def resolve_section(text: str, section_path: str) -> Section:
                 f"Ambiguous section {section_path!r}. "
                 f"Full paths: {', '.join(repr(s.path) for s in suffix_matches)}"
             )
+    xml_sec = resolve_xml_section(text, section_path)
+    if xml_sec is not None:
+        return xml_sec
     raise SectionError(f"Section not found: {section_path!r}")
 
 
@@ -172,7 +201,7 @@ def list_sections(text: str) -> list[dict[str, str | int]]:
             "line": sec.line,
             "chars": sec.chars,
         }
-        for sec in parse_sections(text)
+        for sec in _document_sections(text)
         if not (sec.level == 0 and sec.chars == 0)
     ]
 

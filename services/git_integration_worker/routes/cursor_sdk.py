@@ -1524,6 +1524,10 @@ async def cursor_dispatch(
                 thread_id=cached.thread_id,
                 source_repo=source_repo_str,
                 queue_position=cached.queue_position,
+                holder_dispatch_id=cached.holder_dispatch_id,
+                holder_thread_id=cached.holder_thread_id,
+                holder_resolved_model=cached.holder_resolved_model,
+                holder_subject_preview=cached.holder_subject_preview,
             )
         return JSONResponse(status_code=status_code, content=cached.model_dump())
 

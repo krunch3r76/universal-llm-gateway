@@ -44,3 +44,10 @@ class CursorDispatchResponse(BaseModel):
     status: Literal["admitted", "queued"] = "admitted"
     queue_position: int | None = None
     since: str | None = None
+    holder_dispatch_id: str | None = None
+    holder_thread_id: str | None = None
+    holder_resolved_model: str | None = None
+    holder_subject_preview: str | None = None
+    holder_status: str | None = None
+    holder_started_at: str | None = None
+    holder_last_heartbeat_at: str | None = None

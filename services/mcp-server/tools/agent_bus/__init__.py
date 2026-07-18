@@ -70,6 +70,8 @@ if TYPE_CHECKING:
 
     from fastmcp import FastMCP
 
+AGENT_BUS_DEPRECATED_OPS: frozenset[str] = frozenset({"post", "reply"})
+
 AGENT_BUS_OPS: dict[str, Callable[..., Any]] = {
     "send": _send_dispatch,
     "post": _post_dispatch,
@@ -89,8 +91,16 @@ AGENT_BUS_OPS: dict[str, Callable[..., Any]] = {
     "wait": _wait_dispatch,
 }
 
+
+def advertised_agent_bus_ops() -> tuple[str, ...]:
+    """Ops advertised on the wire ``tool`` enum — excludes deprecated post/reply."""
+    return tuple(sorted(op for op in AGENT_BUS_OPS if op not in AGENT_BUS_DEPRECATED_OPS))
+
+
 __all__ = [
+    "AGENT_BUS_DEPRECATED_OPS",
     "AGENT_BUS_OPS",
+    "advertised_agent_bus_ops",
     "_FETCH_CONTEXT_CAP",
     "_close_dispatch",
     "_close_impl",
@@ -164,23 +174,27 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
           the equivalent durable sidecar write automatically (see
           ``async_tracker_delivery/on_behalf.py``).
 
+        Write path — use ``send`` (``post``/``reply`` are legacy aliases until 2026-09-01):
+
         Operations:
+          send          (new_slug XOR thread, to, subject, body, from?, from_agent?, summary?, tags?, lifecycle_state?, after_turn?, status?, mark_read?, close?, attachments?, allow_long_body?, sidecar_content?, sidecar_slug?, supersedes_turn?) — **primary write op**. Exactly one of new_slug (new thread) or thread (continue) required; supersedes_turn (continue path only) is the database turn id to supersede structurally. slug uniqueness enforced on new_slug path (409 slug_exists on collision). When sidecar_content is set the server writes cortex://notes/system/threads/<thread_id>-<slug>.md before inserting the turn, appends a trailing Sidecar: pointer to the body, and returns sidecar_uri + sidecar_sha256. sidecar_content cap 256KB. Prefer ``from=``; ``from_agent`` is a permanent alias. When omitted on ``/mcp/life`` or ``/mcp/code``, the server autofills ``web-anthropic`` or ``cursor`` respectively.
           threads       (status?, tags?, lifecycle_state?)              — list threads; status: active|blocked|waiting|closed|all (default active); tags: AND-filter; lifecycle_state: pending|admitted|delivered|failed (exact match)
           create_thread (slug, summary?, tags?, lifecycle_state?, thread_id?) — create a thread without a turn; use lifecycle_state="pending" for lifecycle-managed threads that will be dispatched later
           fetch_unread  (to?, thread?, mark_read?, compact?, active_since?, limit?, all?) — recipient scope (to set, thread unset): enriched per-thread unread digest (slug, last_subject, last_activity_at; default 14d window, limit 50; unwindowed totals in response). thread scope: that thread's full unread turn list (no count cap; compact controls bodies). At least one of to/thread required.
           fetch         (to?, thread?, last?, unread?, compact?, mark_read?, all?)  — get turns; at least one of to/thread required; all=true fetches every turn (no limit); unread=true fetches all unread (last ignored; prefer fetch_unread); last caps windowed fetches (default 10, unread default false); compact default false (bodies projected) — pass compact=true for metadata-only
           get           (thread, turn_number)                           — get one specific turn; turn_number may be int or "latest"
-          post          (slug, to, subject, body, from?, from_agent?, summary?, attachments?, tags?, allow_long_body?) — start a new thread (atomic: creates thread + first turn). Prefer ``from=``; ``from_agent`` is a permanent alias. When omitted on ``/mcp/life`` or ``/mcp/code``, the server autofills ``web-anthropic`` or ``cursor`` respectively. DEPRECATED 2026-06-14 — use send(new_slug=..., ...) instead; removed 2026-09-01.
-          send          (new_slug XOR thread, to, subject, body, from?, from_agent?, summary?, tags?, lifecycle_state?, after_turn?, status?, mark_read?, close?, attachments?, allow_long_body?, sidecar_content?, sidecar_slug?, supersedes_turn?) — unified post/reply surface. Exactly one of new_slug (new thread) or thread (continue) required; supersedes_turn (continue path only) is the database turn id to supersede structurally. slug uniqueness enforced on new_slug path (409 slug_exists on collision). When sidecar_content is set the server writes cortex://notes/system/threads/<thread_id>-<slug>.md before inserting the turn, appends a trailing Sidecar: pointer to the body, and returns sidecar_uri + sidecar_sha256. sidecar_content cap 256KB. Prefer ``from=``; surface autofill matches post.
-          reply         (thread, to, subject, body, after_turn, from?, from_agent?, status?, mark_read?, close?, attachments?, allow_long_body?, supersedes_turn?) — reply to a thread; supersedes_turn is the database turn id to supersede structurally (sets prior turn status=superseded); allow_long_body=true explicitly bypasses the 8k briefing limit for rare inline long-form messages; close=true posts this as the final turn and closes the thread (marks all turns read). Prefer ``from=``; surface autofill matches post. DEPRECATED 2026-06-14 — use send(thread=..., ...) instead; removed 2026-09-01.
-          update        (thread, turn_number, body?, append?, subject?) — edit or append to an existing turn while read_at is null; 409 turn_already_acknowledged once marked read (use send/reply for follow-up)
+          update        (thread, turn_number, body?, append?, subject?) — edit or append to an existing turn while read_at is null; 409 turn_already_acknowledged once marked read (use send(thread=...) for follow-up)
           mark_read     (thread, turn_numbers[] XOR through_turn, agent?) — bulk mark read; through_turn requires agent
           wait          (thread, after_turn?, wait_seconds?, completion?, from_agent?) — server-side short-block until consult posts a bus turn after the pointer (completion=first_reply_from + canonical from_agent; alias-aware) or thread closes (completion=thread_closed); wait_seconds clamped <=60 (0=snapshot). Returns {thread_id, complete, status, push_required, suggested_next (object: consult_turn_posted + steps fetch/apply/close when complete and thread still active), qualifying_reply_turn, thread_status, ...}. first_reply_from complete means a consult bus turn exists, not findings applied. Re-call to keep polling — one HTTP call, not a client loop.
           update_thread (thread, status?, summary?, tags?, from_agent?) — patch thread metadata (tags: omit=keep, []=clear, [...]=replace)
           close         (thread, summary?, mark_all_read?)              — close a thread (atomic: marks all turns read by default)
           delete_turn   (thread, turn_number, force?)                   — delete a single turn
           delete_thread (thread, force?)                                — delete an entire thread
-          triage        (from?, from_agent?, older_than, status?, action=mark_read|close, dry_run=true, confirm_token?) — bulk inbox hygiene (agent_bus only). Preview with dry_run=true returns candidates + confirm_token; execute with dry_run=false + confirm_token. Floors: mark_read ≥24h, close ≥7d. Cap 50 threads/call. Prefer ``from=``; surface autofill matches post.
+          triage        (from?, from_agent?, older_than, status?, action=mark_read|close, dry_run=true, confirm_token?) — bulk inbox hygiene (agent_bus only). Preview with dry_run=true returns candidates + confirm_token; execute with dry_run=false + confirm_token. Floors: mark_read ≥24h, close ≥7d. Cap 50 threads/call. Prefer ``from=``; surface autofill matches send.
+
+        Legacy write ops (deprecated 2026-06-14; omitted from wire ``tool`` enum; still accepted; response includes ``_deprecated``):
+          post          (slug, to, subject, body, …) — use send(new_slug=..., ...) instead; removed 2026-09-01.
+          reply         (thread, to, subject, body, after_turn, …) — use send(thread=..., after_turn=..., ...) instead; removed 2026-09-01.
 
         Thread response fields (ThreadDetail):
           id, slug, status, summary, turn_count, unread_count, tags, created_at, updated_at
@@ -190,7 +204,7 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
             each entry has: execution_id, pipeline_id, linked_at, terminal_status, delivery_at
 
         Turn response fields (Turn — returned by fetch, fetch_unread, get, and as
-        the created turn inside post/reply):
+        the created turn inside send):
           id, thread, turn_number, from, to, subject, body,
           status (TurnStatus — see Status enums below), supersedes_turn,
           created_at, read_at, attachments
@@ -217,10 +231,10 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
 
         Examples:
           agent_bus(tool="fetch", arguments='{"thread": "111", "last": 3, "compact": true}')
-          agent_bus(tool="reply", arguments='{"thread": "111", "to": "web", "subject": "Re: topic", "body": "## Reply\\n...", "after_turn": 5, "from": "cursor"}')
-          agent_bus(tool="reply", arguments='{"thread": "111", "to": "web", "subject": "Re: long-form handoff", "body": "...", "after_turn": 5, "from_agent": "cursor", "allow_long_body": true}')
+          agent_bus(tool="send", arguments='{"thread": "111", "to": "web", "subject": "Re: topic", "body": "## Reply\\n...", "after_turn": 5, "from": "cursor"}')
+          agent_bus(tool="send", arguments='{"new_slug": "review-bug", "to": "cursor", "subject": "Bug found", "body": "Details: cortex:notes/system/threads/review-bug-details.md", "from": "web-anthropic", "tags": ["project:ulg", "type:bug"]}')
+          agent_bus(tool="send", arguments='{"thread": "111", "to": "web", "subject": "Re: long-form handoff", "body": "...", "after_turn": 5, "from_agent": "cursor", "allow_long_body": true, "sidecar_content": "# Full spec\\n..."}')
           fs(sandbox="cortex", op="write", path="notes/system/threads/review-bug-details.md", content="...")
-          agent_bus(tool="post", arguments='{"slug": "review-bug", "to": "cursor", "subject": "Bug found", "body": "Details: cortex:notes/system/threads/review-bug-details.md", "from": "web-anthropic", "tags": ["project:ulg", "type:bug"]}')
           agent_bus(tool="threads", arguments='{"tags": ["project:claudeburst", "type:bug"]}')
           agent_bus(tool="threads", arguments='{"lifecycle_state": "pending"}')
           agent_bus(tool="create_thread", arguments='{"slug": "my-workflow", "lifecycle_state": "pending", "tags": ["project:ulg"]}')
@@ -234,8 +248,11 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
         handler = AGENT_BUS_OPS.get(tool)
         if handler is None:
             return {
-                "error": f"Unknown agent_bus tool {tool!r}. "
-                f"Available: {sorted(AGENT_BUS_OPS.keys())}"
+                "error": (
+                    f"Unknown agent_bus tool {tool!r}. "
+                    f"Available: {list(advertised_agent_bus_ops())}. "
+                    f"Legacy (deprecated): {sorted(AGENT_BUS_DEPRECATED_OPS)}"
+                )
             }
         t_prog, prog_timer = toolprogress_begin("agent_bus", inner_tool=tool)
         err: str | None = None

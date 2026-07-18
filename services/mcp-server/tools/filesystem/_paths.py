@@ -76,6 +76,11 @@ FS_WORKFLOW_HINTS: dict[str, str] = {
         "next: cortex entity_create or assert with source_uri pointing to this "
         "path; or use extract_document for PDFs/images requiring text extraction"
     ),
+    "search": (
+        "literal regex content search — NOT semantic; for meaning-based "
+        "retrieval use rag(op=search) or cortex(tool=search); pattern goes "
+        "in content= (not pattern=)"
+    ),
 }
 
 DROPBOX_READ_HINT = (

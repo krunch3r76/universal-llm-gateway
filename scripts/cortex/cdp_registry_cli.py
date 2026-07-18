@@ -1,0 +1,85 @@
+#!/usr/bin/env python3
+"""CLI for CDP port registry — register / deregister / list / reclaim."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+_REPO = Path(__file__).resolve().parent.parent.parent
+if str(_REPO / "libs") not in sys.path:
+    sys.path.insert(0, str(_REPO / "libs"))
+
+from claude_bundles import cdp_registry  # noqa: E402
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    p_reg = sub.add_parser("register", help="Acquire a fresh (port, profile) lane")
+    p_reg.add_argument("--holder", required=True)
+    p_reg.add_argument("--purpose", default=None)
+    p_reg.add_argument(
+        "--no-launch",
+        action="store_true",
+        help="Allocate only (no Chrome launch) — tests / dry alloc",
+    )
+
+    p_dereg = sub.add_parser("deregister", help="Mark lane released")
+    p_dereg.add_argument("--registration-id", required=True)
+    p_dereg.add_argument("--kill", action="store_true")
+
+    sub.add_parser("list", help="List active registrations")
+
+    p_hygiene = sub.add_parser(
+        "hygiene-reclaim",
+        help="Drop released rows so ports re-enter the free pool",
+    )
+    p_hygiene.add_argument(
+        "--yes",
+        action="store_true",
+        help="Required confirm (destructive to released tombstones)",
+    )
+
+    args = parser.parse_args(argv)
+
+    if args.cmd == "register":
+        reg = cdp_registry.register_lane(
+            holder=args.holder,
+            purpose=args.purpose,
+            launch=not args.no_launch,
+        )
+        print(f"registration_id={reg.registration_id}")
+        print(f"cdp_url={reg.cdp_url}")
+        print(f"port={reg.port}")
+        print(f"profile_suffix={reg.profile_suffix}")
+        print(f"profile={reg.profile}")
+        return 0
+
+    if args.cmd == "deregister":
+        cdp_registry.deregister_lane(args.registration_id, kill=args.kill)
+        print(f"deregistered registration_id={args.registration_id} kill={args.kill}")
+        return 0
+
+    if args.cmd == "list":
+        rows = [cdp_registry.registration_as_dict(r) for r in cdp_registry.list_active()]
+        print(json.dumps(rows, indent=2))
+        return 0
+
+    if args.cmd == "hygiene-reclaim":
+        if not args.yes:
+            print("pass --yes to reclaim released ports", file=sys.stderr)
+            return 2
+        ports = cdp_registry.hygiene_reclaim_released()
+        print(json.dumps({"reclaimed_ports": ports}, indent=2))
+        return 0
+
+    parser.error(f"unknown cmd {args.cmd}")
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

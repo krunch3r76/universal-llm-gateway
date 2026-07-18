@@ -262,8 +262,10 @@ skills:
     surface_class: cursor_only
     mcp_surface_required: life
   path-sim:
-    surface_class: shared_sync
-    mcp_surface_required: none
+    # Cursor-lead cascade / code-dispatch machinery — ¬ life/web slug.
+    # R leg gets review-gate contract injected in the nudge (not "Use the path-sim skill").
+    surface_class: cursor_only
+    mcp_surface_required: code
   pipeline-substrate-capabilities:
     surface_class: cursor_only
     mcp_surface_required: code

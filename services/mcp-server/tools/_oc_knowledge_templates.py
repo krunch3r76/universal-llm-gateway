@@ -61,21 +61,22 @@ The `.eml`, `.pdf`, or other original file is the canonical source — use its p
 
 AGENT_BUS_COMPACT = """\
 ## Agent Bus Protocol
-Send: `agent_bus(tool="post", arguments='{{"slug": "topic", "to": "TARGET", "subject": "…", "body": "…", "from_agent": "{agent}"}}')`
-Reply: `agent_bus(tool="reply", arguments='{{"thread": "ID", "to": "TARGET", "subject": "…", "body": "…", "after_turn": N, "from_agent": "{agent}"}}')`
+New thread: `agent_bus(tool="send", arguments='{{"new_slug": "topic", "to": "TARGET", "subject": "…", "body": "…", "from_agent": "{agent}"}}')`
+Continue thread: `agent_bus(tool="send", arguments='{{"thread": "ID", "to": "TARGET", "subject": "…", "body": "…", "after_turn": N, "from_agent": "{agent}"}}')`
 Fetch inbox: `agent_bus(tool="fetch", arguments='{{"to": "{agent}", "last": 5, "unread": true}}')`
 Always pass `mark_read: true` when fetching turns you intend to act on — stale unread counts create false urgency.
 **Outgoing body rule — turns are briefings, not documents (body ≤ ~1KB).**
 Substantive content (specs, reviews, analysis, debriefs, long responses) belongs in a sidecar:
-1. Write to `notes/system/threads/<slug>-<subject>.md` via `fs(sandbox="cortex", op="write", …)`
+1. Write to `notes/system/threads/<slug>-<subject>.md` via `fs(sandbox="cortex", op="write", …)` OR pass `sidecar_content` on `send` (preferred).
 2. Post a short body: orientation sentence(s) + the sidecar path.
-Never put a document, full analysis, or long structured output directly into a turn body unless the recipient contract requires inline long-form delivery; in that rare case pass `allow_long_body: true` on `post`/`reply`.
+Never put a document, full analysis, or long structured output directly into a turn body unless the recipient contract requires inline long-form delivery; in that rare case pass `allow_long_body: true` on `send`.
 A *directive* means implement now. A *ticket* or *todo* means deferred work. Acknowledge receipt of directives before beginning.
 
-**Thread ID vs slug (CRITICAL — post vs reply):**
-- Thread **ID** (e.g. `"1140"`) → `reply` only, field `thread`. Never put a thread ID in `post.slug`.
+**Thread ID vs slug (CRITICAL — send routing):**
+- Thread **ID** (e.g. `"1140"`) → `send(thread="1140", after_turn=…)` only. Never put a thread ID in `new_slug`.
 - Thread **slug** (e.g. `"dispatch-surface-coherence-audit"`) is a human label at creation; it is NOT a routing key for append.
-- **`post` always creates** a new thread. To continue thread N: `reply(thread="N", after_turn=<last turn you read>)`.
+- **`send(new_slug=…)` always creates** a new thread. To continue thread N: `send(thread="N", after_turn=<last turn you read>)`.
+- Legacy `post`/`reply` still work but are deprecated (removed 2026-09-01) — use `send`.
 - Author field: prefer **`from=`** (seat bus address). **`from_agent`** is a permanent alias. When omitted on `/mcp/life` or `/mcp/code`, the server autofills `web-anthropic` or `cursor` respectively.
 - On `dispatch.rejected` with unknown fields — do not retry by swapping names into the wrong op; re-read accepted params for that op.
 
@@ -86,17 +87,17 @@ A *directive* means implement now. A *ticket* or *todo* means deferred work. Ack
 - Scoped listing: `fs(op="list", path="universal-llm-gateway", max_depth=2)` — avoid bare `path="."` at the multi-repo root (128KB cap)"""
 
 AGENT_BUS_EXAMPLES = """\
-### Replying to an unread turn
+### Continuing a thread (send)
 ```
-agent_bus(tool="reply", arguments='{{"thread": "THREAD_ID", "to": "TARGET", "subject": "Re: topic", "body": "Response text.", "after_turn": TURN_NUMBER, "from_agent": "{agent}"}}')
+agent_bus(tool="send", arguments='{{"thread": "THREAD_ID", "to": "TARGET", "subject": "Re: topic", "body": "Response text.", "after_turn": TURN_NUMBER, "from_agent": "{agent}"}}')
 ```
 After implementing a work order, request confirmation from the requesting agent."""
 
 AGENT_BUS_LARGE_PAYLOADS = """\
 ### Large Payload Protocol
-**Outbound**: apply the briefing rule before calling post/reply — don't wait for a 413.
-Write long content to `notes/system/threads/<slug>-<subject>.md` first, then reference it in a short body.
-Exception: if a web-agent communication must carry inline long-form content, pass `allow_long_body: true` explicitly on `post`/`reply`.
+**Outbound**: apply the briefing rule before calling send — don't wait for a 413.
+Write long content to `notes/system/threads/<slug>-<subject>.md` first (or pass `sidecar_content` on `send`), then reference it in a short body.
+Exception: if a web-agent communication must carry inline long-form content, pass `allow_long_body: true` explicitly on `send`.
 
 **Inbound**: when fetch returns a stored-reference (e.g. `rs_XXXX`), don't skip the content. Options in order of preference:
 1. Narrow the window: `last=3`, `compact=true`, or fetch individual turns via `get`.

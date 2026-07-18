@@ -213,15 +213,28 @@ def FrontierSdkWorkerQueued(  # noqa: N802
     thread_id: str,
     source_repo: str | None,
     queue_position: int | None,
+    holder_dispatch_id: str | None = None,
+    holder_thread_id: str | None = None,
+    holder_resolved_model: str | None = None,
+    holder_subject_preview: str | None = None,
 ) -> Event:
+    payload: dict[str, object] = {
+        "dispatch_id": dispatch_id,
+        "thread_id": thread_id,
+        "source_repo": source_repo,
+        "queue_position": queue_position,
+    }
+    if holder_dispatch_id is not None:
+        payload["holder_dispatch_id"] = holder_dispatch_id
+    if holder_thread_id is not None:
+        payload["holder_thread_id"] = holder_thread_id
+    if holder_resolved_model is not None:
+        payload["holder_resolved_model"] = holder_resolved_model
+    if holder_subject_preview is not None:
+        payload["holder_subject_preview"] = holder_subject_preview
     return Event(
         signal="frontier.sdk.worker.queued",
-        payload={
-            "dispatch_id": dispatch_id,
-            "thread_id": thread_id,
-            "source_repo": source_repo,
-            "queue_position": queue_position,
-        },
+        payload=payload,
         scope="node",
     )
 
@@ -273,6 +286,10 @@ def emit_sdk_worker_queued(
     thread_id: str,
     source_repo: str | None,
     queue_position: int | None,
+    holder_dispatch_id: str | None = None,
+    holder_thread_id: str | None = None,
+    holder_resolved_model: str | None = None,
+    holder_subject_preview: str | None = None,
 ) -> None:
     _emit(
         FrontierSdkWorkerQueued(
@@ -280,6 +297,10 @@ def emit_sdk_worker_queued(
             thread_id=thread_id,
             source_repo=source_repo,
             queue_position=queue_position,
+            holder_dispatch_id=holder_dispatch_id,
+            holder_thread_id=holder_thread_id,
+            holder_resolved_model=holder_resolved_model,
+            holder_subject_preview=holder_subject_preview,
         )
     )
 

@@ -46,4 +46,9 @@ def register_cortex_tools(mcp: FastMCP, surface: Surface = "life") -> None:
                 "family": rejection["family"],
                 "surface": rejection["surface"],
             }
-        return cx("POST", "/dispatch", {"tool": tool, "arguments": arguments})
+        return cx(
+            "POST",
+            "/dispatch",
+            {"tool": tool, "arguments": arguments},
+            dispatch_tool=tool,
+        )
