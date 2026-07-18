@@ -13,6 +13,7 @@ from __future__ import annotations
 import contextlib
 import fcntl
 import os
+import shutil
 import time
 import uuid
 from collections.abc import Callable
@@ -60,6 +61,12 @@ class Registration:
     cdp_url: str
     holder: str
     purpose: str | None = None
+
+
+@dataclass(frozen=True)
+class HygieneReclaimResult:
+    reclaimed_ports: list[int]
+    removed_profiles: list[str]
 
 
 def _claim_driver_lock(registration_id: str) -> int:
@@ -303,19 +310,61 @@ def list_active() -> list[Registration]:
     return sorted(out, key=lambda r: r.port)
 
 
-def hygiene_reclaim_released() -> list[int]:
+def _profile_path_from_row(row: dict[str, Any]) -> Path | None:
+    raw = row.get("profile")
+    if raw:
+        return Path(str(raw))
+    suffix = row.get("profile_suffix")
+    if suffix:
+        return cdp_lane.profile_for(str(suffix))
+    return None
+
+
+def _maybe_rmtree_released_profile(
+    row: dict[str, Any],
+    *,
+    chrome_port_for_profile: Callable[[Path], int | None] | None = None,
+) -> Path | None:
+    """Remove a released reg profile dir when it is not PRIMARY and Chrome is not live."""
+    probe = chrome_port_for_profile or cdp_lane.chrome_port_for_profile
+    profile = _profile_path_from_row(row)
+    if profile is None or not profile.exists():
+        return None
+    if profile.resolve() == cdp_lane.PRIMARY_PROFILE.resolve():
+        return None
+    if probe(profile) is not None:
+        return None
+    shutil.rmtree(profile)
+    return profile
+
+
+def hygiene_reclaim_released() -> HygieneReclaimResult:
     reclaimed: list[int] = []
+    removed: list[str] = []
     with _store.ports_lock():
         active = _store.load_active()
         keep: dict[str, dict[str, Any]] = {}
         for rid, row in active.items():
             if row.get("status") == "released":
                 reclaimed.append(int(row["port"]))
-                _store.append_log("hygiene_reclaim", {"registration_id": rid, **row})
+                removed_path = _maybe_rmtree_released_profile(row)
+                if removed_path is not None:
+                    removed.append(str(removed_path))
+                _store.append_log(
+                    "hygiene_reclaim",
+                    {
+                        "registration_id": rid,
+                        **row,
+                        "profile_removed": removed_path is not None,
+                    },
+                )
             else:
                 keep[rid] = row
         _store.write_active(keep)
-    return sorted(reclaimed)
+    return HygieneReclaimResult(
+        reclaimed_ports=sorted(reclaimed),
+        removed_profiles=sorted(removed),
+    )
 
 
 def _kill_listener(port: int) -> None:
@@ -336,10 +385,49 @@ def _kill_listener(port: int) -> None:
             return
 
 
+def is_driver_lock_held(registration_id: str) -> bool:
+    """True if another process holds the driver flock (LOCK_NB probe, no claim)."""
+    lock_path = _store.registration_lock_path(registration_id)
+    if not lock_path.exists():
+        return False
+    fd = _store.open_lock(lock_path)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        return False
+    except OSError:
+        return True
+    finally:
+        with contextlib.suppress(OSError):
+            os.close(fd)
+
+
+def process_holds_driver_lock(registration_id: str) -> bool:
+    """True iff this process claimed the driver lock via register/reattach."""
+    return registration_id in _HELD_LOCKS
+
+
 def registration_as_dict(reg: Registration) -> dict[str, Any]:
     d = asdict(reg)
     d["profile"] = str(reg.profile)
     return d
+
+
+def active_registration_dicts() -> list[dict[str, Any]]:
+    """List projection for CLI — includes driver_pid, attached, chrome_pid."""
+    active = _store.load_active()
+    out: list[dict[str, Any]] = []
+    for rid, row in active.items():
+        if row.get("status") != "active":
+            continue
+        d = registration_as_dict(_row_to_registration(row))
+        holder_pid = row.get("holder_pid")
+        d["driver_pid"] = holder_pid if isinstance(holder_pid, int) else None
+        d["attached"] = is_driver_lock_held(rid)
+        chrome_pid = row.get("chrome_pid")
+        d["chrome_pid"] = chrome_pid if isinstance(chrome_pid, int) else None
+        out.append(d)
+    return sorted(out, key=lambda item: int(item["port"]))
 
 
 # Test helpers — load active via store (kept for monkeypatched paths).

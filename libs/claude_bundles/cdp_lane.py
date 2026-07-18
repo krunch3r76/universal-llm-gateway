@@ -118,6 +118,34 @@ def select_free_port(is_listening, exclude: set[int]) -> int:
     raise LaneError(f"no free CDP port in {PORT_RANGE.start}-{PORT_RANGE.stop - 1}")
 
 
+def seed_profile_rsync_argv(source: Path, dest: Path) -> list[str]:
+    """rsync argv for seeding a lane profile from PRIMARY (OptGuide excluded)."""
+    return [
+        "rsync",
+        "-a",
+        "--exclude=Singleton*",
+        "--exclude=lockfile",
+        "--exclude=.org.chromium.*",
+        "--exclude=OptGuide*",
+        "--exclude=optimization_guide_model_store",
+        f"{source}/",
+        f"{dest}/",
+    ]
+
+
+def chrome_launch_argv(port: int, profile: Path) -> list[str]:
+    """Chrome argv for a CDP lane launch."""
+    return [
+        _CHROME_BIN,
+        f"--remote-debugging-port={port}",
+        "--remote-allow-origins=*",
+        f"--user-data-dir={profile}",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--disable-features=OptimizationGuideOnDeviceModel",
+    ]
+
+
 def parse_chrome_lane(cmdline: str) -> tuple[int | None, str | None]:
     """Extract (port, user_data_dir) from a Chrome cmdline blob.
 
@@ -289,15 +317,7 @@ def _seed_profile(profile: Path) -> None:
         return
     profile.mkdir(parents=True, exist_ok=True)
     subprocess.run(
-        [
-            "rsync",
-            "-a",
-            "--exclude=Singleton*",
-            "--exclude=lockfile",
-            "--exclude=.org.chromium.*",
-            f"{PRIMARY_PROFILE}/",
-            f"{profile}/",
-        ],
+        seed_profile_rsync_argv(PRIMARY_PROFILE, profile),
         check=False,
     )
 
@@ -309,14 +329,7 @@ def _launch_chrome(port: int, profile: Path) -> int:
     env = dict(os.environ, DISPLAY=os.environ.get("DISPLAY", ":1"))
     with open(log, "ab") as logf:
         proc = subprocess.Popen(
-            [
-                _CHROME_BIN,
-                f"--remote-debugging-port={port}",
-                "--remote-allow-origins=*",
-                f"--user-data-dir={profile}",
-                "--no-first-run",
-                "--no-default-browser-check",
-            ],
+            chrome_launch_argv(port, profile),
             stdout=logf,
             stderr=logf,
             stdin=subprocess.DEVNULL,
