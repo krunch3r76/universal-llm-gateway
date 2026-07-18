@@ -3,6 +3,10 @@ let currentExecution = null;
 let selectedStepIdx = null;
 let pollTimer = null;
 let pollInFlight = false;
+let execListEtag = null;
+const POLL_LIVE_MS = 3000;
+const POLL_IDLE_MS = 30000;
+let lastPollIntervalMs = POLL_IDLE_MS;
 let pinnedExecId = null;  // set on first manual selection; blocks auto-select
 let questionStateLocked = false; // true after user manually toggles question
 
@@ -11,6 +15,17 @@ async function fetchJSON(url) {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
+}
+
+async function fetchExecutionsList() {
+  const headers = {};
+  if (execListEtag) headers['If-None-Match'] = execListEtag;
+  const res = await fetch('/api/executions', { headers });
+  if (res.status === 304) return { unchanged: true, executions: null };
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const etag = res.headers.get('ETag');
+  if (etag) execListEtag = etag;
+  return { unchanged: false, executions: await res.json() };
 }
 
 // -- Theme ----------------------------------------------------------------
@@ -32,7 +47,7 @@ function initTheme() {
 async function init() {
   initTheme();
   initCollapsibles();
-  const executions = await fetchJSON('/api/executions');
+  const { executions } = await fetchExecutionsList();
   renderExecList(executions);
   startExecListPolling();
 }
@@ -567,21 +582,50 @@ function renderFinalOutput(steps) {
 }
 
 // -- Execution List Polling -----------------------------------------------
-function startExecListPolling() {
-  if (pollTimer) clearInterval(pollTimer);
-  pollTimer = setInterval(async () => {
-    if (pollInFlight) return;
-    pollInFlight = true;
-    try {
-      const executions = await fetchJSON('/api/executions');
+function execListPollIntervalMs(executions) {
+  lastPollIntervalMs = (executions || []).some(e => e.is_live) ? POLL_LIVE_MS : POLL_IDLE_MS;
+  return lastPollIntervalMs;
+}
+
+function scheduleExecListPoll(delayMs) {
+  if (pollTimer) clearTimeout(pollTimer);
+  pollTimer = setTimeout(pollExecListOnce, delayMs);
+}
+
+async function pollExecListOnce() {
+  if (pollInFlight) {
+    scheduleExecListPoll(POLL_LIVE_MS);
+    return;
+  }
+  pollInFlight = true;
+  let nextDelay = POLL_IDLE_MS;
+  try {
+    const { unchanged, executions } = await fetchExecutionsList();
+    if (!unchanged) {
       renderExecList(executions);
       autoSelectLive(executions);
-    } catch (e) {
-      // network blip
-    } finally {
-      pollInFlight = false;
+      nextDelay = execListPollIntervalMs(executions);
+    } else {
+      nextDelay = lastPollIntervalMs;
     }
-  }, 3000);
+  } catch (e) {
+    // network blip
+  } finally {
+    pollInFlight = false;
+    scheduleExecListPoll(nextDelay);
+  }
+}
+
+function startExecListPolling() {
+  if (pollTimer) clearTimeout(pollTimer);
+  document.addEventListener('visibilitychange', onExecListVisibilityChange);
+  scheduleExecListPoll(POLL_LIVE_MS);
+}
+
+function onExecListVisibilityChange() {
+  if (document.visibilityState !== 'visible') return;
+  if (pollTimer) clearTimeout(pollTimer);
+  pollExecListOnce();
 }
 
 function autoSelectLive(executions) {
@@ -597,8 +641,8 @@ function autoSelectLive(executions) {
 
 async function refreshExecList() {
   try {
-    const executions = await fetchJSON('/api/executions');
-    renderExecList(executions);
+    const { unchanged, executions } = await fetchExecutionsList();
+    if (!unchanged) renderExecList(executions);
   } catch (e) {
     // ignore
   }

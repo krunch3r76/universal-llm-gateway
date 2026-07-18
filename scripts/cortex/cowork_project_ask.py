@@ -51,6 +51,7 @@ from claude_bundles.project_ask_abort import (  # noqa: E402
 from claude_bundles.project_ask_conversation import (  # noqa: E402
     run_project_conversation,
 )
+from claude_bundles.project_ask_prompt_files import load_prompt_files  # noqa: E402
 from claude_bundles.skills_ui_panel import DEFAULT_CDP_URL  # noqa: E402
 
 
@@ -203,6 +204,13 @@ def main(argv: list[str] | None = None) -> int:
         or f"project-ask-{os.getpid()}"
     )
 
+    preloaded_prompts: list[str] | None = None
+    if args.prompt_file or args.prompt.strip():
+        preloaded_prompts = load_prompt_files(
+            args.prompt_file,
+            inline_prompt=args.prompt,
+        )
+
     if args.intent and args.registration_id:
         parser.error("--intent is mutually exclusive with --registration-id")
     # --intent opts into the legacy profile-keyed allocator (implies ¬register).
@@ -216,7 +224,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.deregister_on_exit:
             install_abort_handlers(reg, purpose=reg.purpose)
         try:
-            return _dispatch(args, parser)
+            return _dispatch(args, parser, prompts=preloaded_prompts)
         finally:
             if args.deregister_on_exit:
                 deregister_on_exit(reg, purpose=reg.purpose)
@@ -233,7 +241,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"port={lane.port} reused={lane.reused}",
                 flush=True,
             )
-            return _dispatch(args, parser)
+            return _dispatch(args, parser, prompts=preloaded_prompts)
 
     if args.register:
         if args.cdp_url:
@@ -248,7 +256,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.deregister_on_exit:
             install_abort_handlers(reg, purpose=purpose)
         try:
-            return _dispatch(args, parser)
+            return _dispatch(args, parser, prompts=preloaded_prompts)
         finally:
             if args.deregister_on_exit:
                 deregister_on_exit(reg, purpose=purpose)
@@ -256,7 +264,7 @@ def main(argv: list[str] | None = None) -> int:
     # --no-register: attended primary or explicit URL
     if not args.cdp_url:
         args.cdp_url = DEFAULT_CDP_URL
-    return _dispatch(args, parser)
+    return _dispatch(args, parser, prompts=preloaded_prompts)
 
 
 def _print_registration(reg: cdp_registry.Registration) -> None:
@@ -269,12 +277,14 @@ def _print_registration(reg: cdp_registry.Registration) -> None:
     )
 
 
-def _dispatch(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
-    prompts: list[str] = []
-    for path in args.prompt_file:
-        prompts.append(Path(path).read_text(encoding="utf-8"))
-    if args.prompt.strip():
-        prompts.append(args.prompt)
+def _dispatch(
+    args: argparse.Namespace,
+    parser: argparse.ArgumentParser,
+    *,
+    prompts: list[str] | None = None,
+) -> int:
+    if prompts is None:
+        prompts = load_prompt_files(args.prompt_file, inline_prompt=args.prompt)
     if not prompts:
         parser.error("provide --prompt or --prompt-file")
 

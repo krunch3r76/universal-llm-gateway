@@ -19,10 +19,11 @@ from pathlib import Path
 from typing import Any
 
 import uvicorn
-from aggregator import aggregate_execution, list_executions
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from aggregator import aggregate_execution
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from list_cache import ExecutionListCache
 
 logger = logging.getLogger(__name__)
 
@@ -43,13 +44,18 @@ def create_app(
 ) -> FastAPI:
     """Create and configure the FastAPI application."""
     app = FastAPI(title="Consensus Pipeline Viewer")
+    execution_list_cache = ExecutionListCache()
 
     # -- API routes ----------------------------------------------------------
 
     @app.get("/api/executions")
-    def get_executions() -> JSONResponse:
+    def get_executions(request: Request) -> Response:
         """List all executions with live/complete status."""
-        return JSONResponse(content=list_executions(summaries_dir))
+        executions = execution_list_cache.refresh(summaries_dir)
+        etag = f'W/"{execution_list_cache.version}"'
+        if request.headers.get("if-none-match") == etag:
+            return Response(status_code=304, headers={"ETag": etag})
+        return JSONResponse(content=executions, headers={"ETag": etag})
 
     @app.get("/api/executions/{pipeline_id}/{exec_id}")
     def get_execution(pipeline_id: str, exec_id: str) -> JSONResponse:

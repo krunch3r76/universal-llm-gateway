@@ -16,6 +16,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from implement_admission.dense_spec_schema import dense_spec_hash_uri
+from implement_admission.density_triage_gate import check_requested_bool
 from implement_admission.doc_validate_attestation import (
     DocValidateAttestation,
     DocValidateAttestationVerdict,
@@ -133,8 +134,9 @@ def require_implement_ready(
     raw_waived = attrs.get("recon_waived")
     recon_waived = recon_waived_bool(raw_waived)
     recon_waiver = parse_recon_waiver(raw_waived)
+    check_requested = check_requested_bool(attrs.get("check_requested"))
 
-    if triage == "judgment_required":
+    if triage == "judgment_required" and check_requested:
         skeptic_outcome = resolve_skeptic_ratification(
             todo_id=ref.canonical_ref,
             cortex=cortex,
@@ -174,6 +176,7 @@ def require_implement_ready(
         entity_name=entity.get("name"),
         skeptic_ratified=skeptic_outcome.ratified,
         recon_waived=recon_waived,
+        check_requested=check_requested,
         skeptic_evidence_grounded=skeptic_outcome.evidence_grounded,
         skeptic_evidence_unresolved=skeptic_outcome.evidence_unresolved,
         skeptic_evidence_mode=skeptic_outcome.evidence_mode,
@@ -206,6 +209,7 @@ def require_implement_ready(
                 "entity_name": entity.get("name"),
                 "skeptic_ratified": skeptic_outcome.ratified,
                 "recon_waived": recon_waived,
+                "check_requested": check_requested,
                 "recon_waiver": recon_waiver.to_gate_sibling() if recon_waiver else None,
             },
             skip_side_effect_guard=skip_doc_validate_guard,

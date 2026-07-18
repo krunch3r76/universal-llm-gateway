@@ -123,6 +123,7 @@ def evaluate_implement_ready(
     entity_name: str | None = None,
     skeptic_ratified: bool = False,
     recon_waived: bool = False,
+    check_requested: bool = False,
     skeptic_evidence_grounded: bool | None = None,
     skeptic_evidence_unresolved: list[str] | None = None,
     skeptic_evidence_mode: str | None = None,
@@ -232,13 +233,12 @@ def evaluate_implement_ready(
             "Gate-2 close.",
         )
 
-    # Recon axis-2 hard gate: a material (judgment_required) decision cannot reach
-    # implement on a reviewer-tightened spec alone — the skeptic must have run
-    # (a20966; consensus-steelman-posture). Mechanical todos returned admitted above.
-    if not skeptic_ratified and not recon_waived:
+    # Axis-2 / Gate-6 is opt-in (attrs.check_requested=true). Default admit on
+    # dense implement_ready alone; waiver/skeptic still satisfy when present.
+    if check_requested and not skeptic_ratified and not recon_waived:
         reason = (
-            f"{todo_id}: judgment_required (material) decision needs axis-2 "
-            "ratification before implement — record a confirmed "
+            f"{todo_id}: check_requested=true — axis-2 ratification required "
+            "before implement — record a confirmed "
             f"status({todo_id}, skeptic_ratified, current) assertion citing the "
             "skeptic/panel thread AND the spec_sha256:<hex> URI of the current "
             "dense-spec content in evidence_uris, or set "
@@ -252,7 +252,7 @@ def evaluate_implement_ready(
             reason += f" Unmet subcondition: {skeptic_unratified_reason}"
         return _reject("skeptic_pass_missing", reason)
 
-    if skeptic_ratified and not recon_waived:
+    if check_requested and skeptic_ratified and not recon_waived:
         evidence_reject = _skeptic_evidence_reject(
             todo_id=todo_id,
             evidence_grounded=skeptic_evidence_grounded,

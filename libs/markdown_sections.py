@@ -49,7 +49,7 @@ def _document_sections(text: str) -> list[Section]:
         for sec in atx
         if sec.level > 0
         and not any(
-            sec.start >= xml_sec.start and sec.end <= xml_sec.end for xml_sec in xml
+            xml_sec.start <= sec.start < xml_sec.end for xml_sec in xml
         )
     ] + xml
     body.sort(key=lambda sec: sec.start)
@@ -114,6 +114,17 @@ def parse_sections(text: str) -> list[Section]:
     for sec in sections:
         sec.chars = max(0, sec.end - sec.start)
     return sections
+
+
+def _reject_xml_block_mutation(text: str, section_path: str) -> None:
+    """v1 non-goal: XML block bodies are read-only via section mutation ops."""
+    from markdown_xml_blocks import resolve_xml_section
+
+    if resolve_xml_section(text, section_path) is not None:
+        raise SectionError(
+            f"XML block mutation via {section_path!r} is not supported in v1 "
+            "(ATX-only md_replace/md_append/md_delete); use md_read for XML blocks"
+        )
 
 
 def resolve_section(text: str, section_path: str) -> Section:
@@ -277,6 +288,7 @@ def _set_section_body(text: str, sec: Section, body: str) -> str:
 
 def replace_section(text: str, section_path: str, new_content: str) -> tuple[str, bool]:
     """Replace body only; returns (updated_text, heading_was_normalized)."""
+    _reject_xml_block_mutation(text, section_path)
     sec = resolve_section(text, section_path)
     body, normd = strip_redundant_leading_heading(new_content, sec)
     return _set_section_body(text, sec, body), normd
@@ -284,6 +296,7 @@ def replace_section(text: str, section_path: str, new_content: str) -> tuple[str
 
 def append_section(text: str, section_path: str, added_content: str) -> tuple[str, bool]:
     """Append to section body; normalizes only *added_content*, not existing body."""
+    _reject_xml_block_mutation(text, section_path)
     sec = resolve_section(text, section_path)
     frag, normd = strip_redundant_leading_heading(added_content, sec)
     cur = text[sec.start : sec.end]
@@ -340,6 +353,7 @@ def insert_section(
 
 def delete_section(text: str, section_path: str) -> str:
     """Remove heading line and body (preamble: strip through `end` only)."""
+    _reject_xml_block_mutation(text, section_path)
     sec = resolve_section(text, section_path)
     if sec.level == 0:
         return text[sec.end :]

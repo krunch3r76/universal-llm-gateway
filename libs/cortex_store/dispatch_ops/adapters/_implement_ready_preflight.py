@@ -10,6 +10,7 @@ from implement_admission.dense_spec_schema import (
     DENSE_SPEC_RE,
     dense_spec_hash_uri,
 )
+from implement_admission.density_triage_gate import check_requested_bool
 from implement_admission.gate_distillation import read_dense_spec_text
 from implement_admission.implement_ready_gate6_resolve import resolve_gate6_ratification
 from implement_admission.implement_ready_gate_resolve import (
@@ -290,7 +291,8 @@ def _op_implement_ready_preflight(
         )
 
     skeptic_outcome = SkepticRatificationOutcome(ratified=False)
-    if triage == "judgment_required":
+    check_requested = check_requested_bool(attrs.get("check_requested"))
+    if triage == "judgment_required" and check_requested:
         skeptic_outcome = _resolve_skeptic_ratification_outcome(
             todo_id=todo_id,
             spec_hash_uri=spec_hash_uri,
@@ -330,7 +332,7 @@ def _op_implement_ready_preflight(
     evidence_grounded: bool | None = None
     evidence_unresolved: list[str] | None = None
     evidence_mode: str | None = None
-    if skeptic_outcome.ratified and not recon_waived:
+    if check_requested and skeptic_outcome.ratified and not recon_waived:
         if skeptic_outcome.evidence_grounded is not None:
             evidence_grounded = skeptic_outcome.evidence_grounded
             evidence_unresolved = skeptic_outcome.evidence_unresolved
@@ -367,6 +369,7 @@ def _op_implement_ready_preflight(
         resolution=resolution,
         skeptic_ratified=skeptic_outcome.ratified,
         recon_waived=recon_waived,
+        check_requested=check_requested,
         recon_waiver=recon_waiver.to_gate_sibling() if recon_waiver else None,
         skeptic_evidence_grounded=evidence_grounded,
         skeptic_evidence_unresolved=evidence_unresolved,

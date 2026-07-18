@@ -165,6 +165,7 @@ def preflight_implement_ready(
     resolution: dict[str, Any] | None = None,
     skeptic_ratified: bool = False,
     recon_waived: bool = False,
+    check_requested: bool = False,
     recon_waiver: dict[str, Any] | None = None,
     authoring_mode: bool = False,
     skeptic_evidence_grounded: bool | None = None,
@@ -473,11 +474,13 @@ def preflight_implement_ready(
 
     if authoring_mode:
         _na(13, "skeptic_pass")
+    elif not check_requested:
+        _na(13, "skeptic_pass")
     elif not skeptic_ratified and not recon_waived:
         code = "skeptic_pass_missing"
         reason = (
-            f"{todo_id}: judgment_required (material) decision needs axis-2 "
-            "ratification before implement — record a confirmed "
+            f"{todo_id}: check_requested=true — axis-2 ratification required "
+            "before implement — record a confirmed "
             f"status({todo_id}, skeptic_ratified, current) assertion citing the "
             "skeptic/panel thread AND the spec_sha256:<hex> URI of the current "
             "dense-spec content in evidence_uris, or set "

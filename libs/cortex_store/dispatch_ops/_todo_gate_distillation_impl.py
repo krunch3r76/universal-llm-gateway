@@ -12,6 +12,7 @@ from implement_admission.density_triage_gate import (
     JUDGMENT_REQUIRED,
     MECHANICAL,
     RECON_PENDING,
+    check_requested_bool,
     format_implement_triage_unknown_reason,
 )
 from implement_admission.gate_distillation import (
@@ -214,7 +215,8 @@ def _evaluate_from_persisted(
     now_iso = datetime.now(UTC).isoformat()
     triage = (attrs.get("density_triage") or "").strip()
     spec_hash_uri = dense_spec_hash_uri(spec_text) if spec_text else None
-    if triage == "judgment_required":
+    check_requested = check_requested_bool(attrs.get("check_requested"))
+    if triage == "judgment_required" and check_requested:
         skeptic_outcome = resolve_skeptic_ratification(
             todo_id=entity_id,
             cortex=_DistillImplementReadyCortex(),
@@ -251,6 +253,7 @@ def _evaluate_from_persisted(
         entity_name=entity_name,
         skeptic_ratified=skeptic_outcome.ratified,
         recon_waived=recon_waived,
+        check_requested=check_requested,
         skeptic_evidence_grounded=skeptic_outcome.evidence_grounded,
         skeptic_evidence_unresolved=skeptic_outcome.evidence_unresolved,
         skeptic_evidence_mode=skeptic_outcome.evidence_mode,

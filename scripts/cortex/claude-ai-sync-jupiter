@@ -26,6 +26,12 @@
 #
 #   scripts/cortex/claude-ai-sync-jupiter register-lane --holder seat-a --purpose ask
 #   scripts/cortex/claude-ai-sync-jupiter project-ask --register --purpose ask --uuid … --prompt-file …
+#
+# project-ask --prompt-file (BINDING — friction 24951):
+#   Paths MUST be readable on Jupiter after SSH (no rsync). Prefer durable
+#   tmp/reviews/<name>.md under PROJECT_ROOT (/mnt/torus/projects/universal-llm-gateway).
+#   NEVER seat-local /tmp — wrapper rejects /tmp before SSH; remote Python loads
+#   all prompt files before register_lane().
 #   scripts/cortex/claude-ai-sync-jupiter deregister-lane --registration-id <id>
 #   scripts/cortex/claude-ai-sync-jupiter list-lanes
 #
@@ -48,7 +54,38 @@ usage() {
   echo "Commands: ensure-chrome | status | upload | uninstall | restore-connector |"
   echo "          project-chrome | project-ask |"
   echo "          register-lane | deregister-lane | list-lanes"
+  echo ""
+  echo "project-ask --prompt-file: MUST be Jupiter-readable (shared checkout or"
+  echo "  mcp-data). Durable convention: tmp/reviews/<name>.md under PROJECT_ROOT."
+  echo "  NEVER seat-local /tmp — wrapper rejects /tmp before SSH (24951)."
   exit "${1:-0}"
+}
+
+_reject_tmp_prompt_files() {
+  local a next_is_file=0
+  for a in "$@"; do
+    if [[ "${next_is_file}" -eq 1 ]]; then
+      next_is_file=0
+      if [[ "${a}" == /tmp/* ]]; then
+        echo "error: --prompt-file ${a} uses /tmp — not allowed via claude-ai-sync-jupiter" >&2
+        echo "  Write the sealed prompt under the shared checkout, e.g.:" >&2
+        echo "    tmp/reviews/your-prompt.md" >&2
+        echo "  (resolved on Jupiter as ${REMOTE_REPO}/tmp/reviews/…)" >&2
+        exit 2
+      fi
+      continue
+    fi
+    case "${a}" in
+      --prompt-file)
+        next_is_file=1
+        ;;
+      --prompt-file=/tmp/*)
+        echo "error: ${a} uses /tmp — not allowed via claude-ai-sync-jupiter" >&2
+        echo "  Use tmp/reviews/your-prompt.md under PROJECT_ROOT instead." >&2
+        exit 2
+        ;;
+    esac
+  done
 }
 
 # Parse optional --port / --profile-suffix / --cdp-port before subcommand args.
@@ -293,6 +330,9 @@ case "$cmd" in
     remote_py scripts/cortex/cdp_registry_cli.py list
     ;;
   project-ask)
+    # Ingress guard (24951): reject seat-local /tmp before SSH — remote Python is
+    # authoritative for all other paths.
+    _reject_tmp_prompt_files "$@"
     # Default: registry owns port+profile (--register on in cowork_project_ask).
     # Do NOT ensure_chrome / inject --cdp-url unless --no-register.
     has_intent=0

@@ -13,8 +13,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
-import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -22,8 +20,6 @@ from typing import Any
 from event_apply import apply_event, infer_verifier_pool
 
 logger = logging.getLogger(__name__)
-
-_LIST_QUESTION_PREVIEW_CHARS = 220
 
 
 def aggregate_execution(exec_dir: Path) -> dict[str, Any]:
@@ -74,162 +70,6 @@ def aggregate_execution(exec_dir: Path) -> dict[str, Any]:
     }
 
 
-def list_executions(summaries_dir: Path) -> list[dict[str, Any]]:
-    """List all available executions that have events.jsonl files.
-
-    Scans all pipeline directories and returns executions sorted
-    chronologically (newest first) across all pipelines.
-
-    Each entry includes an ``is_live`` flag so the frontend knows whether
-    to open an SSE stream or fetch the final aggregate.
-    """
-    summaries_dir = Path(summaries_dir)
-    executions: list[dict[str, Any]] = []
-
-    if not summaries_dir.exists():
-        return executions
-
-    for pipeline_dir in summaries_dir.iterdir():
-        if not pipeline_dir.is_dir():
-            continue
-        for exec_dir in pipeline_dir.iterdir():
-            if not exec_dir.is_dir():
-                continue
-            events_file = exec_dir / "events.jsonl"
-            if not events_file.exists():
-                continue
-            try:
-                executions.append(
-                    _build_execution_list_item(exec_dir, pipeline_dir.name)
-                )
-            except (json.JSONDecodeError, OSError) as e:  # Or more specific exceptions
-                logger.error("Failed to aggregate %s: %s", exec_dir, e)
-            except Exception as e:
-                logger.critical(
-                    "Unexpected error aggregating %s: %s", exec_dir, e, exc_info=True
-                )
-                # Depending on desired behavior, could re-raise or continue
-
-    # Sort all executions chronologically (newest first) across all pipelines
-    executions.sort(
-        key=lambda e: e.get("started_at_utc") or e["timestamp"],
-        reverse=True,
-    )
-    return executions
-
-
-_STALE_THRESHOLD_SECONDS = 5 * 60  # No new events for 5 min → dead execution
-
-
-def _build_execution_list_item(
-    exec_dir: Path, pipeline_id_fallback: str
-) -> dict[str, Any]:
-    """Build lightweight metadata for execution cards.
-
-    This intentionally avoids full execution aggregation so frequent list polling
-    does not deserialize large event payloads for every execution.
-    """
-    first = _read_first_event(exec_dir / "events.jsonl")
-
-    dir_name = exec_dir.name
-    parts = dir_name.split("_", maxsplit=2)
-    timestamp = "_".join(parts[:2]) if len(parts) >= 2 else dir_name
-    execution_suffix = parts[2] if len(parts) >= 3 else dir_name
-
-    pipeline_id = first.get("pipeline_id") or pipeline_id_fallback
-    execution_id = first.get("execution_id") or execution_suffix
-    started_at_utc = first.get("wall_clock") or _dir_timestamp_to_utc(dir_name)
-    question = _to_question_preview(first.get("source_text", "Unknown question"))
-    step_count = int(first.get("step_count", 0) or 0)
-
-    return {
-        "pipeline_id": pipeline_id,
-        "execution_id": execution_id,
-        "timestamp": timestamp,
-        "started_at_utc": started_at_utc,
-        "question": question,
-        "step_count": step_count,
-        "active_calls": [],
-        "failed_calls": [],
-        "summary": _build_summary([]),
-        "is_live": not is_execution_complete(exec_dir),
-    }
-
-
-def _read_first_event(path: Path) -> dict[str, Any]:
-    """Read only the first JSONL event from an execution file."""
-    try:
-        with path.open("r", encoding="utf-8") as fh:
-            first_line = fh.readline().strip()
-    except OSError:
-        return {}
-
-    if not first_line:
-        return {}
-    return json.loads(first_line)
-
-
-def _to_question_preview(text: str) -> str:
-    """Collapse whitespace and clamp very long source_text for list cards."""
-    compact = " ".join(text.split())
-    if len(compact) <= _LIST_QUESTION_PREVIEW_CHARS:
-        return compact
-    return f"{compact[:_LIST_QUESTION_PREVIEW_CHARS].rstrip()}..."
-
-
-def is_execution_complete(exec_dir: Path) -> bool:
-    """Check whether the execution has a terminal event or is stale.
-
-    An execution is complete when:
-    - Its last event is a terminal type (pipeline_completed/failed/cancelled), OR
-    - Its events.jsonl hasn't been written to in _STALE_THRESHOLD_SECONDS
-      (handles abrupt kills — e.g. Stargate restart — that never write a terminal event)
-
-    Reads only the last portion of the file (tail) to avoid loading large logs.
-    """
-    events_file = exec_dir / "events.jsonl"
-    if not events_file.exists():
-        return False
-
-    terminal_types = {"pipeline_completed", "pipeline_failed", "pipeline_cancelled"}
-    chunk_size = 8192
-    try:
-        stat = events_file.stat()
-        mtime = stat.st_mtime
-        size = stat.st_size
-
-        if size == 0:
-            return False
-
-        with events_file.open("rb") as f:
-            read_size = min(size, chunk_size * 4)
-            _ = f.seek(max(0, size - read_size), os.SEEK_SET)
-            raw = f.read().decode("utf-8", errors="ignore")
-
-        ev = _last_parseable_event(raw)
-        if ev is None and size > read_size:
-            # Fallback for giant single-line events: tail read can start mid-JSON.
-            ev = _last_parseable_event(events_file.read_text(encoding="utf-8"))
-        if ev is not None:
-            if ev.get("event_type", "") in terminal_types:
-                return True
-            # Last parseable event is non-terminal — check staleness
-            age_seconds = time.time() - mtime
-            if age_seconds > _STALE_THRESHOLD_SECONDS:
-                logger.info(
-                    "Marking %s as complete: no terminal event and file "
-                    "unmodified for %.0fs",
-                    exec_dir.name,
-                    age_seconds,
-                )
-                return True
-            return False
-    except OSError as e:
-        logger.warning("Could not check completion for %s: %s", exec_dir, e)
-
-    return False
-
-
 # -- Internal helpers ---------------------------------------------------------
 
 
@@ -245,19 +85,6 @@ def _read_events(path: Path) -> list[dict[str, Any]]:
         except json.JSONDecodeError as e:
             logger.warning("Bad JSONL line in %s: %s", path, e)
     return events
-
-
-def _last_parseable_event(raw: str) -> dict[str, Any] | None:
-    """Return the last parseable JSON event from raw JSONL content."""
-    for raw_line in reversed(raw.splitlines()):
-        line = raw_line.strip()
-        if not line:
-            continue
-        try:
-            return json.loads(line)
-        except json.JSONDecodeError:
-            continue
-    return None
 
 
 def _extract_question(events: list[dict[str, Any]]) -> str:

@@ -88,18 +88,26 @@ def test_mechanical_is_exempt_from_skeptic_gate() -> None:
 
 @pytest.mark.offline
 def test_material_without_skeptic_is_refused() -> None:
-    # NOTE: this test exercises the gate ordering; if the spec/assertion checks
-    # short-circuit first in your build, stub them as in _ready_kwargs so the
-    # skeptic branch is reached. Expect skeptic_pass_missing once all prior
-    # readiness holds.
-    verdict = evaluate_implement_ready(**_ready_kwargs(skeptic_ratified=False))
+    # Opt-in check_requested=true restores the hard Gate-13 refuse path.
+    verdict = evaluate_implement_ready(
+        **_ready_kwargs(skeptic_ratified=False, check_requested=True)
+    )
     assert not verdict.admitted
     assert verdict.code == "skeptic_pass_missing"
 
 
 @pytest.mark.offline
+def test_material_default_admits_without_skeptic() -> None:
+    # Default (check_requested absent/false): dense implement_ready alone admits.
+    verdict = evaluate_implement_ready(**_ready_kwargs(skeptic_ratified=False))
+    assert verdict.admitted
+
+
+@pytest.mark.offline
 def test_material_with_skeptic_is_admitted() -> None:
-    verdict = evaluate_implement_ready(**_ready_kwargs(skeptic_ratified=True))
+    verdict = evaluate_implement_ready(
+        **_ready_kwargs(skeptic_ratified=True, check_requested=True)
+    )
     assert verdict.admitted
 
 
@@ -115,7 +123,9 @@ def test_recon_pending_is_blocked() -> None:
 @pytest.mark.offline
 def test_recon_waived_admits_without_skeptic() -> None:
     verdict = evaluate_implement_ready(
-        **_ready_kwargs(skeptic_ratified=False, recon_waived=True)
+        **_ready_kwargs(
+            skeptic_ratified=False, recon_waived=True, check_requested=True
+        )
     )
     assert verdict.admitted
 
@@ -166,6 +176,7 @@ def test_grounded_skeptic_evidence_admits() -> None:
     verdict = evaluate_implement_ready(
         **_ready_kwargs(
             skeptic_ratified=True,
+            check_requested=True,
             skeptic_evidence_grounded=True,
         )
     )
@@ -191,6 +202,7 @@ def test_skeptic_evidence_reject_codes(
     verdict = evaluate_implement_ready(
         **_ready_kwargs(
             skeptic_ratified=True,
+            check_requested=True,
             skeptic_evidence_grounded=False,
             skeptic_evidence_unresolved=unresolved,
             skeptic_evidence_mode=mode,
@@ -205,6 +217,7 @@ def test_skeptic_pass_missing_reason_names_spec_sha256_requirement() -> None:
     verdict = evaluate_implement_ready(
         **_ready_kwargs(
             skeptic_ratified=False,
+            check_requested=True,
             skeptic_unratified_reason=(
                 "assertion 22900 matches predicate status(todo:sample, "
                 "skeptic_ratified, current) and is active, but its evidence_uris "
@@ -619,6 +632,7 @@ def test_gate6_does_not_fallback_when_skeptic_stamp_fails_grounding() -> None:
     verdict = evaluate_implement_ready(
         **_ready_kwargs(
             skeptic_ratified=skeptic.ratified,
+            check_requested=True,
             skeptic_evidence_grounded=skeptic.evidence_grounded,
             skeptic_evidence_mode=skeptic.evidence_mode,
         )
@@ -649,6 +663,7 @@ def test_preflight_gate6_parity_with_evaluate() -> None:
     )
     kwargs = _ready_kwargs(
         skeptic_ratified=gate6.ratified,
+        check_requested=True,
         skeptic_evidence_grounded=gate6.evidence_grounded,
         skeptic_evidence_unresolved=gate6.evidence_unresolved,
         skeptic_evidence_mode=gate6.evidence_mode,
@@ -662,9 +677,12 @@ def test_preflight_gate6_parity_with_evaluate() -> None:
 
 @pytest.mark.offline
 def test_skeptic_pass_missing_reason_names_gate6_alternate() -> None:
-    verdict = evaluate_implement_ready(**_ready_kwargs(skeptic_ratified=False))
+    verdict = evaluate_implement_ready(
+        **_ready_kwargs(skeptic_ratified=False, check_requested=True)
+    )
     assert not verdict.admitted
     assert verdict.code == "skeptic_pass_missing"
     assert verdict.reason is not None
     assert "gate6_ratification_uri" in verdict.reason
     assert "recon_waived" in verdict.reason
+    assert "check_requested=true" in verdict.reason

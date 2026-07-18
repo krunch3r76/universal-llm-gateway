@@ -6,7 +6,8 @@ _TRIAGE_EFFECTS: tuple[tuple[str, str], ...] = (
     ("mechanical", "bypass implement-ready gates"),
     (
         "judgment_required",
-        "implement_ready assertion required; axis-2 check optional (path_sim_self_certify waiver or skeptic_ratified)",
+        "implement_ready assertion required; axis-2 only when "
+        "check_requested=true (else skip / recon_waived / skeptic_ratified)",
     ),
     ("recon_pending", "blocked until re-triage after two-axis recon"),
 )
@@ -14,6 +15,22 @@ _TRIAGE_EFFECTS: tuple[tuple[str, str], ...] = (
 MECHANICAL, JUDGMENT_REQUIRED, RECON_PENDING = tuple(name for name, _ in _TRIAGE_EFFECTS)
 
 IMPLEMENT_GATE_TRIAGE = frozenset({MECHANICAL, JUDGMENT_REQUIRED, RECON_PENDING})
+
+_CHECK_REQUESTED_TRUE = frozenset({"1", "true", "yes", "on"})
+
+
+def check_requested_bool(raw: object) -> bool:
+    """Opt-in axis-2 / Gate-6 ratification. Absent or falsey ⇒ not requested."""
+    if raw is True or raw is False:
+        return raw
+    if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+        return raw == 1
+    if raw is None:
+        return False
+    text = str(raw).strip().lower()
+    if not text:
+        return False
+    return text in _CHECK_REQUESTED_TRUE
 
 
 def format_implement_gate_triage_catalog() -> str:
