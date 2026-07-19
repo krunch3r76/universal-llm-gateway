@@ -19,6 +19,7 @@ from transport_utils import (
     DEFAULT_AGENT_BUS_URL,
     DEFAULT_CORTEX_URL,
     DEFAULT_EMAIL_BRIDGE_URL,
+    DEFAULT_SMS_BRIDGE_URL,
     make_sync_client,
 )
 
@@ -56,6 +57,9 @@ _SERVICES: dict[str, dict[str, str]] = {
     },
     "email-bridge": {
         "url": DEFAULT_EMAIL_BRIDGE_URL,
+    },
+    "sms-bridge": {
+        "url": DEFAULT_SMS_BRIDGE_URL,
     },
 }
 

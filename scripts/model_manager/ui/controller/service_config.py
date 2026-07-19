@@ -215,6 +215,7 @@ class McpConfig:
     xai_api_key: str = ""
     mcp_server_url: str = ""
     web_fetcher_url: str = ""
+    project_ask_url: str = ""
     # ClaudeBurst bot endpoints (TCP) — bots run on a separate host, so the
     # MCP container must reach them by IP/port instead of the in-container
     # UDS fallback (which targets a socket path that does not exist on the
@@ -608,6 +609,7 @@ def load_mcp_config() -> McpConfig | None:
         ),
         mcp_server_url=_get_stripped_str("mcp_server_url"),
         web_fetcher_url=_get_stripped_str("WEB_FETCHER_URL", "web_fetcher_url"),
+        project_ask_url=_get_stripped_str("PROJECT_ASK_URL", "project_ask_url"),
         claudeburst_host=_get_stripped_str("CLAUDEBURST_HOST"),
         claudeburst_port=_get_stripped_str("CLAUDEBURST_PORT"),
         claudeburst_perps_host=_get_stripped_str("CLAUDEBURST_PERPS_HOST"),
@@ -770,6 +772,8 @@ def build_mcp_env(workspace_root: Path) -> dict[str, str]:
         env["MCP_SERVER_URL"] = cfg.mcp_server_url
     if cfg.web_fetcher_url:
         env["WEB_FETCHER_URL"] = cfg.web_fetcher_url
+    if cfg.project_ask_url:
+        env["PROJECT_ASK_URL"] = cfg.project_ask_url
     # ClaudeBurst endpoints — without these the in-container claudeburst tool
     # falls back to a UDS path that does not exist on the MCP host (bots run
     # on a separate machine), producing intermittent ``bot_unreachable`` after

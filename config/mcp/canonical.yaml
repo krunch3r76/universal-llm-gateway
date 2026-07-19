@@ -23,6 +23,7 @@ domains:
 - team_dispatch
 - panel_dispatch
 - cortex_brief
+- project_ask
 tools:
 - canonical_name: cortex_entities
   domain: cortex
@@ -3677,6 +3678,70 @@ tools:
   mandate_safety: write
   cache_priority: always_loaded
   introduced: '2026-06-04'
+- canonical_name: project_ask
+  domain: project_ask
+  operation: relay
+  dispatcher_call_shape:
+    tool: project_ask
+    dispatch_key: op
+    dispatch_value: submit
+  flat_call_shape:
+    tool: project_ask
+    substrate_qualified: user-vortex__project_ask
+  fol_descriptor: "Thin httpx relay to Jupiter CDP-ask satellite (PROJECT_ASK_URL).\n\
+    split submit/poll/abort only — ¬ server-side poll loop; ¬ Playwright in MCP handler.\n\
+    Poll returns archive_uri (cortex://) on completion. See agent_skill:claude-ai-cdp-navigation.\n\
+    NEVER curl localhost :8765 (web-fetcher) for /v1/project-ask/* — poll ONLY via\n\
+    project_ask(op=poll, execution_id=…); cdp-ask satellite is :8770 via PROJECT_ASK_URL.\n"
+  json_schema:
+    type: object
+    properties:
+      op:
+        type: string
+        enum:
+        - submit
+        - poll
+        - abort
+      execution_id:
+        type: string
+      prompt_text:
+        type: string
+      prompt_uri:
+        type: string
+      prompt_path:
+        type: string
+      holder:
+        type: string
+      purpose:
+        type: string
+      model:
+        type: string
+      converse:
+        type: boolean
+      no_project_uuid:
+        type: boolean
+      project_uuid:
+        type: string
+      ensure_cowork_auto:
+        type: boolean
+      archive_path:
+        type: string
+      delete_after:
+        type: boolean
+        description: Retain (false) or delete (true) Cowork chat after harvest; omit
+          for runner defaults (converse/turn-2 retain, single-ask delete).
+      timeout_s:
+        type: integer
+    required:
+    - op
+  skill_uri: agent_skill:claude-ai-cdp-navigation
+  seat_visibility:
+  - mcp
+  mandate_safety: write
+  cache_priority: on_demand
+  introduced: '2026-07-18'
+  endpoint_visibility:
+  - code
 - canonical_name: panel_dispatch_panel
   domain: panel_dispatch
   operation: panel
@@ -4285,6 +4350,8 @@ domain_endpoints:
     - code
     git_commit:
     - code
+    project_ask:
+    - code
     agent_bus_read:
     - life
     - code
@@ -4320,6 +4387,7 @@ surface_primary_domains:
   - pipeline
   - team_dispatch
   - panel_dispatch
+  - project_ask
 cortex_families:
   defaults:
     read:
@@ -4452,6 +4520,9 @@ overflow_register_surfaces:
   - code
   llm_generate:
   - code
+# Overflow tools may only carry ops with served OpenAPI schemas once cutover
+# is claimed (A1). During strangler, dispatch/tool_search overflow remains
+# the code-seat path for admin-family cortex ops — see openapi_mcp census.
 contract_vocabulary:
   density_triage:
     fol_descriptor: '∀ v ∈ density_triage: v ∈ {mechanical, judgment_required, cross_cutting,

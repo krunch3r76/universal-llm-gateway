@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import subprocess
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -11,6 +12,9 @@ from typing import Any, Literal
 from implement_admission.closeout_models import EffectsManifest
 from implement_admission.spec import CloseoutStatus
 
+from services.git_integration_worker.cursor_sdk_capture_policy import (
+    deviation_degrades_capture_status,
+)
 from services.git_integration_worker.cursor_sdk_light_bounded_capture import (
     light_bounded_capture_status,
 )
@@ -391,37 +395,107 @@ def _repo_manifest_paths(
     return paths
 
 
+def _hash_worktree_file(source_repo: Path, rel_path: str) -> str | None:
+    try:
+        data = (source_repo / rel_path.lstrip("/")).read_bytes()
+    except OSError:
+        return None
+    return hashlib.sha256(data).hexdigest()
+
+
+def _repo_manifest_evidence_paths(
+    manifest: EffectsManifest | None,
+    *,
+    source_repo: Path | None = None,
+    baseline: dict[str, Any] | None = None,
+) -> set[str]:
+    """Hash-bound manifest write-evidence — not mere path membership (A1)."""
+    manifest_paths = _repo_manifest_paths(manifest, source_repo=source_repo)
+    if not manifest_paths or source_repo is None:
+        return set()
+    _, admit_hashes = normalize_wt_baseline(baseline)
+    evidence: set[str] = set()
+    for path in manifest_paths:
+        current_hash = _hash_worktree_file(source_repo, path)
+        if current_hash is None:
+            continue
+        admit_hash = admit_hashes.get(path)
+        if admit_hash is None or current_hash != admit_hash:
+            evidence.add(path)
+    return evidence
+
+
+def _job_surface_paths(
+    files_expected: list[str],
+    manifest: EffectsManifest | None,
+    *,
+    source_repo: Path | None = None,
+) -> set[str]:
+    surface = {
+        _normalize_expected_path(raw) for raw in files_expected if raw.strip()
+    }
+    surface.update(_repo_manifest_paths(manifest, source_repo=source_repo))
+    return surface
+
+
+def _format_unattributed_token(prefix: str, paths: list[str]) -> str | None:
+    if not paths:
+        return None
+    shown = ",".join(paths[:3])
+    if len(paths) > 3:
+        shown = f"{shown},+{len(paths) - 3}"
+    return f"{prefix}{shown}"
+
+
 def repo_diff_unattributed_deviation(
     *,
     change_set: ChangeSet,
     manifest: EffectsManifest | None,
     source_repo: Path | None = None,
-) -> str | None:
-    """Deviation when baseline-diff paths carry no write-evidence in the dispatch's own capture.
+    files_expected: list[str] | None = None,
+    baseline: dict[str, Any] | None = None,
+) -> tuple[str | None, str | None]:
+    """Dual-channel unattributed diff: ambient visibility vs scoped hard gate.
 
-    Friction 23015: a stale/ambient worktree diff attributed another session's
-    edits (and their failing lint) to a verification-only dispatch. The files_*
-    buckets stay git-authoritative (shell writes are legitimately invisible to
-    the manifest — see capture:shell_repo_writes_unverified), but the
-    manifest/diff disagreement must be machine-visible so a lead reconciles the
-    bus-turn manifest against the closeout instead of trusting phantom writes.
+    Friction 23015: ambient (non-job-surface) diff stays visible for lead reconcile
+    without degrading status. Hard status applies only to job-surface paths
+    lacking hash-bound manifest evidence.
     """
     diff_paths = [*change_set.created, *change_set.modified, *change_set.deleted]
     if not diff_paths:
-        return None
-    evidence = _repo_manifest_paths(manifest, source_repo=source_repo)
-    unattributed = sorted(
-        path
-        for path in dict.fromkeys(diff_paths)
-        if _normalize_repo_path_for_compare(path, source_repo=source_repo)
-        not in evidence
+        return None, None
+    evidence = _repo_manifest_evidence_paths(
+        manifest,
+        source_repo=source_repo,
+        baseline=baseline,
     )
-    if not unattributed:
-        return None
-    shown = ",".join(unattributed[:3])
-    if len(unattributed) > 3:
-        shown = f"{shown},+{len(unattributed) - 3}"
-    return f"divergence:repo_diff_paths_unattributed:{shown}"
+    job_surface = _job_surface_paths(
+        files_expected or [],
+        manifest,
+        source_repo=source_repo,
+    )
+    ambient: list[str] = []
+    scoped: list[str] = []
+    for path in dict.fromkeys(diff_paths):
+        norm = _normalize_repo_path_for_compare(path, source_repo=source_repo)
+        if norm in evidence:
+            continue
+        on_job_surface = norm in job_surface or any(
+            norm.endswith(f"/{job}") for job in job_surface
+        )
+        if on_job_surface:
+            scoped.append(norm or path)
+        else:
+            ambient.append(norm or path)
+    ambient_token = _format_unattributed_token(
+        "divergence:repo_diff_paths_unattributed:ambient:",
+        sorted(ambient),
+    )
+    scoped_token = _format_unattributed_token(
+        "divergence:repo_diff_paths_unattributed:",
+        sorted(scoped),
+    )
+    return ambient_token, scoped_token
 
 
 def gitignored_manifest_paths(
@@ -462,7 +536,9 @@ def degrade_status_for_capture(
 ) -> CloseoutStatus:
     if status != CloseoutStatus.COMPLETE:
         return status
-    if capture_status in {"partial", "unavailable"} or divergence_reason:
+    if capture_status in {"partial", "unavailable"}:
+        return CloseoutStatus.PARTIAL
+    if divergence_reason and deviation_degrades_capture_status(divergence_reason):
         return CloseoutStatus.PARTIAL
     return status
 
@@ -547,7 +623,11 @@ def resolve_closeout_capture_fields(
         files_untracked_or_ignored=files_untracked_or_ignored,
         worktree_isolated=worktree_isolated,
     )
-    if divergence_reason and capture_status == "complete":
+    if (
+        divergence_reason
+        and capture_status == "complete"
+        and deviation_degrades_capture_status(divergence_reason)
+    ):
         capture_status = "partial"
     intent_violation = stated_intent_no_write_capture_violation(
         change_set=change_set,
@@ -569,14 +649,33 @@ def resolve_closeout_capture_fields(
     ):
         deviations.append("capture:dirty_baseline_under_capture")
     if deliverables_expected and manifest and _repo_has_shell_entry(manifest):
-        deviations.append("capture:shell_repo_writes_unverified")
-    unattributed_deviation = repo_diff_unattributed_deviation(
+        shell_deviation = "capture:shell_repo_writes_unverified"
+        deviations.append(shell_deviation)
+        if not expected_deliverables_present(
+            files_expected,
+            manifest,
+            source_repo=source_repo,
+            cortex_root=cortex_root,
+        ):
+            if divergence_reason is None:
+                divergence_reason = shell_deviation
+            if capture_status == "complete":
+                capture_status = "partial"
+    ambient_unattributed, scoped_unattributed = repo_diff_unattributed_deviation(
         change_set=change_set,
         manifest=manifest,
         source_repo=source_repo,
+        files_expected=files_expected,
+        baseline=baseline,
     )
-    if unattributed_deviation:
-        deviations.append(unattributed_deviation)
+    if ambient_unattributed:
+        deviations.append(ambient_unattributed)
+    if scoped_unattributed:
+        deviations.append(scoped_unattributed)
+        if divergence_reason is None:
+            divergence_reason = scoped_unattributed
+        if capture_status == "complete":
+            capture_status = "partial"
     if outside_repo_paths and not worktree_isolated:
         deviations.append("capture:outside_repo_paths_present")
     if files_untracked_or_ignored:

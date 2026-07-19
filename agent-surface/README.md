@@ -17,7 +17,7 @@ This tree is the **authoring** source of truth for rules that project to agent t
 
 | Target | Cursor outputs |
 |---|---|
-| `cursor` | `.cursor/rules/cursor-boot_ws.mdc`, `.cursor/rules/mcp-tool-awareness_ws.mdc` + drift-check vs `core_ws.mdc` table |
+| `cursor` | `.cursor/rules/cursor-boot_ws.mdc`, parent `mcp-tool-awareness_ulg.mdc` + drift-check vs `core_ws.mdc` table |
 
 Run `scripts/gen-rules --target cursor --check` in CI; must exit 0.
 
@@ -26,7 +26,7 @@ Run `scripts/gen-rules --target cursor --check` in CI; must exit 0.
 | ID | Source | Cursor output |
 |---|---|---|
 | `boot-protocol` | `sources/boot-protocol.md` | `.cursor/rules/cursor-boot_ws.mdc` |
-| `mcp-tool-awareness` | `sources/mcp-tool-awareness.md` | `.cursor/rules/mcp-tool-awareness_ws.mdc` |
+| `mcp-tool-awareness` | `sources/mcp-tool-awareness.md` | `projects/.cursor/rules/mcp-tool-awareness_ulg.mdc` |
 | `subagent-model-table` | `table-variants/subagent-model-table.cursor.md` | drift-check only |
 | `command-map` | `sources/command-map.md` | `docs/agent-guides/mvw-command-map.md` (`gen-rules --target command-map`) |
 | `agent-guides-rules` | MVW conduct manifest in `libs/gen_rules/agent_guides.py` | `docs/agent-guides/rules/*.md` (`gen-rules --target agent-guides-rules`) — incl. `capability-dispatch` |

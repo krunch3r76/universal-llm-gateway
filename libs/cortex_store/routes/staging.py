@@ -7,16 +7,17 @@ from fastapi import APIRouter, HTTPException, Query, status
 from universal_logging import get_logger
 
 from ..db import cortex_conn, json_decode, json_encode, query
-from ..status_trait_write import (
-    resolve_staged_entity_traits,
-    trait_insert_extras,
-)
 from ..models import (
     StagingApproval,
+    StagingBatchApproval,
     StagingBatchCreate,
     StagingItem,
     StagingList,
     StagingProposalCreate,
+)
+from ..status_trait_write import (
+    resolve_staged_entity_traits,
+    trait_insert_extras,
 )
 from .staging_relationship_apply import apply_relationship_add
 
@@ -204,6 +205,57 @@ def _fetch_pending(conn: sqlite3.Connection, staging_id: int) -> dict:
             status.HTTP_409_CONFLICT, f"Already resolved: {rows[0]['status']}"
         )
     return rows[0]
+
+
+@router.post("/batch-approve", response_model=StagingList)
+def approve_staging_batch(body: StagingBatchApproval) -> StagingList:
+    """Approve multiple staging proposals in apply order (revises/removes before adds)."""
+    now = _now()
+    ordered = _order_batch_proposals(body.staging_ids)
+    approved: list[StagingItem] = []
+
+    with cortex_conn() as conn:
+        for staging_id in ordered:
+            proposal = _fetch_pending(conn, staging_id)
+            resolved_to = _apply_proposal(conn, proposal)
+            conn.execute(
+                "UPDATE extraction_staging SET status = 'approved', "
+                "resolved_to = ?, reviewer = ?, reviewed_at = ? WHERE id = ?",
+                (resolved_to, body.reviewer, now, staging_id),
+            )
+            rows = query(
+                conn,
+                f"SELECT {_COLS} FROM extraction_staging WHERE id = ?",
+                (staging_id,),
+            )
+            approved.append(_decode_staging_row(rows[0]))
+
+        if body.ledger_id is not None:
+            conn.execute(
+                "UPDATE digest_ledger SET status = 'committed' WHERE id = ?",
+                (body.ledger_id,),
+            )
+        conn.commit()
+
+    return StagingList(items=approved)
+
+
+def _order_batch_proposals(staging_ids: list[int]) -> list[int]:
+    """Supersede/retract rows before adds within a revision batch."""
+    with cortex_conn() as conn:
+        placeholders = ",".join("?" * len(staging_ids))
+        rows = query(
+            conn,
+            f"SELECT id, proposal_type, proposal_action FROM extraction_staging "
+            f"WHERE id IN ({placeholders})",
+            tuple(staging_ids),
+        )
+    priority = {"remove": 0, "revise": 1, "add": 2}
+    sorted_rows = sorted(
+        rows,
+        key=lambda r: priority.get(r["proposal_action"], 3),
+    )
+    return [int(r["id"]) for r in sorted_rows]
 
 
 @router.post("/{staging_id}/approve", response_model=StagingItem)

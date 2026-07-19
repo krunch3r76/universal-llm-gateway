@@ -32,12 +32,12 @@ formatters:
 
 handlers:
   # Main application log (everything except GUI)
-  # DEBUG by default for full file detail, respects LOG_LEVEL override
+  # INFO by default (events are observability SOT); override via LOG_LEVEL
   main_file:
     class: logging.FileHandler
     filename: ${LOG_DIR:-logs}/universal_stargate.log
     formatter: json_file
-    level: ${LOG_LEVEL:-DEBUG}
+    level: ${LOG_LEVEL:-INFO}
 
   # GUI-specific log (separate from main)
   gui_file:

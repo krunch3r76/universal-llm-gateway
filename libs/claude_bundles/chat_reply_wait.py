@@ -4,8 +4,10 @@ Friction notes (keep when generalizing):
 - Poll div[class*="font-claude"] or assistant-message nodes, NOT project header.
 - Always pass ``before`` from pre-send harvest on follow-up turns.
 - 500ms poll + stable length x2 beats 1s regex-marker waits.
-- Do not treat completion as done until message count or body length grows.
+- Do not treat completion as done until a new assistant turn is harvested (n grew).
 - Fable bind 4917: ¬error_banner ∧ turn_count_incremented ∧ ¬tool_pause.
+- Completion is **structural** (new turn + idle + stable), not min_body/min_growth
+  length gates — short replies are valid harvest products (operator bind 2026-07-18).
 - Friction 24666: ``timeout_s`` is an *idle* budget. While Stop / streaming /
   tool_pause is present the idle clock pauses — no wall ceiling (long Cowork
   tool-runs may run arbitrarily long). Idle with no completion still raises.
@@ -176,13 +178,16 @@ def _complete_enough(
     min_growth: int,
     min_body: int,
 ) -> bool:
+    """Structural turn complete — ¬ a prose-length gate.
+
+    ``min_growth`` / ``min_body`` remain for call-site compat; ignored here.
+    """
+    del min_growth, min_body, base_len
     cur_len = state.get("body_len", 0)
     cur_n = state.get("n", 0)
-    grew = cur_len > base_len + min_growth or cur_n > base_n
     return bool(
-        grew
-        and cur_len >= min_body
-        and cur_n > base_n
+        cur_n > base_n
+        and cur_len > 0
         and not _in_flight(state)
     )
 
@@ -206,13 +211,14 @@ def _cowork_complete_enough(
         return False
     if state.get("error_banner") or _in_flight(state):
         return False
+    del min_body, min_growth
     cur_len = state.get("body_len", 0)
     cur_n = state.get("n", 0)
-    if cur_len < min_body:
+    if cur_len < 1:
         return False
 
     grew_n = cur_n > base_n
-    grew_len = cur_len > base_len + min_growth or cur_len > base_len
+    grew_len = cur_len > base_len
     working_to_idle = (
         saw_working
         and state.get("task_map_present")
@@ -240,7 +246,7 @@ async def wait_assistant_reply(
     streaming, or tool_pause is observed the idle deadline is refreshed — there
     is no hard wall ceiling (friction 24666).
     """
-    msg_floor = min_msg_chars if min_msg_chars is not None else max(10, min(40, min_body))
+    msg_floor = min_msg_chars if min_msg_chars is not None else 10
     base_len = (before or {}).get("body_len", 0)
     base_n = (before or {}).get("n", 0)
     stable = 0
@@ -266,9 +272,13 @@ async def wait_assistant_reply(
             stable = 0
             cowork_stable = 0
         else:
-            cur_n = state.get("n", 0)
-            grew = cur_len > base_len + min_growth or cur_n > base_n
-            if grew and cur_len >= min_body and cur_n > base_n:
+            if _complete_enough(
+                state,
+                base_len=base_len,
+                base_n=base_n,
+                min_growth=min_growth,
+                min_body=min_body,
+            ):
                 if cur_len == last_len:
                     stable += 1
                 else:

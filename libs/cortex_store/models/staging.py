@@ -45,3 +45,9 @@ class StagingList(BaseModel):
 
 class StagingApproval(BaseModel):
     reviewer: str = "human"
+
+
+class StagingBatchApproval(BaseModel):
+    staging_ids: list[int]
+    reviewer: str = "human"
+    ledger_id: int | None = None

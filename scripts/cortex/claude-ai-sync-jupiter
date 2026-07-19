@@ -218,26 +218,55 @@ remote_py() {
   ssh "$SSH" "cd ${REMOTE_REPO} && PROJECT_ROOT=${REMOTE_REPO} PYTHONPATH=${REMOTE_REPO}/libs BROWSER_CDP_URL=http://127.0.0.1:${CDP_PORT} ${PY} ${script} ${qargs[*]}"
 }
 
-# 24911: local SSH abort trap — capture registration_id, ownership-safe cleanup.
+# 24911/24976: local SSH abort trap — pre-arm reg_id capture, ownership-safe cleanup.
 _project_ask_reg_id=""
+_project_ask_abort_tmp=""
+
 _project_ask_abort_trap() {
   local id="${_project_ask_reg_id}"
+  if [[ -z "${id}" && -n "${_project_ask_abort_tmp}" && -f "${_project_ask_abort_tmp}" ]]; then
+    id="$(grep -m1 '^registration_id=' "${_project_ask_abort_tmp}" | sed 's/^registration_id=//' || true)"
+  fi
   [[ -z "${id}" ]] && return 0
-  remote_py scripts/cortex/cowork_project_ask.py \
-    --abort-cleanup-registration-id "${id}" >/dev/null 2>&1 || true
+  local out
+  out="$(remote_py scripts/cortex/cowork_project_ask.py \
+    --abort-cleanup-registration-id "${id}" 2>&1)" || true
+  if grep -q '^status=detached_remote_running' <<<"${out}"; then
+    grep '^status=detached_remote_running' <<<"${out}"
+  fi
 }
 
 _project_ask_with_abort_trap() {
   _project_ask_reg_id=""
-  local tmp rc
+  local tmp rc reg_id_file capture_pid
   tmp="$(mktemp)"
+  reg_id_file="$(mktemp)"
+  _project_ask_abort_tmp="${tmp}"
   trap '_project_ask_abort_trap' EXIT INT TERM
+  # F4: pre-arm registration_id capture before remote driver starts.
+  (
+    while [[ ! -f "${reg_id_file}" || ! -s "${reg_id_file}" ]]; do
+      if grep -q '^registration_id=' "${tmp}" 2>/dev/null; then
+        grep -m1 '^registration_id=' "${tmp}" | sed 's/^registration_id=//' > "${reg_id_file}"
+        break
+      fi
+      sleep 0.05
+    done
+  ) &
+  capture_pid=$!
   set +e
   "$@" 2>&1 | tee "${tmp}"
   rc="${PIPESTATUS[0]}"
   set -e
-  _project_ask_reg_id="$(grep -m1 '^registration_id=' "${tmp}" | sed 's/^registration_id=//' || true)"
-  rm -f "${tmp}"
+  if [[ -s "${reg_id_file}" ]]; then
+    _project_ask_reg_id="$(cat "${reg_id_file}")"
+  else
+    _project_ask_reg_id="$(grep -m1 '^registration_id=' "${tmp}" | sed 's/^registration_id=//' || true)"
+  fi
+  kill "${capture_pid}" 2>/dev/null || true
+  wait "${capture_pid}" 2>/dev/null || true
+  rm -f "${tmp}" "${reg_id_file}"
+  _project_ask_abort_tmp=""
   if [[ "${rc}" -eq 0 ]]; then
     trap - EXIT INT TERM
     _project_ask_reg_id=""

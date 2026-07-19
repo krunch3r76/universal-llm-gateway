@@ -10,8 +10,7 @@ in renderer SOURCE rather than a rendered ``operational-context-*.md``, because
 ``render_operational_context`` recomposes that file on every boot and clobbers
 manual edits (assertion 11520). Renderer source survives the next boot.
 
-Block text is operator-approved (2026-05-31); the grok model string is
-``xai/grok-4.5`` per operator. Spec:
+Block text is operator-approved (2026-05-31); boot card distinguishes coding vs non-code Grok substrate (operator 2026-07-18, friction 25081). Spec:
 capability-axis handoff notes under ``cortex:notes/system/threads/`` and
 ``claude-web-dispatch-decision-table.md`` §4.
 """
@@ -67,7 +66,7 @@ To consult a MODEL you do NOT use a build harness. When connector-bound, `team_d
 - **Recon/judgment (cursor-sdk)** → `seat=cursor-sdk, model=cursor/grok-4.5, contract=light-bounded` (≠ API `xai/grok-4.5`).
 - **Manual handoff** → `op=handoff, seat=web-anthropic|cursor, source_ref=…|packet_path=…`; handoff IS delivery (web→operator push, cursor→IDE). Legacy aliases `claude-web`/`claude-cursor` still resolve.
 - **Panel** → `panel_dispatch(…, disposition="panel")`. **Role-less one-shot** → `pipeline(chat-dispatch, model=…)`. **Advisor** → `dispatch(tool="advisor")` [overflow].
-⚠ Build harness ≠ model picker: grok answer → `team_dispatch(op=generate, role=artisan, model="xai/grok-4.5")`.
+⚠ Build harness ≠ model picker: coding-lane Grok → `seat=cursor-sdk, model=cursor/grok-4.5`; non-code artisan Grok → `role=artisan, model=xai/grok-4.5`.
 Full shapes / wrap / executor tiers: skill `consult-routing`."""
 
 # Co-located liveness block (2a durable home). Trimmed per F4-A finding (thread

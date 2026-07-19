@@ -54,7 +54,7 @@ def register_staging_tools(mcp: FastMCP) -> None:
             Updated StagingItem, or {"error": "<message>"}.
         """
         result = cx("POST", f"/staging/{staging_id}/reject", {"reviewer": reviewer})
-        if "error" not in result:
+        if "error" in result:
             logger.error(
                 "cortex_staging_reject failed for ID %d: %s",
                 staging_id,
@@ -62,4 +62,40 @@ def register_staging_tools(mcp: FastMCP) -> None:
             )
         else:
             logger.info("cortex_staging_reject: %d", staging_id)
+        return result
+
+    @mcp.tool(title="Cortex: Batch Approve Staging")
+    def cortex_staging_batch_approve(
+        staging_ids: list[int],
+        ledger_id: int | None = None,
+        reviewer: str = "web-anthropic-opus-review",
+    ) -> dict[str, Any]:
+        """Approve a digest revision batch (supersedes/retracts before adds).
+
+        Args:
+            staging_ids: Pending extraction_staging row ids from revision_staged.
+            ledger_id: digest_ledger row id to mark committed after apply.
+            reviewer: Provenance label for the review seat (default opus review).
+
+        Returns:
+            StagingList of approved items, or {"error": "<message>"}.
+        """
+        body: dict[str, Any] = {
+            "staging_ids": staging_ids,
+            "reviewer": reviewer,
+        }
+        if ledger_id is not None:
+            body["ledger_id"] = ledger_id
+        result = cx("POST", "/staging/batch-approve", body)
+        if "error" in result:
+            logger.error(
+                "cortex_staging_batch_approve failed: %s",
+                result.get("error"),
+            )
+        else:
+            logger.info(
+                "cortex_staging_batch_approve: ids=%s ledger_id=%s",
+                staging_ids,
+                ledger_id,
+            )
         return result

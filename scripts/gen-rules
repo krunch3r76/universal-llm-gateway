@@ -5,7 +5,8 @@ Usage:
     scripts/gen-rules --target {cursor|command-map|agent-guides-rules|agent-skill-bundles|cortex-rules} [--check] [--dry-run]
 
 Targets:
-    cursor       Emit `.cursor/rules/cursor-boot_ws.mdc` + `.cursor/rules/mcp-tool-awareness_ws.mdc`;
+    cursor       Emit `.cursor/rules/cursor-boot_ws.mdc` + parent
+                 `../.cursor/rules/mcp-tool-awareness_ulg.mdc`;
                  run drift-check between `core_ws.mdc` Subagent Model Selection table and
                  `agent-surface/table-variants/subagent-model-table.cursor.md`.
     command-map  Emit `docs/agent-guides/mvw-command-map.md` from
@@ -58,7 +59,8 @@ SECTIONS = {
     },
     "mcp-tool-awareness": {
         "source": "agent-surface/sources/mcp-tool-awareness.md",
-        "cursor_out": ".cursor/rules/mcp-tool-awareness_ws.mdc",
+        # Ecosystem-shared (_ulg) — lives in parent projects/.cursor/rules/
+        "cursor_out": "../.cursor/rules/mcp-tool-awareness_ulg.mdc",
     },
     "subagent-model-table": {
         "cursor_variant": "agent-surface/table-variants/subagent-model-table.cursor.md",
@@ -92,7 +94,7 @@ def _emit_cursor(root: Path, *, check: bool, dry_run: bool) -> int:
     for sect_id in ("boot-protocol", "mcp-tool-awareness"):
         spec = SECTIONS[sect_id]
         source_path = root / spec["source"]
-        out_path = root / spec["cursor_out"]
+        out_path = (root / spec["cursor_out"]).resolve()
         parsed = parse_source(source_path)
         rendered = render_cursor_mdc(parsed, source_rel=spec["source"])
         if dry_run:
@@ -115,6 +117,7 @@ def _emit_cursor(root: Path, *, check: bool, dry_run: bool) -> int:
                 )
                 fail = 1
             continue
+        out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(rendered)
         print(f"wrote {out_path}")
 

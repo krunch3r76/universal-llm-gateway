@@ -1,0 +1,24 @@
+---
+description: Load when Kaywan wants chat→web-anthropic relay rendered in a Canvas panel (type in chat, seat rewrites bus + refreshes canvas). Soft ≤3 Jupiter converse batching is in claude-ai-cdp-navigation.
+alwaysApply: false
+rule_category: cortex-bus
+apply_tier: catalog
+trigger_match_terms:
+  - life-advisor
+  - canvas dialogue
+  - web-anthropic
+  - relay
+  - life-advisor-dialogue
+---
+# Web-anthropic Canvas Dialogue (trigger)
+
+## Invariant
+
+`operator_types_in_chat ⇒ seat relays to web-anthropic ∧ refreshes Canvas` — ¬ canvas input, ¬ canvas fetch.
+
+Full recipe: Use the `web-anthropic-canvas-dialogue` skill.
+
+Default canvas: `canvases/life-advisor-dialogue.canvas.tsx`  
+Default life bus example: agent-bus **5242** (dedicated side channel).
+
+Abort nudges: Stop Cowork stream **before** kill CDP (`claude-ai-cdp-navigation` § Abort).

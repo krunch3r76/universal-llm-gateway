@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate self-contained ``.claude/skills/`` bundles and hardlink cursor → SOT."""
+"""Generate shared_sync Customize Skills bundles (out-of-tree staging) + cursor links."""
 
 from __future__ import annotations
 
@@ -36,6 +36,11 @@ from claude_bundles.resolver import (  # noqa: E402
     resolve_sot,
     shared_sync_slugs,
 )
+from claude_bundles.staging_paths import (  # noqa: E402
+    life_local_skill_md,
+    shared_sync_skill_md,
+    shared_sync_staging_root,
+)
 from gen_rules.check import diff_against  # noqa: E402
 
 
@@ -51,10 +56,8 @@ def _workspace_root() -> Path:
         return _REPO
 
 
-def _bundle_paths(root: Path, slug: str) -> tuple[Path, Path]:
-    claude = root / ".claude" / "skills" / slug / "SKILL.md"
-    cursor = root / ".cursor" / "skills" / slug / "SKILL.md"
-    return claude, cursor
+def _cursor_skill_md(root: Path, slug: str) -> Path:
+    return root / ".cursor" / "skills" / slug / "SKILL.md"
 
 
 def _same_inode(a: Path, b: Path) -> bool:
@@ -171,8 +174,8 @@ def _load_rendered(
 def _check_life_local_files(root: Path) -> int:
     fail = 0
     for slug in life_local_slugs():
-        claude_path, _ = _bundle_paths(root, slug)
-        cursor_path = root / ".cursor" / "skills" / slug / "SKILL.md"
+        claude_path = life_local_skill_md(root, slug)
+        cursor_path = _cursor_skill_md(root, slug)
         if cursor_path.is_file():
             print(
                 f"LIFE-LOCAL: {slug} must not remain under .cursor/skills",
@@ -229,6 +232,7 @@ def _check_life_local_files(root: Path) -> int:
 
 def run_dry_run(root: Path) -> int:
     print("DRY RUN — no writes will be issued")
+    print(f"shared_sync staging root: {shared_sync_staging_root()}")
     print()
     fail = 0
     entity_descriptions = _fetch_entity_descriptions(_cortex_client())
@@ -241,9 +245,10 @@ def run_dry_run(root: Path) -> int:
             print(f"ERROR  {slug:32s}  {exc}", file=sys.stderr)
             fail = 1
             continue
-        claude_path, cursor_path = _bundle_paths(root, slug)
+        render_path = shared_sync_skill_md(slug)
+        cursor_path = _cursor_skill_md(root, slug)
         print(f"{slug:32s}  resolved={root_label}  ({sot_path})")
-        print(f"  WRITE {claude_path.relative_to(root)}")
+        print(f"  WRITE {render_path}")
         if _same_inode(sot_path, cursor_path):
             print(f"  OK (sot-linked) {cursor_path.relative_to(root)}")
         elif cursor_path.is_file():
@@ -257,14 +262,14 @@ def run_dry_run(root: Path) -> int:
             print(f"ERROR  {slug:32s}  {exc}", file=sys.stderr)
             fail = 1
             continue
-        _, cursor_path = _bundle_paths(root, slug)
+        cursor_path = _cursor_skill_md(root, slug)
         print(f"{slug:32s}  cursor-only  resolved={root_label}  ({sot_path})")
         if _same_inode(sot_path, cursor_path):
             print(f"  OK (sot-linked) {cursor_path.relative_to(root)}")
         else:
             print(f"  SOT-LINK {cursor_path.relative_to(root)}")
     for slug in life_local_slugs():
-        claude_path, _ = _bundle_paths(root, slug)
+        claude_path = life_local_skill_md(root, slug)
         print(f"{slug:32s}  life-local  REFUSED (no render)")
         print(f"  SKIP  {claude_path.relative_to(root)}")
     return fail
@@ -348,7 +353,7 @@ def run_check(root: Path) -> int:
             print(f"ERROR: {slug}: {exc}", file=sys.stderr)
             fail = 1
             continue
-        claude_path, _ = _bundle_paths(root, slug)
+        claude_path = shared_sync_skill_md(slug)
         current = (
             claude_path.read_text(encoding="utf-8") if claude_path.is_file() else ""
         )
@@ -390,23 +395,23 @@ def run_generate(root: Path) -> int:
             print(f"ERROR: {slug}: {exc}", file=sys.stderr)
             fail = 1
             continue
-        claude_path, _ = _bundle_paths(root, slug)
-        if claude_path.is_file():
-            existing = claude_path.read_text(encoding="utf-8")
+        render_path = shared_sync_skill_md(slug)
+        if render_path.is_file():
+            existing = render_path.read_text(encoding="utf-8")
             if is_claude_sot_frontmatter(existing):
                 print(
-                    f"REFUSED: {claude_path} carries sot: claude (life-local)",
+                    f"REFUSED: {render_path} carries sot: claude (life-local)",
                     file=sys.stderr,
                 )
                 fail = 1
                 continue
-        claude_path.parent.mkdir(parents=True, exist_ok=True)
+        render_path.parent.mkdir(parents=True, exist_ok=True)
         if (
-            not claude_path.is_file()
-            or claude_path.read_text(encoding="utf-8") != rendered
+            not render_path.is_file()
+            or render_path.read_text(encoding="utf-8") != rendered
         ):
-            claude_path.write_text(rendered, encoding="utf-8")
-            print(f"wrote {claude_path}")
+            render_path.write_text(rendered, encoding="utf-8")
+            print(f"wrote {render_path}")
     fail |= run_link_cursor_indexed(root, slugs=cursor_only_slugs())
     return fail
 

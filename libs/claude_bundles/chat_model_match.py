@@ -82,7 +82,12 @@ def label_satisfies_request(
     *,
     effort: str | None = None,
 ) -> bool:
-    """True when ``label`` attests the requested family (+ effort when required)."""
+    """True when ``label`` attests the requested family (+ effort when required).
+
+    Effort rungs ``max`` / ``high`` / ``extra`` are exclusive: a Max request
+    must not pass on a High label, and a High request must not pass on Max or
+    Extra High (friction 24969).
+    """
     family, parsed_effort = parse_model_request(requested)
     if effort is None:
         effort = parsed_effort
@@ -91,10 +96,17 @@ def label_satisfies_request(
     text = (label or "").strip()
     if not text or not family_pattern(family).search(text):
         return False
-    if effort == "extra" and not re.search(r"Extra", text, re.I):
-        return False
-    if effort == "high" and not re.search(r"High", text, re.I):
-        return False
+    if effort == "max":
+        return bool(re.search(r"Max", text, re.I))
+    if effort == "high":
+        if not re.search(r"High", text, re.I):
+            return False
+        # Extra High / Max must not satisfy a plain High request.
+        if re.search(r"Extra", text, re.I) or re.search(r"Max", text, re.I):
+            return False
+        return True
+    if effort == "extra":
+        return bool(re.search(r"Extra", text, re.I))
     return True
 
 

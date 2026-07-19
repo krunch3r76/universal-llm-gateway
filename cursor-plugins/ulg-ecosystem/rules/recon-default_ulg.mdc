@@ -1,0 +1,34 @@
+---
+description: Recon-default invariant — code-work intake defaults to recon-first before implement; density_triage unset or recon_pending blocks direct implement; waiver via recon_waived attribute.
+alwaysApply: true
+rule_category: workflow
+apply_tier: required_gate
+---
+# Recon-Default Invariant — Stub
+
+Full ladder + skeptic mechanism: Use the `cheap-recon-before-escalation` skill (on trigger).
+
+## Invariant (one line)
+
+∀ code-work intake — friction classed **feature/bug**, or todo seeded **sparse/early** (`density_triage` unset or `recon_pending`) — the **default front-half is recon** (axis-1 cost ladder; axis-2 skeptic on material) **before** implement.
+
+## Trigger → action
+
+| Condition | Action |
+|---|---|
+| Operator says "address friction N" where N is a feature/bug | Run recon front-half — Use the `cheap-recon-before-escalation` skill; ¬ jump to implement |
+| Pickup a todo whose `density_triage` is unset or `recon_pending` | Run recon front-half before drafting implement spec |
+| Material todo (`judgment_required`) without `skeptic_ratified` attestation | Axis-2 skeptic is binding — Use the `cheap-recon-before-escalation` skill §Axis-2 |
+| `recon_waived="<reason>"` present on entity attrs | Waiver granted — skip axis-2 skeptic only; dense-spec / `files_expected` / acceptance checks still required |
+
+## Exempt set (no recon required)
+
+- Pure **assertion / observation** path (friction *logging* only, knowledge claims)
+- `density_triage == "mechanical"` or `"trivial"` scope
+- Todo already carries a **dense implement spec** with `files_expected` + `acceptance_criteria`
+
+## Use the full skill when ANY trigger fires
+
+Use the `cheap-recon-before-escalation` skill
+
+Cross-refs: `friction-review_ws.mdc` (investigate→execute lane), `advisor-timing.mdc` (pause before first write), `reasoning-posture` (pin Question/OOS before merits on material judgment).

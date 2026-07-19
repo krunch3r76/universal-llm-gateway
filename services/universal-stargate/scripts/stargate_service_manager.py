@@ -103,7 +103,8 @@ class StargateConfig:
         config = cls(
             host=os.getenv("STARGATE_HOST", "0.0.0.0"),
             port=int(os.getenv("STARGATE_PORT", "9999")),
-            log_level=os.getenv("STARGATE_LOG_LEVEL", "debug").lower(),
+            # Events are the observability SOT — default INFO, not DEBUG
+            log_level=os.getenv("STARGATE_LOG_LEVEL", "info").lower(),
             gateway_url=os.getenv("GATEWAY_URL", "http://localhost:9998"),
             stargate_venv=os.getenv(
                 "GATEWAY_VENV", os.path.expanduser("~/.venvs/universal")

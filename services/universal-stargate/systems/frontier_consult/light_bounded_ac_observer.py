@@ -4,17 +4,10 @@ from __future__ import annotations
 
 from typing import Literal
 
+from .packet_review_surface import FOOTER_BY_SURFACE, NEGATIVE_SPACE_BY_SURFACE
+
 _PRODUCTION_CODE_HINTS = ("services/", "libs/")
-GENERATE_LANE_AC_OBSERVER_FOOTER = (
-    "## Packet AC observer (advisory)\n"
-    "Verify each packet acceptance criterion and Self-check claim against the "
-    "resulting source and tests.\n"
-    "Executor Self-check PASS is evidence to inspect, not completion authority.\n"
-    "Report PASS or FAIL per packet AC with file evidence paths; mark sources "
-    "missing or unverifiable explicitly.\n"
-    "Treat the staged draft and reasoning trace as the primary implementation "
-    "surface; request packet/source reference when unavailable."
-)
+GENERATE_LANE_AC_OBSERVER_FOOTER = FOOTER_BY_SURFACE["source"]
 
 Contract = Literal["light-bounded", "pure-mechanical", "implement"]
 
@@ -137,3 +130,23 @@ def validate_generate_contract_packet_rules(
             ),
             status_code=422,
         )
+
+
+def build_generate_lane_reviewer_prompt(
+    *,
+    packet_text: str | None,
+    staged_draft_body: str,
+    reasoning_trace_body: str,
+) -> str:
+    """Build generate-lane reviewer prompt with surface-specific rubric."""
+    from .densify_candidate_ready import build_reviewer_prompt
+    from .packet_review_surface import classify_review_surface
+
+    surface = classify_review_surface(packet_text or "")
+    prompt = build_reviewer_prompt(
+        staged_draft_body=staged_draft_body,
+        reasoning_trace_body=reasoning_trace_body,
+        negative_space=NEGATIVE_SPACE_BY_SURFACE[surface],
+    )
+    footer = FOOTER_BY_SURFACE[surface]
+    return f"{prompt}\n\n{footer}"

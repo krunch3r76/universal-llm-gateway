@@ -1,0 +1,31 @@
+# Authoritative _ulg rule census — SoT under cursor-plugins/ulg-ecosystem/rules/
+# (sole Cursor discovery via installed plugin). ¬ projects/.cursor/rules/*_ulg.mdc.
+# One basename (without .mdc) per line.
+
+agent-bus-push-reminder_ulg
+agent-skills_ulg
+anthropic-dispatch-authorization_ulg
+cursor-rule-placement_ulg
+anthropic-substrate_ulg
+awareness_ulg
+capability-dispatch_ulg
+claude-ai-cdp-navigation_ulg
+commit-and-git-scope_ulg
+consultation-workflow_ulg
+expand-growth-loop_ulg
+jupiter-converse-batching_ulg
+mcp-debugging-ux_ulg
+mcp-selector-naming_ulg
+mcp-tool-awareness_ulg
+mcp-tool-param-types_ulg
+phase-vocabulary_ulg
+plan-slug-coherence_ulg
+presence-discipline_ulg
+python-universal-venv_ulg
+reasoning-posture_ulg
+recon-default_ulg
+shared-checkout-housekeeping_ulg
+skill-authoring_ulg
+skill-surface_ulg
+todo_ulg
+web-anthropic-canvas-dialogue_ulg

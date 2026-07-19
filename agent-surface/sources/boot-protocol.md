@@ -27,7 +27,7 @@ Every IDE-resident Cursor agent operates in one of three modes per session. Sele
 
 When the opening message contains a `transcript:cursor-YYYY-MM-DD-HHmm` ID:
 
-Execute the Continue Mode protocol from `mcp-tool-awareness_ws.mdc` — three
+Execute the Continue Mode protocol from `mcp-tool-awareness_ulg.mdc` — three
 parallel `CallMcpTool` reads (session summary, activity journal, recent transcripts).
 
 **Do NOT**: call `cortex_brief`, load full transcripts, or read the briefing card.
@@ -39,7 +39,7 @@ Continue Mode (lightweight) unless the user explicitly says "universal mode".
 
 ## Code Mode — Minimal Boot (MANDATORY)
 
-MCP tool awareness is always available via `mcp-tool-awareness_ws.mdc`.
+MCP tool awareness is always available via `mcp-tool-awareness_ulg.mdc`.
 
 On the **first MCP tool call** beyond basic `fs` ops, if you need deeper tool
 knowledge, read the canonical reference:
@@ -95,7 +95,7 @@ Authoritative protocol lives in `session-close.mdc`.
 ## Reference Files (read on demand)
 
 - `universal-llm-gateway/docs/tool-reference.md` — canonical MCP tool signatures and full op catalog
-- Sandbox routing and markdown ops: see `mcp-tool-awareness_ws.mdc` (always loaded)
+- Sandbox routing and markdown ops: see `mcp-tool-awareness_ulg.mdc` (always loaded)
 <!-- /target:cursor -->
 
 <!-- target:* -->

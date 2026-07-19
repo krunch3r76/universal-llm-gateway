@@ -1,0 +1,34 @@
+---
+description: Reasoning posture — pin Question before merits, out-of-scope, detent before widening; thinking-off does not waive. Resident baseline for strong reasoning.
+alwaysApply: true
+rule_category: workflow
+apply_tier: catalog
+trigger_match_terms:
+  - reasoning-posture
+  - question pin
+  - out-of-scope
+  - detent
+  - cascade
+  - thinking-off
+---
+# Reasoning Posture — Stub
+
+Full body: Use the `reasoning-posture` skill — not this stub.
+
+## Invariant
+
+∀ material judgment / consult / path-sim / proposal review:
+`pin(Question) ≺ merits` · `declare(Out-of-scope)` · `detent ≺ widen` ·
+`cascade_live ⇒ greater_explores ∧ lesser_binds` ·
+`consult_live ⇒ posture ≺ transport` · **`thinking_off ⇏ waive`**.
+
+## Composition (do not fatten consult-posture)
+
+| Concern | Owner |
+|---|---|
+| These rails | `reasoning-posture` (this) |
+| Consult fire grammar | `consult-posture` (trigger-gated) |
+| Pause timing | `advisor-timing` |
+| L0/L1/L2 machinery | `path-sim` |
+
+¬ copy path-sim tables here. ¬ expand `consult-posture` into the general reasoning guide.

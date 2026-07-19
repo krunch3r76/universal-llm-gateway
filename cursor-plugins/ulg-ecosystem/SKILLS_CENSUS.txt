@@ -1,0 +1,23 @@
+# Bootstrap census — ecosystem skills shipped in ulg-ecosystem plugin.
+# One slug per line. Lines starting with # are ignored.
+# SoT: cursor-plugins/ulg-ecosystem/skills/<slug>/SKILL.md
+# (sole Cursor discovery after install — ¬ also under hub .cursor/skills or .claude/skills)
+
+advisor-timing
+cheap-recon-before-escalation
+claude-ai-cdp-navigation
+completion-provenance-discipline
+consult-posture
+consult-routing
+cortex
+dispatch-shape
+friction-review
+git-posture
+handoff-packet-authoring
+implement-todo
+multi-model-review
+operator-posture
+orchestrator-workflow
+path-sim
+reasoning-posture
+satellite-workspace

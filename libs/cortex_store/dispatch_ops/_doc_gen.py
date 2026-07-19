@@ -1,4 +1,10 @@
-"""Build-time codegen entry point for cortex MCP op docs."""
+"""Build-time codegen entry point for cortex MCP op docs.
+
+OpenAPI-first adapter manifest generation lives in
+``cortex_store.openapi_mcp.codegen`` (``scripts/openapi_mcp_codegen.py``).
+This module retains handler-signature doc harvest for the megatool facade
+prose until full OpenAPI descriptor cutover.
+"""
 
 from __future__ import annotations
 

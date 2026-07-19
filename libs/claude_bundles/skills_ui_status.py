@@ -13,6 +13,7 @@ from claude_bundles.skills_ui_panel import (
     listed_skill_names,
     open_skills_panel,
 )
+from claude_bundles.staging_paths import claude_ai_bundle_dir
 
 
 @dataclass(frozen=True)
@@ -32,18 +33,35 @@ class ParityReport:
 async def scan_ui_parity(
     *,
     cdp_url: str,
-    bundles_dir: Path,
+    bundles_dir: Path | None = None,
+    repo_root: Path | None = None,
 ) -> ParityReport:
-    """Compare ``claude_ai_target_slugs()`` to Customize → Skills table + local bundles."""
+    """Compare ``claude_ai_target_slugs()`` to Customize → Skills table + local bundles.
+
+    When ``bundles_dir`` is set, every slug is resolved under that single root
+    (legacy override). Otherwise each slug uses ``claude_ai_bundle_dir``
+    (shared_sync staging + life_local under ``.claude/skills``).
+    """
+    root = (repo_root or Path.cwd()).resolve()
     target = {s.lower() for s in claude_ai_target_slugs()}
 
     invalid: list[tuple[str, str]] = []
     stale: list[str] = []
     for slug in claude_ai_target_slugs():
-        bundle_dir = bundles_dir / slug
+        bundle_dir = (
+            bundles_dir / slug
+            if bundles_dir is not None
+            else claude_ai_bundle_dir(root, slug)
+        )
         md = bundle_dir / "SKILL.md"
         if not md.is_file():
-            invalid.append((slug, "missing .claude/skills bundle — run gen_claude_bundles"))
+            invalid.append(
+                (
+                    slug,
+                    "missing local bundle — run gen_claude_bundles "
+                    "(shared_sync → ~/.gateway/claude-ai-sync/skills/)",
+                )
+            )
             continue
         try:
             validate_bundle_dir(slug, bundle_dir)

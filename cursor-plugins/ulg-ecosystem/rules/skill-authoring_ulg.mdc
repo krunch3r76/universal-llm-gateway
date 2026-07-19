@@ -1,0 +1,21 @@
+---
+description: Authoring or editing a workspace SKILL.md — register the cortex agent_skill entity after saving; local filesystem alone is not done.
+globs: .cursor/skills/**/SKILL.md
+alwaysApply: false
+rule_category: workflow
+apply_tier: glob
+trigger_match_terms:
+  - SKILL.md
+  - skill authoring
+  - register skill
+---
+# Skill authoring — registration invariant
+
+∀ authoring/editing a `.cursor/skills/**/SKILL.md`: a local SKILL.md alone is NOT done.
+Register the `agent_skill` entity via `scripts/cortex/ingest_skills.py`, then verify
+`cortex(entity_get agent_skill:<slug>)` resolves and the skill appears in `GET /boot-skills`.
+After editing a declared `related_skills` companion list, re-run `ingest_skills.py` (attribute +
+`references` edges). Audit drift remediation points at ingest only. The prose miner is archived at
+`scripts/cortex/archive/bootstrap_skill_sot_prose_miner.py` — not routine maintenance.
+Unregistered skills are invisible to boot-skills / web + dispatch seats.
+Full playbook: `agent-guidance-writing` skill.

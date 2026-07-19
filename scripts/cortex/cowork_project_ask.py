@@ -55,6 +55,20 @@ from claude_bundles.project_ask_prompt_files import load_prompt_files  # noqa: E
 from claude_bundles.skills_ui_panel import DEFAULT_CDP_URL  # noqa: E402
 
 
+def _derive_cleanup_ok(
+    delete_after: dict | None,
+    *,
+    delete_requested: bool,
+) -> bool:
+    if not delete_requested:
+        return True
+    if delete_after is None:
+        return False
+    if delete_after.get("step") == "skip_not_in_chat":
+        return True
+    return bool(delete_after.get("ok"))
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -169,6 +183,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Converse mode only: delete chat after final turn (default: keep)",
     )
     parser.add_argument(
+        "--force-delete-fail",
+        action="store_true",
+        help="Dev falsifier: force delete_after step=more failure (exit 1 on --close).",
+    )
+    parser.add_argument(
         "--archive",
         default="",
         help="Archive path before delete (ask mode; auto-default when deleting)",
@@ -190,9 +209,22 @@ def main(argv: list[str] | None = None) -> int:
             "clock pauses — no wall ceiling for long Cowork tool-runs (24666)."
         ),
     )
-    parser.add_argument("--min-body", type=int, default=40)
-    parser.add_argument("--min-growth", type=int, default=50)
+    parser.add_argument(
+        "--min-body",
+        type=int,
+        default=40,
+        help="Legacy — ignored for harvest completion (structural turn gate).",
+    )
+    parser.add_argument(
+        "--min-growth",
+        type=int,
+        default=50,
+        help="Legacy — ignored for harvest completion (structural turn gate).",
+    )
     args = parser.parse_args(argv)
+
+    if args.force_delete_fail:
+        os.environ["CDP_FORCE_DELETE_FAIL"] = "1"
 
     cleanup_id = args.abort_cleanup_registration_id.strip()
     if cleanup_id:
@@ -300,14 +332,21 @@ def _dispatch(
                 delete_after=bool(args.close),
                 cdp_url=args.cdp_url,
                 timeout_s=max(args.timeout_s, 600),
-                min_growth=max(args.min_growth, 80),
-                min_body=max(args.min_body, 200),
+                min_growth=args.min_growth,
+                min_body=args.min_body,
                 ensure_cowork_auto=not args.no_cowork_auto,
             )
+        )
+        delete_requested = bool(args.close)
+        last_delete = results[-1].delete_after if results else None
+        cleanup_ok = _derive_cleanup_ok(
+            last_delete,
+            delete_requested=delete_requested,
         )
         summary = {
             "ok": all(r.ok for r in results),
             "turns": len(results),
+            "cleanup_ok": cleanup_ok,
             "results": [
                 {
                     "ok": r.ok,
@@ -321,7 +360,10 @@ def _dispatch(
                 for r in results
             ],
         }
+        if delete_requested:
+            summary["ok"] = summary["ok"] and cleanup_ok
         print(json.dumps(summary, indent=2))
+        print(f"cleanup_ok={str(cleanup_ok).lower()}", flush=True)
         for i, r in enumerate(results, start=1):
             if r.ok and r.url:
                 print(f"turn_{i}_chat_url={r.url}", flush=True)
@@ -380,6 +422,11 @@ def _dispatch(
             archive_path=archive or None,
         )
     )
+    delete_requested = not args.keep_chat
+    cleanup_ok = _derive_cleanup_ok(
+        result.delete_after,
+        delete_requested=delete_requested,
+    )
     summary = {
         "ok": result.ok,
         "body_len": result.body_len,
@@ -390,9 +437,13 @@ def _dispatch(
         "archive_uri": result.archive_uri,
         "error": result.error,
         "delete_after": result.delete_after,
+        "cleanup_ok": cleanup_ok,
         "body_preview": (result.body or "")[:400],
     }
+    if delete_requested:
+        summary["ok"] = summary["ok"] and cleanup_ok
     print(json.dumps(summary, indent=2))
+    print(f"cleanup_ok={str(cleanup_ok).lower()}", flush=True)
     if result.archive_uri:
         print(f"archive_uri={result.archive_uri}", flush=True)
     if args.out and result.body:

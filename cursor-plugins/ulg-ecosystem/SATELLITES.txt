@@ -1,0 +1,13 @@
+# Sibling dirs under /mnt/torus/projects that are ULG ecosystem satellites.
+# Synced by install-ecosystem-plugin.sh (venv pin). One name per line.
+# Hub (universal-llm-gateway) is NOT listed — it already pins the same interpreter.
+# Add new satellites here; remove retired ones. Re-run install to correct drift.
+
+sms-bridge
+email-bridge
+journal-bridge
+agent-bus
+pajournal
+treasure-chest
+claudeburst
+gollm

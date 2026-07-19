@@ -1,0 +1,53 @@
+#!/usr/bin/env python3
+"""Start the CDP project-ask satellite on Jupiter.
+
+Run on the Jupiter CDP host with cortex files mounted at CORTEX_FILES_ROOT
+(default ~/mcp-data/files or /mnt/torus/mcp-data/files).
+
+    scripts/cdp-ask --port 8770
+
+The MCP server connects via PROJECT_ASK_URL env var.
+"""
+
+from __future__ import annotations
+
+import argparse
+import logging
+import os
+import sys
+from pathlib import Path
+
+_REPO = Path(__file__).resolve().parent.parent.parent
+if str(_REPO / "libs") not in sys.path:
+    sys.path.insert(0, str(_REPO / "libs"))
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="CDP project-ask satellite")
+    parser.add_argument("--host", default="0.0.0.0", help="Bind address")
+    parser.add_argument("--port", type=int, default=8770, help="Listen port")
+    parser.add_argument(
+        "--log-level",
+        default="info",
+        choices=["debug", "info", "warning", "error"],
+    )
+    args = parser.parse_args()
+
+    logging.basicConfig(
+        level=getattr(logging, args.log_level.upper()),
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+
+    if not os.environ.get("CORTEX_FILES_ROOT"):
+        default_root = Path.home() / "mcp-data" / "files"
+        if default_root.is_dir():
+            os.environ["CORTEX_FILES_ROOT"] = str(default_root)
+
+    import uvicorn
+    from cdp_ask import create_app
+
+    uvicorn.run(create_app(), host=args.host, port=args.port)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,28 @@
+---
+description: MCP debugging UX — use Event Service / observability internally, do not dump raw event SQL or commands to user unless explicitly asked. Load before MCP/event-driven debugging work.
+alwaysApply: false
+---
+# MCP Debugging UX
+
+## Default Agent Behavior
+
+For MCP debugging, agents SHOULD use Event Service and `observability` queries
+internally by default.
+
+- Prefer event queries, traces, and structured observability over asking the user
+  to inspect raw logs or run ad hoc event SQL.
+- Treat routine MCP/event query work as agent-side debugging, not user-facing output.
+
+## User-Facing Output
+
+Do not dump raw event query commands or SQL to the user unless one of these is true:
+
+- The user explicitly asks for the exact query/command
+- The user must run a manual step locally or on another machine
+- A handoff/repro path is operationally necessary
+
+When reporting results from internal MCP debugging:
+
+- Summarize the findings in plain language first
+- Mention the relevant signals/events when useful
+- Include raw commands only when they materially help the user act

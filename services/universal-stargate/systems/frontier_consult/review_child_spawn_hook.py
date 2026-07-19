@@ -12,7 +12,6 @@ from fastapi import Response
 from universal_logging import get_logger
 
 from .cursor_sdk_generate_signals import publish_frontier_event
-from .densify_candidate_ready import build_reviewer_prompt
 from .densify_triage import COMPOSER_DRAFT_SENTINEL, REASONING_TRACE_SENTINEL
 from .events import FrontierReviewChildContextMissing, FrontierSdkReviewChildSpawned
 from .generate_admission_context_store import (
@@ -24,7 +23,7 @@ from .generate_admission_context_store import (
     read_spawn_state,
     try_claim_spawn_pending,
 )
-from .light_bounded_ac_observer import GENERATE_LANE_AC_OBSERVER_FOOTER
+from .light_bounded_ac_observer import build_generate_lane_reviewer_prompt
 from .skill_suggest_durable_state import DurableTerminalEvent, durable_catch_up_terminal
 
 logger = get_logger(__name__)
@@ -126,6 +125,7 @@ async def _build_generate_lane_review_prompt(
 ) -> str:
     thread_id = parent_dispatch_thread_id or ""
     draft_body = f"{COMPOSER_DRAFT_SENTINEL}\n# generate lane closeout for {thread_id}"
+    packet_text: str | None = None
     if thread_id:
         from .dispatch_thread_context import read_latest_dispatch_thread_body
 
@@ -136,17 +136,18 @@ async def _build_generate_lane_review_prompt(
                 role="reviewer",
             )
             if thread_body.strip():
+                packet_text = thread_body
                 draft_body = f"{COMPOSER_DRAFT_SENTINEL}\n{thread_body}"
         except Exception:
             pass
     trace_body = (
         f"{REASONING_TRACE_SENTINEL}\n# auto review child for generate/cursor-sdk"
     )
-    prompt = build_reviewer_prompt(
+    return build_generate_lane_reviewer_prompt(
+        packet_text=packet_text,
         staged_draft_body=draft_body,
         reasoning_trace_body=trace_body,
     )
-    return f"{prompt}\n\n{GENERATE_LANE_AC_OBSERVER_FOOTER}"
 
 
 async def spawn_generate_lane_review_child(

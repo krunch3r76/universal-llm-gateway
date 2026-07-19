@@ -111,6 +111,16 @@ class SkillCatalog:
     def resolve_sot(self, slug: str, repo_root: Path) -> tuple[Path, str]:
         entry = self.get(slug)
         dirname = entry.sot_dirname or entry.slug
+        plugin = (
+            repo_root
+            / "cursor-plugins"
+            / "ulg-ecosystem"
+            / "skills"
+            / dirname
+            / "SKILL.md"
+        )
+        if plugin.is_file():
+            return plugin, "cursor-plugins/ulg-ecosystem/skills"
         if entry.surface_class == "life_local":
             path = repo_root / ".claude" / "skills" / dirname / "SKILL.md"
             label = ".claude/skills"
@@ -171,13 +181,37 @@ def _parse_entry(slug: str, raw: object) -> SkillCatalogEntry:
     )
 
 
+def _plugin_census_slugs(repo_root: Path) -> set[str]:
+    """Slugs shipped via ulg-ecosystem plugin (Cursor discovery SoT)."""
+    census = repo_root / "cursor-plugins" / "ulg-ecosystem" / "SKILLS_CENSUS.txt"
+    if not census.is_file():
+        return set()
+    out: set[str] = set()
+    for line in census.read_text(encoding="utf-8").splitlines():
+        slug = line.split("#", 1)[0].strip()
+        if not slug:
+            continue
+        skill = (
+            repo_root
+            / "cursor-plugins"
+            / "ulg-ecosystem"
+            / "skills"
+            / slug
+            / "SKILL.md"
+        )
+        if skill.is_file():
+            out.add(slug)
+    return out
+
+
 def _active_sot_slugs(repo_root: Path) -> set[str]:
     cursor = {
         path.parent.name
         for path in (repo_root / ".cursor" / "skills").glob("*/SKILL.md")
         if path.parent.name != "README"
     }
-    return cursor
+    # Plugin census is Cursor-indexed via the installed plugin, not .cursor/skills.
+    return cursor | _plugin_census_slugs(repo_root)
 
 
 def _validate_sot_coverage(catalog: SkillCatalog, repo_root: Path) -> None:

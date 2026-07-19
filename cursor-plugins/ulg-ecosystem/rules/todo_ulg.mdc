@@ -1,0 +1,228 @@
+---
+description: Todo management extensions for this workspace
+---
+# Todo (Workspace)
+
+**Workspace-specific**: Todo management additions (no base rule)
+
+## Architecture
+
+Todos are Cortex entities (`type: "todo"`) in `~/.cortex/cortex.db`.
+
+**Entity schema**: `id: todo:{slug}`,
+`workflow_state: open|in_progress|blocked|done|deferred|cancelled` (typed column,
+enum-validated against the `workflow_schemas` registry),
+`attributes: {priority, domain, required_skills: [...], backlog?, seed_contract_ack?,
+dispatch_lane?, density?, density_triage?, density_triaged_by?,
+density_triage_evidence_uri?, executor_harness?, artifact_uri?, block_reason?}`.
+Rich todos have `source_uri: cortex://notes/system/specs/{slug}.md` — spec files are RAG-indexed
+in the `todo_specs` scope for semantic search.
+
+## Two-Tier Todo Contract
+
+∀ todo: it is **one of exactly two tiers** at creation:
+
+| Tier | When | Required fields |
+|---|---|---|
+| **Implementation-intent** (default) | Intent to implement (any non-deferred/backlog creation) | `source_uri` (stub spec), `required_skills` (≥1), `priority`, `domain`, ≥1 context edge (`references→decision:*`, `relates_to→service:*`, or `evidence_uris→agent-bus:N`) |
+| **Backlog-only** (explicit) | `workflow_state=deferred` OR `attributes.backlog=true` OR operator says "not yet" / "backlog" | `priority`, `domain` only — no stub spec required |
+
+**Prose mentions in description do not satisfy the implementation-intent contract.**
+Only graph-traversable edges count. The `todo_implementation_seed_incomplete` audit
+gate (WARNING severity) fires on open/in_progress todos missing any of the three
+required fields. Suppressed via `attributes.backlog=true` or
+`attributes.seed_contract_ack='<reason>'` (documented escape hatch).
+
+**Suppression scope — audit only, never implement admission.** `backlog` and
+`seed_contract_ack` silence the *structural audit* finding; they do **not** grant
+implement-dispatch admission. ∀ implement dispatch (`cursor-sdk` generate /
+`cursor-implement` handoff): the precondition is an **active implement-ready
+assertion** citing a dense spec — a generic ack cannot substitute (it would re-open
+the gap an ack was never meant to cover).
+
+**Handoff invariant**: ∀ implementation-intent todo: a fresh agent running
+`/spec-todo {slug}` should produce dense phase docs with zero external session memory.
+`entity_get(todo:{slug})` + `source_uri` (stub spec) + edge traversal ⟹ complete context.
+
+See: `decision:todo-creation-rich-seed-contract` (thread 1144).
+
+## Domain → default `required_skills`
+
+∀ todo: `required_skills` is the skill set a pickup loads **before** gauging
+readiness (`implement-todo` §1b). At creation, attach skills by domain so pickup
+is never skill-blind. The defaults below are the floor — add domain-specific
+skills on top of the ULG pair.
+
+| Domain | Default `required_skills` |
+|---|---|
+| *(any ULG repo work — the floor)* | `architecture-invariants`, `ulg-architecture` |
+| `pipeline` | + `build-pipeline` (new pipeline) or `refine-pipeline` (eval/iterate) |
+| `consult` / dispatch / review | + `consult-routing` |
+| plan arc (multi-phase) | + `implementation-plan-workflow` |
+| rag / corpus | + `research-article-ingest` |
+
+**Tier rules:**
+
+- **Implementation-intent todos** (default tier) MUST carry ≥1 skill — the ULG
+  pair at minimum for any repo work. This is the `required_skills` field of the
+  rich-seed contract above; the `todo_implementation_seed_incomplete` gate fires
+  without it.
+- **Backlog-only todos** (`backlog=true` / `deferred`) are exempt from the gate,
+  but SHOULD still carry the predicted skills (e.g. the ULG pair) when the domain
+  is known — it costs nothing at creation and saves a checkpoint at pickup.
+
+The pickup-side fallback (`implement-todo` §1b: empty set ∧ ULG repo →
+default-load the pair) is a safety net, not a substitute for seeding the
+attribute. Seed at creation; let the fallback catch only genuinely domain-unknown
+todos.
+
+**Pickup discipline (Cursor):** before the first write or dispatch on any
+implementation-intent todo, load every slug in `required_skills` — see
+`required-skills-pickup_ws.mdc` (description-gated; resolves each slug to its paired
+`.cursor/rules/{slug}_ws.mdc` + `.cursor/skills/{slug}/SKILL.md` stub). Native discovery (rule suggestion +
+native skill index) is primary. **Skill load at pickup** (`implement-todo` §1b): ∀ slug in
+`required_skills`, Use the `<slug>` skill (canonical slug — seat self-fetches;
+do not fs-read skill body). Optional: `entity_get(agent_skill:{slug})` for metadata
+only. Seed-time `requires` edges (one per slug) are mandatory alongside the attribute —
+the `project_required_skills_no_relationship` audit fires when they diverge.
+After the floor, agents scan native skill index + boot
+manifest triggers for task-relevant extras (`implement-todo` §1b.1).
+
+## Grouping
+
+When ≥2 todos share one deliverable arc, group under a **`task:`** container (spec +
+`child_of` edges) — **not** a master-`todo:`. A `todo:` is always a **leaf**
+(closable unit of work). Load `agent_skill:task-grouping-discipline` before seeding.
+
+**Workflow scrub (2026-06-04):** `task-seed`, `task-close`, `task_candidates`, and
+`/boot-tasks` are retired (`decision:task-subsystem-retired`) — do **not** cite those
+pipelines/commands. The **`task:` entity type** remains live for bounded multi-todo arcs.
+
+The `{slug}` is canonical: entity slug ≡ spec basename ≡ phase_dir ≡ plan slug.
+See `plan-slug-coherence_ws.mdc` — tools derive the name; they do not ask for it.
+
+### Container: `task:` vs `plan:` vs `project:`
+
+| Container | When | Leaf unit |
+|---|---|---|
+| **`task:{slug}`** + leaf `todo:` | Bounded arc of ≥2 serial/parallel leaf todos; phase-free (no formal phase deck); optional `related_to` → umbrella `project:` | Always `todo:{slug}` — never a master todo |
+| **`plan:{slug}`** + **`plan_phase:`** | `/create-implementation-plan` / `/implement-plan`; phase docs at `tmp/prompts/{slug}/phase-N.md`; `Expected Executor` per phase | One `todo:` per closable leaf (may mirror phases) |
+| **`project:{slug}`** | Long-horizon umbrella track; vision-level; holds multiple `task:` / `plan:` / freestanding `todo:` children | Never a closable execution container itself |
+
+**Pick `task:`** for a bounded multi-todo arc without a formal plan deck. Example:
+`task:panel-dispatch-redesign` (Phase 2 → Phase 3 leaf todos after P0 landed).
+
+**Pick `plan:`** when work is authored as a **phased implementation deck** with per-phase
+density and executor in spec headers. Example: RAG entity gate (`plan:` deck → Composer phases).
+
+**Pick `project:`** for umbrella tracks only. A `task:` MAY `related_to` (or `child_of`)
+an umbrella `project:` for portfolio association — promotion from `task:` → `project:`
+is optional and rare (arc outgrows bounded scope).
+
+A single umbrella `project:` may hold both `task:` arcs and `plan:` decks.
+
+### Dispatch metadata (`dispatch_lane`, `density`, `executor_harness`)
+
+Encode **who produces the next artifact** and **expected execution seat** on
+implementation-intent todos. Keeps `workflow_state` for execution progress only
+(`open` · `in_progress` · `blocked` · `done` · `deferred`).
+
+| Attribute | Values | Purpose |
+|---|---|---|
+| `dispatch_lane` | `none` · `web-spec` · `web-implement-packet` · `cursor-sdk-implement` · `cursor-mechanical` · `cursor-implement` · `operator-gate` | Who authors the next artifact |
+| `density` | `sparse` · `dense` · `mechanical` · `exploration` | Maps to `agent_skill:implementation-plan-workflow` §Plan-density |
+| `density_triage` | `mechanical` · `judgment_required` · `unknown` | **Declared** staging-tier verdict — who may stage how (set by an authorized reasoner/operator, ¬ inferred by the stager) |
+| `density_triaged_by` | agent/operator id | Who recorded the triage verdict |
+| `density_triage_evidence_uri` | spec / assertion / thread URI | Cited basis for the verdict |
+| `executor_harness` | `web-anthropic-direct` · `composer-2.5` · `cursor-mechanical` · `operator` | Expected execution seat |
+| `artifact_uri` | workspaces/cortex URI | Canonical implement packet or phase doc when known |
+| `block_reason` | string | When `workflow_state: blocked` — e.g. falsifier, packet accept, operator assert |
+
+**Staging-tier triage (declared-state, ¬ inferred).** Deciding "densify by a
+reasoning tier vs stage mechanically" is an **escalation** decision — the tier that
+would need to escalate (Composer at staging) is empirically the one that won't
+(`model-tier-awareness.mdc`, thread 807). So it is **declared**, not heuristically
+inferred: an authorized reasoner/operator sets `density_triage` before staging.
+- `judgment_required` ⟹ reasoning-authorized tier densifies (web-consult / cursor-consult / Opus); ¬ mechanical stage.
+- `mechanical` ⟹ bounded mechanical path admissible iff preconditions hold (dense source, `required_skills`, context edge, no open forks).
+- `unknown` / unset ⟹ implement dispatch **blocked**; only consult/densify admissible.
+Full procedure: Use the `handoff-packet-authoring` skill § Staging.
+
+**Lane → transport**
+
+| `dispatch_lane` | Transport | Output |
+|---|---|---|
+| `web-spec` | `team_dispatch(op=handoff, role=web-consult)` + consult packet | design spec / findings |
+| `web-implement-packet` | `team_dispatch(op=handoff, role=web-implement)` + **consult** packet (shorthand `role=web-consult`) | `*-implement-packet.md` (six blocks) — a doc for a downstream implementer |
+| `cursor-sdk-implement` *(default for bound implement)* | `team_dispatch(op=generate, role=cursor-sdk, packet_path=…, contract=implement)` — auto Composer, no IDE pickup; **dense packet required** | code + tests + bus closeout (auto) |
+| `cursor-mechanical` | `cursor-sdk` generate (default) OR IDE session + packet/spec when already in Cursor | code + corpus + closeout |
+| `cursor-implement` | `team_dispatch(op=handoff, role=cursor-implement, source_ref=todo:{slug})` — **fallback** (operator opens IDE) | code + tests + bus closeout |
+| `operator-gate` | operator action (assert, accept, export) | cortex assert / bus ack |
+| `none` | spec-only / tracking | — |
+
+**Observed arcs (2026-06-08):** panel P0 (1359 → 1356 t9) = `web-implement-packet` → `cursor-mechanical`; knob transparency (1364) = `cursor-mechanical` from spec thread; unified admission P0+1 (1363) = `cursor-mechanical` after operator Q1–Q3; corpus export = `cursor-mechanical` with **no web** (`density: mechanical`).
+
+Full proposal: `cortex://notes/system/specs/implement-dispatch-lifecycle.md`.
+
+**Access**: `cortex(tool="entities", arguments='{"type": "todo", "workflow_state": "open"}')`
+or SQL via `sql(db="cortex", sql="SELECT ... FROM entities WHERE type='todo' AND workflow_state='open'")`.
+
+**Completion (preferred)**: `pipeline(op="run", pipeline_id="todo-close",
+messages=[{"role":"user","content":"close"}], options={...closure payload...})`
+— atomically writes the closure **sidecar** (`notes/system/todos/{slug}-closure.md`
++ `attributes.closure_summary_uri`), the closure assertion (citing the sidecar
+URI in `evidence_uris`), references, depends_on edges, and the
+`workflow_state=done` flip in one call. Returns structured per-step results so
+partial failures stay visible.
+
+**Closure payload (pipeline options)**:
+
+| Field | Required | Notes |
+|---|---|---|
+| `todo_id` | yes | e.g. `todo:foo-slug` |
+| `summary` | yes | becomes the closure assertion's `claim` |
+| `evidence_text` | no | defaults to auto-generated provenance line |
+| `evidence_uris` | no | list of source URIs |
+| `reasoning_summary` | no | populates assertion's `reasoning_summary` |
+| `references` | no | `[{target, type_id?, role?, evidence?, strength?}]` → relationships |
+| `depends_on_resolved` | no | `[int]` assertion ids → `depends_on` edges to `assertion:<id>` |
+| `edges` | no | `[{to_node, edge_type, context?, strength?}]` — escape hatch |
+| `skip_workflow_update` | no | backfill mode: don't re-flip `workflow_state` |
+| `agent` | no | seeds `assertion.seeded_by` and edge `agent` |
+| `session_id` | no | edge attribution; defaults to a synthetic id |
+
+**Closure sidecar convention**: on `pipeline:todo-close` success, the
+`todo_close_sidecar` cortex op (owned in cortex-api, which owns
+`CORTEX_FILES_ROOT`) writes a human-readable index at
+`cortex://notes/system/todos/{slug}-closure.md` (sections: Summary, Reasoning,
+Evidence, References — built from the closure payload), sets
+`attributes.closure_summary_uri` on the todo (merge — existing attributes
+preserved), and the closure assertion cites that URI in `evidence_uris`. The
+`done` todo card surfaces `closure_summary_uri` in `status_summary`. This is the
+todo analogue of the agent-bus thread-sidecar convention
+(`notes/system/threads/<thread>-<subject>.md`). The assertion remains the audit
+trail; the sidecar is the human-readable index. Sidecar write is best-effort —
+a failure is recorded in the per-step results but does not abort the audit-trail
+writes.
+
+∀ priority=high todo: close via `pipeline:todo-close`. For lower-stakes
+todos, manual `entity_update` + assertion is permitted but the cortex-api
+emits a `cortex.todo.closure.gap` signal when a todo transitions to `done`
+with zero assertions on the entity. Surface the gap, do not ignore it.
+
+**Session-close gate**: `/session-end` and `session-close.mdc` §0c require
+todo **reconciliation** before `session_close`: inventory touched todos → live
+`entity_get` each → determine completion (§0c-3) → `todo-close` when acceptance
+met but `workflow_state` still `open`/`in_progress` → re-verify `done` → then
+`session_close`. `session_close` does not mark todos done. Preflight surfaces
+`open_todos_in_entity_ids` when `entity_ids` still lists open todos. See
+skill `session-close-kernel` Step 1 (todo reconciliation gate).
+
+**Manual fallback** (only if the pipeline is unavailable):
+`cortex(tool="entity_update", arguments='{"entity_id": "todo:...",
+"workflow_state": "done"}')` + seed a completion assertion with what was
+done and why. (The write path validates workflow_state against the
+registered enum for `todo`.)
+
+`tasks/todo.yaml` and `tasks/todo.archive.yaml` are frozen pointer files
+retained for navigation only — ¬read, ¬write.

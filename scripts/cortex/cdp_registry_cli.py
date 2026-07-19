@@ -65,7 +65,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.cmd == "list":
-        rows = [cdp_registry.registration_as_dict(r) for r in cdp_registry.list_active()]
+        rows = cdp_registry.active_registration_dicts()
         print(json.dumps(rows, indent=2))
         return 0
 
@@ -73,8 +73,16 @@ def main(argv: list[str] | None = None) -> int:
         if not args.yes:
             print("pass --yes to reclaim released ports", file=sys.stderr)
             return 2
-        ports = cdp_registry.hygiene_reclaim_released()
-        print(json.dumps({"reclaimed_ports": ports}, indent=2))
+        result = cdp_registry.hygiene_reclaim_released()
+        print(
+            json.dumps(
+                {
+                    "reclaimed_ports": result.reclaimed_ports,
+                    "removed_profiles": result.removed_profiles,
+                },
+                indent=2,
+            )
+        )
         return 0
 
     parser.error(f"unknown cmd {args.cmd}")

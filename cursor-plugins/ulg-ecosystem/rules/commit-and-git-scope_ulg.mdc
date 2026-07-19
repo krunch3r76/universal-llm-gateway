@@ -1,0 +1,32 @@
+---
+description: Git posture for cursor-sdk / git-integration-worker implement substrate and shared-checkout dispatch reasoning. Default path is live shared checkout — load the skill for doctrine.
+alwaysApply: true
+rule_category: engineering
+apply_tier: required_gate
+trigger_match_terms:
+  - commit
+  - git
+  - scope
+  - finality
+  - gate
+  - headless
+  - revert
+  - canonical
+  - cursor-sdk
+  - uncommitted
+---
+# Git Posture — Cursor stub
+
+**Scope:** Binds on **cursor-sdk / git-integration-worker implement substrate** and
+cross-seat reasoning about shared-checkout state (uncommitted ≠ broken, no standing
+git workflow). Attended **Cursor IDE** and cursor-sdk both use the **live shared
+checkout**.
+
+**Lane A resident:** sole shared `master` · ¬intersecting parallel writers ·
+¬`git stash` to isolate or A/B vs clean HEAD — read the tree (doctrine:
+`git-posture`).
+
+**Canonical skill (load on trigger or coding-session work):** Use the `git-posture` skill
+(seat self-fetches; ¬ fs-read skill body). Entity: `agent_skill:git-posture`.
+Headless `git_*` MCP (`git_commit` default; gated `git_land`/`git_integrate` only when
+operator directs a merge) is covered in that skill — not a separate playbook.

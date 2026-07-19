@@ -18,10 +18,17 @@ from cortex_store.digest_ledger import (
 )
 
 _MIG_PATH = Path(__file__).parent / "migrations" / "068_digest_ledger.py"
+_MIG071_PATH = Path(__file__).parent / "migrations" / "071_digest_ledger_revision.py"
 _spec = importlib.util.spec_from_file_location("migration_068_digest_ledger", _MIG_PATH)
+_spec071 = importlib.util.spec_from_file_location(
+    "migration_071_digest_ledger_revision", _MIG071_PATH
+)
 assert _spec is not None and _spec.loader is not None
+assert _spec071 is not None and _spec071.loader is not None
 migration_068 = importlib.util.module_from_spec(_spec)
+migration_071 = importlib.util.module_from_spec(_spec071)
 _spec.loader.exec_module(migration_068)
+_spec071.loader.exec_module(migration_071)
 
 
 @pytest.fixture()
@@ -29,6 +36,7 @@ def conn() -> sqlite3.Connection:
     c = sqlite3.connect(":memory:")
     c.row_factory = sqlite3.Row
     migration_068.migrate(c)
+    migration_071.migrate(c)
     return c
 
 

@@ -138,7 +138,12 @@ def build_claim_proposals(
                         "valid_from": derive_valid_from_hint(claim),
                         "is_atomic": True,
                         "is_decontextualized": True,
-                        "evidence_uris": [source_uri] if source_uri else [],
+                        "evidence_uris": (
+                            ([source_uri] if source_uri else [])
+                            + [f"{source_uri}#{entry_anchor}"]
+                            if source_uri
+                            else [f"#{entry_anchor}"]
+                        ),
                         "reasoning_summary": f"digest:{entry_anchor}#{claim_index}",
                     },
                 )

@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Tier 2 — dispatch Opus review + batch-approve for a digest revision_staged batch.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+PARAMS_REL="notes/system/threads/5329-tier2-approve-params.md"
+SEALED_URI="cortex://notes/system/threads/5329-tier2-opus-batch-approve-sealed-ask.md"
+PYTHON="${PYTHON:-$HOME/.venvs/universal/bin/python}"
+
+exec "$PYTHON" "$ROOT/scripts/cortex/digest_revision_opus_approve.py" "$@"

@@ -7,11 +7,82 @@ context leak into the next compose.
 Verified path (2026-07-16):
   header More options → delete-chat-trigger → confirm Delete (JS clicks).
 Post-delete often lands on /new; re-navigate before next send if needed.
+
+Resilience (a:25084): bounded header poll, session→chat triggers, sidebar
+Recents fallback keyed by title in aria-label; cleanup_ok on result dict.
 """
 
 from __future__ import annotations
 
+import os
+
 from claude_bundles.project_chrome import project_url
+
+HEADER_POLL_MS = 4000
+HEADER_POLL_INTERVAL_MS = 500
+MENU_WAIT_MS = 700
+CONFIRM_WAIT_MS = 2500
+ESCAPE_WAIT_MS = 300
+
+_POLL_HEADER_MORE_JS = """() => {
+  const header = document.querySelector('[data-testid="chat-header"]');
+  const btn = header?.querySelector('button[aria-label^="More options"]');
+  if (!btn) return {ok: false, step: 'more'};
+  btn.click();
+  return {ok: true, step: 'more'};
+}"""
+
+_DELETE_TRIGGERS_JS = """() => {
+  const session = document.querySelector('[data-testid="delete-session-trigger"]');
+  if (session) {
+    session.click();
+    return {ok: true, step: 'delete-trigger', testid: 'delete-session-trigger'};
+  }
+  const chat = document.querySelector('[data-testid="delete-chat-trigger"]');
+  if (chat) {
+    chat.click();
+    return {ok: true, step: 'delete-trigger', testid: 'delete-chat-trigger'};
+  }
+  return {ok: false, step: 'delete-trigger'};
+}"""
+
+_CONFIRM_DELETE_JS = """() => {
+  const buttons = [...document.querySelectorAll('button,[role=button]')];
+  const del = buttons.find(
+    (b) => /^delete$/i.test((b.innerText || '').trim()) && b.offsetParent
+  );
+  if (!del) return {ok: false, step: 'confirm'};
+  del.click();
+  return {ok: true, step: 'confirm'};
+}"""
+
+_EXTRACT_TITLE_JS = """() => {
+  const header = document.querySelector('[data-testid="chat-header"]');
+  const titleEl = header?.querySelector('h1, h2, [class*="title"]');
+  const fromHeader = (titleEl?.textContent || '').trim();
+  if (fromHeader) return fromHeader;
+  const docTitle = (document.title || '').replace(/\\s*[-–|].*$/, '').trim();
+  return docTitle;
+}"""
+
+_SIDEBAR_CLICK_MORE_JS = """(title) => {
+  const prefix = 'More options for ';
+  const target = prefix + title;
+  const btn = [...document.querySelectorAll('button[aria-label^="More options for "]')]
+    .find((b) => (b.getAttribute('aria-label') || '') === target);
+  if (!btn) return {ok: false, step: 'sidebar-not-found', title};
+  btn.scrollIntoView({ block: 'center' });
+  btn.click();
+  return {ok: true, step: 'sidebar-more', aria: btn.getAttribute('aria-label')};
+}"""
+
+
+def _force_delete_fail() -> bool:
+    return os.environ.get("CDP_FORCE_DELETE_FAIL", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
 
 
 def in_active_chat(url: str) -> bool:
@@ -59,63 +130,160 @@ async def pick_chat_page(ctx, *, prefer_url_substr: str | None = None):
     return page
 
 
-async def delete_current_chat(page) -> dict:
-    """Delete the active chat via header menu. Uses JS clicks (Playwright flaky)."""
-    before = page.url
-    r1 = await page.evaluate(
-        """() => {
-      const header = document.querySelector('[data-testid="chat-header"]');
-      const btn = header?.querySelector('button[aria-label^="More options"]');
-      if (!btn) return {ok:false, step:'more'};
-      btn.click();
-      return {ok:true, step:'more'};
-    }"""
-    )
+async def _poll_header_more(page) -> dict:
+    """Bounded poll for chat-header More options before step=more hard fail."""
+    elapsed = 0
+    last = {"ok": False, "step": "more"}
+    while elapsed < HEADER_POLL_MS:
+        last = await page.evaluate(_POLL_HEADER_MORE_JS)
+        if last.get("ok"):
+            return last
+        await page.wait_for_timeout(HEADER_POLL_INTERVAL_MS)
+        elapsed += HEADER_POLL_INTERVAL_MS
+    return last
+
+
+async def _click_delete_triggers(page) -> dict:
+    r = await page.evaluate(_DELETE_TRIGGERS_JS)
+    if r.get("ok"):
+        return r
+    await page.keyboard.press("Escape")
+    await page.wait_for_timeout(ESCAPE_WAIT_MS)
+    return r
+
+
+async def _confirm_delete(page) -> dict:
+    return await page.evaluate(_CONFIRM_DELETE_JS)
+
+
+async def _delete_via_header(page) -> dict:
+    r1 = await _poll_header_more(page)
     if not r1.get("ok"):
-        return {"ok": False, "step": "more", "url": before}
+        return {"ok": False, "step": "more", "path": "header", "attempts": {"more": r1}}
 
-    await page.wait_for_timeout(900)
-    r2 = await page.evaluate(
-        """() => {
-      const del = document.querySelector('[data-testid="delete-chat-trigger"]');
-      if (!del) return {ok:false, step:'delete-trigger'};
-      del.click();
-      return {ok:true, step:'delete-trigger'};
-    }"""
-    )
+    await page.wait_for_timeout(MENU_WAIT_MS)
+    r2 = await _click_delete_triggers(page)
     if not r2.get("ok"):
-        return {"ok": False, "step": "delete-trigger", "url": before}
+        return {
+            "ok": False,
+            "step": r2.get("step", "delete-trigger"),
+            "path": "header",
+            "attempts": {"more": r1, "trigger": r2},
+        }
 
-    await page.wait_for_timeout(900)
-    r3 = await page.evaluate(
-        """() => {
-      const buttons = [...document.querySelectorAll('button,[role=button]')];
-      const del = buttons.find(
-        (b) => /^delete$/i.test((b.innerText || '').trim()) && b.offsetParent
-      );
-      if (!del) return {ok:false, step:'confirm'};
-      del.click();
-      return {ok:true, step:'confirm'};
-    }"""
-    )
+    await page.wait_for_timeout(MENU_WAIT_MS)
+    r3 = await _confirm_delete(page)
     if not r3.get("ok"):
-        return {"ok": False, "step": "confirm", "url": before}
+        return {
+            "ok": False,
+            "step": "confirm",
+            "path": "header",
+            "attempts": {"more": r1, "trigger": r2, "confirm": r3},
+        }
 
-    await page.wait_for_timeout(2500)
+    await page.wait_for_timeout(CONFIRM_WAIT_MS)
     return {
         "ok": True,
-        "deleted_from": before,
-        "landed_on": page.url,
+        "path": "header",
         "steps": {"more": r1, "trigger": r2, "confirm": r3},
+    }
+
+
+async def _delete_via_sidebar(page, *, title: str) -> dict:
+    if not title:
+        return {"ok": False, "step": "sidebar-not-found", "path": "sidebar", "title": ""}
+
+    r1 = await page.evaluate(_SIDEBAR_CLICK_MORE_JS, title)
+    if not r1.get("ok"):
+        return {
+            "ok": False,
+            "step": r1.get("step", "sidebar-not-found"),
+            "path": "sidebar",
+            "title": title,
+            "attempts": {"more": r1},
+        }
+
+    await page.wait_for_timeout(MENU_WAIT_MS)
+    r2 = await _click_delete_triggers(page)
+    if not r2.get("ok"):
+        return {
+            "ok": False,
+            "step": r2.get("step", "delete-trigger"),
+            "path": "sidebar",
+            "title": title,
+            "attempts": {"more": r1, "trigger": r2},
+        }
+
+    await page.wait_for_timeout(MENU_WAIT_MS)
+    r3 = await _confirm_delete(page)
+    if not r3.get("ok"):
+        return {
+            "ok": False,
+            "step": "confirm",
+            "path": "sidebar",
+            "title": title,
+            "attempts": {"more": r1, "trigger": r2, "confirm": r3},
+        }
+
+    await page.wait_for_timeout(CONFIRM_WAIT_MS)
+    return {
+        "ok": True,
+        "path": "sidebar",
+        "title": title,
+        "steps": {"more": r1, "trigger": r2, "confirm": r3},
+    }
+
+
+async def delete_current_chat(page) -> dict:
+    """Delete the active chat via header menu, with sidebar Recents fallback."""
+    before = page.url or ""
+    if _force_delete_fail():
+        return {"ok": False, "step": "more", "url": before, "forced": True}
+
+    header_result = await _delete_via_header(page)
+    if header_result.get("ok"):
+        return {
+            "ok": True,
+            "deleted_from": before,
+            "landed_on": page.url,
+            "path": "header",
+            "steps": header_result.get("steps"),
+        }
+
+    title = await page.evaluate(_EXTRACT_TITLE_JS)
+    sidebar_result = await _delete_via_sidebar(page, title=str(title or ""))
+    if sidebar_result.get("ok"):
+        return {
+            "ok": True,
+            "deleted_from": before,
+            "landed_on": page.url,
+            "path": "sidebar",
+            "title": sidebar_result.get("title"),
+            "steps": sidebar_result.get("steps"),
+            "header_attempt": header_result,
+        }
+
+    fail_step = sidebar_result.get("step") or header_result.get("step") or "more"
+    return {
+        "ok": False,
+        "step": fail_step,
+        "url": before,
+        "path": sidebar_result.get("path") or header_result.get("path"),
+        "title": title,
+        "attempts": {
+            "header": header_result,
+            "sidebar": sidebar_result,
+        },
     }
 
 
 async def delete_chat_if_active(page, *, return_to: str | None = None) -> dict:
     """Delete when on a chat URL; optionally navigate after."""
     if not in_active_chat(page.url or ""):
-        return {"ok": True, "step": "skip_not_in_chat", "url": page.url}
+        return {"ok": True, "step": "skip_not_in_chat", "url": page.url, "cleanup_ok": True}
 
     result = await delete_current_chat(page)
+    result["cleanup_ok"] = bool(result.get("ok"))
     if return_to:
         await page.goto(return_to, wait_until="domcontentloaded", timeout=90000)
         await page.wait_for_timeout(2000)

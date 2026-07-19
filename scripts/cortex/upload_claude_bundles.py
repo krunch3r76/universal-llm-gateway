@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Export or upload ``.claude/skills/`` bundles for claude.ai parity.
+"""Export or upload Customize Skills bundles for claude.ai parity.
+
+Shared_sync renders live under ``~/.gateway/claude-ai-sync/skills/`` (override:
+``CLAUDE_AI_SKILLS_STAGING``). life_local SOT remains ``<repo>/.claude/skills/``.
 
 Two stores — do not conflate:
 
@@ -39,6 +42,10 @@ from claude_bundles.skills_api import (  # noqa: E402
     write_md_zip,
     write_skill_zip,
 )
+from claude_bundles.staging_paths import (  # noqa: E402
+    claude_ai_bundle_dir,
+    shared_sync_staging_root,
+)
 
 PILOT_SLUGS: tuple[str, ...] = ("fs", "session-close-kernel", "add-mcp-tool")
 
@@ -63,7 +70,8 @@ def _workspace_root() -> Path:
 
 
 def _bundle_dir(root: Path, slug: str) -> Path:
-    return root / ".claude" / "skills" / slug
+    """Bundle dir for Claude.ai upload: staging for shared_sync, repo for life_local."""
+    return claude_ai_bundle_dir(root, slug)
 
 
 def _parse_slugs(raw: str | None) -> list[str]:
@@ -109,7 +117,10 @@ def _validate_targets(
 def _write_md_zip(
     root: Path, targets: list[str], out_path: Path, *, name_pattern: str
 ) -> int:
-    skills_root = root / ".claude" / "skills"
+    # Shared_sync lives in out-of-tree staging; life_local remains under repo.
+    # write_md_zip expects a single parent root — prefer staging when all targets
+    # are shared_sync; mixed sets write per-slug zips via --write-zips instead.
+    skills_root = shared_sync_staging_root()
     path = write_md_zip(targets, skills_root, out_path, name_pattern=name_pattern)
     import zipfile
 

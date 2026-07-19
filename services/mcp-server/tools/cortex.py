@@ -37,7 +37,13 @@ def register_cortex_tools(mcp: FastMCP, surface: Surface = "life") -> None:
             return dispatch_arguments_error(
                 arguments, example='{"entity_id": "type:slug"}', tool="cortex"
             )
-        req_surface = str(current_request_metadata().get("surface") or surface)
+        meta = current_request_metadata()
+        req_surface = str(meta.get("surface") or surface)
+        seat = (
+            meta.get("seat_class")
+            or meta.get("caller_identity")
+            or meta.get("request_profile")
+        )
         allowed, rejection = endpoint_op_allowed(req_surface, "cortex", tool)
         if not allowed and rejection is not None:
             return {
@@ -46,9 +52,12 @@ def register_cortex_tools(mcp: FastMCP, surface: Surface = "life") -> None:
                 "family": rejection["family"],
                 "surface": rejection["surface"],
             }
-        return cx(
-            "POST",
-            "/dispatch",
-            {"tool": tool, "arguments": arguments},
-            dispatch_tool=tool,
-        )
+        body: dict[str, Any] = {
+            "tool": tool,
+            "arguments": arguments,
+            "surface": req_surface,
+            "via_adapter": True,
+        }
+        if seat:
+            body["seat"] = str(seat)
+        return cx("POST", "/dispatch", body, dispatch_tool=tool)

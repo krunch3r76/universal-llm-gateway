@@ -128,6 +128,9 @@ if fp:
 web_fetcher = (cfg.get('WEB_FETCHER_URL') or cfg.get('web_fetcher_url') or '').strip()
 if web_fetcher:
     print('export WEB_FETCHER_URL=' + shlex.quote(web_fetcher))
+project_ask = (cfg.get('PROJECT_ASK_URL') or cfg.get('project_ask_url') or '').strip()
+if project_ask:
+    print('export PROJECT_ASK_URL=' + shlex.quote(project_ask))
 
 def _export_x_credential(key, value):
     if value:

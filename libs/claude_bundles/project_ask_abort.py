@@ -1,9 +1,10 @@
-"""Abort cleanup for project-ask — Stop-then-kill, ownership guard (24911)."""
+"""Abort cleanup for project-ask — Stop-then-kill, ownership guard (24911/24976)."""
 
 from __future__ import annotations
 
 import asyncio
 import json
+import os
 import signal
 import threading
 import urllib.request
@@ -56,6 +57,27 @@ def registration_owns_port(registration_id: str, expected_port: int) -> bool:
 
 def purpose_kill_default(purpose: str | None) -> bool:
     return (purpose or "") == "ask"
+
+
+def emit_detached_status(registration_id: str) -> None:
+    """Best-effort stdout signal — remote driver still authoritative (24976 F1)."""
+    print(
+        f"status=detached_remote_running registration_id={registration_id}",
+        flush=True,
+    )
+
+
+def _process_owns_driver(registration_id: str) -> bool:
+    if cdp_registry.process_holds_driver_lock(registration_id):
+        return True
+    try:
+        row = cdp_registry._load_active().get(registration_id)
+    except Exception:
+        return False
+    if row is None:
+        return False
+    holder_pid = row.get("holder_pid")
+    return isinstance(holder_pid, int) and holder_pid == os.getpid()
 
 
 def deregister_on_exit(reg: cdp_registry.Registration, *, purpose: str | None) -> None:
@@ -122,6 +144,18 @@ def abort_cleanup(reg: cdp_registry.Registration, *, purpose: str | None) -> Non
         _ABORT_DONE = True
     if not registration_owns_port(reg.registration_id, reg.port):
         return
+
+    row = cdp_registry._load_active().get(reg.registration_id)
+    if row is None or row.get("status") != "active":
+        return
+
+    if not _process_owns_driver(reg.registration_id):
+        if cdp_registry.is_driver_lock_held(reg.registration_id):
+            emit_detached_status(reg.registration_id)
+            return
+        if not registration_owns_port(reg.registration_id, reg.port):
+            return
+
     bounded_stop_via_cdp(reg.cdp_url)
     deregister_on_exit(reg, purpose=purpose)
 

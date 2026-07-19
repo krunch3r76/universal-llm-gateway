@@ -1,7 +1,23 @@
 # config/skills.yaml — authoritative skill placement + MCP surface catalog
 #
-# One row per active SOT slug. surface_class selects SOT home and delivery targets;
-# mcp_surface_required gates runtime compatibility (code ⊇ life).
+# One row per active SOT slug. Three orthogonal axes (do not conflate):
+#
+#   1. surface_class — Customize/Skills + SOT home (Claude.ai upload set):
+#        cursor_only  → Cursor IDE / code seats; ¬ uploaded to Customize Skills
+#        shared_sync  → Cursor + Claude.ai Customize
+#        life_local   → Claude.ai / life only
+#      cursor_only means ¬web Customize slug — NOT "hub-only".
+#      Ecosystem Cursor satellites (vortex-code MCP) run cursor_only cascades
+#      when bodies ship via ulg-ecosystem plugin census (SKILLS_CENSUS.txt).
+#
+#   2. mcp_surface_required — runtime MCP compatibility (code ⊇ life ⊇ none).
+#
+#   3. ecosystem plugin delivery — skill_shared ⊥ mcp_endpoint_ready:
+#        ship skill/command bodies via cursor-plugins/ulg-ecosystem census now;
+#        promote script transports (e.g. project-ask) to MCP only when
+#        seat-agnostic invocation is required (decision:ecosystem-code-cascade-
+#        vortex-implies-full). Web/life annex remains for non-code surfaces.
+#
 # Optional aliases canonicalize filesystem/entity name variants.
 # Optional delivery_priority (lower = earlier) relocates former backfill overrides.
 #
@@ -49,8 +65,12 @@ skills:
     surface_class: cursor_only
     mcp_surface_required: none
   claude-ai-cdp-navigation:
+    # Code-seat CDP navigation (Jupiter project-ask / R-admit). cursor_only =
+    # ¬Customize upload; satellites get the body via ulg-ecosystem census.
+    # mcp_surface_required=code: needs vortex-code / hub scripts — not a life slug.
+    # skill_shared (census) independent of MCP endpoint readiness for project-ask.
     surface_class: cursor_only
-    mcp_surface_required: none
+    mcp_surface_required: code
   claude-ai-skill-uninstall:
     surface_class: cursor_only
     mcp_surface_required: none
@@ -127,6 +147,12 @@ skills:
     surface_class: life_local
     mcp_surface_required: none
   email-tool-dispatch:
+    surface_class: life_local
+    mcp_surface_required: life
+  sms-bridge-mailbox:
+    surface_class: life_local
+    mcp_surface_required: life
+  sms-tool-dispatch:
     surface_class: life_local
     mcp_surface_required: life
   engagement-stance:
@@ -265,8 +291,11 @@ skills:
     surface_class: cursor_only
     mcp_surface_required: life
   path-sim:
-    # Cursor-lead cascade / code-dispatch machinery — ¬ life/web slug.
-    # R leg gets review-gate contract injected in the nudge (not "Use the path-sim skill").
+    # Code-cascade machinery (Q→A→R→implement). cursor_only = ¬life/web Customize
+    # slug — NOT hub-exclusive. Any ecosystem Cursor seat with vortex-code +
+    # ulg-ecosystem census body may run path-sim (decision:ecosystem-code-cascade-
+    # vortex-implies-full). R leg: inject review-gate in nudge/sidecar — forbidden
+    # to "Use the path-sim skill" on web-anthropic (stale Customize body ≠ SOT).
     surface_class: cursor_only
     mcp_surface_required: code
   pipeline-substrate-capabilities:
@@ -296,6 +325,9 @@ skills:
   refine-pipeline:
     surface_class: cursor_only
     mcp_surface_required: code
+  reasoning-posture:
+    surface_class: shared_sync
+    mcp_surface_required: life
   required-skills-pickup:
     surface_class: shared_sync
     mcp_surface_required: life
@@ -306,6 +338,9 @@ skills:
     surface_class: cursor_only
     mcp_surface_required: code
   review-task-guidance:
+    surface_class: cursor_only
+    mcp_surface_required: none
+  satellite-workspace:
     surface_class: cursor_only
     mcp_surface_required: none
   service-lifecycle:

@@ -82,6 +82,10 @@ _OP_SPECS: dict[str, str] = {
     "deadlines": "ops_journals:_op_deadlines",
     "deadline_resolve": "ops_journals:_op_deadline_resolve",
     "digest": "ops_digest:_op_digest",
+    "staging_list": "ops_staging:_op_staging_list",
+    "staging_batch_approve": "ops_staging:_op_staging_batch_approve",
+    "staging_approve": "ops_staging:_op_staging_approve",
+    "staging_reject": "ops_staging:_op_staging_reject",
     "journal_read": "ops_journals:_op_journal_read",
     "session_close": "ops_session_close:_op_session_close",
     "session_close_preflight": "ops_session_close:_op_session_close_preflight",
@@ -182,9 +186,19 @@ class _LazyOpRegistry(Mapping[str, Callable[..., Any]]):
 _OPS: Mapping[str, Callable[..., Any]] = _LazyOpRegistry(_OP_SPECS)
 
 
-def execute_op(tool: str, arguments: object) -> Any:
+def execute_op(
+    tool: str,
+    arguments: object,
+    *,
+    surface: str | None = None,
+    seat: str | None = None,
+    via_adapter: bool | None = None,
+) -> Any:
     """Dispatch a cortex op. Handles unknown-tool suggestions, arg parsing,
     workflow hints, and entity completeness enrichment.
+
+    Telemetry kwargs (surface, seat, via_adapter) are populated by the MCP
+    relay pass-through for per-op × per-seat ``mcp.cortex.dispatch`` events.
     """
     handler = _OPS.get(tool)
     if handler is None:
@@ -214,11 +228,16 @@ def execute_op(tool: str, arguments: object) -> Any:
             ),
         }
 
-    record(
-        "mcp.cortex.dispatch",
-        tool=tool,
-        **({"intent": (parsed.get("intent") or "full")} if tool == "entity_get" else {}),
-    )
+    dispatch_telemetry: dict[str, Any] = {"tool": tool}
+    if surface:
+        dispatch_telemetry["surface"] = surface
+    if seat:
+        dispatch_telemetry["seat"] = seat
+    if via_adapter is not None:
+        dispatch_telemetry["via_adapter"] = via_adapter
+    if tool == "entity_get":
+        dispatch_telemetry["intent"] = parsed.get("intent") or "full"
+    record("mcp.cortex.dispatch", **dispatch_telemetry)
     result = handler(**parsed)
     if not isinstance(result, dict):
         return result

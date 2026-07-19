@@ -112,7 +112,7 @@ def test_watermark_skip_same_sha(
 
 
 @pytest.mark.offline
-def test_changed_sha_anomaly_no_stage(
+def test_changed_sha_enters_revision_pass(
     migrated_db_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -131,11 +131,25 @@ def test_changed_sha_anomaly_no_stage(
             )
             conn.commit()
 
-    with patch("cortex_store.dispatch_ops.ops_digest.extract_claims") as mock_extract:
+    revision_result = {
+        "status": "revision_staged",
+        "reason": "content_sha_changed",
+        "ledger_id": 99,
+        "staging_batch_id": "batch-rev-1",
+        "emitted_ids": [1, 2],
+    }
+    with (
+        patch(
+            "cortex_store.dispatch_ops.ops_digest.run_revision_pass",
+            return_value=revision_result,
+        ) as mock_revision,
+        patch("cortex_store.dispatch_ops.ops_digest.extract_claims") as mock_extract,
+    ):
         result = _op_digest(**_digest_args())
         mock_extract.assert_not_called()
+        mock_revision.assert_called_once()
 
-    assert result["status"] == "anomaly"
+    assert result["status"] == "revision_staged"
     assert result["reason"] == "content_sha_changed"
 
 

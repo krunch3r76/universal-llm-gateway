@@ -1,0 +1,39 @@
+---
+description: Load before any Jupiter project-ask --converse bus-nudge or multi-stop agent-bus ping-pong with web-anthropic — standing ≤3 turns per converse session (friction 24831).
+alwaysApply: false
+rule_category: cortex-bus
+apply_tier: catalog
+trigger_match_terms:
+  - jupiter
+  - project-ask
+  - converse
+  - bus-nudge
+  - web-anthropic
+  - meaning-walk
+  - claude-ai-sync-jupiter
+---
+# Jupiter Converse Batching
+
+## Invariant
+
+`∀ Cursor seat · multi-stop Jupiter bus-nudge: prefer ≤3 turns per --converse session` (operator bind 2026-07-16; friction 24831). **Soft ceiling** — not a hard lock; 1-turn OK for a single ask; >3 only with a named reason.
+
+Substance + exemptions: Use the `claude-ai-cdp-navigation` skill § Converse batching.
+
+## Quick bind
+
+| Situation | Action |
+|---|---|
+| Meaning walk / multi-stop ping-pong with next 1–2 stops known | One `--converse` with 2–3 `--prompt-file` turns |
+| Single gated ask (e.g. life-advisor position) | One turn is fine |
+| Operator gate or craft mode next | New session; do not batch across the gate |
+| Whole remaining queue | Prefer batches of ≤3; open another converse for the rest |
+
+## Anti-patterns
+
+| Bad | Good |
+|---|---|
+| One Jupiter session per Stop on a known multi-stop queue | Prefer ≤3 Stops per converse |
+| Re-acquire CDP lane for every web reply cycle | Keep the warm converse for the batch |
+| Pack Attachment A craft into the meaning-walk nudge | Separate converse for craft |
+| Treating 3 as a hard reject of a 4th useful turn | Exceed only with a named reason |

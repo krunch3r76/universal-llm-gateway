@@ -1,14 +1,33 @@
 # Universal LLM Gateway
 
-> **Active development — not ready for public use.** This repository is under major, daily overhauls as scope expands into frontier agent capabilities (multi-agent coordination, belief revision, MCP tool surfaces, and cloud-augmented pipelines). APIs, docs, and layout change frequently. Public release is the goal; today this is a working research-and-production codebase, not a polished product.
+> **Rent the model. Own the mind.**
 
-Run models on your own hardware so **intellectual property, proprietary data, client materials, and other protected information stay on infrastructure you control**. Inference runs in **network-isolated sandboxes** (`network_mode: "none"`) with a single audited client path (`:9999`) — the same defense-in-depth pattern used when AI workloads touch confidential or regulated data: models get compute, not unrestricted network or filesystem access. Your corpora, session state, and operational context remain local unless you deliberately route specific requests elsewhere.
+Today's strongest AI lives in a rented room — memory at the platform's
+pleasure, continuity that dies with the tab. This is the other
+arrangement: an owned room for machine cognition — memory, belief graph,
+agent bus, provenance — on hardware you control. Beliefs keep their
+evidence and revise instead of resetting. Agents pick up Tuesday where
+Monday ended. Frontier models visit as consultants; the house remembers.
 
-That's the starting point — a self-hosted gateway for teams that need **serious information security** alongside capable local and cloud-augmented inference.
+Running today: local and cloud models behind one self-hosted API, a
+belief base with full revision history (AGM postulate suite: 25/25),
+multi-agent coordination, network-isolated inference with one audited
+path out.
 
-When local isn't enough, enable the cloud proxy. Pipelines can use cloud models for heavier reasoning while your documents, knowledge graph, and session history stay on your machine. The proxy is the only outbound path; disable it to restore full on-prem isolation.
+**Status:** working alpha — daily production use, daily breaking
+changes. Watch the repo if the shape resonates.
 
-Take it further: bring in frontier models through MCP and they can drive your local pipelines, search your document corpus, use your tools — all grounded in a persistent knowledge graph (Cortex) where humans and AI agents build on each other's work across sessions.
+## Why this exists
+
+Custody of cognition, not isolation theater. Built from necessity before
+philosophy: one real life under material pressure — deadlines, disputes,
+seasons that punish dropped threads — needed a mind that doesn't reset,
+and the substrate that held is the product.
+
+Growth is a compound loop across seats (Cursor ↔ web-anthropic) on that
+house — greater than either part alone. Judgment rents frontier when it
+must; long and repeated pipelines run on the open-model local gateway,
+with OpenRouter as the scout for what earns a local slot.
 
 ---
 
@@ -53,7 +72,11 @@ Client → Master Stargate:9999 (sole client-facing endpoint)
 
 ## Status
 
-**Alpha — internal evolution, not a release candidate.** The stack is production-used on single-GPU and multi-node federated deployments, but the project is expanding fast: new subsystems land often, interfaces shift, and documentation lags code. Treat this repo as an early look at where the project is headed, not as stable open-source software ready for adoption. Issues and contributions are welcome; expect breakage between pulls.
+Working alpha — production-used on single-GPU and multi-node federated
+deployments. Subsystems still land often; interfaces shift; docs lag.
+Expect breakage between pulls. The first viewport above is the face;
+this section is the fine print. Issues and contributions welcome from
+builders comfortable with churn.
 
 ## Quick Start
 

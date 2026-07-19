@@ -1,0 +1,58 @@
+---
+description: Cursor skill/command/plugin surface — ulg-ecosystem census skills+commands; install after SoT edit; checkout-local skills stay under {repo}/.cursor/skills.
+alwaysApply: true
+rule_category: workflow
+---
+# Skill surface (Cursor IDE)
+
+**Shared playbooks (ecosystem):** `ulg-ecosystem` plugin skills
+(`~/.cursor/plugins/local/ulg-ecosystem/skills/*/SKILL.md`) — Cursor matches
+`description`; agent follows Use the `<slug>` skill (do not fs-read skill SOT into
+context). SoT: `universal-llm-gateway/cursor-plugins/ulg-ecosystem/skills/`.
+
+**Checkout-local playbooks:** `{repo}/.cursor/skills/*/SKILL.md` — hub-only /
+satellite-local skills **not** in `SKILLS_CENSUS.txt`.
+
+**Invariants:** `.cursor/rules/*.mdc` and plugin `rules/*_ulg.mdc` —
+`alwaysApply: true` (every turn) vs description-gated (attach when description matches).
+
+## Install after plugin SoT edit (BINDING)
+
+Installed plugin trees are **copies** (`cp -a`), not hardlinks/symlinks to the
+repo. Reload Window alone does **not** pick up SoT edits.
+
+```
+∀ create|edit under cursor-plugins/ulg-ecosystem/{skills,commands,rules}/
+  ∨ census (SKILLS_CENSUS.txt | RULES_ULG_CENSUS.txt):
+    run scripts/cursor/install-ecosystem-plugin.sh
+    ∧ remind operator: Developer → Reload Window
+```
+
+| SoT path | Install required? |
+|---|---|
+| `…/skills/` (census) | **Yes** |
+| `…/commands/` | **Yes** |
+| `…/rules/*_ulg.mdc` (+ RULES_ULG_CENSUS) | **Yes** (same script; placement detail: `cursor-rule-placement_ulg`) |
+| `{repo}/.cursor/skills/` or `*_ws.mdc` | No (checkout-local) |
+
+¬ claim “skill/command is live in Cursor” until install has been run in this
+session (or verify installed copy under `~/.cursor/plugins/local/ulg-ecosystem/`
+matches SoT).
+
+## Domain-shift invariant (binding)
+
+∀ domain shift — new service, new tool surface, new operational domain — BEFORE advising or acting:
+1. Scan `<available_skills>` by description; Read any matching stub; follow its deferral
+2. Load description-gated `.mdc` rules when matched
+3. THEN advise or act
+
+¬ advise on operational specifics (tool shapes, restart paths, calling conventions) without completing steps 1–2 first.
+
+## Anti-pattern
+
+¬ re-add census skills under hub `.cursor/skills/` or `.claude/skills/` — that
+duplexes the plugin picker. SoT = plugin tree only for census slugs.
+Shared_sync Customize Skills staging = `~/.gateway/claude-ai-sync/skills/`
+(`CLAUDE_AI_SKILLS_STAGING` override); ¬ repo `.claude/skills/` for census.
+`life_local` SOT may live under `.claude/skills/` (not in `SKILLS_CENSUS`).
+¬ edit ecosystem SoT and stop at Reload Window without reinstall.

@@ -1,0 +1,57 @@
+---
+description: Plan slug coherence — one name binds entity / spec / phase_dir / plan / plan_phase across the plannable-work lifecycle. Load when authoring specs, creating plan or todo entities, or running /create-implementation-plan or /implement-plan.
+---
+# Plan Slug Coherence (Workspace)
+
+## Invariant
+
+**Invariant**: ∀ plannable work — one canonical `{slug}` binds every artifact:
+
+```
+entity slug  ≡  spec basename  ≡  phase_dir name  ≡  plan slug  ≡  plan_phase prefix
+```
+
+Concretely, for `{slug} = manage-mvc-busy-channel`:
+
+| Artifact | Value |
+|---|---|
+| Todo entity | `todo:manage-mvc-busy-channel` |
+| Plan entity | `plan:manage-mvc-busy-channel` |
+| Spec file | `cortex://notes/system/specs/manage-mvc-busy-channel.md` |
+| Phase dir | `tmp/prompts/manage-mvc-busy-channel/` |
+| Phase entity | `plan_phase:manage-mvc-busy-channel/phase-N` |
+
+## Derivation, not interrogation
+
+**Invariant**: tools DERIVE `{slug}` from the entity id (the part after
+`plan:`/`todo:`) or the spec basename. They do ¬ ask the user for the phase-dir
+name, plan name, or output path.
+
+`entity_get(arg) → source_uri → spec → phase_dir = tmp/prompts/{slug}/`. A
+mismatch at any link spawns a divergent `plan:` entity — the single most common
+plan-authoring friction. Bind once; reuse everywhere.
+
+## Steps vs phases
+
+A `task:` arc orders its leaf `todo:` members by **steps** (the spec Steps table
+and/or `depends_on` edges) — `step` is not an entity type and has no slug. A
+`plan:` arc orders its shipping units by **phases** (`plan_phase:{slug}/phase-N`
++ `tmp/prompts/{slug}/phase-N.md`, `/implement-plan`). Canonical definition and
+collision disambiguation: `entity-lifecycle-discipline` §Vocabulary — step vs phase.
+
+## Cross-references
+
+- skill `planning-promotion-ladder` — the architecture→implementation
+  promotion ladder this slug rides: where a decision / spec / handoff-packet becomes
+  a `todo:`, gets shaped into a `plan:` (phases) or `task:` (steps), decomposed, and
+  executed — plus the provenance-attachment grammar (`source_uri`, `derived_from`,
+  `references`, `related_to`, `evidence_uris`, `artifact_uri`, `requires`, `source_ref`).
+- `/plan-seed` — atomic front door: writes `cortex://notes/system/specs/{slug}.md` and creates
+  `todo:{slug}` + `plan:{slug}` + the `derived_from` edge from one slug, so
+  coherence holds by construction.
+- `/draft-spec` — emits phased specs against `cortex://notes/system/specs/_task-template.md` under
+  this slug; per-phase header lifts 1:1 into `tmp/prompts/{slug}/phase-N.md`.
+- `/create-implementation-plan` — entity-arg resolution applies this invariant.
+- `/implement-plan` — phase-dir + `plan_phase:` seeding assume this invariant.
+- `todo_ws.mdc` — todo entities carry `source_uri: cortex://notes/system/specs/{slug}.md`.
+- `tasks/specs/agent-workflow-parity.md` — multi-todo arcs use `task:` (bounded arc, ≥2 leaf `todo:` via `child_of`) or a `project:` umbrella + spec; the `task-seed`/`task-close` *workflow* was retired 2026-06-04 but the `task:` entity type stays live (`decision:task-subsystem-retired`).

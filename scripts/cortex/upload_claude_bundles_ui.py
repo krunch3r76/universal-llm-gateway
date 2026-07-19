@@ -39,6 +39,7 @@ if str(_REPO / "libs") not in sys.path:
 
 from claude_bundles.resolver import claude_ai_target_slugs  # noqa: E402
 from claude_bundles.skills_api import validate_bundle_dir  # noqa: E402
+from claude_bundles.staging_paths import claude_ai_bundle_dir  # noqa: E402
 from claude_bundles.skills_ui import (  # noqa: E402
     DEFAULT_CDP_URL,
     chrome_start_hint,
@@ -93,9 +94,13 @@ def _resolve_items(args: argparse.Namespace) -> list[tuple[str, Path]]:
     slugs = _resolve_slugs(args)
     if args.zip_dir:
         items = list_zip_dir(Path(args.zip_dir), slugs=slugs)
+    elif args.bundles_dir:
+        items = list_bundle_mds(Path(args.bundles_dir), slugs=slugs)
     else:
-        bundles = Path(args.bundles_dir or (_REPO / ".claude" / "skills"))
-        items = list_bundle_mds(bundles, slugs=slugs)
+        targets = slugs if slugs is not None else list(claude_ai_target_slugs())
+        items = [
+            (slug, claude_ai_bundle_dir(_REPO, slug) / "SKILL.md") for slug in targets
+        ]
     return _filter_valid(items, skip_invalid=args.skip_invalid)
 
 
@@ -205,8 +210,16 @@ def main() -> int:
             print(f"PREFLIGHT FAILED: {exc}", file=sys.stderr)
             return 1
     if args.status:
-        bundles = Path(args.bundles_dir or (_REPO / ".claude" / "skills"))
-        report = asyncio.run(scan_ui_parity(cdp_url=args.cdp_url, bundles_dir=bundles))
+        if args.bundles_dir:
+            report = asyncio.run(
+                scan_ui_parity(
+                    cdp_url=args.cdp_url, bundles_dir=Path(args.bundles_dir)
+                )
+            )
+        else:
+            report = asyncio.run(
+                scan_ui_parity(cdp_url=args.cdp_url, repo_root=_REPO)
+            )
         if args.json:
             return _emit_status_json(report)
         return print_parity_report(report)

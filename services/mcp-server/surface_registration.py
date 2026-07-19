@@ -31,6 +31,7 @@ from tools.panel_dispatch import register_panel_dispatch_tools
 from tools.pipeline import register_pipeline_tools
 from tools.pipeline_consult import register_pipeline_consult_tools
 from tools.project import register_project_tools
+from tools.project_ask import register_project_ask_tool
 from tools.promote_document_to_evidence import (
     register_promote_document_to_evidence_tools,
 )
@@ -111,3 +112,4 @@ def register_tools_for_surface(mcp: FastMCP, surface: Surface) -> None:
         register_imagine_tools(mcp)
         register_security_tools(mcp)
         register_security_js_tools(mcp)
+        register_project_ask_tool(mcp)

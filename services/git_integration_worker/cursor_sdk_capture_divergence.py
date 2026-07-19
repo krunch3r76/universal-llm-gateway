@@ -336,6 +336,31 @@ def apply_surface_cross_checks(
     )
 
 
+def _expected_gitignored_missing_on_disk(
+    files_expected: list[str],
+    files_untracked_or_ignored: tuple[str, ...],
+    manifest: EffectsManifest | None,
+    *,
+    source_repo: Path,
+    cortex_root: Path,
+) -> bool:
+    """F7/A2: hard only when a job-surface gitignored path is absent on disk."""
+    if not files_untracked_or_ignored:
+        return False
+    untracked = {path.lstrip("/") for path in files_untracked_or_ignored}
+    job_surface = set(_repo_manifest_paths(manifest, source_repo=source_repo))
+    job_surface.update(_normalize_expected_path(raw) for raw in files_expected)
+    for path in sorted(untracked):
+        on_job_surface = path in job_surface or any(
+            path.endswith(f"/{job}") for job in job_surface
+        )
+        if not on_job_surface:
+            continue
+        if not _path_exists_in_sandboxes(path, source_repo, cortex_root):
+            return True
+    return False
+
+
 def closeout_divergence_reason(
     *,
     deliverables_expected: bool,
@@ -353,7 +378,13 @@ def closeout_divergence_reason(
 ) -> str | None:
     if not deliverables_expected or degraded_reason is not None:
         return None
-    if files_untracked_or_ignored:
+    if _expected_gitignored_missing_on_disk(
+        files_expected,
+        files_untracked_or_ignored,
+        manifest,
+        source_repo=source_repo,
+        cortex_root=cortex_root,
+    ):
         return "divergence:repo_diff_gitignored_present"
     checked = apply_surface_cross_checks(
         manifest,

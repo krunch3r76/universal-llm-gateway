@@ -39,10 +39,11 @@ second opinion, hand off reasoning, **or hand off a bound implementation**.
    `consult-routing.md` before a dispatch is a protocol violation — the same
    severity as skipping the packet protocol reads.
 2. Complete the **mandatory preflight** (consult AND implement handoffs):
-   1. **Operator consult token ⇒ posture before transport:** Use the `consult-posture` skill (annex URI on non-resident seats) — classify, declare detent/cascade/scope-lock BEFORE transport or packet.
-   2. Use the `consult-routing` skill (canonical slug — seat self-fetches; ¬ fs-read skill body) — transport + authority map
-   3. `fs(workspaces, .cursor/rules/architecture-handoff-protocol.mdc)` — md_read § The Six Required Blocks (rule artifact — read)
-   4. `fs(workspaces, .cursor/rules/handoff-dispatchers.mdc)` — § target seat (rule artifact — read)
+   1. **Resident rails (always):** Use the `reasoning-posture` skill — pin Question/OOS/detent before merits; `thinking_off ⇏ waive`.
+   2. **Operator consult token ⇒ posture before transport:** Use the `consult-posture` skill (annex URI on non-resident seats) — classify, declare detent/cascade/scope-lock BEFORE transport or packet (defers general rails to `reasoning-posture`).
+   3. Use the `consult-routing` skill (canonical slug — seat self-fetches; ¬ fs-read skill body) — transport + authority map
+   4. `fs(workspaces, .cursor/rules/architecture-handoff-protocol.mdc)` — md_read § The Six Required Blocks (rule artifact — read)
+   5. `fs(workspaces, .cursor/rules/handoff-dispatchers.mdc)` — § target seat (rule artifact — read)
 
    The protocol files live at **project** `.cursor/rules/` (no
    `universal-llm-gateway/` prefix), NOT under the repo's `.cursor/rules/`.
@@ -192,9 +193,11 @@ bouncing between two incompatible approaches.
 - **Model tier awareness** (`model-tier-awareness.mdc`): governs *resident
   tier choice* — when to recommend switching Cursor between Sonnet 4.6 and
   Opus 4.8. Fires at the same junctures as advisor-timing checkpoints 1 and 3.
-- **Consult posture** (`.cursor/skills/consult-posture/SKILL.md` →
-  skill `consult-posture`): governs *extended-capability posture* — classify,
-  detent, cascade, scope-lock BEFORE transport once checkpoint 0 fires.
+- **Reasoning posture** (skill `reasoning-posture`): resident *Question/OOS/detent*
+  rails — thinking-off does not waive; referenced by consult-posture.
+- **Consult posture** (skill `consult-posture`): governs *extended-capability
+  posture* — classify, detent, cascade, scope-lock BEFORE transport once
+  checkpoint 0 fires (defers general rails to `reasoning-posture`).
 - **Consult routing** (`.cursor/skills/consult-routing/SKILL.md` →
   skill `consult-routing`): governs *transport* — which
   dispatcher to use once checkpoint 0 fires. Deep matrix: `handoff-dispatchers.mdc`.

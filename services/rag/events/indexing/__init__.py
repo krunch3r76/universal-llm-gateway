@@ -1,0 +1,123 @@
+"""RAG indexing and storage event factories (package re-exports)."""
+
+from __future__ import annotations
+
+from services.rag.events.indexing.chunk_signals import (
+    rag_chunk_contextualization_completed,
+    rag_chunk_contextualization_failed,
+    rag_chunk_contextualization_started,
+    rag_chunk_noise_tagged,
+    rag_embedding_chunk_fallback,
+)
+from services.rag.events.indexing.contextualization import (
+    rag_contextualization_applied,
+    rag_contextualization_completed,
+    rag_contextualization_exception_record_failed,
+    rag_contextualization_exception_recorded,
+    rag_contextualization_partial,
+    rag_contextualization_started,
+    rag_contextualization_tail_abandoned,
+)
+from services.rag.events.indexing.contextualize_cache import (
+    rag_contextualize_cache_evaluated,
+    rag_contextualize_cache_gc_completed,
+    rag_contextualize_cache_gc_failed,
+    rag_contextualize_cache_lookup_failed,
+    rag_contextualize_cache_store_completed,
+    rag_contextualize_cache_store_failed,
+)
+from services.rag.events.indexing.directory_batch import (
+    rag_directory_cleared,
+    rag_directory_index_completed,
+    rag_directory_index_started,
+    rag_property_index_rebuilt,
+)
+from services.rag.events.indexing.failure_tracking import (
+    rag_article_content_hash_mismatch,
+    rag_entity_gate_io_failed,
+    rag_file_deletion_failed,
+    rag_file_indexing_failure_cleared,
+    rag_file_indexing_failure_recorded,
+    rag_file_indexing_failure_retry_requested,
+    rag_file_indexing_failure_skipped,
+    rag_file_indexing_gated,
+    rag_file_retry_deferred,
+    rag_indexing_failure_persist_failed,
+)
+from services.rag.events.indexing.file_lifecycle import (
+    rag_file_deleted,
+    rag_file_indexed,
+    rag_file_indexing_failed,
+    rag_file_skipped,
+    rag_property_index_unavailable,
+)
+from services.rag.events.indexing.html_normalization import (
+    rag_html_normalization_completed,
+    rag_html_normalization_failed,
+    rag_html_normalization_started,
+)
+from services.rag.events.indexing.storage_pipeline import (
+    rag_chroma_upsert_completed,
+    rag_chroma_upsert_started,
+    rag_embed_completed,
+    rag_embed_started,
+    rag_hints_update_completed,
+    rag_hints_update_started,
+    rag_property_write_completed,
+    rag_property_write_started,
+    rag_source_commit_completed,
+    rag_source_commit_started,
+)
+
+__all__ = [
+    "rag_property_index_rebuilt",
+    "rag_file_indexed",
+    "rag_file_deleted",
+    "rag_file_skipped",
+    "rag_file_indexing_failed",
+    "rag_file_retry_deferred",
+    "rag_file_indexing_failure_recorded",
+    "rag_file_indexing_failure_skipped",
+    "rag_entity_gate_io_failed",
+    "rag_file_indexing_gated",
+    "rag_file_indexing_failure_cleared",
+    "rag_file_indexing_failure_retry_requested",
+    "rag_file_deletion_failed",
+    "rag_article_content_hash_mismatch",
+    "rag_chunk_noise_tagged",
+    "rag_chunk_contextualization_started",
+    "rag_chunk_contextualization_completed",
+    "rag_chunk_contextualization_failed",
+    "rag_property_index_unavailable",
+    "rag_contextualization_started",
+    "rag_contextualization_completed",
+    "rag_contextualization_partial",
+    "rag_contextualization_tail_abandoned",
+    "rag_contextualization_exception_recorded",
+    "rag_contextualization_exception_record_failed",
+    "rag_contextualization_applied",
+    "rag_contextualize_cache_evaluated",
+    "rag_contextualize_cache_lookup_failed",
+    "rag_contextualize_cache_store_completed",
+    "rag_contextualize_cache_store_failed",
+    "rag_contextualize_cache_gc_completed",
+    "rag_contextualize_cache_gc_failed",
+    "rag_embed_started",
+    "rag_embed_completed",
+    "rag_chroma_upsert_started",
+    "rag_chroma_upsert_completed",
+    "rag_property_write_started",
+    "rag_property_write_completed",
+    "rag_source_commit_started",
+    "rag_source_commit_completed",
+    "rag_hints_update_started",
+    "rag_hints_update_completed",
+    "rag_embedding_chunk_fallback",
+    "rag_html_normalization_started",
+    "rag_html_normalization_completed",
+    "rag_html_normalization_failed",
+    "rag_directory_cleared",
+    "rag_directory_index_started",
+    "rag_directory_index_completed",
+    "rag_indexing_failure_persist_failed",
+]

@@ -9,7 +9,16 @@ from typing import Any
 
 from .db import json_decode, json_encode
 
-_JSON_FIELDS = frozenset({"emitted_ids", "verify_verdicts"})
+_JSON_FIELDS = frozenset(
+    {
+        "emitted_ids",
+        "verify_verdicts",
+        "superseded_ids",
+        "retracted_ids",
+        "carried_forward_ids",
+    }
+)
+_EFFECTIVE_STATUSES = ("staged", "committed")
 
 _ISO_DATE_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})")
 _ISO_DATE_IN_TEXT_RE = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
@@ -92,6 +101,44 @@ def lookup_latest_for_anchor(
     return _decode_row(row)
 
 
+def lookup_effective_watermark(
+    conn: sqlite3.Connection,
+    journal_entity_id: str,
+    entry_anchor: str,
+) -> dict[str, Any] | None:
+    """Latest row with status staged or committed — watermark for skip/revision."""
+    placeholders = ",".join("?" * len(_EFFECTIVE_STATUSES))
+    row = conn.execute(
+        "SELECT * FROM digest_ledger "
+        "WHERE journal_entity_id = ? AND entry_anchor = ? "
+        f"AND COALESCE(status, 'committed') IN ({placeholders}) "
+        "ORDER BY id DESC LIMIT 1",
+        (journal_entity_id, entry_anchor, *_EFFECTIVE_STATUSES),
+    ).fetchone()
+    if row is None:
+        return None
+    return _decode_row(row)
+
+
+def lookup_pending_staged_batch(
+    conn: sqlite3.Connection,
+    journal_entity_id: str,
+    entry_anchor: str,
+    content_sha256: str,
+) -> dict[str, Any] | None:
+    """Return a staged ledger row for the same anchor+sha (batch idempotence)."""
+    row = conn.execute(
+        "SELECT * FROM digest_ledger "
+        "WHERE journal_entity_id = ? AND entry_anchor = ? "
+        "AND content_sha256 = ? AND COALESCE(status, 'committed') = 'staged' "
+        "ORDER BY id DESC LIMIT 1",
+        (journal_entity_id, entry_anchor, content_sha256),
+    ).fetchone()
+    if row is None:
+        return None
+    return _decode_row(row)
+
+
 def write(
     conn: sqlite3.Connection,
     *,
@@ -101,13 +148,20 @@ def write(
     emitted_ids: list[Any],
     staging_batch_id: str | None = None,
     verify_verdicts: dict[str, Any] | None = None,
+    revision_of: int | None = None,
+    status: str = "committed",
+    superseded_ids: list[Any] | None = None,
+    retracted_ids: list[Any] | None = None,
+    carried_forward_ids: list[Any] | None = None,
+    snapshot_uri: str | None = None,
 ) -> int:
     """Insert a digest ledger row; returns the new integer id."""
     cur = conn.execute(
         "INSERT INTO digest_ledger "
         "(journal_entity_id, entry_anchor, content_sha256, emitted_ids, "
-        "staging_batch_id, verify_verdicts) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
+        "staging_batch_id, verify_verdicts, revision_of, status, "
+        "superseded_ids, retracted_ids, carried_forward_ids, snapshot_uri) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             journal_entity_id,
             entry_anchor,
@@ -115,6 +169,12 @@ def write(
             json_encode(emitted_ids),
             staging_batch_id,
             json_encode(verify_verdicts or {}),
+            revision_of,
+            status,
+            json_encode(superseded_ids or []),
+            json_encode(retracted_ids or []),
+            json_encode(carried_forward_ids or []),
+            snapshot_uri,
         ),
     )
     return int(cur.lastrowid)
@@ -169,7 +229,9 @@ __all__ = [
     "compute_entry_content_sha256",
     "derive_valid_from_hint",
     "lookup",
+    "lookup_effective_watermark",
     "lookup_latest_for_anchor",
+    "lookup_pending_staged_batch",
     "map_p_class_to_derivation_confidence",
     "write",
 ]

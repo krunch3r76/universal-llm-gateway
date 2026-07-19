@@ -11,11 +11,12 @@ from ..digest_dedup import enrich_claim_batch_dedup_candidates
 from ..digest_ledger import (
     compute_entry_content_sha256,
     lookup,
-    lookup_latest_for_anchor,
+    lookup_effective_watermark,
 )
 from ..digest_ledger import (
     write as ledger_write,
 )
+from ..digest_revision_pass import run_revision_pass
 from ..digest_segment import aggregate_auto_segment_digest
 from ..events_digest import digest_extract, digest_staged, digest_verify
 from ..journal_digest_extract import extract_claims
@@ -52,23 +53,20 @@ def _digest_one(
                 "ledger_id": prior["id"],
             }
 
-        latest = lookup_latest_for_anchor(conn, journal_entity_id, entry_anchor)
+        latest = lookup_effective_watermark(conn, journal_entity_id, entry_anchor)
         if latest is not None and latest["content_sha256"] != content_sha:
             digest_staged(
                 journal_entity_id=journal_entity_id,
                 entry_anchor=entry_anchor,
-                status="anomaly",
+                status="revision",
                 ledger_id=int(latest["id"]),
             )
-            return {
-                "status": "anomaly",
-                "reason": "content_sha_changed",
-                "journal_entity_id": journal_entity_id,
-                "entry_anchor": entry_anchor,
-                "content_sha256": content_sha,
-                "prior_sha256": latest["content_sha256"],
-                "prior_ledger_id": latest["id"],
-            }
+            return run_revision_pass(
+                journal_entity_id=journal_entity_id,
+                entry_anchor=entry_anchor,
+                entry_text=entry_text,
+                journal_uri=journal_uri,
+            )
 
     claim_batch = extract_claims(
         entry_text,

@@ -1,0 +1,49 @@
+---
+description: Shared-checkout housekeeping — never delete or revert untracked/dirty paths you cannot attribute to this session. Always-on guardrail for sole master + parallel WIP.
+alwaysApply: true
+rule_category: engineering
+apply_tier: required_gate
+trigger_match_terms:
+  - untracked
+  - housekeeping
+  - delete
+  - rm
+  - clean
+  - git clean
+  - parallel
+  - shared checkout
+  - sole master
+  - cursor-plugins
+---
+# Shared-checkout housekeeping
+
+**Invariant:** `¬attribute(path, this_session ∨ this_dispatch) ⇒ ¬delete(path) ∧ ¬revert(path)`.
+On Lane-A sole shared `master`, untracked / dirty / “noise” is often **parallel WIP** — not disposable.
+
+Doctrine: Use the `git-posture` skill (sole-checkout corollary). Friction class: a:25030.
+
+## Forbidden
+
+| Action | Why |
+|---|---|
+| `rm` / `rm -rf` / `git clean` of untracked paths because they are `??`, same-mtime as your job, or absent from `files_expected` | Those signals ≠ authorship |
+| Treating implement `status=partial` / capture “unattributed paths” as license to delete | Capture grades dirty shared trees; it does not own them |
+| “Safe housekeeping” without session/author proof or operator confirm | Overconfidence; irreversible |
+
+## Permitted
+
+| Action | When |
+|---|---|
+| Leave + flag (bus/scoreboard tangential) | Default |
+| Ask operator before delete | Ambiguous ownership |
+| Delete / revert | Proven this session/dispatch authored it, **or** operator explicitly directs |
+
+## Anti-patterns
+
+| Bad | Good |
+|---|---|
+| “Untracked + Stage-B mtime ⇒ worker noise ⇒ `rm -rf cursor-plugins/`” | Flag as parallel-WIP candidate; leave alone |
+| “Not in my `files_expected` ⇒ safe to clean” | `¬in(files_expected)` ≠ `owned_by(me)` |
+| Infer disposable from `git status` alone | Attribute via session/dispatch evidence, then act |
+
+**Confidence rule:** cannot trace origin ⇒ **not** safe to delete.

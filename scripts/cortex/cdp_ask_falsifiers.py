@@ -32,6 +32,8 @@ from claude_bundles.skills_ui_panel import DEFAULT_CDP_URL, connect_cdp  # noqa:
 OUT = Path(
     "/mnt/torus/mcp-data/files/notes/system/threads/4917-fable-cdp-review/falsifiers"
 )
+# SCC Pharmacist endeavor Cowork Project — falsifier harness ONLY.
+# ¬ path-sim R-admit default (use --converse --no-uuid on /new; friction 24967).
 PROJECT = "019f6917-2ab2-772c-a1ec-f88434b08e32"
 CDP = DEFAULT_CDP_URL
 
@@ -48,7 +50,7 @@ def _write(name: str, payload: dict) -> Path:
 
 
 async def f1_timeout_incomplete_no_delete() -> dict:
-    """Short timeout + high min_body ⇒ incomplete; chat must not be deleted."""
+    """Short idle timeout with no new turn ⇒ incomplete; chat must not be deleted."""
     result = await run_project_ask(
         "Reply with a single word: PING. Do not elaborate.",
         project_uuid=PROJECT,
@@ -56,8 +58,6 @@ async def f1_timeout_incomplete_no_delete() -> dict:
         delete_after=True,
         cdp_url=CDP,
         timeout_s=8,
-        min_growth=50,
-        min_body=8000,  # impossible for a one-word reply
         archive_path=str(OUT / "f1-would-have-archived.md"),
     )
     deleted = bool(result.delete_after and result.delete_after.get("ok") and
@@ -72,7 +72,7 @@ async def f1_timeout_incomplete_no_delete() -> dict:
         "stamp": _stamp(),
         "result": result.as_dict(),
         "criterion": "ok=False ∧ delete did not destroy a chat",
-        "note": "min_body=8000 with 8s timeout forces HarvestIncomplete path",
+        "note": "8s idle timeout before new turn forces HarvestIncomplete path",
     }
 
 

@@ -120,14 +120,23 @@ def _load_trace_body(uri: str, inline: str | None) -> str:
     return f"{REASONING_TRACE_SENTINEL}\n# reasoning trace from {uri}"
 
 
+_DEFAULT_NEGATIVE_SPACE = (
+    "Per new/changed param or branch: where invalid + does the "
+    "spec reject it there with a test?"
+)
+
+
 def build_reviewer_prompt(
     *,
     staged_draft_body: str,
     reasoning_trace_body: str,
+    negative_space: str | None = None,
 ) -> str:
+    resolved_negative_space = (
+        _DEFAULT_NEGATIVE_SPACE if negative_space is None else negative_space
+    )
     return (
-        "<negative_space>Per new/changed param or branch: where invalid + does the "
-        "spec reject it there with a test?</negative_space>\n"
+        f"<negative_space>{resolved_negative_space}</negative_space>\n"
         f"<composer_draft>\n{staged_draft_body}\n</composer_draft>\n"
         f"<reasoning_trace>\n{reasoning_trace_body}\n</reasoning_trace>"
     )

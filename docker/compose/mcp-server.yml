@@ -62,6 +62,7 @@ services:
       - X_ACCESS_TOKEN=${X_ACCESS_TOKEN:-}
       - X_ACCESS_SECRET=${X_ACCESS_SECRET:-}
       - WEB_FETCHER_URL=${WEB_FETCHER_URL:-}
+      - PROJECT_ASK_URL=${PROJECT_ASK_URL:-}
       - SQLITE_CONFIG_PATH=/data/sqlite-config.yaml
       - STARGATE_URL=${STARGATE_URL:-http://io:9999}
       - MCP_SHARED_IMAGE_DIR=/data/files/.shared-images

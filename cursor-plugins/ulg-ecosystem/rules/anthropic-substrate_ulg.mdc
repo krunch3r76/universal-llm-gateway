@@ -1,0 +1,27 @@
+---
+description: Anthropic substrate stub — anthropic/* API prohibited; cursor/* OK except Fable; CDP preferred when packable
+alwaysApply: true
+rule_category: workflow
+apply_tier: catalog
+trigger_match_terms:
+  - anthropic/
+  - Opus
+  - Fable
+  - team_dispatch
+  - cursor/claude-opus
+---
+# Anthropic substrate (always-on stub)
+
+`∀ Cursor lead dispatch involving Anthropic-family models:`
+
+| Want | Do |
+|---|---|
+| `anthropic/*` (Stargate API) | **PROHIBITED** by default |
+| `cursor/*` (cursor-sdk) | **OK** except **Fable** |
+| Opus / Sonnet product consult | **web-anthropic-cdp** preferred (cortex-packaged corpus) |
+| Need live checkout browse | **`cursor/claude-opus-*`** acceptable |
+
+¬ equate “Opus High” with `anthropic/claude-opus-*`.  
+¬ use `cost_intent=deliberate_high_cost` as routine license for API.
+
+**SOT:** Use the `consult-routing` skill § Anthropic-family substrate · rule `anthropic-dispatch-authorization_ws.mdc` · `decision:anthropic-family-dispatch-substrate`.

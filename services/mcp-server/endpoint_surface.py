@@ -40,6 +40,7 @@ _CORTEX_ADMIN_OVERFLOW_TOOLS: frozenset[str] = frozenset(
         "cortex_chunk_get",
         "cortex_staging_list",
         "cortex_staging_reject",
+        "cortex_staging_batch_approve",
         "cortex_surface_form_create",
         "cortex_surface_form_lookup",
     }

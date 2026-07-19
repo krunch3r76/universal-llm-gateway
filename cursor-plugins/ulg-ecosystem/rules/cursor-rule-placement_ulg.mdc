@@ -1,0 +1,54 @@
+---
+description: "When creating or editing a Cursor rule for all ULG workspaces, ecosystem-shared guidance, satellite sharing, or choosing _ulg vs _ws filename — placement + plugin census + install."
+alwaysApply: false
+rule_category: workflow
+apply_tier: catalog
+trigger_match_terms:
+  - _ulg
+  - _ws
+  - ecosystem rule
+  - shared rule
+  - all workspaces
+  - satellite
+  - cursor rule
+  - .cursor/rules
+  - RULES_ULG_CENSUS
+  - ulg-ecosystem
+---
+# Cursor rule placement (ULG ecosystem)
+
+## Binary suffix (binding)
+
+| Suffix | Meaning | Where (SoT) |
+|---|---|---|
+| `_ulg` | Shared across **all** ULG-ecosystem workspaces | `universal-llm-gateway/cursor-plugins/ulg-ecosystem/rules/{topic}_ulg.mdc` → installed plugin |
+| `_ws` | Local to **this** checkout only | `{repo}/.cursor/rules/{topic}_ws.mdc` |
+
+¬ put new `_ulg` rules under `/mnt/torus/projects/.cursor/rules/` — parent
+inheritance + plugin would duplex on the hub. Plugin is the **sole** Cursor
+discovery surface for `_ulg`.
+
+Unsuffixed parent rules (legacy language/quality) may still live under
+`projects/.cursor/rules/`; **new ecosystem-shared guidance uses `_ulg` in the plugin SoT**.
+
+## When operator says “all workspaces” / “ecosystem” / “satellites”
+
+1. Create `universal-llm-gateway/cursor-plugins/ulg-ecosystem/rules/{topic}_ulg.mdc`.
+2. Append basename (no `.mdc`) to  
+   `universal-llm-gateway/cursor-plugins/ulg-ecosystem/RULES_ULG_CENSUS.txt`.
+3. Run `universal-llm-gateway/scripts/cursor/install-ecosystem-plugin.sh`.
+4. Remind operator: **Developer: Reload Window**.
+
+Same install+reload gate applies to ecosystem **skills** and **commands**
+(always-on: `skill-surface_ulg.mdc` § Install after plugin SoT edit).
+
+¬ hardlink into satellites. ¬ leave shared rules only under ULG or parent `.cursor/rules/`.
+
+## Checkout-local (`_ws`)
+
+IMAP/sms-gate/env, Stargate/gateway hub-only, IDE-boot quirks for one repo → `{repo}/.cursor/rules/*_ws.mdc` only. No census / no plugin step.
+
+## Pointers
+
+- Full bootstrap: `/mnt/torus/projects/.cursor/shared-workspace-setup.md` §2–3
+- Use the `satellite-workspace` skill for satellite partition + PYTHONPATH

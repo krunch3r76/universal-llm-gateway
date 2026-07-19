@@ -1,0 +1,31 @@
+---
+description: Agent skills registry — check before any non-standard document or tool pattern the team may have solved before (PDF/image extraction, financial/legal/insurance docs, frontier dispatch, browser sessions). Resolve by canonical skill slug / agent_skill entity — do not fs-read skill bodies.
+alwaysApply: false
+rule_category: cortex-bus
+apply_tier: catalog
+trigger_match_terms:
+  - skill
+  - registry
+  - pdf
+  - extraction
+  - frontier
+  - dispatch
+---
+# Agent Skills (ULG ecosystem)
+
+Skills are registered as `agent_skill:<slug>` entities and delivered by **canonical slug** (`Use the <slug>` skill — seat self-fetches). Check before manually re-deriving an ingestion procedure or tool pattern the team has encountered before.
+
+**Invariant**: ∀ non-standard document type or tool pattern (financial statements, legal filings, insurance docs, frontier dispatch, browser sessions, …): Use the relevant skill by slug before attempting the operation; ¬ re-derive what is already documented. ¬ `fs`-read skill markdown into context.
+
+**In-session discovery (all seats):** discovery is **native** — description-gated
+rule stubs attach (plugin `*_ulg.mdc` + checkout-local `*_ws.mdc`); the native
+`<available_skills>` index surfaces census skills from the `ulg-ecosystem` plugin
+and checkout-local `.cursor/skills/*/SKILL.md` stubs whose `description` matches
+the task; web seats use boot manifest + description triggers. Read the matched
+stub; it defers to the skill SOT via seat self-fetch on explicit use.
+
+Index / discovery (fallback — metadata only, not body load):
+```
+cortex(tool="entities", arguments='{"type": "agent_skill"}')
+cortex(tool="entity_get", arguments='{"entity_id": "agent_skill:<slug>"}')
+```

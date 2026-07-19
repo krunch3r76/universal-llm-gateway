@@ -1,0 +1,61 @@
+---
+description: "When running Python/pip/pytest/ruff in any ULG ecosystem workspace (Glass, agent terminal, satellite, hub) — use $HOME/.venvs/universal/bin/python; bare python fails sitecustomize/libs."
+alwaysApply: true
+rule_category: workflow
+apply_tier: required_gate
+trigger_match_terms:
+  - python
+  - pip
+  - pytest
+  - venv
+  - universal
+  - VIRTUAL_ENV
+  - sitecustomize
+---
+# Python interpreter — universal venv (binding)
+
+## Invariant
+
+∀ Python invocation on this machine in the ULG ecosystem (hub **or** any satellite,
+Glass / agent terminal / human terminal / scripts):
+
+```text
+python  ≡  $HOME/.venvs/universal/bin/python
+pip     ≡  $HOME/.venvs/universal/bin/pip
+pytest  ≡  $HOME/.venvs/universal/bin/pytest
+ruff    ≡  $HOME/.venvs/universal/bin/ruff
+```
+
+¬ bare `python` / `python3` / `pip` / `pytest` unless that path already resolves
+inside `$HOME/.venvs/universal` (verify with `which python` → must contain
+`.venvs/universal`).
+
+## Why
+
+- Shared venv `sitecustomize.py` injects `universal-llm-gateway/libs/` into `sys.path`.
+- Cursor Glass / agent terminals **do not** honor `python.terminal.activateEnvironment`
+  (known regression) — `.vscode` pins alone are insufficient for agent shells.
+- ∀ satellite: **no** private project venv.
+
+## Required command shape
+
+```bash
+"$HOME/.venvs/universal/bin/python" script.py
+"$HOME/.venvs/universal/bin/python" -m pytest …
+"$HOME/.venvs/universal/bin/pip" install …
+```
+
+Acceptable short form after confirming PATH:
+
+```bash
+source "$HOME/.venvs/universal/bin/activate"   # same command / same shell only
+python script.py
+```
+
+¬ rely on a prior terminal having activated the venv; agent shells are fresh.
+
+## Related
+
+- Pin templates + roster sync: `install-ecosystem-plugin.sh` / `SATELLITES.txt`
+- Placement / ecosystem surface: `cursor-rule-placement_ulg.mdc`
+- Use the `satellite-workspace` skill

@@ -1,0 +1,51 @@
+---
+description: Anthropic-family dispatch substrate — before any anthropic/* model=, Opus/Fable consult, or team_dispatch that would hit Stargate Anthropic API. anthropic/* prohibited by default; cursor/* OK except Fable; CDP preferred when corpus can be cortex-packaged.
+alwaysApply: false
+rule_category: workflow
+apply_tier: description
+trigger_match_terms:
+  - anthropic/
+  - anthropic/claude
+  - claude-opus
+  - claude-fable
+  - cost_intent
+  - deliberate_high_cost
+  - team_dispatch
+  - Opus
+  - Fable
+  - web-anthropic-cdp
+  - cursor/claude-opus
+---
+# Anthropic-family dispatch substrate
+
+**House rule (operator 2026-07-17 / 2026-07-18):** substrate choice for Anthropic-family work — not a “how to spend API credits” guide.
+
+## Defaults (binding)
+
+| Path | Default |
+|---|---|
+| `model=anthropic/*` on `team_dispatch` / Stargate Anthropic Messages API | **PROHIBITED** |
+| `model=cursor/*` on `seat=cursor-sdk` | **PERMITTED** except **Fable** |
+| Anthropic-family consult (Opus / Sonnet / web-anthropic product) | **web-anthropic-cdp preferred** — corpus must be **cortex-packaged** (`cortex://`; ¬ rely on `workspaces://` / GitHub browse) |
+| Codebase must be navigable on the executor | **`cursor/claude-opus-*`** (cursor-sdk) is acceptable |
+
+**Fable:** CDP / web-anthropic product picker only — ¬ `anthropic/claude-fable-*` API and ¬ `cursor/*` Fable as standing default.
+
+## Anti-patterns
+
+| Bad | Good |
+|---|---|
+| “Opus High” → `role=artisan model=anthropic/claude-opus-4-8` + `cost_intent` | CDP sealed ask **or** `seat=cursor-sdk model=cursor/claude-opus-4-8` |
+| Self-attest `deliberate_high_cost` to unlock API Opus | Treat API as **off** unless operator **explicitly** overrides the house rule for that call |
+| Cancel / re-route without operator bind when substrate was wrong | Ask substrate; ¬ silent cancel of a live dispatch |
+
+## Stargate gate (residual mechanics — not the house rule)
+
+Stargate still hard-gates explicit `model=anthropic/*` via `anthropic_override_gate` (`cost_intent=deliberate_high_cost` + reason, in-family profile, or review-child spawn). **Passing that gate ≠ house-rule permission.** Fleet default remains: do not select `anthropic/*`. Operator override of the house rule is a spoken/written exception for that dispatch — not routine self-attestation.
+
+## SOT pointers
+
+- Skill: `consult-routing` § Anthropic-family substrate
+- Skill: `path-sim` § Anthropic-family substrate (cascade transport)
+- Skill: `claude-ai-cdp-navigation` (CDP packaging + picker)
+- Decision: `decision:anthropic-family-dispatch-substrate`

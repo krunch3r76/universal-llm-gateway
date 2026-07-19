@@ -185,7 +185,7 @@ The pointer body defaults to the standard ≤25-line pointer template (see
 
 Caller **must** write the packet file before calling handoff; only a pointer is posted
 to the bus. `push_reminder` in the response carries the formatted push instruction
-when the handoff thread stays open and web must act (see `agent-bus-push-reminder_ws.mdc`).
+when the handoff thread stays open and web must act (see `agent-bus-push-reminder_ulg.mdc`).
 
 **Canonical retrieval** (submit → handle → wait):
 
@@ -414,6 +414,76 @@ dispatch(tool="manage", arguments='{"action": "sync_restart", "service": "mcp"}'
 tool_search(query="poll pipeline result")
 dispatch(tool="pipeline", arguments='{"op": "result", "execution_id": "...", "wait_seconds": 60}')
 ```
+
+## project_ask
+
+**Code-surface only** — Jupiter CDP sealed project-ask via the `cdp-ask` satellite
+(`libs/cdp_ask/`). Thin httpx relay from MCP; **split submit / poll / abort** (no
+server-side poll loop in the handler). Replaces hub-checkout SSH for path-sim
+R-admit and other vortex-code seats.
+
+**Prerequisites**
+
+| Component | Requirement |
+|---|---|
+| Satellite | `scripts/cdp-ask --port 8770` on Jupiter with `CORTEX_FILES_ROOT` pointing at `/mcp-data/files` |
+| MCP env | `PROJECT_ASK_URL=http://jupiter:8770` in `~/.gateway/mcp.yaml` (exported by `sync-and-restart-mcp.sh`) |
+| Harvest | Jupiter host mounts cortex files tree (F-3); `/health` returns `harvest_root_ok: true` |
+
+**Production activation:** `scripts.local/start-jupiter-browser` (Chrome + web-fetcher +
+cdp-ask on Jupiter :8770), then set `PROJECT_ASK_URL: http://jupiter:8770` in
+`~/.gateway/mcp.yaml` and run `./scripts/sync-and-restart-mcp.sh` (**not**
+`--no-cache` unless you re-sync G3 paths afterward — see
+`.cursor/skills/jupiter-browser-via-mcp/SKILL.md` § cdp-ask activation).
+
+Dogfood fallback (hub checkout): `scripts/cortex/claude-ai-sync-jupiter project-ask …`
+
+### Args
+
+| Arg | Type | Description |
+|---|---|---|
+| `op` | `"submit" \| "poll" \| "abort"` | **Required.** Client polls — MCP does not block until CDP completes |
+| `execution_id` | `str \| null` | Required for `poll` / `abort` |
+| `prompt_text` | `str \| null` | Inline prompt (submit) |
+| `prompt_uri` | `str \| null` | `cortex://…` resolved under `CORTEX_FILES_ROOT` on Jupiter (submit) |
+| `prompt_path` | `str \| null` | Path on Jupiter `PROJECT_ROOT` (submit) |
+| `holder` | `str` | Registry holder id (default `mcp-project-ask`) |
+| `purpose` | `str` | Registry purpose tag (default `ask`) |
+| `model` | `str` | Live CDP picker model (default `opus-4.8`) |
+| `converse` | `bool` | Multi-turn `/new` consult |
+| `no_project_uuid` | `bool` | Use `https://claude.ai/new` instead of Cowork Project UUID |
+| `project_uuid` | `str` | Explicit Cowork Project UUID |
+| `ensure_cowork_auto` | `bool` | Cowork + auto-approve on `/new` |
+| `archive_path` | `str \| null` | Optional harvest archive path on Jupiter |
+| `timeout_s` | `int` | Idle completion budget forwarded to satellite |
+
+### Returns
+
+| `op` | Shape |
+|---|---|
+| `submit` | `{execution_id, status: "running", registration_id?}` |
+| `poll` | `{execution_id, status, archive_uri?, ok?, body?, error?, …}` — `archive_uri` present when completed |
+| `abort` | `{execution_id, status: "aborted", aborted: true}` |
+
+### Examples
+
+Path-sim R-admit (MCP product path):
+
+```
+project_ask(op="submit",
+            prompt_uri="cortex://notes/system/threads/my-r-prompt.md",
+            converse=true, no_project_uuid=true, model="opus-4.8")
+# → execution_id
+
+project_ask(op="poll", execution_id="<id>")
+# repeat until status=completed and archive_uri is set
+```
+
+**Poll guardrail:** NEVER curl localhost `:8765` (web-fetcher) or any localhost URL for
+`/v1/project-ask/*` — that port is not project-ask. Poll only via MCP
+`project_ask(op="poll", …)`; the cdp-ask satellite is `:8770` behind `PROJECT_ASK_URL`.
+
+When `PROJECT_ASK_URL` is unset, returns `{error: "PROJECT_ASK_URL not configured…"}`.
 
 ## rag_search
 

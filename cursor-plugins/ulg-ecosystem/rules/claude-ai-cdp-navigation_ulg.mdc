@@ -1,0 +1,46 @@
+---
+description: Load CDP navigation discipline when web-anthropic or Jupiter CDP (Cowork, project-ask) is in scope — before advising manual operator push.
+alwaysApply: true
+rule_category: cortex-bus
+apply_tier: catalog
+trigger_match_terms:
+  - web-anthropic
+  - jupiter-cdp
+  - cowork
+  - project-ask
+  - bus-nudge
+  - cdp
+  - claude-ai-sync-jupiter
+---
+# Claude.ai CDP Navigation (trigger)
+
+**Invariant:** `web-anthropic ∨ jupiter-cdp ∨ Cowork ∨ project-ask ∨ bus-nudge in scope ⇒ Use the claude-ai-cdp-navigation skill before advising manual operator push or transport.`
+
+Mechanics (FOL, lane, harvest, converse batching, Cowork multitask, **web-anthropic-cdp dispatch constraints**): Use the `claude-ai-cdp-navigation` skill — not this stub.
+
+## When (always-on)
+
+Apply when task, operator message, or open agent-bus work involves:
+- web-anthropic handoff, reply, or push vs CDP choice
+- Jupiter `project-ask` / `claude-ai-sync-jupiter`
+- Cowork continuity or multi-stop bus-nudge
+- Authoring any packet / prompt for web-anthropic via CDP
+
+## Standing dispatch constraints (BINDING summary — skill is SOT)
+
+Until operator override or substrate change (friction 24906):
+
+| Constraint | Consequence for packets |
+|---|---|
+| ¬ `workspaces://` readable on web | Stage corpus to `cortex://` (life MCP); ¬ cite workspaces paths as openable |
+| GitHub connector down | ¬ rely on connector for codebase browse |
+| Cursor-only skills invisible | Claude slugs by name; else inject body or cortex sidecar |
+
+## Anti-patterns
+
+| Bad | Good |
+|---|---|
+| "Push to web" / manual open claude.ai as first default | CDP `project-ask` bus-nudge per skill |
+| Transport advice without loading CDP skill | `Use the claude-ai-cdp-navigation skill` first |
+| Packet cites `workspaces://` or `.cursor/skills/…` as readable by web | `cortex://` URIs + claude slug / injected body |
+| Copy CDP mechanics into this rule | Defer to skill SOT |

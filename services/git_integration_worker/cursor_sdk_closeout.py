@@ -735,6 +735,14 @@ def _assemble_closeout_delivery(
     finalize_oversize: bool = True,
     worktree_isolated: bool = False,
 ) -> CloseoutDelivery:
+    """Assemble implement closeout delivery.
+
+    Lane-A contract (a:25024): ``worktree_isolated`` defaults False on sole shared
+    master. Ambient git/worktree census is visibility-only; never pass
+    ``worktree_isolated=True`` here to tolerate parallel WIP — that poisons
+    Lane-B isolation semantics. Isolated hard-fail paths activate only when a
+    future Lane-B caller explicitly sets ``worktree_isolated=True``.
+    """
     text = full_result_text(outcome.body, degraded_reason)
     sidecar_appendix: list[str] = []
     sidecar_path = write_repo_sidecar(source_repo, dispatch_id, text)
