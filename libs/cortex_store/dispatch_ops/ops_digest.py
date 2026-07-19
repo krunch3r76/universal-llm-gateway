@@ -19,7 +19,7 @@ from ..digest_ledger import (
 from ..digest_revision_pass import run_revision_pass
 from ..digest_segment import aggregate_auto_segment_digest
 from ..events_digest import digest_extract, digest_staged, digest_verify
-from ..journal_digest_extract import extract_claims
+from ..digest_extract_backend import extract_claims
 from ..journal_digest_verify import verify_claim_batch
 from ..models import StagingProposalCreate
 from ..routes.staging import create_staging_batch_on_conn

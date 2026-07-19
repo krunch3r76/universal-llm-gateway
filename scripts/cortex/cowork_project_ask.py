@@ -164,13 +164,24 @@ def main(argv: list[str] | None = None) -> int:
         default="opus-4.8",
         help="live picker name/pattern (e.g. opus-4.8, sonnet-5, fable-5) | leave",
     )
-    parser.add_argument(
-        "--no-cowork-auto",
+    mode_group = parser.add_mutually_exclusive_group()
+    mode_group.add_argument(
+        "--chat",
         action="store_true",
         help=(
-            "On /new compose: skip Cowork + Automatically approve "
-            "(default is ensure_cowork_auto=True)"
+            "Operator opt-in: Chat compose on /new (CDP Send path broken — "
+            "friction 25051; agents must not use without operator override)"
         ),
+    )
+    mode_group.add_argument(
+        "--cowork-auto",
+        action="store_true",
+        help="Cowork + Automatically approve on /new (default; explicit no-op)",
+    )
+    mode_group.add_argument(
+        "--no-cowork-auto",
+        action="store_true",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--keep-chat",
@@ -334,7 +345,7 @@ def _dispatch(
                 timeout_s=max(args.timeout_s, 600),
                 min_growth=args.min_growth,
                 min_body=args.min_body,
-                ensure_cowork_auto=not args.no_cowork_auto,
+                ensure_cowork_auto=not args.chat,
             )
         )
         delete_requested = bool(args.close)

@@ -453,7 +453,8 @@ Dogfood fallback (hub checkout): `scripts/cortex/claude-ai-sync-jupiter project-
 | `converse` | `bool` | Multi-turn `/new` consult |
 | `no_project_uuid` | `bool` | Use `https://claude.ai/new` instead of Cowork Project UUID |
 | `project_uuid` | `str` | Explicit Cowork Project UUID |
-| `ensure_cowork_auto` | `bool` | Cowork + auto-approve on `/new` |
+| `ensure_cowork_auto` | `bool` | Cowork + auto-approve on `/new` (default `true`; friction 25051) |
+| `chat_compose` | `bool` | Operator opt-in Chat on `/new` (default `false`; sets `ensure_cowork_auto=false`) |
 | `archive_path` | `str \| null` | Optional harvest archive path on Jupiter |
 | `timeout_s` | `int` | Idle completion budget forwarded to satellite |
 

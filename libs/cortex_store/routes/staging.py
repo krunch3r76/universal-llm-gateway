@@ -34,9 +34,9 @@ _ASSERTION_INSERT = (
     "INSERT INTO assertions ("
     "  entity_id, claim, confidence, evidence, evidence_uris,"
     "  chunk_id, derivation_type, reasoning_summary, observed_at,"
-    "  valid_from, valid_until, validity_precision, confidence_score,"
-    "  temporal_type, is_atomic, is_decontextualized"
-    ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    "  valid_from, valid_until, confidence_score,"
+    "  is_atomic, is_decontextualized"
+    ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
 )
 
 
@@ -62,9 +62,7 @@ def _assertion_params(pj: dict, chunk_id: int | None) -> tuple:
         pj.get("observed_at"),
         pj.get("valid_from"),
         pj.get("valid_until"),
-        pj.get("validity_precision"),
         pj.get("confidence_score"),
-        pj.get("temporal_type"),
         pj.get("is_atomic", True),
         pj.get("is_decontextualized", True),
     )
@@ -141,11 +139,13 @@ def create_staging_batch_on_conn(
 ) -> list[int]:
     """Insert staging proposals on *conn*; caller owns commit."""
     created_ids: list[int] = []
+    now = _now()
     for p in proposals:
         cur = conn.execute(
             "INSERT INTO extraction_staging "
             "(source_uri, proposal_type, proposal_action, target_id, "
-            " proposal_json, chunk_id) VALUES (?, ?, ?, ?, ?, ?)",
+            " proposal_json, chunk_id, status, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)",
             (
                 p.source_uri,
                 p.proposal_type,
@@ -153,6 +153,7 @@ def create_staging_batch_on_conn(
                 p.target_id,
                 json_encode(p.proposal_json),
                 p.chunk_id,
+                now,
             ),
         )
         if cur.lastrowid is None:
@@ -367,10 +368,6 @@ def _apply_proposal(conn: sqlite3.Connection, proposal: dict) -> str:
         target_id = proposal.get("target_id")
         if not target_id:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "revise needs target_id")
-        conn.execute(
-            "UPDATE assertions SET superseded_by = -1, superseded_at = ? WHERE id = ?",
-            (now, target_id),
-        )
         cur = conn.execute(_ASSERTION_INSERT, _assertion_params(pj, chunk_id))
         new_id = cur.lastrowid
         conn.execute(
@@ -384,8 +381,8 @@ def _apply_proposal(conn: sqlite3.Connection, proposal: dict) -> str:
         if not target_id:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "remove needs target_id")
         conn.execute(
-            "UPDATE assertions SET superseded_by = -1, superseded_at = ? WHERE id = ?",
-            (now, target_id),
+            "UPDATE assertions SET superseded_by = -1 WHERE id = ?",
+            (target_id,),
         )
         return f"removed:{target_id}"
 

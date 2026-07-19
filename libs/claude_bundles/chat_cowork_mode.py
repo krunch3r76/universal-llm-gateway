@@ -6,13 +6,20 @@ Verified on Jupiter CDP ask profile (:9223) 2026-07-16:
 - Cowork exposes approval control (aria ``Manually approve`` /
   ``Automatically approve`` / skip).
 - Menu radios: Manually approve | Automatically approve | Skip all approvals.
-- Desired latency-sensitive / connector consult default: Cowork + Auto.
+- Cowork + Auto default on bare ``/new`` (friction 25051).
+- Chat via ``ensure_chat_compose`` — **operator-gated only** until dogfood passes.
+- Toggle repair + poll-until-attest (friction 25052 — dual-primary Q1 bind).
 """
 
 from __future__ import annotations
 
 import re
 from typing import Any, Literal
+
+from claude_bundles.compose_attest import (
+    await_compose_attest,
+    compose_mode_fingerprint,
+)
 
 ApprovalMode = Literal["auto", "manual", "skip"]
 ComposeMode = Literal["chat", "cowork"]
@@ -53,10 +60,10 @@ def exclusive_radio_text_match(text: str, token: str) -> bool:
 async def _chip_center(page, label: str) -> dict[str, float] | None:
     return await page.evaluate(
         """(label) => {
-          for (const el of document.querySelectorAll('span,button,div')) {
+          for (const el of document.querySelectorAll('span,button,div,[role=button],[role=radio]')) {
             if ((el.innerText || '').trim() !== label) continue;
             const r = el.getBoundingClientRect();
-            if (r.width < 20 || r.width > 120 || r.height < 16 || r.height > 40) {
+            if (r.width < 20 || r.width > 200 || r.height < 16 || r.height > 48) {
               continue;
             }
             return {x: r.x + r.width / 2, y: r.y + r.height / 2};
@@ -67,30 +74,13 @@ async def _chip_center(page, label: str) -> dict[str, float] | None:
     )
 
 
-async def compose_mode_fingerprint(page) -> dict[str, Any]:
-    """Lightweight attest: title + approval aria currently shown."""
-    title = await page.title()
-    approval = await page.evaluate(
-        """() => {
-          const btns = Array.from(document.querySelectorAll('button'));
-          for (const b of btns) {
-            const aria = b.getAttribute('aria-label') || '';
-            if (/approve/i.test(aria)) {
-              return {
-                aria,
-                text: (b.innerText || '').trim().replace(/\\s+/g, ' ').slice(0, 40),
-              };
-            }
-          }
-          return null;
-        }"""
-    )
-    mode: str | None = None
-    if re.search(r"new task", title, re.I):
-        mode = "cowork"
-    elif re.search(r"new chat", title, re.I):
-        mode = "chat"
-    return {"title": title, "mode": mode, "approval": approval, "url": page.url}
+async def _scroll_click(loc) -> None:
+    """Scroll segmented-control target into view before click."""
+    try:
+        await loc.scroll_into_view_if_needed(timeout=3000)
+    except Exception:  # noqa: BLE001 — best-effort; force click still runs
+        pass
+    await loc.click(force=True)
 
 
 async def select_compose_mode(page, mode: ComposeMode) -> dict[str, Any]:
@@ -100,26 +90,70 @@ async def select_compose_mode(page, mode: ComposeMode) -> dict[str, Any]:
     if before.get("mode") == mode:
         return {"ok": True, "step": f"already_{mode}", "before": before, "after": before}
 
-    box = await _chip_center(page, label)
-    if not box:
-        return {
-            "ok": False,
-            "step": "chip_missing",
-            "wanted": mode,
-            "before": before,
-        }
-    await page.mouse.click(box["x"], box["y"])
-    await page.wait_for_timeout(1800)
-    after = await compose_mode_fingerprint(page)
-    ok = after.get("mode") == mode or (
-        mode == "cowork" and bool(after.get("approval"))
-    )
+    clicked_via = None
+    for name in (label, label.lower(), label.upper()):
+        for loc in (
+            page.get_by_role("tab", name=re.compile(rf"^{re.escape(name)}$", re.I)),
+            page.get_by_role("radio", name=re.compile(rf"^{re.escape(name)}$", re.I)),
+            page.get_by_role("button", name=re.compile(rf"^{re.escape(name)}$", re.I)),
+            page.get_by_text(name, exact=True),
+        ):
+            if not await loc.count():
+                continue
+            btn = loc.first
+            if not await btn.is_visible():
+                continue
+            box = await btn.bounding_box()
+            if box and (box["width"] < 20 or box["width"] > 220 or box["height"] < 14):
+                continue
+            await _scroll_click(btn)
+            clicked_via = "playwright"
+            break
+        if clicked_via:
+            break
+
+    if not clicked_via:
+        box = await _chip_center(page, label)
+        if not box:
+            return {
+                "ok": False,
+                "step": "chip_missing",
+                "wanted": mode,
+                "before": before,
+            }
+        await page.mouse.click(box["x"], box["y"])
+        clicked_via = "mouse"
+
+    if mode == "cowork" and label == "Cowork":
+        after_probe = await compose_mode_fingerprint(page)
+        if after_probe.get("mode") != "cowork" and not after_probe.get("approval"):
+            js = await page.evaluate(
+                """() => {
+                  const hits = [];
+                  for (const el of document.querySelectorAll('button,[role=button],[role=radio],span,div')) {
+                    if ((el.innerText || '').trim() !== 'Cowork') continue;
+                    if (!el.offsetParent) continue;
+                    const r = el.getBoundingClientRect();
+                    if (r.width < 10 || r.height < 10) continue;
+                    el.click();
+                    hits.push({w: r.width, h: r.height, y: r.y});
+                  }
+                  return hits;
+                }"""
+            )
+            if js:
+                clicked_via = "js_brute"
+
+    attest = await await_compose_attest(page, mode, timeout_s=8.0)
+    after = attest.get("fingerprint") or await compose_mode_fingerprint(page)
+    ok = bool(attest.get("ok"))
     return {
         "ok": ok,
         "step": f"selected_{mode}" if ok else f"select_{mode}_no_attest",
         "before": before,
         "after": after,
-        "clicked": box,
+        "via": clicked_via,
+        "attest": attest,
     }
 
 
@@ -217,11 +251,26 @@ async def set_approval_mode(page, mode: ApprovalMode = "auto") -> dict[str, Any]
     }
 
 
+async def ensure_chat_compose(page) -> dict[str, Any]:
+    """Select Chat mode on ``/new`` compose (operator-gated only).
+
+    Call after landing on ``https://claude.ai/new``, before model pick / send.
+    Requires explicit operator override (``--chat`` / ``chat_compose=true``).
+    """
+    mode = await select_compose_mode(page, "chat")
+    return {
+        "ok": bool(mode.get("ok")),
+        "step": "chat_compose",
+        "mode": mode,
+    }
+
+
 async def ensure_cowork_auto(page) -> dict[str, Any]:
     """Select Cowork mode and Automatically approve (>> Auto).
 
-    Call after landing on ``https://claude.ai/new``, before model pick / send.
-    No-op-ish on Project shells that lack the Chat/Cowork chips (returns
+    Default on bare ``/new`` for automated CDP (friction 25051). Call after
+    landing on ``https://claude.ai/new``, before model pick / send. No-op-ish
+    on Project shells that lack the Chat/Cowork chips (returns
     ``chip_missing`` — callers may continue without failing hard).
     """
     mode = await select_compose_mode(page, "cowork")

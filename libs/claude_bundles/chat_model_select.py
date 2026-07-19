@@ -6,7 +6,7 @@ first (fast path — not an availability gate); on miss it discovers radios
 (including under "More models") and matches the requested name/pattern.
 
 Effort High/Extra/Max live under ``effort-menu-trigger`` → ``effort-option-*``
-(friction 24592). Sealed-ask default for Opus is Effort **High** (operator
+(friction 24592). Sealed-ask default for Opus/Fable is Effort **High** (operator
 2026-07-16); request ``opus-4.8-extra`` when Extra is required.
 
 Cowork Project nests some models under "More models" and mounts the picker
@@ -24,6 +24,7 @@ from claude_bundles.chat_model_match import (
     label_satisfies_request,
     match_model_request,
     parse_model_request,
+    sealed_ask_default_effort,
 )
 
 # Re-export pure helpers for existing callers / tests.
@@ -35,6 +36,7 @@ __all__ = [
     "list_picker_radios",
     "match_model_request",
     "parse_model_request",
+    "sealed_ask_default_effort",
     "select_fable_5",
     "select_from_ui",
     "select_haiku_45",
@@ -343,7 +345,7 @@ async def select_opus_48(page, *, prefer_extra: bool = False) -> dict:
 
 async def select_fable_5(page) -> dict:
     """Ensure Fable 5 for protocol consult seat."""
-    return await select_from_ui(page, "fable-5", effort=None)
+    return await select_model(page, "fable-5")
 
 
 async def select_haiku_45(page) -> dict:
@@ -362,7 +364,6 @@ async def select_model(page, model: str) -> dict:
         label = await current_model_label(page)
         return {"ok": True, "step": "leave", "current_model": label}
     family, effort = parse_model_request(model or "opus-4.8")
-    # Sealed-ask default: bare Opus → Effort High (operator 2026-07-16).
-    if effort is None and family.startswith("opus"):
-        effort = "high"
+    if effort is None:
+        effort = sealed_ask_default_effort(family)
     return await select_from_ui(page, model or "opus-4.8", effort=effort)

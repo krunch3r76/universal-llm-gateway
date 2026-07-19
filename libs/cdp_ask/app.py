@@ -57,7 +57,9 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
         try:
             root = verify_harvest_root()
         except RuntimeError:
-            return HealthResponse(status="fail_closed", harvest_root="", harvest_root_ok=False)
+            return HealthResponse(
+                status="fail_closed", harvest_root="", harvest_root_ok=False
+            )
         return HealthResponse(status="ok", harvest_root=str(root), harvest_root_ok=True)
 
     @app.post(
@@ -65,7 +67,9 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
         response_model=SubmitProjectAskResponse,
         status_code=202,
     )
-    async def submit_execution(req: SubmitProjectAskRequest) -> SubmitProjectAskResponse:
+    async def submit_execution(
+        req: SubmitProjectAskRequest,
+    ) -> SubmitProjectAskResponse:
         verify_harvest_root()
         record = await execution_store.create(holder=req.holder, purpose=req.purpose)
 
@@ -74,7 +78,9 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
             return bool(current and current.abort_requested)
 
         async def _on_registered(registration_id: str) -> None:
-            await execution_store.set_registration_id(record.execution_id, registration_id)
+            await execution_store.set_registration_id(
+                record.execution_id, registration_id
+            )
 
         def _sync_registered(registration_id: str) -> None:
             asyncio.create_task(_on_registered(registration_id))
@@ -86,8 +92,10 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
                     abort_check=_abort_check,
                     on_registered=_sync_registered,
                 )
-                status = "aborted" if payload.get("status") == "aborted" else (
-                    "completed" if payload.get("ok") else "failed"
+                status = (
+                    "aborted"
+                    if payload.get("status") == "aborted"
+                    else ("completed" if payload.get("ok") else "failed")
                 )
                 await execution_store.mark_terminal(
                     record.execution_id,
@@ -151,29 +159,68 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
         response_model=AbortExecutionResponse,
     )
     async def abort_execution(execution_id: str) -> AbortExecutionResponse:
+        from claude_bundles.project_ask_abort import (
+            AbortCleanupOutcome,
+            abort_cleanup,
+            lookup_active_registration,
+        )
+
         record = await execution_store.request_abort(execution_id)
         if record is None:
             raise HTTPException(404, f"unknown execution_id: {execution_id}")
-        if record.task and not record.task.done():
-            record.task.cancel()
-        if record.registration_id:
-            from claude_bundles.project_ask_abort import (
-                abort_cleanup,
-                lookup_active_registration,
-            )
 
+        outcome: AbortCleanupOutcome
+        if record.registration_id:
             reg = lookup_active_registration(record.registration_id)
             if reg is not None:
-                abort_cleanup(reg, purpose=record.purpose)
-        await execution_store.mark_terminal(
-            execution_id,
-            status="aborted",
-            error="aborted",
-        )
+                outcome = abort_cleanup(reg, purpose=record.purpose)
+            else:
+                outcome = "no_registration"
+        else:
+            outcome = "no_registration"
+
+        terminal = outcome == "attested_stopped_and_deregistered"
+        attested = outcome in {
+            "attested_stopped_and_deregistered",
+            "stopped_deregister_failed",
+        }
+        still_attached: bool | None
+        if outcome == "still_attached":
+            still_attached = True
+        elif attested:
+            still_attached = False
+        else:
+            still_attached = None
+
+        # M3: cleanup before task.cancel so still_attached keeps a live driver for
+        # retry; non-terminal failed-attest rows stay running + abort_requested until
+        # the caller retries abort or execution_store TTL reaper marks them failed.
+        if terminal and record.task and not record.task.done():
+            record.task.cancel()
+        if terminal:
+            await execution_store.mark_terminal(
+                execution_id,
+                status="aborted",
+                error="aborted",
+            )
+            return AbortExecutionResponse(
+                execution_id=execution_id,
+                status="aborted",
+                aborted=True,
+                attested=True,
+                still_attached=False,
+                abort_outcome=outcome,
+            )
+
+        refreshed = await execution_store.get(execution_id)
+        status = refreshed.status if refreshed else record.status
         return AbortExecutionResponse(
             execution_id=execution_id,
-            status="aborted",
-            aborted=True,
+            status=status,
+            aborted=False,
+            attested=attested,
+            still_attached=still_attached,
+            abort_outcome=outcome,
         )
 
     app.state.execution_store = execution_store

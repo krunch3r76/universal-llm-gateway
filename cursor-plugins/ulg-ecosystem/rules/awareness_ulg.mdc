@@ -1,5 +1,5 @@
 ---
-description: Project awareness — todos (Cortex entities), vision (docs/VISION.md), discoveries (tasks/discoveries/). Load when discussing priorities, next-steps, "what should we work on", todo lifecycle, or before creating/closing todo entities.
+description: Project awareness — todos (Cortex entities), vision (three-doc taxonomy — MAP / essay / cognitive-platform), discoveries (tasks/discoveries/). Load when discussing priorities, next-steps, "what should we work on", todo lifecycle, or before creating/closing todo entities.
 alwaysApply: false
 rule_category: cortex-bus
 apply_tier: command
@@ -54,9 +54,17 @@ Semantic search: `rag(op="search", arguments='{"scope": "todo_specs", "query": "
 
 ## Vision Awareness
 
+Three-doc taxonomy (there is **no** single `docs/VISION.md` — that file does not exist):
+
+| Doc | Role | Consult when |
+|---|---|---|
+| **MAP** `cortex://notes/system/threads/4917-posture-stack-foundation/fable-foundation-map.md` | Inter-agent / operational **law index** — four pillars, must-not-re-decide, falsifiers, standing debt | **default** alignment check on `judgment_required` / pillar-touching / strategic work — via `VISION-ALIGN` (`path-sim` § Vision-align flag) |
+| **Essay** `cortex://notes/system/design/ulg-architectural-vision.md` | Resonance / orientation ("feel the shape in ten minutes") — ¬ law | wide detent, onboarding, grant/public register |
+| **Cognitive-platform vision** (`decision:cortex-vision-cognitive-platform` + staged prose) | Public face / north star | outward narrative, grant alignment — ¬ day-to-day workflow choke-points |
+
 ∀ discussion involving architecture decisions, new subsystems, or strategic direction:
-- Consult `docs/VISION.md` to check alignment with the tokenized inference network roadmap
-- Surface misalignment or synergy when relevant — don't force it into every conversation
+- Check alignment against the **MAP** (law index); open the essay only for wide / onboarding / public register.
+- Surface misalignment or synergy when relevant — don't force it into every conversation (fatigue discipline).
 
 ## Discoveries
 

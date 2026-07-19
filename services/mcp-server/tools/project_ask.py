@@ -78,6 +78,7 @@ def register_project_ask_tool(mcp: FastMCP) -> None:
         no_project_uuid: bool = False,
         project_uuid: str = "",
         ensure_cowork_auto: bool = True,
+        chat_compose: bool = False,
         archive_path: str | None = None,
         delete_after: bool | None = None,
         timeout_s: int = 360,
@@ -124,7 +125,10 @@ def register_project_ask_tool(mcp: FastMCP) -> None:
             converse: Multi-turn /new consult
             no_project_uuid: Use https://claude.ai/new instead of Project UUID
             project_uuid: Explicit Cowork Project UUID (when not no_project_uuid)
-            ensure_cowork_auto: Cowork + Automatically approve on /new
+            ensure_cowork_auto: Cowork + Automatically approve on /new (default).
+                Set false only with chat_compose=true (operator opt-in — friction 25051).
+            chat_compose: Operator opt-in Chat on /new. Agents must not set without
+                explicit operator override (CDP Send path broken — friction 25051).
             archive_path: Optional harvest archive path on Jupiter
             delete_after: Retain (false) or delete (true) chat after harvest; omit
                 for satellite defaults (converse/turn-2 retain, single-ask delete)
@@ -133,9 +137,12 @@ def register_project_ask_tool(mcp: FastMCP) -> None:
         Returns:
             submit: {execution_id, status, registration_id?}
             poll: {execution_id, status, archive_uri?, ok?, body?, error?, …}
-            abort: {execution_id, status, aborted}
+            abort: {execution_id, status, aborted, attested, still_attached,
+                abort_outcome, stop_clicked?}
         """
         if op == "submit":
+            if chat_compose:
+                ensure_cowork_auto = False
             body = {
                 k: v
                 for k, v in {
@@ -155,7 +162,9 @@ def register_project_ask_tool(mcp: FastMCP) -> None:
                 }.items()
                 if v is not None and v != ""
             }
-            if not any(body.get(k) for k in ("prompt_text", "prompt_uri", "prompt_path")):
+            if not any(
+                body.get(k) for k in ("prompt_text", "prompt_uri", "prompt_path")
+            ):
                 return {
                     "error": "submit requires prompt_text, prompt_uri, or prompt_path"
                 }
@@ -179,5 +188,13 @@ def register_project_ask_tool(mcp: FastMCP) -> None:
             "POST",
             f"/v1/project-ask/executions/{execution_id}/abort",
         )
-        record("mcp.project_ask.abort", execution_id=execution_id)
+        record(
+            "mcp.project_ask.abort",
+            execution_id=execution_id,
+            status=result.get("status"),
+            aborted=result.get("aborted"),
+            attested=result.get("attested"),
+            still_attached=result.get("still_attached"),
+            abort_outcome=result.get("abort_outcome"),
+        )
         return result

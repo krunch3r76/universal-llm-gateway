@@ -63,3 +63,7 @@ class AbortExecutionResponse(BaseModel):
     execution_id: str
     status: ExecutionStatus
     aborted: bool
+    attested: bool = False
+    still_attached: bool | None = None
+    abort_outcome: str = ""
+    stop_clicked: bool | None = None

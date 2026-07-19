@@ -14,6 +14,7 @@ Recents fallback keyed by title in aria-label; cleanup_ok on result dict.
 
 from __future__ import annotations
 
+import json
 import os
 
 from claude_bundles.project_chrome import project_url
@@ -291,6 +292,39 @@ async def delete_chat_if_active(page, *, return_to: str | None = None) -> dict:
     return result
 
 
+def _compose_setup_error(
+    *,
+    step: str,
+    url: str,
+    result: dict,
+    on_new: bool,
+) -> RuntimeError:
+    """Structured fail-closed error distinguishing /new toggle vs project shell."""
+    mode_block = result.get("mode") or result.get("approval") or result
+    payload: dict = {
+        "step": step,
+        "url": url,
+        "surface": "bare_new" if on_new else "project_or_cse",
+    }
+    if isinstance(mode_block, dict):
+        payload.update(
+            {
+                "inner_step": mode_block.get("step"),
+                "before": mode_block.get("before"),
+                "after": mode_block.get("after"),
+                "via": mode_block.get("via"),
+                "attest": mode_block.get("attest"),
+            }
+        )
+    hint = (
+        "new_compose_toggle_failed"
+        if on_new
+        else "project_shell_compose — mid-flight CSE lanes do not prove /new toggle"
+    )
+    payload["hint"] = hint
+    return RuntimeError(f"{step} failed: {json.dumps(payload, default=str)}")
+
+
 async def goto_fresh_compose(
     page,
     *,
@@ -300,9 +334,9 @@ async def goto_fresh_compose(
 ) -> str:
     """Land on a clean compose surface (Project chrome or bare /new).
 
-    On bare ``/new``, default ``ensure_cowork_auto=True`` selects Cowork +
-    Automatically approve before the caller picks a model / sends
-    (``agent_skill:claude-ai-cdp-navigation`` § Cowork + Auto).
+    On bare ``/new``, default ``ensure_cowork_auto=True`` selects Cowork + Auto
+    (friction 25051 — Chat CDP Send path broken). Pass ``ensure_cowork_auto=False``
+    only on **operator-gated** Chat dispatches.
     """
     if compose_url:
         url = compose_url
@@ -314,12 +348,30 @@ async def goto_fresh_compose(
     await page.wait_for_timeout(2500)
     # Chat/Cowork + Auto only exist on bare /new compose — not Project shell.
     on_new = url.rstrip("/").endswith("/new") or "/new?" in url
-    if ensure_cowork_auto and on_new and not project_uuid:
-        from claude_bundles.chat_cowork_mode import ensure_cowork_auto as _ensure
+    if on_new and not project_uuid:
+        from claude_bundles.chat_cowork_mode import (
+            ensure_chat_compose as _ensure_chat,
+        )
+        from claude_bundles.chat_cowork_mode import (
+            ensure_cowork_auto as _ensure_cowork,
+        )
 
-        result = await _ensure(page)
-        if not result.get("ok"):
-            # Prefer approval failure detail — mode dict is often ok:True (cowork selected).
-            page_err = result.get("approval") or result.get("mode") or result
-            raise RuntimeError(f"ensure_cowork_auto failed: {page_err}")
+        if ensure_cowork_auto:
+            result = await _ensure_cowork(page)
+            if not result.get("ok"):
+                raise _compose_setup_error(
+                    step="ensure_cowork_auto",
+                    url=page.url,
+                    result=result,
+                    on_new=on_new,
+                )
+        else:
+            result = await _ensure_chat(page)
+            if not result.get("ok"):
+                raise _compose_setup_error(
+                    step="ensure_chat_compose",
+                    url=page.url,
+                    result=result,
+                    on_new=on_new,
+                )
     return page.url

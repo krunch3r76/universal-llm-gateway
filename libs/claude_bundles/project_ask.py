@@ -15,6 +15,7 @@ from typing import Any
 
 from playwright.async_api import Page
 
+from claude_bundles.chat_model_match import sealed_ask_default_effort
 from claude_bundles.chat_model_select import (
     label_satisfies_request,
     parse_model_request,
@@ -25,6 +26,11 @@ from claude_bundles.chat_session_hygiene import (
     delete_chat_if_active,
     goto_fresh_compose,
     pick_chat_page,
+)
+from claude_bundles.compose_attest import (
+    await_compose_attest,
+    await_submit_visible,
+    compose_mode_fingerprint,
 )
 from claude_bundles.project_chrome import project_url
 from claude_bundles.skills_ui_panel import DEFAULT_CDP_URL, connect_cdp
@@ -73,9 +79,8 @@ def _attest_model(requested: str, state: dict[str, Any], selected: dict[str, Any
         return None
     req = requested or ""
     family, effort = parse_model_request(req)
-    # Mirror select_model sealed-ask default (operator 2026-07-16: High).
-    if effort is None and family.startswith("opus"):
-        effort = "high"
+    if effort is None:
+        effort = sealed_ask_default_effort(family)
     if not label_satisfies_request(req, label, effort=effort):
         raise RuntimeError(
             f"model attestation mismatch: wanted {req!r}, got {label!r}"
@@ -93,12 +98,12 @@ def archive_harvest(
     archive_path: str,
 ) -> str:
     """Persist raw harvest before delete. Returns cortex:// or file URI."""
-    from datetime import datetime, timezone
+    from datetime import UTC, datetime
     from pathlib import Path
 
     path = Path(archive_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now(timezone.utc).isoformat()
+    stamp = datetime.now(UTC).isoformat()
     text = (
         f"# CDP ask harvest\n\n"
         f"- archived_at: `{stamp}`\n"
@@ -185,22 +190,35 @@ async def send_prompt(page: Page, text: str) -> None:
     await page.keyboard.press("Backspace")
     await _insert_prompt_text(page, text)
     await page.wait_for_timeout(600)
-    # Prefer Start task (Cowork) before Send message (Chat). Fail closed —
-    # Enter fallback left prompts unsent (900s empty harvest, 2026-07-16).
-    for role_re in _SUBMIT_ROLE_RES:
+
+    fp = await compose_mode_fingerprint(page)
+    mode: str = fp.get("mode") or ("cowork" if fp.get("approval") else "chat")
+    if mode not in ("chat", "cowork"):
+        mode = "cowork" if fp.get("approval") else "chat"
+    attest = await await_compose_attest(page, mode, timeout_s=4.0)  # type: ignore[arg-type]
+    if not attest.get("ok"):
+        raise RuntimeError(
+            f"compose re-attest failed before send: mode={mode!r} "
+            f"fingerprint={attest.get('fingerprint')}"
+        )
+
+    submit = await await_submit_visible(page, mode, timeout_s=8.0)
+    if submit.get("ok"):
+        role_re = _SUBMIT_ROLE_RES[0 if mode == "cowork" else 1]
         loc = page.get_by_role("button", name=role_re)
         if await loc.count():
             btn = loc.first
             if await btn.is_visible() and not await btn.is_disabled():
                 await btn.click(force=True)
                 return
-    for aria in _SUBMIT_ARIA_SUBSTRS:
+        aria = _SUBMIT_ARIA_SUBSTRS[0 if mode == "cowork" else 1]
         loc = page.locator(f"button[aria-label*='{aria}' i]")
         if await loc.count():
             btn = loc.first
             if await btn.is_visible() and not await btn.is_disabled():
                 await btn.click(force=True)
                 return
+
     raise RuntimeError(
         "submit control missing: need visible Start task (Cowork) or "
         "Send message (Chat) — refusing Enter fallback"

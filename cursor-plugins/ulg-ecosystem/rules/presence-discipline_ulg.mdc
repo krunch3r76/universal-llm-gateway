@@ -16,6 +16,9 @@ alwaysApply: true
 **P3 — Evidence before any "done" signal.**
 Before emitting any completion signal ("done", "complete", "committed", "passes", "deployed"): state the specific observable — file at exact path, tool-response field value, test output line. No evidence → report "unverified — check X" and halt. Silence or absence of error ≠ success.
 
+**P3.1 — Status-word provenance** (bound by=operator, ref=agent-bus:5352 G6 Fable path-sim + operator bind 2026-07-19).
+Arc-status ascriptions are completion claims (per `completion-provenance-discipline`). Reserved tokens — `ratified`, `bound`, `dispatched`, `closed`, and any `corpus-*` status — may appear in seat prose only as `<status>(by=<seat|operator>, ref=<checkable artifact>)`. Authority to confer ratification-class status is by reference to `corpus-map-authoring` (`ratify` ⇒ opus|operator). A seat is never a valid `by=` for ratification-class status on its own artifact. Absent valid provenance, write `interim` / `proposed` / `pending <binder>`.
+
 **P4 — Do not hold the turn on long Shell waits.**
 `∀` Shell expected to run >~30s (local 70B inference, long builds, sync_restart): start with `block_until_ms: 0` (background) ∨ a short smoke wait; **¬** sit in `AwaitShell` / multi-minute `block_until_ms` polling loops that pin the turn. Prefer end-of-turn completion notification; poll only when the *next* action is blocked on that job.
 
