@@ -327,6 +327,9 @@ skills:
   rag-canonical-reference-reminder:
     surface_class: cursor_only
     mcp_surface_required: none
+  recording-posture:
+    surface_class: shared_sync
+    mcp_surface_required: life
   refine-pipeline:
     surface_class: cursor_only
     mcp_surface_required: code

@@ -183,13 +183,22 @@ def _price_row(
         priced["cost_source"] = "wire"
         priced["wire_key"] = wire_key
     elif rate is not None:
-        computed = _rate_x_tokens(row, rate)
-        if computed is not None:
-            priced["cost_usd"] = computed
-            priced["cost_source"] = "rate_x_tokens"
-        else:
+        # All-zero catalog/provider rates are missing prices, not free inference.
+        # Intentional local zeros use source=manual_seed_local and may price at $0.
+        zero_rate = (
+            rate.input_rate_per_m == 0.0 and rate.output_rate_per_m == 0.0
+        )
+        if zero_rate and rate.source != "manual_seed_local":
             priced["cost_usd"] = None
             priced["cost_source"] = "unavailable"
+        else:
+            computed = _rate_x_tokens(row, rate)
+            if computed is not None:
+                priced["cost_usd"] = computed
+                priced["cost_source"] = "rate_x_tokens"
+            else:
+                priced["cost_usd"] = None
+                priced["cost_source"] = "unavailable"
         priced["wire_key"] = None
     else:
         priced["cost_usd"] = None

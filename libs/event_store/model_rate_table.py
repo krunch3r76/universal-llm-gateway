@@ -165,6 +165,7 @@ def upsert_catalog_models(
     upserted = 0
     skipped = 0
     rejected_negative = 0
+    rejected_zero_rate = 0
 
     for model in models:
         model_id = str(getattr(model, "id", "") or "").strip()
@@ -183,15 +184,29 @@ def upsert_catalog_models(
         if input_rate < 0 or output_rate < 0:
             rejected_negative += 1
             continue
-        _CATALOG_ROWS[model_id] = {
-            "model_id": model_id,
-            "input_rate_per_m": input_rate,
-            "output_rate_per_m": output_rate,
-            "source": source,
-            "updated_at": _now_iso(),
-            "pinned": False,
-        }
-        upserted += 1
+        if input_rate == 0.0 and output_rate == 0.0:
+            rejected_zero_rate += 1
+            continue
+        ids_to_write = [model_id]
+        # OpenRouter rows are openrouter/<provider>/<model>; rollups use bare
+        # provider-canonical ids — dual-key so resolve_rate hits real prices.
+        if model_id.startswith("openrouter/"):
+            bare_id = model_id.removeprefix("openrouter/")
+            if "/" in bare_id and bare_id not in ids_to_write:
+                bare_manual = manual_rows.get(bare_id)
+                if bare_manual is None or not bare_manual.pinned:
+                    ids_to_write.append(bare_id)
+        updated_at = _now_iso()
+        for write_id in ids_to_write:
+            _CATALOG_ROWS[write_id] = {
+                "model_id": write_id,
+                "input_rate_per_m": input_rate,
+                "output_rate_per_m": output_rate,
+                "source": source,
+                "updated_at": updated_at,
+                "pinned": False,
+            }
+            upserted += 1
 
     if upserted:
         save_catalog_rows_to_disk(_CATALOG_ROWS)
@@ -200,6 +215,7 @@ def upsert_catalog_models(
         "upserted": upserted,
         "skipped": skipped,
         "rejected_negative": rejected_negative,
+        "rejected_zero_rate": rejected_zero_rate,
     }
     logger.info("Model rate table catalog ingest: %s", counts)
     return counts
@@ -234,11 +250,10 @@ def resolve_rate(
         row = _row_from_mapping(catalog_id, raw, default_source="catalog_refresh")
         if row is not None:
             merged[catalog_id] = row
+    # Only pinned manual rows override catalog; non-pinned seeds fill gaps only.
     for manual_id, manual_row in manual_rows.items():
         existing = merged.get(manual_id)
-        if existing is None or not existing.pinned:
-            merged[manual_id] = manual_row
-        elif manual_row.pinned:
+        if existing is None or manual_row.pinned:
             merged[manual_id] = manual_row
 
     for key in keys:
