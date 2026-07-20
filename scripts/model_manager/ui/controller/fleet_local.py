@@ -29,6 +29,7 @@ from .operation_log import tee_with_summary
 from .restart_drain import run_gated_drain_supervised_blocking
 from .service_config import (
     is_agent_bus_configured,
+    is_cdp_ask_manage_enabled,
     is_cloud_proxy_configured,
     is_cortex_configured,
     is_email_bridge_configured,
@@ -263,6 +264,8 @@ async def stop_local_services(
         stop_ops.append(("email_bridge", ctl.stop_email_bridge))
     if not _FLEET_SKIP_GIT_WORKER:
         stop_ops.append(("git_integration_worker", lambda: _drain_stop_git_worker(ctl)))
+    if is_cdp_ask_manage_enabled() and ctl._cdp_ask_runs_local():  # noqa: SLF001
+        stop_ops.append(("cdp_ask", ctl.stop_cdp_ask))
 
     stop_results = await run_ops_parallel(stop_ops)
     stop_dict: dict[str, bool] = {}
@@ -334,6 +337,8 @@ def _build_start_ops(
         start_ops.append(("email_bridge", email_bridge_op))
     if is_rag_configured():
         start_ops.append(("rag", ctl.start_rag))
+    if is_cdp_ask_manage_enabled() and ctl._cdp_ask_runs_local():  # noqa: SLF001
+        start_ops.append(("cdp_ask", ctl.start_cdp_ask))
     return start_ops
 
 

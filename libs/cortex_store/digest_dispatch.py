@@ -45,7 +45,7 @@ def _validate_digest_args(digest_args: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def _run_digest(validated: dict[str, Any], session_id: str | None) -> None:
-    from .dispatch_ops.ops_digest import _op_digest
+    from .dispatch_ops.ops_digest import _digest_enqueue_phase1
 
     digest_run(
         journal_entity_id=validated["journal_entity_id"],
@@ -53,10 +53,10 @@ def _run_digest(validated: dict[str, Any], session_id: str | None) -> None:
         session_id=session_id,
     )
     try:
-        _op_digest(**validated)
+        _digest_enqueue_phase1(**validated)
     except Exception:
         logger.warning(
-            "digest background dispatch failed for session %s anchor %s",
+            "digest background enqueue failed for session %s anchor %s",
             session_id,
             validated.get("entry_anchor"),
             exc_info=True,
@@ -66,7 +66,7 @@ def _run_digest(validated: dict[str, Any], session_id: str | None) -> None:
 def dispatch_digest_background(
     digest_args: dict[str, Any], *, session_id: str | None = None
 ) -> None:
-    """Daemon-thread enqueue of _op_digest. Fail-open. Honor CORTEX_DIGEST_CLOSE_HOOK."""
+    """Daemon-thread enqueue-only digest job. Fail-open. Honor CORTEX_DIGEST_CLOSE_HOOK."""
     if not _hook_enabled():
         return
     validated = _validate_digest_args(digest_args)

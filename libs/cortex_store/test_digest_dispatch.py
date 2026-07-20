@@ -26,7 +26,7 @@ def _clear_hook_env(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_env_off_no_thread_no_op() -> None:
     with (
         patch("cortex_store.digest_dispatch.threading.Thread") as thread_cls,
-        patch("cortex_store.dispatch_ops.ops_digest._op_digest") as op_digest,
+        patch("cortex_store.dispatch_ops.ops_digest._digest_enqueue_phase1") as op_digest,
     ):
         dispatch_digest_background(_VALID_DIGEST, session_id="sess-1")
     thread_cls.assert_not_called()
@@ -38,7 +38,7 @@ def test_env_on_missing_digest_keys_no_op(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setenv("CORTEX_DIGEST_CLOSE_HOOK", "1")
     with (
         patch("cortex_store.digest_dispatch.threading.Thread") as thread_cls,
-        patch("cortex_store.dispatch_ops.ops_digest._op_digest") as op_digest,
+        patch("cortex_store.dispatch_ops.ops_digest._digest_enqueue_phase1") as op_digest,
     ):
         dispatch_digest_background({"journal_entity_id": "document:journal"}, session_id="s")
         dispatch_digest_background({"entry_anchor": "a"}, session_id="s")
@@ -58,7 +58,7 @@ def test_env_on_valid_digest_invokes_op(monkeypatch: pytest.MonkeyPatch) -> None
 
     with (
         patch("cortex_store.digest_dispatch.threading.Thread.start", _capture_start),
-        patch("cortex_store.dispatch_ops.ops_digest._op_digest") as op_digest,
+        patch("cortex_store.dispatch_ops.ops_digest._digest_enqueue_phase1") as op_digest,
         patch("cortex_store.digest_dispatch.digest_run") as digest_run,
     ):
         dispatch_digest_background(_VALID_DIGEST, session_id="sess-abc")
@@ -100,7 +100,7 @@ def test_op_exception_swallowed_in_thread(monkeypatch: pytest.MonkeyPatch) -> No
 
     with (
         patch("cortex_store.digest_dispatch.threading.Thread", side_effect=_run_immediately),
-        patch("cortex_store.dispatch_ops.ops_digest._op_digest", side_effect=RuntimeError("boom")),
+        patch("cortex_store.dispatch_ops.ops_digest._digest_enqueue_phase1", side_effect=RuntimeError("boom")),
         patch("cortex_store.digest_dispatch.digest_run"),
     ):
         dispatch_digest_background(_VALID_DIGEST, session_id="sess-thread")

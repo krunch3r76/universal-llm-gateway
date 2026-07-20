@@ -53,6 +53,10 @@ def load_corpus_hints(
             e,
             exc_info=True,
         )
+        if event_bus is not None:
+            event_bus.publish_from_sync(
+                rag_corpus_hints_load_failed(path=str(resolved), error=str(e))
+            )
         return {}
     result: dict[str, list[str]] = defaultdict(list)
     for scope, term in rows:
@@ -78,6 +82,18 @@ def load_scope_vocabulary(
             ).fetchall()
     except sqlite3.Error as e:
         logger.warning("Failed to load scope vocabulary from DB %s: %s", resolved, e)
+        if event_bus is not None:
+            event_bus.publish_from_sync(
+                rag_scope_vocabulary_load_failed(path=str(resolved), error=str(e))
+            )
+        return {}
+    except Exception as e:
+        logger.error(
+            "Unexpected error loading scope vocabulary from DB %s: %s",
+            resolved,
+            e,
+            exc_info=True,
+        )
         if event_bus is not None:
             event_bus.publish_from_sync(
                 rag_scope_vocabulary_load_failed(path=str(resolved), error=str(e))

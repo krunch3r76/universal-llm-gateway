@@ -10,7 +10,11 @@ from universal_logging import get_logger
 
 from services.rag.config import WatchDirectory
 from services.rag.events.indexing import rag_file_indexing_failed
-from services.rag.events.lifecycle import rag_watch_reconcile_complete
+from services.rag.events.lifecycle import (
+    rag_watch_reconcile_complete,
+    rag_watch_reconcile_failed,
+    rag_watch_reconcile_repair_failed,
+)
 from services.rag.watcher_manager.protocols import (
     _RECONCILE_BUSY_INTERVAL_S,
     effective_extensions,
@@ -46,11 +50,18 @@ class ReconcileMixin:
                 logger.exception(
                     "Reconcile loop iteration failed unexpectedly: %s", exc
                 )
+                await self._emit(rag_watch_reconcile_failed(error=str(exc)))
             if total_recovered > 0 and self._post_reconcile_repair is not None:
                 try:
                     await self._post_reconcile_repair(recovered_roots)
-                except Exception:
+                except Exception as exc:
                     logger.exception("post_reconcile_repair failed")
+                    await self._emit(
+                        rag_watch_reconcile_repair_failed(
+                            error=str(exc),
+                            roots=recovered_roots,
+                        )
+                    )
             interval = (
                 _RECONCILE_BUSY_INTERVAL_S
                 if total_recovered > 0
@@ -115,7 +126,7 @@ class ReconcileMixin:
                         worker_unchanged += 1
                     elif result.indexed > 0:
                         worker_recovered += 1
-                        logger.info(
+                        logger.debug(
                             "Reconcile recovered: file=%s indexed=%d",
                             result.file,
                             result.indexed,

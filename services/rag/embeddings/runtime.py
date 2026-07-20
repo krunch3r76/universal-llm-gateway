@@ -7,8 +7,6 @@ from typing import TYPE_CHECKING
 import httpx
 from universal_logging import get_logger
 
-from services.rag.embeddings.constants import GATEWAY_URL
-
 if TYPE_CHECKING:
     from universal_event_bus import EventBus
 

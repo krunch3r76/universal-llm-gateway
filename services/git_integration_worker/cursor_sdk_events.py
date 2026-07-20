@@ -53,18 +53,28 @@ def FrontierSdkWorkerCompleted(  # noqa: N802
     tool_call_count: int,
     result_bytes: int,
     outcome: str,
+    resolved_model: str,
+    model_knobs_requested: dict[str, str] | None = None,
+    usage: dict[str, Any] | None = None,
+    usage_capture_status: str = "missing",
 ) -> Event:
+    payload: dict[str, Any] = {
+        "dispatch_id": dispatch_id,
+        "thread_id": thread_id,
+        "execution_id": execution_id,
+        "duration_s": duration_s,
+        "tool_call_count": tool_call_count,
+        "result_bytes": result_bytes,
+        "outcome": outcome,
+        "resolved_model": resolved_model,
+        "usage": usage,
+        "usage_capture_status": usage_capture_status,
+    }
+    if model_knobs_requested is not None:
+        payload["model_knobs_requested"] = model_knobs_requested
     return Event(
         signal="frontier.sdk.worker.completed",
-        payload={
-            "dispatch_id": dispatch_id,
-            "thread_id": thread_id,
-            "execution_id": execution_id,
-            "duration_s": duration_s,
-            "tool_call_count": tool_call_count,
-            "result_bytes": result_bytes,
-            "outcome": outcome,
-        },
+        payload=payload,
         scope="node",
     )
 
@@ -183,6 +193,10 @@ def emit_sdk_worker_completed(
     tool_call_count: int,
     result_bytes: int,
     outcome: str,
+    resolved_model: str,
+    model_knobs_requested: dict[str, str] | None = None,
+    usage: dict[str, Any] | None = None,
+    usage_capture_status: str = "missing",
 ) -> None:
     _emit(
         FrontierSdkWorkerCompleted(
@@ -193,17 +207,25 @@ def emit_sdk_worker_completed(
             tool_call_count=tool_call_count,
             result_bytes=result_bytes,
             outcome=outcome,
+            resolved_model=resolved_model,
+            model_knobs_requested=model_knobs_requested,
+            usage=usage,
+            usage_capture_status=usage_capture_status,
         )
     )
     logger.info(
         "cursor sdk worker completed: dispatch_id=%s thread_id=%s duration_s=%.3f "
-        "tool_call_count=%s result_bytes=%s outcome=%s",
+        "tool_call_count=%s result_bytes=%s outcome=%s resolved_model=%s "
+        "usage_capture_status=%s usage=%s",
         dispatch_id,
         thread_id,
         duration_s,
         tool_call_count,
         result_bytes,
         outcome,
+        resolved_model,
+        usage_capture_status,
+        usage,
     )
 
 

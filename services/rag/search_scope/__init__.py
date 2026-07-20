@@ -10,7 +10,10 @@ from services.rag.search_scope.prefix_filter import (
 )
 from services.rag.search_scope.property_boost import apply_property_boost
 from services.rag.search_scope.recency import apply_recency_sort
-from services.rag.search_scope.scope_resolution import require_loaded_config, resolve_scope_request
+from services.rag.search_scope.scope_resolution import (
+    require_loaded_config,
+    resolve_scope_request,
+)
 
 __all__ = [
     "apply_bm25_sidecar",

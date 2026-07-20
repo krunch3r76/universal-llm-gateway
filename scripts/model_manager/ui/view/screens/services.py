@@ -25,6 +25,7 @@ from ...controller.restart_window_ctl import (
 )
 from ...controller.service_config import (
     is_agent_bus_configured,
+    is_cdp_ask_manage_enabled,
     is_cloud_proxy_configured,
     is_cortex_configured,
     is_email_bridge_configured,
@@ -126,6 +127,7 @@ class ServicesScreen(Screen):
             yield Static("  Events:   checking...", id="svc-events")
             yield Static("  EmailBridge: —", id="svc-emailbridge")
             yield Static("  GitWorker:   —", id="svc-gitworker")
+            yield Static("  CDP Ask:     —", id="svc-cdpask")
 
         with Vertical(id="build-options"):
             yield Select(
@@ -227,6 +229,18 @@ class ServicesScreen(Screen):
                 yield Button(
                     "Stop Git Worker",
                     id="btn-stop-gitworker",
+                    variant="error",
+                    disabled=True,
+                )
+                yield Button(
+                    "Start CDP Ask",
+                    id="btn-start-cdpask",
+                    variant="success",
+                    disabled=True,
+                )
+                yield Button(
+                    "Stop CDP Ask",
+                    id="btn-stop-cdpask",
                     variant="error",
                     disabled=True,
                 )
@@ -354,6 +368,13 @@ class ServicesScreen(Screen):
                     )
                 else:
                     self.run_worker(self._stop_git_integration_worker(), exclusive=True)
+            case "btn-start-cdpask" | "btn-stop-cdpask":
+                self.query_one("#btn-start-cdpask", Button).disabled = True
+                self.query_one("#btn-stop-cdpask", Button).disabled = True
+                if event.button.id == "btn-start-cdpask":
+                    self.run_worker(self._start_cdp_ask(), exclusive=True)
+                else:
+                    self.run_worker(self._stop_cdp_ask(), exclusive=True)
             case "btn-restart-local":
                 self.run_worker(self._restart_local(), exclusive=True)
             case "btn-force-toggle":
@@ -547,6 +568,22 @@ class ServicesScreen(Screen):
         giw_up = giw.status is not ServiceStatus.STOPPED
         self.query_one("#btn-start-gitworker", Button).disabled = giw_up
         self.query_one("#btn-stop-gitworker", Button).disabled = not giw_up
+
+        cdp_ask = svc.service_state.check_cdp_ask()
+        cdp_ask_line = f"  CDP Ask:     {cdp_ask.detail or cdp_ask.status}"
+        self.query_one("#svc-cdpask", Static).update(cdp_ask_line)
+        cdp_manageable = is_cdp_ask_manage_enabled()
+        cdp_inactive = cdp_ask.status in (
+            ServiceStatus.NOT_ENABLED,
+            ServiceStatus.DISABLED,
+        )
+        cdp_up = cdp_manageable and cdp_ask.status is not ServiceStatus.STOPPED
+        self.query_one("#btn-start-cdpask", Button).disabled = (
+            not cdp_manageable or cdp_up or cdp_inactive
+        )
+        self.query_one("#btn-stop-cdpask", Button).disabled = (
+            not cdp_manageable or not cdp_up or cdp_inactive
+        )
 
         events = svc.service_state.check_event_service()
         self.query_one("#svc-events", Static).update(
@@ -908,6 +945,19 @@ class ServicesScreen(Screen):
             "git_integration_worker",
             lambda: svc.stop_git_integration_worker(),
         )
+        await asyncio.sleep(2)
+        self._refresh_status()
+
+    async def _start_cdp_ask(self) -> None:
+        svc = self.app.service_controller  # type: ignore[attr-defined]
+        result = await svc.start_cdp_ask()
+        self.query_one("#svc-log", LogStream).write_line(result)
+        await asyncio.sleep(2)
+        self._refresh_status()
+
+    async def _stop_cdp_ask(self) -> None:
+        svc = self.app.service_controller  # type: ignore[attr-defined]
+        await self._run_gated_action("stop", "cdp_ask", lambda: svc.stop_cdp_ask())
         await asyncio.sleep(2)
         self._refresh_status()
 

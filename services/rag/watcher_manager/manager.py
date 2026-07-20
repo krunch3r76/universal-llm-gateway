@@ -86,6 +86,7 @@ class WatcherManager(
         self._watchers: list = []
         self._watch_configs: list[WatchDirectory] = []
         self._initial_reindex_tasks: list[asyncio.Task[None]] = []
+        self._background_tasks: set[asyncio.Task[None]] = set()
         self._reconcile_task: asyncio.Task[None] | None = None
         self._repair_debounce_task: asyncio.Task[None] | None = None
         self._pending_repair_scopes: set[str] = set()
@@ -263,7 +264,9 @@ class WatcherManager(
                 )
                 await self._emit(rag_file_indexing_failed(file=source, error=str(exc)))
 
-        asyncio.create_task(_run(), name=f"rag-reindex-request:{file_path.name}")
+        task = asyncio.create_task(_run(), name=f"rag-reindex-request:{file_path.name}")
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
         return True
 
     async def _emit(self, event: Event) -> None:

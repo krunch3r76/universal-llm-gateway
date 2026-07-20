@@ -95,6 +95,21 @@ class ExecutionStore:
                 and rec.status in {"pending", "running"}
             }
 
+    async def active_work_snapshot(self) -> dict[str, Any]:
+        """Aggregate pending/running executions for drain-aware restart probes."""
+        async with self._lock:
+            execution_ids = [
+                rec.execution_id
+                for rec in self._records.values()
+                if rec.status in {"pending", "running"}
+            ]
+        running_count = len(execution_ids)
+        return {
+            "busy": running_count > 0,
+            "running_count": running_count,
+            "execution_ids": execution_ids,
+        }
+
     async def attach_task(self, execution_id: str, task: asyncio.Task[Any]) -> None:
         async with self._lock:
             rec = self._records.get(execution_id)

@@ -674,6 +674,8 @@ def _run_sdk_sync(
                     effects_manifest=effects_manifest,
                     capture_branch=capture_branch,
                     tool_calls=stream_capture.tool_calls,
+                    usage=stream_capture.usage,
+                    usage_capture_status=stream_capture.usage_capture_status,
                 )
             except BaseException as exc:
                 # Friction 23050: wrap any mid-flight abort (APITimeoutError /
@@ -946,6 +948,9 @@ async def _deliver_sdk_closeout(
                 "cursor check/review role bridge failed: dispatch_id=%s",
                 req.dispatch_id,
             )
+        # model_knobs_requested: admit-time knobs from CursorDispatchRequest, also
+        # persisted in cursor_sdk_dispatches.record_json at admit; req threads them
+        # through the drive path to emit (no ledger re-read required).
         emit_sdk_worker_completed(
             dispatch_id=req.dispatch_id,
             thread_id=req.thread_id,
@@ -956,6 +961,10 @@ async def _deliver_sdk_closeout(
             outcome=resolve_completion_outcome(
                 run_outcome=run_outcome, delivery_ok=True
             ),
+            resolved_model=req.model,
+            model_knobs_requested=req.model_knobs,
+            usage=outcome.usage,
+            usage_capture_status=outcome.usage_capture_status,
         )
         turn_number = extract_turn_number(bus_result.body)
         await emit_implement_closeout_trigger(
@@ -1008,6 +1017,10 @@ async def _deliver_sdk_closeout(
         tool_call_count=outcome.tool_call_count,
         result_bytes=delivery.full_result_bytes,
         outcome=resolve_completion_outcome(run_outcome=run_outcome, delivery_ok=False),
+        resolved_model=req.model,
+        model_knobs_requested=req.model_knobs,
+        usage=outcome.usage,
+        usage_capture_status=outcome.usage_capture_status,
     )
     await _terminate_link(bus, thread_id=req.thread_id, terminal_status="failed")
     await _mark_terminal_and_promote(

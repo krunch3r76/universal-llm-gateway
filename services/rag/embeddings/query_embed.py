@@ -11,6 +11,7 @@ from universal_logging import get_logger
 from services.rag.embeddings.batch_post import post_embeddings
 from services.rag.embeddings.constants import (
     DEFAULT_INSTRUCTION,
+    EMBED_RETRY_ATTEMPTS,
     GATEWAY_URL,
     QUERY_RETRY_ATTEMPTS,
     QUERY_RETRY_BASE_S,
@@ -20,8 +21,15 @@ from services.rag.embeddings.constants import (
 )
 from services.rag.embeddings.errors import EmbeddingTransientError
 from services.rag.embeddings.model_id import is_instruction_aware_model
-from services.rag.embeddings.runtime import get_client, get_event_bus, require_configured
-from services.rag.events.query import rag_embedding_query_success
+from services.rag.embeddings.runtime import (
+    get_client,
+    get_event_bus,
+    require_configured,
+)
+from services.rag.events.query import (
+    rag_embedding_query_failed,
+    rag_embedding_query_success,
+)
 
 logger = get_logger(__name__)
 
@@ -56,17 +64,31 @@ async def embed_queries_batch(
     formatted = [format_query_text(t, scope) for t in texts]
     try:
         embeddings = await post_embeddings(formatted)
-    except Exception:
+    except Exception as exc:
         logger.error(
             "embed_queries_batch failed for %d texts (model=%s)",
             len(texts),
             model_id,
             exc_info=True,
         )
+        last_status = (
+            exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
+        )
+        event_bus = get_event_bus()
+        if event_bus is not None:
+            await event_bus.publish_nowait(
+                rag_embedding_query_failed(
+                    model_id=model_id,
+                    attempts=EMBED_RETRY_ATTEMPTS,
+                    last_status=last_status,
+                    query_len=sum(len(t) for t in texts),
+                    scope=scope,
+                )
+            )
         raise EmbeddingTransientError(
             f"Batch query embedding failed for {len(texts)} texts (model={model_id})",
             model_id=model_id,
-            attempts=3,
+            attempts=EMBED_RETRY_ATTEMPTS,
             last_status=None,
         )
     event_bus = get_event_bus()
@@ -155,8 +177,6 @@ async def embed_query(text: str, scope: str | list[str] | None = None) -> list[f
     )
     event_bus = get_event_bus()
     if event_bus is not None:
-        from services.rag.events.query import rag_embedding_query_failed
-
         await event_bus.publish_nowait(
             rag_embedding_query_failed(
                 model_id=model_id,

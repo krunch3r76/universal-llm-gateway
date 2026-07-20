@@ -11,6 +11,7 @@ __all__ = [
 
 
 def matches_source_prefix(source: str, prefixes: list[str]) -> bool:
+    """Return True when source path starts with any configured prefix."""
     return any(source.startswith(prefix) for prefix in prefixes)
 
 
@@ -21,6 +22,7 @@ def apply_source_prefix_filter(
     source_prefixes: list[str] | None,
     top_k: int,
 ) -> tuple[list[str], list[dict[str, str | int | float | bool]], list[float]]:
+    """Filter search rows to those whose source matches any prefix."""
     if not source_prefixes:
         return chunks, metadatas, distances
     filtered = [
@@ -72,6 +74,7 @@ def apply_max_distance_filter(
     distances: list[float],
     max_distance: float | None,
 ) -> tuple[list[str], list[dict[str, str | int | float | bool]], list[float]]:
+    """Drop rows whose distance exceeds the configured ceiling."""
     if max_distance is None:
         return chunks, metadatas, distances
     filtered = [

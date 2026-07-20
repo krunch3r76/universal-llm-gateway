@@ -36,6 +36,7 @@ from universal_concurrency import FifoCapacityGate
 from universal_logging import get_logger
 
 from .restart_window_ctl import open_service_window
+from .service_config import cdp_ask_url_config
 
 logger = get_logger(__name__)
 
@@ -132,7 +133,7 @@ class HttpActiveWorkProbe:
 
 def _default_probes() -> dict[str, BusyProbe]:
     """Service → busy probe. Unlisted services default to NullBusyProbe."""
-    return {
+    probes: dict[str, BusyProbe] = {
         "stargate": HttpActiveWorkProbe(
             STARGATE_PROBE_URL, "/api/v1/admin/active-work"
         ),
@@ -140,6 +141,13 @@ def _default_probes() -> dict[str, BusyProbe]:
             GIT_INTEGRATION_WORKER_URL, "/api/v1/git/active-work"
         ),
     }
+    cfg = cdp_ask_url_config()
+    if cfg is not None:
+        _host, _port, base = cfg
+        probes["cdp_ask"] = HttpActiveWorkProbe(
+            base, "/v1/project-ask/active-work"
+        )
+    return probes
 
 
 class RestartDrainGate:

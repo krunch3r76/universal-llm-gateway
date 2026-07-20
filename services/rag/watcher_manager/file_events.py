@@ -38,7 +38,7 @@ class FileEventsMixin:
             )
             return
         self._note_index_mutation(path, result)
-        logger.info(
+        logger.debug(
             "Watcher reindex complete: file=%s deleted=%d indexed=%d unchanged=%s",
             result.file,
             result.deleted,
@@ -66,7 +66,7 @@ class FileEventsMixin:
             )
             await self._emit(rag_file_deletion_failed(file=file_path, error=str(exc)))
             return
-        logger.info(
+        logger.debug(
             "Watcher delete complete: file=%s deleted=%d",
             result.file,
             result.deleted,

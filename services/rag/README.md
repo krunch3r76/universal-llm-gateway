@@ -646,7 +646,7 @@ curl -X POST --unix-socket /tmp/universal-protocol/rag.sock \
 - `rag.file.indexing.failure.skipped` — reconcile/initial sweep gated a file.
 - `rag.file.indexing.failure.cleared` — row removed
   (`indexed_successfully` / `source_deleted` / `operator_cleared`).
-- `rag.file.indexing.failure.retry.requested` — operator issued retry;
+- `rag.file.indexing.retry.requested` — operator issued retry;
   `scheduled` indicates watcher admission.
 
 All four are `role=coordination`.

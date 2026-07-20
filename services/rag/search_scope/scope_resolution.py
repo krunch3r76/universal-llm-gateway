@@ -11,6 +11,7 @@ __all__ = ["require_loaded_config", "resolve_scope_request"]
 
 
 def require_loaded_config(config: RagConfig | None) -> RagConfig:
+    """Return loaded config or raise HTTP 503 when startup has not finished."""
     if config is None:
         raise HTTPException(status_code=503, detail="RAG config not loaded")
     return config
@@ -20,6 +21,7 @@ def resolve_scope_request(
     request: SearchRequest,
     config: RagConfig | None,
 ) -> SearchRequest:
+    """Resolve named scope(s) to merged source prefixes; reject conflicting fields."""
     if request.scope and request.source_prefixes:
         raise HTTPException(
             status_code=400,

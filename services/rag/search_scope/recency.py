@@ -16,6 +16,7 @@ def apply_recency_sort(
     distances: list[float],
     recency_weight: float,
 ) -> tuple[list[str], list[dict[str, str | int | float | bool]], list[float]]:
+    """Reorder results by recency-adjusted score while preserving raw distances."""
     if recency_weight <= 0.0 or not chunks:
         return chunks, metadatas, distances
     adjusted = _apply_recency(distances, metadatas, recency_weight)

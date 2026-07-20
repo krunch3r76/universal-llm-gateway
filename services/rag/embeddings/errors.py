@@ -7,8 +7,8 @@ class EmbeddingDependencyUnavailableError(RuntimeError):
     """Embedding unavailable: not in catalog or dim seed failed after admission."""
 
 
-class TransientEmbeddingError(Exception):
-    """Retryable embedding backend failure (VRAM pressure, transient model fault)."""
+class _BatchRetryError(Exception):
+    """Internal batch_post retry/split signal (not caller-facing; distinct from EmbeddingTransientError)."""
 
 
 class EmbeddingTransientError(Exception):

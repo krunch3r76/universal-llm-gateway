@@ -216,6 +216,7 @@ class McpConfig:
     mcp_server_url: str = ""
     web_fetcher_url: str = ""
     project_ask_url: str = ""
+    cdp_ask_manage_enabled: bool = True
     # ClaudeBurst bot endpoints (TCP) — bots run on a separate host, so the
     # MCP container must reach them by IP/port instead of the in-container
     # UDS fallback (which targets a socket path that does not exist on the
@@ -610,6 +611,10 @@ def load_mcp_config() -> McpConfig | None:
         mcp_server_url=_get_stripped_str("mcp_server_url"),
         web_fetcher_url=_get_stripped_str("WEB_FETCHER_URL", "web_fetcher_url"),
         project_ask_url=_get_stripped_str("PROJECT_ASK_URL", "project_ask_url"),
+        cdp_ask_manage_enabled=_parse_bool(
+            raw.get("cdp_ask_manage_enabled", True),
+            default=True,
+        ),
         claudeburst_host=_get_stripped_str("CLAUDEBURST_HOST"),
         claudeburst_port=_get_stripped_str("CLAUDEBURST_PORT"),
         claudeburst_perps_host=_get_stripped_str("CLAUDEBURST_PERPS_HOST"),
@@ -672,6 +677,158 @@ def is_email_bridge_configured() -> bool:
 def is_rag_configured() -> bool:
     """Return True when ~/.gateway/rag.yaml exists, treating RAG as opt-in."""
     return _RAG_CONFIG_PATH.exists()
+
+
+_CDP_ASK_DEFAULT_PORT = 8770
+_LOCALHOST_ALIASES = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def parse_project_ask_url(raw: str) -> tuple[str, int, str] | None:
+    """Parse ``project_ask_url`` into ``(host, port, base_url)``."""
+    from urllib.parse import urlparse
+
+    text = raw.strip()
+    if not text:
+        return None
+    if "://" not in text:
+        text = f"http://{text}"
+    parsed = urlparse(text)
+    host = (parsed.hostname or "").strip()
+    if not host:
+        return None
+    port = parsed.port if parsed.port is not None else _CDP_ASK_DEFAULT_PORT
+    base = f"{parsed.scheme}://{host}:{port}"
+    return host, port, base.rstrip("/")
+
+
+def cdp_ask_manage_state() -> str:
+    """Return ``not_enabled`` | ``disabled`` | ``enabled`` for cdp-ask manage lifecycle."""
+    cfg = load_mcp_config()
+    if cfg is None or not cfg.project_ask_url.strip():
+        return "not_enabled"
+    if not cfg.cdp_ask_manage_enabled:
+        return "disabled"
+    return "enabled"
+
+
+def is_cdp_ask_manage_enabled() -> bool:
+    """True when manage owns cdp-ask lifecycle (URL set and manage flag not false)."""
+    return cdp_ask_manage_state() == "enabled"
+
+
+def cdp_ask_url_config() -> tuple[str, int, str] | None:
+    """Parsed URL when ``project_ask_url`` is non-empty (even if manage-disabled)."""
+    cfg = load_mcp_config()
+    if cfg is None:
+        return None
+    return parse_project_ask_url(cfg.project_ask_url)
+
+
+def _local_host_identities() -> set[str]:
+    import socket
+
+    identities: set[str] = set(_LOCALHOST_ALIASES)
+    try:
+        identities.add(socket.gethostname())
+        identities.add(socket.getfqdn())
+    except OSError:
+        pass
+    for value in identities.copy():
+        if "." in value:
+            identities.add(value.split(".", 1)[0])
+    return {item.strip().lower() for item in identities if item.strip()}
+
+
+def _node_registry_identities() -> set[str]:
+    """Host aliases from ``~/.gateway/nodes/*.env`` and federation remotes."""
+    identities: set[str] = set()
+    if NODES_DIR.exists():
+        for node_env in NODES_DIR.glob("*.env"):
+            identities.add(node_env.stem)
+            for key in ("NODE_ID", "MASTER_HOST"):
+                value = load_env_file(node_env).get(key, "").strip()
+                if value:
+                    identities.add(value)
+    config_path = GATEWAY_DIR / "stargate.yaml"
+    if config_path.exists():
+        try:
+            raw = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        except Exception:
+            raw = {}
+        if isinstance(raw, dict):
+            federation = raw.get("federation", {})
+            if isinstance(federation, dict):
+                remotes = federation.get("remotes") or []
+                if isinstance(remotes, list):
+                    for remote in remotes:
+                        if not isinstance(remote, dict):
+                            continue
+                        sid = str(remote.get("stargate_id", "")).strip()
+                        if sid.startswith("relay-"):
+                            identities.add(sid.removeprefix("relay-"))
+                        url = str(remote.get("url", "")).strip()
+                        if url:
+                            from urllib.parse import urlparse
+
+                            host = urlparse(url).hostname
+                            if host:
+                                identities.add(host)
+    return {item.strip().lower() for item in identities if item.strip()}
+
+
+def is_cdp_ask_local_host(url_host: str) -> bool:
+    """True when manage on this host should use local uvicorn (not SSH-to-self)."""
+    host = url_host.strip().lower()
+    if not host:
+        return False
+    if host in _LOCALHOST_ALIASES:
+        return True
+    identities = _local_host_identities() | _node_registry_identities()
+    return host in identities
+
+
+def resolve_cdp_ask_remote_target(url_host: str) -> tuple[str, str, str] | None:
+    """Resolve ``(hostname, address, ssh_user)`` for remote cdp-ask SSH control."""
+    host = url_host.strip().lower()
+    if not host or is_cdp_ask_local_host(host):
+        return None
+
+    config_path = GATEWAY_DIR / "stargate.yaml"
+    remotes: list[dict[str, object]] = []
+    if config_path.exists():
+        try:
+            raw = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        except Exception:
+            raw = {}
+        if isinstance(raw, dict):
+            federation = raw.get("federation", {})
+            if isinstance(federation, dict):
+                remotes_raw = federation.get("remotes") or []
+                if isinstance(remotes_raw, list):
+                    remotes = [r for r in remotes_raw if isinstance(r, dict)]
+
+    for remote in remotes:
+        sid = str(remote.get("stargate_id", "")).strip()
+        hostname = sid.removeprefix("relay-") if sid.startswith("relay-") else sid
+        url = str(remote.get("url", "")).strip()
+        from urllib.parse import urlparse
+
+        address = (urlparse(url).hostname or "").strip()
+        candidates = {hostname.lower(), address.lower()}
+        if host not in candidates:
+            continue
+        node_env = NODES_DIR / f"{hostname}.env"
+        ssh_user = load_env_file(node_env).get("SSH_USER", "").strip()
+        if not ssh_user:
+            continue
+        return hostname, address or hostname, ssh_user
+
+    node_env = NODES_DIR / f"{host}.env"
+    if node_env.exists():
+        ssh_user = load_env_file(node_env).get("SSH_USER", "").strip()
+        if ssh_user:
+            return host, host, ssh_user
+    return None
 
 
 def is_cloud_proxy_configured() -> bool:

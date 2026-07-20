@@ -18,6 +18,12 @@ from universal_logging import get_logger
 from scripts.model_manager.observation_event import emit_fleet_relay_status
 
 from .operation_log import tee_with_summary
+from .restart_drain import HttpActiveWorkProbe
+from .service_config import (
+    cdp_ask_url_config,
+    is_cdp_ask_manage_enabled,
+    resolve_cdp_ask_remote_target,
+)
 from .topology import (
     deploy_remote,
     gateway_image_mismatch_warnings,
@@ -91,6 +97,7 @@ def _classify_result(msg: str) -> bool:
             "cortex api stopped",
             "agent bus started",
             "agent bus stopped",
+            "cdp-ask",
             "sidecar",
         )
     ):
@@ -106,6 +113,7 @@ def _classify_result(msg: str) -> bool:
             "already exited",
             "sigkill'd after",
             "rebuild_scheduled",
+            "skipped",
         )
     ):
         return True
@@ -309,4 +317,57 @@ async def deploy_single_remote(
     connected = await verify_relay_connection(hostname, sink=sink)
     if not connected:
         return hostname, False
+    await _maybe_restart_remote_cdp_ask(hostname, root=root, sink=sink)
     return hostname, True
+
+
+async def _maybe_restart_remote_cdp_ask(
+    hostname: str, *, root: Path, sink: FleetProgressSink
+) -> None:
+    """When cdp-ask is enabled for this remote, sync+restart after fleet deploy."""
+    if not is_cdp_ask_manage_enabled():
+        return
+    cfg = cdp_ask_url_config()
+    if cfg is None:
+        return
+    url_host, _port, _base = cfg
+    resolved = resolve_cdp_ask_remote_target(url_host)
+    if resolved is None:
+        return
+    remote_hostname, _address, _ssh_user = resolved
+    if remote_hostname != hostname:
+        return
+    _host, _port, base = cfg
+    try:
+        work = await HttpActiveWorkProbe(
+            base, "/v1/project-ask/active-work"
+        ).snapshot()
+    except Exception as exc:
+        sink.line(
+            hostname,
+            f"  ⚠ cdp_ask sync_restart deferred (active-work probe failed: {exc})",
+        )
+        return
+    if work.busy:
+        count = work.detail.get("running_count", 0)
+        sink.line(
+            hostname,
+            f"  ⚠ cdp_ask sync_restart deferred ({count} execution(s) in flight)",
+        )
+        ids = work.detail.get("execution_ids") or []
+        if ids:
+            preview = ", ".join(ids[:3])
+            suffix = "…" if len(ids) > 3 else ""
+            sink.line(hostname, f"    execution_ids: {preview}{suffix}")
+        return
+    from .service_ctl.cdp_ask_remote import sync_restart_cdp_ask_remote
+
+    try:
+        msg = await sync_restart_cdp_ask_remote(root)
+        ok = _classify_result(msg)
+        sink.line(hostname, f"  {'✓' if ok else '✗'} cdp_ask sync_restart")
+        if not ok:
+            sink.line(hostname, f"    {msg.splitlines()[0]}")
+    except Exception as exc:
+        logger.exception("cdp_ask fleet restart failed for %s", hostname)
+        sink.line(hostname, f"  ✗ cdp_ask sync_restart: {exc}")

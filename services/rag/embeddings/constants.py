@@ -4,7 +4,6 @@ from __future__ import annotations
 
 GATEWAY_URL = "http://localhost:9999"
 
-PROBE_INTERVAL_S = 2.0
 PROBE_TIMEOUT_S = 120.0
 
 EMBED_BATCH_SIZE = 16

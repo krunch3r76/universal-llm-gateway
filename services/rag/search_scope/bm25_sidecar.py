@@ -5,9 +5,12 @@ from __future__ import annotations
 from typing import Any
 
 import chromadb
+from universal_logging import get_logger
 
 from services.rag.fts_index import FtsIndex
 from services.rag.search_scope.prefix_filter import apply_source_prefix_filter_with_ids
+
+logger = get_logger(__name__)
 
 __all__ = ["apply_bm25_sidecar"]
 
@@ -39,7 +42,12 @@ def apply_bm25_sidecar(
             bm25_hits = fts.search_scoped(query, source_prefixes, limit=bm25_limit)
         else:
             bm25_hits = fts.search(query, limit=bm25_limit)
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            "BM25 sidecar search failed; returning dense-only results: %s",
+            exc,
+            exc_info=True,
+        )
         return ids, chunks, metadatas, distances, 0
 
     if not bm25_hits:
@@ -77,7 +85,12 @@ def apply_bm25_sidecar(
 
     try:
         fetched = collection.get(ids=bm25_only_ids, include=["documents", "metadatas"])
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            "BM25 sidecar Chroma fetch failed; returning partial merge: %s",
+            exc,
+            exc_info=True,
+        )
         return ids, chunks, metadatas, distances, bm25_hit_count
 
     fetched_ids: list[str] = fetched.get("ids") or []

@@ -185,7 +185,7 @@ class InitialReindexMixin:
         await asyncio.gather(*workers)
 
         file_total = reindexed_total + unchanged_total + error_total
-        logger.info(
+        logger.debug(
             "Initial watch reindex complete: path=%s files=%d reindexed=%d unchanged=%d errors=%d",
             watch_path,
             file_total,

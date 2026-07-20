@@ -196,6 +196,24 @@ def rag_watch_reconcile_complete(
 
 
 @event_factory
+def rag_watch_reconcile_failed(*, error: str) -> Event:
+    """Emitted when a reconciliation loop iteration fails unexpectedly."""
+    return Event(
+        signal="rag.watch.reconcile.failed",
+        payload={"error": error},
+    )
+
+
+@event_factory
+def rag_watch_reconcile_repair_failed(*, error: str, roots: list[str]) -> Event:
+    """Emitted when post-reconcile repair fails after a successful sweep."""
+    return Event(
+        signal="rag.watch.reconcile.repair.failed",
+        payload={"error": error, "roots": roots},
+    )
+
+
+@event_factory
 def rag_watchers_registered(*, count: int, paths: list[str]) -> Event:
     """Emitted when all inotify watchers are registered (fast path, before initial reindex)."""
     return Event(

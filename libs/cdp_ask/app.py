@@ -57,6 +57,11 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
         await registry_hygiene.stop()
         await execution_store.stop()
 
+    @app.get("/v1/project-ask/active-work")
+    async def active_work() -> dict[str, object]:
+        """Return in-flight executions so manage can defer restart mid-harvest."""
+        return await execution_store.active_work_snapshot()
+
     @app.get("/health", response_model=HealthResponse)
     async def health() -> HealthResponse:
         try:

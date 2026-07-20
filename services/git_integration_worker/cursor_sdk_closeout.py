@@ -90,6 +90,9 @@ class SdkRunOutcome:
     # can see a tool call the runtime truncates/rejects before it reaches
     # run.conversation(). Populated by observe_run_stream in the drive path.
     tool_calls: tuple[ToolCallObservation, ...] = ()
+    # Normalized from TurnEndedUpdate.usage (+ TokenDelta fallthrough when absent).
+    usage: dict[str, Any] | None = None
+    usage_capture_status: str = "missing"
 
 
 @dataclass(frozen=True)

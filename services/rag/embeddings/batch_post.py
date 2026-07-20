@@ -18,7 +18,7 @@ from services.rag.embeddings.constants import (
     REWARM_TIMEOUT_S,
     TRANSIENT_STATUS_CODES,
 )
-from services.rag.embeddings.errors import TransientEmbeddingError
+from services.rag.embeddings.errors import _BatchRetryError
 from services.rag.embeddings.model_id import max_batch_tokens_for_model
 from services.rag.embeddings.runtime import (
     cache_embed_dim,
@@ -30,6 +30,8 @@ from services.rag.embeddings.runtime import (
 )
 
 logger = get_logger(__name__)
+
+_pending_event_tasks: set[asyncio.Task[object]] = set()
 
 __all__ = ["post_embeddings"]
 
@@ -111,7 +113,7 @@ async def _handle_single_item_500(text: str, error_body: str) -> list[list[float
         model_id,
         error_body,
     )
-    raise TransientEmbeddingError(
+    raise _BatchRetryError(
         f"Embedding 500 on within-limits text (model={model_id}, text_len={len(text)})"
     )
 
@@ -134,7 +136,7 @@ def _fallback_to_zero_vector(text_len: int) -> list[list[float]] | None:
     )
     event_bus = get_event_bus()
     if event_bus is not None:
-        asyncio.create_task(
+        task = asyncio.create_task(
             event_bus.publish_nowait(
                 rag_embedding_chunk_fallback(
                     model=model_id,
@@ -143,6 +145,8 @@ def _fallback_to_zero_vector(text_len: int) -> list[list[float]] | None:
                 )
             )
         )
+        _pending_event_tasks.add(task)
+        task.add_done_callback(_pending_event_tasks.discard)
     return [[0.0] * embed_dim]
 
 
@@ -228,7 +232,7 @@ async def post_embeddings(batch: list[str]) -> list[list[float]]:
             result = parse_embedding_rows(response.json())
             cache_embed_dim(result)
             return result
-        except TransientEmbeddingError as exc:
+        except _BatchRetryError as exc:
             last_exc = exc
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code not in TRANSIENT_STATUS_CODES:
@@ -258,7 +262,7 @@ async def post_embeddings(batch: list[str]) -> list[list[float]]:
             delay,
         )
         await asyncio.sleep(delay)
-    if isinstance(last_exc, TransientEmbeddingError) and len(batch) == 1:
+    if isinstance(last_exc, _BatchRetryError) and len(batch) == 1:
         fallback = _fallback_to_zero_vector(len(batch[0]))
         if fallback is not None:
             return fallback

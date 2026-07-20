@@ -43,6 +43,7 @@ VALID_SERVICES = frozenset(
         "agent_bus",
         "git_integration_worker",
         "email_bridge",
+        "cdp_ask",
     }
 )
 REBUILD_SERVICES = frozenset(
@@ -66,6 +67,7 @@ SYNC_RESTART_SERVICES = frozenset(
         "agent_bus",
         "git_integration_worker",
         "event_service",
+        "cdp_ask",
     }
 )
 
@@ -351,6 +353,10 @@ async def _wait_healthy(svc: ServiceState, service: str, timeout: float) -> floa
         info = await asyncio.to_thread(_check_one, svc, service)
         if info.status == ServiceStatus.RUNNING:
             return time.monotonic() - t0
+        if info.status in (ServiceStatus.NOT_ENABLED, ServiceStatus.DISABLED):
+            raise TimeoutError(
+                f"'{service}' is {info.status.value}; wait_healthy not applicable"
+            )
         if time.monotonic() >= deadline:
             raise TimeoutError(
                 f"'{service}' not healthy after {timeout:.0f}s "
@@ -363,6 +369,8 @@ async def _start(ctl: ServiceController, service: str) -> str:
     """Call the appropriate ServiceController start method."""
     if service not in VALID_SERVICES:
         raise ValueError(f"Unknown service: '{service}'")
+    if service == "cdp_ask":
+        return await ctl.start_cdp_ask()
     return await getattr(ctl, f"start_{service}")()
 
 
@@ -381,6 +389,8 @@ async def _stop(ctl: ServiceController, service: str) -> str:
     """Call the appropriate ServiceController stop method."""
     if service not in VALID_SERVICES:
         raise ValueError(f"Unknown service: '{service}'")
+    if service == "cdp_ask":
+        return await ctl.stop_cdp_ask()
     return await getattr(ctl, f"stop_{service}")()
 
 
@@ -519,8 +529,11 @@ async def _sync_restart(ctl: ServiceController, service: str) -> str:
     Per-service strategy:
       gateway      → restart (libs/, services/, config/ are bind-mounted)
       mcp          → deferred via ``run_gated_deferred`` in ``execute`` (API path)
+      cdp_ask      → dedicated sync_restart (never coupled to mcp)
       stargate, rag, cloud_proxy, cortex_api, agent_bus, event_service → restart
     """
+    if service == "cdp_ask":
+        return await ctl.sync_restart_cdp_ask()
     stop_msg = await _stop(ctl, service)
     start_msg = await _start(ctl, service)
     msg = f"{stop_msg}\n{start_msg}"

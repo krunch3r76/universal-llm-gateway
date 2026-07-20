@@ -17,6 +17,10 @@ def _status_icon(status: ServiceStatus | BuildStatus) -> str:
             return "[red]○[/]"
         case ServiceStatus.UNHEALTHY | BuildStatus.FAILED:
             return "[yellow]◌[/]"
+        case ServiceStatus.NOT_ENABLED:
+            return "[dim]—[/]"
+        case ServiceStatus.DISABLED:
+            return "[blue]⊘[/]"
         case BuildStatus.BUILDING:
             return "[cyan]◎[/]"
         case _:

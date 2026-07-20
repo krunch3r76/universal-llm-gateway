@@ -2,12 +2,20 @@
 
 from __future__ import annotations
 
+import os
 import uuid
 from typing import Any
 
+from ..claim_batch_verify import verify_claim_batch as _verify_claim_batch_kernel
 from ..db import cortex_conn
 from ..digest_claim_proposals import build_claim_proposals
 from ..digest_dedup import enrich_claim_batch_dedup_candidates
+from ..digest_extract_backend import (
+    extract_backend,
+    extract_claims,
+    validate_digest_backend_config,
+)
+from ..digest_jobs import enqueue_extract, job_status, retry_job, tick_jobs
 from ..digest_ledger import (
     compute_entry_content_sha256,
     lookup,
@@ -19,10 +27,184 @@ from ..digest_ledger import (
 from ..digest_revision_pass import run_revision_pass
 from ..digest_segment import aggregate_auto_segment_digest
 from ..events_digest import digest_extract, digest_staged, digest_verify
-from ..digest_extract_backend import extract_claims
-from ..journal_digest_verify import verify_claim_batch
+from ..journal_digest_verify import (
+    _DIGEST_CONFIG,
+    _VERIFY_SYSTEM,
+    _build_journal_user_prompt,
+    _chat_completion,
+    _get_verify_model,
+    verify_claim_batch,
+)
 from ..models import StagingProposalCreate
 from ..routes.staging import create_staging_batch_on_conn
+
+
+def finish_claim_batch_for_job(job: dict[str, Any]) -> dict[str, Any]:
+    """Verify → stage → ledger for a parsed async job row."""
+    claim_batch = job.get("claims_json")
+    if not isinstance(claim_batch, dict):
+        return {"error": "missing_claims_json", "code": "digest_job_missing_claims"}
+
+    journal_entity_id = str(job["journal_entity_id"])
+    entry_anchor = str(job["entry_anchor"])
+    entry_text = str(job["entry_text"])
+    journal_uri = job.get("journal_uri")
+    content_sha = str(job["content_sha256"])
+    source_uri = journal_uri or f"cortex://journal/{journal_entity_id}"
+
+    with cortex_conn() as conn:
+        claim_batch = enrich_claim_batch_dedup_candidates(
+            conn,
+            claim_batch,
+            journal_uri=source_uri,
+            journal_entity_id=journal_entity_id,
+        )
+
+    verified = _verify_claim_batch_kernel(
+        entry_text,
+        claim_batch,
+        source_anchor=entry_anchor,
+        extract_model=f"anthropic/{job.get('model') or 'haiku-4.5'}",
+        verify_model=_get_verify_model(),
+        system_prompt=_VERIFY_SYSTEM,
+        complete=_chat_completion,
+        config=_DIGEST_CONFIG,
+        build_user_prompt=_build_journal_user_prompt,
+    )
+    if verified is None:
+        verify_model = os.environ.get("CORTEX_DIGEST_VERIFY_MODEL", "").strip()
+        if not verify_model:
+            return {"error": "verify_blocked", "code": "digest_verify_blocked"}
+        return {"error": "verify_failed", "code": "digest_verify_failed"}
+
+    digest_verify(
+        journal_entity_id=journal_entity_id,
+        entry_anchor=entry_anchor,
+        claim_count=len(verified.get("claims", [])),
+    )
+
+    proposals: list[StagingProposalCreate] = []
+    skipped_dedups: list[str] = []
+    flagged_indices: list[int] = []
+    staged_counts = {"entity": 0, "assertion": 0, "relationship": 0}
+
+    with cortex_conn() as conn:
+        for index, claim in enumerate(verified.get("claims", [])):
+            claim_proposals, skipped, flagged = build_claim_proposals(
+                conn,
+                claim=claim,
+                claim_index=index,
+                entry_anchor=entry_anchor,
+                journal_entity_id=journal_entity_id,
+                journal_uri=journal_uri,
+            )
+            proposals.extend(claim_proposals)
+            skipped_dedups.extend(skipped)
+            flagged_indices.extend(flagged)
+
+        staging_batch_id = str(uuid.uuid4())
+        emitted_ids: list[Any] = []
+        if proposals:
+            row_ids = create_staging_batch_on_conn(conn, proposals)
+            emitted_ids = row_ids
+            for proposal, row_id in zip(proposals, row_ids, strict=True):
+                staged_counts[proposal.proposal_type] = (
+                    staged_counts.get(proposal.proposal_type, 0) + 1
+                )
+
+        verify_verdicts = verified.get("verify_verdicts") or {}
+        ledger_id = ledger_write(
+            conn,
+            journal_entity_id=journal_entity_id,
+            entry_anchor=entry_anchor,
+            content_sha256=content_sha,
+            emitted_ids=emitted_ids,
+            staging_batch_id=staging_batch_id,
+            verify_verdicts=verify_verdicts,
+        )
+        conn.commit()
+
+    digest_staged(
+        journal_entity_id=journal_entity_id,
+        entry_anchor=entry_anchor,
+        status="staged",
+        ledger_id=ledger_id,
+        staging_batch_id=staging_batch_id,
+    )
+
+    return {
+        "status": "staged",
+        "ledger_id": ledger_id,
+        "staging_batch_id": staging_batch_id,
+        "verify_verdicts": verify_verdicts,
+        "claims_json": verified,
+        "emitted_ids": emitted_ids,
+        "staged_counts": staged_counts,
+        "flagged_claim_indices": sorted(set(flagged_indices)),
+        "skipped_dedups": skipped_dedups,
+    }
+
+
+def _digest_enqueue_phase1(
+    *,
+    journal_entity_id: str,
+    entry_anchor: str,
+    entry_text: str,
+    journal_uri: str | None = None,
+) -> dict[str, Any]:
+    """Phase 1: watermark lookup + enqueue-only for CDP backend."""
+    config_error = validate_digest_backend_config()
+    if config_error:
+        return {"error": config_error, "code": "digest_backend_config_invalid"}
+
+    content_sha = compute_entry_content_sha256(entry_text)
+    with cortex_conn() as conn:
+        prior = lookup(conn, journal_entity_id, entry_anchor, content_sha)
+        if prior is not None:
+            digest_staged(
+                journal_entity_id=journal_entity_id,
+                entry_anchor=entry_anchor,
+                status="skipped",
+                ledger_id=int(prior["id"]),
+            )
+            return {
+                "status": "skipped",
+                "reason": "watermark_match",
+                "journal_entity_id": journal_entity_id,
+                "entry_anchor": entry_anchor,
+                "content_sha256": content_sha,
+                "ledger_id": prior["id"],
+            }
+
+        latest = lookup_effective_watermark(conn, journal_entity_id, entry_anchor)
+        if latest is not None and latest["content_sha256"] != content_sha:
+            if extract_backend() == "cdp":
+                return enqueue_extract(
+                    journal_entity_id=journal_entity_id,
+                    entry_anchor=entry_anchor,
+                    entry_text=entry_text,
+                    journal_uri=journal_uri,
+                    kind="revision_extract",
+                )
+            digest_staged(
+                journal_entity_id=journal_entity_id,
+                entry_anchor=entry_anchor,
+                status="revision",
+                ledger_id=int(latest["id"]),
+            )
+            return run_revision_pass(
+                journal_entity_id=journal_entity_id,
+                entry_anchor=entry_anchor,
+                entry_text=entry_text,
+                journal_uri=journal_uri,
+            )
+
+    return enqueue_extract(
+        journal_entity_id=journal_entity_id,
+        entry_anchor=entry_anchor,
+        entry_text=entry_text,
+        journal_uri=journal_uri,
+    )
 
 
 def _digest_one(
@@ -176,9 +358,23 @@ def _op_digest(
     journal_uri: str | None = None,
     auto_segment: bool = False,
     entry_date: str | None = None,
+    action: str | None = None,
+    job_id: str | None = None,
+    tick_limit: int = 1,
     **_: object,
 ) -> dict[str, Any]:
     """Watermark → extract → verify → attach/map → dedup → stage → ledger."""
+    if action == "tick":
+        return tick_jobs(limit=max(1, int(tick_limit)))
+    if action == "status":
+        if not job_id:
+            return {"error": "job_id is required", "code": "missing_job_id"}
+        return job_status(str(job_id))
+    if action == "retry":
+        if not job_id:
+            return {"error": "job_id is required", "code": "missing_job_id"}
+        return retry_job(str(job_id))
+
     if not journal_entity_id:
         return {
             "error": "journal_entity_id is required",
@@ -193,6 +389,11 @@ def _op_digest(
                 "error": "entry_date is required when auto_segment is true",
                 "code": "missing_entry_date",
             }
+        if extract_backend() == "cdp":
+            return {
+                "error": "auto_segment with cdp backend is not supported in v0",
+                "code": "digest_cdp_auto_segment_unsupported",
+            }
         return aggregate_auto_segment_digest(
             _digest_one,
             journal_entity_id=journal_entity_id,
@@ -203,6 +404,16 @@ def _op_digest(
 
     if not entry_anchor:
         return {"error": "entry_anchor is required", "code": "missing_entry_anchor"}
+
+    if action == "enqueue" or extract_backend() == "cdp":
+        if not entry_anchor:
+            return {"error": "entry_anchor is required", "code": "missing_entry_anchor"}
+        return _digest_enqueue_phase1(
+            journal_entity_id=journal_entity_id,
+            entry_anchor=entry_anchor,
+            entry_text=entry_text,
+            journal_uri=journal_uri,
+        )
 
     return _digest_one(
         journal_entity_id=journal_entity_id,

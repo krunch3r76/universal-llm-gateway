@@ -179,7 +179,7 @@ def rag_file_indexing_failure_retry_requested(
     indicates whether the watcher accepted the reindex admission — useful for
     distinguishing operator intent from actual scheduling outcome."""
     return Event(
-        signal="rag.file.indexing.failure.retry.requested",
+        signal="rag.file.indexing.retry.requested",
         role="coordination",
         payload={"file": file, "scheduled": scheduled},
     )

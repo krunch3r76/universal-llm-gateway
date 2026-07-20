@@ -33,6 +33,20 @@ trigger_match_terms:
 
 **CDP vs manual push:** Pre-advice WHEN bind: `claude-ai-cdp-navigation_ws.mdc` (alwaysApply). This rule owns **turn-close** reminder gating only — suppress reminder when CDP/`project-ask` already prompted the same thread (row above), even if `team_dispatch` still carries `push_reminder`.
 
+## Lead ordering invariant (a25444)
+
+For any open web-anthropic leg that will use CDP on the **same** coordination thread:
+
+1. Stage cortex corpus + sealed prompt
+2. **`project_ask(op=submit, …)` MUST complete before assistant turn close** (after answer-3 preflight + **required** bus pointer on arc coordination legs)
+3. Only then may the turn close without push reminder
+
+**Falsifier (regression):** push reminder emitted **and** CDP `project_ask` submit succeeded on the same thread in the same leg → friction a25444 class.
+
+**Root cause (5403):** `team_dispatch` handoff returned `push_reminder` before CDP submit; seat echoed reminder at turn close. Gradual `/overhaul` steps 4 (deep) and 11 must **not** default to handoff path — use CDP per `overhaul.md` + `/review-arch-doc` default.
+
+**When manual reminder is legitimate:** open web thread + web expected next actor + **no** CDP submit on that thread (CDP-down with operator-chosen legacy `web-claude` fallback only).
+
 ## Reminder format (when gate passes)
 
 > **Action needed — push to web claude**: reply posted to thread {ID} turn {N}. Push the agent-bus message to trigger web claude's turn.

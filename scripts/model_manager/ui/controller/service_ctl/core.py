@@ -33,16 +33,21 @@ from ..service_config import (
     GATEWAY_DIR,
     NODES_DIR,
     build_service_env,
+    cdp_ask_manage_state,
+    cdp_ask_url_config,
     ensure_bind_mount_dirs,
     ensure_node_env,
     ensure_socket_dir,
     ensure_stargate_config,
+    is_cdp_ask_local_host,
     load_env_file,
 )
 from ..shutdown_gate import ManageShutdownGate
 from ..sidecar_ctl import SidecarController
 from . import (
     agent_bus_service,
+    cdp_ask_remote,
+    cdp_ask_service,
     cloud_proxy_service,
     cortex_api_service,
     event_service,
@@ -721,6 +726,61 @@ class ServiceController:
         """Rebuild git-integration-worker — host process, so rebuild = restart."""
         await self.stop_git_integration_worker()
         return await self.start_git_integration_worker()
+
+    def _cdp_ask_lifecycle_noop(self, action: str) -> str | None:
+        state = cdp_ask_manage_state()
+        if state == "not_enabled":
+            return f"cdp-ask {action} skipped (PROJECT_ASK_URL unset)."
+        if state == "disabled":
+            return f"cdp-ask {action} skipped (manage lifecycle disabled)."
+        return None
+
+    def _cdp_ask_runs_local(self) -> bool:
+        cfg = cdp_ask_url_config()
+        if cfg is None:
+            return True
+        host, _port, _base = cfg
+        return is_cdp_ask_local_host(host)
+
+    async def start_cdp_ask(self) -> str:
+        """Start cdp-ask locally or on the remote CDP host."""
+        noop = self._cdp_ask_lifecycle_noop("start")
+        if noop is not None:
+            return noop
+        if self._cdp_ask_runs_local():
+            return await cdp_ask_service.start_cdp_ask(
+                self._service_state, self._root, self._kill_and_wait
+            )
+        return await cdp_ask_remote.start_cdp_ask_remote(self._root)
+
+    async def stop_cdp_ask(self) -> str:
+        """Stop cdp-ask locally or on the remote CDP host."""
+        noop = self._cdp_ask_lifecycle_noop("stop")
+        if noop is not None:
+            return noop
+        if self._cdp_ask_runs_local():
+            return await cdp_ask_service.stop_cdp_ask(
+                self._service_state, self._root, self._kill_and_wait
+            )
+        return await cdp_ask_remote.stop_cdp_ask_remote(self._root)
+
+    async def restart_cdp_ask(self) -> str:
+        """Restart cdp-ask (stop then start)."""
+        noop = self._cdp_ask_lifecycle_noop("restart")
+        if noop is not None:
+            return noop
+        await self.stop_cdp_ask()
+        return await self.start_cdp_ask()
+
+    async def sync_restart_cdp_ask(self) -> str:
+        """Sync cdp-ask source and restart the satellite process."""
+        noop = self._cdp_ask_lifecycle_noop("sync_restart")
+        if noop is not None:
+            return noop
+        if self._cdp_ask_runs_local():
+            await self.stop_cdp_ask()
+            return await self.start_cdp_ask()
+        return await cdp_ask_remote.sync_restart_cdp_ask_remote(self._root)
 
     async def start_email_bridge(self) -> str:
         """Start email-bridge as host subprocess."""
