@@ -97,6 +97,10 @@ class SdkRunOutcome:
     usage_capture_status: str = "missing"
     sdk_request_id: str | None = None
     request_id_source: str | None = None
+    # Local-bridge join keys when platform requestId is not on the wire (0.1.9:
+    # request_id lives on SDKRequestMessage / CursorSDKError only — not RunResult).
+    sdk_run_id: str | None = None
+    sdk_agent_id: str | None = None
     degraded_reasons: tuple[str, ...] = ()
     sdk_git: dict[str, Any] | None = None
     stream_only_deviations: tuple[str, ...] = ()
@@ -389,8 +393,8 @@ def merge_degraded_reasons(
 def degraded_reasons_from_exception(exc: BaseException) -> tuple[str, ...]:
     """Map SDK/bridge failures to ``degraded_reasons[]`` tokens (A sidecar §A4)."""
     from cursor_sdk.errors import (
-        APITimeoutError,
         AgentBusyError,
+        APITimeoutError,
         AuthenticationError,
         CursorSDKError,
         NotFoundError,

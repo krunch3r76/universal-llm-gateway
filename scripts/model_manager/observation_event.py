@@ -404,3 +404,53 @@ async def emit_manage_digest_tick_error(*, reason: str) -> None:
 async def emit_manage_digest_tick_completed(*, count: int, status: str) -> None:
     """Tick advanced at least one job."""
     await _emit("manage.digest.tick.completed", {"count": count, "status": status})
+
+
+async def emit_manage_charter_tick_started() -> None:
+    """Charter-runner tick started with manage lifecycle."""
+    await _emit("manage.charter.tick.started", {})
+
+
+async def emit_manage_charter_tick_stopped() -> None:
+    """Charter-runner tick stopped with manage lifecycle."""
+    await _emit("manage.charter.tick.stopped", {})
+
+
+async def emit_manage_charter_tick_scanned(*, roots: int, admitted: int) -> None:
+    """One scan pass over enrolled roots completed."""
+    await _emit("manage.charter.tick.scanned", {"roots": roots, "admitted": admitted})
+
+
+async def emit_manage_charter_tick_admitted(
+    *, root: str, dispatch_id: str, worker_thread: str
+) -> None:
+    """A fresh windowed cursor-sdk continuation was admitted for a root."""
+    await _emit(
+        "manage.charter.tick.admitted",
+        {"root": root, "dispatch_id": dispatch_id, "worker_thread": worker_thread},
+    )
+
+
+async def emit_manage_charter_tick_window_failed(*, root: str, reason: str) -> None:
+    """A window failed/stalled; root is stopped pending human re-arm (no auto-retry)."""
+    await _emit("manage.charter.tick.window_failed", {"root": root, "reason": reason})
+
+
+async def emit_manage_charter_tick_waiting_open(*, root: str, age_s: int) -> None:
+    """Attended handoff still waiting for operator to open the IDE thread."""
+    await _emit(
+        "manage.charter.tick.waiting_open", {"root": root, "age_s": age_s}
+    )
+
+
+async def emit_manage_charter_tick_error(*, reason: str) -> None:
+    """Non-fatal charter tick failure; loop continues."""
+    await _emit("manage.charter.tick.error", {"reason": reason})
+
+
+async def emit_manage_charter_tick_reloaded(*, modules: list[str]) -> None:
+    """Charter-runner modules reloaded in-process; tick loop restarted."""
+    await _emit(
+        "manage.charter.tick.reloaded",
+        {"modules": modules, "count": len(modules)},
+    )

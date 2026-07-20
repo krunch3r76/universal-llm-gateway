@@ -60,6 +60,8 @@ def FrontierSdkWorkerCompleted(  # noqa: N802
     request_id: str | None = None,
     sdk_request_id: str | None = None,
     request_id_source: str | None = None,
+    sdk_run_id: str | None = None,
+    sdk_agent_id: str | None = None,
     degraded_reasons: list[str] | None = None,
 ) -> Event:
     payload: dict[str, Any] = {
@@ -82,6 +84,10 @@ def FrontierSdkWorkerCompleted(  # noqa: N802
         payload["sdk_request_id"] = sdk_request_id
     if request_id_source is not None:
         payload["request_id_source"] = request_id_source
+    if sdk_run_id is not None:
+        payload["sdk_run_id"] = sdk_run_id
+    if sdk_agent_id is not None:
+        payload["sdk_agent_id"] = sdk_agent_id
     if degraded_reasons is not None:
         payload["degraded_reasons"] = degraded_reasons
     return Event(
@@ -212,6 +218,8 @@ def emit_sdk_worker_completed(
     request_id: str | None = None,
     sdk_request_id: str | None = None,
     request_id_source: str | None = None,
+    sdk_run_id: str | None = None,
+    sdk_agent_id: str | None = None,
     degraded_reasons: list[str] | None = None,
 ) -> None:
     _emit(
@@ -230,6 +238,8 @@ def emit_sdk_worker_completed(
             request_id=request_id,
             sdk_request_id=sdk_request_id,
             request_id_source=request_id_source,
+            sdk_run_id=sdk_run_id,
+            sdk_agent_id=sdk_agent_id,
             degraded_reasons=degraded_reasons,
         )
     )
@@ -237,7 +247,7 @@ def emit_sdk_worker_completed(
         "cursor sdk worker completed: dispatch_id=%s thread_id=%s duration_s=%.3f "
         "tool_call_count=%s result_bytes=%s outcome=%s resolved_model=%s "
         "usage_capture_status=%s usage=%s request_id=%s sdk_request_id=%s "
-        "request_id_source=%s degraded_reasons=%s",
+        "request_id_source=%s sdk_run_id=%s sdk_agent_id=%s degraded_reasons=%s",
         dispatch_id,
         thread_id,
         duration_s,
@@ -250,6 +260,8 @@ def emit_sdk_worker_completed(
         request_id,
         sdk_request_id,
         request_id_source,
+        sdk_run_id,
+        sdk_agent_id,
         degraded_reasons,
     )
 

@@ -57,6 +57,8 @@ _VALID_OPERATIONS = frozenset(
         "delivery-audit-token-rollup",
         "delivery-audit-baseline-campaign",
         "delivery-audit-selfassess",
+        "dispatch-economics-token-rollup",
+        "dispatch-economics-dollar-equivalents",
         "operations",
         "raw_sql",
     }
@@ -175,6 +177,10 @@ def register_event_tools(mcp: FastMCP) -> None:
           delivery-audit-baseline-campaign (campaign_id)
                                                       — p50/p95 baseline campaign report
           delivery-audit-selfassess (campaign_id)     — §6 rubric self-assessment report
+          dispatch-economics-token-rollup (since_ts?, until_ts?, minutes?, seat_substrate?, dispatch_id?, execution_id?, request_id?)
+                                                      — cross-substrate seat token rollup
+          dispatch-economics-dollar-equivalents (since_ts?, until_ts?, minutes?, seat_substrate?, dispatch_id?, execution_id?, request_id?)
+                                                      — G2 rollup + cost_usd / cost_source join
           operations           ()                    — list all available operations
           raw_sql              (sql, params?, limit?) — raw SQL SELECT query
 

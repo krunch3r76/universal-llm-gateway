@@ -41,9 +41,11 @@ __all__ = [
     "ToolCallObservation",
     "UsageCaptureStatus",
     "aggregate_stream_usage",
+    "finalize_request_id_capture",
     "finalize_stream_capture_usage",
     "normalize_usage_map",
     "observe_run_stream",
+    "request_id_from_sdk_error",
 ]
 
 logger = get_logger(__name__)
@@ -322,6 +324,32 @@ def observe_run_stream(
         usage_total_derived=derived,
         sdk_request_id=sdk_request_id,
         request_id_source=request_id_source,
+    )
+
+
+def finalize_request_id_capture(
+    capture: StreamCapture,
+    *,
+    run: Any = None,
+    result: Any = None,
+) -> StreamCapture:
+    """Apply post-wait Run/RunResult request_id when stream capture missed it."""
+    if capture.sdk_request_id:
+        return capture
+    request_id = None
+    if result is not None:
+        request_id = getattr(result, "request_id", None)
+    if not request_id and run is not None:
+        request_id = getattr(run, "request_id", None)
+    if not request_id:
+        return capture
+    return StreamCapture(
+        tool_calls=capture.tool_calls,
+        usage=capture.usage,
+        usage_capture_status=capture.usage_capture_status,
+        usage_total_derived=capture.usage_total_derived,
+        sdk_request_id=str(request_id),
+        request_id_source="post_wait",
     )
 
 

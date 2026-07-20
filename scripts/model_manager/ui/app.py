@@ -21,6 +21,7 @@ from universal_event_bus import EventBus, MinimalEventDebugBroadcaster
 from scripts.model_manager.ensure_venv import find_workspace_root
 
 from .api_server import ManageAPIServer, ManageSocketBusyError
+from .controller.charter_runner import CharterRunnerTickLoop
 from .controller.digest_tick_loop import DigestTickLoop
 from .controller.onboarding import OnboardingController
 from .controller.service_config import (
@@ -132,6 +133,7 @@ class ModelManagerApp(App):
         self._broadcaster: MinimalEventDebugBroadcaster | None = None
         self._api_server: ManageAPIServer | None = None
         self._digest_tick_loop: DigestTickLoop | None = None
+        self._charter_tick_loop: CharterRunnerTickLoop | None = None
 
     @property
     def catalog(self) -> CatalogState:
@@ -216,6 +218,60 @@ class ModelManagerApp(App):
                 timeout=15,
             )
 
+        try:
+            self._charter_tick_loop = CharterRunnerTickLoop(
+                service_state=self._service_controller.service_state,
+                shutdown_gate=self._service_controller.shutdown_gate,
+                workspace_root=self._workspace_root,
+                on_admit=lambda msg: self.notify(msg, timeout=45),
+            )
+            await self._charter_tick_loop.start()
+            self._service_controller.set_charter_tick_reload(self.reload_charter_tick)
+        except Exception as e:
+            logger.exception("Failed to start charter runner tick loop: %s", e)
+            self._charter_tick_loop = None
+            self.notify(
+                f"charter runner tick loop unavailable: {e}",
+                severity="warning",
+                timeout=15,
+            )
+
+    async def reload_charter_tick(self) -> dict:
+        """Reload charter-runner modules in-process and restart the tick loop.
+
+        Prefer this over quitting ``./manage`` when only charter-runner code
+        changed. Wired to manage.sock method ``charter_reload``.
+        """
+        from scripts.model_manager import observation_event as events
+        from scripts.model_manager.ui.controller.charter_runner.reload import (
+            charter_runner_loop_class,
+            reload_charter_runner_modules,
+        )
+
+        if self._charter_tick_loop is not None:
+            try:
+                await self._charter_tick_loop.stop()
+            except Exception as e:
+                logger.exception("Error stopping charter tick before reload: %s", e)
+            self._charter_tick_loop = None
+
+        reloaded = reload_charter_runner_modules()
+        loop_cls = charter_runner_loop_class()
+        self._charter_tick_loop = loop_cls(
+            service_state=self._service_controller.service_state,
+            shutdown_gate=self._service_controller.shutdown_gate,
+            workspace_root=self._workspace_root,
+            on_admit=lambda msg: self.notify(msg, timeout=45),
+        )
+        await self._charter_tick_loop.start()
+        self._service_controller.set_charter_tick_reload(self.reload_charter_tick)
+        await events.emit_manage_charter_tick_reloaded(modules=reloaded)
+        self.notify(
+            f"charter tick reloaded ({len(reloaded)} modules)",
+            timeout=15,
+        )
+        return {"status": "ok", "reloaded_modules": reloaded, "count": len(reloaded)}
+
     async def _retry_api_server(self) -> None:
         """Retry binding manage.sock after a startup failure.
 
@@ -259,6 +315,12 @@ class ModelManagerApp(App):
             except Exception as e:
                 logger.exception("Error stopping digest tick loop: %s", e)
             self._digest_tick_loop = None
+        if self._charter_tick_loop is not None:
+            try:
+                await self._charter_tick_loop.stop()
+            except Exception as e:
+                logger.exception("Error stopping charter runner tick loop: %s", e)
+            self._charter_tick_loop = None
         if self._api_server is not None:
             try:
                 await self._api_server.stop()

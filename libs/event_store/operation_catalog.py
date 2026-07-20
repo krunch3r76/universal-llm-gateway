@@ -290,6 +290,46 @@ _register(
 
 _register(
     OperationDef(
+        name="dispatch-economics-token-rollup",
+        description=(
+            "Cross-substrate dispatch token rollup from sdk, snapshot, pipeline, "
+            "and CDP-unavailable stubs with join_audit metrics"
+        ),
+        params={
+            "since_ts": {"type": "int"},
+            "until_ts": {"type": "int"},
+            "minutes": {"type": "int"},
+            "seat_substrate": {"type": "string"},
+            "dispatch_id": {"type": "string"},
+            "execution_id": {"type": "string"},
+            "request_id": {"type": "string"},
+        },
+        returns="rows, summary, join_audit",
+    )
+)
+
+_register(
+    OperationDef(
+        name="dispatch-economics-dollar-equivalents",
+        description=(
+            "G2 token rollup joined with dollar equivalents from authoritative wire "
+            "spend or model rate table (rate x prompt/completion tokens only)"
+        ),
+        params={
+            "since_ts": {"type": "int"},
+            "until_ts": {"type": "int"},
+            "minutes": {"type": "int"},
+            "seat_substrate": {"type": "string"},
+            "dispatch_id": {"type": "string"},
+            "execution_id": {"type": "string"},
+            "request_id": {"type": "string"},
+        },
+        returns="rows (+ cost_usd, cost_source), summary, join_audit, pricing_audit",
+    )
+)
+
+_register(
+    OperationDef(
         name="frontier.densify.review.outcome",
         description=(
             "Densify review outcome events with finding-delta / rubber-stamp "

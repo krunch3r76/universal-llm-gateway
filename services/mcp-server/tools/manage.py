@@ -2,8 +2,8 @@
 
 Connects to /tmp/universal-protocol/manage.sock (JSON-RPC 2.0 over UDS).
 Exposes status, health, start, stop, restart, sync_restart, rebuild,
-wait_healthy, and busy_status for gateway-managed services. Single entry
-point reduces agent context overhead.
+wait_healthy, busy_status, and charter_reload for gateway-managed services.
+Single entry point reduces agent context overhead.
 """
 
 from __future__ import annotations
@@ -36,6 +36,7 @@ _VALID_ACTIONS = frozenset(
         "rebuild",
         "wait_healthy",
         "busy_status",
+        "charter_reload",
     }
 )
 
@@ -255,6 +256,9 @@ def register_manage_tools(mcp: FastMCP) -> None:
                                              retry_after_s, elapsed_s}. Reads the
                                              drain probes WITHOUT acquiring any
                                              restart slot — safe to poll live.
+          charter_reload (no service needed) — in-process reload of charter-runner
+                                             modules + restart tick loop (no TUI quit).
+                                             Prefer after charter-runner code edits.
 
         Services: gateway, stargate, rag, cloud_proxy, mcp, event_service,
                   cortex_api, agent_bus, email_bridge, git_integration_worker

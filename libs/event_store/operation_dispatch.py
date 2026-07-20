@@ -11,6 +11,8 @@ from typing import Any
 
 from universal_logging import get_logger
 
+from .dispatch_economics_pricing import dispatch_economics_dollar_equivalents
+from .dispatch_economics_rollup import dispatch_economics_token_rollup
 from .operation_catalog import get_operation
 from .operation_types import OperationCallable
 from .operations_delivery_audit import (
@@ -70,6 +72,8 @@ _DISPATCH: dict[str, OperationCallable] = {
     "delivery-audit-token-rollup": _delivery_audit_token_rollup,
     "delivery-audit-baseline-campaign": _delivery_audit_baseline_campaign,
     "delivery-audit-selfassess": _delivery_audit_selfassess,
+    "dispatch-economics-token-rollup": dispatch_economics_token_rollup,
+    "dispatch-economics-dollar-equivalents": dispatch_economics_dollar_equivalents,
     "frontier.densify.review.admitted": _densify_review_admitted,
     "frontier.densify.review.outcome": _densify_review_outcome,
 }

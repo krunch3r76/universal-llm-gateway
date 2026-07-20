@@ -5,7 +5,11 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+from universal_logging import get_logger
+
 from ..service_config import cdp_ask_url_config, resolve_cdp_ask_remote_target
+
+logger = get_logger(__name__)
 
 _SERVICE_NAME = "cdp-ask"
 # Shared NFS checkout on Jupiter (preferred over ~/universal-llm-gateway copy).
@@ -16,6 +20,8 @@ _CDP_ASK_PATHS = (
     "scripts/cdp-ask",
     "services/cdp-ask/",
 )
+# Bound remote lifecycle SSH so a stuck session cannot pin fleet_deploy forever.
+_SSH_TIMEOUT_S = 30.0
 
 
 def _ssh_target() -> tuple[str, str] | None:
@@ -39,14 +45,33 @@ async def _run_ssh(command: str) -> tuple[int, str]:
         "ssh",
         "-o",
         "BatchMode=yes",
+        "-o",
+        "ConnectTimeout=10",
+        "-o",
+        "ServerAliveInterval=5",
+        "-o",
+        "ServerAliveCountMax=2",
         ssh_target,
         command,
         stdin=asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
     )
-    out = await proc.communicate()
-    text = out[0].decode(errors="replace") if out[0] else ""
+    try:
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=_SSH_TIMEOUT_S)
+    except TimeoutError:
+        logger.warning(
+            "%s remote ssh timed out after %.0fs; killing local ssh",
+            _SERVICE_NAME,
+            _SSH_TIMEOUT_S,
+        )
+        proc.kill()
+        try:
+            await proc.communicate()
+        except Exception:  # noqa: BLE001 — best-effort reap after kill
+            pass
+        return 1, f"{_SERVICE_NAME} remote ssh timed out after {_SSH_TIMEOUT_S:.0f}s."
+    text = out.decode(errors="replace") if out else ""
     return proc.returncode or 0, text.strip()
 
 
@@ -56,16 +81,23 @@ def _port() -> int:
 
 
 async def start_cdp_ask_remote(root: Path) -> str:  # noqa: ARG001
-    """Start cdp-ask on the remote CDP host from the shared NFS checkout."""
+    """Start cdp-ask on the remote CDP host from the shared NFS checkout.
+
+    Use ``;`` (not ``&&``) before the background ``&`` so only the daemon line is
+    backgrounded. ``A && nohup … & echo`` parses as ``(A && nohup …) & echo``, which
+    leaves SSH waiting on the daemon for the session lifetime and pins fleet_deploy.
+    ``setsid`` + closed stdin fully detaches from the SSH session.
+    """
     port = _port()
     cmd = (
-        f"mkdir -p /tmp/logs/cdp-ask ~/.gateway && "
-        f"REPO={_REMOTE_REPO} && "
-        f"test -f \"$REPO/scripts/cdp-ask\" && "
-        f"nohup env CORTEX_FILES_ROOT={_REMOTE_FILES_ROOT} "
-        f"\"$HOME/.venvs/universal/bin/python\" \"$REPO/scripts/cdp-ask\" "
-        f"--port {port} >/tmp/logs/cdp-ask/remote-start.log 2>&1 & "
-        f"echo $! > ~/.gateway/cdp-ask.pid && echo started"
+        "mkdir -p /tmp/logs/cdp-ask ~/.gateway; "
+        f"REPO={_REMOTE_REPO}; "
+        'test -f "$REPO/scripts/cdp-ask" || exit 1; '
+        f"setsid env CORTEX_FILES_ROOT={_REMOTE_FILES_ROOT} "
+        "\"$HOME/.venvs/universal/bin/python\" \"$REPO/scripts/cdp-ask\" "
+        f"--port {port} </dev/null >/tmp/logs/cdp-ask/remote-start.log 2>&1 & "
+        "echo $! > ~/.gateway/cdp-ask.pid; "
+        "echo started"
     )
     code, text = await _run_ssh(cmd)
     if code == 0:
@@ -107,7 +139,9 @@ async def sync_restart_cdp_ask_remote(root: Path) -> str:
         return f"{_SERVICE_NAME} remote target could not be resolved."
     _ssh_user_host, address = target
 
-    nfs_code, nfs_text = await _run_ssh(f"test -f {_REMOTE_REPO}/scripts/cdp-ask && echo nfs_ok")
+    nfs_code, nfs_text = await _run_ssh(
+        f"test -f {_REMOTE_REPO}/scripts/cdp-ask && echo nfs_ok"
+    )
     if nfs_code == 0 and "nfs_ok" in nfs_text:
         restart_msg = await restart_cdp_ask_remote(root)
         return f"{_SERVICE_NAME} restarted on {address} (shared NFS).\n{restart_msg}"
@@ -129,15 +163,26 @@ async def sync_restart_cdp_ask_remote(root: Path) -> str:
             "-az",
             "--delete",
             "-e",
-            "ssh -o BatchMode=yes",
+            "ssh -o BatchMode=yes -o ConnectTimeout=10",
             src_arg,
             dest,
             stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
-        out = await proc.communicate()
-        text = out[0].decode(errors="replace") if out[0] else ""
+        try:
+            out, _ = await asyncio.wait_for(proc.communicate(), timeout=_SSH_TIMEOUT_S)
+        except TimeoutError:
+            proc.kill()
+            try:
+                await proc.communicate()
+            except Exception:  # noqa: BLE001 — best-effort reap after kill
+                pass
+            return (
+                f"{_SERVICE_NAME} remote rsync timed out for {rel} "
+                f"after {_SSH_TIMEOUT_S:.0f}s."
+            )
+        text = out.decode(errors="replace") if out else ""
         if proc.returncode != 0:
             return (
                 f"{_SERVICE_NAME} remote rsync failed for {rel} "

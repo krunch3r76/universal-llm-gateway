@@ -142,6 +142,22 @@ class ServiceController:
         # Process-level quit guard — tracks in-flight manage.sock JSON-RPC and
         # long-running TUI activities so ./manage cannot exit mid-operation.
         self._shutdown_gate = ManageShutdownGate()
+        # Optional hook: ManageApp registers in-process charter tick reload.
+        self._charter_tick_reload = None
+
+    def set_charter_tick_reload(self, hook) -> None:
+        """Register async ``() -> dict`` that reloads charter-runner in-process."""
+        self._charter_tick_reload = hook
+
+    async def reload_charter_tick(self) -> dict:
+        """Invoke the registered charter-tick reload hook (manage.sock)."""
+        hook = self._charter_tick_reload
+        if hook is None:
+            raise ValueError(
+                "charter_reload not registered — ./manage TUI must be running "
+                "with a boot that wires set_charter_tick_reload"
+            )
+        return await hook()
 
     @property
     def root(self) -> Path:

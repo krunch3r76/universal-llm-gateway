@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
+from event_store.model_rate_table import upsert_catalog_models
 from llm_adapters.capability_dispatch import CatalogMissError, resolve, to_wire_dict
 
 from .adapters.base import ProviderAdapter
@@ -249,6 +250,12 @@ class CatalogManager:
             base_url=config.base_url,
             api_key=config.api_key,
             adapter_type=adapter.adapter_type,
+        )
+        ingest_counts = upsert_catalog_models(models)
+        logger.info(
+            "Rate table ingest for provider '%s': %s",
+            config.provider,
+            ingest_counts,
         )
         if self._on_provider_catalog_refreshed is not None:
             await self._on_provider_catalog_refreshed(config.provider, len(models))

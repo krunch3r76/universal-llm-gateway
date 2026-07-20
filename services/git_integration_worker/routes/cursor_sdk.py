@@ -72,7 +72,6 @@ from services.git_integration_worker.cursor_sdk_closeout import (
     read_post_wait_snapshot,
     resolve_completion_outcome,
     resolve_run_outcome_label,
-    sdk_fs_git_mismatch_reason,
     stream_only_effect_deviations,
 )
 from services.git_integration_worker.cursor_sdk_closeout_trigger import (
@@ -104,6 +103,11 @@ from services.git_integration_worker.cursor_sdk_events import (
     emit_write_lease_promoted,
     emit_write_lease_released,
 )
+from services.git_integration_worker.cursor_sdk_feature_probe import (
+    LOCAL_BRIDGE_PATH_LABEL,
+    git_probe_degraded_reasons,
+    probe_run_git_info,
+)
 from services.git_integration_worker.cursor_sdk_gate import (
     acquire_sdk_dispatch_slot,
     force_release_sdk_dispatch_slot,
@@ -115,6 +119,12 @@ from services.git_integration_worker.cursor_sdk_light_bounded_capture import (
     fs_write_landed,
     light_bounded_deliverable_present,
 )
+from services.git_integration_worker.cursor_sdk_manifest import (
+    build_effects_manifest,
+    classify_mcp_capture_branch,
+    merge_artifact_paths,
+    merge_stream_tool_calls,
+)
 from services.git_integration_worker.cursor_sdk_orphan import (
     abort_orphaned_bridge,
     clear_dispatch_orphan_state,
@@ -122,18 +132,13 @@ from services.git_integration_worker.cursor_sdk_orphan import (
     mark_dispatch_orphaned,
     register_active_client,
 )
-from services.git_integration_worker.cursor_sdk_manifest import (
-    build_effects_manifest,
-    classify_mcp_capture_branch,
-    merge_artifact_paths,
-    merge_stream_tool_calls,
-)
 from services.git_integration_worker.cursor_sdk_packet import (
     extract_source_ref_from_packet,
     infer_contract_from_text,
     resolve_prompt_preamble,
 )
 from services.git_integration_worker.cursor_sdk_stream_capture import (
+    finalize_request_id_capture,
     finalize_stream_capture_usage,
     observe_run_stream,
     request_id_from_sdk_error,
@@ -629,6 +634,10 @@ def _run_sdk_sync(
                 stream_capture = finalize_stream_capture_usage(
                     stream_capture, run=run, result=result
                 )
+                assert run is not None and result is not None
+                stream_capture = finalize_request_id_capture(
+                    stream_capture, run=run, result=result
+                )
                 post_wait = read_post_wait_snapshot(
                     run=run,
                     agent=agent,
@@ -672,12 +681,15 @@ def _run_sdk_sync(
                     )
                 sdk_request_id = stream_capture.sdk_request_id
                 request_id_source = stream_capture.request_id_source or "absent"
-                git_mismatch = sdk_fs_git_mismatch_reason(
-                    post_wait.sdk_git, source_repo
+                git_probe = probe_run_git_info(
+                    path_label=LOCAL_BRIDGE_PATH_LABEL,
+                    result=result,
                 )
-                extra_reasons: tuple[str, ...] = ()
-                if git_mismatch:
-                    extra_reasons = (git_mismatch,)
+                extra_reasons = git_probe_degraded_reasons(
+                    probe=git_probe,
+                    sdk_git=post_wait.sdk_git,
+                    source_repo=source_repo,
+                )
                 stream_deviations = stream_only_effect_deviations(
                     stream_tool_calls=stream_capture.tool_calls,
                     conversation_tool_call_count=conversation_tool_call_count,
@@ -694,6 +706,10 @@ def _run_sdk_sync(
                     usage_capture_status=stream_capture.usage_capture_status,
                     sdk_request_id=sdk_request_id,
                     request_id_source=request_id_source,
+                    sdk_run_id=getattr(run, "id", None) or getattr(result, "id", None),
+                    sdk_agent_id=(
+                        getattr(agent, "id", None) or getattr(result, "agent_id", None)
+                    ),
                     degraded_reasons=extra_reasons,
                     sdk_git=post_wait.sdk_git,
                     stream_only_deviations=stream_deviations,
@@ -985,6 +1001,18 @@ async def _deliver_sdk_closeout(
         # model_knobs_requested: admit-time knobs from CursorDispatchRequest, also
         # persisted in cursor_sdk_dispatches.record_json at admit; req threads them
         # through the drive path to emit (no ledger re-read required).
+        # Missing SDK requestId is an observability gap (R F-1), not a crash.
+        # Emit with request_id_source=absent + degrade token so fleet join stays
+        # diagnosable without aborting an otherwise successful closeout.
+        if outcome.sdk_request_id is None:
+            if "sdk_request_id_absent" not in completed_reasons:
+                completed_reasons.append("sdk_request_id_absent")
+            logger.warning(
+                "cursor sdk completed without sdk_request_id: dispatch_id=%s "
+                "request_id_source=%s",
+                req.dispatch_id,
+                outcome.request_id_source or "absent",
+            )
         emit_sdk_worker_completed(
             dispatch_id=req.dispatch_id,
             thread_id=req.thread_id,
@@ -1002,6 +1030,8 @@ async def _deliver_sdk_closeout(
             request_id=envelope_request_id,
             sdk_request_id=outcome.sdk_request_id,
             request_id_source=outcome.request_id_source or "absent",
+            sdk_run_id=outcome.sdk_run_id,
+            sdk_agent_id=outcome.sdk_agent_id,
             degraded_reasons=completed_reasons,
         )
         turn_number = extract_turn_number(bus_result.body)
@@ -1062,6 +1092,8 @@ async def _deliver_sdk_closeout(
         request_id=envelope_request_id,
         sdk_request_id=outcome.sdk_request_id,
         request_id_source=outcome.request_id_source or "absent",
+        sdk_run_id=outcome.sdk_run_id,
+        sdk_agent_id=outcome.sdk_agent_id,
         degraded_reasons=completed_reasons,
     )
     await _terminate_link(bus, thread_id=req.thread_id, terminal_status="failed")

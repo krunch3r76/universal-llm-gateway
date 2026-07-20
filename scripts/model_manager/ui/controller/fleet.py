@@ -127,19 +127,23 @@ class FleetOrchestrator:
             else:
                 await self._run_restart_path(scope, stopped_ok, failures)
         finally:
+            # Emit/clear may await; clear activity in an inner finally so a cancel
+            # or hung emit cannot leave fleet_deploy pinned on the quit drain.
             elapsed = time.monotonic() - t0
-            await emit_fleet_operation_completed(
-                operation=operation,
-                build=build,
-                success=not failures,
-                duration_s=elapsed,
-                failures=failures,
-            )
-            await clear_fleet_windows(
-                ctl.restart_intent_store,
-                reason="fleet.operation.completed",
-            )
-            ctl.shutdown_gate.set_activity("fleet_deploy", False)
+            try:
+                await emit_fleet_operation_completed(
+                    operation=operation,
+                    build=build,
+                    success=not failures,
+                    duration_s=elapsed,
+                    failures=failures,
+                )
+                await clear_fleet_windows(
+                    ctl.restart_intent_store,
+                    reason="fleet.operation.completed",
+                )
+            finally:
+                ctl.shutdown_gate.set_activity("fleet_deploy", False)
 
         return FleetResult(
             operation=operation,

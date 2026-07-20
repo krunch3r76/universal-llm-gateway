@@ -216,6 +216,10 @@ async def execute(
         case "busy_status":
             return await _busy_status(ctl)
 
+        case "charter_reload":
+            # In-process charter-runner module reload + tick restart (no TUI quit).
+            return await ctl.reload_charter_tick()
+
         case "fleet_sync_restart":
             return await _fleet(ctl, build=False, scope=str(params.get("scope", "all")))
 
@@ -226,8 +230,8 @@ async def execute(
             raise ValueError(
                 f"Unknown method: '{method}'. "
                 "Valid: status, health, wait_healthy, start, stop, restart, "
-                "sync_restart, rebuild, busy_status, fleet_sync_restart, "
-                "fleet_rebuild_deploy"
+                "sync_restart, rebuild, busy_status, charter_reload, "
+                "fleet_sync_restart, fleet_rebuild_deploy"
             )
 
 
