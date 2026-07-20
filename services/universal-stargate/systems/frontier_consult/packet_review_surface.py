@@ -129,6 +129,21 @@ def _has_durable_deliverable_and_halt(packet_text: str) -> bool:
     return any(marker in lowered for marker in _HALT_MARKERS)
 
 
+def packet_has_production_files_expected(packet_text: str | None) -> bool:
+    """True when files_expected includes a production ship path under services/libs."""
+    if not packet_text or not packet_text.strip():
+        return False
+    paths = _collect_files_expected_paths(packet_text)
+    return any(_is_production_ship_path(path) for path in paths)
+
+
+def has_durable_deliverable_and_halt(packet_text: str | None) -> bool:
+    """True when acceptance sections cite a durable URI and explicit HALT markers."""
+    if not packet_text or not packet_text.strip():
+        return False
+    return _has_durable_deliverable_and_halt(packet_text)
+
+
 def classify_review_surface(packet_text: str) -> ReviewSurface:
     """Classify packet acceptance surface for generate-lane AC observer rubric."""
     if not packet_text or not packet_text.strip():

@@ -1,3 +1,10 @@
+"""
+Request-queue runtime: enqueue, dequeue, process, and complete routing work.
+
+Owns the asyncio PriorityQueue, processing map, and metrics. Emits optional
+REQUEST_QUEUED / REQUEST_TIMEOUT events; re-queues when no gateway is ready.
+"""
+
 import asyncio
 import time
 from typing import Any
@@ -8,7 +15,7 @@ from .types import QueuedRequest
 
 
 class RequestQueueRuntime:
-    """Runtime request-path operations (enqueue/dequeue/process)."""
+    """Enqueue/dequeue/process path for Federated gateway assignment Futures."""
 
     def __init__(
         self,

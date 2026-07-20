@@ -1,8 +1,15 @@
+"""
+Request-queue maintenance mixin: shutdown drain and cancel in-flight work.
+
+Discards queued PriorityQueue items and fails processing Futures with
+CancelledError so waiters do not hang across service stop.
+"""
+
 import asyncio
 
 
 class RequestQueueMaintenance:
-    """Non-critical maintenance operations (shutdown)."""
+    """Shutdown drain: empty the queue and cancel in-flight request Futures."""
 
     async def shutdown(self) -> None:
         """Discard all queued requests on shutdown."""

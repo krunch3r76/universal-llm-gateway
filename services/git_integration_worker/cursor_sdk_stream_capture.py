@@ -73,6 +73,9 @@ class StreamCapture:
     usage_capture_status: UsageCaptureStatus = "missing"
     # True when stream total was recomputed (not wire) — used only by finalize.
     usage_total_derived: bool = False
+    # First stream SDKRequestMessage.request_id (pin: not on RunResult).
+    sdk_request_id: str | None = None
+    request_id_source: str | None = None
 
     @property
     def tool_call_count(self) -> int:
@@ -232,6 +235,7 @@ def observe_run_stream(
     emitted: dict[str, ToolCallObservation] = {}
     turn_usages: list[Mapping[str, Any] | None] = []
     token_delta_sum = [0]
+    captured_request: list[tuple[str, str]] = []
 
     def _emit(call_id: str, message: Any) -> None:
         observation = _observation_from_message(message)
@@ -273,7 +277,11 @@ def observe_run_stream(
                     )
                 sdk_message = getattr(event, "sdk_message", None)
                 if sdk_message is not None:
-                    if getattr(sdk_message, "type", "") == "usage":
+                    if getattr(sdk_message, "type", "") == "request":
+                        request_id = getattr(sdk_message, "request_id", None)
+                        if request_id and not captured_request:
+                            captured_request.append((str(request_id), "stream"))
+                    elif getattr(sdk_message, "type", "") == "usage":
                         _record_usage_message(
                             sdk_message,
                             turn_usages=turn_usages,
@@ -305,11 +313,15 @@ def observe_run_stream(
         token_delta_sum=token_delta_sum[0],
     )
     derived = bool(usage and usage.get(TOTAL_DERIVED_KEY))
+    sdk_request_id = captured_request[0][0] if captured_request else None
+    request_id_source = captured_request[0][1] if captured_request else None
     return StreamCapture(
         tool_calls=tuple(emitted[call_id] for call_id in latest),
         usage=public_usage(usage),
         usage_capture_status=usage_capture_status,
         usage_total_derived=derived,
+        sdk_request_id=sdk_request_id,
+        request_id_source=request_id_source,
     )
 
 
@@ -334,4 +346,14 @@ def finalize_stream_capture_usage(
         usage=usage,
         usage_capture_status=status,
         usage_total_derived=False,
+        sdk_request_id=capture.sdk_request_id,
+        request_id_source=capture.request_id_source,
     )
+
+
+def request_id_from_sdk_error(exc: BaseException) -> tuple[str | None, str | None]:
+    """Fallback request_id from CursorSDKError when stream capture missed it."""
+    request_id = getattr(exc, "request_id", None)
+    if request_id:
+        return str(request_id), "error"
+    return None, None

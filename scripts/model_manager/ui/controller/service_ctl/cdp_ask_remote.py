@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from pathlib import Path
 
 from ..service_config import cdp_ask_url_config, resolve_cdp_ask_remote_target
 
 _SERVICE_NAME = "cdp-ask"
+# Shared NFS checkout on Jupiter (preferred over ~/universal-llm-gateway copy).
+_REMOTE_REPO = "/mnt/torus/projects/universal-llm-gateway"
+_REMOTE_FILES_ROOT = "/mnt/torus/mcp-data/files"
 _CDP_ASK_PATHS = (
     "libs/cdp_ask/",
     "scripts/cdp-ask",
@@ -48,52 +50,40 @@ async def _run_ssh(command: str) -> tuple[int, str]:
     return proc.returncode or 0, text.strip()
 
 
-def _manage_rpc(action: str) -> str:
-    payload = (
-        json.dumps(
-            {
-                "jsonrpc": "2.0",
-                "method": action,
-                "params": {"service": "cdp_ask"},
-                "id": 1,
-            }
-        )
-        + "\n"
-    )
-    return (
-        "python3 - <<'PY'\n"
-        "import json, socket\n"
-        "from transport_utils import MANAGE_SOCKET\n"
-        f"req = {payload!r}\n"
-        "s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)\n"
-        "s.connect(MANAGE_SOCKET)\n"
-        "s.sendall(req.encode())\n"
-        "resp = s.recv(65536).decode()\n"
-        "print(resp.strip())\n"
-        "data = json.loads(resp)\n"
-        "raise SystemExit(0 if 'error' not in data else 1)\n"
-        "PY"
-    )
+def _port() -> int:
+    cfg = cdp_ask_url_config()
+    return cfg[1] if cfg else 8770
 
 
 async def start_cdp_ask_remote(root: Path) -> str:  # noqa: ARG001
-    """Start cdp-ask on the remote CDP host via manage.sock, script fallback."""
-    code, text = await _run_ssh(
-        "cd ~/universal-llm-gateway && "
-        f"({_manage_rpc('start')} "
-        "|| (test -x scripts/cdp-ask && ./scripts/cdp-ask --port 8770 >/tmp/logs/cdp-ask/remote-start.log 2>&1 & echo started))"
+    """Start cdp-ask on the remote CDP host from the shared NFS checkout."""
+    port = _port()
+    cmd = (
+        f"mkdir -p /tmp/logs/cdp-ask ~/.gateway && "
+        f"REPO={_REMOTE_REPO} && "
+        f"test -f \"$REPO/scripts/cdp-ask\" && "
+        f"nohup env CORTEX_FILES_ROOT={_REMOTE_FILES_ROOT} "
+        f"\"$HOME/.venvs/universal/bin/python\" \"$REPO/scripts/cdp-ask\" "
+        f"--port {port} >/tmp/logs/cdp-ask/remote-start.log 2>&1 & "
+        f"echo $! > ~/.gateway/cdp-ask.pid && echo started"
     )
+    code, text = await _run_ssh(cmd)
     if code == 0:
         return f"{_SERVICE_NAME} remote start ok.\n{text}"
     return f"{_SERVICE_NAME} remote start failed.\n{text}"
 
 
 async def stop_cdp_ask_remote(root: Path) -> str:  # noqa: ARG001
-    code, text = await _run_ssh(
-        "cd ~/universal-llm-gateway && "
-        f"({_manage_rpc('stop')} "
-        "|| (test -f ~/.gateway/cdp-ask.pid && kill $(cat ~/.gateway/cdp-ask.pid) && rm -f ~/.gateway/cdp-ask.pid && echo stopped))"
+    port = _port()
+    cmd = (
+        "if test -f ~/.gateway/cdp-ask.pid; then "
+        "kill $(cat ~/.gateway/cdp-ask.pid) 2>/dev/null || true; "
+        "rm -f ~/.gateway/cdp-ask.pid; "
+        "fi; "
+        f"fuser -k {port}/tcp 2>/dev/null || true; "
+        "echo stopped"
     )
+    code, text = await _run_ssh(cmd)
     if code == 0:
         return f"{_SERVICE_NAME} remote stop ok.\n{text}"
     return f"{_SERVICE_NAME} remote stop failed.\n{text}"
@@ -101,31 +91,57 @@ async def stop_cdp_ask_remote(root: Path) -> str:  # noqa: ARG001
 
 async def restart_cdp_ask_remote(root: Path) -> str:
     stop_msg = await stop_cdp_ask_remote(root)
+    await asyncio.sleep(1.0)
     start_msg = await start_cdp_ask_remote(root)
     return f"{stop_msg}\n{start_msg}"
 
 
 async def sync_restart_cdp_ask_remote(root: Path) -> str:
+    """Restart remote cdp-ask.
+
+    Prefer shared NFS checkout (no rsync). Fall back to per-path rsync into
+    ``~/universal-llm-gateway`` only when the NFS repo is absent remotely.
+    """
     target = _ssh_target()
     if target is None:
         return f"{_SERVICE_NAME} remote target could not be resolved."
-    ssh_target, address = target
-    dest = f"{ssh_target}:~/universal-llm-gateway/"
-    rsync_args = ["rsync", "-az", "--delete"]
+    _ssh_user_host, address = target
+
+    nfs_code, nfs_text = await _run_ssh(f"test -f {_REMOTE_REPO}/scripts/cdp-ask && echo nfs_ok")
+    if nfs_code == 0 and "nfs_ok" in nfs_text:
+        restart_msg = await restart_cdp_ask_remote(root)
+        return f"{_SERVICE_NAME} restarted on {address} (shared NFS).\n{restart_msg}"
+
+    # Non-NFS fallback: rsync into home checkout then restart (home path).
+    ssh_target, _ = target
     for rel in _CDP_ASK_PATHS:
-        rsync_args.append(str(root / rel))
-        rsync_args.append(f"{dest}{rel.rstrip('/')}/")
-    proc = await asyncio.create_subprocess_exec(
-        *rsync_args,
-        stdin=asyncio.subprocess.DEVNULL,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
-    )
-    out = await proc.communicate()
-    rsync_text = out[0].decode(errors="replace") if out[0] else ""
-    if proc.returncode != 0:
-        return f"{_SERVICE_NAME} remote rsync failed (exit {proc.returncode}).\n{rsync_text}"
+        src = root / rel
+        if not src.exists():
+            continue
+        if src.is_file():
+            src_arg = str(src)
+            dest = f"{ssh_target}:~/universal-llm-gateway/{rel}"
+        else:
+            src_arg = f"{str(src).rstrip('/')}/"
+            dest = f"{ssh_target}:~/universal-llm-gateway/{rel.rstrip('/')}/"
+        proc = await asyncio.create_subprocess_exec(
+            "rsync",
+            "-az",
+            "--delete",
+            "-e",
+            "ssh -o BatchMode=yes",
+            src_arg,
+            dest,
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        out = await proc.communicate()
+        text = out[0].decode(errors="replace") if out[0] else ""
+        if proc.returncode != 0:
+            return (
+                f"{_SERVICE_NAME} remote rsync failed for {rel} "
+                f"(exit {proc.returncode}).\n{text}"
+            )
     restart_msg = await restart_cdp_ask_remote(root)
-    return (
-        f"{_SERVICE_NAME} synced to {address}.\n{rsync_text}\n{restart_msg}".strip()
-    )
+    return f"{_SERVICE_NAME} synced+restarted on {address}.\n{restart_msg}"

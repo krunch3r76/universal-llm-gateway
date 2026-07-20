@@ -1,4 +1,8 @@
-"""Shared types: data classes, error types, protocol, constants."""
+"""
+Shared CapacityPool types: dataclasses, errors, protocol, and constants.
+
+Defines CapacityToken, QueueFullError, and related structures used by mixins.
+"""
 
 from __future__ import annotations
 

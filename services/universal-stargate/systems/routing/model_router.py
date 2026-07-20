@@ -423,13 +423,13 @@ class ModelRouter:
             )
             return False
 
-        return await execute_eviction_plan(
+        return (await execute_eviction_plan(
             forwarder=self._forwarder,
             federated_gateway=selected.ref,
             eviction_plan=eviction_plan,
             gateway_name=selected.name,
             event_bus=self._event_bus,
-        )
+        )).ok
 
     # -------------------------------------------------------------------------
     # Main Entry Point

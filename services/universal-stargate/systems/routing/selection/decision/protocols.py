@@ -1,7 +1,8 @@
 """
-Protocols for routing decision dependencies.
+Protocols for routing decision dependencies (duck-typed trackers).
 
-Using Protocol allows duck typing while maintaining type safety.
+Typing.Protocol surfaces for in-flight routing keys and related deps so
+eviction planning stays type-safe without importing concrete Master trackers.
 """
 
 from typing import Protocol

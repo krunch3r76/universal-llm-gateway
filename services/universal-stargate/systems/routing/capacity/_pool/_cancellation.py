@@ -1,4 +1,8 @@
-"""Mixin: request cancellation, waiter removal, and leaked-slot recovery."""
+"""
+CapacityPool mixin: request cancellation, waiter removal, leaked-slot recovery.
+
+Cleans waiters when requests cancel and decrements slots that would otherwise leak.
+"""
 
 from __future__ import annotations
 

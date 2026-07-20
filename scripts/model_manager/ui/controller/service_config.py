@@ -739,41 +739,25 @@ def _local_host_identities() -> set[str]:
     return {item.strip().lower() for item in identities if item.strip()}
 
 
-def _node_registry_identities() -> set[str]:
-    """Host aliases from ``~/.gateway/nodes/*.env`` and federation remotes."""
-    identities: set[str] = set()
-    if NODES_DIR.exists():
-        for node_env in NODES_DIR.glob("*.env"):
-            identities.add(node_env.stem)
-            for key in ("NODE_ID", "MASTER_HOST"):
-                value = load_env_file(node_env).get(key, "").strip()
-                if value:
-                    identities.add(value)
-    config_path = GATEWAY_DIR / "stargate.yaml"
-    if config_path.exists():
-        try:
-            raw = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
-        except Exception:
-            raw = {}
-        if isinstance(raw, dict):
-            federation = raw.get("federation", {})
-            if isinstance(federation, dict):
-                remotes = federation.get("remotes") or []
-                if isinstance(remotes, list):
-                    for remote in remotes:
-                        if not isinstance(remote, dict):
-                            continue
-                        sid = str(remote.get("stargate_id", "")).strip()
-                        if sid.startswith("relay-"):
-                            identities.add(sid.removeprefix("relay-"))
-                        url = str(remote.get("url", "")).strip()
-                        if url:
-                            from urllib.parse import urlparse
+def _this_host_node_aliases() -> set[str]:
+    """NODE_ID / env-stem aliases that describe *this* machine only.
 
-                            host = urlparse(url).hostname
-                            if host:
-                                identities.add(host)
-    return {item.strip().lower() for item in identities if item.strip()}
+    Fleet-wide ``nodes/*.env`` and federation remotes must NOT count as local —
+    otherwise master ``io`` treats URL host ``jupiter`` as local and never SSH-
+    deploys (F-1 regression).
+    """
+    local = _local_host_identities()
+    aliases: set[str] = set()
+    if not NODES_DIR.exists():
+        return aliases
+    for node_env in NODES_DIR.glob("*.env"):
+        data = load_env_file(node_env)
+        stem = node_env.stem.strip().lower()
+        node_id = (data.get("NODE_ID", "") or stem).strip().lower()
+        if stem in local or node_id in local:
+            aliases.add(stem)
+            aliases.add(node_id)
+    return {item for item in aliases if item}
 
 
 def is_cdp_ask_local_host(url_host: str) -> bool:
@@ -783,7 +767,7 @@ def is_cdp_ask_local_host(url_host: str) -> bool:
         return False
     if host in _LOCALHOST_ALIASES:
         return True
-    identities = _local_host_identities() | _node_registry_identities()
+    identities = _local_host_identities() | _this_host_node_aliases()
     return host in identities
 
 

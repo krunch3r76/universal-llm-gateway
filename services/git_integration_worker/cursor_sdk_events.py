@@ -57,6 +57,10 @@ def FrontierSdkWorkerCompleted(  # noqa: N802
     model_knobs_requested: dict[str, str] | None = None,
     usage: dict[str, Any] | None = None,
     usage_capture_status: str = "missing",
+    request_id: str | None = None,
+    sdk_request_id: str | None = None,
+    request_id_source: str | None = None,
+    degraded_reasons: list[str] | None = None,
 ) -> Event:
     payload: dict[str, Any] = {
         "dispatch_id": dispatch_id,
@@ -72,6 +76,14 @@ def FrontierSdkWorkerCompleted(  # noqa: N802
     }
     if model_knobs_requested is not None:
         payload["model_knobs_requested"] = model_knobs_requested
+    if request_id is not None:
+        payload["request_id"] = request_id
+    if sdk_request_id is not None:
+        payload["sdk_request_id"] = sdk_request_id
+    if request_id_source is not None:
+        payload["request_id_source"] = request_id_source
+    if degraded_reasons is not None:
+        payload["degraded_reasons"] = degraded_reasons
     return Event(
         signal="frontier.sdk.worker.completed",
         payload=payload,
@@ -197,6 +209,10 @@ def emit_sdk_worker_completed(
     model_knobs_requested: dict[str, str] | None = None,
     usage: dict[str, Any] | None = None,
     usage_capture_status: str = "missing",
+    request_id: str | None = None,
+    sdk_request_id: str | None = None,
+    request_id_source: str | None = None,
+    degraded_reasons: list[str] | None = None,
 ) -> None:
     _emit(
         FrontierSdkWorkerCompleted(
@@ -211,12 +227,17 @@ def emit_sdk_worker_completed(
             model_knobs_requested=model_knobs_requested,
             usage=usage,
             usage_capture_status=usage_capture_status,
+            request_id=request_id,
+            sdk_request_id=sdk_request_id,
+            request_id_source=request_id_source,
+            degraded_reasons=degraded_reasons,
         )
     )
     logger.info(
         "cursor sdk worker completed: dispatch_id=%s thread_id=%s duration_s=%.3f "
         "tool_call_count=%s result_bytes=%s outcome=%s resolved_model=%s "
-        "usage_capture_status=%s usage=%s",
+        "usage_capture_status=%s usage=%s request_id=%s sdk_request_id=%s "
+        "request_id_source=%s degraded_reasons=%s",
         dispatch_id,
         thread_id,
         duration_s,
@@ -226,6 +247,10 @@ def emit_sdk_worker_completed(
         resolved_model,
         usage_capture_status,
         usage,
+        request_id,
+        sdk_request_id,
+        request_id_source,
+        degraded_reasons,
     )
 
 

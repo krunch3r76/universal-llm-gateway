@@ -1,4 +1,8 @@
-"""Mixin: capacity bookkeeping — set/remove slots, reconcile, query availability."""
+"""
+CapacityPool mixin: set/remove slots, reconcile counts, query availability.
+
+Owns the slot maps and availability helpers used by acquisition and release.
+"""
 
 from __future__ import annotations
 

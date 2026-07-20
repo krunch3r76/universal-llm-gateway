@@ -200,7 +200,7 @@ async def execute_master_eviction(
 
     ok = False
     try:
-        ok = await execute_eviction_plan(
+        outcome = await execute_eviction_plan(
             forwarder=federation_forwarder,
             federated_gateway=selected_gateway.ref,
             eviction_plan=eviction_plan,
@@ -208,6 +208,7 @@ async def execute_master_eviction(
             request_id=request_id,
             event_bus=event_bus,
         )
+        ok = outcome.ok
     finally:
         if federated_manager is not None and marked_transitioning and not ok:
             for model_id in marked_transitioning:

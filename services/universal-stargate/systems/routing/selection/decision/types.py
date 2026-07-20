@@ -1,7 +1,8 @@
 """
-Decision engine types: candidates, traces, results.
+Decision engine types: candidates, traces, results, and feasibility tiers.
 
-Immutable types for routing decisions with full observability.
+Immutable dataclasses and enums for routing decisions with full observability
+(constraint failures, score components, eviction plan summaries).
 """
 
 from __future__ import annotations
@@ -20,9 +21,10 @@ if TYPE_CHECKING:
 
 class FeasibilityTier(IntEnum):
     """
-    Gateway feasibility classification.
+    Gateway feasibility classification for resource/catalog fitness.
 
-    T0 < T1 < T2 in preference order (lower is worse).
+    T0 < T1 < T2 in preference order (lower is worse). Concurrency slot
+    exhaustion is CapacityPool admission, not a feasibility tier.
     """
 
     T0_INFEASIBLE = 0  # Cannot serve model (unhealthy, incompatible, etc.)

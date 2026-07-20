@@ -72,10 +72,13 @@ async def prepare_cursor_sdk_generate(
     max_tool_turns: int | None = None,
     execution_id: str | None = None,
     dispatch_id: str | None = None,
+    source_ref: str | None = None,
+    dispatch_lane: str | None = None,
 ) -> PreparedCursorSdkHandle:
     """Validate, mint/reuse IDs, create pending thread; do not POST the worker."""
     from .light_bounded_ac_observer import (
         prepare_lb_auto_review_for_generate,
+        stamp_lb_review_spawn_fields,
         validate_generate_contract_packet_rules,
     )
 
@@ -85,6 +88,16 @@ async def prepare_cursor_sdk_generate(
             auto_review_child=auto_review_child,
             packet_path=packet_path,
             message_text=message_text,
+        )
+    )
+    review_surface, resolved_dispatch_lane, suppress_review_spawn = (
+        stamp_lb_review_spawn_fields(
+            contract=contract,
+            early_packet_text=early_packet_text,
+            dispatch_lane=dispatch_lane,
+            source_ref=source_ref,
+            dispatch_thread_id=dispatch_thread_id,
+            request_id=request_id,
         )
     )
 
@@ -274,6 +287,9 @@ async def prepare_cursor_sdk_generate(
         resolved_model=resolved_model,
         parent_dispatch_thread_id=parent_dispatch_thread_id,
         dispatch_thread_id=dispatch_thread_id,
+        review_surface=review_surface,
+        dispatch_lane=resolved_dispatch_lane,
+        suppress_review_spawn=suppress_review_spawn,
     )
 
     if claimed_via_atomic:

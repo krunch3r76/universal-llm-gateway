@@ -1,4 +1,4 @@
-"""D7 admission-time execution context + D4 review-child spawn state (stargate-local)."""
+"""D7 admission-time execution context + D4 review-child spawn state."""
 
 from __future__ import annotations
 
@@ -26,6 +26,9 @@ CREATE TABLE IF NOT EXISTS generate_admission_context (
     parent_dispatch_thread_id TEXT,
     dispatch_thread_id        TEXT,
     spawn_template_provenance TEXT,
+    review_surface            TEXT,
+    dispatch_lane             TEXT,
+    suppress_review_spawn     INTEGER,
     created_at                TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_generate_admission_context_created
@@ -57,11 +60,31 @@ def _db_path() -> Path:
     return data_dir / "stargate-generate-admission.db"
 
 
+_MIGRATION_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("review_surface", "TEXT"),
+    ("dispatch_lane", "TEXT"),
+    ("suppress_review_spawn", "INTEGER"),
+)
+
+
+def _ensure_migration_columns(conn: sqlite3.Connection) -> None:
+    existing = {
+        row[1]
+        for row in conn.execute("PRAGMA table_info(generate_admission_context)")
+    }
+    for name, col_type in _MIGRATION_COLUMNS:
+        if name not in existing:
+            conn.execute(
+                f"ALTER TABLE generate_admission_context ADD COLUMN {name} {col_type}"
+            )
+
+
 def _connect() -> sqlite3.Connection:
     conn = sqlite3.connect(_db_path(), timeout=5.0)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.executescript(_DDL)
+    _ensure_migration_columns(conn)
     return conn
 
 
@@ -75,7 +98,10 @@ class AdmissionContext:
     parent_dispatch_thread_id: str | None
     dispatch_thread_id: str | None
     spawn_template_provenance: SpawnProvenance | None
-    created_at: str
+    review_surface: str | None = None
+    dispatch_lane: str | None = None
+    suppress_review_spawn: bool = False
+    created_at: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,6 +127,9 @@ def write_admission_context(
     parent_dispatch_thread_id: str | None,
     dispatch_thread_id: str | None,
     spawn_template_provenance: SpawnProvenance | None = None,
+    review_surface: str | None = None,
+    dispatch_lane: str | None = None,
+    suppress_review_spawn: bool = False,
 ) -> None:
     conn = _connect()
     try:
@@ -108,7 +137,8 @@ def write_admission_context(
             "INSERT OR REPLACE INTO generate_admission_context "
             "(execution_id, auto_review_child, op, role, resolved_model, "
             "parent_dispatch_thread_id, dispatch_thread_id, spawn_template_provenance, "
-            "created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "review_surface, dispatch_lane, suppress_review_spawn, "
+            "created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 execution_id,
                 int(auto_review_child),
@@ -118,6 +148,9 @@ def write_admission_context(
                 parent_dispatch_thread_id,
                 dispatch_thread_id,
                 spawn_template_provenance,
+                review_surface,
+                dispatch_lane,
+                int(suppress_review_spawn),
                 _now(),
             ),
         )
@@ -132,6 +165,7 @@ def read_admission_context(execution_id: str) -> AdmissionContext | None:
         row = conn.execute(
             "SELECT execution_id, auto_review_child, op, role, resolved_model, "
             "parent_dispatch_thread_id, dispatch_thread_id, spawn_template_provenance, "
+            "review_surface, dispatch_lane, suppress_review_spawn, "
             "created_at FROM generate_admission_context WHERE execution_id=?",
             (execution_id,),
         ).fetchone()
@@ -140,6 +174,7 @@ def read_admission_context(execution_id: str) -> AdmissionContext | None:
     if row is None:
         return None
     provenance = row["spawn_template_provenance"]
+    suppress_raw = row["suppress_review_spawn"]
     return AdmissionContext(
         execution_id=row["execution_id"],
         auto_review_child=bool(row["auto_review_child"]),
@@ -149,6 +184,9 @@ def read_admission_context(execution_id: str) -> AdmissionContext | None:
         parent_dispatch_thread_id=row["parent_dispatch_thread_id"],
         dispatch_thread_id=row["dispatch_thread_id"],
         spawn_template_provenance=provenance if provenance else None,
+        review_surface=row["review_surface"],
+        dispatch_lane=row["dispatch_lane"],
+        suppress_review_spawn=bool(suppress_raw) if suppress_raw is not None else False,
         created_at=row["created_at"],
     )
 

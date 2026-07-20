@@ -1,12 +1,24 @@
 """
 Model eviction module for resource management.
 
-Exports:
-    - unload_models: Force unload models from gateway
+Exports typed eviction execution helpers for federated unload paths.
 """
 
-from .planner import unload_models
+from .event_waiter import EvictionWaiter, UnloadResult
+from .executor import (
+    EvictionInflightRegistry,
+    EvictionOutcome,
+    EvictionStatus,
+    execute_eviction_plan,
+    get_eviction_plan_for_gateway,
+)
 
 __all__ = [
-    "unload_models",
+    "EvictionInflightRegistry",
+    "EvictionOutcome",
+    "EvictionStatus",
+    "EvictionWaiter",
+    "UnloadResult",
+    "execute_eviction_plan",
+    "get_eviction_plan_for_gateway",
 ]

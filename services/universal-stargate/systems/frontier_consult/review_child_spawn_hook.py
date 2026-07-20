@@ -113,6 +113,8 @@ def should_spawn_review_child(ctx: AdmissionContext) -> bool:
         return False
     if not ctx.auto_review_child:
         return False
+    if ctx.suppress_review_spawn:
+        return False
     if is_review_child_execution(ctx):
         return False
     return True

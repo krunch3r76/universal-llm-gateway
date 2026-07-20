@@ -1,5 +1,8 @@
 """
 Model availability and loading checks for feasibility evaluation.
+
+Helpers for catalog membership and resident-model detection used by early
+feasibility gates before resource / eviction planning runs.
 """
 
 from typing import TYPE_CHECKING

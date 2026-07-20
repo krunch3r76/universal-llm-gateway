@@ -1,4 +1,8 @@
-"""Mixin: admission pause / resume (starvation-relief preemption primitive)."""
+"""
+CapacityPool mixin: admission pause / resume for starvation-relief preemption.
+
+When paused, new acquires wait; resume unblocks the FIFO waiter dispatch path.
+"""
 
 from __future__ import annotations
 

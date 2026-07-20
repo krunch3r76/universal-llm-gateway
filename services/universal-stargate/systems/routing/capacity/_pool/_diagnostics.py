@@ -1,4 +1,8 @@
-"""Mixin: diagnostic queries (admission state snapshot, full pool snapshot)."""
+"""
+CapacityPool mixin: diagnostic queries for admission and full pool snapshots.
+
+Read-only observability helpers for operators and tests inspecting pool state.
+"""
 
 from __future__ import annotations
 

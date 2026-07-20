@@ -1,5 +1,8 @@
-"""Mixin: emit capacity queue lifecycle events (entered, admitted, waiting, full,"
-"cancelled)."""
+"""
+CapacityPool mixin: emit capacity queue lifecycle events on the EventBus.
+
+Covers entered, admitted, waiting, full, and cancelled queue telemetry signals.
+"""
 
 from __future__ import annotations
 

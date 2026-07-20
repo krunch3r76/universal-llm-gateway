@@ -1,7 +1,8 @@
 """
-Domain types for gateway selection.
+Domain types for gateway selection: Placement, Gateway, ModelDetails.
 
-Minimal type system: 3 dataclasses, 2 type aliases.
+Minimal type system (dataclasses + TypedDict) shared by collectors, feasibility,
+scoring, and eviction planning across the routing selection package.
 """
 
 from __future__ import annotations
@@ -28,7 +29,7 @@ class Placement:
 
 
 class ModelDetails(TypedDict, total=False):
-    """Per-model routing metadata used by selection and eviction planning."""
+    """Per-model routing metadata: idle timing, footprints, concurrency caps."""
 
     last_inference_time: float | None
     vram_usage: int

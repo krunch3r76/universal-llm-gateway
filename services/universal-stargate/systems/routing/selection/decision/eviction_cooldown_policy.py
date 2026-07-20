@@ -1,4 +1,9 @@
-"""Eviction cooldown class policy, constants, and oscillation tracking."""
+"""
+Eviction cooldown class policy, constants, and oscillation tracking.
+
+Defines REQUIRED vs OPPORTUNISTIC request classes, hard-floor seconds, and
+helpers for remaining cooldown / override eligibility during planning.
+"""
 
 from __future__ import annotations
 
@@ -18,7 +23,7 @@ COOLDOWN_OVERRIDE_OSCILLATION_WINDOW_S = 120.0
 
 
 class EvictionRequestClass(StrEnum):
-    """Whether eviction is required for an admitted request or opportunistic."""
+    """Eviction class: required for admission vs opportunistic reclaim only."""
 
     REQUIRED = "required"
     OPPORTUNISTIC = "opportunistic"
@@ -31,7 +36,7 @@ def remaining_cooldown_s(
     *,
     now: float | None = None,
 ) -> float:
-    """Return seconds remaining before ``model_id`` exits cooldown on ``gateway``."""
+    """Seconds remaining before ``model_id`` exits load-cooldown on ``gateway``."""
     clock = time.monotonic() if now is None else now
     elapsed = clock - gateway.model_loaded_at.get(model_id, 0.0)
     return max(0.0, eviction_cooldown_s - elapsed)

@@ -1,5 +1,9 @@
-"""Mixin: capacity acquisition — acquire_token, acquire context manager, immediate try,"
-"wait loop."""
+"""
+CapacityPool mixin: acquire_token, acquire context manager, immediate try, wait loop.
+
+Implements admission acquisition including pause gating and leaked-slot recovery
+on the wait path before returning a CapacityToken.
+"""
 
 from __future__ import annotations
 

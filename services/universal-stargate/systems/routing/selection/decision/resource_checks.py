@@ -1,7 +1,8 @@
 """
-Resource checking for feasibility evaluation.
+Resource checking for feasibility evaluation (VRAM/RAM + reservations).
 
-Handles resource availability checks including loading model reservations.
+Computes required footprints, loading reservations, and admission verdicts
+used when classifying T1 vs T2 vs structural T0 resource failures.
 """
 
 from collections.abc import Callable

@@ -1,7 +1,8 @@
 """
-Sticky placement tracking for routing stability.
+Sticky placement tracking for routing stability (hysteresis).
 
-Provides hysteresis to prevent gateway oscillation.
+StickyPlacementTracker binds model_id → gateway_name across selections so the
+scorer can apply a stability bonus and reduce oscillation between near-ties.
 """
 
 from __future__ import annotations

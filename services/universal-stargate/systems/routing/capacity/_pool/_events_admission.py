@@ -1,4 +1,8 @@
-"""Mixin: emit admission lifecycle events (paused, resumed, slot leak recovered)."""
+"""
+CapacityPool mixin: emit admission lifecycle events on the EventBus.
+
+Covers paused, resumed, and slot-leak-recovered signals for capacity telemetry.
+"""
 
 from __future__ import annotations
 

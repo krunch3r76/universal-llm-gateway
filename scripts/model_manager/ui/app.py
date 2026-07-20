@@ -21,6 +21,7 @@ from universal_event_bus import EventBus, MinimalEventDebugBroadcaster
 from scripts.model_manager.ensure_venv import find_workspace_root
 
 from .api_server import ManageAPIServer, ManageSocketBusyError
+from .controller.digest_tick_loop import DigestTickLoop
 from .controller.onboarding import OnboardingController
 from .controller.service_config import (
     ensure_cortex_api_config,
@@ -130,6 +131,7 @@ class ModelManagerApp(App):
         self._event_bus: EventBus | None = None
         self._broadcaster: MinimalEventDebugBroadcaster | None = None
         self._api_server: ManageAPIServer | None = None
+        self._digest_tick_loop: DigestTickLoop | None = None
 
     @property
     def catalog(self) -> CatalogState:
@@ -198,6 +200,22 @@ class ModelManagerApp(App):
         # supervisor) — robust to a manage restart mid-drain. Never crashes boot.
         await self._service_controller.reconcile_pending_restart_intents()
 
+        try:
+            self._digest_tick_loop = DigestTickLoop(
+                service_state=self._service_controller.service_state,
+                shutdown_gate=self._service_controller.shutdown_gate,
+                workspace_root=self._workspace_root,
+            )
+            await self._digest_tick_loop.start()
+        except Exception as e:
+            logger.exception("Failed to start digest tick loop: %s", e)
+            self._digest_tick_loop = None
+            self.notify(
+                f"digest tick loop unavailable: {e}",
+                severity="warning",
+                timeout=15,
+            )
+
     async def _retry_api_server(self) -> None:
         """Retry binding manage.sock after a startup failure.
 
@@ -235,6 +253,12 @@ class ModelManagerApp(App):
                 os.killpg(proc.pid, signal.SIGTERM)
             except (ProcessLookupError, PermissionError):
                 pass
+        if self._digest_tick_loop is not None:
+            try:
+                await self._digest_tick_loop.stop()
+            except Exception as e:
+                logger.exception("Error stopping digest tick loop: %s", e)
+            self._digest_tick_loop = None
         if self._api_server is not None:
             try:
                 await self._api_server.stop()

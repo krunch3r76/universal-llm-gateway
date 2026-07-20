@@ -1,3 +1,10 @@
+"""
+Queue data types for the request queue package.
+
+Defines QueuedRequest: FIFO-by-queued_at PriorityQueue item with timeout,
+optional Future for gateway assignment, and re-queue-safe ordering.
+"""
+
 import asyncio
 import time
 from dataclasses import dataclass, field

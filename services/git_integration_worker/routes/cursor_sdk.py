@@ -67,9 +67,13 @@ from services.git_integration_worker.cursor_sdk_closeout import (
     empty_assistant_turn_reason,
     empty_output_degraded_reason,
     format_delivery_fallback_body,
+    merge_degraded_reasons,
     prepare_closeout_delivery_async,
+    read_post_wait_snapshot,
     resolve_completion_outcome,
     resolve_run_outcome_label,
+    sdk_fs_git_mismatch_reason,
+    stream_only_effect_deviations,
 )
 from services.git_integration_worker.cursor_sdk_closeout_trigger import (
     build_closeout_idempotency_key,
@@ -132,6 +136,7 @@ from services.git_integration_worker.cursor_sdk_packet import (
 from services.git_integration_worker.cursor_sdk_stream_capture import (
     finalize_stream_capture_usage,
     observe_run_stream,
+    request_id_from_sdk_error,
 )
 from services.git_integration_worker.cursor_sdk_transcript import resolve_run_body
 from services.git_integration_worker.git_worker_lifecycle_events import (
@@ -139,6 +144,7 @@ from services.git_integration_worker.git_worker_lifecycle_events import (
     build_dispatch_error_envelope,
     emit_git_worker_dispatch_rejected,
     log_dispatch_rejection,
+    request_id_from_dispatch_id,
 )
 from services.git_integration_worker.models.cursor_api import (
     CursorDispatchRequest,
@@ -146,6 +152,8 @@ from services.git_integration_worker.models.cursor_api import (
 )
 
 logger = get_logger(__name__)
+
+# Item 7 (list_runs cwd): killed — zero ULG call sites under grep (sdk019).
 
 router = APIRouter(prefix="/api/v1/cursor", tags=["cursor-sdk"])
 
@@ -621,22 +629,14 @@ def _run_sdk_sync(
                 stream_capture = finalize_stream_capture_usage(
                     stream_capture, run=run, result=result
                 )
-                artifact_paths: list[str] = []
-                list_artifacts_fn = getattr(agent, "list_artifacts", None)
-                if callable(list_artifacts_fn):
-                    try:
-                        raw_artifacts = list_artifacts_fn()
-                        if raw_artifacts:
-                            artifact_paths = [
-                                str(path) for path in raw_artifacts if path
-                            ]
-                    except Exception as artifact_exc:  # noqa: BLE001
-                        logger.debug(
-                            "cursor sdk list_artifacts unavailable: dispatch_id=%s err=%s",
-                            dispatch_id,
-                            artifact_exc,
-                        )
-                turns = run.conversation()
+                post_wait = read_post_wait_snapshot(
+                    run=run,
+                    agent=agent,
+                    result=result,
+                    poll_fallback=True,
+                )
+                turns = post_wait.conversation
+                artifact_paths = list(post_wait.artifact_paths)
                 capture_branch = classify_mcp_capture_branch(turns)
                 effects_manifest = build_effects_manifest(
                     dispatch_id=dispatch_id,
@@ -670,6 +670,18 @@ def _run_sdk_sync(
                         stream_capture.tool_call_count - conversation_tool_call_count,
                         len(stream_capture.truncated_tool_calls),
                     )
+                sdk_request_id = stream_capture.sdk_request_id
+                request_id_source = stream_capture.request_id_source or "absent"
+                git_mismatch = sdk_fs_git_mismatch_reason(
+                    post_wait.sdk_git, source_repo
+                )
+                extra_reasons: tuple[str, ...] = ()
+                if git_mismatch:
+                    extra_reasons = (git_mismatch,)
+                stream_deviations = stream_only_effect_deviations(
+                    stream_tool_calls=stream_capture.tool_calls,
+                    conversation_tool_call_count=conversation_tool_call_count,
+                )
                 return SdkRunOutcome(
                     body=resolve_run_body(result.result, turns),
                     status=str(result.status),
@@ -680,8 +692,22 @@ def _run_sdk_sync(
                     tool_calls=stream_capture.tool_calls,
                     usage=stream_capture.usage,
                     usage_capture_status=stream_capture.usage_capture_status,
+                    sdk_request_id=sdk_request_id,
+                    request_id_source=request_id_source,
+                    degraded_reasons=extra_reasons,
+                    sdk_git=post_wait.sdk_git,
+                    stream_only_deviations=stream_deviations,
                 )
             except BaseException as exc:
+                sdk_request_id, request_id_source = request_id_from_sdk_error(exc)
+                if sdk_request_id:
+                    logger.info(
+                        "cursor sdk error request_id captured: dispatch_id=%s "
+                        "sdk_request_id=%s source=%s",
+                        dispatch_id,
+                        sdk_request_id,
+                        request_id_source,
+                    )
                 # Friction 23050: wrap any mid-flight abort (APITimeoutError /
                 # bridge ReadTimeout / dying SDK) with partial forensics so the
                 # failure envelope does not destroy all knowledge of the run.
@@ -915,6 +941,10 @@ async def _deliver_sdk_closeout(
     if delivery.closeout_status.value == "partial":
         run_outcome = "degraded"
     duration_s = outcome.duration_ms / 1000.0
+    completed_reasons = list(
+        merge_degraded_reasons(degraded_reason, *outcome.degraded_reasons)
+    )
+    envelope_request_id = request_id_from_dispatch_id(req.dispatch_id)
 
     bus_result = await bus.reply(
         thread_id=req.thread_id,
@@ -969,6 +999,10 @@ async def _deliver_sdk_closeout(
             model_knobs_requested=req.model_knobs,
             usage=outcome.usage,
             usage_capture_status=outcome.usage_capture_status,
+            request_id=envelope_request_id,
+            sdk_request_id=outcome.sdk_request_id,
+            request_id_source=outcome.request_id_source or "absent",
+            degraded_reasons=completed_reasons,
         )
         turn_number = extract_turn_number(bus_result.body)
         await emit_implement_closeout_trigger(
@@ -1025,6 +1059,10 @@ async def _deliver_sdk_closeout(
         model_knobs_requested=req.model_knobs,
         usage=outcome.usage,
         usage_capture_status=outcome.usage_capture_status,
+        request_id=envelope_request_id,
+        sdk_request_id=outcome.sdk_request_id,
+        request_id_source=outcome.request_id_source or "absent",
+        degraded_reasons=completed_reasons,
     )
     await _terminate_link(bus, thread_id=req.thread_id, terminal_status="failed")
     await _mark_terminal_and_promote(

@@ -1,3 +1,11 @@
+"""
+Post-selection gateway resource verification with event-driven caches.
+
+ResourceVerifier checks assigned gateways still meet model footprints before
+forwarding. Config cache drops on MODEL_LOADED/UNLOADED; verification cache
+drops on GATEWAY_RESOURCE_UPDATE. Fail-open ERROR trusts the prior router pick.
+"""
+
 from enum import Enum
 from typing import Any
 
@@ -14,7 +22,7 @@ logger = get_logger(__name__)
 
 
 class VerificationResult(Enum):
-    """Result of gateway resource verification."""
+    """PASS / FAIL / ERROR outcome of a single gateway resource check."""
 
     PASS = "pass"  # Gateway has sufficient resources
     FAIL = "fail"  # Gateway lacks resources

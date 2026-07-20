@@ -53,7 +53,13 @@ def _emit(event: Event) -> None:
 
 
 def request_id_from_dispatch_id(dispatch_id: str) -> str:
-    """Derive request_id from ``{request_id}-{8hex}`` dispatch ids."""
+    """Derive envelope ``request_id`` from ``{request_id}-{8hex}`` dispatch ids.
+
+    Dual-field contract (sdk019): this dispatch-derived value is the lifecycle
+    envelope ``request_id`` and is never overwritten by SDK stream/error ids.
+    SDK run correlation uses separate ``sdk_request_id`` +
+    ``request_id_source`` on ``frontier.sdk.worker.completed``.
+    """
     if len(dispatch_id) > 9 and dispatch_id[-9] == "-":
         suffix = dispatch_id[-8:]
         if len(suffix) == 8 and all(c in "0123456789abcdef" for c in suffix):

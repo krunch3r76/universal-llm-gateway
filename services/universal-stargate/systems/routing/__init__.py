@@ -8,8 +8,9 @@ This system handles:
 - Request queue management
 
 Key Invariants:
-    ∀ gateway: (model_loaded ∧ has_capacity) ⟹ tier = T1
-    ∀ gateway: (model_loaded ∧ ¬has_capacity) ⟹ tier = T0
+    ∀ gateway: (model_loaded ∧ resources_fit) ⟹ tier = T1
+    ∀ gateway: concurrency capacity is CapacityPool admission, independent of
+               feasibility tier (loaded-but-busy stays T1; ¬ T0 for slot exhaustion)
     ∀ eviction: models_to_evict ⊆ idle_models
 
 Usage:

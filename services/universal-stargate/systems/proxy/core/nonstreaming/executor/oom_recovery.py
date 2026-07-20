@@ -109,7 +109,7 @@ async def attempt_oom_recovery(
         estimated_cost=0.0,
     )
 
-    ok = await execute_eviction_plan(
+    outcome = await execute_eviction_plan(
         forwarder=federation_forwarder,
         federated_gateway=gateway,
         eviction_plan=plan,
@@ -117,6 +117,7 @@ async def attempt_oom_recovery(
         request_id=request_id,
         event_bus=event_bus,
     )
+    ok = outcome.ok
 
     if not ok:
         logger.error(

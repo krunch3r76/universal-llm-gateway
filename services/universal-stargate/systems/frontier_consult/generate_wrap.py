@@ -327,6 +327,8 @@ async def dispatch_cursor_sdk_generate_route(
             cost_intent_reason=getattr(body, "cost_intent_reason", None),
             reasoning_effort=getattr(body, "reasoning_effort", None),
             max_tool_turns=getattr(body, "max_tool_turns", None),
+            source_ref=getattr(body, "source_ref", None),
+            dispatch_lane=getattr(body, "dispatch_lane", None),
         )
         if isinstance(result, dict):
             split_warning = consolidation_split_warning(

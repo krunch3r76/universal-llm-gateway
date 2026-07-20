@@ -134,7 +134,7 @@ def federated_gateways_to_routing_candidates(
 
 
 class StargateCollisionError(Exception):
-    """Raised when duplicate stargate_ids detected."""
+    """Raised when federation collection sees duplicate stargate_id values."""
 
     pass
 

@@ -76,6 +76,8 @@ logger = get_logger(__name__)
 # Must stay aligned with ``libs/agent_bus_store/turns_models`` bus invariants.
 MAX_TURN_BODY_CHARS = 8_000
 _CLOSEOUT_FILE_HEAD = 5
+_POST_WAIT_POLL_ATTEMPTS = 3
+_POST_WAIT_POLL_INTERVAL_S = 0.2
 
 
 @dataclass(frozen=True)
@@ -93,6 +95,18 @@ class SdkRunOutcome:
     # Normalized from TurnEndedUpdate.usage (+ TokenDelta fallthrough when absent).
     usage: dict[str, Any] | None = None
     usage_capture_status: str = "missing"
+    sdk_request_id: str | None = None
+    request_id_source: str | None = None
+    degraded_reasons: tuple[str, ...] = ()
+    sdk_git: dict[str, Any] | None = None
+    stream_only_deviations: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class PostWaitSnapshot:
+    conversation: list[Any]
+    artifact_paths: tuple[str, ...]
+    sdk_git: dict[str, Any] | None
 
 
 @dataclass(frozen=True)
@@ -356,6 +370,159 @@ def count_tool_calls(turns: list) -> int:
         steps = getattr(getattr(turn, "turn", None), "steps", ()) or ()
         total += sum(1 for step in steps if getattr(step, "type", "") == "toolCall")
     return total
+
+
+def merge_degraded_reasons(
+    singular: str | None,
+    *extra: str,
+) -> tuple[str, ...]:
+    """Dual-emit compat: singular reason first, then additive extras."""
+    reasons: list[str] = []
+    if singular:
+        reasons.append(singular)
+    for reason in extra:
+        if reason and reason not in reasons:
+            reasons.append(reason)
+    return tuple(reasons)
+
+
+def degraded_reasons_from_exception(exc: BaseException) -> tuple[str, ...]:
+    """Map SDK/bridge failures to ``degraded_reasons[]`` tokens (A sidecar §A4)."""
+    from cursor_sdk.errors import (
+        APITimeoutError,
+        AgentBusyError,
+        AuthenticationError,
+        CursorSDKError,
+        NotFoundError,
+        RateLimitError,
+    )
+
+    from services.git_integration_worker.cursor_home import (
+        CursorHomeConfigError,
+        CursorVenvConfigError,
+    )
+
+    if isinstance(exc, RateLimitError):
+        return ("sdk_rate_limited",)
+    if isinstance(exc, AgentBusyError):
+        return ("sdk_agent_busy",)
+    if isinstance(exc, AuthenticationError):
+        return ("sdk_auth_failed",)
+    if isinstance(exc, NotFoundError):
+        return ("sdk_run_not_found",)
+    if isinstance(exc, APITimeoutError):
+        return ("sdk_timeout",)
+    if isinstance(exc, CursorSDKError):
+        code = getattr(exc, "code", None) or "unknown"
+        return (f"sdk_error:{code}",)
+    if type(exc).__name__ == "SdkRunAbortedError":
+        return ("bridge_read_timeout",)
+    if isinstance(exc, CursorHomeConfigError):
+        return ("bridge_env_config",)
+    if isinstance(exc, CursorVenvConfigError):
+        return ("bridge_env_config",)
+    return ("worker_dispatch_failed",)
+
+
+def extract_sdk_git_snapshot(git_info: Any) -> dict[str, Any] | None:
+    if git_info is None:
+        return None
+    branches = getattr(git_info, "branches", None) or ()
+    if not branches:
+        return None
+    first = branches[0]
+    return {
+        "repo_url": getattr(first, "repo_url", None),
+        "branch": getattr(first, "branch", None),
+        "pr_url": getattr(first, "pr_url", None),
+    }
+
+
+def _git_branch_name(source_repo: Path) -> str | None:
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(source_repo), "branch", "--show-current"],
+            capture_output=True,
+            check=True,
+            timeout=5,
+            text=True,
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+        return None
+    branch = proc.stdout.strip()
+    return branch or None
+
+
+def sdk_fs_git_mismatch_reason(
+    sdk_git: dict[str, Any] | None,
+    source_repo: Path,
+) -> str | None:
+    """Return ``sdk_fs_mismatch`` when SDK git disagrees with FS/git (day-1 XCHECK)."""
+    if not sdk_git:
+        return None
+    fs_branch = _git_branch_name(source_repo)
+    sdk_branch = sdk_git.get("branch")
+    if fs_branch and sdk_branch and fs_branch != sdk_branch:
+        return "sdk_fs_mismatch"
+    return None
+
+
+def _post_wait_needs_poll(*, conversation: list[Any], status: str) -> bool:
+    if status == "finished" and not conversation:
+        return True
+    return False
+
+
+def read_post_wait_snapshot(
+    *,
+    run: Any,
+    agent: Any,
+    result: Any,
+    poll_fallback: bool = True,
+) -> PostWaitSnapshot:
+    """Post-wait authority reads; bounded poll when immediate snapshot is incomplete."""
+
+    def _read() -> tuple[list[Any], tuple[str, ...], dict[str, Any] | None]:
+        turns = run.conversation()
+        artifact_paths: list[str] = []
+        list_artifacts_fn = getattr(agent, "list_artifacts", None)
+        if callable(list_artifacts_fn):
+            try:
+                raw_artifacts = list_artifacts_fn()
+                if raw_artifacts:
+                    artifact_paths = [str(path) for path in raw_artifacts if path]
+            except Exception:  # noqa: BLE001
+                artifact_paths = []
+        sdk_git = extract_sdk_git_snapshot(getattr(result, "git", None))
+        return turns, tuple(artifact_paths), sdk_git
+
+    status = str(getattr(result, "status", ""))
+    conversation, artifact_paths, sdk_git = _read()
+    if poll_fallback and _post_wait_needs_poll(
+        conversation=conversation, status=status
+    ):
+        import time
+
+        for _ in range(_POST_WAIT_POLL_ATTEMPTS):
+            time.sleep(_POST_WAIT_POLL_INTERVAL_S)
+            conversation, artifact_paths, sdk_git = _read()
+            if not _post_wait_needs_poll(conversation=conversation, status=status):
+                break
+    return PostWaitSnapshot(
+        conversation=conversation,
+        artifact_paths=artifact_paths,
+        sdk_git=sdk_git,
+    )
+
+
+def stream_only_effect_deviations(
+    *,
+    stream_tool_calls: tuple[ToolCallObservation, ...],
+    conversation_tool_call_count: int,
+) -> tuple[str, ...]:
+    if stream_tool_calls and conversation_tool_call_count < len(stream_tool_calls):
+        return ("stream_only_effect",)
+    return ()
 
 
 def degraded_implement_reason(outcome: SdkRunOutcome) -> str | None:
@@ -849,6 +1016,19 @@ def _assemble_closeout_delivery(
         )
     )
     deviations = [*baseline_deviations, *(deviations or [])]
+    if outcome.stream_only_deviations:
+        deviations = [
+            *deviations,
+            *(
+                d
+                for d in outcome.stream_only_deviations
+                if d not in deviations
+            ),
+        ]
+    for reason in outcome.degraded_reasons:
+        token = f"degraded:{reason}"
+        if token not in deviations and reason not in deviations:
+            deviations.append(token)
     if dropped_non_file_entries:
         deviations = [*(deviations or []), "capture:non_file_manifest_entry_dropped"]
     expected_cortex_uris = collect_expected_cortex_deliverable_uris(

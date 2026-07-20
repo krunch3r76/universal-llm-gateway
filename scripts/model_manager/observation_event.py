@@ -374,3 +374,33 @@ async def emit_manage_restart_window_cleared(
             "reason": reason,
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# Manage-owned digest tick loop (todo:digest-manage-tick-loop)
+# ---------------------------------------------------------------------------
+
+
+async def emit_manage_digest_tick_started() -> None:
+    """Periodic digest ticker started with manage lifecycle."""
+    await _emit("manage.digest.tick.started", {})
+
+
+async def emit_manage_digest_tick_stopped() -> None:
+    """Periodic digest ticker stopped; in-flight to_thread tick drained."""
+    await _emit("manage.digest.tick.stopped", {})
+
+
+async def emit_manage_digest_tick_skipped(*, reason: str) -> None:
+    """Tick skipped (cortex-api unhealthy, wrong extract backend, etc.)."""
+    await _emit("manage.digest.tick.skipped", {"reason": reason})
+
+
+async def emit_manage_digest_tick_error(*, reason: str) -> None:
+    """Non-fatal tick failure; loop continues."""
+    await _emit("manage.digest.tick.error", {"reason": reason})
+
+
+async def emit_manage_digest_tick_completed(*, count: int, status: str) -> None:
+    """Tick advanced at least one job."""
+    await _emit("manage.digest.tick.completed", {"count": count, "status": status})

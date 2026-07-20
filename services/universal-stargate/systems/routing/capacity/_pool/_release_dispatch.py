@@ -1,4 +1,8 @@
-"""Mixin: token release and FIFO dispatch loop."""
+"""
+CapacityPool mixin: token release and FIFO waiter dispatch loop.
+
+On release, decrements the slot and wakes the next queued waiter if present.
+"""
 
 from __future__ import annotations
 

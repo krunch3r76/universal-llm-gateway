@@ -150,6 +150,7 @@ class TeamDispatchGenerateBody(_DispatchCommon):
     mcp: bool | None = None
     packet_path: str | None = None
     source_ref: str | None = None
+    dispatch_lane: str | None = None
     # Inline prompt (SF1): bypass thread latch — prefer over bus-turn-only dispatch.
     prompt: str | None = None
     sidecar_ref: str | None = None

@@ -1,4 +1,9 @@
-"""Verdict-classed VRAM admission for routing resource checks."""
+"""
+Verdict-classed VRAM admission for routing resource checks.
+
+Classifies admit vs transient / margin / structural insufficient using capped
+headroom and attainable ceiling — shared by resource_checks and reclaim paths.
+"""
 
 from __future__ import annotations
 
@@ -8,7 +13,7 @@ from typing import Any
 
 
 class AdmissionVerdict(StrEnum):
-    """Capacity admission verdict for a single gateway/model pair."""
+    """VRAM capacity verdict for one gateway/model pair (admit vs insufficient)."""
 
     ADMIT = "admit"
     INSUFFICIENT_TRANSIENT = "insufficient_transient"
@@ -85,7 +90,7 @@ def compute_capped_margin_mb(
     vram_headroom_floor_mb: int,
     vram_margin_cap_mb: int = _DEFAULT_VRAM_MARGIN_CAP_MB,
 ) -> int:
-    """Return clamp(pct×footprint, floor_mb, abs_cap_mb) headroom component."""
+    """Return clamp(pct×footprint, floor_mb, abs_cap_mb) as the headroom margin."""
     pct_component = int(footprint_est_mb * (vram_margin_pct / 100))
     return _clamp(pct_component, vram_headroom_floor_mb, vram_margin_cap_mb)
 
@@ -98,7 +103,7 @@ def evaluate_vram_admission(
     reserved_mb: int,
     resource_margins: dict[str, float | int] | None = None,
 ) -> AdmissionEvaluation:
-    """Classify VRAM admission using capped headroom and attainable ceiling."""
+    """Classify VRAM admit/insufficient using capped headroom and attainable ceiling."""
     margins = resource_margins or {}
     vram_margin_pct = int(margins.get("vram_margin_pct", 5))
     vram_headroom_floor_mb = int(margins.get("vram_headroom_mb", 2048))

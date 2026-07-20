@@ -208,6 +208,20 @@ def _park_job(conn, job: dict[str, Any], reason: str, error: str | None = None) 
     )
 
 
+def _try_claim_enqueued(conn, job_id: str) -> bool:
+    """Atomically move ENQUEUED → SUBMITTED; False when another tick claimed first."""
+    cur = conn.execute(
+        """
+        UPDATE digest_jobs
+        SET state = 'SUBMITTED',
+            updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+        WHERE job_id = ? AND state = 'ENQUEUED'
+        """,
+        (job_id,),
+    )
+    return cur.rowcount == 1
+
+
 def _pick_job(conn) -> dict[str, Any] | None:
     row = conn.execute(
         """
@@ -224,18 +238,35 @@ def _advance_job(conn, job: dict[str, Any]) -> dict[str, Any]:
     job_id = str(job["job_id"])
 
     if state == "ENQUEUED":
+        if not _try_claim_enqueued(conn, job_id):
+            conn.commit()
+            return {"job_id": job_id, "status": "claim_lost", "state": "ENQUEUED"}
+
         if job.get("kind") == "revision_extract":
             _park_job(conn, job, "revision_extract_async_v0")
             conn.commit()
             return {"job_id": job_id, "state": "PARKED", "reason": "revision_extract_async_v0"}
 
+        row = conn.execute(
+            "SELECT * FROM digest_jobs WHERE job_id = ?", (job_id,)
+        ).fetchone()
+        job = _decode_row(row)
+        state = job["state"]
+
+    if state == "SUBMITTED":
         result = run_cdp_extract_for_job(job)
         if result.get("park_reason"):
             attempt = int(job.get("attempt") or 0) + 1
             if attempt >= 2:
                 _park_job(conn, job, str(result["park_reason"]), str(result.get("error")))
             else:
-                _update_job(conn, job_id, attempt=attempt, last_error=str(result.get("error")))
+                _update_job(
+                    conn,
+                    job_id,
+                    attempt=attempt,
+                    last_error=str(result.get("error")),
+                    state="ENQUEUED",
+                )
             conn.commit()
             return {"job_id": job_id, "error": result.get("error"), "park_reason": result.get("park_reason")}
 
@@ -349,6 +380,8 @@ def tick_jobs(*, limit: int = 1) -> dict[str, Any]:
                 if job is None:
                     break
                 outcome = _advance_job(conn, job)
+                if outcome.get("status") == "claim_lost":
+                    break
                 results.append(outcome)
                 if outcome.get("state") == "STAGED" or outcome.get("park_reason"):
                     continue

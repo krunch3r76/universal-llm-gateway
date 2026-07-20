@@ -10,7 +10,7 @@ from .types import QueuedRequest
 
 
 class RequestQueue(RequestQueueRuntime, RequestQueueMaintenance):
-    """Concrete request queue combining runtime and maintenance operations."""
+    """Concrete queue: runtime enqueue/process plus maintenance shutdown drain."""
 
     pass
 

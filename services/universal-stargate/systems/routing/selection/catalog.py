@@ -1,7 +1,8 @@
 """
-Catalog integration for Stargate pool.
+Catalog integration for the Stargate routing pool.
 
-Aggregates model availability from local gateway and federation.
+Aggregates model availability from the local gateway and federation peers so
+selection and feasibility see a unified catalog view per request.
 """
 
 from __future__ import annotations

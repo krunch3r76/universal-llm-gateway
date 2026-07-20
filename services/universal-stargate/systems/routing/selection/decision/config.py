@@ -1,7 +1,8 @@
 """
-Affinity and routing policy configuration.
+Affinity and routing policy configuration for the decision engine.
 
-Config loaded from stargate_config.yaml and validated at startup.
+Loaded from stargate_config.yaml and validated at startup: affinity rules,
+weights, margins, and related selection policy knobs.
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ if TYPE_CHECKING:
 
 
 class AffinityStrength(StrEnum):
-    """Affinity rule strength - determines selection behavior."""
+    """Affinity rule strength: SOFT bonus vs HARD must-route-if-feasible."""
 
     SOFT = "soft"  # Bonus points, can be overridden by other factors
     HARD = "hard"  # Must route to this gateway if feasible

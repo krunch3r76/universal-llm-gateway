@@ -26,11 +26,12 @@ logger = get_logger(__name__)
 
 
 class UnloadResult(Enum):
-    """Result of unload wait operation."""
+    """Outcome of waiting for MODEL_UNLOADED."""
 
     UNLOADED = "unloaded"
     TIMEOUT = "timeout"
     FAILED = "failed"
+    SHUTDOWN = "shutdown"
 
 
 class EvictionWaiter:
@@ -67,6 +68,7 @@ class EvictionWaiter:
     def __init__(self, event_bus: EventBus):
         self._event_bus = event_bus
         self._pending_unloads: dict[tuple[str, str], asyncio.Event] = {}
+        self._wake_reasons: dict[tuple[str, str], UnloadResult] = {}
         self._subscription_active = False
         self._handler_ref = None  # Keep reference for unsubscribe
 
@@ -83,12 +85,12 @@ class EvictionWaiter:
         logger.debug("EvictionWaiter started, subscribed to MODEL_UNLOADED events")
 
     def stop(self) -> None:
-        """Stop listening and wake all pending waiters."""
+        """Stop listening and wake pending waiters with SHUTDOWN (not UNLOADED)."""
         if not self._subscription_active:
             return
 
-        # Wake all pending waiters (treat as unloaded on shutdown)
-        for event in self._pending_unloads.values():
+        for key, event in self._pending_unloads.items():
+            self._wake_reasons[key] = UnloadResult.SHUTDOWN
             event.set()
         self._pending_unloads.clear()
         self._subscription_active = False
@@ -133,6 +135,7 @@ class EvictionWaiter:
                 f"✅ MODEL_UNLOADED event received: {model_id_str} "
                 f"on {gateway_name}, waking waiter"
             )
+            self._wake_reasons[key] = UnloadResult.UNLOADED
             wait_event.set()
             # Don't pop here - let wait_for_registered() clean up
         else:
@@ -178,7 +181,8 @@ class EvictionWaiter:
             timeout: Maximum seconds to wait (default 10s for force unload)
 
         Returns:
-            UnloadResult.UNLOADED if event received, TIMEOUT otherwise
+            UnloadResult.UNLOADED if event received, SHUTDOWN if waiter stopped,
+            TIMEOUT on timeout, FAILED if no wait was registered.
         """
         event_key = model_id.normalized
         key = (gateway_name, event_key)
@@ -198,6 +202,13 @@ class EvictionWaiter:
 
         try:
             await asyncio.wait_for(wait_event.wait(), timeout=timeout)
+            reason = self._wake_reasons.pop(key, UnloadResult.UNLOADED)
+            if reason == UnloadResult.SHUTDOWN:
+                logger.warning(
+                    f"Eviction waiter shutdown before MODEL_UNLOADED confirmed: "
+                    f"{model_id} on {gateway_name}"
+                )
+                return UnloadResult.SHUTDOWN
             logger.info(f"✅ Unload confirmed via event: {model_id} on {gateway_name}")
             return UnloadResult.UNLOADED
         except TimeoutError:
@@ -207,5 +218,5 @@ class EvictionWaiter:
             )
             return UnloadResult.TIMEOUT
         finally:
-            # Cleanup
             self._pending_unloads.pop(key, None)
+            self._wake_reasons.pop(key, None)

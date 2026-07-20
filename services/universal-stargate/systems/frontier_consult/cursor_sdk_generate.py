@@ -173,6 +173,8 @@ async def dispatch_cursor_sdk_generate(
     reasoning_effort: str | None = None,
     max_tool_turns: int | None = None,
     prepared_handle: PreparedCursorSdkHandle | None = None,
+    source_ref: str | None = None,
+    dispatch_lane: str | None = None,
 ) -> dict[str, Any]:
     """Execute cursor-sdk generate with to_thread default delivery.
 
@@ -207,5 +209,7 @@ async def dispatch_cursor_sdk_generate(
         cost_intent_reason=cost_intent_reason,
         reasoning_effort=reasoning_effort,
         max_tool_turns=max_tool_turns,
+        source_ref=source_ref,
+        dispatch_lane=dispatch_lane,
     )
     return await dispatch_prepared_cursor_sdk(handle)
