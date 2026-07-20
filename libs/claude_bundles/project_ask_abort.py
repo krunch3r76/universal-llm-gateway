@@ -140,6 +140,7 @@ def deregister_on_exit(reg: cdp_registry.Registration, *, purpose: str | None) -
         return
     kill = purpose_kill_default(purpose or reg.purpose)
     cdp_registry.deregister_lane(reg.registration_id, kill=kill)
+    cdp_registry.reclaim_best_effort()
 
 
 def _claude_page(cdp_url: str) -> dict[str, Any] | None:

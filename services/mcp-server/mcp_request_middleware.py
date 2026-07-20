@@ -53,7 +53,20 @@ def _seat_class_from_path(path: str) -> str:
     /mcp/code → "cursor" (Cursor IDE / code surface)
     other     → "unknown"
     """
-    return _MCP_SEAT_BY_PATH.get(path, "unknown")
+    if not path:
+        return "unknown"
+    normalized = path.rstrip("/") or "/"
+    exact = _MCP_SEAT_BY_PATH.get(normalized)
+    if exact is not None:
+        return exact
+    from endpoint_surface import surface_from_path
+
+    surface = surface_from_path(normalized)
+    if surface == "life":
+        return "claude"
+    if surface == "code":
+        return "cursor"
+    return "unknown"
 
 
 def _extract_jsonrpc_id(body: bytes) -> Any:
@@ -115,7 +128,7 @@ def _summarize_tool_args(tool_name: str, args: dict[str, Any]) -> str:
         path = args.get("path", "")
         return f"op={op} path={path}" if op else ""
     if tool_name == "cortex_brief":
-        seat = args.get("seat") or args.get("agent", "cursor")
+        seat = args.get("seat") or "?"
         return f"seat={seat}"
     if tool_name == "web_search":
         q = str(args.get("query", ""))[:60]

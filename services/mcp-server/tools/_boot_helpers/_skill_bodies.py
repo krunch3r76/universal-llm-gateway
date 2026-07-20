@@ -5,8 +5,8 @@ from __future__ import annotations
 from typing import Any
 
 from agent_seat.guidance_entity import entity_slug_from_id
-from implement_admission.skill_source_table import (
-    SkillSourceResolveError,
+from implement_admission.skill_catalog_resolver import (
+    SkillCatalogResolveError,
     resolve_canonical_source_uri,
 )
 
@@ -40,4 +40,4 @@ def skill_relpath(skill: dict[str, Any]) -> str:
         return rel
     if uri.startswith(".cursor/skills/"):
         return f"universal-llm-gateway/{uri}"
-    raise SkillSourceResolveError(f"unsupported boot source_uri: {uri!r}")
+    raise SkillCatalogResolveError(f"unsupported boot source_uri: {uri!r}")

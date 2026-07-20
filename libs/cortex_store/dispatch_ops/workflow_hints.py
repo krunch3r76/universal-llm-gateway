@@ -129,11 +129,14 @@ _WORKFLOW_HINTS: dict[str, str] = {
         "Read-only — does not trigger implement side-effect guard."
     ),
     "implement_ready_preflight": (
+        "on admitted=false: read first_failure + resolution — gate-9 fail may include "
+        "resolution.missing_sections + doc_template_hint for early dense-spec surface. "
         "next: doc_template(doc_type=implement_dense_spec) to author the spec skeleton; "
         "fill required sections; run doc_validate(text=…) or doc_validate(path=…) until "
         "status=pass; record attestation_tokens on the todo's implement-ready assertion; "
         "then todo_distill_implement_gate at Gate-2 close before implement dispatch. "
-        "Load: skill `implement-todo`"
+        "path-sim Stage-A: worker runs this closeout before halt; lead re-runs preflight "
+        "before Stage-B (safety-net). Load: skill `implement-todo`"
     ),
     "edges": (
         "tip: to see edges in entity context, use entity_get with include_edges=true. "

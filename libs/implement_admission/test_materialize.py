@@ -17,7 +17,7 @@ from implement_admission.materialize import (
     materialize,
     packet_is_sufficient,
 )
-from implement_admission.skill_source_table import SkillSourceResolveError
+from implement_admission.skill_catalog_resolver import SkillCatalogResolveError
 from implement_admission.spec import (
     Acceptance,
     Closeout,
@@ -107,8 +107,15 @@ def test_mcp_capabilities_enriched(tmp_path: Path) -> None:
 
 def test_materialize_fail_loud_unknown_skill(tmp_path: Path) -> None:
     spec = _sample_spec(skills=["foo"])
-    with pytest.raises(SkillSourceResolveError):
+    with pytest.raises(SkillCatalogResolveError, match="absent from skill catalog"):
         materialize(spec, out_dir=tmp_path)
+
+
+def test_materialize_admits_catalog_plugin_only_skill(tmp_path: Path) -> None:
+    """Catalog membership unblocks plugin-SOT slugs without a URI table gate."""
+    result = materialize(_sample_spec(skills=["path-sim"]), out_dir=tmp_path)
+    mcp = result.text.split("<mcp_capabilities>")[1].split("</mcp_capabilities>")[0]
+    assert "Use the `path-sim` skill" in mcp
 
 
 def test_mcp_capabilities_always_carries_arch_skillrefs(tmp_path: Path) -> None:

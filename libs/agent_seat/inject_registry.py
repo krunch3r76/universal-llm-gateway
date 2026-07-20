@@ -221,7 +221,7 @@ def coding_scope_inject_entity_ids() -> tuple[str, ...]:
 
 
 class CallerSkillUnresolvedError(LookupError):
-    """Caller ``skills=`` id absent from the canonical skill source table."""
+    """Caller ``skills=`` id absent from the skill catalog."""
 
     def __init__(self, skill_id: str) -> None:
         self.skill_id = skill_id
@@ -337,9 +337,9 @@ def _fetch_registry_entry(
 ) -> tuple[dict[str, Any] | None, str | None]:
     include_non_active = not entry.lifecycle_required
     slug = entity_slug_from_id(entry.entity_id)
-    from implement_admission.skill_body_resolve import resolve_skill_body_from_table
+    from implement_admission.skill_body_resolve import resolve_skill_body_from_catalog
 
-    payload, reason = resolve_skill_body_from_table(
+    payload, reason = resolve_skill_body_from_catalog(
         slug,
         include_non_active=include_non_active,
     )
@@ -464,16 +464,17 @@ def _pack_tiered_bodies(
 
 
 def _caller_skill_entity_id(slug: str) -> str:
-    from implement_admission.skill_source_table import (
-        SkillSourceResolveError,
-        canonical_table_key,
-        resolve_canonical_source_uri,
-    )
+    """Map caller ``skills=`` id → ``agent_skill:{canonical}`` via catalog membership.
 
-    key = canonical_table_key(slug)
+    Membership authority is ``config/skills.yaml`` (same set as materialize G2 /
+    IDE), not a separate URI table.
+    """
+    from claude_bundles.catalog import get_skill_catalog
+
+    catalog = get_skill_catalog()
     try:
-        resolve_canonical_source_uri(key)
-    except SkillSourceResolveError as exc:
+        key = catalog.get(slug).slug
+    except KeyError as exc:
         raise CallerSkillUnresolvedError(slug) from exc
     return f"agent_skill:{key}"
 
@@ -601,7 +602,7 @@ def resolve_injected_bodies(
 ) -> InjectResolution:
     """Single registry-driven resolver for all server inject paths."""
     del seat  # reserved for future seat-specific policy
-    from implement_admission.skill_source_table import canonical_agent_skill_id
+    from implement_admission.skill_catalog_resolver import canonical_agent_skill_id
 
     assert_must_inline_allowlist_valid()
     mount_ids = {canonical_agent_skill_id(slug) for slug in provider_mount_slugs}

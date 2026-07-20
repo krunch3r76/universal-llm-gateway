@@ -41,7 +41,7 @@ def _template_sha256(text: str) -> str:
 
 def _resolve_skill_body_bytes(slug: str) -> bytes | None:
     from implement_admission.closeout_helpers import workspaces_root
-    from implement_admission.skill_source_table import resolve_canonical_source_uri
+    from implement_admission.skill_catalog_resolver import resolve_canonical_source_uri
 
     uri = resolve_canonical_source_uri(slug)
     candidates: list[str] = []

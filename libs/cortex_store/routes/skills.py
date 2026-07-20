@@ -280,9 +280,9 @@ def get_skill_body(
     ] = False,
 ) -> dict[str, Any]:
     """Return the substantive skill/rule body with source_uri and content digest."""
-    from implement_admission.skill_body_resolve import resolve_skill_body_from_table
+    from implement_admission.skill_body_resolve import resolve_skill_body_from_catalog
 
-    payload, reason = resolve_skill_body_from_table(
+    payload, reason = resolve_skill_body_from_catalog(
         id,
         include_non_active=include_non_active,
         expected_digest=expected_digest,

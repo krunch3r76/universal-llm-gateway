@@ -34,3 +34,8 @@ def disposition_for_deviation(token: str) -> DeviationDisposition:
 
 def deviation_degrades_capture_status(token: str) -> bool:
     return disposition_for_deviation(token) == DeviationDisposition.HARD_FAIL
+
+
+def any_hard_fail_deviation(*tokens: str | None) -> bool:
+    """True when any token is a HARD_FAIL disposition (a:25136 narrowing)."""
+    return any(token and deviation_degrades_capture_status(token) for token in tokens)

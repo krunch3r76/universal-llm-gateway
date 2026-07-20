@@ -340,7 +340,7 @@ class McpToolExecutor:
         """Pre-execute ``cortex_brief(...)`` when primary params appear in system prompt.
 
         Supported directive shapes mirror the MCP tool's primary params:
-        ``agent="<seat-slug>"`` (hyphenated slugs), and/or
+        ``seat="<seat-slug>"`` (legacy prompt ``agent=`` maps to ``seat``), and/or
         ``family="..."``, ``platform="..."``, optional ``role="..."``.
         Unrecognized or param-less ``cortex_brief(...)`` spans are left unchanged.
         """

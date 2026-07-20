@@ -29,8 +29,12 @@ from claude_bundles.chat_session_hygiene import (
 )
 from claude_bundles.compose_attest import (
     await_compose_attest,
+    await_live_submit_visible,
     await_submit_visible,
+    click_discovered_submit,
     compose_mode_fingerprint,
+    resolve_submit_strategy,
+    warm_submit_settle_ms,
 )
 from claude_bundles.project_chrome import project_url
 from claude_bundles.skills_ui_panel import DEFAULT_CDP_URL, connect_cdp
@@ -39,6 +43,7 @@ _THINKING_LINE = re.compile(
     r"^(Thinking about .+|Thinking\b.*)$",
     re.I | re.M,
 )
+_EXECUTION_ID_LINE = re.compile(r"^- execution_id: `([^`]+)`", re.M)
 
 
 def strip_thinking_prefix(body: str) -> str:
@@ -88,6 +93,21 @@ def _attest_model(requested: str, state: dict[str, Any], selected: dict[str, Any
     return label
 
 
+def read_archive_execution_id(archive_path: str) -> str | None:
+    """Return execution_id stamped in an existing harvest file, if any."""
+    from pathlib import Path
+
+    path = Path(archive_path)
+    if not path.is_file():
+        return None
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    match = _EXECUTION_ID_LINE.search(text)
+    return match.group(1) if match else None
+
+
 def archive_harvest(
     *,
     body: str,
@@ -96,17 +116,34 @@ def archive_harvest(
     model: dict[str, Any],
     attested_model: str | None,
     archive_path: str,
+    execution_id: str | None = None,
 ) -> str:
     """Persist raw harvest before delete. Returns cortex:// or file URI."""
     from datetime import UTC, datetime
     from pathlib import Path
 
     path = Path(archive_path)
+    if path.is_file() and execution_id:
+        existing = read_archive_execution_id(archive_path)
+        if existing and existing != execution_id:
+            raise RuntimeError(
+                "archive path occupied by foreign execution "
+                f"(existing={existing[:8]}, requested={execution_id[:8]}): "
+                f"{archive_path}"
+            )
+        if existing is None:
+            raise RuntimeError(
+                f"archive path occupied without execution_id metadata: {archive_path}"
+            )
     path.parent.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(UTC).isoformat()
+    exec_line = (
+        f"- execution_id: `{execution_id}`\n" if execution_id else ""
+    )
     text = (
         f"# CDP ask harvest\n\n"
         f"- archived_at: `{stamp}`\n"
+        f"{exec_line}"
         f"- url: `{url}`\n"
         f"- project_uuid: `{project_uuid}`\n"
         f"- model_select: `{model}`\n"
@@ -192,6 +229,20 @@ async def send_prompt(page: Page, text: str) -> None:
     await page.wait_for_timeout(600)
 
     fp = await compose_mode_fingerprint(page)
+    strategy = resolve_submit_strategy(page.url or "", fp)
+
+    if strategy == "live_discover":
+        await composer.click(force=True)
+        await page.wait_for_timeout(warm_submit_settle_ms())
+        submit = await await_live_submit_visible(page, composer=composer, timeout_s=8.0)
+        if not submit.get("ok"):
+            raise RuntimeError(
+                "submit control missing on warm session: need composer-local enabled "
+                f"submit (live_discover) — refusing Enter fallback; last={submit.get('last')}"
+            )
+        await click_discovered_submit(page, submit, composer=composer)
+        return
+
     mode: str = fp.get("mode") or ("cowork" if fp.get("approval") else "chat")
     if mode not in ("chat", "cowork"):
         mode = "cowork" if fp.get("approval") else "chat"
@@ -236,6 +287,7 @@ async def project_ask_on_page(
     min_growth: int = 50,
     min_body: int = 40,
     archive_path: str | None = None,
+    execution_id: str | None = None,
 ) -> ProjectAskResult:
     """Run one sealed ask on an existing Playwright page."""
     dest = project_url(project_uuid)
@@ -280,6 +332,7 @@ async def project_ask_on_page(
                 model=model_info,
                 attested_model=attested,
                 archive_path=archive_path,
+                execution_id=execution_id,
             )
         elif delete_after:
             # Fable MUST: delete only after archive — refuse if no path provided
@@ -335,6 +388,7 @@ async def run_project_ask(
     min_growth: int = 50,
     min_body: int = 40,
     archive_path: str | None = None,
+    execution_id: str | None = None,
 ) -> ProjectAskResult:
     """Connect CDP, run one sealed ask, disconnect."""
     pw, _browser, ctx, _page0 = await connect_cdp(cdp_url)
@@ -350,6 +404,7 @@ async def run_project_ask(
             min_growth=min_growth,
             min_body=min_body,
             archive_path=archive_path,
+            execution_id=execution_id,
         )
     finally:
         await pw.stop()

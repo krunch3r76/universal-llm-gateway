@@ -2,11 +2,13 @@
 
 Extracted from _briefing_card.py to keep that module under the 400-line
 SLOC limit. Callers import ``truncate_at_sentence``,
-``filter_recent_self_reflections``, and ``deadline_line`` from here.
+``filter_recent_self_reflections``, ``filter_identity_override_reflections``,
+and ``deadline_line`` from here.
 """
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -23,6 +25,22 @@ _NOTES_PREVIEW_MAX_CHARS = 320
 # Self-reflection recency cap. Older notes drift out of the boot card — agents
 # can re-fetch via /assertions if they're chasing a specific historical claim.
 _SELF_REFLECTION_MAX_AGE_DAYS = 14
+
+# Boot must not inject product/persona identity (decision:seat-lane-split-liaison-model
+# a23875; decision:boot-identity-by-allusion; decision:identity-doctrine-endpoint-provenance).
+_IDENTITY_OVERRIDE_CLAIM_RE = re.compile(
+    r"(?is)"
+    r"(?:addressable\s+name\s+is\b"
+    r"|agent\s+is\s+[\"']?max\b"
+    r"|name\s+is\s+max\b"
+    r"|you\s+are\s+(?:max|claude)\b"
+    r"|speaking\s+as\s+max\b"
+    r"|identity\s+override\b"
+    r"|persona\s+override\b"
+    r"|RETIRED\s+as\s+boot(?:/product)?\s+identity\b"
+    r"|¬\s*(?:boot|prompt).*?\bas\s+['\"]?you are Max"
+    r"|Max\s+naming\s+is\s+coordination)"
+)
 
 
 def truncate_at_sentence(text: str, max_chars: int) -> str:
@@ -51,6 +69,25 @@ def truncate_at_sentence(text: str, max_chars: int) -> str:
     return window.rstrip() + "…"
 
 
+def filter_identity_override_reflections(
+    self_reflections: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Drop claims that assert a personal/product identity onto the seat.
+
+    Max / persona naming may exist as coordination provenance elsewhere;
+    boot projection must not say "you are X" (a23875).
+    """
+    if not self_reflections:
+        return []
+    kept: list[dict[str, Any]] = []
+    for a in self_reflections:
+        claim = a.get("claim") or ""
+        if _IDENTITY_OVERRIDE_CLAIM_RE.search(str(claim)):
+            continue
+        kept.append(a)
+    return kept
+
+
 def filter_recent_self_reflections(
     self_reflections: list[dict[str, Any]],
     now: datetime,
@@ -62,13 +99,14 @@ def filter_recent_self_reflections(
     The fetcher already orders DESC by created_at; this is a recency cap on
     top of the fixed limit (default 5). When the agent has fewer than 5
     recent reflections, the section degrades naturally — no padding with
-    stale entries.
+    stale entries. Identity-override claims are stripped before the age cut.
     """
     if not self_reflections:
         return []
+    candidates = filter_identity_override_reflections(self_reflections)
     threshold = now - timedelta(days=max_age_days)
     fresh: list[dict[str, Any]] = []
-    for a in self_reflections:
+    for a in candidates:
         created = a.get("created_at") or a.get("observed_at") or ""
         if not created:
             # No timestamp — keep it; better to render than silently drop.
@@ -300,6 +338,7 @@ def render_arc_section(
 __all__ = [
     "PREVIEW_MAX_CHARS",
     "deadline_line",
+    "filter_identity_override_reflections",
     "filter_recent_self_reflections",
     "truncate_at_sentence",
     "render_arc_section",

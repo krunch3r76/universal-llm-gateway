@@ -15,6 +15,7 @@ from cdp_ask.models import (
     SubmitProjectAskRequest,
     SubmitProjectAskResponse,
 )
+from cdp_ask.registry_hygiene_loop import RegistryHygieneLoop
 from cdp_ask.runner import run_execution, verify_harvest_root
 
 logger = logging.getLogger(__name__)
@@ -24,6 +25,7 @@ class HealthResponse(BaseModel):
     status: str
     harvest_root: str
     harvest_root_ok: bool
+    registry_hygiene: str
 
 
 def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
@@ -32,6 +34,7 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
         description="Jupiter satellite for claude.ai CDP sealed asks",
     )
     execution_store = store or ExecutionStore()
+    registry_hygiene = RegistryHygieneLoop()
 
     def _deregister(registration_id: str) -> None:
         from claude_bundles import cdp_registry
@@ -47,9 +50,11 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
         if reaped:
             logger.warning("boot reconcile reaped orphaned lanes: %s", reaped)
         await execution_store.start()
+        await registry_hygiene.start()
 
     @app.on_event("shutdown")
     async def _shutdown() -> None:
+        await registry_hygiene.stop()
         await execution_store.stop()
 
     @app.get("/health", response_model=HealthResponse)
@@ -58,9 +63,18 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
             root = verify_harvest_root()
         except RuntimeError:
             return HealthResponse(
-                status="fail_closed", harvest_root="", harvest_root_ok=False
+                status="fail_closed",
+                harvest_root="",
+                harvest_root_ok=False,
+                registry_hygiene="stopped",
             )
-        return HealthResponse(status="ok", harvest_root=str(root), harvest_root_ok=True)
+        hygiene_status = "running" if registry_hygiene.running else "stopped"
+        return HealthResponse(
+            status="ok",
+            harvest_root=str(root),
+            harvest_root_ok=True,
+            registry_hygiene=hygiene_status,
+        )
 
     @app.post(
         "/v1/project-ask/executions",
@@ -89,6 +103,7 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
             try:
                 payload = await run_execution(
                     req,
+                    execution_id=record.execution_id,
                     abort_check=_abort_check,
                     on_registered=_sync_registered,
                 )
@@ -224,4 +239,5 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
         )
 
     app.state.execution_store = execution_store
+    app.state.registry_hygiene = registry_hygiene
     return app

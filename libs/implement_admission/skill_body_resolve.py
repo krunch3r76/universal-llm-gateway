@@ -1,13 +1,13 @@
-"""Table-first skill body resolution — shared SOT for Layer-C inline + GET /skills/body."""
+"""Catalog-first skill body resolution — shared SOT for Layer-C inline + GET /skills/body."""
 
 from __future__ import annotations
 
 import hashlib
 from typing import Any
 
-from implement_admission.skill_source_table import (
-    SkillSourceResolveError,
-    canonical_table_key,
+from implement_admission.skill_catalog_resolver import (
+    SkillCatalogResolveError,
+    canonical_catalog_slug,
     resolve_canonical_source_uri,
 )
 
@@ -65,32 +65,37 @@ def _stable_entity_id(row: dict[str, Any] | None, key: str, entity_id_hint: str)
     return f"agent_skill:{key}"
 
 
-def resolve_skill_body_from_table(
+def resolve_skill_body_from_catalog(
     slug_or_entity_id: str,
     *,
     include_non_active: bool = False,
     expected_digest: str | None = None,
     conn: Any | None = None,
 ) -> tuple[dict[str, Any] | None, str | None]:
-    """Resolve body via D1 table ``source_uri`` with lifecycle + digest gates.
+    """Resolve body via catalog URI hint + ``_resolve_skill_file`` fallbacks.
 
-    Returns ``(payload, drop_reason)``. ``drop_reason`` is set when resolution
-    fails (``body_missing``, ``digest_mismatch``). Lifecycle withholding still
-    returns a payload dict with ``body: None`` and ``reason:
-    inactive_lifecycle_withheld`` (HTTP 200 contract).
+    Catalog URI is a hint, not a membership gate before file resolution —
+    ``_resolve_skill_file`` may still find plugin SOT or ``agent-skills/``
+    when the URI lookup fails. Returns ``(payload, drop_reason)``.
+    ``drop_reason`` is set when resolution fails (``body_missing``,
+    ``digest_mismatch``). Lifecycle withholding still returns a payload
+    dict with ``body: None`` and ``reason: inactive_lifecycle_withheld``
+    (HTTP 200 contract).
     """
     from cortex_store.confidence_field import DISCOVERABLE_SKILL_LIFECYCLE
     from cortex_store.db import cortex_conn
     from cortex_store.routes.boot._skill_trigger import _resolve_skill_file
 
     raw = slug_or_entity_id.strip()
-    key = canonical_table_key(raw)
+    key = canonical_catalog_slug(raw)
     entity_id_hint = raw if ":" in raw else f"agent_skill:{key}"
 
+    source_uri: str | None
     try:
         source_uri = resolve_canonical_source_uri(key)
-    except SkillSourceResolveError:
-        return None, "body_missing"
+    except (SkillCatalogResolveError, FileNotFoundError, OSError, ValueError):
+        # URI hint failed — still attempt agent-skills / plugin fallback chain.
+        source_uri = None
 
     own_conn = conn is None
     if own_conn:
@@ -128,6 +133,13 @@ def resolve_skill_body_from_table(
         body_text = path.read_text(encoding="utf-8")
     except OSError:
         return None, "body_missing"
+
+    if source_uri is None:
+        # Prefer a workspaces URI when the body was found only via fallbacks.
+        try:
+            source_uri = resolve_canonical_source_uri(key)
+        except (SkillCatalogResolveError, FileNotFoundError, OSError, ValueError):
+            source_uri = None
 
     digest = body_digest(source_uri, key)
     if expected_digest and digest and expected_digest != digest:

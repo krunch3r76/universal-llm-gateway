@@ -103,6 +103,8 @@ def test_chrome_launch_argv_disables_optimization_guide(tmp_path: Path) -> None:
     assert "--disable-features=OptimizationGuideOnDeviceModel" in argv
     assert f"--user-data-dir={profile}" in argv
     assert "--remote-debugging-port=9225" in argv
+    assert "--disk-cache-size=134217728" in argv
+    assert "--media-cache-size=134217728" in argv
 
 
 def test_claim_fresh_profile_lock_skips_held_suffixes(

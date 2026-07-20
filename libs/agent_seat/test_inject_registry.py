@@ -73,7 +73,7 @@ def _body_map(monkeypatch: pytest.MonkeyPatch, bodies: dict[str, str]) -> None:
         return {"digest": digest, "body": expanded[lookup], "id": lookup}, None
 
     monkeypatch.setattr(
-        "implement_admission.skill_body_resolve.resolve_skill_body_from_table",
+        "implement_admission.skill_body_resolve.resolve_skill_body_from_catalog",
         fake_resolve,
     )
 
@@ -310,7 +310,7 @@ def test_lifecycle_required_withheld(monkeypatch: pytest.MonkeyPatch) -> None:
         return None, "body_missing"
 
     monkeypatch.setattr(
-        "implement_admission.skill_body_resolve.resolve_skill_body_from_table",
+        "implement_admission.skill_body_resolve.resolve_skill_body_from_catalog",
         fake_resolve,
     )
     monkeypatch.setattr(
@@ -625,6 +625,28 @@ def test_caller_skill_unresolvable_raises(
         )
 
 
+def test_caller_skill_catalog_plugin_only_resolves(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Catalog membership admits plugin-SOT slugs (¬ legacy URI-table gate)."""
+    from agent_seat.inject_registry import _caller_skill_entity_id
+
+    assert _caller_skill_entity_id("path-sim") == "agent_skill:path-sim"
+    bodies = {
+        "agent_skill:path-sim": "path-sim-body",
+        "agent_skill:cortex-orientation": "orientation",
+    }
+    _body_map(monkeypatch, bodies)
+    resolution = resolve_injected_bodies(
+        "claude-api",
+        platform="api",
+        inject_profile="dispatch",
+        caller_skill_ids=("path-sim",),
+        budget_bytes=None,
+    )
+    assert "path-sim-body" in resolution.block_md
+
+
 def test_merged_overlap_provider_mounted_regression(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -801,7 +823,7 @@ def test_injected_markers_carry_resolver_digest(
         return None, "body_missing"
 
     monkeypatch.setattr(
-        "implement_admission.skill_body_resolve.resolve_skill_body_from_table",
+        "implement_admission.skill_body_resolve.resolve_skill_body_from_catalog",
         fake_resolve,
     )
     resolution = resolve_injected_bodies(
@@ -829,9 +851,9 @@ def test_phantom_agent_skill_id_resolves_via_table_slug(
         conn: object | None = None,
     ) -> tuple[dict[str, Any] | None, str | None]:
         del include_non_active, expected_digest, conn
-        from implement_admission.skill_source_table import canonical_table_key
+        from implement_admission.skill_catalog_resolver import canonical_catalog_slug
 
-        key = canonical_table_key(slug_or_entity_id)
+        key = canonical_catalog_slug(slug_or_entity_id)
         if key == "ulg-architecture":
             return {
                 "id": "agent_skill:ulg-architecture",
@@ -847,7 +869,7 @@ def test_phantom_agent_skill_id_resolves_via_table_slug(
         return None, "body_missing"
 
     monkeypatch.setattr(
-        "implement_admission.skill_body_resolve.resolve_skill_body_from_table",
+        "implement_admission.skill_body_resolve.resolve_skill_body_from_catalog",
         fake_resolve,
     )
     resolution = resolve_injected_bodies(

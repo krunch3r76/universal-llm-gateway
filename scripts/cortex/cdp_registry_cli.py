@@ -36,12 +36,22 @@ def main(argv: list[str] | None = None) -> int:
 
     p_hygiene = sub.add_parser(
         "hygiene-reclaim",
-        help="Drop released rows so ports re-enter the free pool",
+        help="Reclaim released/orphaned_retry lanes and sweep orphan profiles",
     )
     p_hygiene.add_argument(
         "--yes",
         action="store_true",
         help="Required confirm (destructive to released tombstones)",
+    )
+    p_hygiene.add_argument(
+        "--no-stale-active",
+        action="store_true",
+        help="Skip stale-active reap (conjunctive TTL+dead PID+port down)",
+    )
+    p_hygiene.add_argument(
+        "--no-orphan-sweep",
+        action="store_true",
+        help="Skip orphan profile-dir sweep",
     )
 
     args = parser.parse_args(argv)
@@ -73,7 +83,10 @@ def main(argv: list[str] | None = None) -> int:
         if not args.yes:
             print("pass --yes to reclaim released ports", file=sys.stderr)
             return 2
-        result = cdp_registry.hygiene_reclaim_released()
+        result = cdp_registry.hygiene_reclaim_extended(
+            include_stale_active=not args.no_stale_active,
+            include_orphan_sweep=not args.no_orphan_sweep,
+        )
         print(
             json.dumps(
                 {

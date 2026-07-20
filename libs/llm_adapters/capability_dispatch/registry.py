@@ -169,6 +169,7 @@ _PROVIDER_SURFACE: dict[str, str] = {
     "chatgpt": SURFACE_OPENAI_RESPONSES,
     "xai": SURFACE_OPENAI_RESPONSES,
     "google": SURFACE_GOOGLE,
+    "perplexity": SURFACE_OPENAI_CHAT_COMPLETIONS,
 }
 
 

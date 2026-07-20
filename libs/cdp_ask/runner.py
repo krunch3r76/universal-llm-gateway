@@ -19,8 +19,17 @@ from claude_bundles.project_ask_prompt_files import (
     project_root_base,
     resolve_prompt_path,
 )
+from cortex_store.files_path_normalize import normalize_cortex_files_path
 
 from cdp_ask.models import SubmitProjectAskRequest
+
+
+class ArchivePathError(ValueError):
+    """Raised when explicit archive_path cannot resolve under CORTEX_FILES_ROOT."""
+
+    def __init__(self, teaching: dict[str, Any]) -> None:
+        self.teaching = teaching
+        super().__init__(teaching.get("error") or "archive_path invalid")
 
 
 def cortex_files_root() -> Path:
@@ -35,9 +44,40 @@ def verify_harvest_root() -> Path:
     if not root.is_dir():
         raise RuntimeError(
             "CORTEX_FILES_ROOT harvest root missing or unreachable "
-            f"({root}). Jupiter host must mount /mcp-data/files/."
+            f"({root}). Set CORTEX_FILES_ROOT to the live cortex files mount "
+            "(doc shorthand /mcp-data/files/ is not a Jupiter path)."
         )
     return root
+
+
+def resolve_archive_path(raw: str) -> str:
+    """Resolve explicit archive_path under live CORTEX_FILES_ROOT."""
+    root = verify_harvest_root()
+    rel, err = normalize_cortex_files_path(
+        raw,
+        root,
+        field="archive_path",
+        reason_prefix="archive_path",
+    )
+    if err is not None:
+        raise ArchivePathError(err)
+    assert rel is not None
+    abs_path = (root / rel).resolve()
+    try:
+        abs_path.relative_to(root.resolve())
+    except ValueError as exc:
+        raise ArchivePathError(
+            {
+                "error": f"archive_path escapes CORTEX_FILES_ROOT: {exc}",
+                "reason": "archive_path.sandbox_escape",
+                "field": "archive_path",
+                "expected": "path resolved under CORTEX_FILES_ROOT",
+                "files_root": str(root.resolve()),
+                "received": raw,
+                "hint": "Do not use .. or absolute paths outside the sandbox.",
+            }
+        ) from exc
+    return str(abs_path)
 
 
 def resolve_prompt(req: SubmitProjectAskRequest) -> list[str]:
@@ -68,14 +108,21 @@ def _load_prompt_uri(uri: str) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def default_archive_path(req: SubmitProjectAskRequest) -> str:
+def default_archive_path(
+    req: SubmitProjectAskRequest,
+    *,
+    execution_id: str = "",
+) -> str:
     if req.archive_path:
-        return req.archive_path
+        return resolve_archive_path(req.archive_path)
     root = verify_harvest_root()
-    slug = req.project_uuid[:8] if req.project_uuid else "new"
-    return str(
-        root / "notes/system/threads" / f"cdp-ask-archive-{slug}.md"
-    )
+    if req.project_uuid:
+        name = f"cdp-ask-archive-{req.project_uuid[:8]}.md"
+    elif execution_id:
+        name = f"cdp-ask-archive-new-{execution_id[:8]}.md"
+    else:
+        name = "cdp-ask-archive-new.md"
+    return str(root / "notes/system/threads" / name)
 
 
 def _result_dict(result: ProjectAskResult) -> dict[str, Any]:
@@ -85,6 +132,7 @@ def _result_dict(result: ProjectAskResult) -> dict[str, Any]:
 async def run_execution(
     req: SubmitProjectAskRequest,
     *,
+    execution_id: str = "",
     abort_check: Callable[[], Awaitable[bool]],
     on_registered: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
@@ -126,7 +174,10 @@ async def run_execution(
                     project_uuid=last.project_uuid,
                     model=last.model,
                     attested_model=last.attested_model,
-                    archive_path=default_archive_path(req),
+                    archive_path=default_archive_path(
+                        req, execution_id=execution_id
+                    ),
+                    execution_id=execution_id or None,
                 )
             return {
                 "ok": all(r.ok for r in results),
@@ -154,7 +205,13 @@ async def run_execution(
         delete_after = (
             bool(req.delete_after) if req.delete_after is not None else True
         )
-        archive = default_archive_path(req) if delete_after else req.archive_path
+        archive = (
+            default_archive_path(req, execution_id=execution_id)
+            if delete_after
+            else (
+                resolve_archive_path(req.archive_path) if req.archive_path else None
+            )
+        )
         result = await run_project_ask(
             prompt,
             project_uuid=req.project_uuid,
@@ -165,6 +222,7 @@ async def run_execution(
             min_growth=req.min_growth,
             min_body=req.min_body,
             archive_path=archive,
+            execution_id=execution_id or None,
         )
         if await abort_check():
             abort_cleanup(reg, purpose=req.purpose)

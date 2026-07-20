@@ -87,6 +87,14 @@ _GEMINI_API = ModelCapabilityCard(
     skills_mount_backend="none",
 )
 
+# Lit-discovery chain models: provider-native research/search only — no Stargate MCP loop.
+_DEEP_RESEARCH_DISCOVERY = ModelCapabilityCard(
+    mcp_client_tool_loop=False,
+    mcp_remote_connector=False,
+    server_side_tools=(),
+    skills_mount_backend="none",
+)
+
 MODEL_CAPABILITY_CARDS: Final[dict[str, ModelCapabilityCard]] = {
     "anthropic/claude-sonnet-4-6": _ANTHROPIC_API,
     "anthropic/claude-opus-4-8": _ANTHROPIC_API,
@@ -100,7 +108,10 @@ MODEL_CAPABILITY_CARDS: Final[dict[str, ModelCapabilityCard]] = {
     "openai/gpt-5.4": _OPENAI_API,
     "openai/gpt-5.4-mini": _OPENAI_API,
     "openai/o4-mini": _OPENAI_API,
+    "openai/o4-mini-deep-research": _DEEP_RESEARCH_DISCOVERY,
     "openai/o3": _OPENAI_API,
+    "openai/o3-deep-research": _DEEP_RESEARCH_DISCOVERY,
+    "perplexity/sonar-deep-research": _DEEP_RESEARCH_DISCOVERY,
     "xai/grok-4.5": _XAI_STANDARD,
     "xai/grok-4.3": _XAI_STANDARD,
     "xai/grok-4-fast-reasoning": _XAI_STANDARD,

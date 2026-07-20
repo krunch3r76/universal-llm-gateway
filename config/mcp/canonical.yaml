@@ -3815,34 +3815,21 @@ tools:
   flat_call_shape:
     tool: cortex_brief
     substrate_qualified: user-vortex__cortex_brief
-  fol_descriptor: "∀ seat ∈ AgentSeats:\n  cortex_brief(seat?, agent?, family?, platform?, role?, transcript_id?,
+  fol_descriptor: "∀ seat ∈ AgentSeats:\n  cortex_brief(seat?, role?, transcript_id?,
     views?) ⟹\n    session_id minted ∧ briefing_card ∈ Markdown ∧ sections_available ∈ List[ManifestEntry]\n\
     \    ∧ agent_skill bodies indexed (slug + trigger) — ¬inlined;\n    load by canonical slug (platform/server
-    inject; ¬ fs-read agent-skills/ paths).\nMints session id; writes operational_context to disk on LIVE
-    calls. Read-only fetch graph. See agent_skill:cortex.\n"
+    inject; ¬ fs-read agent-skills/ paths).\nBlank call is mount-aware (life→web-anthropic, code→cursor);
+    seat= required when mount surface is unknown. agent=/family=/platform= retired from wire schema
+    (family+platform inferred from seat or mount).\nMints session id;
+    writes operational_context to disk on LIVE calls. Read-only fetch graph. See agent_skill:cortex.\n"
   json_schema:
     type: object
     properties:
       seat:
         type: string
-        description: Primary seat address (web-anthropic, cursor, …). Legacy aliases (claude-web, 
-          claude-cursor, …) still resolve.
-      agent:
-        type: string
-        description: Permanent alias for seat=. Prefer seat= on new call sites.
-      family:
-        type: string
-        enum:
-        - claude
-        - gpt
-        - grok
-        - gemini
-      platform:
-        type: string
-        enum:
-        - cursor
-        - api
-        - web
+        description: Seat address or capability cell (web-anthropic, cursor, grok-api-multi, …).
+          Legacy aliases (claude-web, claude-cursor, …) still resolve. Blank defaults are
+          mount-aware (life→web, code→cursor). Family/platform are inferred — not wire params.
       role:
         type: string
       transcript_id:

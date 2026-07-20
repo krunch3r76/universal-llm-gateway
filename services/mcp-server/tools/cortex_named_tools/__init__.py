@@ -23,7 +23,7 @@ def register_cortex_named_tools(mcp: FastMCP, *, surface: str = "life") -> None:
     """Register named Cortex MCP tools: chunk, surface form, staging, and boot."""
     register_data_tools(mcp)
     register_staging_tools(mcp)
-    register_orchestration_tools(mcp)
+    register_orchestration_tools(mcp, surface=surface)
 
 
 __all__ = [

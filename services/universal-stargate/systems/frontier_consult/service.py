@@ -272,7 +272,7 @@ def _classification_missing_slug(exc: Exception) -> str:
 
 
 def _dropped_entry_canonical(entry: dict[str, Any]) -> str:
-    from implement_admission.skill_source_table import canonical_agent_skill_id
+    from implement_admission.skill_catalog_resolver import canonical_agent_skill_id
 
     slug = entry.get("slug")
     if slug:
@@ -344,7 +344,7 @@ def _classify_required_body_overflow(
 
 
 def _caller_canonical_set(caller_layer_c_ids: tuple[str, ...]) -> frozenset[str]:
-    from implement_admission.skill_source_table import canonical_agent_skill_id
+    from implement_admission.skill_catalog_resolver import canonical_agent_skill_id
 
     return frozenset(
         canonical_agent_skill_id(skill_id) for skill_id in caller_layer_c_ids

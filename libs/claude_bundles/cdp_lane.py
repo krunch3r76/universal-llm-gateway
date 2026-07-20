@@ -143,6 +143,8 @@ def chrome_launch_argv(port: int, profile: Path) -> list[str]:
         "--no-first-run",
         "--no-default-browser-check",
         "--disable-features=OptimizationGuideOnDeviceModel",
+        "--disk-cache-size=134217728",
+        "--media-cache-size=134217728",
     ]
 
 

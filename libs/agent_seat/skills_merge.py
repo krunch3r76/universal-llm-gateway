@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-from implement_admission.skill_source_table import canonical_agent_skill_id
+from implement_admission.skill_catalog_resolver import canonical_agent_skill_id
 
 from agent_seat.body_injection import (
     SkillDeliveryChannel,

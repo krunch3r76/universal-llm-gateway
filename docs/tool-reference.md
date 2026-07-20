@@ -426,7 +426,7 @@ R-admit and other vortex-code seats.
 
 | Component | Requirement |
 |---|---|
-| Satellite | `scripts/cdp-ask --port 8770` on Jupiter with `CORTEX_FILES_ROOT` pointing at `/mcp-data/files` |
+| Satellite | `scripts/cdp-ask --port 8770` on Jupiter with `CORTEX_FILES_ROOT` set to the live cortex files mount (host example: `/mnt/torus/mcp-data/files`; doc shorthand `/mcp-data/files/` is rewritten on the satellite, not a Jupiter path) |
 | MCP env | `PROJECT_ASK_URL=http://jupiter:8770` in `~/.gateway/mcp.yaml` (exported by `sync-and-restart-mcp.sh`) |
 | Harvest | Jupiter host mounts cortex files tree (F-3); `/health` returns `harvest_root_ok: true` |
 
@@ -455,7 +455,7 @@ Dogfood fallback (hub checkout): `scripts/cortex/claude-ai-sync-jupiter project-
 | `project_uuid` | `str` | Explicit Cowork Project UUID |
 | `ensure_cowork_auto` | `bool` | Cowork + auto-approve on `/new` (default `true`; friction 25051) |
 | `chat_compose` | `bool` | Operator opt-in Chat on `/new` (default `false`; sets `ensure_cowork_auto=false`) |
-| `archive_path` | `str \| null` | Optional harvest archive path on Jupiter |
+| `archive_path` | `str \| null` | Optional harvest archive path on Jupiter — normalized on satellite; prefer relative or `cortex://` (doc shorthand `/mcp-data/files/…` is rewritten to live root) |
 | `timeout_s` | `int` | Idle completion budget forwarded to satellite |
 
 ### Returns
@@ -977,14 +977,11 @@ Unified boot briefing for session start. Seat-scoped: each `{family}-{platform}`
 
 ### Args
 
-All parameters optional. **Default seat when nothing is passed:** `family=claude`, `platform=cursor` → bus address **`cursor`** (capability cell `claude-cursor`).
+All parameters optional. **Blank-call default is mount-aware:** `/mcp/life` → `web-anthropic` (`claude`/`web`); `/mcp/code` → `cursor` (`claude`/`cursor`). When the mount surface cannot be inferred, `seat=` is required — there is no silent cursor default. `agent=` / `family=` / `platform=` are retired from the wire schema (family+platform are inferred from `seat` or the mount).
 
 | Arg | Default | Description |
 |---|---|---|
-| `seat` | — | Primary seat address: `web-anthropic`, `web` / `claude-web` (→ `web-anthropic`), `cursor` / `claude-cursor` (→ `cursor`), … Overrides `family`/`platform` when slug parses. |
-| `agent` | — | Permanent alias for `seat`; prefer `seat=` on new call sites. |
-| `family` | `claude` | Model family: `claude`, `gpt`, `grok`, `gemini` |
-| `platform` | `cursor` | Surface: `cursor`, `web`, `api` |
+| `seat` | — | Seat address or capability cell: `web-anthropic`, `cursor`, `claude-web`, `grok-api-multi`, … Family/platform are derived from this slug. |
 | `role` | — | Functional annotation: `lead`, `reviewer`, `gatherer`, … Does **not** change seat slug or default to `lead`. |
 | `transcript_id` | `""` | Continuation from a **closed** session transcript entity |
 | `views` | — | Entity ids for subgraph manifest entries on the card |
@@ -1024,8 +1021,7 @@ write, and no `mcp.cortex.boot*` event emission.
 
 | Arg | Default | Description |
 |---|---|---|
-| `seat` | — | Seat slug (same semantics as `cortex_brief`); use with `family`/`platform` when omitted |
-| `agent` | — | Permanent alias for `seat` |
+| `seat` | — | Seat slug (same semantics as `cortex_brief`) |
 | `family` | `claude` | Primary family when `seat` / `agent` absent |
 | `platform` | `cursor` | Primary platform when `seat` / `agent` absent |
 | `transcript_id` | `""` | Optional continuation transcript for primary profile |

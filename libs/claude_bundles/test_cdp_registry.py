@@ -100,19 +100,10 @@ def test_register_exhausted_fails_closed(isolated_registry: Path) -> None:
             launch_chrome=_noop_launch,
             is_listening=lambda _p: False,
         )
-    # deregister marks released — still not reusable in v1
+    # deregister marks released — reclaim-on-register recycles the port
     reg.deregister_lane(regs[0].registration_id)
-    with pytest.raises(reg.RegistryExhaustedError):
-        reg.register_lane(
-            holder="after-release",
-            launch_chrome=_noop_launch,
-            is_listening=lambda _p: False,
-        )
-    # hygiene reclaims → free again
-    result = reg.hygiene_reclaim_released()
-    assert regs[0].port in result.reclaimed_ports
     again = reg.register_lane(
-        holder="after-hygiene",
+        holder="after-release",
         launch_chrome=_noop_launch,
         is_listening=lambda _p: False,
     )
@@ -272,7 +263,11 @@ def test_active_registration_dicts_enriched_fields(
     assert row["chrome_pid"] == 1
 
 
-def test_hygiene_rmtree_released_profile(isolated_registry: Path) -> None:
+def test_hygiene_rmtree_released_profile(
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    trash = tmp_path / "reclaim-trash"
+    monkeypatch.setattr(reg, "RECLAIM_TRASH_DIR", trash)
     r = reg.register_lane(
         holder="a",
         launch_chrome=_noop_launch,
@@ -282,10 +277,11 @@ def test_hygiene_rmtree_released_profile(isolated_registry: Path) -> None:
     assert profile.exists()
     reg.deregister_lane(r.registration_id)
 
-    result = reg.hygiene_reclaim_released()
+    result = reg.hygiene_reclaim_extended(empty_trash=False)
     assert r.port in result.reclaimed_ports
     assert str(profile) in result.removed_profiles
     assert not profile.exists()
+    assert any(trash.iterdir())
 
 
 def test_hygiene_skips_primary_profile(
@@ -312,11 +308,36 @@ def test_hygiene_skips_primary_profile(
     result = reg.hygiene_reclaim_released()
     assert primary.exists()
     assert str(primary) not in result.removed_profiles
+    assert 9223 not in result.reclaimed_ports
+    active = reg._load_active()
+    assert "dead" in active
+    assert active["dead"]["status"] == "orphaned_retry"
 
 
-def test_hygiene_skips_live_profile(
-    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
+def test_orphan_sweep_never_primary(
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    trash = tmp_path / "reclaim-trash"
+    monkeypatch.setattr(reg, "RECLAIM_TRASH_DIR", trash)
+    primary = tmp_path / "profiles" / "claude-ai-chrome-profile"
+    primary.mkdir(parents=True)
+    orphan = primary.parent / "claude-ai-chrome-profile-reg-orphan01"
+    orphan.mkdir()
+    kept_primary = primary.parent / "claude-ai-chrome-profile"
+    monkeypatch.setattr(reg.cdp_lane, "PRIMARY_PROFILE", kept_primary)
+    monkeypatch.setattr(reg.cdp_lane, "chrome_port_for_profile", lambda _p: None)
+
+    result = reg.hygiene_reclaim_extended(include_stale_active=False)
+    assert kept_primary.exists()
+    assert not orphan.exists()
+    assert str(orphan) in result.removed_profiles
+
+
+def test_hygiene_skips_live_profile_keeps_orphaned_retry(
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    trash = tmp_path / "reclaim-trash"
+    monkeypatch.setattr(reg, "RECLAIM_TRASH_DIR", trash)
     profiles = reg.cdp_lane.profile_for("x").parent
     profile = profiles / "claude-ai-chrome-profile-reg-livebeef"
     profile.mkdir(parents=True)
@@ -342,3 +363,7 @@ def test_hygiene_skips_live_profile(
     result = reg.hygiene_reclaim_released()
     assert profile.exists()
     assert str(profile) not in result.removed_profiles
+    assert 9224 not in result.reclaimed_ports
+    active = reg._load_active()
+    assert "live" in active
+    assert active["live"]["status"] == "orphaned_retry"

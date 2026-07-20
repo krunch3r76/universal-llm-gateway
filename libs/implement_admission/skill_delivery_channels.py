@@ -6,9 +6,9 @@ import hashlib
 import re
 from dataclasses import dataclass
 
-from implement_admission.skill_source_table import (
-    TEMPLATE_VERSION,
-    canonical_table_key,
+from implement_admission.skill_catalog_resolver import (
+    catalog_digest,
+    canonical_catalog_slug,
     resolve_canonical_source_uri,
 )
 
@@ -166,7 +166,7 @@ def fenced_payload_for_body(body: str) -> str:
 def _resolve_inline_block(
     text: str, match: re.Match[str]
 ) -> InlineSkillBlock:
-    slug = canonical_table_key(match.group("slug"))
+    slug = canonical_catalog_slug(match.group("slug"))
     declared = match.group("digest").strip()
     tail = text[match.end() :]
     fence_open = re.match(r"\s*```(?:markdown)?\s*\n", tail)
@@ -231,7 +231,7 @@ def declared_inline_digests(text: str) -> dict[str, str]:
         match = _next_structural_inline_header(text, cursor)
         if match is None:
             break
-        slug = canonical_table_key(match.group("slug"))
+        slug = canonical_catalog_slug(match.group("slug"))
         digests[slug] = match.group("digest").strip()
         cursor = match.end() + 1
     return digests
@@ -239,13 +239,13 @@ def declared_inline_digests(text: str) -> dict[str, str]:
 
 def replace_inline_block_for_slug(text: str, slug: str, fresh_block: str) -> str:
     """Replace one inline block, including stale declared digests."""
-    target = canonical_table_key(slug)
+    target = canonical_catalog_slug(slug)
     cursor = 0
     while True:
         match = _next_structural_inline_header(text, cursor)
         if match is None:
             return text
-        if canonical_table_key(match.group("slug")) != target:
+        if canonical_catalog_slug(match.group("slug")) != target:
             cursor = match.end() + 1
             continue
         try:
@@ -265,7 +265,7 @@ def parse_inline_skill_blocks(text: str) -> list[InlineSkillBlock]:
         match = _next_structural_inline_header(text, cursor)
         if match is None:
             break
-        slug = canonical_table_key(match.group("slug"))
+        slug = canonical_catalog_slug(match.group("slug"))
         try:
             block = _resolve_inline_block(text, match)
         except ValueError:
@@ -279,7 +279,7 @@ def parse_inline_skill_blocks(text: str) -> list[InlineSkillBlock]:
     return blocks
 
 
-def _table_body_for_slug(slug: str) -> str | None:
+def _catalog_body_for_slug(slug: str) -> str | None:
     from cortex_store.routes.boot._skill_trigger import _resolve_skill_file
 
     try:
@@ -315,11 +315,11 @@ def packet_skill_slugs(text: str) -> set[str]:
     slugs: set[str] = set()
     scan = text_without_inline_payload_regions(text)
     for match in _USE_SKILL_RE.finditer(scan):
-        slugs.add(canonical_table_key(match.group("slug")))
+        slugs.add(canonical_catalog_slug(match.group("slug")))
     for match in _FS_SKILL_POINTER_RE.finditer(scan):
-        slugs.add(canonical_table_key(match.group("slug")))
+        slugs.add(canonical_catalog_slug(match.group("slug")))
     for match in _INLINE_SKILL_HEADER_RE.finditer(text):
-        slugs.add(canonical_table_key(match.group("slug")))
+        slugs.add(canonical_catalog_slug(match.group("slug")))
     return slugs
 
 
@@ -328,9 +328,9 @@ def validate_exactly_one_skill_channel(text: str) -> SkillChannelViolation | Non
     inline = {block.slug for block in parse_inline_skill_blocks(text)}
     scan = text_without_inline_payload_regions(text)
     pointer = {
-        canonical_table_key(m.group("slug")) for m in _USE_SKILL_RE.finditer(scan)
+        canonical_catalog_slug(m.group("slug")) for m in _USE_SKILL_RE.finditer(scan)
     } | {
-        canonical_table_key(m.group("slug"))
+        canonical_catalog_slug(m.group("slug"))
         for m in _FS_SKILL_POINTER_RE.finditer(scan)
     }
     overlap = sorted(inline & pointer)
@@ -351,7 +351,7 @@ def validate_inline_skill_hashes(text: str) -> SkillChannelViolation | None:
         match = _next_structural_inline_header(text, cursor)
         if match is None:
             break
-        slug = canonical_table_key(match.group("slug"))
+        slug = canonical_catalog_slug(match.group("slug"))
         try:
             block = _resolve_inline_block(text, match)
         except ValueError as exc:
@@ -374,7 +374,7 @@ def validate_inline_skill_hashes(text: str) -> SkillChannelViolation | None:
                     "— rebuild packet"
                 ),
             )
-        resolved_body = _table_body_for_slug(block.slug)
+        resolved_body = _catalog_body_for_slug(block.slug)
         if resolved_body is None:
             return SkillChannelViolation(
                 code="skill_unresolvable_on_seat",
@@ -451,7 +451,7 @@ def resolve_inline_bodies(
                 body=body,
                 digest=_sha256_full(fenced),
                 source_uri=source_uri,
-                rev=f"table:{TEMPLATE_VERSION}",
+                rev=f"catalog:{catalog_digest()[:23]}",
                 byte_len=len(body.encode("utf-8")),
             )
         )

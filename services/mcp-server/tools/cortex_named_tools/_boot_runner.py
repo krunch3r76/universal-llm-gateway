@@ -302,8 +302,10 @@ def run_cortex_brief(
     """Build a Cortex boot briefing for internal callers and MCP.
 
     Args:
-        family       — model family: claude / gpt / grok / gemini (default: claude)
-        platform     — platform surface: cursor / api / web (default: cursor)
+        family       — model family: claude / gpt / grok / gemini
+        platform     — platform surface: cursor / api / web
+                       (callers should resolve via mount-aware seat selection;
+                       blank defaults are owned by cortex_brief, not here)
         role         — accepted for back-compat; no longer scopes boot output. Boot
                        output is seat-predicated: duties are properties of the seat
                        (family+platform cell), not assignments to the reader.
@@ -326,7 +328,8 @@ def run_cortex_brief(
     Returns a slim briefing card (~25-35KB typical) with a section manifest pointing
     to existing MCP tools for deeper pulls. Heavy data is NOT inlined — pull on demand.
     """
-    # Resolve (family, platform); defaults to (claude, cursor) when both are None.
+    # Resolve (family, platform). Blank axes still fill via resolve_seat for
+    # internal callers; MCP cortex_brief applies mount-aware defaults first.
     resolved_family, resolved_platform = resolve_seat(family=family, platform=platform)
     capability_profile = get_profile(resolved_family, resolved_platform)
 

@@ -88,7 +88,19 @@ def _resolve_skill_file(source_uri: str | None, slug: str) -> Path | None:
             if candidate.is_file():
                 return candidate
     fallback = _FILES_ROOT / "agent-skills" / f"{slug}.md"
-    return fallback if fallback.is_file() else None
+    if fallback.is_file():
+        return fallback
+    try:
+        from claude_bundles.catalog import load_skill_catalog
+
+        repo_root = _WORKSPACES_ROOT / "universal-llm-gateway"
+        catalog = load_skill_catalog(repo_root=repo_root)
+        plugin_path, _ = catalog.resolve_sot(slug, repo_root)
+        if plugin_path.is_file():
+            return plugin_path
+    except (FileNotFoundError, KeyError, ValueError):
+        pass
+    return None
 
 
 def canonical_skill_summary(

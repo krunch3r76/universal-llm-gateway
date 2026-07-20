@@ -86,7 +86,7 @@ def register_tools_for_surface(mcp: FastMCP, surface: Surface) -> None:
     register_agent_bus_tools(mcp)
     register_agent_bus_read_tool(mcp)
     register_cortex_tools(mcp, surface=surface)
-    register_cortex_named_tools(mcp)
+    register_cortex_named_tools(mcp, surface=surface)
     register_advisor_tools(mcp)
     register_close_tools(mcp)
     register_skill_suggest_tools(mcp)

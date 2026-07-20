@@ -68,5 +68,14 @@ def build_dual_endpoint_app(
 
 
 def is_mcp_endpoint_path(path: str) -> bool:
-    """True when ``path`` is a dual-endpoint MCP streamable-HTTP mount."""
-    return path in MCP_ENDPOINT_PATHS
+    """True when ``path`` is under a dual-endpoint MCP streamable-HTTP mount.
+
+    Accepts exact mounts and subpaths (streamable-HTTP may append suffixes);
+    trailing slashes are normalized. Bare ``/mcp`` is not a live mount.
+    """
+    if not path:
+        return False
+    normalized = path.rstrip("/") or "/"
+    if normalized in MCP_ENDPOINT_PATHS:
+        return True
+    return surface_from_path(normalized) is not None

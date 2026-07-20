@@ -77,6 +77,11 @@ skills:
   completion-provenance-discipline:
     surface_class: shared_sync
     mcp_surface_required: none
+  composer-standing-reply-format:
+    # Operator-once-per-session bind; checkout-local under .cursor/skills/.
+    # ¬ ulg-ecosystem census unless operator asks (kickoff OOS).
+    surface_class: cursor_only
+    mcp_surface_required: none
   consensus-steelman-posture:
     surface_class: shared_sync
     mcp_surface_required: life

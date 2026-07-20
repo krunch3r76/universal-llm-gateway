@@ -56,11 +56,11 @@ def build_dispatch_skill_context(
     code_touching: bool = False,
     provider_mount_slugs: frozenset[str] | None = None,
 ) -> DispatchSkillContext:
-    from implement_admission.skill_source_table import canonical_table_key
+    from implement_admission.skill_catalog_resolver import canonical_catalog_slug
 
     caps = resolve_dispatch_capabilities(model=model, mcp_enabled=mcp_enabled)
     mounts = provider_mount_slugs or frozenset()
-    canonical_mounts = frozenset(canonical_table_key(slug) for slug in mounts)
+    canonical_mounts = frozenset(canonical_catalog_slug(slug) for slug in mounts)
     return DispatchSkillContext(
         model=model,
         mcp_enabled=bool(caps["mcp_connector_active"]),
@@ -77,9 +77,9 @@ def select_skill_delivery_channel(
     ctx: DispatchSkillContext,
 ) -> SkillDeliveryChannel:
     """Capability-determined exactly-one channel with precedence B > C > A (D3)."""
-    from implement_admission.skill_source_table import canonical_table_key
+    from implement_admission.skill_catalog_resolver import canonical_catalog_slug
 
-    canonical = canonical_table_key(slug_or_entity_id)
+    canonical = canonical_catalog_slug(slug_or_entity_id)
     if canonical in ctx.provider_mount_slugs:
         return SkillDeliveryChannel.LAYER_B_PROVIDER
     if not ctx.mcp_enabled:
@@ -99,9 +99,9 @@ def skill_use_instruction(
     Customize→Skills; Cursor ``<available_skills>``). Do NOT emit ``fs(...)``
     skill paths (``agent-skills/`` retired; friction 23128).
     """
-    from implement_admission.skill_source_table import canonical_table_key
+    from implement_admission.skill_catalog_resolver import canonical_catalog_slug
 
-    slug = canonical_table_key(slug_or_entity_id)
+    slug = canonical_catalog_slug(slug_or_entity_id)
     line = f"Use the `{slug}` skill"
     if bullet:
         line = f"- {line}"
@@ -119,7 +119,7 @@ def filter_double_load_excluded(
     already_delivered: frozenset[str],
 ) -> tuple[str, ...]:
     """Exclude slugs whose canonical agent_skill id was already delivered (D3)."""
-    from implement_admission.skill_source_table import canonical_agent_skill_id
+    from implement_admission.skill_catalog_resolver import canonical_agent_skill_id
 
     out: list[str] = []
     for slug in slugs:
@@ -241,9 +241,9 @@ def _fetch_body_sync(
 ) -> tuple[dict[str, Any] | None, str | None]:
     """Return (payload, drop_reason). Uses shared table-first resolver in-process."""
     del timeout_ms  # in-process resolver — HTTP timeout N/A
-    from implement_admission.skill_body_resolve import resolve_skill_body_from_table
+    from implement_admission.skill_body_resolve import resolve_skill_body_from_catalog
 
-    payload, reason = resolve_skill_body_from_table(
+    payload, reason = resolve_skill_body_from_catalog(
         entity_id,
         include_non_active=include_non_active,
         expected_digest=expected_digest,

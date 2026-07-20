@@ -7,6 +7,7 @@ from typing import Any
 from fastapi import HTTPException
 from universal_logging import get_logger
 
+from ..digest_dispatch import dispatch_digest_background
 from ..routes.session_handoff import _upsert_session_handoff_impl
 from ..routes.session_journals import _close_session_impl
 from ..session_close_validation import (
@@ -25,11 +26,11 @@ from ..transcript_assembly import (
     resolve_jsonl_path,
     session_id_timing_hint,
 )
+from ._session_bus_thread_disposition import bus_thread_disposition_preflight_fields
 from ._session_close_doc_type import check_session_close_validate_attestation
 from ._session_objective_promote import promote_session_objectives
 from ._session_summary_path import resolve_session_summary_md
 from ._session_todo_reconciliation import todo_reconciliation_preflight_fields
-from ..digest_dispatch import dispatch_digest_background
 from ._shared import _FILES_ROOT, record
 from .ops_audit_detectors import run_detectors
 from .ops_review_gate import _run_session_audit_or_block, summarize_audit_outcome
@@ -331,6 +332,13 @@ def _op_session_close_preflight(
             *(preflight.get("warnings") or []),
             todo_recon["todo_reconciliation_warning"],
         ]
+    bus_disp = bus_thread_disposition_preflight_fields(entity_ids)
+    preflight.update(bus_disp)
+    if bus_disp.get("bus_thread_disposition_warning"):
+        preflight["warnings"] = [
+            *(preflight.get("warnings") or []),
+            bus_disp["bus_thread_disposition_warning"],
+        ]
     if handoff_source_path or handoff_prompt:
         handoff_preview = handoff_dry_run_preview(
             files_root=_FILES_ROOT,
@@ -511,6 +519,13 @@ def _op_session_close(
             dry_payload["warnings"] = [
                 *(dry_payload.get("warnings") or []),
                 todo_recon["todo_reconciliation_warning"],
+            ]
+        bus_disp = bus_thread_disposition_preflight_fields(entity_ids)
+        dry_payload.update(bus_disp)
+        if bus_disp.get("bus_thread_disposition_warning"):
+            dry_payload["warnings"] = [
+                *(dry_payload.get("warnings") or []),
+                bus_disp["bus_thread_disposition_warning"],
             ]
         return dry_payload
 

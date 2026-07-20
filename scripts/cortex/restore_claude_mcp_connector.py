@@ -190,14 +190,40 @@ async def _approve_oauth(page: Page, context, timeout_ms: int) -> Page:
     return page
 
 
-async def _click_connect_and_oauth(page: Page, context, timeout_ms: int) -> str:
+async def _disconnect_if_connected(page: Page) -> bool:
+    """Click Disconnect when the detail shows a live session (tools/list refresh)."""
+    disconnect = page.get_by_role("button", name=re.compile(r"^disconnect$", re.I))
+    if not await disconnect.count() or not await disconnect.first.is_visible():
+        return False
+    await disconnect.first.click(force=True)
+    await page.wait_for_timeout(1500)
+    confirm = page.get_by_role(
+        "button", name=re.compile(r"^(disconnect|confirm|yes)$", re.I)
+    )
+    if await confirm.count() and await confirm.first.is_visible():
+        await confirm.first.click(force=True)
+        await page.wait_for_timeout(1500)
+    return True
+
+
+async def _click_connect_and_oauth(
+    page: Page,
+    context,
+    timeout_ms: int,
+    *,
+    force_reconnect: bool = False,
+) -> str:
+    if force_reconnect:
+        await _disconnect_if_connected(page)
+        await page.wait_for_timeout(1000)
+
     connect_btn = page.get_by_role(
         "button", name=re.compile(r"^(connect|reconnect)$", re.I)
     )
     if not await connect_btn.count():
         body = await page.locator("body").inner_text()
         mcp_visible = "mcp.k-1.me" in body
-        if not _CONNECTION_ISSUE.search(body) and mcp_visible:
+        if not force_reconnect and not _CONNECTION_ISSUE.search(body) and mcp_visible:
             return "already_connected"
         raise RuntimeError("Connect/Reconnect button not found")
 
@@ -227,9 +253,18 @@ async def restore_connector(
     mcp_url: str,
     connector_name: str,
     timeout_s: float,
+    force_reconnect: bool = False,
 ) -> str:
     pw, _browser, context, page = await connect_cdp(cdp_url)
     timeout_ms = int(timeout_s * 1000)
+
+    async def _connect(
+        p: Page, ctx=context, t_ms: int = timeout_ms
+    ) -> str:
+        return await _click_connect_and_oauth(
+            p, ctx, t_ms, force_reconnect=force_reconnect
+        )
+
     try:
         page = await _open_connectors_panel(page)
         desired = await _row_matching(page, connector_name)
@@ -258,7 +293,7 @@ async def restore_connector(
                 timeout_ms=timeout_ms,
                 back_to_list=_back_to_list,
                 approve_oauth=_approve_oauth,
-                click_connect_and_oauth=_click_connect_and_oauth,
+                click_connect_and_oauth=_connect,
             )
 
         if desired is None and legacy_found is None:
@@ -272,13 +307,13 @@ async def restore_connector(
                     timeout_ms=timeout_ms,
                     back_to_list=_back_to_list,
                     approve_oauth=_approve_oauth,
-                    click_connect_and_oauth=_click_connect_and_oauth,
+                    click_connect_and_oauth=_connect,
                 )
 
         page = await _open_connector_detail(page, connector_name, mcp_url)
         if not await page.get_by_text(mcp_url, exact=False).count():
             raise RuntimeError(f"Connector detail for {mcp_url} not visible")
-        return await _click_connect_and_oauth(page, context, timeout_ms)
+        return await _connect(page)
     finally:
         await pw.stop()
 
@@ -292,6 +327,12 @@ def main() -> int:
     parser.add_argument("--mcp-url", default=DEFAULT_MCP_URL)
     parser.add_argument("--connector-name", default=DEFAULT_CONNECTOR_NAME)
     parser.add_argument("--timeout", type=float, default=90.0)
+    parser.add_argument(
+        "--force-reconnect",
+        action="store_true",
+        help="Disconnect then Connect+OAuth even when already Connected "
+        "(forces tools/list refresh after MCP schema changes).",
+    )
     args = parser.parse_args()
 
     try:
@@ -301,6 +342,7 @@ def main() -> int:
                 mcp_url=args.mcp_url,
                 connector_name=args.connector_name,
                 timeout_s=args.timeout,
+                force_reconnect=args.force_reconnect,
             )
         )
     except Exception as exc:

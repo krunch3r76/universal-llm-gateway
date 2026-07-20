@@ -7,8 +7,8 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from implement_admission.skill_source_table import (
-    SkillSourceResolveError,
+from implement_admission.skill_catalog_resolver import (
+    SkillCatalogResolveError,
     resolve_canonical_source_uri,
 )
 
@@ -65,7 +65,7 @@ def probe_rendered_surface(
     *,
     platform: str = "web",
 ) -> SurfaceProbeReport:
-    """Resolve every emitted skill pointer against the D1 table (fail-loud)."""
+    """Resolve every emitted skill pointer against the skill catalog (fail-loud)."""
     violations: list[SurfacePointerViolation] = []
     slugs = _extract_slugs(text)
     for slug in sorted(slugs):
@@ -81,7 +81,7 @@ def probe_rendered_surface(
             continue
         try:
             uri = resolve_canonical_source_uri(slug)
-        except SkillSourceResolveError as exc:
+        except SkillCatalogResolveError as exc:
             violations.append(
                 SurfacePointerViolation(
                     pointer=slug,

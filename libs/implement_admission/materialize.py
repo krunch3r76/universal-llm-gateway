@@ -16,11 +16,7 @@ from implement_admission.admission_read import (
     compute_packet_sha256,
     replace_frontmatter_value,
 )
-from implement_admission.skill_source_table import (
-    SkillSourceResolveError,
-    canonical_table_key,
-    resolve_canonical_source_uri,
-)
+from implement_admission.skill_catalog_resolver import SkillCatalogResolveError
 from implement_admission.spec import ImplementSpec, SourceKind, implement_spec_hash
 
 _TOOL_SURFACE = (
@@ -64,7 +60,7 @@ def materialize(
 ) -> MaterializedPacket:
     """Write a six-block packet to out_dir and return path + content hash."""
     if not skip_freshness_probe:
-        assert_skill_table_fresh_for_dispatch()
+        assert_skill_catalog_fresh_for_dispatch()
     out_dir.mkdir(parents=True, exist_ok=True)
     spec_hash = spec.provenance.implement_spec_hash or implement_spec_hash(spec)
     slug = spec.source.canonical_ref.replace(":", "-").replace("/", "-")[:80]
@@ -116,27 +112,33 @@ def _extract_block(text: str, tag: str) -> str | None:
 
 
 def _skill_read(slug: str) -> str:
-    """Name-only skill-use line for implement packets (¬ fs path)."""
+    """Name-only skill-use line for implement packets (¬ fs path).
+
+    Membership authority is ``config/skills.yaml`` via ``get_skill_catalog`` —
+    same set IDE / cursor-sdk expose (charter skill-table-catalog-parity G2).
+    """
+    from claude_bundles.catalog import get_skill_catalog
+
     try:
-        # Validate slug resolves in the committed table; emit use+slug cue.
-        resolve_canonical_source_uri(slug)
-    except SkillSourceResolveError as exc:
-        raise SkillSourceResolveError(
-            f"packet materialize blocked — unresolved skill slug {slug!r}: {exc}"
+        get_skill_catalog().get(slug)
+    except KeyError as exc:
+        raise SkillCatalogResolveError(
+            f"packet materialize blocked — unresolved skill slug {slug!r}: "
+            f"absent from skill catalog"
         ) from exc
     from agent_seat.body_injection import skill_use_instruction
 
     return skill_use_instruction(slug)
 
 
-def assert_skill_table_fresh_for_dispatch(*, enforce_live: bool = False) -> None:
-    """Pre-dispatch freshness probe (F1) — table digest always; live drift optional."""
-    from implement_admission.skill_table_freshness import (
+def assert_skill_catalog_fresh_for_dispatch(*, enforce_live: bool = False) -> None:
+    """Pre-dispatch freshness probe (F1) — catalog load always; live drift optional."""
+    from implement_admission.skill_catalog_freshness import (
         assert_fresh_or_raise,
-        check_table_digest,
+        check_catalog_valid,
     )
 
-    digest_v = check_table_digest()
+    digest_v = check_catalog_valid()
     if digest_v is not None:
         raise RuntimeError(digest_v.detail or digest_v.reason)
     if enforce_live:
@@ -228,10 +230,13 @@ def _render_mcp_capabilities(spec: ImplementSpec) -> str:
     for slug in CODING_SESSION_ADVERTISE_SLUGS:
         if slug not in raw_skills and slug not in inject_slugs:
             raw_skills.append(slug)
+    from claude_bundles.catalog import get_skill_catalog
+
+    catalog = get_skill_catalog()
     seen_keys: set[str] = set()
     skills: list[str] = []
     for slug in raw_skills:
-        key = canonical_table_key(slug)
+        key = catalog.canonical_slug(slug)
         if key in seen_keys:
             continue
         seen_keys.add(key)

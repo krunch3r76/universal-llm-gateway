@@ -9,6 +9,7 @@ from typing import Any
 from implement_admission.dense_spec_schema import (
     DENSE_SPEC_RE,
     dense_spec_hash_uri,
+    validate_dense_spec,
 )
 from implement_admission.density_triage_gate import check_requested_bool
 from implement_admission.gate_distillation import read_dense_spec_text
@@ -17,7 +18,10 @@ from implement_admission.implement_ready_gate_resolve import (
     SkepticRatificationOutcome,
     resolve_skeptic_ratification,
 )
-from implement_admission.implement_ready_preflight import preflight_implement_ready
+from implement_admission.implement_ready_preflight import (
+    GateStatus,
+    preflight_implement_ready,
+)
 from implement_admission.recon_waiver import resolve_effective_recon_waived
 from implement_admission.source_ref import parse_source_ref
 from implement_admission.spec import SourceKind
@@ -376,7 +380,22 @@ def _op_implement_ready_preflight(
         skeptic_evidence_mode=evidence_mode,
         skeptic_unratified_reason=skeptic_outcome.reason,
     )
-    return report.to_dict()
+    result = report.to_dict()
+    gate9 = next((g for g in report.gates if g.gate == 9), None)
+    if (
+        gate9 is not None
+        and gate9.status == GateStatus.FAILED
+        and spec_text is not None
+    ):
+        schema = validate_dense_spec(spec_text)
+        if schema.missing_sections:
+            enriched = dict(result.get("resolution") or {})
+            enriched["missing_sections"] = list(schema.missing_sections)
+            enriched["doc_template_hint"] = (
+                "cortex(doc_template, doc_type=implement_dense_spec)"
+            )
+            result["resolution"] = enriched
+    return result
 
 
 __all__ = ["_op_implement_ready_preflight"]

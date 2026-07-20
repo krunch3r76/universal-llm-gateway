@@ -12,8 +12,8 @@ from typing import Any
 
 from claude_bundles.bundle_description import parse_frontmatter
 from claude_bundles.resolver import render_bundle
-from implement_admission.skill_source_table import (
-    canonical_table_key,
+from implement_admission.skill_catalog_resolver import (
+    canonical_catalog_slug,
     resolve_canonical_source_uri,
 )
 
@@ -72,7 +72,7 @@ def resolve_skill_bundles(
     *,
     workspaces_root: Path | None = None,
 ) -> list[ResolvedSkillBundle]:
-    """Resolve canonical table ids to inline zip bundles for provider mount."""
+    """Resolve canonical catalog ids to inline zip bundles for provider mount."""
     if not skill_ids:
         return []
 
@@ -84,17 +84,25 @@ def resolve_skill_bundles(
         if not skill_id:
             raise SkillMountResolveError("empty skill id in skills= list")
         try:
-            canonical_slug = canonical_table_key(skill_id)
+            canonical_slug = canonical_catalog_slug(skill_id)
             source_uri = resolve_canonical_source_uri(skill_id)
         except LookupError as exc:
             raise SkillMountResolveError(
-                f"skill id {skill_id!r} absent from canonical table"
+                f"skill id {skill_id!r} absent from skill catalog"
             ) from exc
 
         path = _resolve_source_path(
             source_uri,
             workspaces_root=ws_root,
         )
+        if path is None:
+            try:
+                from claude_bundles.catalog import load_skill_catalog
+
+                catalog = load_skill_catalog(repo_root=ws_root, validate_sot=False)
+                path, _ = catalog.resolve_sot(canonical_slug, ws_root)
+            except (KeyError, FileNotFoundError):
+                path = None
         if path is None:
             raise SkillMountResolveError(
                 f"skill id {skill_id!r}: source uri unmappable or unreadable "

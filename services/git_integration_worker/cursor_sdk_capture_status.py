@@ -13,6 +13,7 @@ from implement_admission.closeout_models import EffectsManifest
 from implement_admission.spec import CloseoutStatus
 
 from services.git_integration_worker.cursor_sdk_capture_policy import (
+    any_hard_fail_deviation,
     deviation_degrades_capture_status,
 )
 from services.git_integration_worker.cursor_sdk_light_bounded_capture import (
@@ -298,6 +299,22 @@ def baseline_dirty_in_expected(
     return False
 
 
+def _manifest_coverage_hard_fail(manifest: EffectsManifest) -> bool:
+    """Coverage partial/unavailable degrades only on HARD_FAIL cross_checks (a:25136)."""
+    if not manifest.coverage:
+        return False
+    if "unavailable" in manifest.coverage.values():
+        return True
+    for name, cov in manifest.coverage.items():
+        if cov != "partial":
+            continue
+        section = manifest.surfaces.get(name)
+        cross_check = section.cross_check if section else None
+        if cross_check is None or deviation_degrades_capture_status(cross_check):
+            return True
+    return False
+
+
 def classify_capture_status(
     *,
     deliverables_expected: bool,
@@ -313,12 +330,8 @@ def classify_capture_status(
         return "unavailable"
     if baseline_dirty_in_expected(baseline, files_expected) and not baseline_has_hashes:
         return "partial"
-    if manifest and manifest.coverage:
-        values = set(manifest.coverage.values())
-        if "unavailable" in values:
-            return "partial"
-        if "partial" in values:
-            return "partial"
+    if manifest and _manifest_coverage_hard_fail(manifest):
+        return "partial"
     return "complete"
 
 
@@ -684,4 +697,16 @@ def resolve_closeout_capture_fields(
         deviations.append(divergence_reason)
     if intent_violation:
         deviations.append(intent_violation)
+    if (
+        deliverables_expected
+        and capture_status == "partial"
+        and expected_deliverables_present(
+            files_expected,
+            manifest,
+            source_repo=source_repo,
+            cortex_root=cortex_root,
+        )
+        and not any_hard_fail_deviation(divergence_reason, *deviations)
+    ):
+        capture_status = "complete"
     return capture_status, divergence_reason, deviations, manifest
