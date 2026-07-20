@@ -1,4 +1,3 @@
-# ruff: noqa: N802
 """Gateway state, retry, and resource event signals.
 
 Covers gateway connectivity/health transitions, retry telemetry,
@@ -12,6 +11,8 @@ Signals:
     resource.reserved — VRAM/RAM reserved for model load
     resource.released — reservation released (completed/expired/cancelled)
 """
+
+# ruff: noqa: N802
 
 from typing import Literal
 

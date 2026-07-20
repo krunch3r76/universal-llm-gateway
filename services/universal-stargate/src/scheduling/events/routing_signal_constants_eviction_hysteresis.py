@@ -1,5 +1,4 @@
-"""Stargate scheduling routing events — split module"
-"(routing_signal_constants_eviction_hysteresis.py)."""
+"""Signal string constants for Stargate eviction-hysteresis routing (cooldown applied/blocked/overridden, demand-driven eviction applied, and eviction execution failure). Consumed by `routing_factories_eviction_hysteresis.py`'s event factories and by routing eviction-cooldown subscribers."""
 
 # ruff: noqa: N802
 

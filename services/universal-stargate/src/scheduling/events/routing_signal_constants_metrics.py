@@ -1,5 +1,4 @@
-"""Stargate scheduling routing events — split module"
-"(routing_signal_constants_metrics.py)."""
+"""Signal string constants for Stargate routing metrics: model-load initiated/completed and per-request gateway-trace/routed signals, plus token-count precondition/completion/failure signals. Consumed by `routing_factories_metrics_load.py` and `routing_factories_metrics_tokens.py`'s event factories."""
 
 # ruff: noqa: N802
 

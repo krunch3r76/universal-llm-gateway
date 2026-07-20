@@ -11,14 +11,14 @@ from typing import Optional
 
 
 class ConnectivityState(Enum):
-    """Network connectivity state - can we reach the gateway?"""
+    """Enum describing network connectivity state: whether this gateway can currently be reached over the network, independent of whether the service running behind it is healthy (see `HealthState` for that orthogonal concern)."""
 
     REACHABLE = "reachable"
     UNREACHABLE = "unreachable"
 
 
 class HealthState(Enum):
-    """Service health state - is the gateway service functional?"""
+    """Enum describing service health state: whether the gateway service is functionally able to serve requests, independent of whether it is currently network-reachable (see `ConnectivityState` for that orthogonal concern)."""
 
     HEALTHY = "healthy"
     UNHEALTHY = "unhealthy"

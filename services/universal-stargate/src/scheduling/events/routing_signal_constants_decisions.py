@@ -1,5 +1,4 @@
-"""Stargate scheduling routing events — split module"
-"(routing_signal_constants_decisions.py)."""
+"""Signal string constants for Stargate routing decisions and overflow handling (queuing, dequeuing, decision success/failure, timeout, overflow trigger/failure, overflow capacity-assigned, and model-load-overflow-started). Consumed by `routing_factories_decisions_overflow.py`'s event factories and by routing event subscribers."""
 
 # ruff: noqa: N802
 

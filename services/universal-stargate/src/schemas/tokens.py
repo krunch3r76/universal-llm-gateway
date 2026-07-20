@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class ImageURL(BaseModel):
-    """Image URL specification for multi-modal content"""
+    """Image URL specification for multi-modal message content, referenced by `ContentPartImage` to point at the image being included in a request; validated and serialized as a pydantic model."""
 
     url: str = Field(..., description="Image URL (data URI or HTTP(S) URL)")
     detail: Literal["auto", "low", "high"] | None = Field(
@@ -21,14 +21,14 @@ class ImageURL(BaseModel):
 
 
 class ContentPartText(BaseModel):
-    """Text content part"""
+    """One multi-modal content part carrying plain text, as distinct from `ContentPartImage`'s image content, within a message's list of content parts; validated and serialized as a pydantic model."""
 
     type: Literal["text"] = "text"
     text: str = Field(..., description="Text content")
 
 
 class ContentPartImage(BaseModel):
-    """Image content part"""
+    """One multi-modal content part carrying image content via an `ImageURL`, as distinct from `ContentPartText`'s plain-text content, within a message's list of content parts; validated and serialized as a pydantic model."""
 
     type: Literal["image_url"] = "image_url"
     image_url: ImageURL = Field(..., description="Image URL specification")
@@ -38,7 +38,7 @@ ContentPart = Annotated[ContentPartText | ContentPartImage, Field(discriminator=
 
 
 class Message(BaseModel):
-    """Chat message with support for text-only and multi-modal content"""
+    """Chat message with support for both text-only and multi-modal content, used by the token-count endpoint's schemas as distinct from the `ChatMessage` model used by the chat completion endpoint."""
 
     model_config = ConfigDict(extra="allow")
 
@@ -55,7 +55,7 @@ class Message(BaseModel):
 
 
 class TokenCountRequest(BaseModel):
-    """Request schema for token counting endpoint"""
+    """Request schema for the token counting endpoint, carrying the messages (or equivalent input) whose token usage the caller wants estimated before submitting an actual completion request."""
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -120,7 +120,7 @@ class TokenCountRequest(BaseModel):
 
 
 class TokenCountResponse(BaseModel):
-    """Response schema for token counting endpoint"""
+    """Response schema for the token counting endpoint, returning the computed token usage for the caller's submitted `TokenCountRequest` payload as a pydantic-validated result."""
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -140,7 +140,7 @@ class TokenCountResponse(BaseModel):
 
 
 class TokenCountError(BaseModel):
-    """Error response schema for token counting failures"""
+    """Error response schema for token counting failures, returned in place of a `TokenCountResponse` when the endpoint cannot compute usage for the submitted request."""
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -156,7 +156,7 @@ class TokenCountError(BaseModel):
 
 
 class TokenMetrics(BaseModel):
-    """Token metrics for monitoring"""
+    """Token metrics for monitoring overall service token throughput, distinct from the per-request accounting in `TokenCountResponse`/`ChatCompletionUsage`; validated and serialized as a pydantic model."""
 
     model_config = ConfigDict(
         json_schema_extra={

@@ -1,4 +1,4 @@
-"""Model information and metadata schemas"""
+"""Model information and metadata schemas. Defines the pydantic response models the API uses to describe available models and to list them, shared across both basic and detailed model-info endpoints."""
 
 from typing import Any
 
@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class ModelInfo(BaseModel):
-    """Model information schema - flexible for both basic and detailed responses"""
+    """Model information schema describing a single available model, flexible enough to serve both basic and detailed model-info responses from the same pydantic model rather than requiring separate schemas per verbosity level."""
 
     model_config = ConfigDict(
         protected_namespaces=(),
@@ -63,8 +63,7 @@ class ModelInfo(BaseModel):
 
 
 class ModelListResponse(BaseModel):
-    """Response schema for models listing endpoint - flexible for basic and detailed"
-    "responses"""
+    """Response schema for the models-listing endpoint, wrapping a collection of `ModelInfo` entries and flexible enough to serve both basic and detailed listing responses from the same pydantic model."""
 
     model_config = ConfigDict(
         extra="allow",  # Allow additional fields from gateway

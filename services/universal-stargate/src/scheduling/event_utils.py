@@ -16,7 +16,7 @@ logger = get_logger(__name__)
 
 
 class StateTransitionDebugger:
-    """Debug helper for tracking and analyzing state transitions"""
+    """Debug helper that tracks and analyzes gateway state transitions in memory. Buffers transition history and per-event counts as GATEWAY_STATE_CHANGED events arrive, and exposes summary, recent-transition, and history-clearing accessors for diagnostics."""
 
     def __init__(self):
         self._transition_history: list[dict[str, Any]] = []

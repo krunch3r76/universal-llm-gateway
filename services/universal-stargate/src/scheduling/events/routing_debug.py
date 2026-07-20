@@ -1,4 +1,3 @@
-# ruff: noqa: N802
 """Debug observability signals for routing decisions and gateway state changes.
 
 Emitted on anomalies only — not on every routing call. Designed for
@@ -10,6 +9,8 @@ Signals:
     routing.debug.gateway.removed — gateway removed on edge/remote disconnect
     routing.debug.gateway.registered — new gateway registered (initial or reconnect)
 """
+
+# ruff: noqa: N802
 
 from typing import Any
 

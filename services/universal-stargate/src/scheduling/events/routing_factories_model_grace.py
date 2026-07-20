@@ -1,5 +1,4 @@
-"""Stargate scheduling routing events — split module"
-"(routing_factories_model_grace.py)."""
+"""Stargate scheduling routing events — split module covering model grace-period routing: grace-queued, grace-resolved, and grace-timeout signals, built as `Event` objects marking a request's wait for a model to finish its post-load grace window."""
 
 # ruff: noqa: N802
 

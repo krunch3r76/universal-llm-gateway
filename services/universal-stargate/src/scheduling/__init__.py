@@ -1,7 +1,4 @@
-# ruff: noqa: N999, F401
-# pyright: reportUnusedImport=false, reportUnsupportedDunderAll=false
-"""
-Scheduling system for Universal Stargate.
+"""Stargate scheduling package — event bus wiring, consumers, and gateway state.
 
 Architecture: WebSocket-first control plane with event-driven consumers.
 This package re-exports gateway state types, event utilities, error classes,
@@ -34,6 +31,9 @@ Gateway state and errors:
 - ConnectivityError, HealthError, GatewayError, GatewayTimeoutError,
   ModelLoadError, ModelUnloadError, NoHealthyGatewaysError
 """
+
+# ruff: noqa: N999, F401
+# pyright: reportUnusedImport=false, reportUnsupportedDunderAll=false
 
 from .consumers.metrics_consumer import MetricsConsumer
 from .consumers.model_cache_consumer import ModelCacheConsumer

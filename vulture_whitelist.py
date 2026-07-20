@@ -27,3 +27,9 @@ include_all_variants  # noqa: F821
 
 # Mock hydrate callbacks matching real signature (test_frontier_dispatch.py)
 transcript_id  # noqa: F821
+
+# TYPE_CHECKING annotation-only import (resource_consumer.py)
+SingleGatewayManager  # noqa: F821
+
+# pydantic BaseModel.model_post_init required signature (chat_completion.py)
+__context  # noqa: F821

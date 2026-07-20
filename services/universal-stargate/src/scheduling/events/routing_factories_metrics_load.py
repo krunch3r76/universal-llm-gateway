@@ -1,5 +1,4 @@
-"""Stargate scheduling routing events — split module"
-"(routing_factories_metrics_load.py)."""
+"""Stargate scheduling routing events — split module covering load metrics and request routing: model-load initiated/completed signals plus per-request gateway-trace and routed signals, built as `Event` objects for routing-metrics consumers."""
 
 # ruff: noqa: N802
 

@@ -1,5 +1,4 @@
-"""Stargate scheduling routing events — split module"
-"(routing_factories_oom_recovery.py)."""
+"""Stargate scheduling routing events — split module covering out-of-memory (OOM) recovery. Builds `Event` objects via `event_factory` for OOM-recovery routing signals defined in this module, keeping OOM-specific factory functions isolated from the other routing-event split modules."""
 
 # ruff: noqa: N802
 

@@ -1,10 +1,11 @@
-# ruff: noqa: N802
 """System lifecycle event signals.
 
 Signals:
     system.started — Stargate session started; carries pid + role for forensics
     system.shutdown — Stargate shutting down
 """
+
+# ruff: noqa: N802
 
 from universal_event_bus import Event, event_factory
 

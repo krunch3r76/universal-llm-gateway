@@ -1,5 +1,4 @@
-"""Stargate scheduling routing events — split module"
-"(routing_factories_metrics_tokens.py)."""
+"""Stargate scheduling routing events — split module covering token-count metrics: token-counting precondition, completion, and failure signals, built as `Event` objects for routing token-usage tracking and observability consumers."""
 
 # ruff: noqa: N802
 

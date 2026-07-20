@@ -14,5 +14,5 @@ from typing import Any
 
 
 def client_requested_stream(body: Mapping[str, Any]) -> bool:
-    """True iff ``body["stream"]`` is the JSON boolean ``true`` (strict)."""
+    """True iff ``body["stream"]`` is the JSON boolean ``true`` (a strict ``is True`` identity check, not merely a truthy value), so callers cannot accidentally enable streaming with ``"stream": 1`` or similar."""
     return body.get("stream") is True

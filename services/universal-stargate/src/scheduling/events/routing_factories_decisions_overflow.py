@@ -1,5 +1,4 @@
-"""Stargate scheduling routing events — split module"
-"(routing_factories_decisions_overflow.py)."""
+"""Stargate scheduling routing events — split module covering routing decisions and overflow handling: queuing, dequeuing, decision success/failure, timeout, overflow trigger/failure, overflow capacity-assigned, and model-load-overflow-started signals, built as `Event` objects for the routing scheduler."""
 
 # ruff: noqa: N802
 

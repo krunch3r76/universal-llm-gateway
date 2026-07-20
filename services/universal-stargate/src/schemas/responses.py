@@ -1,4 +1,4 @@
-"""General API response schemas"""
+"""General API response schemas. Defines the shared pydantic response models — health, metrics, error, validation-error, and generic success payloads — reused across the service's HTTP endpoints."""
 
 import time
 from typing import Any
@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class HealthResponse(BaseModel):
-    """Simple health check response schema for /health endpoint"""
+    """Simple health check response schema for the `/health` endpoint, giving callers a minimal pydantic-validated payload to confirm the service process is up and responding."""
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -27,7 +27,7 @@ class HealthResponse(BaseModel):
 
 
 class MetricsResponse(BaseModel):
-    """System metrics response schema"""
+    """System metrics response schema exposing service-level operational metrics to callers as a pydantic-validated payload, distinct from the minimal `HealthResponse` liveness check."""
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -63,7 +63,7 @@ class MetricsResponse(BaseModel):
 
 
 class ErrorResponse(BaseModel):
-    """Error response schema"""
+    """Generic error response schema used to report a failed request back to the caller as a pydantic-validated payload, shared across endpoints that do not need the more detailed `ValidationErrorResponse` shape."""
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -82,7 +82,7 @@ class ErrorResponse(BaseModel):
 
 
 class ValidationErrorResponse(BaseModel):
-    """Validation error response schema"""
+    """Response schema for reporting request-validation failures back to the caller, distinct from the generic `ErrorResponse` used for other failure modes, validated and serialized as a pydantic model."""
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -103,7 +103,7 @@ class ValidationErrorResponse(BaseModel):
 
 
 class SuccessResponse(BaseModel):
-    """Generic success response schema"""
+    """Generic success response schema used for endpoints that only need to confirm an operation completed, without the richer payload shapes of the service's other pydantic response schemas."""
 
     model_config = ConfigDict(
         json_schema_extra={

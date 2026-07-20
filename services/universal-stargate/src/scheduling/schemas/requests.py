@@ -1,6 +1,4 @@
-"""
-Request schemas for the scheduling system.
-"""
+"""Request schemas for the scheduling system. Defines the dataclass-based request records (built with `time`/`uuid` for identity and timing) that reference the `RequestStatus` enum from the sibling `resources` module to track a request's lifecycle state."""
 
 import time
 import uuid

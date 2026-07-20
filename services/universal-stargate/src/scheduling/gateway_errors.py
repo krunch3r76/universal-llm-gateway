@@ -9,7 +9,7 @@ from typing import Any
 
 
 class GatewayError(Exception):
-    """Base exception for all gateway errors."""
+    """Base exception for all gateway errors. Carries a human-readable message plus optional `gateway_url` and structured `context`, and serializes itself via `to_dict()` (keyed by `error_type`, `message`, `gateway_url`, `context`) for structured logging."""
 
     def __init__(
         self,

@@ -1,5 +1,4 @@
-"""Stargate scheduling routing events — split module"
-"(routing_factories_eviction_hysteresis.py)."""
+"""Stargate scheduling routing events — split module covering eviction hysteresis: cooldown applied/blocked/overridden, demand-driven eviction applied, and eviction execution failure signals, built as `Event` objects for the routing scheduler's eviction-cooldown logic."""
 
 # ruff: noqa: N802
 

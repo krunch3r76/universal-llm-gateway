@@ -1,4 +1,3 @@
-# ruff: noqa: N802
 """Federation model load orchestration and catalog event signals.
 
 Covers federated model load requests/confirmations/failures, orchestrator
@@ -21,6 +20,8 @@ Signals:
     model.loaded (federation variant) — reuse signal, federation payload
     model.unloaded (federation variant) — reuse signal, federation payload
 """
+
+# ruff: noqa: N802
 
 from model_id import ModelId
 from universal_event_bus import Event, event_factory

@@ -1,8 +1,11 @@
+"""Event-bus consumers for Stargate scheduling metrics, routing, and resources.
+
+Re-exports MetricsConsumer, routing/model consumers, and resource update handlers
+used by the scheduling package public surface.
+"""
+
 # ruff: noqa: F401
 # pyright: reportUnusedImport=false, reportUnsupportedDunderAll=false
-"""
-Scheduling event consumers.
-"""
 
 from .metrics_consumer import MetricsConsumer
 from .model_cache_consumer import ModelCacheConsumer

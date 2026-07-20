@@ -1,4 +1,3 @@
-# ruff: noqa: N802
 """Request snapshot event signals — before/after records for pipeline evaluation.
 
 These events carry structured request/response payloads that the event service
@@ -13,6 +12,8 @@ Signals:
     request.snapshot.completed — response body for non-streaming requests
     request.snapshot.failed    — error details on failure
 """
+
+# ruff: noqa: N802
 
 from __future__ import annotations
 

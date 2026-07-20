@@ -1,5 +1,4 @@
-"""
-Event signals for Universal Stargate event-driven architecture.
+"""Event signals for Universal Stargate event-driven architecture.
 
 All events use the UML Message structure from universal_event_bus.
 Events are created via factory functions and published as Event objects.
@@ -32,284 +31,25 @@ Domain modules:
     cloud               — cloud proxy availability and catalog
     proxy               — federated request proxy layer: transformation decisions
     pipeline            — registry, embedding steps, domain verification
-    system              — startup and shutdown
-"""
+    system              — startup and shutdown"""
 
-from .cloud import (
-    CLOUD_PROXY_AVAILABLE,
-    CLOUD_PROXY_CATALOG_FETCH_FAILED,
-    CLOUD_PROXY_CATALOG_UPDATED,
-    CLOUD_PROXY_UNAVAILABLE,
-    CloudProxyAvailable,
-    CloudProxyCatalogFetchFailed,
-    CloudProxyCatalogUpdated,
-    CloudProxyUnavailable,
-)
-from .cursor_catalog import (
-    CURSOR_CATALOG_AVAILABLE,
-    CURSOR_CATALOG_DRIFT_DETECTED,
-    CURSOR_CATALOG_FETCH_FAILED,
-    CURSOR_CATALOG_UNAVAILABLE,
-    CURSOR_CATALOG_UPDATED,
-    CursorCatalogAvailable,
-    CursorCatalogDriftDetected,
-    CursorCatalogFetchFailed,
-    CursorCatalogUnavailable,
-    CursorCatalogUpdated,
-)
-from .federation_load import (
-    FEDERATION_CATALOG_VRAM_DRIFT,
-    FEDERATION_GATEWAY_CATALOG_CHANGED,
-    FEDERATION_GATEWAY_REACHABILITY_RESTORED,
-    FEDERATION_LOAD_CONFIRMED,
-    FEDERATION_LOAD_FAILED,
-    FEDERATION_LOAD_REQUESTED,
-    FEDERATION_ORCHESTRATOR_DECIDED,
-    FEDERATION_ORCHESTRATOR_EVICTED,
-    FederationCatalogVramDrift,
-    FederationGatewayCatalogChanged,
-    FederationGatewayReachabilityRestored,
-    FederationGatewayResourceUpdateSignal,
-    FederationLoadConfirmed,
-    FederationLoadFailed,
-    FederationLoadRequested,
-    FederationModelLoaded,
-    FederationModelUnloaded,
-    FederationOrchestratorDecided,
-    FederationOrchestratorEvicted,
-)
-from .federation_signaling import (
-    FEDERATION_ACTIVATION_FILTERED_EMPTY,
-    FEDERATION_CONNECTION_AUTHENTICATED,
-    FEDERATION_CONNECTION_ESTABLISHED,
-    FEDERATION_CONNECTION_LOST,
-    FEDERATION_LINK_TIMEOUT,
-    FEDERATION_ROUTING_DELEGATED,
-    FEDERATION_ROUTING_REJECTED,
-    FEDERATION_ROUTING_ROUTED_LOCAL,
-    FEDERATION_TELEMETRY_APPLIED,
-    FEDERATION_TELEMETRY_MARKED_STALE,
-    FEDERATION_TELEMETRY_RECEIVED,
-    FEDERATION_TELEMETRY_WIRED,
-    FederationActivationFilteredEmpty,
-    FederationConnectionAuthenticated,
-    FederationConnectionEstablished,
-    FederationConnectionLost,
-    FederationLinkTimeout,
-    FederationRoutingDelegated,
-    FederationRoutingRejected,
-    FederationRoutingRoutedLocal,
-    FederationTelemetryApplied,
-    FederationTelemetryMarkedStale,
-    FederationTelemetryReceived,
-    FederationTelemetryWired,
-)
-from .gateway import (
-    GATEWAY_RESOURCE_UPDATE,
-    GATEWAY_RETRY_ATTEMPTED,
-    GATEWAY_STATE_CHANGED,
-    RESOURCE_RELEASED,
-    RESOURCE_RESERVED,
-    GatewayResourceUpdate,
-    GatewayRetryAttempted,
-    GatewayStateChanged,
-    ResourceReleased,
-    ResourceReserved,
-)
-from .model_lifecycle import (
-    MODEL_AVAILABLE,
-    MODEL_CAPACITY_FREED,
-    MODEL_EXECUTION_COMPLETED,
-    MODEL_EXECUTION_FAILED,
-    MODEL_EXECUTION_STARTED,
-    MODEL_LOAD_FAILED,
-    MODEL_LOADED,
-    MODEL_LOADING_PROGRESS,
-    MODEL_LOADING_STARTED,
-    MODEL_LOADING_STUCK,
-    MODEL_UNAVAILABLE,
-    MODEL_UNLOADED,
-    ModelAvailable,
-    ModelCapacityFreed,
-    ModelExecutionCompleted,
-    ModelExecutionFailed,
-    ModelExecutionStarted,
-    ModelLoaded,
-    ModelLoadingFailed,
-    ModelLoadingProgress,
-    ModelLoadingStarted,
-    ModelLoadingStuck,
-    ModelUnavailable,
-    ModelUnloaded,
-)
-from .pipeline import (
-    PIPELINE_DAG_EXECUTION_COMPLETED,
-    PIPELINE_DEADLOCK_DETECTED,
-    PIPELINE_EXECUTION_CANCELLED,
-    PIPELINE_EXECUTION_TIMED_OUT,
-    PIPELINE_MODEL_GATE_CLAIMED,
-    PIPELINE_MODEL_GATE_RELEASED,
-    PIPELINE_MODEL_GATE_RELEASED_ON_FAILURE,
-    PIPELINE_MODEL_REGISTRY_LOOKUP_FAILED,
-    PIPELINE_REGISTRY_UNAVAILABLE,
-    PIPELINE_STEP_DOMAIN_VERIFICATION_COMPLETED,
-    PIPELINE_STEP_DOMAIN_VERIFICATION_STARTED,
-    PIPELINE_STEP_EMBEDDING_COMPLETED,
-    PIPELINE_STEP_EMBEDDING_FAILED,
-    PIPELINE_STEP_EMBEDDING_STARTED,
-    PIPELINE_STEP_MODEL_DEFERRED,
-    PipelineDagExecutionCompleted,
-    PipelineDeadlockDetected,
-    PipelineExecutionCancelled,
-    PipelineExecutionTimedOut,
-    PipelineModelGateClaimed,
-    PipelineModelGateReleased,
-    PipelineModelGateReleasedOnFailure,
-    PipelineModelRegistryLookupFailed,
-    PipelineStepEmbeddingCompleted,
-    PipelineStepEmbeddingFailed,
-    PipelineStepEmbeddingStarted,
-    PipelineStepModelDeferred,
-    pipeline_registry_unavailable,
-    pipeline_step_domain_verification_completed,
-    pipeline_step_domain_verification_started,
-)
-from .proxy import (
-    FEDERATED_REQUEST_PROMPT_TRANSFORMATION_APPLIED,
-    FEDERATED_REQUEST_PROMPT_TRANSFORMATION_FAILED,
-    FEDERATED_REQUEST_PROMPT_TRANSFORMATION_SKIPPED,
-    federated_request_prompt_transformation_applied,
-    federated_request_prompt_transformation_failed,
-    federated_request_prompt_transformation_skipped,
-)
-from .queue import (
-    CAPACITY_ADMISSION_PAUSED,
-    CAPACITY_ADMISSION_RESUMED,
-    CAPACITY_POOL_ADMITTED,
-    CAPACITY_POOL_CANCELLED,
-    CAPACITY_POOL_FULL,
-    CAPACITY_POOL_QUEUED,
-    CAPACITY_POOL_WAITING,
-    QUEUE_MASTER_ENTERED,
-    QUEUE_MASTER_TIMEOUT,
-    QUEUE_MASTER_TOCTOU,
-    QUEUE_MASTER_WOKEN,
-    CapacityAdmissionPaused,
-    CapacityAdmissionResumed,
-    CapacityPoolAdmitted,
-    CapacityPoolCancelled,
-    CapacityPoolFull,
-    CapacityPoolQueued,
-    CapacityPoolWaiting,
-    QueueMasterEntered,
-    QueueMasterTimedOut,
-    QueueMasterToctou,
-    QueueMasterWoken,
-)
-from .request import (
-    FEDERATION_SNAPSHOT_SENT,
-    MODEL_SELECTION_HEALTH_OBSERVATION,
-    MODEL_SELECTION_RANK_COMPUTED,
-    MODEL_SELECTION_SCORE_UPDATED,
-    MODEL_SELECTION_SWITCH_ALLOWED,
-    MODEL_SELECTION_SWITCH_SUPPRESSED,
-    REQUEST_ALIAS_RESOLVED,
-    REQUEST_CLIENT_DISCONNECTED,
-    REQUEST_COMPLETED,
-    REQUEST_FAILED,
-    REQUEST_INFERENCE_STARTED,
-    REQUEST_PROCESSING,
-    REQUEST_PROFILE_RESOLVED,
-    REQUEST_QUEUED,
-    REQUEST_REMOVED,
-    REQUEST_TIMEOUT,
-    FederationSnapshotSent,
-    ModelSelectionHealthObservation,
-    ModelSelectionRankComputed,
-    ModelSelectionScoreUpdated,
-    ModelSelectionSwitchAllowed,
-    ModelSelectionSwitchSuppressed,
-    RequestAliasResolved,
-    RequestClientDisconnected,
-    RequestCompleted,
-    RequestFailed,
-    RequestInferenceStarted,
-    RequestProcessing,
-    RequestProfileResolved,
-    RequestQueued,
-    RequestRemoved,
-    RequestTimeout,
-)
-from .routing import (
-    MODEL_CAPACITY_OVERFLOW_ASSIGNED,
-    MODEL_LOAD_COMPLETED,
-    MODEL_LOAD_INITIATED,
-    MODEL_LOAD_OVERFLOW_STARTED,
-    REQUEST_GATEWAY_TRACE,
-    REQUEST_ROUTED,
-    ROUTING_DECISION,
-    ROUTING_DECISION_FAILED,
-    TOKEN_COUNT_COMPLETED,
-    TOKEN_COUNT_PRECONDITION,
-    TOKEN_COUNTING_FAILED,
-    ModelCapacityOverflowAssigned,
-    ModelLoadCompleted,
-    ModelLoadInitiated,
-    ModelLoadOverflowStarted,
-    RequestGatewayTrace,
-    RequestRouted,
-    RoutingDecision,
-    RoutingDecisionFailed,
-    TokenCountCompleted,
-    TokenCountingFailed,
-    TokenCountPrecondition,
-)
-from .routing_debug import (
-    ROUTING_DEBUG_GATEWAY_DROPOUT,
-    ROUTING_DEBUG_GATEWAY_REGISTERED,
-    ROUTING_DEBUG_GATEWAY_REMOVED,
-    RoutingDebugGatewayDropout,
-    RoutingDebugGatewayRegistered,
-    RoutingDebugGatewayRemoved,
-)
-from .routing_failures import (
-    CAPACITY_SLOT_LEAK_RECOVERED,
-    ROUTING_CAPACITY_DIVERGENCE,
-    ROUTING_CAPACITY_PRESEEDED,
-    ROUTING_EVICTION_BLOCKED_BUSY,
-    ROUTING_EVICTION_INSUFFICIENT_PERMANENT,
-    ROUTING_MODEL_INFEASIBLE,
-    ROUTING_OVERFLOW_FAILED,
-    ROUTING_OVERFLOW_TRIGGERED,
-    ROUTING_RESOURCE_DATA_MISSING,
-    ROUTING_UPSTREAM_ALL_EXCLUDED,
-    CapacitySlotLeakRecovered,
-    RoutingCapacityDivergence,
-    RoutingCapacityPreseeded,
-    RoutingEvictionBlockedBusy,
-    RoutingEvictionInsufficientPermanent,
-    RoutingModelInfeasible,
-    RoutingOverflowFailed,
-    RoutingOverflowTriggered,
-    RoutingResourceDataMissing,
-    RoutingUpstreamAllExcluded,
-)
-from .snapshot import (
-    REQUEST_SNAPSHOT_COMPLETED,
-    REQUEST_SNAPSHOT_FAILED,
-    REQUEST_SNAPSHOT_RECEIVED,
-    REQUEST_SNAPSHOT_ROUTED,
-    RequestSnapshotCompleted,
-    RequestSnapshotFailed,
-    RequestSnapshotReceived,
-    RequestSnapshotRouted,
-)
-from .system import (
-    SYSTEM_SHUTDOWN,
-    SYSTEM_STARTED,
-    SystemShutdown,
-    SystemStarted,
-)
+# ruff: noqa: F403, F405
+
+from .cloud import *  # noqa: F403
+from .cursor_catalog import *  # noqa: F403
+from .federation_load import *  # noqa: F403
+from .federation_signaling import *  # noqa: F403
+from .gateway import *  # noqa: F403
+from .model_lifecycle import *  # noqa: F403
+from .pipeline import *  # noqa: F403
+from .proxy import *  # noqa: F403
+from .queue import *  # noqa: F403
+from .request import *  # noqa: F403
+from .routing import *  # noqa: F403
+from .routing_debug import *  # noqa: F403
+from .routing_failures import *  # noqa: F403
+from .snapshot import *  # noqa: F403
+from .system import *  # noqa: F403
 
 __all__ = [
     # ── routing ──────────────────────────────────────────────────────────────

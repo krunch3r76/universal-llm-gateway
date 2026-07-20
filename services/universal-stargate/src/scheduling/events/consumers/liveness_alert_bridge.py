@@ -1,4 +1,4 @@
-"""Operator-visible delivery for federation liveness stale/recovered signals."""
+"""Operator-visible delivery for federation liveness stale/recovered signals. Subscribes to gateway liveness events on the event bus and posts human-readable alert and recovery briefings to a dedicated agent_bus thread over HTTP, so operators see silent-node and recovery status without polling."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ _TO_AGENT = "claude-web"
 
 
 class LivenessAlertBridge:
-    """Post liveness stale/recovered briefings to a dedicated agent_bus thread."""
+    """Posts liveness stale/recovered briefings to a dedicated agent_bus thread. Subscribes to FEDERATION_GATEWAY_LIVENESS_STALE and FEDERATION_GATEWAY_RECOVERED events, tracks open alerts in `_open_alerts` to avoid duplicate stale notices, and skips posting entirely when no agent-bus token is configured."""
 
     def __init__(self, event_bus: EventBus) -> None:
         self._event_bus = event_bus

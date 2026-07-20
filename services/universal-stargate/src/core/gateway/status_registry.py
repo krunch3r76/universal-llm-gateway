@@ -1,8 +1,4 @@
-"""
-Gateway availability and lifecycle tracking.
-
-Single responsibility: track gateway availability state (available/draining/shutdown).
-"""
+"""Gateway availability and lifecycle tracking for the scheduling core. Single responsibility: record each gateway's availability state (available, draining, or shutdown) as timestamped dataclass entries, giving other scheduling modules one place to read current gateway status."""
 
 import time
 from dataclasses import dataclass, field

@@ -27,7 +27,7 @@ logger = get_logger(__name__)
 
 
 class StateTransition:
-    """Represents a gateway state transition for historical tracking"""
+    """Represents a single gateway state transition captured for historical tracking. Records the gateway URL, the previous and new connectivity/health state pairs, and a timestamp, and serializes itself via `to_dict()` for API responses."""
 
     def __init__(
         self,

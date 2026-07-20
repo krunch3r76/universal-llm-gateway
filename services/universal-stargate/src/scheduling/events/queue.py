@@ -1,4 +1,3 @@
-# ruff: noqa: N802
 """Capacity queue event signals.
 
 Covers request entry, wake-up, and TOCTOU race detection
@@ -18,6 +17,8 @@ Capacity pool signals:
     capacity.pool.full — queue at max depth, request rejected immediately
     capacity.pool.cancelled — queued request removed before admission
 """
+
+# ruff: noqa: N802
 
 from universal_event_bus import Event, event_factory
 

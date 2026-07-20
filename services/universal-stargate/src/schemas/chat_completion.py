@@ -14,7 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class ChatMessage(BaseModel):
-    """Chat message in the conversation (supports multimodal content)"""
+    """A single chat message in the conversation history, validated and serialized as a pydantic model. Supports multimodal content (e.g., text alongside other content types) in addition to plain text bodies."""
 
     model_config = ConfigDict(extra="allow")
 
@@ -29,10 +29,7 @@ class ChatMessage(BaseModel):
 
 
 class ChatCompletionRequest(BaseModel):
-    """Request schema for chat completion endpoint.
-
-    Simplified to avoid default value issues.
-    """
+    """Request schema for the chat completion endpoint, deliberately simplified to avoid pydantic default-value issues. Requires exactly one of `messages` or `prompt` to be set — `model_post_init` raises `ValueError` if both or neither are provided."""
 
     model_config = ConfigDict(
         extra="allow",  # Allow additional fields not defined in schema
@@ -77,7 +74,7 @@ class ChatCompletionRequest(BaseModel):
 
 
 class ChatCompletionChoice(BaseModel):
-    """Individual choice in chat completion response"""
+    """One individual completion choice as returned by the chat completion endpoint, mirroring the choices-list pattern used across this module's response schemas; validated and serialized as a pydantic model."""
 
     index: int = Field(..., description="Choice index")
     message: ChatMessage = Field(..., description="Assistant response message")
@@ -85,7 +82,7 @@ class ChatCompletionChoice(BaseModel):
 
 
 class ChatCompletionUsage(BaseModel):
-    """Token usage information"""
+    """Token usage accounting attached to a chat completion response — the counts consumers use for billing and rate-limit bookkeeping, validated and serialized as a pydantic model like its sibling schemas in this module."""
 
     prompt_tokens: int = Field(..., description="Number of tokens in the prompt")
     completion_tokens: int = Field(
@@ -95,7 +92,7 @@ class ChatCompletionUsage(BaseModel):
 
 
 class ChatCompletionResponse(BaseModel):
-    """Chat completion response schema"""
+    """Top-level response returned by the (non-streaming) chat completion endpoint, bundling the model's completion choices and usage accounting into a single pydantic-validated payload for the API client."""
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -140,7 +137,7 @@ class ChatCompletionResponse(BaseModel):
 
 # Streaming response schemas (for future implementation)
 class ChatCompletionStreamDelta(BaseModel):
-    """Delta content for streaming responses (supports multimodal)"""
+    """An incremental delta of content within a single streamed completion chunk (supports multimodal content), as opposed to a full message body; validated and serialized as a pydantic model."""
 
     model_config = ConfigDict(extra="allow")
 
@@ -149,7 +146,7 @@ class ChatCompletionStreamDelta(BaseModel):
 
 
 class ChatCompletionStreamChoice(BaseModel):
-    """Individual choice in streaming response"""
+    """One individual choice within a streamed chat completion chunk, carrying a `ChatCompletionStreamDelta` rather than a complete message; validated and serialized as a pydantic model."""
 
     index: int
     delta: ChatCompletionStreamDelta
@@ -157,7 +154,7 @@ class ChatCompletionStreamChoice(BaseModel):
 
 
 class ChatCompletionStreamResponse(BaseModel):
-    """Streaming response chunk"""
+    """One chunk of a server-sent streaming chat completion response, sent incrementally instead of the single `ChatCompletionResponse` payload used by non-streaming requests; validated and serialized as a pydantic model."""
 
     id: str
     object: str = "chat.completion.chunk"
