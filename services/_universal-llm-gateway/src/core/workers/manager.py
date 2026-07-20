@@ -13,6 +13,8 @@ except ImportError:
 
 # Structured error codes for stream termination
 class StreamErrorCode:
+    """Canonical string codes for worker stream termination reported to gateway clients."""
+
     CANCELLED = "cancelled"
     TIMEOUT = "timeout"
     ENGINE_ERROR = "engine_error"

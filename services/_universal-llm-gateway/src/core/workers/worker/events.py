@@ -51,6 +51,7 @@ def _make_event(
 
 
 async def emit_worker_started(*, worker_id: str, model_id: str, pid: int) -> None:
+    """Publish worker.started to the local event ingest socket for lifecycle observability."""
     pub = await _get_publisher()
     pub.publish_nowait(
         _make_event(
@@ -63,6 +64,7 @@ async def emit_worker_started(*, worker_id: str, model_id: str, pid: int) -> Non
 async def emit_worker_stopped(
     *, worker_id: str, model_id: str, exit_code: int | None
 ) -> None:
+    """Publish worker.stopped with exit_code when a worker process shuts down gracefully."""
     pub = await _get_publisher()
     pub.publish_nowait(
         _make_event(
@@ -74,6 +76,7 @@ async def emit_worker_stopped(
 
 
 async def emit_model_loading(*, worker_id: str, model_id: str) -> None:
+    """Publish worker.model.loading when the worker begins loading its assigned model."""
     pub = await _get_publisher()
     pub.publish_nowait(
         _make_event(
@@ -86,6 +89,7 @@ async def emit_model_loading(*, worker_id: str, model_id: str) -> None:
 async def emit_model_loaded(
     *, worker_id: str, model_id: str, duration_s: float
 ) -> None:
+    """Publish worker.model.loaded with load duration after model initialization succeeds."""
     pub = await _get_publisher()
     pub.publish_nowait(
         _make_event(
@@ -101,6 +105,7 @@ async def emit_model_loaded(
 
 
 async def emit_model_failed(*, worker_id: str, model_id: str, error: str) -> None:
+    """Publish worker.model.failed with error text when model load or init fails."""
     pub = await _get_publisher()
     pub.publish_nowait(
         _make_event(
@@ -142,6 +147,7 @@ async def emit_inference_dequeued(
 async def emit_inference_started(
     *, worker_id: str, model_id: str, request_id: str
 ) -> None:
+    """Publish worker.inference.started when the worker begins processing a request."""
     pub = await _get_publisher()
     pub.publish_nowait(
         _make_event(
@@ -163,6 +169,7 @@ async def emit_inference_completed(
     duration_s: float,
     tokens: int | None = None,
 ) -> None:
+    """Publish worker.inference.completed with duration and optional token count metrics."""
     payload: dict[str, Any] = {
         "worker_id": worker_id,
         "model_id": model_id,
@@ -176,6 +183,7 @@ async def emit_inference_completed(
 
 
 async def shutdown_publisher() -> None:
+    """Stop the lazy UDSEventPublisher singleton during worker shutdown."""
     global _publisher  # noqa: PLW0603
     if _publisher is not None:
         await _publisher.stop()

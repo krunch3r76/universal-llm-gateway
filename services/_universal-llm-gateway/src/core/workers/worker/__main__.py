@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Worker process main entry point.
 

@@ -1,4 +1,3 @@
-# ruff: noqa: N999
 """
 Catalog Module - Model catalog loading, validation, and conversion.
 
@@ -17,7 +16,7 @@ V2 Breaking Changes:
     - No V1 config name constants (GPU_CONFIG_NAMES, DEFAULT_GPU_CONFIG, etc.)
     - ValidationIssue now from schemas module
     - All validation uses schema-driven logic
-"""
+"""  # noqa: N999
 
 from typing import Any
 

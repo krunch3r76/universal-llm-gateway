@@ -1,7 +1,8 @@
-#!/usr/bin/env python3
-"""Worker process lifecycle management.
+"""Worker process lifecycle management for Universal Protocol RPC workers.
 
-Manages worker initialization, ASGI server lifecycle, and graceful shutdown.
+Defines the Worker class that hosts the ASGI server, registers inference RPC
+handlers, and coordinates graceful shutdown. Instantiated by worker.__main__ and
+managed by the gateway WorkerController during model load operations.
 """
 
 import asyncio

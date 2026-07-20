@@ -1,5 +1,9 @@
-#!/usr/bin/env python3
-"""Main FastAPI application for Universal LLM Gateway (Phase 2 - Actual Inference)"""
+"""Main FastAPI application entry point for Universal LLM Gateway inference service.
+
+Bootstraps logging, engine environment, and socket configuration before creating
+the FastAPI app via app_factory. Invoked by uvicorn in factory mode or directly
+when run as __main__; gateway operators and process supervisors start this module.
+"""
 
 import os
 import sys
