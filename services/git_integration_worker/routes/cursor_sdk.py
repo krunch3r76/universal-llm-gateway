@@ -130,6 +130,7 @@ from services.git_integration_worker.cursor_sdk_packet import (
     resolve_prompt_preamble,
 )
 from services.git_integration_worker.cursor_sdk_stream_capture import (
+    finalize_stream_capture_usage,
     observe_run_stream,
 )
 from services.git_integration_worker.cursor_sdk_transcript import resolve_run_body
@@ -617,6 +618,9 @@ def _run_sdk_sync(
                     on_tool_call=live_counter.bump,
                 )
                 result = run.wait()
+                stream_capture = finalize_stream_capture_usage(
+                    stream_capture, run=run, result=result
+                )
                 artifact_paths: list[str] = []
                 list_artifacts_fn = getattr(agent, "list_artifacts", None)
                 if callable(list_artifacts_fn):

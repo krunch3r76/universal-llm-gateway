@@ -5,10 +5,12 @@ source both ``count_tool_calls`` and ``build_effects_manifest`` read from —
 a tool call the runtime truncates or rejects upstream of our MCP server can
 be finalized OUT of that conversation while still surfacing on the live
 stream as a ``running``/``error`` message. This module drains ``run.events()``
-(when available) before ``run.wait()``: ``SDKToolUseMessage`` tool calls come
-from ``RunStreamEvent.sdk_message``; ``TurnEndedUpdate`` / ``TokenDeltaUpdate``
-usage meters live on ``RunStreamEvent.interaction_update`` and are **not**
-yielded by ``run.stream()``. Falls back to ``run.stream()`` for test doubles.
+(when available) before ``run.wait()``: ``SDKToolUseMessage`` tool calls and
+``SDKUsageMessage`` (``type=="usage"``) come from ``RunStreamEvent.sdk_message``;
+``TurnEndedUpdate`` / ``TokenDeltaUpdate`` on ``interaction_update`` remain a
+secondary path. After ``run.wait()``, ``finalize_stream_capture_usage`` applies
+post-wait ``run.usage`` / ``result.usage`` as authority. Falls back to
+``run.stream()`` for test doubles.
 """
 
 from __future__ import annotations
@@ -16,19 +18,33 @@ from __future__ import annotations
 import json
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any
 
 from universal_event_bus import Event, event_factory
 from universal_logging import get_logger
 
 from services.git_integration_worker.cursor_sdk_events import emit_frontier_event
+from services.git_integration_worker.cursor_sdk_usage_normalize import (
+    TOTAL_DERIVED_KEY,
+    UsageCaptureStatus,
+    aggregate_stream_usage,
+    coerce_non_negative_int,
+    finalize_usage_with_post_wait,
+    normalize_usage_map,
+    public_usage,
+    usage_payload_from_object,
+)
 
-UsageCaptureStatus = Literal["captured", "partial", "missing"]
-
-_INPUT_TOKEN_KEYS = ("input_tokens", "prompt_tokens", "input", "inputTokens")
-_OUTPUT_TOKEN_KEYS = ("output_tokens", "completion_tokens", "output", "outputTokens")
-_TOTAL_TOKEN_KEYS = ("total_tokens", "total", "totalTokens")
-_SPEND_PASS_THROUGH_KEYS = ("cost_usd", "credits", "spend", "cost")
+# Re-export for existing callers/tests.
+__all__ = [
+    "StreamCapture",
+    "ToolCallObservation",
+    "UsageCaptureStatus",
+    "aggregate_stream_usage",
+    "finalize_stream_capture_usage",
+    "normalize_usage_map",
+    "observe_run_stream",
+]
 
 logger = get_logger(__name__)
 
@@ -55,6 +71,8 @@ class StreamCapture:
     tool_calls: tuple[ToolCallObservation, ...]
     usage: dict[str, Any] | None = None
     usage_capture_status: UsageCaptureStatus = "missing"
+    # True when stream total was recomputed (not wire) — used only by finalize.
+    usage_total_derived: bool = False
 
     @property
     def tool_call_count(self) -> int:
@@ -63,112 +81,6 @@ class StreamCapture:
     @property
     def truncated_tool_calls(self) -> tuple[ToolCallObservation, ...]:
         return tuple(tc for tc in self.tool_calls if tc.truncated_any)
-
-
-def _coerce_non_negative_int(value: Any) -> int | None:
-    if value is None or isinstance(value, bool):
-        return None
-    if isinstance(value, int):
-        return value if value >= 0 else None
-    if isinstance(value, float):
-        return int(value) if value >= 0 else None
-    if isinstance(value, str):
-        try:
-            parsed = int(value)
-        except ValueError:
-            return None
-        return parsed if parsed >= 0 else None
-    return None
-
-
-def _first_token_count(raw: Mapping[str, Any], keys: tuple[str, ...]) -> int | None:
-    for key in keys:
-        if key in raw:
-            parsed = _coerce_non_negative_int(raw[key])
-            if parsed is not None:
-                return parsed
-    return None
-
-
-def normalize_usage_map(raw: Mapping[str, Any]) -> tuple[dict[str, Any] | None, bool]:
-    """Map SDK ``TurnEndedUpdate.usage`` to input/output/total (+ optional spend).
-
-    Returns ``(normalized, mappable)``. When keys are opaque, ``mappable`` is
-    False and callers should persist ``usage_raw`` with ``partial`` status.
-    """
-    input_tokens = _first_token_count(raw, _INPUT_TOKEN_KEYS)
-    output_tokens = _first_token_count(raw, _OUTPUT_TOKEN_KEYS)
-    total_tokens = _first_token_count(raw, _TOTAL_TOKEN_KEYS)
-    if input_tokens is None and output_tokens is None and total_tokens is None:
-        return None, False
-    if total_tokens is None and input_tokens is not None and output_tokens is not None:
-        total_tokens = input_tokens + output_tokens
-    normalized: dict[str, Any] = {}
-    if input_tokens is not None:
-        normalized["input_tokens"] = input_tokens
-    if output_tokens is not None:
-        normalized["output_tokens"] = output_tokens
-    if total_tokens is not None:
-        normalized["total_tokens"] = total_tokens
-    for key in _SPEND_PASS_THROUGH_KEYS:
-        if key in raw:
-            normalized[key] = raw[key]
-    return normalized, True
-
-
-def _sum_normalized_usages(items: tuple[dict[str, Any], ...]) -> dict[str, Any]:
-    """F5: sum per-turn mappable usage maps before emit."""
-    aggregated: dict[str, Any] = {}
-    for field in ("input_tokens", "output_tokens", "total_tokens"):
-        values = [item[field] for item in items if field in item]
-        if values:
-            aggregated[field] = sum(values)
-    for key in _SPEND_PASS_THROUGH_KEYS:
-        for item in reversed(items):
-            if key in item:
-                aggregated[key] = item[key]
-                break
-    return aggregated
-
-
-def aggregate_stream_usage(
-    *,
-    turn_usages: tuple[Mapping[str, Any] | None, ...],
-    token_delta_sum: int,
-) -> tuple[dict[str, Any] | None, UsageCaptureStatus]:
-    """Derive terminal usage + ``usage_capture_status`` from stream observations.
-
-    ``partial`` when ≥1 turn has usage and ≥1 does not (R F-A5), when only
-    ``TokenDeltaUpdate`` totals exist (F1 fallthrough), or when keys are opaque.
-    ``captured`` requires every turn-ended message carried mappable usage (F5 sum).
-    ``missing`` when no turn usage and no token deltas were observed.
-    """
-    turns_with_usage = sum(1 for usage in turn_usages if usage)
-    turns_without_usage = sum(1 for usage in turn_usages if not usage)
-    mixed_turns = turns_with_usage > 0 and turns_without_usage > 0
-
-    normalized_turns: list[dict[str, Any]] = []
-    for raw in turn_usages:
-        if not raw:
-            continue
-        normalized, mappable = normalize_usage_map(raw)
-        if not mappable:
-            return {"usage_raw": dict(raw)}, "partial"
-        if normalized is not None:
-            normalized_turns.append(normalized)
-
-    if normalized_turns:
-        aggregated = _sum_normalized_usages(tuple(normalized_turns))
-        if mixed_turns:
-            return aggregated, "partial"
-        if turn_usages and turns_without_usage == 0:
-            return aggregated, "captured"
-        return aggregated, "captured"
-
-    if token_delta_sum > 0:
-        return {"total_tokens": token_delta_sum}, "partial"
-
-    return None, "missing"
 
 
 def _json_bytes(value: Any) -> int:
@@ -267,12 +179,18 @@ def _record_usage_message(
     token_delta_sum: list[int],
 ) -> None:
     msg_type = getattr(message, "type", "")
+    if msg_type == "usage":
+        turn_usages.append(usage_payload_from_object(getattr(message, "usage", None)))
+        return
     if msg_type == "turn-ended":
         usage = getattr(message, "usage", None)
-        turn_usages.append(usage if isinstance(usage, Mapping) else None)
+        if isinstance(usage, Mapping):
+            turn_usages.append(usage)
+        else:
+            turn_usages.append(usage_payload_from_object(usage))
         return
     if msg_type == "token-delta":
-        tokens = _coerce_non_negative_int(getattr(message, "tokens", None))
+        tokens = coerce_non_negative_int(getattr(message, "tokens", None))
         if tokens is not None:
             token_delta_sum[0] += tokens
 
@@ -355,9 +273,16 @@ def observe_run_stream(
                     )
                 sdk_message = getattr(event, "sdk_message", None)
                 if sdk_message is not None:
-                    _process_tool_call_message(
-                        sdk_message, latest=latest, emit_fn=_emit
-                    )
+                    if getattr(sdk_message, "type", "") == "usage":
+                        _record_usage_message(
+                            sdk_message,
+                            turn_usages=turn_usages,
+                            token_delta_sum=token_delta_sum,
+                        )
+                    else:
+                        _process_tool_call_message(
+                            sdk_message, latest=latest, emit_fn=_emit
+                        )
         else:
             for message in run.stream():
                 _record_usage_message(
@@ -379,8 +304,34 @@ def observe_run_stream(
         turn_usages=tuple(turn_usages),
         token_delta_sum=token_delta_sum[0],
     )
+    derived = bool(usage and usage.get(TOTAL_DERIVED_KEY))
     return StreamCapture(
         tool_calls=tuple(emitted[call_id] for call_id in latest),
-        usage=usage,
+        usage=public_usage(usage),
         usage_capture_status=usage_capture_status,
+        usage_total_derived=derived,
+    )
+
+
+def finalize_stream_capture_usage(
+    capture: StreamCapture,
+    *,
+    run: Any = None,
+    result: Any = None,
+) -> StreamCapture:
+    """Apply post-wait ``run.usage`` / ``result.usage`` as authority over stream."""
+    stream_usage = dict(capture.usage) if capture.usage is not None else None
+    if stream_usage is not None and capture.usage_total_derived:
+        stream_usage[TOTAL_DERIVED_KEY] = True
+    usage, status = finalize_usage_with_post_wait(
+        stream_usage=stream_usage,
+        stream_status=capture.usage_capture_status,
+        run=run,
+        result=result,
+    )
+    return StreamCapture(
+        tool_calls=capture.tool_calls,
+        usage=usage,
+        usage_capture_status=status,
+        usage_total_derived=False,
     )
