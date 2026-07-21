@@ -369,6 +369,14 @@ def run_check(root: Path) -> int:
             fail = 1
     fail |= _check_life_local_files(root)
     fail |= run_check_cursor_sot(root)
+    validator = root / "scripts" / "cortex" / "validate_skill_catalog.py"
+    if validator.is_file():
+        proc = subprocess.run(
+            [sys.executable, str(validator), "--root", str(root)],
+            cwd=root,
+            check=False,
+        )
+        fail |= proc.returncode
     fail |= run_skill_git_guard(root)
     fail |= _check_bundle_descriptions(root, entity_descriptions)
     try:

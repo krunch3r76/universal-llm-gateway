@@ -98,6 +98,7 @@ tests/*
 !libs/cortex_store/tests/test_register_skill_substrate.py
 !libs/cortex_store/dispatch_ops/test_mcp_doc_parity.py
 !libs/claude_bundles/test_skills_ui_upload.py
+!libs/claude_bundles/test_catalog.py
 !services/universal-stargate/systems/frontier_consult/test_implement_admission_materialize.py
 !services/universal-stargate/systems/frontier_consult/test_handoff_enrich.py
 !services/universal-stargate/systems/frontier_consult/test_life_intent_routes.py

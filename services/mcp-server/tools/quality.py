@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 from mcp_events import monotonic_now, record
 
 from ._project_paths import repo_base_for, resolve_existing_files
+from ._skill_catalog_gate import run_skill_catalog_gate
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -62,6 +63,20 @@ _OFFLINE_TEST_SUITES: tuple[dict[str, Any], ...] = (
         "import_mode": "importlib",
         "workspaces_root_from_repo_parent": True,
     },
+    {
+        "name": "skill_catalog_parity",
+        "source_segments": (
+            "/libs/claude_bundles/catalog.py",
+            "/config/skills.yaml",
+            "/cursor-plugins/ulg-ecosystem/SKILLS_CENSUS.txt",
+            "/scripts/cortex/validate_skill_catalog.py",
+            "/scripts/hooks/validate_skill_catalog_staged.py",
+            "/.cursor/skills/",
+        ),
+        "test_paths": ("libs/claude_bundles/test_catalog.py",),
+        "marker": None,
+        "extra_pythonpath": ("libs",),
+    },
 )
 
 
@@ -83,6 +98,9 @@ def register_quality_tools(mcp: FastMCP) -> None:
         import_result = _run_import_check(existing)
         tests_result = _run_offline_tests(existing)
         catalog_result = _run_event_catalog_gate(existing)
+        skill_catalog_result = run_skill_catalog_gate(
+            existing, repo_root=repo_base_for(_PROJECT_ROOT)
+        )
 
         passed = (
             ruff_result["passed"]
@@ -90,6 +108,7 @@ def register_quality_tools(mcp: FastMCP) -> None:
             and import_result["passed"]
             and tests_result["passed"]
             and catalog_result["passed"]
+            and skill_catalog_result["passed"]
         )
         duration = monotonic_now() - t0
 
@@ -106,6 +125,7 @@ def register_quality_tools(mcp: FastMCP) -> None:
             "imports": import_result,
             "tests": tests_result,
             "event_catalog": catalog_result,
+            "skill_catalog": skill_catalog_result,
         }
 
 

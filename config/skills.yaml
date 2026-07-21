@@ -176,6 +176,9 @@ skills:
   entity-lifecycle-discipline:
     surface_class: shared_sync
     mcp_surface_required: none
+  event-instrumentation-discipline:
+    surface_class: shared_sync
+    mcp_surface_required: none
   external-prose-decompose-recompose:
     surface_class: shared_sync
     mcp_surface_required: none

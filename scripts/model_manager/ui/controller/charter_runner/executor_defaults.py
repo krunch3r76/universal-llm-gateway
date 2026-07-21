@@ -43,3 +43,27 @@ def default_generate_body(
         "caller_agent": caller_agent,
         "tags": ["charter-runner", f"root:{root_id}", f"window:{window_index}"],
     }
+
+
+def default_handoff_body(
+    *,
+    root_id: str,
+    window_index: int,
+    packet_path: str,
+    subject: str,
+    caller_agent: str,
+) -> dict[str, Any]:
+    """Wire body for ``POST /api/v1/team/handoff`` (attended IDE consult)."""
+    return {
+        "op": "handoff",
+        "role": "cursor-consult",
+        "packet_path": packet_path,
+        "subject": subject,
+        "caller_agent": caller_agent,
+        "tags": [
+            "charter-runner",
+            f"root:{root_id}",
+            f"window:{window_index}",
+            "admission:handoff",
+        ],
+    }

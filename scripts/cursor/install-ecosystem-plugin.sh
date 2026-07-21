@@ -42,6 +42,14 @@ VERIFY_DUPLEX="${SCRIPT_DIR}/verify-ecosystem-no-duplex.sh"
 [[ -x "$VERIFY_DUPLEX" ]] || chmod +x "$VERIFY_DUPLEX"
 "$VERIFY_DUPLEX" "$ULG_ROOT"
 
+PYTHON="${HOME}/.venvs/universal/bin/python3"
+if [[ ! -x "$PYTHON" ]]; then
+  PYTHON="python3"
+fi
+if ! "$PYTHON" "$ULG_ROOT/scripts/cortex/validate_skill_catalog.py" --root "$ULG_ROOT"; then
+  die "census↔catalog parity failed — add matching config/skills.yaml row before install"
+fi
+
 echo "==> Assembling ulg-ecosystem from $PLUGIN_SRC"
 rm -rf "$STAGING"
 mkdir -p "$STAGING"/{.cursor-plugin,skills,commands,rules,hooks,scripts}

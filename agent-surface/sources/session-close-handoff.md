@@ -46,6 +46,25 @@ the pickup agent to open or implement them.
 Dispatch happens when the operator issues a **separate** execution directive
 after pickup. Recency of bus threads is ¬ authority (see `handoff-pickup_ws.mdc`).
 
+## Continuity efficiency (binding — operator 2026-07-20)
+
+When a **standing root** exists for the arc, `handoff_prompt` is a **pointer into
+that root** — not a paste of prior handoff bodies.
+
+Required when `active_standing_root(S)`: root thread id · latest CHECKPOINT turn
+(or stale flag) · scoreboard URI if chartered · 1-line state · next. Chat carries
+the pointer; the next seat navigates the root (`agent-bus-discipline` § Two
+CHECKPOINT modes — Continuity).
+
+| Bad | Good |
+|---|---|
+| Paste prior `handoff_prompt` prose into the new handoff / chat | Cite root + CHECKPOINT turn; let the seat `get` that turn |
+| Full tick-schema CHECKPOINT ceremony on a non-enrolled continuity root | Index-thin CHECKPOINT on continuity roots; full schema only when tagged `charter-runner` (tick-driven) |
+| Leave finished worker windows open as “continuity” | Close one-shot workers; root (or handoff pointer) is the spine |
+
+Cross-ref: `agent-bus-discipline` § Standing root threads → Two CHECKPOINT modes
+(tick-driven vs continuity).
+
 ## Roadmap position (forward half — when relevant)
 
 A handoff's forward half MUST carry the active arc's **roadmap position** whenever
@@ -139,4 +158,5 @@ cold-distrust gauntlet. Prose stays suppressed (assertion 8384).
 | Bare roadmap inventory — names without status, or a guessed status | Every item carries a status token + `(live)`/`(unknown)`; unread ⇒ `unknown`, never inferred |
 | Show only the active subtree when it sits under a project | Lead with nearest container + active position + one-hop relevant siblings |
 | Inline `handoff_prompt` containing `{"thread":…,"poll_hint":…}` / `arguments_json` JSON | File-backed handoff (`handoff_source_path`); Deferred inventory cites `thread N` in prose only |
+| Stack prior handoff bodies into the new `handoff_prompt` / chat paste | Pointer into standing root (id + CHECKPOINT turn + scoreboard); navigate, ¬ re-embed |
 <!-- /target:* -->

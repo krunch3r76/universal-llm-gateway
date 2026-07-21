@@ -3,14 +3,16 @@
 
 # Ensure we use bash
 SHELL := /usr/bin/env bash
+PYTHON ?= $(HOME)/.venvs/universal/bin/python
 
-.PHONY: help verify-uml status skill-graph-check skill-graph-reconcile claude-bundles
+.PHONY: help verify-uml status skill-graph-check skill-catalog-check skill-graph-reconcile claude-bundles
 
 help:
 	@echo "Available targets:"
 	@echo "  verify-uml    - Verify PlantUML SVG files for syntax errors"
 	@echo "  status        - Show git status"
 	@echo "  skill-graph-check     - Read-only skill graph drift check (JSON report)"
+	@echo "  skill-catalog-check   - Fail-closed SKILLS_CENSUS↔config/skills.yaml parity"
 	@echo "  skill-graph-reconcile - Explicit add+prune skill graph reconcile"
 	@echo ""
 	@echo "Git Workflow:"
@@ -35,11 +37,14 @@ verify-uml:
 	fi
 
 skill-graph-check:
-	python scripts/cortex/gen_skill_stubs.py --check
+	$(PYTHON) scripts/cortex/gen_skill_stubs.py --check
+
+skill-catalog-check:
+	$(PYTHON) scripts/cortex/validate_skill_catalog.py --root .
 
 skill-graph-reconcile:
-	python scripts/cortex/ingest_skills.py && python scripts/cortex/gen_skill_stubs.py --generate && python scripts/rag/attribute_skill_vocabulary.py
+	$(PYTHON) scripts/cortex/ingest_skills.py && $(PYTHON) scripts/cortex/gen_skill_stubs.py --generate && $(PYTHON) scripts/rag/attribute_skill_vocabulary.py
 
 claude-bundles:
 	scripts/gen-rules --target agent-skill-bundles
-	python scripts/cortex/gen_claude_bundles.py
+	$(PYTHON) scripts/cortex/gen_claude_bundles.py

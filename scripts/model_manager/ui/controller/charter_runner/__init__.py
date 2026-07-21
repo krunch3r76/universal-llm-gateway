@@ -1,13 +1,16 @@
 """Charter runner — CHECKPOINT continuation for standing roots.
 
-Manage-hosted tick that admits one default Grok 4.5 High window per eligible
-enrolled root. See ``cortex://notes/system/specs/charter-runner-tick.md``.
+Manage-hosted tick that admits one window per eligible enrolled root.
+See ``cortex://notes/system/specs/charter-runner-tick.md``.
 
-Two substrates (both use ``packet_path``, never ``source_ref``):
+Two substrates (both use ``packet_path``, never ``source_ref``), selected via
+``CHARTER_ADMISSION_MODE`` (default ``generate``):
 
-- **Attended** — Composer on an IDE bus thread (``from=cursor``, human opens
-  the thread). Soft ``waiting_open`` remind only; no default hard-fail.
-- **Unattended** — manage fires ``seat=cursor-sdk``, ``op=generate``,
+- **Attended** — ``CHARTER_ADMISSION_MODE=handoff``: POST
+  ``/api/v1/team/handoff`` with ``role=cursor-consult``; Composer on an IDE
+  bus thread (``from=cursor``, human opens the thread). Soft ``waiting_open``
+  remind only; no default hard-fail.
+- **Unattended** — default: manage fires ``seat=cursor-sdk``, ``op=generate``,
   ``contract=light-bounded``, ``model=cursor/grok-4.5`` via team dispatch.
   Optional hard stall via ``CHARTER_UNATTENDED_STALE_S`` (default OFF).
 

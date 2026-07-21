@@ -193,15 +193,22 @@ The `X-Pipeline-Execution-Id` response header invariant is preserved via
 
 ## MCP Tools
 
-`services/mcp-server/tools/pipeline.py` exposes:
+The unified `pipeline` MCP tool dispatches by `op`:
 
-- `pipeline_async(pipeline, messages, options?, result_delivery?)` — thin relay
-  to `POST /api/v1/pipelines/dispatch`; returns `execution_id` immediately
-- `pipeline_result(execution_id, wait_seconds=0.0)` — relay to
+- `pipeline(op="async", pipeline_id=…, messages=…, options=?, result_delivery=?)` —
+  relay to `POST /api/v1/pipelines/dispatch`; returns `execution_id` immediately
+- `pipeline(op="result", execution_id=…, wait_seconds=0.0)` — relay to
   `GET /api/v1/pipelines/executions/{id}?wait=…`; short-polls with server-side
   wait clamped to 60s
+- `pipeline(op="run", pipeline_id=…, messages=…, options=?)` — synchronous execution
+- `pipeline(op="validate", pipeline_id=…)` — validate YAML + handler registration
+- `pipeline(op="stats")` — tracker occupancy snapshot
+- `pipeline(op="cancel", execution_id=…)` — cancel in-flight async execution
 
-Both tools follow the MCP tool relay invariant (HTTP-only, no direct DB or
+**Legacy note:** older docs referenced separate `pipeline_async` / `pipeline_result`
+tool names; the live wire is the single `pipeline(op=…)` surface above.
+
+Both relay paths follow the MCP tool relay invariant (HTTP-only, no direct DB or
 internal imports).
 
 ## Events

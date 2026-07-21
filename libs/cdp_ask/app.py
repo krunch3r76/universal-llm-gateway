@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -14,9 +15,14 @@ from cdp_ask.models import (
     ExecutionPollResponse,
     SubmitProjectAskRequest,
     SubmitProjectAskResponse,
+    classify_stall_stage,
 )
+from cdp_ask.page_liveness import LadderCallbacks
 from cdp_ask.registry_hygiene_loop import RegistryHygieneLoop
-from cdp_ask.runner import run_execution, verify_harvest_root
+from cdp_ask.runner import (
+    run_execution,
+    verify_harvest_root,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +110,56 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
         def _sync_registered(registration_id: str) -> None:
             asyncio.create_task(_on_registered(registration_id))
 
+        async def _on_turn_idle() -> None:
+            await execution_store.update_ladder(
+                record.execution_id,
+                completion_phase="turn_idle",
+                turn_idle_at=time.time(),
+            )
+            await execution_store.update_liveness(
+                record.execution_id,
+                streaming=None,
+                stop=None,
+                tool_pause=None,
+                liveness_observed_at=None,
+            )
+
+        async def _on_content_proof(uri: str, sha: str) -> None:
+            await execution_store.update_ladder(
+                record.execution_id,
+                completion_phase="content_proof",
+                content_proof_uri=uri,
+                content_proof_sha256=sha,
+            )
+
+        async def _on_archiving() -> None:
+            await execution_store.update_ladder(
+                record.execution_id,
+                completion_phase="archiving",
+            )
+
+        async def _on_liveness(
+            streaming: bool,
+            stop: bool,
+            tool_pause: bool,
+            observed_at: float,
+        ) -> None:
+            await execution_store.update_liveness(
+                record.execution_id,
+                streaming=streaming,
+                stop=stop,
+                tool_pause=tool_pause,
+                liveness_observed_at=observed_at,
+            )
+
+        ladder = LadderCallbacks(
+            on_turn_idle=_on_turn_idle,
+            on_content_proof=_on_content_proof,
+            on_archiving=_on_archiving,
+            on_liveness=_on_liveness,
+            abort_check=_abort_check,
+        )
+
         async def _runner() -> None:
             try:
                 payload = await run_execution(
@@ -111,23 +167,29 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
                     execution_id=record.execution_id,
                     abort_check=_abort_check,
                     on_registered=_sync_registered,
+                    ladder=ladder,
                 )
                 status = (
                     "aborted"
                     if payload.get("status") == "aborted"
                     else ("completed" if payload.get("ok") else "failed")
                 )
+                stall = payload.get("stall_stage")
+                if status == "failed" and not stall:
+                    stall = classify_stall_stage(payload.get("error"))
                 await execution_store.mark_terminal(
                     record.execution_id,
                     status=status,
                     result=payload,
                     error=payload.get("error"),
+                    stall_stage=stall if status == "failed" else None,
                 )
             except asyncio.CancelledError:
                 await execution_store.mark_terminal(
                     record.execution_id,
                     status="aborted",
                     error="cancelled",
+                    stall_stage="mark_terminal",
                 )
                 raise
             except Exception as exc:  # noqa: BLE001
@@ -136,6 +198,7 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
                     record.execution_id,
                     status="failed",
                     error=str(exc),
+                    stall_stage="mark_terminal",
                 )
 
         task = asyncio.create_task(_runner())
@@ -156,6 +219,7 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
         if record is None:
             raise HTTPException(404, f"unknown execution_id: {execution_id}")
         payload = record.result or {}
+        live = record.status == "running" and record.completion_phase == "running"
         return ExecutionPollResponse(
             execution_id=record.execution_id,
             status=record.status,
@@ -172,6 +236,15 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
             error=record.error or payload.get("error"),
             delete_after=payload.get("delete_after"),
             results=payload.get("results"),
+            completion_phase=record.completion_phase,
+            content_proof_uri=record.content_proof_uri,
+            content_proof_sha256=record.content_proof_sha256,
+            turn_idle_at=record.turn_idle_at,
+            stall_stage=record.stall_stage,
+            streaming=record.streaming if live else None,
+            stop=record.stop if live else None,
+            tool_pause=record.tool_pause if live else None,
+            liveness_observed_at=record.liveness_observed_at if live else None,
         )
 
     @app.post(

@@ -25,7 +25,13 @@ Package Semantics:
     No sys.path mutation - modules are isolated by unique package name.
 
 Example Structure:
-    pipelines.local/
+    pipelines/{domain}/v1/          # Primary repo-local layout (migration-class)
+        handlers/
+            __init__.py             # register_handlers(router: DomainRouter)
+            my_handler.py
+        {domain}-v1.yaml
+        prompts.yaml
+    pipelines.local/                # Optional external/workspace overlay
     └── consensus/
         ├── handlers/               # Shared (loaded first)
         │   ├── __init__.py        # register_handlers(router)

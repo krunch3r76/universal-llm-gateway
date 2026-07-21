@@ -22,6 +22,7 @@ cat > "$HOOKS_DIR/pre-commit" << 'EOF'
 PYTHON="${HOME}/.venvs/universal/bin/python3"
 
 "$PYTHON" scripts/hooks/validate_catalog.py --staged || exit 1
+"$PYTHON" scripts/hooks/validate_skill_catalog_staged.py || exit 1
 # Regenerate catalog when staged event sources drift, then re-stage the doc.
 "$PYTHON" -m scripts.gen_event_catalog sync --staged || exit 1
 git add docs/event-contracts.md 2>/dev/null || true

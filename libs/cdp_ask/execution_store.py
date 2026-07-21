@@ -10,7 +10,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from cdp_ask.models import ExecutionStatus
+from cdp_ask.models import CompletionPhase, ExecutionStatus, StallStage
 
 DeregisterFn = Callable[[str], None]
 
@@ -28,6 +28,15 @@ class ExecutionRecord:
     error: str | None = None
     abort_requested: bool = False
     task: asyncio.Task[Any] | None = field(default=None, repr=False)
+    completion_phase: CompletionPhase = "running"
+    content_proof_uri: str | None = None
+    content_proof_sha256: str | None = None
+    turn_idle_at: float | None = None
+    stall_stage: StallStage | None = None
+    streaming: bool | None = None
+    stop: bool | None = None
+    tool_pause: bool | None = None
+    liveness_observed_at: float | None = None
 
 
 class ExecutionStore:
@@ -127,6 +136,53 @@ class ExecutionStore:
             rec.registration_id = registration_id
             rec.updated_at = time.time()
 
+    async def update_ladder(
+        self,
+        execution_id: str,
+        *,
+        completion_phase: CompletionPhase | None = None,
+        content_proof_uri: str | None = None,
+        content_proof_sha256: str | None = None,
+        turn_idle_at: float | None = None,
+        stall_stage: StallStage | None = None,
+    ) -> None:
+        """Merge dual-completion ladder fields on an in-flight execution."""
+        async with self._lock:
+            rec = self._records.get(execution_id)
+            if rec is None:
+                return
+            if completion_phase is not None:
+                rec.completion_phase = completion_phase
+            if content_proof_uri is not None:
+                rec.content_proof_uri = content_proof_uri
+            if content_proof_sha256 is not None:
+                rec.content_proof_sha256 = content_proof_sha256
+            if turn_idle_at is not None:
+                rec.turn_idle_at = turn_idle_at
+            if stall_stage is not None:
+                rec.stall_stage = stall_stage
+            rec.updated_at = time.time()
+
+    async def update_liveness(
+        self,
+        execution_id: str,
+        *,
+        streaming: bool | None,
+        stop: bool | None,
+        tool_pause: bool | None,
+        liveness_observed_at: float | None,
+    ) -> None:
+        """Persist the last Cowork window harvest sample for poll-plane projection."""
+        async with self._lock:
+            rec = self._records.get(execution_id)
+            if rec is None:
+                return
+            rec.streaming = streaming
+            rec.stop = stop
+            rec.tool_pause = tool_pause
+            rec.liveness_observed_at = liveness_observed_at
+            rec.updated_at = time.time()
+
     async def mark_terminal(
         self,
         execution_id: str,
@@ -134,6 +190,8 @@ class ExecutionStore:
         status: ExecutionStatus,
         result: dict[str, Any] | None = None,
         error: str | None = None,
+        completion_phase: CompletionPhase | None = None,
+        stall_stage: StallStage | None = None,
     ) -> None:
         async with self._lock:
             rec = self._records[execution_id]
@@ -142,6 +200,20 @@ class ExecutionStore:
             rec.error = error
             rec.updated_at = time.time()
             rec.task = None
+            if completion_phase is not None:
+                rec.completion_phase = completion_phase
+            elif status == "completed":
+                rec.completion_phase = "terminal"
+            elif status in {"failed", "aborted"}:
+                rec.completion_phase = "failed"
+            if stall_stage is not None:
+                rec.stall_stage = stall_stage
+            elif status == "failed" and rec.stall_stage is None:
+                rec.stall_stage = "unknown"
+            rec.streaming = None
+            rec.stop = None
+            rec.tool_pause = None
+            rec.liveness_observed_at = None
 
     async def request_abort(self, execution_id: str) -> ExecutionRecord | None:
         async with self._lock:

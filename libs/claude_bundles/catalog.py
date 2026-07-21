@@ -214,6 +214,31 @@ def _active_sot_slugs(repo_root: Path) -> set[str]:
     return cursor | _plugin_census_slugs(repo_root)
 
 
+def check_sot_catalog_parity(
+    repo_root: Path | None = None,
+    *,
+    catalog_path: Path | None = None,
+) -> None:
+    """Validate bidirectional parity between active Cursor SOTs and catalog rows.
+
+    Active SOTs are plugin census slugs plus ``.cursor/skills`` bodies. Catalog
+    rows for ``shared_sync`` and ``cursor_only`` must match exactly. Also
+    validates life_local rows and resolvable plugin/hub SOT paths.
+
+    Args:
+        repo_root: Repository root (defaults to package repo root).
+        catalog_path: Optional override for ``config/skills.yaml``.
+
+    Returns:
+        None when parity holds.
+
+    Raises:
+        CatalogValidationError: When census, catalog, or life_local SOT parity fails.
+    """
+    root = repo_root or _REPO_ROOT
+    load_skill_catalog(path=catalog_path, repo_root=root, validate_sot=True)
+
+
 def _validate_sot_coverage(catalog: SkillCatalog, repo_root: Path) -> None:
     """Every active Cursor SOT and every life_local row must resolve exactly once."""
     errors: list[str] = []

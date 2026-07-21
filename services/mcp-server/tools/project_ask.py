@@ -90,7 +90,11 @@ def register_project_ask_tool(mcp: FastMCP) -> None:
 
         Ops (client must poll — no server-side wait loop):
           submit — POST execution; returns ``execution_id`` + ``status: running``
-          poll — GET execution status; ``archive_uri`` present when completed
+          poll — GET execution status; dual-completion ladder on every response:
+            ``completion_phase`` (running → turn_idle → content_proof → archiving →
+            terminal | failed), optional ``content_proof_uri`` / ``content_proof_sha256`` /
+            ``turn_idle_at``, and ``stall_stage`` on failed terminals. ``archive_uri``
+            remains archive-proof after successful harvest.
           abort — cancel in-flight execution and release CDP lane
 
         POLL GUARDRAIL — project-ask executions:
@@ -98,11 +102,14 @@ def register_project_ask_tool(mcp: FastMCP) -> None:
           :8765 — for ``/v1/project-ask/*``. Port 8765 is web-fetcher, NOT
           project-ask. The cdp-ask satellite listens on :8770 (``PROJECT_ASK_URL``).
           Client polls ONLY via this MCP tool: ``project_ask(op="poll",
-          execution_id="<id>")`` — repeat until ``archive_uri`` is set. This handler
-          is a thin relay to ``PROJECT_ASK_URL``; there is NO server-side poll loop.
-          Completion proof: poll response ``archive_uri`` (cortex:// harvest). Verify
-          via ``mcp.project_ask.poll`` events. CLI/SSH dogfood
-          (``claude-ai-sync-jupiter project-ask``) is hub-checkout fallback only.
+          execution_id="<id>")`` — repeat until ``archive_uri`` **or** consumer-verified
+          ``content_proof`` (path-sim R-admit). This handler is a thin relay to
+          ``PROJECT_ASK_URL``; there is NO server-side poll loop.
+          Completion proof: poll ``archive_uri`` (archive-proof) **or**
+          ``completion_phase=content_proof`` with consumer fs-read + sha re-verify
+          (content-proof). Verify via ``mcp.project_ask.poll`` events.
+          CLI/SSH dogfood (``claude-ai-sync-jupiter project-ask``) is hub-checkout
+          fallback only.
 
         Prompt ingress (priority: inline > cortex URI > Jupiter path):
           prompt_text — inline sealed prompt body
@@ -136,7 +143,9 @@ def register_project_ask_tool(mcp: FastMCP) -> None:
 
         Returns:
             submit: {execution_id, status, registration_id?}
-            poll: {execution_id, status, archive_uri?, ok?, body?, error?, …}
+            poll: {execution_id, status, completion_phase, archive_uri?, content_proof_uri?,
+                content_proof_sha256?, turn_idle_at?, stall_stage?, streaming?, stop?,
+                tool_pause?, liveness_observed_at?, ok?, body?, error?, …}
             abort: {execution_id, status, aborted, attested, still_attached,
                 abort_outcome, stop_clicked?}
         """
@@ -181,6 +190,13 @@ def register_project_ask_tool(mcp: FastMCP) -> None:
                 "mcp.project_ask.poll",
                 execution_id=execution_id,
                 status=result.get("status"),
+                completion_phase=result.get("completion_phase"),
+                content_proof_uri=result.get("content_proof_uri"),
+                stall_stage=result.get("stall_stage"),
+                streaming=result.get("streaming"),
+                stop=result.get("stop"),
+                tool_pause=result.get("tool_pause"),
+                liveness_observed_at=result.get("liveness_observed_at"),
             )
             return result
 

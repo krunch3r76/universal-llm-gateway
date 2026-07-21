@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
+import hashlib
 import os
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -21,7 +24,8 @@ from claude_bundles.project_ask_prompt_files import (
 )
 from cortex_store.files_path_normalize import normalize_cortex_files_path
 
-from cdp_ask.models import SubmitProjectAskRequest
+from cdp_ask.models import SubmitProjectAskRequest, classify_stall_stage
+from cdp_ask.page_liveness import LadderCallbacks, content_proof_watcher
 
 
 class ArchivePathError(ValueError):
@@ -129,18 +133,77 @@ def _result_dict(result: ProjectAskResult) -> dict[str, Any]:
     return result.as_dict()
 
 
+def _path_to_cortex_uri(path: Path, root: Path) -> str:
+    rel = path.resolve().relative_to(root.resolve())
+    return f"cortex://{rel.as_posix()}"
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(65536), b""):
+            digest.update(chunk)
+    return f"sha256:{digest.hexdigest()}"
+
+
+def resolve_content_proof_targets(
+    req: SubmitProjectAskRequest,
+    *,
+    execution_id: str,
+) -> list[tuple[Path, str]]:
+    """Return filesystem paths and cortex URIs to watch for early durable proof."""
+    root = verify_harvest_root()
+    seen: set[Path] = set()
+    targets: list[tuple[Path, str]] = []
+
+    def _add(raw_path: Path, uri: str) -> None:
+        resolved = raw_path.resolve()
+        if resolved in seen:
+            return
+        seen.add(resolved)
+        targets.append((resolved, uri))
+
+    if req.archive_path:
+        _add(Path(resolve_archive_path(req.archive_path)), req.archive_path.strip())
+
+    default_path = Path(default_archive_path(req, execution_id=execution_id))
+    _add(default_path, _path_to_cortex_uri(default_path, root))
+
+    prompt_uri = (req.prompt_uri or "").strip()
+    if prompt_uri.startswith("cortex://") and prompt_uri.endswith("-r-prompt.md"):
+        review_uri = prompt_uri.replace("-r-prompt.md", "-web-anthropic-review.md")
+        rel = review_uri.removeprefix("cortex://").lstrip("/")
+        _add(root / rel, review_uri)
+
+    return targets
+
+
 async def run_execution(
     req: SubmitProjectAskRequest,
     *,
     execution_id: str = "",
     abort_check: Callable[[], Awaitable[bool]],
     on_registered: Callable[[str], None] | None = None,
+    ladder: LadderCallbacks | None = None,
 ) -> dict[str, Any]:
+    """Run one registry-backed project-ask and return a terminal-shaped result dict."""
     prompts = resolve_prompt(req)
     holder = req.holder.strip() or "cdp-ask-satellite"
     reg = cdp_registry.register_lane(holder=holder, purpose=req.purpose)
     if on_registered is not None:
         on_registered(reg.registration_id)
+    watcher: asyncio.Task[None] | None = None
+    if ladder is not None:
+        targets = resolve_content_proof_targets(req, execution_id=execution_id)
+        watcher = asyncio.create_task(
+            content_proof_watcher(
+                targets=targets,
+                cdp_url=reg.cdp_url,
+                callbacks=ladder,
+                min_bytes=max(req.min_body, 1),
+                sha256_file=_sha256_file,
+            )
+        )
     try:
         if req.converse:
             delete_after = (
@@ -168,6 +231,8 @@ async def run_execution(
             last = results[-1] if results else None
             archive_uri = last.archive_uri if last else None
             if last and last.ok and not archive_uri and last.body:
+                if ladder and ladder.on_archiving:
+                    await ladder.on_archiving()
                 archive_uri = archive_harvest(
                     body=last.body,
                     url=last.url,
@@ -192,6 +257,11 @@ async def run_execution(
                 "model": last.model if last else {},
                 "attested_model": last.attested_model if last else None,
                 "error": None if all(r.ok for r in results) else "conversation failed",
+                "stall_stage": (
+                    classify_stall_stage(last.error if last else "conversation failed")
+                    if not all(r.ok for r in results)
+                    else None
+                ),
             }
 
         if req.no_project_uuid and not req.converse:
@@ -234,8 +304,16 @@ async def run_execution(
             }
         payload = _result_dict(result)
         payload["registration_id"] = reg.registration_id
+        if not result.ok:
+            payload["stall_stage"] = classify_stall_stage(result.error)
+        elif result.archive_uri and ladder and ladder.on_archiving:
+            await ladder.on_archiving()
         return payload
     finally:
+        if watcher is not None:
+            watcher.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await watcher
         if not await abort_check():
             deregister_on_exit(reg, purpose=req.purpose)
 

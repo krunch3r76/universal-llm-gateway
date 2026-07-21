@@ -8,6 +8,9 @@ Friction notes (keep when generalizing):
 - Fable bind 4917: ¬error_banner ∧ turn_count_incremented ∧ ¬tool_pause.
 - Friction 25654: error_banner match text must surface; raise only when
   banner ∧ ¬in_flight (transient "Overloaded" while Stop/streaming must wait).
+- Friction 25684: lingering Overloaded (delay overlay) after turn landed must
+  ¬ block structural completion — banner ∧ ¬in_flight ∧ new turn ⇒ complete;
+  fail-closed on banner only when the turn never completed.
 - Friction 25486: error_banner scan scoped to banner/toast/alert nodes only —
   composer/chat-input text must not false-fire the banner regex.
 - Completion is **structural** (new turn + idle + stable), not min_body/min_growth
@@ -235,6 +238,10 @@ def _fatal_error_banner(state: dict) -> bool:
     Transient Claude overlays (``Overloaded``, rate-limit) often coexist with
     Stop/streaming while the product retries — aborting then orphans a live
     Cowork task (friction 25654). Only fail-closed once ¬in_flight.
+
+    Callers must still prefer structural completion over this gate
+    (friction 25684): a lingering delay overlay after the answer landed is
+    not incompleteness.
     """
     return bool(state.get("error_banner")) and not _in_flight(state)
 
@@ -274,7 +281,9 @@ def _cowork_complete_enough(
     """
     if not _is_cowork_cse_url(state.get("url", "")):
         return False
-    if state.get("error_banner") or _in_flight(state):
+    # Lingering delay overlays (Overloaded) must not veto Cowork completion
+    # once the turn is idle (friction 25684) — same as chat path.
+    if _in_flight(state):
         return False
     del min_body, min_growth
     cur_len = state.get("body_len", 0)
@@ -337,12 +346,11 @@ async def wait_assistant_reply(
             stable = 0
             cowork_stable = 0
         else:
-            # Banner without Stop/streaming: hold completion; idle clock runs so
-            # a delayed retry can flip streaming back on before we fail-closed.
-            if state.get("error_banner"):
-                stable = 0
-                cowork_stable = 0
-            elif _complete_enough(
+            # Structural / Cowork completion wins over a lingering delay overlay
+            # (Overloaded can remain in the DOM after the answer landed —
+            # friction 25684). Banner without a completed turn still holds
+            # stable counters so a delayed retry can resume before fail-closed.
+            if _complete_enough(
                 state,
                 base_len=base_len,
                 base_n=base_n,
@@ -356,9 +364,6 @@ async def wait_assistant_reply(
                 last_len = cur_len
                 if stable >= stable_polls:
                     return state
-
-            if state.get("error_banner"):
-                pass
             elif _cowork_complete_enough(
                 state,
                 base_len=base_len,
@@ -374,6 +379,9 @@ async def wait_assistant_reply(
                 last_len = cur_len
                 if cowork_stable >= stable_polls:
                     return state
+            elif state.get("error_banner"):
+                stable = 0
+                cowork_stable = 0
             else:
                 cowork_stable = 0
 
@@ -382,8 +390,7 @@ async def wait_assistant_reply(
         await asyncio.sleep(poll_ms / 1000)
 
     state = await harvest_assistant(page, min_msg_chars=msg_floor)
-    if _fatal_error_banner(state):
-        raise HarvestIncomplete(_error_banner_message(state, on_timeout=True))
+    # Prefer structural completion over banner fail-closed (25684).
     if _complete_enough(
         state,
         base_len=base_len,
@@ -401,6 +408,8 @@ async def wait_assistant_reply(
         saw_working=saw_working,
     ):
         return state
+    if _fatal_error_banner(state):
+        raise HarvestIncomplete(_error_banner_message(state, on_timeout=True))
     raise HarvestIncomplete(
         f"timed out incomplete (base_len={base_len}, last={state.get('body_len')}, "
         f"n={state.get('n')}) — ¬delete"

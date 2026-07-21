@@ -1,22 +1,27 @@
-"""Admit a charter window via Stargate team dispatch (default: Grok 4.5 High).
+"""Admit a charter window via Stargate team dispatch or attended handoff.
 
-Writes a Resume-step-0 packet under the gateway checkout, then
-``POST /api/v1/team/dispatch`` with ``seat=cursor-sdk``, ``model=cursor/grok-4.5``,
-``model_knobs={effort:high, fast:false}`` (Grok has no thinking knob). Response
-carries ``thread_id`` / ``execution_id`` for the worker surface + transcript.
+Writes a Resume-step-0 packet under the gateway checkout, then either:
+
+- ``POST /api/v1/team/dispatch`` (default generate: Grok cursor-sdk), or
+- ``POST /api/v1/team/handoff`` (attended: ``role=cursor-consult`` + packet_path).
+
+Response carries ``thread_id`` / ``execution_id`` for the worker surface + transcript.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from transport_utils import DEFAULT_STARGATE_URL, make_async_client
 
-from .executor_defaults import default_generate_body
+from .executor_defaults import default_generate_body, default_handoff_body
+
+AdmissionMode = Literal["generate", "handoff"]
 
 _TIMEOUT_S = 30.0
 _DISPATCH_PATH = "/api/v1/team/dispatch"
+_HANDOFF_PATH = "/api/v1/team/handoff"
 _CALLER = "charter-runner"
 _PACKET_DIR = Path("tmp/charter-runner")
 
@@ -39,23 +44,35 @@ async def fire_window(
     workspace_root: Path,
     window_index: int = 1,
     subject: str | None = None,
+    admission_mode: AdmissionMode = "generate",
 ) -> dict[str, Any]:
-    """Admit one default Grok cursor-sdk window for the charter root."""
+    """Admit one charter window (generate default or attended handoff)."""
     packet_path = write_handoff_packet(
         workspace_root, root_id, window_index, packet_text
     )
     subj = subject or (
         f"Charter-runner window {window_index} — agent-bus:{root_id}"
     )
-    body = default_generate_body(
-        root_id=root_id,
-        window_index=window_index,
-        packet_path=packet_path,
-        subject=subj,
-        caller_agent=_CALLER,
-    )
+    if admission_mode == "handoff":
+        body = default_handoff_body(
+            root_id=root_id,
+            window_index=window_index,
+            packet_path=packet_path,
+            subject=subj,
+            caller_agent=_CALLER,
+        )
+        path = _HANDOFF_PATH
+    else:
+        body = default_generate_body(
+            root_id=root_id,
+            window_index=window_index,
+            packet_path=packet_path,
+            subject=subj,
+            caller_agent=_CALLER,
+        )
+        path = _DISPATCH_PATH
     async with make_async_client(DEFAULT_STARGATE_URL, timeout=_TIMEOUT_S) as client:
-        resp = await client.post(_DISPATCH_PATH, json=body)
+        resp = await client.post(path, json=body)
         resp.raise_for_status()
         result = dict(resp.json())
     if "thread_id" not in result and result.get("thread"):
@@ -65,10 +82,13 @@ async def fire_window(
         str(result.get("execution_id") or result.get("thread_id") or ""),
     )
     result["packet_path"] = packet_path
-    result["executor"] = {
-        "seat": body["seat"],
-        "model": body["model"],
-        "model_knobs": body["model_knobs"],
-        "contract": body["contract"],
-    }
+    if admission_mode == "handoff":
+        result["executor"] = {"role": "cursor-consult", "seat": "cursor"}
+    else:
+        result["executor"] = {
+            "seat": body["seat"],
+            "model": body["model"],
+            "model_knobs": body["model_knobs"],
+            "contract": body["contract"],
+        }
     return result

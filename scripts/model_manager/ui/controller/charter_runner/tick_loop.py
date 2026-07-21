@@ -1,8 +1,11 @@
 """Manage-hosted charter-runner tick.
 
-Periodic supervisor that watches enrolled standing roots and admits one default
-Grok 4.5 High (``cursor/grok-4.5``, effort=high, fast=false) cursor-sdk window
-per eligible root. CHECKPOINT on the charter root clears in-flight.
+Periodic supervisor that watches enrolled standing roots and admits one window
+per eligible root. Default substrate is unattended Grok 4.5 High
+(``cursor/grok-4.5``, effort=high, fast=false) via generate dispatch.
+Opt-in attended handoff (``CHARTER_ADMISSION_MODE=handoff``) POSTs
+``/api/v1/team/handoff`` with ``role=cursor-consult`` for IDE observation.
+CHECKPOINT on the charter root clears in-flight.
 """
 
 from __future__ import annotations
@@ -23,6 +26,7 @@ from scripts.model_manager.ui.model.service_state import ServiceState, ServiceSt
 
 from . import bus_client, dispatch_client, window_log
 from .caps import CapStore
+from .dispatch_client import AdmissionMode
 from .eligibility import (
     ADMISSION_SUBJECT_PREFIX,
     Decision,
@@ -39,6 +43,7 @@ _ACTIVITY = "charter_tick"
 _WAITING_OPEN_REMIND_S = 900.0
 # Hard stall (stale_window) is opt-in / unattended only — 0 or unset = OFF.
 _ENV_UNATTENDED_STALE_S = "CHARTER_UNATTENDED_STALE_S"
+_ENV_ADMISSION_MODE = "CHARTER_ADMISSION_MODE"
 _ENV_KEYS = ("AGENT_BUS_TOKEN",)
 
 # Re-export for tests that import via tick_loop.
@@ -56,6 +61,20 @@ def _unattended_stale_s_from_env() -> float:
         return 0.0
 
 
+def _admission_mode() -> AdmissionMode:
+    """Read ``CHARTER_ADMISSION_MODE``; default generate; unknown → generate + warn."""
+    raw = os.environ.get(_ENV_ADMISSION_MODE, "").strip().lower()
+    if not raw or raw == "generate":
+        return "generate"
+    if raw == "handoff":
+        return "handoff"
+    logger.warning(
+        "charter-runner: unknown CHARTER_ADMISSION_MODE=%r — treating as generate",
+        raw,
+    )
+    return "generate"
+
+
 def ensure_charter_tick_env(workspace_root: Path) -> None:
     """Overlay bus auth into the manage process env (token is not ambient)."""
     merged = build_mcp_env(workspace_root)
@@ -65,7 +84,7 @@ def ensure_charter_tick_env(workspace_root: Path) -> None:
 
 
 class CharterRunnerTickLoop:
-    """Async supervisor: scan enrolled roots + admit Composer handoff windows."""
+    """Async supervisor: scan enrolled roots + admit generate or handoff windows."""
 
     def __init__(
         self,
@@ -192,6 +211,7 @@ class CharterRunnerTickLoop:
                 "charter-runner requires workspace_root for handoff packets"
             )
         window_index = _count_admissions(turns) + 1
+        admission_mode = _admission_mode()
         # A-R3-4: durable pre-fire intent — crash before pointer must not re-fire.
         if self._caps.has_admit_intent(root_id, window_index):
             self._caps.mark_failed(root_id, "admit_intent_orphan")
@@ -204,6 +224,7 @@ class CharterRunnerTickLoop:
             decision.parsed,
             scoreboard_uri=decision.parsed.scoreboard_uri,
             window_index=window_index,
+            admission_mode=admission_mode,
         )
         self._caps.mark_admit_intent(root_id, window_index)
         # Fire first — a failed handoff must not leave an orphaned in-flight pointer.
@@ -213,7 +234,10 @@ class CharterRunnerTickLoop:
                 packet,
                 workspace_root=self._workspace_root,
                 window_index=window_index,
-                subject=handoff_subject(root_id, window_index),
+                subject=handoff_subject(
+                    root_id, window_index, admission_mode=admission_mode
+                ),
+                admission_mode=admission_mode,
             )
         except Exception:
             self._caps.clear_admit_intent(root_id, window_index)
@@ -279,7 +303,11 @@ class CharterRunnerTickLoop:
             logger.exception("charter-runner window_log append_admit failed")
         msg = (
             f"charter-runner: admitted {worker_thread} for root {root_id}"
-            f" (cursor/grok-4.5 effort=high)"
+            + (
+                " (attended IDE — open worker thread)"
+                if admission_mode == "handoff"
+                else " (cursor/grok-4.5 effort=high)"
+            )
         )
         if push:
             msg += f" — {push}"
