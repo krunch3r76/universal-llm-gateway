@@ -6,6 +6,8 @@ Friction notes (keep when generalizing):
 - 500ms poll + stable length x2 beats 1s regex-marker waits.
 - Do not treat completion as done until a new assistant turn is harvested (n grew).
 - Fable bind 4917: ¬error_banner ∧ turn_count_incremented ∧ ¬tool_pause.
+- Friction 25654: error_banner match text must surface; raise only when
+  banner ∧ ¬in_flight (transient "Overloaded" while Stop/streaming must wait).
 - Completion is **structural** (new turn + idle + stable), not min_body/min_growth
   length gates — short replies are valid harvest products (operator bind 2026-07-18).
 - Friction 24666: ``timeout_s`` is an *idle* budget. While Stop / streaming /
@@ -101,9 +103,19 @@ HARVEST_JS = """
   }
   const pageText = (document.body && document.body.innerText) || '';
   const scan = pageText.slice(0, 4000) + pageText.slice(-4000);
-  const errorBanner = /hit a limit|rate limit|something went wrong|network error|try again later|usage limit|overloaded/i.test(
-    scan
-  );
+  const errorBannerRe =
+    /hit a limit|rate limit|something went wrong|network error|try again later|usage limit|overloaded/i;
+  const errorBannerMatch = scan.match(errorBannerRe);
+  const errorBanner = !!errorBannerMatch;
+  // Context around first match for diagnostics (poll/CLI surfaces this).
+  let errorBannerText = '';
+  if (errorBannerMatch && typeof errorBannerMatch.index === 'number') {
+    const i = errorBannerMatch.index;
+    errorBannerText = scan
+      .slice(Math.max(0, i - 80), i + errorBannerMatch[0].length + 120)
+      .replace(/\\s+/g, ' ')
+      .trim();
+  }
   const toolPause = !!document.querySelector(
     '[data-testid*="tool"], [data-testid*="research"], [aria-label*="Searching" i]'
   ) && streaming;
@@ -137,6 +149,8 @@ HARVEST_JS = """
     streaming,
     stop,
     error_banner: errorBanner,
+    error_banner_match: errorBannerMatch ? errorBannerMatch[0] : '',
+    error_banner_text: errorBannerText,
     tool_pause: toolPause,
     model_label: modelLabel,
     task_map_present: taskMapPresent,
@@ -148,6 +162,7 @@ HARVEST_JS = """
 
 
 async def harvest_assistant(page, *, min_msg_chars: int = 40) -> dict:
+    """Evaluate ``HARVEST_JS`` on the page and return assistant-turn state."""
     return await page.evaluate(HARVEST_JS, {"minMsgChars": min_msg_chars})
 
 
@@ -168,6 +183,34 @@ def _in_flight(state: dict) -> bool:
     return bool(
         state.get("streaming") or state.get("stop") or state.get("tool_pause")
     )
+
+
+def _error_banner_message(state: dict, *, on_timeout: bool = False) -> str:
+    """Human-readable HarvestIncomplete detail including matched banner text."""
+    kind = "error_banner on timeout" if on_timeout else "error_banner detected"
+    match = (state.get("error_banner_match") or "").strip()
+    text = (state.get("error_banner_text") or "").strip()
+    bits = [
+        kind,
+        f"url={state.get('url')}",
+        f"len={state.get('body_len')}",
+    ]
+    if match:
+        bits.append(f"match={match!r}")
+    if text and text.lower() != match.lower():
+        # Truncate so MCP/CLI errors stay skim-friendly.
+        bits.append(f"ctx={text[:200]!r}")
+    return " ".join(bits)
+
+
+def _fatal_error_banner(state: dict) -> bool:
+    """True when a banner is present AND the turn is idle (not recovering).
+
+    Transient Claude overlays (``Overloaded``, rate-limit) often coexist with
+    Stop/streaming while the product retries — aborting then orphans a live
+    Cowork task (friction 25654). Only fail-closed once ¬in_flight.
+    """
+    return bool(state.get("error_banner")) and not _in_flight(state)
 
 
 def _complete_enough(
@@ -257,10 +300,10 @@ async def wait_assistant_reply(
 
     while True:
         state = await harvest_assistant(page, min_msg_chars=msg_floor)
-        if state.get("error_banner"):
-            raise HarvestIncomplete(
-                f"error_banner detected url={state.get('url')} len={state.get('body_len')}"
-            )
+        # Never raise mid-poll on banner alone (friction 25654): Overloaded /
+        # rate-limit overlays often appear while Stop/streaming is still up, or
+        # briefly between product retries. Fail-closed only after idle timeout
+        # with match text attached.
         cur_len = state.get("body_len", 0)
         in_flight = _in_flight(state)
 
@@ -272,7 +315,12 @@ async def wait_assistant_reply(
             stable = 0
             cowork_stable = 0
         else:
-            if _complete_enough(
+            # Banner without Stop/streaming: hold completion; idle clock runs so
+            # a delayed retry can flip streaming back on before we fail-closed.
+            if state.get("error_banner"):
+                stable = 0
+                cowork_stable = 0
+            elif _complete_enough(
                 state,
                 base_len=base_len,
                 base_n=base_n,
@@ -287,7 +335,9 @@ async def wait_assistant_reply(
                 if stable >= stable_polls:
                     return state
 
-            if _cowork_complete_enough(
+            if state.get("error_banner"):
+                pass
+            elif _cowork_complete_enough(
                 state,
                 base_len=base_len,
                 base_n=base_n,
@@ -310,10 +360,8 @@ async def wait_assistant_reply(
         await asyncio.sleep(poll_ms / 1000)
 
     state = await harvest_assistant(page, min_msg_chars=msg_floor)
-    if state.get("error_banner"):
-        raise HarvestIncomplete(
-            f"error_banner on timeout url={state.get('url')}"
-        )
+    if _fatal_error_banner(state):
+        raise HarvestIncomplete(_error_banner_message(state, on_timeout=True))
     if _complete_enough(
         state,
         base_len=base_len,
