@@ -10,8 +10,9 @@ from fastapi import HTTPException, status
 from pydantic import ValidationError
 
 from ...db import WRITE_LOCK, cortex_conn, decode_row, query
-from ...status_trait_write import materialize_graduated_lifecycle
+from ...enrichment import reindex_assertion_fts
 from ...models import AssertionItem, AssertionUpdate, AssertionUpdateResponse
+from ...status_trait_write import materialize_graduated_lifecycle
 from ._shared import (
     _ASSERTION_COLS,
     _JSON_FIELDS,
@@ -94,6 +95,7 @@ def update_assertion(
         # predicate_form_explicitly_set: True when the caller explicitly
         # included predicate_form in the request (even as null = clearing intent).
         predicate_form_explicitly_set = False
+        enrichment_fields_updated = False
         if isinstance(body, dict):
             for k in (
                 "superseded_by",
@@ -106,9 +108,13 @@ def update_assertion(
                 "review_notes",
                 "resolution_status",
                 "fulfillment_assertion_id",
+                "prospective_summary",
+                "events_json",
             ):
                 if k in body and body[k] is not None:
                     update_map[k] = body[k]
+                    if k in ("prospective_summary", "events_json"):
+                        enrichment_fields_updated = True
             # predicate_form: explicit null in dict → clear the field
             if "predicate_form" in body:
                 update_map["predicate_form"] = body["predicate_form"]
@@ -125,10 +131,14 @@ def update_assertion(
                 "review_notes",
                 "resolution_status",
                 "fulfillment_assertion_id",
+                "prospective_summary",
+                "events_json",
             ):
                 val = getattr(body, k)
                 if val is not None:
                     update_map[k] = val
+                    if k in ("prospective_summary", "events_json"):
+                        enrichment_fields_updated = True
             # predicate_form: use model_fields_set to detect explicit null (clearing)
             if "predicate_form" in body.model_fields_set:
                 update_map["predicate_form"] = body.predicate_form
@@ -249,6 +259,9 @@ def update_assertion(
                 old_predicate_form,
                 new_predicate_form,
             )
+
+        if enrichment_fields_updated:
+            reindex_assertion_fts(assertion_id)
 
         rows = query(
             conn,

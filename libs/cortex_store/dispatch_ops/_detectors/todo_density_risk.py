@@ -14,7 +14,9 @@ from ...db import query
 from ._shared import _finding
 
 _IMPL_INTENT_STATES = ("open", "in_progress")
-_ULG_FLOOR_SKILLS = frozenset({"architecture-invariants", "ulg-architecture"})
+_ULG_FLOOR_SKILLS = frozenset(
+    {"architecture-invariants", "ulg-architecture", "docstring-quality"}
+)
 _DESIGN_BEARING_EXACT = frozenset(
     {
         "build-pipeline",

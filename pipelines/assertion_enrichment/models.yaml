@@ -1,0 +1,4 @@
+models:
+  enrich:
+    model: qwen3-14b-q4-k-m-40960
+    profile: qwen3-instruct

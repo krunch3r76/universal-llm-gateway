@@ -118,6 +118,7 @@ contract: consult
     result = enrich_handoff_packet(packet, cortex=cortex)
     assert "architecture-invariants" in result.skills_added
     assert "ulg-architecture" in result.skills_added
+    assert "docstring-quality" in result.skills_added
     assert "`architecture-invariants`" in result.text
     assert "agent-skills/" not in result.text
 
@@ -298,13 +299,15 @@ def test_build_pointer_cursor_consult_uses_canonical_slug_priming() -> None:
 
 
 def test_enrich_injects_arch_refs_for_cursor_parity() -> None:
-    """Phase 1: enrich wires architecture-invariants + ulg-architecture by default."""
+    """Phase 1: enrich wires ULG code-work floor triple by default."""
     cortex = _StubCortex()
     result = enrich_handoff_packet(_THIN_WEB_PACKET, cortex=cortex)
     assert "architecture-invariants" in result.skills_added
     assert "ulg-architecture" in result.skills_added
+    assert "docstring-quality" in result.skills_added
     assert "`architecture-invariants`" in result.text
     assert "`ulg-architecture`" in result.text
+    assert "`docstring-quality`" in result.text
     assert "agent-skills/" not in result.text
 
 
@@ -605,8 +608,8 @@ def test_mirror_preserves_skill_inline_source_uri() -> None:
     )
     mirrored, rewrites = mirror_workspaces_pointers_for_web(packet)
     assert rewrites
-    mirrored_uri = "workspaces://universal-llm-gateway/.cursor/skills/consult-routing"
-    assert mirrored_uri in mirrored
+    # Census skills resolve under cursor-plugins/… (plugin SoT), not hub .cursor/.
+    assert resolved[0].source_uri in mirrored
     assert validate_inline_skill_hashes(mirrored) is None
 
 

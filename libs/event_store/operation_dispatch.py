@@ -22,6 +22,7 @@ from .operations_delivery_audit import (
     _delivery_audit_selfassess,
     _delivery_audit_token_rollup,
 )
+from .operations_charter_tick import manage_charter_tick_audit
 from .operations_densify_review import (
     _densify_review_admitted,
     _densify_review_outcome,
@@ -76,6 +77,7 @@ _DISPATCH: dict[str, OperationCallable] = {
     "dispatch-economics-dollar-equivalents": dispatch_economics_dollar_equivalents,
     "frontier.densify.review.admitted": _densify_review_admitted,
     "frontier.densify.review.outcome": _densify_review_outcome,
+    "manage.charter.tick.audit": manage_charter_tick_audit,
 }
 
 

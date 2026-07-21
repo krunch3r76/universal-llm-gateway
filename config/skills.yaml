@@ -136,6 +136,10 @@ skills:
   dispatch-workflow:
     surface_class: cursor_only
     mcp_surface_required: life
+  docstring-quality:
+    surface_class: shared_sync
+    mcp_surface_required: none
+    delivery_priority: 2
   document-ingestion:
     surface_class: cursor_only
     mcp_surface_required: code

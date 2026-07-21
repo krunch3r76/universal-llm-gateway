@@ -1,0 +1,46 @@
+# assertion-enrichment — prospective summary + event extraction (v3 Kumiho).
+#
+# Triggered fire-and-forget by libs/cortex_store/enrichment_dispatch.py on
+# assertion create/supersede. Two custom steps mirror the former inline
+# enrichment.py hooks so pipeline_test snapshot/replay/compare applies.
+#
+# Invocation:
+#   pipeline(op="run", pipeline_id="assertion-enrichment",
+#            messages=[{"role":"user","content":"enrich"}],
+#            options={
+#              "assertion_id": <int>,
+#              "claim": "<natural language>",
+#              "entity_id": "<entity:slug>",
+#              "confidence": "<confirmed|believed|...>",
+#              "kinds": ["prospective", "events"],  # optional subset
+#            })
+
+schema_version: 6
+id: assertion-enrichment
+version: "1.0"
+type: assertion_enrichment
+description: >
+  Generate prospective_summary and events_json for an assertion and write
+  them back via cortex-api assertion_update. Idempotent per field
+  (skip when already populated).
+output: events
+
+options:
+  timeout_seconds: 120
+
+steps:
+  - name: prospective
+    type: assertion_enrichment_prospective_v1
+    model_ref: enrich
+    prompt_ref: assertion_enrichment.v1.prospective
+    generation_parameters:
+      temperature: 0.3
+      max_tokens: 256
+
+  - name: events
+    type: assertion_enrichment_events_v1
+    model_ref: enrich
+    prompt_ref: assertion_enrichment.v1.events
+    generation_parameters:
+      temperature: 0.3
+      max_tokens: 512

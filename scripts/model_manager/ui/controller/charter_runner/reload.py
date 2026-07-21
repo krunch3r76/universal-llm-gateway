@@ -1,8 +1,10 @@
 """In-process reload of charter-runner modules + tick loop restart.
 
 Avoids a full ``./manage`` TUI quit when only charter-runner code changed.
-Caller (ManageApp) stops the live loop, invokes ``reload_charter_runner_modules``,
-then constructs a fresh ``CharterRunnerTickLoop`` from the reloaded package.
+Caller (ManageApp.reload_charter_tick) stops the live loop, invokes
+``reload_charter_runner_modules``, constructs a fresh ``CharterRunnerTickLoop``
+from the reloaded package, then emits ``manage.charter.tick.reloaded`` with the
+returned module list.
 """
 
 from __future__ import annotations
@@ -21,6 +23,7 @@ _MODULE_NAMES: tuple[str, ...] = (
     "scripts.model_manager.ui.controller.charter_runner.bus_client",
     "scripts.model_manager.ui.controller.charter_runner.dispatch_client",
     "scripts.model_manager.ui.controller.charter_runner.materializer",
+    "scripts.model_manager.ui.controller.charter_runner.harvest",
     "scripts.model_manager.ui.controller.charter_runner.tick_loop",
     "scripts.model_manager.ui.controller.charter_runner",
 )

@@ -4,7 +4,9 @@ Files are numbered by agent-bus thread id:
 - ``{worker_thread}.log`` — one window (admit packet + worker turns + CHECKPOINT)
 - ``root-{root_id}.log`` — arc index lines pointing at each window file
 
-Ephemeral by design (``/tmp/logs``).
+Transcripts are ephemeral (``/tmp/logs``). Harvest-done markers live in a
+durable dir outside ``/tmp`` so a manage restart does not re-emit ``closed``
+or re-close historical workers (A-R3-3).
 """
 
 from __future__ import annotations
@@ -15,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 LOG_DIR = Path("/tmp/logs/charter-runner")
-_HARVESTED_DIR = LOG_DIR / "harvested"
+_HARVESTED_DIR = Path.home() / ".local" / "share" / "charter-runner" / "harvested"
 
 
 def _stamp() -> str:

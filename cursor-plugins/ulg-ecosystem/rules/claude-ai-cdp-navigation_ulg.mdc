@@ -34,7 +34,7 @@ Until operator override or substrate change (friction 24906):
 |---|---|
 | ¬ `workspaces://` readable on web | Stage corpus to `cortex://` (life MCP); ¬ cite workspaces paths as openable |
 | GitHub connector down | ¬ rely on connector for codebase browse |
-| Cursor-only skills invisible | Claude slugs by name; else inject body or cortex sidecar |
+| Skill delivery | Claude slug → `/` or `Use the … skill`; not a Claude slug → **inline** excerpt (skill § Skill delivery — fleet rule) |
 
 ## Anti-patterns
 
@@ -42,5 +42,5 @@ Until operator override or substrate change (friction 24906):
 |---|---|
 | "Push to web" / manual open claude.ai as first default | CDP `project-ask` bus-nudge per skill |
 | Transport advice without loading CDP skill | `Use the claude-ai-cdp-navigation skill` first |
-| Packet cites `workspaces://` or `.cursor/skills/…` as readable by web | `cortex://` URIs + claude slug / injected body |
+| Packet cites `workspaces://` or `.cursor/skills/…` as readable by web | `cortex://` URIs; Claude-slug engage or **inline** non-slugs |
 | Copy CDP mechanics into this rule | Defer to skill SOT |

@@ -340,6 +340,18 @@ _register(
     )
 )
 
+_register(
+    OperationDef(
+        name="manage.charter.tick.audit",
+        description=(
+            "Charter-runner tick lifecycle audit: admitted/closed/failed rows "
+            "plus waiting_open aging over a time window"
+        ),
+        params={"minutes": {"type": "int"}, "limit": {"type": "int", "default": 200}},
+        returns="admitted, closed, failed, waiting_open (+ aging_s)",
+    )
+)
+
 
 def list_operations() -> list[dict[str, Any]]:
     """Return all registered operation definitions as serializable dicts."""

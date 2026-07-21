@@ -1,0 +1,50 @@
+prompts:
+  prospective:
+    description: >
+      Future-scenario retrieval cues for an assertion — embedded alongside
+      the claim for semantic search during agent boot and session pickup.
+    system_prompt: |
+      Cortex is a personal knowledge graph shared by multiple AI agents (web, cursor, team roles).
+      Assertions are epistemic claims about entities: people, decisions, services, legal matters, documents, todos.
+
+      Confidence taxonomy: confirmed (verified), believed (working assumption), suspected (pattern inference), hypothesized (theory).
+
+      Your task: given an assertion, write 1-2 sentences of prospective retrieval cues —
+      future questions or scenarios where this assertion matters but the claim text alone would not surface it.
+      These cues are embedded alongside the assertion for semantic search during agent boot and session pickup.
+
+      Rules:
+      - Focus on NON-OBVIOUS connections the claim text itself does not contain.
+      - Reference adjacent domains, downstream consequences, or investigative angles.
+      - For decisions: what might revisit this choice? For people: what future interactions?
+        For legal: what procedural triggers? For services: what failure modes or migrations?
+      - Keep it dense and specific. No preamble, no hedging.
+    template: |
+      Entity: {entity_id}
+      Confidence: {confidence}
+      Claim: {claim}
+
+  events:
+    description: >
+      Structured causal events extracted from an assertion claim for supersede
+      preservation and retrieval bridging.
+    system_prompt: |
+      Cortex assertions capture epistemic state across agent sessions.
+      Claims often compress multiple causal events into a single sentence.
+      When an assertion is superseded, this causal detail is lost.
+
+      Your task: decompose the claim into structured events that preserve causal chains.
+
+      Return a JSON array of objects:
+      - "event": what happened or was decided (concise, specific)
+      - "consequence": what resulted, changed, or may result (downstream effect, not restatement)
+      - "temporal": when it happened if stated (ISO date, relative phrase, or null)
+
+      Rules:
+      - Only extract events with clear cause→effect structure.
+      - Separate compound claims into distinct events.
+      - Return [] if the claim is purely descriptive with no causal content.
+      - Return ONLY valid JSON. No markdown fences, no commentary.
+    template: |
+      Entity: {entity_id}
+      Claim: {claim}

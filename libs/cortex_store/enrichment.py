@@ -297,29 +297,19 @@ def enrich_background(
     entity_id: str,
     confidence: str,
 ) -> None:
-    """Fire enrichment in a daemon thread — never blocks the write path."""
-    if not _ENRICHMENT_ENABLED:
-        return
+    """Fire enrichment in a daemon thread — delegates to pipeline dispatch."""
+    from .enrichment_dispatch import dispatch_assertion_enrichment_background
 
-    def _run() -> None:
-        try:
-            enrich_assertion(assertion_id, claim, entity_id, confidence)
-        except Exception:
-            logger.warning(
-                "Background enrichment failed for assertion %d",
-                assertion_id,
-                exc_info=True,
-            )
-
-    t = threading.Thread(target=_run, daemon=True)
-    t.start()
+    dispatch_assertion_enrichment_background(
+        assertion_id, claim, entity_id, confidence
+    )
 
 
 def enrich_old_assertion_events(conn: sqlite3.Connection, assertion_id: int) -> None:
-    """Enrich an about-to-be-superseded assertion with event extraction if missing.
+    """Dispatch event extraction for an about-to-be-superseded assertion if missing.
 
     Called during supersede to preserve causal structure before compression.
-    Runs synchronously in a daemon thread to avoid blocking the write path.
+    Runs fire-and-forget via the assertion-enrichment pipeline (events kind only).
     """
     if not is_enrichment_enabled("events"):
         return
@@ -328,25 +318,19 @@ def enrich_old_assertion_events(conn: sqlite3.Connection, assertion_id: int) -> 
 
     rows = query(
         conn,
-        "SELECT claim, entity_id, events_json FROM assertions WHERE id = ?",
+        "SELECT claim, entity_id, confidence, events_json FROM assertions WHERE id = ?",
         (assertion_id,),
     )
     if not rows or rows[0].get("events_json"):
         return
 
     row = rows[0]
+    from .enrichment_dispatch import dispatch_assertion_enrichment_background
 
-    def _run() -> None:
-        try:
-            events = extract_events(row["claim"], row["entity_id"])
-            if events:
-                _update_assertion_field(assertion_id, "events_json", events)
-        except Exception:
-            logger.warning(
-                "Supersede event enrichment failed for assertion %d",
-                assertion_id,
-                exc_info=True,
-            )
-
-    t = threading.Thread(target=_run, daemon=True)
-    t.start()
+    dispatch_assertion_enrichment_background(
+        assertion_id,
+        row["claim"],
+        row["entity_id"],
+        row.get("confidence") or "believed",
+        kinds={"events"},
+    )

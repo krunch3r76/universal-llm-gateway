@@ -11,6 +11,7 @@ consult-posture
 consult-routing
 cortex
 dispatch-shape
+docstring-quality
 friction-review
 git-posture
 handoff-packet-authoring

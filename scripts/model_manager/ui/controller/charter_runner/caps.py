@@ -6,8 +6,10 @@ auto-admission — set to very-long bounds per operator bind (2026-07-19). A roo
 that hits a worker failure/timeout is *stopped* (no re-admit) until a human
 resets it; there is no auto-retry.
 
-State is in-memory: a manage restart resets counters, which is acceptable because
-the bus in-flight guard remains authoritative for correctness.
+Admit counters are in-memory (manage restart resets them). Pre-fire intent
+markers are durable on disk so a crash between ``fire_window`` and the
+admission pointer cannot re-dispatch the same (root, window) on restart
+(A-R3-4). The bus in-flight guard remains authoritative once the pointer lands.
 """
 
 from __future__ import annotations
@@ -15,6 +17,7 @@ from __future__ import annotations
 import os
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 
 
 def _env_int(name: str, default: int) -> int:
@@ -23,6 +26,10 @@ def _env_int(name: str, default: int) -> int:
         return int(raw) if raw else default
     except ValueError:
         return default
+
+
+def _default_intent_dir() -> Path:
+    return Path.home() / ".local" / "share" / "charter-runner" / "admit-intent"
 
 
 @dataclass(frozen=True)
@@ -48,9 +55,15 @@ class _RootState:
 class CapStore:
     """Tracks admission bookkeeping per root thread."""
 
-    def __init__(self, caps: WindowCaps | None = None) -> None:
+    def __init__(
+        self,
+        caps: WindowCaps | None = None,
+        *,
+        intent_dir: Path | None = None,
+    ) -> None:
         self._caps = caps or WindowCaps.from_env()
         self._roots: dict[str, _RootState] = {}
+        self._intent_dir = intent_dir if intent_dir is not None else _default_intent_dir()
 
     def check(
         self, root_id: str, *, now: float | None = None
@@ -79,6 +92,22 @@ class CapStore:
 
     def reset(self, root_id: str) -> None:
         self._roots.pop(root_id, None)
+
+    def intent_path(self, root_id: str, window_index: int) -> Path:
+        return self._intent_dir / f"{root_id}-w{window_index}.intent"
+
+    def has_admit_intent(self, root_id: str, window_index: int) -> bool:
+        return self.intent_path(root_id, window_index).exists()
+
+    def mark_admit_intent(self, root_id: str, window_index: int) -> None:
+        """Durable pre-fire marker keyed (root, window) — crash-safe vs double-fire."""
+        self._intent_dir.mkdir(parents=True, exist_ok=True)
+        self.intent_path(root_id, window_index).write_text(
+            f"{time.time():.3f}\n", encoding="utf-8"
+        )
+
+    def clear_admit_intent(self, root_id: str, window_index: int) -> None:
+        self.intent_path(root_id, window_index).unlink(missing_ok=True)
 
     def _recent_count(self, state: _RootState, *, now: float | None = None) -> int:
         now = time.time() if now is None else now

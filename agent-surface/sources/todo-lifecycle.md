@@ -51,7 +51,7 @@ The defaults below are the floor — add domain-specific skills on top.
 
 | Domain | Default `required_skills` |
 |---|---|
-| *(any repo work — the floor)* | the repo's core architecture-invariants skill |
+| *(any repo work — the floor)* | architecture-invariants + ulg-architecture + docstring-quality |
 | `pipeline` | + build-pipeline (new pipeline) or refine-pipeline (eval/iterate) |
 | `consult` / dispatch / review | + consult-routing |
 | plan arc (multi-phase) | + implementation-plan-workflow |
@@ -60,14 +60,14 @@ The defaults below are the floor — add domain-specific skills on top.
 **Tier rules:**
 
 - **Implementation-intent todos** (default tier) MUST carry ≥1 skill — the repo's
-  core pair at minimum for any repo work. This is the `required_skills` field of
+  core triple at minimum for any repo work. This is the `required_skills` field of
   the rich-seed contract above; the `todo_implementation_seed_incomplete` gate
   fires without it.
 - **Backlog-only todos** (`backlog=true` / `deferred`) are exempt from the gate,
   but SHOULD still carry the predicted skills when the domain is known — it costs
   nothing at creation and saves a checkpoint at pickup.
 
-The pickup-side fallback (empty set ∧ known repo → default-load the core pair) is
+The pickup-side fallback (empty set ∧ known repo → default-load the core triple) is
 a safety net, not a substitute for seeding the attribute. Seed at creation; let the
 fallback catch only genuinely domain-unknown todos.
 

@@ -209,6 +209,14 @@ INJECT_REGISTRY: tuple[InjectEntry, ...] = (
         priority=50,
         inline_tier=InlineTier.NORMAL,
     ),
+    InjectEntry(
+        entity_id="agent_skill:docstring-quality",
+        scope=InjectScope.CODING,
+        platform_predicate="*",
+        profile_applicability=frozenset({"code_touching"}),
+        priority=55,
+        inline_tier=InlineTier.NORMAL,
+    ),
 )
 
 

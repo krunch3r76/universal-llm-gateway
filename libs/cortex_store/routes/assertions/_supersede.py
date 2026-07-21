@@ -24,11 +24,8 @@ from ...assertion_quality import (
 from ...belief_guard import analyze_assertion_impact
 from ...config import supersede_validation_mode
 from ...db import WRITE_LOCK, cortex_conn, decode_row, json_encode, query
-from ...enrichment import (
-    enrich_background,
-    enrich_old_assertion_events,
-    reindex_assertion_fts,
-)
+from ...enrichment import enrich_old_assertion_events, reindex_assertion_fts
+from ...enrichment_dispatch import dispatch_assertion_enrichment_background
 from ...entrenchment import compute_entrenchment
 from ...event_publisher import cortex_supersede_would_reject
 from ...models import (
@@ -465,7 +462,9 @@ def supersede_assertion(body: SupersedeRequest) -> SupersedeResponse:
         )
 
     threading.Thread(target=reindex_assertion_fts, args=(new_id,), daemon=True).start()
-    enrich_background(new_id, body.claim, body.entity_id, body.confidence)
+    dispatch_assertion_enrichment_background(
+        new_id, body.claim, body.entity_id, body.confidence
+    )
 
     # Re-derive predicate_form from the new claim when the old form was dropped
     # (claim changed, no explicit supply). Mirrors the create path's async

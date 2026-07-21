@@ -436,6 +436,28 @@ async def emit_manage_charter_tick_window_failed(*, root: str, reason: str) -> N
     await _emit("manage.charter.tick.window_failed", {"root": root, "reason": reason})
 
 
+async def emit_manage_charter_tick_closed(
+    *,
+    root: str,
+    window_index: int,
+    worker_thread: str,
+    checkpoint_turn: int,
+    worker_closed: bool | None,
+) -> None:
+    """Window harvested after CHECKPOINT; terminal verify signal for the admit."""
+    await _emit(
+        "manage.charter.tick.closed",
+        {
+            "root": root,
+            "window_index": window_index,
+            "worker_thread": worker_thread,
+            "checkpoint_turn": checkpoint_turn,
+            "turn_number": checkpoint_turn,
+            "worker_closed": worker_closed,
+        },
+    )
+
+
 async def emit_manage_charter_tick_waiting_open(*, root: str, age_s: int) -> None:
     """Attended handoff still waiting for operator to open the IDE thread."""
     await _emit(

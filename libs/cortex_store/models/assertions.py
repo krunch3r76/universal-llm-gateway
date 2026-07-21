@@ -53,7 +53,7 @@ class AssertionCreate(BaseModel):
     is_decontextualized: bool = True
     resolution_status: ResolutionStatus | None = None
     fulfillment_assertion_id: int | None = None
-    # v3: Kumiho grounding — BYO-storage + consolidation enrichment
+    # v3 enrichment writeback — populated by pipelines/assertion_enrichment/.
     prospective_summary: str | None = None
     events_json: str | None = None
     artifact_uri: str | None = None
@@ -154,7 +154,7 @@ class AssertionItem(BaseModel):
     resolution_status: str | None = None
     fulfillment_assertion_id: int | None = None
     quality_score: float | None = None
-    # v3: Kumiho grounding — BYO-storage + consolidation enrichment
+    # v3 enrichment writeback — populated by pipelines/assertion_enrichment/.
     prospective_summary: str | None = None
     events_json: str | None = None
     artifact_uri: str | None = None
@@ -190,6 +190,9 @@ class AssertionUpdate(BaseModel):
     # pipelines/predicate_extract/ after fire-and-forget dispatch from the
     # assertion-create write hook. Explicit null in PATCH body clears the field.
     predicate_form: str | None = None
+    # v3 enrichment writeback — populated by pipelines/assertion_enrichment/.
+    prospective_summary: str | None = None
+    events_json: str | None = None
     # Idempotency guard for superseded_by writes. When the target row already
     # has a non-null superseded_by, the PATCH is rejected with 409 Conflict
     # unless force=True is set. Prevents silent lineage clobber from
@@ -349,6 +352,9 @@ class AssertionCreateResponse(BaseModel):
     validation_warnings: list[dict[str, str]] | None = None
     contradiction_warnings: list[ContradictionConflict] | None = None
     predicate_form_normalize: PredicateFormNormalize | None = None
+    already_known: bool = False
+    known_state_reason: str | None = None
+    matched_assertion_id: int | None = None
 
 
 class AssertionUpdateResponse(BaseModel):

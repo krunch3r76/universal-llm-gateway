@@ -61,6 +61,8 @@ def _op_assertion_update(
     reviewed_at: str | None = None,
     review_notes: str | None = None,
     predicate_form: Any = _UNSET,
+    prospective_summary: str | None = None,
+    events_json: str | None = None,
     force: bool = False,
     **_: object,
 ) -> dict[str, Any]:
@@ -77,6 +79,8 @@ def _op_assertion_update(
             ("reviewer", reviewer),
             ("reviewed_at", reviewed_at),
             ("review_notes", review_notes),
+            ("prospective_summary", prospective_summary),
+            ("events_json", events_json),
         ]
         if val is not None
     }

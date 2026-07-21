@@ -154,6 +154,7 @@ def graph_imprint_remembered(
     proposal_id: str,
     applied_count: int,
     deduped: bool,
+    already_known: bool = False,
 ) -> Event:
     """graph.imprint.remembered — fully-resolved patch auto-committed or deduped."""
     ev = Event(
@@ -164,6 +165,31 @@ def graph_imprint_remembered(
             "proposal_id": proposal_id,
             "applied_count": applied_count,
             "deduped": deduped,
+            "already_known": already_known,
+        },
+    )
+    record(ev.signal, **ev.payload)
+    return ev
+
+
+@event_factory
+def graph_recorder_already_known(
+    *,
+    entity_id: str,
+    matched_assertion_id: int,
+    reason: str,
+    anchor: str | None = None,
+) -> Event:
+    """graph.recorder.already_known — known-state skip on assert/imprint path."""
+    ev = Event(
+        signal="graph.recorder.already_known",
+        role="observation",
+        scope="global",
+        payload={
+            "entity_id": entity_id,
+            "matched_assertion_id": matched_assertion_id,
+            "reason": reason,
+            "anchor": anchor,
         },
     )
     record(ev.signal, **ev.payload)

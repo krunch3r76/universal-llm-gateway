@@ -165,30 +165,62 @@ def _source_uri(slug: str, body: str, root: Path) -> str:
 
 
 def _scan_skills(root: Path) -> dict[str, dict[str, object]]:
+    """Scan ``.cursor/skills`` plus catalog SOTs that live only under the plugin."""
+    from claude_bundles.catalog import get_skill_catalog
+
     skills_dir = root / ".cursor" / "skills"
-    if not skills_dir.is_dir():
-        print(f"ERROR: missing skills dir: {skills_dir}", file=sys.stderr)
-        return {}
     found: dict[str, dict[str, object]] = {}
-    for skill_path in sorted(skills_dir.glob("*/SKILL.md")):
-        slug = skill_path.parent.name
-        if slug in life_local_slugs():
+    if skills_dir.is_dir():
+        for skill_path in sorted(skills_dir.glob("*/SKILL.md")):
+            slug = skill_path.parent.name
+            if slug in life_local_slugs():
+                continue
+            try:
+                text = skill_path.read_text(encoding="utf-8")
+            except OSError:
+                print(f"ERROR: unreadable {skill_path}", file=sys.stderr)
+                continue
+            fm = parse_frontmatter(text)
+            description = str(fm.get("description") or "").strip()
+            if not description:
+                print(f"WARN: missing description: {skill_path}", file=sys.stderr)
+                continue
+            found[slug] = {
+                "slug": slug,
+                "frontmatter": fm,
+                "description": description,
+                "source_uri": _source_uri(slug, text, root),
+                "related_skills": declared_related_skills(text, fm),
+                "surface_class": surface_class_for_slug(slug),
+            }
+    else:
+        print(f"ERROR: missing skills dir: {skills_dir}", file=sys.stderr)
+
+    # Census / plugin SOTs are authoritative when present; ingest must see them.
+    catalog = get_skill_catalog()
+    for slug in catalog.cursor_indexed_slugs():
+        if slug in found or slug in life_local_slugs():
             continue
         try:
-            text = skill_path.read_text(encoding="utf-8")
+            path, _ = catalog.resolve_sot(slug, root)
+        except FileNotFoundError:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
         except OSError:
-            print(f"ERROR: unreadable {skill_path}", file=sys.stderr)
+            print(f"ERROR: unreadable {path}", file=sys.stderr)
             continue
         fm = parse_frontmatter(text)
         description = str(fm.get("description") or "").strip()
         if not description:
-            print(f"WARN: missing description: {skill_path}", file=sys.stderr)
+            print(f"WARN: missing description: {path}", file=sys.stderr)
             continue
+        rel = path.resolve().relative_to(root.resolve()).as_posix()
         found[slug] = {
             "slug": slug,
             "frontmatter": fm,
             "description": description,
-            "source_uri": _source_uri(slug, text, root),
+            "source_uri": f"{_WS}/{rel}",
             "related_skills": declared_related_skills(text, fm),
             "surface_class": surface_class_for_slug(slug),
         }

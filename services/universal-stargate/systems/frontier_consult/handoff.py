@@ -72,9 +72,11 @@ _MCP_CAPABILITIES_TAG = "<mcp_capabilities>"
 # backstop at all, so omitting these refs lets a reviewer review blind to the
 # universal invariants + ULG topology/lifecycle. Required unconditionally for
 # every MCP-seat handoff (decision: 2026-06-11 operator).
+# ULG code-work floor: architecture pair + docstring quality (operator bind 2026-07-20).
 _ARCH_SKILL_SLUGS: tuple[str, ...] = (
     "architecture-invariants",
     "ulg-architecture",
+    "docstring-quality",
 )
 _REQUIRED_INVARIANT_SKILL_REFS: tuple[str, ...] = _ARCH_SKILL_SLUGS
 
@@ -311,11 +313,11 @@ def validate_packet(
             missing_refs = _missing_arch_skill_refs(text)
             if missing_refs:
                 reason = (
-                    f"Packet {packet_path!r} missing required architecture "
+                    f"Packet {packet_path!r} missing required code-work floor "
                     f"skill-ref(s): {', '.join(missing_refs)}. MCP-seat handoffs "
-                    "must reference the universal invariant + ULG architecture "
-                    "layers (Block 2 / Block 5) so the reviewer reads them before "
-                    "findings. Acceptable forms: canonical slug "
+                    "must reference architecture-invariants, ulg-architecture, and "
+                    "docstring-quality (Block 2 / Block 5) so the reviewer loads "
+                    "them before findings. Acceptable forms: canonical slug "
                     "(`architecture-invariants`), "
                     "`agent_skill:<slug>`, legacy path ('agent-skills/<slug>'), or "
                     "workspaces stub ('.cursor/skills/<slug>/SKILL.md') — not a "

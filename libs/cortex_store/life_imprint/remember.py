@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..db import cortex_conn
+from ..recorder_known_state import check_patch_assert_known_state
 from .apply import ImprintCommitError, commit_imprint_proposal
 from .op_plan import build_op_plan, normalize_patch
 from .proposal_store import (
@@ -54,6 +55,9 @@ class RememberSuccessResult:
     normalized_patch: dict[str, Any]
     context: str
     deduped: bool
+    already_known: bool = False
+    matched_assertion_id: int | None = None
+    known_state_reason: str | None = None
     status: str = _STATUS_SUCCESS
 
 
@@ -147,6 +151,39 @@ def run_remember(
 
     normalized, op_plan, _candidates = pipeline
     patch_hash = patch_sha256(normalized)
+
+    conn = cortex_conn()
+    try:
+        known = check_patch_assert_known_state(conn, op_plan)
+    finally:
+        conn.close()
+    if known.already_known and known.matched_assertion_id is not None:
+        assert_entity = next(
+            (
+                str((entry.get("args") or {}).get("entity_id"))
+                for entry in op_plan
+                if entry.get("op") == "assert"
+            ),
+            "unknown",
+        )
+        return RememberSuccessResult(
+            proposal_id=f"known:{known.matched_assertion_id}",
+            applied=[
+                {
+                    "op": "assert",
+                    "entity_id": assert_entity,
+                    "already_known": True,
+                    "matched_assertion_id": known.matched_assertion_id,
+                    "known_state_reason": known.known_state_reason,
+                }
+            ],
+            normalized_patch=normalized,
+            context=reg.context_id,
+            deduped=False,
+            already_known=True,
+            matched_assertion_id=known.matched_assertion_id,
+            known_state_reason=known.known_state_reason,
+        )
 
     with _patch_lock(patch_hash):
         committed = find_committed_by_patch_hash(

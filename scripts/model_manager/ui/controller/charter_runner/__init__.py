@@ -1,7 +1,18 @@
 """Charter runner — CHECKPOINT continuation for standing roots.
 
-Manage-hosted tick that admits default Grok 4.5 High cursor-sdk windows for
-enrolled roots. See ``cortex://notes/system/specs/charter-runner-tick.md``.
+Manage-hosted tick that admits one default Grok 4.5 High window per eligible
+enrolled root. See ``cortex://notes/system/specs/charter-runner-tick.md``.
+
+Two substrates (both use ``packet_path``, never ``source_ref``):
+
+- **Attended** — Composer on an IDE bus thread (``from=cursor``, human opens
+  the thread). Soft ``waiting_open`` remind only; no default hard-fail.
+- **Unattended** — manage fires ``seat=cursor-sdk``, ``op=generate``,
+  ``contract=light-bounded``, ``model=cursor/grok-4.5`` via team dispatch.
+  Optional hard stall via ``CHARTER_UNATTENDED_STALE_S`` (default OFF).
+
+Do not label the code contract as bare ``cursor-consult`` — that handoff role
+is an attended operator path, not the unattended runner wire.
 """
 
 from .reload import charter_runner_loop_class, reload_charter_runner_modules

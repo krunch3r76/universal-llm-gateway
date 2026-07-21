@@ -57,15 +57,17 @@ __all__ = [
 ]
 
 # Always-wired densify floor for MCP-seat handoffs (claude-web + claude-cursor).
-# architecture-invariants + ulg-architecture are injected unconditionally so the
-# cursor arch-ref floor (_missing_arch_skill_refs) is satisfied by enrich rather
-# than by author hand-wiring — parity with the generate lane's required_skills.
+# architecture-invariants + ulg-architecture + docstring-quality are injected
+# unconditionally so the cursor arch-ref floor (_missing_arch_skill_refs) is
+# satisfied by enrich rather than by author hand-wiring — parity with the
+# generate lane's required_skills (ULG code-work floor triple).
 _DEFAULT_DENSIFY_SLUGS: tuple[str, ...] = (
     "lead-seat-boot",
     "consult-routing",
     "handoff-packet-authoring",
     "architecture-invariants",
     "ulg-architecture",
+    "docstring-quality",
 )
 
 _TASK_CLASS_KEYWORDS: tuple[tuple[tuple[str, ...], str], ...] = (

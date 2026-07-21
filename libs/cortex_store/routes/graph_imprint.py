@@ -20,6 +20,7 @@ from ..events_imprint import (
     graph_imprint_remember_received,
     graph_imprint_remember_rejected,
     graph_imprint_remembered,
+    graph_recorder_already_known,
 )
 from ..life_imprint.apply import ImprintCommitError, commit_imprint_proposal
 from ..life_imprint.op_plan import build_op_plan, normalize_patch
@@ -27,6 +28,7 @@ from ..life_imprint.proposal_store import create_proposal
 from ..life_imprint.registry import load_registry
 from ..life_imprint.remember import RememberPreviewResult, run_remember
 from ..life_imprint.shape_check import shape_check_patch
+from ..recorder_known_state import check_patch_assert_known_state
 
 router = APIRouter(prefix="/graph/imprint", tags=["graph-imprint"])
 logger = get_logger("cortex-api.graph-imprint")
@@ -59,6 +61,9 @@ class ImprintProposeResponse(BaseModel):
     candidates: list[dict[str, Any]]
     proposal_id: str | None = None
     context: str = Field(default="cortex.life/v1")
+    already_known: bool = False
+    matched_assertion_id: int | None = None
+    known_state_reason: str | None = None
 
 
 class ImprintCommitRequest(BaseModel):
@@ -77,6 +82,9 @@ class ImprintRememberSuccessResponse(BaseModel):
     applied: list[dict[str, Any]]
     normalized_patch: dict[str, Any]
     deduped: bool = False
+    already_known: bool = False
+    matched_assertion_id: int | None = None
+    known_state_reason: str | None = None
     context: str = Field(default="cortex.life/v1")
 
 
@@ -125,14 +133,41 @@ def imprint_propose(body: ImprintProposeRequest) -> ImprintProposeResponse:
     conn = cortex_conn()
     try:
         op_plan, candidates = build_op_plan(patch, registry, conn)
+        graph_imprint_proposed(
+            statement_count=stmt_count,
+            op_plan_count=len(op_plan),
+            candidate_count=len(candidates),
+        )
+
+        known = check_patch_assert_known_state(conn, op_plan)
+        if known.already_known and known.matched_assertion_id is not None:
+            assert_entity = next(
+                (
+                    str((entry.get("args") or {}).get("entity_id"))
+                    for entry in op_plan
+                    if entry.get("op") == "assert"
+                ),
+                "unknown",
+            )
+            graph_recorder_already_known(
+                entity_id=assert_entity,
+                matched_assertion_id=known.matched_assertion_id,
+                reason=known.known_state_reason or "already_known",
+                anchor=known.anchor,
+            )
+            return ImprintProposeResponse(
+                normalized_patch=normalized,
+                op_plan=op_plan,
+                rejects=[],
+                candidates=candidates,
+                proposal_id=None,
+                context=registry.context_id,
+                already_known=True,
+                matched_assertion_id=known.matched_assertion_id,
+                known_state_reason=known.known_state_reason,
+            )
     finally:
         conn.close()
-
-    graph_imprint_proposed(
-        statement_count=stmt_count,
-        op_plan_count=len(op_plan),
-        candidate_count=len(candidates),
-    )
 
     proposal_id = None
     if not candidates and op_plan:
@@ -238,12 +273,30 @@ def imprint_remember(body: ImprintProposeRequest):
         proposal_id=result.proposal_id,
         applied_count=len(result.applied),
         deduped=result.deduped,
+        already_known=result.already_known,
     )
+    if result.already_known and result.matched_assertion_id is not None:
+        assert_entity = next(
+            (
+                str(entry.get("entity_id"))
+                for entry in result.applied
+                if entry.get("already_known")
+            ),
+            "unknown",
+        )
+        graph_recorder_already_known(
+            entity_id=assert_entity,
+            matched_assertion_id=result.matched_assertion_id,
+            reason=result.known_state_reason or "already_known",
+        )
     return ImprintRememberSuccessResponse(
         proposal_id=result.proposal_id,
-        committed=True,
+        committed=not result.already_known,
         applied=result.applied,
         normalized_patch=result.normalized_patch,
         deduped=result.deduped,
+        already_known=result.already_known,
+        matched_assertion_id=result.matched_assertion_id,
+        known_state_reason=result.known_state_reason,
         context=result.context,
     )

@@ -101,3 +101,58 @@ async def close_worker_thread(
         )
         resp.raise_for_status()
         return dict(resp.json())
+
+
+async def fetch_thread(thread_id: str) -> dict[str, Any]:
+    """Fetch one thread detail (status, summary, …)."""
+    async with make_async_client(DEFAULT_AGENT_BUS_URL, timeout=_TIMEOUT_S) as client:
+        resp = await client.get(
+            f"/threads/{thread_id}",
+            headers=_auth_headers(),
+        )
+        resp.raise_for_status()
+        return dict(resp.json())
+
+
+def closeout_status_from_turns(turns: list[dict[str, Any]]) -> str | None:
+    """Latest machine-closeout ``status`` from worker turns, if present.
+
+    Cursor-sdk / dispatch closeouts post a JSON body with a ``status`` field
+    (``complete`` | ``partial`` | ``failed`` | ``timeout``). Newest turn wins.
+    """
+    ordered = sorted(
+        turns,
+        key=lambda t: int(t.get("turn_number") or 0),
+        reverse=True,
+    )
+    for turn in ordered:
+        body = str(turn.get("body") or "").strip()
+        if not body.startswith("{"):
+            continue
+        try:
+            data = json.loads(body)
+        except (ValueError, TypeError):
+            continue
+        if isinstance(data, dict) and "status" in data:
+            return str(data["status"]).strip().lower()
+    return None
+
+
+async def worker_failure_reason(worker_thread: str) -> str | None:
+    """Return a failure reason if the worker closeout/thread is terminal-failed.
+
+    - Closeout body ``status ∈ {failed, timeout}`` → that status.
+    - Thread ``status == closed`` with no successful closeout → ``worker_closed``.
+    - Otherwise ``None`` (still running / completed successfully).
+    """
+    if not worker_thread:
+        return None
+    turns = await fetch_turns(worker_thread)
+    status = closeout_status_from_turns(turns)
+    if status in {"failed", "timeout"}:
+        return status
+    detail = await fetch_thread(worker_thread)
+    thread_status = str(detail.get("status") or "").lower()
+    if thread_status == "closed" and status not in {"complete", "partial"}:
+        return "worker_closed"
+    return None

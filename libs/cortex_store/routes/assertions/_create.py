@@ -22,8 +22,10 @@ from ...assertion_quality import (
 from ...belief_guard import guard_assertion_write
 from ...claim_hash import compute_claim_hash
 from ...db import WRITE_LOCK, cortex_conn, decode_row, json_encode, query
-from ...enrichment import enrich_background, reindex_assertion_fts
+from ...enrichment import reindex_assertion_fts
+from ...enrichment_dispatch import dispatch_assertion_enrichment_background
 from ...entrenchment import compute_entrenchment
+from ...events_imprint import graph_recorder_already_known
 from ...graph_utils import check_contradictions
 from ...models import (
     AssertionCreate,
@@ -34,6 +36,10 @@ from ...models import (
 )
 from ...near_dup import check_near_duplicate, record_near_duplicate
 from ...predicate_extract_dispatch import dispatch_predicate_extract_background
+from ...recorder_known_state import (
+    check_recorder_known_state,
+    should_apply_recorder_known_state,
+)
 from ...status_trait_write import materialize_graduated_lifecycle
 from ...substantiation_sync import recompute_entity_substantiation_status
 from ._shared import (
@@ -197,6 +203,13 @@ def create_assertion(
                 detail=f"Entity not found: {body.entity_id}",
             )
 
+        entity_type_row = query(
+            conn, "SELECT type FROM entities WHERE id = ?", (body.entity_id,)
+        )
+        entity_type = (
+            str(entity_type_row[0]["type"]) if entity_type_row else None
+        )
+
         # C2: Write-path contradiction check (entity-local, AGM G3)
         contradiction_warnings_out: list[ContradictionConflict] | None = None
         if body.force and body.supersedes_id is not None:
@@ -231,6 +244,33 @@ def create_assertion(
                 )
                 for c in guard.contradiction_warnings
             ]
+
+        if should_apply_recorder_known_state(body, entity_type=entity_type):
+            known = check_recorder_known_state(conn, body)
+            if known.already_known and known.matched_assertion_id is not None:
+                rows = query(
+                    conn,
+                    f"SELECT {_ASSERTION_COLS} FROM assertions WHERE id = ?",
+                    (known.matched_assertion_id,),
+                )
+                if rows:
+                    item = AssertionItem(**decode_row(rows[0], _JSON_FIELDS))
+                    graph_recorder_already_known(
+                        entity_id=body.entity_id,
+                        matched_assertion_id=known.matched_assertion_id,
+                        reason=known.known_state_reason or "already_known",
+                        anchor=known.anchor,
+                    )
+                    response.status_code = status.HTTP_200_OK
+                    return AssertionCreateResponse(
+                        was_new=False,
+                        item=item,
+                        validation_warnings=validation_warnings,
+                        contradiction_warnings=contradiction_warnings_out,
+                        already_known=True,
+                        known_state_reason=known.known_state_reason,
+                        matched_assertion_id=known.matched_assertion_id,
+                    )
 
         entrenchment = compute_entrenchment(
             confidence=body.confidence,
@@ -445,17 +485,30 @@ def create_assertion(
 
     item = AssertionItem(**decode_row(rows[0], _JSON_FIELDS))
     response.status_code = status.HTTP_201_CREATED if was_new else status.HTTP_200_OK
+    already_known = False
+    known_state_reason: str | None = None
+    matched_assertion_id: int | None = None
     if not was_new:
         logger.info(
             "Assertion dedup: exact duplicate for entity_id=%s, returning existing id=%d",
             body.entity_id,
             item.id,
         )
+        already_known = True
+        known_state_reason = "exact_claim_hash"
+        matched_assertion_id = item.id
+        graph_recorder_already_known(
+            entity_id=body.entity_id,
+            matched_assertion_id=item.id,
+            reason="exact_claim_hash",
+        )
     else:
         threading.Thread(
             target=reindex_assertion_fts, args=(item.id,), daemon=True
         ).start()
-        enrich_background(item.id, body.claim, body.entity_id, body.confidence)
+        dispatch_assertion_enrichment_background(
+            item.id, body.claim, body.entity_id, body.confidence
+        )
         dispatch_predicate_extract_background(item.id, body.claim, body.entity_id)
         _embed_assertion_background(
             item.id,
@@ -484,6 +537,9 @@ def create_assertion(
         validation_warnings=validation_warnings,
         contradiction_warnings=contradiction_warnings_out,
         predicate_form_normalize=predicate_form_normalize_out,
+        already_known=already_known,
+        known_state_reason=known_state_reason,
+        matched_assertion_id=matched_assertion_id,
     )
 
 
