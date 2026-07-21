@@ -8,6 +8,8 @@ Friction notes (keep when generalizing):
 - Fable bind 4917: ¬error_banner ∧ turn_count_incremented ∧ ¬tool_pause.
 - Friction 25654: error_banner match text must surface; raise only when
   banner ∧ ¬in_flight (transient "Overloaded" while Stop/streaming must wait).
+- Friction 25486: error_banner scan scoped to banner/toast/alert nodes only —
+  composer/chat-input text must not false-fire the banner regex.
 - Completion is **structural** (new turn + idle + stable), not min_body/min_growth
   length gates — short replies are valid harvest products (operator bind 2026-07-18).
 - Friction 24666: ``timeout_s`` is an *idle* budget. While Stop / streaming /
@@ -101,17 +103,42 @@ HARVEST_JS = """
     }
     if (stop) break;
   }
-  const pageText = (document.body && document.body.innerText) || '';
-  const scan = pageText.slice(0, 4000) + pageText.slice(-4000);
   const errorBannerRe =
     /hit a limit|rate limit|something went wrong|network error|try again later|usage limit|overloaded/i;
-  const errorBannerMatch = scan.match(errorBannerRe);
+  const isInsideComposer = (el) => {
+    if (!el) return false;
+    if (el.closest('[data-testid="chat-input"]')) return true;
+    if (el.closest('[class*="composer" i]')) return true;
+    return false;
+  };
+  const bannerSelectors = [
+    '[role="alert"]',
+    '[role="status"]',
+    '[class*="toast" i]',
+    '[class*="banner" i]',
+    '[data-testid*="toast" i]',
+    '[data-testid*="banner" i]',
+    '[data-testid*="alert" i]',
+    '[data-testid*="error" i]',
+  ];
+  const bannerSeen = new Set();
+  const bannerTexts = [];
+  for (const sel of bannerSelectors) {
+    for (const el of document.querySelectorAll(sel)) {
+      if (bannerSeen.has(el) || isInsideComposer(el)) continue;
+      bannerSeen.add(el);
+      const t = (el.innerText || '').trim();
+      if (t) bannerTexts.push(t);
+    }
+  }
+  const bannerScan = bannerTexts.join('\\n');
+  const errorBannerMatch = bannerScan.match(errorBannerRe);
   const errorBanner = !!errorBannerMatch;
   // Context around first match for diagnostics (poll/CLI surfaces this).
   let errorBannerText = '';
   if (errorBannerMatch && typeof errorBannerMatch.index === 'number') {
     const i = errorBannerMatch.index;
-    errorBannerText = scan
+    errorBannerText = bannerScan
       .slice(Math.max(0, i - 80), i + errorBannerMatch[0].length + 120)
       .replace(/\\s+/g, ' ')
       .trim();
@@ -134,8 +161,9 @@ HARVEST_JS = """
     .filter(Boolean)
     .slice(0, 40);
   const taskMapPresent = taskMapSteps.length > 0;
+  const taskMapStepsText = taskMapSteps.join('\\n');
   const taskMapWorking =
-    /working through/i.test(pageText) ||
+    /working through/i.test(taskMapStepsText) ||
     !!document.querySelector(
       '[class*="spinner" i],[aria-busy="true"],[data-testid*="progress" i]'
     );
@@ -180,9 +208,7 @@ def _in_flight(state: dict) -> bool:
     ``streaming`` is the defense-in-depth backstop when ``stop`` is momentarily
     false during generation (24873 R-amendment).
     """
-    return bool(
-        state.get("streaming") or state.get("stop") or state.get("tool_pause")
-    )
+    return bool(state.get("streaming") or state.get("stop") or state.get("tool_pause"))
 
 
 def _error_banner_message(state: dict, *, on_timeout: bool = False) -> str:
@@ -228,11 +254,7 @@ def _complete_enough(
     del min_growth, min_body, base_len
     cur_len = state.get("body_len", 0)
     cur_n = state.get("n", 0)
-    return bool(
-        cur_n > base_n
-        and cur_len > 0
-        and not _in_flight(state)
-    )
+    return bool(cur_n > base_n and cur_len > 0 and not _in_flight(state))
 
 
 def _cowork_complete_enough(
