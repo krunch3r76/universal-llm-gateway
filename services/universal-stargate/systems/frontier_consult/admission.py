@@ -148,7 +148,7 @@ def assert_model_carded(
     event_publisher: EventPublisher | None,
 ) -> None:
     """Pre-hydration card gate — raises translated 422 on missing capability card."""
-    if ModelId.parse(model).backend_type == "cursor_sdk":
+    if ModelId.parse(model).backend_type in {"cursor_sdk", "cdp"}:
         return
     try:
         client_side_mcp_tool_loop_admitted(model)
@@ -207,7 +207,7 @@ def _mcp_base_admitted(
     When ``request_id`` is supplied (dispatch admission), ``CapabilityCardError``
     is translated to a structured 422; otherwise the lib exception propagates.
     """
-    if ModelId.parse(model).backend_type == "cursor_sdk":
+    if ModelId.parse(model).backend_type in {"cursor_sdk", "cdp"}:
         return True
     try:
         return client_side_mcp_tool_loop_admitted(model)

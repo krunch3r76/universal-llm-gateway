@@ -22,7 +22,7 @@ _CATALOG_ROWS: dict[str, dict[str, Any]] = {}
 
 @dataclass(frozen=True, slots=True)
 class ModelRateRow:
-    """USD per million tokens for prompt and completion."""
+    """USD per million tokens for prompt, optional cache tiers, and completion."""
 
     model_id: str
     input_rate_per_m: float
@@ -30,6 +30,8 @@ class ModelRateRow:
     source: str
     updated_at: str
     pinned: bool = False
+    cache_write_rate_per_m: float | None = None
+    cache_read_rate_per_m: float | None = None
 
 
 def rates_yaml_path() -> Path:
@@ -58,12 +60,29 @@ def _coerce_rate(value: Any) -> float | None:
     return parsed
 
 
+_INVALID_OPTIONAL_RATE = object()
+
+
+def _optional_nonneg_rate(raw: dict[str, Any], key: str) -> float | None | object:
+    """Return rate, None if key absent, or a sentinel if present-but-invalid."""
+    if key not in raw:
+        return None
+    value = _coerce_rate(raw.get(key))
+    if value is None or value < 0:
+        return _INVALID_OPTIONAL_RATE
+    return value
+
+
 def _row_from_mapping(model_id: str, raw: dict[str, Any], *, default_source: str) -> ModelRateRow | None:
     input_rate = _coerce_rate(raw.get("input_rate_per_m"))
     output_rate = _coerce_rate(raw.get("output_rate_per_m"))
     if input_rate is None or output_rate is None:
         return None
     if input_rate < 0 or output_rate < 0:
+        return None
+    cache_write = _optional_nonneg_rate(raw, "cache_write_rate_per_m")
+    cache_read = _optional_nonneg_rate(raw, "cache_read_rate_per_m")
+    if cache_write is _INVALID_OPTIONAL_RATE or cache_read is _INVALID_OPTIONAL_RATE:
         return None
     return ModelRateRow(
         model_id=model_id,
@@ -72,6 +91,8 @@ def _row_from_mapping(model_id: str, raw: dict[str, Any], *, default_source: str
         source=str(raw.get("source") or default_source),
         updated_at=str(raw.get("updated_at") or _now_iso()),
         pinned=bool(raw.get("pinned")),
+        cache_write_rate_per_m=cache_write if isinstance(cache_write, float) else None,
+        cache_read_rate_per_m=cache_read if isinstance(cache_read, float) else None,
     )
 
 

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
-import contextlib
 import hashlib
 import os
 from collections.abc import Awaitable, Callable
@@ -25,7 +23,11 @@ from claude_bundles.project_ask_prompt_files import (
 from cortex_store.files_path_normalize import normalize_cortex_files_path
 
 from cdp_ask.models import SubmitProjectAskRequest, classify_stall_stage
-from cdp_ask.page_liveness import LadderCallbacks, content_proof_watcher
+from cdp_ask.page_liveness import (
+    LadderAdvanceState,
+    LadderCallbacks,
+    make_harvest_ladder_hook,
+)
 
 
 class ArchivePathError(ValueError):
@@ -192,18 +194,21 @@ async def run_execution(
     reg = cdp_registry.register_lane(holder=holder, purpose=req.purpose)
     if on_registered is not None:
         on_registered(reg.registration_id)
-    watcher: asyncio.Task[None] | None = None
+    on_harvest: Callable[[dict[str, Any]], Awaitable[None]] | None = None
     if ladder is not None:
-        targets = resolve_content_proof_targets(req, execution_id=execution_id)
-        watcher = asyncio.create_task(
-            content_proof_watcher(
-                targets=targets,
-                cdp_url=reg.cdp_url,
-                callbacks=ladder,
-                min_bytes=max(req.min_body, 1),
-                sha256_file=_sha256_file,
+        if not execution_id.strip():
+            raise ValueError(
+                "execution_id required for dual-completion ladder (non-empty)"
             )
+        progress = LadderAdvanceState(
+            targets=resolve_content_proof_targets(req, execution_id=execution_id),
+            min_bytes=max(req.min_body, 1),
+            sha256_file=_sha256_file,
+            execution_id=execution_id,
         )
+        # Held-page samples only — competing connect_cdp blocked dual-completion
+        # while converse held the lane (friction 25671).
+        on_harvest = make_harvest_ladder_hook(callbacks=ladder, progress=progress)
     try:
         if req.converse:
             delete_after = (
@@ -219,6 +224,7 @@ async def run_execution(
                 min_growth=req.min_growth,
                 min_body=req.min_body,
                 ensure_cowork_auto=req.ensure_cowork_auto,
+                on_harvest=on_harvest,
             )
             if await abort_check():
                 abort_cleanup(reg, purpose=req.purpose)
@@ -293,6 +299,7 @@ async def run_execution(
             min_body=req.min_body,
             archive_path=archive,
             execution_id=execution_id or None,
+            on_harvest=on_harvest,
         )
         if await abort_check():
             abort_cleanup(reg, purpose=req.purpose)
@@ -310,10 +317,6 @@ async def run_execution(
             await ladder.on_archiving()
         return payload
     finally:
-        if watcher is not None:
-            watcher.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await watcher
         if not await abort_check():
             deregister_on_exit(reg, purpose=req.purpose)
 

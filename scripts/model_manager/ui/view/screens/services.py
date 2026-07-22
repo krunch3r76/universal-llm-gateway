@@ -15,6 +15,7 @@ from textual.screen import Screen
 from textual.timer import Timer
 from textual.widgets import Button, Footer, Header, Select, Static
 
+from ...controller.busy_work_summary import format_active_work_summary
 from ...controller.operation_log import tee_with_summary
 from ...controller.restart_drain import run_gated
 from ...controller.restart_intent_store import intent_status_view
@@ -641,9 +642,11 @@ class ServicesScreen(Screen):
     async def _render_deferral(self, action: str, service: str, result: dict) -> None:
         """Log a drain-gate deferral and emit manage.restart.deferred (TUI path)."""
         log = self.query_one("#svc-log", LogStream)
+        summary = format_active_work_summary(result.get("active_work"))
+        holder = f" — {summary}" if summary else ""
         log.write_line(
             f"[{service}] {action} deferred ({result.get('state')}): "
-            f"{result.get('reason')} — enable Force to override."
+            f"{result.get('reason')}{holder} — enable Force to override."
         )
         bus = self.app.event_bus  # type: ignore[attr-defined]
         if bus is not None:
@@ -654,6 +657,7 @@ class ServicesScreen(Screen):
                     state=str(result.get("state", "")),
                     reason=str(result.get("reason", "")),
                     retry_after_s=int(result.get("retry_after_s", 30)),
+                    active_work_summary=summary,
                 )
             )
 

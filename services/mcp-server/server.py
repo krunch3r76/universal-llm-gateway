@@ -667,7 +667,7 @@ def _build_server(
         arguments: JSON-encoded object string (e.g. '{"query": "...", "scope": "research"}')
 
         Operations:
-          search            (query, scope?, prefix?, top_k?|limit?) — semantic search (PRIMARY and ONLY agent surface for RAG); scope/prefix mutually exclusive; limit aliases top_k. Agents MUST use this (or dedicated rag_search); rag_answer pipeline is buried for MCP debugging of /v1/chat/completions with rag-answer* models only.
+          search            (query, scope?, prefix?, top_k?|limit?, mapped?) — semantic search (PRIMARY and ONLY agent surface for RAG); scope/prefix mutually exclusive; limit aliases top_k; mapped=true does exact (scope,query) durable-pack lookup via config/mcp/rag_mapped_index.yaml (identical envelope) with live rag-context fallback on miss. Agents MUST use this (or dedicated rag_search); rag_answer pipeline is buried for MCP debugging of /v1/chat/completions with rag-answer* models only.
           recon             (label, themes, top_k?, durable_sink?) — labeled per-theme recon with durable sidecar persistence via DurableSink
           list_scopes       ()                                  — list scopes with prefixes and coverage
           coverage          ()                                  — per-scope indexed file counts

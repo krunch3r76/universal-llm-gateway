@@ -41,11 +41,18 @@ def ManageServiceFailed(  # noqa: N802
 
 @event_factory
 def ManageRestartDeferred(  # noqa: N802
-    method: str, service: str, state: str, reason: str, retry_after_s: int
+    method: str,
+    service: str,
+    state: str,
+    reason: str,
+    retry_after_s: int,
+    active_work_summary: str = "",
 ) -> Event:
     """Emitted when a stop/restart/sync_restart is deferred by the drain gate.
 
     state ∈ {"busy", "in_progress", "probe_error"}.
+    ``active_work_summary`` is a one-line holder description (may be empty when
+    the probe returned no usable detail).
     """
     return Event(
         signal="manage.restart.deferred",
@@ -55,6 +62,7 @@ def ManageRestartDeferred(  # noqa: N802
             "state": state,
             "reason": reason,
             "retry_after_s": retry_after_s,
+            "active_work_summary": active_work_summary,
         },
     )
 

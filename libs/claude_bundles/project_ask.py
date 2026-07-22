@@ -10,6 +10,7 @@ Uses the authenticated ``claude-ai-chrome-profile`` on Jupiter CDP.
 from __future__ import annotations
 
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass
 from typing import Any
 
@@ -150,7 +151,9 @@ def archive_harvest(
         f"- attested_model: `{attested_model}`\n\n"
         f"## Body\n\n{body}\n"
     )
-    path.write_text(text, encoding="utf-8")
+    tmp = path.with_suffix(f"{path.suffix}.tmp")
+    tmp.write_text(text, encoding="utf-8")
+    tmp.replace(path)
     resolved = str(path.resolve())
     if "/mcp-data/files/" in resolved:
         rel = resolved.split("/mcp-data/files/", 1)[1]
@@ -288,6 +291,7 @@ async def project_ask_on_page(
     min_body: int = 40,
     archive_path: str | None = None,
     execution_id: str | None = None,
+    on_harvest: Callable[[dict], Awaitable[None]] | None = None,
 ) -> ProjectAskResult:
     """Run one sealed ask on an existing Playwright page."""
     dest = project_url(project_uuid)
@@ -320,6 +324,7 @@ async def project_ask_on_page(
             poll_ms=500,
             min_growth=min_growth,
             min_body=min_body,
+            on_harvest=on_harvest,
         )
         body = strip_thinking_prefix(state.get("body") or "")
         attested = _attest_model(model, state, model_info)
@@ -389,6 +394,7 @@ async def run_project_ask(
     min_body: int = 40,
     archive_path: str | None = None,
     execution_id: str | None = None,
+    on_harvest: Callable[[dict], Awaitable[None]] | None = None,
 ) -> ProjectAskResult:
     """Connect CDP, run one sealed ask, disconnect."""
     pw, _browser, ctx, _page0 = await connect_cdp(cdp_url)
@@ -405,6 +411,7 @@ async def run_project_ask(
             min_body=min_body,
             archive_path=archive_path,
             execution_id=execution_id,
+            on_harvest=on_harvest,
         )
     finally:
         await pw.stop()

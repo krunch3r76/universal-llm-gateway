@@ -241,11 +241,15 @@ def register_manage_tools(mcp: FastMCP) -> None:
           wait_healthy  (service, timeout?) — block until RUNNING or timeout
           busy_status   (no service needed) — per-service busy read model: for
                                              each service {busy, restart_would_defer,
-                                             active_work, restart_intent,
-                                             restart_window} plus top-level
-                                             restart_windows {open: [...]} and a
-                                             process block {manage_inflight,
-                                             activities}. restart_intent is null when
+                                             active_work, active_work_summary,
+                                             restart_intent, restart_window} plus
+                                             top-level restart_windows {open: [...]}
+                                             and a process block {manage_inflight,
+                                             activities}. active_work_summary is a
+                                             one-line holder description (prefer it
+                                             when diagnosing busy=true — e.g. cursor-sdk
+                                             dispatch id + model + subject).
+                                             restart_intent is null when
                                              no live non-terminal intent exists;
                                              otherwise {restart_intent_id, status,
                                              drain_epoch, deadline_at, elapsed_s}.
@@ -267,8 +271,10 @@ def register_manage_tools(mcp: FastMCP) -> None:
         in-flight work (e.g. a running async pipeline on stargate, an integrate
         on git_integration_worker). A deferral returns
         {"status":"deferred","state","service","reason","retry_after_s",
-        "active_work"} where state ∈ {busy, in_progress, probe_error}. Honor
-        retry_after_s and retry, or pass force=true to preempt in-flight work.
+        "active_work","active_work_summary"} where state ∈ {busy, in_progress,
+        probe_error}. Prefer active_work_summary for a one-line holder identity;
+        dig into active_work only when you need structure. Honor retry_after_s
+        and retry, or pass force=true to preempt in-flight work.
 
         Self-restart (mcp): sync_restart/rebuild returns status=ok immediately
         (manage.sock defers container stop to a background task). The triggering

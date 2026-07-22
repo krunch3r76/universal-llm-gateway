@@ -123,7 +123,10 @@ def build_in_process_sender(
 
     from systems.proxy.routers.cloud_passthrough import _get_cloud_forwarder
 
-    from ...events.dispatch import PipelineFrontierDispatchToolRequested
+    from ...events.dispatch import (
+        PipelineFrontierDispatchToolRequested,
+        PipelineFrontierDispatchToolsWire,
+    )
 
     execution_id = context.execution_id
     # An explicit per-step ``timeout_seconds`` wins; otherwise fall back to the
@@ -244,7 +247,28 @@ def build_in_process_sender(
 
         return _on_event_anthropic
 
+    _hop2_emitted = False
+
     async def _send(path: str, json_body: dict[str, Any]) -> dict[str, Any]:
+        nonlocal _hop2_emitted
+        if not _hop2_emitted:
+            _hop2_emitted = True
+            body_tools = json_body.get("tools") or []
+            hop2_tools = [
+                str(t.get("type") or "")
+                for t in body_tools
+                if isinstance(t, dict) and t.get("type")
+            ]
+            publish(
+                PipelineFrontierDispatchToolsWire(
+                    execution_id=execution_id,
+                    agent=agent,
+                    model=str(json_body.get("model") or ""),
+                    provider=_provider_from_path(path),
+                    hop="upstream_body",
+                    tools=hop2_tools,
+                )
+            )
         client = _get_cloud_forwarder()
         if client is None:
             raise RuntimeError(

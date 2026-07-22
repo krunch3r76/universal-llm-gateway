@@ -22,6 +22,7 @@ from transport_utils import MANAGE_SOCKET
 from universal_event_bus import EventBus
 
 from .api_dispatch import execute, write_json
+from .controller.busy_work_summary import format_active_work_summary
 from .manage_events import (
     ManageQuitRequestRejected,
     ManageRestartDeferred,
@@ -229,6 +230,7 @@ class ManageAPIServer:
 
         duration = round(time.monotonic() - t0, 3)
         if isinstance(result, dict) and result.get("status") == "deferred":
+            summary = format_active_work_summary(result.get("active_work"))
             await self._event_bus.publish(
                 ManageRestartDeferred(
                     method=method,
@@ -236,6 +238,7 @@ class ManageAPIServer:
                     state=str(result.get("state", "")),
                     reason=str(result.get("reason", "")),
                     retry_after_s=int(result.get("retry_after_s", 30)),
+                    active_work_summary=summary,
                 )
             )
             return result, None

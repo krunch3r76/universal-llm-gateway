@@ -154,25 +154,33 @@ class WorkAdmissionController:
         """Authoritative projection: counted tickets ∪ ledger live-running
         dispatches (orphan-excluded), de-duplicated by ``op_id`` so a cursor-sdk
         dispatch — which bridges a ticket and a ledger row — is counted once.
+
+        Cursor-sdk rows carry ``resolved_model`` / ``subject_preview`` from the
+        ledger so busy probes name the holder, not only an opaque dispatch id.
         """
         ops: list[dict[str, Any]] = []
         seen: set[str] = set()
+        projections = {
+            proj["op_id"]: proj for proj in self.ledger.live_dispatch_projections()
+        }
         for ticket in self._tickets.values():
-            ops.append(ticket.to_dict())
+            entry = ticket.to_dict()
+            proj = projections.get(ticket.op_id)
+            if proj is not None:
+                for key in (
+                    "resolved_model",
+                    "subject_preview",
+                    "thread_id",
+                    "started_at",
+                ):
+                    if proj.get(key) is not None and entry.get(key) is None:
+                        entry[key] = proj[key]
+            ops.append(entry)
             seen.add(ticket.op_id)
-        snapshot = self.ledger.active_snapshot()
-        for dispatch_id in snapshot["dispatch_ids"]:
+        for dispatch_id, proj in projections.items():
             if dispatch_id in seen:
                 continue
-            ops.append(
-                {
-                    "kind": "cursor_sdk",
-                    "op_id": dispatch_id,
-                    "route": "/api/v1/cursor/dispatch",
-                    "admitted_at": None,
-                    "state": "running",
-                }
-            )
+            ops.append(proj)
             seen.add(dispatch_id)
         return ops
 

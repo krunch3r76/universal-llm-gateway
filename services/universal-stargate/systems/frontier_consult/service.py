@@ -153,7 +153,7 @@ def _resolve_pre_hydration_effective_model(
             field="model",
             reason="model is required when no role default is configured",
         )
-    if ModelId.parse(raw).backend_type == "cursor_sdk":
+    if ModelId.parse(raw).backend_type in {"cursor_sdk", "cdp"}:
         return raw
     try:
         return resolve_wire_model_id(raw, require_cloud=True).wire_id
@@ -454,6 +454,12 @@ async def build_dispatch_body(
     effective_model = _resolve_pre_hydration_effective_model(
         req, request_id=request_id
     )
+    if ModelId.parse(effective_model).backend_type == "cdp":
+        from .cdp_generate import build_cdp_pipeline_dispatch_body
+
+        return build_cdp_pipeline_dispatch_body(
+            model=effective_model, request_id=request_id
+        )
     # CC-only models have no Responses-native capability card; they route via
     # chat-dispatch respond_cc (generate → /v1/chat/completions). Role-carrying
     # rejects immediately (persona-free envelope only). Role-less skips the
@@ -582,8 +588,9 @@ async def build_dispatch_body(
     provider_mount_slugs: frozenset[str] = frozenset()
     caller_layer_c_ids: tuple[str, ...] = ()
     cursor_sdk_model = ModelId.parse(effective_model).backend_type == "cursor_sdk"
-    # CC-only generate branch is persona-free / skills-free (chat-dispatch respond_cc envelope).
-    # Skip partition — uncarded search-api models have no skills_mount_backend.
+    # CC-only generate branch is persona-free / skills-free
+    # (chat-dispatch respond_cc envelope). Skip partition — uncarded search-api
+    # models have no skills_mount_backend.
     if effective_skills and not cursor_sdk_model and not cc_only:
         try:
             skill_partition = partition_skill_channels(

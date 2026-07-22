@@ -10,8 +10,16 @@ from __future__ import annotations
 
 from typing import Literal
 
-from .checkpoint_parse import ParsedCheckpoint, first_actionable_step
+from universal_logging import get_logger
+
+from .checkpoint_parse import (
+    ParsedCheckpoint,
+    first_actionable_step,
+    first_resolvable_implication,
+)
 from .executor_defaults import DEFAULT_MODEL, DEFAULT_MODEL_KNOBS
+
+logger = get_logger(__name__)
 
 AdmissionMode = Literal["generate", "handoff"]
 
@@ -26,6 +34,16 @@ _DENSIFY_FLOOR = (
 
 
 def _work_summary(parsed: ParsedCheckpoint) -> str:
+    """S1 steering: prefer Implication → gated Step/Next-pickup; else Steps."""
+    steered, unresolved = first_resolvable_implication(parsed)
+    if unresolved:
+        logger.warning(
+            "implication_target_unresolved root_implications=%s next_pickup=%s",
+            parsed.implications,
+            parsed.next_pickup,
+        )
+    if steered is not None:
+        return steered
     step = first_actionable_step(parsed)
     if step is not None:
         return f"Step {step.ordinal} — {step.title} (status: {step.status})"

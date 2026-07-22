@@ -26,6 +26,7 @@ from ._rag_http import (
 from ._rag_http import (
     rag_post as _rag_post_http,
 )
+from ._rag_mapped import resolve as resolve_mapped_pack
 from ._rag_retrieval_metadata import (
     envelope_retrieval_fields,
     retrieval_metadata_from_response,
@@ -400,6 +401,7 @@ def register_rag_tools(mcp: FastMCP) -> None:
         limit: int | None = None,
         scope: str | list[str] | None = None,
         prefix: str | list[str] | None = None,
+        mapped: bool = False,
     ) -> dict[str, Any]:
         """PRIMARY (and only) agent surface for MCP RAG retrieval. Returns raw
         context chunks with source labels for the agent to cite, gate (lawyer-stance),
@@ -420,6 +422,10 @@ def register_rag_tools(mcp: FastMCP) -> None:
         active — do NOT read an empty/thin result as 'absent from corpus' without
         re-searching explicit scopes.
 
+        When ``mapped=true``, exact (scope, query) lookup against
+        ``config/mcp/rag_mapped_index.yaml`` serves a durable pack body through
+        the identical search envelope; miss falls through to live rag-context.
+
         Full docs: fs(op="md_read", sandbox="workspaces", path="universal-llm-gateway/docs/tool-reference.md", section="rag_search")
 
         Args:
@@ -434,6 +440,8 @@ def register_rag_tools(mcp: FastMCP) -> None:
             prefix: Source path prefix filter as a comma-separated string or
                 list (e.g. "/docs/research", ["/docs/research", "/docs/engram"]).
                 Mutually exclusive with scope.
+            mapped: When True, try exact (scope, query) durable-pack lookup
+                first; on miss, run live rag-context.
 
         Returns:
             On success: {"status": "ok", "pipeline": "rag-context",
@@ -446,6 +454,11 @@ def register_rag_tools(mcp: FastMCP) -> None:
             ``default_scope`` or ``classifier``.
             On error:   {"error": "<message>"} (+ ``scope_note`` when unscoped)
         """
+        if mapped:
+            hit = resolve_mapped_pack(query, scope)
+            if hit is not None:
+                return hit
+
         pipeline_options: dict[str, Any] = {}
         scope_override, scope_error = _normalize_scope_override(scope)
         prefixes, prefix_error = _normalize_prefix_override(prefix)

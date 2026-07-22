@@ -20,7 +20,7 @@ __all__ = [
     "to_model_card_dict",
 ]
 
-DESCRIPTOR_VERSION: Final[str] = "2026-07-14"
+DESCRIPTOR_VERSION: Final[str] = "2026-07-21"
 
 # Emergency denylist for cursor-sdk substrate admission. Entries are bare wire ids
 # (no cursor/ prefix); membership is checked after prefix strip + lowercase.
@@ -245,6 +245,12 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
         instruction_profile="reasoner",
     ),
     "gemini-3.5-flash": ModelCapability(
+        knobs={},
+        default_variant={},
+        instruction_profile="mechanical",
+    ),
+    # GA 2026-07-21 — successor to gemini-3.5-flash; same cursor-sdk knob surface.
+    "gemini-3.6-flash": ModelCapability(
         knobs={},
         default_variant={},
         instruction_profile="mechanical",

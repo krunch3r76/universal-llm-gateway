@@ -202,7 +202,7 @@ profiles:
     # `decision:identity-doctrine-endpoint-provenance`.
     # Gemini MCP ON: full catalog (inc. writes); model discretion applies.
     provider: google
-    default_model: google/gemini-3.5-flash
+    default_model: google/gemini-3.6-flash
     tool_surface: mcp
     mcp_surface: code
     delivery: auto
@@ -212,6 +212,7 @@ profiles:
     confirm_and_proceed: true
     addenda: []
     allowed_models:
+      - google/gemini-3.6-flash
       - google/gemini-3.5-flash
       - google/gemini-3.1-pro-preview
       - google/gemini-2.5-flash
@@ -222,7 +223,7 @@ profiles:
     # Cursor seat for Gemini. MCP is wired for IDE use; prefer claude-cursor for
     # durable cortex/fs/workspace writes — Gemini often fails or no-ops mutations.
     provider: google
-    default_model: google/gemini-3.5-flash
+    default_model: google/gemini-3.6-flash
     tool_surface: mcp
     mcp_surface: code
     delivery: manual
@@ -235,6 +236,7 @@ profiles:
       - session-close-markdown-audit
       - session-close-transcript
     allowed_models:
+      - google/gemini-3.6-flash
       - google/gemini-3.5-flash
       - google/gemini-3.1-pro-preview
       - google/gemini-2.5-flash
@@ -380,9 +382,10 @@ roles:
     description: "Analysis/synthesis via MCP tools. Full catalog access; writes allowed by model discretion. For guaranteed code-surface writes use reviewer (gpt-5.6-terra). web-anthropic can write through life/Cortex MCP but has no code/workspaces surface."
     default_family: gemini
     default_platform: api
-    default_model: google/gemini-3.5-flash
+    default_model: google/gemini-3.6-flash
     allowed_models:
       - google/gemini-3.1-pro-preview
+      - google/gemini-3.6-flash
       - google/gemini-3.5-flash
       - google/gemini-2.5-flash
       - google/gemini-2.5-pro

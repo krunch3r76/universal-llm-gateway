@@ -133,6 +133,8 @@ def source_priority(row: dict[str, Any]) -> int:
         return 2
     if substrate == _SUBSTRATE_SNAPSHOT:
         return 0
+    if substrate == _SUBSTRATE_CDP:
+        return -1
     return -1
 
 

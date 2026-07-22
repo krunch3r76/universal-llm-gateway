@@ -377,6 +377,9 @@ def check_agent_model_consistency(role_or_seat: str, model: str) -> str | None:
     if expected_provider is None:
         return None
     model_prefix = model.split("/")[0] if "/" in model else ""
+    if model_prefix == "cdp":
+        # CDP is its own substrate (web-anthropic-cdp); never anthropic-alias.
+        return None
     provider_map = {
         "anthropic": "anthropic",
         "openai": "openai",

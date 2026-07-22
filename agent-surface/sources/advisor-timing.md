@@ -73,6 +73,16 @@ second opinion, hand off reasoning, **or hand off a bound implementation**.
    records a defect, it does NOT submit a ticket. See `consult-routing.md` § Codified bug reports
    → Pass zoom-out duty.
 
+6. **Substrate readiness (code surface — before firing the call):** a
+   `team_dispatch` / `op=generate` needs the delivery chain **up** — `agent_bus` +
+   `stargate` + `git_integration_worker`. One `manage(action="busy_status")` read
+   exposes all three; if any dispatch-critical service is stopped (common after a
+   partial or aborted fleet stop), **start + `wait_healthy` BEFORE the dispatch** —
+   do not discover it via `stargate_unreachable` / bus-connection errors mid-consult
+   (reactive serial repair cost, friction 2026-07-21). **Self-referential caveat:**
+   when the consult subject *is* a service-lifecycle bug, that bug may have knocked
+   over the consult transport itself — expect to restore your own dependencies first.
+
 ### 1. Before Substantive Work
 
 ∀ task requiring new code, architectural interpretation, or behavioral change:

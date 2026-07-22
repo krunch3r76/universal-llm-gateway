@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Awaitable, Callable
 
 HARVEST_JS = """
 ({ minMsgChars }) => {
@@ -313,12 +314,16 @@ async def wait_assistant_reply(
     stable_polls: int = 2,
     min_body: int = 400,
     min_msg_chars: int | None = None,
+    on_harvest: Callable[[dict], Awaitable[None]] | None = None,
 ) -> dict:
     """Wait until complete(turn) or idle timeout.
 
     ``timeout_s`` is idle wall-time without in-flight signals. While Stop,
     streaming, or tool_pause is observed the idle deadline is refreshed — there
     is no hard wall ceiling (friction 24666).
+
+    ``on_harvest`` receives each successful sample (held-page only — dual-completion
+    ladder consumers must not open a competing CDP connect; friction 25671).
     """
     msg_floor = min_msg_chars if min_msg_chars is not None else 10
     base_len = (before or {}).get("body_len", 0)
@@ -331,6 +336,8 @@ async def wait_assistant_reply(
 
     while True:
         state = await harvest_assistant(page, min_msg_chars=msg_floor)
+        if on_harvest is not None:
+            await on_harvest(state)
         # Never raise mid-poll on banner alone (friction 25654): Overloaded /
         # rate-limit overlays often appear while Stop/streaming is still up, or
         # briefly between product retries. Fail-closed only after idle timeout
@@ -390,6 +397,8 @@ async def wait_assistant_reply(
         await asyncio.sleep(poll_ms / 1000)
 
     state = await harvest_assistant(page, min_msg_chars=msg_floor)
+    if on_harvest is not None:
+        await on_harvest(state)
     # Prefer structural completion over banner fail-closed (25684).
     if _complete_enough(
         state,

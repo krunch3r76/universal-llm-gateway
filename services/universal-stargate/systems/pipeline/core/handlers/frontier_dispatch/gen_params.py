@@ -3,8 +3,8 @@
 Builds the merged generation-parameter dict (step defaults < caller
 ``generation_parameters``), applies the model-default ``reasoning_effort``,
 translates ``reasoning_effort`` to a provider-native ``thinking`` config,
-injects the card-derived server-side built-in tool set for agent dispatch when
-the ``server_tools`` knob allows,
+injects the card-derived server-side built-in tool set whenever the
+``server_tools`` knob allows (role-less chat-dispatch included),
 optionally appends the runtime-context block to the system prompt, resolves the
 per-model ``max_output`` + reasoning at the SINGLE ``CapabilityDispatch``
 boundary (G7), and assembles the :class:`~llm_adapters.FrontierRequest`. This is
@@ -35,6 +35,7 @@ from ...events.dispatch import (
     PipelineFrontierCapabilityKnobRejected,
     PipelineFrontierCapabilityResolved,
     PipelineFrontierDispatchToolSuppressed,
+    PipelineFrontierDispatchToolsWire,
 )
 from ...execution.errors import (
     CapabilityCatalogMissError,
@@ -124,30 +125,47 @@ def build_frontier_request(
         if translated is not None:
             gen_params["thinking"] = translated
 
-    # For agent dispatches, inject server-side built-ins from the model card when
-    # the ``server_tools`` knob allows (default ALL). Caller-supplied
-    # ``generation_parameters.provider_options.{provider}.tools`` (including
-    # ``[]`` to suppress) always wins via the ``if "tools" not in`` guard.
-    if admission.agent:
-        builtins = server_side_tools(admission.model)
-        if builtins:
-            po: dict[str, Any] = dict(gen_params.get("provider_options") or {})
-            provider_opts: dict[str, Any] = dict(po.get(admission.provider) or {})
-            if "tools" not in provider_opts:
-                if admission.server_tools_enabled:
-                    provider_opts["tools"] = [{"type": name} for name in builtins]
-                else:
-                    admission.publish(
-                        PipelineFrontierDispatchToolSuppressed(
-                            execution_id=context.execution_id,
-                            agent=admission.agent,
-                            model=admission.model,
-                            provider=admission.provider,
-                            reason="server_tools_knob",
-                        )
+    # Inject server-side built-ins from the model card when the ``server_tools``
+    # knob allows (default ALL). Applies to role-less chat-dispatch as well as
+    # agent seats — omit ``server_tools`` = attach the full card list.
+    # Caller-supplied ``generation_parameters.provider_options.{provider}.tools``
+    # (including ``[]`` to suppress) always wins via the ``if "tools" not in``
+    # guard.
+    builtins = server_side_tools(admission.model)
+    if builtins:
+        po: dict[str, Any] = dict(gen_params.get("provider_options") or {})
+        provider_opts: dict[str, Any] = dict(po.get(admission.provider) or {})
+        if "tools" not in provider_opts:
+            if admission.server_tools_enabled:
+                provider_opts["tools"] = [{"type": name} for name in builtins]
+            else:
+                admission.publish(
+                    PipelineFrontierDispatchToolSuppressed(
+                        execution_id=context.execution_id,
+                        agent=admission.agent,
+                        model=admission.model,
+                        provider=admission.provider,
+                        reason="server_tools_knob",
                     )
-            po[admission.provider] = provider_opts
-            gen_params["provider_options"] = po
+                )
+        po[admission.provider] = provider_opts
+        gen_params["provider_options"] = po
+        # Hop-1 wire: provider_options tools after inject (permanent observability).
+        hop1_tools = [
+            str(t.get("type") or "")
+            for t in (provider_opts.get("tools") or [])
+            if isinstance(t, dict)
+        ]
+        admission.publish(
+            PipelineFrontierDispatchToolsWire(
+                execution_id=context.execution_id,
+                agent=admission.agent,
+                model=admission.model,
+                provider=admission.provider,
+                hop="provider_options",
+                tools=[t for t in hop1_tools if t],
+            )
+        )
 
     if bool(step.get_domain_field("inject_runtime_context")):
         effort_str = gen_params.get("reasoning_effort") or "default"

@@ -4,8 +4,9 @@ The agent-bus store has no CHECKPOINT turn type or body parser — CHECKPOINTs a
 markdown turns identified only by a ``CHECKPOINT`` subject prefix. This module is
 the sole reader that turns a CHECKPOINT body into the fields the charter runner
 gates on (WIP, gated Next-pickup, scoreboard URI, BLOCKED, canonical Steps,
-RESUME footer). Parsing is deliberately lenient: an unrecognized shape yields a
-conservative "not eligible" result rather than raising.
+RESUME footer, Precedents/Implications). Parsing is deliberately lenient: an
+unrecognized shape yields a conservative "not eligible" result rather than
+raising.
 """
 
 from __future__ import annotations
@@ -24,6 +25,15 @@ _OPERATOR_FORK_RE = re.compile(r"\boperator\b", re.IGNORECASE)
 # Bare "none" or "none (gloss)" — parenthetical notes must not flip WIP-active.
 _WIP_NONE_RE = re.compile(
     r"^(?:[-*]\s*)?(?:wip:|in[_-]?flight:)?none(?:\s*\(.*\))?\s*$",
+    re.IGNORECASE,
+)
+# Schema §4.0 / Frictions mirror — silence ≠ none; explicit marker ⇒ empty list.
+_NONE_WINDOW_RE = re.compile(r"^_None this window\._\s*$", re.IGNORECASE)
+# Canonical RESUME footer prefix (schema §3.1.1 / Align-2).
+_RESUME_PREFIX = "— RESUME (any seat, no command):"
+# Implication wire: ``P1 ⇒ Steps: …`` / ``P2 => Next-pickup: …``
+_IMPLICATION_ARROW_RE = re.compile(
+    r"^P\d+\s*(?:⇒|=>)\s*(Steps|Next-pickup|WIP)\s*:\s*(.+)$",
     re.IGNORECASE,
 )
 
@@ -46,6 +56,8 @@ class ParsedCheckpoint:
     open_operator_fork: bool = False
     steps: list[Step] = field(default_factory=list)
     has_resume_footer: bool = False
+    precedents: list[str] = field(default_factory=list)
+    implications: list[str] = field(default_factory=list)
 
 
 def _sections(body: str) -> dict[str, str]:
@@ -96,16 +108,35 @@ def _parse_next_pickup(text: str) -> list[str]:
     return items
 
 
+def _parse_bullet_or_none(text: str) -> list[str]:
+    """Parse a bullet list; ``_None this window._`` (sole or per-line) ⇒ empty."""
+    stripped = text.strip()
+    if not stripped or _NONE_WINDOW_RE.match(stripped):
+        return []
+    items: list[str] = []
+    for line in stripped.splitlines():
+        line_s = line.strip()
+        if not line_s or _NONE_WINDOW_RE.match(line_s):
+            continue
+        m = re.match(r"^\s*(?:\d+\.|[-*])\s+(.+?)\s*$", line)
+        if m:
+            items.append(m.group(1).strip())
+    return items
+
+
 def _wip_is_none(text: str) -> bool:
     stripped = text.strip()
     if not stripped:
+        return True
+    # Schema §4.0 silence marker (same as Frictions / Precedents).
+    if "\n" not in stripped and _NONE_WINDOW_RE.match(stripped):
         return True
     # Single-line "none" (any casing / list glyph), optional parenthetical gloss.
     if "\n" not in stripped and _WIP_NONE_RE.match(stripped):
         return True
     # Legacy normalize path for bare tokens without gloss.
-    normalized = re.sub(r"[-*\s`]", "", stripped).lower()
-    return normalized in {"none", "wip:none", "inflight:none"}
+    normalized = re.sub(r"[-*\s`_]", "", stripped).lower()
+    return normalized in {"none", "wip:none", "inflight:none", "nonethiswindow."}
 
 
 def parse_checkpoint(body: str) -> ParsedCheckpoint:
@@ -116,6 +147,8 @@ def parse_checkpoint(body: str) -> ParsedCheckpoint:
     wip_text = _find_section(sections, "in-flight", "wip", "in flight")
     next_text = _find_section(sections, "next pickup", "next-pickup")
     steps_text = _find_section(sections, "steps")
+    precedents_text = _find_section(sections, "precedents")
+    implications_text = _find_section(sections, "implications")
 
     next_pickup = _parse_next_pickup(next_text)
     next_pickup_gated = any(_GATED_ROW_RE.search(item) for item in next_pickup)
@@ -146,6 +179,8 @@ def parse_checkpoint(body: str) -> ParsedCheckpoint:
         open_operator_fork=open_operator_fork,
         steps=steps,
         has_resume_footer=_has_resume_footer(body),
+        precedents=_parse_bullet_or_none(precedents_text),
+        implications=_parse_bullet_or_none(implications_text),
     )
 
 
@@ -162,7 +197,7 @@ def _detect_blocked(body: str, steps: list[Step]) -> bool:
 
 
 def _has_resume_footer(body: str) -> bool:
-    return "RESUME (any seat" in body or "— RESUME" in body
+    return _RESUME_PREFIX in body
 
 
 def first_actionable_step(parsed: ParsedCheckpoint) -> Step | None:
@@ -171,3 +206,72 @@ def first_actionable_step(parsed: ParsedCheckpoint) -> Step | None:
         if step.status != "done":
             return step
     return None
+
+
+def _gated_ids_in(text: str) -> list[str]:
+    return _GATED_ROW_RE.findall(text)
+
+
+def _is_t_row_target(text: str) -> bool:
+    """True when the implication names a T-lane id (not a gated G/R row)."""
+    return bool(re.search(r"\bT\d+[a-z]?\b", text)) and not _GATED_ROW_RE.search(text)
+
+
+def resolve_implication_target(
+    parsed: ParsedCheckpoint, implication: str
+) -> str | None:
+    """Map one Implication line to a gated Step / Next-pickup work string.
+
+    Returns None when the line is malformed, targets WIP-only without a gated
+    id, names a T-row, or the gated id is absent from Steps and Next-pickup.
+    """
+    m = _IMPLICATION_ARROW_RE.match(implication.strip())
+    if not m:
+        return None
+    target_kind = m.group(1).strip().lower()
+    rest = m.group(2).strip()
+    if _is_t_row_target(rest):
+        return None
+    gated = _gated_ids_in(rest)
+    if not gated:
+        return None
+    # Prefer the first gated id named in the implication body.
+    want = gated[0]
+    if target_kind in {"next-pickup", "steps"}:
+        for item in parsed.next_pickup:
+            if want in _gated_ids_in(item):
+                return item
+        for step in parsed.steps:
+            if step.status == "done":
+                continue
+            if want in _gated_ids_in(step.title):
+                return f"Step {step.ordinal} — {step.title} (status: {step.status})"
+        return None
+    # WIP target: only accept when a gated id still resolves to Next-pickup/Steps.
+    for item in parsed.next_pickup:
+        if want in _gated_ids_in(item):
+            return item
+    for step in parsed.steps:
+        if step.status == "done":
+            continue
+        if want in _gated_ids_in(step.title):
+            return f"Step {step.ordinal} — {step.title} (status: {step.status})"
+    return None
+
+
+def first_resolvable_implication(
+    parsed: ParsedCheckpoint,
+) -> tuple[str | None, bool]:
+    """S1: first Implication whose target resolves to a gated Step/Next-pickup.
+
+    Returns ``(work_text, unresolved)``. ``unresolved`` is True when at least
+    one Implication was present and none resolved (caller logs
+    ``implication_target_unresolved``).
+    """
+    if not parsed.implications:
+        return None, False
+    for line in parsed.implications:
+        resolved = resolve_implication_target(parsed, line)
+        if resolved is not None:
+            return resolved, False
+    return None, True

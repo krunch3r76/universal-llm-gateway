@@ -88,7 +88,7 @@ def _validate_prefixed_id(model_id: str) -> WireModelResolution:
             model_id,
             (
                 f"Model {model_id!r} has no recognized cloud provider prefix. "
-                f"Use provider/model form (e.g. openai/gpt-5.5, google/gemini-3.5-flash)."
+                f"Use provider/model form (e.g. openai/gpt-5.5, google/gemini-3.6-flash)."
             ),
         )
     provider = parsed.provider.lower()

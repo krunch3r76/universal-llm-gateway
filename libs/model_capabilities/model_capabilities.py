@@ -21,7 +21,7 @@ __all__ = [
     "skills_mount_backend",
 ]
 
-CARD_VERSION: Final[str] = "2026-07-14"
+CARD_VERSION: Final[str] = "2026-07-21"
 
 ReasonCode = Literal["capability_card_missing", "capability_card_field_missing"]
 SkillsMountBackend = Literal["openai_container", "none"]
@@ -55,6 +55,9 @@ class CapabilityCardError(LookupError):
 _ANTHROPIC_API = ModelCapabilityCard(
     mcp_client_tool_loop=True,
     mcp_remote_connector=True,
+    # No request-declared server builtins on card-inject path: Messages
+    # web_search/web_fetch/code_execution map only via req.tools →
+    # _ANTHROPIC_SERVER_TOOL_VERSION_MAP (anthropic/_helpers.py).
     server_side_tools=(),
     skills_mount_backend="none",
 )
@@ -62,7 +65,10 @@ _ANTHROPIC_API = ModelCapabilityCard(
 _OPENAI_API = ModelCapabilityCard(
     mcp_client_tool_loop=True,
     mcp_remote_connector=False,
-    server_side_tools=(),
+    # Responses-shaped bare type; same string deep-research requires
+    # (live 400 on execution 09f37279). code_interpreter/file_search need
+    # extra config — not default-attached.
+    server_side_tools=("web_search_preview",),
     skills_mount_backend="openai_container",
 )
 
@@ -83,14 +89,27 @@ _XAI_MULTI_AGENT = ModelCapabilityCard(
 _GEMINI_API = ModelCapabilityCard(
     mcp_client_tool_loop=True,
     mcp_remote_connector=False,
+    # No request-declared server builtins on card-inject path: Gemini
+    # google_search/code_execution need {google_search:{}} via req.tools
+    # (llm_adapters/google.py), not Responses-shaped provider_options.
     server_side_tools=(),
     skills_mount_backend="none",
 )
 
-# Lit-discovery chain models: provider-native research/search only — no Stargate MCP loop.
-_DEEP_RESEARCH_DISCOVERY = ModelCapabilityCard(
+# Lit-discovery: provider-native research only — no Stargate MCP loop.
+_OPENAI_DEEP_RESEARCH = ModelCapabilityCard(
     mcp_client_tool_loop=False,
     mcp_remote_connector=False,
+    # Live 400 execution 09f37279: require web_search_preview|mcp|file_search.
+    server_side_tools=("web_search_preview",),
+    skills_mount_backend="none",
+)
+
+_PERPLEXITY_DEEP_RESEARCH = ModelCapabilityCard(
+    mcp_client_tool_loop=False,
+    mcp_remote_connector=False,
+    # No request-declared server builtins — sonar search is ambient on
+    # Chat Completions (registry: perplexity → openai_chat_completions).
     server_side_tools=(),
     skills_mount_backend="none",
 )
@@ -108,16 +127,17 @@ MODEL_CAPABILITY_CARDS: Final[dict[str, ModelCapabilityCard]] = {
     "openai/gpt-5.4": _OPENAI_API,
     "openai/gpt-5.4-mini": _OPENAI_API,
     "openai/o4-mini": _OPENAI_API,
-    "openai/o4-mini-deep-research": _DEEP_RESEARCH_DISCOVERY,
+    "openai/o4-mini-deep-research": _OPENAI_DEEP_RESEARCH,
     "openai/o3": _OPENAI_API,
-    "openai/o3-deep-research": _DEEP_RESEARCH_DISCOVERY,
-    "perplexity/sonar-deep-research": _DEEP_RESEARCH_DISCOVERY,
+    "openai/o3-deep-research": _OPENAI_DEEP_RESEARCH,
+    "perplexity/sonar-deep-research": _PERPLEXITY_DEEP_RESEARCH,
     "xai/grok-4.5": _XAI_STANDARD,
     "xai/grok-4.3": _XAI_STANDARD,
     "xai/grok-4-fast-reasoning": _XAI_STANDARD,
     "xai/grok-4.20-0309-reasoning": _XAI_STANDARD,
     "xai/grok-4.20-multi-agent-0309": _XAI_MULTI_AGENT,
     "google/gemini-3.5-flash": _GEMINI_API,
+    "google/gemini-3.6-flash": _GEMINI_API,
     "google/gemini-3.1-pro-preview": _GEMINI_API,
     "google/gemini-3.1-pro": _GEMINI_API,
     "google/gemini-3-pro": _GEMINI_API,

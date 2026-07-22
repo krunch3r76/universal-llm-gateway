@@ -144,6 +144,24 @@ def append_closeout(
     return path
 
 
+def append_executor_note(worker_thread: str, executor: dict[str, Any]) -> None:
+    """Append the executor bind to the worker transcript, if one was recorded.
+
+    Writes a ``--- executor ---`` block carrying seat/model/knobs/contract so the
+    numbered transcript records which substrate ran the window. A missing thread id
+    or empty executor mapping is a no-op (nothing to record).
+    """
+    if not executor or not worker_thread:
+        return
+    note = (
+        f"\n--- executor ---\n"
+        f"seat={executor.get('seat')} model={executor.get('model')} "
+        f"knobs={executor.get('model_knobs')} "
+        f"contract={executor.get('contract')}\n"
+    )
+    _append(worker_transcript_path(worker_thread), note)
+
+
 def parse_admission_meta(body: str | None) -> dict[str, Any]:
     """Best-effort JSON from an admission-pointer turn body."""
     try:

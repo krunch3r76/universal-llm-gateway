@@ -83,6 +83,8 @@ class DrainOutcome:
 
     def to_result(self) -> dict[str, Any]:
         """Render the JSON-RPC result dict returned over manage.sock."""
+        from .busy_work_summary import format_active_work_summary
+
         return {
             "status": "deferred",
             "state": self.state,
@@ -90,6 +92,7 @@ class DrainOutcome:
             "reason": self.reason,
             "retry_after_s": self.retry_after_s,
             "active_work": self.active_work,
+            "active_work_summary": format_active_work_summary(self.active_work),
         }
 
 
@@ -416,6 +419,45 @@ def _drain_deferred_result(intent: Any, *, reason: str | None = None) -> dict[st
     }
 
 
+def _blocking_drain_result(
+    *, service: str, action: str, intent_id: str, final: Any
+) -> dict[str, Any]:
+    """Terminal envelope for the fleet blocking path (ok vs error)."""
+    # "completed" mirrors restart_intent_store.STATUS_COMPLETED; literal keeps
+    # this module duck-typed (concrete-store-free).
+    drained_ok = final is not None and final.status == "completed"
+    return {
+        "status": "ok" if drained_ok else "error",
+        "drain_status": (final.status if final is not None else "missing"),
+        "service": service,
+        "action": action,
+        "restart_intent_id": intent_id,
+    }
+
+
+async def _await_intent_terminal(
+    store: Any, intent: Any, *, deadline_s: float
+) -> Any:
+    """Poll until ``intent`` leaves non-terminal statuses or ``deadline_s`` elapses.
+
+    Used when the blocking path coalesces onto a live intent owned by another
+    supervise task — we must not return a deferred envelope (fleet would score
+    that as stop failure) and must not start a second begin-drain.
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + deadline_s
+    intent_id = intent.intent_id
+    while True:
+        current = store.get(intent_id)
+        if current is None:
+            return None
+        if current.status not in ("pending_drain", "drained_restarting"):
+            return current
+        if loop.time() >= deadline:
+            return current
+        await asyncio.sleep(0.2)
+
+
 def _spawn_supervised(
     gate: RestartDrainGate, service: str, supervisor: Any, intent: Any
 ) -> None:
@@ -492,21 +534,32 @@ async def run_gated_drain_supervised_blocking(
     Fleet stop/restart cycles must not return until the worker has drained and
     been killed, so a later fleet START phase does not race the supervisor
     (Phase-3 fleet re-enable — decision on todo:git-worker-drain-p3-fleet,
-    gpt-5.5 review thread 2018). Acquires the restart-mutex slot, persists a
-    pending_drain intent, runs the supervisor INLINE (vs ``_spawn_supervised``),
-    releases the slot, then re-reads the intent to classify the terminal status.
-    Coalescing: if the slot is already held by an in-flight supervision, the
-    existing live intent's deferred envelope is returned (that supervisor owns
-    the drain).
+    gpt-5.5 review thread 2018).
+
+    Busy-skip: ``evaluate(..., force=True)`` skips the active-work probe so
+    in-flight integrate/cursor-sdk work does not defer the fleet stop. The
+    supervisor still begins drain and waits for ``active_count→0`` before
+    SIGTERM. ``force`` here means busy-probe skip only — not the API/MCP
+    ``force=true`` immediate-kill path.
+
+    Coalescing: if the restart-mutex slot is already held, await the live
+    intent to a terminal status (do not return a deferred envelope — fleet
+    scores that as stop failure).
     """
-    outcome = await gate.evaluate(service, force=False)
+    outcome = await gate.evaluate(service, force=True)
     if outcome is not None:
         existing = store.active_for_service(service)
-        if existing is not None:
-            return _drain_deferred_result(
-                existing, reason="drain already in progress for this service"
-            )
-        return outcome.to_result()
+        if existing is None:
+            return outcome.to_result()
+        final = await _await_intent_terminal(
+            store, existing, deadline_s=float(supervisor.deadline_s)
+        )
+        return _blocking_drain_result(
+            service=service,
+            action=action,
+            intent_id=existing.intent_id,
+            final=final,
+        )
 
     deadline_at = (
         datetime.now(UTC) + timedelta(seconds=supervisor.deadline_s)
@@ -535,17 +588,12 @@ async def run_gated_drain_supervised_blocking(
             store, service, reason="git-worker supervised drain completed"
         )
 
-    final = store.get(intent.intent_id)
-    # "completed" mirrors restart_intent_store.STATUS_COMPLETED; kept as a literal
-    # to preserve this module's duck-typed (concrete-store-free) store contract.
-    drained_ok = final is not None and final.status == "completed"
-    return {
-        "status": "ok" if drained_ok else "error",
-        "drain_status": (final.status if final is not None else "missing"),
-        "service": service,
-        "action": action,
-        "restart_intent_id": intent.intent_id,
-    }
+    return _blocking_drain_result(
+        service=service,
+        action=action,
+        intent_id=intent.intent_id,
+        final=store.get(intent.intent_id),
+    )
 
 
 async def resume_drain_supervision(

@@ -51,7 +51,7 @@ _REMOTE_DEPLOY_RSYNC_FILTERS: tuple[str, ...] = ()
 
 _CRITICAL_DEPLOY_PATHS: tuple[str, ...] = (
     "services/_universal-llm-gateway/src/routers/api/v1/models/__init__.py",
-    "services/_universal-llm-gateway/src/routers/api/v1/models/management.py",
+    "services/_universal-llm-gateway/src/routers/api/v1/models/management/__init__.py",
     "config/models/text_llm/llama-cpp/qwen3-14b-q4-k-m.yaml",
     "libs/cortex_store/models/__init__.py",
     "services/universal-stargate/systems/proxy/routers/api/git.py",

@@ -156,3 +156,34 @@ def PipelineFrontierDispatchToolSuppressed(  # noqa: N802
         },
         scope="node",
     )
+
+
+@event_factory
+def PipelineFrontierDispatchToolsWire(  # noqa: N802
+    execution_id: str,
+    agent: str | None,
+    model: str,
+    provider: str,
+    hop: str,
+    tools: list[str],
+) -> Event:
+    """Permanent observability for server-tool wire presence (hop-1 / hop-2).
+
+    Localizes card-inject vs upstream-body drops without unit-sim alone.
+    ``hop`` vocabulary:
+    - ``provider_options`` — tools on ``FrontierRequest.provider_options`` (hop 1)
+    - ``upstream_body`` — tools on the provider-native request body (hop 2)
+    """
+    return Event(
+        signal="pipeline.frontier.dispatch.tools.wire",
+        payload={
+            "execution_id": execution_id,
+            "agent": agent,
+            "model": model,
+            "provider": provider,
+            "hop": hop,
+            "tools": tools,
+            "tools_present": bool(tools),
+        },
+        scope="node",
+    )

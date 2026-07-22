@@ -67,7 +67,7 @@ GET  :9999/cloud-ui         # browser model browser
 | Anthropic | `anthropic/claude-sonnet-4-6` | `openrouter/anthropic/claude-sonnet-4` |
 | xAI | `xai/grok-4.5` | `openrouter/x-ai/grok-4.5` |
 | OpenAI | latest capable model for automated dispatch / MCP writes; a slightly cheaper default for casual use | `openrouter/openai/gpt-4o` |
-| Google | `google/gemini-3.5-flash` | `openrouter/google/gemini-3.5-flash` |
+| Google | `google/gemini-3.6-flash` | `openrouter/google/gemini-3.6-flash` |
 | Other (Qwen, Mistral, etc.) | `openrouter/qwen/qwen3-32b` | (no direct route) |
 
 Direct routing avoids the OpenRouter middleman — lower latency, native features, no markup.

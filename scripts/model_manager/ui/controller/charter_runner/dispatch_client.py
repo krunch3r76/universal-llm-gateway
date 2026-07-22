@@ -15,9 +15,13 @@ from typing import Any, Literal
 
 from transport_utils import DEFAULT_STARGATE_URL, make_async_client
 
-from .executor_defaults import default_generate_body, default_handoff_body
+from .executor_defaults import (
+    autonomous_generate_body,
+    default_generate_body,
+    default_handoff_body,
+)
 
-AdmissionMode = Literal["generate", "handoff"]
+AdmissionMode = Literal["generate", "handoff", "autonomous"]
 
 _TIMEOUT_S = 30.0
 _DISPATCH_PATH = "/api/v1/team/dispatch"
@@ -29,12 +33,19 @@ _PACKET_DIR = Path("tmp/charter-runner")
 def write_handoff_packet(
     workspace_root: Path, root_id: str, window_index: int, packet_text: str
 ) -> str:
-    """Persist packet; return repo-relative path for dispatch ``packet_path``."""
+    """Persist packet; return path for dispatch ``packet_path``.
+
+    Path is **source-repo-relative** (``tmp/charter-runner/…``), not
+    workspaces-prefixed (``universal-llm-gateway/tmp/…``). Stargate resolves
+    both via ``repo_base``; the cursor-sdk worker only joins onto
+    ``source_repo`` and rejects the double-prefixed form
+    (``CURSOR_PACKET_INVALID``).
+    """
     dest_dir = workspace_root / _PACKET_DIR
     dest_dir.mkdir(parents=True, exist_ok=True)
     filename = f"{root_id}-w{window_index}.md"
     (dest_dir / filename).write_text(packet_text, encoding="utf-8")
-    return f"universal-llm-gateway/{_PACKET_DIR.as_posix()}/{filename}"
+    return f"{_PACKET_DIR.as_posix()}/{filename}"
 
 
 async def fire_window(
@@ -62,6 +73,15 @@ async def fire_window(
             caller_agent=_CALLER,
         )
         path = _HANDOFF_PATH
+    elif admission_mode == "autonomous":
+        body = autonomous_generate_body(
+            root_id=root_id,
+            window_index=window_index,
+            packet_path=packet_path,
+            subject=subj,
+            caller_agent=_CALLER,
+        )
+        path = _DISPATCH_PATH
     else:
         body = default_generate_body(
             root_id=root_id,

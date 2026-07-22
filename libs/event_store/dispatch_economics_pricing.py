@@ -155,14 +155,31 @@ def _select_wire(members: list[dict[str, Any]] | None) -> tuple[float | None, st
 
 
 def _rate_x_tokens(row: dict[str, Any], rate: ModelRateRow) -> float | None:
+    """Estimate USD from token tiers × rates (cache tiers skipped when rate is None)."""
     prompt = row.get("prompt_tokens")
     completion = row.get("completion_tokens")
-    if prompt is None and completion is None:
+    cache_write = row.get("cache_write_tokens")
+    cache_read = row.get("cache_read_tokens")
+    if (
+        prompt is None
+        and completion is None
+        and cache_write is None
+        and cache_read is None
+    ):
         return None
     total = 0.0
     has_component = False
     if prompt is not None:
         total += (prompt / 1_000_000) * rate.input_rate_per_m
+        has_component = True
+    if (
+        cache_write is not None
+        and rate.cache_write_rate_per_m is not None
+    ):
+        total += (cache_write / 1_000_000) * rate.cache_write_rate_per_m
+        has_component = True
+    if cache_read is not None and rate.cache_read_rate_per_m is not None:
+        total += (cache_read / 1_000_000) * rate.cache_read_rate_per_m
         has_component = True
     if completion is not None:
         total += (completion / 1_000_000) * rate.output_rate_per_m
@@ -208,10 +225,14 @@ def _price_row(
     if rate is not None:
         priced["input_rate_per_m"] = rate.input_rate_per_m
         priced["output_rate_per_m"] = rate.output_rate_per_m
+        priced["cache_write_rate_per_m"] = rate.cache_write_rate_per_m
+        priced["cache_read_rate_per_m"] = rate.cache_read_rate_per_m
         priced["rate_source"] = rate.source
     else:
         priced["input_rate_per_m"] = None
         priced["output_rate_per_m"] = None
+        priced["cache_write_rate_per_m"] = None
+        priced["cache_read_rate_per_m"] = None
         priced["rate_source"] = None
     return priced
 

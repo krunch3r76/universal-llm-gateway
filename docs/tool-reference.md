@@ -524,6 +524,17 @@ muddled average that degrades the primary retrieval signal.
 | `limit` | int\|None | Alias for `top_k` (ergonomics for MCP/dispatch paths; error on conflict) |
 | `scope` | str\|list\|None | Named scope filter: single string, comma-separated string, or list. Call `rag_list_scopes()` for valid names. |
 | `prefix` | str\|list\|None | Source path prefix filter. Mutually exclusive with `scope`. |
+| `mapped` | bool | Default `false`. When `true`, exact `(scope, query)` lookup against `config/mcp/rag_mapped_index.yaml` serves a durable pack body through the identical search envelope; miss (or multi/missing scope) falls through to live `rag-context`. |
+
+### Mapped packs (`mapped=true`)
+
+Dispatcher/orchestrator path for curated writing-sample injects. Pack files are
+**pure `context` bodies** (Source / Body evidence blocks only — no frontmatter).
+Retrieval metadata comes from the index entry. Envelope keys match live success
+exactly (`status`, `pipeline`, `content_length`, `duration_s`, `context`,
+`retrieval`); mapped vs live is recorded only in `mcp.rag.mapped.hit` /
+`mcp.rag.mapped.miss` events (not in the envelope). Match is exact on normalized
+`(scope, query)` (lowercase, strip, collapse whitespace) — not embedding-fuzzy.
 
 ### Returns
 
@@ -547,7 +558,8 @@ On success:
 - **`retrieval`**: compact scope metadata from the rag-context retrieve step.
   `auto_classified` is `true` only when `scope_source=classifier` (LLM scope
   prediction ran). The MCP primary path uses the direct pipeline
-  (`scope_source=default_scope` for unscoped calls).
+  (`scope_source=default_scope` for unscoped calls). Mapped hits use
+  `scope_source=user_override` (or the index entry's value).
 - **`scope_note`**: present on unscoped success/empty paths when
   `scope_source` is `default_scope` or `classifier` (static advisory).
 

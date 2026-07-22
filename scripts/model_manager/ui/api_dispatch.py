@@ -275,6 +275,8 @@ async def _busy_status(ctl: ServiceController) -> dict[str, Any]:
     block surfaces the quit-guard accounting (``ManageShutdownGate``) so a UI can
     also reflect "the manage host itself is busy".
     """
+    from .controller.busy_work_summary import format_active_work_summary
+
     report = await ctl.restart_gate.busy_report(sorted(SYNC_RESTART_SERVICES))
     now = datetime.now(UTC)
     store = ctl.restart_intent_store
@@ -288,6 +290,9 @@ async def _busy_status(ctl: ServiceController) -> dict[str, Any]:
             intent_status_view(intent, now=now) if intent is not None else None
         )
         entry["restart_window"] = store.restart_window_for_service(service, now=now)
+        entry["active_work_summary"] = format_active_work_summary(
+            entry.get("active_work")
+        )
     extra = ("build_image",) if ctl.build_running else ()
     snap = ctl.shutdown_gate.snapshot(extra_activities=extra)
     return {

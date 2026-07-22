@@ -15,6 +15,7 @@ admission pointer cannot re-dispatch the same (root, window) on restart
 from __future__ import annotations
 
 import os
+import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -30,6 +31,13 @@ def _env_int(name: str, default: int) -> int:
 
 def _default_intent_dir() -> Path:
     return Path.home() / ".local" / "share" / "charter-runner" / "admit-intent"
+
+
+def _default_revise_dir() -> Path:
+    return Path.home() / ".local" / "share" / "charter-runner" / "revise-count"
+
+
+_REVISE_PICKUP_RE = re.compile(r"\brevise\b|\bG\d+[a-c]\b", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -60,10 +68,16 @@ class CapStore:
         caps: WindowCaps | None = None,
         *,
         intent_dir: Path | None = None,
+        revise_dir: Path | None = None,
+        revise_cap: int | None = None,
     ) -> None:
         self._caps = caps or WindowCaps.from_env()
         self._roots: dict[str, _RootState] = {}
         self._intent_dir = intent_dir if intent_dir is not None else _default_intent_dir()
+        self._revise_dir = revise_dir if revise_dir is not None else _default_revise_dir()
+        self._revise_cap = (
+            revise_cap if revise_cap is not None else _env_int("CHARTER_REVISE_CAP", 3)
+        )
 
     def check(
         self, root_id: str, *, now: float | None = None
@@ -108,6 +122,43 @@ class CapStore:
 
     def clear_admit_intent(self, root_id: str, window_index: int) -> None:
         self.intent_path(root_id, window_index).unlink(missing_ok=True)
+
+    def revise_path(self, root_id: str) -> Path:
+        return self._revise_dir / f"{root_id}.revise"
+
+    def get_revise_count(self, root_id: str) -> int:
+        path = self.revise_path(root_id)
+        if not path.exists():
+            return 0
+        try:
+            return max(0, int(path.read_text(encoding="utf-8").strip().splitlines()[0]))
+        except (OSError, ValueError, IndexError):
+            return 0
+
+    def increment_revise(self, root_id: str) -> int:
+        """Bump the durable revise counter; return the new count."""
+        self._revise_dir.mkdir(parents=True, exist_ok=True)
+        count = self.get_revise_count(root_id) + 1
+        self.revise_path(root_id).write_text(f"{count}\n", encoding="utf-8")
+        return count
+
+    def reset_revise(self, root_id: str) -> None:
+        self.revise_path(root_id).unlink(missing_ok=True)
+
+    @property
+    def revise_cap(self) -> int:
+        return self._revise_cap
+
+    def check_revise_admit(
+        self, root_id: str, next_pickup: list[str]
+    ) -> tuple[bool, str | None]:
+        """Block admission when a revise pickup would exceed the machine cap."""
+        if not any(_REVISE_PICKUP_RE.search(item) for item in next_pickup):
+            return True, None
+        count = self.get_revise_count(root_id)
+        if count >= self._revise_cap:
+            return False, "revise_cap_exhausted"
+        return True, None
 
     def _recent_count(self, state: _RootState, *, now: float | None = None) -> int:
         now = time.time() if now is None else now

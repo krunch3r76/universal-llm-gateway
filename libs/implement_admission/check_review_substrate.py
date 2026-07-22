@@ -22,7 +22,9 @@ CURSOR_CHECK_REVIEW_MODELS = frozenset(
         "cursor/grok-4.5",
     }
 )
-MECHANICAL_CURSOR_MODELS = frozenset({"cursor/gemini-3.5-flash"})
+MECHANICAL_CURSOR_MODELS = frozenset(
+    {"cursor/gemini-3.5-flash", "cursor/gemini-3.6-flash"}
+)
 SYNTHESIZER_ROLE = "synthesizer"
 _MECHANICAL_PROFILE = "mechanical"
 _JUDGMENT_ROLES = frozenset({"reviewer", "skeptic"})

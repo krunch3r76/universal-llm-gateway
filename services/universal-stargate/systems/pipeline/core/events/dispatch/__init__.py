@@ -51,6 +51,7 @@ from .frontier_tools import (
     PipelineFrontierDispatchToolFailed,
     PipelineFrontierDispatchToolRequested,
     PipelineFrontierDispatchToolSuppressed,
+    PipelineFrontierDispatchToolsWire,
 )
 from .journal import (
     PipelineDispatchJournalPruned,
@@ -78,6 +79,7 @@ __all__ = [
     # Frontier tools
     "PipelineFrontierDispatchToolRequested",
     "PipelineFrontierDispatchToolCalled",
+    "PipelineFrontierDispatchToolsWire",
     "PipelineFrontierDispatchToolFailed",
     "PipelineFrontierDispatchToolSuppressed",
     # Frontier remote MCP

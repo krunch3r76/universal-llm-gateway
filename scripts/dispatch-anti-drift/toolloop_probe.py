@@ -67,6 +67,11 @@ _PROBE_MATRIX: list[tuple[str, str, str, int, int]] = [
     ("xai/grok-4.5", "task_a", _TASK_A_PROMPT, 3, 1),
     # Google (regression-class monitoring).
     ("google/gemini-3-pro", "task_a", _TASK_A_PROMPT, 3, 1),
+    # Gemini 3.x Flash — synthesizer defaults (todo:gemini-native-mcp-surface Phase 0).
+    ("google/gemini-3.6-flash", "task_a", _TASK_A_PROMPT, 3, 1),
+    ("google/gemini-3.6-flash", "task_b", _TASK_B_PROMPT, 5, 2),
+    ("google/gemini-3.5-flash", "task_a", _TASK_A_PROMPT, 3, 1),
+    ("google/gemini-3.5-flash", "task_b", _TASK_B_PROMPT, 5, 2),
 ]
 
 
@@ -140,7 +145,8 @@ def _build_request(model: str, prompt: str, max_tool_turns: int) -> dict[str, An
         "mcp": True,
         "messages": [{"role": "user", "content": prompt}],
         "max_tool_turns": max_tool_turns,
-        "max_tokens": 512,
+        # Top-level max_tokens rejected (extra=forbid); knobs ride generation_options.
+        "generation_options": {"max_tokens": 512},
     }
 
 

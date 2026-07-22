@@ -1,6 +1,9 @@
 # Manual seed + override rows for dispatch economics dollar equivalents.
 # Catalog refresh upserts OpenRouter pricing to model_rates_catalog.yaml;
 # pinned rows here win over catalog projection (non-pinned seeds fill gaps only).
+#
+# cursor/* rates: SOT = https://cursor.com/docs/models-and-pricing (API pool table).
+# Optional cache_*_rate_per_m omitted when docs list "-" for that tier.
 
 aliases:
   composer-2.5: cursor/composer-2.5
@@ -14,27 +17,34 @@ aliases:
 
 models:
   - model_id: cursor/composer-2.5
-    input_rate_per_m: 1.25
-    output_rate_per_m: 6.0
+    input_rate_per_m: 0.5
+    cache_read_rate_per_m: 0.2
+    output_rate_per_m: 2.5
     source: manual_seed
     pinned: true
+  # sot_absent on Cursor docs (Composer 2.5 / Composer 1 only) — leave prior pin; ¬ invent.
   - model_id: cursor/composer-2.5-fast
     input_rate_per_m: 0.625
     output_rate_per_m: 3.0
     source: manual_seed
     pinned: true
   - model_id: cursor/grok-4.5
-    input_rate_per_m: 3.0
-    output_rate_per_m: 15.0
+    input_rate_per_m: 2.0
+    cache_read_rate_per_m: 0.5
+    output_rate_per_m: 6.0
     source: manual_seed
     pinned: true
   - model_id: cursor/claude-opus-4-8
-    input_rate_per_m: 15.0
-    output_rate_per_m: 75.0
+    input_rate_per_m: 5.0
+    cache_write_rate_per_m: 6.25
+    cache_read_rate_per_m: 0.5
+    output_rate_per_m: 25.0
     source: manual_seed
     pinned: true
   - model_id: cursor/claude-sonnet-4-6
     input_rate_per_m: 3.0
+    cache_write_rate_per_m: 3.75
+    cache_read_rate_per_m: 0.3
     output_rate_per_m: 15.0
     source: manual_seed
     pinned: true

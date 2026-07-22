@@ -1,0 +1,29 @@
+# Mapped rag-context pack index.
+# Exact (scope, query) → durable pack URI. Served by rag(op=search, mapped=true)
+# through the identical search envelope; miss falls through to live rag-context.
+#
+# Pack files are pure `context` bodies (Source / Body evidence blocks only) —
+# no frontmatter. Retrieval metadata comes from this index, not the file.
+#
+# Reload: mcp-server restart (index is process-cached).
+
+entries:
+  - scope: legal_writing_samples
+    query: >-
+      good cause late filing reinstatement plea grounds ordinary care board
+      member human reader short form
+    uri: cortex://notes/legal/writing-samples/good-cause-plea-rag-context-v2.md
+    resolved_scope: legal_writing_samples
+    chunks_found: 6
+    scope_source: user_override
+    scope_confidence: 1.0
+
+  - scope: cover_letter_samples
+    query: >-
+      government cover letter mission continuity employer tie-back JD parallel
+      human voice why-here
+    uri: cortex://notes/job-search/cover-letters/cover-letter-rag-context-v2.md
+    resolved_scope: cover_letter_samples
+    chunks_found: 5
+    scope_source: user_override
+    scope_confidence: 1.0

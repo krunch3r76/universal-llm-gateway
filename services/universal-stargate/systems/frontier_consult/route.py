@@ -30,6 +30,11 @@ from .admission import (
     resolve_handoff_seat,
     resolve_handoff_target,
 )
+from .cdp_generate import (
+    dispatch_cdp_generate,
+    is_cdp_model,
+    reject_cursor_sdk_seat_with_cdp,
+)
 from .closeout_reply import parse_closeout_payload, run_implement_closeout_pipeline
 from .contract_derivation import derive_contract
 from .densify_triage import DensityTriage
@@ -453,6 +458,21 @@ async def team_dispatch(
     role = getattr(body, "role", None)
     seat = getattr(body, "seat", None)
     model = getattr(body, "model", None)
+    if body.op == "generate" and is_cdp_model(model):
+        try:
+            reject_cursor_sdk_seat_with_cdp(
+                seat=seat, model=model, request_id=request_id
+            )
+            result = await dispatch_cdp_generate(
+                request_id=request_id,
+                body=body,
+                response=response,
+            )
+        except FrontierEndpointError as exc:
+            return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
+        if isinstance(result, dict):
+            response.status_code = 202
+        return result
     if body.op == "generate":
         try:
             enforce_generate_role_seat_exclusive(

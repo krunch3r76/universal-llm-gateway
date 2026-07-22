@@ -820,14 +820,40 @@ class CursorDispatchLedger:
         dispatch cannot wedge the gate. Use ``running_orphans`` for the
         reconciler view of survivors.
         """
-        with self._connect() as conn:
-            ids = [
-                row["dispatch_id"]
-                for row in conn.execute(
-                    "SELECT dispatch_id FROM cursor_sdk_dispatches WHERE status='running'"
-                ).fetchall()
-            ]
-        live = [
-            d for d in ids if (t := self._tasks.get(d)) is not None and not t.done()
-        ]
+        live = [op["op_id"] for op in self.live_dispatch_projections()]
         return {"running": len(live), "dispatch_ids": live}
+
+    def live_dispatch_projections(self) -> list[dict[str, Any]]:
+        """Human-readable live cursor-sdk ops for busy / active-work probes.
+
+        Same live-task filter as ``active_snapshot`` (orphans excluded), but
+        projects subject/model/thread so operators are not stuck with opaque
+        dispatch UUIDs when diagnosing a busy git-worker.
+        """
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT dispatch_id, thread_id, resolved_model, status, started_at, "
+                "last_heartbeat_at, record_json, packet_path "
+                "FROM cursor_sdk_dispatches WHERE status='running'"
+            ).fetchall()
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            dispatch_id = row["dispatch_id"]
+            task = self._tasks.get(dispatch_id)
+            if task is None or task.done():
+                continue
+            holder = _holder_projection(row)
+            out.append(
+                {
+                    "kind": "cursor_sdk",
+                    "op_id": dispatch_id,
+                    "route": "/api/v1/cursor/dispatch",
+                    "admitted_at": holder.get("holder_started_at"),
+                    "state": str(row["status"] or "running"),
+                    "resolved_model": holder.get("holder_resolved_model"),
+                    "subject_preview": holder.get("holder_subject_preview"),
+                    "thread_id": holder.get("holder_thread_id"),
+                    "started_at": holder.get("holder_started_at"),
+                }
+            )
+        return out

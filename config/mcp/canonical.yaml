@@ -2820,7 +2820,9 @@ tools:
     tool: rag_search
     substrate_qualified: user-vortex__rag_search
   fol_descriptor: "∀ query ∈ str ∧ scope ∈ RAGScope:\n  rag_search(query, scope) ⟹\n    result ∈ List[Chunk]
-    ∧ ∀ c ∈ result: c.score ≥ 0.\nRead-only. Semantic + keyword. ¬side-effects. See agent_skill:rag.\n"
+    ∧ ∀ c ∈ result: c.score ≥ 0.\n  mapped=true ⇒ exact (scope,query) durable-pack hit via
+    config/mcp/rag_mapped_index.yaml (identical envelope) ∨ live rag-context fallback.\nRead-only.
+    Semantic + keyword. ¬side-effects. See agent_skill:rag.\n"
   json_schema:
     type: object
     properties:
@@ -2830,6 +2832,9 @@ tools:
         type: string
       limit:
         type: integer
+      mapped:
+        type: boolean
+        description: Exact (scope, query) durable-pack lookup; miss falls through to live rag-context
     required:
     - query
   skill_uri: agent_skill:rag

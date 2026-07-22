@@ -201,8 +201,10 @@ async def _drain_stop_git_worker(ctl: ServiceController) -> str:
 
     Awaits the cooperative drain to terminal state (begin-drain -> worker
     git_worker.drain.completed -> SIGTERM) so the fleet START phase does not race
-    the supervisor. On success the worker is not running; the returned message is
-    scored by ``_classify_result``. See todo:git-worker-drain-p3-fleet
+    the supervisor. Busy in-flight work is NOT a stop failure: the blocking
+    helper busy-skips the active-work probe and waits for ``active_count→0``.
+    On success the worker is not running; the returned message is scored by
+    ``_classify_result``. See todo:git-worker-drain-p3-fleet
     (gpt-5.5 review thread 2018).
     """
     from ..model.service_state import ServiceStatus

@@ -33,7 +33,7 @@ from .eligibility import (
     evaluate_root,
 )
 from .harvest import completed_windows, harvest_completed_windows
-from .materializer import handoff_subject, materialize_resume_packet
+from .materializer_autonomous import select_packet
 
 logger = get_logger(__name__)
 
@@ -61,13 +61,46 @@ def _unattended_stale_s_from_env() -> float:
         return 0.0
 
 
-def _admission_mode() -> AdmissionMode:
-    """Read ``CHARTER_ADMISSION_MODE``; default generate; unknown → generate + warn."""
-    raw = os.environ.get(_ENV_ADMISSION_MODE, "").strip().lower()
-    if not raw or raw == "generate":
+def _admission_mode_path() -> Path:
+    """Durable arming file — overrides env so tick can re-arm without process restart."""
+    return Path.home() / ".local" / "share" / "charter-runner" / "admission_mode"
+
+
+def _resolve_admission_token(raw: str) -> AdmissionMode | None:
+    token = raw.strip().lower()
+    if not token or token == "generate":
         return "generate"
-    if raw == "handoff":
+    if token == "handoff":
         return "handoff"
+    if token == "autonomous":
+        return "autonomous"
+    return None
+
+
+def _admission_mode() -> AdmissionMode:
+    """Resolve admission mode: durable file (if present) then ``CHARTER_ADMISSION_MODE``.
+
+    ``autonomous`` selects the background-lead packet (full path-sim arc via
+    satellite R-admit + capped revise loop). ``generate`` (default) and ``handoff``
+    are unchanged. File path: ``~/.local/share/charter-runner/admission_mode``.
+    """
+    path = _admission_mode_path()
+    if path.is_file():
+        try:
+            file_raw = path.read_text(encoding="utf-8").splitlines()[0]
+        except (OSError, IndexError):
+            file_raw = ""
+        resolved = _resolve_admission_token(file_raw)
+        if resolved is not None:
+            return resolved
+        logger.warning(
+            "charter-runner: unknown admission_mode file %r — falling through to env",
+            file_raw,
+        )
+    raw = os.environ.get(_ENV_ADMISSION_MODE, "").strip().lower()
+    resolved = _resolve_admission_token(raw)
+    if resolved is not None:
+        return resolved
     logger.warning(
         "charter-runner: unknown CHARTER_ADMISSION_MODE=%r — treating as generate",
         raw,
@@ -219,7 +252,7 @@ class CharterRunnerTickLoop:
                 root=root_id, reason="admit_intent_orphan"
             )
             return False
-        packet = materialize_resume_packet(
+        packet, subject = select_packet(
             root_id,
             decision.parsed,
             scoreboard_uri=decision.parsed.scoreboard_uri,
@@ -234,9 +267,7 @@ class CharterRunnerTickLoop:
                 packet,
                 workspace_root=self._workspace_root,
                 window_index=window_index,
-                subject=handoff_subject(
-                    root_id, window_index, admission_mode=admission_mode
-                ),
+                subject=subject,
                 admission_mode=admission_mode,
             )
         except Exception:
@@ -284,31 +315,16 @@ class CharterRunnerTickLoop:
                 push_reminder=push,
                 dispatch_id=str(result.get("dispatch_id") or ""),
             )
-            # Record executor bind in the numbered transcript.
-            executor = result.get("executor") or {}
-            if executor and worker_thread:
-                from .window_log import worker_transcript_path
-
-                note = (
-                    f"\n--- executor ---\n"
-                    f"seat={executor.get('seat')} model={executor.get('model')} "
-                    f"knobs={executor.get('model_knobs')} "
-                    f"contract={executor.get('contract')}\n"
-                )
-                path = worker_transcript_path(worker_thread)
-                path.parent.mkdir(parents=True, exist_ok=True)
-                with path.open("a", encoding="utf-8") as fh:
-                    fh.write(note)
+            window_log.append_executor_note(worker_thread, result.get("executor") or {})
         except Exception:  # noqa: BLE001 — transcript must not kill the tick
             logger.exception("charter-runner window_log append_admit failed")
-        msg = (
-            f"charter-runner: admitted {worker_thread} for root {root_id}"
-            + (
-                " (attended IDE — open worker thread)"
-                if admission_mode == "handoff"
-                else " (cursor/grok-4.5 effort=high)"
-            )
-        )
+        if admission_mode == "handoff":
+            mode_note = " (attended IDE — open worker thread)"
+        elif admission_mode == "autonomous":
+            mode_note = " (autonomous background lead — cursor/grok-4.5)"
+        else:
+            mode_note = " (cursor/grok-4.5 effort=high)"
+        msg = f"charter-runner: admitted {worker_thread} for root {root_id}" + mode_note
         if push:
             msg += f" — {push}"
         if self._on_admit is not None:

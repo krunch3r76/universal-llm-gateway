@@ -25,7 +25,15 @@ class ComposerPollutedError(RuntimeError):
 
 
 async def composer_has_attachments(page: Page) -> bool:
-    """Detect file/skill chips in the chat composer (pollution probe)."""
+    """Return True when visible attachment-semantic chips pollute the composer.
+
+    Page-chrome badges (e.g. Labs/Beta feature chips matching generic ``chip``
+    classes or ``data-testid*='chip'``) are intentionally excluded — only
+    attachment-semantic selectors are consulted. Fail-closed pollution detection
+    rests on those primaries; if a future attachment variant uses only a bare
+    ``chip`` class with no attachment token, repair via a composer-scoped
+    fallback (P2), not a page-wide chip scan.
+    """
     selectors = (
         "[data-testid='file-attachment']",
         "[data-testid='attachment']",
@@ -39,20 +47,6 @@ async def composer_has_attachments(page: Page) -> bool:
             for i in range(min(await loc.count(), 5)):
                 if await loc.nth(i).is_visible():
                     return True
-    composer = page.locator(
-        "textarea, [contenteditable='true'], [role='textbox']"
-    ).first
-    if await composer.count():
-        try:
-            sibs = page.locator(
-                "[class*='chip'], [class*='Chip'], [data-testid*='chip']"
-            )
-            if await sibs.count():
-                for i in range(min(await sibs.count(), 8)):
-                    if await sibs.nth(i).is_visible():
-                        return True
-        except Exception:
-            pass
     return False
 
 

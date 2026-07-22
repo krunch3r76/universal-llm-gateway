@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
+
 from claude_bundles.chat_model_select import select_model
 from claude_bundles.chat_reply_wait import harvest_assistant, wait_assistant_reply
 from claude_bundles.chat_session_hygiene import (
@@ -27,6 +29,7 @@ async def project_followup_on_page(
     timeout_s: int = 360,
     min_growth: int = 50,
     min_body: int = 40,
+    on_harvest: Callable[[dict], Awaitable[None]] | None = None,
 ) -> ProjectAskResult:
     """Send another turn on the current chat. No navigate."""
     dest = project_url(project_uuid) if project_uuid else "https://claude.ai/new"
@@ -40,6 +43,7 @@ async def project_followup_on_page(
             poll_ms=500,
             min_growth=min_growth,
             min_body=min_body,
+            on_harvest=on_harvest,
         )
         body = strip_thinking_prefix(state.get("body") or "")
         return ProjectAskResult(
@@ -78,6 +82,7 @@ async def run_project_conversation(
     min_growth: int = 80,
     min_body: int = 200,
     ensure_cowork_auto: bool = True,
+    on_harvest: Callable[[dict], Awaitable[None]] | None = None,
 ) -> list[ProjectAskResult]:
     """N-turn consult on one chat. First opens compose; later turns follow up."""
     if not prompts:
@@ -96,6 +101,7 @@ async def run_project_conversation(
                 timeout_s=timeout_s,
                 min_growth=min_growth,
                 min_body=min_body,
+                on_harvest=on_harvest,
             )
         else:
             url = compose_url or "https://claude.ai/new"
@@ -128,6 +134,7 @@ async def run_project_conversation(
                 poll_ms=500,
                 min_growth=min_growth,
                 min_body=min_body,
+                on_harvest=on_harvest,
             )
             body = strip_thinking_prefix(state.get("body") or "")
             first = ProjectAskResult(
@@ -152,6 +159,7 @@ async def run_project_conversation(
                 timeout_s=timeout_s,
                 min_growth=min_growth,
                 min_body=min_body,
+                on_harvest=on_harvest,
             )
             results.append(nxt)
             if not nxt.ok:

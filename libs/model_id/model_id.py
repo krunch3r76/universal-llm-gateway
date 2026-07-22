@@ -86,7 +86,7 @@ class ModelId:
     """True if model ID ends with -hybrid suffix."""
 
     backend_type: str | None = None
-    """Backend type: None (local), 'federated', 'cloud_api', 'cursor_sdk', 'vps'."""
+    """Backend type: None (local), 'federated', 'cloud_api', 'cursor_sdk', 'cdp', 'vps'."""
 
     provider: str | None = None
     """Cloud provider name (e.g., 'anthropic'). None for local models."""
@@ -146,7 +146,12 @@ class ModelId:
         # Opaque pass-through — no local suffix parsing for cloud IDs.
         if "/" in model_id_str:
             provider_prefix = model_id_str.split("/", 1)[0]
-            backend_type = "cursor_sdk" if provider_prefix == "cursor" else "cloud_api"
+            if provider_prefix == "cursor":
+                backend_type = "cursor_sdk"
+            elif provider_prefix == "cdp":
+                backend_type = "cdp"
+            else:
+                backend_type = "cloud_api"
             return cls(
                 original=original,
                 base_id=model_id_str,

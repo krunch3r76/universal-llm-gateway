@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from claude_bundles.skills_ui_evidence import composer_has_attachments
 from claude_bundles.skills_ui_network import (
     UploadResult,
     _is_noise_url,
@@ -153,6 +154,54 @@ async def test_stability_guarded_add_click_skips_when_expanded() -> None:
     add_btn.click = AsyncMock()
     await stability_guarded_add_click(add_btn)
     add_btn.click.assert_not_called()
+
+
+def _mock_locator(*, count: int = 0, visible: bool = False) -> MagicMock:
+    loc = MagicMock()
+    loc.count = AsyncMock(return_value=count)
+    nth = MagicMock()
+    nth.is_visible = AsyncMock(return_value=visible)
+    loc.nth = MagicMock(return_value=nth)
+    return loc
+
+
+def _mock_page(locator_map: dict[str, MagicMock]) -> MagicMock:
+    page = MagicMock()
+
+    def _locator(sel: str) -> MagicMock:
+        return locator_map.get(sel, _mock_locator())
+
+    page.locator = MagicMock(side_effect=_locator)
+    return page
+
+
+@pytest.mark.asyncio
+async def test_composer_has_attachments_ignores_labs_beta_generic_chip() -> None:
+    """Generic page-chrome chips must not trigger pollution (Labs/Beta false positive)."""
+    generic_chip = _mock_locator(count=1, visible=True)
+    page = _mock_page(
+        {
+            "[data-testid='file-attachment']": _mock_locator(),
+            "[data-testid='attachment']": _mock_locator(),
+            ".attachment-chip": _mock_locator(),
+            "[class*='attachment']": _mock_locator(),
+            "[class*='Attachment']": _mock_locator(),
+            "[class*='chip'], [class*='Chip'], [data-testid*='chip']": generic_chip,
+        }
+    )
+    assert not await composer_has_attachments(page)
+
+
+@pytest.mark.asyncio
+async def test_composer_has_attachments_detects_file_attachment_chip() -> None:
+    """Realistic attachment DOM (file-attachment testid) must trigger pollution."""
+    attachment = _mock_locator(count=1, visible=True)
+    page = _mock_page(
+        {
+            "[data-testid='file-attachment']": attachment,
+        }
+    )
+    assert await composer_has_attachments(page)
 
 
 @pytest.mark.asyncio

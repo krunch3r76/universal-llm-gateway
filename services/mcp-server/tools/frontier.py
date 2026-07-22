@@ -624,7 +624,13 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                 record_prefix="mcp.team.handoff",
             )
 
-        if not role and not seat:
+        # CDP substrate is role-less (model=cdp/<picker> selects transport).
+        cdp_roleless = (
+            op in {"generate", "to_thread"}
+            and isinstance(model, str)
+            and model.startswith("cdp/")
+        )
+        if not role and not seat and not cdp_roleless:
             return {
                 "error": {
                     "code": "validation_error",

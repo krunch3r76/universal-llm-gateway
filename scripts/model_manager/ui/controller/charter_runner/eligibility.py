@@ -124,4 +124,14 @@ def evaluate_root(root_id: str, turns: list[dict], caps: CapStore) -> Decision:
             parsed=parsed,
         )
 
+    revise_ok, revise_reason = caps.check_revise_admit(root_id, parsed.next_pickup)
+    if not revise_ok:
+        return Decision(
+            False,
+            revise_reason or "revise_cap_exhausted",
+            root_id,
+            checkpoint=checkpoint,
+            parsed=parsed,
+        )
+
     return Decision(True, "eligible", root_id, checkpoint=checkpoint, parsed=parsed)

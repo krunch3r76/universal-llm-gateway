@@ -30,7 +30,13 @@ def default_generate_body(
     subject: str,
     caller_agent: str,
 ) -> dict[str, Any]:
-    """Wire body for ``POST /api/v1/team/dispatch`` (default Grok window)."""
+    """Wire body for ``POST /api/v1/team/dispatch`` (default Grok window).
+
+    ``subject`` is accepted for call-site symmetry with handoff but is **not**
+    on the generate schema (handoff-only). WIP subject is posted on the root bus
+    pointer, not the Stargate body.
+    """
+    del subject, window_index  # handoff-only / pointer-side; not generate wire
     return {
         "op": "generate",
         "seat": DEFAULT_SEAT,
@@ -39,10 +45,31 @@ def default_generate_body(
         "contract": DEFAULT_CONTRACT,
         "packet_path": packet_path,
         "dispatch_thread_id": root_id,
-        "subject": subject,
         "caller_agent": caller_agent,
-        "tags": ["charter-runner", f"root:{root_id}", f"window:{window_index}"],
     }
+
+
+def autonomous_generate_body(
+    *,
+    root_id: str,
+    window_index: int,
+    packet_path: str,
+    subject: str,
+    caller_agent: str,
+) -> dict[str, Any]:
+    """Wire body for the autonomous background-lead window.
+
+    Same generate wire as ``default_generate_body`` (cursor-sdk Grok 4.5 High).
+    The autonomous mandate lives in the materialized packet + root WIP pointer
+    — generate schema rejects ``subject`` / ``tags`` (handoff-only fields).
+    """
+    return default_generate_body(
+        root_id=root_id,
+        window_index=window_index,
+        packet_path=packet_path,
+        subject=subject,
+        caller_agent=caller_agent,
+    )
 
 
 def default_handoff_body(

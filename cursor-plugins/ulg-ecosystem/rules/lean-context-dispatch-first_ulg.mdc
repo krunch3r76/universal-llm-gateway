@@ -1,0 +1,71 @@
+---
+description: Lean context = dispatch-first — resident pre-action gate, escalation ladder, and autonomous CDP trigger for cursor seats. Before non-trivial implement or breadth investigation, prefer dispatch over in-seat hand-coding.
+alwaysApply: true
+rule_category: workflow
+apply_tier: required_gate
+trigger_match_terms:
+  - lean-context-dispatch-first
+  - dispatch-first
+  - lean context
+  - generate-default
+  - cursor-sdk
+  - CDP escalate
+  - project_ask
+---
+# Lean Context = Dispatch-First — Stub
+
+Resident home for the cursor-seat generate-default lock (operator 2026-06-29 /
+2026-07-21). Mechanism tables live in composed SOT — this stub carries the gate,
+ladder, CDP predicate, and guardrails only.
+
+## Invariant (one line)
+
+`lean context ⇒ dispatch heavy reading / authoring / implement off-seat; lead
+stays orchestrator.` Pre-action gate: before any non-trivial implement or breadth
+investigation, ask **"can this be a dispatch?"** — default **yes**, unless
+trivial/local or latency-sensitive tight-loop debugging.
+
+## Escalation ladder
+
+| Need | Path | Autonomy |
+|---|---|---|
+| Mechanical implement | `team_dispatch(op=generate, role=cursor-sdk)` → `cursor/composer-2.5` | Autonomous (default) |
+| Investigate / judgment | `cursor/grok-4.5` effort ∈ {low, medium, **high**} (+ fast) — ¬ xhigh/max | In-seat or gated seat switch |
+| Greater reasoning | **CDP** web-anthropic Opus via `project_ask` (today; future endpoint: `todo:cdp-model-endpoint-dispatch`) | **AUTONOMOUS** under trigger below |
+| Premium metered | `cursor/claude-opus-4-8` effort ∈ {low, medium, high, **xhigh**, **max**} | **OPERATOR-GATED** — propose tier, wait |
+
+Asymmetric effort: Grok tops at `high`; only Opus has `xhigh`/`max`. Fable excluded.
+`anthropic/*` API **PROHIBITED** — see `anthropic-dispatch-authorization`.
+
+## CDP trigger predicate (announce-then-proceed)
+
+**Escalate autonomously when ANY:**
+
+- architecture-suitability / rival-architecture live (detent ≥ wide)
+- ≥2 co-primary hypotheses at cursor tier left unranked
+- invariant-touching or cross-agent-scope bind
+- recurrence class (same failure shape ≥2)
+- external independent check needed
+
+**Anti-trigger (stay `cursor/`):** mechanical · single-subsystem · loci known ·
+self-verifiable.
+
+**Announce-then-proceed:** at fire, emit ONE legible line (`CDP: <trigger> — <why>`),
+then proceed. ¬ silent.
+
+## Guardrails
+
+| Guard | Binding |
+|---|---|
+| Trivial exception | Trivial/local touches + latency-sensitive tight-loop debug stay in-seat (dispatch overhead is anti-lean) |
+| Verification budget | ¬ rubber-stamp fork self-reports; canonical/destructive writes get lead verification (`cursor-sdk-instruction-standard`) |
+| Cost read | Pair CDP / Opus escalation with `observability(operation="dispatch-economics-dollar-equivalents", …)` |
+| CDP corpus staging | `workspaces://` unreadable on web — stage corpus to `cortex://` before CDP fire |
+| Substrate wall | `anthropic/*` prohibited; Fable excluded; compose `anthropic-dispatch-authorization` |
+
+## Composes with (pointers, ¬ copies)
+
+- `consult-routing` — surface / role routing
+- `model-tier-awareness` — escalation tier taxonomy
+- `anthropic-dispatch-authorization` — Anthropic-family substrate house rules
+- `orchestrator-workflow` — why lean = context conservation; stub points here for generate-default
