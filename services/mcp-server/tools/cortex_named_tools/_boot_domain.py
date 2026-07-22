@@ -19,9 +19,22 @@ _LIFE_ENTITY_PREFIXES = (
     "financial:",
     "document:",
 )
-_LIFE_SENTINEL_TEMPLATE = (
-    "{count} life-lane items hidden — explicit life brief to view"
-)
+_LIFE_SENTINEL_TEMPLATE = "{count} life-lane items hidden — explicit life brief to view"
+
+
+def default_boot_domain(domain: str | None, platform: str) -> str | None:
+    """Platform-aware boot-domain default (friction 25727).
+
+    The cursor platform is a code seat: when the caller does not specify a
+    domain, default it to ``coding`` so life / dropbox / life-deadline / temporal
+    life payloads suppress (behind a visible life-lane sentinel) instead of
+    rendering on a code-seat card. An explicit ``domain=`` (e.g. ``life`` for a
+    cross-domain brief) is always preserved. All other platforms keep the caller
+    value (``None`` → ``mixed-minimal`` via ``normalize_boot_domain``).
+    """
+    if domain is None and platform == "cursor":
+        return "coding"
+    return domain
 
 
 def normalize_boot_domain(domain: str | None) -> str:
@@ -201,7 +214,9 @@ def apply_domain_todo_state(
     other_key = "life" if domain == "coding" else "coding"
     primary = [t for t in todos if _todo_domain_class(t) == primary_key]
     other = [t for t in todos if _todo_domain_class(t) == other_key]
-    remainder = [t for t in todos if _todo_domain_class(t) not in {primary_key, other_key}]
+    remainder = [
+        t for t in todos if _todo_domain_class(t) not in {primary_key, other_key}
+    ]
     ordered = primary + remainder
     if not ordered:
         ordered = todos

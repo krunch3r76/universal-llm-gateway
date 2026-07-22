@@ -32,7 +32,28 @@ _SKILLS_INDEX_DIR = Path("/data/files/notes/system/boot")
 # size + ~0.5KB headroom (thread 1427 §A.3); breach self-announces on-card and
 # emits mcp.cortex.boot.card.overbudget. Declared intent: ratchet DOWN as fixed
 # doctrine graduates to skills.
-_CARD_BYTE_CEILINGS = {"web": 19_000, "default": 15_500}
+# The cursor ceiling (friction 25727) is a *construct-under-budget* regression
+# tripwire: the cursor profile (domain=coding default + gate-only skills) lands
+# the card at ~11KB, so 12KB catches drift without demanding a hard truncation
+# of the structured card. NOT a hard trim — breach announces + emits an event.
+_CARD_BYTE_CEILINGS = {"web": 19_000, "cursor": 12_000, "default": 15_500}
+
+
+def _card_ceiling_for(seat_slug: str, boot_domain: str | None = None) -> int:
+    """Resolve the delivered-card byte ceiling for a seat.
+
+    The cursor ceiling is calibrated for the coding lane (the cursor default).
+    An explicit ``domain=life`` / ``mixed-minimal`` cursor brief legitimately
+    restores life payloads and carries more, so it falls back to the default
+    ceiling rather than tripping the coding-lane regression tripwire.
+    """
+    if seat_slug.endswith("-web"):
+        return _CARD_BYTE_CEILINGS["web"]
+    if seat_slug.endswith("-cursor") and boot_domain == "coding":
+        return _CARD_BYTE_CEILINGS["cursor"]
+    return _CARD_BYTE_CEILINGS["default"]
+
+
 logger = get_logger(__name__)
 
 
@@ -91,34 +112,37 @@ def _gate_only_skills_card(
     ``skills_index_md`` was de-inlined (thread 2523 /
     decision:boot-orientation-card-vs-fetch). Keep the header, the blockquote
     preamble, and every ⚑-gate skill line (required gates stay on-card); drop the
-    category headers and non-gate skill lines; inject a pointer to the full index.
+    category headers and non-gate skill lines.
+
+    The header's full-set reference is seat-aware (friction 25727): web seats
+    materialize a ``skills_index_ref`` sidecar, so the header cites it. Cursor /
+    IDE seats do NOT get a sidecar (native skill discovery is resident), so the
+    header points at native discovery rather than a ``skills_index_ref`` that is
+    always ``None`` for those seats.
     NOTE: this trims the skills DIRECTORY only — the operational orientation blocks
     (operator-posture, model-tier, consult-routing, dispatch) are separate ``##``
     sections and are NOT touched here (that thinning is the panel-gated P1 work).
     """
     if not card_md:
         return card_md
+    if skills_index_ref:
+        header = (
+            "## Agent Skills (⚑ required gates shown on-card — "
+            "full active index via skills_index_ref)"
+        )
+    else:
+        header = (
+            "## Agent Skills (⚑ required gates shown on-card — "
+            "full set via native skill discovery)"
+        )
     out: list[str] = []
-    pointer_injected = False
     for line in card_md.split("\n"):
         stripped = line.strip()
         if stripped.startswith("## Agent Skills"):
-            out.append(
-                "## Agent Skills (⚑ required gates shown on-card — "
-                "full active index via skills_index_ref)"
-            )
+            out.append(header)
             continue
         if stripped.startswith(">"):
             out.append(line)
-            if not pointer_injected and "platform seats" in line:
-                ref = skills_index_ref or "notes/system/boot/skills-index-<seat>.md"
-                out.append(
-                    f"> **Full index**: all active skills (concise) live in "
-                    f"`{ref}` (LIVE boot writes it; `skills_index_ref`). Only ⚑ "
-                    f"required-gate skills are enumerated on-card; discover the "
-                    f"rest via the full index at that path (native discovery)."
-                )
-                pointer_injected = True
             continue
         if stripped.startswith("**") and stripped.endswith("**"):
             continue  # category header (e.g. **cortex-planning (12)**) — drop
@@ -342,6 +366,7 @@ def run_cortex_brief(
 
     from ._boot_domain import (
         count_life_lane_card_items,
+        default_boot_domain,
         filter_life_lane_deadlines,
         filter_life_lane_temporal,
         filter_life_lane_todos,
@@ -386,7 +411,8 @@ def run_cortex_brief(
         "session_limit": capability_profile.session_limit,
         "self_reflections_limit": capability_profile.self_reflections_limit,
         "session_agent_filter": None,
-        "domain": normalize_boot_domain(domain),
+        # Cursor is a code seat: default an unset domain to coding (friction 25727).
+        "domain": normalize_boot_domain(default_boot_domain(domain, resolved_platform)),
     }
     # Family anchor replaces the old self_entity_id (persona role entity).
     # The boot data fetch uses this to scope self-reflection assertions.
@@ -463,13 +489,17 @@ def run_cortex_brief(
     dropbox_files: list[str] | None = raw_dropbox_files or None
 
     card_deadlines = (
-        extracted["deadlines"]
-        if profile_dict.get("include_deadlines", True)
-        else None
+        extracted["deadlines"] if profile_dict.get("include_deadlines", True) else None
     )
     card_todos = extracted["todos"] or None
     card_temporal = extracted["temporal_active"] or None
     card_in_flight = extracted["in_flight_todos"] or None
+    # Review-queue is a knowledge-curation surface, not code-implementation state.
+    # On the coding lane (default for cursor seats — friction 25727) suppress the
+    # on-card block; it stays reachable via cortex(tool='review_queue') and renders
+    # on an explicit life / mixed brief.
+    card_review_total = None if suppress_life else extracted["review_total"]
+    card_review_top = None if suppress_life else review_top
     life_hidden_count = 0
     life_lane_sentinel_line: str | None = None
     if suppress_life:
@@ -503,8 +533,8 @@ def run_cortex_brief(
         unread_turn_total=extracted["unread_turn_total"],
         unread_window_label=extracted["unread_window_label"],
         unread_threads=unread_threads,
-        review_total=extracted["review_total"],
-        review_top=review_top,
+        review_total=card_review_total,
+        review_top=card_review_top,
         last_session=(extracted.get("continuity") or {}).get("last_session")
         or (extracted["sessions"][0] if extracted["sessions"] else None),
         continuity=extracted.get("continuity") or None,
@@ -551,7 +581,7 @@ def run_cortex_brief(
     )
 
     card_bytes = len(card.encode("utf-8"))
-    ceiling = _CARD_BYTE_CEILINGS["web" if seat_slug.endswith("-web") else "default"]
+    ceiling = _card_ceiling_for(seat_slug, boot_domain)
     if card_bytes > ceiling:
         card += (
             f"\n\n⚠ Card over budget: {card_bytes}B > {ceiling}B ceiling — "
