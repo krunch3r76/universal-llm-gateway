@@ -3883,12 +3883,18 @@ All-zero catalog rates (`input_rate_per_m` and `output_rate_per_m` both 0.0, and
 | `cost_source` | string | `wire` \| `rate_x_tokens` \| `unavailable` |
 | `input_rate_per_m` | float \| null | Resolved prompt rate (USD per 1M tokens) when looked up |
 | `output_rate_per_m` | float \| null | Resolved completion rate (USD per 1M tokens) when looked up |
+| `cache_write_rate_per_m` | float \| null | Resolved cache-write rate when the rate row defines one |
+| `cache_read_rate_per_m` | float \| null | Resolved cache-read rate when the rate row defines one |
 | `rate_source` | string \| null | `manual_seed`, `catalog_refresh`, etc. |
 | `wire_key` | string \| null | Winning wire field (`cost_usd`, `spend`, `cost`) when `cost_source=wire` |
 
 **Precedence:** authoritative USD wire (`cost_usd` / `spend` / `cost`, not `credits`) wins;
-else `(prompt_tokens/1e6)*input_rate_per_m + (completion_tokens/1e6)*output_rate_per_m`
-(cache tokens excluded in v1); else `cost_usd=null`, `cost_source=unavailable` (null ≠ 0.0).
+else four-term rate×tokens estimate
+`(prompt_tokens/1e6)*input_rate_per_m + (cache_write_tokens/1e6)*cache_write_rate_per_m + (cache_read_tokens/1e6)*cache_read_rate_per_m + (completion_tokens/1e6)*output_rate_per_m`
+(cache terms skipped when the corresponding rate is null / absent on the rate row);
+else `cost_usd=null`, `cost_source=unavailable` (null ≠ 0.0).
+`cost_source=rate_x_tokens` is an **estimate** (prefer wire USD when SDK emits it).
+Cursor-sdk pinned seeds take rates from https://cursor.com/docs/models-and-pricing.
 
 **Wire predicate (F1):** `0.0` counts as authoritative zero only when the key is present on
 the usage dict **and** `usage_capture_status == "captured"`. Missing-key defaults do not win

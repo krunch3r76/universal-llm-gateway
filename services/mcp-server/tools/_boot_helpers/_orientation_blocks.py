@@ -17,7 +17,10 @@ capability-axis handoff notes under ``cortex:notes/system/threads/`` and
 
 from __future__ import annotations
 
-from agent_seat.inject_channels import ORIENTATION_BLOCK_SKILL_MAP
+from agent_seat.inject_channels import (
+    ORIENTATION_BLOCK_SKILL_MAP,
+    orientation_block_keys_for_agent,
+)
 
 # inject-channel block keys → slugs: agent_seat.inject_channels.ORIENTATION_BLOCK_SKILL_MAP
 # Lead seats (config/agents.yaml lead_seats) use this claude-form block on /mcp
@@ -85,14 +88,17 @@ _LIVENESS_BLOCK = """\
 A change is LIVE only when LOADED into the running process at its last deploy/restart — git commit/master is neither necessary nor sufficient. Before claiming a surface changed, ask: (1) WHICH substrate? (2) did its LOAD EVENT fire? (3) what does the LIVE PROBE say? — service behavior→`sync_restart`+observability · MCP surface→mcp restart+boot manifest · routing→`/v1/models` · agent-context→`cortex_brief`. ¬ infer existence/canonicality/done-ness from git; commit is NOT a completion gate.
 Detail: skill `git-posture` (`agent_skill:git-posture`). Tag: `[universal:git-posture]`."""
 
-# Compact index — full playbook is skill `consult-routing` (current superset,
-# verified 2026-06-04). The two highest-frequency traps are kept inline; everything
-# else defers to the skill. See F2 finding, thread 1289.
+# Compact index — full playbook is skill `consult-routing` (current superset).
+# Web-dedup (friction 25727 follow-on): the transport-preflight mandate is GATES
+# §2 (on every seat) and the long-form routing lives in the opctx sidecar's
+# `## Team Consultation` section (web receives both card + opctx). This block now
+# carries ONLY the codified-bug + friction nuances not in GATES/opctx, plus the
+# skill pointer — the GATES-duplicated preflight sentence and the cursor-only
+# `.cursor/rules/` reference (web has no such directory) were removed.
 # inject-channel block key: consult-routing-gate-block
 _CONSULT_ROUTING_GATE = """\
-## Consult routing — use the skill before dispatching
-On any consult / review / handoff / dispatch outside this seat: Use the `consult-routing` skill (canonical slug — seat self-fetches; ¬ fs-read body) BEFORE choosing transport. Mandatory before ANY handoff packet / `team_dispatch(op=handoff)` (implement not exempt). Rule artifacts (Six Blocks, seat map) live under `.cursor/rules/` — skill points; do not skip use because this index is present.
-Codified bug = TWO phases (investigate→dense spec, then execute); filed bug defaults to INVESTIGATION. `friction()` is observation log, not ticket channel. Full model: skill `consult-routing`."""
+## Consult routing — codified-bug + friction nuance (preflight is GATES §2)
+Codified bug = TWO phases (investigate→dense spec, then execute); a filed bug defaults to INVESTIGATION. `friction()` is an observation log, not a ticket channel. Transport preflight is GATES §2 — Use the `consult-routing` skill before ANY handoff / `team_dispatch(op=handoff)` (implement not exempt). Full model: skill `consult-routing`."""
 
 _RAG_SCOPE_AWARENESS_BLOCK = """\
 ## RAG corpus retrieval — primary tool (call directly; ¬ dispatch overflow)
@@ -102,14 +108,18 @@ Default search is AUTO-SCOPED — before "not in corpus": `list_scopes` then exp
 
 
 def _render_server_primary_manifest_line() -> str:
-    """Inject live ``tools/list`` primary names from derivation (layer 1 truth)."""
+    """Inject live ``tools/list`` primary names from derivation (layer 1 truth).
+
+    Body only (no leading newline) — ``render_orientation_blocks`` adds the
+    blank-line separator when it wraps each selected block.
+    """
     from _derive import get_claude_manifest  # noqa: PLC0415
 
     manifest = get_claude_manifest()
     names = sorted(e["tool_name"] for e in manifest)
     joined = ", ".join(names)
     return (
-        f"\n## MCP server primary (`tools/list`, N={len(names)})\n"
+        f"## MCP server primary (`tools/list`, N={len(names)})\n"
         f"Assembly advertises: `{joined}`.\n"
         f"¬ identical to connector-bound callables — see MCP binding block above."
     )
@@ -156,14 +166,13 @@ def _render_op_skill_bindings_line() -> str | None:
     )
 
 
-def _session_close_orientation_for_agent(agent: str | None) -> str | None:
-    if agent and agent.endswith("-web"):
-        block = _SESSION_CLOSE_WEB_BLOCK
-        bindings = _render_op_skill_bindings_line()
-        if bindings:
-            block = f"{block}{bindings}"
-        return f"\n{block}"
-    return None
+def _session_close_web_body() -> str:
+    """Session-close block body + manifest-sourced per-op skill bindings line."""
+    block = _SESSION_CLOSE_WEB_BLOCK
+    bindings = _render_op_skill_bindings_line()
+    if bindings:
+        block = f"{block}{bindings}"
+    return block
 
 
 # Web seats have NO always-applied rule mechanism (Cursor carries
@@ -176,15 +185,15 @@ _TIER_SELECTION_POINTER = """\
 `agent_skill:model-tier-awareness-web` auto-injects on web boot (INJECT_REGISTRY / seat_preloaded). When the operator declares model identity or a task-class trigger fires, follow the **auto-injected** full protocol — do NOT re-derive tier rules from this pointer. Canonical slug: `model-tier-awareness-web`."""
 
 
-def _tier_selection_orientation_for_agent(agent: str | None) -> str | None:
-    if agent and agent.endswith("-web"):
-        return f"\n{_TIER_SELECTION_POINTER}"
-    return None
+def _render_gates_strip(selected: frozenset[str]) -> str:
+    """GATES strip — always inline on every seat (invariant: fire-before-tool-call).
 
-
-def _render_gates_strip(agent: str | None) -> str:
+    The web-only capability-verify line rides along whenever the seat also
+    renders the full capability-verify block (selection-driven, not a seat-suffix
+    check).
+    """
     body = _GATES_STRIP
-    if agent and agent.endswith("-web"):
+    if "capability-verify-block" in selected:
         body = f"{body}\n{_GATES_CAPABILITY_VERIFY_LINE}"
     return f"\n{body}"
 
@@ -196,12 +205,6 @@ Absence of a shell ≠ a step is unavailable. Before ANY "this seat cannot run Y
 - code gate → `dispatch(tool="quality_gate", arguments='{"files": ["path/a.py"]}')` (ruff + compileall + import-check; +Lane-A offline pytest when edits touch `libs/llm_adapters/` or `libs/model_id/`). Security replay (`http_replay`/`http_request`/`http_diff`/`session_store`/`js_analyze`) — call by EXACT name (¬ reliably keyworded in `tool_search`).
 - **This seat closes verification on-seat (`lead_seats` config)** — `quality_gate` + liveness (`manage(action="sync_restart")`, `wait_healthy`). ¬ dispatch cursor for verify-only.
 Arbitrary pytest paths (`services/rag/`, integration) + `tools/pipeline_test replay` are shell/CLI-only → hand off. Full catalog: `.cursor/rules/handoff-dispatchers.mdc` § Seat capability verify + skill `consult-routing`."""
-
-
-def _seat_capability_verify_orientation_for_agent(agent: str | None) -> str | None:
-    if agent and agent.endswith("-web"):
-        return f"\n{_SEAT_CAPABILITY_VERIFY_BLOCK}"
-    return None
 
 
 # inject-channel block key: operator-posture-block
@@ -216,56 +219,102 @@ Orchestration duty: drive the endeavor; orient the operator; conviction at the w
 Full register + anti-patterns: skill `operator-posture` (`agent_skill:operator-posture`)."""
 
 
+# Per-domain render order over the CORE doctrine keys (soft reorder — friction
+# 25727 / thread 1427). Web-only blocks are placed by ``render_orientation_blocks``
+# (tier + capability-verify near the top by GATES; session-close at the tail).
+# GATES itself is always emitted first, on every seat.
+_CORE_BLOCK_ORDER: dict[str, tuple[str, ...]] = {
+    "coding": (
+        "mcp-binding-block",
+        "dispatch-consult-block",
+        "consult-routing-gate-block",
+        "operator-posture-block",
+        "mcp-server-primary-block",
+        "rag-scope-awareness-block",
+        "liveness-block",
+        "entity-hierarchy-block",
+    ),
+    "life": (
+        "operator-posture-block",
+        "consult-routing-gate-block",
+        "mcp-binding-block",
+        "mcp-server-primary-block",
+        "dispatch-consult-block",
+        "rag-scope-awareness-block",
+        "liveness-block",
+        "entity-hierarchy-block",
+    ),
+    "mixed-minimal": (
+        "operator-posture-block",
+        "mcp-binding-block",
+        "mcp-server-primary-block",
+        "dispatch-consult-block",
+        "consult-routing-gate-block",
+        "rag-scope-awareness-block",
+        "liveness-block",
+        "entity-hierarchy-block",
+    ),
+}
+
+
+def _orientation_block_bodies() -> dict[str, str]:
+    """Map each orientation block key → its rendered body (no leading newline).
+
+    ``render_orientation_blocks`` wraps each selected body with a leading
+    newline so the card's ``"\\n".join(parts)`` yields consistent blank-line
+    separators. The block→body mapping and the per-seat SELECTION
+    (``orientation_block_keys_for_agent``) are the two halves of the SOT.
+    """
+    return {
+        "operator-posture-block": _OPERATOR_POSTURE_BLOCK,
+        "mcp-binding-block": _MCP_BINDING_LIVENESS_BLOCK,
+        "mcp-server-primary-block": _render_server_primary_manifest_line(),
+        "dispatch-consult-block": _DISPATCH_CONSULT_BLOCK_CLAUDE,
+        "consult-routing-gate-block": _CONSULT_ROUTING_GATE,
+        "rag-scope-awareness-block": _RAG_SCOPE_AWARENESS_BLOCK,
+        "liveness-block": _LIVENESS_BLOCK,
+        "entity-hierarchy-block": _ENTITY_HIERARCHY_BLOCK,
+        "capability-verify-block": _SEAT_CAPABILITY_VERIFY_BLOCK,
+        "session-close-web-block": _session_close_web_body(),
+        "tier-selection-block": _TIER_SELECTION_POINTER,
+    }
+
+
 def render_orientation_blocks(
     family: str | None = None,
     agent: str | None = None,
     domain: str | None = None,
 ) -> list[str]:
-    """Return the capability-axis + liveness orientation blocks as card parts.
+    """Return the per-seat orientation blocks as card parts (GATES first).
 
-    All seats use the claude direct-call form (``team_dispatch`` in
-    ``_PRIMARY_TOOLS`` direct-call form; ``panel_dispatch`` is primary on
-    claude-web; overflow via ``dispatch(tool="…")`` for advisor/pipeline_consult).
+    Block SELECTION is owned by ``orientation_block_keys_for_agent`` (the single
+    per-seat SOT in ``agent_seat.inject_channels``): cursor renders the thinned
+    resident-covered set, web the full doctrine + web-only blocks, other
+    platforms (api) the full doctrine without web-only blocks. This function
+    only maps keys → bodies and applies the per-``domain`` soft reorder.
 
-    Default (``family is None``) renders the same form, matching the default
-    ``(claude, cursor)`` seat.
-
-    ``domain`` soft-reorders blocks (coding | life | mixed-minimal); bodies are
-    never hard-suppressed here — life hard-suppression is enforced in
+    ``domain`` soft-reorders the CORE blocks (coding | life | mixed-minimal);
+    bodies are never hard-suppressed here — life hard-suppression is enforced in
     ``_boot_domain`` fetch/todo partition and ``render_briefing_card`` assembly.
-
-    Emitted above the skills list by ``render_briefing_card()``. Each element
-    carries a leading newline so the card's ``"\\n".join(parts)`` produces a
-    blank-line separator consistent with the other sections.
+    GATES is always emitted first on every seat (fire-before-any-tool-call is
+    not deferrable to a skill fetch). ``family`` is accepted for signature
+    stability; selection is seat-predicated on ``agent``.
     """
-    session_close_block = _session_close_orientation_for_agent(agent)
-    tier_selection_block = _tier_selection_orientation_for_agent(agent)
-    capability_verify_block = _seat_capability_verify_orientation_for_agent(agent)
+    del family  # seat selection is agent-predicated; family retained for API compat
+    selected = orientation_block_keys_for_agent(agent)
+    bodies = _orientation_block_bodies()
     domain_key = (domain or "mixed-minimal").strip().lower()
-    core_blocks = [
-        f"\n{_OPERATOR_POSTURE_BLOCK}",
-        f"\n{_MCP_BINDING_LIVENESS_BLOCK}",
-        _render_server_primary_manifest_line(),
-        f"\n{_DISPATCH_CONSULT_BLOCK_CLAUDE}",
-        f"\n{_CONSULT_ROUTING_GATE}",
-        f"\n{_RAG_SCOPE_AWARENESS_BLOCK}",
-        f"\n{_LIVENESS_BLOCK}",
-        f"\n{_ENTITY_HIERARCHY_BLOCK}",
-    ]
-    if domain_key == "coding":
-        order = [1, 3, 4, 0, 2, 5, 6, 7]
-    elif domain_key == "life":
-        order = [0, 4, 1, 2, 3, 5, 6, 7]
-    else:
-        order = list(range(len(core_blocks)))
-    blocks = [_render_gates_strip(agent)] + [core_blocks[i] for i in order]
-    if session_close_block:
-        insert_at = 4 if domain_key == "life" else 3
-        blocks.insert(insert_at, session_close_block)
-    if tier_selection_block:
-        blocks.insert(1, tier_selection_block)
-    if capability_verify_block:
-        blocks.insert(2, capability_verify_block)
+    core_order = _CORE_BLOCK_ORDER.get(domain_key, _CORE_BLOCK_ORDER["mixed-minimal"])
+
+    blocks: list[str] = [_render_gates_strip(selected)]
+    # Web-only "top" blocks: tier pointer + capability-verify pair with GATES.
+    for key in ("tier-selection-block", "capability-verify-block"):
+        if key in selected:
+            blocks.append(f"\n{bodies[key]}")
+    blocks.extend(f"\n{bodies[key]}" for key in core_order if key in selected)
+    # Web-only tail block: session-close reminder.
+    if "session-close-web-block" in selected:
+        blocks.append(f"\n{bodies['session-close-web-block']}")
     return blocks
 
 

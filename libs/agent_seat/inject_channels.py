@@ -17,15 +17,22 @@ ORIENTATION_BLOCK_SKILL_MAP: dict[str, tuple[str, ...]] = {
         "web-transcript-preprocessing",
     ),
     "tier-selection-block": ("model-tier-awareness-web",),
-    # rag-scope-awareness-block: no backing agent_skill
+    # No backing agent_skill (rendered inline only; never web skill-injected):
+    #   mcp-server-primary-block — live tools/list manifest line
+    #   rag-scope-awareness-block — no skill covers rag scope semantics
 }
 
-_ORIENTATION_BLOCKS_ALL_SEATS: frozenset[str] = frozenset(
+# Full doctrine set rendered inline on seats WITHOUT resident alwaysApply rules
+# (web + api). Web adds _ORIENTATION_BLOCKS_WEB_ONLY on top; cursor renders the
+# thinned _ORIENTATION_BLOCKS_CURSOR set instead (see orientation_block_keys_for_agent).
+_ORIENTATION_CORE_BLOCKS: frozenset[str] = frozenset(
     {
         "operator-posture-block",
         "mcp-binding-block",
+        "mcp-server-primary-block",
         "dispatch-consult-block",
         "consult-routing-gate-block",
+        "rag-scope-awareness-block",
         "liveness-block",
         "entity-hierarchy-block",
     }
@@ -36,6 +43,24 @@ _ORIENTATION_BLOCKS_WEB_ONLY: frozenset[str] = frozenset(
         "capability-verify-block",
         "session-close-web-block",
         "tier-selection-block",
+    }
+)
+
+# Cursor render set — friction 25727 follow-on. Cursor carries resident
+# alwaysApply rules + native skill discovery, so a core block whose doctrine a
+# resident rule (and/or a self-fetchable skill) already carries is DROPPED
+# (verified against live rule bodies before cutting):
+#   operator-posture-block    → operator-posture.mdc (resident)
+#   dispatch-consult-block     → lean-context-dispatch-first_ulg ladder (resident) + GATES §2
+#   consult-routing-gate-block → GATES §2 + phase-vocabulary_ulg (codified-bug 2-phase) + consult-routing skill
+#   liveness-block             → commit-and-git-scope_ulg + shared-checkout-housekeeping_ulg (resident) + git-posture skill
+#   entity-hierarchy-block     → phase-vocabulary_ulg (resident) + entity-lifecycle-discipline skill
+#   mcp-binding-block          → web/claude.ai connector-shaped; cursor binds vortex natively (GATES §1 one-liner)
+#   mcp-server-primary-block   → cursor sees tools/list natively via the IDE
+# rag-scope-awareness-block has NO resident rule and NO backing skill → KEPT.
+_ORIENTATION_BLOCKS_CURSOR: frozenset[str] = frozenset(
+    {
+        "rag-scope-awareness-block",
     }
 )
 
@@ -55,12 +80,25 @@ def _is_web_agent(agent: str | None) -> bool:
     return bool(agent and agent.endswith("-web"))
 
 
+def _is_cursor_agent(agent: str | None) -> bool:
+    return bool(agent and agent.endswith("-cursor"))
+
+
 def _is_subagent_seat(family: str, platform: str) -> bool:
     return family == "subagent" and platform == "subagent"
 
 
 def orientation_block_keys_for_agent(agent: str | None) -> frozenset[str]:
-    keys = set(_ORIENTATION_BLOCKS_ALL_SEATS)
+    """Per-seat orientation block selection SOT (render + web skill-injection).
+
+    One authoritative selector — the renderer emits exactly these keys, and the
+    web skill-injection accounting derives its slugs from this set. Cursor gets
+    the thinned resident-covered set; web gets full doctrine + web-only blocks;
+    other platforms (api) get full doctrine without the web-only blocks.
+    """
+    if _is_cursor_agent(agent):
+        return _ORIENTATION_BLOCKS_CURSOR
+    keys = set(_ORIENTATION_CORE_BLOCKS)
     if _is_web_agent(agent):
         keys.update(_ORIENTATION_BLOCKS_WEB_ONLY)
     return frozenset(keys)
@@ -76,7 +114,9 @@ def opcontext_section_keys_for_agent(family: str, platform: str) -> frozenset[st
 def web_orientation_inject_skill_slugs(agent: str | None) -> tuple[str, ...]:
     slugs: set[str] = set()
     for key in orientation_block_keys_for_agent(agent):
-        slugs.update(ORIENTATION_BLOCK_SKILL_MAP[key])
+        # Non-skill-backed render blocks (mcp-server-primary, rag-scope) carry no
+        # inject slug — they render inline only, so they contribute nothing here.
+        slugs.update(ORIENTATION_BLOCK_SKILL_MAP.get(key, ()))
     return tuple(sorted(slugs))
 
 
