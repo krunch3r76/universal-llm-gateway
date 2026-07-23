@@ -4,9 +4,9 @@ When the latest CHECKPOINT stop is ``CONSULT_PENDING``, the tick admits a consul
 seat — dual-wire under the same ``window_kind=consult``:
 
 - ``consult_role: judgment_gap`` → web-consult handoff (scope-lock harvest, no
-  ``project_ask``).
-- ``consult_role: r_admit`` → unattended cursor-sdk generate with ``project_ask``
-  in MCP caps (submit→poll→E2 provenance owned by this seat).
+  R-admit transport).
+- ``consult_role: r_admit`` → unattended cursor-sdk generate; primary R host is
+  ``team_dispatch(model=cdp/opus-4.8)`` with MCP ``project_ask`` as escape only.
 
 Consult seats must not dispatch nested consults (depth-1 only).
 """
@@ -37,9 +37,10 @@ def _scope_r_admit(window_index: int, root_id: str) -> str:
 <scope>
 Goal: Charter-runner R-admit CONSULT window {window_index} — external R review on
 agent-bus:{root_id}. The autonomous holder posted CONSULT_PENDING with
-consult_role: r_admit; this window owns project_ask submit→poll→E2 provenance
-(depth-1 only — no nested consult dispatch). Default executor: cursor-sdk Grok
-(unattended generate wire; Opus reviewer via project_ask satellite).
+consult_role: r_admit; this window owns primary R-admit via
+team_dispatch(model=cdp/opus-4.8) submit→poll_hint→E2 provenance (depth-1 only —
+no nested consult dispatch). Default executor: cursor-sdk Grok (unattended
+generate wire; Opus reviewer via cdp/ model-endpoint). MCP project_ask = escape.
 </scope>"""
 
 
@@ -72,16 +73,20 @@ def _invariants_r_admit(root_id: str) -> str:
 <invariants>
 [consult-boundary] CONSULT_PENDING + consult_role: r_admit on agent-bus:{root_id} —
 pinned R prompt URI / dense spec corpus on the root CHECKPOINT; do not re-open scope.
-[R-independence] fire R-admit via `project_ask` to web-anthropic Opus 4.8 — a DIFFERENT
-substrate/family than the cursor-sdk seat running this window. Never self-assess R.
-[depth-1] `project_ask` is the single depth-1 external boundary (cross-family satellite
-≠ nested SDK consult). Harvest one R reply; write the shared four-field consult schema
-via `r_verdict_gate.consult_provenance_from_r_admit` with consultant_family=anthropic /
-consultant_substrate=web-anthropic (reviewer family, not this firing seat).
+[R-independence] fire R-admit via team_dispatch(model=cdp/opus-4.8, contract=light-bounded)
+to web-anthropic Opus — a DIFFERENT substrate/family than the cursor-sdk seat running
+this window. Never self-assess R. MCP project_ask is escape only (IF6 / satellite-direct).
+[depth-1] cdp/ generate is the single depth-1 external boundary (cross-family
+model-endpoint ≠ nested SDK consult). Harvest one R reply; write the shared four-field
+consult schema via `r_verdict_gate.consult_provenance_from_r_admit` with
+consultant_family=anthropic / consultant_substrate=web-anthropic (reviewer family,
+not this firing seat).
 [OF2-resume] if the window ends mid-poll, Next-pickup MUST keep CONSULT_PENDING +
-consult_role: r_admit + execution_id=<id> so the next tick re-admits this R wire.
-[IF6-escape] if consult cannot resume cross-window poll (lost execution_id), surface
-IF6 — holder-fired dual-host remains live until G5 dogfood; do not delete emergency path.
+consult_role: r_admit + poll_hint / from=cdp bus-turn reference (replaces
+execution_id-only resume used by project_ask escape) so the next tick re-admits.
+[IF6-escape] if cdp/ cannot resume cross-window (lost poll_hint / bus turn), surface
+IF6 and use MCP project_ask escape — holder-fired dual-host remains live; do not
+delete emergency path.
 [window] end with exactly one CHECKPOINT on the root, then stop — no worker resume here.
 - Use the `consult-routing` skill (canonical slug — seat self-fetches)
 - Use the `agent-bus-discipline` skill (canonical slug — seat self-fetches)
@@ -127,23 +132,30 @@ def _task_guidance_r_admit(*, root_id: str, scoreboard_line: str) -> str:
    CONSULT_PENDING + consult_role: r_admit and the pinned R prompt URI / corpus.
 
 ## R-admit work (this seat owns submit→poll→E2)
-- If resuming: poll `project_ask` with the pinned execution_id until
-  content_proof/archive_uri (long `running` ≠ stalled; do not abort on wall-clock).
-- If fresh: `project_ask(op=submit, prompt_uri=cortex://…, converse=true,
-  no_project_uuid=true, model=opus-4.8)` → poll to proof.
+### Primary — team_dispatch model=cdp/opus-4.8
+- If resuming: agent_bus.wait from the pinned poll_hint / from=cdp bus-turn until
+  a qualifying cdp turn lands (reply or DELIVERY FAILED). Long running ≠ stalled.
+- If fresh: team_dispatch(op=generate, model=cdp/opus-4.8, contract=light-bounded,
+  prompt/sidecar_ref=<R prompt cortex URI>, dispatch_thread_id=…) → poll via
+  agent_bus.wait from poll_hint (from_agent=cdp).
 - Parse merits verdict with fail-closed gate (ADMIT/RATIFY advance; amendments fold first).
 - Write E2 via `consult_provenance_from_r_admit` — consultant_family=anthropic,
   consultant_substrate=web-anthropic regardless of this seat's substrate.
 - On incomplete poll: Next-pickup = CONSULT_PENDING + consult_role: r_admit +
-  `G3 — resume R-admit poll (execution_id=<id>)` (OF2).
+  poll_hint / from=cdp bus-turn anchor (OF2).
+
+### Escape — MCP project_ask (IF6 / satellite-direct / holder emergency only)
+- project_ask(op=submit, prompt_uri=cortex://…, converse=true, no_project_uuid=true,
+  model=opus-4.8) → poll to content_proof/archive_uri; resume via execution_id.
 
 ## Acceptance criteria
-1. R-admit harvested with content_proof/archive_uri and parseable merits verdict.
+1. R-admit harvested with content_proof/archive_uri (or cdp/ harvest URI) and
+   parseable merits verdict.
 2. Root CHECKPOINT carries the four shared consult provenance fields for implement_ready.
 3. Stop after CHECKPOINT — no nested SDK consult fan-out.
 
 ## Stop conditions
-CHECKPOINT boundary · unresolvable project_ask transport · IF6 tripwire ⇒ BLOCKED.
+CHECKPOINT boundary · unresolvable cdp/ transport · IF6 tripwire ⇒ BLOCKED.
 </task_guidance>"""
 
 
@@ -173,9 +185,10 @@ consult under the autonomous holder (forbidden — depth-1 window boundary only)
 _MCP_CAPABILITIES_R_ADMIT = """\
 <mcp_capabilities>
 LIFE/CORTEX MCP: ON — cortex, agent_bus, fs (cortex sandbox).
-CODE/VORTEX MCP: ON — workspaces fs, project_ask (R-admit to web-anthropic Opus).
-This seat owns project_ask submit→poll (depth-1 external boundary only).
-Nested team_dispatch/cursor-sdk consult fan-out is forbidden in this window.
+CODE/VORTEX MCP: ON — workspaces fs, team_dispatch (primary R-admit:
+model=cdp/opus-4.8), agent_bus wait/poll_hint, project_ask (escape only).
+This seat owns cdp/ submit→poll_hint (depth-1 external boundary). Nested
+cursor-sdk consult fan-out is forbidden in this window.
 </mcp_capabilities>"""
 
 
@@ -193,7 +206,8 @@ def _output_format_r_admit(root_id: str) -> str:
 <output_format>
 Post the CHECKPOINT on agent-bus:{root_id} with the four shared consult provenance
 fields (consult_thread, verdict, consultant_family, consultant_substrate).
-On incomplete poll preserve CONSULT_PENDING + consult_role: r_admit + execution_id.
+On incomplete poll preserve CONSULT_PENDING + consult_role: r_admit + poll_hint /
+from=cdp bus-turn (or execution_id when on project_ask escape).
 Then stop — the next tick re-admits R-admit consult or worker resume after proof.
 </output_format>"""
 

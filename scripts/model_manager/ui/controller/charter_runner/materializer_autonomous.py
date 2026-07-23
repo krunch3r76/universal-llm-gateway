@@ -7,10 +7,11 @@ processes across windows on the next-gated-pickup the charter tick re-admits.
 
 Unlike the one-gated-step generate packet, the autonomous window is authorized to
 act as a background lead: decompose the arc into gated G-rows, dispatch sub-legs,
-fire R-admit via consult_role: r_admit CONSULT_PENDING (consult seat owns
-``project_ask`` submit→poll→E2), restart services for deploy-verify, and run a capped revise loop. The
-substrate separation for R-admit is the sole thing that keeps autonomous R honest
-(autonomous != self-certify); see ``cortex://notes/system/specs/autonomous-path-sim-charter.md``.
+fire R-admit via consult_role: r_admit CONSULT_PENDING (consult seat owns primary
+``team_dispatch(model=cdp/opus-4.8)``; MCP ``project_ask`` = escape), restart
+services for deploy-verify, and run a capped revise loop. The substrate separation
+for R-admit is the sole thing that keeps autonomous R honest (autonomous !=
+self-certify); see ``cortex://notes/system/specs/autonomous-path-sim-charter.md``.
 """
 
 from __future__ import annotations
@@ -62,12 +63,12 @@ implement), fire satellite R-admit, restart services for deploy-verify, and
 revise — NOT the one-gated-step-then-stop generate default.
 [R-independence] R-admit MUST be hosted on a consult seat with consult_role: r_admit
 — the autonomous holder posts CONSULT_PENDING at G3 and STOPs; it must NOT fire
-`project_ask` submit/poll from this window. The consult seat owns submit→poll→E2
-on web-anthropic Opus via the project_ask satellite (jupiter:8770). Autonomous ≠
-self-certify. Never collapse R-admit into your own self-assessment.
+R-admit transport from this window. The consult seat owns primary submit→poll→E2
+via team_dispatch(model=cdp/opus-4.8) (web-anthropic Opus). MCP project_ask =
+escape only. Autonomous ≠ self-certify. Never collapse R-admit into your own
+self-assessment.
 [IF6-escape] holder-fired R-admit (direct project_ask from worker) remains the
-dual-host emergency path until G5 dogfood confirms consult-seat poll-resume; do
-not delete or disable that path in code before dogfood passes.
+dual-host emergency path; do not delete or disable that path in code.
 [restart-auth] service restart for deploy-verify is EXPLICITLY authorized here,
 overriding implement-work-item §4B ask-before-restart: quality_gate →
 manage(sync_restart) → wait_healthy → live probe. Only the `manage` MCP —
@@ -110,9 +111,11 @@ G2  A + Gate-2       cursor-sdk Composer — L1/L2 tables + dense spec
                      (doc_validate gates 6/8/9) + implement_ready assertion.
 G3  R-admit          STOP with CONSULT_PENDING + consult_role: r_admit (pin R
                      prompt URI / dense spec on CHECKPOINT Sidecars). Do NOT
-                     fire project_ask from this holder window — next tick admits
-                     the R-admit consult seat which owns submit→poll→E2. Consult
-                     seat writes shared provenance via consult_provenance_from_r_admit
+                     self-fire R-admit from this holder window — next tick admits
+                     the R-admit consult seat which owns primary
+                     team_dispatch(model=cdp/opus-4.8)→poll_hint (from=cdp);
+                     MCP project_ask = escape only. Consult seat writes shared
+                     provenance via consult_provenance_from_r_admit
                      (consultant_family=anthropic / consultant_substrate=web-anthropic).
                      Parse with fail-closed gate before worker resumes to G4.
 G4  implement +      implement the R-admitted bind, then deploy-verify:
@@ -134,7 +137,7 @@ above as that step requires. Stay inside the gated Next-pickup.
 1. The window's gated step is advanced, revised (clean CHECKPOINT queuing the next
    revise step), or BLOCKED with a clear reason.
 2. If this step is G3 R-admit: post CONSULT_PENDING + consult_role: r_admit with
-   pinned R corpus — do NOT self-fire project_ask from this holder window.
+   pinned R corpus — do NOT self-fire cdp/ or project_ask from this holder window.
 3. If this step runs deploy-verify: the restart-auth loop (quality_gate →
    manage sync_restart → wait_healthy → live probe) ran via the `manage` MCP only.
    A failed probe queues a revise step (≤{revise_cap}), it does not crash the window.
@@ -158,7 +161,8 @@ def _corpus(root_id: str, scoreboard_uri: str | None) -> str:
 Charter root agent-bus:{root_id}. Scoreboard: {scoreboard_uri or '(see latest CHECKPOINT)'}.
 Latest CHECKPOINT on the root is the only state source.
 Design: cortex://notes/system/specs/autonomous-path-sim-charter.md.
-R-admit transport: docs/tool-reference.md § project_ask (jupiter:8770 satellite).
+R-admit transport: primary team_dispatch(model=cdp/opus-4.8); MCP project_ask escape
+(docs/tool-reference.md § project_ask / cdp model-endpoint).
 </corpus>"""
 
 
@@ -167,7 +171,8 @@ _MCP_CAPABILITIES = """\
 LIFE/CORTEX MCP: ON — cortex, agent_bus, fs (cortex sandbox).
 CODE/VORTEX MCP: ON — workspaces fs, observability, quality_gate, team_dispatch
 (fan out Q/A/implement sub-legs), manage (sync_restart authorized for deploy-verify
-per [restart-auth]). R-admit is consult-hosted — holder does NOT use project_ask at G3.
+per [restart-auth]). R-admit is consult-hosted — holder does NOT fire cdp/ or
+project_ask at G3 (consult seat owns primary cdp/; project_ask = escape).
 </mcp_capabilities>"""
 
 

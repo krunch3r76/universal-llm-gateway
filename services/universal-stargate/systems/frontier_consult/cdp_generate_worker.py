@@ -124,6 +124,95 @@ async def post_cdp_turn(
         return False
 
 
+_POST_RETRY_SLEEP_S = 0.5
+ONBEHALF_POST_FAILED_STALL = "onbehalf_post_failed"
+
+
+def format_onbehalf_delivery_failed_body(result: CdpGenerateResult) -> str:
+    """Terminal body when harvest exists but on-behalf bus post failed."""
+    fail = CdpGenerateResult(
+        ok=False,
+        body=result.body or "",
+        execution_id=result.execution_id,
+        satellite_execution_id=result.satellite_execution_id,
+        prompt_uri=result.prompt_uri,
+        picker_model=result.picker_model,
+        archive_uri=result.archive_uri,
+        content_proof_uri=result.content_proof_uri,
+        content_proof_sha256=result.content_proof_sha256,
+        stall_stage=ONBEHALF_POST_FAILED_STALL,
+        error=result.error or "on-behalf bus post failed after retry",
+        substrate=result.substrate,
+        cost_source=result.cost_source,
+    )
+    lines = [format_cdp_result_body(fail)]
+    if result.archive_uri:
+        lines.append(f"- prior_archive_uri: `{result.archive_uri}`")
+    if result.content_proof_uri:
+        lines.append(f"- prior_content_proof_uri: `{result.content_proof_uri}`")
+    return "\n".join(lines)
+
+
+async def deliver_cdp_result_turn(
+    *,
+    result: CdpGenerateResult,
+    thread_id: str,
+    to_agent: str,
+    request_id: str,
+) -> bool:
+    """Post result with one retry; then terminal DELIVERY FAILED (fail-closed).
+
+    Returns True when any post succeeded (result or terminal failure turn).
+    Returns False only when the final DELIVERY FAILED post also fails (bus
+    unreachable) — CRITICAL-logged; substrate stall ceiling is the backstop.
+    """
+    subject = (
+        f"cdp reply — {result.execution_id[:8]}"
+        if result.ok
+        else f"cdp FAILED — {result.execution_id[:8]}"
+    )
+    body = format_cdp_result_body(result)
+    posted = await post_cdp_turn(
+        thread_id=thread_id,
+        to_agent=to_agent,
+        subject=subject,
+        body=body,
+        request_id=request_id,
+    )
+    if posted:
+        return True
+    await asyncio.sleep(_POST_RETRY_SLEEP_S)
+    posted = await post_cdp_turn(
+        thread_id=thread_id,
+        to_agent=to_agent,
+        subject=subject,
+        body=body,
+        request_id=request_id,
+    )
+    if posted:
+        return True
+    fail_subject = f"cdp DELIVERY FAILED — {result.execution_id[:8]}"
+    fail_body = format_onbehalf_delivery_failed_body(result)
+    final = await post_cdp_turn(
+        thread_id=thread_id,
+        to_agent=to_agent,
+        subject=fail_subject,
+        body=fail_body,
+        request_id=request_id,
+    )
+    if not final:
+        logger.critical(
+            "cdp on-behalf DELIVERY FAILED post also failed "
+            "(bus unreachable residual): thread=%s execution_id=%s "
+            "stall_stage=%s request_id=%s",
+            thread_id,
+            result.execution_id,
+            ONBEHALF_POST_FAILED_STALL,
+            request_id,
+        )
+    return final
+
+
 async def run_cdp_worker(
     *,
     execution_id: str,
@@ -153,15 +242,9 @@ async def run_cdp_worker(
             picker_model=model_id.split("/", 1)[-1],
             error=f"worker_crash: {exc}",
         )
-    subject = (
-        f"cdp reply — {execution_id[:8]}"
-        if result.ok
-        else f"cdp FAILED — {execution_id[:8]}"
-    )
-    await post_cdp_turn(
+    await deliver_cdp_result_turn(
+        result=result,
         thread_id=thread_id,
         to_agent=to_agent,
-        subject=subject,
-        body=format_cdp_result_body(result),
         request_id=request_id,
     )
