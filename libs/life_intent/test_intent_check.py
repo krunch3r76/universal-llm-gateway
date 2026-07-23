@@ -43,7 +43,7 @@ def test_refused_vocabulary_dispatch() -> None:
         {
             "verb": "fix",
             "subject": "broken thing",
-            "detail": "Please team_dispatch op=generate role=cursor-sdk to fix this.",
+            "detail": "Please team_dispatch op=generate seat=cursor-sdk to fix this.",
         }
     )
     assert any(r.code == "refused_vocabulary" for r in result.rejects)

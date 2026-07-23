@@ -42,6 +42,8 @@ class LadderAdvanceState:
     min_bytes: int = 1
     sha256_file: Callable[[Path], str] | None = None
     execution_id: str = ""
+    output_download_pending: bool = False
+    blocked_archive_paths: set[Path] = field(default_factory=set)
 
 
 def archive_stamp_allows_content_proof(
@@ -106,6 +108,11 @@ async def advance_ladder_from_harvest(
                 if not path.is_file() or path.stat().st_size < progress.min_bytes:
                     continue
             except OSError:
+                continue
+            if (
+                progress.output_download_pending
+                and path.resolve() in progress.blocked_archive_paths
+            ):
                 continue
             if not archive_stamp_allows_content_proof(path, progress.execution_id):
                 continue

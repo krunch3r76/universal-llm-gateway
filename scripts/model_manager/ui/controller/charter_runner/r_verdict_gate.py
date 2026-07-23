@@ -88,3 +88,94 @@ def advance_allowed(text: str) -> bool:
 def gate_action(text: str) -> RGateAction:
     """Return the machine gate action for an R-admit harvest or sidecar body."""
     return parse_r_verdict(text).action
+
+
+def parse_r_verdict_with_independence(
+    text: str,
+    *,
+    r_family: str | None = None,
+    implement_family: str | None = None,
+) -> ParsedRVerdict:
+    """Parse R verdict and reject ADVANCE when R family equals implement family."""
+    parsed = parse_r_verdict(text)
+    if parsed.action is not RGateAction.ADVANCE:
+        return parsed
+    rf = (r_family or "").strip().lower()
+    impl = (implement_family or "").strip().lower()
+    if rf and impl and rf == impl:
+        return ParsedRVerdict(
+            parsed.verdict,
+            RGateAction.BLOCKED,
+            "same_family_r_pre_check_only",
+        )
+    return parsed
+
+
+def advance_allowed_with_independence(
+    text: str,
+    *,
+    r_family: str | None = None,
+    implement_family: str | None = None,
+) -> bool:
+    """True only when merits verdict advances and families differ."""
+    return (
+        parse_r_verdict_with_independence(
+            text,
+            r_family=r_family,
+            implement_family=implement_family,
+        ).action
+        is RGateAction.ADVANCE
+    )
+
+
+@dataclass(frozen=True)
+class ConsultProvenance:
+    """Single ``implement_ready`` consult schema (R-admit and judgment-gap)."""
+
+    consult_thread: str
+    verdict: str
+    consultant_family: str
+    consultant_substrate: str
+
+
+def consult_provenance_from_r_admit(
+    *,
+    consult_thread: str,
+    harvest_text: str,
+    consultant_family: str = "anthropic",
+    consultant_substrate: str = "web-anthropic",
+) -> ConsultProvenance | None:
+    """Map an R-admit harvest into the shared consult provenance schema.
+
+    Holder-fired G3 and consult-seat judgment gaps write the same four fields
+    so ``implement_ready`` has one gate (Fable G7 E2). Returns ``None`` when the
+    harvest has no parseable path-sim verdict token.
+    """
+    thread = (consult_thread or "").strip()
+    if not thread:
+        return None
+    parsed = parse_r_verdict(harvest_text)
+    if not parsed.verdict:
+        return None
+    family = (consultant_family or "").strip() or "anthropic"
+    substrate = (consultant_substrate or "").strip() or "web-anthropic"
+    return ConsultProvenance(
+        consult_thread=thread,
+        verdict=parsed.verdict,
+        consultant_family=family,
+        consultant_substrate=substrate,
+    )
+
+
+def format_consult_provenance_md(prov: ConsultProvenance, *, evidence: str | None = None) -> str:
+    """CHECKPOINT markdown block for the shared consult provenance schema."""
+    lines = [
+        "## Consult provenance",
+        f"- consult_thread: {prov.consult_thread}",
+        f"- verdict: {prov.verdict}",
+        f"- consultant_family: {prov.consultant_family}",
+        f"- consultant_substrate: {prov.consultant_substrate}",
+    ]
+    if evidence:
+        lines.append(f"- evidence: {evidence}")
+    return "\n".join(lines) + "\n"

@@ -118,7 +118,7 @@ def test_propose_refused_vocabulary(monkeypatch: pytest.MonkeyPatch) -> None:
                 "verb": "fix",
                 "subject": "widget",
                 "detail": (
-                    "Use team_dispatch with role=cursor-sdk to patch this "
+                    "Use team_dispatch with seat=cursor-sdk to patch this "
                     "broken widget."
                 ),
             }

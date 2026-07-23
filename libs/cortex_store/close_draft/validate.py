@@ -70,6 +70,25 @@ def resolve_draft_paths(fields: dict[str, Any]) -> tuple[dict[str, Any], list[di
     return resolved, errors
 
 
+def coalesce_draft_fields(
+    *,
+    nested: dict[str, Any] | None,
+    flat: dict[str, Any] | None,
+) -> tuple[dict[str, Any], list[str]]:
+    """Merge nested ``fields`` with top-level draft aliases.
+
+    Life/web callers often pass ``summary`` / ``session_summary_md`` at the
+    request top level. Pydantic would otherwise drop those extras and leave an
+    empty draft — check used to PASS, then commit failed with summary got 0.
+    Nested ``fields`` wins on key collision. Returns (merged, unknown_keys).
+    """
+    flat = flat or {}
+    nested = nested or {}
+    unknown = [k for k in flat if k not in ALLOWED_FIELD_KEYS]
+    folded = {k: v for k, v in flat.items() if k in ALLOWED_FIELD_KEYS}
+    return {**folded, **nested}, unknown
+
+
 def depth_cross_field_gaps(fields: dict[str, Any]) -> list[dict[str, str]]:
     depth = str(fields.get("depth") or "light")
     has_transcript_path = bool(fields.get("transcript_md_path"))
@@ -113,14 +132,34 @@ def depth_cross_field_gaps(fields: dict[str, Any]) -> list[dict[str, str]]:
                 "action": "Use light/verbatim when decisions/entities/handoff exist",
             }
         )
+    # Required for commit/session_close — missing must FAIL check (not only
+    # too-short-when-present). Empty draft {depth:light} used to PASS.
     summary = fields.get("summary")
-    if summary is not None and len(str(summary)) < 20:
+    summary_text = str(summary).strip() if summary is not None else ""
+    if len(summary_text) < 20:
         gaps.append(
             {
                 "code": "summary.too_short",
                 "item": "summary",
-                "priority": "high",
-                "action": "Write summary ≥20 characters",
+                "priority": "critical",
+                "action": (
+                    "Set fields.summary (≥20 chars) via close(op=draft); "
+                    "top-level summary is also accepted as an alias"
+                ),
+            }
+        )
+    has_summary_md = bool(str(fields.get("session_summary_md") or "").strip())
+    has_summary_path = bool(fields.get("session_summary_md_path"))
+    if depth != "none" and not has_summary_md and not has_summary_path:
+        gaps.append(
+            {
+                "code": "session_summary.required",
+                "item": "session_summary_md",
+                "priority": "critical",
+                "action": (
+                    "Set fields.session_summary_md (or session_summary_md_path) "
+                    "via close(op=draft)"
+                ),
             }
         )
     return gaps

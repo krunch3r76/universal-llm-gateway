@@ -73,6 +73,10 @@ def _ready_kwargs(**over: object) -> dict[str, object]:
         "files_expected": ["a.py"],
         "acceptance_criteria": ["criterion one"],
         "entity_name": "Sample",
+        "consult_thread": "agent-bus:8801",
+        "verdict": "proceed",
+        "consultant_family": "anthropic",
+        "consultant_substrate": "web-anthropic",
     }
     base.update(over)
     return base

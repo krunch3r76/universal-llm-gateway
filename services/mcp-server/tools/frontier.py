@@ -478,6 +478,9 @@ def register_frontier_tools(mcp: FastMCP) -> None:
           Provider-neutral no-op where a provider has none (OQ-b ruling).
         - ``skills``: unified skills input path; capability-selected delivery;
           ``list[str]``; unsupported on ``op="handoff"`` (see validation above).
+          On roleless CDP generate (``model=cdp/<picker>``): Claude slugs
+          (``shared_sync``) are prepended as ``/<slug>\\n`` lines; non-Claude
+          skills are inlined at the top of the sealed prompt.
           MCP-predicated skills on a non-MCP dispatch reject 422
           ``skills_mcp_predicated`` naming the offenders; scope-default
           predicated skills are skipped with an event, never rejected.

@@ -249,6 +249,11 @@ def register_manage_tools(mcp: FastMCP) -> None:
                                              one-line holder description (prefer it
                                              when diagnosing busy=true — e.g. cursor-sdk
                                              dispatch id + model + subject).
+                                             For cdp_ask, busy=true means any in-flight
+                                             project-ask (restart drain) — NOT lane-full.
+                                             Admission uses active_work.{free_slots,
+                                             at_soft_limit, at_hard_limit} with soft=2
+                                             hard=3 (friction a:25814).
                                              restart_intent is null when
                                              no live non-terminal intent exists;
                                              otherwise {restart_intent_id, status,

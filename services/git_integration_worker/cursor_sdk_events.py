@@ -299,6 +299,46 @@ def FrontierSdkWorkerQueued(  # noqa: N802
 
 
 @event_factory
+def FrontierSdkImplementSourceRefUnresolved(  # noqa: N802
+    dispatch_id: str,
+    thread_id: str,
+    execution_id: str,
+) -> Event:
+    return Event(
+        signal="frontier.sdk.implement.source_ref_unresolved",
+        payload={
+            "dispatch_id": dispatch_id,
+            "thread_id": thread_id,
+            "execution_id": execution_id,
+        },
+        scope="node",
+    )
+
+
+def emit_sdk_implement_unresolved_source_ref(
+    *,
+    dispatch_id: str,
+    thread_id: str,
+    execution_id: str,
+) -> None:
+    """Watchable gap when ``contract=implement`` admits without a ``source_ref``."""
+    _emit(
+        FrontierSdkImplementSourceRefUnresolved(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            execution_id=execution_id,
+        )
+    )
+    logger.warning(
+        "cursor sdk implement admit unresolved source_ref: dispatch_id=%s "
+        "thread_id=%s execution_id=%s",
+        dispatch_id,
+        thread_id,
+        execution_id,
+    )
+
+
+@event_factory
 def FrontierWriteLeaseAcquired(  # noqa: N802
     dispatch_id: str,
     source_repo: str | None,

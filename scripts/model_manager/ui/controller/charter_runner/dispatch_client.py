@@ -17,11 +17,13 @@ from transport_utils import DEFAULT_STARGATE_URL, make_async_client
 
 from .executor_defaults import (
     autonomous_generate_body,
+    consult_handoff_body,
     default_generate_body,
     default_handoff_body,
+    r_admit_consult_generate_body,
 )
 
-AdmissionMode = Literal["generate", "handoff", "autonomous"]
+AdmissionMode = Literal["generate", "handoff", "autonomous", "consult"]
 
 _TIMEOUT_S = 30.0
 _DISPATCH_PATH = "/api/v1/team/dispatch"
@@ -56,6 +58,7 @@ async def fire_window(
     window_index: int = 1,
     subject: str | None = None,
     admission_mode: AdmissionMode = "generate",
+    consult_role: str | None = None,
 ) -> dict[str, Any]:
     """Admit one charter window (generate default or attended handoff)."""
     packet_path = write_handoff_packet(
@@ -73,6 +76,25 @@ async def fire_window(
             caller_agent=_CALLER,
         )
         path = _HANDOFF_PATH
+    elif admission_mode == "consult":
+        if consult_role == "r_admit":
+            body = r_admit_consult_generate_body(
+                root_id=root_id,
+                window_index=window_index,
+                packet_path=packet_path,
+                subject=subj,
+                caller_agent=_CALLER,
+            )
+            path = _DISPATCH_PATH
+        else:
+            body = consult_handoff_body(
+                root_id=root_id,
+                window_index=window_index,
+                packet_path=packet_path,
+                subject=subj,
+                caller_agent=_CALLER,
+            )
+            path = _HANDOFF_PATH
     elif admission_mode == "autonomous":
         body = autonomous_generate_body(
             root_id=root_id,
@@ -104,6 +126,17 @@ async def fire_window(
     result["packet_path"] = packet_path
     if admission_mode == "handoff":
         result["executor"] = {"role": "cursor-consult", "seat": "cursor"}
+    elif admission_mode == "consult":
+        if consult_role == "r_admit":
+            result["executor"] = {
+                "seat": body["seat"],
+                "model": body["model"],
+                "model_knobs": body["model_knobs"],
+                "contract": body["contract"],
+                "consult_role": "r_admit",
+            }
+        else:
+            result["executor"] = {"role": "web-consult", "seat": "web-anthropic"}
     else:
         result["executor"] = {
             "seat": body["seat"],

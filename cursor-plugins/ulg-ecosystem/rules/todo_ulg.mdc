@@ -163,7 +163,7 @@ Full procedure: Use the `handoff-packet-authoring` skill § Staging.
 |---|---|---|
 | `web-spec` | `team_dispatch(op=handoff, role=web-consult)` + consult packet | design spec / findings |
 | `web-implement-packet` | `team_dispatch(op=handoff, role=web-implement)` + **consult** packet (shorthand `role=web-consult`) | `*-implement-packet.md` (six blocks) — a doc for a downstream implementer |
-| `cursor-sdk-implement` *(default for bound implement)* | `team_dispatch(op=generate, role=cursor-sdk, packet_path=…, contract=implement)` — auto Composer, no IDE pickup; **dense packet required** | code + tests + bus closeout (auto) |
+| `cursor-sdk-implement` *(default for bound implement)* | `team_dispatch(op=generate, seat=cursor-sdk, packet_path=…, contract=implement)` — auto Composer, no IDE pickup; **dense packet required** | code + tests + bus closeout (auto) |
 | `cursor-mechanical` | `cursor-sdk` generate (default) OR IDE session + packet/spec when already in Cursor | code + corpus + closeout |
 | `cursor-implement` | `team_dispatch(op=handoff, role=cursor-implement, source_ref=todo:{slug})` — **fallback** (operator opens IDE) | code + tests + bus closeout |
 | `operator-gate` | operator action (assert, accept, export) | cortex assert / bus ack |

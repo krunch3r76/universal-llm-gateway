@@ -61,7 +61,7 @@ second opinion, hand off reasoning, **or hand off a bound implementation**.
    from the IDE, or `role=web-consult` from web) to trace root cause, inventory touch points,
    and resolve design choice into a dense spec; **investigate close** distills `files_expected` /
    `acceptance_criteria` (+ `required_skills`) and records implement-ready + `spec_sha256`;
-   **execute** default = `team_dispatch(op=generate, role=cursor-sdk, contract=implement,
+   **execute** default = `team_dispatch(op=generate, seat=cursor-sdk, contract=implement,
    source_ref=todo:{slug})` (code surface only — on life: `agent_bus` a code seat) (or web-native inline `fs` fix) only once attrs are distilled;
    `cursor-implement` / `web-implement` + `packet_path` = named fallback. **Pass zoom-out duty:**
    on every `type:bug` bus pickup or bug handoff to web/cursor, zoom out in the pass — grep the

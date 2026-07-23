@@ -74,6 +74,8 @@ def _resolve_admission_token(raw: str) -> AdmissionMode | None:
         return "handoff"
     if token == "autonomous":
         return "autonomous"
+    if token == "consult":
+        return "consult"
     return None
 
 
@@ -245,6 +247,10 @@ class CharterRunnerTickLoop:
             )
         window_index = _count_admissions(turns) + 1
         admission_mode = _admission_mode()
+        consult_role: str | None = None
+        if decision.window_kind == "consult":
+            admission_mode = "consult"
+            consult_role = decision.parsed.consult_role
         # A-R3-4: durable pre-fire intent — crash before pointer must not re-fire.
         if self._caps.has_admit_intent(root_id, window_index):
             self._caps.mark_failed(root_id, "admit_intent_orphan")
@@ -258,6 +264,7 @@ class CharterRunnerTickLoop:
             scoreboard_uri=decision.parsed.scoreboard_uri,
             window_index=window_index,
             admission_mode=admission_mode,
+            consult_role=consult_role,
         )
         self._caps.mark_admit_intent(root_id, window_index)
         # Fire first — a failed handoff must not leave an orphaned in-flight pointer.
@@ -269,6 +276,7 @@ class CharterRunnerTickLoop:
                 window_index=window_index,
                 subject=subject,
                 admission_mode=admission_mode,
+                consult_role=consult_role,
             )
         except Exception:
             self._caps.clear_admit_intent(root_id, window_index)
@@ -320,6 +328,11 @@ class CharterRunnerTickLoop:
             logger.exception("charter-runner window_log append_admit failed")
         if admission_mode == "handoff":
             mode_note = " (attended IDE — open worker thread)"
+        elif admission_mode == "consult":
+            if consult_role == "r_admit":
+                mode_note = " (CONSULT_PENDING — R-admit consult, cursor-sdk generate)"
+            else:
+                mode_note = " (CONSULT_PENDING — web-consult cross-family)"
         elif admission_mode == "autonomous":
             mode_note = " (autonomous background lead — cursor/grok-4.5)"
         else:

@@ -7,8 +7,8 @@ processes across windows on the next-gated-pickup the charter tick re-admits.
 
 Unlike the one-gated-step generate packet, the autonomous window is authorized to
 act as a background lead: decompose the arc into gated G-rows, dispatch sub-legs,
-fire R-admit on a *different substrate* (web-anthropic Opus via the ``project_ask``
-satellite), restart services for deploy-verify, and run a capped revise loop. The
+fire R-admit via consult_role: r_admit CONSULT_PENDING (consult seat owns
+``project_ask`` submit→poll→E2), restart services for deploy-verify, and run a capped revise loop. The
 substrate separation for R-admit is the sole thing that keeps autonomous R honest
 (autonomous != self-certify); see ``cortex://notes/system/specs/autonomous-path-sim-charter.md``.
 """
@@ -20,6 +20,7 @@ from universal_logging import get_logger
 from .checkpoint_parse import ParsedCheckpoint
 from .executor_defaults import DEFAULT_MODEL, DEFAULT_MODEL_KNOBS
 from .materializer import _work_summary, handoff_subject, materialize_resume_packet
+from .materializer_consult import consult_subject, materialize_consult_packet
 
 logger = get_logger(__name__)
 
@@ -59,11 +60,14 @@ thread read.
 decompose the arc into gated G-rows, dispatch sub-legs (team_dispatch Q/A/
 implement), fire satellite R-admit, restart services for deploy-verify, and
 revise — NOT the one-gated-step-then-stop generate default.
-[R-independence] R-admit MUST be dispatched to web-anthropic Opus 4.8 via the
-`project_ask` satellite (jupiter:8770) — a DIFFERENT substrate/family than the
-cursor-sdk Grok/Composer running Q/A/implement. Autonomous ≠ self-certify.
-Firing your own R is legitimate ONLY because the reviewer model/family differs.
-Never collapse R-admit into your own self-assessment.
+[R-independence] R-admit MUST be hosted on a consult seat with consult_role: r_admit
+— the autonomous holder posts CONSULT_PENDING at G3 and STOPs; it must NOT fire
+`project_ask` submit/poll from this window. The consult seat owns submit→poll→E2
+on web-anthropic Opus via the project_ask satellite (jupiter:8770). Autonomous ≠
+self-certify. Never collapse R-admit into your own self-assessment.
+[IF6-escape] holder-fired R-admit (direct project_ask from worker) remains the
+dual-host emergency path until G5 dogfood confirms consult-seat poll-resume; do
+not delete or disable that path in code before dogfood passes.
 [restart-auth] service restart for deploy-verify is EXPLICITLY authorized here,
 overriding implement-work-item §4B ask-before-restart: quality_gate →
 manage(sync_restart) → wait_healthy → live probe. Only the `manage` MCP —
@@ -80,6 +84,14 @@ step (increment revise counter). Worker crash/timeout ⇒ STOP root via worker_f
 never mask a crash as a probe revise.
 [window] end this window with exactly one CHECKPOINT, then stop. The next tick
 admits the next gated step. Do NOT run an immortal loop inside one window.
+[consult-boundary] when judgment/ambitious work needs external consult, post
+CONSULT_PENDING with consult_role: judgment_gap (pin Question/OOS + corpus manifest)
+or consult_role: r_admit at G3 (pin R prompt URI) and STOP — never nested
+team_dispatch/cursor-sdk consult under this autonomous holder (depth-1 only;
+next tick admits a separate cross-family consult seat).
+[consult-depth] consult seats are single-round (depth-1); they cannot dispatch
+further consults. Resume worker windows only after consult provenance is on the
+root CHECKPOINT / todo attrs.
 {_DENSIFY_FLOOR}
 </invariants>"""
 
@@ -96,12 +108,13 @@ def _task_guidance(*, root_id: str, work: str, scoreboard_line: str, revise_cap:
 G1  Q (L0)           cursor-sdk Grok — ranked question table + Question set.
 G2  A + Gate-2       cursor-sdk Composer — L1/L2 tables + dense spec
                      (doc_validate gates 6/8/9) + implement_ready assertion.
-G3  R-admit          project_ask(op=submit, prompt_uri=cortex://…, converse=true,
-                     no_project_uuid=true, model=opus-4.8) → poll to
-                     content_proof/archive_uri (long `running` ≠ stalled; ¬ abort
-                     on wall-clock) → verdict. Parse with fail-closed gate: only
-                     ADMIT/RATIFY → implement; ADMIT_WITH_AMENDMENTS → fold amendments
-                     first; RETURN/SCOPE-DRIFT/unparseable → BLOCKED. [R-independence]
+G3  R-admit          STOP with CONSULT_PENDING + consult_role: r_admit (pin R
+                     prompt URI / dense spec on CHECKPOINT Sidecars). Do NOT
+                     fire project_ask from this holder window — next tick admits
+                     the R-admit consult seat which owns submit→poll→E2. Consult
+                     seat writes shared provenance via consult_provenance_from_r_admit
+                     (consultant_family=anthropic / consultant_substrate=web-anthropic).
+                     Parse with fail-closed gate before worker resumes to G4.
 G4  implement +      implement the R-admitted bind, then deploy-verify:
     deploy-verify      quality_gate → manage(sync_restart, service=<svc>) →
                        manage(busy_status) wait_healthy → live probe.
@@ -120,9 +133,8 @@ above as that step requires. Stay inside the gated Next-pickup.
 ## Acceptance criteria
 1. The window's gated step is advanced, revised (clean CHECKPOINT queuing the next
    revise step), or BLOCKED with a clear reason.
-2. If this step is R-admit: it was fired via `project_ask` to web-anthropic Opus
-   (NOT self-assessed), polled to content_proof/archive_uri, and its verdict is
-   recorded with the harvest URI. R-independence guardrail honored.
+2. If this step is G3 R-admit: post CONSULT_PENDING + consult_role: r_admit with
+   pinned R corpus — do NOT self-fire project_ask from this holder window.
 3. If this step runs deploy-verify: the restart-auth loop (quality_gate →
    manage sync_restart → wait_healthy → live probe) ran via the `manage` MCP only.
    A failed probe queues a revise step (≤{revise_cap}), it does not crash the window.
@@ -133,7 +145,8 @@ above as that step requires. Stay inside the gated Next-pickup.
 6. Stop after the CHECKPOINT — no second window.
 
 ## Stop conditions (first wins)
-CHECKPOINT boundary · revise cap {revise_cap} exhausted (post BLOCKED) ·
+CHECKPOINT boundary · CONSULT_PENDING (external consult — stop; no nested SDK) ·
+revise cap {revise_cap} exhausted (post BLOCKED) ·
 judgment-required operator fork · unresolvable failure. NEVER exit with a failure
 status on a recoverable probe fail — post a clean revise CHECKPOINT instead.
 </task_guidance>"""
@@ -154,7 +167,7 @@ _MCP_CAPABILITIES = """\
 LIFE/CORTEX MCP: ON — cortex, agent_bus, fs (cortex sandbox).
 CODE/VORTEX MCP: ON — workspaces fs, observability, quality_gate, team_dispatch
 (fan out Q/A/implement sub-legs), manage (sync_restart authorized for deploy-verify
-per [restart-auth]), project_ask (R-admit to web-anthropic Opus per [R-independence]).
+per [restart-auth]). R-admit is consult-hosted — holder does NOT use project_ask at G3.
 </mcp_capabilities>"""
 
 
@@ -228,12 +241,21 @@ def select_packet(
     scoreboard_uri: str | None,
     window_index: int,
     admission_mode: str,
+    consult_role: str | None = None,
 ) -> tuple[str, str]:
     """Return ``(packet_body, bus_subject)`` for the given admission mode.
 
-    ``autonomous`` yields the background-lead packet; ``generate``/``handoff``
-    defer to the unchanged ``materialize_resume_packet`` + ``handoff_subject``.
+    ``autonomous`` yields the background-lead packet; ``consult`` yields the
+    depth-1 consult seat packet (judgment vs R-admit by ``consult_role``);
+    ``generate``/``handoff`` defer to the unchanged ``materialize_resume_packet``
+    + ``handoff_subject``.
     """
+    if admission_mode == "consult":
+        packet = materialize_consult_packet(
+            root_id, parsed, scoreboard_uri=scoreboard_uri, window_index=window_index
+        )
+        role = consult_role or parsed.consult_role
+        return packet, consult_subject(root_id, window_index, consult_role=role)
     if admission_mode == "autonomous":
         packet = materialize_autonomous_packet(
             root_id, parsed, scoreboard_uri=scoreboard_uri, window_index=window_index

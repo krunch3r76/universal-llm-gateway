@@ -14,6 +14,12 @@ from cdp_ask.models import CompletionPhase, ExecutionStatus, StallStage
 
 DeregisterFn = Callable[[str], None]
 
+# Operator bind (friction a:25814): simultaneous CDP project-ask lanes.
+# soft = prefer-not-to-add; hard = lane-full for admission. Drain `busy` stays
+# independent: any pending/running work defers restart.
+LANE_SOFT_LIMIT = 2
+LANE_HARD_LIMIT = 3
+
 
 @dataclass
 class ExecutionRecord:
@@ -105,7 +111,12 @@ class ExecutionStore:
             }
 
     async def active_work_snapshot(self) -> dict[str, Any]:
-        """Aggregate pending/running executions for drain-aware restart probes."""
+        """Aggregate pending/running executions for drain + lane-admission probes.
+
+        ``busy`` is restart-drain semantics (any in-flight work) — NOT lane-full.
+        Seats admit a new CDP lane from ``free_slots`` / ``at_hard_limit``
+        (soft=2 prefer, hard=3 ceiling; friction a:25814).
+        """
         async with self._lock:
             execution_ids = [
                 rec.execution_id
@@ -113,10 +124,16 @@ class ExecutionStore:
                 if rec.status in {"pending", "running"}
             ]
         running_count = len(execution_ids)
+        free_slots = max(0, LANE_HARD_LIMIT - running_count)
         return {
             "busy": running_count > 0,
             "running_count": running_count,
             "execution_ids": execution_ids,
+            "soft_limit": LANE_SOFT_LIMIT,
+            "hard_limit": LANE_HARD_LIMIT,
+            "free_slots": free_slots,
+            "at_soft_limit": running_count >= LANE_SOFT_LIMIT,
+            "at_hard_limit": running_count >= LANE_HARD_LIMIT,
         }
 
     async def attach_task(self, execution_id: str, task: asyncio.Task[Any]) -> None:

@@ -65,6 +65,32 @@ class DispatchConflict(Exception):  # noqa: N818 — spec name (preserved from r
     """Raised when dispatch_id fingerprint does not match a prior admission."""
 
 
+class SourceRefConflict(Exception):  # noqa: N818 — peer implement gate
+    """Raised when a non-terminal implement already holds the same ``source_ref``.
+
+    Attributes:
+        source_ref: Work-item identity that collided.
+        holder_dispatch_id: In-flight peer dispatch id.
+        holder_thread_id: In-flight peer bus thread id, when persisted.
+    """
+
+    def __init__(
+        self,
+        *,
+        source_ref: str,
+        holder_dispatch_id: str,
+        holder_thread_id: str | None,
+    ) -> None:
+        self.source_ref = source_ref
+        self.holder_dispatch_id = holder_dispatch_id
+        self.holder_thread_id = holder_thread_id
+        super().__init__(
+            f"source_ref {source_ref!r} already has non-terminal implement "
+            f"(holder_dispatch_id={holder_dispatch_id!r}, "
+            f"holder_thread_id={holder_thread_id!r})"
+        )
+
+
 def _now() -> str:
     from datetime import datetime
 
@@ -333,11 +359,20 @@ class CursorDispatchLedger:
                 conn.execute(
                     "ALTER TABLE cursor_sdk_dispatches ADD COLUMN queued_at TEXT"
                 )
+            if "source_ref" not in cols:
+                conn.execute(
+                    "ALTER TABLE cursor_sdk_dispatches ADD COLUMN source_ref TEXT"
+                )
             _migrate_queued_status(conn)
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_sdk_dispatch_queued "
                 "ON cursor_sdk_dispatches(source_repo, worker_instance, status) "
                 "WHERE status = 'queued'"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_sdk_dispatch_source_ref_active "
+                "ON cursor_sdk_dispatches(source_ref, status) "
+                "WHERE status IN ('queued','admitted','running')"
             )
 
     def _connect(self) -> sqlite3.Connection:
@@ -377,10 +412,20 @@ class CursorDispatchLedger:
         source_repo: str | None = None,
         read_only: bool = False,
         worker_instance: str | None = None,
+        source_ref: str | None = None,
+        force: bool = False,
     ) -> CursorDispatchResponse | None:
         """Durable idempotency (F2). Returns cached admission on hit, None on first
         admitted insert, or a queued ticket when the write-lease is held.
-        Raises DispatchConflict only on fingerprint mismatch."""
+
+        Same-``source_ref`` implement gate (``contract=implement`` only): when
+        ``source_ref`` is set and ``force`` is false, a peer row with the same
+        ``source_ref`` and status in ``{queued,admitted,running}`` raises
+        ``SourceRefConflict`` without inserting. The SELECT and INSERT share the
+        existing ``BEGIN IMMEDIATE`` transaction, so concurrent admits cannot
+        both observe an empty peer set and both insert.
+
+        Raises ``DispatchConflict`` on fingerprint mismatch."""
         record_json = _dispatch_record_json(req)
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
@@ -414,6 +459,23 @@ class CursorDispatchLedger:
                         holder=holder,
                     )
                 return _response_from_row(existing, admission=admission)
+            if (
+                contract == "implement"
+                and source_ref
+                and not force
+            ):
+                peer = conn.execute(
+                    "SELECT dispatch_id, thread_id FROM cursor_sdk_dispatches "
+                    "WHERE source_ref=? AND dispatch_id<>? "
+                    "AND status IN ('queued','admitted','running') LIMIT 1",
+                    (source_ref, req.dispatch_id),
+                ).fetchone()
+                if peer is not None:
+                    raise SourceRefConflict(
+                        source_ref=source_ref,
+                        holder_dispatch_id=peer["dispatch_id"],
+                        holder_thread_id=peer["thread_id"],
+                    )
             insert_status = _STATUS_ADMITTED
             queued_at: str | None = None
             if not read_only and source_repo:
@@ -438,8 +500,8 @@ class CursorDispatchLedger:
                 "(dispatch_id, fingerprint, thread_id, execution_id, caller_agent, "
                 " resolved_model, packet_path, message_present, status, record_json, "
                 " wt_baseline, contract, source_repo, read_only, worker_instance, "
-                " queued_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " queued_at, source_ref) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     req.dispatch_id,
                     fingerprint,
@@ -457,6 +519,7 @@ class CursorDispatchLedger:
                     1 if read_only else 0,
                     worker_instance,
                     queued_at,
+                    source_ref,
                 ),
             )
             if insert_status == _STATUS_QUEUED:

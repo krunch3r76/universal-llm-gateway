@@ -60,7 +60,12 @@ async def post_cdp_turn(
     body: str,
     request_id: str,
 ) -> bool:
-    """Post on-behalf bus turn as ``from=cdp``."""
+    """Post on-behalf bus turn as ``from=cdp``.
+
+    Marks unread turns addressed to ``cdp`` before posting — the admit
+    pointer is ``to=cdp``, and agent-bus rejects posts while unread
+    (``unread_turns_exist`` 409).
+    """
     token = _agent_bus_token()
     allow_unset = os.getenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "").strip().lower() in (
         "1",
@@ -70,19 +75,35 @@ async def post_cdp_turn(
     if not token and not allow_unset:
         logger.warning("cdp on-behalf post skipped: AGENT_BUS_TOKEN unset")
         return False
-    payload: dict[str, Any] = {
-        "thread": thread_id,
-        "from": CDP_REPLY_FROM,
-        "to": to_agent,
-        "subject": subject,
-        "body": body,
-        "status": "open",
-        "after_turn": 0,
-        "allow_long_body": True,
-    }
     headers = {"Authorization": f"Bearer {token}"} if token else {}
     try:
         async with make_async_client(DEFAULT_AGENT_BUS_URL, timeout=30.0) as client:
+            # Clear unread admit-pointer(s) addressed to cdp before reply.
+            mark = await client.patch(
+                f"/threads/{thread_id}/turns/read-state",
+                json={
+                    "through_turn": 10_000,
+                    "agent": CDP_REPLY_FROM,
+                },
+                headers=headers,
+            )
+            if mark.status_code >= 300:
+                logger.warning(
+                    "cdp mark_read before post: thread=%s status=%s body=%s",
+                    thread_id,
+                    mark.status_code,
+                    mark.text[:200],
+                )
+            payload: dict[str, Any] = {
+                "thread": thread_id,
+                "from": CDP_REPLY_FROM,
+                "to": to_agent,
+                "subject": subject,
+                "body": body,
+                "status": "open",
+                "after_turn": 0,
+                "allow_long_body": True,
+            }
             resp = await client.post("/turns", json=payload, headers=headers)
             if resp.status_code >= 300:
                 logger.warning(

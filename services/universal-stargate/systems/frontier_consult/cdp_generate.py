@@ -13,7 +13,12 @@ from typing import TYPE_CHECKING, Any
 from claude_bundles.cdp_model_endpoint import CDP_REPLY_FROM, CDP_SUBSTRATE
 from claude_bundles.cdp_model_endpoint_staging import (
     CdpStagingError,
+    read_prompt_text,
     stage_prompt_uri,
+)
+from claude_bundles.cowork_skill_delivery import (
+    SkillDeliveryError,
+    prepend_cdp_dispatch_skills,
 )
 from model_id import ModelId
 
@@ -68,22 +73,50 @@ def _stage_inputs(
     prompt: str | None,
     sidecar_ref: str | None,
     packet_path: str | None,
+    skills: list[str] | None = None,
 ) -> Any:
+    """Stage prompt; when ``skills`` is set, prepend slash/inline delivery first."""
     cortex_uri = None
     if isinstance(sidecar_ref, str) and sidecar_ref.startswith("cortex://"):
         cortex_uri = sidecar_ref
     elif isinstance(packet_path, str) and packet_path.startswith("cortex://"):
         cortex_uri = packet_path
+    packet_non_cortex = (
+        packet_path
+        if isinstance(packet_path, str) and not packet_path.startswith("cortex://")
+        else None
+    )
+    sidecar_non_cortex = (
+        sidecar_ref
+        if isinstance(sidecar_ref, str) and not sidecar_ref.startswith("cortex://")
+        else None
+    )
+    if skills:
+        text = read_prompt_text(
+            prompt_text=prompt,
+            prompt_uri=cortex_uri,
+            packet_path=packet_non_cortex,
+            sidecar_ref=sidecar_non_cortex,
+        )
+        try:
+            text, _, _ = prepend_cdp_dispatch_skills(text, skills)
+        except KeyError as exc:
+            raise CdpStagingError(
+                f"unknown skill in skills=: {exc.args[0] if exc.args else exc}",
+                code="cdp_skills_unknown",
+            ) from exc
+        except SkillDeliveryError as exc:
+            raise CdpStagingError(str(exc), code="cdp_skills_delivery") from exc
+        return stage_prompt_uri(
+            execution_id=execution_id,
+            prompt_text=text,
+        )
     return stage_prompt_uri(
         execution_id=execution_id,
         prompt_text=prompt,
         prompt_uri=cortex_uri,
-        packet_path=packet_path
-        if isinstance(packet_path, str) and not packet_path.startswith("cortex://")
-        else None,
-        sidecar_ref=sidecar_ref
-        if isinstance(sidecar_ref, str) and not sidecar_ref.startswith("cortex://")
-        else None,
+        packet_path=packet_non_cortex,
+        sidecar_ref=sidecar_non_cortex,
     )
 
 
@@ -146,17 +179,20 @@ async def dispatch_cdp_generate(
         )
 
     execution_id = str(uuid.uuid4())
+    skills = getattr(body, "skills", None)
     try:
         staged = _stage_inputs(
             execution_id=execution_id,
             prompt=prompt,
             sidecar_ref=sidecar_ref,
             packet_path=packet_path,
+            skills=skills if isinstance(skills, list) else None,
         )
     except CdpStagingError as exc:
+        field = "skills" if str(exc.code).startswith("cdp_skills") else "prompt"
         raise FrontierEndpointError(
             request_id=request_id,
-            field="prompt",
+            field=field,
             reason=exc.reason,
             status_code=422,
             code=exc.code,

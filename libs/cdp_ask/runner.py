@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from claude_bundles import cdp_registry
+from claude_bundles.cowork_output_download import should_attempt_output_download
 from claude_bundles.project_ask import (
     ProjectAskResult,
     archive_harvest,
@@ -26,8 +27,39 @@ from cdp_ask.models import SubmitProjectAskRequest, classify_stall_stage
 from cdp_ask.page_liveness import (
     LadderAdvanceState,
     LadderCallbacks,
+    advance_ladder_from_harvest,
     make_harvest_ladder_hook,
 )
+
+
+async def _release_f6_and_advance_proof(
+    *,
+    progress: LadderAdvanceState | None,
+    ladder: LadderCallbacks | None,
+    archive_uri: str | None,
+) -> None:
+    """Clear F6 pending after archive land so content_proof can fire (A2).
+
+    ``output_download_pending`` blocks thin pre-download archives during wait.
+    Once ``resolve_harvest_body`` + ``archive_harvest`` have stamped the final
+    bytes, the flag must clear and the ladder must re-sample — otherwise
+    content_proof stays suppressed for the whole download-attempting run.
+    """
+    if progress is None or ladder is None or not archive_uri:
+        return
+    if not progress.output_download_pending:
+        return
+    progress.output_download_pending = False
+    await advance_ladder_from_harvest(
+        {
+            "streaming": False,
+            "stop": False,
+            "tool_pause": False,
+            "body_len": max(progress.min_bytes, 1),
+        },
+        callbacks=ladder,
+        progress=progress,
+    )
 
 
 class ArchivePathError(ValueError):
@@ -39,6 +71,7 @@ class ArchivePathError(ValueError):
 
 
 def cortex_files_root() -> Path:
+    """Return the resolved CORTEX_FILES_ROOT path (env override or default mount)."""
     raw = os.environ.get("CORTEX_FILES_ROOT", "").strip()
     if raw:
         return Path(raw).expanduser().resolve()
@@ -46,6 +79,7 @@ def cortex_files_root() -> Path:
 
 
 def verify_harvest_root() -> Path:
+    """Return CORTEX_FILES_ROOT after verifying the harvest directory exists."""
     root = cortex_files_root()
     if not root.is_dir():
         raise RuntimeError(
@@ -87,6 +121,7 @@ def resolve_archive_path(raw: str) -> str:
 
 
 def resolve_prompt(req: SubmitProjectAskRequest) -> list[str]:
+    """Load prompt text from inline body, cortex URI, or checkout-relative path."""
     if req.prompt_text and req.prompt_text.strip():
         return [req.prompt_text.strip()]
     if req.prompt_uri and req.prompt_uri.strip():
@@ -119,6 +154,7 @@ def default_archive_path(
     *,
     execution_id: str = "",
 ) -> str:
+    """Resolve the harvest archive filesystem path for one project-ask execution."""
     if req.archive_path:
         return resolve_archive_path(req.archive_path)
     root = verify_harvest_root()
@@ -195,6 +231,7 @@ async def run_execution(
     if on_registered is not None:
         on_registered(reg.registration_id)
     on_harvest: Callable[[dict[str, Any]], Awaitable[None]] | None = None
+    progress: LadderAdvanceState | None = None
     if ladder is not None:
         if not execution_id.strip():
             raise ValueError(
@@ -205,6 +242,19 @@ async def run_execution(
             min_bytes=max(req.min_body, 1),
             sha256_file=_sha256_file,
             execution_id=execution_id,
+            output_download_pending=should_attempt_output_download(
+                harvest_source=req.harvest_source,
+                expected_size=req.expected_size,
+                download_output=req.download_output,
+            ),
+            blocked_archive_paths={
+                Path(default_archive_path(req, execution_id=execution_id)).resolve(),
+                *(
+                    {Path(resolve_archive_path(req.archive_path)).resolve()}
+                    if req.archive_path
+                    else set()
+                ),
+            },
         )
         # Held-page samples only — competing connect_cdp blocked dual-completion
         # while converse held the lane (friction 25671).
@@ -225,6 +275,9 @@ async def run_execution(
                 min_body=req.min_body,
                 ensure_cowork_auto=req.ensure_cowork_auto,
                 on_harvest=on_harvest,
+                expected_size=req.expected_size,
+                harvest_source=req.harvest_source,
+                download_output=req.download_output,
             )
             if await abort_check():
                 abort_cleanup(reg, purpose=req.purpose)
@@ -250,6 +303,9 @@ async def run_execution(
                     ),
                     execution_id=execution_id or None,
                 )
+            await _release_f6_and_advance_proof(
+                progress=progress, ladder=ladder, archive_uri=archive_uri
+            )
             return {
                 "ok": all(r.ok for r in results),
                 "registration_id": reg.registration_id,
@@ -300,6 +356,9 @@ async def run_execution(
             archive_path=archive,
             execution_id=execution_id or None,
             on_harvest=on_harvest,
+            expected_size=req.expected_size,
+            harvest_source=req.harvest_source,
+            download_output=req.download_output,
         )
         if await abort_check():
             abort_cleanup(reg, purpose=req.purpose)
@@ -315,6 +374,11 @@ async def run_execution(
             payload["stall_stage"] = classify_stall_stage(result.error)
         elif result.archive_uri and ladder and ladder.on_archiving:
             await ladder.on_archiving()
+        await _release_f6_and_advance_proof(
+            progress=progress,
+            ladder=ladder,
+            archive_uri=result.archive_uri if result.ok else None,
+        )
         return payload
     finally:
         if not await abort_check():
@@ -322,4 +386,5 @@ async def run_execution(
 
 
 def resolve_project_root_path(raw: str) -> Path:
+    """Resolve a checkout-relative or absolute prompt path under PROJECT_ROOT."""
     return resolve_prompt_path(raw, project_root_base())

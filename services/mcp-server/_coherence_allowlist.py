@@ -97,6 +97,7 @@ INTENTIONAL_OVERFLOW: frozenset[str] = frozenset(
         "rag_delete_source",
         "rag_get_chunks",
         "rag_list_articles",
+        "rag_list_mapped",
         "rag_list_scopes",
         "rag_orphaned_articles",
         "rag_refresh_corpus_hints",

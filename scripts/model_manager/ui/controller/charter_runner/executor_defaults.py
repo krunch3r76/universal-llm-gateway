@@ -94,3 +94,50 @@ def default_handoff_body(
             "admission:handoff",
         ],
     }
+
+
+def r_admit_consult_generate_body(
+    *,
+    root_id: str,
+    window_index: int,
+    packet_path: str,
+    subject: str,
+    caller_agent: str,
+) -> dict[str, Any]:
+    """Unattended generate wire for R-admit consult hosting (project_ask-capable).
+
+    Same cursor-sdk Grok generate schema as worker windows; the R-admit mandate
+    lives in the materialized consult packet. Distinct from ``consult_handoff_body``
+    (web-consult judgment-gap handoff — no ``project_ask`` on that wire).
+    """
+    return default_generate_body(
+        root_id=root_id,
+        window_index=window_index,
+        packet_path=packet_path,
+        subject=subject,
+        caller_agent=caller_agent,
+    )
+
+
+def consult_handoff_body(
+    *,
+    root_id: str,
+    window_index: int,
+    packet_path: str,
+    subject: str,
+    caller_agent: str,
+) -> dict[str, Any]:
+    """Wire body for charter CONSULT_PENDING pickup (cross-family web-consult)."""
+    return {
+        "op": "handoff",
+        "role": "web-consult",
+        "packet_path": packet_path,
+        "subject": subject,
+        "caller_agent": caller_agent,
+        "tags": [
+            "charter-runner",
+            f"root:{root_id}",
+            f"window:{window_index}",
+            "admission:consult",
+        ],
+    }

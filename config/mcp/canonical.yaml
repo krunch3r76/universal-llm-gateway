@@ -624,7 +624,9 @@ tools:
     tool: close_draft
     substrate_qualified: user-vortex__close_draft
   fol_descriptor: 'Accumulate/revise close fields; every write bumps draft revision; big payloads via
-    path params.
+    path params. Prefer nested `fields`; top-level aliases for known keys (summary,
+    session_summary_md, …) are folded into fields. Commit does not accept summary —
+    draft then check then commit.
 
     '
   json_schema:
@@ -634,9 +636,36 @@ tools:
         type: string
       fields:
         type: object
+      summary:
+        type: string
+        description: Flat alias folded into fields.summary (≥20 chars required before check PASS)
+      session_summary_md:
+        type: string
+        description: Flat alias folded into fields.session_summary_md
+      session_summary_md_path:
+        type: string
+      depth:
+        type: string
+      decisions:
+        type: array
+      open_items:
+        type: array
+      entity_ids:
+        type: array
+      reflections:
+        type: array
+      handoff:
+        type: string
+      handoff_source_path:
+        type: string
+      transcript_md_path:
+        type: string
+      domains:
+        type: array
+      prior_session_id:
+        type: string
     required:
     - session_id
-    - fields
   skill_uri: rule:session-close-kernel
   seat_visibility:
   - mcp

@@ -25,6 +25,9 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 _DEFAULT_INDEX = _REPO_ROOT / "config" / "mcp" / "rag_mapped_index.yaml"
 _WS_RE = re.compile(r"\s+")
 _CORTEX_PREFIX = "cortex://"
+LIST_MAPPED_ACTIVATION_NOTE = (
+    "Activation = rag(op=search, mapped=true) only; do not fs-read pack bodies."
+)
 
 
 def normalize_key(scope: str, query: str) -> tuple[str, str]:
@@ -173,6 +176,38 @@ def resolve(
             "scope_confidence": float(entry.get("scope_confidence") or 1.0),
         },
     }
+
+
+def list_mapped_entries(*, index_path: Path | None = None) -> list[dict[str, Any]]:
+    """Return URI-safe catalog rows for each indexed mapped pack.
+
+    Each row includes ``scope``, ``query``, and an ``activate`` recipe for
+    ``rag(op=search, mapped=true)``. Pack ``uri`` values are omitted. Optional
+    ``label`` / ``genre`` keys appear only when explicitly present on the index
+    entry — never synthesized from scope.
+    """
+    path = index_path or _DEFAULT_INDEX
+    index = _load_index(str(path.resolve()))
+    entries: list[dict[str, Any]] = []
+    for entry in index.values():
+        scope = entry["scope"]
+        query = entry["query"]
+        item: dict[str, Any] = {
+            "scope": scope,
+            "query": query,
+            "activate": {
+                "op": "search",
+                "mapped": True,
+                "scope": scope,
+                "query": query,
+            },
+        }
+        if "label" in entry:
+            item["label"] = entry["label"]
+        if "genre" in entry:
+            item["genre"] = entry["genre"]
+        entries.append(item)
+    return entries
 
 
 def clear_index_cache() -> None:

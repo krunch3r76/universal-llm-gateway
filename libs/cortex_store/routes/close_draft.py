@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from universal_logging import get_logger
 
 from ..close_draft.check import run_close_check
@@ -18,7 +18,11 @@ from ..close_draft.store import (
     stamp_check_state,
     update_draft_fields,
 )
-from ..close_draft.validate import reject_graph_write_keys, validate_stage_args
+from ..close_draft.validate import (
+    coalesce_draft_fields,
+    reject_graph_write_keys,
+    validate_stage_args,
+)
 from ..db import cortex_conn, query
 from ..dispatch_ops._session_todo_reconciliation import open_todos_in_entity_ids
 from ..events_close import (
@@ -40,8 +44,27 @@ class StageRequest(BaseModel):
 
 
 class DraftRequest(BaseModel):
+    """Draft patch — nested ``fields`` and/or flat ALLOWED_FIELD_KEYS aliases."""
+
+    model_config = ConfigDict(extra="allow")
+
     session_id: str
     fields: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _fold_flat_field_aliases(self) -> DraftRequest:
+        extras = dict(self.__pydantic_extra__ or {})
+        merged, unknown = coalesce_draft_fields(nested=self.fields, flat=extras)
+        if unknown:
+            raise ValueError(
+                f"Unknown draft field(s) at top level: {unknown}. "
+                "Put close fields under 'fields' or use known keys "
+                "(summary, session_summary_md, …)."
+            )
+        self.fields = merged
+        if self.__pydantic_extra__ is not None:
+            self.__pydantic_extra__.clear()
+        return self
 
 
 class CheckRequest(BaseModel):
@@ -49,6 +72,10 @@ class CheckRequest(BaseModel):
 
 
 class CommitRequest(BaseModel):
+    """Commit uses the checked draft only — summary belongs on draft, not here."""
+
+    model_config = ConfigDict(extra="forbid")
+
     session_id: str
     checked_revision: int
 

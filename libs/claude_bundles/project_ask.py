@@ -12,6 +12,7 @@ from __future__ import annotations
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Any
 
 from playwright.async_api import Page
@@ -37,6 +38,14 @@ from claude_bundles.compose_attest import (
     resolve_submit_strategy,
     warm_submit_settle_ms,
 )
+from claude_bundles.cowork_output_download import (
+    ExpectedSize,
+    HarvestSource,
+    OutputDownloadError,
+    cortex_files_root_from_env,
+    resolve_harvest_body,
+)
+from claude_bundles.cowork_skill_delivery import split_leading_slash_skills
 from claude_bundles.project_chrome import project_url
 from claude_bundles.skills_ui_panel import DEFAULT_CDP_URL, connect_cdp
 
@@ -96,8 +105,6 @@ def _attest_model(requested: str, state: dict[str, Any], selected: dict[str, Any
 
 def read_archive_execution_id(archive_path: str) -> str | None:
     """Return execution_id stamped in an existing harvest file, if any."""
-    from pathlib import Path
-
     path = Path(archive_path)
     if not path.is_file():
         return None
@@ -121,7 +128,6 @@ def archive_harvest(
 ) -> str:
     """Persist raw harvest before delete. Returns cortex:// or file URI."""
     from datetime import UTC, datetime
-    from pathlib import Path
 
     path = Path(archive_path)
     if path.is_file() and execution_id:
@@ -196,31 +202,39 @@ def submit_control_names() -> tuple[str, ...]:
     return ("Start task", "Send message")
 
 
-_LEADING_SLASH_SKILL = re.compile(r"^(/[\w-]+)(?:\r?\n)+(.*)\Z", re.DOTALL)
-
-
 async def _insert_prompt_text(page: Page, text: str) -> None:
-    """Fill the composer, binding a leading ``/skill`` before the body.
+    """Fill the composer, binding leading ``/skill`` chip lines before the body.
 
-    Claude.ai slash skills need the token typed and confirmed with a newline
+    Claude.ai slash skills need the chip token typed and confirmed with Enter
     (menu select / chip bind) before the rest of the sealed prompt. A single
     ``insert_text`` of ``/prose-discipline\\n\\nROLE…`` skips that bind.
+
+    Multi-skill CDP delivery uses hybrid formatting (one ``/<slug>\\n`` chip
+    plus trailing ``Use the … skill`` lines) — ``split_leading_slash_skills``
+    therefore sees at most one slash token; remaining skills paste via
+    ``insert_text``. Escape-after-Enter is not used (dogfood 5590).
     """
-    m = _LEADING_SLASH_SKILL.match(text)
-    if m is None:
+    slash_tokens, rest = split_leading_slash_skills(text)
+    if not slash_tokens:
         await page.keyboard.insert_text(text)
         return
-    slash, rest = m.group(1), m.group(2)
-    # Character typing surfaces the slash menu; paste does not.
-    await page.keyboard.type(slash, delay=25)
-    await page.wait_for_timeout(450)
-    await page.keyboard.press("Enter")
-    await page.wait_for_timeout(350)
+    for slash in slash_tokens:
+        # Character typing surfaces the slash menu; paste does not.
+        await page.keyboard.type(slash, delay=25)
+        await page.wait_for_timeout(450)
+        await page.keyboard.press("Enter")
+        await page.wait_for_timeout(350)
     if rest:
         await page.keyboard.insert_text(rest)
 
 
 async def send_prompt(page: Page, text: str) -> None:
+    """Clear the composer, chip-bind leading slash skills, then click submit.
+
+    Contract: hybrid CDP prefixes yield at most one ``/<slug>\\n`` chip token;
+    remaining Use-the lines paste with the body. Fail-closed submit (no Enter
+    fallback) via compose attestation / live_discover.
+    """
     composer = await find_composer(page)
     if composer is None:
         raise RuntimeError("composer not found on page")
@@ -292,6 +306,9 @@ async def project_ask_on_page(
     archive_path: str | None = None,
     execution_id: str | None = None,
     on_harvest: Callable[[dict], Awaitable[None]] | None = None,
+    expected_size: ExpectedSize = "auto",
+    harvest_source: HarvestSource = "auto",
+    download_output: bool = False,
 ) -> ProjectAskResult:
     """Run one sealed ask on an existing Playwright page."""
     dest = project_url(project_uuid)
@@ -328,10 +345,32 @@ async def project_ask_on_page(
         )
         body = strip_thinking_prefix(state.get("body") or "")
         attested = _attest_model(model, state, model_info)
+        try:
+            archive_body = await resolve_harvest_body(
+                page,
+                body,
+                harvest_source=harvest_source,
+                expected_size=expected_size,
+                download_output=download_output,
+                cortex_files_root=cortex_files_root_from_env(),
+            )
+        except OutputDownloadError as exc:
+            return ProjectAskResult(
+                ok=False,
+                body="",
+                url=str(state.get("url") or page.url),
+                project_uuid=project_uuid,
+                project_url=dest,
+                model=model_info,
+                body_len=0,
+                delete_after=None,
+                error=str(exc),
+                attested_model=attested,
+            )
         archive_uri = None
         if archive_path:
             archive_uri = archive_harvest(
-                body=body,
+                body=archive_body,
                 url=str(state.get("url") or page.url),
                 project_uuid=project_uuid,
                 model=model_info,
@@ -343,12 +382,12 @@ async def project_ask_on_page(
             # Fable MUST: delete only after archive — refuse if no path provided
             return ProjectAskResult(
                 ok=False,
-                body=body,
+                body=archive_body,
                 url=str(state.get("url") or page.url),
                 project_uuid=project_uuid,
                 project_url=dest,
                 model=model_info,
-                body_len=len(body),
+                body_len=len(archive_body),
                 delete_after=None,
                 error="archive_path required before delete (archive-before-delete bind)",
                 attested_model=attested,
@@ -358,12 +397,12 @@ async def project_ask_on_page(
             delete_result = await delete_chat_if_active(page, return_to=dest)
         return ProjectAskResult(
             ok=True,
-            body=body,
+            body=archive_body,
             url=str(state.get("url") or page.url),
             project_uuid=project_uuid,
             project_url=dest,
             model=model_info,
-            body_len=len(body),
+            body_len=len(archive_body),
             delete_after=delete_result,
             archive_uri=archive_uri,
             attested_model=attested,
@@ -395,6 +434,9 @@ async def run_project_ask(
     archive_path: str | None = None,
     execution_id: str | None = None,
     on_harvest: Callable[[dict], Awaitable[None]] | None = None,
+    expected_size: ExpectedSize = "auto",
+    harvest_source: HarvestSource = "auto",
+    download_output: bool = False,
 ) -> ProjectAskResult:
     """Connect CDP, run one sealed ask, disconnect."""
     pw, _browser, ctx, _page0 = await connect_cdp(cdp_url)
@@ -412,6 +454,9 @@ async def run_project_ask(
             archive_path=archive_path,
             execution_id=execution_id,
             on_harvest=on_harvest,
+            expected_size=expected_size,
+            harvest_source=harvest_source,
+            download_output=download_output,
         )
     finally:
         await pw.stop()

@@ -11,6 +11,13 @@ from claude_bundles.chat_session_hygiene import (
     goto_fresh_compose,
     pick_chat_page,
 )
+from claude_bundles.cowork_output_download import (
+    ExpectedSize,
+    HarvestSource,
+    OutputDownloadError,
+    cortex_files_root_from_env,
+    resolve_harvest_body,
+)
 from claude_bundles.project_ask import (
     ProjectAskResult,
     project_ask_on_page,
@@ -30,6 +37,9 @@ async def project_followup_on_page(
     min_growth: int = 50,
     min_body: int = 40,
     on_harvest: Callable[[dict], Awaitable[None]] | None = None,
+    expected_size: ExpectedSize = "auto",
+    harvest_source: HarvestSource = "auto",
+    download_output: bool = False,
 ) -> ProjectAskResult:
     """Send another turn on the current chat. No navigate."""
     dest = project_url(project_uuid) if project_uuid else "https://claude.ai/new"
@@ -46,14 +56,35 @@ async def project_followup_on_page(
             on_harvest=on_harvest,
         )
         body = strip_thinking_prefix(state.get("body") or "")
+        try:
+            archive_body = await resolve_harvest_body(
+                page,
+                body,
+                harvest_source=harvest_source,
+                expected_size=expected_size,
+                download_output=download_output,
+                cortex_files_root=cortex_files_root_from_env(),
+            )
+        except OutputDownloadError as exc:
+            return ProjectAskResult(
+                ok=False,
+                body="",
+                url=str(state.get("url") or page.url),
+                project_uuid=project_uuid or "",
+                project_url=dest,
+                model={},
+                body_len=0,
+                delete_after=None,
+                error=str(exc),
+            )
         return ProjectAskResult(
             ok=True,
-            body=body,
+            body=archive_body,
             url=str(state.get("url") or page.url),
             project_uuid=project_uuid or "",
             project_url=dest,
             model={"ok": True, "step": "followup"},
-            body_len=len(body),
+            body_len=len(archive_body),
             delete_after=None,
         )
     except Exception as exc:  # noqa: BLE001
@@ -83,6 +114,9 @@ async def run_project_conversation(
     min_body: int = 200,
     ensure_cowork_auto: bool = True,
     on_harvest: Callable[[dict], Awaitable[None]] | None = None,
+    expected_size: ExpectedSize = "auto",
+    harvest_source: HarvestSource = "auto",
+    download_output: bool = False,
 ) -> list[ProjectAskResult]:
     """N-turn consult on one chat. First opens compose; later turns follow up."""
     if not prompts:
@@ -102,6 +136,9 @@ async def run_project_conversation(
                 min_growth=min_growth,
                 min_body=min_body,
                 on_harvest=on_harvest,
+                expected_size=expected_size,
+                harvest_source=harvest_source,
+                download_output=download_output,
             )
         else:
             url = compose_url or "https://claude.ai/new"
@@ -137,14 +174,37 @@ async def run_project_conversation(
                 on_harvest=on_harvest,
             )
             body = strip_thinking_prefix(state.get("body") or "")
+            try:
+                archive_body = await resolve_harvest_body(
+                    page,
+                    body,
+                    harvest_source=harvest_source,
+                    expected_size=expected_size,
+                    download_output=download_output,
+                    cortex_files_root=cortex_files_root_from_env(),
+                )
+            except OutputDownloadError as exc:
+                return [
+                    ProjectAskResult(
+                        ok=False,
+                        body="",
+                        url=str(state.get("url") or page.url),
+                        project_uuid="",
+                        project_url=url,
+                        model=model_info,
+                        body_len=0,
+                        delete_after=None,
+                        error=str(exc),
+                    )
+                ]
             first = ProjectAskResult(
                 ok=True,
-                body=body,
+                body=archive_body,
                 url=str(state.get("url") or page.url),
                 project_uuid="",
                 project_url=url,
                 model=model_info,
-                body_len=len(body),
+                body_len=len(archive_body),
                 delete_after=None,
             )
         results.append(first)
@@ -160,6 +220,9 @@ async def run_project_conversation(
                 min_growth=min_growth,
                 min_body=min_body,
                 on_harvest=on_harvest,
+                expected_size=expected_size,
+                harvest_source=harvest_source,
+                download_output=download_output,
             )
             results.append(nxt)
             if not nxt.ok:

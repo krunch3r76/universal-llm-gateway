@@ -167,7 +167,7 @@ tool_search(query="pipeline")    # → enables pipeline(op="result", ...)
 **Dispatch & Consult — pick by CAPABILITY, not model family:**
 - API consult → `team_dispatch(op="generate", role=..., dispatch_thread_id="<thread>", contract="light-bounded", prompt="<brief>"|sidecar_ref="cortex://…", model="provider/model"?)`; latest bus turn is fallback only
 - bounded determinate task → team_dispatch(op=generate, seat=cursor-sdk, dispatch_thread_id="<thread>", contract=light-bounded|pure-mechanical|implement, packet_path?=…)
-- deprecated: op=handoff,seat=cursor-sdk normalizes to generate with a warning
+- auto seat on handoff → 422 `seat_not_manual` (use op=generate, seat=cursor-sdk)
 
 On the code surface (`/mcp/code`) `team_dispatch` is primary — call directly.
 Optional `model=` must be `provider/model` (bare name = 404). A build harness

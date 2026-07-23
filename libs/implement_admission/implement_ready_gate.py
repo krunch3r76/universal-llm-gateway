@@ -129,6 +129,11 @@ def require_implement_ready(
     raw_acs = attrs.get("acceptance_criteria")
     acceptance_criteria = raw_acs if isinstance(raw_acs, list) else []
 
+    consult_thread = str(attrs.get("consult_thread") or "").strip() or None
+    consult_verdict = str(attrs.get("verdict") or attrs.get("consult_verdict") or "").strip() or None
+    consultant_family = str(attrs.get("consultant_family") or "").strip() or None
+    consultant_substrate = str(attrs.get("consultant_substrate") or "").strip() or None
+
     spec_hash_uri = dense_spec_hash_uri(dense_spec_text) if dense_spec_text else None
 
     raw_waived = attrs.get("recon_waived")
@@ -181,6 +186,10 @@ def require_implement_ready(
         skeptic_evidence_unresolved=skeptic_outcome.evidence_unresolved,
         skeptic_evidence_mode=skeptic_outcome.evidence_mode,
         skeptic_unratified_reason=skeptic_outcome.reason,
+        consult_thread=consult_thread,
+        verdict=consult_verdict,
+        consultant_family=consultant_family,
+        consultant_substrate=consultant_substrate,
     )
     if not verdict.admitted:
         raise ImplementReadyGateError(
@@ -211,6 +220,13 @@ def require_implement_ready(
                 "recon_waived": recon_waived,
                 "check_requested": check_requested,
                 "recon_waiver": recon_waiver.to_gate_sibling() if recon_waiver else None,
+                # Must match evaluate_implement_ready consult axis — omit ⇒
+                # judgment_required fails live doc_validate side-effect guard
+                # with implement_consult_provenance_missing → doc_validate_not_passing.
+                "consult_thread": consult_thread,
+                "verdict": consult_verdict,
+                "consultant_family": consultant_family,
+                "consultant_substrate": consultant_substrate,
             },
             skip_side_effect_guard=skip_doc_validate_guard,
         )

@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """CLI — sealed ask / n-turn consult against claude.ai via Jupiter CDP.
 
 Run ON Jupiter (CDP host). From Cursor / remote seats use:
@@ -26,6 +25,10 @@ Examples:
 On converse success the CLI prints JSON plus `turn_N_chat_url=…` per turn.
 When `--out-dir` is omitted, bodies live in stdout JSON only — see
 agent_skill:claude-ai-cdp-navigation § Post-converse recovery.
+
+Harvest knobs: ``--expected-size``, ``--harvest-source``, ``--download-output``
+forward into ``run_project_ask`` / ``run_project_conversation`` for Cowork
+Output download (``todo:cdp-cowork-outputs-local-harvest``).
 """
 
 from __future__ import annotations
@@ -70,6 +73,7 @@ def _derive_cleanup_ok(
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Parse CLI flags and run one sealed ask or multi-turn converse on Jupiter CDP."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--cdp-url",
@@ -232,6 +236,29 @@ def main(argv: list[str] | None = None) -> int:
         default=50,
         help="Legacy — ignored for harvest completion (structural turn gate).",
     )
+    parser.add_argument(
+        "--expected-size",
+        choices=("small", "large", "auto"),
+        default="auto",
+        help=(
+            "Expected deliverable size (default auto). large attempts Cowork "
+            "Output download when harvest-source is auto."
+        ),
+    )
+    parser.add_argument(
+        "--harvest-source",
+        choices=("chat", "output-file", "auto"),
+        default="auto",
+        help=(
+            "Harvest provenance: chat (scrape only), output-file (download "
+            "required), auto (Output then cortex-fs/chat fallback)."
+        ),
+    )
+    parser.add_argument(
+        "--download-output",
+        action="store_true",
+        help="Attempt Cowork Output download before archive (also implied by --expected-size large).",
+    )
     args = parser.parse_args(argv)
 
     if args.force_delete_fail:
@@ -346,6 +373,9 @@ def _dispatch(
                 min_growth=args.min_growth,
                 min_body=args.min_body,
                 ensure_cowork_auto=not args.chat,
+                expected_size=args.expected_size,
+                harvest_source=args.harvest_source,
+                download_output=args.download_output,
             )
         )
         delete_requested = bool(args.close)
@@ -431,6 +461,9 @@ def _dispatch(
             min_growth=args.min_growth,
             min_body=args.min_body,
             archive_path=archive or None,
+            expected_size=args.expected_size,
+            harvest_source=args.harvest_source,
+            download_output=args.download_output,
         )
     )
     delete_requested = not args.keep_chat

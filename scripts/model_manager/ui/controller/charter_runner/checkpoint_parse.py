@@ -36,6 +36,12 @@ _IMPLICATION_ARROW_RE = re.compile(
     r"^P\d+\s*(?:⇒|=>)\s*(Steps|Next-pickup|WIP)\s*:\s*(.+)$",
     re.IGNORECASE,
 )
+_CONSULT_PENDING_RE = re.compile(r"\bCONSULT_PENDING\b", re.IGNORECASE)
+_CONSULT_ROLE_RE = re.compile(
+    r"consult_role:\s*(r_admit|judgment_gap)\b", re.IGNORECASE
+)
+# Fallback sniff when explicit consult_role marker is absent (demoted per E5).
+_JUDGMENT_GAP_SNIFF_RE = re.compile(r"\bjudgment\s+gap\b", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -58,6 +64,8 @@ class ParsedCheckpoint:
     has_resume_footer: bool = False
     precedents: list[str] = field(default_factory=list)
     implications: list[str] = field(default_factory=list)
+    consult_pending: bool = False
+    consult_role: str | None = None  # r_admit | judgment_gap when consult_pending
 
 
 def _sections(body: str) -> dict[str, str]:
@@ -168,6 +176,10 @@ def parse_checkpoint(body: str) -> ParsedCheckpoint:
 
     steps = _parse_steps(steps_text)
     blocked = _detect_blocked(body, steps)
+    consult_pending = _detect_consult_pending(body, next_pickup)
+    consult_role = (
+        _parse_consult_role(body, next_pickup) if consult_pending else None
+    )
 
     return ParsedCheckpoint(
         wip_is_none=_wip_is_none(wip_text),
@@ -181,7 +193,49 @@ def parse_checkpoint(body: str) -> ParsedCheckpoint:
         has_resume_footer=_has_resume_footer(body),
         precedents=_parse_bullet_or_none(precedents_text),
         implications=_parse_bullet_or_none(implications_text),
+        consult_pending=consult_pending,
+        consult_role=consult_role,
     )
+
+
+def _parse_consult_role(body: str, next_pickup: list[str]) -> str | None:
+    """Extract ``consult_role: r_admit | judgment_gap``; content-sniff fallback."""
+    sections = _sections(body)
+    stop_text = _find_section(sections, "stop", "stop class", "stop condition")
+    for text in [*next_pickup, stop_text, body]:
+        if not text:
+            continue
+        m = _CONSULT_ROLE_RE.search(text)
+        if m:
+            return m.group(1).lower()
+    combined = "\n".join(next_pickup)
+    if _JUDGMENT_GAP_SNIFF_RE.search(combined):
+        return "judgment_gap"
+    if re.search(r"\bR-admit\b", combined, re.IGNORECASE):
+        return "r_admit"
+    if re.search(r"\bG3\b", combined, re.IGNORECASE) and re.search(
+        r"execution_id=", combined, re.IGNORECASE
+    ):
+        return "r_admit"
+    return "judgment_gap"
+
+
+def _detect_consult_pending(body: str, next_pickup: list[str]) -> bool:
+    """True when the active CHECKPOINT stop class is CONSULT_PENDING."""
+    if any(_CONSULT_PENDING_RE.search(item) for item in next_pickup):
+        return True
+    sections = _sections(body)
+    stop_text = _find_section(sections, "stop", "stop class", "stop condition")
+    if stop_text and _CONSULT_PENDING_RE.search(stop_text):
+        return True
+    for line in body.splitlines():
+        if re.match(
+            r"^\s*(?:[-*]\s*)?(?:Stop|Status)\s*[:\-—]\s*CONSULT_PENDING\b",
+            line,
+            re.IGNORECASE,
+        ):
+            return True
+    return False
 
 
 def _detect_blocked(body: str, steps: list[Step]) -> bool:

@@ -26,7 +26,13 @@ from ._rag_http import (
 from ._rag_http import (
     rag_post as _rag_post_http,
 )
-from ._rag_mapped import resolve as resolve_mapped_pack
+from ._rag_mapped import (
+    LIST_MAPPED_ACTIVATION_NOTE,
+    list_mapped_entries,
+)
+from ._rag_mapped import (
+    resolve as resolve_mapped_pack,
+)
 from ._rag_retrieval_metadata import (
     envelope_retrieval_fields,
     retrieval_metadata_from_response,
@@ -268,6 +274,52 @@ def _scope_metadata_from_db() -> dict[str, dict[str, Any]]:
 
 def register_rag_tools(mcp: FastMCP) -> None:
     """Register RAG pipeline tools on *mcp*."""
+
+    @mcp.tool(title="RAG: List Mapped Packs")
+    def rag_list_mapped() -> dict[str, Any]:
+        """List keyed mapped-pack (scope, query) pairs without pack URIs.
+
+        Returns activation recipes for ``rag(op=search, mapped=true)``. Agents
+        discover keys here — do not fs-read pack bodies directly.
+
+        Returns:
+            On success:
+                {
+                  "status": "ok",
+                  "entries": [
+                    {
+                      "scope": "...",
+                      "query": "...",
+                      "activate": {
+                        "op": "search",
+                        "mapped": true,
+                        "scope": "...",
+                        "query": "..."
+                      },
+                      "label": "..."  # only when present on index entry
+                    },
+                    ...
+                  ],
+                  "count": <int>,
+                  "note": "<activation rule>"
+                }
+            Missing or unreadable index → ``entries: []`` with the same note.
+        """
+        t0 = monotonic_now()
+        record("mcp.rag.mapped.list")
+        entries = list_mapped_entries()
+        duration = monotonic_now() - t0
+        record(
+            "mcp.rag.mapped.listed",
+            count=len(entries),
+            duration_s=round(duration, 3),
+        )
+        return {
+            "status": "ok",
+            "entries": entries,
+            "count": len(entries),
+            "note": LIST_MAPPED_ACTIVATION_NOTE,
+        }
 
     @mcp.tool(title="RAG: List Scopes")
     def rag_list_scopes() -> dict[str, Any]:

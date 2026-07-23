@@ -45,6 +45,7 @@ from services.git_integration_worker.cursor_dispatch_ledger import (
     CursorDispatchLedger,
     DispatchConflict,
     PromotedDispatch,
+    SourceRefConflict,
 )
 from services.git_integration_worker.cursor_home import (
     CursorHomeConfigError,
@@ -93,6 +94,7 @@ from services.git_integration_worker.cursor_sdk_deliverables import (
 )
 from services.git_integration_worker.cursor_sdk_events import (
     emit_sdk_closeout_reconciled,
+    emit_sdk_implement_unresolved_source_ref,
     emit_sdk_worker_completed,
     emit_sdk_worker_delivery_failed,
     emit_sdk_worker_failed,
@@ -286,6 +288,7 @@ def _reject_pre_admission(
     invalid_fields: list[str] | None = None,
     retryable: bool | None = None,
     validation_stage: str = "pre_admission",
+    extra_data: dict[str, Any] | None = None,
 ) -> JSONResponse:
     envelope = build_dispatch_error_envelope(
         execution_id=req.execution_id,
@@ -303,6 +306,7 @@ def _reject_pre_admission(
     )
     emit_git_worker_dispatch_rejected(envelope)
     log_dispatch_rejection(envelope)
+    content_data = extra_data if extra_data is not None else None
     return JSONResponse(
         status_code=http_status,
         content=error_envelope(
@@ -310,6 +314,7 @@ def _reject_pre_admission(
             message=detail_summary,
             source="gateway",
             retryable=retryable,
+            data=content_data,
         ),
     )
 
@@ -1578,6 +1583,13 @@ async def cursor_dispatch(
             detail_summary="read_only=true is incompatible with contract=implement",
             invalid_fields=["read_only"],
         )
+    candidate_source_ref = req.source_ref or extract_source_ref_from_packet(packet_text)
+    if contract == "implement" and not candidate_source_ref:
+        emit_sdk_implement_unresolved_source_ref(
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            execution_id=req.execution_id,
+        )
     source_repo_str = str(cfg.source_repo.resolve())
     try:
         cached = await asyncio.to_thread(
@@ -1592,6 +1604,23 @@ async def cursor_dispatch(
             source_repo=source_repo_str,
             read_only=req.read_only,
             worker_instance=controller.worker_id,
+            source_ref=candidate_source_ref,
+            force=req.force,
+        )
+    except SourceRefConflict as exc:
+        return _reject_pre_admission(
+            req,
+            worker_error_code="CURSOR_SOURCE_REF_IN_FLIGHT",
+            failure_layer="admission",
+            http_status=409,
+            detail_summary=str(exc),
+            retryable=False,
+            validation_stage="ledger_source_ref",
+            extra_data={
+                "source_ref": exc.source_ref,
+                "holder_dispatch_id": exc.holder_dispatch_id,
+                "holder_thread_id": exc.holder_thread_id,
+            },
         )
     except DispatchConflict as exc:
         return _reject_pre_admission(

@@ -29,7 +29,7 @@ trivial/local or latency-sensitive tight-loop debugging.
 
 | Need | Path | Autonomy |
 |---|---|---|
-| Mechanical implement | `team_dispatch(op=generate, role=cursor-sdk)` → `cursor/composer-2.5` | Autonomous (default) |
+| Mechanical implement | `team_dispatch(op=generate, seat=cursor-sdk)` → `cursor/composer-2.5` | Autonomous (default) |
 | Investigate / judgment | `cursor/grok-4.5` effort ∈ {low, medium, **high**} (+ fast) — ¬ xhigh/max | In-seat or gated seat switch |
 | Greater reasoning | **CDP** web-anthropic Opus via `project_ask` (today; future endpoint: `todo:cdp-model-endpoint-dispatch`) | **AUTONOMOUS** under trigger below |
 | Premium metered | `cursor/claude-opus-4-8` effort ∈ {low, medium, high, **xhigh**, **max**} | **OPERATOR-GATED** — propose tier, wait |

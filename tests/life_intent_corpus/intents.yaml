@@ -34,7 +34,7 @@ intents:
     intent:
       verb: build
       subject: shortcut request
-      detail: "Use team_dispatch op=generate role=cursor-sdk contract=implement for the feature."
+      detail: "Use team_dispatch op=generate seat=cursor-sdk contract=implement for the feature."
   - id: i07_ambiguous_thing
     text: "Something is wrong with the thing."
     intent:

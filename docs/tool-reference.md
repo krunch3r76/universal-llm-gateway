@@ -62,7 +62,7 @@ For `team_dispatch(op="handoff")` only: returns synchronously with
 `op` values (`team_dispatch`):
 - `"generate"` — **default bus mode** for API roles: auto-provisions thread +
   `output_contract=thread`; poll `poll_hint` (agent-bus wait). `cursor-sdk` uses
-  the dedicated SDK orchestrator (same bus default). **`role=cursor-sdk` is the
+  the dedicated SDK orchestrator (same bus default). **`seat=cursor-sdk` is the
   default transport for bound mechanical implement** (`source_ref=todo:{slug}` +
   `contract=implement`, auto Composer, no IDE pickup) — the `cursor-implement`
   handoff is the operator-attended fallback. Materialization reads todo attributes;
@@ -86,8 +86,9 @@ entity, assembles birth + briefing + continuation, and rejects violations before
 | Arg | Type | Description |
 |---|---|---|
 | `op` | `"generate"\|"to_thread"\|"handoff"` | Output channel |
-| `role` | API (`generate`/`to_thread`): `reviewer`, `gatherer`, `synthesizer`, `artisan`, `skeptic`, `cursor-sdk`. Handoff only: `web-consult`, `web-implement`, `cursor-consult`, `cursor-implement` | `{platform}-{contract}` roster slug (seat aliases like `claude-web` → 422 `handoff_role_invalid`). **`skeptic`**: default `xai/grok-4.5` (MCP-capable standard card) — pre-stage context on `dispatch_thread_id`; admission returns `capabilities.inline_only` / `capabilities.mcp_enabled`. |
-| `contract` | `"light-bounded"\|"pure-mechanical"\|"implement"\|"wrap"` | **Required** for `op="generate"`/`op="to_thread"`. Authority grant: `light-bounded` (bounded consult/execution), `pure-mechanical` (deterministic write loop), `implement` (bound mechanical implement — default via `source_ref=todo:{slug}` server materialization on `role=cursor-sdk`; legacy `packet_path` escape-hatch), `wrap` (materialize-only, no Composer spawn; requires `source_ref`, forbids `packet_path`). `consult` is dropped — migrate to `light-bounded`. |
+| `role` | API (`generate`/`to_thread`): `reviewer`, `gatherer`, `synthesizer`, `artisan`, `skeptic`. Handoff only: `web-consult`, `web-implement`, `cursor-consult`, `cursor-implement` | Functional role roster only — **not** a substrate selector. SDK peer slug via `role=` → 422 `role_is_not_a_seat` (use `seat=`). Seat aliases like `claude-web` → 422 `handoff_role_invalid`. **`skeptic`**: default `xai/grok-4.5` (MCP-capable standard card) — pre-stage context on `dispatch_thread_id`; admission returns `capabilities.inline_only` / `capabilities.mcp_enabled`. |
+| `seat` | Auto-dispatch (`generate`/`to_thread`): `cursor-sdk`. Handoff: manual bus seats (`web-anthropic`, `cursor`, …) — not auto seats | Mutually exclusive with `role` on generate/to_thread. SDK implement peer: `seat=cursor-sdk`. `op=handoff` + auto seat → 422 `seat_not_manual`. |
+| `contract` | `"light-bounded"\|"pure-mechanical"\|"implement"\|"wrap"` | **Required** for `op="generate"`/`op="to_thread"`. Authority grant: `light-bounded` (bounded consult/execution), `pure-mechanical` (deterministic write loop), `implement` (bound mechanical implement — default via `source_ref=todo:{slug}` server materialization on `seat=cursor-sdk`; legacy `packet_path` escape-hatch), `wrap` (materialize-only, no Composer spawn; requires `source_ref`, forbids `packet_path`). `consult` is dropped — migrate to `light-bounded`. |
 | `dispatch_thread_id` | `str` | Compaction key for server-owned thread persistence (`thread:dispatch:{id}`). Stable per arc/session. When no explicit `packet_path`, `prompt`, or `sidecar_ref` is supplied, context falls back to this thread's latest role-addressed turn. Unused by `op="handoff"`. |
 | `thread` | `str\|None` | Required when `op="to_thread"` — agent-bus thread ID |
 | `subject` | `str\|None` | Bus reply subject (`to_thread`); required packet subject (`handoff`) |
@@ -97,16 +98,16 @@ entity, assembles birth + briefing + continuation, and rejects violations before
 | `caller_agent` | `str\|None` | Dispatch provenance |
 | `timeout_seconds` | `int\|None` | Pipeline wall-clock cap |
 | `mcp` | `bool\|None` | MCP-class tools only (client loop + remote connector). `None` = per-model default; `False` = inline-only (no MCP-class tools). Does not govern provider server-side built-ins — see `server_tools`. |
-| `skills` | `list[str]\|None` | Unified skills input path; capability-selected delivery. Supported on `op=generate` and `op=to_thread` only — not `handoff`. |
+| `skills` | `list[str]\|None` | Unified skills input path; capability-selected delivery. Supported on `op=generate` and `op=to_thread` only — not `handoff`. Roleless CDP (`model=cdp/…`): Claude slugs (`shared_sync`) prepended as `/<slug>` lines; others inlined at top. |
 | `server_tools` | `bool\|None` | Provider server-side built-ins. Omit = ALL card-derived built-ins; `False` suppresses card-derived provider built-ins. Independent of `mcp`. |
-| `source_ref` | `str\|None` | Admission ref (`todo:{slug}`, `plan:{slug}`, `plan_phase:{slug}[/phase-N]`, `agent-bus:N#turn-N`, `packet:{path}`). On `op="generate"` with `role=cursor-sdk`: drives `contract=implement` and `contract=wrap` — Stargate resolves `normalize → materialize → validate_packet` server-side from the source entity's **attributes** (`files_expected`, `acceptance_criteria`, `required_skills`, gate keys); the `source_uri` spec body is fingerprinted via `content_hash`, never content-read. On `op="handoff"`: same normalize/materialize path; **preferred for the implement lane** (`cursor-implement` / `web-implement`). `agent-bus:N` is gated unless an explicit `#turn-N` resolves it; `task:`/`project:` are grammar-excluded (containers, not dispatchable). Relay pass-through — the MCP client does NOT resolve it. |
+| `source_ref` | `str\|None` | Admission ref (`todo:{slug}`, `plan:{slug}`, `plan_phase:{slug}[/phase-N]`, `agent-bus:N#turn-N`, `packet:{path}`). On `op="generate"` with `seat=cursor-sdk`: drives `contract=implement` and `contract=wrap` — Stargate resolves `normalize → materialize → validate_packet` server-side from the source entity's **attributes** (`files_expected`, `acceptance_criteria`, `required_skills`, gate keys); the `source_uri` spec body is fingerprinted via `content_hash`, never content-read. On `op="handoff"`: same normalize/materialize path; **preferred for the implement lane** (`cursor-implement` / `web-implement`). `agent-bus:N` is gated unless an explicit `#turn-N` resolves it; `task:`/`project:` are grammar-excluded (containers, not dispatchable). Relay pass-through — the MCP client does NOT resolve it. |
 | `packet_path` | `str\|None` | Explicit file-backed prompt/instruction source for `op="generate"`; mutually exclusive with `prompt` and `sidecar_ref`. Honored for `contract=light-bounded`, `pure-mechanical`, and `implement` (legacy hand-authored escape-hatch; implement also runs implement-ready gate). Default implement path is `source_ref`. On `op="handoff"`, it is the hand-authored alternative to `source_ref`; both-present triggers the existing drift guard. |
 | `prompt` | `str\|None` | Atomic inline brief for `op="generate"`/`op="to_thread"` consult contracts. Preferred for short self-contained briefs because it cannot desynchronize from the dispatch call. Mutually exclusive with `packet_path`, `sidecar_ref`, and `source_ref`; rejected on `implement`, `wrap`, and `handoff`. |
 | `sidecar_ref` | `str\|None` | Atomic file-backed brief reference (`cortex://` or `workspaces://`) for `op="generate"`/`op="to_thread"` consult contracts. Preferred for long briefs. Same exclusivity/contract rules as `prompt`. |
 | `pointer_body` | `str\|None` | `op="handoff"` only — override the pointer turn body (≤25 lines) |
 | `tags` | `list[str]\|None` | `op="handoff"` only — bus thread tags (default: `["agent:{to_agent}", "type:handoff", "contract:{handoff_contract}"]`). Caller-supplied tags are preserved; `contract:{value}` is appended if absent |
-| `role=cursor-sdk` (op=generate) | — | **Default transport for bound mechanical implement.** SDK auto substrate; default delivery=thread; general-execution via `contract=light-bounded|pure-mechanical` with context on `dispatch_thread_id` or `packet_path` (packet wins when both present); implement via `source_ref=todo:{slug}` + `contract=implement` (server materialization + implement-ready gate; legacy `packet_path` escape-hatch); materialize-only via `contract=wrap` + `source_ref`; poll via `poll_hint` (agent-bus), not `pipeline(op=result)`. **Dense attributes required** for implement (Composer executes mechanically). `cursor-implement` handoff = operator-attended fallback |
-| `op=handoff, seat=cursor-sdk` | — | **Deprecated** — normalizes to generate + warning (`deprecated_alias` in response) |
+| `seat=cursor-sdk` (op=generate) | — | **Default transport for bound mechanical implement.** SDK auto substrate; default delivery=thread; general-execution via `contract=light-bounded|pure-mechanical` with context on `dispatch_thread_id` or `packet_path` (packet wins when both present); implement via `source_ref=todo:{slug}` + `contract=implement` (server materialization + implement-ready gate; legacy `packet_path` escape-hatch); materialize-only via `contract=wrap` + `source_ref`; poll via `poll_hint` (agent-bus), not `pipeline(op=result)`. **Dense attributes required** for implement (Composer executes mechanically). `cursor-implement` handoff = operator-attended fallback |
+| `op=handoff, seat=cursor-sdk` | — | **Rejected** — 422 `seat_not_manual` (use `op=generate, seat=cursor-sdk`) |
 
 **`op="generate"` / `op="to_thread"` — admission guard for web/manual seats:**
 
@@ -527,6 +528,17 @@ muddled average that degrades the primary retrieval signal.
 | `mapped` | bool | Default `false`. When `true`, exact `(scope, query)` lookup against `config/mcp/rag_mapped_index.yaml` serves a durable pack body through the identical search envelope; miss (or multi/missing scope) falls through to live `rag-context`. |
 
 ### Mapped packs (`mapped=true`)
+
+Discover keyed packs with ``rag(op="list_mapped")`` — returns
+``{status, entries, count, note}``. Each ``entries[]`` row has ``scope``,
+``query``, and an ``activate`` recipe **without** pack ``uri`` values
+(optional ``label``/``genre`` only when present on the index). Top-level
+``note`` states activation is search-only (``mapped=true``) — do not
+fs-read pack bodies. Then activate with
+``rag(op="search", mapped=true, scope=…, query=…)`` using the exact keys
+from the catalog. Live corpus search stays ``mapped=false`` (omit the param).
+Missing/unreadable index → empty ``entries`` (not a hard error) with the
+same ``note``.
 
 Dispatcher/orchestrator path for curated writing-sample injects. Pack files are
 **pure `context` bodies** (Source / Body evidence blocks only — no frontmatter).
@@ -1058,7 +1070,8 @@ RAG knowledge retrieval and index management.
 
 | Op | Args | Description |
 |---|---|---|
-| `search` | query (REQUIRED), scope?, prefix?, top_k? | Semantic search. scope and prefix are mutually exclusive. |
+| `search` | query (REQUIRED), scope?, prefix?, top_k?, mapped? | Semantic search. scope and prefix are mutually exclusive. mapped=true does exact (scope, query) durable-pack lookup. |
+| `list_mapped` | — | URI-safe catalog (`entries` + top-level activation `note`); entries omit pack URIs; missing index → empty entries |
 | `answer` | question (REQUIRED), scope?, prefix?, deep? | RAG-grounded answer. deep=True for iterative retrieval. |
 | `list_scopes` | — | List scopes with prefixes and coverage |
 | `coverage` | — | Per-scope indexed file counts |

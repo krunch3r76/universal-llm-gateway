@@ -650,6 +650,7 @@ def _build_server(
     rag_op_tool: dict[str, str] = {
         "search": "rag_search",
         "recon": "rag_recon",
+        "list_mapped": "rag_list_mapped",
         "list_scopes": "rag_list_scopes",
         "coverage": "rag_coverage",
         "upsert_article": "rag_upsert_article",
@@ -669,6 +670,7 @@ def _build_server(
         Operations:
           search            (query, scope?, prefix?, top_k?|limit?, mapped?) — semantic search (PRIMARY and ONLY agent surface for RAG); scope/prefix mutually exclusive; limit aliases top_k; mapped=true does exact (scope,query) durable-pack lookup via config/mcp/rag_mapped_index.yaml (identical envelope) with live rag-context fallback on miss. Agents MUST use this (or dedicated rag_search); rag_answer pipeline is buried for MCP debugging of /v1/chat/completions with rag-answer* models only.
           recon             (label, themes, top_k?, durable_sink?) — labeled per-theme recon with durable sidecar persistence via DurableSink
+          list_mapped       ()                                  — URI-safe catalog of mapped pack keys + activate recipe
           list_scopes       ()                                  — list scopes with prefixes and coverage
           coverage          ()                                  — per-scope indexed file counts
           upsert_article    (url, title?, scope?)               — index article by URL

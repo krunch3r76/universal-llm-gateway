@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Literal
 
 from .caps import CapStore
 from .checkpoint_parse import ParsedCheckpoint, parse_checkpoint
@@ -23,6 +24,7 @@ from .checkpoint_parse import ParsedCheckpoint, parse_checkpoint
 ENROLLMENT_TAG = "charter-runner"
 ADMISSION_SUBJECT_PREFIX = "WIP charter-runner"
 CHECKPOINT_PREFIX = "CHECKPOINT"
+WindowKind = Literal["worker", "consult"]
 
 
 @dataclass(frozen=True)
@@ -33,6 +35,7 @@ class Decision:
     checkpoint: dict | None = None
     parsed: ParsedCheckpoint | None = None
     admission_turn: dict | None = None
+    window_kind: WindowKind = "worker"
 
 
 def find_enrolled_roots() -> list[dict]:
@@ -109,6 +112,26 @@ def evaluate_root(root_id: str, turns: list[dict], caps: CapStore) -> Decision:
         return Decision(
             False, "operator_fork", root_id, checkpoint=checkpoint, parsed=parsed
         )
+
+    if parsed.consult_pending:
+        allowed, cap_reason = caps.check(root_id)
+        if not allowed:
+            return Decision(
+                False,
+                cap_reason or "cap_reached",
+                root_id,
+                checkpoint=checkpoint,
+                parsed=parsed,
+            )
+        return Decision(
+            True,
+            "eligible_consult",
+            root_id,
+            checkpoint=checkpoint,
+            parsed=parsed,
+            window_kind="consult",
+        )
+
     if not parsed.next_pickup_gated:
         return Decision(
             False, "no_gated_pickup", root_id, checkpoint=checkpoint, parsed=parsed

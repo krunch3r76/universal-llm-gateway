@@ -83,6 +83,45 @@ def resolve_workspaces_path(uri_or_path: str) -> Path | None:
     return None
 
 
+def read_prompt_text(
+    *,
+    prompt_text: str | None = None,
+    prompt_uri: str | None = None,
+    packet_path: str | None = None,
+    sidecar_ref: str | None = None,
+) -> str:
+    """Resolve CDP prompt inputs to a mutable text body.
+
+    Used when skills= must prepend slash/inline delivery before staging.
+    """
+    if prompt_text is not None and prompt_text.strip():
+        return prompt_text
+    for candidate in (prompt_uri, sidecar_ref, packet_path):
+        if not candidate or not str(candidate).strip():
+            continue
+        raw = str(candidate).strip()
+        if raw.startswith("cortex://"):
+            rel = raw[len("cortex://") :].lstrip("/")
+            path = cortex_files_root() / rel
+            if not path.is_file():
+                raise CdpStagingError(
+                    f"cortex prompt missing on disk: {raw!r}",
+                    code="cdp_prompt_missing",
+                )
+            return path.read_text(encoding="utf-8")
+        source = resolve_workspaces_path(raw)
+        if source is None:
+            raise CdpStagingError(
+                f"unstageable CDP prompt input: {raw!r} "
+                "(not cortex:// and not a readable workspaces/checkout path)",
+            )
+        return source.read_text(encoding="utf-8")
+    raise CdpStagingError(
+        "CDP generate requires prompt_text, prompt_uri, sidecar_ref, or packet_path",
+        code="cdp_prompt_missing",
+    )
+
+
 def stage_prompt_uri(
     *,
     execution_id: str,

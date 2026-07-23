@@ -65,7 +65,12 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
 
     @app.get("/v1/project-ask/active-work")
     async def active_work() -> dict[str, object]:
-        """Return in-flight executions so manage can defer restart mid-harvest."""
+        """In-flight executions for restart drain + multi-lane admission.
+
+        ``busy`` ⇒ defer restart (any pending/running). Lane admission uses
+        ``free_slots`` / ``at_hard_limit`` (soft=2, hard=3) — ¬ equate busy
+        with lane-full (friction a:25814).
+        """
         return await execution_store.active_work_snapshot()
 
     @app.get("/health", response_model=HealthResponse)

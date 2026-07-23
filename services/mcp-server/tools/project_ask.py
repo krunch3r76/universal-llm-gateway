@@ -82,6 +82,9 @@ def register_project_ask_tool(mcp: FastMCP) -> None:
         archive_path: str | None = None,
         delete_after: bool | None = None,
         timeout_s: int = 360,
+        expected_size: Literal["small", "large", "auto"] = "auto",
+        harvest_source: Literal["chat", "output-file", "auto"] = "auto",
+        download_output: bool = False,
     ) -> dict[str, Any]:
         """Submit, poll, or abort a Jupiter CDP sealed project-ask execution.
 
@@ -120,6 +123,20 @@ def register_project_ask_tool(mcp: FastMCP) -> None:
         ``model=opus-4.8``, ``purpose=ask``. Converse retains the Cowork chat by
         default; set ``delete_after=false`` on single-ask to retain for inspect.
 
+        Harvest knobs (Cowork Outputs — ``todo:cdp-cowork-outputs-local-harvest``):
+          expected_size — ``small`` | ``large`` | ``auto`` (default ``auto``).
+            ``large`` with ``harvest_source=auto`` attempts Cowork Output download
+            before archive; ``small`` never forces Output download.
+          harvest_source — ``chat`` | ``output-file`` | ``auto`` (default ``auto``).
+            ``chat`` archives scraped chat body only (legacy). ``output-file``
+            requires Output download — hard fail on miss (no thin chat archive).
+            ``auto`` tries Output download when ``expected_size=large`` or
+            ``download_output=true``; on miss falls back to a chat ``cortex://``
+            pointer when present, else chat body.
+          download_output — bool (default ``false``). When true (or with
+            ``expected_size=large``), attempt Cowork Output download into the
+            archive path before ``content_proof``.
+
         Args:
             op: submit | poll | abort
             execution_id: Required for poll/abort
@@ -140,6 +157,9 @@ def register_project_ask_tool(mcp: FastMCP) -> None:
             delete_after: Retain (false) or delete (true) chat after harvest; omit
                 for satellite defaults (converse/turn-2 retain, single-ask delete)
             timeout_s: Idle completion budget forwarded to satellite
+            expected_size: Deliverable size signal (small | large | auto)
+            harvest_source: Harvest provenance (chat | output-file | auto)
+            download_output: Attempt Cowork Output download when true or large mode
 
         Returns:
             submit: {execution_id, status, registration_id?}
@@ -168,6 +188,9 @@ def register_project_ask_tool(mcp: FastMCP) -> None:
                     "archive_path": archive_path,
                     "delete_after": delete_after,
                     "timeout_s": timeout_s,
+                    "expected_size": expected_size,
+                    "harvest_source": harvest_source,
+                    "download_output": download_output if download_output else None,
                 }.items()
                 if v is not None and v != ""
             }

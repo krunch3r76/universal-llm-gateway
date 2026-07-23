@@ -66,6 +66,29 @@ class SubmitProjectAskRequest(BaseModel):
     min_body: int = 40
     min_growth: int = 50
     delete_after: bool | None = None
+    expected_size: Literal["small", "large", "auto"] = Field(
+        default="auto",
+        description=(
+            "Expected deliverable size. ``large`` with ``harvest_source=auto`` "
+            "attempts Cowork Output download before archive; ``small`` never "
+            "forces Output download."
+        ),
+    )
+    harvest_source: Literal["chat", "output-file", "auto"] = Field(
+        default="auto",
+        description=(
+            "Harvest provenance. ``chat`` archives scraped chat body only; "
+            "``output-file`` requires Output download (hard fail on miss); "
+            "``auto`` tries Output then cortex-fs pointer then chat fallback."
+        ),
+    )
+    download_output: bool = Field(
+        default=False,
+        description=(
+            "When true (or with ``expected_size=large``), attempt Cowork Output "
+            "download into the archive path before ``content_proof``."
+        ),
+    )
 
 
 class ExecutionSummary(BaseModel):

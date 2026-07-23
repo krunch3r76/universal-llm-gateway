@@ -227,6 +227,34 @@ def validate_inline_prompt_inputs(
     return None
 
 
+def reject_supersede_wire_field(supersede: Any) -> dict[str, Any] | None:
+    """Reject ``supersede`` on team_dispatch — not shipped; use ``force`` instead."""
+    if supersede is None:
+        return None
+    return _validation_error(
+        "supersede is not supported on team_dispatch in this release; "
+        "use force=true to bypass same-source_ref reject on implement admits",
+        field="supersede",
+        code="supersede_not_supported",
+    )
+
+
+def validate_force_on_implement(
+    force: bool,
+    contract: str | None,
+) -> dict[str, Any] | None:
+    """``force`` bypasses same-``source_ref`` reject only; valid on implement."""
+    if not force:
+        return None
+    if contract != "implement":
+        return _validation_error(
+            "force is only valid with contract='implement'",
+            field="force",
+            code="force_implement_only",
+        )
+    return None
+
+
 def reject_pointer_body_on_generate(
     op: str,
     pointer_body: str | None,

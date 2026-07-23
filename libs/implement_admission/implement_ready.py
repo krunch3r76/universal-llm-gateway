@@ -59,6 +59,34 @@ def _reject(code: str, reason: str) -> ImplementReadyVerdict:
     return ImplementReadyVerdict(admitted=False, code=code, reason=reason)
 
 
+def _consult_provenance_reject(
+    *,
+    todo_id: str,
+    consult_thread: str | None,
+    verdict: str | None,
+    consultant_family: str | None,
+    consultant_substrate: str | None,
+) -> ImplementReadyVerdict | None:
+    missing: list[str] = []
+    if not (consult_thread or "").strip():
+        missing.append("consult_thread")
+    if not (verdict or "").strip():
+        missing.append("verdict")
+    if not (consultant_family or "").strip():
+        missing.append("consultant_family")
+    if not (consultant_substrate or "").strip():
+        missing.append("consultant_substrate")
+    if not missing:
+        return None
+    joined = ", ".join(missing)
+    return _reject(
+        "implement_consult_provenance_missing",
+        f"{todo_id}: judgment_required requires consult provenance "
+        f"({joined}) — traverse CONSULT_PENDING → consult seat → resume "
+        "with verdict attrs before implement dispatch",
+    )
+
+
 def _skeptic_evidence_reject(
     *,
     todo_id: str,
@@ -128,6 +156,10 @@ def evaluate_implement_ready(
     skeptic_evidence_unresolved: list[str] | None = None,
     skeptic_evidence_mode: str | None = None,
     skeptic_unratified_reason: str | None = None,
+    consult_thread: str | None = None,
+    verdict: str | None = None,
+    consultant_family: str | None = None,
+    consultant_substrate: str | None = None,
 ) -> ImplementReadyVerdict:
     """Deterministic implement-readiness verdict over declared todo state."""
     triage = (density_triage or "").strip() or None
@@ -261,6 +293,16 @@ def evaluate_implement_ready(
         )
         if evidence_reject is not None:
             return evidence_reject
+
+    consult_reject = _consult_provenance_reject(
+        todo_id=todo_id,
+        consult_thread=consult_thread,
+        verdict=verdict,
+        consultant_family=consultant_family,
+        consultant_substrate=consultant_substrate,
+    )
+    if consult_reject is not None:
+        return consult_reject
 
     return ImplementReadyVerdict(
         admitted=True,

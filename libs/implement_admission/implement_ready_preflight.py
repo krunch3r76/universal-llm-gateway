@@ -20,6 +20,7 @@ from implement_admission.implement_ready import (
     _acceptance_unpopulated_or_default,
     _assertion_cites_dense_spec,
     _assertion_inactive,
+    _consult_provenance_reject,
     _skeptic_evidence_reject,
 )
 
@@ -38,6 +39,7 @@ _GATE_NAMES: dict[int, str] = {
     11: "files_expected_distilled",
     12: "acceptance_criteria_distilled",
     13: "skeptic_pass",
+    14: "consult_provenance",
 }
 
 _GATE_13_DEFERRED_SUBCHECKS: tuple[str, ...] = (
@@ -172,6 +174,10 @@ def preflight_implement_ready(
     skeptic_evidence_unresolved: list[str] | None = None,
     skeptic_evidence_mode: str | None = None,
     skeptic_unratified_reason: str | None = None,
+    consult_thread: str | None = None,
+    verdict: str | None = None,
+    consultant_family: str | None = None,
+    consultant_substrate: str | None = None,
 ) -> PreflightReport:
     """Non-writing preflight over the declared-state gates (0-13).
 
@@ -254,11 +260,11 @@ def preflight_implement_ready(
 
     if triage == MECHANICAL:
         _pass(0, "mechanical_bypass")
-        for i in range(1, 14):
+        for i in range(1, 15):
             _na(i, _GATE_NAMES[i])
         return PreflightReport(
             admitted=True,
-            summary={"failed": 0, "blocked": 0, "not_applicable": 13},
+            summary={"failed": 0, "blocked": 0, "not_applicable": 14},
             first_failure=None,
             resolution=resolution,
             gates=gates,
@@ -271,8 +277,8 @@ def preflight_implement_ready(
             f"{todo_id}: recon not complete — run the two-axis recon and "
             "re-triage to judgment_required or mechanical before implement dispatch"
         )
-        _fail(1, "triage_known", code, reason, also_block=tuple(range(2, 14)))
-        for i in range(2, 14):
+        _fail(1, "triage_known", code, reason, also_block=tuple(range(2, 15)))
+        for i in range(2, 15):
             _block(i, _GATE_NAMES[i], blocked_by=(1,))
         return _make_report(
             admitted=False,
@@ -284,8 +290,8 @@ def preflight_implement_ready(
     if triage != JUDGMENT_REQUIRED:
         code = "implement_triage_unknown"
         reason = format_implement_triage_unknown_reason(todo_id, density_triage)
-        _fail(1, "triage_known", code, reason, also_block=tuple(range(2, 14)))
-        for i in range(2, 14):
+        _fail(1, "triage_known", code, reason, also_block=tuple(range(2, 15)))
+        for i in range(2, 15):
             _block(i, _GATE_NAMES[i], blocked_by=(1,))
         return _make_report(
             admitted=False,
@@ -525,6 +531,29 @@ def preflight_implement_ready(
     else:
         gate_waiver = recon_waiver if recon_waived and recon_waiver else None
         _pass(13, "skeptic_pass", gate_recon_waiver=gate_waiver)
+
+    if authoring_mode:
+        _na(14, "consult_provenance")
+    elif 14 in blocked or gates[1].status != GateStatus.PASSED:
+        parents = (1,) if gates[1].status != GateStatus.PASSED else ()
+        _block(14, "consult_provenance", blocked_by=parents)
+    else:
+        consult_reject = _consult_provenance_reject(
+            todo_id=todo_id,
+            consult_thread=consult_thread,
+            verdict=verdict,
+            consultant_family=consultant_family,
+            consultant_substrate=consultant_substrate,
+        )
+        if consult_reject is not None:
+            _fail(
+                14,
+                "consult_provenance",
+                consult_reject.code or "implement_consult_provenance_missing",
+                consult_reject.reason or "consult provenance missing",
+            )
+        else:
+            _pass(14, "consult_provenance")
 
     return _make_report(
         admitted=first_failure
