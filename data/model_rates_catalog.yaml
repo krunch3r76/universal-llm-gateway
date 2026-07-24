@@ -1,3830 +1,3830 @@
-updated_at: '2026-07-23T13:45:53.885434+00:00'
+updated_at: '2026-07-23T19:45:56.535374+00:00'
 models:
 - model_id: ai21/jamba-large-1.7
   input_rate_per_m: 2.0
   output_rate_per_m: 8.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885195+00:00'
+  updated_at: '2026-07-23T19:45:56.535117+00:00'
   pinned: false
 - model_id: aion-labs/aion-2.0
   input_rate_per_m: 0.8
   output_rate_per_m: 1.6
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885042+00:00'
+  updated_at: '2026-07-23T19:45:56.534954+00:00'
   pinned: false
 - model_id: aion-labs/aion-3.0
   input_rate_per_m: 3.0
   output_rate_per_m: 6.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884884+00:00'
+  updated_at: '2026-07-23T19:45:56.534785+00:00'
   pinned: false
 - model_id: aion-labs/aion-3.0-mini
   input_rate_per_m: 0.7
   output_rate_per_m: 1.4
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884882+00:00'
+  updated_at: '2026-07-23T19:45:56.534783+00:00'
   pinned: false
 - model_id: aion-labs/aion-rp-llama-3.1-8b
   input_rate_per_m: 0.8
   output_rate_per_m: 1.6
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885313+00:00'
+  updated_at: '2026-07-23T19:45:56.535243+00:00'
   pinned: false
 - model_id: allenai/olmo-3-32b-think
   input_rate_per_m: 0.15
   output_rate_per_m: 0.5
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885110+00:00'
+  updated_at: '2026-07-23T19:45:56.535027+00:00'
   pinned: false
 - model_id: amazon/nova-2-lite-v1
   input_rate_per_m: 0.3
   output_rate_per_m: 2.5
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885098+00:00'
+  updated_at: '2026-07-23T19:45:56.535014+00:00'
   pinned: false
 - model_id: amazon/nova-lite-v1
   input_rate_per_m: 0.06
   output_rate_per_m: 0.24
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885339+00:00'
+  updated_at: '2026-07-23T19:45:56.535271+00:00'
   pinned: false
 - model_id: amazon/nova-micro-v1
   input_rate_per_m: 0.035
   output_rate_per_m: 0.14
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885341+00:00'
+  updated_at: '2026-07-23T19:45:56.535273+00:00'
   pinned: false
 - model_id: amazon/nova-premier-v1
   input_rate_per_m: 2.5
   output_rate_per_m: 12.5
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885124+00:00'
+  updated_at: '2026-07-23T19:45:56.535041+00:00'
   pinned: false
 - model_id: amazon/nova-pro-v1
   input_rate_per_m: 0.8
   output_rate_per_m: 3.2
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885343+00:00'
+  updated_at: '2026-07-23T19:45:56.535275+00:00'
   pinned: false
 - model_id: anthracite-org/magnum-v4-72b
   input_rate_per_m: 3.0
   output_rate_per_m: 5.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885351+00:00'
+  updated_at: '2026-07-23T19:45:56.535284+00:00'
   pinned: false
 - model_id: anthropic/claude-3-haiku
   input_rate_per_m: 0.25
   output_rate_per_m: 1.25
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885396+00:00'
+  updated_at: '2026-07-23T19:45:56.535333+00:00'
   pinned: false
 - model_id: anthropic/claude-fable-5
   input_rate_per_m: 10.0
   output_rate_per_m: 50.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884907+00:00'
+  updated_at: '2026-07-23T19:45:56.534809+00:00'
   pinned: false
 - model_id: anthropic/claude-haiku-4.5
   input_rate_per_m: 1.0
   output_rate_per_m: 5.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885138+00:00'
+  updated_at: '2026-07-23T19:45:56.535056+00:00'
   pinned: false
 - model_id: anthropic/claude-opus-4
   input_rate_per_m: 15.0
   output_rate_per_m: 75.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885250+00:00'
+  updated_at: '2026-07-23T19:45:56.535176+00:00'
   pinned: false
 - model_id: anthropic/claude-opus-4.1
   input_rate_per_m: 15.0
   output_rate_per_m: 75.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885207+00:00'
+  updated_at: '2026-07-23T19:45:56.535130+00:00'
   pinned: false
 - model_id: anthropic/claude-opus-4.5
   input_rate_per_m: 5.0
   output_rate_per_m: 25.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885108+00:00'
+  updated_at: '2026-07-23T19:45:56.535025+00:00'
   pinned: false
 - model_id: anthropic/claude-opus-4.6
   input_rate_per_m: 5.0
   output_rate_per_m: 25.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885056+00:00'
+  updated_at: '2026-07-23T19:45:56.534969+00:00'
   pinned: false
 - model_id: anthropic/claude-opus-4.7
   input_rate_per_m: 5.0
   output_rate_per_m: 25.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884987+00:00'
+  updated_at: '2026-07-23T19:45:56.534895+00:00'
   pinned: false
 - model_id: anthropic/claude-opus-4.7-fast
   input_rate_per_m: 30.0
   output_rate_per_m: 150.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884926+00:00'
+  updated_at: '2026-07-23T19:45:56.534831+00:00'
   pinned: false
 - model_id: anthropic/claude-opus-4.8
   input_rate_per_m: 5.0
   output_rate_per_m: 25.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884919+00:00'
+  updated_at: '2026-07-23T19:45:56.534823+00:00'
   pinned: false
 - model_id: anthropic/claude-opus-4.8-fast
   input_rate_per_m: 10.0
   output_rate_per_m: 50.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884918+00:00'
+  updated_at: '2026-07-23T19:45:56.534821+00:00'
   pinned: false
 - model_id: anthropic/claude-sonnet-4
   input_rate_per_m: 3.0
   output_rate_per_m: 15.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885251+00:00'
+  updated_at: '2026-07-23T19:45:56.535178+00:00'
   pinned: false
 - model_id: anthropic/claude-sonnet-4.5
   input_rate_per_m: 3.0
   output_rate_per_m: 15.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885157+00:00'
+  updated_at: '2026-07-23T19:45:56.535076+00:00'
   pinned: false
 - model_id: anthropic/claude-sonnet-4.6
   input_rate_per_m: 3.0
   output_rate_per_m: 15.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885045+00:00'
+  updated_at: '2026-07-23T19:45:56.534958+00:00'
   pinned: false
 - model_id: anthropic/claude-sonnet-5
   input_rate_per_m: 2.0
   output_rate_per_m: 10.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884890+00:00'
+  updated_at: '2026-07-23T19:45:56.534791+00:00'
   pinned: false
 - model_id: arcee-ai/trinity-large-thinking
   input_rate_per_m: 0.25
   output_rate_per_m: 0.8
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884998+00:00'
+  updated_at: '2026-07-23T19:45:56.534906+00:00'
   pinned: false
 - model_id: arcee-ai/virtuoso-large
   input_rate_per_m: 0.75
   output_rate_per_m: 1.2
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885258+00:00'
+  updated_at: '2026-07-23T19:45:56.535186+00:00'
   pinned: false
 - model_id: baidu/ernie-4.5-vl-424b-a47b
   input_rate_per_m: 0.42
   output_rate_per_m: 1.25
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885236+00:00'
+  updated_at: '2026-07-23T19:45:56.535162+00:00'
   pinned: false
 - model_id: bytedance-seed/seed-1.6
   input_rate_per_m: 0.25
   output_rate_per_m: 2.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885077+00:00'
+  updated_at: '2026-07-23T19:45:56.534992+00:00'
   pinned: false
 - model_id: bytedance-seed/seed-1.6-flash
   input_rate_per_m: 0.075
   output_rate_per_m: 0.3
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885075+00:00'
+  updated_at: '2026-07-23T19:45:56.534990+00:00'
   pinned: false
 - model_id: bytedance-seed/seed-2.0-lite
   input_rate_per_m: 0.25
   output_rate_per_m: 2.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885017+00:00'
+  updated_at: '2026-07-23T19:45:56.534927+00:00'
   pinned: false
 - model_id: bytedance-seed/seed-2.0-mini
   input_rate_per_m: 0.1
   output_rate_per_m: 0.4
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885029+00:00'
+  updated_at: '2026-07-23T19:45:56.534940+00:00'
   pinned: false
 - model_id: bytedance/ui-tars-1.5-7b
   input_rate_per_m: 0.1
   output_rate_per_m: 0.2
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885221+00:00'
+  updated_at: '2026-07-23T19:45:56.535146+00:00'
   pinned: false
 - model_id: cognitivecomputations/dolphin-mistral-24b-venice-edition
   input_rate_per_m: 0.2
   output_rate_per_m: 0.9
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885229+00:00'
+  updated_at: '2026-07-23T19:45:56.535154+00:00'
   pinned: false
 - model_id: cohere/command-a
   input_rate_per_m: 2.5
   output_rate_per_m: 10.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885293+00:00'
+  updated_at: '2026-07-23T19:45:56.535223+00:00'
   pinned: false
 - model_id: cohere/command-r-08-2024
   input_rate_per_m: 0.15
   output_rate_per_m: 0.6
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885365+00:00'
+  updated_at: '2026-07-23T19:45:56.535299+00:00'
   pinned: false
 - model_id: cohere/command-r-plus-08-2024
   input_rate_per_m: 2.5
   output_rate_per_m: 10.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885367+00:00'
+  updated_at: '2026-07-23T19:45:56.535301+00:00'
   pinned: false
 - model_id: cohere/command-r7b-12-2024
   input_rate_per_m: 0.0375
   output_rate_per_m: 0.15
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885336+00:00'
+  updated_at: '2026-07-23T19:45:56.535267+00:00'
   pinned: false
 - model_id: deepcogito/cogito-v2.1-671b
   input_rate_per_m: 1.25
   output_rate_per_m: 1.25
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885114+00:00'
+  updated_at: '2026-07-23T19:45:56.535030+00:00'
   pinned: false
 - model_id: deepseek/deepseek-chat
   input_rate_per_m: 0.2002
   output_rate_per_m: 0.8001
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885330+00:00'
+  updated_at: '2026-07-23T19:45:56.535262+00:00'
   pinned: false
 - model_id: deepseek/deepseek-chat-v3-0324
   input_rate_per_m: 0.27
   output_rate_per_m: 1.12
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885284+00:00'
+  updated_at: '2026-07-23T19:45:56.535213+00:00'
   pinned: false
 - model_id: deepseek/deepseek-chat-v3.1
   input_rate_per_m: 0.25
   output_rate_per_m: 0.95
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885190+00:00'
+  updated_at: '2026-07-23T19:45:56.535111+00:00'
   pinned: false
 - model_id: deepseek/deepseek-r1
   input_rate_per_m: 0.7
   output_rate_per_m: 2.5
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885325+00:00'
+  updated_at: '2026-07-23T19:45:56.535256+00:00'
   pinned: false
 - model_id: deepseek/deepseek-r1-0528
   input_rate_per_m: 0.5
   output_rate_per_m: 2.15
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885248+00:00'
+  updated_at: '2026-07-23T19:45:56.535174+00:00'
   pinned: false
 - model_id: deepseek/deepseek-r1-distill-llama-70b
   input_rate_per_m: 0.8
   output_rate_per_m: 0.8
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885324+00:00'
+  updated_at: '2026-07-23T19:45:56.535254+00:00'
   pinned: false
 - model_id: deepseek/deepseek-v3.1-terminus
   input_rate_per_m: 0.27
   output_rate_per_m: 1.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885172+00:00'
+  updated_at: '2026-07-23T19:45:56.535092+00:00'
   pinned: false
 - model_id: deepseek/deepseek-v3.2
   input_rate_per_m: 0.269
   output_rate_per_m: 0.4
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885106+00:00'
+  updated_at: '2026-07-23T19:45:56.535023+00:00'
   pinned: false
 - model_id: deepseek/deepseek-v3.2-exp
   input_rate_per_m: 0.27
   output_rate_per_m: 0.41
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885158+00:00'
+  updated_at: '2026-07-23T19:45:56.535078+00:00'
   pinned: false
 - model_id: deepseek/deepseek-v4-flash
   input_rate_per_m: 0.098
   output_rate_per_m: 0.196
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884971+00:00'
+  updated_at: '2026-07-23T19:45:56.534877+00:00'
   pinned: false
 - model_id: deepseek/deepseek-v4-pro
   input_rate_per_m: 0.435
   output_rate_per_m: 0.87
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884969+00:00'
+  updated_at: '2026-07-23T19:45:56.534875+00:00'
   pinned: false
 - model_id: google/gemini-2.5-flash
   input_rate_per_m: 0.3
   output_rate_per_m: 2.5
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885241+00:00'
+  updated_at: '2026-07-23T19:45:56.535167+00:00'
   pinned: false
 - model_id: google/gemini-2.5-flash-image
   input_rate_per_m: 0.3
   output_rate_per_m: 2.5
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885149+00:00'
+  updated_at: '2026-07-23T19:45:56.535067+00:00'
   pinned: false
 - model_id: google/gemini-2.5-flash-lite
   input_rate_per_m: 0.1
   output_rate_per_m: 0.4
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885223+00:00'
+  updated_at: '2026-07-23T19:45:56.535148+00:00'
   pinned: false
 - model_id: google/gemini-2.5-pro
   input_rate_per_m: 1.25
   output_rate_per_m: 10.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885243+00:00'
+  updated_at: '2026-07-23T19:45:56.535169+00:00'
   pinned: false
 - model_id: google/gemini-2.5-pro-preview
   input_rate_per_m: 1.25
   output_rate_per_m: 10.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885246+00:00'
+  updated_at: '2026-07-23T19:45:56.535173+00:00'
   pinned: false
 - model_id: google/gemini-2.5-pro-preview-05-06
   input_rate_per_m: 1.25
   output_rate_per_m: 10.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885257+00:00'
+  updated_at: '2026-07-23T19:45:56.535184+00:00'
   pinned: false
 - model_id: google/gemini-3-flash-preview
   input_rate_per_m: 0.5
   output_rate_per_m: 3.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885082+00:00'
+  updated_at: '2026-07-23T19:45:56.534997+00:00'
   pinned: false
 - model_id: google/gemini-3-pro-image
   input_rate_per_m: 2.0
   output_rate_per_m: 12.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884899+00:00'
+  updated_at: '2026-07-23T19:45:56.534801+00:00'
   pinned: false
 - model_id: google/gemini-3-pro-image-preview
   input_rate_per_m: 2.0
   output_rate_per_m: 12.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885112+00:00'
+  updated_at: '2026-07-23T19:45:56.535028+00:00'
   pinned: false
 - model_id: google/gemini-3.1-flash-image
   input_rate_per_m: 0.5
   output_rate_per_m: 3.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884897+00:00'
+  updated_at: '2026-07-23T19:45:56.534799+00:00'
   pinned: false
 - model_id: google/gemini-3.1-flash-image-preview
   input_rate_per_m: 0.5
   output_rate_per_m: 3.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885030+00:00'
+  updated_at: '2026-07-23T19:45:56.534942+00:00'
   pinned: false
 - model_id: google/gemini-3.1-flash-lite
   input_rate_per_m: 0.25
   output_rate_per_m: 1.5
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884931+00:00'
+  updated_at: '2026-07-23T19:45:56.534836+00:00'
   pinned: false
 - model_id: google/gemini-3.1-flash-lite-image
   input_rate_per_m: 0.25
   output_rate_per_m: 1.5
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884891+00:00'
+  updated_at: '2026-07-23T19:45:56.534793+00:00'
   pinned: false
 - model_id: google/gemini-3.1-flash-lite-preview
   input_rate_per_m: 0.25
   output_rate_per_m: 1.5
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885027+00:00'
+  updated_at: '2026-07-23T19:45:56.534938+00:00'
   pinned: false
 - model_id: google/gemini-3.1-pro-preview
   input_rate_per_m: 2.0
   output_rate_per_m: 12.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885044+00:00'
+  updated_at: '2026-07-23T19:45:56.534956+00:00'
   pinned: false
 - model_id: google/gemini-3.1-pro-preview-customtools
   input_rate_per_m: 2.0
   output_rate_per_m: 12.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885039+00:00'
+  updated_at: '2026-07-23T19:45:56.534951+00:00'
   pinned: false
 - model_id: google/gemini-3.5-flash
   input_rate_per_m: 1.5
   output_rate_per_m: 9.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884924+00:00'
+  updated_at: '2026-07-23T19:45:56.534829+00:00'
   pinned: false
 - model_id: google/gemini-3.5-flash-lite
   input_rate_per_m: 0.3
   output_rate_per_m: 2.5
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884854+00:00'
+  updated_at: '2026-07-23T19:45:56.534752+00:00'
   pinned: false
 - model_id: google/gemini-3.6-flash
   input_rate_per_m: 1.5
   output_rate_per_m: 7.5
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884852+00:00'
+  updated_at: '2026-07-23T19:45:56.534750+00:00'
   pinned: false
 - model_id: google/gemma-2-27b-it
   input_rate_per_m: 0.65
   output_rate_per_m: 0.65
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885385+00:00'
+  updated_at: '2026-07-23T19:45:56.535321+00:00'
   pinned: false
 - model_id: google/gemma-3-12b-it
   input_rate_per_m: 0.05
   output_rate_per_m: 0.15
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885291+00:00'
+  updated_at: '2026-07-23T19:45:56.535221+00:00'
   pinned: false
 - model_id: google/gemma-3-27b-it
-  input_rate_per_m: 0.1
-  output_rate_per_m: 0.3
+  input_rate_per_m: 0.08
+  output_rate_per_m: 0.45
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885301+00:00'
+  updated_at: '2026-07-23T19:45:56.535230+00:00'
   pinned: false
 - model_id: google/gemma-3-4b-it
   input_rate_per_m: 0.05
   output_rate_per_m: 0.1
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885289+00:00'
+  updated_at: '2026-07-23T19:45:56.535219+00:00'
   pinned: false
 - model_id: google/gemma-3n-e4b-it
   input_rate_per_m: 0.06
   output_rate_per_m: 0.12
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885253+00:00'
+  updated_at: '2026-07-23T19:45:56.535180+00:00'
   pinned: false
 - model_id: google/gemma-4-26b-a4b-it
   input_rate_per_m: 0.12
   output_rate_per_m: 0.35
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884990+00:00'
+  updated_at: '2026-07-23T19:45:56.534898+00:00'
   pinned: false
 - model_id: google/gemma-4-31b-it
   input_rate_per_m: 0.12
   output_rate_per_m: 0.35
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884992+00:00'
+  updated_at: '2026-07-23T19:45:56.534901+00:00'
   pinned: false
 - model_id: gryphe/mythomax-l2-13b
   input_rate_per_m: 0.06
   output_rate_per_m: 0.06
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885410+00:00'
+  updated_at: '2026-07-23T19:45:56.535348+00:00'
   pinned: false
 - model_id: ibm-granite/granite-4.0-h-micro
   input_rate_per_m: 0.017
   output_rate_per_m: 0.112
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885135+00:00'
+  updated_at: '2026-07-23T19:45:56.535052+00:00'
   pinned: false
 - model_id: ibm-granite/granite-4.1-8b
   input_rate_per_m: 0.05
   output_rate_per_m: 0.1
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884937+00:00'
+  updated_at: '2026-07-23T19:45:56.534842+00:00'
   pinned: false
 - model_id: inception/mercury-2
   input_rate_per_m: 0.25
   output_rate_per_m: 0.75
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885024+00:00'
+  updated_at: '2026-07-23T19:45:56.534934+00:00'
   pinned: false
 - model_id: inclusionai/ling-2.6-1t
   input_rate_per_m: 0.075
   output_rate_per_m: 0.625
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884973+00:00'
+  updated_at: '2026-07-23T19:45:56.534879+00:00'
   pinned: false
 - model_id: inclusionai/ling-2.6-flash
   input_rate_per_m: 0.01
   output_rate_per_m: 0.03
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884982+00:00'
+  updated_at: '2026-07-23T19:45:56.534889+00:00'
   pinned: false
 - model_id: inclusionai/ring-2.6-1t
   input_rate_per_m: 0.075
   output_rate_per_m: 0.625
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884929+00:00'
+  updated_at: '2026-07-23T19:45:56.534835+00:00'
   pinned: false
 - model_id: inflection/inflection-3-pi
   input_rate_per_m: 2.5
   output_rate_per_m: 10.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885355+00:00'
+  updated_at: '2026-07-23T19:45:56.535288+00:00'
   pinned: false
 - model_id: inflection/inflection-3-productivity
   input_rate_per_m: 2.5
   output_rate_per_m: 10.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885357+00:00'
+  updated_at: '2026-07-23T19:45:56.535290+00:00'
   pinned: false
 - model_id: kwaipilot/kat-coder-air-v2.5
   input_rate_per_m: 0.15
   output_rate_per_m: 0.6
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884864+00:00'
+  updated_at: '2026-07-23T19:45:56.534763+00:00'
   pinned: false
 - model_id: kwaipilot/kat-coder-pro-v2
   input_rate_per_m: 0.3
   output_rate_per_m: 1.2
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885003+00:00'
+  updated_at: '2026-07-23T19:45:56.534912+00:00'
   pinned: false
 - model_id: kwaipilot/kat-coder-pro-v2.5
   input_rate_per_m: 0.74
   output_rate_per_m: 2.96
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884866+00:00'
+  updated_at: '2026-07-23T19:45:56.534765+00:00'
   pinned: false
 - model_id: mancer/weaver
   input_rate_per_m: 0.5
   output_rate_per_m: 0.75
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885406+00:00'
+  updated_at: '2026-07-23T19:45:56.535344+00:00'
   pinned: false
 - model_id: meituan/longcat-2.0
   input_rate_per_m: 0.3
   output_rate_per_m: 1.2
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884856+00:00'
+  updated_at: '2026-07-23T19:45:56.534754+00:00'
   pinned: false
 - model_id: meta-llama/llama-3.1-70b-instruct
   input_rate_per_m: 0.4
   output_rate_per_m: 0.4
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885377+00:00'
+  updated_at: '2026-07-23T19:45:56.535312+00:00'
   pinned: false
 - model_id: meta-llama/llama-3.1-8b-instruct
   input_rate_per_m: 0.05
   output_rate_per_m: 0.08
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885379+00:00'
+  updated_at: '2026-07-23T19:45:56.535314+00:00'
   pinned: false
 - model_id: meta-llama/llama-3.2-1b-instruct
   input_rate_per_m: 0.027
   output_rate_per_m: 0.201
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885360+00:00'
+  updated_at: '2026-07-23T19:45:56.535293+00:00'
   pinned: false
 - model_id: meta-llama/llama-3.2-3b-instruct
   input_rate_per_m: 0.05
   output_rate_per_m: 0.33
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885362+00:00'
+  updated_at: '2026-07-23T19:45:56.535295+00:00'
   pinned: false
 - model_id: meta-llama/llama-3.3-70b-instruct
   input_rate_per_m: 0.13
   output_rate_per_m: 0.4
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885337+00:00'
+  updated_at: '2026-07-23T19:45:56.535269+00:00'
   pinned: false
 - model_id: meta-llama/llama-4-maverick
   input_rate_per_m: 0.2
   output_rate_per_m: 0.8
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885281+00:00'
+  updated_at: '2026-07-23T19:45:56.535209+00:00'
   pinned: false
 - model_id: meta-llama/llama-4-scout
   input_rate_per_m: 0.1
   output_rate_per_m: 0.3
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885283+00:00'
+  updated_at: '2026-07-23T19:45:56.535211+00:00'
   pinned: false
 - model_id: meta-llama/llama-guard-4-12b
   input_rate_per_m: 0.18
   output_rate_per_m: 0.18
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885260+00:00'
+  updated_at: '2026-07-23T19:45:56.535187+00:00'
   pinned: false
 - model_id: meta/muse-spark-1.1
   input_rate_per_m: 1.25
   output_rate_per_m: 4.25
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884862+00:00'
+  updated_at: '2026-07-23T19:45:56.534761+00:00'
   pinned: false
 - model_id: microsoft/phi-4
   input_rate_per_m: 0.07
   output_rate_per_m: 0.14
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885329+00:00'
+  updated_at: '2026-07-23T19:45:56.535260+00:00'
   pinned: false
 - model_id: microsoft/wizardlm-2-8x22b
   input_rate_per_m: 0.62
   output_rate_per_m: 0.62
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885392+00:00'
+  updated_at: '2026-07-23T19:45:56.535329+00:00'
   pinned: false
 - model_id: minimax/minimax-01
   input_rate_per_m: 0.2
   output_rate_per_m: 1.1
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885327+00:00'
+  updated_at: '2026-07-23T19:45:56.535258+00:00'
   pinned: false
 - model_id: minimax/minimax-m1
   input_rate_per_m: 0.55
   output_rate_per_m: 2.2
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885240+00:00'
+  updated_at: '2026-07-23T19:45:56.535165+00:00'
   pinned: false
 - model_id: minimax/minimax-m2
-  input_rate_per_m: 0.3
-  output_rate_per_m: 1.2
+  input_rate_per_m: 0.255
+  output_rate_per_m: 1.02
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885131+00:00'
+  updated_at: '2026-07-23T19:45:56.535049+00:00'
   pinned: false
 - model_id: minimax/minimax-m2-her
   input_rate_per_m: 0.3
   output_rate_per_m: 1.2
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885064+00:00'
+  updated_at: '2026-07-23T19:45:56.534978+00:00'
   pinned: false
 - model_id: minimax/minimax-m2.1
   input_rate_per_m: 0.3
   output_rate_per_m: 1.2
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885079+00:00'
+  updated_at: '2026-07-23T19:45:56.534994+00:00'
   pinned: false
 - model_id: minimax/minimax-m2.5
   input_rate_per_m: 0.15
   output_rate_per_m: 0.9
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885051+00:00'
+  updated_at: '2026-07-23T19:45:56.534963+00:00'
   pinned: false
 - model_id: minimax/minimax-m2.7
   input_rate_per_m: 0.25
   output_rate_per_m: 1.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885006+00:00'
+  updated_at: '2026-07-23T19:45:56.534916+00:00'
   pinned: false
 - model_id: minimax/minimax-m3
   input_rate_per_m: 0.3
   output_rate_per_m: 1.2
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884914+00:00'
+  updated_at: '2026-07-23T19:45:56.534818+00:00'
   pinned: false
 - model_id: mistralai/codestral-2508
   input_rate_per_m: 0.3
   output_rate_per_m: 0.9
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885209+00:00'
+  updated_at: '2026-07-23T19:45:56.535132+00:00'
   pinned: false
 - model_id: mistralai/devstral-2512
   input_rate_per_m: 0.4
   output_rate_per_m: 2.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885091+00:00'
+  updated_at: '2026-07-23T19:45:56.535007+00:00'
   pinned: false
 - model_id: mistralai/ministral-14b-2512
   input_rate_per_m: 0.2
   output_rate_per_m: 0.2
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885100+00:00'
+  updated_at: '2026-07-23T19:45:56.535016+00:00'
   pinned: false
 - model_id: mistralai/ministral-3b-2512
   input_rate_per_m: 0.1
   output_rate_per_m: 0.1
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885103+00:00'
+  updated_at: '2026-07-23T19:45:56.535020+00:00'
   pinned: false
 - model_id: mistralai/ministral-8b-2512
   input_rate_per_m: 0.15
   output_rate_per_m: 0.15
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885101+00:00'
+  updated_at: '2026-07-23T19:45:56.535018+00:00'
   pinned: false
 - model_id: mistralai/mistral-large
   input_rate_per_m: 2.0
   output_rate_per_m: 6.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885397+00:00'
+  updated_at: '2026-07-23T19:45:56.535334+00:00'
   pinned: false
 - model_id: mistralai/mistral-large-2407
   input_rate_per_m: 2.0
   output_rate_per_m: 6.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885346+00:00'
+  updated_at: '2026-07-23T19:45:56.535278+00:00'
   pinned: false
 - model_id: mistralai/mistral-large-2512
   input_rate_per_m: 0.5
   output_rate_per_m: 1.5
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885105+00:00'
+  updated_at: '2026-07-23T19:45:56.535021+00:00'
   pinned: false
 - model_id: mistralai/mistral-medium-3
   input_rate_per_m: 0.4
   output_rate_per_m: 2.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885255+00:00'
+  updated_at: '2026-07-23T19:45:56.535182+00:00'
   pinned: false
 - model_id: mistralai/mistral-medium-3-5
   input_rate_per_m: 1.5
   output_rate_per_m: 7.5
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884938+00:00'
+  updated_at: '2026-07-23T19:45:56.534844+00:00'
   pinned: false
 - model_id: mistralai/mistral-medium-3.1
   input_rate_per_m: 0.4
   output_rate_per_m: 2.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885192+00:00'
+  updated_at: '2026-07-23T19:45:56.535113+00:00'
   pinned: false
 - model_id: mistralai/mistral-nemo
   input_rate_per_m: 0.019
   output_rate_per_m: 0.03
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885380+00:00'
+  updated_at: '2026-07-23T19:45:56.535316+00:00'
   pinned: false
 - model_id: mistralai/mistral-saba
   input_rate_per_m: 0.2
   output_rate_per_m: 0.6
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885309+00:00'
+  updated_at: '2026-07-23T19:45:56.535239+00:00'
   pinned: false
 - model_id: mistralai/mistral-small-24b-instruct-2501
   input_rate_per_m: 0.05
   output_rate_per_m: 0.08
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885320+00:00'
+  updated_at: '2026-07-23T19:45:56.535251+00:00'
   pinned: false
 - model_id: mistralai/mistral-small-2603
   input_rate_per_m: 0.15
   output_rate_per_m: 0.6
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885012+00:00'
+  updated_at: '2026-07-23T19:45:56.534921+00:00'
   pinned: false
 - model_id: mistralai/mistral-small-3.1-24b-instruct
   input_rate_per_m: 0.351
   output_rate_per_m: 0.555
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885288+00:00'
+  updated_at: '2026-07-23T19:45:56.535217+00:00'
   pinned: false
 - model_id: mistralai/mistral-small-3.2-24b-instruct
   input_rate_per_m: 0.1
   output_rate_per_m: 0.3
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885238+00:00'
+  updated_at: '2026-07-23T19:45:56.535163+00:00'
   pinned: false
 - model_id: mistralai/mixtral-8x22b-instruct
   input_rate_per_m: 2.0
   output_rate_per_m: 6.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885391+00:00'
+  updated_at: '2026-07-23T19:45:56.535327+00:00'
   pinned: false
 - model_id: mistralai/voxtral-small-24b-2507
   input_rate_per_m: 0.1
   output_rate_per_m: 0.3
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885128+00:00'
+  updated_at: '2026-07-23T19:45:56.535045+00:00'
   pinned: false
 - model_id: moonshotai/kimi-k2
   input_rate_per_m: 0.57
   output_rate_per_m: 2.3
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885227+00:00'
+  updated_at: '2026-07-23T19:45:56.535152+00:00'
   pinned: false
 - model_id: moonshotai/kimi-k2-0905
   input_rate_per_m: 0.6
   output_rate_per_m: 2.5
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885183+00:00'
+  updated_at: '2026-07-23T19:45:56.535104+00:00'
   pinned: false
 - model_id: moonshotai/kimi-k2-thinking
   input_rate_per_m: 0.6
   output_rate_per_m: 2.5
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885123+00:00'
+  updated_at: '2026-07-23T19:45:56.535039+00:00'
   pinned: false
 - model_id: moonshotai/kimi-k2.5
   input_rate_per_m: 0.57
   output_rate_per_m: 2.85
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885061+00:00'
+  updated_at: '2026-07-23T19:45:56.534974+00:00'
   pinned: false
 - model_id: moonshotai/kimi-k2.6
   input_rate_per_m: 0.684
   output_rate_per_m: 3.42
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884985+00:00'
+  updated_at: '2026-07-23T19:45:56.534893+00:00'
   pinned: false
 - model_id: moonshotai/kimi-k2.7-code
   input_rate_per_m: 0.82
   output_rate_per_m: 3.75
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884903+00:00'
+  updated_at: '2026-07-23T19:45:56.534805+00:00'
   pinned: false
 - model_id: moonshotai/kimi-k3
   input_rate_per_m: 3.0
   output_rate_per_m: 15.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884860+00:00'
+  updated_at: '2026-07-23T19:45:56.534759+00:00'
   pinned: false
 - model_id: morph/morph-v3-fast
   input_rate_per_m: 0.8
   output_rate_per_m: 1.2
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885234+00:00'
+  updated_at: '2026-07-23T19:45:56.535159+00:00'
   pinned: false
 - model_id: morph/morph-v3-large
   input_rate_per_m: 0.9
   output_rate_per_m: 1.9
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885233+00:00'
+  updated_at: '2026-07-23T19:45:56.535158+00:00'
   pinned: false
 - model_id: nex-agi/nex-n2-mini
   input_rate_per_m: 0.025
   output_rate_per_m: 0.1
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884893+00:00'
+  updated_at: '2026-07-23T19:45:56.534795+00:00'
   pinned: false
 - model_id: nex-agi/nex-n2-pro
   input_rate_per_m: 0.25
   output_rate_per_m: 1.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884908+00:00'
+  updated_at: '2026-07-23T19:45:56.534811+00:00'
   pinned: false
 - model_id: nousresearch/hermes-3-llama-3.1-405b
   input_rate_per_m: 1.0
   output_rate_per_m: 1.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885372+00:00'
+  updated_at: '2026-07-23T19:45:56.535306+00:00'
   pinned: false
 - model_id: nousresearch/hermes-3-llama-3.1-70b
   input_rate_per_m: 0.7
   output_rate_per_m: 0.7
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885370+00:00'
+  updated_at: '2026-07-23T19:45:56.535304+00:00'
   pinned: false
 - model_id: nousresearch/hermes-4-405b
   input_rate_per_m: 1.0
   output_rate_per_m: 3.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885189+00:00'
+  updated_at: '2026-07-23T19:45:56.535110+00:00'
   pinned: false
 - model_id: nousresearch/hermes-4-70b
   input_rate_per_m: 0.13
   output_rate_per_m: 0.4
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885187+00:00'
+  updated_at: '2026-07-23T19:45:56.535108+00:00'
   pinned: false
 - model_id: nvidia/nemotron-3-nano-30b-a3b
   input_rate_per_m: 0.05
   output_rate_per_m: 0.2
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885084+00:00'
+  updated_at: '2026-07-23T19:45:56.534999+00:00'
   pinned: false
 - model_id: nvidia/nemotron-3-super-120b-a12b
   input_rate_per_m: 0.08
   output_rate_per_m: 0.45
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885015+00:00'
+  updated_at: '2026-07-23T19:45:56.534925+00:00'
   pinned: false
 - model_id: nvidia/nemotron-3-ultra-550b-a55b
   input_rate_per_m: 0.5
   output_rate_per_m: 2.2
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884911+00:00'
+  updated_at: '2026-07-23T19:45:56.534814+00:00'
   pinned: false
 - model_id: openai/gpt-3.5-turbo
   input_rate_per_m: 0.5
   output_rate_per_m: 1.5
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885412+00:00'
+  updated_at: '2026-07-23T19:45:56.535350+00:00'
   pinned: false
 - model_id: openai/gpt-3.5-turbo-0613
   input_rate_per_m: 1.0
   output_rate_per_m: 2.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885399+00:00'
+  updated_at: '2026-07-23T19:45:56.535337+00:00'
   pinned: false
 - model_id: openai/gpt-3.5-turbo-16k
   input_rate_per_m: 3.0
   output_rate_per_m: 4.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885404+00:00'
+  updated_at: '2026-07-23T19:45:56.535343+00:00'
   pinned: false
 - model_id: openai/gpt-3.5-turbo-instruct
   input_rate_per_m: 1.5
   output_rate_per_m: 2.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885403+00:00'
+  updated_at: '2026-07-23T19:45:56.535341+00:00'
   pinned: false
 - model_id: openai/gpt-4
   input_rate_per_m: 30.0
   output_rate_per_m: 60.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885413+00:00'
+  updated_at: '2026-07-23T19:45:56.535352+00:00'
   pinned: false
 - model_id: openai/gpt-4-turbo
   input_rate_per_m: 10.0
   output_rate_per_m: 30.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885394+00:00'
+  updated_at: '2026-07-23T19:45:56.535331+00:00'
   pinned: false
 - model_id: openai/gpt-4-turbo-preview
   input_rate_per_m: 10.0
   output_rate_per_m: 30.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885401+00:00'
+  updated_at: '2026-07-23T19:45:56.535338+00:00'
   pinned: false
 - model_id: openai/gpt-4.1
   input_rate_per_m: 2.0
   output_rate_per_m: 8.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885275+00:00'
+  updated_at: '2026-07-23T19:45:56.535204+00:00'
   pinned: false
 - model_id: openai/gpt-4.1-mini
   input_rate_per_m: 0.4
   output_rate_per_m: 1.6
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885277+00:00'
+  updated_at: '2026-07-23T19:45:56.535206+00:00'
   pinned: false
 - model_id: openai/gpt-4.1-nano
   input_rate_per_m: 0.1
   output_rate_per_m: 0.4
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885279+00:00'
+  updated_at: '2026-07-23T19:45:56.535208+00:00'
   pinned: false
 - model_id: openai/gpt-4o
   input_rate_per_m: 2.5
   output_rate_per_m: 10.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885387+00:00'
+  updated_at: '2026-07-23T19:45:56.535323+00:00'
   pinned: false
 - model_id: openai/gpt-4o-2024-05-13
   input_rate_per_m: 5.0
   output_rate_per_m: 15.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885389+00:00'
+  updated_at: '2026-07-23T19:45:56.535325+00:00'
   pinned: false
 - model_id: openai/gpt-4o-2024-08-06
   input_rate_per_m: 2.5
   output_rate_per_m: 10.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885375+00:00'
+  updated_at: '2026-07-23T19:45:56.535310+00:00'
   pinned: false
 - model_id: openai/gpt-4o-2024-11-20
   input_rate_per_m: 2.5
   output_rate_per_m: 10.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885344+00:00'
+  updated_at: '2026-07-23T19:45:56.535277+00:00'
   pinned: false
 - model_id: openai/gpt-4o-mini-2024-07-18
   input_rate_per_m: 0.15
   output_rate_per_m: 0.6
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885384+00:00'
+  updated_at: '2026-07-23T19:45:56.535319+00:00'
   pinned: false
 - model_id: openai/gpt-4o-mini-search-preview
   input_rate_per_m: 0.15
   output_rate_per_m: 0.6
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885295+00:00'
+  updated_at: '2026-07-23T19:45:56.535224+00:00'
   pinned: false
 - model_id: openai/gpt-4o-search-preview
   input_rate_per_m: 2.5
   output_rate_per_m: 10.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885297+00:00'
+  updated_at: '2026-07-23T19:45:56.535226+00:00'
   pinned: false
 - model_id: openai/gpt-5
   input_rate_per_m: 1.25
   output_rate_per_m: 10.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885199+00:00'
+  updated_at: '2026-07-23T19:45:56.535120+00:00'
   pinned: false
 - model_id: openai/gpt-5-chat
   input_rate_per_m: 1.25
   output_rate_per_m: 10.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885197+00:00'
+  updated_at: '2026-07-23T19:45:56.535119+00:00'
   pinned: false
 - model_id: openai/gpt-5-codex
   input_rate_per_m: 1.25
   output_rate_per_m: 10.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885171+00:00'
+  updated_at: '2026-07-23T19:45:56.535090+00:00'
   pinned: false
 - model_id: openai/gpt-5-image
   input_rate_per_m: 10.0
   output_rate_per_m: 10.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885143+00:00'
+  updated_at: '2026-07-23T19:45:56.535062+00:00'
   pinned: false
 - model_id: openai/gpt-5-image-mini
   input_rate_per_m: 2.5
   output_rate_per_m: 2.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885136+00:00'
+  updated_at: '2026-07-23T19:45:56.535054+00:00'
   pinned: false
 - model_id: openai/gpt-5-mini
   input_rate_per_m: 0.25
   output_rate_per_m: 2.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885201+00:00'
+  updated_at: '2026-07-23T19:45:56.535123+00:00'
   pinned: false
 - model_id: openai/gpt-5-nano
   input_rate_per_m: 0.05
   output_rate_per_m: 0.4
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885202+00:00'
+  updated_at: '2026-07-23T19:45:56.535124+00:00'
   pinned: false
 - model_id: openai/gpt-5-pro
   input_rate_per_m: 15.0
   output_rate_per_m: 120.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885153+00:00'
+  updated_at: '2026-07-23T19:45:56.535072+00:00'
   pinned: false
 - model_id: openai/gpt-5.1
   input_rate_per_m: 1.25
   output_rate_per_m: 10.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885115+00:00'
+  updated_at: '2026-07-23T19:45:56.535032+00:00'
   pinned: false
 - model_id: openai/gpt-5.1-chat
   input_rate_per_m: 1.25
   output_rate_per_m: 10.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885117+00:00'
+  updated_at: '2026-07-23T19:45:56.535034+00:00'
   pinned: false
 - model_id: openai/gpt-5.1-codex
   input_rate_per_m: 1.25
   output_rate_per_m: 10.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885119+00:00'
+  updated_at: '2026-07-23T19:45:56.535036+00:00'
   pinned: false
 - model_id: openai/gpt-5.1-codex-max
   input_rate_per_m: 1.25
   output_rate_per_m: 10.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885097+00:00'
+  updated_at: '2026-07-23T19:45:56.535013+00:00'
   pinned: false
 - model_id: openai/gpt-5.1-codex-mini
   input_rate_per_m: 0.25
   output_rate_per_m: 2.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885121+00:00'
+  updated_at: '2026-07-23T19:45:56.535037+00:00'
   pinned: false
 - model_id: openai/gpt-5.2
   input_rate_per_m: 1.75
   output_rate_per_m: 14.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885089+00:00'
+  updated_at: '2026-07-23T19:45:56.535005+00:00'
   pinned: false
 - model_id: openai/gpt-5.2-chat
   input_rate_per_m: 1.75
   output_rate_per_m: 14.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885086+00:00'
+  updated_at: '2026-07-23T19:45:56.535002+00:00'
   pinned: false
 - model_id: openai/gpt-5.2-codex
   input_rate_per_m: 1.75
   output_rate_per_m: 14.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885073+00:00'
+  updated_at: '2026-07-23T19:45:56.534988+00:00'
   pinned: false
 - model_id: openai/gpt-5.2-pro
   input_rate_per_m: 21.0
   output_rate_per_m: 168.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885088+00:00'
+  updated_at: '2026-07-23T19:45:56.535003+00:00'
   pinned: false
 - model_id: openai/gpt-5.3-chat
   input_rate_per_m: 1.75
   output_rate_per_m: 14.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885025+00:00'
+  updated_at: '2026-07-23T19:45:56.534937+00:00'
   pinned: false
 - model_id: openai/gpt-5.3-codex
   input_rate_per_m: 1.75
   output_rate_per_m: 14.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885040+00:00'
+  updated_at: '2026-07-23T19:45:56.534953+00:00'
   pinned: false
 - model_id: openai/gpt-5.4
   input_rate_per_m: 2.5
   output_rate_per_m: 15.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885022+00:00'
+  updated_at: '2026-07-23T19:45:56.534933+00:00'
   pinned: false
 - model_id: openai/gpt-5.4-image-2
   input_rate_per_m: 8.0
   output_rate_per_m: 15.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884980+00:00'
+  updated_at: '2026-07-23T19:45:56.534887+00:00'
   pinned: false
 - model_id: openai/gpt-5.4-nano
   input_rate_per_m: 0.2
   output_rate_per_m: 1.25
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885008+00:00'
+  updated_at: '2026-07-23T19:45:56.534918+00:00'
   pinned: false
 - model_id: openai/gpt-5.4-pro
   input_rate_per_m: 30.0
   output_rate_per_m: 180.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885020+00:00'
+  updated_at: '2026-07-23T19:45:56.534931+00:00'
   pinned: false
 - model_id: openai/gpt-5.5
   input_rate_per_m: 5.0
   output_rate_per_m: 30.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884967+00:00'
+  updated_at: '2026-07-23T19:45:56.534873+00:00'
   pinned: false
 - model_id: openai/gpt-5.5-pro
   input_rate_per_m: 30.0
   output_rate_per_m: 180.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884965+00:00'
+  updated_at: '2026-07-23T19:45:56.534872+00:00'
   pinned: false
 - model_id: openai/gpt-5.6-luna
   input_rate_per_m: 1.0
   output_rate_per_m: 6.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884870+00:00'
+  updated_at: '2026-07-23T19:45:56.534770+00:00'
   pinned: false
 - model_id: openai/gpt-5.6-luna-pro
   input_rate_per_m: 1.0
   output_rate_per_m: 6.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884868+00:00'
+  updated_at: '2026-07-23T19:45:56.534767+00:00'
   pinned: false
 - model_id: openai/gpt-5.6-sol
   input_rate_per_m: 5.0
   output_rate_per_m: 30.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884877+00:00'
+  updated_at: '2026-07-23T19:45:56.534777+00:00'
   pinned: false
 - model_id: openai/gpt-5.6-sol-pro
   input_rate_per_m: 5.0
   output_rate_per_m: 30.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884875+00:00'
+  updated_at: '2026-07-23T19:45:56.534775+00:00'
   pinned: false
 - model_id: openai/gpt-5.6-terra
   input_rate_per_m: 2.5
   output_rate_per_m: 15.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884874+00:00'
+  updated_at: '2026-07-23T19:45:56.534773+00:00'
   pinned: false
 - model_id: openai/gpt-5.6-terra-pro
   input_rate_per_m: 2.5
   output_rate_per_m: 15.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884872+00:00'
+  updated_at: '2026-07-23T19:45:56.534772+00:00'
   pinned: false
 - model_id: openai/gpt-audio
   input_rate_per_m: 2.5
   output_rate_per_m: 10.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885068+00:00'
+  updated_at: '2026-07-23T19:45:56.534982+00:00'
   pinned: false
 - model_id: openai/gpt-audio-mini
   input_rate_per_m: 0.6
   output_rate_per_m: 2.4
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885070+00:00'
+  updated_at: '2026-07-23T19:45:56.534985+00:00'
   pinned: false
 - model_id: openai/gpt-chat-latest
   input_rate_per_m: 5.0
   output_rate_per_m: 30.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884933+00:00'
+  updated_at: '2026-07-23T19:45:56.534838+00:00'
   pinned: false
 - model_id: openai/gpt-oss-120b
   input_rate_per_m: 0.037
   output_rate_per_m: 0.17
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885204+00:00'
+  updated_at: '2026-07-23T19:45:56.535126+00:00'
   pinned: false
 - model_id: openai/gpt-oss-20b
   input_rate_per_m: 0.03
   output_rate_per_m: 0.13
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885205+00:00'
+  updated_at: '2026-07-23T19:45:56.535128+00:00'
   pinned: false
 - model_id: openai/gpt-oss-safeguard-20b
   input_rate_per_m: 0.075
   output_rate_per_m: 0.3
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885129+00:00'
+  updated_at: '2026-07-23T19:45:56.535046+00:00'
   pinned: false
 - model_id: openai/o1
   input_rate_per_m: 15.0
   output_rate_per_m: 60.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885334+00:00'
+  updated_at: '2026-07-23T19:45:56.535265+00:00'
   pinned: false
 - model_id: openai/o1-pro
   input_rate_per_m: 150.0
   output_rate_per_m: 600.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885286+00:00'
+  updated_at: '2026-07-23T19:45:56.535215+00:00'
   pinned: false
 - model_id: openai/o3
   input_rate_per_m: 2.0
   output_rate_per_m: 8.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885272+00:00'
+  updated_at: '2026-07-23T19:45:56.535200+00:00'
   pinned: false
 - model_id: openai/o3-deep-research
   input_rate_per_m: 10.0
   output_rate_per_m: 40.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885145+00:00'
+  updated_at: '2026-07-23T19:45:56.535063+00:00'
   pinned: false
 - model_id: openai/o3-mini
   input_rate_per_m: 1.1
   output_rate_per_m: 4.4
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885318+00:00'
+  updated_at: '2026-07-23T19:45:56.535249+00:00'
   pinned: false
 - model_id: openai/o3-mini-high
   input_rate_per_m: 1.1
   output_rate_per_m: 4.4
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885311+00:00'
+  updated_at: '2026-07-23T19:45:56.535241+00:00'
   pinned: false
 - model_id: openai/o3-pro
   input_rate_per_m: 20.0
   output_rate_per_m: 80.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885245+00:00'
+  updated_at: '2026-07-23T19:45:56.535171+00:00'
   pinned: false
 - model_id: openai/o4-mini
   input_rate_per_m: 1.1
   output_rate_per_m: 4.4
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885274+00:00'
+  updated_at: '2026-07-23T19:45:56.535202+00:00'
   pinned: false
 - model_id: openai/o4-mini-deep-research
   input_rate_per_m: 2.0
   output_rate_per_m: 8.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885147+00:00'
+  updated_at: '2026-07-23T19:45:56.535065+00:00'
   pinned: false
 - model_id: openai/o4-mini-high
   input_rate_per_m: 1.1
   output_rate_per_m: 4.4
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885270+00:00'
+  updated_at: '2026-07-23T19:45:56.535199+00:00'
   pinned: false
 - model_id: openrouter/ai21/jamba-large-1.7
   input_rate_per_m: 2.0
   output_rate_per_m: 8.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885195+00:00'
+  updated_at: '2026-07-23T19:45:56.535117+00:00'
   pinned: false
 - model_id: openrouter/aion-labs/aion-2.0
   input_rate_per_m: 0.8
   output_rate_per_m: 1.6
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885042+00:00'
+  updated_at: '2026-07-23T19:45:56.534954+00:00'
   pinned: false
 - model_id: openrouter/aion-labs/aion-3.0
   input_rate_per_m: 3.0
   output_rate_per_m: 6.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884884+00:00'
+  updated_at: '2026-07-23T19:45:56.534785+00:00'
   pinned: false
 - model_id: openrouter/aion-labs/aion-3.0-mini
   input_rate_per_m: 0.7
   output_rate_per_m: 1.4
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884882+00:00'
+  updated_at: '2026-07-23T19:45:56.534783+00:00'
   pinned: false
 - model_id: openrouter/aion-labs/aion-rp-llama-3.1-8b
   input_rate_per_m: 0.8
   output_rate_per_m: 1.6
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885313+00:00'
+  updated_at: '2026-07-23T19:45:56.535243+00:00'
   pinned: false
 - model_id: openrouter/allenai/olmo-3-32b-think
   input_rate_per_m: 0.15
   output_rate_per_m: 0.5
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885110+00:00'
+  updated_at: '2026-07-23T19:45:56.535027+00:00'
   pinned: false
 - model_id: openrouter/amazon/nova-2-lite-v1
   input_rate_per_m: 0.3
   output_rate_per_m: 2.5
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885098+00:00'
+  updated_at: '2026-07-23T19:45:56.535014+00:00'
   pinned: false
 - model_id: openrouter/amazon/nova-lite-v1
   input_rate_per_m: 0.06
   output_rate_per_m: 0.24
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885339+00:00'
+  updated_at: '2026-07-23T19:45:56.535271+00:00'
   pinned: false
 - model_id: openrouter/amazon/nova-micro-v1
   input_rate_per_m: 0.035
   output_rate_per_m: 0.14
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885341+00:00'
+  updated_at: '2026-07-23T19:45:56.535273+00:00'
   pinned: false
 - model_id: openrouter/amazon/nova-premier-v1
   input_rate_per_m: 2.5
   output_rate_per_m: 12.5
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885124+00:00'
+  updated_at: '2026-07-23T19:45:56.535041+00:00'
   pinned: false
 - model_id: openrouter/amazon/nova-pro-v1
   input_rate_per_m: 0.8
   output_rate_per_m: 3.2
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885343+00:00'
+  updated_at: '2026-07-23T19:45:56.535275+00:00'
   pinned: false
 - model_id: openrouter/anthracite-org/magnum-v4-72b
   input_rate_per_m: 3.0
   output_rate_per_m: 5.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885351+00:00'
+  updated_at: '2026-07-23T19:45:56.535284+00:00'
   pinned: false
 - model_id: openrouter/anthropic/claude-3-haiku
   input_rate_per_m: 0.25
   output_rate_per_m: 1.25
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885396+00:00'
+  updated_at: '2026-07-23T19:45:56.535333+00:00'
   pinned: false
 - model_id: openrouter/anthropic/claude-fable-5
   input_rate_per_m: 10.0
   output_rate_per_m: 50.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884907+00:00'
+  updated_at: '2026-07-23T19:45:56.534809+00:00'
   pinned: false
 - model_id: openrouter/anthropic/claude-haiku-4.5
   input_rate_per_m: 1.0
   output_rate_per_m: 5.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885138+00:00'
+  updated_at: '2026-07-23T19:45:56.535056+00:00'
   pinned: false
 - model_id: openrouter/anthropic/claude-opus-4
   input_rate_per_m: 15.0
   output_rate_per_m: 75.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885250+00:00'
+  updated_at: '2026-07-23T19:45:56.535176+00:00'
   pinned: false
 - model_id: openrouter/anthropic/claude-opus-4.1
   input_rate_per_m: 15.0
   output_rate_per_m: 75.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885207+00:00'
+  updated_at: '2026-07-23T19:45:56.535130+00:00'
   pinned: false
 - model_id: openrouter/anthropic/claude-opus-4.5
   input_rate_per_m: 5.0
   output_rate_per_m: 25.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885108+00:00'
+  updated_at: '2026-07-23T19:45:56.535025+00:00'
   pinned: false
 - model_id: openrouter/anthropic/claude-opus-4.6
   input_rate_per_m: 5.0
   output_rate_per_m: 25.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885056+00:00'
+  updated_at: '2026-07-23T19:45:56.534969+00:00'
   pinned: false
 - model_id: openrouter/anthropic/claude-opus-4.7
   input_rate_per_m: 5.0
   output_rate_per_m: 25.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884987+00:00'
+  updated_at: '2026-07-23T19:45:56.534895+00:00'
   pinned: false
 - model_id: openrouter/anthropic/claude-opus-4.7-fast
   input_rate_per_m: 30.0
   output_rate_per_m: 150.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884926+00:00'
+  updated_at: '2026-07-23T19:45:56.534831+00:00'
   pinned: false
 - model_id: openrouter/anthropic/claude-opus-4.8
   input_rate_per_m: 5.0
   output_rate_per_m: 25.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884919+00:00'
+  updated_at: '2026-07-23T19:45:56.534823+00:00'
   pinned: false
 - model_id: openrouter/anthropic/claude-opus-4.8-fast
   input_rate_per_m: 10.0
   output_rate_per_m: 50.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884918+00:00'
+  updated_at: '2026-07-23T19:45:56.534821+00:00'
   pinned: false
 - model_id: openrouter/anthropic/claude-sonnet-4
   input_rate_per_m: 3.0
   output_rate_per_m: 15.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885251+00:00'
+  updated_at: '2026-07-23T19:45:56.535178+00:00'
   pinned: false
 - model_id: openrouter/anthropic/claude-sonnet-4.5
   input_rate_per_m: 3.0
   output_rate_per_m: 15.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885157+00:00'
+  updated_at: '2026-07-23T19:45:56.535076+00:00'
   pinned: false
 - model_id: openrouter/anthropic/claude-sonnet-4.6
   input_rate_per_m: 3.0
   output_rate_per_m: 15.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885045+00:00'
+  updated_at: '2026-07-23T19:45:56.534958+00:00'
   pinned: false
 - model_id: openrouter/anthropic/claude-sonnet-5
   input_rate_per_m: 2.0
   output_rate_per_m: 10.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884890+00:00'
+  updated_at: '2026-07-23T19:45:56.534791+00:00'
   pinned: false
 - model_id: openrouter/arcee-ai/trinity-large-thinking
   input_rate_per_m: 0.25
   output_rate_per_m: 0.8
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884998+00:00'
+  updated_at: '2026-07-23T19:45:56.534906+00:00'
   pinned: false
 - model_id: openrouter/arcee-ai/virtuoso-large
   input_rate_per_m: 0.75
   output_rate_per_m: 1.2
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885258+00:00'
+  updated_at: '2026-07-23T19:45:56.535186+00:00'
   pinned: false
 - model_id: openrouter/baidu/ernie-4.5-vl-424b-a47b
   input_rate_per_m: 0.42
   output_rate_per_m: 1.25
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885236+00:00'
+  updated_at: '2026-07-23T19:45:56.535162+00:00'
   pinned: false
 - model_id: openrouter/bytedance-seed/seed-1.6
   input_rate_per_m: 0.25
   output_rate_per_m: 2.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885077+00:00'
+  updated_at: '2026-07-23T19:45:56.534992+00:00'
   pinned: false
 - model_id: openrouter/bytedance-seed/seed-1.6-flash
   input_rate_per_m: 0.075
   output_rate_per_m: 0.3
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885075+00:00'
+  updated_at: '2026-07-23T19:45:56.534990+00:00'
   pinned: false
 - model_id: openrouter/bytedance-seed/seed-2.0-lite
   input_rate_per_m: 0.25
   output_rate_per_m: 2.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885017+00:00'
+  updated_at: '2026-07-23T19:45:56.534927+00:00'
   pinned: false
 - model_id: openrouter/bytedance-seed/seed-2.0-mini
   input_rate_per_m: 0.1
   output_rate_per_m: 0.4
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885029+00:00'
+  updated_at: '2026-07-23T19:45:56.534940+00:00'
   pinned: false
 - model_id: openrouter/bytedance/ui-tars-1.5-7b
   input_rate_per_m: 0.1
   output_rate_per_m: 0.2
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885221+00:00'
+  updated_at: '2026-07-23T19:45:56.535146+00:00'
   pinned: false
 - model_id: openrouter/cognitivecomputations/dolphin-mistral-24b-venice-edition
   input_rate_per_m: 0.2
   output_rate_per_m: 0.9
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885229+00:00'
+  updated_at: '2026-07-23T19:45:56.535154+00:00'
   pinned: false
 - model_id: openrouter/cohere/command-a
   input_rate_per_m: 2.5
   output_rate_per_m: 10.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885293+00:00'
+  updated_at: '2026-07-23T19:45:56.535223+00:00'
   pinned: false
 - model_id: openrouter/cohere/command-r-08-2024
   input_rate_per_m: 0.15
   output_rate_per_m: 0.6
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885365+00:00'
+  updated_at: '2026-07-23T19:45:56.535299+00:00'
   pinned: false
 - model_id: openrouter/cohere/command-r-plus-08-2024
   input_rate_per_m: 2.5
   output_rate_per_m: 10.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885367+00:00'
+  updated_at: '2026-07-23T19:45:56.535301+00:00'
   pinned: false
 - model_id: openrouter/cohere/command-r7b-12-2024
   input_rate_per_m: 0.0375
   output_rate_per_m: 0.15
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885336+00:00'
+  updated_at: '2026-07-23T19:45:56.535267+00:00'
   pinned: false
 - model_id: openrouter/deepcogito/cogito-v2.1-671b
   input_rate_per_m: 1.25
   output_rate_per_m: 1.25
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885114+00:00'
+  updated_at: '2026-07-23T19:45:56.535030+00:00'
   pinned: false
 - model_id: openrouter/deepseek/deepseek-chat
   input_rate_per_m: 0.2002
   output_rate_per_m: 0.8001
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885330+00:00'
+  updated_at: '2026-07-23T19:45:56.535262+00:00'
   pinned: false
 - model_id: openrouter/deepseek/deepseek-chat-v3-0324
   input_rate_per_m: 0.27
   output_rate_per_m: 1.12
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885284+00:00'
+  updated_at: '2026-07-23T19:45:56.535213+00:00'
   pinned: false
 - model_id: openrouter/deepseek/deepseek-chat-v3.1
   input_rate_per_m: 0.25
   output_rate_per_m: 0.95
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885190+00:00'
+  updated_at: '2026-07-23T19:45:56.535111+00:00'
   pinned: false
 - model_id: openrouter/deepseek/deepseek-r1
   input_rate_per_m: 0.7
   output_rate_per_m: 2.5
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885325+00:00'
+  updated_at: '2026-07-23T19:45:56.535256+00:00'
   pinned: false
 - model_id: openrouter/deepseek/deepseek-r1-0528
   input_rate_per_m: 0.5
   output_rate_per_m: 2.15
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885248+00:00'
+  updated_at: '2026-07-23T19:45:56.535174+00:00'
   pinned: false
 - model_id: openrouter/deepseek/deepseek-r1-distill-llama-70b
   input_rate_per_m: 0.8
   output_rate_per_m: 0.8
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885324+00:00'
+  updated_at: '2026-07-23T19:45:56.535254+00:00'
   pinned: false
 - model_id: openrouter/deepseek/deepseek-v3.1-terminus
   input_rate_per_m: 0.27
   output_rate_per_m: 1.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885172+00:00'
+  updated_at: '2026-07-23T19:45:56.535092+00:00'
   pinned: false
 - model_id: openrouter/deepseek/deepseek-v3.2
   input_rate_per_m: 0.269
   output_rate_per_m: 0.4
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885106+00:00'
+  updated_at: '2026-07-23T19:45:56.535023+00:00'
   pinned: false
 - model_id: openrouter/deepseek/deepseek-v3.2-exp
   input_rate_per_m: 0.27
   output_rate_per_m: 0.41
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885158+00:00'
+  updated_at: '2026-07-23T19:45:56.535078+00:00'
   pinned: false
 - model_id: openrouter/deepseek/deepseek-v4-flash
   input_rate_per_m: 0.098
   output_rate_per_m: 0.196
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884971+00:00'
+  updated_at: '2026-07-23T19:45:56.534877+00:00'
   pinned: false
 - model_id: openrouter/deepseek/deepseek-v4-pro
   input_rate_per_m: 0.435
   output_rate_per_m: 0.87
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884969+00:00'
+  updated_at: '2026-07-23T19:45:56.534875+00:00'
   pinned: false
 - model_id: openrouter/google/gemini-2.5-flash
   input_rate_per_m: 0.3
   output_rate_per_m: 2.5
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885241+00:00'
+  updated_at: '2026-07-23T19:45:56.535167+00:00'
   pinned: false
 - model_id: openrouter/google/gemini-2.5-flash-image
   input_rate_per_m: 0.3
   output_rate_per_m: 2.5
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885149+00:00'
+  updated_at: '2026-07-23T19:45:56.535067+00:00'
   pinned: false
 - model_id: openrouter/google/gemini-2.5-flash-lite
   input_rate_per_m: 0.1
   output_rate_per_m: 0.4
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885223+00:00'
+  updated_at: '2026-07-23T19:45:56.535148+00:00'
   pinned: false
 - model_id: openrouter/google/gemini-2.5-pro
   input_rate_per_m: 1.25
   output_rate_per_m: 10.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885243+00:00'
+  updated_at: '2026-07-23T19:45:56.535169+00:00'
   pinned: false
 - model_id: openrouter/google/gemini-2.5-pro-preview
   input_rate_per_m: 1.25
   output_rate_per_m: 10.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885246+00:00'
+  updated_at: '2026-07-23T19:45:56.535173+00:00'
   pinned: false
 - model_id: openrouter/google/gemini-2.5-pro-preview-05-06
   input_rate_per_m: 1.25
   output_rate_per_m: 10.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885257+00:00'
+  updated_at: '2026-07-23T19:45:56.535184+00:00'
   pinned: false
 - model_id: openrouter/google/gemini-3-flash-preview
   input_rate_per_m: 0.5
   output_rate_per_m: 3.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885082+00:00'
+  updated_at: '2026-07-23T19:45:56.534997+00:00'
   pinned: false
 - model_id: openrouter/google/gemini-3-pro-image
   input_rate_per_m: 2.0
   output_rate_per_m: 12.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884899+00:00'
+  updated_at: '2026-07-23T19:45:56.534801+00:00'
   pinned: false
 - model_id: openrouter/google/gemini-3-pro-image-preview
   input_rate_per_m: 2.0
   output_rate_per_m: 12.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885112+00:00'
+  updated_at: '2026-07-23T19:45:56.535028+00:00'
   pinned: false
 - model_id: openrouter/google/gemini-3.1-flash-image
   input_rate_per_m: 0.5
   output_rate_per_m: 3.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884897+00:00'
+  updated_at: '2026-07-23T19:45:56.534799+00:00'
   pinned: false
 - model_id: openrouter/google/gemini-3.1-flash-image-preview
   input_rate_per_m: 0.5
   output_rate_per_m: 3.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885030+00:00'
+  updated_at: '2026-07-23T19:45:56.534942+00:00'
   pinned: false
 - model_id: openrouter/google/gemini-3.1-flash-lite
   input_rate_per_m: 0.25
   output_rate_per_m: 1.5
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884931+00:00'
+  updated_at: '2026-07-23T19:45:56.534836+00:00'
   pinned: false
 - model_id: openrouter/google/gemini-3.1-flash-lite-image
   input_rate_per_m: 0.25
   output_rate_per_m: 1.5
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884891+00:00'
+  updated_at: '2026-07-23T19:45:56.534793+00:00'
   pinned: false
 - model_id: openrouter/google/gemini-3.1-flash-lite-preview
   input_rate_per_m: 0.25
   output_rate_per_m: 1.5
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885027+00:00'
+  updated_at: '2026-07-23T19:45:56.534938+00:00'
   pinned: false
 - model_id: openrouter/google/gemini-3.1-pro-preview
   input_rate_per_m: 2.0
   output_rate_per_m: 12.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885044+00:00'
+  updated_at: '2026-07-23T19:45:56.534956+00:00'
   pinned: false
 - model_id: openrouter/google/gemini-3.1-pro-preview-customtools
   input_rate_per_m: 2.0
   output_rate_per_m: 12.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885039+00:00'
+  updated_at: '2026-07-23T19:45:56.534951+00:00'
   pinned: false
 - model_id: openrouter/google/gemini-3.5-flash
   input_rate_per_m: 1.5
   output_rate_per_m: 9.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884924+00:00'
+  updated_at: '2026-07-23T19:45:56.534829+00:00'
   pinned: false
 - model_id: openrouter/google/gemini-3.5-flash-lite
   input_rate_per_m: 0.3
   output_rate_per_m: 2.5
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884854+00:00'
+  updated_at: '2026-07-23T19:45:56.534752+00:00'
   pinned: false
 - model_id: openrouter/google/gemini-3.6-flash
   input_rate_per_m: 1.5
   output_rate_per_m: 7.5
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884852+00:00'
+  updated_at: '2026-07-23T19:45:56.534750+00:00'
   pinned: false
 - model_id: openrouter/google/gemma-2-27b-it
   input_rate_per_m: 0.65
   output_rate_per_m: 0.65
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885385+00:00'
+  updated_at: '2026-07-23T19:45:56.535321+00:00'
   pinned: false
 - model_id: openrouter/google/gemma-3-12b-it
   input_rate_per_m: 0.05
   output_rate_per_m: 0.15
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885291+00:00'
+  updated_at: '2026-07-23T19:45:56.535221+00:00'
   pinned: false
 - model_id: openrouter/google/gemma-3-27b-it
-  input_rate_per_m: 0.1
-  output_rate_per_m: 0.3
+  input_rate_per_m: 0.08
+  output_rate_per_m: 0.45
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885301+00:00'
+  updated_at: '2026-07-23T19:45:56.535230+00:00'
   pinned: false
 - model_id: openrouter/google/gemma-3-4b-it
   input_rate_per_m: 0.05
   output_rate_per_m: 0.1
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885289+00:00'
+  updated_at: '2026-07-23T19:45:56.535219+00:00'
   pinned: false
 - model_id: openrouter/google/gemma-3n-e4b-it
   input_rate_per_m: 0.06
   output_rate_per_m: 0.12
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885253+00:00'
+  updated_at: '2026-07-23T19:45:56.535180+00:00'
   pinned: false
 - model_id: openrouter/google/gemma-4-26b-a4b-it
   input_rate_per_m: 0.12
   output_rate_per_m: 0.35
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884990+00:00'
+  updated_at: '2026-07-23T19:45:56.534898+00:00'
   pinned: false
 - model_id: openrouter/google/gemma-4-31b-it
   input_rate_per_m: 0.12
   output_rate_per_m: 0.35
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884992+00:00'
+  updated_at: '2026-07-23T19:45:56.534901+00:00'
   pinned: false
 - model_id: openrouter/gryphe/mythomax-l2-13b
   input_rate_per_m: 0.06
   output_rate_per_m: 0.06
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885410+00:00'
+  updated_at: '2026-07-23T19:45:56.535348+00:00'
   pinned: false
 - model_id: openrouter/ibm-granite/granite-4.0-h-micro
   input_rate_per_m: 0.017
   output_rate_per_m: 0.112
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885135+00:00'
+  updated_at: '2026-07-23T19:45:56.535052+00:00'
   pinned: false
 - model_id: openrouter/ibm-granite/granite-4.1-8b
   input_rate_per_m: 0.05
   output_rate_per_m: 0.1
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884937+00:00'
+  updated_at: '2026-07-23T19:45:56.534842+00:00'
   pinned: false
 - model_id: openrouter/inception/mercury-2
   input_rate_per_m: 0.25
   output_rate_per_m: 0.75
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885024+00:00'
+  updated_at: '2026-07-23T19:45:56.534934+00:00'
   pinned: false
 - model_id: openrouter/inclusionai/ling-2.6-1t
   input_rate_per_m: 0.075
   output_rate_per_m: 0.625
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884973+00:00'
+  updated_at: '2026-07-23T19:45:56.534879+00:00'
   pinned: false
 - model_id: openrouter/inclusionai/ling-2.6-flash
   input_rate_per_m: 0.01
   output_rate_per_m: 0.03
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884982+00:00'
+  updated_at: '2026-07-23T19:45:56.534889+00:00'
   pinned: false
 - model_id: openrouter/inclusionai/ring-2.6-1t
   input_rate_per_m: 0.075
   output_rate_per_m: 0.625
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884929+00:00'
+  updated_at: '2026-07-23T19:45:56.534835+00:00'
   pinned: false
 - model_id: openrouter/inflection/inflection-3-pi
   input_rate_per_m: 2.5
   output_rate_per_m: 10.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885355+00:00'
+  updated_at: '2026-07-23T19:45:56.535288+00:00'
   pinned: false
 - model_id: openrouter/inflection/inflection-3-productivity
   input_rate_per_m: 2.5
   output_rate_per_m: 10.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885357+00:00'
+  updated_at: '2026-07-23T19:45:56.535290+00:00'
   pinned: false
 - model_id: openrouter/kwaipilot/kat-coder-air-v2.5
   input_rate_per_m: 0.15
   output_rate_per_m: 0.6
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884864+00:00'
+  updated_at: '2026-07-23T19:45:56.534763+00:00'
   pinned: false
 - model_id: openrouter/kwaipilot/kat-coder-pro-v2
   input_rate_per_m: 0.3
   output_rate_per_m: 1.2
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885003+00:00'
+  updated_at: '2026-07-23T19:45:56.534912+00:00'
   pinned: false
 - model_id: openrouter/kwaipilot/kat-coder-pro-v2.5
   input_rate_per_m: 0.74
   output_rate_per_m: 2.96
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884866+00:00'
+  updated_at: '2026-07-23T19:45:56.534765+00:00'
   pinned: false
 - model_id: openrouter/mancer/weaver
   input_rate_per_m: 0.5
   output_rate_per_m: 0.75
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885406+00:00'
+  updated_at: '2026-07-23T19:45:56.535344+00:00'
   pinned: false
 - model_id: openrouter/meituan/longcat-2.0
   input_rate_per_m: 0.3
   output_rate_per_m: 1.2
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884856+00:00'
+  updated_at: '2026-07-23T19:45:56.534754+00:00'
   pinned: false
 - model_id: openrouter/meta-llama/llama-3.1-70b-instruct
   input_rate_per_m: 0.4
   output_rate_per_m: 0.4
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885377+00:00'
+  updated_at: '2026-07-23T19:45:56.535312+00:00'
   pinned: false
 - model_id: openrouter/meta-llama/llama-3.1-8b-instruct
   input_rate_per_m: 0.05
   output_rate_per_m: 0.08
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885379+00:00'
+  updated_at: '2026-07-23T19:45:56.535314+00:00'
   pinned: false
 - model_id: openrouter/meta-llama/llama-3.2-1b-instruct
   input_rate_per_m: 0.027
   output_rate_per_m: 0.201
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885360+00:00'
+  updated_at: '2026-07-23T19:45:56.535293+00:00'
   pinned: false
 - model_id: openrouter/meta-llama/llama-3.2-3b-instruct
   input_rate_per_m: 0.05
   output_rate_per_m: 0.33
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885362+00:00'
+  updated_at: '2026-07-23T19:45:56.535295+00:00'
   pinned: false
 - model_id: openrouter/meta-llama/llama-3.3-70b-instruct
   input_rate_per_m: 0.13
   output_rate_per_m: 0.4
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885337+00:00'
+  updated_at: '2026-07-23T19:45:56.535269+00:00'
   pinned: false
 - model_id: openrouter/meta-llama/llama-4-maverick
   input_rate_per_m: 0.2
   output_rate_per_m: 0.8
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885281+00:00'
+  updated_at: '2026-07-23T19:45:56.535209+00:00'
   pinned: false
 - model_id: openrouter/meta-llama/llama-4-scout
   input_rate_per_m: 0.1
   output_rate_per_m: 0.3
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885283+00:00'
+  updated_at: '2026-07-23T19:45:56.535211+00:00'
   pinned: false
 - model_id: openrouter/meta-llama/llama-guard-4-12b
   input_rate_per_m: 0.18
   output_rate_per_m: 0.18
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885260+00:00'
+  updated_at: '2026-07-23T19:45:56.535187+00:00'
   pinned: false
 - model_id: openrouter/meta/muse-spark-1.1
   input_rate_per_m: 1.25
   output_rate_per_m: 4.25
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884862+00:00'
+  updated_at: '2026-07-23T19:45:56.534761+00:00'
   pinned: false
 - model_id: openrouter/microsoft/phi-4
   input_rate_per_m: 0.07
   output_rate_per_m: 0.14
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885329+00:00'
+  updated_at: '2026-07-23T19:45:56.535260+00:00'
   pinned: false
 - model_id: openrouter/microsoft/wizardlm-2-8x22b
   input_rate_per_m: 0.62
   output_rate_per_m: 0.62
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885392+00:00'
+  updated_at: '2026-07-23T19:45:56.535329+00:00'
   pinned: false
 - model_id: openrouter/minimax/minimax-01
   input_rate_per_m: 0.2
   output_rate_per_m: 1.1
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885327+00:00'
+  updated_at: '2026-07-23T19:45:56.535258+00:00'
   pinned: false
 - model_id: openrouter/minimax/minimax-m1
   input_rate_per_m: 0.55
   output_rate_per_m: 2.2
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885240+00:00'
+  updated_at: '2026-07-23T19:45:56.535165+00:00'
   pinned: false
 - model_id: openrouter/minimax/minimax-m2
-  input_rate_per_m: 0.3
-  output_rate_per_m: 1.2
+  input_rate_per_m: 0.255
+  output_rate_per_m: 1.02
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885131+00:00'
+  updated_at: '2026-07-23T19:45:56.535049+00:00'
   pinned: false
 - model_id: openrouter/minimax/minimax-m2-her
   input_rate_per_m: 0.3
   output_rate_per_m: 1.2
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885064+00:00'
+  updated_at: '2026-07-23T19:45:56.534978+00:00'
   pinned: false
 - model_id: openrouter/minimax/minimax-m2.1
   input_rate_per_m: 0.3
   output_rate_per_m: 1.2
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885079+00:00'
+  updated_at: '2026-07-23T19:45:56.534994+00:00'
   pinned: false
 - model_id: openrouter/minimax/minimax-m2.5
   input_rate_per_m: 0.15
   output_rate_per_m: 0.9
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885051+00:00'
+  updated_at: '2026-07-23T19:45:56.534963+00:00'
   pinned: false
 - model_id: openrouter/minimax/minimax-m2.7
   input_rate_per_m: 0.25
   output_rate_per_m: 1.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885006+00:00'
+  updated_at: '2026-07-23T19:45:56.534916+00:00'
   pinned: false
 - model_id: openrouter/minimax/minimax-m3
   input_rate_per_m: 0.3
   output_rate_per_m: 1.2
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884914+00:00'
+  updated_at: '2026-07-23T19:45:56.534818+00:00'
   pinned: false
 - model_id: openrouter/mistralai/codestral-2508
   input_rate_per_m: 0.3
   output_rate_per_m: 0.9
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885209+00:00'
+  updated_at: '2026-07-23T19:45:56.535132+00:00'
   pinned: false
 - model_id: openrouter/mistralai/devstral-2512
   input_rate_per_m: 0.4
   output_rate_per_m: 2.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885091+00:00'
+  updated_at: '2026-07-23T19:45:56.535007+00:00'
   pinned: false
 - model_id: openrouter/mistralai/ministral-14b-2512
   input_rate_per_m: 0.2
   output_rate_per_m: 0.2
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885100+00:00'
+  updated_at: '2026-07-23T19:45:56.535016+00:00'
   pinned: false
 - model_id: openrouter/mistralai/ministral-3b-2512
   input_rate_per_m: 0.1
   output_rate_per_m: 0.1
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885103+00:00'
+  updated_at: '2026-07-23T19:45:56.535020+00:00'
   pinned: false
 - model_id: openrouter/mistralai/ministral-8b-2512
   input_rate_per_m: 0.15
   output_rate_per_m: 0.15
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885101+00:00'
+  updated_at: '2026-07-23T19:45:56.535018+00:00'
   pinned: false
 - model_id: openrouter/mistralai/mistral-large
   input_rate_per_m: 2.0
   output_rate_per_m: 6.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885397+00:00'
+  updated_at: '2026-07-23T19:45:56.535334+00:00'
   pinned: false
 - model_id: openrouter/mistralai/mistral-large-2407
   input_rate_per_m: 2.0
   output_rate_per_m: 6.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885346+00:00'
+  updated_at: '2026-07-23T19:45:56.535278+00:00'
   pinned: false
 - model_id: openrouter/mistralai/mistral-large-2512
   input_rate_per_m: 0.5
   output_rate_per_m: 1.5
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885105+00:00'
+  updated_at: '2026-07-23T19:45:56.535021+00:00'
   pinned: false
 - model_id: openrouter/mistralai/mistral-medium-3
   input_rate_per_m: 0.4
   output_rate_per_m: 2.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885255+00:00'
+  updated_at: '2026-07-23T19:45:56.535182+00:00'
   pinned: false
 - model_id: openrouter/mistralai/mistral-medium-3-5
   input_rate_per_m: 1.5
   output_rate_per_m: 7.5
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884938+00:00'
+  updated_at: '2026-07-23T19:45:56.534844+00:00'
   pinned: false
 - model_id: openrouter/mistralai/mistral-medium-3.1
   input_rate_per_m: 0.4
   output_rate_per_m: 2.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885192+00:00'
+  updated_at: '2026-07-23T19:45:56.535113+00:00'
   pinned: false
 - model_id: openrouter/mistralai/mistral-nemo
   input_rate_per_m: 0.019
   output_rate_per_m: 0.03
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885380+00:00'
+  updated_at: '2026-07-23T19:45:56.535316+00:00'
   pinned: false
 - model_id: openrouter/mistralai/mistral-saba
   input_rate_per_m: 0.2
   output_rate_per_m: 0.6
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885309+00:00'
+  updated_at: '2026-07-23T19:45:56.535239+00:00'
   pinned: false
 - model_id: openrouter/mistralai/mistral-small-24b-instruct-2501
   input_rate_per_m: 0.05
   output_rate_per_m: 0.08
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885320+00:00'
+  updated_at: '2026-07-23T19:45:56.535251+00:00'
   pinned: false
 - model_id: openrouter/mistralai/mistral-small-2603
   input_rate_per_m: 0.15
   output_rate_per_m: 0.6
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885012+00:00'
+  updated_at: '2026-07-23T19:45:56.534921+00:00'
   pinned: false
 - model_id: openrouter/mistralai/mistral-small-3.1-24b-instruct
   input_rate_per_m: 0.351
   output_rate_per_m: 0.555
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885288+00:00'
+  updated_at: '2026-07-23T19:45:56.535217+00:00'
   pinned: false
 - model_id: openrouter/mistralai/mistral-small-3.2-24b-instruct
   input_rate_per_m: 0.1
   output_rate_per_m: 0.3
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885238+00:00'
+  updated_at: '2026-07-23T19:45:56.535163+00:00'
   pinned: false
 - model_id: openrouter/mistralai/mixtral-8x22b-instruct
   input_rate_per_m: 2.0
   output_rate_per_m: 6.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885391+00:00'
+  updated_at: '2026-07-23T19:45:56.535327+00:00'
   pinned: false
 - model_id: openrouter/mistralai/voxtral-small-24b-2507
   input_rate_per_m: 0.1
   output_rate_per_m: 0.3
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885128+00:00'
+  updated_at: '2026-07-23T19:45:56.535045+00:00'
   pinned: false
 - model_id: openrouter/moonshotai/kimi-k2
   input_rate_per_m: 0.57
   output_rate_per_m: 2.3
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885227+00:00'
+  updated_at: '2026-07-23T19:45:56.535152+00:00'
   pinned: false
 - model_id: openrouter/moonshotai/kimi-k2-0905
   input_rate_per_m: 0.6
   output_rate_per_m: 2.5
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885183+00:00'
+  updated_at: '2026-07-23T19:45:56.535104+00:00'
   pinned: false
 - model_id: openrouter/moonshotai/kimi-k2-thinking
   input_rate_per_m: 0.6
   output_rate_per_m: 2.5
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885123+00:00'
+  updated_at: '2026-07-23T19:45:56.535039+00:00'
   pinned: false
 - model_id: openrouter/moonshotai/kimi-k2.5
   input_rate_per_m: 0.57
   output_rate_per_m: 2.85
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885061+00:00'
+  updated_at: '2026-07-23T19:45:56.534974+00:00'
   pinned: false
 - model_id: openrouter/moonshotai/kimi-k2.6
   input_rate_per_m: 0.684
   output_rate_per_m: 3.42
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884985+00:00'
+  updated_at: '2026-07-23T19:45:56.534893+00:00'
   pinned: false
 - model_id: openrouter/moonshotai/kimi-k2.7-code
   input_rate_per_m: 0.82
   output_rate_per_m: 3.75
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884903+00:00'
+  updated_at: '2026-07-23T19:45:56.534805+00:00'
   pinned: false
 - model_id: openrouter/moonshotai/kimi-k3
   input_rate_per_m: 3.0
   output_rate_per_m: 15.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884860+00:00'
+  updated_at: '2026-07-23T19:45:56.534759+00:00'
   pinned: false
 - model_id: openrouter/morph/morph-v3-fast
   input_rate_per_m: 0.8
   output_rate_per_m: 1.2
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885234+00:00'
+  updated_at: '2026-07-23T19:45:56.535159+00:00'
   pinned: false
 - model_id: openrouter/morph/morph-v3-large
   input_rate_per_m: 0.9
   output_rate_per_m: 1.9
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885233+00:00'
+  updated_at: '2026-07-23T19:45:56.535158+00:00'
   pinned: false
 - model_id: openrouter/nex-agi/nex-n2-mini
   input_rate_per_m: 0.025
   output_rate_per_m: 0.1
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884893+00:00'
+  updated_at: '2026-07-23T19:45:56.534795+00:00'
   pinned: false
 - model_id: openrouter/nex-agi/nex-n2-pro
   input_rate_per_m: 0.25
   output_rate_per_m: 1.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884908+00:00'
+  updated_at: '2026-07-23T19:45:56.534811+00:00'
   pinned: false
 - model_id: openrouter/nousresearch/hermes-3-llama-3.1-405b
   input_rate_per_m: 1.0
   output_rate_per_m: 1.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885372+00:00'
+  updated_at: '2026-07-23T19:45:56.535306+00:00'
   pinned: false
 - model_id: openrouter/nousresearch/hermes-3-llama-3.1-70b
   input_rate_per_m: 0.7
   output_rate_per_m: 0.7
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885370+00:00'
+  updated_at: '2026-07-23T19:45:56.535304+00:00'
   pinned: false
 - model_id: openrouter/nousresearch/hermes-4-405b
   input_rate_per_m: 1.0
   output_rate_per_m: 3.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885189+00:00'
+  updated_at: '2026-07-23T19:45:56.535110+00:00'
   pinned: false
 - model_id: openrouter/nousresearch/hermes-4-70b
   input_rate_per_m: 0.13
   output_rate_per_m: 0.4
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885187+00:00'
+  updated_at: '2026-07-23T19:45:56.535108+00:00'
   pinned: false
 - model_id: openrouter/nvidia/nemotron-3-nano-30b-a3b
   input_rate_per_m: 0.05
   output_rate_per_m: 0.2
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885084+00:00'
+  updated_at: '2026-07-23T19:45:56.534999+00:00'
   pinned: false
 - model_id: openrouter/nvidia/nemotron-3-super-120b-a12b
   input_rate_per_m: 0.08
   output_rate_per_m: 0.45
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885015+00:00'
+  updated_at: '2026-07-23T19:45:56.534925+00:00'
   pinned: false
 - model_id: openrouter/nvidia/nemotron-3-ultra-550b-a55b
   input_rate_per_m: 0.5
   output_rate_per_m: 2.2
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884911+00:00'
+  updated_at: '2026-07-23T19:45:56.534814+00:00'
   pinned: false
 - model_id: openrouter/openai/gpt-3.5-turbo
   input_rate_per_m: 0.5
   output_rate_per_m: 1.5
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885412+00:00'
+  updated_at: '2026-07-23T19:45:56.535350+00:00'
   pinned: false
 - model_id: openrouter/openai/gpt-3.5-turbo-0613
   input_rate_per_m: 1.0
   output_rate_per_m: 2.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885399+00:00'
+  updated_at: '2026-07-23T19:45:56.535337+00:00'
   pinned: false
 - model_id: openrouter/openai/gpt-3.5-turbo-16k
   input_rate_per_m: 3.0
   output_rate_per_m: 4.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885404+00:00'
+  updated_at: '2026-07-23T19:45:56.535343+00:00'
   pinned: false
 - model_id: openrouter/openai/gpt-3.5-turbo-instruct
   input_rate_per_m: 1.5
   output_rate_per_m: 2.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885403+00:00'
+  updated_at: '2026-07-23T19:45:56.535341+00:00'
   pinned: false
 - model_id: openrouter/openai/gpt-4
   input_rate_per_m: 30.0
   output_rate_per_m: 60.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885413+00:00'
+  updated_at: '2026-07-23T19:45:56.535352+00:00'
   pinned: false
 - model_id: openrouter/openai/gpt-4-turbo
   input_rate_per_m: 10.0
   output_rate_per_m: 30.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885394+00:00'
+  updated_at: '2026-07-23T19:45:56.535331+00:00'
   pinned: false
 - model_id: openrouter/openai/gpt-4-turbo-preview
   input_rate_per_m: 10.0
   output_rate_per_m: 30.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885401+00:00'
+  updated_at: '2026-07-23T19:45:56.535338+00:00'
   pinned: false
 - model_id: openrouter/openai/gpt-4.1
   input_rate_per_m: 2.0
   output_rate_per_m: 8.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885275+00:00'
+  updated_at: '2026-07-23T19:45:56.535204+00:00'
   pinned: false
 - model_id: openrouter/openai/gpt-4.1-mini
   input_rate_per_m: 0.4
   output_rate_per_m: 1.6
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885277+00:00'
+  updated_at: '2026-07-23T19:45:56.535206+00:00'
   pinned: false
 - model_id: openrouter/openai/gpt-4.1-nano
   input_rate_per_m: 0.1
   output_rate_per_m: 0.4
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885279+00:00'
+  updated_at: '2026-07-23T19:45:56.535208+00:00'
   pinned: false
 - model_id: openrouter/openai/gpt-4o
   input_rate_per_m: 2.5
   output_rate_per_m: 10.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885387+00:00'
+  updated_at: '2026-07-23T19:45:56.535323+00:00'
   pinned: false
 - model_id: openrouter/openai/gpt-4o-2024-05-13
   input_rate_per_m: 5.0
   output_rate_per_m: 15.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885389+00:00'
+  updated_at: '2026-07-23T19:45:56.535325+00:00'
   pinned: false
 - model_id: openrouter/openai/gpt-4o-2024-08-06
   input_rate_per_m: 2.5
   output_rate_per_m: 10.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885375+00:00'
+  updated_at: '2026-07-23T19:45:56.535310+00:00'
   pinned: false
 - model_id: openrouter/openai/gpt-4o-2024-11-20
   input_rate_per_m: 2.5
   output_rate_per_m: 10.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885344+00:00'
+  updated_at: '2026-07-23T19:45:56.535277+00:00'
   pinned: false
 - model_id: openrouter/openai/gpt-4o-mini
   input_rate_per_m: 0.15
   output_rate_per_m: 0.6
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885382+00:00'
+  updated_at: '2026-07-23T19:45:56.535318+00:00'
   pinned: false
 - model_id: openrouter/openai/gpt-4o-mini-2024-07-18
   input_rate_per_m: 0.15
   output_rate_per_m: 0.6
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885384+00:00'
+  updated_at: '2026-07-23T19:45:56.535319+00:00'
   pinned: false
 - model_id: openrouter/openai/gpt-4o-mini-search-preview
   input_rate_per_m: 0.15
   output_rate_per_m: 0.6
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885295+00:00'
+  updated_at: '2026-07-23T19:45:56.535224+00:00'
   pinned: false
 - model_id: openrouter/openai/gpt-4o-search-preview
   input_rate_per_m: 2.5
   output_rate_per_m: 10.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885297+00:00'
+  updated_at: '2026-07-23T19:45:56.535226+00:00'
   pinned: false
 - model_id: openrouter/openai/gpt-5
   input_rate_per_m: 1.25
   output_rate_per_m: 10.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885199+00:00'
+  updated_at: '2026-07-23T19:45:56.535120+00:00'
   pinned: false
 - model_id: openrouter/openai/gpt-5-chat
   input_rate_per_m: 1.25
   output_rate_per_m: 10.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885197+00:00'
+  updated_at: '2026-07-23T19:45:56.535119+00:00'
   pinned: false
 - model_id: openrouter/openai/gpt-5-codex
   input_rate_per_m: 1.25
   output_rate_per_m: 10.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885171+00:00'
+  updated_at: '2026-07-23T19:45:56.535090+00:00'
   pinned: false
 - model_id: openrouter/openai/gpt-5-image
   input_rate_per_m: 10.0
   output_rate_per_m: 10.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885143+00:00'
+  updated_at: '2026-07-23T19:45:56.535062+00:00'
   pinned: false
 - model_id: openrouter/openai/gpt-5-image-mini
   input_rate_per_m: 2.5
   output_rate_per_m: 2.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885136+00:00'
+  updated_at: '2026-07-23T19:45:56.535054+00:00'
   pinned: false
 - model_id: openrouter/openai/gpt-5-mini
   input_rate_per_m: 0.25
   output_rate_per_m: 2.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885201+00:00'
+  updated_at: '2026-07-23T19:45:56.535123+00:00'
   pinned: false
 - model_id: openrouter/openai/gpt-5-nano
   input_rate_per_m: 0.05
   output_rate_per_m: 0.4
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885202+00:00'
+  updated_at: '2026-07-23T19:45:56.535124+00:00'
   pinned: false
 - model_id: openrouter/openai/gpt-5-pro
   input_rate_per_m: 15.0
   output_rate_per_m: 120.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885153+00:00'
+  updated_at: '2026-07-23T19:45:56.535072+00:00'
   pinned: false
 - model_id: openrouter/openai/gpt-5.1
   input_rate_per_m: 1.25
   output_rate_per_m: 10.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885115+00:00'
+  updated_at: '2026-07-23T19:45:56.535032+00:00'
   pinned: false
 - model_id: openrouter/openai/gpt-5.1-chat
   input_rate_per_m: 1.25
   output_rate_per_m: 10.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885117+00:00'
+  updated_at: '2026-07-23T19:45:56.535034+00:00'
   pinned: false
 - model_id: openrouter/openai/gpt-5.1-codex
   input_rate_per_m: 1.25
   output_rate_per_m: 10.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885119+00:00'
+  updated_at: '2026-07-23T19:45:56.535036+00:00'
   pinned: false
 - model_id: openrouter/openai/gpt-5.1-codex-max
   input_rate_per_m: 1.25
   output_rate_per_m: 10.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885097+00:00'
+  updated_at: '2026-07-23T19:45:56.535013+00:00'
   pinned: false
 - model_id: openrouter/openai/gpt-5.1-codex-mini
   input_rate_per_m: 0.25
   output_rate_per_m: 2.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885121+00:00'
+  updated_at: '2026-07-23T19:45:56.535037+00:00'
   pinned: false
 - model_id: openrouter/openai/gpt-5.2
   input_rate_per_m: 1.75
   output_rate_per_m: 14.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885089+00:00'
+  updated_at: '2026-07-23T19:45:56.535005+00:00'
   pinned: false
 - model_id: openrouter/openai/gpt-5.2-chat
   input_rate_per_m: 1.75
   output_rate_per_m: 14.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885086+00:00'
+  updated_at: '2026-07-23T19:45:56.535002+00:00'
   pinned: false
 - model_id: openrouter/openai/gpt-5.2-codex
   input_rate_per_m: 1.75
   output_rate_per_m: 14.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885073+00:00'
+  updated_at: '2026-07-23T19:45:56.534988+00:00'
   pinned: false
 - model_id: openrouter/openai/gpt-5.2-pro
   input_rate_per_m: 21.0
   output_rate_per_m: 168.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885088+00:00'
+  updated_at: '2026-07-23T19:45:56.535003+00:00'
   pinned: false
 - model_id: openrouter/openai/gpt-5.3-chat
   input_rate_per_m: 1.75
   output_rate_per_m: 14.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885025+00:00'
+  updated_at: '2026-07-23T19:45:56.534937+00:00'
   pinned: false
 - model_id: openrouter/openai/gpt-5.3-codex
   input_rate_per_m: 1.75
   output_rate_per_m: 14.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885040+00:00'
+  updated_at: '2026-07-23T19:45:56.534953+00:00'
   pinned: false
 - model_id: openrouter/openai/gpt-5.4
   input_rate_per_m: 2.5
   output_rate_per_m: 15.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885022+00:00'
+  updated_at: '2026-07-23T19:45:56.534933+00:00'
   pinned: false
 - model_id: openrouter/openai/gpt-5.4-image-2
   input_rate_per_m: 8.0
   output_rate_per_m: 15.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884980+00:00'
+  updated_at: '2026-07-23T19:45:56.534887+00:00'
   pinned: false
 - model_id: openrouter/openai/gpt-5.4-mini
   input_rate_per_m: 0.75
   output_rate_per_m: 4.5
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885010+00:00'
+  updated_at: '2026-07-23T19:45:56.534920+00:00'
   pinned: false
 - model_id: openrouter/openai/gpt-5.4-nano
   input_rate_per_m: 0.2
   output_rate_per_m: 1.25
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885008+00:00'
+  updated_at: '2026-07-23T19:45:56.534918+00:00'
   pinned: false
 - model_id: openrouter/openai/gpt-5.4-pro
   input_rate_per_m: 30.0
   output_rate_per_m: 180.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885020+00:00'
+  updated_at: '2026-07-23T19:45:56.534931+00:00'
   pinned: false
 - model_id: openrouter/openai/gpt-5.5
   input_rate_per_m: 5.0
   output_rate_per_m: 30.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884967+00:00'
+  updated_at: '2026-07-23T19:45:56.534873+00:00'
   pinned: false
 - model_id: openrouter/openai/gpt-5.5-pro
   input_rate_per_m: 30.0
   output_rate_per_m: 180.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884965+00:00'
+  updated_at: '2026-07-23T19:45:56.534872+00:00'
   pinned: false
 - model_id: openrouter/openai/gpt-5.6-luna
   input_rate_per_m: 1.0
   output_rate_per_m: 6.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884870+00:00'
+  updated_at: '2026-07-23T19:45:56.534770+00:00'
   pinned: false
 - model_id: openrouter/openai/gpt-5.6-luna-pro
   input_rate_per_m: 1.0
   output_rate_per_m: 6.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884868+00:00'
+  updated_at: '2026-07-23T19:45:56.534767+00:00'
   pinned: false
 - model_id: openrouter/openai/gpt-5.6-sol
   input_rate_per_m: 5.0
   output_rate_per_m: 30.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884877+00:00'
+  updated_at: '2026-07-23T19:45:56.534777+00:00'
   pinned: false
 - model_id: openrouter/openai/gpt-5.6-sol-pro
   input_rate_per_m: 5.0
   output_rate_per_m: 30.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884875+00:00'
+  updated_at: '2026-07-23T19:45:56.534775+00:00'
   pinned: false
 - model_id: openrouter/openai/gpt-5.6-terra
   input_rate_per_m: 2.5
   output_rate_per_m: 15.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884874+00:00'
+  updated_at: '2026-07-23T19:45:56.534773+00:00'
   pinned: false
 - model_id: openrouter/openai/gpt-5.6-terra-pro
   input_rate_per_m: 2.5
   output_rate_per_m: 15.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884872+00:00'
+  updated_at: '2026-07-23T19:45:56.534772+00:00'
   pinned: false
 - model_id: openrouter/openai/gpt-audio
   input_rate_per_m: 2.5
   output_rate_per_m: 10.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885068+00:00'
+  updated_at: '2026-07-23T19:45:56.534982+00:00'
   pinned: false
 - model_id: openrouter/openai/gpt-audio-mini
   input_rate_per_m: 0.6
   output_rate_per_m: 2.4
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885070+00:00'
+  updated_at: '2026-07-23T19:45:56.534985+00:00'
   pinned: false
 - model_id: openrouter/openai/gpt-chat-latest
   input_rate_per_m: 5.0
   output_rate_per_m: 30.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884933+00:00'
+  updated_at: '2026-07-23T19:45:56.534838+00:00'
   pinned: false
 - model_id: openrouter/openai/gpt-oss-120b
   input_rate_per_m: 0.037
   output_rate_per_m: 0.17
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885204+00:00'
+  updated_at: '2026-07-23T19:45:56.535126+00:00'
   pinned: false
 - model_id: openrouter/openai/gpt-oss-20b
   input_rate_per_m: 0.03
   output_rate_per_m: 0.13
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885205+00:00'
+  updated_at: '2026-07-23T19:45:56.535128+00:00'
   pinned: false
 - model_id: openrouter/openai/gpt-oss-safeguard-20b
   input_rate_per_m: 0.075
   output_rate_per_m: 0.3
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885129+00:00'
+  updated_at: '2026-07-23T19:45:56.535046+00:00'
   pinned: false
 - model_id: openrouter/openai/o1
   input_rate_per_m: 15.0
   output_rate_per_m: 60.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885334+00:00'
+  updated_at: '2026-07-23T19:45:56.535265+00:00'
   pinned: false
 - model_id: openrouter/openai/o1-pro
   input_rate_per_m: 150.0
   output_rate_per_m: 600.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885286+00:00'
+  updated_at: '2026-07-23T19:45:56.535215+00:00'
   pinned: false
 - model_id: openrouter/openai/o3
   input_rate_per_m: 2.0
   output_rate_per_m: 8.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885272+00:00'
+  updated_at: '2026-07-23T19:45:56.535200+00:00'
   pinned: false
 - model_id: openrouter/openai/o3-deep-research
   input_rate_per_m: 10.0
   output_rate_per_m: 40.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885145+00:00'
+  updated_at: '2026-07-23T19:45:56.535063+00:00'
   pinned: false
 - model_id: openrouter/openai/o3-mini
   input_rate_per_m: 1.1
   output_rate_per_m: 4.4
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885318+00:00'
+  updated_at: '2026-07-23T19:45:56.535249+00:00'
   pinned: false
 - model_id: openrouter/openai/o3-mini-high
   input_rate_per_m: 1.1
   output_rate_per_m: 4.4
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885311+00:00'
+  updated_at: '2026-07-23T19:45:56.535241+00:00'
   pinned: false
 - model_id: openrouter/openai/o3-pro
   input_rate_per_m: 20.0
   output_rate_per_m: 80.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885245+00:00'
+  updated_at: '2026-07-23T19:45:56.535171+00:00'
   pinned: false
 - model_id: openrouter/openai/o4-mini
   input_rate_per_m: 1.1
   output_rate_per_m: 4.4
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885274+00:00'
+  updated_at: '2026-07-23T19:45:56.535202+00:00'
   pinned: false
 - model_id: openrouter/openai/o4-mini-deep-research
   input_rate_per_m: 2.0
   output_rate_per_m: 8.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885147+00:00'
+  updated_at: '2026-07-23T19:45:56.535065+00:00'
   pinned: false
 - model_id: openrouter/openai/o4-mini-high
   input_rate_per_m: 1.1
   output_rate_per_m: 4.4
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885270+00:00'
+  updated_at: '2026-07-23T19:45:56.535199+00:00'
   pinned: false
 - model_id: openrouter/perceptron/perceptron-mk1
   input_rate_per_m: 0.15
   output_rate_per_m: 1.5
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884928+00:00'
+  updated_at: '2026-07-23T19:45:56.534833+00:00'
   pinned: false
 - model_id: openrouter/perplexity/sonar
   input_rate_per_m: 1.0
   output_rate_per_m: 1.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885322+00:00'
+  updated_at: '2026-07-23T19:45:56.535253+00:00'
   pinned: false
 - model_id: openrouter/perplexity/sonar-deep-research
   input_rate_per_m: 2.0
   output_rate_per_m: 8.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885308+00:00'
+  updated_at: '2026-07-23T19:45:56.535238+00:00'
   pinned: false
 - model_id: openrouter/perplexity/sonar-pro
   input_rate_per_m: 3.0
   output_rate_per_m: 15.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885306+00:00'
+  updated_at: '2026-07-23T19:45:56.535236+00:00'
   pinned: false
 - model_id: openrouter/perplexity/sonar-pro-search
   input_rate_per_m: 3.0
   output_rate_per_m: 15.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885126+00:00'
+  updated_at: '2026-07-23T19:45:56.535043+00:00'
   pinned: false
 - model_id: openrouter/perplexity/sonar-reasoning-pro
   input_rate_per_m: 2.0
   output_rate_per_m: 8.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885304+00:00'
+  updated_at: '2026-07-23T19:45:56.535234+00:00'
   pinned: false
 - model_id: openrouter/poolside/laguna-m.1
   input_rate_per_m: 0.2
   output_rate_per_m: 0.4
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884941+00:00'
+  updated_at: '2026-07-23T19:45:56.534847+00:00'
   pinned: false
 - model_id: openrouter/poolside/laguna-s-2.1
   input_rate_per_m: 0.1
   output_rate_per_m: 0.2
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884849+00:00'
+  updated_at: '2026-07-23T19:45:56.534746+00:00'
   pinned: false
 - model_id: openrouter/poolside/laguna-xs-2.1
   input_rate_per_m: 0.06
   output_rate_per_m: 0.12
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884888+00:00'
+  updated_at: '2026-07-23T19:45:56.534789+00:00'
   pinned: false
 - model_id: openrouter/qwen/qwen-2.5-72b-instruct
   input_rate_per_m: 0.36
   output_rate_per_m: 0.4
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885363+00:00'
+  updated_at: '2026-07-23T19:45:56.535297+00:00'
   pinned: false
 - model_id: openrouter/qwen/qwen-2.5-7b-instruct
   input_rate_per_m: 0.04
   output_rate_per_m: 0.1
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885353+00:00'
+  updated_at: '2026-07-23T19:45:56.535286+00:00'
   pinned: false
 - model_id: openrouter/qwen/qwen-2.5-coder-32b-instruct
   input_rate_per_m: 0.66
   output_rate_per_m: 1.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885348+00:00'
+  updated_at: '2026-07-23T19:45:56.535280+00:00'
   pinned: false
 - model_id: openrouter/qwen/qwen-plus
   input_rate_per_m: 0.26
   output_rate_per_m: 0.78
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885316+00:00'
+  updated_at: '2026-07-23T19:45:56.535247+00:00'
   pinned: false
 - model_id: openrouter/qwen/qwen-plus-2025-07-28
   input_rate_per_m: 0.26
   output_rate_per_m: 0.78
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885180+00:00'
+  updated_at: '2026-07-23T19:45:56.535100+00:00'
   pinned: false
 - model_id: openrouter/qwen/qwen-plus-2025-07-28:thinking
   input_rate_per_m: 0.26
   output_rate_per_m: 0.78
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885181+00:00'
+  updated_at: '2026-07-23T19:45:56.535102+00:00'
   pinned: false
 - model_id: openrouter/qwen/qwen2.5-vl-72b-instruct
   input_rate_per_m: 0.8
   output_rate_per_m: 1.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885315+00:00'
+  updated_at: '2026-07-23T19:45:56.535245+00:00'
   pinned: false
 - model_id: openrouter/qwen/qwen3-14b
   input_rate_per_m: 0.2275
   output_rate_per_m: 0.91
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885265+00:00'
+  updated_at: '2026-07-23T19:45:56.535193+00:00'
   pinned: false
 - model_id: openrouter/qwen/qwen3-235b-a22b
   input_rate_per_m: 0.455
   output_rate_per_m: 1.82
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885269+00:00'
+  updated_at: '2026-07-23T19:45:56.535197+00:00'
   pinned: false
 - model_id: openrouter/qwen/qwen3-235b-a22b-2507
   input_rate_per_m: 0.09
   output_rate_per_m: 0.55
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885225+00:00'
+  updated_at: '2026-07-23T19:45:56.535150+00:00'
   pinned: false
 - model_id: openrouter/qwen/qwen3-235b-a22b-thinking-2507
   input_rate_per_m: 0.3
   output_rate_per_m: 3.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885218+00:00'
+  updated_at: '2026-07-23T19:45:56.535142+00:00'
   pinned: false
 - model_id: openrouter/qwen/qwen3-30b-a3b
   input_rate_per_m: 0.13
   output_rate_per_m: 0.52
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885262+00:00'
+  updated_at: '2026-07-23T19:45:56.535189+00:00'
   pinned: false
 - model_id: openrouter/qwen/qwen3-30b-a3b-instruct-2507
   input_rate_per_m: 0.1
   output_rate_per_m: 0.3
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885212+00:00'
+  updated_at: '2026-07-23T19:45:56.535136+00:00'
   pinned: false
 - model_id: openrouter/qwen/qwen3-30b-a3b-thinking-2507
   input_rate_per_m: 0.13
   output_rate_per_m: 1.56
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885185+00:00'
+  updated_at: '2026-07-23T19:45:56.535106+00:00'
   pinned: false
 - model_id: openrouter/qwen/qwen3-32b
   input_rate_per_m: 0.08
   output_rate_per_m: 0.28
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885267+00:00'
+  updated_at: '2026-07-23T19:45:56.535195+00:00'
   pinned: false
 - model_id: openrouter/qwen/qwen3-8b
   input_rate_per_m: 0.117
   output_rate_per_m: 0.455
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885263+00:00'
+  updated_at: '2026-07-23T19:45:56.535191+00:00'
   pinned: false
 - model_id: openrouter/qwen/qwen3-coder
   input_rate_per_m: 0.3
   output_rate_per_m: 1.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885219+00:00'
+  updated_at: '2026-07-23T19:45:56.535144+00:00'
   pinned: false
 - model_id: openrouter/qwen/qwen3-coder-30b-a3b-instruct
   input_rate_per_m: 0.07
   output_rate_per_m: 0.27
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885211+00:00'
+  updated_at: '2026-07-23T19:45:56.535134+00:00'
   pinned: false
 - model_id: openrouter/qwen/qwen3-coder-flash
   input_rate_per_m: 0.195
   output_rate_per_m: 0.975
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885174+00:00'
+  updated_at: '2026-07-23T19:45:56.535094+00:00'
   pinned: false
 - model_id: openrouter/qwen/qwen3-coder-next
   input_rate_per_m: 0.11
   output_rate_per_m: 0.8
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885057+00:00'
+  updated_at: '2026-07-23T19:45:56.534970+00:00'
   pinned: false
 - model_id: openrouter/qwen/qwen3-coder-plus
   input_rate_per_m: 0.65
   output_rate_per_m: 3.25
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885169+00:00'
+  updated_at: '2026-07-23T19:45:56.535089+00:00'
   pinned: false
 - model_id: openrouter/qwen/qwen3-max
   input_rate_per_m: 0.78
   output_rate_per_m: 3.9
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885167+00:00'
+  updated_at: '2026-07-23T19:45:56.535087+00:00'
   pinned: false
 - model_id: openrouter/qwen/qwen3-max-thinking
   input_rate_per_m: 0.78
   output_rate_per_m: 3.9
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885054+00:00'
+  updated_at: '2026-07-23T19:45:56.534967+00:00'
   pinned: false
 - model_id: openrouter/qwen/qwen3-next-80b-a3b-instruct
   input_rate_per_m: 0.15
   output_rate_per_m: 1.2
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885178+00:00'
+  updated_at: '2026-07-23T19:45:56.535098+00:00'
   pinned: false
 - model_id: openrouter/qwen/qwen3-next-80b-a3b-thinking
   input_rate_per_m: 0.0975
   output_rate_per_m: 0.78
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885176+00:00'
+  updated_at: '2026-07-23T19:45:56.535096+00:00'
   pinned: false
 - model_id: openrouter/qwen/qwen3-vl-235b-a22b-instruct
   input_rate_per_m: 0.21
   output_rate_per_m: 1.9
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885165+00:00'
+  updated_at: '2026-07-23T19:45:56.535085+00:00'
   pinned: false
 - model_id: openrouter/qwen/qwen3-vl-235b-a22b-thinking
   input_rate_per_m: 0.26
   output_rate_per_m: 2.6
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885164+00:00'
+  updated_at: '2026-07-23T19:45:56.535083+00:00'
   pinned: false
 - model_id: openrouter/qwen/qwen3-vl-30b-a3b-instruct
   input_rate_per_m: 0.15
   output_rate_per_m: 0.6
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885152+00:00'
+  updated_at: '2026-07-23T19:45:56.535071+00:00'
   pinned: false
 - model_id: openrouter/qwen/qwen3-vl-30b-a3b-thinking
   input_rate_per_m: 0.13
   output_rate_per_m: 1.56
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885150+00:00'
+  updated_at: '2026-07-23T19:45:56.535069+00:00'
   pinned: false
 - model_id: openrouter/qwen/qwen3-vl-32b-instruct
   input_rate_per_m: 0.104
   output_rate_per_m: 0.416
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885133+00:00'
+  updated_at: '2026-07-23T19:45:56.535051+00:00'
   pinned: false
 - model_id: openrouter/qwen/qwen3-vl-8b-instruct
   input_rate_per_m: 0.117
   output_rate_per_m: 0.455
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885141+00:00'
+  updated_at: '2026-07-23T19:45:56.535060+00:00'
   pinned: false
 - model_id: openrouter/qwen/qwen3-vl-8b-thinking
   input_rate_per_m: 0.117
   output_rate_per_m: 1.365
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885140+00:00'
+  updated_at: '2026-07-23T19:45:56.535058+00:00'
   pinned: false
 - model_id: openrouter/qwen/qwen3.5-122b-a10b
   input_rate_per_m: 0.26
   output_rate_per_m: 2.08
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885035+00:00'
+  updated_at: '2026-07-23T19:45:56.534947+00:00'
   pinned: false
 - model_id: openrouter/qwen/qwen3.5-27b
-  input_rate_per_m: 0.26
-  output_rate_per_m: 2.6
+  input_rate_per_m: 0.195
+  output_rate_per_m: 1.56
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885034+00:00'
+  updated_at: '2026-07-23T19:45:56.534945+00:00'
   pinned: false
 - model_id: openrouter/qwen/qwen3.5-35b-a3b
   input_rate_per_m: 0.14
   output_rate_per_m: 1.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885032+00:00'
+  updated_at: '2026-07-23T19:45:56.534944+00:00'
   pinned: false
 - model_id: openrouter/qwen/qwen3.5-397b-a17b
   input_rate_per_m: 0.39
   output_rate_per_m: 2.34
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885049+00:00'
+  updated_at: '2026-07-23T19:45:56.534961+00:00'
   pinned: false
 - model_id: openrouter/qwen/qwen3.5-9b
   input_rate_per_m: 0.1
   output_rate_per_m: 0.15
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885018+00:00'
+  updated_at: '2026-07-23T19:45:56.534929+00:00'
   pinned: false
 - model_id: openrouter/qwen/qwen3.5-flash-02-23
   input_rate_per_m: 0.065
   output_rate_per_m: 0.26
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885037+00:00'
+  updated_at: '2026-07-23T19:45:56.534949+00:00'
   pinned: false
 - model_id: openrouter/qwen/qwen3.5-plus-02-15
   input_rate_per_m: 0.26
   output_rate_per_m: 1.56
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885047+00:00'
+  updated_at: '2026-07-23T19:45:56.534960+00:00'
   pinned: false
 - model_id: openrouter/qwen/qwen3.5-plus-20260420
   input_rate_per_m: 0.3
   output_rate_per_m: 1.8
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884955+00:00'
+  updated_at: '2026-07-23T19:45:56.534862+00:00'
   pinned: false
 - model_id: openrouter/qwen/qwen3.6-27b
   input_rate_per_m: 0.6
   output_rate_per_m: 3.6
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884964+00:00'
+  updated_at: '2026-07-23T19:45:56.534870+00:00'
   pinned: false
 - model_id: openrouter/qwen/qwen3.6-35b-a3b
   input_rate_per_m: 0.14
   output_rate_per_m: 1.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884959+00:00'
+  updated_at: '2026-07-23T19:45:56.534866+00:00'
   pinned: false
 - model_id: openrouter/qwen/qwen3.6-flash
   input_rate_per_m: 0.1875
   output_rate_per_m: 1.125
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884957+00:00'
+  updated_at: '2026-07-23T19:45:56.534864+00:00'
   pinned: false
 - model_id: openrouter/qwen/qwen3.6-max-preview
   input_rate_per_m: 1.04
   output_rate_per_m: 6.24
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884961+00:00'
+  updated_at: '2026-07-23T19:45:56.534868+00:00'
   pinned: false
 - model_id: openrouter/qwen/qwen3.6-plus
   input_rate_per_m: 0.325
   output_rate_per_m: 1.95
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884994+00:00'
+  updated_at: '2026-07-23T19:45:56.534903+00:00'
   pinned: false
 - model_id: openrouter/qwen/qwen3.7-max
   input_rate_per_m: 1.475
   output_rate_per_m: 4.425
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884921+00:00'
+  updated_at: '2026-07-23T19:45:56.534825+00:00'
   pinned: false
 - model_id: openrouter/qwen/qwen3.7-plus
   input_rate_per_m: 0.32
   output_rate_per_m: 1.28
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884912+00:00'
+  updated_at: '2026-07-23T19:45:56.534816+00:00'
   pinned: false
 - model_id: openrouter/rekaai/reka-edge
   input_rate_per_m: 0.1
   output_rate_per_m: 0.1
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885005+00:00'
+  updated_at: '2026-07-23T19:45:56.534914+00:00'
   pinned: false
 - model_id: openrouter/rekaai/reka-flash-3
   input_rate_per_m: 0.1
   output_rate_per_m: 0.2
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885299+00:00'
+  updated_at: '2026-07-23T19:45:56.535228+00:00'
   pinned: false
 - model_id: openrouter/relace/relace-apply-3
   input_rate_per_m: 0.85
   output_rate_per_m: 1.25
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885162+00:00'
+  updated_at: '2026-07-23T19:45:56.535081+00:00'
   pinned: false
 - model_id: openrouter/relace/relace-search
   input_rate_per_m: 1.0
   output_rate_per_m: 3.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885093+00:00'
+  updated_at: '2026-07-23T19:45:56.535009+00:00'
   pinned: false
 - model_id: openrouter/sakana/fugu-ultra
   input_rate_per_m: 5.0
   output_rate_per_m: 30.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884895+00:00'
+  updated_at: '2026-07-23T19:45:56.534797+00:00'
   pinned: false
 - model_id: openrouter/sao10k/l3-lunaris-8b
   input_rate_per_m: 0.04
   output_rate_per_m: 0.05
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885374+00:00'
+  updated_at: '2026-07-23T19:45:56.535308+00:00'
   pinned: false
 - model_id: openrouter/sao10k/l3.1-euryale-70b
   input_rate_per_m: 0.85
   output_rate_per_m: 0.85
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885369+00:00'
+  updated_at: '2026-07-23T19:45:56.535303+00:00'
   pinned: false
 - model_id: openrouter/sao10k/l3.3-euryale-70b
   input_rate_per_m: 0.65
   output_rate_per_m: 0.75
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885332+00:00'
+  updated_at: '2026-07-23T19:45:56.535264+00:00'
   pinned: false
 - model_id: openrouter/stepfun/step-3.5-flash
   input_rate_per_m: 0.1
   output_rate_per_m: 0.3
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885059+00:00'
+  updated_at: '2026-07-23T19:45:56.534973+00:00'
   pinned: false
 - model_id: openrouter/stepfun/step-3.7-flash
   input_rate_per_m: 0.2
   output_rate_per_m: 1.15
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884916+00:00'
+  updated_at: '2026-07-23T19:45:56.534819+00:00'
   pinned: false
 - model_id: openrouter/tencent/hunyuan-a13b-instruct
   input_rate_per_m: 0.14
   output_rate_per_m: 0.57
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885231+00:00'
+  updated_at: '2026-07-23T19:45:56.535156+00:00'
   pinned: false
 - model_id: openrouter/tencent/hy3
   input_rate_per_m: 0.14
   output_rate_per_m: 0.58
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884886+00:00'
+  updated_at: '2026-07-23T19:45:56.534787+00:00'
   pinned: false
 - model_id: openrouter/tencent/hy3-preview
   input_rate_per_m: 0.063
   output_rate_per_m: 0.21
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884975+00:00'
+  updated_at: '2026-07-23T19:45:56.534881+00:00'
   pinned: false
 - model_id: openrouter/thedrummer/cydonia-24b-v4.1
   input_rate_per_m: 0.3
   output_rate_per_m: 0.5
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885160+00:00'
+  updated_at: '2026-07-23T19:45:56.535079+00:00'
   pinned: false
 - model_id: openrouter/thedrummer/rocinante-12b
   input_rate_per_m: 0.25
   output_rate_per_m: 0.5
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885359+00:00'
+  updated_at: '2026-07-23T19:45:56.535292+00:00'
   pinned: false
 - model_id: openrouter/thedrummer/skyfall-36b-v2
   input_rate_per_m: 0.55
   output_rate_per_m: 0.8
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885302+00:00'
+  updated_at: '2026-07-23T19:45:56.535232+00:00'
   pinned: false
 - model_id: openrouter/thedrummer/unslopnemo-12b
   input_rate_per_m: 0.4
   output_rate_per_m: 0.4
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885350+00:00'
+  updated_at: '2026-07-23T19:45:56.535282+00:00'
   pinned: false
 - model_id: openrouter/thinkingmachines/inkling
   input_rate_per_m: 1.0
   output_rate_per_m: 4.05
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884858+00:00'
+  updated_at: '2026-07-23T19:45:56.534757+00:00'
   pinned: false
 - model_id: openrouter/undi95/remm-slerp-l2-13b
   input_rate_per_m: 0.45
   output_rate_per_m: 0.65
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885408+00:00'
+  updated_at: '2026-07-23T19:45:56.535346+00:00'
   pinned: false
 - model_id: openrouter/upstage/solar-pro-3
   input_rate_per_m: 0.15
   output_rate_per_m: 0.6
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885063+00:00'
+  updated_at: '2026-07-23T19:45:56.534976+00:00'
   pinned: false
 - model_id: openrouter/writer/palmyra-x5
   input_rate_per_m: 0.6
   output_rate_per_m: 6.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885066+00:00'
+  updated_at: '2026-07-23T19:45:56.534980+00:00'
   pinned: false
 - model_id: openrouter/x-ai/grok-4.20
   input_rate_per_m: 1.25
   output_rate_per_m: 2.5
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885001+00:00'
+  updated_at: '2026-07-23T19:45:56.534910+00:00'
   pinned: false
 - model_id: openrouter/x-ai/grok-4.20-multi-agent
   input_rate_per_m: 1.25
   output_rate_per_m: 2.5
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884999+00:00'
+  updated_at: '2026-07-23T19:45:56.534908+00:00'
   pinned: false
 - model_id: openrouter/x-ai/grok-4.3
   input_rate_per_m: 1.25
   output_rate_per_m: 2.5
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884935+00:00'
+  updated_at: '2026-07-23T19:45:56.534840+00:00'
   pinned: false
 - model_id: openrouter/x-ai/grok-4.5
   input_rate_per_m: 2.0
   output_rate_per_m: 6.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884879+00:00'
+  updated_at: '2026-07-23T19:45:56.534779+00:00'
   pinned: false
 - model_id: openrouter/x-ai/grok-build-0.1
   input_rate_per_m: 1.0
   output_rate_per_m: 2.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884923+00:00'
+  updated_at: '2026-07-23T19:45:56.534827+00:00'
   pinned: false
 - model_id: openrouter/xiaomi/mimo-v2.5
   input_rate_per_m: 0.14
   output_rate_per_m: 0.28
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884978+00:00'
+  updated_at: '2026-07-23T19:45:56.534885+00:00'
   pinned: false
 - model_id: openrouter/xiaomi/mimo-v2.5-pro
   input_rate_per_m: 0.435
   output_rate_per_m: 0.87
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884976+00:00'
+  updated_at: '2026-07-23T19:45:56.534883+00:00'
   pinned: false
 - model_id: openrouter/z-ai/glm-4.5
   input_rate_per_m: 0.6
   output_rate_per_m: 2.2
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885214+00:00'
+  updated_at: '2026-07-23T19:45:56.535138+00:00'
   pinned: false
 - model_id: openrouter/z-ai/glm-4.5-air
   input_rate_per_m: 0.13
   output_rate_per_m: 0.85
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885216+00:00'
+  updated_at: '2026-07-23T19:45:56.535140+00:00'
   pinned: false
 - model_id: openrouter/z-ai/glm-4.5v
   input_rate_per_m: 0.6
   output_rate_per_m: 1.8
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885194+00:00'
+  updated_at: '2026-07-23T19:45:56.535115+00:00'
   pinned: false
 - model_id: openrouter/z-ai/glm-4.6
   input_rate_per_m: 0.5
   output_rate_per_m: 2.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885155+00:00'
+  updated_at: '2026-07-23T19:45:56.535074+00:00'
   pinned: false
 - model_id: openrouter/z-ai/glm-4.6v
   input_rate_per_m: 0.3
   output_rate_per_m: 0.9
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885094+00:00'
+  updated_at: '2026-07-23T19:45:56.535011+00:00'
   pinned: false
 - model_id: openrouter/z-ai/glm-4.7
   input_rate_per_m: 0.4
   output_rate_per_m: 1.75
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885080+00:00'
+  updated_at: '2026-07-23T19:45:56.534996+00:00'
   pinned: false
 - model_id: openrouter/z-ai/glm-4.7-flash
   input_rate_per_m: 0.06
   output_rate_per_m: 0.4
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885072+00:00'
+  updated_at: '2026-07-23T19:45:56.534986+00:00'
   pinned: false
 - model_id: openrouter/z-ai/glm-5
   input_rate_per_m: 0.95
   output_rate_per_m: 2.55
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885052+00:00'
+  updated_at: '2026-07-23T19:45:56.534965+00:00'
   pinned: false
 - model_id: openrouter/z-ai/glm-5-turbo
   input_rate_per_m: 1.2
   output_rate_per_m: 4.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885013+00:00'
+  updated_at: '2026-07-23T19:45:56.534923+00:00'
   pinned: false
 - model_id: openrouter/z-ai/glm-5.1
   input_rate_per_m: 0.966
   output_rate_per_m: 3.036
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884988+00:00'
+  updated_at: '2026-07-23T19:45:56.534897+00:00'
   pinned: false
 - model_id: openrouter/z-ai/glm-5.2
-  input_rate_per_m: 0.784
-  output_rate_per_m: 2.464
+  input_rate_per_m: 0.812
+  output_rate_per_m: 2.552
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884901+00:00'
+  updated_at: '2026-07-23T19:45:56.534803+00:00'
   pinned: false
 - model_id: openrouter/z-ai/glm-5v-turbo
   input_rate_per_m: 1.2
   output_rate_per_m: 4.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884996+00:00'
+  updated_at: '2026-07-23T19:45:56.534905+00:00'
   pinned: false
 - model_id: openrouter/~anthropic/claude-fable-latest
   input_rate_per_m: 10.0
   output_rate_per_m: 50.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884905+00:00'
+  updated_at: '2026-07-23T19:45:56.534807+00:00'
   pinned: false
 - model_id: openrouter/~anthropic/claude-haiku-latest
   input_rate_per_m: 1.0
   output_rate_per_m: 5.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884943+00:00'
+  updated_at: '2026-07-23T19:45:56.534849+00:00'
   pinned: false
 - model_id: openrouter/~anthropic/claude-opus-latest
   input_rate_per_m: 5.0
   output_rate_per_m: 25.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884983+00:00'
+  updated_at: '2026-07-23T19:45:56.534891+00:00'
   pinned: false
 - model_id: openrouter/~anthropic/claude-sonnet-latest
   input_rate_per_m: 2.0
   output_rate_per_m: 10.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884952+00:00'
+  updated_at: '2026-07-23T19:45:56.534858+00:00'
   pinned: false
 - model_id: openrouter/~google/gemini-flash-latest
   input_rate_per_m: 1.5
   output_rate_per_m: 7.5
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884950+00:00'
+  updated_at: '2026-07-23T19:45:56.534856+00:00'
   pinned: false
 - model_id: openrouter/~google/gemini-pro-latest
   input_rate_per_m: 2.0
   output_rate_per_m: 12.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884947+00:00'
+  updated_at: '2026-07-23T19:45:56.534852+00:00'
   pinned: false
 - model_id: openrouter/~moonshotai/kimi-latest
   input_rate_per_m: 3.0
   output_rate_per_m: 15.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884948+00:00'
+  updated_at: '2026-07-23T19:45:56.534854+00:00'
   pinned: false
 - model_id: openrouter/~openai/gpt-latest
   input_rate_per_m: 5.0
   output_rate_per_m: 30.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884954+00:00'
+  updated_at: '2026-07-23T19:45:56.534860+00:00'
   pinned: false
 - model_id: openrouter/~openai/gpt-mini-latest
   input_rate_per_m: 0.75
   output_rate_per_m: 4.5
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884945+00:00'
+  updated_at: '2026-07-23T19:45:56.534851+00:00'
   pinned: false
 - model_id: openrouter/~x-ai/grok-latest
   input_rate_per_m: 2.0
   output_rate_per_m: 6.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884881+00:00'
+  updated_at: '2026-07-23T19:45:56.534781+00:00'
   pinned: false
 - model_id: perceptron/perceptron-mk1
   input_rate_per_m: 0.15
   output_rate_per_m: 1.5
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884928+00:00'
+  updated_at: '2026-07-23T19:45:56.534833+00:00'
   pinned: false
 - model_id: perplexity/sonar
   input_rate_per_m: 1.0
   output_rate_per_m: 1.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885322+00:00'
+  updated_at: '2026-07-23T19:45:56.535253+00:00'
   pinned: false
 - model_id: perplexity/sonar-deep-research
   input_rate_per_m: 2.0
   output_rate_per_m: 8.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885308+00:00'
+  updated_at: '2026-07-23T19:45:56.535238+00:00'
   pinned: false
 - model_id: perplexity/sonar-pro
   input_rate_per_m: 3.0
   output_rate_per_m: 15.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885306+00:00'
+  updated_at: '2026-07-23T19:45:56.535236+00:00'
   pinned: false
 - model_id: perplexity/sonar-pro-search
   input_rate_per_m: 3.0
   output_rate_per_m: 15.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885126+00:00'
+  updated_at: '2026-07-23T19:45:56.535043+00:00'
   pinned: false
 - model_id: perplexity/sonar-reasoning-pro
   input_rate_per_m: 2.0
   output_rate_per_m: 8.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885304+00:00'
+  updated_at: '2026-07-23T19:45:56.535234+00:00'
   pinned: false
 - model_id: poolside/laguna-m.1
   input_rate_per_m: 0.2
   output_rate_per_m: 0.4
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884941+00:00'
+  updated_at: '2026-07-23T19:45:56.534847+00:00'
   pinned: false
 - model_id: poolside/laguna-s-2.1
   input_rate_per_m: 0.1
   output_rate_per_m: 0.2
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884849+00:00'
+  updated_at: '2026-07-23T19:45:56.534746+00:00'
   pinned: false
 - model_id: poolside/laguna-xs-2.1
   input_rate_per_m: 0.06
   output_rate_per_m: 0.12
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884888+00:00'
+  updated_at: '2026-07-23T19:45:56.534789+00:00'
   pinned: false
 - model_id: qwen/qwen-2.5-72b-instruct
   input_rate_per_m: 0.36
   output_rate_per_m: 0.4
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885363+00:00'
+  updated_at: '2026-07-23T19:45:56.535297+00:00'
   pinned: false
 - model_id: qwen/qwen-2.5-7b-instruct
   input_rate_per_m: 0.04
   output_rate_per_m: 0.1
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885353+00:00'
+  updated_at: '2026-07-23T19:45:56.535286+00:00'
   pinned: false
 - model_id: qwen/qwen-2.5-coder-32b-instruct
   input_rate_per_m: 0.66
   output_rate_per_m: 1.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885348+00:00'
+  updated_at: '2026-07-23T19:45:56.535280+00:00'
   pinned: false
 - model_id: qwen/qwen-plus
   input_rate_per_m: 0.26
   output_rate_per_m: 0.78
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885316+00:00'
+  updated_at: '2026-07-23T19:45:56.535247+00:00'
   pinned: false
 - model_id: qwen/qwen-plus-2025-07-28
   input_rate_per_m: 0.26
   output_rate_per_m: 0.78
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885180+00:00'
+  updated_at: '2026-07-23T19:45:56.535100+00:00'
   pinned: false
 - model_id: qwen/qwen-plus-2025-07-28:thinking
   input_rate_per_m: 0.26
   output_rate_per_m: 0.78
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885181+00:00'
+  updated_at: '2026-07-23T19:45:56.535102+00:00'
   pinned: false
 - model_id: qwen/qwen2.5-vl-72b-instruct
   input_rate_per_m: 0.8
   output_rate_per_m: 1.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885315+00:00'
+  updated_at: '2026-07-23T19:45:56.535245+00:00'
   pinned: false
 - model_id: qwen/qwen3-14b
   input_rate_per_m: 0.2275
   output_rate_per_m: 0.91
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885265+00:00'
+  updated_at: '2026-07-23T19:45:56.535193+00:00'
   pinned: false
 - model_id: qwen/qwen3-235b-a22b
   input_rate_per_m: 0.455
   output_rate_per_m: 1.82
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885269+00:00'
+  updated_at: '2026-07-23T19:45:56.535197+00:00'
   pinned: false
 - model_id: qwen/qwen3-235b-a22b-2507
   input_rate_per_m: 0.09
   output_rate_per_m: 0.55
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885225+00:00'
+  updated_at: '2026-07-23T19:45:56.535150+00:00'
   pinned: false
 - model_id: qwen/qwen3-235b-a22b-thinking-2507
   input_rate_per_m: 0.3
   output_rate_per_m: 3.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885218+00:00'
+  updated_at: '2026-07-23T19:45:56.535142+00:00'
   pinned: false
 - model_id: qwen/qwen3-30b-a3b
   input_rate_per_m: 0.13
   output_rate_per_m: 0.52
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885262+00:00'
+  updated_at: '2026-07-23T19:45:56.535189+00:00'
   pinned: false
 - model_id: qwen/qwen3-30b-a3b-instruct-2507
   input_rate_per_m: 0.1
   output_rate_per_m: 0.3
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885212+00:00'
+  updated_at: '2026-07-23T19:45:56.535136+00:00'
   pinned: false
 - model_id: qwen/qwen3-30b-a3b-thinking-2507
   input_rate_per_m: 0.13
   output_rate_per_m: 1.56
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885185+00:00'
+  updated_at: '2026-07-23T19:45:56.535106+00:00'
   pinned: false
 - model_id: qwen/qwen3-32b
   input_rate_per_m: 0.08
   output_rate_per_m: 0.28
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885267+00:00'
+  updated_at: '2026-07-23T19:45:56.535195+00:00'
   pinned: false
 - model_id: qwen/qwen3-8b
   input_rate_per_m: 0.117
   output_rate_per_m: 0.455
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885263+00:00'
+  updated_at: '2026-07-23T19:45:56.535191+00:00'
   pinned: false
 - model_id: qwen/qwen3-coder
   input_rate_per_m: 0.3
   output_rate_per_m: 1.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885219+00:00'
+  updated_at: '2026-07-23T19:45:56.535144+00:00'
   pinned: false
 - model_id: qwen/qwen3-coder-30b-a3b-instruct
   input_rate_per_m: 0.07
   output_rate_per_m: 0.27
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885211+00:00'
+  updated_at: '2026-07-23T19:45:56.535134+00:00'
   pinned: false
 - model_id: qwen/qwen3-coder-flash
   input_rate_per_m: 0.195
   output_rate_per_m: 0.975
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885174+00:00'
+  updated_at: '2026-07-23T19:45:56.535094+00:00'
   pinned: false
 - model_id: qwen/qwen3-coder-next
   input_rate_per_m: 0.11
   output_rate_per_m: 0.8
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885057+00:00'
+  updated_at: '2026-07-23T19:45:56.534970+00:00'
   pinned: false
 - model_id: qwen/qwen3-coder-plus
   input_rate_per_m: 0.65
   output_rate_per_m: 3.25
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885169+00:00'
+  updated_at: '2026-07-23T19:45:56.535089+00:00'
   pinned: false
 - model_id: qwen/qwen3-max
   input_rate_per_m: 0.78
   output_rate_per_m: 3.9
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885167+00:00'
+  updated_at: '2026-07-23T19:45:56.535087+00:00'
   pinned: false
 - model_id: qwen/qwen3-max-thinking
   input_rate_per_m: 0.78
   output_rate_per_m: 3.9
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885054+00:00'
+  updated_at: '2026-07-23T19:45:56.534967+00:00'
   pinned: false
 - model_id: qwen/qwen3-next-80b-a3b-instruct
   input_rate_per_m: 0.15
   output_rate_per_m: 1.2
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885178+00:00'
+  updated_at: '2026-07-23T19:45:56.535098+00:00'
   pinned: false
 - model_id: qwen/qwen3-next-80b-a3b-thinking
   input_rate_per_m: 0.0975
   output_rate_per_m: 0.78
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885176+00:00'
+  updated_at: '2026-07-23T19:45:56.535096+00:00'
   pinned: false
 - model_id: qwen/qwen3-vl-235b-a22b-instruct
   input_rate_per_m: 0.21
   output_rate_per_m: 1.9
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885165+00:00'
+  updated_at: '2026-07-23T19:45:56.535085+00:00'
   pinned: false
 - model_id: qwen/qwen3-vl-235b-a22b-thinking
   input_rate_per_m: 0.26
   output_rate_per_m: 2.6
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885164+00:00'
+  updated_at: '2026-07-23T19:45:56.535083+00:00'
   pinned: false
 - model_id: qwen/qwen3-vl-30b-a3b-instruct
   input_rate_per_m: 0.15
   output_rate_per_m: 0.6
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885152+00:00'
+  updated_at: '2026-07-23T19:45:56.535071+00:00'
   pinned: false
 - model_id: qwen/qwen3-vl-30b-a3b-thinking
   input_rate_per_m: 0.13
   output_rate_per_m: 1.56
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885150+00:00'
+  updated_at: '2026-07-23T19:45:56.535069+00:00'
   pinned: false
 - model_id: qwen/qwen3-vl-32b-instruct
   input_rate_per_m: 0.104
   output_rate_per_m: 0.416
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885133+00:00'
+  updated_at: '2026-07-23T19:45:56.535051+00:00'
   pinned: false
 - model_id: qwen/qwen3-vl-8b-instruct
   input_rate_per_m: 0.117
   output_rate_per_m: 0.455
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885141+00:00'
+  updated_at: '2026-07-23T19:45:56.535060+00:00'
   pinned: false
 - model_id: qwen/qwen3-vl-8b-thinking
   input_rate_per_m: 0.117
   output_rate_per_m: 1.365
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885140+00:00'
+  updated_at: '2026-07-23T19:45:56.535058+00:00'
   pinned: false
 - model_id: qwen/qwen3.5-122b-a10b
   input_rate_per_m: 0.26
   output_rate_per_m: 2.08
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885035+00:00'
+  updated_at: '2026-07-23T19:45:56.534947+00:00'
   pinned: false
 - model_id: qwen/qwen3.5-27b
-  input_rate_per_m: 0.26
-  output_rate_per_m: 2.6
+  input_rate_per_m: 0.195
+  output_rate_per_m: 1.56
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885034+00:00'
+  updated_at: '2026-07-23T19:45:56.534945+00:00'
   pinned: false
 - model_id: qwen/qwen3.5-35b-a3b
   input_rate_per_m: 0.14
   output_rate_per_m: 1.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885032+00:00'
+  updated_at: '2026-07-23T19:45:56.534944+00:00'
   pinned: false
 - model_id: qwen/qwen3.5-397b-a17b
   input_rate_per_m: 0.39
   output_rate_per_m: 2.34
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885049+00:00'
+  updated_at: '2026-07-23T19:45:56.534961+00:00'
   pinned: false
 - model_id: qwen/qwen3.5-9b
   input_rate_per_m: 0.1
   output_rate_per_m: 0.15
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885018+00:00'
+  updated_at: '2026-07-23T19:45:56.534929+00:00'
   pinned: false
 - model_id: qwen/qwen3.5-flash-02-23
   input_rate_per_m: 0.065
   output_rate_per_m: 0.26
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885037+00:00'
+  updated_at: '2026-07-23T19:45:56.534949+00:00'
   pinned: false
 - model_id: qwen/qwen3.5-plus-02-15
   input_rate_per_m: 0.26
   output_rate_per_m: 1.56
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885047+00:00'
+  updated_at: '2026-07-23T19:45:56.534960+00:00'
   pinned: false
 - model_id: qwen/qwen3.5-plus-20260420
   input_rate_per_m: 0.3
   output_rate_per_m: 1.8
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884955+00:00'
+  updated_at: '2026-07-23T19:45:56.534862+00:00'
   pinned: false
 - model_id: qwen/qwen3.6-27b
   input_rate_per_m: 0.6
   output_rate_per_m: 3.6
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884964+00:00'
+  updated_at: '2026-07-23T19:45:56.534870+00:00'
   pinned: false
 - model_id: qwen/qwen3.6-35b-a3b
   input_rate_per_m: 0.14
   output_rate_per_m: 1.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884959+00:00'
+  updated_at: '2026-07-23T19:45:56.534866+00:00'
   pinned: false
 - model_id: qwen/qwen3.6-flash
   input_rate_per_m: 0.1875
   output_rate_per_m: 1.125
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884957+00:00'
+  updated_at: '2026-07-23T19:45:56.534864+00:00'
   pinned: false
 - model_id: qwen/qwen3.6-max-preview
   input_rate_per_m: 1.04
   output_rate_per_m: 6.24
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884961+00:00'
+  updated_at: '2026-07-23T19:45:56.534868+00:00'
   pinned: false
 - model_id: qwen/qwen3.6-plus
   input_rate_per_m: 0.325
   output_rate_per_m: 1.95
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884994+00:00'
+  updated_at: '2026-07-23T19:45:56.534903+00:00'
   pinned: false
 - model_id: qwen/qwen3.7-max
   input_rate_per_m: 1.475
   output_rate_per_m: 4.425
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884921+00:00'
+  updated_at: '2026-07-23T19:45:56.534825+00:00'
   pinned: false
 - model_id: qwen/qwen3.7-plus
   input_rate_per_m: 0.32
   output_rate_per_m: 1.28
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884912+00:00'
+  updated_at: '2026-07-23T19:45:56.534816+00:00'
   pinned: false
 - model_id: rekaai/reka-edge
   input_rate_per_m: 0.1
   output_rate_per_m: 0.1
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885005+00:00'
+  updated_at: '2026-07-23T19:45:56.534914+00:00'
   pinned: false
 - model_id: rekaai/reka-flash-3
   input_rate_per_m: 0.1
   output_rate_per_m: 0.2
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885299+00:00'
+  updated_at: '2026-07-23T19:45:56.535228+00:00'
   pinned: false
 - model_id: relace/relace-apply-3
   input_rate_per_m: 0.85
   output_rate_per_m: 1.25
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885162+00:00'
+  updated_at: '2026-07-23T19:45:56.535081+00:00'
   pinned: false
 - model_id: relace/relace-search
   input_rate_per_m: 1.0
   output_rate_per_m: 3.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885093+00:00'
+  updated_at: '2026-07-23T19:45:56.535009+00:00'
   pinned: false
 - model_id: sakana/fugu-ultra
   input_rate_per_m: 5.0
   output_rate_per_m: 30.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884895+00:00'
+  updated_at: '2026-07-23T19:45:56.534797+00:00'
   pinned: false
 - model_id: sao10k/l3-lunaris-8b
   input_rate_per_m: 0.04
   output_rate_per_m: 0.05
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885374+00:00'
+  updated_at: '2026-07-23T19:45:56.535308+00:00'
   pinned: false
 - model_id: sao10k/l3.1-euryale-70b
   input_rate_per_m: 0.85
   output_rate_per_m: 0.85
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885369+00:00'
+  updated_at: '2026-07-23T19:45:56.535303+00:00'
   pinned: false
 - model_id: sao10k/l3.3-euryale-70b
   input_rate_per_m: 0.65
   output_rate_per_m: 0.75
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885332+00:00'
+  updated_at: '2026-07-23T19:45:56.535264+00:00'
   pinned: false
 - model_id: stepfun/step-3.5-flash
   input_rate_per_m: 0.1
   output_rate_per_m: 0.3
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885059+00:00'
+  updated_at: '2026-07-23T19:45:56.534973+00:00'
   pinned: false
 - model_id: stepfun/step-3.7-flash
   input_rate_per_m: 0.2
   output_rate_per_m: 1.15
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884916+00:00'
+  updated_at: '2026-07-23T19:45:56.534819+00:00'
   pinned: false
 - model_id: tencent/hunyuan-a13b-instruct
   input_rate_per_m: 0.14
   output_rate_per_m: 0.57
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885231+00:00'
+  updated_at: '2026-07-23T19:45:56.535156+00:00'
   pinned: false
 - model_id: tencent/hy3
   input_rate_per_m: 0.14
   output_rate_per_m: 0.58
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884886+00:00'
+  updated_at: '2026-07-23T19:45:56.534787+00:00'
   pinned: false
 - model_id: tencent/hy3-preview
   input_rate_per_m: 0.063
   output_rate_per_m: 0.21
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884975+00:00'
+  updated_at: '2026-07-23T19:45:56.534881+00:00'
   pinned: false
 - model_id: thedrummer/cydonia-24b-v4.1
   input_rate_per_m: 0.3
   output_rate_per_m: 0.5
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885160+00:00'
+  updated_at: '2026-07-23T19:45:56.535079+00:00'
   pinned: false
 - model_id: thedrummer/rocinante-12b
   input_rate_per_m: 0.25
   output_rate_per_m: 0.5
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885359+00:00'
+  updated_at: '2026-07-23T19:45:56.535292+00:00'
   pinned: false
 - model_id: thedrummer/skyfall-36b-v2
   input_rate_per_m: 0.55
   output_rate_per_m: 0.8
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885302+00:00'
+  updated_at: '2026-07-23T19:45:56.535232+00:00'
   pinned: false
 - model_id: thedrummer/unslopnemo-12b
   input_rate_per_m: 0.4
   output_rate_per_m: 0.4
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885350+00:00'
+  updated_at: '2026-07-23T19:45:56.535282+00:00'
   pinned: false
 - model_id: thinkingmachines/inkling
   input_rate_per_m: 1.0
   output_rate_per_m: 4.05
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884858+00:00'
+  updated_at: '2026-07-23T19:45:56.534757+00:00'
   pinned: false
 - model_id: undi95/remm-slerp-l2-13b
   input_rate_per_m: 0.45
   output_rate_per_m: 0.65
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885408+00:00'
+  updated_at: '2026-07-23T19:45:56.535346+00:00'
   pinned: false
 - model_id: upstage/solar-pro-3
   input_rate_per_m: 0.15
   output_rate_per_m: 0.6
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885063+00:00'
+  updated_at: '2026-07-23T19:45:56.534976+00:00'
   pinned: false
 - model_id: writer/palmyra-x5
   input_rate_per_m: 0.6
   output_rate_per_m: 6.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885066+00:00'
+  updated_at: '2026-07-23T19:45:56.534980+00:00'
   pinned: false
 - model_id: x-ai/grok-4.20
   input_rate_per_m: 1.25
   output_rate_per_m: 2.5
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885001+00:00'
+  updated_at: '2026-07-23T19:45:56.534910+00:00'
   pinned: false
 - model_id: x-ai/grok-4.20-multi-agent
   input_rate_per_m: 1.25
   output_rate_per_m: 2.5
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884999+00:00'
+  updated_at: '2026-07-23T19:45:56.534908+00:00'
   pinned: false
 - model_id: x-ai/grok-4.3
   input_rate_per_m: 1.25
   output_rate_per_m: 2.5
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884935+00:00'
+  updated_at: '2026-07-23T19:45:56.534840+00:00'
   pinned: false
 - model_id: x-ai/grok-4.5
   input_rate_per_m: 2.0
   output_rate_per_m: 6.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884879+00:00'
+  updated_at: '2026-07-23T19:45:56.534779+00:00'
   pinned: false
 - model_id: x-ai/grok-build-0.1
   input_rate_per_m: 1.0
   output_rate_per_m: 2.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884923+00:00'
+  updated_at: '2026-07-23T19:45:56.534827+00:00'
   pinned: false
 - model_id: xiaomi/mimo-v2.5
   input_rate_per_m: 0.14
   output_rate_per_m: 0.28
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884978+00:00'
+  updated_at: '2026-07-23T19:45:56.534885+00:00'
   pinned: false
 - model_id: xiaomi/mimo-v2.5-pro
   input_rate_per_m: 0.435
   output_rate_per_m: 0.87
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884976+00:00'
+  updated_at: '2026-07-23T19:45:56.534883+00:00'
   pinned: false
 - model_id: z-ai/glm-4.5
   input_rate_per_m: 0.6
   output_rate_per_m: 2.2
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885214+00:00'
+  updated_at: '2026-07-23T19:45:56.535138+00:00'
   pinned: false
 - model_id: z-ai/glm-4.5-air
   input_rate_per_m: 0.13
   output_rate_per_m: 0.85
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885216+00:00'
+  updated_at: '2026-07-23T19:45:56.535140+00:00'
   pinned: false
 - model_id: z-ai/glm-4.5v
   input_rate_per_m: 0.6
   output_rate_per_m: 1.8
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885194+00:00'
+  updated_at: '2026-07-23T19:45:56.535115+00:00'
   pinned: false
 - model_id: z-ai/glm-4.6
   input_rate_per_m: 0.5
   output_rate_per_m: 2.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885155+00:00'
+  updated_at: '2026-07-23T19:45:56.535074+00:00'
   pinned: false
 - model_id: z-ai/glm-4.6v
   input_rate_per_m: 0.3
   output_rate_per_m: 0.9
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885094+00:00'
+  updated_at: '2026-07-23T19:45:56.535011+00:00'
   pinned: false
 - model_id: z-ai/glm-4.7
   input_rate_per_m: 0.4
   output_rate_per_m: 1.75
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885080+00:00'
+  updated_at: '2026-07-23T19:45:56.534996+00:00'
   pinned: false
 - model_id: z-ai/glm-4.7-flash
   input_rate_per_m: 0.06
   output_rate_per_m: 0.4
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885072+00:00'
+  updated_at: '2026-07-23T19:45:56.534986+00:00'
   pinned: false
 - model_id: z-ai/glm-5
   input_rate_per_m: 0.95
   output_rate_per_m: 2.55
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885052+00:00'
+  updated_at: '2026-07-23T19:45:56.534965+00:00'
   pinned: false
 - model_id: z-ai/glm-5-turbo
   input_rate_per_m: 1.2
   output_rate_per_m: 4.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.885013+00:00'
+  updated_at: '2026-07-23T19:45:56.534923+00:00'
   pinned: false
 - model_id: z-ai/glm-5.1
   input_rate_per_m: 0.966
   output_rate_per_m: 3.036
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884988+00:00'
+  updated_at: '2026-07-23T19:45:56.534897+00:00'
   pinned: false
 - model_id: z-ai/glm-5.2
-  input_rate_per_m: 0.784
-  output_rate_per_m: 2.464
+  input_rate_per_m: 0.812
+  output_rate_per_m: 2.552
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884901+00:00'
+  updated_at: '2026-07-23T19:45:56.534803+00:00'
   pinned: false
 - model_id: z-ai/glm-5v-turbo
   input_rate_per_m: 1.2
   output_rate_per_m: 4.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884996+00:00'
+  updated_at: '2026-07-23T19:45:56.534905+00:00'
   pinned: false
 - model_id: ~anthropic/claude-fable-latest
   input_rate_per_m: 10.0
   output_rate_per_m: 50.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884905+00:00'
+  updated_at: '2026-07-23T19:45:56.534807+00:00'
   pinned: false
 - model_id: ~anthropic/claude-haiku-latest
   input_rate_per_m: 1.0
   output_rate_per_m: 5.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884943+00:00'
+  updated_at: '2026-07-23T19:45:56.534849+00:00'
   pinned: false
 - model_id: ~anthropic/claude-opus-latest
   input_rate_per_m: 5.0
   output_rate_per_m: 25.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884983+00:00'
+  updated_at: '2026-07-23T19:45:56.534891+00:00'
   pinned: false
 - model_id: ~anthropic/claude-sonnet-latest
   input_rate_per_m: 2.0
   output_rate_per_m: 10.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884952+00:00'
+  updated_at: '2026-07-23T19:45:56.534858+00:00'
   pinned: false
 - model_id: ~google/gemini-flash-latest
   input_rate_per_m: 1.5
   output_rate_per_m: 7.5
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884950+00:00'
+  updated_at: '2026-07-23T19:45:56.534856+00:00'
   pinned: false
 - model_id: ~google/gemini-pro-latest
   input_rate_per_m: 2.0
   output_rate_per_m: 12.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884947+00:00'
+  updated_at: '2026-07-23T19:45:56.534852+00:00'
   pinned: false
 - model_id: ~moonshotai/kimi-latest
   input_rate_per_m: 3.0
   output_rate_per_m: 15.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884948+00:00'
+  updated_at: '2026-07-23T19:45:56.534854+00:00'
   pinned: false
 - model_id: ~openai/gpt-latest
   input_rate_per_m: 5.0
   output_rate_per_m: 30.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884954+00:00'
+  updated_at: '2026-07-23T19:45:56.534860+00:00'
   pinned: false
 - model_id: ~openai/gpt-mini-latest
   input_rate_per_m: 0.75
   output_rate_per_m: 4.5
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884945+00:00'
+  updated_at: '2026-07-23T19:45:56.534851+00:00'
   pinned: false
 - model_id: ~x-ai/grok-latest
   input_rate_per_m: 2.0
   output_rate_per_m: 6.0
   source: catalog_refresh
-  updated_at: '2026-07-23T13:45:53.884881+00:00'
+  updated_at: '2026-07-23T19:45:56.534781+00:00'
   pinned: false
