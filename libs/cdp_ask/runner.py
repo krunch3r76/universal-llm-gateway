@@ -11,6 +11,7 @@ from typing import Any
 from claude_bundles import cdp_registry
 from claude_bundles.cowork_output_download import should_attempt_output_download
 from claude_bundles.project_ask import (
+    HarvestArchiveError,
     ProjectAskResult,
     archive_harvest,
     run_project_ask,
@@ -292,17 +293,35 @@ async def run_execution(
             if last and last.ok and not archive_uri and last.body:
                 if ladder and ladder.on_archiving:
                     await ladder.on_archiving()
-                archive_uri = archive_harvest(
-                    body=last.body,
-                    url=last.url,
-                    project_uuid=last.project_uuid,
-                    model=last.model,
-                    attested_model=last.attested_model,
-                    archive_path=default_archive_path(
-                        req, execution_id=execution_id
-                    ),
-                    execution_id=execution_id or None,
-                )
+                try:
+                    archive_uri = archive_harvest(
+                        body=last.body,
+                        url=last.url,
+                        project_uuid=last.project_uuid,
+                        model=last.model,
+                        attested_model=last.attested_model,
+                        archive_path=default_archive_path(
+                            req, execution_id=execution_id
+                        ),
+                        execution_id=execution_id or None,
+                    )
+                except HarvestArchiveError as exc:
+                    return {
+                        "ok": False,
+                        "registration_id": reg.registration_id,
+                        "archive_uri": None,
+                        "results": [_result_dict(r) for r in results],
+                        "body": last.body,
+                        "body_len": last.body_len,
+                        "url": last.url,
+                        "project_uuid": last.project_uuid,
+                        "project_url": last.project_url,
+                        "model": last.model,
+                        "attested_model": last.attested_model,
+                        "error": str(exc),
+                        "harvest_provenance": None,
+                        "stall_stage": classify_stall_stage(str(exc)),
+                    }
             await _release_f6_and_advance_proof(
                 progress=progress, ladder=ladder, archive_uri=archive_uri
             )
@@ -318,6 +337,9 @@ async def run_execution(
                 "project_url": last.project_url if last else "",
                 "model": last.model if last else {},
                 "attested_model": last.attested_model if last else None,
+                "harvest_provenance": (
+                    last.harvest_provenance if last and last.ok else None
+                ),
                 "error": None if all(r.ok for r in results) else "conversation failed",
                 "stall_stage": (
                     classify_stall_stage(last.error if last else "conversation failed")

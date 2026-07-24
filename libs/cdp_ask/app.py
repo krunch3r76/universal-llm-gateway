@@ -241,6 +241,7 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
             error=record.error or payload.get("error"),
             delete_after=payload.get("delete_after"),
             results=payload.get("results"),
+            harvest_provenance=payload.get("harvest_provenance"),
             completion_phase=record.completion_phase,
             content_proof_uri=record.content_proof_uri,
             content_proof_sha256=record.content_proof_sha256,

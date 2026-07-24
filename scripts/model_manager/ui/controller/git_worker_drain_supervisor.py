@@ -14,8 +14,8 @@ Owns the deferred-drain lifecycle for ONE restart intent:
 Timeout-as-alert (R-F): if the deadline passes before convergence the intent goes
 to ``timeout`` and ``manage.restart.timeout`` is emitted with the stuck-op
 identity + the explicit-force affordance. The supervisor NEVER auto-SIGKILLs.
-Observability-first: a periodic ``manage.restart.draining`` heartbeat makes a
-slow/wedged drain visible well before the deadline.
+Default deadline is 7 days (assume drain inevitable under normal holds —
+todo:manage-busy-drain-restart); progress heartbeats remain the visibility path.
 
 All worker/event transports are injected callables so the lifecycle is unit
 testable with a fake worker + fake event feed + fake kill (AC-2..AC-5). The
@@ -54,7 +54,10 @@ _DRAIN_COMPLETED_SIGNAL = "git_worker.drain.completed"
 _DRAIN_SIGNAL_FILTER = "git_worker.drain.*"
 _SUBSCRIBE_URL = "http://localhost/v1/subscribe"
 
-_DEFAULT_DEADLINE_S = 600.0  # ~10 min; a true last resort, essentially never fires
+# Operator bind 2026-07-24 (todo:manage-busy-drain-restart): assume drain is
+# inevitable under normal holds (incl. long cursor-sdk windows). Timeout stays
+# alert-only (never auto-SIGKILL); bar is days, not minutes.
+_DEFAULT_DEADLINE_S = 604800.0  # 7 days
 _DEFAULT_RECONCILE_INTERVAL_S = 2.0
 _DEFAULT_PROGRESS_INTERVAL_S = 30.0
 

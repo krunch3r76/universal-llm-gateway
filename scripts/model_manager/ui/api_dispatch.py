@@ -250,7 +250,8 @@ async def _git_worker_drain_supervised(
 
     git_integration_worker non-force stop/restart/sync_restart converge via the
     event-driven drain (durable intent + worker begin-drain + 202 deferred) rather
-    than the generic busy-probe deferral. force=true keeps the existing immediate
+    than the generic busy-probe deferral. Busy work busy-skips into durable drain
+    (todo:manage-busy-drain-restart); force=true keeps the existing immediate
     kill path. The terminal lifecycle is action-appropriate: stop vs restart.
     """
     supervisor = ctl.build_git_worker_drain_supervisor(

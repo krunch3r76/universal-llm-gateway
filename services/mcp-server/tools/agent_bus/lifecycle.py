@@ -193,6 +193,18 @@ def _wait_dispatch(
         return {"error": 'wait requires: thread (str, e.g. "1234")'}
     if completion == "first_reply_from" and not from_agent:
         return {"error": "wait with completion=first_reply_from requires from_agent"}
+    from agent_bus_store.wait_status import STATUS_COMPLETION_MODES
+
+    allowed = {"first_reply_from", "thread_closed", *STATUS_COMPLETION_MODES}
+    if completion not in allowed:
+        return {
+            "error": (
+                f"wait: unknown completion mode {completion!r}; "
+                "expected first_reply_from | thread_closed | "
+                "status:done | status:failed | status:needs-attended"
+            ),
+            "reason": "unknown_completion_mode",
+        }
     wait_clamped = max(0.0, min(wait_seconds, 60.0))
     params: list[tuple[str, str]] = [
         ("after_turn", str(after_turn)),

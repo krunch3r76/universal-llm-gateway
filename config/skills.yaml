@@ -240,8 +240,11 @@ skills:
     surface_class: shared_sync
     mcp_surface_required: none
   lawyer-stance:
-    surface_class: cursor_only
+    surface_class: shared_sync
     mcp_surface_required: none
+  lawyer-stance-code:
+    surface_class: cursor_only
+    mcp_surface_required: code
   lead-agent-git-integration:
     surface_class: cursor_only
     mcp_surface_required: none

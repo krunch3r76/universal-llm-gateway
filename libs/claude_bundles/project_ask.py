@@ -9,6 +9,7 @@ Uses the authenticated ``claude-ai-chrome-profile`` on Jupiter CDP.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass
@@ -40,6 +41,7 @@ from claude_bundles.compose_attest import (
 )
 from claude_bundles.cowork_output_download import (
     ExpectedSize,
+    HarvestProvenance,
     HarvestSource,
     OutputDownloadError,
     cortex_files_root_from_env,
@@ -54,6 +56,14 @@ _THINKING_LINE = re.compile(
     re.I | re.M,
 )
 _EXECUTION_ID_LINE = re.compile(r"^- execution_id: `([^`]+)`", re.M)
+
+
+class HarvestArchiveError(RuntimeError):
+    """Raised when ``archive_harvest`` refuses to overwrite mismatched on-disk bytes.
+
+    Mapped to ``ok=false`` terminal by callers — may leave correct rich bytes on
+    disk without clobbering them with a thinner harvest body.
+    """
 
 
 def strip_thinking_prefix(body: str) -> str:
@@ -78,6 +88,7 @@ class ProjectAskResult:
     error: str | None = None
     archive_uri: str | None = None
     attested_model: str | None = None
+    harvest_provenance: HarvestProvenance | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -116,6 +127,14 @@ def read_archive_execution_id(archive_path: str) -> str | None:
     return match.group(1) if match else None
 
 
+def _archive_body_section(full_text: str) -> str:
+    marker = "## Body\n\n"
+    idx = full_text.find(marker)
+    if idx < 0:
+        return ""
+    return full_text[idx + len(marker) :]
+
+
 def archive_harvest(
     *,
     body: str,
@@ -126,7 +145,14 @@ def archive_harvest(
     archive_path: str,
     execution_id: str | None = None,
 ) -> str:
-    """Persist raw harvest before delete. Returns cortex:// or file URI."""
+    """Persist raw harvest before delete. Returns cortex:// or file URI.
+
+    Raises:
+        HarvestArchiveError: When *archive_path* already exists and its on-disk
+            sha256 differs from the bytes about to be written (defense-in-depth
+            against clobber). Callers map this to ``ok=false`` terminal.
+        RuntimeError: When *archive_path* is occupied by a foreign execution.
+    """
     from datetime import UTC, datetime
 
     path = Path(archive_path)
@@ -157,6 +183,26 @@ def archive_harvest(
         f"- attested_model: `{attested_model}`\n\n"
         f"## Body\n\n{body}\n"
     )
+    if path.is_file():
+        try:
+            existing_text = path.read_text(encoding="utf-8")
+        except OSError:
+            existing_text = ""
+        existing_body = _archive_body_section(existing_text)
+        if existing_body:
+            same_body = hashlib.sha256(existing_body.encode()).digest() == hashlib.sha256(
+                body.encode()
+            ).digest()
+            same_exec = (
+                execution_id is not None
+                and read_archive_execution_id(archive_path) == execution_id
+            )
+            upgrade = same_exec and len(body) > len(existing_body)
+            if not same_body and not upgrade:
+                raise HarvestArchiveError(
+                    "archive path sha256 mismatch — refusing overwrite: "
+                    f"{archive_path}"
+                )
     tmp = path.with_suffix(f"{path.suffix}.tmp")
     tmp.write_text(text, encoding="utf-8")
     tmp.replace(path)
@@ -345,8 +391,9 @@ async def project_ask_on_page(
         )
         body = strip_thinking_prefix(state.get("body") or "")
         attested = _attest_model(model, state, model_info)
+        harvest_provenance: HarvestProvenance | None = None
         try:
-            archive_body = await resolve_harvest_body(
+            harvest = await resolve_harvest_body(
                 page,
                 body,
                 harvest_source=harvest_source,
@@ -366,18 +413,36 @@ async def project_ask_on_page(
                 delete_after=None,
                 error=str(exc),
                 attested_model=attested,
+                harvest_provenance=None,
             )
+        archive_body = harvest.content
+        harvest_provenance = harvest.provenance
         archive_uri = None
         if archive_path:
-            archive_uri = archive_harvest(
-                body=archive_body,
-                url=str(state.get("url") or page.url),
-                project_uuid=project_uuid,
-                model=model_info,
-                attested_model=attested,
-                archive_path=archive_path,
-                execution_id=execution_id,
-            )
+            try:
+                archive_uri = archive_harvest(
+                    body=archive_body,
+                    url=str(state.get("url") or page.url),
+                    project_uuid=project_uuid,
+                    model=model_info,
+                    attested_model=attested,
+                    archive_path=archive_path,
+                    execution_id=execution_id,
+                )
+            except HarvestArchiveError as exc:
+                return ProjectAskResult(
+                    ok=False,
+                    body=archive_body,
+                    url=str(state.get("url") or page.url),
+                    project_uuid=project_uuid,
+                    project_url=dest,
+                    model=model_info,
+                    body_len=len(archive_body),
+                    delete_after=None,
+                    error=str(exc),
+                    attested_model=attested,
+                    harvest_provenance=None,
+                )
         elif delete_after:
             # Fable MUST: delete only after archive — refuse if no path provided
             return ProjectAskResult(
@@ -406,6 +471,7 @@ async def project_ask_on_page(
             delete_after=delete_result,
             archive_uri=archive_uri,
             attested_model=attested,
+            harvest_provenance=harvest_provenance,
         )
     except Exception as exc:  # noqa: BLE001 — surface to CLI ledger; ¬delete
         return ProjectAskResult(

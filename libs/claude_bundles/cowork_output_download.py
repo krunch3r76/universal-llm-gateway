@@ -16,6 +16,7 @@ from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 ExpectedSize = Literal["small", "large", "auto"]
 HarvestSource = Literal["chat", "output-file", "auto"]
+HarvestProvenance = Literal["output-file", "cortex-uri", "chat"]
 
 
 def cortex_files_root_from_env() -> Path | None:
@@ -72,7 +73,13 @@ _OUTPUT_DOWNLOAD_JS = """
 
 
 class OutputDownloadError(RuntimeError):
-    """Raised when ``harvest_source=output-file`` requires Output bytes and download misses."""
+    """Raised when Output bytes are required and resolution misses.
+
+    Raised for ``harvest_source=output-file`` on download miss/empty, and for
+    ``harvest_source=auto`` with ``expected_size=large`` when both Cowork Output
+    download and a readable chat ``cortex://`` pointer miss (fail-closed — no
+    thin chat archive).
+    """
 
 
 @dataclass(frozen=True)
@@ -82,6 +89,14 @@ class OutputDownloadResult:
     filename: str
     content: str
     content_bytes: bytes
+
+
+@dataclass(frozen=True)
+class HarvestBody:
+    """Resolved harvest payload and its provenance (distinct from submit ``harvest_source``)."""
+
+    content: str
+    provenance: HarvestProvenance
 
 
 def should_attempt_output_download(
@@ -182,23 +197,28 @@ async def resolve_harvest_body(
     expected_size: ExpectedSize = "auto",
     download_output: bool = False,
     cortex_files_root: Path | None = None,
-) -> str:
+) -> HarvestBody:
     """Resolve archive body from Output download, cortex-fs fallback, or chat scrape.
 
+    Returns ``HarvestBody`` with ``provenance`` distinct from the submit-time
+    ``harvest_source`` knob (``auto`` | ``output-file`` | ``chat``).
+
     ``harvest_source=output-file`` raises ``OutputDownloadError`` on miss/empty.
-    ``harvest_source=auto`` with an attempted download falls back to a chat
-    ``cortex://`` pointer when present, else the scraped chat body.
+    ``harvest_source=auto`` with ``expected_size=large`` tries Output download,
+    then a chat ``cortex://`` pointer; on both miss raises ``OutputDownloadError``
+    (fail-closed — no thin chat archive). Non-large ``auto`` soft-falls to chat.
+    ``harvest_source=chat`` returns scraped chat with ``provenance=chat``.
     """
     if not should_attempt_output_download(
         harvest_source=harvest_source,
         expected_size=expected_size,
         download_output=download_output,
     ):
-        return chat_body
+        return HarvestBody(content=chat_body, provenance="chat")
 
     downloaded = await download_cowork_output(page)
     if downloaded is not None and downloaded.content.strip():
-        return downloaded.content
+        return HarvestBody(content=downloaded.content, provenance="output-file")
 
     if harvest_source == "output-file":
         raise OutputDownloadError(
@@ -212,5 +232,12 @@ async def resolve_harvest_body(
         if uri:
             copied = read_cortex_uri_content(uri, cortex_root=root)
             if copied and copied.strip():
-                return copied
-    return chat_body
+                return HarvestBody(content=copied, provenance="cortex-uri")
+
+    if harvest_source == "auto" and expected_size == "large":
+        raise OutputDownloadError(
+            "Cowork Output download and cortex-uri both missed for "
+            "harvest_source=auto with expected_size=large — refusing thin chat archive"
+        )
+
+    return HarvestBody(content=chat_body, provenance="chat")

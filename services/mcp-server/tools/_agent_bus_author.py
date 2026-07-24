@@ -13,7 +13,7 @@ _SURFACE_DEFAULT_FROM: dict[str, str] = {
 }
 
 AUTHOR_AUTOFILL_OPS: frozenset[str] = frozenset(
-    {"send", "post", "reply", "triage", "update_thread"}
+    {"send", "request", "post", "reply", "triage", "update_thread"}
 )
 
 

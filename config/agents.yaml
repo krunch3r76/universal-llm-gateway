@@ -104,7 +104,8 @@ profiles:
 
   gpt/api:
     # Default for automated team_dispatch roles assigned to GPT (e.g. reviewer).
-    # Standing default = Terra (panel family shift 2026-07-09); gpt-5.5 special-case.
+    # Standing default = Terra (panel family shift 2026-07-09); gpt-5.5 OPERATOR-GATED
+    # (explicit operator authorization — not standing default; writing uses Terra±Gemini).
     provider: openai
     default_model: openai/gpt-5.6-terra
     tool_surface: mcp
@@ -364,7 +365,7 @@ roles:
     default_contract: implement
 
   reviewer:
-    description: "Review and audit with reliable MCP writes. Preferred automated: gpt-5.6-terra. Anthropic API last resort (cost). web-anthropic via agent-bus is a life/Cortex MCP writer with code/workspaces MCP off. gpt-5.5 special-case only."
+    description: "Review and audit with reliable MCP writes. Engineering default: gpt-5.6-terra. Life/writing: Terra standing, or google/gemini-3.6-flash as MCP-capable peer (same tool surface as Terra; writing pair with synthesizer per decision:writing-consult-model-routing). Anthropic API last resort (cost). web-anthropic via agent-bus is a life/Cortex MCP writer with code/workspaces MCP off. gpt-5.5 OPERATOR-GATED (explicit auth; not standing default)."
     default_family: gpt
     default_platform: api
     default_model: openai/gpt-5.6-terra
@@ -375,11 +376,13 @@ roles:
       - openai/gpt-5.5
       - anthropic/claude-sonnet-4-6
       - anthropic/claude-opus-4-8
+      - google/gemini-3.6-flash
+      - google/gemini-3.5-flash
       - google/gemini-3.1-pro-preview
       - google/gemini-2.5-pro
 
   synthesizer:
-    description: "Analysis/synthesis via MCP tools. Full catalog access; writes allowed by model discretion. For guaranteed code-surface writes use reviewer (gpt-5.6-terra). web-anthropic can write through life/Cortex MCP but has no code/workspaces surface."
+    description: "Analysis/synthesis via MCP tools. Full catalog access; writes allowed by model discretion. For guaranteed code-surface writes use reviewer (gpt-5.6-terra). Writing second family with Terra (Terra+Gemini; ¬ Grok). web-anthropic can write through life/Cortex MCP but has no code/workspaces surface."
     default_family: gemini
     default_platform: api
     default_model: google/gemini-3.6-flash
@@ -392,7 +395,7 @@ roles:
       - google/gemini-2.5-flash-lite
 
   artisan:
-    description: "Inline reasoning specialist; structured execution at frontier-grade reasoning"
+    description: "Inline reasoning specialist; structured execution at frontier-grade reasoning. Engineering default Grok; PROHIBITED for writing/correspondence — see decision:writing-consult-model-routing."
     default_family: grok
     default_platform: api
     default_model: xai/grok-4.5
@@ -401,14 +404,17 @@ roles:
 
   skeptic:
     description: "Adversarial / dialectical seat; pushback on consensus framing.
-      Family MUST differ from the artifact's author (independence). Default
-      xai/grok-4.5 (standing panel family with Terra reviewer); allowlist carries
-      OpenAI/Anthropic for author-dependent selection. MCP-on is inherent to grok/api."
+      Engineering panels only (standing panel family with Terra reviewer). Writing
+      uses Terra+Gemini, not default panel_dispatch. Family MUST differ from the
+      artifact's author (independence). Default xai/grok-4.5; allowlist carries
+      OpenAI/Anthropic for author-dependent selection. gpt-5.5 OPERATOR-GATED on
+      this role. MCP-on is inherent to grok/api."
     default_family: grok
     default_platform: api
     default_model: xai/grok-4.5
     allowed_models:
       - xai/grok-4.5
+      - xai/grok-4.20-0309-reasoning
       - openai/gpt-5.6-terra
       - openai/gpt-5.5
       - anthropic/claude-opus-4-8

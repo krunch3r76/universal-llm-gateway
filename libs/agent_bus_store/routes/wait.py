@@ -19,11 +19,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from ..auth import require_token
 from ..db import get_thread, get_thread_turns_asc, normalize_thread_id
 from ..wait_status import (
+    STATUS_COMPLETION_MODES,
     Completion,
     build_suggested_next,
     derive_status,
     is_complete,
     qualifying_reply,
+    qualifying_status_turn,
 )
 
 router = APIRouter(dependencies=[Depends(require_token)])
@@ -55,9 +57,15 @@ def _snapshot(
         thread_row, turns, after_turn=after_turn, completion=completion
     )
     pointer = next((t for t in turns if t["turn_number"] == after_turn), None)
-    reply = qualifying_reply(
-        turns, after_turn=after_turn, from_agent=completion.get("from_agent")
-    )
+    mode = completion.get("mode", "first_reply_from")
+    if mode in STATUS_COMPLETION_MODES:
+        reply = qualifying_status_turn(
+            turns, after_turn=after_turn, status_token=str(mode)
+        )
+    else:
+        reply = qualifying_reply(
+            turns, after_turn=after_turn, from_agent=completion.get("from_agent")
+        )
     reply_turn = reply["turn_number"] if reply else None
     suggested = build_suggested_next(
         thread_row,
@@ -95,17 +103,20 @@ async def wait_thread_route(
 ) -> dict[str, Any]:
     """Bounded server-side wait. ``wait=0`` is an immediate snapshot.
 
-    ``completion`` ∈ {first_reply_from, thread_closed}. ``from_agent`` is
-    required for first_reply_from. Pre-reply status is always
-    ``awaiting_first_reply`` (C) — push state is not inferred from read_at.
+    ``completion`` ∈ {first_reply_from, thread_closed, status:done,
+    status:failed, status:needs-attended}. ``from_agent`` is required for
+    first_reply_from. Pre-reply status is always ``awaiting_first_reply`` (C)
+    — push state is not inferred from read_at.
     """
     thread_id = normalize_thread_id(thread_id)
-    if completion not in ("first_reply_from", "thread_closed"):
+    allowed = ("first_reply_from", "thread_closed", *sorted(STATUS_COMPLETION_MODES))
+    if completion not in allowed:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=(
                 f"unknown completion mode {completion!r}; "
-                "expected first_reply_from | thread_closed"
+                "expected first_reply_from | thread_closed | "
+                "status:done | status:failed | status:needs-attended"
             ),
         )
     if completion == "first_reply_from" and not from_agent:

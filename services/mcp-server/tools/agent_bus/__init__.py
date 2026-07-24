@@ -54,6 +54,10 @@ from .read_state import (
     _update_dispatch,
     _update_impl,
 )
+from .request import (
+    _request_dispatch,
+    _request_impl,
+)
 from .send import (
     _send_dispatch,
     _send_impl,
@@ -74,6 +78,7 @@ AGENT_BUS_DEPRECATED_OPS: frozenset[str] = frozenset({"post", "reply"})
 
 AGENT_BUS_OPS: dict[str, Callable[..., Any]] = {
     "send": _send_dispatch,
+    "request": _request_dispatch,
     "post": _post_dispatch,
     "reply": _reply_dispatch,
     "fetch": _fetch_dispatch,
@@ -123,6 +128,8 @@ __all__ = [
     "_relay",
     "_reply_dispatch",
     "_reply_impl",
+    "_request_dispatch",
+    "_request_impl",
     "_resolve_turn_id",
     "_send_dispatch",
     "_send_impl",
@@ -178,6 +185,7 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
 
         Operations:
           send          (new_slug XOR thread, to, subject, body, from?, from_agent?, summary?, tags?, lifecycle_state?, after_turn?, status?, mark_read?, close?, attachments?, allow_long_body?, sidecar_content?, sidecar_slug?, supersedes_turn?) — **primary write op**. Exactly one of new_slug (new thread) or thread (continue) required; supersedes_turn (continue path only) is the database turn id to supersede structurally. slug uniqueness enforced on new_slug path (409 slug_exists on collision). When sidecar_content is set the server writes cortex://notes/system/threads/<thread_id>-<slug>.md before inserting the turn, appends a trailing Sidecar: pointer to the body, and returns sidecar_uri + sidecar_sha256. sidecar_content cap 256KB. Prefer ``from=``; ``from_agent`` is a permanent alias. When omitted on ``/mcp/life`` or ``/mcp/code``, the server autofills ``web-anthropic`` or ``cursor`` respectively.
+          request       (new_slug XOR thread, to='cursor', subject, body, from?, from_agent?, tags?, sidecar_content?, sidecar_slug?, desired_model?, desired_effort?, contract?) — life-callable Cursor Auto channel. Injects lane:cursor-auto; arms Auto when a live handler heartbeats (else handler_status=no-auto-handler); returns {thread, turn, handler_status, poll_hint}. ¬ dual-tag lane:life-to-code on degrade.
           threads       (status?, tags?, lifecycle_state?)              — list threads; status: active|blocked|waiting|closed|all (default active); tags: AND-filter; lifecycle_state: pending|admitted|delivered|failed (exact match)
           create_thread (slug, summary?, tags?, lifecycle_state?, thread_id?) — create a thread without a turn; use lifecycle_state="pending" for lifecycle-managed threads that will be dispatched later
           fetch_unread  (to?, thread?, mark_read?, compact?, active_since?, limit?, all?) — recipient scope (to set, thread unset): enriched per-thread unread digest (slug, last_subject, last_activity_at; default 14d window, limit 50; unwindowed totals in response). thread scope: that thread's full unread turn list (no count cap; compact controls bodies). At least one of to/thread required.
@@ -185,7 +193,7 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
           get           (thread, turn_number)                           — get one specific turn; turn_number may be int or "latest"
           update        (thread, turn_number, body?, append?, subject?) — edit or append to an existing turn while read_at is null; 409 turn_already_acknowledged once marked read (use send(thread=...) for follow-up)
           mark_read     (thread, turn_numbers[] XOR through_turn, agent?) — bulk mark read; through_turn requires agent
-          wait          (thread, after_turn?, wait_seconds?, completion?, from_agent?) — server-side short-block until consult posts a bus turn after the pointer (completion=first_reply_from + canonical from_agent; alias-aware) or thread closes (completion=thread_closed); wait_seconds clamped <=60 (0=snapshot). Returns {thread_id, complete, status, push_required, suggested_next (object: consult_turn_posted + steps fetch/apply/close when complete and thread still active), qualifying_reply_turn, thread_status, ...}. first_reply_from complete means a consult bus turn exists, not findings applied. Re-call to keep polling — one HTTP call, not a client loop.
+          wait          (thread, after_turn?, wait_seconds?, completion?, from_agent?) — server-side short-block until consult posts a bus turn after the pointer (completion=first_reply_from + canonical from_agent; alias-aware), thread closes (completion=thread_closed), or Auto posts a terminal status token (completion=status:done|status:failed|status:needs-attended); wait_seconds clamped <=60 (0=snapshot). Returns {thread_id, complete, status, push_required, suggested_next (object: consult_turn_posted + steps fetch/apply/close when complete and thread still active), qualifying_reply_turn, thread_status, ...}. first_reply_from complete means a consult bus turn exists, not findings applied. Re-call to keep polling — one HTTP call, not a client loop.
           update_thread (thread, status?, summary?, tags?, from_agent?) — patch thread metadata (tags: omit=keep, []=clear, [...]=replace)
           close         (thread, summary?, mark_all_read?)              — close a thread (atomic: marks all turns read by default)
           delete_turn   (thread, turn_number, force?)                   — delete a single turn

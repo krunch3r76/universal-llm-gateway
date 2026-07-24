@@ -57,7 +57,7 @@ async def project_followup_on_page(
         )
         body = strip_thinking_prefix(state.get("body") or "")
         try:
-            archive_body = await resolve_harvest_body(
+            harvest = await resolve_harvest_body(
                 page,
                 body,
                 harvest_source=harvest_source,
@@ -76,16 +76,18 @@ async def project_followup_on_page(
                 body_len=0,
                 delete_after=None,
                 error=str(exc),
+                harvest_provenance=None,
             )
         return ProjectAskResult(
             ok=True,
-            body=archive_body,
+            body=harvest.content,
             url=str(state.get("url") or page.url),
             project_uuid=project_uuid or "",
             project_url=dest,
             model={"ok": True, "step": "followup"},
-            body_len=len(archive_body),
+            body_len=len(harvest.content),
             delete_after=None,
+            harvest_provenance=harvest.provenance,
         )
     except Exception as exc:  # noqa: BLE001
         return ProjectAskResult(
@@ -175,7 +177,7 @@ async def run_project_conversation(
             )
             body = strip_thinking_prefix(state.get("body") or "")
             try:
-                archive_body = await resolve_harvest_body(
+                harvest = await resolve_harvest_body(
                     page,
                     body,
                     harvest_source=harvest_source,
@@ -195,17 +197,19 @@ async def run_project_conversation(
                         body_len=0,
                         delete_after=None,
                         error=str(exc),
+                        harvest_provenance=None,
                     )
                 ]
             first = ProjectAskResult(
                 ok=True,
-                body=archive_body,
+                body=harvest.content,
                 url=str(state.get("url") or page.url),
                 project_uuid="",
                 project_url=url,
                 model=model_info,
-                body_len=len(archive_body),
+                body_len=len(harvest.content),
                 delete_after=None,
+                harvest_provenance=harvest.provenance,
             )
         results.append(first)
         if not first.ok:
@@ -246,6 +250,7 @@ async def run_project_conversation(
                 error=last.error,
                 archive_uri=last.archive_uri,
                 attested_model=last.attested_model,
+                harvest_provenance=last.harvest_provenance,
             )
         return results
     finally:

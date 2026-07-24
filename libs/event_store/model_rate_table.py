@@ -73,7 +73,9 @@ def _optional_nonneg_rate(raw: dict[str, Any], key: str) -> float | None | objec
     return value
 
 
-def _row_from_mapping(model_id: str, raw: dict[str, Any], *, default_source: str) -> ModelRateRow | None:
+def _row_from_mapping(
+    model_id: str, raw: dict[str, Any], *, default_source: str
+) -> ModelRateRow | None:
     input_rate = _coerce_rate(raw.get("input_rate_per_m"))
     output_rate = _coerce_rate(raw.get("output_rate_per_m"))
     if input_rate is None or output_rate is None:
@@ -96,7 +98,9 @@ def _row_from_mapping(model_id: str, raw: dict[str, Any], *, default_source: str
     )
 
 
-def load_manual_rows(path: Path | None = None) -> tuple[dict[str, ModelRateRow], dict[str, str]]:
+def load_manual_rows(
+    path: Path | None = None,
+) -> tuple[dict[str, ModelRateRow], dict[str, str]]:
     """Load seed/override rows and alias map from YAML."""
     yaml_path = path or rates_yaml_path()
     if not yaml_path.is_file():
@@ -131,8 +135,20 @@ def load_manual_rows(path: Path | None = None) -> tuple[dict[str, ModelRateRow],
     return rows, aliases
 
 
-def load_catalog_rows_from_disk(path: Path | None = None) -> dict[str, ModelRateRow]:
-    """Load catalog-ingest projection rows written by cloud-proxy refresh."""
+def _pricing_tuple(raw: dict[str, Any]) -> tuple[Any, ...]:
+    """Comparable pricing fields — excludes updated_at (refresh noise)."""
+    return (
+        _coerce_rate(raw.get("input_rate_per_m")),
+        _coerce_rate(raw.get("output_rate_per_m")),
+        str(raw.get("source") or ""),
+        bool(raw.get("pinned")),
+        _coerce_rate(raw.get("cache_write_rate_per_m")),
+        _coerce_rate(raw.get("cache_read_rate_per_m")),
+    )
+
+
+def _load_catalog_raw_from_disk(path: Path | None = None) -> dict[str, dict[str, Any]]:
+    """Load raw catalog dicts from disk for pricing-equality checks."""
     yaml_path = path or catalog_yaml_path()
     if not yaml_path.is_file():
         return {}
@@ -143,19 +159,26 @@ def load_catalog_rows_from_disk(path: Path | None = None) -> dict[str, ModelRate
         return {}
     if not isinstance(payload, dict):
         return {}
-
-    rows: dict[str, ModelRateRow] = {}
+    rows: dict[str, dict[str, Any]] = {}
     models = payload.get("models") or []
-    if isinstance(models, list):
-        for entry in models:
-            if not isinstance(entry, dict):
-                continue
-            model_id = str(entry.get("model_id") or "").strip()
-            if not model_id:
-                continue
-            row = _row_from_mapping(model_id, entry, default_source="catalog_refresh")
-            if row is not None:
-                rows[model_id] = row
+    if not isinstance(models, list):
+        return {}
+    for entry in models:
+        if not isinstance(entry, dict):
+            continue
+        model_id = str(entry.get("model_id") or "").strip()
+        if model_id:
+            rows[model_id] = dict(entry)
+    return rows
+
+
+def load_catalog_rows_from_disk(path: Path | None = None) -> dict[str, ModelRateRow]:
+    """Load catalog-ingest projection rows written by cloud-proxy refresh."""
+    rows: dict[str, ModelRateRow] = {}
+    for model_id, entry in _load_catalog_raw_from_disk(path).items():
+        row = _row_from_mapping(model_id, entry, default_source="catalog_refresh")
+        if row is not None:
+            rows[model_id] = row
     return rows
 
 
@@ -181,9 +204,16 @@ def upsert_catalog_models(
     *,
     source: str = "catalog_refresh",
 ) -> dict[str, int]:
-    """Upsert catalog pricing rows; pinned manual rows are not overwritten."""
+    """Upsert catalog pricing rows; pinned manual rows are not overwritten.
+
+    Disk write is skipped when no pricing fields changed (timestamp-only
+    refreshes must not dirty the tracked catalog YAML).
+    """
     manual_rows, _ = load_manual_rows()
+    prior: dict[str, dict[str, Any]] = _load_catalog_raw_from_disk()
+    prior.update(_CATALOG_ROWS)
     upserted = 0
+    pricing_changed = 0
     skipped = 0
     rejected_negative = 0
     rejected_zero_rate = 0
@@ -217,23 +247,32 @@ def upsert_catalog_models(
                 bare_manual = manual_rows.get(bare_id)
                 if bare_manual is None or not bare_manual.pinned:
                     ids_to_write.append(bare_id)
-        updated_at = _now_iso()
         for write_id in ids_to_write:
-            _CATALOG_ROWS[write_id] = {
+            candidate = {
                 "model_id": write_id,
                 "input_rate_per_m": input_rate,
                 "output_rate_per_m": output_rate,
                 "source": source,
-                "updated_at": updated_at,
                 "pinned": False,
             }
+            existing = prior.get(write_id)
+            if existing is not None and _pricing_tuple(existing) == _pricing_tuple(
+                candidate
+            ):
+                candidate["updated_at"] = str(existing.get("updated_at") or _now_iso())
+            else:
+                candidate["updated_at"] = _now_iso()
+                pricing_changed += 1
+            _CATALOG_ROWS[write_id] = candidate
+            prior[write_id] = candidate
             upserted += 1
 
-    if upserted:
+    if pricing_changed:
         save_catalog_rows_to_disk(_CATALOG_ROWS)
 
     counts = {
         "upserted": upserted,
+        "pricing_changed": pricing_changed,
         "skipped": skipped,
         "rejected_negative": rejected_negative,
         "rejected_zero_rate": rejected_zero_rate,

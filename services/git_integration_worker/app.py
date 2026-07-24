@@ -35,6 +35,13 @@ from services.git_integration_worker.git_worker_lifecycle_events import (
     register_git_worker_lifecycle_event_publisher,
 )
 from services.git_integration_worker.routes.admin import router as admin_router
+from services.git_integration_worker.routes.cursor_auto import (
+    auto_worker_loop,
+    orphan_scanner_loop,
+)
+from services.git_integration_worker.routes.cursor_auto import (
+    router as cursor_auto_router,
+)
 from services.git_integration_worker.routes.cursor_catalog import (
     router as cursor_catalog_router,
 )
@@ -100,6 +107,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await startup_ledger_reconcile(app)
     sweeper = asyncio.create_task(stale_lease_sweeper(app))
     app.state.stale_lease_sweeper = sweeper
+    auto_worker = asyncio.create_task(auto_worker_loop(app))
+    app.state.cursor_auto_worker = auto_worker
+    orphan_scanner = asyncio.create_task(orphan_scanner_loop(app))
+    app.state.cursor_auto_orphan_scanner = orphan_scanner
     logger.info(
         "git-integration-worker started: version=%s port=%d source_repo=%s "
         "worker_id=%s",
@@ -125,11 +136,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
-        sweeper_task = getattr(app.state, "stale_lease_sweeper", None)
-        if sweeper_task is not None:
-            sweeper_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await sweeper_task
+        for attr in (
+            "stale_lease_sweeper",
+            "cursor_auto_worker",
+            "cursor_auto_orphan_scanner",
+        ):
+            task = getattr(app.state, attr, None)
+            if task is not None:
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
         # Defense-in-depth cooperative drain on process shutdown: close admission
         # and wait (bounded) for in-flight mutating work to finish before exit.
         # Phase-2 manage drives the PRIMARY drain via the admin route ahead of
@@ -179,6 +195,7 @@ def create_app() -> FastAPI:
     app.include_router(integrate_router)
     app.include_router(cursor_sdk_router)
     app.include_router(cursor_catalog_router)
+    app.include_router(cursor_auto_router)
     app.include_router(admin_router)
     return app
 

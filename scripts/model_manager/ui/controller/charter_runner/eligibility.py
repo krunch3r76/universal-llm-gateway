@@ -14,17 +14,46 @@ than the latest CHECKPOINT. A fresh CHECKPOINT past the pointer clears it.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
+from ..restart_intent_store import Intent
 from .caps import CapStore
 from .checkpoint_parse import ParsedCheckpoint, parse_checkpoint
 
 ENROLLMENT_TAG = "charter-runner"
 ADMISSION_SUBJECT_PREFIX = "WIP charter-runner"
 CHECKPOINT_PREFIX = "CHECKPOINT"
+GIW_SERVICE = "git_integration_worker"
+GIW_DRAIN_BLOCKS_RESTART_REASON = "giw_drain_blocks_restart_pickup"
 WindowKind = Literal["worker", "consult"]
+
+_GIW = re.escape(GIW_SERVICE)
+_SYNC_RESTART_GIW_RE = re.compile(
+    rf"sync_restart[^;\n]*{_GIW}|{_GIW}[^;\n]*sync_restart",
+    re.IGNORECASE,
+)
+_MANAGE_GIW_RESTART_RE = re.compile(
+    rf"manage\s*\([^)]*(?:restart|sync_restart|stop)[^)]*{_GIW}|"
+    rf"manage\s*\([^)]*{_GIW}[^)]*(?:restart|sync_restart|stop)",
+    re.IGNORECASE,
+)
+_WAIT_HEALTHY_GIW_RESTART_RE = re.compile(
+    rf"wait_healthy[^;\n]*(?:sync_restart|restart)[^;\n]*{_GIW}|"
+    rf"(?:sync_restart|restart)[^;\n]*wait_healthy[^;\n]*{_GIW}|"
+    rf"wait_healthy[^;\n]*{_GIW}[^;\n]*(?:sync_restart|restart)",
+    re.IGNORECASE,
+)
+_BARE_GIW_RESTART_RE = re.compile(
+    rf"\brestart\b[^;\n]*{_GIW}|{_GIW}[^;\n]*\brestart\b",
+    re.IGNORECASE,
+)
+_PROBE_ONLY_PICKUP_RE = re.compile(
+    r"\b(?:live\s+)?probe\b(?:\s+only|\s+after\s+(?:healthy|restart))",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -39,12 +68,14 @@ class Decision:
 
 
 def find_enrolled_roots() -> list[dict]:
+    """List active agent-bus root threads tagged for charter-runner admission."""
     from agent_bus_store.db import list_threads_v2
 
     return list_threads_v2(status="active", tags=[ENROLLMENT_TAG])
 
 
 def load_turns(root_id: str) -> list[dict]:
+    """Load a root thread's turns in ascending turn-number order for gating."""
     from agent_bus_store.db import get_thread_turns_asc
 
     return get_thread_turns_asc(root_id)
@@ -78,8 +109,59 @@ def _starts_with(prefix: str) -> Callable[[str], bool]:
     return lambda subject: subject.upper().startswith(upper)
 
 
-def evaluate_root(root_id: str, turns: list[dict], caps: CapStore) -> Decision:
-    """Pure gate evaluation over a root's turns (no I/O)."""
+def next_pickup_is_restart_from_holder(item: str) -> bool:
+    """True when a Next-pickup row would re-hold GIW for manage restart/drain.
+
+    Matches restart-from-holder phrasing (``sync_restart``, manage restart GIW,
+    in-window ``wait_healthy`` tied to GIW restart). Post-healthy probe-only rows
+    are excluded so drain can admit verification windows after the holder exits.
+    """
+    text = item.strip()
+    if not text:
+        return False
+    restart_shaped = any(
+        pattern.search(text)
+        for pattern in (
+            _SYNC_RESTART_GIW_RE,
+            _MANAGE_GIW_RESTART_RE,
+            _WAIT_HEALTHY_GIW_RESTART_RE,
+            _BARE_GIW_RESTART_RE,
+        )
+    )
+    if not restart_shaped:
+        return False
+    if _PROBE_ONLY_PICKUP_RE.search(text) and not (
+        _SYNC_RESTART_GIW_RE.search(text) or _MANAGE_GIW_RESTART_RE.search(text)
+    ):
+        return False
+    return True
+
+
+def giw_drain_blocks_restart_pickup(
+    next_pickup: list[str],
+    giw_intent_probe: Callable[[], Intent | None],
+) -> bool:
+    """Return True when live GIW drain intent must refuse restart-shaped admission."""
+    if not any(next_pickup_is_restart_from_holder(item) for item in next_pickup):
+        return False
+    intent = giw_intent_probe()
+    return intent is not None and not intent.is_terminal
+
+
+def _default_giw_intent_probe() -> Intent | None:
+    from ..restart_intent_store import RestartIntentStore
+
+    return RestartIntentStore.instance().active_for_service(GIW_SERVICE)
+
+
+def evaluate_root(
+    root_id: str,
+    turns: list[dict],
+    caps: CapStore,
+    *,
+    giw_intent_probe: Callable[[], Intent | None] | None = None,
+) -> Decision:
+    """Evaluate admission gates over a root's turns and optional GIW intent probe."""
     checkpoint = _latest_matching(turns, _starts_with(CHECKPOINT_PREFIX))
     if checkpoint is None:
         return Decision(False, "no_checkpoint", root_id)
@@ -152,6 +234,16 @@ def evaluate_root(root_id: str, turns: list[dict], caps: CapStore) -> Decision:
         return Decision(
             False,
             revise_reason or "revise_cap_exhausted",
+            root_id,
+            checkpoint=checkpoint,
+            parsed=parsed,
+        )
+
+    probe = giw_intent_probe or _default_giw_intent_probe
+    if giw_drain_blocks_restart_pickup(parsed.next_pickup, probe):
+        return Decision(
+            False,
+            GIW_DRAIN_BLOCKS_RESTART_REASON,
             root_id,
             checkpoint=checkpoint,
             parsed=parsed,

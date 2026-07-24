@@ -408,7 +408,12 @@ _SUPERVISE_TASKS: set[asyncio.Task[None]] = set()
 
 
 def _drain_deferred_result(intent: Any, *, reason: str | None = None) -> dict[str, Any]:
-    """The 202 envelope for a deferred, drain-supervised git-worker restart."""
+    """The 202 envelope for a deferred, drain-supervised git-worker restart.
+
+    ``caller_must_exit_to_release_lease`` is binding for cursor-sdk holders:
+    waiting in-window for healthy while holding ``cursor_sdk_gate`` never
+    converges (friction 25989). Arm the intent, then exit so active_count→0.
+    """
     return {
         "status": "deferred",
         "state": "draining",
@@ -416,6 +421,12 @@ def _drain_deferred_result(intent: Any, *, reason: str | None = None) -> dict[st
         "restart_intent_id": intent.intent_id,
         "deadline_at": intent.deadline_at,
         "reason": reason or "draining; completion delivered via git_worker.drain events",
+        "caller_must_exit_to_release_lease": True,
+        "guidance": (
+            "If you hold the git_integration_worker write lease (cursor-sdk), "
+            "exit this dispatch now — do not wait_healthy in-window. "
+            "Probe only after restart completes / worker healthy."
+        ),
     }
 
 
@@ -485,13 +496,17 @@ async def run_gated_drain_supervised(
 ) -> dict[str, Any]:
     """git-worker non-force stop/restart/sync_restart → durable drain supervision.
 
-    Acquires the restart-mutex slot (NOT the busy-probe deferral), persists a
-    ``pending_drain`` intent, schedules the supervisor, and returns a 202 deferred
-    envelope. Coalescing (AC-6): if the slot is already held by an in-flight
+    Busy-skip (``evaluate(force=True)``): in-flight cursor-sdk/integrate work must
+    **not** soft-defer without an intent. The supervisor begins drain and waits
+    for ``active_count→0`` (same posture as the fleet blocking path). Soft
+    ``state=busy`` with no durable intent is the self-held lease deadlock
+    (friction 25989 / todo:manage-busy-drain-restart).
+
+    Coalescing (AC-6): if the restart-mutex slot is already held by an in-flight
     supervision, the existing live intent's id is returned — no second intent, no
     second begin-drain.
     """
-    outcome = await gate.evaluate(service, force=False)
+    outcome = await gate.evaluate(service, force=True)
     if outcome is not None:
         existing = store.active_for_service(service)
         if existing is not None:

@@ -28,12 +28,53 @@ from .turns_models import ThreadStatus
 
 WaitStatus = Literal["awaiting_first_reply", "complete"]
 
+# Terminal Auto-orchestrator status tokens (agent_bus.request completion).
+STATUS_COMPLETION_MODES: frozenset[str] = frozenset(
+    {"status:done", "status:failed", "status:needs-attended"}
+)
+CompletionMode = Literal[
+    "first_reply_from",
+    "thread_closed",
+    "status:done",
+    "status:failed",
+    "status:needs-attended",
+]
+
 
 class Completion(TypedDict, total=False):
     """Caller completion spec. ``mode`` selects the predicate."""
 
-    mode: Literal["first_reply_from", "thread_closed"]
+    mode: CompletionMode
     from_agent: str  # required when mode == "first_reply_from"
+
+
+def _turn_carries_status_token(turn: dict[str, Any], token: str) -> bool:
+    """True when subject or body contains the exact ``status:…`` token."""
+    needle = token if token.startswith("status:") else f"status:{token}"
+    subject = str(turn.get("subject") or "")
+    body = str(turn.get("body") or "")
+    return needle in subject or needle in body
+
+
+def qualifying_status_turn(
+    turns: list[dict[str, Any]],
+    *,
+    after_turn: int,
+    status_token: str,
+) -> dict[str, Any] | None:
+    """First turn after ``after_turn`` whose subject/body carries ``status_token``.
+
+    Non-terminal statuses never qualify. Prefer subject-prefix matches but any
+    occurrence in subject or body satisfies (F5 tag-based completion).
+    """
+    if status_token not in STATUS_COMPLETION_MODES:
+        return None
+    for t in sorted(turns, key=lambda r: r["turn_number"]):
+        if t["turn_number"] <= after_turn:
+            continue
+        if _turn_carries_status_token(t, status_token):
+            return t
+    return None
 
 
 def qualifying_reply(
@@ -181,6 +222,13 @@ def is_complete(
     mode = completion.get("mode", "first_reply_from")
     if mode == "thread_closed":
         return thread_row["status"] == ThreadStatus.CLOSED
+    if mode in STATUS_COMPLETION_MODES:
+        return (
+            qualifying_status_turn(
+                turns, after_turn=after_turn, status_token=str(mode)
+            )
+            is not None
+        )
     # first_reply_from
     return (
         qualifying_reply(

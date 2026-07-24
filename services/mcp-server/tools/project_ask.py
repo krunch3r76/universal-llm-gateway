@@ -128,11 +128,12 @@ def register_project_ask_tool(mcp: FastMCP) -> None:
             ``large`` with ``harvest_source=auto`` attempts Cowork Output download
             before archive; ``small`` never forces Output download.
           harvest_source — ``chat`` | ``output-file`` | ``auto`` (default ``auto``).
-            ``chat`` archives scraped chat body only (legacy). ``output-file``
-            requires Output download — hard fail on miss (no thin chat archive).
-            ``auto`` tries Output download when ``expected_size=large`` or
-            ``download_output=true``; on miss falls back to a chat ``cortex://``
-            pointer when present, else chat body.
+            Submit-time knob (distinct from poll ``harvest_provenance``). ``chat``
+            archives scraped chat body only (legacy). ``output-file`` requires
+            Output download — hard fail on miss. ``auto`` tries Output when
+            ``expected_size=large`` or ``download_output=true``; on miss tries
+            chat ``cortex://`` pointer; under ``expected_size=large`` refuses
+            thin chat fallback (fail-closed).
           download_output — bool (default ``false``). When true (or with
             ``expected_size=large``), attempt Cowork Output download into the
             archive path before ``content_proof``.
@@ -158,14 +159,14 @@ def register_project_ask_tool(mcp: FastMCP) -> None:
                 for satellite defaults (converse/turn-2 retain, single-ask delete)
             timeout_s: Idle completion budget forwarded to satellite
             expected_size: Deliverable size signal (small | large | auto)
-            harvest_source: Harvest provenance (chat | output-file | auto)
+            harvest_source: Submit-time harvest source (chat | output-file | auto); distinct from poll harvest_provenance
             download_output: Attempt Cowork Output download when true or large mode
 
         Returns:
             submit: {execution_id, status, registration_id?}
             poll: {execution_id, status, completion_phase, archive_uri?, content_proof_uri?,
-                content_proof_sha256?, turn_idle_at?, stall_stage?, streaming?, stop?,
-                tool_pause?, liveness_observed_at?, ok?, body?, error?, …}
+                content_proof_sha256?, turn_idle_at?, stall_stage?, harvest_provenance?,
+                streaming?, stop?, tool_pause?, liveness_observed_at?, ok?, body?, error?, …}
             abort: {execution_id, status, aborted, attested, still_attached,
                 abort_outcome, stop_clicked?}
         """

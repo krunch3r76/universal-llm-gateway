@@ -37,6 +37,22 @@ _IMPLICATION_ARROW_RE = re.compile(
     re.IGNORECASE,
 )
 _CONSULT_PENDING_RE = re.compile(r"\bCONSULT_PENDING\b", re.IGNORECASE)
+# Negation markers that demote a CONSULT_PENDING mention from an active stop-class
+# directive to inert prose (a worker's own "do not re-consult" disclaimer). Scanned
+# in a short lookbehind window immediately preceding the token.
+_CONSULT_NEGATION_MARKERS = (
+    "¬",
+    "re-",
+    "not ",
+    " no ",
+    "never",
+    "avoid",
+    "prevent",
+    "without",
+    "n't",
+    "cease",
+    "stop re",
+)
 _CONSULT_ROLE_RE = re.compile(
     r"consult_role:\s*(r_admit|judgment_gap)\b", re.IGNORECASE
 )
@@ -220,13 +236,30 @@ def _parse_consult_role(body: str, next_pickup: list[str]) -> str | None:
     return "judgment_gap"
 
 
+def _active_consult_token(text: str) -> bool:
+    """True when ``text`` carries a non-negated CONSULT_PENDING mention.
+
+    A worker's own disclaimer (``¬ re-CONSULT_PENDING``, ``do not re-consult``)
+    re-uses the literal token to *forbid* re-consultation; matching it as an
+    active stop-class directive self-perpetuates stale consult admissions
+    (friction 25984). Each occurrence is active only when the short lookbehind
+    window preceding it holds no negation marker.
+    """
+    lowered = text.lower()
+    for m in _CONSULT_PENDING_RE.finditer(text):
+        window = lowered[max(0, m.start() - 16) : m.start()]
+        if not any(marker in window for marker in _CONSULT_NEGATION_MARKERS):
+            return True
+    return False
+
+
 def _detect_consult_pending(body: str, next_pickup: list[str]) -> bool:
     """True when the active CHECKPOINT stop class is CONSULT_PENDING."""
-    if any(_CONSULT_PENDING_RE.search(item) for item in next_pickup):
+    if any(_active_consult_token(item) for item in next_pickup):
         return True
     sections = _sections(body)
     stop_text = _find_section(sections, "stop", "stop class", "stop condition")
-    if stop_text and _CONSULT_PENDING_RE.search(stop_text):
+    if stop_text and _active_consult_token(stop_text):
         return True
     for line in body.splitlines():
         if re.match(

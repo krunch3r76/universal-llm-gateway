@@ -77,9 +77,11 @@ class SubmitProjectAskRequest(BaseModel):
     harvest_source: Literal["chat", "output-file", "auto"] = Field(
         default="auto",
         description=(
-            "Harvest provenance. ``chat`` archives scraped chat body only; "
+            "Submit-time harvest knob (distinct from poll ``harvest_provenance``). "
+            "``chat`` archives scraped chat body only; "
             "``output-file`` requires Output download (hard fail on miss); "
-            "``auto`` tries Output then cortex-fs pointer then chat fallback."
+            "``auto`` tries Output then cortex-fs pointer; under ``expected_size=large`` "
+            "refuses thin chat fallback (fail-closed)."
         ),
     )
     download_output: bool = Field(
@@ -130,6 +132,16 @@ class ExecutionPollResponse(BaseModel):
     error: str | None = None
     delete_after: dict[str, Any] | None = None
     results: list[dict[str, Any]] | None = None
+    harvest_provenance: Literal["output-file", "cortex-uri", "chat"] | None = Field(
+        default=None,
+        description=(
+            "Resolution outcome provenance (distinct from submit ``harvest_source``). "
+            "Present on successful terminals only; ``null`` on non-success. "
+            "When present: ``output-file`` | ``cortex-uri`` | ``chat``. "
+            "Never ``ok=true`` with ``harvest_provenance=chat`` when "
+            "``expected_size=large`` (auto fail-closed)."
+        ),
+    )
     completion_phase: CompletionPhase = Field(
         default="running",
         description=(
