@@ -66,7 +66,8 @@ def register_files_tool(mcp: FastMCP) -> None:
               for line-range slice — 0-based offset, max lines in limit)
           read_multi — batch read multiple files (paths required)
           write  — create/overwrite file (path, content required; optional
-              expected_sha256 for concurrent-safe overwrite, if_absent for
+              expected_sha256 for concurrent-safe overwrite — bare hex from
+              read_sha256 or ``sha256:``/``spec_sha256:``; if_absent for
               create-only — see friction-13695 sidecar)
           write_binary — write base64-encoded binary data (path required,
               content = base64 string). Use to stage PDFs, images, or other

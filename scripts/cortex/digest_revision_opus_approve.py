@@ -114,7 +114,7 @@ def main() -> int:
         "ask",
         "--no-uuid",
         "--model",
-        "opus-4.8",
+        "opus-5",
         "--prompt-uri",
         SEALED_URI,
         "--converse",

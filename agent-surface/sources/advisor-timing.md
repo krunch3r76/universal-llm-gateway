@@ -202,7 +202,7 @@ bouncing between two incompatible approaches.
   Switch to full Plan mode when the decision is large enough to warrant it.
 - **Model tier awareness** (`model-tier-awareness.mdc`): governs *resident
   tier choice* — when to recommend switching Cursor between Sonnet 4.6 and
-  Opus 4.8. Fires at the same junctures as advisor-timing checkpoints 1 and 3.
+  Opus 5. Fires at the same junctures as advisor-timing checkpoints 1 and 3.
 - **Reasoning posture** (skill `reasoning-posture`): resident *Question/OOS/detent*
   rails — thinking-off does not waive; referenced by consult-posture.
 - **Consult posture** (skill `consult-posture`): governs *extended-capability

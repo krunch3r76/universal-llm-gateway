@@ -208,12 +208,16 @@ async def dispatch_cursor_sdk_worker(
     read_only: bool = False,
     close_contract: CloseContract = "auto",
     dispatch_id: str | None = None,
+    nest_under: str | None = None,
 ) -> tuple[bool, dict[str, Any]]:
     """POST ``/api/v1/cursor/dispatch``; return structured ``(ok, detail)``.
 
     When ``dispatch_id`` is supplied (prepared-handle path), reuse it so
     retries share the ledger idempotency key. Legacy/unprepared callers
     still mint ``{request_id}-{uuid8}``.
+
+    ``nest_under`` parks the named parent write-lease holder so this child can
+    admit under limit=1 (PARK-RESTORE-DUAL).
     """
     effective_dispatch_id = dispatch_id or f"{request_id}-{uuid.uuid4().hex[:8]}"
     payload: dict[str, object] = {
@@ -233,6 +237,8 @@ async def dispatch_cursor_sdk_worker(
         payload["read_only"] = True
     if close_contract != "auto":
         payload["close_contract"] = close_contract
+    if nest_under:
+        payload["nest_under"] = nest_under
     try:
         async with make_async_client(
             worker_base_url(), timeout=_WORKER_TIMEOUT

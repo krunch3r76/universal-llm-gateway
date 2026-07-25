@@ -416,9 +416,68 @@ async def emit_manage_charter_tick_stopped() -> None:
     await _emit("manage.charter.tick.stopped", {})
 
 
-async def emit_manage_charter_tick_scanned(*, roots: int, admitted: int) -> None:
-    """One scan pass over enrolled roots completed."""
-    await _emit("manage.charter.tick.scanned", {"roots": roots, "admitted": admitted})
+async def emit_manage_charter_tick_scanned(
+    *,
+    roots: int,
+    admitted: int,
+    skipped_by_reason: dict[str, int] | None = None,
+) -> None:
+    """One scan pass over enrolled roots completed.
+
+    ``skipped_by_reason`` is the always-on volume signal (A6): counts of
+    ineligible Decisions by reason for this tick. Per-root ``root_skipped``
+    remains for diagnosability; sinks must tolerate roots×ticks cardinality
+    for durable ineligible reasons (operator_fork / blocked / no_checkpoint).
+    """
+    payload: dict = {"roots": roots, "admitted": admitted}
+    if skipped_by_reason is not None:
+        payload["skipped_by_reason"] = dict(skipped_by_reason)
+    await _emit("manage.charter.tick.scanned", payload)
+
+
+async def emit_manage_charter_tick_root_skipped(
+    *, root: str, reason: str, checkpoint_turn: int | None = None
+) -> None:
+    """Emit per-root ineligible Decision so silent starve is observable.
+
+    Fired for every ineligible reason (including ``window_in_flight`` before
+    recover). Does not mutate bus state — telemetry only.
+    """
+    await _emit(
+        "manage.charter.tick.root_skipped",
+        {
+            "root": root,
+            "reason": reason,
+            "checkpoint_turn": checkpoint_turn,
+        },
+    )
+
+
+async def emit_manage_charter_tick_root_closed(
+    *,
+    root: str,
+    reason: str,
+    checkpoint_turn: int | None = None,
+    closed: bool,
+    unenrolled: bool,
+) -> None:
+    """Emit after a no_gated_pickup state-close attempt on an enrolled root.
+
+    ``closed=False`` means the close PATCH raised or failed — the event still
+    fires so operators see the attempt (A2 honesty). ``unenrolled=False`` means
+    the charter-runner tag was not stripped (close failed, or tag PATCH failed
+    after a successful close).
+    """
+    await _emit(
+        "manage.charter.tick.root_closed",
+        {
+            "root": root,
+            "reason": reason,
+            "checkpoint_turn": checkpoint_turn,
+            "closed": closed,
+            "unenrolled": unenrolled,
+        },
+    )
 
 
 async def emit_manage_charter_tick_admitted(
@@ -434,6 +493,69 @@ async def emit_manage_charter_tick_admitted(
 async def emit_manage_charter_tick_window_failed(*, root: str, reason: str) -> None:
     """A window failed/stalled; root is stopped pending human re-arm (no auto-retry)."""
     await _emit("manage.charter.tick.window_failed", {"root": root, "reason": reason})
+
+
+async def emit_manage_charter_tick_self_healed(
+    *,
+    root: str,
+    reason: str,
+    window_index: int,
+    worker_thread: str,
+    heal_count: int = 0,
+    harvested: bool = True,
+) -> None:
+    """Autonomous self-heal posted a recovery CHECKPOINT and reset CapStore stop."""
+    await _emit(
+        "manage.charter.tick.self_healed",
+        {
+            "root": root,
+            "reason": reason,
+            "window_index": window_index,
+            "worker_thread": worker_thread,
+            "heal_count": heal_count,
+            "harvested": harvested,
+        },
+    )
+
+
+async def emit_manage_charter_tick_self_heal_aborted(
+    *,
+    root: str,
+    reason: str,
+    window_index: int,
+) -> None:
+    """Self-heal declined after a partial check (round-trip / no pickup)."""
+    await _emit(
+        "manage.charter.tick.self_heal_aborted",
+        {
+            "root": root,
+            "reason": reason,
+            "window_index": window_index,
+        },
+    )
+
+
+async def emit_manage_charter_tick_consult_stall_recovered(
+    *,
+    root: str,
+    reason: str,
+    window_index: int,
+    worker_thread: str,
+    heal_count: int = 0,
+    harvested: bool = True,
+) -> None:
+    """Consult-mode stall recovery posted CHECKPOINT (a:26131)."""
+    await _emit(
+        "manage.charter.tick.consult_stall_recovered",
+        {
+            "root": root,
+            "reason": reason,
+            "window_index": window_index,
+            "worker_thread": worker_thread,
+            "heal_count": heal_count,
+            "harvested": harvested,
+        },
+    )
 
 
 async def emit_manage_charter_tick_closed(
@@ -454,6 +576,34 @@ async def emit_manage_charter_tick_closed(
             "checkpoint_turn": checkpoint_turn,
             "turn_number": checkpoint_turn,
             "worker_closed": worker_closed,
+        },
+    )
+
+
+async def emit_manage_charter_implement_gate_bypassed(
+    *,
+    root: str,
+    window_index: int,
+    worker_thread: str,
+    dispatch_id: str,
+    source_ref: str,
+    turn_number: int,
+) -> None:
+    """Harvest saw a closeout report an implement run whose readiness gate no-opped.
+
+    Second, independent detector for the class ``_warn_on_ungated_implement``
+    covers from the dispatch response (review §1): this one is derived from the
+    worker's own closeout turn, correlated back to the charter root and window.
+    """
+    await _emit(
+        "manage.charter.implement_gate_bypassed",
+        {
+            "root": root,
+            "window_index": window_index,
+            "worker_thread": worker_thread,
+            "dispatch_id": dispatch_id,
+            "source_ref": source_ref,
+            "turn_number": turn_number,
         },
     )
 

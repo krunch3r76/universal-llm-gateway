@@ -1,6 +1,7 @@
 """CDP substrate generate front — ``model=cdp/<picker>`` on team_dispatch.
 
-Thin admit front over ``claude_bundles.cdp_model_endpoint.run_cdp_generate``.
+Thin admit front over the native CDP API (``cdp_ask.client`` /
+``POST /api/v1/providers/cdp/ask`` via ``claude_bundles.cdp_model_endpoint``).
 Posts on-behalf turns as ``from=cdp`` only after harvest proof (or failed+stall).
 """
 
@@ -32,6 +33,9 @@ if TYPE_CHECKING:
     from fastapi import Response
 
     from .route import TeamDispatchGenerateBody
+
+# Retain fire-and-forget CDP worker tasks until done (GC-safe; W9).
+_CDP_WORKER_TASKS: set[asyncio.Task[None]] = set()
 
 
 def is_cdp_model(model: str | None) -> bool:
@@ -65,6 +69,33 @@ def reject_cursor_sdk_seat_with_cdp(
             status_code=422,
             code="cdp_cursor_sdk_seat_rejected",
         )
+
+
+def reject_role_with_substrate_model(
+    *,
+    role: str | None,
+    model: str | None,
+    request_id: str,
+) -> None:
+    """Reject ``role`` + ``cdp/`` or ``cursor/`` (role would be silently dropped)."""
+    if not role or not model:
+        return
+    try:
+        backend = ModelId.parse(model).backend_type
+    except (TypeError, ValueError):
+        return
+    if backend not in {"cdp", "cursor_sdk"}:
+        return
+    raise FrontierEndpointError(
+        request_id=request_id,
+        field="role",
+        reason=(
+            f"role={role!r} cannot combine with substrate model={model!r}; "
+            "omit role (model prefix selects transport) or use a cloud model"
+        ),
+        status_code=422,
+        code="substrate_model_role_conflict",
+    )
 
 
 def _stage_inputs(
@@ -141,6 +172,11 @@ async def dispatch_cdp_generate(
         model=model,
         request_id=request_id,
     )
+    reject_role_with_substrate_model(
+        role=getattr(body, "role", None),
+        model=model,
+        request_id=request_id,
+    )
     contract = body.contract
     if contract in {"implement", "wrap"}:
         raise FrontierEndpointError(
@@ -205,7 +241,7 @@ async def dispatch_cdp_generate(
     )
     thread_id = body.dispatch_thread_id
     if thread_id and str(thread_id).strip().isdigit():
-        await post_pointer_turn(
+        pointer_turn = await post_pointer_turn(
             request_id=request_id,
             thread_id=str(thread_id),
             to_agent=CDP_REPLY_FROM,
@@ -213,7 +249,7 @@ async def dispatch_cdp_generate(
             pointer_body=pointer_body,
             caller_agent=body.caller_agent,
         )
-        after_turn = 1
+        after_turn = pointer_turn
     else:
         thread_id = await create_handoff_thread(
             request_id=request_id,
@@ -231,7 +267,8 @@ async def dispatch_cdp_generate(
         )
         after_turn = 1
 
-    asyncio.create_task(
+    timeout_seconds = getattr(body, "timeout_seconds", None)
+    worker_task = asyncio.create_task(
         run_cdp_worker(
             execution_id=execution_id,
             model_id=str(model),
@@ -239,8 +276,29 @@ async def dispatch_cdp_generate(
             caller_agent=body.caller_agent,
             prompt_uri=staged.prompt_uri,
             request_id=request_id,
-        )
+            pointer_turn=after_turn,
+            max_wall_s=float(timeout_seconds) if timeout_seconds else None,
+        ),
+        name=f"cdp-worker-{execution_id[:8]}",
     )
+    _CDP_WORKER_TASKS.add(worker_task)
+
+    def _log_worker_done(task: asyncio.Task[None]) -> None:
+        _CDP_WORKER_TASKS.discard(task)
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            from universal_logging import get_logger
+
+            get_logger(__name__).error(
+                "cdp worker task failed: execution_id=%s err=%s",
+                execution_id,
+                exc,
+                exc_info=exc,
+            )
+
+    worker_task.add_done_callback(_log_worker_done)
 
     handoff_fields = build_handoff_result(
         thread_id=str(thread_id),
@@ -287,27 +345,4 @@ async def dispatch_cdp_generate(
             "tool_access": False,
         },
         "terminal": False,
-    }
-
-
-def build_cdp_pipeline_dispatch_body(
-    *,
-    model: str,
-    request_id: str,
-) -> dict[str, Any]:
-    """Pipeline-front marker: CDP uses the shared adapter, not CapabilityDispatch."""
-    if not is_cdp_model(model):
-        raise FrontierEndpointError(
-            request_id=request_id,
-            field="model",
-            reason="build_cdp_pipeline_dispatch_body requires model=cdp/<picker>",
-            status_code=422,
-            code="cdp_model_required",
-        )
-    return {
-        "substrate": CDP_SUBSTRATE,
-        "model": model,
-        "pipeline": "cdp-model-endpoint",
-        "cost_source": "unavailable",
-        "adapter": "claude_bundles.cdp_model_endpoint.run_cdp_generate",
     }

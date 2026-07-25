@@ -509,12 +509,33 @@ def _build_server(
         )
         effective_path = path
         if path.strip():
+            from implement_admission.closeout_helpers import cortex_files_root
             from implement_admission.scheme_resolve import resolve_fs_ingress
 
+            # Path-arg for_write: mutating single-path ops True; move/copy
+            # source stays False (target resolved per-arg in ops / cross-sandbox).
+            _path_write_ops = frozenset(
+                {
+                    "write",
+                    "append",
+                    "prepend",
+                    "replace",
+                    "insert_at_line",
+                    "write_binary",
+                    "append_binary",
+                    "delete",
+                    "md_replace",
+                    "md_append",
+                    "md_insert",
+                    "md_delete",
+                }
+            )
             try:
                 ingress = resolve_fs_ingress(
                     path,
                     sandbox=effective_sandbox or None,
+                    cortex_root=cortex_files_root(),
+                    for_write=op in _path_write_ops,
                 )
             except ValueError as exc:
                 return {"error": str(exc)}

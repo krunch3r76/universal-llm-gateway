@@ -3,7 +3,7 @@
 <!-- AUTHORED:START -->
 First-run seed for `doc-generate` (thread 4750). Inventory basename maps
 `systems/pipeline/` → `docs/architecture/pipeline.md`. Related authored
-surface (not replaced by this file): `docs/architecture/async-pipeline-dispatch.md`.
+surface (not replaced by this file): `docs/architecture/design/async-pipeline-dispatch.md`.
 <!-- AUTHORED:END -->
 
 <!-- GENERATED:START inventory_sha=61793257e8f1 generated=2026-07-09 -->

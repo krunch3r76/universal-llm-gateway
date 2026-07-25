@@ -40,6 +40,7 @@ def _update_thread_impl(
     summary: str | None,
     tags: list[str] | None,
     from_agent: str,
+    enroll_charter_runner: bool = False,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {}
     if status is not None:
@@ -48,6 +49,8 @@ def _update_thread_impl(
         payload["summary"] = summary
     if tags is not None:
         payload["tags"] = tags
+    if enroll_charter_runner:
+        payload["enroll_charter_runner"] = True
     if not payload:
         return {
             "error": "update_thread requires at least one of: status, summary, tags"
@@ -140,6 +143,7 @@ def _update_thread_dispatch(
     summary: str | None = None,
     tags: list[str] | None = None,
     from_agent: str = "",
+    enroll_charter_runner: bool = False,
 ) -> dict[str, Any]:
     if isinstance(thread, int):
         thread = str(thread)
@@ -155,6 +159,7 @@ def _update_thread_dispatch(
         summary=summary,
         tags=tags,
         from_agent=from_agent,
+        enroll_charter_runner=enroll_charter_runner,
     )
 
 

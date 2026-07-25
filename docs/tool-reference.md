@@ -450,7 +450,7 @@ Dogfood fallback (hub checkout): `scripts/cortex/claude-ai-sync-jupiter project-
 | `prompt_path` | `str \| null` | Path on Jupiter `PROJECT_ROOT` (submit) |
 | `holder` | `str` | Registry holder id (default `mcp-project-ask`) |
 | `purpose` | `str` | Registry purpose tag (default `ask`) |
-| `model` | `str` | Live CDP picker model (default `opus-4.8`) |
+| `model` | `str` | Live CDP picker model (default `opus-5`) |
 | `converse` | `bool` | Multi-turn `/new` consult |
 | `no_project_uuid` | `bool` | Use `https://claude.ai/new` instead of Cowork Project UUID |
 | `project_uuid` | `str` | Explicit Cowork Project UUID |
@@ -474,7 +474,7 @@ Path-sim R-admit (MCP product path):
 ```
 project_ask(op="submit",
             prompt_uri="cortex://notes/system/threads/my-r-prompt.md",
-            converse=true, no_project_uuid=true, model="opus-4.8")
+            converse=true, no_project_uuid=true, model="opus-5")
 # → execution_id
 
 project_ask(op="poll", execution_id="<id>")

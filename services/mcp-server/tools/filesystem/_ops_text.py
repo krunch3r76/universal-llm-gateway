@@ -17,6 +17,7 @@ from .._durable_write import (
     write_verify_error_dict,
 )
 from .._file_helpers import read_file_result, read_files_batch
+from .._hashing import format_sha256_uri, sha256_hex_equal
 from ..file_editor import perform_edit
 from ._format_writers import write_docx, write_pdf
 from ._paths import (
@@ -105,13 +106,14 @@ def write_file_impl(
       - Both guard params together → ``ValueError``.
 
     On success, response includes ``written_sha256``: bare lowercase hex of the
-    resulting file bytes. Callers compose ``sha256:`` / ``spec_sha256:`` prefixes.
+    resulting file bytes. ``expected_sha256`` accepts bare hex (``read_sha256``
+    round-trip) or ``sha256:`` / ``spec_sha256:`` citation prefixes.
     """
     if expected_sha256 is not None and if_absent:
         raise ValueError("expected_sha256 and if_absent are mutually exclusive")
 
     reject_template_tokens(path)
-    dest = safe_path(path)
+    dest = safe_path(path, for_write=True)
     with path_write_lock(dest):
         actual_sha256 = sha256_of_file(dest)
         if if_absent and dest.exists():
@@ -121,17 +123,25 @@ def write_file_impl(
                 reason="file_exists",
                 message=f"Refusing to overwrite existing file: {path!r}",
             )
-        if expected_sha256 is not None and actual_sha256 != expected_sha256:
+        # Prefix-normalize so read_sha256 (bare hex) round-trips into CAS write
+        # without hand-editing (friction a:26153).
+        if expected_sha256 is not None and not sha256_hex_equal(
+            actual_sha256, expected_sha256
+        ):
+            expected_echo = format_sha256_uri(expected_sha256)
+            actual_echo = (
+                None if actual_sha256 is None else format_sha256_uri(actual_sha256)
+            )
             return _write_rejection(
                 path=path,
                 resolved=dest,
                 reason="file_sha256.mismatch",
                 message=(
                     f"Refusing write to {path!r}: current file hash "
-                    f"{actual_sha256!r} does not match expected {expected_sha256!r}"
+                    f"{actual_echo!r} does not match expected {expected_echo!r}"
                 ),
-                expected_sha256=expected_sha256,
-                actual_sha256=actual_sha256,
+                expected_sha256=expected_echo,
+                actual_sha256=actual_echo,
             )
         try:
             written_sha256 = _write_content_durable(dest, content)
@@ -241,7 +251,7 @@ def edit_file_impl(
 ) -> dict[str, str | int]:
     """Atomically edit a text file in the sandboxed files directory."""
     reject_template_tokens(path)
-    dest = safe_path(path)
+    dest = safe_path(path, for_write=True)
     if dest.suffix.lower() not in EDITABLE_SUFFIXES:
         raise ValueError(
             f"Cannot edit binary format {dest.suffix!r} in place. "

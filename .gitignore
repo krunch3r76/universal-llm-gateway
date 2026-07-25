@@ -152,6 +152,10 @@ README_REVISED.md
 # Generated images (regenerate from PlantUML sources in docs)
 *.svg
 *.png
+!docs/architecture/design/images/
+!docs/architecture/design/images/**
+!docs/architecture/images/
+!docs/architecture/images/**
 
 # Generated event-catalog sidecar — derived, regenerate via scripts/gen-event-catalog (not a SOT)
 /docs/event-contracts.catalog.json

@@ -6,6 +6,11 @@ adapter dispatch, and event publishing.
 
 Prefer ``/v1/chat/completions`` with workspace IDs (``anthropic/...``,
 ``xai/...``) for OpenAI-compatible clients.
+
+Agent-substrate peers (not cloud-proxy):
+  - ``/api/v1/providers/cdp/*`` — see ``providers_cdp.py``
+  - ``/api/v1/providers/cursor/*`` — see ``providers_cursor.py``
+  Spec: ``notes/system/specs/substrate-apis-cdp-cursor.md``
 """
 
 from __future__ import annotations

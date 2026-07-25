@@ -123,6 +123,22 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
         default_variant={"fast": "true"},
         instruction_profile="mechanical",
     ),
+    "claude-opus-5": ModelCapability(
+        knobs={
+            "thinking": KnobSpec(accepted=("false", "true")),
+            "context": KnobSpec(accepted=("300k", "1m")),
+            "effort": KnobSpec(accepted=("low", "medium", "high", "xhigh", "max")),
+            "fast": KnobSpec(accepted=("false", "true")),
+        },
+        fixed_params={"cyber": "false"},
+        default_variant={
+            "thinking": "true",
+            "context": "1m",
+            "effort": "high",
+            "fast": "false",
+        },
+        instruction_profile="reasoner",
+    ),
     "claude-opus-4-8": ModelCapability(
         knobs={
             "thinking": KnobSpec(accepted=("false", "true")),

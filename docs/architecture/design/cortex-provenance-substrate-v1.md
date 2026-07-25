@@ -976,7 +976,7 @@ This section catalogs the domains this universal spec instantiates, with pointer
 
 ### 10.1 Legal briefs and authored artifacts — first instantiation
 
-`document:entity-backed-claim-provenance-v1` (`workspaces:universal-llm-gateway/docs/architecture/entity-backed-claim-provenance.md`) is the first domain instantiation of this universal spec. The instantiation:
+`document:entity-backed-claim-provenance-v1` (`workspaces:universal-llm-gateway/docs/architecture/design/entity-backed-claim-provenance.md`) is the first domain instantiation of this universal spec. The instantiation:
 
 - Defines domain entity types: `legal_source:` (abstract primary authority), `case-law:` (cited precedent), `exhibit:` (case-specific factual document).
 - Defines the URI scheme with pinpoint fragments (section / paragraph / page / line) for resolving citations to chunk granularity.
@@ -1710,7 +1710,7 @@ Track the spec's progression from draft to promoted public artifact. Each item i
 - [ ] **Cross-reference into grant artifacts.** Add §X reference in `artifact:goose-grant-packet-v3` narrative and §Y reference in `artifact:epistemic-substrate-paper-draft` citing this spec as the architecture-layer formalization of the provenance pillar.
 - [x] **Brief-spec § 9.2.5 thin pointer.** New § 9.2.5 inserted in `entity-backed-claim-provenance.md` between § 9.2 and § 9.3; three-sentence pointer routes seed-data verification at this phase to substrate § 5 + § 6 and `agent_skill:auditor-validatability-confidence` (landed v1.2). Closes `todo:provenance-spec-9-2-5-amendment` on the brief-implementation child.
 - [ ] **Cortex entity update.** Mark `todo:cortex-provenance-substrate-spec` workflow_state from `in_progress` to `done` once all three master-close criteria are satisfied: (a) draft merged to workspaces canonical path, (b) brief-spec §9.2.5 demoted, (c) cross-references landed in grant artifacts.
-- [ ] **`source_uri` and content_hash on the spec entity.** `entity_update(entity_id='document:cortex-provenance-substrate-v1', source_uri='workspaces:universal-llm-gateway/docs/architecture/cortex-provenance-substrate-v1.md')` to anchor the entity at the file and auto-recompute the content hash.
+- [ ] **`source_uri` and content_hash on the spec entity.** `entity_update(entity_id='document:cortex-provenance-substrate-v1', source_uri='workspaces:universal-llm-gateway/docs/architecture/design/cortex-provenance-substrate-v1.md')` to anchor the entity at the file and auto-recompute the content hash.
 - [ ] **Promotion assertion on the spec entity.** Write a `confidence: confirmed` assertion on `document:cortex-provenance-substrate-v1` recording the promotion event (analogous to brief-spec assertion 9240).
 
 Note: the brief-spec implementation arc (`todo:entity-backed-claim-provenance-implementation`) closes independently when the BOE-19-P §9.7 publish gate passes; it does not block this master.

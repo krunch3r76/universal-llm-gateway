@@ -1975,7 +1975,7 @@ tools:
         type: string
       desired_model:
         type: string
-        description: auto | composer-2.5 | grok-4.5 | opus-4.8 (default auto).
+        description: auto | composer-2.5 | grok-4.5 | opus-5 (default auto).
       desired_effort:
         type: string
         description: low | medium | high | max (default medium).

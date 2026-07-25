@@ -22,9 +22,12 @@ from .model_id import (
 )
 from .validation import validate_model_id, validate_model_id_strict
 from .wire_resolve import (
+    AGENT_SUBSTRATE_PROVIDERS,
     KNOWN_CLOUD_PROVIDERS,
+    SubstrateCapabilityUnimplementedError,
     WireModelResolution,
     WireModelResolutionError,
+    require_cloud_api_backend,
     require_cloud_provider,
     resolve_wire_model_id,
 )
@@ -38,9 +41,12 @@ __all__ = [
     "canonical_model_entity_id",
     "validate_model_id",
     "validate_model_id_strict",
+    "AGENT_SUBSTRATE_PROVIDERS",
     "KNOWN_CLOUD_PROVIDERS",
+    "SubstrateCapabilityUnimplementedError",
     "WireModelResolution",
     "WireModelResolutionError",
+    "require_cloud_api_backend",
     "require_cloud_provider",
     "resolve_wire_model_id",
 ]

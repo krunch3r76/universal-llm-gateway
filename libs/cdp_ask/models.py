@@ -56,7 +56,7 @@ class SubmitProjectAskRequest(BaseModel):
     prompt_path: str | None = None
     holder: str = Field(default="cdp-ask-satellite")
     purpose: str = "ask"
-    model: str = "opus-4.8"
+    model: str = "opus-5"
     converse: bool = False
     no_project_uuid: bool = False
     project_uuid: str = ""

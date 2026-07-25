@@ -46,7 +46,7 @@ def is_independent(provenance: Provenance, evaluator_model_id: str) -> bool:
         True if evaluator != originator
 
     Caller contract — granularity (Phase 1 audit per
-    docs/architecture/entity-backed-claim-provenance.md § 5.2 / § 9.1
+    docs/architecture/design/entity-backed-claim-provenance.md § 5.2 / § 9.1
     item 9, audit performed 2026-05-12):
 
       Both ``provenance.originator_model_id`` and ``evaluator_model_id``

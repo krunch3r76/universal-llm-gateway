@@ -12,6 +12,8 @@ from .model_status import router as model_status_router
 from .pipelines import router as pipelines_router
 from .pipelines_dispatch import router as pipelines_dispatch_router
 from .profiles import router as profiles_router
+from .providers_cdp import router as providers_cdp_router
+from .providers_cursor import router as providers_cursor_router
 from .providers_native import router as providers_native_router
 from .rag_articles import router as rag_articles_router
 from .rag_chunks_by_index import router as rag_chunks_by_index_router
@@ -27,6 +29,8 @@ router = APIRouter(prefix="/api/v1", tags=["api"])
 # Include sub-routers
 router.include_router(profiles_router)
 router.include_router(providers_native_router)
+router.include_router(providers_cdp_router)
+router.include_router(providers_cursor_router)
 router.include_router(gateways_router)
 router.include_router(model_status_router)
 router.include_router(model_availability_watch_router)

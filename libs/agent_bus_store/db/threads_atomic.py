@@ -36,6 +36,8 @@ def create_thread_with_turn(
     tags: list[str] | None = None,
     lifecycle_state: str | None = None,
     strict_slug: bool = False,
+    body_transformer: Any | None = None,
+    enroll_charter_runner: bool = False,
 ) -> tuple[dict[str, Any], int, str, int]:
     """Atomically create a thread and its first turn in one transaction.
 
@@ -45,9 +47,18 @@ def create_thread_with_turn(
 
     lifecycle_state: when provided, transitions the new thread into that
     state as part of the same transaction and emits the coordination event.
+
+    body_transformer: optional ``(thread_id: str) -> str`` called after the
+    thread row is inserted and before the turn insert (same transaction).
+    Used for soft-spill so a raise rolls back the thread (no orphan).
     """
+    from agent_bus_store.enrollment_guard import gate_enrollment_tags
+
     from .turns import SlugExists, UnreadTurnsExist, _insert_attachments
 
+    gated_tags = gate_enrollment_tags(
+        tags, prior_tags=[], enroll_charter_runner=enroll_charter_runner
+    )
     ts = now()
     with connect() as conn:
         if strict_slug:
@@ -87,13 +98,24 @@ def create_thread_with_turn(
                     provided_after_turn=after_turn,
                 )
 
+        insert_body = body_transformer(thread_id) if body_transformer else body
+
         turn_number = 1
         cur = conn.execute(
             "INSERT INTO turns "
             "(thread, turn_number, from_agent, to_agent, subject, body, "
             "status, created_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (thread_id, turn_number, from_agent, to_agent, subject, body, status, ts),
+            (
+                thread_id,
+                turn_number,
+                from_agent,
+                to_agent,
+                subject,
+                insert_body,
+                status,
+                ts,
+            ),
         )
         if cur.lastrowid is None:
             raise RuntimeError("Failed to insert turn: sqlite returned no row id")
@@ -102,8 +124,8 @@ def create_thread_with_turn(
         if attachments:
             _insert_attachments(conn, turn_id, attachments)
 
-        if tags:
-            set_thread_tags(conn, thread_id, tags)
+        if gated_tags:
+            set_thread_tags(conn, thread_id, gated_tags)
 
     thread_detail = get_thread_with_links(thread_id)
     assert thread_detail is not None

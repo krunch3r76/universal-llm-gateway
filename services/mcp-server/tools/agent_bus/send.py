@@ -37,6 +37,7 @@ def _send_impl(
     sidecar_content: str | None = None,
     sidecar_slug: str | None = None,
     supersedes_turn: int | None = None,
+    enroll_charter_runner: bool = False,
 ) -> dict[str, Any]:
     """Relay to POST /threads/send."""
     payload: dict[str, Any] = {
@@ -54,6 +55,8 @@ def _send_impl(
         payload["summary"] = summary
     if tags:
         payload["tags"] = tags
+    if enroll_charter_runner:
+        payload["enroll_charter_runner"] = True
     if lifecycle_state is not None:
         payload["lifecycle_state"] = lifecycle_state
     if after_turn > 0:
@@ -123,6 +126,7 @@ def _send_dispatch(
     sidecar_content: str | None = None,
     sidecar_slug: str | None = None,
     supersedes_turn: int | None = None,
+    enroll_charter_runner: bool = False,
 ) -> dict[str, Any]:
     if isinstance(thread, int):
         thread = str(thread)
@@ -217,4 +221,5 @@ def _send_dispatch(
         sidecar_content=sidecar_content,
         sidecar_slug=sidecar_slug,
         supersedes_turn=supersedes_turn,
+        enroll_charter_runner=enroll_charter_runner,
     )

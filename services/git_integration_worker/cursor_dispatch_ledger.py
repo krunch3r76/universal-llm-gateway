@@ -30,8 +30,12 @@ logger = get_logger(__name__)
 _STATUS_QUEUED = "queued"
 _STATUS_ADMITTED = "admitted"
 _STATUS_RUNNING = "running"
+_STATUS_PARKED_WAITING = "parked_waiting"
 _STATUS_TERMINAL = ("completed", "failed")
 _ACTIVE_WRITER_STATUSES = (_STATUS_ADMITTED, _STATUS_RUNNING)
+_STATUS_CHECK = (
+    "'queued','admitted','running','parked_waiting','completed','failed'"
+)
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS cursor_sdk_dispatches (
@@ -46,13 +50,14 @@ CREATE TABLE IF NOT EXISTS cursor_sdk_dispatches (
     state_root         TEXT,
     sdk_agent_id       TEXT,
     sdk_run_id         TEXT,
-    status             TEXT NOT NULL CHECK (status IN ('queued','admitted','running','completed','failed')),
+    status             TEXT NOT NULL CHECK (status IN ('queued','admitted','running','parked_waiting','completed','failed')),
     started_at         TEXT,
     last_heartbeat_at  TEXT,
     terminal_status    TEXT CHECK (terminal_status IN ('completed','failed')),
     terminal_at        TEXT,
     record_json        TEXT NOT NULL DEFAULT '{}',
-    queued_at          TEXT
+    queued_at          TEXT,
+    park_child_dispatch_id TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_sdk_dispatch_running
     ON cursor_sdk_dispatches(status) WHERE status = 'running';
@@ -309,6 +314,89 @@ def _migrate_queued_status(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_parked_waiting_status(conn: sqlite3.Connection) -> None:
+    """Extend status CHECK with ``parked_waiting`` + park_child column."""
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='cursor_sdk_dispatches'"
+    ).fetchone()
+    if row is None or row["sql"] is None:
+        return
+    needs_status = "'parked_waiting'" not in row["sql"]
+    cols = {
+        r["name"] for r in conn.execute("PRAGMA table_info(cursor_sdk_dispatches)")
+    }
+    needs_col = "park_child_dispatch_id" not in cols
+    if not needs_status and not needs_col:
+        return
+    if needs_col and not needs_status:
+        conn.execute(
+            "ALTER TABLE cursor_sdk_dispatches "
+            "ADD COLUMN park_child_dispatch_id TEXT"
+        )
+        return
+    has_source_ref = "source_ref" in cols
+    source_ref_select = "source_ref" if has_source_ref else "NULL"
+    conn.executescript(
+        f"""
+        CREATE TABLE cursor_sdk_dispatches_v5 (
+            dispatch_id        TEXT PRIMARY KEY,
+            fingerprint        TEXT NOT NULL,
+            thread_id          TEXT NOT NULL,
+            execution_id       TEXT,
+            caller_agent       TEXT,
+            resolved_model     TEXT NOT NULL,
+            packet_path        TEXT,
+            message_present    INTEGER NOT NULL DEFAULT 0,
+            state_root         TEXT,
+            sdk_agent_id       TEXT,
+            sdk_run_id         TEXT,
+            status             TEXT NOT NULL CHECK (
+                status IN ({_STATUS_CHECK})
+            ),
+            started_at         TEXT,
+            last_heartbeat_at  TEXT,
+            terminal_status    TEXT CHECK (terminal_status IN ('completed','failed')),
+            terminal_at        TEXT,
+            record_json        TEXT NOT NULL DEFAULT '{{}}',
+            wt_baseline        TEXT,
+            contract           TEXT,
+            source_repo        TEXT,
+            read_only          INTEGER NOT NULL DEFAULT 0,
+            worker_instance    TEXT,
+            queued_at          TEXT,
+            source_ref         TEXT,
+            park_child_dispatch_id TEXT
+        );
+        INSERT INTO cursor_sdk_dispatches_v5 (
+            dispatch_id, fingerprint, thread_id, execution_id, caller_agent,
+            resolved_model, packet_path, message_present, state_root,
+            sdk_agent_id, sdk_run_id, status, started_at, last_heartbeat_at,
+            terminal_status, terminal_at, record_json, wt_baseline, contract,
+            source_repo, read_only, worker_instance, queued_at, source_ref,
+            park_child_dispatch_id
+        )
+        SELECT
+            dispatch_id, fingerprint, thread_id, execution_id, caller_agent,
+            resolved_model, packet_path, message_present, state_root,
+            sdk_agent_id, sdk_run_id, status, started_at, last_heartbeat_at,
+            terminal_status, terminal_at, record_json, wt_baseline, contract,
+            source_repo, read_only, worker_instance, queued_at,
+            {source_ref_select},
+            NULL
+        FROM cursor_sdk_dispatches;
+        DROP TABLE cursor_sdk_dispatches;
+        ALTER TABLE cursor_sdk_dispatches_v5 RENAME TO cursor_sdk_dispatches;
+        CREATE INDEX IF NOT EXISTS idx_sdk_dispatch_running
+            ON cursor_sdk_dispatches(status) WHERE status = 'running';
+        CREATE INDEX IF NOT EXISTS idx_sdk_dispatch_execution
+            ON cursor_sdk_dispatches(execution_id);
+        CREATE INDEX IF NOT EXISTS idx_sdk_dispatch_parked
+            ON cursor_sdk_dispatches(source_repo, status)
+            WHERE status = 'parked_waiting';
+        """
+    )
+
+
 class CursorDispatchLedger:
     """Durable singleton; survives worker restart. DB methods are sync (F1)."""
 
@@ -364,6 +452,7 @@ class CursorDispatchLedger:
                     "ALTER TABLE cursor_sdk_dispatches ADD COLUMN source_ref TEXT"
                 )
             _migrate_queued_status(conn)
+            _migrate_parked_waiting_status(conn)
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_sdk_dispatch_queued "
                 "ON cursor_sdk_dispatches(source_repo, worker_instance, status) "
@@ -373,6 +462,11 @@ class CursorDispatchLedger:
                 "CREATE INDEX IF NOT EXISTS idx_sdk_dispatch_source_ref_active "
                 "ON cursor_sdk_dispatches(source_ref, status) "
                 "WHERE status IN ('queued','admitted','running')"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_sdk_dispatch_parked "
+                "ON cursor_sdk_dispatches(source_repo, status) "
+                "WHERE status = 'parked_waiting'"
             )
 
     def _connect(self) -> sqlite3.Connection:
@@ -414,6 +508,7 @@ class CursorDispatchLedger:
         worker_instance: str | None = None,
         source_ref: str | None = None,
         force: bool = False,
+        nest_under: str | None = None,
     ) -> CursorDispatchResponse | None:
         """Durable idempotency (F2). Returns cached admission on hit, None on first
         admitted insert, or a queued ticket when the write-lease is held.
@@ -424,6 +519,10 @@ class CursorDispatchLedger:
         ``SourceRefConflict`` without inserting. The SELECT and INSERT share the
         existing ``BEGIN IMMEDIATE`` transaction, so concurrent admits cannot
         both observe an empty peer set and both insert.
+
+        Nest park: when ``nest_under`` names the live write-lease holder for
+        ``source_repo``, that parent is moved to ``parked_waiting`` and the
+        child inserts as ``admitted`` (caller must also ``transfer_holder``).
 
         Raises ``DispatchConflict`` on fingerprint mismatch."""
         record_json = _dispatch_record_json(req)
@@ -478,6 +577,7 @@ class CursorDispatchLedger:
                     )
             insert_status = _STATUS_ADMITTED
             queued_at: str | None = None
+            nested_park_parent: str | None = None
             if not read_only and source_repo:
                 conflict = conn.execute(
                     "SELECT dispatch_id FROM cursor_sdk_dispatches "
@@ -492,7 +592,29 @@ class CursorDispatchLedger:
                     "AND status='queued' AND dispatch_id<>? LIMIT 1",
                     (source_repo, req.dispatch_id),
                 ).fetchone()
-                if conflict is not None or prior_queued is not None:
+                if (
+                    conflict is not None
+                    and nest_under
+                    and nest_under == conflict["dispatch_id"]
+                ):
+                    parked = conn.execute(
+                        "UPDATE cursor_sdk_dispatches SET status=?, "
+                        "park_child_dispatch_id=? "
+                        "WHERE dispatch_id=? AND status IN ('admitted','running')",
+                        (
+                            _STATUS_PARKED_WAITING,
+                            req.dispatch_id,
+                            nest_under,
+                        ),
+                    )
+                    if parked.rowcount == 1:
+                        nested_park_parent = nest_under
+                        insert_status = _STATUS_ADMITTED
+                        queued_at = None
+                    else:
+                        insert_status = _STATUS_QUEUED
+                        queued_at = _now()
+                elif conflict is not None or prior_queued is not None:
                     insert_status = _STATUS_QUEUED
                     queued_at = _now()
             conn.execute(
@@ -522,6 +644,9 @@ class CursorDispatchLedger:
                     source_ref,
                 ),
             )
+            if nested_park_parent is not None:
+                # Capacity transfer is caller's duty (cursor_sdk_park); ledger done.
+                return None
             if insert_status == _STATUS_QUEUED:
                 pos = self._queue_position_conn(
                     conn,
@@ -542,6 +667,61 @@ class CursorDispatchLedger:
                     row, admission=admission, queue_position=pos, holder=holder
                 )
         return None
+
+    def park_for_nested(self, *, parent_id: str, child_id: str) -> bool:
+        """Move parent ``admitted|running`` → ``parked_waiting`` for ``child_id``.
+
+        Returns True when the parent row was parked.
+        """
+        with self._connect() as conn:
+            updated = conn.execute(
+                "UPDATE cursor_sdk_dispatches SET status=?, park_child_dispatch_id=? "
+                "WHERE dispatch_id=? AND status IN ('admitted','running')",
+                (_STATUS_PARKED_WAITING, child_id, parent_id),
+            )
+            return updated.rowcount == 1
+
+    def restore_from_park(self, *, parent_id: str) -> str | None:
+        """Restore parent ``parked_waiting`` → ``running``; return source_repo."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT source_repo FROM cursor_sdk_dispatches "
+                "WHERE dispatch_id=? AND status=?",
+                (parent_id, _STATUS_PARKED_WAITING),
+            ).fetchone()
+            if row is None:
+                return None
+            conn.execute(
+                "UPDATE cursor_sdk_dispatches SET status=?, park_child_dispatch_id=NULL "
+                "WHERE dispatch_id=? AND status=?",
+                (_STATUS_RUNNING, parent_id, _STATUS_PARKED_WAITING),
+            )
+            return row["source_repo"]
+
+    def find_parked_parent_for_child(
+        self, *, child_id: str
+    ) -> tuple[str, str | None] | None:
+        """Return ``(parent_id, source_repo)`` when a parked parent points at child."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT dispatch_id, source_repo FROM cursor_sdk_dispatches "
+                "WHERE status=? AND park_child_dispatch_id=? LIMIT 1",
+                (_STATUS_PARKED_WAITING, child_id),
+            ).fetchone()
+        if row is None:
+            return None
+        return row["dispatch_id"], row["source_repo"]
+
+    def has_parked_parent(self, *, source_repo: str) -> bool:
+        """True when any ``parked_waiting`` row exists for ``source_repo``."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM cursor_sdk_dispatches "
+                "WHERE source_repo=? AND COALESCE(read_only,0)=0 "
+                "AND status=? LIMIT 1",
+                (source_repo, _STATUS_PARKED_WAITING),
+            ).fetchone()
+        return row is not None
 
     @staticmethod
     def _queue_position_conn(
@@ -644,6 +824,14 @@ class CursorDispatchLedger:
         """
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
+            parked = conn.execute(
+                "SELECT dispatch_id FROM cursor_sdk_dispatches "
+                "WHERE source_repo=? AND COALESCE(read_only,0)=0 "
+                "AND status=? LIMIT 1",
+                (source_repo, _STATUS_PARKED_WAITING),
+            ).fetchone()
+            if parked is not None:
+                return None
             active = conn.execute(
                 "SELECT dispatch_id FROM cursor_sdk_dispatches "
                 "WHERE source_repo=? AND COALESCE(read_only,0)=0 "

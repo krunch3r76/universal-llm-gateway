@@ -54,7 +54,7 @@ async def f1_timeout_incomplete_no_delete() -> dict:
     result = await run_project_ask(
         "Reply with a single word: PING. Do not elaborate.",
         project_uuid=PROJECT,
-        model="opus-4.8",
+        model="opus-5",
         delete_after=True,
         cdp_url=CDP,
         timeout_s=8,
@@ -135,7 +135,7 @@ async def f3_missing_archive_refuses_delete() -> dict:
     result = await run_project_ask(
         "Reply with exactly: F3_ARCHIVE_GATE",
         project_uuid=PROJECT,
-        model="opus-4.8",
+        model="opus-5",
         delete_after=True,
         cdp_url=CDP,
         timeout_s=120,

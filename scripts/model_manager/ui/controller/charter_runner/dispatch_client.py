@@ -14,14 +14,18 @@ from pathlib import Path
 from typing import Any, Literal
 
 from transport_utils import DEFAULT_STARGATE_URL, make_async_client
+from universal_logging import get_logger
 
 from .executor_defaults import (
     autonomous_generate_body,
     consult_handoff_body,
-    default_generate_body,
     default_handoff_body,
+    default_judgment_body,
+    implement_body,
     r_admit_consult_generate_body,
 )
+
+logger = get_logger(__name__)
 
 AdmissionMode = Literal["generate", "handoff", "autonomous", "consult"]
 
@@ -59,14 +63,19 @@ async def fire_window(
     subject: str | None = None,
     admission_mode: AdmissionMode = "generate",
     consult_role: str | None = None,
+    implement_source_ref: str | None = None,
 ) -> dict[str, Any]:
-    """Admit one charter window (generate default or attended handoff)."""
+    """Admit one charter window (generate default or attended handoff).
+
+    ``implement_source_ref`` set (autonomous mode only) fires the mechanical
+    Composer implement bind instead of the Grok judgment bind; the caller is
+    ``executor_routing``, which supplies a ref only when the implement lane is
+    proven.
+    """
     packet_path = write_handoff_packet(
         workspace_root, root_id, window_index, packet_text
     )
-    subj = subject or (
-        f"Charter-runner window {window_index} — agent-bus:{root_id}"
-    )
+    subj = subject or (f"Charter-runner window {window_index} — agent-bus:{root_id}")
     if admission_mode == "handoff":
         body = default_handoff_body(
             root_id=root_id,
@@ -96,16 +105,26 @@ async def fire_window(
             )
             path = _HANDOFF_PATH
     elif admission_mode == "autonomous":
-        body = autonomous_generate_body(
-            root_id=root_id,
-            window_index=window_index,
-            packet_path=packet_path,
-            subject=subj,
-            caller_agent=_CALLER,
-        )
+        if implement_source_ref:
+            body = implement_body(
+                root_id=root_id,
+                window_index=window_index,
+                packet_path=packet_path,
+                subject=subj,
+                caller_agent=_CALLER,
+                source_ref=implement_source_ref,
+            )
+        else:
+            body = autonomous_generate_body(
+                root_id=root_id,
+                window_index=window_index,
+                packet_path=packet_path,
+                subject=subj,
+                caller_agent=_CALLER,
+            )
         path = _DISPATCH_PATH
     else:
-        body = default_generate_body(
+        body = default_judgment_body(
             root_id=root_id,
             window_index=window_index,
             packet_path=packet_path,
@@ -144,4 +163,31 @@ async def fire_window(
             "model_knobs": body["model_knobs"],
             "contract": body["contract"],
         }
+    _warn_on_ungated_implement(root_id, body, result)
     return result
+
+
+def _warn_on_ungated_implement(
+    root_id: str, body: dict[str, Any], result: dict[str, Any]
+) -> None:
+    """Flag an implement window whose readiness gate silently no-opped.
+
+    ``require_implement_ready`` short-circuits when it cannot resolve a todo
+    ``source_ref`` from packet front matter, and it does so *without* failing
+    the dispatch — the window just runs unreviewed. A server-stamped
+    ``implement_spec_hash`` is the proof the gate actually ran, so its absence
+    on an implement dispatch is a defect, never a success (review §1 / F5).
+    """
+    if body.get("contract") != "implement":
+        return
+    if result.get("implement_spec_hash"):
+        return
+    logger.error(
+        "charter-runner implement window fired without implement_spec_hash "
+        "root=%s dispatch=%s source_ref=%s — require_implement_ready no-opped; "
+        "treat this window's output as ungated",
+        root_id,
+        result.get("dispatch_id"),
+        body.get("source_ref"),
+    )
+    result["implement_gate_bypassed"] = True

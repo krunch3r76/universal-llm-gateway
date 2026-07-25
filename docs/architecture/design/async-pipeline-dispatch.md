@@ -365,7 +365,7 @@ OpenAI / Google compat). For Anthropic, `translate_reasoning_effort` in
 `frontier_dispatch_request.py` maps `reasoning_effort` to provider-native
 `thinking`:
 
-- **Adaptive-capable models** (Mythos Preview, Opus 4.8/4.7/4.6, Sonnet 4.6):
+- **Adaptive-capable models** (Mythos Preview, Opus 5/4.8/4.7/4.6, Sonnet 4.6):
   `thinking: {type: adaptive}` — effort is surfaced separately via
   `output_config.effort`. Manual `{type: enabled, budget_tokens: N}` is
   deprecated on 4.6+ and rejected on Opus 4.7+.

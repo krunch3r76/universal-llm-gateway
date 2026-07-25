@@ -34,6 +34,7 @@ from .cdp_generate import (
     dispatch_cdp_generate,
     is_cdp_model,
     reject_cursor_sdk_seat_with_cdp,
+    reject_role_with_substrate_model,
 )
 from .closeout_reply import parse_closeout_payload, run_implement_closeout_pipeline
 from .contract_derivation import derive_contract
@@ -176,6 +177,7 @@ class TeamDispatchGenerateBody(_DispatchCommon):
     ) = None
     auto_review_child: bool = False
     model_knobs: dict[str, str] | None = None
+    spawn_review_provenance: Literal["generate_review_child"] | None = None
     cost_intent: Literal["deliberate_high_cost"] | None = None
     suppress_cost_warning: bool = False
     cost_intent_reason: str | None = None
@@ -463,6 +465,9 @@ async def team_dispatch(
             reject_cursor_sdk_seat_with_cdp(
                 seat=seat, model=model, request_id=request_id
             )
+            reject_role_with_substrate_model(
+                role=role, model=model, request_id=request_id
+            )
             result = await dispatch_cdp_generate(
                 request_id=request_id,
                 body=body,
@@ -476,7 +481,7 @@ async def team_dispatch(
     if body.op == "generate":
         try:
             enforce_generate_role_seat_exclusive(
-                role, seat, request_id=request_id
+                role, seat, request_id=request_id, model=model
             )
         except FrontierEndpointError as exc:
             return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
@@ -493,6 +498,12 @@ async def team_dispatch(
             role=role, seat=seat, model=model, request_id=request_id
         )
     ):
+        try:
+            reject_role_with_substrate_model(
+                role=role, model=model, request_id=request_id
+            )
+        except FrontierEndpointError as exc:
+            return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
         sdk_seat = seat or "cursor-sdk"
         return await dispatch_cursor_sdk_generate_route(
             request_id=request_id,

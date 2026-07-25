@@ -14,11 +14,26 @@ def resolve_fs_path(
     sandbox: str = "",
     *,
     require_file: bool = False,
+    for_write: bool = False,
+    cortex_root: Path | None = None,
 ) -> tuple[str, str, Path | None, dict[str, Any]]:
-    """Resolve fs path; return (sandbox, rel, resolved, meta extras)."""
+    """Resolve fs path; return (sandbox, rel, resolved, meta extras).
+
+    ``for_write`` and ``cortex_root`` are threaded into shared ingress.
+    Mutating single-path ops pass ``for_write=True``. For move/copy, resolve
+    the source with ``for_write=False`` and the target with ``for_write=True``.
+    """
+    from implement_admission.closeout_helpers import cortex_files_root
+
     explicit = sandbox.strip() or None
+    root = cortex_root if cortex_root is not None else cortex_files_root()
     try:
-        ingress = resolve_fs_ingress(path, sandbox=explicit)
+        ingress = resolve_fs_ingress(
+            path,
+            sandbox=explicit,
+            cortex_root=root,
+            for_write=for_write,
+        )
     except ValueError as exc:
         raise ValueError(str(exc)) from exc
 
@@ -64,6 +79,7 @@ def dual_carry_result(
     rel_path: str,
     **extra: Any,
 ) -> dict[str, Any]:
+    """Thin wrapper around ``dual_carry`` for fs MCP response payloads."""
     return dual_carry(sandbox, rel_path, **extra)
 
 

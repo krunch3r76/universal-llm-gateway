@@ -73,7 +73,7 @@ def register_project_ask_tool(mcp: FastMCP) -> None:
         prompt_path: str | None = None,
         holder: str = "mcp-project-ask",
         purpose: str = "ask",
-        model: str = "opus-4.8",
+        model: str = "opus-5",
         converse: bool = False,
         no_project_uuid: bool = False,
         project_uuid: str = "",
@@ -120,7 +120,7 @@ def register_project_ask_tool(mcp: FastMCP) -> None:
           prompt_path — checkout-relative or absolute path on Jupiter PROJECT_ROOT
 
         Path-sim R-admit defaults: ``converse=true``, ``no_project_uuid=true``,
-        ``model=opus-4.8``, ``purpose=ask``. Converse retains the Cowork chat by
+        ``model=opus-5``, ``purpose=ask``. Converse retains the Cowork chat by
         default; set ``delete_after=false`` on single-ask to retain for inspect.
 
         Harvest knobs (Cowork Outputs — ``todo:cdp-cowork-outputs-local-harvest``):

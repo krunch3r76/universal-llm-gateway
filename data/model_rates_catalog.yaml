@@ -1,4 +1,4 @@
-updated_at: '2026-07-24T11:00:18.228579+00:00'
+updated_at: '2026-07-25T18:47:24.509702+00:00'
 models:
 - model_id: ai21/jamba-large-1.7
   input_rate_per_m: 2.0
@@ -138,6 +138,18 @@ models:
   source: catalog_refresh
   pinned: false
   updated_at: '2026-07-24T06:42:31.198962+00:00'
+- model_id: anthropic/claude-opus-5
+  input_rate_per_m: 5.0
+  output_rate_per_m: 25.0
+  source: catalog_refresh
+  pinned: false
+  updated_at: '2026-07-24T17:22:57.071994+00:00'
+- model_id: anthropic/claude-opus-5-fast
+  input_rate_per_m: 10.0
+  output_rate_per_m: 50.0
+  source: catalog_refresh
+  pinned: false
+  updated_at: '2026-07-24T17:22:57.071989+00:00'
 - model_id: anthropic/claude-sonnet-4
   input_rate_per_m: 3.0
   output_rate_per_m: 15.0
@@ -163,11 +175,11 @@ models:
   pinned: false
   updated_at: '2026-07-24T06:42:31.198932+00:00'
 - model_id: arcee-ai/trinity-large-thinking
-  input_rate_per_m: 0.25
-  output_rate_per_m: 0.8
+  input_rate_per_m: 0.22
+  output_rate_per_m: 0.85
   source: catalog_refresh
   pinned: false
-  updated_at: '2026-07-24T06:42:31.199047+00:00'
+  updated_at: '2026-07-25T14:59:38.585156+00:00'
 - model_id: arcee-ai/virtuoso-large
   input_rate_per_m: 0.75
   output_rate_per_m: 1.2
@@ -301,11 +313,11 @@ models:
   pinned: false
   updated_at: '2026-07-24T06:42:31.199223+00:00'
 - model_id: deepseek/deepseek-v4-flash
-  input_rate_per_m: 0.098
-  output_rate_per_m: 0.196
+  input_rate_per_m: 0.0938
+  output_rate_per_m: 0.1876
   source: catalog_refresh
   pinned: false
-  updated_at: '2026-07-24T06:42:31.199018+00:00'
+  updated_at: '2026-07-25T02:42:03.485355+00:00'
 - model_id: deepseek/deepseek-v4-pro
   input_rate_per_m: 0.435
   output_rate_per_m: 0.87
@@ -463,11 +475,11 @@ models:
   pinned: false
   updated_at: '2026-07-24T06:42:31.199039+00:00'
 - model_id: google/gemma-4-31b-it
-  input_rate_per_m: 0.1
-  output_rate_per_m: 0.35
+  input_rate_per_m: 0.14
+  output_rate_per_m: 0.4
   source: catalog_refresh
   pinned: false
-  updated_at: '2026-07-24T06:42:31.199041+00:00'
+  updated_at: '2026-07-24T17:22:57.072246+00:00'
 - model_id: gryphe/mythomax-l2-13b
   input_rate_per_m: 0.06
   output_rate_per_m: 0.06
@@ -805,17 +817,17 @@ models:
   pinned: false
   updated_at: '2026-07-24T06:42:31.199119+00:00'
 - model_id: moonshotai/kimi-k2.6
-  input_rate_per_m: 0.684
-  output_rate_per_m: 3.42
+  input_rate_per_m: 0.646
+  output_rate_per_m: 2.72
   source: catalog_refresh
   pinned: false
-  updated_at: '2026-07-24T06:42:31.199034+00:00'
+  updated_at: '2026-07-25T08:42:05.795400+00:00'
 - model_id: moonshotai/kimi-k2.7-code
-  input_rate_per_m: 0.71
-  output_rate_per_m: 3.49
+  input_rate_per_m: 0.78
+  output_rate_per_m: 3.5
   source: catalog_refresh
   pinned: false
-  updated_at: '2026-07-24T06:42:31.198946+00:00'
+  updated_at: '2026-07-24T20:42:01.267234+00:00'
 - model_id: moonshotai/kimi-k3
   input_rate_per_m: 3.0
   output_rate_per_m: 15.0
@@ -877,17 +889,17 @@ models:
   pinned: false
   updated_at: '2026-07-24T06:42:31.199143+00:00'
 - model_id: nvidia/nemotron-3-super-120b-a12b
-  input_rate_per_m: 0.08
-  output_rate_per_m: 0.45
+  input_rate_per_m: 0.085
+  output_rate_per_m: 0.4
   source: catalog_refresh
   pinned: false
-  updated_at: '2026-07-24T06:42:31.199069+00:00'
+  updated_at: '2026-07-24T20:42:01.267401+00:00'
 - model_id: nvidia/nemotron-3-ultra-550b-a55b
-  input_rate_per_m: 0.5
-  output_rate_per_m: 2.2
+  input_rate_per_m: 0.6
+  output_rate_per_m: 3.6
   source: catalog_refresh
   pinned: false
-  updated_at: '2026-07-24T06:42:31.198954+00:00'
+  updated_at: '2026-07-25T02:42:03.485264+00:00'
 - model_id: openai/gpt-3.5-turbo
   input_rate_per_m: 0.5
   output_rate_per_m: 1.5
@@ -1201,11 +1213,11 @@ models:
   pinned: false
   updated_at: '2026-07-24T06:42:31.199271+00:00'
 - model_id: openai/gpt-oss-20b
-  input_rate_per_m: 0.029
-  output_rate_per_m: 0.14
+  input_rate_per_m: 0.03
+  output_rate_per_m: 0.13
   source: catalog_refresh
   pinned: false
-  updated_at: '2026-07-24T06:42:31.199273+00:00'
+  updated_at: '2026-07-24T20:42:01.267690+00:00'
 - model_id: openai/gpt-oss-safeguard-20b
   input_rate_per_m: 0.075
   output_rate_per_m: 0.3
@@ -1410,6 +1422,18 @@ models:
   source: catalog_refresh
   pinned: false
   updated_at: '2026-07-24T06:42:31.198962+00:00'
+- model_id: openrouter/anthropic/claude-opus-5
+  input_rate_per_m: 5.0
+  output_rate_per_m: 25.0
+  source: catalog_refresh
+  pinned: false
+  updated_at: '2026-07-24T17:22:57.071992+00:00'
+- model_id: openrouter/anthropic/claude-opus-5-fast
+  input_rate_per_m: 10.0
+  output_rate_per_m: 50.0
+  source: catalog_refresh
+  pinned: false
+  updated_at: '2026-07-24T17:22:57.071981+00:00'
 - model_id: openrouter/anthropic/claude-sonnet-4
   input_rate_per_m: 3.0
   output_rate_per_m: 15.0
@@ -1435,11 +1459,11 @@ models:
   pinned: false
   updated_at: '2026-07-24T06:42:31.198932+00:00'
 - model_id: openrouter/arcee-ai/trinity-large-thinking
-  input_rate_per_m: 0.25
-  output_rate_per_m: 0.8
+  input_rate_per_m: 0.22
+  output_rate_per_m: 0.85
   source: catalog_refresh
   pinned: false
-  updated_at: '2026-07-24T06:42:31.199047+00:00'
+  updated_at: '2026-07-25T14:59:38.585153+00:00'
 - model_id: openrouter/arcee-ai/virtuoso-large
   input_rate_per_m: 0.75
   output_rate_per_m: 1.2
@@ -1573,11 +1597,11 @@ models:
   pinned: false
   updated_at: '2026-07-24T06:42:31.199223+00:00'
 - model_id: openrouter/deepseek/deepseek-v4-flash
-  input_rate_per_m: 0.098
-  output_rate_per_m: 0.196
+  input_rate_per_m: 0.0938
+  output_rate_per_m: 0.1876
   source: catalog_refresh
   pinned: false
-  updated_at: '2026-07-24T06:42:31.199018+00:00'
+  updated_at: '2026-07-25T02:42:03.485353+00:00'
 - model_id: openrouter/deepseek/deepseek-v4-pro
   input_rate_per_m: 0.435
   output_rate_per_m: 0.87
@@ -1735,11 +1759,11 @@ models:
   pinned: false
   updated_at: '2026-07-24T06:42:31.199039+00:00'
 - model_id: openrouter/google/gemma-4-31b-it
-  input_rate_per_m: 0.1
-  output_rate_per_m: 0.35
+  input_rate_per_m: 0.14
+  output_rate_per_m: 0.4
   source: catalog_refresh
   pinned: false
-  updated_at: '2026-07-24T06:42:31.199041+00:00'
+  updated_at: '2026-07-24T17:22:57.072244+00:00'
 - model_id: openrouter/gryphe/mythomax-l2-13b
   input_rate_per_m: 0.06
   output_rate_per_m: 0.06
@@ -2077,17 +2101,17 @@ models:
   pinned: false
   updated_at: '2026-07-24T06:42:31.199119+00:00'
 - model_id: openrouter/moonshotai/kimi-k2.6
-  input_rate_per_m: 0.684
-  output_rate_per_m: 3.42
+  input_rate_per_m: 0.646
+  output_rate_per_m: 2.72
   source: catalog_refresh
   pinned: false
-  updated_at: '2026-07-24T06:42:31.199034+00:00'
+  updated_at: '2026-07-25T08:42:05.795398+00:00'
 - model_id: openrouter/moonshotai/kimi-k2.7-code
-  input_rate_per_m: 0.71
-  output_rate_per_m: 3.49
+  input_rate_per_m: 0.78
+  output_rate_per_m: 3.5
   source: catalog_refresh
   pinned: false
-  updated_at: '2026-07-24T06:42:31.198946+00:00'
+  updated_at: '2026-07-24T20:42:01.267232+00:00'
 - model_id: openrouter/moonshotai/kimi-k3
   input_rate_per_m: 3.0
   output_rate_per_m: 15.0
@@ -2149,17 +2173,17 @@ models:
   pinned: false
   updated_at: '2026-07-24T06:42:31.199143+00:00'
 - model_id: openrouter/nvidia/nemotron-3-super-120b-a12b
-  input_rate_per_m: 0.08
-  output_rate_per_m: 0.45
+  input_rate_per_m: 0.085
+  output_rate_per_m: 0.4
   source: catalog_refresh
   pinned: false
-  updated_at: '2026-07-24T06:42:31.199069+00:00'
+  updated_at: '2026-07-24T20:42:01.267399+00:00'
 - model_id: openrouter/nvidia/nemotron-3-ultra-550b-a55b
-  input_rate_per_m: 0.5
-  output_rate_per_m: 2.2
+  input_rate_per_m: 0.6
+  output_rate_per_m: 3.6
   source: catalog_refresh
   pinned: false
-  updated_at: '2026-07-24T06:42:31.198954+00:00'
+  updated_at: '2026-07-25T02:42:03.485262+00:00'
 - model_id: openrouter/openai/gpt-3.5-turbo
   input_rate_per_m: 0.5
   output_rate_per_m: 1.5
@@ -2485,11 +2509,11 @@ models:
   pinned: false
   updated_at: '2026-07-24T06:42:31.199271+00:00'
 - model_id: openrouter/openai/gpt-oss-20b
-  input_rate_per_m: 0.029
-  output_rate_per_m: 0.14
+  input_rate_per_m: 0.03
+  output_rate_per_m: 0.13
   source: catalog_refresh
   pinned: false
-  updated_at: '2026-07-24T06:42:31.199273+00:00'
+  updated_at: '2026-07-24T20:42:01.267687+00:00'
 - model_id: openrouter/openai/gpt-oss-safeguard-20b
   input_rate_per_m: 0.075
   output_rate_per_m: 0.3
@@ -2683,11 +2707,11 @@ models:
   pinned: false
   updated_at: '2026-07-24T06:42:31.199350+00:00'
 - model_id: openrouter/qwen/qwen3-30b-a3b-instruct-2507
-  input_rate_per_m: 0.1
-  output_rate_per_m: 0.3
+  input_rate_per_m: 0.0481
+  output_rate_per_m: 0.193
   source: catalog_refresh
   pinned: false
-  updated_at: '2026-07-24T06:42:31.199281+00:00'
+  updated_at: '2026-07-25T18:47:24.509378+00:00'
 - model_id: openrouter/qwen/qwen3-30b-a3b-thinking-2507
   input_rate_per_m: 0.13
   output_rate_per_m: 1.56
@@ -2707,11 +2731,11 @@ models:
   pinned: false
   updated_at: '2026-07-24T06:42:31.199353+00:00'
 - model_id: openrouter/qwen/qwen3-coder
-  input_rate_per_m: 0.38
-  output_rate_per_m: 1.55
+  input_rate_per_m: 0.3
+  output_rate_per_m: 1.0
   source: catalog_refresh
   pinned: false
-  updated_at: '2026-07-24T06:42:31.199288+00:00'
+  updated_at: '2026-07-24T17:22:57.072634+00:00'
 - model_id: openrouter/qwen/qwen3-coder-30b-a3b-instruct
   input_rate_per_m: 0.07
   output_rate_per_m: 0.27
@@ -2749,11 +2773,11 @@ models:
   pinned: false
   updated_at: '2026-07-24T06:42:31.199111+00:00'
 - model_id: openrouter/qwen/qwen3-next-80b-a3b-instruct
-  input_rate_per_m: 0.15
-  output_rate_per_m: 1.2
+  input_rate_per_m: 0.1
+  output_rate_per_m: 1.1
   source: catalog_refresh
   pinned: false
-  updated_at: '2026-07-24T06:42:31.199244+00:00'
+  updated_at: '2026-07-24T17:22:57.072558+00:00'
 - model_id: openrouter/qwen/qwen3-next-80b-a3b-thinking
   input_rate_per_m: 0.0975
   output_rate_per_m: 0.78
@@ -2851,11 +2875,11 @@ models:
   pinned: false
   updated_at: '2026-07-24T06:42:31.199003+00:00'
 - model_id: openrouter/qwen/qwen3.6-27b
-  input_rate_per_m: 0.288
+  input_rate_per_m: 0.289
   output_rate_per_m: 2.4
   source: catalog_refresh
   pinned: false
-  updated_at: '2026-07-24T06:42:31.199010+00:00'
+  updated_at: '2026-07-24T20:42:01.267320+00:00'
 - model_id: openrouter/qwen/qwen3.6-35b-a3b
   input_rate_per_m: 0.14
   output_rate_per_m: 1.0
@@ -3121,11 +3145,11 @@ models:
   pinned: false
   updated_at: '2026-07-24T06:42:31.199038+00:00'
 - model_id: openrouter/z-ai/glm-5.2
-  input_rate_per_m: 0.8204
-  output_rate_per_m: 2.5784
+  input_rate_per_m: 0.7042
+  output_rate_per_m: 2.2132
   source: catalog_refresh
   pinned: false
-  updated_at: '2026-07-24T11:00:18.227741+00:00'
+  updated_at: '2026-07-25T18:47:24.508928+00:00'
 - model_id: openrouter/z-ai/glm-5v-turbo
   input_rate_per_m: 1.2
   output_rate_per_m: 4.0
@@ -3319,11 +3343,11 @@ models:
   pinned: false
   updated_at: '2026-07-24T06:42:31.199350+00:00'
 - model_id: qwen/qwen3-30b-a3b-instruct-2507
-  input_rate_per_m: 0.1
-  output_rate_per_m: 0.3
+  input_rate_per_m: 0.0481
+  output_rate_per_m: 0.193
   source: catalog_refresh
   pinned: false
-  updated_at: '2026-07-24T06:42:31.199281+00:00'
+  updated_at: '2026-07-25T18:47:24.509380+00:00'
 - model_id: qwen/qwen3-30b-a3b-thinking-2507
   input_rate_per_m: 0.13
   output_rate_per_m: 1.56
@@ -3343,11 +3367,11 @@ models:
   pinned: false
   updated_at: '2026-07-24T06:42:31.199353+00:00'
 - model_id: qwen/qwen3-coder
-  input_rate_per_m: 0.38
-  output_rate_per_m: 1.55
+  input_rate_per_m: 0.3
+  output_rate_per_m: 1.0
   source: catalog_refresh
   pinned: false
-  updated_at: '2026-07-24T06:42:31.199288+00:00'
+  updated_at: '2026-07-24T17:22:57.072636+00:00'
 - model_id: qwen/qwen3-coder-30b-a3b-instruct
   input_rate_per_m: 0.07
   output_rate_per_m: 0.27
@@ -3385,11 +3409,11 @@ models:
   pinned: false
   updated_at: '2026-07-24T06:42:31.199111+00:00'
 - model_id: qwen/qwen3-next-80b-a3b-instruct
-  input_rate_per_m: 0.15
-  output_rate_per_m: 1.2
+  input_rate_per_m: 0.1
+  output_rate_per_m: 1.1
   source: catalog_refresh
   pinned: false
-  updated_at: '2026-07-24T06:42:31.199244+00:00'
+  updated_at: '2026-07-24T17:22:57.072560+00:00'
 - model_id: qwen/qwen3-next-80b-a3b-thinking
   input_rate_per_m: 0.0975
   output_rate_per_m: 0.78
@@ -3487,11 +3511,11 @@ models:
   pinned: false
   updated_at: '2026-07-24T06:42:31.199003+00:00'
 - model_id: qwen/qwen3.6-27b
-  input_rate_per_m: 0.288
+  input_rate_per_m: 0.289
   output_rate_per_m: 2.4
   source: catalog_refresh
   pinned: false
-  updated_at: '2026-07-24T06:42:31.199010+00:00'
+  updated_at: '2026-07-24T20:42:01.267322+00:00'
 - model_id: qwen/qwen3.6-35b-a3b
   input_rate_per_m: 0.14
   output_rate_per_m: 1.0
@@ -3757,11 +3781,11 @@ models:
   pinned: false
   updated_at: '2026-07-24T06:42:31.199038+00:00'
 - model_id: z-ai/glm-5.2
-  input_rate_per_m: 0.8204
-  output_rate_per_m: 2.5784
+  input_rate_per_m: 0.7042
+  output_rate_per_m: 2.2132
   source: catalog_refresh
   pinned: false
-  updated_at: '2026-07-24T11:00:18.227751+00:00'
+  updated_at: '2026-07-25T18:47:24.508937+00:00'
 - model_id: z-ai/glm-5v-turbo
   input_rate_per_m: 1.2
   output_rate_per_m: 4.0

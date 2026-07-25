@@ -16,6 +16,7 @@ _uds_publisher: Callable[[str, dict[str, Any]], None] | None = None
 def register_cursor_sdk_event_publisher(
     publisher: Callable[[str, dict[str, Any]], None],
 ) -> None:
+    """Install the UDS publisher used when mcp_events.record is unavailable."""
     global _uds_publisher
     _uds_publisher = publisher
 
@@ -191,6 +192,7 @@ def emit_sdk_worker_progress(
     elapsed_s: float,
     tool_call_count: int,
 ) -> None:
+    """Publish mid-run progress for a live cursor-sdk worker dispatch."""
     _emit(
         FrontierSdkWorkerProgress(
             dispatch_id=dispatch_id,
@@ -222,6 +224,7 @@ def emit_sdk_worker_completed(
     sdk_agent_id: str | None = None,
     degraded_reasons: list[str] | None = None,
 ) -> None:
+    """Publish terminal success/outcome telemetry for a finished cursor-sdk worker."""
     _emit(
         FrontierSdkWorkerCompleted(
             dispatch_id=dispatch_id,
@@ -379,6 +382,40 @@ def FrontierWriteLeasePromoted(  # noqa: N802
     )
 
 
+@event_factory
+def FrontierWriteLeaseParkEnter(  # noqa: N802
+    parent_id: str,
+    child_id: str,
+    source_repo: str | None,
+) -> Event:
+    return Event(
+        signal="frontier.sdk.worker.lease.park_enter",
+        payload={
+            "parent_id": parent_id,
+            "child_id": child_id,
+            "source_repo": source_repo,
+        },
+        scope="node",
+    )
+
+
+@event_factory
+def FrontierWriteLeaseParkRestore(  # noqa: N802
+    parent_id: str,
+    child_id: str,
+    source_repo: str | None,
+) -> Event:
+    return Event(
+        signal="frontier.sdk.worker.lease.park_restore",
+        payload={
+            "parent_id": parent_id,
+            "child_id": child_id,
+            "source_repo": source_repo,
+        },
+        scope="node",
+    )
+
+
 def emit_sdk_worker_queued(
     *,
     dispatch_id: str,
@@ -390,6 +427,7 @@ def emit_sdk_worker_queued(
     holder_resolved_model: str | None = None,
     holder_subject_preview: str | None = None,
 ) -> None:
+    """Publish FIFO queue placement while another dispatch holds the write lease."""
     _emit(
         FrontierSdkWorkerQueued(
             dispatch_id=dispatch_id,
@@ -410,6 +448,7 @@ def emit_write_lease_released(
     source_repo: str | None,
     stale: bool = False,
 ) -> None:
+    """Publish write-lease release for a dispatch (including stale reclaim)."""
     _emit(
         FrontierWriteLeaseReleased(
             dispatch_id=dispatch_id,
@@ -420,9 +459,36 @@ def emit_write_lease_released(
 
 
 def emit_write_lease_promoted(*, dispatch_id: str, source_repo: str | None) -> None:
+    """Publish write-lease promotion when a queued dispatch becomes the holder."""
     _emit(
         FrontierWriteLeasePromoted(
             dispatch_id=dispatch_id,
+            source_repo=source_repo,
+        )
+    )
+
+
+def emit_write_lease_park_enter(
+    *, parent_id: str, child_id: str, source_repo: str | None
+) -> None:
+    """Publish nest park-enter when parent yields lease and capacity to nested child."""
+    _emit(
+        FrontierWriteLeaseParkEnter(
+            parent_id=parent_id,
+            child_id=child_id,
+            source_repo=source_repo,
+        )
+    )
+
+
+def emit_write_lease_park_restore(
+    *, parent_id: str, child_id: str, source_repo: str | None
+) -> None:
+    """Publish nest park-restore when child terminal returns lease and capacity to parent."""
+    _emit(
+        FrontierWriteLeaseParkRestore(
+            parent_id=parent_id,
+            child_id=child_id,
             source_repo=source_repo,
         )
     )
@@ -457,6 +523,7 @@ def emit_sdk_worker_timeout(
     resolved_model: str,
     timeout_s: float,
 ) -> None:
+    """Publish hard-timeout failure for a cursor-sdk worker that exceeded its budget."""
     _emit(
         FrontierSdkWorkerTimeout(
             dispatch_id=dispatch_id,
@@ -508,6 +575,7 @@ def emit_sdk_worker_orphaned(
     timeout_s: float,
     bridge_aborted: bool,
 ) -> None:
+    """Publish orphaned-worker failure when the bridge exits without a clean closeout."""
     _emit(
         FrontierSdkWorkerOrphaned(
             dispatch_id=dispatch_id,
@@ -539,6 +607,7 @@ def emit_sdk_worker_failed(
     worker_error_code: str | None = None,
     detail_summary: str | None = None,
 ) -> None:
+    """Publish structured worker-runtime failure with layer and error code detail."""
     _emit(
         FrontierSdkWorkerFailed(
             dispatch_id=dispatch_id,
@@ -561,6 +630,7 @@ def emit_sdk_worker_delivery_failed(
     result_bytes: int,
     sidecar_ref: str,
 ) -> None:
+    """Publish closeout delivery failure when the bus/sidecar post does not succeed."""
     _emit(
         FrontierSdkWorkerDeliveryFailed(
             dispatch_id=dispatch_id,
@@ -614,6 +684,7 @@ def emit_sdk_closeout_relocated(
     body_chars: int,
     tier: str,
 ) -> None:
+    """Publish closeout body relocation to a durable URI when inline size exceeds limits."""
     _emit(
         FrontierSdkCloseoutRelocated(
             dispatch_id=dispatch_id,

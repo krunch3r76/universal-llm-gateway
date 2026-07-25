@@ -11,3 +11,9 @@ class OverReleaseError(RuntimeError):
     """Raised when release() called more times than acquire()."""
 
     pass
+
+
+class TransferHolderError(RuntimeError):
+    """Raised when transfer_holder() is called with a non-holder from_id."""
+
+    pass

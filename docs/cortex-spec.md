@@ -9,8 +9,8 @@ This document is the read-model layer. The **write-time discipline** that sits o
 top of it — auditor-validatability, cross-model independence, forward-looking
 provenance — is specified separately in:
 
-- [`docs/architecture/cortex-provenance-substrate-v1.md`](architecture/cortex-provenance-substrate-v1.md) — universal provenance discipline
-- [`docs/architecture/entity-backed-claim-provenance.md`](architecture/entity-backed-claim-provenance.md) — first domain instantiation (authored artifacts)
+- [`docs/architecture/design/cortex-provenance-substrate-v1.md`](architecture/design/cortex-provenance-substrate-v1.md) — universal provenance discipline
+- [`docs/architecture/design/entity-backed-claim-provenance.md`](architecture/design/entity-backed-claim-provenance.md) — first domain instantiation (authored artifacts)
 
 Where those specs reference `spec:cortex-v2.4` (the read model) or
 `document:cortex-v3-spec` (the v3 additions), **this document is that reference.**

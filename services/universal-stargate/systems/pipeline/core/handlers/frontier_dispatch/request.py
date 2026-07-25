@@ -75,10 +75,20 @@ def translate_reasoning_effort(
 
 
 def normalize_frontier_wire_model(model: str) -> str:
-    """Prefix bare cloud ids (e.g. gpt-5.5) before provider routing."""
-    from model_id import resolve_wire_model_id
+    """Prefix bare cloud ids (e.g. gpt-5.5) before provider routing.
 
-    return resolve_wire_model_id(model, require_cloud=True).wire_id
+    Agent substrates (``cursor/``, ``cdp/``) resolve successfully but are
+    rejected here — frontier_dispatch is the cloud native-loop path.
+    """
+    from model_id import (
+        require_cloud_api_backend,
+        resolve_wire_model_id,
+    )
+
+    return require_cloud_api_backend(
+        resolve_wire_model_id(model, require_cloud=True),
+        capability="frontier_dispatch",
+    ).wire_id
 
 
 async def resolve_model(

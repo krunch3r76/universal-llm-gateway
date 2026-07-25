@@ -26,6 +26,7 @@ class CursorDispatchRequest(BaseModel):
     close_contract: Literal["lead", "auto"] = "auto"
     force: bool = False
     source_ref: str | None = None
+    nest_under: str | None = None
 
     @model_validator(mode="after")
     def _packet_xor_message(self) -> CursorDispatchRequest:

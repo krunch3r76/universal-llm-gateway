@@ -146,10 +146,18 @@ async def run_native_tool_loop(
 
     Raises:
         ValueError if provider has no native path or no API key configured.
+        SubstrateCapabilityUnimplementedError for ``cursor/`` / ``cdp/`` models.
     """
-    from model_id import resolve_wire_model_id
+    from model_id import (
+        require_cloud_api_backend,
+        resolve_wire_model_id,
+    )
 
-    model = resolve_wire_model_id(model, require_cloud=True).wire_id
+    resolution = require_cloud_api_backend(
+        resolve_wire_model_id(model, require_cloud=True),
+        capability="native_loop",
+    )
+    model = resolution.wire_id
     parsed = ModelId.parse(model)
     provider = effective_provider_for_model(parsed.provider, model=model)
     path = NATIVE_PATHS.get(provider)

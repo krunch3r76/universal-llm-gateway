@@ -8,7 +8,7 @@ processes across windows on the next-gated-pickup the charter tick re-admits.
 Unlike the one-gated-step generate packet, the autonomous window is authorized to
 act as a background lead: decompose the arc into gated G-rows, dispatch sub-legs,
 fire R-admit via consult_role: r_admit CONSULT_PENDING (consult seat owns primary
-``team_dispatch(model=cdp/opus-4.8)``; MCP ``project_ask`` = escape), restart
+``team_dispatch(model=cdp/opus-5)``; MCP ``project_ask`` = escape), restart
 services for deploy-verify, and run a capped revise loop. The substrate separation
 for R-admit is the sole thing that keeps autonomous R honest (autonomous !=
 self-certify); see ``cortex://notes/system/specs/autonomous-path-sim-charter.md``.
@@ -64,9 +64,13 @@ revise — NOT the one-gated-step-then-stop generate default.
 [R-independence] R-admit MUST be hosted on a consult seat with consult_role: r_admit
 — the autonomous holder posts CONSULT_PENDING at G3 and STOPs; it must NOT fire
 R-admit transport from this window. The consult seat owns primary submit→poll→E2
-via team_dispatch(model=cdp/opus-4.8) (web-anthropic Opus). MCP project_ask =
+via team_dispatch(model=cdp/opus-5) (web-anthropic Opus). MCP project_ask =
 escape only. Autonomous ≠ self-certify. Never collapse R-admit into your own
 self-assessment.
+[sealed-unattended] When pinning the R prompt URI at G3, the prompt body MUST
+include the sealed unattended clause (a:26156): answer with best judgment;
+state assumptions; ¬ clarifying questions; ¬ wait for a human. Cowork Qs
+false-complete sealed harvests — ¬ expect charter auto-reply.
 [IF6-escape] holder-fired R-admit (direct project_ask from worker) remains the
 dual-host emergency path; do not delete or disable that path in code.
 [restart-auth] service restart for deploy-verify is EXPLICITLY authorized here,
@@ -85,6 +89,11 @@ step (increment revise counter). Worker crash/timeout ⇒ STOP root via worker_f
 never mask a crash as a probe revise.
 [window] end this window with exactly one CHECKPOINT, then stop. The next tick
 admits the next gated step. Do NOT run an immortal loop inside one window.
+[checkpoint-contract] worker closeout ``status=complete`` without a root
+CHECKPOINT after the WIP admission pointer is a contract breach
+(``checkpoint_missing``). The autonomous runner self-heals by posting a
+machine CHECKPOINT that re-queues Next-pickup — but you MUST still post the
+R12 CHECKPOINT yourself before closeout; do not rely on self-heal.
 [consult-boundary] when judgment/ambitious work needs external consult, post
 CONSULT_PENDING with consult_role: judgment_gap (pin Question/OOS + corpus manifest)
 or consult_role: r_admit at G3 (pin R prompt URI) and STOP — never nested
@@ -93,11 +102,30 @@ next tick admits a separate cross-family consult seat).
 [consult-depth] consult seats are single-round (depth-1); they cannot dispatch
 further consults. Resume worker windows only after consult provenance is on the
 root CHECKPOINT / todo attrs.
+[closeout-next-pickup] Closeout / R-after / arc-close CHECKPOINT Next-pickup MUST
+include a gated token (`G\\d+`/`R\\d+` or allowlisted CLOSEOUT/arc-close). Canonical:
+`G6 — R-after …`. Bare `R-after` alone ⇒ no_gated_pickup → state-close (a:26092).
+[executor-lane] a Next-pickup row MAY declare `executor_lane: implement` to route
+the next window to the mechanical Composer implement bind, or `executor_lane:
+judgment` to hold the Grok bind. Declare `implement` ONLY for a G4-proper code
+edit whose work item is already implement-ready — the row (or Anchor) must name a
+single `todo:<slug>`, else the machine fails closed to judgment. Revise rows
+(G4a/G4b/G4c) stay judgment: probe-fail windows post a CHECKPOINT and no file
+change, which `contract=implement` would label degraded. Undeclared ⇒ G-ordinal
+heuristic, and anything ambiguous ⇒ judgment.
+[stale-r-corpus-sha] On CONSULT_PENDING + consult_role: r_admit, Sidecars MUST pin
+the live dense-spec hash on the **same row** as the dense-spec URI
+(`Dense spec: cortex://… · spec_sha256:<64-hex>`). Machine pre-fire refuses
+mismatch/missing/ambiguous/malformed/unreadable (reason=stale_r_corpus_sha).
+Refresh = holder re-fs.read → rewrite Sidecars same-row hash → re-CHECKPOINT;
+¬ consult-seat auto-rewrite (a:26095).
 {_DENSIFY_FLOOR}
 </invariants>"""
 
 
-def _task_guidance(*, root_id: str, work: str, scoreboard_line: str, revise_cap: int) -> str:
+def _task_guidance(
+    *, root_id: str, work: str, scoreboard_line: str, revise_cap: int
+) -> str:
     return f"""\
 <task_guidance>
 ## Resume step 0 (do first)
@@ -107,13 +135,13 @@ def _task_guidance(*, root_id: str, work: str, scoreboard_line: str, revise_cap:
 
 ## Autonomous arc (G-row decomposition — lay/advance on the scoreboard)
 G1  Q (L0)           cursor-sdk Grok — ranked question table + Question set.
-G2  A + Gate-2       cursor-sdk Composer — L1/L2 tables + dense spec
+G2  A + Gate-2       cursor-sdk Grok — L1/L2 tables + dense spec
                      (doc_validate gates 6/8/9) + implement_ready assertion.
 G3  R-admit          STOP with CONSULT_PENDING + consult_role: r_admit (pin R
                      prompt URI / dense spec on CHECKPOINT Sidecars). Do NOT
                      self-fire R-admit from this holder window — next tick admits
                      the R-admit consult seat which owns primary
-                     team_dispatch(model=cdp/opus-4.8)→poll_hint (from=cdp);
+                     team_dispatch(model=cdp/opus-5)→poll_hint (from=cdp);
                      MCP project_ask = escape only. Consult seat writes shared
                      provenance via consult_provenance_from_r_admit
                      (consultant_family=anthropic / consultant_substrate=web-anthropic).
@@ -143,7 +171,8 @@ above as that step requires. Stay inside the gated Next-pickup.
    A failed probe queues a revise step (≤{revise_cap}), it does not crash the window.
 4. A formal R12 CHECKPOINT is posted on agent-bus:{root_id} (from=cursor-sdk).
    Required sections inline: ## Steps, ## Frictions, ## Sidecars, WIP, Next-pickup,
-   Scoreboard URI, RESUME footer.
+   Scoreboard URI, RESUME footer. ``status=complete`` without this CHECKPOINT is
+   ``checkpoint_missing`` (autonomous self-heal will re-queue — do not rely on it).
 5. Scoreboard gated lane updated if a G-row status changed.
 6. Stop after the CHECKPOINT — no second window.
 
@@ -158,10 +187,10 @@ status on a recoverable probe fail — post a clean revise CHECKPOINT instead.
 def _corpus(root_id: str, scoreboard_uri: str | None) -> str:
     return f"""\
 <corpus>
-Charter root agent-bus:{root_id}. Scoreboard: {scoreboard_uri or '(see latest CHECKPOINT)'}.
+Charter root agent-bus:{root_id}. Scoreboard: {scoreboard_uri or "(see latest CHECKPOINT)"}.
 Latest CHECKPOINT on the root is the only state source.
 Design: cortex://notes/system/specs/autonomous-path-sim-charter.md.
-R-admit transport: primary team_dispatch(model=cdp/opus-4.8); MCP project_ask escape
+R-admit transport: primary team_dispatch(model=cdp/opus-5); MCP project_ask escape
 (docs/tool-reference.md § project_ask / cdp model-endpoint).
 </corpus>"""
 
@@ -186,6 +215,22 @@ NOT a failure status. Then stop. Agent for friction filing: cursor-sdk.
 </output_format>"""
 
 
+def _front_matter(source_ref: str | None) -> str:
+    """YAML front matter carrying ``source_ref`` for the implement gate.
+
+    ``generate_wrap.prepare_implement_packet`` resolves the readiness gate's
+    ``source_ref`` from packet front matter and **discards** the body value, and
+    ``frontmatter_value`` returns ``None`` when there is no ``---`` region at
+    all — at which point ``require_implement_ready`` short-circuits and the
+    window runs with no triage check, no implement-ready assertion, and no
+    ``spec_sha256``. An implement-lane packet must therefore always be stamped;
+    ``executor_routing`` refuses the implement lane when no ref resolves.
+    """
+    if not source_ref:
+        return ""
+    return f"---\nsource_ref: {source_ref}\n---\n"
+
+
 def materialize_autonomous_packet(
     root_id: str,
     parsed: ParsedCheckpoint,
@@ -193,6 +238,7 @@ def materialize_autonomous_packet(
     scoreboard_uri: str | None = None,
     window_index: int = 1,
     revise_cap: int = REVISE_CAP_DEFAULT,
+    source_ref: str | None = None,
 ) -> str:
     """Return a background-lead six-block packet (write to disk before dispatch).
 
@@ -200,6 +246,8 @@ def materialize_autonomous_packet(
     the full path-sim arc as a background lead — including firing R-admit on the
     web-anthropic Opus substrate via ``project_ask`` and restarting services for
     deploy-verify — while keeping the one-CHECKPOINT-per-window boundary.
+
+    ``source_ref`` stamps front matter for an implement-lane window.
     """
     scoreboard_line = (
         f"read the scoreboard gated lane at {scoreboard_uri}, then "
@@ -218,7 +266,7 @@ def materialize_autonomous_packet(
     corpus = _corpus(root_id, scoreboard_uri)
     output = _output_format(root_id)
     return f"""\
-{scope}
+{_front_matter(source_ref)}{scope}
 {invariants}
 {task}
 {corpus}
@@ -247,13 +295,15 @@ def select_packet(
     window_index: int,
     admission_mode: str,
     consult_role: str | None = None,
+    source_ref: str | None = None,
 ) -> tuple[str, str]:
     """Return ``(packet_body, bus_subject)`` for the given admission mode.
 
     ``autonomous`` yields the background-lead packet; ``consult`` yields the
     depth-1 consult seat packet (judgment vs R-admit by ``consult_role``);
     ``generate``/``handoff`` defer to the unchanged ``materialize_resume_packet``
-    + ``handoff_subject``.
+    + ``handoff_subject``. ``source_ref`` stamps implement-lane front matter and
+    is passed only on the autonomous path.
     """
     if admission_mode == "consult":
         packet = materialize_consult_packet(
@@ -263,7 +313,11 @@ def select_packet(
         return packet, consult_subject(root_id, window_index, consult_role=role)
     if admission_mode == "autonomous":
         packet = materialize_autonomous_packet(
-            root_id, parsed, scoreboard_uri=scoreboard_uri, window_index=window_index
+            root_id,
+            parsed,
+            scoreboard_uri=scoreboard_uri,
+            window_index=window_index,
+            source_ref=source_ref,
         )
         return packet, autonomous_subject(root_id, window_index)
     packet = materialize_resume_packet(
@@ -274,5 +328,7 @@ def select_packet(
         admission_mode=admission_mode,  # type: ignore[arg-type]
     )
     return packet, handoff_subject(
-        root_id, window_index, admission_mode=admission_mode  # type: ignore[arg-type]
+        root_id,
+        window_index,
+        admission_mode=admission_mode,  # type: ignore[arg-type]
     )

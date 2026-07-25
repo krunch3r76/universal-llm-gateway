@@ -454,12 +454,27 @@ async def build_dispatch_body(
     effective_model = _resolve_pre_hydration_effective_model(
         req, request_id=request_id
     )
-    if ModelId.parse(effective_model).backend_type == "cdp":
-        from .cdp_generate import build_cdp_pipeline_dispatch_body
-
-        return build_cdp_pipeline_dispatch_body(
-            model=effective_model, request_id=request_id
+    if ModelId.parse(effective_model).backend_type in {"cdp", "cursor_sdk"}:
+        from model_id import (
+            SubstrateCapabilityUnimplementedError,
+            require_cloud_api_backend,
+            resolve_wire_model_id,
         )
+
+        try:
+            require_cloud_api_backend(
+                resolve_wire_model_id(effective_model, require_cloud=True),
+                capability="pipeline_dispatch_admission",
+            )
+        except SubstrateCapabilityUnimplementedError as exc:
+            raise FrontierEndpointError(
+                request_id=request_id,
+                field="model",
+                reason=str(exc),
+                status_code=501,
+                code="substrate_capability_unimplemented",
+                details=exc.to_dict(),
+            ) from exc
     # CC-only models have no Responses-native capability card; they route via
     # chat-dispatch respond_cc (generate → /v1/chat/completions). Role-carrying
     # rejects immediately (persona-free envelope only). Role-less skips the

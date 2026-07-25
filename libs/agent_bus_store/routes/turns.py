@@ -8,6 +8,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from ..auth import require_token
+from ..body_auto_spill import prepare_body_for_insert, spill_error_http
 from ..db import (
     TurnAlreadyAcknowledged,
     UnreadTurnsExist,
@@ -40,7 +41,6 @@ from ..turns_models import (
     UnreadThreadTocRow,
     active_since_window_label,
     parse_active_since,
-    turn_body_limit_error,
 )
 
 router = APIRouter(dependencies=[Depends(require_token)])
@@ -78,14 +78,20 @@ def _turn_from_row(r: dict[str, Any]) -> Turn:
 async def create_turn(turn: TurnCreate) -> TurnCreated:
     """Create one turn, enforcing unread and status invariants from storage logic."""
     turn.thread = normalize_thread_id(turn.thread)
-    if error_detail := turn_body_limit_error(
-        turn.body,
-        allow_long_body=turn.allow_long_body,
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=error_detail,
+    try:
+        prepared = prepare_body_for_insert(
+            thread=turn.thread,
+            subject=turn.subject,
+            body=turn.body,
+            from_agent=turn.from_agent,
+            allow_long_body=turn.allow_long_body,
         )
+    except Exception as exc:
+        mapped = spill_error_http(exc, thread_id=turn.thread)
+        if mapped is None:
+            raise
+        status_code, detail = mapped
+        raise HTTPException(status_code=status_code, detail=detail) from exc
     att_dicts = [a.model_dump() for a in turn.attachments] if turn.attachments else None
     try:
         turn_id, ts, turn_number = insert_turn(
@@ -93,7 +99,7 @@ async def create_turn(turn: TurnCreate) -> TurnCreated:
             from_agent=turn.from_agent,
             to_agent=turn.to,
             subject=turn.subject,
-            body=turn.body,
+            body=prepared.body,
             status=turn.status,
             thread_slug=turn.thread_slug,
             after_turn=turn.after_turn,
@@ -114,7 +120,7 @@ async def create_turn(turn: TurnCreate) -> TurnCreated:
         loop.run_in_executor(
             None,
             lambda: _maybe_trigger_implement_closeout(
-                thread=turn.thread, body=turn.body
+                thread=turn.thread, body=prepared.body
             ),
         )
     except Exception:
@@ -143,6 +149,8 @@ async def create_turn(turn: TurnCreate) -> TurnCreated:
         thread=turn.thread,
         turn_number=turn_number,
         created_at=datetime.fromisoformat(ts),
+        sidecar_uri=prepared.sidecar_uri,
+        sidecar_sha256=prepared.sidecar_sha256,
     )
 
 

@@ -15,7 +15,7 @@ from .anthropic_override_gate import (
 )
 from .service import FrontierGenerateRequest, build_dispatch_body
 
-_OPUS = "anthropic/claude-opus-4-8"
+_OPUS = "anthropic/claude-opus-5"
 _DISPATCH_THREAD = "test-dispatch-thread"
 
 
@@ -55,6 +55,7 @@ def test_in_family_anthropic_profile_admits() -> None:
         model=_OPUS,
         profile_provider="anthropic",
         profile_allowed_models=(
+            "anthropic/claude-opus-5",
             "anthropic/claude-opus-4-8",
             "anthropic/claude-sonnet-4-6",
         ),

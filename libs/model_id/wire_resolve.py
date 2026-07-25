@@ -5,6 +5,11 @@ dispatch, and any path
 that routes through ``ModelId`` + ``effective_provider_for_model``. Bare IDs
 like ``gpt-5.5`` must not fall through to a default provider (historically
 Anthropic) — they are either prefixed here or rejected pre-dispatch.
+
+Agent substrates (``cursor/``, ``cdp/``) are first-class peers — never
+``Unknown provider``. Cloud-only call sites must raise
+:class:`SubstrateCapabilityUnimplementedError` when they cannot serve those
+backends.
 """
 
 from __future__ import annotations
@@ -17,6 +22,10 @@ from .model_id import ROUTING_PREFIXES, ModelId, infer_cloud_provider_from_bare
 KNOWN_CLOUD_PROVIDERS = frozenset(
     {"openai", "anthropic", "xai", "google", "chatgpt"}
 )
+
+# Async agent substrates — peer spawn endpoints, not cloud Messages/Responses.
+# ``cursor`` → backend_type cursor_sdk; ``cdp`` → backend_type cdp.
+AGENT_SUBSTRATE_PROVIDERS = frozenset({"cursor", "cdp"})
 
 # Heuristic markers for local gateway model IDs (not cloud aliases).
 _LOCAL_ID_INDICATORS = frozenset(
@@ -43,6 +52,7 @@ class WireModelResolution:
     wire_id: str
     provider: str | None
     was_bare: bool
+    backend_type: str | None = None
 
 
 class WireModelResolutionError(ValueError):
@@ -52,6 +62,42 @@ class WireModelResolutionError(ValueError):
         self.model_id = model_id
         self.reason = reason
         super().__init__(reason)
+
+
+class SubstrateCapabilityUnimplementedError(ValueError):
+    """Known substrate cannot serve the requested capability yet.
+
+    Prefer this over treating ``cursor/`` or ``cdp/`` as unknown providers.
+    """
+
+    def __init__(
+        self,
+        *,
+        substrate: str,
+        capability: str,
+        reason: str,
+        model_id: str | None = None,
+    ) -> None:
+        self.substrate = substrate
+        self.capability = capability
+        self.reason = reason
+        self.model_id = model_id
+        msg = (
+            f"substrate_capability_unimplemented: substrate={substrate!r} "
+            f"capability={capability!r} — {reason}"
+        )
+        if model_id:
+            msg = f"{msg} (model={model_id!r})"
+        super().__init__(msg)
+
+    def to_dict(self) -> dict[str, str | None]:
+        return {
+            "code": "substrate_capability_unimplemented",
+            "substrate": self.substrate,
+            "capability": self.capability,
+            "reason": self.reason,
+            "model_id": self.model_id,
+        }
 
 
 def _strip_effort_suffix(model_id: str) -> str:
@@ -82,6 +128,7 @@ def _validate_prefixed_id(model_id: str) -> WireModelResolution:
             wire_id=model_id,
             provider=routing_layer,
             was_bare=False,
+            backend_type=parsed.backend_type,
         )
     if parsed.provider is None:
         raise WireModelResolutionError(
@@ -92,15 +139,37 @@ def _validate_prefixed_id(model_id: str) -> WireModelResolution:
             ),
         )
     provider = parsed.provider.lower()
+    if provider in AGENT_SUBSTRATE_PROVIDERS:
+        _, _, picker = model_id.partition("/")
+        if not picker.strip():
+            raise WireModelResolutionError(
+                model_id,
+                (
+                    f"Agent substrate id {model_id!r} requires a non-empty picker "
+                    f"(e.g. cdp/opus-5, cursor/claude-opus-5)."
+                ),
+            )
+        return WireModelResolution(
+            wire_id=model_id,
+            provider=provider,
+            was_bare=False,
+            backend_type=parsed.backend_type,
+        )
     if provider not in KNOWN_CLOUD_PROVIDERS:
         raise WireModelResolutionError(
             model_id,
             (
                 f"Unknown provider prefix {provider!r} in {model_id!r}. "
-                f"Known providers: {sorted(KNOWN_CLOUD_PROVIDERS)}."
+                f"Known providers: {sorted(KNOWN_CLOUD_PROVIDERS)}; "
+                f"agent substrates: {sorted(AGENT_SUBSTRATE_PROVIDERS)}."
             ),
         )
-    return WireModelResolution(wire_id=model_id, provider=provider, was_bare=False)
+    return WireModelResolution(
+        wire_id=model_id,
+        provider=provider,
+        was_bare=False,
+        backend_type=parsed.backend_type or "cloud_api",
+    )
 
 
 def resolve_wire_model_id(
@@ -108,11 +177,13 @@ def resolve_wire_model_id(
     *,
     require_cloud: bool = False,
 ) -> WireModelResolution:
-    """Normalize a model id for frontier/cloud dispatch wiring.
+    """Normalize a model id for frontier/cloud/agent-substrate dispatch wiring.
 
     Args:
         model_id: Caller-supplied id (bare or ``provider/model``).
         require_cloud: When True, reject ids that look like local gateway models.
+            Agent substrates (``cursor/``, ``cdp/``) are still admitted — they
+            are not local gateway ids.
 
     Returns:
         WireModelResolution with prefixed ``wire_id`` when inference applied.
@@ -135,7 +206,12 @@ def resolve_wire_model_id(
     provider = infer_cloud_provider_from_bare(work)
     if provider is not None:
         wire_id = f"{provider}/{work}"
-        return WireModelResolution(wire_id=wire_id, provider=provider, was_bare=True)
+        return WireModelResolution(
+            wire_id=wire_id,
+            provider=provider,
+            was_bare=True,
+            backend_type="cloud_api",
+        )
 
     if _looks_like_local_model_id(work):
         if require_cloud:
@@ -146,7 +222,9 @@ def resolve_wire_model_id(
                     "frontier model. Use provider/model (e.g. openai/gpt-5.5)."
                 ),
             )
-        return WireModelResolution(wire_id=work, provider=None, was_bare=False)
+        return WireModelResolution(
+            wire_id=work, provider=None, was_bare=False, backend_type=None
+        )
 
     raise WireModelResolutionError(
         work,
@@ -156,6 +234,28 @@ def resolve_wire_model_id(
             "gpt-*, claude-*, grok-*, gemini-*."
         ),
     )
+
+
+def require_cloud_api_backend(
+    resolution: WireModelResolution,
+    *,
+    capability: str,
+) -> WireModelResolution:
+    """Admit only cloud_api backends; raise for cursor/cdp with a clear code."""
+    backend = resolution.backend_type
+    provider = (resolution.provider or "").lower()
+    if backend in {"cursor_sdk", "cdp"} or provider in AGENT_SUBSTRATE_PROVIDERS:
+        substrate = "cdp" if backend == "cdp" or provider == "cdp" else "cursor"
+        raise SubstrateCapabilityUnimplementedError(
+            substrate=substrate,
+            capability=capability,
+            reason=(
+                f"{capability} is cloud-API-only; use team_dispatch/spawn "
+                f"(model={resolution.wire_id!r}) for async agent substrates"
+            ),
+            model_id=resolution.wire_id,
+        )
+    return resolution
 
 
 def require_cloud_provider(

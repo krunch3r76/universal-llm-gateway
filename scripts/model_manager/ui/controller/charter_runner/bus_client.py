@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import UTC, datetime
 from typing import Any
 
 from transport_utils import DEFAULT_AGENT_BUS_URL, make_async_client
@@ -57,12 +58,15 @@ async def post_admission_pointer(
     posted_at_iso: str,
     worker_thread: str = "",
     packet_path: str = "",
+    admission_mode: str = "",
 ) -> dict[str, Any]:
     """Post the in-flight marker turn on the root (after a successful handoff).
 
     A later CHECKPOINT past this turn clears the in-flight state; a soft
     ``waiting_open`` remind (not auto-fail) covers operator-open latency.
     ``worker_thread`` / ``packet_path`` feed the /tmp transcript closeout harvest.
+    ``admission_mode`` is the mode armed at fire time (self-heal reads this, not
+    the live env, so mid-arc mode flips cannot heal an attended window).
     """
     meta = {
         "charter_runner": True,
@@ -70,6 +74,7 @@ async def post_admission_pointer(
         "posted_at": posted_at_iso,
         "worker_thread": worker_thread,
         "packet_path": packet_path,
+        "admission_mode": admission_mode,
     }
     body = json.dumps(meta, separators=(",", ":"))
     payload = {
@@ -77,6 +82,27 @@ async def post_admission_pointer(
         "from": _RUNNER_AGENT,
         "to": "cursor",
         "subject": f"{ADMISSION_SUBJECT_PREFIX} window {window_index}",
+        "body": body,
+    }
+    async with make_async_client(DEFAULT_AGENT_BUS_URL, timeout=_TIMEOUT_S) as client:
+        resp = await client.post("/threads/send", json=payload, headers=_auth_headers())
+        resp.raise_for_status()
+        return dict(resp.json())
+
+
+async def post_root_checkpoint(
+    root_id: str,
+    *,
+    subject: str,
+    body: str,
+    to: str = "charter-runner",
+) -> dict[str, Any]:
+    """Post a CHECKPOINT turn on the charter root (clears in-flight after WIP)."""
+    payload = {
+        "thread": root_id,
+        "from": _RUNNER_AGENT,
+        "to": to,
+        "subject": subject,
         "body": body,
     }
     async with make_async_client(DEFAULT_AGENT_BUS_URL, timeout=_TIMEOUT_S) as client:
@@ -103,6 +129,57 @@ async def close_worker_thread(
         return dict(resp.json())
 
 
+async def close_root_thread(root_id: str, *, summary: str) -> dict[str, Any]:
+    """Close an enrolled charter **root** thread (not a worker window).
+
+    Uses the same PATCH ``/threads/{id}/close`` shape as ``close_worker_thread``
+    (``summary``, ``mark_all_read=True``). Side effect: mutates bus thread
+    status to closed so the root leaves the active enrolled set after unenroll.
+    """
+    payload = {
+        "summary": summary,
+        "mark_all_read": True,
+    }
+    async with make_async_client(DEFAULT_AGENT_BUS_URL, timeout=_TIMEOUT_S) as client:
+        resp = await client.patch(
+            f"/threads/{root_id}/close",
+            json=payload,
+            headers=_auth_headers(),
+        )
+        resp.raise_for_status()
+        return dict(resp.json())
+
+
+async def unenroll_root(root_id: str) -> dict[str, Any]:
+    """Strip ``charter-runner`` from root tags via read-modify-write PATCH.
+
+    Fetches the thread, removes ``ENROLLMENT_TAG`` from the tags list, then
+    replaces tags with the PATCH update. Idempotent when the tag is already
+    absent. Returns ``{tags, unenrolled}`` where ``unenrolled`` is True iff
+    the enrollment tag is absent after the PATCH (do not use ``bool(dict)``).
+    """
+    detail = await fetch_thread(root_id)
+    tags = list(detail.get("tags") or [])
+    if ENROLLMENT_TAG in tags:
+        tags = [t for t in tags if t != ENROLLMENT_TAG]
+        async with make_async_client(
+            DEFAULT_AGENT_BUS_URL, timeout=_TIMEOUT_S
+        ) as client:
+            resp = await client.patch(
+                f"/threads/{root_id}",
+                json={"tags": tags},
+                headers=_auth_headers(),
+            )
+            resp.raise_for_status()
+            detail = dict(resp.json())
+            # Some bus shapes nest the thread under a key; normalize tags.
+            if "tags" not in detail and isinstance(detail.get("thread"), dict):
+                detail = dict(detail["thread"])
+            tags = list(detail.get("tags") or tags)
+    unenrolled = ENROLLMENT_TAG not in tags
+    return {"tags": tags, "unenrolled": unenrolled}
+
+
 async def fetch_thread(thread_id: str) -> dict[str, Any]:
     """Fetch one thread detail (status, summary, …)."""
     async with make_async_client(DEFAULT_AGENT_BUS_URL, timeout=_TIMEOUT_S) as client:
@@ -114,12 +191,8 @@ async def fetch_thread(thread_id: str) -> dict[str, Any]:
         return dict(resp.json())
 
 
-def closeout_status_from_turns(turns: list[dict[str, Any]]) -> str | None:
-    """Latest machine-closeout ``status`` from worker turns, if present.
-
-    Cursor-sdk / dispatch closeouts post a JSON body with a ``status`` field
-    (``complete`` | ``partial`` | ``failed`` | ``timeout``). Newest turn wins.
-    """
+def closeout_turn_from_turns(turns: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Latest machine-closeout turn (JSON body with ``status``), if present."""
     ordered = sorted(
         turns,
         key=lambda t: int(t.get("turn_number") or 0),
@@ -134,8 +207,44 @@ def closeout_status_from_turns(turns: list[dict[str, Any]]) -> str | None:
         except (ValueError, TypeError):
             continue
         if isinstance(data, dict) and "status" in data:
-            return str(data["status"]).strip().lower()
+            return turn
     return None
+
+
+def closeout_status_from_turns(turns: list[dict[str, Any]]) -> str | None:
+    """Latest machine-closeout ``status`` from worker turns, if present.
+
+    Cursor-sdk / dispatch closeouts post a JSON body with a ``status`` field
+    (``complete`` | ``partial`` | ``failed`` | ``timeout``). Newest turn wins.
+    """
+    turn = closeout_turn_from_turns(turns)
+    if turn is None:
+        return None
+    try:
+        data = json.loads(str(turn.get("body") or "").strip())
+    except (ValueError, TypeError):
+        return None
+    if isinstance(data, dict) and "status" in data:
+        return str(data["status"]).strip().lower()
+    return None
+
+
+def closeout_posted_at_from_turns(turns: list[dict[str, Any]]) -> datetime | None:
+    """Timestamp of the latest machine-closeout turn, if parseable."""
+    turn = closeout_turn_from_turns(turns)
+    if turn is None:
+        return None
+    raw = turn.get("created_at") or turn.get("posted_at")
+    if not raw:
+        return None
+    try:
+        text = str(raw).replace("Z", "+00:00")
+        dt = datetime.fromisoformat(text)
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=UTC)
+        return dt
+    except (TypeError, ValueError):
+        return None
 
 
 async def worker_failure_reason(worker_thread: str) -> str | None:
@@ -143,7 +252,8 @@ async def worker_failure_reason(worker_thread: str) -> str | None:
 
     - Closeout body ``status ∈ {failed, timeout}`` → that status.
     - Thread ``status == closed`` with no successful closeout → ``worker_closed``.
-    - Otherwise ``None`` (still running / completed successfully).
+    - Otherwise ``None`` (still running, or success-shaped — see self_heal for
+      ``checkpoint_missing`` when complete/partial lacks a root CHECKPOINT).
     """
     if not worker_thread:
         return None

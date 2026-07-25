@@ -37,9 +37,16 @@ _SANDBOX_ROOTS: dict[str, Path] = {
 }
 
 
-def _resolve_sandbox_path(sandbox: str, relative: str) -> tuple[Path, str]:
+def _resolve_sandbox_path(
+    sandbox: str, relative: str, *, for_write: bool = False
+) -> tuple[Path, str]:
     """Resolve path via shared ingress; return (absolute, sandbox-relative rel)."""
-    ingress = resolve_fs_ingress(relative, sandbox=sandbox)
+    ingress = resolve_fs_ingress(
+        relative,
+        sandbox=sandbox,
+        cortex_root=_SANDBOX_ROOTS["cortex"],
+        for_write=for_write,
+    )
     if ingress.sandbox != sandbox:
         raise ValueError(
             f"Path {relative!r} resolves to sandbox {ingress.sandbox!r}, "
@@ -68,8 +75,8 @@ def copy_between_sandboxes_impl(
             "Cross-sandbox copy requires different source and target sandboxes"
         )
 
-    src, src_rel = _resolve_sandbox_path(source_sandbox, source)
-    dst, dst_rel = _resolve_sandbox_path(target_sandbox, destination)
+    src, src_rel = _resolve_sandbox_path(source_sandbox, source, for_write=False)
+    dst, dst_rel = _resolve_sandbox_path(target_sandbox, destination, for_write=True)
     if not src.exists():
         raise FileNotFoundError(f"Source not found: {source!r}")
     if not src.is_file():

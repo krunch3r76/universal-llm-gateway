@@ -22,8 +22,8 @@ logger = logging.getLogger(__name__)
 def move_file_impl(source: str, destination: str) -> dict[str, str]:
     """Move or rename a file within the sandbox."""
     reject_template_tokens(destination)
-    src = safe_path(source)
-    dst = safe_path(destination)
+    src = safe_path(source, for_write=False)
+    dst = safe_path(destination, for_write=True)
     if not src.exists():
         raise FileNotFoundError(f"Source not found: {source!r}")
     if not src.is_file():
@@ -45,8 +45,8 @@ def move_file_impl(source: str, destination: str) -> dict[str, str]:
 def copy_file_impl(source: str, destination: str) -> dict[str, str]:
     """Copy a file within the sandbox."""
     reject_template_tokens(destination)
-    src = safe_path(source)
-    dst = safe_path(destination)
+    src = safe_path(source, for_write=False)
+    dst = safe_path(destination, for_write=True)
     if not src.exists():
         raise FileNotFoundError(f"Source not found: {source!r}")
     if not src.is_file():
@@ -67,7 +67,7 @@ def copy_file_impl(source: str, destination: str) -> dict[str, str]:
 
 def remove_directory_impl(directory: str) -> dict[str, str]:
     """Remove a directory and all its contents from the sandbox."""
-    target = safe_path(directory)
+    target = safe_path(directory, for_write=True)
     if not target.exists():
         raise FileNotFoundError(f"Directory not found: {directory!r}")
     if not target.is_dir():
@@ -83,7 +83,7 @@ def remove_directory_impl(directory: str) -> dict[str, str]:
 
 def delete_file_impl(path: str) -> dict[str, str]:
     """Soft-delete a file by moving it to the sandbox trash/ directory."""
-    target = safe_path(path)
+    target = safe_path(path, for_write=True)
     if not target.exists():
         raise FileNotFoundError(f"File not found: {path!r}")
     if not target.is_file():

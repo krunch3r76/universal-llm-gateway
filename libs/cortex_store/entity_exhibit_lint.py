@@ -1,6 +1,6 @@
 """Exhibit entity write-time invariants (spec § 1.3).
 
-Per docs/architecture/entity-backed-claim-provenance.md § 1.3, every
+Per docs/architecture/design/entity-backed-claim-provenance.md § 1.3, every
 ``exhibit:`` entity carries a **required** ``belongs_to`` relationship
 to its parent ``case:`` — created at write time, not optional. The
 enforcement runs inside ``entity_crud.create_entity_impl`` against the

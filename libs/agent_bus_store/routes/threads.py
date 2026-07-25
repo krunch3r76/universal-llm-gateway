@@ -8,6 +8,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from ..auth import require_token
+from ..body_auto_spill import PreparedBody, prepare_body_for_insert, spill_error_http
 from ..db import (
     PendingShellContention,
     SlugExists,
@@ -35,6 +36,7 @@ from ..db import (
     update_thread,
 )
 from ..db.turns import UnreadTurnsExist
+from ..enrollment_guard import EnrollmentTagError, enrollment_denied_http
 from ..turns_models import (
     TRIAGE_THREAD_CAP,
     DispatchAdmit,
@@ -68,6 +70,38 @@ from ..turns_models import (
 )
 
 router = APIRouter(dependencies=[Depends(require_token)])
+
+
+def _spill_transformer(
+    *,
+    subject: str,
+    body: str,
+    from_agent: str,
+    allow_long_body: bool,
+    holder: dict[str, PreparedBody],
+):
+    """Build a create_thread_with_turn body_transformer that soft-spills."""
+
+    def _transform(thread_id: str) -> str:
+        prepared = prepare_body_for_insert(
+            thread=thread_id,
+            subject=subject,
+            body=body,
+            from_agent=from_agent,
+            allow_long_body=allow_long_body,
+        )
+        holder["prepared"] = prepared
+        return prepared.body
+
+    return _transform
+
+
+def _raise_spill_http(exc: BaseException, *, thread_id: str | None = None) -> None:
+    mapped = spill_error_http(exc, thread_id=thread_id)
+    if mapped is None:
+        raise exc
+    status_code, detail = mapped
+    raise HTTPException(status_code=status_code, detail=detail) from exc
 
 
 def _thread_detail(row: dict[str, Any]) -> ThreadDetail:
@@ -278,6 +312,14 @@ async def export_thread_route(thread_id: str) -> Response:
     )
 
 
+def _raise_enrollment_denied(exc: BaseException) -> None:
+    mapped = enrollment_denied_http(exc)
+    if mapped is None:
+        return
+    status_code, detail = mapped
+    raise HTTPException(status_code=status_code, detail=detail) from exc
+
+
 @router.post(
     "/threads",
     status_code=status.HTTP_201_CREATED,
@@ -287,13 +329,18 @@ async def create_thread_route(body: ThreadCreate) -> ThreadDetail:
     """Create one thread using explicit or auto-generated thread identifiers."""
     if body.id is not None:
         body.id = normalize_thread_id(body.id)
-    row = create_thread(
-        thread_id=body.id,
-        slug=body.slug,
-        summary=body.summary,
-        tags=body.tags,
-        lifecycle_state=body.lifecycle_state,
-    )
+    try:
+        row = create_thread(
+            thread_id=body.id,
+            slug=body.slug,
+            summary=body.summary,
+            tags=body.tags,
+            lifecycle_state=body.lifecycle_state,
+            enroll_charter_runner=body.enroll_charter_runner,
+        )
+    except EnrollmentTagError as exc:
+        _raise_enrollment_denied(exc)
+        raise
     if row is None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -316,15 +363,8 @@ async def create_thread_with_turn_route(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=error_detail,
         )
-    if error_detail := turn_body_limit_error(
-        body.body,
-        allow_long_body=body.allow_long_body,
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=error_detail,
-        )
     att_dicts = [a.model_dump() for a in body.attachments] if body.attachments else None
+    spill_holder: dict[str, PreparedBody] = {}
     try:
         thread_row, turn_id, ts, turn_number = create_thread_with_turn(
             slug=body.slug,
@@ -338,14 +378,34 @@ async def create_thread_with_turn_route(
             attachments=att_dicts,
             tags=body.tags,
             lifecycle_state=body.lifecycle_state,
+            enroll_charter_runner=body.enroll_charter_runner,
+            body_transformer=_spill_transformer(
+                subject=body.subject,
+                body=body.body,
+                from_agent=body.from_agent,
+                allow_long_body=body.allow_long_body,
+                holder=spill_holder,
+            ),
         )
-    except UnreadTurnsExist as e:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=e.to_detail(),
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as exc:
+        mapped = spill_error_http(exc)
+        if mapped is not None:
+            status_code, detail = mapped
+            raise HTTPException(status_code=status_code, detail=detail) from exc
+        if isinstance(exc, EnrollmentTagError):
+            _raise_enrollment_denied(exc)
+            raise
+        if isinstance(exc, UnreadTurnsExist):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=exc.to_detail(),
+            ) from exc
+        if isinstance(exc, ValueError):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+            ) from exc
+        raise
+    prepared = spill_holder.get("prepared")
     return ThreadWithTurnCreated(
         thread=_thread_detail(thread_row),
         turn=TurnCreated(
@@ -353,6 +413,8 @@ async def create_thread_with_turn_route(
             thread=thread_row["id"],
             turn_number=turn_number,
             created_at=datetime.fromisoformat(ts),
+            sidecar_uri=prepared.sidecar_uri if prepared else None,
+            sidecar_sha256=prepared.sidecar_sha256 if prepared else None,
         ),
     )
 
@@ -436,13 +498,18 @@ def _send_with_sidecar(body: TurnSendCreate) -> TurnSendCreated:
                         ),
                     },
                 )
-        thread_row = create_thread(
-            thread_id=None,
-            slug=body.new_slug,
-            summary=body.summary,
-            tags=body.tags or [],
-            lifecycle_state=body.lifecycle_state,
-        )
+        try:
+            thread_row = create_thread(
+                thread_id=None,
+                slug=body.new_slug,
+                summary=body.summary,
+                tags=body.tags or [],
+                lifecycle_state=body.lifecycle_state,
+                enroll_charter_runner=body.enroll_charter_runner,
+            )
+        except EnrollmentTagError as exc:
+            _raise_enrollment_denied(exc)
+            raise
         if thread_row is None:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -594,15 +661,8 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
         )
     if body.sidecar_content is not None:
         return _send_with_sidecar(body)
-    if error_detail := turn_body_limit_error(
-        body.body,
-        allow_long_body=body.allow_long_body,
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=error_detail,
-        )
     att_dicts = [a.model_dump() for a in body.attachments] if body.attachments else None
+    spill_holder: dict[str, PreparedBody] = {}
 
     if has_new_slug:
         if body.after_turn is not None and body.after_turn > 0:
@@ -637,29 +697,49 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
                 tags=body.tags or [],
                 lifecycle_state=body.lifecycle_state,
                 strict_slug=True,
+                enroll_charter_runner=body.enroll_charter_runner,
+                body_transformer=_spill_transformer(
+                    subject=body.subject,
+                    body=body.body,
+                    from_agent=body.from_agent,
+                    allow_long_body=body.allow_long_body,
+                    holder=spill_holder,
+                ),
             )
-        except SlugExists as e:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail={
-                    "error": "slug_exists",
-                    "slug": e.slug,
-                    "existing_thread_id": e.existing_thread_id,
-                    "message": (
-                        f"A thread with slug {e.slug!r} already exists "
-                        f"(thread {e.existing_thread_id}). "
-                        "Use send(thread=<id>, ...) to continue it or choose "
-                        "a different new_slug."
-                    ),
-                },
-            )
-        except UnreadTurnsExist as e:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=e.to_detail(),
-            )
-        except ValueError as e:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        except Exception as exc:
+            mapped = spill_error_http(exc)
+            if mapped is not None:
+                status_code, detail = mapped
+                raise HTTPException(status_code=status_code, detail=detail) from exc
+            if isinstance(exc, EnrollmentTagError):
+                _raise_enrollment_denied(exc)
+                raise
+            if isinstance(exc, SlugExists):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "error": "slug_exists",
+                        "slug": exc.slug,
+                        "existing_thread_id": exc.existing_thread_id,
+                        "message": (
+                            f"A thread with slug {exc.slug!r} already exists "
+                            f"(thread {exc.existing_thread_id}). "
+                            "Use send(thread=<id>, ...) to continue it or choose "
+                            "a different new_slug."
+                        ),
+                    },
+                ) from exc
+            if isinstance(exc, UnreadTurnsExist):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=exc.to_detail(),
+                ) from exc
+            if isinstance(exc, ValueError):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+                ) from exc
+            raise
+        prepared = spill_holder.get("prepared")
         return TurnSendCreated(
             send_path="new_thread",
             thread=_thread_detail(thread_row),
@@ -668,7 +748,11 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
                 thread=thread_row["id"],
                 turn_number=turn_number,
                 created_at=datetime.fromisoformat(ts),
+                sidecar_uri=prepared.sidecar_uri if prepared else None,
+                sidecar_sha256=prepared.sidecar_sha256 if prepared else None,
             ),
+            sidecar_uri=prepared.sidecar_uri if prepared else None,
+            sidecar_sha256=prepared.sidecar_sha256 if prepared else None,
         )
 
     if body.lifecycle_state is not None:
@@ -684,12 +768,23 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
 
     thread_id = normalize_thread_id(body.thread)
     try:
+        prepared = prepare_body_for_insert(
+            thread=thread_id,
+            subject=body.subject,
+            body=body.body,
+            from_agent=body.from_agent,
+            allow_long_body=body.allow_long_body,
+        )
+    except Exception as exc:
+        _raise_spill_http(exc, thread_id=thread_id)
+        raise  # pragma: no cover — _raise_spill_http always raises
+    try:
         thread_row, turn_id, ts, turn_number, marked_read = create_turn(
             thread_id=thread_id,
             from_agent=body.from_agent,
             to_agent=body.to,
             subject=body.subject,
-            body=body.body,
+            body=prepared.body,
             status=body.status,
             after_turn=body.after_turn,
             supersedes_turn=body.supersedes_turn,
@@ -715,8 +810,12 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
             thread=thread_id,
             turn_number=turn_number,
             created_at=datetime.fromisoformat(ts),
+            sidecar_uri=prepared.sidecar_uri,
+            sidecar_sha256=prepared.sidecar_sha256,
         ),
         marked_read=marked_read,
+        sidecar_uri=prepared.sidecar_uri,
+        sidecar_sha256=prepared.sidecar_sha256,
     )
 
 
@@ -744,9 +843,17 @@ async def close_thread_route(thread_id: str, body: ThreadClose) -> ThreadDetail:
 )
 async def update_thread_route(thread_id: str, body: ThreadUpdate) -> ThreadDetail:
     thread_id = normalize_thread_id(thread_id)
-    row = update_thread(
-        thread_id, status=body.status, summary=body.summary, tags=body.tags
-    )
+    try:
+        row = update_thread(
+            thread_id,
+            status=body.status,
+            summary=body.summary,
+            tags=body.tags,
+            enroll_charter_runner=body.enroll_charter_runner,
+        )
+    except EnrollmentTagError as exc:
+        _raise_enrollment_denied(exc)
+        raise
     if row is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

@@ -1,9 +1,9 @@
 """Serialize nested cursor-sdk dispatches under ``cursor_sdk_gate`` limit=1.
 
 When Auto holds the sole gate slot, a naive nested ``team_dispatch(cursor-sdk)``
-self-deadlocks (friction 25956). Prefer in-seat for bounded work; otherwise
-queue the nested admit until the holder releases — never block forever waiting
-on a second concurrent SDK admit while holding the sole slot.
+self-deadlocks (friction 25956). Prefer nest+wait+park (``nest_under``) so the
+parent parks, the child runs, then capacity restores — in-seat only when park is
+unavailable or the work is trivial/bounded.
 """
 
 from __future__ import annotations
@@ -17,16 +17,18 @@ from services.git_integration_worker.cursor_sdk_gate import sdk_dispatch_gate_st
 def should_run_in_seat(*, gate_limit: int | None = None) -> bool:
     """True when nested SDK admit would risk self-deadlock under limit=1.
 
-    Returns True when the gate is already at capacity (active >= limit) — the
-    caller should prefer in-seat work instead of nesting another SDK dispatch.
+    Prefer park (``nest_under``) when available. This helper remains for the
+    in-seat fallback when park is unavailable or work is trivial.
     """
     stats = sdk_dispatch_gate_stats()
     limit = gate_limit if gate_limit is not None else int(stats["limit"])
     return int(stats["active"]) >= limit
 
 
-def plan_nested_dispatch(*, work_bounded: bool) -> dict[str, Any]:
-    """Decide in-seat vs queue/serialize for a nested specialist dispatch.
+def plan_nested_dispatch(
+    *, work_bounded: bool, park_available: bool = True
+) -> dict[str, Any]:
+    """Decide nest+park vs in-seat vs dispatch-now for a nested specialist.
 
     Returns a disposition plan (pure decision; does not acquire the gate).
     """
@@ -34,20 +36,29 @@ def plan_nested_dispatch(*, work_bounded: bool) -> dict[str, Any]:
     active = int(stats["active"])
     limit = int(stats["limit"])
     queued = int(stats["queued"])
-    if work_bounded or active >= limit:
+    gate = {"active": active, "queued": queued, "limit": limit}
+    if work_bounded:
         return {
             "action": "in_seat",
-            "reason": (
-                "bounded_work"
-                if work_bounded
-                else "gate_at_capacity_avoid_self_deadlock"
-            ),
-            "gate": {"active": active, "queued": queued, "limit": limit},
+            "reason": "bounded_work",
+            "gate": gate,
+        }
+    if active >= limit:
+        if park_available:
+            return {
+                "action": "nest_park",
+                "reason": "gate_at_capacity_prefer_park",
+                "gate": gate,
+            }
+        return {
+            "action": "in_seat",
+            "reason": "gate_at_capacity_park_unavailable",
+            "gate": gate,
         }
     return {
         "action": "dispatch_now",
         "reason": "gate_has_capacity",
-        "gate": {"active": active, "queued": queued, "limit": limit},
+        "gate": gate,
     }
 
 
@@ -56,14 +67,17 @@ async def run_serialized[T](
     *,
     prefer_in_seat: Callable[[], T] | None = None,
     work_bounded: bool = False,
+    park_available: bool = True,
 ) -> tuple[T, dict[str, Any]]:
-    """Run nested work in-seat when gate is full; otherwise run the coroutine.
+    """Run nested work via park preference; in-seat only as fallback.
 
-    Does not acquire a second gate slot — callers that need a real nested
-    ``team_dispatch`` must release the holder slot first or wait for capacity
-    outside this helper. ``prefer_in_seat`` is the fallback for limit=1 holders.
+    Does not itself perform nest_under admit — callers that need a real nested
+    ``team_dispatch`` must pass ``nest_under=<parent_dispatch_id>`` on the GIW
+    payload (or rely on Stargate automatic nest wiring).
     """
-    plan = plan_nested_dispatch(work_bounded=work_bounded)
+    plan = plan_nested_dispatch(
+        work_bounded=work_bounded, park_available=park_available
+    )
     if plan["action"] == "in_seat":
         if prefer_in_seat is None:
             raise RuntimeError(
@@ -71,5 +85,10 @@ async def run_serialized[T](
                 "prefer_in_seat fallback provided (friction 25956 class)"
             )
         return prefer_in_seat(), plan
+    if plan["action"] == "nest_park":
+        # Caller must fire team_dispatch with nest_under; this helper cannot
+        # invent the parent id. Fall through to coro when provided.
+        result = await coro_factory()
+        return result, plan
     result = await coro_factory()
     return result, plan

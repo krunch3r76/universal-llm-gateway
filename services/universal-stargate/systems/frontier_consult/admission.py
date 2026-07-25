@@ -54,11 +54,18 @@ def enforce_generate_role_seat_exclusive(
     seat: str | None,
     *,
     request_id: str,
+    model: str | None = None,
 ) -> None:
-    """Exactly-one FOL for ``role`` vs ``seat`` on generate/to_thread."""
+    """Exactly-one FOL for ``role`` vs ``seat`` on generate/to_thread.
+
+    Exception: ``model=cursor/…`` alone is admitted (model-only peer of
+    ``model=cdp/…``) — seat defaults to ``cursor-sdk`` at the dispatch branch.
+    """
     has_role = bool(role and str(role).strip())
     has_seat = bool(seat and str(seat).strip())
     if not has_role and not has_seat:
+        if _is_cursor_substrate_model(model):
+            return
         raise FrontierEndpointError(
             request_id=request_id,
             field="role",
@@ -76,6 +83,15 @@ def enforce_generate_role_seat_exclusive(
             code="role_seat_exclusive",
             details=_generate_teaching_data("role|seat"),
         )
+
+
+def _is_cursor_substrate_model(model: str | None) -> bool:
+    if not model or not str(model).strip():
+        return False
+    try:
+        return ModelId.parse(model).backend_type == "cursor_sdk"
+    except (TypeError, ValueError):
+        return False
 
 
 def reject_role_cursor_sdk_on_generate(
@@ -789,14 +805,19 @@ def is_cursor_sdk_generate_admission(
     model: str | None = None,
     request_id: str,
 ) -> bool:
-    """True when ``op=generate`` should enter the cursor-sdk handler branch."""
-    del model  # model-only admission rejected (Option B)
+    """True when ``op=generate`` should enter the cursor-sdk handler branch.
+
+    Admits ``seat=cursor-sdk`` (explicit) or ``model=cursor/…`` alone
+    (model-only peer of ``model=cdp/…``).
+    """
     if role is not None and normalize_agent_slug(role) == "cursor-sdk":
         return False
     if seat is not None and str(seat).strip():
         return is_auto_seat_generate_admission(
             seat=seat, role=None, model=None, request_id=request_id
         )
+    if _is_cursor_substrate_model(model):
+        return True
     return False
 
 

@@ -159,42 +159,43 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
         arguments: JSON-encoded object string (e.g. '{"thread": "111"}')
 
         Body convention — SIDECAR-DRIVEN (read before posting):
-          Turn bodies MUST be short briefings (target < 2 KB; server enforces a
-          hard char limit). Long content — reviews, specs, analysis, handoffs —
-          goes in a Cortex sidecar markdown file. Preferred path: pass
-          sidecar_content (and optional sidecar_slug) on send — the server writes
+          Turn bodies MUST be short briefings (target < 2 KB). Prefer durable
+          Cortex sidecars over inline walls of text. Sidecar-first is the
+          intended usage model; auto-spill is the safety net, not the intended
+          model. Preferred path: pass sidecar_content (and optional
+          sidecar_slug) on send — the server writes
           cortex://notes/system/threads/<thread_id>-<slug>.md atomically before
           the turn insert and appends a trailing Sidecar: pointer to the body.
           Manual alternative (legacy): fs(sandbox="cortex", op="write",
              path="notes/system/threads/<thread>-<subject>.md", content="...")
-          then reference it concisely in the turn body.
-          The turn body then references it concisely:
-            "Review complete. Full findings: cortex:notes/system/threads/949-review.md"
-          Workspace files (for example tmp/reviews packets) may be mirrors, but
-          agent_bus messages should point first to the Cortex sidecar.
-          Posting an oversized body returns 413. The sidecar pattern is not a
-          workaround for the limit — it IS the intended usage model. Brief body
-          + durable sidecar file is always preferred over an inline wall of text.
-          Rare exception: pass allow_long_body=true on post/reply only when the
-          recipient needs inline long-form content and a sidecar would break the
-          communication contract. Stargate on-behalf pipeline delivery performs
-          the equivalent durable sidecar write automatically (see
-          ``async_tracker_delivery/on_behalf.py``).
+          then reference it concisely in the turn body. On send (and legacy
+          post/reply; request routes through send): soft overflow above the
+          inline soft limit (no caller sidecar_content) is auto-spilled to a
+          Cortex sidecar + pointer with HTTP 200 (see
+          libs/agent_bus_store/body_auto_spill.py). HTTP 413 is reserved for
+          the allow_long_body hard ceiling, spill-write failure, and
+          sidecar-content-too-large — not ordinary soft overflow. Workspace
+          mirrors (e.g. tmp/reviews) are secondary; point first to the Cortex
+          sidecar. Rare exception: allow_long_body=true opts the turn out of auto-spill
+          and keeps the body inline up to the hard ceiling when a sidecar would
+          break the recipient contract; exceeding that ceiling returns 413.
+          Stargate on-behalf pipeline delivery performs the equivalent durable
+          sidecar write automatically (see ``async_tracker_delivery/on_behalf.py``).
 
         Write path — use ``send`` (``post``/``reply`` are legacy aliases until 2026-09-01):
 
         Operations:
-          send          (new_slug XOR thread, to, subject, body, from?, from_agent?, summary?, tags?, lifecycle_state?, after_turn?, status?, mark_read?, close?, attachments?, allow_long_body?, sidecar_content?, sidecar_slug?, supersedes_turn?) — **primary write op**. Exactly one of new_slug (new thread) or thread (continue) required; supersedes_turn (continue path only) is the database turn id to supersede structurally. slug uniqueness enforced on new_slug path (409 slug_exists on collision). When sidecar_content is set the server writes cortex://notes/system/threads/<thread_id>-<slug>.md before inserting the turn, appends a trailing Sidecar: pointer to the body, and returns sidecar_uri + sidecar_sha256. sidecar_content cap 256KB. Prefer ``from=``; ``from_agent`` is a permanent alias. When omitted on ``/mcp/life`` or ``/mcp/code``, the server autofills ``web-anthropic`` or ``cursor`` respectively.
+          send          (new_slug XOR thread, to, subject, body, from?, from_agent?, summary?, tags?, enroll_charter_runner?, lifecycle_state?, after_turn?, status?, mark_read?, close?, attachments?, allow_long_body?, sidecar_content?, sidecar_slug?, supersedes_turn?) — **primary write op**. Exactly one of new_slug (new thread) or thread (continue) required; supersedes_turn (continue path only) is the database turn id to supersede structurally. slug uniqueness enforced on new_slug path (409 slug_exists on collision). Tag ``charter-runner`` is **reserved enrollment** — newly adding it requires ``enroll_charter_runner=true`` (422 reserved_enrollment_tag otherwise); keeping/removing never needs the flag. When sidecar_content is set the server writes cortex://notes/system/threads/<thread_id>-<slug>.md before inserting the turn, appends a trailing Sidecar: pointer to the body, and returns sidecar_uri + sidecar_sha256. sidecar_content cap 256KB. Prefer ``from=``; ``from_agent`` is a permanent alias. When omitted on ``/mcp/life`` or ``/mcp/code``, the server autofills ``web-anthropic`` or ``cursor`` respectively.
           request       (new_slug XOR thread, to='cursor', subject, body, from?, from_agent?, tags?, sidecar_content?, sidecar_slug?, desired_model?, desired_effort?, contract?) — life-callable Cursor Auto channel. Injects lane:cursor-auto; arms Auto when a live handler heartbeats (else handler_status=no-auto-handler); returns {thread, turn, handler_status, poll_hint}. ¬ dual-tag lane:life-to-code on degrade.
           threads       (status?, tags?, lifecycle_state?)              — list threads; status: active|blocked|waiting|closed|all (default active); tags: AND-filter; lifecycle_state: pending|admitted|delivered|failed (exact match)
-          create_thread (slug, summary?, tags?, lifecycle_state?, thread_id?) — create a thread without a turn; use lifecycle_state="pending" for lifecycle-managed threads that will be dispatched later
+          create_thread (slug, summary?, tags?, enroll_charter_runner?, lifecycle_state?, thread_id?) — create a thread without a turn; use lifecycle_state="pending" for lifecycle-managed threads that will be dispatched later; ``enroll_charter_runner=true`` required to include tag ``charter-runner``
           fetch_unread  (to?, thread?, mark_read?, compact?, active_since?, limit?, all?) — recipient scope (to set, thread unset): enriched per-thread unread digest (slug, last_subject, last_activity_at; default 14d window, limit 50; unwindowed totals in response). thread scope: that thread's full unread turn list (no count cap; compact controls bodies). At least one of to/thread required.
           fetch         (to?, thread?, last?, unread?, compact?, mark_read?, all?)  — get turns; at least one of to/thread required; all=true fetches every turn (no limit); unread=true fetches all unread (last ignored; prefer fetch_unread); last caps windowed fetches (default 10, unread default false); compact default false (bodies projected) — pass compact=true for metadata-only
           get           (thread, turn_number)                           — get one specific turn; turn_number may be int or "latest"
           update        (thread, turn_number, body?, append?, subject?) — edit or append to an existing turn while read_at is null; 409 turn_already_acknowledged once marked read (use send(thread=...) for follow-up)
           mark_read     (thread, turn_numbers[] XOR through_turn, agent?) — bulk mark read; through_turn requires agent
           wait          (thread, after_turn?, wait_seconds?, completion?, from_agent?) — server-side short-block until consult posts a bus turn after the pointer (completion=first_reply_from + canonical from_agent; alias-aware), thread closes (completion=thread_closed), or Auto posts a terminal status token (completion=status:done|status:failed|status:needs-attended); wait_seconds clamped <=60 (0=snapshot). Returns {thread_id, complete, status, push_required, suggested_next (object: consult_turn_posted + steps fetch/apply/close when complete and thread still active), qualifying_reply_turn, thread_status, ...}. first_reply_from complete means a consult bus turn exists, not findings applied. Re-call to keep polling — one HTTP call, not a client loop.
-          update_thread (thread, status?, summary?, tags?, from_agent?) — patch thread metadata (tags: omit=keep, []=clear, [...]=replace)
+          update_thread (thread, status?, summary?, tags?, enroll_charter_runner?, from_agent?) — patch thread metadata (tags: omit=keep, []=clear, [...]=replace); newly adding ``charter-runner`` requires ``enroll_charter_runner=true``
           close         (thread, summary?, mark_all_read?)              — close a thread (atomic: marks all turns read by default)
           delete_turn   (thread, turn_number, force?)                   — delete a single turn
           delete_thread (thread, force?)                                — delete an entire thread

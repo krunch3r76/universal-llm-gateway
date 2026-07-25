@@ -27,7 +27,7 @@ def write_binary_impl(rel_path: str, content_base64: str) -> dict[str, Any]:
     boundary. Any file type is accepted.
     """
     reject_template_tokens(rel_path)
-    dest = safe_path(rel_path)
+    dest = safe_path(rel_path, for_write=True)
     try:
         raw = base64.b64decode(content_base64, validate=True)
     except binascii.Error as exc:
@@ -73,7 +73,7 @@ def append_binary_impl(rel_path: str, content_base64: str) -> dict[str, Any]:
     valid base64. The total file size is capped at BINARY_MAX_BYTES.
     """
     reject_template_tokens(rel_path)
-    dest = safe_path(rel_path)
+    dest = safe_path(rel_path, for_write=True)
     try:
         raw = base64.b64decode(content_base64, validate=True)
     except binascii.Error as exc:

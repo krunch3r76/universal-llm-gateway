@@ -64,7 +64,7 @@ _SCENARIOS: list[tuple[str, str, int | None, dict | None, str | None, str]] = [
     ("xai/grok-4.5", "responses_floor_bump", 1000, None, None, "floor_bump"),
     # Anthropic ceiling-clamp
     (
-        "anthropic/claude-opus-4-8",
+        "anthropic/claude-opus-5",
         "anthropic_ceiling_clamp",
         200000,
         None,
@@ -73,7 +73,7 @@ _SCENARIOS: list[tuple[str, str, int | None, dict | None, str | None, str]] = [
     ),
     # Cross-knob: request < 2×budget → auto-bumped
     (
-        "anthropic/claude-opus-4-8",
+        "anthropic/claude-opus-5",
         "cross_knob_bump",
         1000,
         {"type": "enabled", "budget_tokens": 24000},

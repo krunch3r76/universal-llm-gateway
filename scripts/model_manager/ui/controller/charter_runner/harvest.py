@@ -6,10 +6,40 @@ from universal_logging import get_logger
 
 from scripts.model_manager import observation_event as events
 
-from . import bus_client, window_log
+from . import bus_client, gate_bypass_detect, window_log
 from .eligibility import ADMISSION_SUBJECT_PREFIX, CHECKPOINT_PREFIX
 
 logger = get_logger(__name__)
+
+
+async def _flag_gate_bypass(
+    *,
+    root_id: str,
+    window_index: int,
+    worker_thread: str,
+    worker_turns: list[dict],
+) -> None:
+    """Emit the second detector's signal for any ungated implement closeout."""
+    for finding in gate_bypass_detect.detect_gate_bypass(worker_turns):
+        logger.error(
+            "charter-runner window %s (root=%s) closed out ungated: worker closeout "
+            "t%s reported %s dispatch=%s source_ref=%s — require_implement_ready "
+            "no-opped; treat this window's output as unreviewed",
+            window_index,
+            root_id,
+            finding.turn_number,
+            gate_bypass_detect.GATE_BYPASS_DEVIATION,
+            finding.dispatch_id,
+            finding.source_ref,
+        )
+        await events.emit_manage_charter_implement_gate_bypassed(
+            root=root_id,
+            window_index=window_index,
+            worker_thread=worker_thread,
+            dispatch_id=finding.dispatch_id,
+            source_ref=finding.source_ref,
+            turn_number=finding.turn_number,
+        )
 
 
 def turn_number(turn: dict) -> int:
@@ -63,6 +93,15 @@ async def harvest_completed_windows(root_id: str, turns: list[dict]) -> None:
                 logger.exception(
                     "charter-runner failed fetching worker %s", worker_thread
                 )
+        try:
+            await _flag_gate_bypass(
+                root_id=root_id,
+                window_index=window_index,
+                worker_thread=worker_thread,
+                worker_turns=worker_turns,
+            )
+        except Exception:  # noqa: BLE001 — a detector must never abort the tick
+            logger.exception("charter-runner gate-bypass detection failed")
         worker_closed: bool | None = None
         if worker_thread:
             try:

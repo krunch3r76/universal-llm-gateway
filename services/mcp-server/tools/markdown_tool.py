@@ -54,16 +54,24 @@ _FILES_ROOT = Path("/data/files")
 _PROJECT_ROOT = Path(os.environ.get("PROJECT_ROOT", "/data/project"))
 
 
-def _resolve_sandbox(sandbox: str, path: str) -> Path:
+def _resolve_sandbox(sandbox: str, path: str, *, for_write: bool = False) -> Path:
+    from implement_admission.closeout_helpers import cortex_files_root
     from implement_admission.scheme_resolve import resolve_fs_ingress
 
     try:
-        ingress = resolve_fs_ingress(path, sandbox=sandbox)
+        ingress = resolve_fs_ingress(
+            path,
+            sandbox=sandbox,
+            cortex_root=cortex_files_root() if sandbox == "cortex" else None,
+            for_write=for_write,
+        )
         if ingress.resolved is not None:
             return ingress.resolved
         rel = ingress.rel_path.lstrip("/")
     except ValueError:
-        rel = path.lstrip("/")
+        # Propagate entity / top-level-creation teaching errors; do not
+        # silently fall back to a bare relative under the mount.
+        raise
     if sandbox == "cortex":
         root = _FILES_ROOT.resolve()
     elif sandbox == "workspaces":
@@ -313,7 +321,17 @@ def register_markdown_tools(mcp: FastMCP) -> None:
         if not path:
             return {"error": "'path' is required"}
         try:
-            resolved = _resolve_sandbox(sandbox, path)
+            _md_write_ops = frozenset(
+                {
+                    "replace_section",
+                    "append_section",
+                    "insert_section",
+                    "delete_section",
+                }
+            )
+            resolved = _resolve_sandbox(
+                sandbox, path, for_write=op in _md_write_ops
+            )
         except ValueError as e:
             return {"error": str(e)}
 

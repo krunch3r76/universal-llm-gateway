@@ -9,8 +9,9 @@ from pathlib import Path, PurePosixPath
 
 from implement_admission.closeout_helpers import cortex_files_root
 from implement_admission.share_uri_registry import (
-    CORTEX_FILE_ROOT_DIRS,
+    entity_vs_file_teaching_error,
     is_cortex_entity_uri,
+    leading_segment,
 )
 
 _ULG_REPO_DIRNAME = "universal-llm-gateway"
@@ -45,12 +46,14 @@ class FsIngressResult:
 
 
 def workspaces_root(workspaces_root_override: Path | None = None) -> Path:
+    """Return the workspaces mount root, honoring an explicit override."""
     if workspaces_root_override is not None:
         return workspaces_root_override.resolve()
     return Path(os.environ.get("PROJECT_ROOT") or "/mnt/torus/projects").resolve()
 
 
 def repo_base(root: Path) -> Path:
+    """Return the ULG repo directory under *root*, or *root* itself."""
     resolved = root.resolve()
     if resolved.name == _ULG_REPO_DIRNAME:
         return resolved
@@ -59,6 +62,7 @@ def repo_base(root: Path) -> Path:
 
 
 def path_contained_in(candidate: Path, root: Path) -> bool:
+    """True when *candidate* resolves inside *root* (no traversal escape)."""
     try:
         candidate.resolve().relative_to(root.resolve())
     except ValueError:
@@ -67,6 +71,7 @@ def path_contained_in(candidate: Path, root: Path) -> bool:
 
 
 def strip_admission_prefixes(path_or_uri: str) -> str:
+    """Strip ``packet:`` and leading slashes from an admission path/URI."""
     raw = path_or_uri.strip()
     lower = raw.lower()
     if lower.startswith(_PACKET_PREFIX):
@@ -75,6 +80,7 @@ def strip_admission_prefixes(path_or_uri: str) -> str:
 
 
 def parse_schemed_path(path_or_uri: str) -> ParsedSchemedPath:
+    """Parse a Share URI or bare path into scheme + relative path parts."""
     raw = strip_admission_prefixes(path_or_uri)
     if raw.lower().startswith("files://"):
         body = raw[8:]
@@ -107,10 +113,10 @@ def _sandbox_root(
     parsed: ParsedSchemedPath,
     *,
     workspaces_root_override: Path | None,
-    cortex_root_override: Path | None,
+    cortex_root: Path | None,
 ) -> Path:
     if parsed.scheme == "cortex":
-        return (cortex_root_override or cortex_files_root()).resolve()
+        return (cortex_root or cortex_files_root()).resolve()
     return workspaces_root(workspaces_root_override)
 
 
@@ -130,6 +136,7 @@ def path_escapes_sandbox(
     *,
     sandbox_root: Path,
 ) -> bool:
+    """True when *parsed* would traverse outside *sandbox_root*."""
     if _reject_traversal(parsed.rel_path):
         return True
     root = sandbox_root.resolve()
@@ -140,9 +147,23 @@ def path_escapes_sandbox(
     return False
 
 
-def infer_sandbox_from_parsed(parsed: ParsedSchemedPath) -> str | None:
+def infer_sandbox_from_parsed(
+    parsed: ParsedSchemedPath,
+    *,
+    cortex_root: Path,
+    for_write: bool = False,
+) -> str | None:
+    """Infer ``cortex`` / ``workspaces`` sandbox from a parsed Share URI.
+
+    Cortex entity pointers (colon form or non-existing leading segment under
+    ``cortex_root``) return ``None`` so callers route to entity lookup.
+    ``for_write`` engages the top-level creation gate inside
+    ``is_cortex_entity_uri``.
+    """
     if parsed.scheme == "cortex":
-        if is_cortex_entity_uri(parsed.rel_path):
+        if is_cortex_entity_uri(
+            parsed.rel_path, cortex_root=cortex_root, for_write=for_write
+        ):
             return None
         return "cortex"
     if parsed.scheme in ("workspaces", "ws"):
@@ -153,6 +174,7 @@ def infer_sandbox_from_parsed(parsed: ParsedSchemedPath) -> str | None:
 def sandbox_scheme_conflict_message(
     explicit_sandbox: str, inferred_sandbox: str, path_or_uri: str
 ) -> str:
+    """Build the teaching error when explicit sandbox disagrees with URI scheme."""
     return (
         f"sandbox={explicit_sandbox!r} conflicts with scheme in path={path_or_uri!r} "
         f"(infers sandbox={inferred_sandbox!r}). Pass only one disambiguator — "
@@ -164,10 +186,10 @@ def sandbox_scheme_conflict_message(
 def _mount_roots(
     *,
     workspaces_root_override: Path | None,
-    cortex_root_override: Path | None,
+    cortex_root: Path | None,
 ) -> list[tuple[str, Path]]:
     ws = workspaces_root(workspaces_root_override).resolve()
-    cortex = (cortex_root_override or cortex_files_root()).resolve()
+    cortex = (cortex_root or cortex_files_root()).resolve()
     roots: list[tuple[str, Path]] = [("workspaces", ws), ("cortex", cortex)]
     for env_key, sandbox in (
         ("WORKSPACES_ROOT", "workspaces"),
@@ -198,7 +220,7 @@ def _normalize_mount_path(
     path_or_uri: str,
     *,
     workspaces_root_override: Path | None,
-    cortex_root_override: Path | None,
+    cortex_root: Path | None,
 ) -> tuple[str, str, bool] | None:
     candidate = Path(path_or_uri.strip())
     if not candidate.is_absolute():
@@ -206,7 +228,7 @@ def _normalize_mount_path(
     resolved = candidate.resolve()
     for sandbox, root in _mount_roots(
         workspaces_root_override=workspaces_root_override,
-        cortex_root_override=cortex_root_override,
+        cortex_root=cortex_root,
     ):
         try:
             rel = resolved.relative_to(root.resolve()).as_posix()
@@ -229,19 +251,30 @@ def resolve_fs_ingress(
     *,
     sandbox: str | None = None,
     workspaces_root_override: Path | None = None,
-    cortex_root_override: Path | None = None,
+    cortex_root: Path | None = None,
+    for_write: bool = False,
 ) -> FsIngressResult:
-    """Resolve fs ``path`` (+ optional explicit ``sandbox``) to sandbox + rel."""
+    """Resolve fs ``path`` (+ optional explicit ``sandbox``) to sandbox + rel.
+
+    ``cortex_root`` must be supplied at in-repo call sites (tests and MCP).
+    When omitted, live ``cortex_files_root()`` is used only for mount-path
+    normalization of absolute host paths — never as a silent fallback for
+    entity/file classification when a caller already has a root.
+    ``for_write=True`` engages the top-level creation gate (absent top-level
+    slash-form write raises a teaching error); nested writes under an existing
+    top-level remain file paths.
+    """
     raw = path_or_uri.strip()
     if not raw:
         raise ValueError("path is required")
 
+    effective_cortex_root = (cortex_root or cortex_files_root()).resolve()
     path_input_normalized = False
     normalization_advisory: str | None = None
     mount = _normalize_mount_path(
         raw,
         workspaces_root_override=workspaces_root_override,
-        cortex_root_override=cortex_root_override,
+        cortex_root=effective_cortex_root,
     )
     if mount is not None:
         inferred_sandbox, rel_path, path_input_normalized = mount
@@ -254,23 +287,29 @@ def resolve_fs_ingress(
     else:
         parsed = parse_schemed_path(raw)
         if parsed.scheme == "cortex" and Path(parsed.rel_path).is_absolute():
-            cortex_root = (cortex_root_override or cortex_files_root()).resolve()
             try:
                 rel_path = (
-                    Path(parsed.rel_path).resolve().relative_to(cortex_root).as_posix()
+                    Path(parsed.rel_path)
+                    .resolve()
+                    .relative_to(effective_cortex_root)
+                    .as_posix()
                 )
                 parsed = ParsedSchemedPath(scheme="cortex", rel_path=rel_path)
             except ValueError:
                 rel_path = parsed.rel_path.lstrip("/")
         else:
             rel_path = parsed.rel_path.lstrip("/")
-        inferred = infer_sandbox_from_parsed(parsed)
-        if inferred is None and parsed.scheme == "cortex":
-            raise ValueError(
-                f"cortex:// path {raw!r} is not a file-root path "
-                f"(known dirs: {', '.join(sorted(CORTEX_FILE_ROOT_DIRS))}); "
-                "entity URIs are resolved via cortex entity lookup, not fs."
+        try:
+            inferred = infer_sandbox_from_parsed(
+                parsed,
+                cortex_root=effective_cortex_root,
+                for_write=for_write,
             )
+        except ValueError:
+            # for_write top-level creation gate — re-raise as-is
+            raise
+        if inferred is None and parsed.scheme == "cortex":
+            raise entity_vs_file_teaching_error(raw, leading_segment(rel_path))
         if inferred is not None:
             inferred_sandbox = inferred
         elif sandbox:
@@ -297,7 +336,7 @@ def resolve_fs_ingress(
             rel_path=rel_path,
         ),
         workspaces_root_override=workspaces_root_override,
-        cortex_root_override=cortex_root_override,
+        cortex_root=effective_cortex_root,
     )
     resolved = _resolve_under_root(root, rel_path)
     if resolved is None and effective_sandbox == "workspaces":
@@ -324,33 +363,52 @@ def resolve_fs_ingress(
     )
 
 
-def _bare_path_implies_cortex(rel_path: str) -> bool:
-    """True when a schemeless path is under a known cortex file-root dir.
+def _bare_path_implies_cortex(
+    rel_path: str,
+    *,
+    cortex_root: Path,
+) -> bool:
+    """True when a schemeless path resolves to an existing file under cortex.
 
-    Bare ``notes/system/specs/...`` (and other CORTEX_FILE_ROOT_DIRS prefixes)
-    live under CORTEX_FILES_ROOT, not PROJECT_ROOT. Without this, admission
-    readers that strip ``cortex://`` (or cite the bare form) resolve under
-    workspaces and spuriously report ``implement_spec_unreadable`` while
-    ``doc_validate(path=cortex://...)`` and ``fs(sandbox=cortex)`` succeed
-    (friction 23230).
+    Bare ``notes/system/specs/...`` that *exists* under CORTEX_FILES_ROOT must
+    route to cortex (friction 23230). Leading-segment-only existence is too
+    aggressive: live cortex may also have top-levels like ``tasks/`` that
+    collide with workspaces-relative bare paths (``tasks/specs/...``).
     """
-    first = rel_path.strip("/").split("/", 1)[0].lower()
-    return first in {d.lower() for d in CORTEX_FILE_ROOT_DIRS}
+    first = leading_segment(rel_path)
+    if not first or ":" in first:
+        return False
+    root = cortex_root.resolve()
+    candidate = (root / rel_path.lstrip("/")).resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError:
+        return False
+    return candidate.is_file()
 
 
 def resolve_schemed_packet(
     path_or_uri: str,
     *,
     workspaces_root_override: Path | None = None,
-    cortex_root_override: Path | None = None,
+    cortex_root: Path | None = None,
 ) -> SchemeResolution:
+    """Resolve a schemed or bare packet path to sandbox root + optional file.
+
+    Bare paths that exist as files under ``cortex_root`` are coerced to the
+    cortex scheme (friction 23230). Pass ``cortex_root`` explicitly in tests
+    so the live mount is never consulted.
+    """
+    effective_cortex_root = (cortex_root or cortex_files_root()).resolve()
     parsed = parse_schemed_path(path_or_uri)
-    if parsed.scheme is None and _bare_path_implies_cortex(parsed.rel_path):
+    if parsed.scheme is None and _bare_path_implies_cortex(
+        parsed.rel_path, cortex_root=effective_cortex_root
+    ):
         parsed = ParsedSchemedPath(scheme="cortex", rel_path=parsed.rel_path)
     sandbox_root = _sandbox_root(
         parsed,
         workspaces_root_override=workspaces_root_override,
-        cortex_root_override=cortex_root_override,
+        cortex_root=effective_cortex_root,
     )
     if _reject_traversal(parsed.rel_path):
         return SchemeResolution(
@@ -376,17 +434,17 @@ def resolve_schemed_packet_file(
     path_or_uri: str,
     *,
     workspaces_root_override: Path | None = None,
-    cortex_root_override: Path | None = None,
+    cortex_root: Path | None = None,
 ) -> Path | None:
+    """Return the resolved packet file path, or ``None`` when missing."""
     return resolve_schemed_packet(
         path_or_uri,
         workspaces_root_override=workspaces_root_override,
-        cortex_root_override=cortex_root_override,
+        cortex_root=cortex_root,
     ).resolved_file
 
 
 __all__ = [
-    "CORTEX_FILE_ROOT_DIRS",
     "FsIngressResult",
     "ParsedSchemedPath",
     "SchemeResolution",

@@ -113,7 +113,9 @@ from services.git_integration_worker.cursor_sdk_feature_probe import (
 from services.git_integration_worker.cursor_sdk_gate import (
     acquire_sdk_dispatch_slot,
     force_release_sdk_dispatch_slot,
-    release_sdk_dispatch_slot_sync,
+)
+from services.git_integration_worker.cursor_sdk_implement_gate import (
+    implement_gate_bypass_deviations,
 )
 from services.git_integration_worker.cursor_sdk_light_bounded_capture import (
     extract_instructed_paths,
@@ -138,6 +140,11 @@ from services.git_integration_worker.cursor_sdk_packet import (
     extract_source_ref_from_packet,
     infer_contract_from_text,
     resolve_prompt_preamble,
+)
+from services.git_integration_worker.cursor_sdk_park import (
+    release_or_restore_for_child,
+    release_or_restore_for_child_sync,
+    transfer_capacity_after_park,
 )
 from services.git_integration_worker.cursor_sdk_stream_capture import (
     finalize_request_id_capture,
@@ -744,7 +751,8 @@ def _run_sdk_sync(
     finally:
         # Release the capacity slot from this thread — not from the async
         # coroutine — so a timed-out orphan thread holds the slot until exit.
-        release_sdk_dispatch_slot_sync(gate_loop, dispatch_id=dispatch_id)
+        # A1: if a parked parent waits for this child, transfer (no waiter wake).
+        release_or_restore_for_child_sync(gate_loop, dispatch_id=dispatch_id)
 
 
 async def _mark_terminal_and_promote(
@@ -754,14 +762,17 @@ async def _mark_terminal_and_promote(
     controller: WorkAdmissionController,
     request: Request | None = None,
 ) -> None:
-    """Mark terminal, release lease, and promote the FIFO head when applicable."""
-    await force_release_sdk_dispatch_slot(dispatch_id=dispatch_id)
+    """Mark terminal, release/restore lease, and promote FIFO head when applicable."""
+    disposition = await release_or_restore_for_child(dispatch_id=dispatch_id)
     ledger = CursorDispatchLedger.instance()
     source_repo = await asyncio.to_thread(
         ledger.mark_terminal,
         dispatch_id=dispatch_id,
         terminal_status=terminal_status,
     )
+    if disposition == "restored":
+        # Parked parent regained capacity — siblings stay queued (Q4).
+        return
     emit_write_lease_released(dispatch_id=dispatch_id, source_repo=source_repo)
     if source_repo:
         await _promote_queued_for_repo(
@@ -897,7 +908,7 @@ async def startup_ledger_reconcile(app: FastAPI) -> None:
         ledger.startup_reconcile, worker_instance=controller.worker_id
     )
     for orphan in ledger.running_orphans():
-        await force_release_sdk_dispatch_slot(dispatch_id=orphan.dispatch_id)
+        await release_or_restore_for_child(dispatch_id=orphan.dispatch_id)
         source_repo = await asyncio.to_thread(
             ledger.mark_terminal,
             dispatch_id=orphan.dispatch_id,
@@ -940,6 +951,7 @@ async def _deliver_sdk_closeout(
     packet_text: str = "",
     deliverables_expected: bool = False,
     light_bounded_expected_paths: tuple[str, ...] = (),
+    extra_deviations: tuple[str, ...] = (),
 ) -> None:
     baseline = await asyncio.to_thread(
         CursorDispatchLedger.instance().read_wt_baseline,
@@ -957,6 +969,7 @@ async def _deliver_sdk_closeout(
         deliverables_expected=deliverables_expected,
         light_bounded_expected_paths=light_bounded_expected_paths,
         execution_id=req.execution_id,
+        extra_deviations=extra_deviations,
     )
     run_outcome = resolve_run_outcome_label(degraded_reason)
     if delivery.closeout_status.value == "partial":
@@ -1496,6 +1509,10 @@ async def _finalize_success(
         deliverables_expected=contract == "implement"
         or bool(light_bounded_expected_paths),
         light_bounded_expected_paths=light_bounded_expected_paths,
+        extra_deviations=implement_gate_bypass_deviations(
+            contract=contract,
+            work_item_ref=work_item_ref,
+        ),
     )
 
 
@@ -1606,6 +1623,7 @@ async def cursor_dispatch(
             worker_instance=controller.worker_id,
             source_ref=candidate_source_ref,
             force=req.force,
+            nest_under=req.nest_under,
         )
     except SourceRefConflict as exc:
         return _reject_pre_admission(
@@ -1646,6 +1664,43 @@ async def cursor_dispatch(
                 holder_subject_preview=cached.holder_subject_preview,
             )
         return JSONResponse(status_code=status_code, content=cached.model_dump())
+
+    # Nest park: ledger already moved parent → parked_waiting; transfer capacity
+    # to the child before the gated run (child acquire is idempotent if holding).
+    if req.nest_under and not req.read_only:
+        parked = await asyncio.to_thread(
+            ledger.find_parked_parent_for_child, child_id=req.dispatch_id
+        )
+        if parked is not None and parked[0] == req.nest_under:
+            try:
+                await transfer_capacity_after_park(
+                    parent_id=req.nest_under,
+                    child_id=req.dispatch_id,
+                    source_repo=source_repo_str,
+                )
+            except Exception as exc:
+                logger.error(
+                    "nest park capacity transfer failed: parent=%s child=%s err=%s",
+                    req.nest_under[:8],
+                    req.dispatch_id[:8],
+                    exc,
+                )
+                await asyncio.to_thread(
+                    ledger.mark_terminal,
+                    dispatch_id=req.dispatch_id,
+                    terminal_status="failed",
+                )
+                await asyncio.to_thread(
+                    ledger.restore_from_park, parent_id=req.nest_under
+                )
+                return _reject_pre_admission(
+                    req,
+                    worker_error_code="CURSOR_NEST_PARK_TRANSFER_FAILED",
+                    failure_layer="admission",
+                    http_status=503,
+                    detail_summary=str(exc),
+                    retryable=True,
+                )
 
     # Friction 23001: wt-baseline capture is deferred into
     # _run_sdk_dispatch_gated (post slot acquisition) so the admission HTTP

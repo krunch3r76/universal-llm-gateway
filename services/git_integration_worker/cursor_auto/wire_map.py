@@ -18,9 +18,17 @@ Disposition = Literal[
 _MODEL_TABLE: dict[str, str] = {
     "composer-2.5": "cursor/composer-2.5",
     "grok-4.5": "cursor/grok-4.5",
-    "opus-4.8": "cursor/claude-opus-4-8",
+    "opus-5": "cursor/claude-opus-5",
 }
-_EFFORT_VALUES = frozenset({"low", "medium", "high", "max"})
+# Canonical wire vocabulary (cursor knobs + frontier reasoning_effort).
+# Aliases: CDP UI "Extra" / Cursor "Extra High" / GPT "extra-high" → xhigh.
+_EFFORT_VALUES = frozenset({"low", "medium", "high", "xhigh", "max"})
+_EFFORT_ALIASES: dict[str, str] = {
+    "extra": "xhigh",
+    "extra-high": "xhigh",
+    "extra_high": "xhigh",
+    "extrahigh": "xhigh",
+}
 _CONTRACTS = frozenset({"answer", "investigate", "implement", "verify"})
 
 
@@ -39,7 +47,7 @@ def resolve_desired_model(
         by_contract = {
             "answer": "cursor/composer-2.5",
             "investigate": "cursor/grok-4.5",
-            "implement": "cursor/claude-opus-4-8",
+            "implement": "cursor/claude-opus-5",
             "verify": "cursor/composer-2.5",
         }
         model_id = by_contract.get(contract, "cursor/composer-2.5")
@@ -58,7 +66,7 @@ def resolve_desired_model(
             "notes": f"unknown desired_model={raw!r}; clamped to composer-2.5",
         }
     knobs: dict[str, str] = {}
-    if model_id == "cursor/claude-opus-4-8":
+    if model_id == "cursor/claude-opus-5":
         knobs = {"thinking": "true"}
     return {
         "requested": raw,
@@ -70,20 +78,30 @@ def resolve_desired_model(
 
 
 def resolve_desired_effort(desired_effort: str | None) -> dict[str, Any]:
-    """Clamp ``desired_effort`` to supported model_knobs.effort values."""
-    raw = (desired_effort or "medium").strip().lower() or "medium"
-    if raw in _EFFORT_VALUES:
+    """Normalize + clamp ``desired_effort`` to canonical wire values.
+
+    Canonical set: low|medium|high|xhigh|max. Surface aliases (``extra``,
+    ``extra-high``, ``Extra High``) normalize to ``xhigh`` before clamp.
+    """
+    requested = (desired_effort or "medium").strip().lower() or "medium"
+    # Spaces → hyphens so "extra high" / "Extra High" share one alias key.
+    key = requested.replace(" ", "-")
+    normalized = _EFFORT_ALIASES.get(key, key)
+    if normalized in _EFFORT_VALUES:
+        notes = "honored"
+        if normalized != key:
+            notes = f"normalized {requested!r}→{normalized}"
         return {
-            "requested": raw,
-            "resolved_effort": raw,
+            "requested": requested,
+            "resolved_effort": normalized,
             "clamped": False,
-            "notes": "honored",
+            "notes": notes,
         }
     return {
-        "requested": raw,
+        "requested": requested,
         "resolved_effort": "medium",
         "clamped": True,
-        "notes": f"unknown desired_effort={raw!r}; clamped to medium",
+        "notes": f"unknown desired_effort={requested!r}; clamped to medium",
     }
 
 

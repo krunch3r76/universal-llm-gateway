@@ -241,12 +241,18 @@ class ModelManagerApp(App):
 
         Prefer this over quitting ``./manage`` when only charter-runner code
         changed. Wired to manage.sock method ``charter_reload``.
+
+        Always ``importlib.reload`` the reload driver first so ``_MODULE_NAMES``
+        picks up disk edits (otherwise a long-lived manage process keeps a stale
+        census and skips new modules like ``self_heal``).
         """
+        import importlib
+
         from scripts.model_manager import observation_event as events
-        from scripts.model_manager.ui.controller.charter_runner.reload import (
-            charter_runner_loop_class,
-            reload_charter_runner_modules,
-        )
+        from scripts.model_manager.ui.controller import charter_runner as cr_pkg
+        from scripts.model_manager.ui.controller.charter_runner import reload as reload_mod
+
+        importlib.reload(reload_mod)
 
         if self._charter_tick_loop is not None:
             try:
@@ -255,8 +261,9 @@ class ModelManagerApp(App):
                 logger.exception("Error stopping charter tick before reload: %s", e)
             self._charter_tick_loop = None
 
-        reloaded = reload_charter_runner_modules()
-        loop_cls = charter_runner_loop_class()
+        reloaded = reload_mod.reload_charter_runner_modules()
+        importlib.reload(cr_pkg)
+        loop_cls = reload_mod.charter_runner_loop_class()
         self._charter_tick_loop = loop_cls(
             service_state=self._service_controller.service_state,
             shutdown_gate=self._service_controller.shutdown_gate,

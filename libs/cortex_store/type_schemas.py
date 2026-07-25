@@ -5,7 +5,7 @@ typed lifecycle column, type_attribute_schemas governs the
 required-attribute contract for entities of that type. Both registries
 are seeded by migrations and read at write time during ``entity_create``.
 
-Per docs/architecture/entity-backed-claim-provenance.md § 1.1 / § 1.2 /
+Per docs/architecture/design/entity-backed-claim-provenance.md § 1.1 / § 1.2 /
 § 1.3 / § 4.1, types like ``legal_source``, ``case-law``, ``exhibit``,
 and ``brief`` carry structural-attribute contracts that must be enforced
 at write time so the structural-gap detector (§ 7) can rely on the

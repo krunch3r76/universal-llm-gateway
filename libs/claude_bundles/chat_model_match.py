@@ -14,7 +14,7 @@ _EFFORT_TOKENS = frozenset({"low", "medium", "high", "extra", "xhigh", "max"})
 # Pipeline prediction — try-first labels only. Miss ⇒ live UI discovery (SOT).
 # Operator-authorized 2026-07-16; keep in sync with common picker SKUs.
 PREDICTED_MODEL_LABELS: tuple[str, ...] = (
-    "Opus 4.8",
+    "Opus 5",
     "Sonnet 5",
     "Haiku 4.5",
     "Fable 5",
@@ -36,10 +36,10 @@ def parse_model_request(requested: str) -> tuple[str, str | None]:
     Opus High defaulting is applied by ``select_model`` (sealed-ask policy),
     not here — callers may suppress or override effort.
     """
-    key = (requested or "opus-4.8").strip().lower()
+    key = (requested or "opus-5").strip().lower()
     if key in _LEAVE:
         return key, None
-    # Keep version dots (opus-4.8); only hyphen/space/underscore are separators.
+    # Keep version segments (opus-5, haiku-4.5); hyphen/space/underscore are separators.
     norm = re.sub(r"[\s_]+", "-", key)
     parts = [p for p in norm.split("-") if p]
     effort: str | None = None

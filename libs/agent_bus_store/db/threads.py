@@ -365,10 +365,16 @@ def create_thread(
     summary: str | None = None,
     tags: list[str] | None = None,
     lifecycle_state: str | None = None,
+    enroll_charter_runner: bool = False,
 ) -> dict[str, Any] | None:
     """Returns thread detail with dispatch_links, or None if thread_id already exists."""
+    from agent_bus_store.enrollment_guard import gate_enrollment_tags
+
     from .lifecycle import _transition_lifecycle_state
 
+    gated_tags = gate_enrollment_tags(
+        tags, prior_tags=[], enroll_charter_runner=enroll_charter_runner
+    )
     if thread_id is None:
         thread_id = next_thread_id()
     ts = now()
@@ -383,8 +389,8 @@ def create_thread(
             "VALUES (?, ?, ?, ?, ?)",
             (thread_id, slug, summary, ts, ts),
         )
-        if tags:
-            set_thread_tags(conn, thread_id, tags)
+        if gated_tags:
+            set_thread_tags(conn, thread_id, gated_tags)
         if lifecycle_state is not None:
             _transition_lifecycle_state(conn, thread_id, lifecycle_state, "create")
     thread_detail = get_thread_with_links(thread_id)
@@ -436,6 +442,7 @@ def update_thread(
     status: str | None = None,
     summary: str | None = None,
     tags: list[str] | None = None,
+    enroll_charter_runner: bool = False,
 ) -> dict[str, Any] | None:
     """Returns updated thread detail, or None if not found.
 
@@ -445,6 +452,8 @@ def update_thread(
     matching the dedicated /close route. Closing a thread clears its unread
     queue regardless of which endpoint is used.
     """
+    from agent_bus_store.enrollment_guard import gate_enrollment_tags
+
     ts = now()
     with connect() as conn:
         row = conn.execute(
@@ -452,6 +461,14 @@ def update_thread(
         ).fetchone()
         if row is None:
             return None
+        prior_tags: list[str] = []
+        if tags is not None:
+            prior_tags = _load_thread_tags(conn, [thread_id]).get(thread_id, [])
+            tags = gate_enrollment_tags(
+                tags,
+                prior_tags=prior_tags,
+                enroll_charter_runner=enroll_charter_runner,
+            )
         sets: list[str] = ["updated_at = ?"]
         params: list[Any] = [ts]
         if status is not None:

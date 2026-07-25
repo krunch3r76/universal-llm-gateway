@@ -1,4 +1,4 @@
-"""Charter-runner default executor bind.
+"""Charter-runner executor binds — judgment (default) and implement.
 
 Operator bind 2026-07-20: default agent = **Grok 4.5 High** on the coding
 substrate. Wire: ``seat=cursor-sdk``, ``model=cursor/grok-4.5``.
@@ -6,6 +6,12 @@ substrate. Wire: ``seat=cursor-sdk``, ``model=cursor/grok-4.5``.
 Grok exposes ``effort`` + ``fast`` only (no ``thinking`` knob — live
 ListModels / ``cursor_capabilities``). \"High effort thinking\" maps to
 ``effort=high`` + ``fast=false``.
+
+The implement bind pins ``cursor/composer-2.5``, which is already the seat
+default (``config/agents.yaml`` ``cursor/sdk.default_model``, bound there
+specifically to ``contract=implement``) — this pins the existing default rather
+than introducing a new model. Passing it explicitly is still right so the
+executor note and ``window_log`` record a concrete bind.
 
 Step overrides (not this module): CDP Opus for Opus-class code review;
 attended Composer handoff when eyes-on is required.
@@ -21,8 +27,17 @@ DEFAULT_CONTRACT = "light-bounded"
 # \"thinking\" is not a Grok knob — non-fast + high effort is the High tier.
 DEFAULT_MODEL_KNOBS: dict[str, str] = {"effort": "high", "fast": "false"}
 
+IMPLEMENT_MODEL = "cursor/composer-2.5"
+IMPLEMENT_CONTRACT = "implement"
+# Composer exposes exactly one knob (``fast``, live default true) — no
+# ``effort``, no ``thinking``. ``align_cursor_knobs`` *drops* unrecognized knobs
+# with a warning instead of rejecting, so a stray ``effort=high`` carried over
+# from the Grok bind would vanish silently while the executor note still read as
+# if effort were set. Send none and inherit Composer's own default.
+IMPLEMENT_MODEL_KNOBS: dict[str, str] = {}
 
-def default_generate_body(
+
+def default_judgment_body(
     *,
     root_id: str,
     window_index: int,
@@ -49,6 +64,36 @@ def default_generate_body(
     }
 
 
+def implement_body(
+    *,
+    root_id: str,
+    window_index: int,
+    packet_path: str,
+    subject: str,
+    caller_agent: str,
+    source_ref: str,
+) -> dict[str, Any]:
+    """Wire body for a mechanical G4 implement window (Composer, gated).
+
+    ``source_ref`` is required, not optional: under ``contract=implement`` the
+    Stargate gate resolves readiness from the packet's front matter and this
+    ref, and a dispatch that cannot name a work item must never reach this
+    function — ``executor_routing`` fails closed to the judgment bind instead.
+    """
+    del subject, window_index  # handoff-only / pointer-side; not generate wire
+    return {
+        "op": "generate",
+        "seat": DEFAULT_SEAT,
+        "model": IMPLEMENT_MODEL,
+        "model_knobs": dict(IMPLEMENT_MODEL_KNOBS),
+        "contract": IMPLEMENT_CONTRACT,
+        "packet_path": packet_path,
+        "dispatch_thread_id": root_id,
+        "caller_agent": caller_agent,
+        "source_ref": source_ref,
+    }
+
+
 def autonomous_generate_body(
     *,
     root_id: str,
@@ -59,11 +104,11 @@ def autonomous_generate_body(
 ) -> dict[str, Any]:
     """Wire body for the autonomous background-lead window.
 
-    Same generate wire as ``default_generate_body`` (cursor-sdk Grok 4.5 High).
+    Same generate wire as ``default_judgment_body`` (cursor-sdk Grok 4.5 High).
     The autonomous mandate lives in the materialized packet + root WIP pointer
     — generate schema rejects ``subject`` / ``tags`` (handoff-only fields).
     """
-    return default_generate_body(
+    return default_judgment_body(
         root_id=root_id,
         window_index=window_index,
         packet_path=packet_path,
@@ -88,10 +133,10 @@ def default_handoff_body(
         "subject": subject,
         "caller_agent": caller_agent,
         "tags": [
-            "charter-runner",
             f"root:{root_id}",
             f"window:{window_index}",
             "admission:handoff",
+            "charter-window",
         ],
     }
 
@@ -110,7 +155,7 @@ def r_admit_consult_generate_body(
     lives in the materialized consult packet. Distinct from ``consult_handoff_body``
     (web-consult judgment-gap handoff — no ``project_ask`` on that wire).
     """
-    return default_generate_body(
+    return default_judgment_body(
         root_id=root_id,
         window_index=window_index,
         packet_path=packet_path,
@@ -135,9 +180,9 @@ def consult_handoff_body(
         "subject": subject,
         "caller_agent": caller_agent,
         "tags": [
-            "charter-runner",
             f"root:{root_id}",
             f"window:{window_index}",
             "admission:consult",
+            "charter-window",
         ],
     }

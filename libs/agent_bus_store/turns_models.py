@@ -236,10 +236,23 @@ class TurnCreate(BaseModel):
 
 
 class TurnCreated(BaseModel):
+    """API response for a newly inserted agent-bus turn row after create."""
+
     id: int
     thread: str
     turn_number: int
     created_at: datetime
+    sidecar_uri: str | None = Field(
+        default=None,
+        description="Cortex URI when soft-spill auto-wrote a sidecar for this turn.",
+    )
+    sidecar_sha256: str | None = Field(
+        default=None,
+        description=(
+            "SHA-256 of spill content bytes (same domain as "
+            "write_thread_sidecar_for_send); None when no auto-spill."
+        ),
+    )
 
 
 class Turn(BaseModel):
@@ -351,6 +364,8 @@ class ThreadCreate(BaseModel):
     slug: str
     summary: str | None = None
     tags: list[str] = Field(default_factory=list)
+    # Required to newly add reserved tag ``charter-runner`` (enrollment dual-key).
+    enroll_charter_runner: bool = False
     # When set, opts this thread into lifecycle management from creation.
     # None = no lifecycle (backward-compat default).
     lifecycle_state: str | None = None
@@ -395,6 +410,8 @@ class ThreadUpdate(BaseModel):
     summary: str | None = None
     # None = leave tags unchanged. [] = clear all. [...] = replace with the new set.
     tags: list[str] | None = None
+    # Required when ``tags`` newly adds reserved ``charter-runner``.
+    enroll_charter_runner: bool = False
 
 
 class TurnDelete(BaseModel):
@@ -425,6 +442,7 @@ class ThreadWithTurnCreate(BaseModel):
     after_turn: int | None = None
     attachments: list[AttachmentCreate] | None = None
     tags: list[str] = Field(default_factory=list)
+    enroll_charter_runner: bool = False
     lifecycle_state: str | None = None
 
 
@@ -458,6 +476,8 @@ class TurnSendCreate(BaseModel):
     allow_long_body: bool = False
     summary: str | None = None
     tags: list[str] = Field(default_factory=list)
+    # Dual-key for reserved enrollment tag on new_slug path (ignored on continue).
+    enroll_charter_runner: bool = False
     lifecycle_state: str | None = None
     after_turn: int | None = None
     status: TurnStatus = TurnStatus.OPEN

@@ -5,12 +5,19 @@ per eligible root. Default substrate is unattended Grok 4.5 High
 (``cursor/grok-4.5``, effort=high, fast=false) via generate dispatch.
 Opt-in attended handoff (``CHARTER_ADMISSION_MODE=handoff``) POSTs
 ``/api/v1/team/handoff`` with ``role=cursor-consult`` for IDE observation.
+``CHARTER_ADMISSION_MODE=autonomous`` selects the background-lead packet and
+auto-arms hard stall at ``DEFAULT_AUTONOMOUS_STALE_S`` (3600s) unless
+``CHARTER_UNATTENDED_STALE_S`` overrides (incl. ``0`` = force OFF).
+Consult-mode windows additionally recover at ``DEFAULT_CONSULT_STALE_S`` (900s)
+via ``consult_stall`` (R-ADMIT on root advances; else re-queue CONSULT_PENDING)
+so a hung CDP/consult seat cannot pin the root for a full hour (a:26131).
 CHECKPOINT on the charter root clears in-flight.
 """
 
 from __future__ import annotations
 
 import asyncio
+import importlib
 import json
 import os
 from collections.abc import Callable
@@ -20,45 +27,93 @@ from pathlib import Path
 from universal_logging import get_logger
 
 from scripts.model_manager import observation_event as events
+
+# Stale-manage heal: charter_reload historically omitted observation_event, so a
+# manage process started before G3 emitters lacks root_skipped and dies on first
+# skip. Reload in-place before state_close binds ``events`` (module object shared).
+if not hasattr(events, "emit_manage_charter_tick_root_skipped"):
+    importlib.reload(events)
+
 from scripts.model_manager.ui.controller.service_config import build_mcp_env
 from scripts.model_manager.ui.controller.shutdown_gate import ManageShutdownGate
 from scripts.model_manager.ui.model.service_state import ServiceState, ServiceStatus
 
-from . import bus_client, dispatch_client, window_log
+from . import admit, bus_client, window_log
+from . import consult_stall as _consult_stall_mod
+from . import self_heal as _self_heal_mod
+from . import state_close as _state_close_mod
 from .caps import CapStore
 from .dispatch_client import AdmissionMode
 from .eligibility import (
-    ADMISSION_SUBJECT_PREFIX,
     Decision,
     evaluate_root,
 )
 from .harvest import completed_windows, harvest_completed_windows
-from .materializer_autonomous import select_packet
+
+# One-shot at tick_loop import: long-lived manage may hold pre-census modules
+# in sys.modules (r_corpus_sha / self_heal / state_close) until ./manage process
+# recycle picks up app.py reload-driver + reload.py census.
+_self_heal_mod = importlib.reload(_self_heal_mod)
+_consult_stall_mod = importlib.reload(_consult_stall_mod)
+_state_close_mod = importlib.reload(_state_close_mod)
+MAX_STATE_CLOSES_PER_TICK = _state_close_mod.MAX_STATE_CLOSES_PER_TICK
+emit_skip_and_maybe_state_close = _state_close_mod.emit_skip_and_maybe_state_close
+maybe_state_close_root = _state_close_mod.maybe_state_close_root
+DEFAULT_CONSULT_STALE_S = _consult_stall_mod.DEFAULT_CONSULT_STALE_S
 
 logger = get_logger(__name__)
+
 
 _DEFAULT_TICK_INTERVAL_S = 60.0
 _ACTIVITY = "charter_tick"
 # Soft remind only — attended handoffs may sit until the operator opens IDE.
 _WAITING_OPEN_REMIND_S = 900.0
-# Hard stall (stale_window) is opt-in / unattended only — 0 or unset = OFF.
+# Hard stall (stale_window): autonomous default-on; other modes env-opt-in.
 _ENV_UNATTENDED_STALE_S = "CHARTER_UNATTENDED_STALE_S"
 _ENV_ADMISSION_MODE = "CHARTER_ADMISSION_MODE"
 _ENV_KEYS = ("AGENT_BUS_TOKEN",)
+# Margin over CURSOR_SDK_TIMEOUT (1800) so stale cannot race worker_failed (A1).
+DEFAULT_AUTONOMOUS_STALE_S = 3600.0
 
 # Re-export for tests that import via tick_loop.
 _completed_windows = completed_windows
 
 
-def _unattended_stale_s_from_env() -> float:
-    """Return hard-stall seconds when armed; 0 disables (attended default)."""
+def _env_unattended_stale_raw() -> float | None:
+    """Parse CHARTER_UNATTENDED_STALE_S; None means unset or malformed (A5).
+
+    Empty/whitespace → None (unset). Non-float → None (malformed→unset).
+    Negatives clamp to 0.0 (force-OFF). Explicit 0.0 is force-OFF, not unset.
+    """
     raw = os.environ.get(_ENV_UNATTENDED_STALE_S, "").strip()
     if not raw:
-        return 0.0
+        return None  # unset
     try:
         return max(0.0, float(raw))
     except ValueError:
-        return 0.0
+        return None  # malformed → treat as unset (A5)
+
+
+def _unattended_stale_s_from_env() -> float:
+    """Legacy shim: unset/malformed → 0.0; else parsed seconds. Delegates to raw."""
+    val = _env_unattended_stale_raw()
+    return 0.0 if val is None else val
+
+
+def _effective_unattended_stale_s(*, constructor_override: float | None) -> float:
+    """Resolve hard-stall seconds: constructor → env → autonomous default → 0.
+
+    Under admission_mode=autonomous with env unset, returns DEFAULT_AUTONOMOUS_STALE_S
+    (3600). Explicit env (including 0) always wins. Constructor override freezes for tests.
+    """
+    if constructor_override is not None:
+        return max(0.0, float(constructor_override))
+    env_val = _env_unattended_stale_raw()
+    if env_val is not None:
+        return env_val
+    if _admission_mode() == "autonomous":
+        return DEFAULT_AUTONOMOUS_STALE_S
+    return 0.0
 
 
 def _admission_mode_path() -> Path:
@@ -138,12 +193,8 @@ class CharterRunnerTickLoop:
         self._tick_interval_s = tick_interval_s
         self._caps = caps or CapStore()
         self._on_admit = on_admit
-        # None → env; 0 / unset env → hard-fail OFF (preserve attended sit-open).
-        self._unattended_stale_s = (
-            _unattended_stale_s_from_env()
-            if unattended_stale_s is None
-            else max(0.0, float(unattended_stale_s))
-        )
+        # None → resolve at handle time (env / autonomous default); float freezes tests.
+        self._unattended_stale_override = unattended_stale_s
         self._loop_task: asyncio.Task[None] | None = None
         self._reminded: set[str] = set()
 
@@ -198,6 +249,8 @@ class CharterRunnerTickLoop:
     async def _tick_once(self) -> None:
         roots = await bus_client.list_enrolled_roots()
         admitted = 0
+        skipped_by_reason: dict[str, int] = {}
+        state_closes_this_tick = 0
         for thread in roots:
             root_id = str(thread.get("id") or "")
             if not root_id:
@@ -206,14 +259,37 @@ class CharterRunnerTickLoop:
             await harvest_completed_windows(root_id, turns)
             decision = evaluate_root(root_id, turns, self._caps)
             if decision.eligible:
-                if await self._admit_window(decision, turns):
-                    admitted += 1
-            elif decision.reason == "window_in_flight":
+                try:
+                    if await self._admit_window(decision, turns):
+                        admitted += 1
+                except Exception:
+                    logger.exception(
+                        "charter-runner admit failed root=%s — continuing scan",
+                        root_id,
+                    )
+                continue
+            # Every ineligible Decision emits root_skipped (silent-starve fix).
+            state_closes_this_tick = await emit_skip_and_maybe_state_close(
+                decision,
+                state_closes_this_tick=state_closes_this_tick,
+                skipped_by_reason=skipped_by_reason,
+                max_state_closes=MAX_STATE_CLOSES_PER_TICK,
+                caps=self._caps,
+            )
+            if decision.reason == "window_in_flight":
                 if await self._recover_worker_failure(decision):
                     continue
-                await self._handle_waiting_open(decision)
+                if await self._try_consult_stall(decision, turns):
+                    continue
+                if await self._try_self_heal(decision, turns):
+                    continue
+                state_closes_this_tick = await self._handle_waiting_open(
+                    decision, turns, state_closes_this_tick=state_closes_this_tick
+                )
         await events.emit_manage_charter_tick_scanned(
-            roots=len(roots), admitted=admitted
+            roots=len(roots),
+            admitted=admitted,
+            skipped_by_reason=skipped_by_reason,
         )
 
     async def _recover_worker_failure(self, decision: Decision) -> bool:
@@ -239,143 +315,108 @@ class CharterRunnerTickLoop:
         return True
 
     async def _admit_window(self, decision: Decision, turns: list[dict]) -> bool:
-        root_id = decision.root_id
-        assert decision.parsed is not None and decision.checkpoint is not None
         if self._workspace_root is None:
             raise RuntimeError(
                 "charter-runner requires workspace_root for handoff packets"
             )
-        window_index = _count_admissions(turns) + 1
-        admission_mode = _admission_mode()
-        consult_role: str | None = None
-        if decision.window_kind == "consult":
-            admission_mode = "consult"
-            consult_role = decision.parsed.consult_role
-        # A-R3-4: durable pre-fire intent — crash before pointer must not re-fire.
-        if self._caps.has_admit_intent(root_id, window_index):
-            self._caps.mark_failed(root_id, "admit_intent_orphan")
-            await events.emit_manage_charter_tick_window_failed(
-                root=root_id, reason="admit_intent_orphan"
-            )
-            return False
-        packet, subject = select_packet(
-            root_id,
-            decision.parsed,
-            scoreboard_uri=decision.parsed.scoreboard_uri,
-            window_index=window_index,
-            admission_mode=admission_mode,
-            consult_role=consult_role,
+        admitted = await admit.admit_window(
+            decision=decision,
+            turns=turns,
+            caps=self._caps,
+            workspace_root=self._workspace_root,
+            on_admit=self._on_admit,
         )
-        self._caps.mark_admit_intent(root_id, window_index)
-        # Fire first — a failed handoff must not leave an orphaned in-flight pointer.
-        try:
-            result = await dispatch_client.fire_window(
-                root_id,
-                packet,
-                workspace_root=self._workspace_root,
-                window_index=window_index,
-                subject=subject,
-                admission_mode=admission_mode,
-                consult_role=consult_role,
-            )
-        except Exception:
-            self._caps.clear_admit_intent(root_id, window_index)
-            raise
-        # Admit bookkeeping before pointer post so a failed pointer cannot
-        # re-fire on the next tick (A1 — crash-safe vs double-fire).
-        self._caps.record_admit(root_id)
-        worker_thread = str(result.get("thread_id") or "")
-        packet_path = str(result.get("packet_path") or "")
-        push = str(result.get("push_reminder") or "")
-        now_iso = datetime.now(UTC).isoformat()
-        try:
-            await bus_client.post_admission_pointer(
-                root_id,
-                window_index=window_index,
-                posted_at_iso=now_iso,
-                worker_thread=worker_thread,
-                packet_path=packet_path,
-            )
-        except Exception as exc:  # noqa: BLE001 — stop root; do not re-fire
-            logger.exception(
-                "charter-runner pointer post failed for root %s after fire: %s",
-                root_id,
-                exc,
-            )
-            self._caps.mark_failed(root_id, "pointer_post_failed")
-            await events.emit_manage_charter_tick_window_failed(
-                root=root_id, reason="pointer_post_failed"
-            )
-            return False
-        self._reminded.discard(root_id)
-        await events.emit_manage_charter_tick_admitted(
-            root=root_id,
-            dispatch_id=str(result.get("dispatch_id") or worker_thread),
-            worker_thread=worker_thread,
-        )
-        try:
-            window_log.append_admit(
-                root_id=root_id,
-                window_index=window_index,
-                worker_thread=worker_thread,
-                packet_path=packet_path,
-                packet_text=packet,
-                push_reminder=push,
-                dispatch_id=str(result.get("dispatch_id") or ""),
-            )
-            window_log.append_executor_note(worker_thread, result.get("executor") or {})
-        except Exception:  # noqa: BLE001 — transcript must not kill the tick
-            logger.exception("charter-runner window_log append_admit failed")
-        if admission_mode == "handoff":
-            mode_note = " (attended IDE — open worker thread)"
-        elif admission_mode == "consult":
-            if consult_role == "r_admit":
-                mode_note = " (CONSULT_PENDING — R-admit consult, cursor-sdk generate)"
-            else:
-                mode_note = " (CONSULT_PENDING — web-consult cross-family)"
-        elif admission_mode == "autonomous":
-            mode_note = " (autonomous background lead — cursor/grok-4.5)"
-        else:
-            mode_note = " (cursor/grok-4.5 effort=high)"
-        msg = f"charter-runner: admitted {worker_thread} for root {root_id}" + mode_note
-        if push:
-            msg += f" — {push}"
-        if self._on_admit is not None:
-            try:
-                self._on_admit(msg)
-            except Exception:  # noqa: BLE001 — notify must not kill the tick
-                logger.exception("charter-runner on_admit notify failed")
-        return True
+        if admitted:
+            self._reminded.discard(decision.root_id)
+        return admitted
 
-    async def _handle_waiting_open(self, decision: Decision) -> None:
-        """Soft remind by default; optional unattended hard-fail past stale threshold."""
+    async def _try_self_heal(self, decision: Decision, turns: list[dict]) -> bool:
+        """Autonomous: complete/partial without root terminal → machine heal."""
         adm = decision.admission_turn or {}
         posted_at = _admission_posted_at(adm)
         if posted_at is None:
-            return
+            return False
         age = (datetime.now(UTC) - posted_at).total_seconds()
-        stale_s = self._unattended_stale_s
+        return await _self_heal_mod.try_self_heal_incomplete_window(
+            decision,
+            root_turns=turns,
+            caps=self._caps,
+            age_s=age,
+            admission_mode=_admission_mode(),
+        )
+
+    async def _try_consult_stall(self, decision: Decision, turns: list[dict]) -> bool:
+        """Consult-mode: hung WIP past DEFAULT_CONSULT_STALE_S → recover (a:26131)."""
+        adm = decision.admission_turn or {}
+        posted_at = _admission_posted_at(adm)
+        if posted_at is None:
+            return False
+        age = (datetime.now(UTC) - posted_at).total_seconds()
+        return await _consult_stall_mod.try_recover_consult_stall(
+            decision,
+            root_turns=turns,
+            caps=self._caps,
+            age_s=age,
+            admission_mode=_admission_mode(),
+        )
+
+    async def _handle_waiting_open(
+        self,
+        decision: Decision,
+        turns: list[dict],
+        *,
+        state_closes_this_tick: int = 0,
+    ) -> int:
+        """Soft remind by default; unattended hard-fail past effective stale threshold.
+
+        Broad ``stopped:*`` early-out (A2): once a root is already stopped for any
+        reason, do not re-emit ``window_failed`` / overwrite ``stopped_reason`` —
+        ``window_in_flight`` short-circuits before caps in ``evaluate_root``, so
+        this guard is the only barrier against stale restop. Exact
+        ``stopped:stale_window`` state-close lives in ``emit_skip_and_maybe_state_close``
+        / transition close below — not in this early-out.
+
+        Prefer self-heal over ``stale_window`` when the closeout-grace window has
+        elapsed (may re-probe after an earlier grace-blocked attempt). Returns the
+        updated A4 ``state_closes_this_tick`` counter for ``_tick_once`` to consume.
+        """
+        allowed, cap_reason = self._caps.check(decision.root_id)
+        if not allowed and (cap_reason or "").startswith("stopped:"):
+            return state_closes_this_tick
+        adm = decision.admission_turn or {}
+        posted_at = _admission_posted_at(adm)
+        if posted_at is None:
+            return state_closes_this_tick
+        age = (datetime.now(UTC) - posted_at).total_seconds()
+        stale_s = _effective_unattended_stale_s(
+            constructor_override=self._unattended_stale_override
+        )
         if stale_s > 0 and age >= stale_s:
+            if await self._try_self_heal(decision, turns):
+                return state_closes_this_tick
+            if await self._try_consult_stall(decision, turns):
+                return state_closes_this_tick
+            if await _self_heal_mod.closeout_within_grace(decision):
+                return state_closes_this_tick
             self._caps.mark_failed(decision.root_id, "stale_window")
             await events.emit_manage_charter_tick_window_failed(
                 root=decision.root_id, reason="stale_window"
             )
-            return
+            return await maybe_state_close_root(
+                decision,
+                reason="stale_window",
+                state_closes_this_tick=state_closes_this_tick,
+                max_state_closes=MAX_STATE_CLOSES_PER_TICK,
+            )
         if age < _WAITING_OPEN_REMIND_S:
-            return
+            return state_closes_this_tick
         if decision.root_id in self._reminded:
-            return
+            return state_closes_this_tick
         self._reminded.add(decision.root_id)
         await events.emit_manage_charter_tick_waiting_open(
             root=decision.root_id, age_s=int(age)
         )
-
-
-def _count_admissions(turns: list[dict]) -> int:
-    prefix = ADMISSION_SUBJECT_PREFIX.upper()
-    return sum(
-        1 for t in turns if str(t.get("subject") or "").upper().startswith(prefix)
-    )
+        return state_closes_this_tick
 
 
 def _admission_posted_at(admission_turn: dict) -> datetime | None:

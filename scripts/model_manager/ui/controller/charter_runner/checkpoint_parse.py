@@ -19,6 +19,9 @@ _STEP_STATUS = {" ": "pending", "~": "in_progress", "x": "done", "!": "blocked"}
 _STEP_RE = re.compile(r"^\s*(?:\d+\.|[-*])\s*\[([ x~!])\]\s*(.+?)\s*$")
 # Gated deliverable ids: scoreboard G-rows (G2, G3a) and charter R-beats (R1a, R1b).
 _GATED_ROW_RE = re.compile(r"\b[GR]\d+[a-z]?\b")
+# Closeout synonyms when authors omit the G-row id (a:26092). Case-sensitive:
+# lowercase ``closeout`` must NOT gate (A1). ``R-after`` is never allowlisted.
+_CLOSEOUT_GATED_RE = re.compile(r"\b(?:CLOSEOUT|arc[_-]close)\b")
 _SCOREBOARD_URI_RE = re.compile(r"(cortex://\S*scoreboard\S*)", re.IGNORECASE)
 _CORTEX_URI_RE = re.compile(r"cortex://[^\s)\]]+")
 _OPERATOR_FORK_RE = re.compile(r"\boperator\b", re.IGNORECASE)
@@ -28,7 +31,11 @@ _WIP_NONE_RE = re.compile(
     re.IGNORECASE,
 )
 # Schema §4.0 / Frictions mirror — silence ≠ none; explicit marker ⇒ empty list.
-_NONE_WINDOW_RE = re.compile(r"^_None this window\._\s*$", re.IGNORECASE)
+# Optional single-line parenthetical gloss parity with _WIP_NONE_RE (friction 26060).
+_NONE_WINDOW_RE = re.compile(
+    r"^_None this window\._(?:\s*\(.*\))?\s*$",
+    re.IGNORECASE,
+)
 # Canonical RESUME footer prefix (schema §3.1.1 / Align-2).
 _RESUME_PREFIX = "— RESUME (any seat, no command):"
 # Implication wire: ``P1 ⇒ Steps: …`` / ``P2 => Next-pickup: …``
@@ -56,6 +63,14 @@ _CONSULT_NEGATION_MARKERS = (
 _CONSULT_ROLE_RE = re.compile(
     r"consult_role:\s*(r_admit|judgment_gap)\b", re.IGNORECASE
 )
+# Declared executor lane on a Next-pickup row (a:26152 / review §4). Declared
+# beats the G-ordinal heuristic; ambiguity across rows fails closed upstream.
+_EXECUTOR_LANE_RE = re.compile(
+    r"executor_lane:\s*(implement|judgment)\b", re.IGNORECASE
+)
+# Work-item ref the implement gate needs (``require_implement_ready``). Charter
+# CHECKPOINTs name it in the Anchor block: ``- Todo: todo:<slug> · …``.
+_SOURCE_REF_RE = re.compile(r"\b((?:todo|plan|plan_phase):[a-z0-9][a-z0-9._-]*)")
 # Fallback sniff when explicit consult_role marker is absent (demoted per E5).
 _JUDGMENT_GAP_SNIFF_RE = re.compile(r"\bjudgment\s+gap\b", re.IGNORECASE)
 
@@ -82,6 +97,9 @@ class ParsedCheckpoint:
     implications: list[str] = field(default_factory=list)
     consult_pending: bool = False
     consult_role: str | None = None  # r_admit | judgment_gap when consult_pending
+    executor_lane: str | None = None  # implement | judgment, declared on Next-pickup
+    executor_lane_ambiguous: bool = False  # ≥2 rows declared conflicting lanes
+    source_ref: str | None = None  # todo:/plan:/plan_phase: ref for the implement gate
 
 
 def _sections(body: str) -> dict[str, str]:
@@ -132,15 +150,20 @@ def _parse_next_pickup(text: str) -> list[str]:
     return items
 
 
+def _silence_marker_line(text: str) -> bool:
+    """True when ``text`` is a single-line schema silence marker (optional gloss)."""
+    return bool(_NONE_WINDOW_RE.match(text.strip()))
+
+
 def _parse_bullet_or_none(text: str) -> list[str]:
     """Parse a bullet list; ``_None this window._`` (sole or per-line) ⇒ empty."""
     stripped = text.strip()
-    if not stripped or _NONE_WINDOW_RE.match(stripped):
+    if not stripped or _silence_marker_line(stripped):
         return []
     items: list[str] = []
     for line in stripped.splitlines():
         line_s = line.strip()
-        if not line_s or _NONE_WINDOW_RE.match(line_s):
+        if not line_s or _silence_marker_line(line_s):
             continue
         m = re.match(r"^\s*(?:\d+\.|[-*])\s+(.+?)\s*$", line)
         if m:
@@ -152,11 +175,14 @@ def _wip_is_none(text: str) -> bool:
     stripped = text.strip()
     if not stripped:
         return True
-    # Schema §4.0 silence marker (same as Frictions / Precedents).
-    if "\n" not in stripped and _NONE_WINDOW_RE.match(stripped):
+    # Multi-line WIP stays non-none (single-line guard).
+    if "\n" in stripped:
+        return False
+    # Schema §4.0 silence marker (same as Frictions / Precedents), optional gloss.
+    if _silence_marker_line(stripped):
         return True
     # Single-line "none" (any casing / list glyph), optional parenthetical gloss.
-    if "\n" not in stripped and _WIP_NONE_RE.match(stripped):
+    if _WIP_NONE_RE.match(stripped):
         return True
     # Legacy normalize path for bare tokens without gloss.
     normalized = re.sub(r"[-*\s`_]", "", stripped).lower()
@@ -175,7 +201,7 @@ def parse_checkpoint(body: str) -> ParsedCheckpoint:
     implications_text = _find_section(sections, "implications")
 
     next_pickup = _parse_next_pickup(next_text)
-    next_pickup_gated = any(_GATED_ROW_RE.search(item) for item in next_pickup)
+    next_pickup_gated = any(item_is_gated(item) for item in next_pickup)
     open_operator_fork = any(_OPERATOR_FORK_RE.search(item) for item in next_pickup)
 
     scoreboard_uri = None
@@ -193,9 +219,8 @@ def parse_checkpoint(body: str) -> ParsedCheckpoint:
     steps = _parse_steps(steps_text)
     blocked = _detect_blocked(body, steps)
     consult_pending = _detect_consult_pending(body, next_pickup)
-    consult_role = (
-        _parse_consult_role(body, next_pickup) if consult_pending else None
-    )
+    consult_role = _parse_consult_role(body, next_pickup) if consult_pending else None
+    executor_lane, executor_lane_ambiguous = _parse_executor_lane(next_pickup)
 
     return ParsedCheckpoint(
         wip_is_none=_wip_is_none(wip_text),
@@ -211,7 +236,37 @@ def parse_checkpoint(body: str) -> ParsedCheckpoint:
         implications=_parse_bullet_or_none(implications_text),
         consult_pending=consult_pending,
         consult_role=consult_role,
+        executor_lane=executor_lane,
+        executor_lane_ambiguous=executor_lane_ambiguous,
+        source_ref=_parse_source_ref(body),
     )
+
+
+def _parse_executor_lane(next_pickup: list[str]) -> tuple[str | None, bool]:
+    """Extract a declared ``executor_lane:`` from Next-pickup rows.
+
+    Returns ``(lane, ambiguous)``. Two rows declaring different lanes is
+    ambiguous; the router fails closed to the judgment bind rather than
+    guessing which pickup the tick is about to admit.
+    """
+    declared = {
+        m.group(1).lower()
+        for item in next_pickup
+        if (m := _EXECUTOR_LANE_RE.search(item)) is not None
+    }
+    if len(declared) > 1:
+        return None, True
+    return (declared.pop() if declared else None), False
+
+
+def _parse_source_ref(body: str) -> str | None:
+    """First ``todo:``/``plan:``/``plan_phase:`` work-item ref named in the body.
+
+    ``None`` when absent or when the body names more than one distinct ref —
+    the implement gate must bind a single unambiguous work item.
+    """
+    found = {m.group(1).lower() for m in _SOURCE_REF_RE.finditer(body or "")}
+    return found.pop() if len(found) == 1 else None
 
 
 def _parse_consult_role(body: str, next_pickup: list[str]) -> str | None:
@@ -293,6 +348,17 @@ def first_actionable_step(parsed: ParsedCheckpoint) -> Step | None:
         if step.status != "done":
             return step
     return None
+
+
+def item_is_gated(text: str) -> bool:
+    """Return True when ``text`` carries a gated Next-pickup token.
+
+    Gated means a G/R digit id (``G6``, ``R1a``) **or** an allowlisted closeout
+    synonym (``CLOSEOUT``, ``arc-close``, ``arc_close`` — case-sensitive). Bare
+    phase names such as ``R-after`` and lowercase ``closeout`` are not gated
+    (a:26092 / A1).
+    """
+    return bool(_GATED_ROW_RE.search(text) or _CLOSEOUT_GATED_RE.search(text))
 
 
 def _gated_ids_in(text: str) -> list[str]:

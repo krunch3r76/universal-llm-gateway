@@ -49,6 +49,7 @@ profiles:
       - session-close-transcript
     allowed_models:
       - anthropic/claude-sonnet-4-6
+      - anthropic/claude-opus-5
       - anthropic/claude-opus-4-8
 
   claude/api:
@@ -65,6 +66,7 @@ profiles:
     allowed_models:
       - anthropic/claude-sonnet-4-6
       - anthropic/claude-opus-4
+      - anthropic/claude-opus-5
       - anthropic/claude-opus-4-8
       - anthropic/claude-3-5-sonnet
 
@@ -375,7 +377,9 @@ roles:
       - openai/gpt-5.6-luna
       - openai/gpt-5.5
       - anthropic/claude-sonnet-4-6
+      - anthropic/claude-opus-5
       - anthropic/claude-opus-4-8
+      - cursor/claude-opus-5
       - google/gemini-3.6-flash
       - google/gemini-3.5-flash
       - google/gemini-3.1-pro-preview
@@ -417,4 +421,5 @@ roles:
       - xai/grok-4.20-0309-reasoning
       - openai/gpt-5.6-terra
       - openai/gpt-5.5
+      - anthropic/claude-opus-5
       - anthropic/claude-opus-4-8

@@ -7,7 +7,7 @@ first (fast path — not an availability gate); on miss it discovers radios
 
 Effort High/Extra/Max live under ``effort-menu-trigger`` → ``effort-option-*``
 (friction 24592). Sealed-ask default for Opus/Fable is Effort **High** (operator
-2026-07-16); request ``opus-4.8-extra`` when Extra is required.
+2026-07-16); request ``opus-5-extra`` when Extra is required.
 
 Cowork Project nests some models under "More models" and mounts the picker
 only after chat composer chrome is live.
@@ -41,7 +41,7 @@ __all__ = [
     "select_from_ui",
     "select_haiku_45",
     "select_model",
-    "select_opus_48",
+    "select_opus_5",
     "set_effort",
 ]
 
@@ -337,10 +337,10 @@ async def select_from_ui(
     }
 
 
-async def select_opus_48(page, *, prefer_extra: bool = False) -> dict:
-    """Ensure Opus 4.8; default Effort High (``prefer_extra=True`` → Extra)."""
+async def select_opus_5(page, *, prefer_extra: bool = False) -> dict:
+    """Ensure Opus 5; default Effort High (``prefer_extra=True`` → Extra)."""
     effort = "extra" if prefer_extra else "high"
-    return await select_from_ui(page, "opus-4.8", effort=effort)
+    return await select_from_ui(page, "opus-5", effort=effort)
 
 
 async def select_fable_5(page) -> dict:
@@ -356,14 +356,14 @@ async def select_haiku_45(page) -> dict:
 async def select_model(page, model: str) -> dict:
     """Select by prediction then live UI discovery; or leave.
 
-    Examples: ``opus-4.8``, ``fable-5``, ``sonnet-5``, ``haiku-4.5``, ``leave``.
+    Examples: ``opus-5``, ``fable-5``, ``sonnet-5``, ``haiku-4.5``, ``leave``.
     ``PREDICTED_MODEL_LABELS`` is try-first only — availability SOT remains the picker.
     """
-    key = (model or "opus-4.8").strip().lower()
+    key = (model or "opus-5").strip().lower()
     if is_leave_request(key):
         label = await current_model_label(page)
         return {"ok": True, "step": "leave", "current_model": label}
-    family, effort = parse_model_request(model or "opus-4.8")
+    family, effort = parse_model_request(model or "opus-5")
     if effort is None:
         effort = sealed_ask_default_effort(family)
-    return await select_from_ui(page, model or "opus-4.8", effort=effort)
+    return await select_from_ui(page, model or "opus-5", effort=effort)

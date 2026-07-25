@@ -19,7 +19,7 @@ MechanicalContract = Literal["pure-mechanical", "light-bounded", "implement"]
 CostIntent = Literal["deliberate_high_cost"] | None
 
 _COST_RISK_MODELS = frozenset(
-    {"claude-opus-4-8", "claude-sonnet-4-6", "claude-fable-5"}
+    {"claude-opus-5", "claude-opus-4-8", "claude-sonnet-4-6", "claude-fable-5"}
 )
 _MECHANICAL_CONTRACTS = frozenset({"pure-mechanical", "light-bounded"})
 

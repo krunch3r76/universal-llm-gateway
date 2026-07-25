@@ -146,6 +146,12 @@ equivalent SQL read-model.
 in `evidence_uris`), references, `depends_on` edges, and the `workflow_state=done`
 flip in one call. Structured per-step results keep partial failures visible.
 
+**Arc-close invariant (landed 5737):** a closeout/closure sidecar alone does
+**not** complete the todo — `workflow_state` must become `done` via
+`todo_close_sidecar` / `entity_update`. Parent + children each need the state
+flip (5737 repair class: G6 wrote closure docs while top-level `workflow_state`
+stayed open/in_progress).
+
 **Closure payload fields**: `todo_id` (required), `summary` (required, becomes the
 closure assertion's claim), `evidence_text`, `evidence_uris`, `reasoning_summary`,
 `references` (`[{target, type_id?, role?, evidence?, strength?}]` → relationships),

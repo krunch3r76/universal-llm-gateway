@@ -73,11 +73,19 @@ class CapStore:
     ) -> None:
         self._caps = caps or WindowCaps.from_env()
         self._roots: dict[str, _RootState] = {}
-        self._intent_dir = intent_dir if intent_dir is not None else _default_intent_dir()
-        self._revise_dir = revise_dir if revise_dir is not None else _default_revise_dir()
+        self._intent_dir = (
+            intent_dir if intent_dir is not None else _default_intent_dir()
+        )
+        self._revise_dir = (
+            revise_dir if revise_dir is not None else _default_revise_dir()
+        )
         self._revise_cap = (
             revise_cap if revise_cap is not None else _env_int("CHARTER_REVISE_CAP", 3)
         )
+        # Heal counts survive reset() so checkpoint_missing loops stay bounded.
+        self._heal_counts: dict[str, int] = {}
+        # Consult-stall generations are independent and monotonic across root resets.
+        self._consult_stall_heals: dict[str, int] = {}
 
     def check(
         self, root_id: str, *, now: float | None = None
@@ -144,6 +152,28 @@ class CapStore:
 
     def reset_revise(self, root_id: str) -> None:
         self.revise_path(root_id).unlink(missing_ok=True)
+
+    def increment_heal(self, root_id: str) -> int:
+        """Bump the in-memory heal counter (survives ``reset``); return new count.
+
+        Distinct from revise_cap — checkpoint_missing is not a deploy-verify probe
+        failure and must not steal G4a/b/c budget (R-admit A4).
+        """
+        count = self._heal_counts.get(root_id, 0) + 1
+        self._heal_counts[root_id] = count
+        return count
+
+    def get_heal_count(self, root_id: str) -> int:
+        return self._heal_counts.get(root_id, 0)
+
+    def increment_consult_stall_heal(self, root_id: str) -> int:
+        """Bump the consult-stall generation without consuming self-heal budget."""
+        count = self._consult_stall_heals.get(root_id, 0) + 1
+        self._consult_stall_heals[root_id] = count
+        return count
+
+    def get_consult_stall_heal_count(self, root_id: str) -> int:
+        return self._consult_stall_heals.get(root_id, 0)
 
     @property
     def revise_cap(self) -> int:

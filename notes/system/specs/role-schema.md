@@ -43,7 +43,7 @@ attributes:
   default_family: gpt
   default_platform: api
   default_model: openai/gpt-5.5
-  allowed_models: [openai/gpt-5.5, anthropic/claude-sonnet-4-6, anthropic/claude-opus-4-8, google/gemini-3.1-pro-preview, google/gemini-2.5-pro]
+  allowed_models: [openai/gpt-5.5, anthropic/claude-sonnet-4-6, anthropic/claude-opus-5, anthropic/claude-opus-4-8, google/gemini-3.1-pro-preview, google/gemini-2.5-pro]
   frontier_kind: openai
   required_tools: [cortex, fs]
   mcp_required: true

@@ -46,7 +46,8 @@ def register_individual_tools(mcp: FastMCP) -> None:
         Args:
             path: Relative file path, e.g. "documents/resume.md".
             content: Text content to write.
-            expected_sha256: Optional ``sha256:<hex>`` guard for safe overwrite.
+            expected_sha256: Optional CAS guard — bare hex (``read_sha256``) or
+                ``sha256:<hex>`` / ``spec_sha256:<hex>``.
             if_absent: When True, write only if the file does not exist.
 
         Returns:

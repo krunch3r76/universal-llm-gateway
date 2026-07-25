@@ -140,14 +140,20 @@ def reject_template_tokens(relative: str) -> None:
         )
 
 
-def safe_path(relative: str) -> Path:
+def safe_path(relative: str, *, for_write: bool = False) -> Path:
     """Resolve *relative* inside the sandbox, rejecting traversal attempts.
 
     Raises ValueError if the resolved path escapes the sandbox root.
+    Pass ``for_write=True`` for mutating ops (and for move/copy *targets*).
     """
     from implement_admission.scheme_resolve import resolve_fs_ingress
 
-    ingress = resolve_fs_ingress(relative, sandbox="cortex")
+    ingress = resolve_fs_ingress(
+        relative,
+        sandbox="cortex",
+        cortex_root=SANDBOX_ROOT,
+        for_write=for_write,
+    )
     if ingress.resolved is not None:
         return ingress.resolved
     clean = ingress.rel_path.lstrip("/")

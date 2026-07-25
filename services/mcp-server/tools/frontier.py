@@ -514,7 +514,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         ``model_knobs`` — cursor-sdk model-variant knobs (``op="generate"``,
         ``seat="cursor-sdk"``) aligned against the resolved Cursor model's
         capability descriptor (``libs/cursor_capabilities``). E.g. on
-        ``model="cursor/claude-opus-4-8"`` pass
+        ``model="cursor/claude-opus-5"`` pass
         ``model_knobs={"effort": "low", "thinking": "false"}``. Unsupported or
         invalid knob values are dropped with a ``knob_dropped`` warning; the
         per-knob outcome is echoed in ``knob_resolution``. Ignored on API roles.
@@ -627,19 +627,25 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                 record_prefix="mcp.team.handoff",
             )
 
-        # CDP substrate is role-less (model=cdp/<picker> selects transport).
+        # Agent substrates may be role/seat-less (model prefix selects transport).
+        cursor_model_only = (
+            op == "generate"
+            and isinstance(model, str)
+            and model.startswith("cursor/")
+        )
         cdp_roleless = (
             op in {"generate", "to_thread"}
             and isinstance(model, str)
             and model.startswith("cdp/")
         )
-        if not role and not seat and not cdp_roleless:
+        if not role and not seat and not cdp_roleless and not cursor_model_only:
             return {
                 "error": {
                     "code": "validation_error",
                     "message": (
                         "exactly one of role or seat is required when "
-                        "op='generate' or op='to_thread'"
+                        "op='generate' or op='to_thread' "
+                        "(except model=cdp/… or model=cursor/…)"
                     ),
                 },
                 "field": "role",

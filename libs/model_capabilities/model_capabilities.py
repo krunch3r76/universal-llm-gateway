@@ -116,6 +116,7 @@ _PERPLEXITY_DEEP_RESEARCH = ModelCapabilityCard(
 
 MODEL_CAPABILITY_CARDS: Final[dict[str, ModelCapabilityCard]] = {
     "anthropic/claude-sonnet-4-6": _ANTHROPIC_API,
+    "anthropic/claude-opus-5": _ANTHROPIC_API,
     "anthropic/claude-opus-4-8": _ANTHROPIC_API,
     "anthropic/claude-fable-5": _ANTHROPIC_API,
     "anthropic/claude-opus-4": _ANTHROPIC_API,

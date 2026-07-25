@@ -35,7 +35,7 @@ trigger_match_terms:
 
 | Bad | Good |
 |---|---|
-| “Opus High” → `role=artisan model=anthropic/claude-opus-4-8` + `cost_intent` | CDP sealed ask **or** `seat=cursor-sdk model=cursor/claude-opus-4-8` |
+| “Opus High” → `role=artisan model=anthropic/claude-opus-5` + `cost_intent` | CDP sealed ask **or** `seat=cursor-sdk model=cursor/claude-opus-5` |
 | Self-attest `deliberate_high_cost` to unlock API Opus | Treat API as **off** unless operator **explicitly** overrides the house rule for that call |
 | Cancel / re-route without operator bind when substrate was wrong | Ask substrate; ¬ silent cancel of a live dispatch |
 

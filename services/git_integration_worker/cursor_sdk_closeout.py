@@ -843,6 +843,7 @@ async def prepare_closeout_delivery_async(
     deliverables_expected: bool = False,
     light_bounded_expected_paths: tuple[str, ...] = (),
     execution_id: str,
+    extra_deviations: tuple[str, ...] = (),
     post_closeout_sidecar_fn: Callable[..., Any] | None = None,
 ) -> CloseoutDelivery:
     """Write sidecar, resolve pinned cortex deliverables, build closeout JSON."""
@@ -884,6 +885,7 @@ async def prepare_closeout_delivery_async(
         divergent_rels=pinned.divergent_rels,
         light_bounded_expected_paths=light_bounded_expected_paths,
         execution_id=execution_id,
+        extra_deviations=extra_deviations,
         post_closeout_sidecar_fn=post_closeout_sidecar_fn,
     )
 
@@ -905,6 +907,7 @@ def _assemble_closeout_delivery(
     divergent_rels: tuple[str, ...] = (),
     light_bounded_expected_paths: tuple[str, ...] = (),
     execution_id: str = "test-execution",
+    extra_deviations: tuple[str, ...] = (),
     post_closeout_sidecar_fn: Callable[..., dict[str, Any] | None] | None = None,
     finalize_oversize: bool = True,
     worktree_isolated: bool = False,
@@ -1019,7 +1022,13 @@ def _assemble_closeout_delivery(
             worktree_isolated=worktree_isolated,
         )
     )
-    deviations = [*baseline_deviations, *(deviations or [])]
+    # Caller-supplied tokens lead: oversize bodies keep only the first few
+    # deviations, and a gate-bypass finding must not be the entry that is dropped.
+    deviations = [
+        *extra_deviations,
+        *baseline_deviations,
+        *(d for d in (deviations or []) if d not in extra_deviations),
+    ]
     if outcome.stream_only_deviations:
         deviations = [
             *deviations,
@@ -1134,6 +1143,7 @@ async def _assemble_closeout_delivery_async(
     divergent_rels: tuple[str, ...] = (),
     light_bounded_expected_paths: tuple[str, ...] = (),
     execution_id: str,
+    extra_deviations: tuple[str, ...] = (),
     post_closeout_sidecar_fn: Callable[..., Any] | None = None,
 ) -> CloseoutDelivery:
     delivery = _assemble_closeout_delivery(
@@ -1152,6 +1162,7 @@ async def _assemble_closeout_delivery_async(
         divergent_rels=divergent_rels,
         light_bounded_expected_paths=light_bounded_expected_paths,
         execution_id=execution_id,
+        extra_deviations=extra_deviations,
         finalize_oversize=False,
     )
     full_body = delivery.body

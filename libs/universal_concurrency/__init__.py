@@ -17,7 +17,7 @@ Design principles:
 """
 
 from .capacity_counter import CapacityCounter
-from .exceptions import CapacityLimitError, OverReleaseError
+from .exceptions import CapacityLimitError, OverReleaseError, TransferHolderError
 from .fifo_capacity_gate import FifoCapacityGate
 from .fifo_wait_queue import FifoWaitQueue
 from .queue_utils import QUEUE_EMPTY_ERRORS, drain_queue_batch
@@ -33,5 +33,6 @@ __all__ = [
     "GateStats",
     "OverReleaseError",
     "QUEUE_EMPTY_ERRORS",
+    "TransferHolderError",
     "WaitQueueStats",
 ]

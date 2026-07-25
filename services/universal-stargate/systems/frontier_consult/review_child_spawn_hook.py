@@ -29,7 +29,8 @@ from .skill_suggest_durable_state import DurableTerminalEvent, durable_catch_up_
 logger = get_logger(__name__)
 
 _DEFAULT_CROSS_FAMILY_REVIEWER = "openai/gpt-5.5"
-_OPENAI_EXECUTOR_ALTERNATE = "anthropic/claude-opus-4-8"
+# Prefer cursor/* Anthropic-family over anthropic/* API (house rule).
+_OPENAI_EXECUTOR_ALTERNATE = "cursor/claude-opus-5"
 _GENERATE_OP = "generate"
 _CURSOR_SDK_ROLE = "cursor-sdk"
 _REVIEWER_ROLE = "reviewer"
@@ -89,6 +90,7 @@ def select_cross_family_reviewer(resolved_model: str) -> ReviewerSelection | Non
 
 
 def _reviewer_model_admitted(model: str) -> bool:
+    """Admit cloud API and agent-substrate (cursor/cdp) reviewer models."""
     from model_id import WireModelResolutionError, resolve_wire_model_id
 
     try:
@@ -99,10 +101,11 @@ def _reviewer_model_admitted(model: str) -> bool:
 
 
 def is_review_child_execution(ctx: AdmissionContext) -> bool:
-    if ctx.op != _TO_THREAD_OP:
-        return False
-    if ctx.role != _REVIEWER_ROLE:
-        return False
+    """True when this admission is a review-child spawn (any substrate).
+
+    Provenance is authoritative so API ``to_thread`` and cursor-sdk ``generate``
+    children both suppress grandchild re-spawn.
+    """
     if not ctx.auto_review_child:
         return False
     return ctx.spawn_template_provenance == _SPAWN_PROVENANCE
@@ -152,6 +155,75 @@ async def _build_generate_lane_review_prompt(
     )
 
 
+async def _dispatch_review_child(
+    *,
+    request_id: str,
+    delivery_thread: str,
+    prompt: str,
+    reviewer: ReviewerSelection,
+) -> dict[str, Any]:
+    """Admit one review child on the substrate matching ``reviewer.model``.
+
+    ``cursor/*`` → ``op=generate`` + ``seat=cursor-sdk`` (house preference).
+    Cloud API models → ``op=to_thread`` + ``role=reviewer`` (existing path).
+    """
+    from .route import TeamDispatchGenerateBody, TeamDispatchToThreadBody, team_dispatch
+
+    if reviewer.family == "cursor":
+        child_body: TeamDispatchGenerateBody | TeamDispatchToThreadBody = (
+            TeamDispatchGenerateBody(
+                op=_GENERATE_OP,
+                seat=_CURSOR_SDK_ROLE,
+                dispatch_thread_id=delivery_thread,
+                model=reviewer.model,
+                contract="light-bounded",
+                prompt=prompt,
+                # Child must not cascade another review-child spawn.
+                auto_review_child=False,
+                spawn_review_provenance=_SPAWN_PROVENANCE,
+            )
+        )
+        result = await team_dispatch(child_body, Response())
+        child_op, child_role = _GENERATE_OP, _CURSOR_SDK_ROLE
+    else:
+        child_body = TeamDispatchToThreadBody(
+            op=_TO_THREAD_OP,
+            role=_REVIEWER_ROLE,
+            dispatch_thread_id=delivery_thread,
+            thread=delivery_thread,
+            subject=f"generate cross-family review — {request_id[:8]}",
+            contract="light-bounded",
+            model=reviewer.model,
+            auto_review_child=True,
+            read_only=True,
+            spawn_review_provenance=_SPAWN_PROVENANCE,
+        )
+        from .densify_candidate_ready import _PromptOverride
+
+        with _PromptOverride(prompt):
+            result = await team_dispatch(child_body, Response())
+        child_op, child_role = _TO_THREAD_OP, _REVIEWER_ROLE
+
+    if not isinstance(result, dict):
+        return {}
+    child_exec = result.get("execution_id")
+    if child_exec:
+        from .generate_admission_context_store import write_admission_context
+
+        write_admission_context(
+            execution_id=str(child_exec),
+            auto_review_child=True,
+            op=child_op,
+            role=child_role,
+            resolved_model=reviewer.model,
+            parent_dispatch_thread_id=delivery_thread,
+            dispatch_thread_id=delivery_thread,
+            spawn_template_provenance=_SPAWN_PROVENANCE,
+            suppress_review_spawn=True,
+        )
+    return result
+
+
 async def spawn_generate_lane_review_child(
     *,
     request_id: str,
@@ -165,8 +237,6 @@ async def spawn_generate_lane_review_child(
     by cursor-sdk closeout). Delivery must use coord ``dispatch_thread_id``,
     matching densify_candidate_ready — never the worker thread alone.
     """
-    from .route import TeamDispatchToThreadBody, team_dispatch
-
     delivery_thread = ctx.dispatch_thread_id or ctx.parent_dispatch_thread_id
     if not delivery_thread:
         logger.warning(
@@ -179,38 +249,12 @@ async def spawn_generate_lane_review_child(
         request_id=request_id,
         parent_dispatch_thread_id=delivery_thread,
     )
-    child_body = TeamDispatchToThreadBody(
-        op=_TO_THREAD_OP,
-        role=_REVIEWER_ROLE,
-        dispatch_thread_id=delivery_thread,
-        thread=delivery_thread,
-        subject=f"generate cross-family review — {request_id[:8]}",
-        contract="light-bounded",
-        model=reviewer.model,
-        auto_review_child=True,
-        read_only=True,
-        spawn_review_provenance=_SPAWN_PROVENANCE,
+    return await _dispatch_review_child(
+        request_id=request_id,
+        delivery_thread=delivery_thread,
+        prompt=prompt,
+        reviewer=reviewer,
     )
-    from .densify_candidate_ready import _PromptOverride
-
-    with _PromptOverride(prompt):
-        result = await team_dispatch(child_body, Response())
-    if isinstance(result, dict):
-        child_exec = result.get("execution_id")
-        if child_exec:
-            from .generate_admission_context_store import write_admission_context
-
-            write_admission_context(
-                execution_id=str(child_exec),
-                auto_review_child=True,
-                op=_TO_THREAD_OP,
-                role=_REVIEWER_ROLE,
-                resolved_model=reviewer.model,
-                parent_dispatch_thread_id=delivery_thread,
-                dispatch_thread_id=delivery_thread,
-                spawn_template_provenance=_SPAWN_PROVENANCE,
-            )
-    return result if isinstance(result, dict) else {}
 
 
 def _emit_review_child_spawned(

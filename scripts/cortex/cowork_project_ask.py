@@ -165,8 +165,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--model",
-        default="opus-4.8",
-        help="live picker name/pattern (e.g. opus-4.8, sonnet-5, fable-5) | leave",
+        default="opus-5",
+        help="live picker name/pattern (e.g. opus-5, sonnet-5, fable-5) | leave",
     )
     mode_group = parser.add_mutually_exclusive_group()
     mode_group.add_argument(

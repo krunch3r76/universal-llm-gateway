@@ -6,24 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from implement_admission.scheme_resolve import repo_base, workspaces_root
-from implement_admission.share_uri_registry import (
-    CORTEX_FILE_ROOT_DIRS,
-    is_cortex_entity_uri,
-)
-
-_ULG_REPO_DIRNAME = "universal-llm-gateway"
-
-
-def _repo_name_for_abs(abs_path: Path, ws_root: Path) -> str:
-    resolved = abs_path.resolve()
-    root = ws_root.resolve()
-    for repo in _repo_dirs(root):
-        try:
-            resolved.relative_to(repo.resolve())
-            return repo.name
-        except ValueError:
-            continue
-    return root.name
+from implement_admission.share_uri_registry import is_cortex_entity_uri, leading_segment
 
 
 def _repo_dirs(root: Path) -> list[Path]:
@@ -42,13 +25,13 @@ def sandbox_rel(
     abs_path: Path,
     *,
     workspaces_root_override: Path | None = None,
-    cortex_root_override: Path | None = None,
+    cortex_root: Path | None = None,
 ) -> str:
     """Return sandbox-relative posix path for *abs_path*."""
     from implement_admission.closeout_helpers import cortex_files_root
 
     if sandbox == "cortex":
-        root = (cortex_root_override or cortex_files_root()).resolve()
+        root = (cortex_root or cortex_files_root()).resolve()
     elif sandbox == "workspaces":
         root = workspaces_root(workspaces_root_override).resolve()
     else:
@@ -72,7 +55,7 @@ def to_share_uri(
     path_or_rel: str | Path,
     *,
     workspaces_root_override: Path | None = None,
-    cortex_root_override: Path | None = None,
+    cortex_root: Path | None = None,
 ) -> str:
     """Emit canonical Share URI for *sandbox* + relative or absolute path."""
     if isinstance(path_or_rel, Path):
@@ -80,7 +63,7 @@ def to_share_uri(
             sandbox,
             path_or_rel,
             workspaces_root_override=workspaces_root_override,
-            cortex_root_override=cortex_root_override,
+            cortex_root=cortex_root,
         )
     else:
         raw = str(path_or_rel).strip().lstrip("/")
@@ -95,10 +78,18 @@ def to_share_uri(
         else:
             rel = raw
 
+    clean = rel.lstrip("/")
+    first = leading_segment(clean)
+    if first and ":" in first:
+        raise ValueError(
+            f"Refuse to mint Share URI with ':' in leading segment {first!r}; "
+            "colon forces entity form and must not appear in file-root egress."
+        )
+
     if sandbox == "cortex":
-        return f"cortex://{rel.lstrip('/')}"
+        return f"cortex://{clean}"
     if sandbox == "workspaces":
-        return f"workspaces://{rel.lstrip('/')}"
+        return f"workspaces://{clean}"
     raise ValueError(f"Unknown sandbox {sandbox!r}")
 
 
@@ -107,7 +98,7 @@ def dual_carry(
     rel_path: str,
     *,
     workspaces_root_override: Path | None = None,
-    cortex_root_override: Path | None = None,
+    cortex_root: Path | None = None,
     **extra: Any,
 ) -> dict[str, Any]:
     """Build agent-facing payload with sandbox-relative ``path`` + canonical ``uri``."""
@@ -118,7 +109,7 @@ def dual_carry(
             sandbox,
             clean_rel,
             workspaces_root_override=workspaces_root_override,
-            cortex_root_override=cortex_root_override,
+            cortex_root=cortex_root,
         ),
     }
     payload.update(extra)
@@ -148,7 +139,6 @@ def project_share_uri_for_abs(
 
 
 __all__ = [
-    "CORTEX_FILE_ROOT_DIRS",
     "dual_carry",
     "is_cortex_entity_uri",
     "project_share_uri_for_abs",

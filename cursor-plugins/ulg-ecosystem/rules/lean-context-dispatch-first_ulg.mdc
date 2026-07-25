@@ -31,11 +31,30 @@ trivial/local or latency-sensitive tight-loop debugging.
 |---|---|---|
 | Mechanical implement | `team_dispatch(op=generate, seat=cursor-sdk)` → `cursor/composer-2.5` | Autonomous (default) |
 | Investigate / judgment | `cursor/grok-4.5` effort ∈ {low, medium, **high**} (+ fast) — ¬ xhigh/max | In-seat or gated seat switch |
-| Greater reasoning | **CDP** web-anthropic Opus via `project_ask` (today; future endpoint: `todo:cdp-model-endpoint-dispatch`) | **AUTONOMOUS** under trigger below |
-| Premium metered | `cursor/claude-opus-4-8` effort ∈ {low, medium, high, **xhigh**, **max**} | **OPERATOR-GATED** — propose tier, wait |
+| Greater reasoning | **CDP** web-anthropic Opus via `team_dispatch(model=cdp/opus-5)` (`project_ask` = escape only) | **AUTONOMOUS** under trigger below |
+| Premium metered | `cursor/claude-opus-5` effort ∈ {low, medium, high, **xhigh**, **max**} | **OPERATOR-GATED** — propose tier, wait |
 
 Asymmetric effort: Grok tops at `high`; only Opus has `xhigh`/`max`. Fable excluded.
 `anthropic/*` API **PROHIBITED** — see `anthropic-dispatch-authorization`.
+
+## Non-primary cursor model gate (operator 2026-07-25)
+
+`∀` cursor-substrate dispatch — IDE **`Task` `model=`** *or* `team_dispatch`
+`model=cursor/*` — the chosen model MUST be the **workflow-primary** for that
+work class, else **OPERATOR-GATED** (propose the slug + why, wait).
+
+| Term | Meaning |
+|---|---|
+| **Workflow-primary** | Model a standing rule/skill already names as the autonomous default for that need (this ladder · `consult-routing` · `path-sim` · `subagent-strategy`). Omitting `model=` when the harness inherits the session / role default counts as primary. |
+| **Non-primary** | Any other explicit bind — e.g. `gpt-5.6-sol-*`, off-table Task slugs, `cursor/claude-opus-*` (also premium row above), or a ladder model used for the **wrong** work class (Sol/Opus for mechanical after judgment closed). |
+
+**Exception:** another workflow/rule already specifies that exact model for that class
+(e.g. path-sim Q/A → `cursor/grok-4.5`; implement → `cursor/composer-2.5`; CDP
+trigger → `cdp/opus-5`). Then fire without re-asking.
+
+**Anti-pattern:** re-spend frontier reasoning (`sol` / Opus / Fable) to *implement*
+amendments a prior consult already densified — that is non-primary for the
+mechanical class. Doctrine: `decision:cursor-non-primary-model-operator-gate`.
 
 ## CDP trigger predicate (announce-then-proceed)
 

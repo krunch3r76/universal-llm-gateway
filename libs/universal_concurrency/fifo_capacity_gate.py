@@ -20,7 +20,7 @@ from time import monotonic
 
 from universal_logging import get_logger
 
-from .exceptions import CapacityLimitError, OverReleaseError
+from .exceptions import CapacityLimitError, OverReleaseError, TransferHolderError
 from .types import GateStats
 
 logger = get_logger(__name__)
@@ -117,10 +117,15 @@ class FifoCapacityGate:
         Try to acquire slot without waiting (atomic).
 
         No await = no interleaving = safe without lock.
+        Idempotent: returns True when ``request_id`` already holds a slot
+        (nest park path: child may already hold via ``transfer_holder``).
 
         Returns:
             True if slot acquired, False if at capacity.
         """
+        if request_id in self._holders:
+            return True
+
         try:
             limit = self.current_limit
         except CapacityLimitError as e:
@@ -382,6 +387,39 @@ class FifoCapacityGate:
                     self._gate_id,
                     self._active_count,
                     limit,
+                )
+
+    async def transfer_holder(self, from_id: str, to_id: str) -> None:
+        """Swap capacity holders without waking waiters or changing active_count.
+
+        Used for nest park/restore: parent→child on nest enter, child→parent on
+        child terminal. Waiters stay queued; siblings must not steal the slot.
+
+        Args:
+            from_id: Current holder to discard.
+            to_id: New holder to add (may already be absent from waiters).
+
+        Raises:
+            TransferHolderError: If ``from_id`` is not a current holder.
+        """
+        async with self._lock:
+            if from_id not in self._holders:
+                raise TransferHolderError(
+                    f"[GATE:{self._gate_id}] transfer_holder from_id={from_id!r} "
+                    "is not the current holder"
+                )
+            if from_id == to_id:
+                return
+            self._holders.discard(from_id)
+            self._holders.add(to_id)
+            if self._gate_id is not None:
+                logger.info(
+                    "🔁 [GATE:%s] transfer_holder %s → %s (active=%d, queued=%d)",
+                    self._gate_id,
+                    from_id[:8],
+                    to_id[:8],
+                    self._active_count,
+                    len(self._waiters),
                 )
 
     async def force_release(self, request_id: str) -> bool:

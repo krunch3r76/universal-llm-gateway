@@ -72,6 +72,7 @@ def _create_thread_impl(
     tags: list[str] | None = None,
     lifecycle_state: str | None = None,
     thread_id: str | None = None,
+    enroll_charter_runner: bool = False,
 ) -> dict[str, Any]:
     """Create a thread without a turn via POST /threads."""
     payload: dict[str, Any] = {"slug": slug}
@@ -83,6 +84,8 @@ def _create_thread_impl(
         payload["lifecycle_state"] = lifecycle_state
     if thread_id is not None:
         payload["id"] = thread_id
+    if enroll_charter_runner:
+        payload["enroll_charter_runner"] = True
     result = relay("agent-bus", "POST", "/threads", body=payload)
     if isinstance(result, dict) and "error" in result:
         return {"error": f"agent-bus error creating thread: {result['error']}"}
@@ -125,6 +128,7 @@ def _create_thread_dispatch(
     tags: list[str] | None = None,
     lifecycle_state: str | None = None,
     thread_id: str | None = None,
+    enroll_charter_runner: bool = False,
 ) -> dict[str, Any]:
     if not slug:
         return {"error": "create_thread requires: slug"}
@@ -134,4 +138,5 @@ def _create_thread_dispatch(
         tags=tags,
         lifecycle_state=lifecycle_state,
         thread_id=thread_id,
+        enroll_charter_runner=enroll_charter_runner,
     )

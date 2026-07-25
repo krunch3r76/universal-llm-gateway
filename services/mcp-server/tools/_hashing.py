@@ -10,6 +10,32 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
+# Citation prefixes callers may attach when composing assertion/spec hashes.
+# ``read_sha256`` / ``written_sha256`` are bare hex; CAS guards accept either form.
+_SHA256_CITATION_PREFIXES = ("sha256:", "spec_sha256:")
+
+
+def normalize_sha256_hex(value: str) -> str:
+    """Return lowercase bare hex; strip optional ``sha256:`` / ``spec_sha256:``."""
+    stripped = value.strip()
+    lower = stripped.lower()
+    for prefix in _SHA256_CITATION_PREFIXES:
+        if lower.startswith(prefix):
+            return stripped[len(prefix) :].lower()
+    return lower
+
+
+def sha256_hex_equal(left: str | None, right: str | None) -> bool:
+    """True when both sides denote the same digest after prefix normalization."""
+    if left is None or right is None:
+        return left is right
+    return normalize_sha256_hex(left) == normalize_sha256_hex(right)
+
+
+def format_sha256_uri(value: str) -> str:
+    """Canonical ``sha256:<hex>`` form for mismatch echo (friction a:26153)."""
+    return f"sha256:{normalize_sha256_hex(value)}"
+
 
 def sha256_hex_of_bytes(data: bytes) -> str:
     """Return lowercase hex SHA-256 of *data* (no ``sha256:`` prefix)."""

@@ -86,14 +86,28 @@ async def handle_llm_proxy(request: Request) -> JSONResponse:
             status_code=400,
             headers=_CORS_HEADERS,
         )
-    from model_id import WireModelResolutionError, resolve_wire_model_id
+    from model_id import (
+        SubstrateCapabilityUnimplementedError,
+        WireModelResolutionError,
+        require_cloud_api_backend,
+        resolve_wire_model_id,
+    )
 
     try:
-        wire = resolve_wire_model_id(str(raw_model), require_cloud=True)
+        wire = require_cloud_api_backend(
+            resolve_wire_model_id(str(raw_model), require_cloud=True),
+            capability="llm_proxy_chat_completions",
+        )
     except WireModelResolutionError as exc:
         return JSONResponse(
             {"error": str(exc)},
             status_code=400,
+            headers=_CORS_HEADERS,
+        )
+    except SubstrateCapabilityUnimplementedError as exc:
+        return JSONResponse(
+            {"error": exc.to_dict()},
+            status_code=501,
             headers=_CORS_HEADERS,
         )
 
