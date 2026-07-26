@@ -29,10 +29,18 @@ logger = get_logger(__name__)
 def _persist_residue_after_harvest(
     *,
     root_id: str,
-    checkpoint_body: str,
+    consumed_checkpoint_body: str,
     admission_meta: dict,
 ) -> None:
-    """Update last-residue store after a closed window is harvested."""
+    """Record the residue the closed window CONSUMED, not the one it produced.
+
+    The gate compares the current tip against this record, so storing the
+    post-window CHECKPOINT would compare the tip against itself: no witness can
+    fire against an identical witness, so every root would take an
+    ``unchanged_residue`` skip per tick and stop at the threshold with no way to
+    produce a newer CHECKPOINT. Thrash detection needs the pair to straddle a
+    window boundary.
+    """
     from .checkpoint_parse import parse_checkpoint
     from .residue_fingerprint import (
         load_residue_record,
@@ -41,13 +49,13 @@ def _persist_residue_after_harvest(
     )
     from .tick_loop import _admission_mode
 
-    parsed = parse_checkpoint(checkpoint_body)
+    parsed = parse_checkpoint(consumed_checkpoint_body)
     admission_mode = str(admission_meta.get("admission_mode") or _admission_mode())
     window_kind = "consult" if admission_mode == "consult" else "worker"
     prior = load_residue_record(root_id)
     w10_consumed = prior.w10_consumed if prior is not None else False
     record = record_from_harvest(
-        checkpoint_body=checkpoint_body,
+        checkpoint_body=consumed_checkpoint_body,
         parsed=parsed,
         admission_mode=admission_mode,
         window_kind=window_kind,
@@ -266,6 +274,22 @@ def completed_windows(turns: list[dict]) -> list[tuple[dict, dict]]:
     return pairs
 
 
+def consumed_checkpoint(turns: list[dict], admission: dict) -> dict | None:
+    """Latest CHECKPOINT preceding an admission — the residue that window ran on."""
+    adm_n = turn_number(admission)
+    cp_prefix = CHECKPOINT_PREFIX.upper()
+    best: dict | None = None
+    for turn in turns:
+        n = turn_number(turn)
+        if n >= adm_n or n <= 0:
+            continue
+        if not str(turn.get("subject") or "").upper().startswith(cp_prefix):
+            continue
+        if best is None or n > turn_number(best):
+            best = turn
+    return best
+
+
 async def harvest_completed_windows(root_id: str, turns: list[dict]) -> None:
     """Append worker turns + CHECKPOINT for windows that closed since last tick."""
     for admission, checkpoint in completed_windows(turns):
@@ -335,11 +359,22 @@ async def harvest_completed_windows(root_id: str, turns: list[dict]) -> None:
                 worker_turns=worker_turns,
                 worker_closed=worker_closed,
             )
-            _persist_residue_after_harvest(
-                root_id=root_id,
-                checkpoint_body=str(checkpoint.get("body") or ""),
-                admission_meta=meta,
-            )
+            consumed = consumed_checkpoint(turns, admission)
+            if consumed is None:
+                # Leaving the store untouched is the safe branch: writing this
+                # window's own CHECKPOINT would deadlock the next tick.
+                logger.warning(
+                    "charter-runner window %s (root=%s) has no preceding "
+                    "CHECKPOINT — last-residue store left unchanged",
+                    window_index,
+                    root_id,
+                )
+            else:
+                _persist_residue_after_harvest(
+                    root_id=root_id,
+                    consumed_checkpoint_body=str(consumed.get("body") or ""),
+                    admission_meta=meta,
+                )
             await events.emit_manage_charter_tick_closed(
                 root=root_id,
                 window_index=window_index,
