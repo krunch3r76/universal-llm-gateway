@@ -36,7 +36,9 @@ _PIN_RE = re.compile(
     re.IGNORECASE,
 )
 _SPEC_URI_RE = re.compile(
-    r"(cortex://notes/system/specs/[^\s\)\],|]+)",
+    # Exclude markdown fence/punctuation so `cortex://…md` does not keep the
+    # trailing backtick (a:26351-class — stale_r_corpus_sha:unreadable).
+    r"(cortex://notes/system/specs/[^\s\)\],|`'\"]+)",
     re.IGNORECASE,
 )
 _HEX64_RE = re.compile(r"^[0-9a-fA-F]{64}$")
@@ -87,7 +89,7 @@ def _candidate_rows(sidecars: str) -> list[tuple[str, str]]:
         pin_m = _PIN_RE.search(row)
         if uri_m is None or pin_m is None:
             continue
-        found.append((uri_m.group(1).rstrip("."), pin_m.group(1)))
+        found.append((uri_m.group(1).rstrip(".`'\""), pin_m.group(1)))
     return found
 
 
