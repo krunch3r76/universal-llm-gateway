@@ -15,6 +15,10 @@ from services.git_integration_worker.cursor_auto.directive import (
     build_sdk_message,
     parse_request_body,
 )
+from services.git_integration_worker.cursor_auto.episode_briefing import (
+    compose_admit_body,
+    maybe_briefing_for_admit,
+)
 from services.git_integration_worker.cursor_auto.gate_serialize import (
     plan_nested_dispatch,
 )
@@ -69,22 +73,24 @@ async def process_job(
     )
     gate_plan = plan_nested_dispatch(work_bounded=work_bounded)
 
+    base_admit_body = (
+        "Auto admitted lane:cursor-auto request.\n"
+        f"requested_model={model['requested']} "
+        f"resolved={model['resolved_model_id']}\n"
+        f"requested_effort={effort['requested']} "
+        f"resolved={effort['resolved_effort']}\n"
+        f"contract={contract_info['contract']} "
+        f"handoff={handoff_contract}\n"
+        f"gate_plan={gate_plan['action']}\n"
+        f"directive={directive is not None}"
+    )
+    briefing = await maybe_briefing_for_admit(job.thread_id)
     admit = await client.reply(
         thread_id=job.thread_id,
         to_agent=job.from_agent,
         from_agent=_FROM_AUTO,
         subject=f"status:admitted — {job.subject[:80]}",
-        body=(
-            "Auto admitted lane:cursor-auto request.\n"
-            f"requested_model={model['requested']} "
-            f"resolved={model['resolved_model_id']}\n"
-            f"requested_effort={effort['requested']} "
-            f"resolved={effort['resolved_effort']}\n"
-            f"contract={contract_info['contract']} "
-            f"handoff={handoff_contract}\n"
-            f"gate_plan={gate_plan['action']}\n"
-            f"directive={directive is not None}"
-        ),
+        body=compose_admit_body(base_admit_body, briefing),
     )
     if admit.status_code >= 400:
         queue.mark_done(job.job_id, failed=True)

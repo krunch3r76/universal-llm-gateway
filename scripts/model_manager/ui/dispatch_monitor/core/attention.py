@@ -106,6 +106,18 @@ def _charter_items(
 def _root_items(root: CharterRootRow, thresholds: Thresholds) -> list[AttentionItem]:
     """Derive attention for one charter root."""
     items: list[AttentionItem] = []
+    if root.state == "failed":
+        items.append(
+            AttentionItem(
+                key=f"charter.root.window-failed:{root.root_id}",
+                kind="charter.root.window_failed",
+                severity="crit",
+                subject=root.root_id,
+                title="Charter window failed",
+                detail=root.skip_reason or "unspecified",
+                since_ms=root.last_signal_ms,
+            )
+        )
     if root.state == "waiting_open" and root.waiting_open_since_ms is not None:
         items.append(
             AttentionItem(
@@ -186,6 +198,42 @@ def _sdk_items(
                     since_ms=row.terminal_ms,
                 )
             )
+        if row.state == "timeout":
+            items.append(
+                AttentionItem(
+                    key=f"sdk.dispatch.timeout:{row.dispatch_id}",
+                    kind="sdk.dispatch.timeout",
+                    severity="crit",
+                    subject=row.dispatch_id,
+                    title="Dispatch timed out",
+                    detail=row.failure_reason or "worker exceeded wall budget",
+                    since_ms=row.terminal_ms,
+                )
+            )
+        if row.state == "orphaned":
+            items.append(
+                AttentionItem(
+                    key=f"sdk.dispatch.orphaned:{row.dispatch_id}",
+                    kind="sdk.dispatch.orphaned",
+                    severity="crit",
+                    subject=row.dispatch_id,
+                    title="Dispatch orphaned",
+                    detail=row.failure_reason or "bridge lost while worker running",
+                    since_ms=row.terminal_ms,
+                )
+            )
+        if row.delivery_failed:
+            items.append(
+                AttentionItem(
+                    key=f"sdk.dispatch.delivery-failed:{row.dispatch_id}",
+                    kind="sdk.dispatch.delivery_failed",
+                    severity="crit",
+                    subject=row.dispatch_id,
+                    title="Dispatch delivery failed",
+                    detail=row.failure_reason or "run ok, bus post failed",
+                    since_ms=row.last_progress_ms,
+                )
+            )
         if row.terminal_ms is None:
             severity = _escalate(
                 row.idle_age_ms,
@@ -215,53 +263,51 @@ def _sdk_items(
 def _cdp_items(
     legs: tuple[CdpLegRow, ...], thresholds: Thresholds
 ) -> list[AttentionItem]:
-    """Derive attention for CDP legs, including the proofless-completion case."""
+    """Derive attention for CDP legs per v3 §9 arc-specific classes."""
     items: list[AttentionItem] = []
-    warn, crit = thresholds.cdp_idle_warn_ms, thresholds.cdp_idle_crit_ms
     for row in legs:
-        if row.state == "completed" and not row.proof_present:
+        subject = row.request_id
+        if row.state == "stalled":
             items.append(
                 AttentionItem(
-                    key=f"cdp.leg.proofless:{row.execution_id}",
-                    kind="cdp.leg.completed_without_proof",
-                    severity="warn",
-                    subject=row.execution_id,
-                    title="CDP leg completed with no archive or content proof",
-                    detail=(
-                        "Terminal carried neither archive_uri nor content_proof_uri. "
-                        "Treat as unharvested, not as success."
-                    ),
+                    key=f"cdp.leg.stalled:{subject}",
+                    kind="cdp.leg.stalled",
+                    severity="crit",
+                    subject=subject,
+                    title="CDP leg stalled without proof",
+                    detail=row.failure_reason or row.stall_stage or "unspecified",
                     since_ms=row.terminal_ms,
                 )
             )
-        if row.state in ("failed", "aborted"):
+        if row.state == "delivery_failed":
             items.append(
                 AttentionItem(
-                    key=f"cdp.leg.terminal:{row.execution_id}",
-                    kind=f"cdp.leg.{row.state}",
-                    severity="crit" if row.state == "failed" else "warn",
-                    subject=row.execution_id,
-                    title=f"CDP leg {row.state}",
-                    detail=row.failure_reason or "no reason reported",
+                    key=f"cdp.leg.delivery_failed:{subject}",
+                    kind="cdp.leg.delivery_failed",
+                    severity="crit",
+                    subject=subject,
+                    title="CDP delivery failed — outcome not on the bus",
+                    detail=row.failure_reason or "on-behalf bus delivery exhausted",
                     since_ms=row.terminal_ms,
                 )
             )
-        if row.terminal_ms is None:
-            severity = _escalate(row.idle_age_ms, warn, crit)
-            if severity:
+        if row.terminal_ms is None and row.admitted_at_ms is not None:
+            wall_ms = row.max_wall_s * 1000
+            warn_ms = (wall_ms * 2) // 3
+            if row.elapsed_ms is not None and row.elapsed_ms >= warn_ms:
                 items.append(
                     AttentionItem(
-                        key=f"cdp.leg.idle:{row.execution_id}",
-                        kind="cdp.leg.idle",
-                        severity=severity,
-                        subject=row.execution_id,
-                        title="CDP leg quiet",
+                        key=f"cdp.leg.wall_approaching:{subject}",
+                        kind="cdp.leg.wall_approaching",
+                        severity="warn",
+                        subject=subject,
+                        title="CDP leg approaching wall ceiling",
                         detail=(
-                            f"No progress for {_secs(row.idle_age_ms)}. Silence is not "
-                            "failure -- the leg may be alive and quiet."
+                            f"Elapsed {_secs(row.elapsed_ms)} of {row.max_wall_s}s max wall. "
+                            "Silence is not failure before the ceiling."
                         ),
-                        since_ms=row.last_progress_ms,
-                        age_ms=row.idle_age_ms,
+                        since_ms=row.admitted_at_ms,
+                        age_ms=row.elapsed_ms,
                     )
                 )
     return items

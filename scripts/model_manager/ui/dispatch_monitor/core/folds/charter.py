@@ -109,6 +109,9 @@ class CharterFold:
         self.wip_capacity: int | None = None
         self.wip_in_use = 0
         self.cold_start_seeded = False
+        self.loop_state = "unknown"
+        self.last_reload_ms: int | None = None
+        self.reload_module_count = 0
 
     def handlers(self) -> dict[str, Any]:
         """Return this fold's signal-to-handler table."""
@@ -122,6 +125,10 @@ class CharterFold:
             signals.CHARTER_ERROR: self._on_error,
             signals.CHARTER_INTENT_HEALED: self._on_intent_healed,
             signals.CHARTER_AUDIT: self._on_audit,
+            signals.CHARTER_STARTED: self._on_lifecycle,
+            signals.CHARTER_STOPPED: self._on_lifecycle,
+            signals.CHARTER_RELOADED: self._on_reload,
+            signals.CHARTER_WINDOW_FAILED: self._on_window_failed,
         }
 
     def _root(self, root_id: str, record: EventRecord) -> RootState:
@@ -262,7 +269,11 @@ class CharterFold:
     def _on_error(self, record: EventRecord) -> None:
         """Record the most recent tick error. Zero of these is the normal case."""
         self.last_error_ms = record.ts_unix_ms
-        message = record.payload.get("message") or record.payload.get("error")
+        message = (
+            record.payload.get("reason")
+            or record.payload.get("message")
+            or record.payload.get("error")
+        )
         self.last_error_message = str(message) if message else "unspecified"
 
     def _on_intent_healed(self, record: EventRecord) -> None:
@@ -274,6 +285,35 @@ class CharterFold:
         if row.state == "in_flight":
             row.state = "intent_healed"
         row.admitted_at_ms = None
+
+    def _on_lifecycle(self, record: EventRecord) -> None:
+        """Fold tick loop start/stop — v3 §4 ``on_lifecycle``."""
+        if record.signal == signals.CHARTER_STARTED:
+            self.loop_state = "running"
+        elif record.signal == signals.CHARTER_STOPPED:
+            self.loop_state = "stopped"
+
+    def _on_reload(self, record: EventRecord) -> None:
+        """Resolve a charter_reload command — v3 §4 ``on_reload``."""
+        payload = record.payload
+        modules = payload.get("modules")
+        if isinstance(modules, (list, tuple)):
+            self.reload_module_count = len(modules)
+        elif _as_int(payload.get("count")) is not None:
+            self.reload_module_count = _as_int(payload.get("count")) or 0
+        self.last_reload_ms = record.ts_unix_ms
+
+    def _on_window_failed(self, record: EventRecord) -> None:
+        """Mark a root failed pending human re-arm — v3 §4 ``on_window_failed``."""
+        payload = record.payload
+        root_id = _root_id(payload, record)
+        if not root_id:
+            return
+        row = self._root(root_id, record)
+        reason = payload.get("reason")
+        row.skip_reason = str(reason) if reason else None
+        row.state = "failed"
+        row.waiting_open_since_ms = None
 
     def _on_audit(self, record: EventRecord) -> None:
         """Seed cold-start state from a windowed audit snapshot.

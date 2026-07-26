@@ -54,15 +54,14 @@ def test_fingerprint_ignores_clock_advance_when_nothing_changed() -> None:
 def test_fingerprint_changes_when_attention_crosses_a_threshold() -> None:
     """Age exclusion must not mute real state change.
 
-    The clock advance here pushes a live CDP leg past its idle warn threshold. The
-    resulting attention item is new *membership*, which is hashed -- so the frame
-    must publish even though only time passed.
+    The clock advance here pushes a live CDP leg past ⅔ max_wall_s. The
+    resulting wall-approaching attention item is new *membership*, which is hashed.
     """
     model, now = replay("cdp-leg.jsonl")
     quiet = model.derive(now)
-    stale = model.derive(now + 10_000_000)
+    stale = model.derive(now + 1_210_000)
     assert stale.fingerprint != quiet.fingerprint
-    assert any(item.kind == "cdp.leg.idle" for item in stale.attention)
+    assert any(item.kind == "cdp.leg.wall_approaching" for item in stale.attention)
 
 
 def test_fold_order_independence_across_sources() -> None:

@@ -19,7 +19,7 @@ from .folds import CdpFold, CharterFold, SdkFold
 ROOT_CLOSED_STATES = ("closed",)
 
 #: Dispatch states meaning the worker leg is over, one way or another.
-SDK_TERMINAL_STATES = ("completed", "failed")
+SDK_TERMINAL_STATES = ("completed", "failed", "timeout", "orphaned")
 
 
 def age(now_ms: int, since_ms: int | None) -> int | None:
@@ -70,6 +70,9 @@ def sdk_rows(
                 divergent_fields=tuple(sorted(state.divergent_fields)),
                 terminal_emitter=state.terminal_emitter,
                 provenance=state.provenance or "signal",
+                queue_position=state.queue_position,
+                closeout_uri=state.closeout_uri,
+                delivery_failed=state.delivery_failed,
             )
         )
     rows.sort(key=lambda r: r.dispatch_id)
@@ -83,26 +86,29 @@ def cdp_rows(
     rows = []
     for state in fold.legs.values():
         live = state.terminal_ms is None
+        elapsed = age(now_ms, state.admitted_at_ms) if live else None
         rows.append(
             CdpLegRow(
+                request_id=state.request_id,
                 execution_id=state.execution_id,
+                satellite_execution_id=state.satellite_execution_id,
+                thread_id=state.thread_id,
+                model=state.model,
+                caller_agent=state.caller_agent,
                 state=state.state,
-                picker_model=state.picker_model,
-                dispatch_thread_id=state.dispatch_thread_id,
-                root_id=state.root_id or index.root_for_cdp(state.execution_id),
-                prompt_uri=state.prompt_uri,
-                submitted_ms=state.submitted_ms,
-                last_progress_ms=state.last_progress_ms,
+                admitted_at_ms=state.admitted_at_ms,
                 terminal_ms=state.terminal_ms,
-                idle_age_ms=age(now_ms, state.last_progress_ms) if live else None,
+                elapsed_ms=elapsed,
+                max_wall_s=state.max_wall_s,
                 archive_uri=state.archive_uri,
                 content_proof_uri=state.content_proof_uri,
                 stall_stage=state.stall_stage,
                 failure_reason=state.failure_reason,
                 proof_present=bool(state.archive_uri or state.content_proof_uri),
+                root_id=state.root_id or index.root_for_cdp(state.request_id),
             )
         )
-    rows.sort(key=lambda r: r.execution_id)
+    rows.sort(key=lambda r: r.request_id)
     return tuple(rows)
 
 

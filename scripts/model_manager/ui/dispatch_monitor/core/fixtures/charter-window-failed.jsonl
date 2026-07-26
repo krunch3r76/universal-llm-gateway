@@ -1,0 +1,5 @@
+# Fixture — charter window_failed (v3 §4 / §9).
+# Root 5811 admitted then window_failed with live reason field.
+{"signal": "manage.charter.tick.scanned", "ts_unix_ms": 1753601000000, "seq": 4001, "source": "ulg://charter-runner", "payload": {"roots": 1, "admitted": 0}}
+{"signal": "manage.charter.tick.admitted", "ts_unix_ms": 1753601000500, "seq": 4002, "source": "ulg://charter-runner", "subject": "5811", "payload": {"root": "5811", "worker_thread": "5812", "window_index": 2, "project": "project:dispatch-supervisor-monitor"}}
+{"signal": "manage.charter.tick.window_failed", "ts_unix_ms": 1753601050000, "seq": 4003, "source": "ulg://charter-runner", "subject": "5811", "payload": {"root": "5811", "reason": "worker_failed"}}

@@ -26,6 +26,36 @@ from .eligibility import ADMISSION_SUBJECT_PREFIX, CHECKPOINT_PREFIX
 logger = get_logger(__name__)
 
 
+def _persist_residue_after_harvest(
+    *,
+    root_id: str,
+    checkpoint_body: str,
+    admission_meta: dict,
+) -> None:
+    """Update last-residue store after a closed window is harvested."""
+    from .checkpoint_parse import parse_checkpoint
+    from .residue_fingerprint import (
+        load_residue_record,
+        record_from_harvest,
+        save_residue_record,
+    )
+    from .tick_loop import _admission_mode
+
+    parsed = parse_checkpoint(checkpoint_body)
+    admission_mode = str(admission_meta.get("admission_mode") or _admission_mode())
+    window_kind = "consult" if admission_mode == "consult" else "worker"
+    prior = load_residue_record(root_id)
+    w10_consumed = prior.w10_consumed if prior is not None else False
+    record = record_from_harvest(
+        checkpoint_body=checkpoint_body,
+        parsed=parsed,
+        admission_mode=admission_mode,
+        window_kind=window_kind,
+        w10_consumed=w10_consumed,
+    )
+    save_residue_record(root_id, record)
+
+
 async def _flag_gate_bypass(
     *,
     root_id: str,
@@ -304,6 +334,11 @@ async def harvest_completed_windows(root_id: str, turns: list[dict]) -> None:
                 checkpoint_body=str(checkpoint.get("body") or ""),
                 worker_turns=worker_turns,
                 worker_closed=worker_closed,
+            )
+            _persist_residue_after_harvest(
+                root_id=root_id,
+                checkpoint_body=str(checkpoint.get("body") or ""),
+                admission_meta=meta,
             )
             await events.emit_manage_charter_tick_closed(
                 root=root_id,

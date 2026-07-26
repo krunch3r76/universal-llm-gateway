@@ -20,11 +20,8 @@ Provenance is tracked per family because it differs sharply:
 and ``specs/dispatch-surface-unify.md``. The ``.started`` / ``.progress`` / ``.failed``
 members of the *worker* family are INFERRED and flagged in ``README.md``.
 
-``cdp.generate.*`` -- **PROSPECTIVE**. Assigned by the G4 scope packet. The CDP
-lane emits no events today (``cortex://notes/system/threads/5718-session-review-substrate-apis.md``:
-"the entire CDP lane emits zero events"), so this family is a contract the
-emitter side must still honour. Folding it is harmless until then: absent
-signals simply leave ``cdp`` empty.
+``cdp.generate.*`` -- **VERIFIED** (G5.2 slice 1). Live emitters in
+``frontier_consult/cdp_events.py``; handler table keyed on ``request_id`` per v3 §6.
 
 Naming tension worth a G5 decision, not a core change: ``[universal:events]``
 fixes the signal grammar at ``^[a-z]+(\\.[a-z]+){1,4}$`` -- no underscores. Four
@@ -45,6 +42,10 @@ CHARTER_WAITING_OPEN = "manage.charter.tick.waiting_open"
 CHARTER_ERROR = "manage.charter.tick.error"
 CHARTER_INTENT_HEALED = "manage.charter.tick.intent_healed"
 CHARTER_AUDIT = "manage.charter.tick.audit"
+CHARTER_STARTED = "manage.charter.tick.started"
+CHARTER_STOPPED = "manage.charter.tick.stopped"
+CHARTER_RELOADED = "manage.charter.tick.reloaded"
+CHARTER_WINDOW_FAILED = "manage.charter.tick.window_failed"
 
 #: Signals accepted only as cold-start seed material, never as live transitions.
 CHARTER_COLD_START = (CHARTER_AUDIT,)
@@ -53,6 +54,15 @@ CHARTER_COLD_START = (CHARTER_AUDIT,)
 SDK_WORKER_PROGRESS = "frontier.sdk.worker.progress"
 SDK_WORKER_COMPLETED = "frontier.sdk.worker.completed"
 SDK_WORKER_FAILED = "frontier.sdk.worker.failed"
+SDK_WORKER_QUEUED = "frontier.sdk.worker.queued"
+SDK_WORKER_TIMEOUT = "frontier.sdk.worker.timeout"
+SDK_WORKER_ORPHANED = "frontier.sdk.worker.orphaned"
+SDK_WORKER_DELIVERY_FAILED = "frontier.sdk.worker.delivery_failed"
+SDK_LEASE_PROMOTED = "frontier.sdk.worker.lease.promoted"
+SDK_LEASE_RELEASED = "frontier.sdk.worker.lease.released"
+SDK_LEASE_PARK_ENTER = "frontier.sdk.worker.lease.park_enter"
+SDK_LEASE_PARK_RESTORE = "frontier.sdk.worker.lease.park_restore"
+SDK_CLOSEOUT_RELOCATED = "frontier.sdk.closeout.relocated"
 
 # --- sdk family: pipeline lane (GS2 emitter B) -----------------------------
 SDK_PIPELINE_STARTED = "pipeline.frontier.dispatch.started"
@@ -82,18 +92,42 @@ SDK_TERMINAL_SIGNALS = frozenset(
     }
 )
 
-SDK_FAILURE_SIGNALS = frozenset({SDK_WORKER_FAILED, SDK_PIPELINE_FAILED})
+SDK_FAILURE_SIGNALS = frozenset(
+    {SDK_WORKER_FAILED, SDK_PIPELINE_FAILED, SDK_WORKER_TIMEOUT, SDK_WORKER_ORPHANED}
+)
 
-# --- cdp family (PROSPECTIVE) ---------------------------------------------
+SDK_LIFECYCLE_SIGNALS = (
+    SDK_WORKER_QUEUED,
+    SDK_WORKER_TIMEOUT,
+    SDK_WORKER_ORPHANED,
+    SDK_WORKER_DELIVERY_FAILED,
+    SDK_LEASE_PROMOTED,
+    SDK_LEASE_RELEASED,
+    SDK_LEASE_PARK_ENTER,
+    SDK_LEASE_PARK_RESTORE,
+    SDK_CLOSEOUT_RELOCATED,
+)
+
+# --- cdp family (VERIFIED live — v3 §6) ------------------------------------
+CDP_ADMITTED = "cdp.generate.admitted"
 CDP_SUBMITTED = "cdp.generate.submitted"
-CDP_RUNNING = "cdp.generate.running"
-CDP_PROGRESS = "cdp.generate.progress"
-CDP_COMPLETED = "cdp.generate.completed"
-CDP_FAILED = "cdp.generate.failed"
-CDP_ABORTED = "cdp.generate.aborted"
+CDP_PROOF = "cdp.generate.proof"
 CDP_STALLED = "cdp.generate.stalled"
+CDP_DELIVERY_FAILED = "cdp.generate.delivery_failed"
 
-CDP_TERMINAL_SIGNALS = frozenset({CDP_COMPLETED, CDP_FAILED, CDP_ABORTED})
+#: Earliest G3 marker; filtered to ``reply_from_agent == \"cdp\"`` in the fold.
+POLL_HINT_ISSUED = "frontier.poll.hint.issued"
+
+CDP_TERMINAL_SIGNALS = frozenset({CDP_PROOF, CDP_STALLED, CDP_DELIVERY_FAILED})
+
+#: G4 contract signals never emitted live — removed from handler table G5.2 slice 1.
+CDP_PHANTOM = (
+    "cdp.generate.running",
+    "cdp.generate.progress",
+    "cdp.generate.completed",
+    "cdp.generate.failed",
+    "cdp.generate.aborted",
+)
 
 # --- realtime-plane drop counters (VERIFIED, doctrine §2) ------------------
 EVENTS_DROPPED_INGEST = "events.dropped.ingest"
@@ -101,6 +135,8 @@ EVENTS_DROPPED_SUBSCRIBE = "events.dropped.subscribe"
 
 # --- cold-start seed meta (G5 graft — not emitted on the live bus) ---------
 MONITOR_SEED_FOLD_STATUS = "monitor.seed.fold_status"
+#: GX1 replay window could not be satisfied on reconnect (graft-only meta).
+MONITOR_TRANSPORT_REPLAY_TRUNCATED = "monitor.transport.replay_truncated"
 #: Synthetic SDK row injection from reconcile / lease-snapshot (D2: no live emitter).
 MONITOR_META_SDK_STARTED = "monitor.meta.sdk_started"
 #: Reconcile source failure — graft-only; drives attention, never steady-state poll.
@@ -121,24 +157,28 @@ CHARTER_FAMILY = (
     CHARTER_ERROR,
     CHARTER_INTENT_HEALED,
     CHARTER_AUDIT,
+    CHARTER_STARTED,
+    CHARTER_STOPPED,
+    CHARTER_RELOADED,
+    CHARTER_WINDOW_FAILED,
 )
 
-SDK_FAMILY = tuple(SDK_EMITTER_BY_SIGNAL)
+SDK_FAMILY = tuple(SDK_EMITTER_BY_SIGNAL) + SDK_LIFECYCLE_SIGNALS
 
 CDP_FAMILY = (
+    CDP_ADMITTED,
     CDP_SUBMITTED,
-    CDP_RUNNING,
-    CDP_PROGRESS,
-    CDP_COMPLETED,
-    CDP_FAILED,
-    CDP_ABORTED,
+    CDP_PROOF,
     CDP_STALLED,
+    CDP_DELIVERY_FAILED,
+    POLL_HINT_ISSUED,
 )
 
 META_FAMILY = (
     EVENTS_DROPPED_INGEST,
     EVENTS_DROPPED_SUBSCRIBE,
     MONITOR_SEED_FOLD_STATUS,
+    MONITOR_TRANSPORT_REPLAY_TRUNCATED,
     MONITOR_META_SDK_STARTED,
     MONITOR_RECONCILE_SOURCE_FAILED,
 )

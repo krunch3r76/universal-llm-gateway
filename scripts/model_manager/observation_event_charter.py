@@ -36,6 +36,7 @@ async def emit_manage_charter_tick_root_skipped(
     half: str | None = None,
     predicate_id: str | None = None,
     wip_snippet: str | None = None,
+    fingerprint: str | None = None,
 ) -> None:
     """Emit per-root ineligible Decision so silent starve is observable.
 
@@ -53,6 +54,8 @@ async def emit_manage_charter_tick_root_skipped(
         payload["predicate_id"] = predicate_id
     if wip_snippet is not None:
         payload["wip_snippet"] = wip_snippet[:120]
+    if fingerprint is not None:
+        payload["fingerprint"] = fingerprint
     await _emit("manage.charter.tick.root_skipped", payload)
 
 

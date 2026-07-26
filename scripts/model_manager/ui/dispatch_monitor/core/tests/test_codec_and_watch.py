@@ -117,12 +117,14 @@ def test_watch_render_is_pure_text_and_names_every_section(any_fixture: str) -> 
     assert model.derive(now).fingerprint in text
 
 
-def test_watch_surfaces_divergence_and_missing_proof() -> None:
-    """The reference View must make the two quiet defects visible."""
+def test_watch_surfaces_divergence_and_stalled_cdp() -> None:
+    """The reference View must make GS2 divergence and CDP stalled legs visible."""
     gs2, gs2_now = replay("gs2-dual-emitter.jsonl")
     assert "DIVERGENT" in render(gs2.derive(gs2_now))
     cdp, cdp_now = replay("cdp-leg.jsonl")
-    assert "NO-PROOF" in render(cdp.derive(cdp_now))
+    text = render(cdp.derive(cdp_now))
+    assert "stalled" in text
+    assert "req-stalled" in text or "exec-cdp-02" in text
 
 
 def test_watch_entry_emits_decodable_json_frames(capsys) -> None:

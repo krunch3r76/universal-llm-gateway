@@ -193,74 +193,86 @@ def test_replayed_terminal_is_idempotent() -> None:
     assert once.fingerprint == twice.fingerprint
 
 
-# --- cdp -------------------------------------------------------------------
+# --- cdp (live v3 §6) -------------------------------------------------------
 def test_cdp_silence_is_not_failure() -> None:
-    """A quiet leg stays running and earns an idle item; it never folds to failed."""
+    """An admitted leg with no terminal stays admitted; wall warn is not failed."""
     model, now = replay("cdp-leg.jsonl")
-    frame = model.derive(now + 10_000_000)
-    row = _row(frame.cdp, "execution_id", "exec-cdp-03")
-    assert row.state == "running"
+    frame = model.derive(now + 1_210_000)
+    row = _row(frame.cdp, "request_id", "req-silent")
+    assert row.state == "admitted"
     assert row.terminal_ms is None
     assert row.failure_reason is None
-    idle = _row(frame.attention, "key", "cdp.leg.idle:exec-cdp-03")
-    assert idle.severity == "crit", "long silence escalates, but stays an idle item"
+    wall = _row(frame.attention, "key", "cdp.leg.wall_approaching:req-silent")
+    assert wall.severity == "warn"
 
 
-def test_cdp_completed_without_proof_is_flagged() -> None:
-    """A proofless completion is state ``completed`` with ``proof_present`` false."""
+def test_cdp_proof_terminal_is_clean() -> None:
+    """A proof terminal carries proof_present and no failure attention."""
     model, now = replay("cdp-leg.jsonl")
     frame = model.derive(now)
-    proofless = _row(frame.cdp, "execution_id", "exec-cdp-02")
-    assert proofless.state == "completed" and proofless.proof_present is False
-    assert any(
-        i.kind == "cdp.leg.completed_without_proof" and i.subject == "exec-cdp-02"
-        for i in frame.attention
-    )
-    clean = _row(frame.cdp, "execution_id", "exec-cdp-01")
-    assert clean.proof_present is True
-    assert not any(
-        i.kind == "cdp.leg.completed_without_proof" and i.subject == "exec-cdp-01"
-        for i in frame.attention
-    )
+    clean = _row(frame.cdp, "request_id", "req-success")
+    assert clean.state == "proof" and clean.proof_present is True
+    assert clean.satellite_execution_id == "sat-9a1f"
+    assert not any(i.kind == "cdp.leg.stalled" and i.subject == "req-success" for i in frame.attention)
 
 
-def test_cdp_root_correlates_through_dispatch_thread() -> None:
-    """A leg naming a root links directly; one naming only a thread links via index."""
+def test_cdp_stalled_raises_attention() -> None:
+    """``cdp.generate.stalled`` is a terminal failure with crit attention."""
     model, now = replay("cdp-leg.jsonl")
     frame = model.derive(now)
-    assert _row(frame.cdp, "execution_id", "exec-cdp-01").root_id == "5852"
-    assert _row(frame.cdp, "execution_id", "exec-cdp-02").root_id is None
+    row = _row(frame.cdp, "request_id", "req-stalled")
+    assert row.state == "stalled" and row.terminal_ms is not None
+    item = _row(frame.attention, "key", "cdp.leg.stalled:req-stalled")
+    assert item.severity == "crit"
 
 
-def test_unknown_cdp_status_is_counted_not_guessed() -> None:
-    """An off-vocabulary status is recorded as drift, never aliased to a known one."""
+def test_cdp_admitted_submitted_proof_one_row() -> None:
+    """Admitted → submitted → proof on one request_id yields exactly one row."""
     model = Model()
+    rid = "req-abc"
     model.apply(
         Event(
-            "cdp.generate.running",
+            "cdp.generate.admitted",
             1_000,
-            {"execution_id": "odd", "status": "queued"},
+            {"request_id": rid, "execution_id": "ex1", "model": "cdp/opus-5", "thread_id": "99"},
         )
     )
-    assert model.cdp.unknown_statuses == {"queued": 1}
-    assert "cdp_status_vocabulary_drift" in model.derive(1_000).health.degraded
-
-
-def test_stalled_signal_does_not_terminate_the_leg() -> None:
-    """``cdp.generate.stalled`` is a diagnosis from the poll ladder, not a terminal."""
-    model = Model()
-    model.apply(Event("cdp.generate.submitted", 1_000, {"execution_id": "s1"}))
-    model.apply(Event("cdp.generate.running", 1_100, {"execution_id": "s1"}))
     model.apply(
         Event(
-            "cdp.generate.stalled",
-            1_200,
-            {"execution_id": "s1", "stall_stage": "no_progress"},
+            "cdp.generate.submitted",
+            2_000,
+            {"request_id": rid, "execution_id": "ex1", "satellite_execution_id": "sat1", "model": "cdp/opus-5"},
         )
     )
-    row = _row(model.derive(1_300).cdp, "execution_id", "s1")
-    assert row.state == "running" and row.terminal_ms is None
-    assert row.stall_stage == "no_progress"
+    model.apply(
+        Event(
+            "cdp.generate.proof",
+            3_000,
+            {"request_id": rid, "execution_id": "ex1", "satellite_execution_id": "sat1", "archive_uri": "cortex://a"},
+        )
+    )
+    frame = model.derive(3_000)
+    assert len(frame.cdp) == 1
+    row = frame.cdp[0]
+    assert row.request_id == rid
+    assert row.state == "proof"
+    assert row.satellite_execution_id == "sat1"
+
+
+def test_non_cdp_poll_hint_is_ignored() -> None:
+    """Poll hints with reply_from_agent != cdp do not open CDP rows."""
+    model, now = replay("cdp-leg.jsonl")
+    frame = model.derive(now)
+    assert not any(r.request_id == "req-sdk-only" for r in frame.cdp)
+
+
+def test_cdp_poll_hint_populates_caller_agent() -> None:
+    """CDP poll hint is the earliest marker and supplies caller_agent."""
+    model, now = replay("cdp-leg.jsonl")
+    row = _row(model.derive(now).cdp, "request_id", "req-success")
+    assert row.caller_agent == "cursor"
+    assert row.thread_id == "5901"
+
 
 
 # --- totality --------------------------------------------------------------
@@ -271,6 +283,20 @@ def test_unknown_signal_is_counted_never_raised() -> None:
     assert frame.health.unhandled_signals == {"some.unknown.signal.family": 1}
     assert "unhandled_signals" in frame.health.degraded
     assert any(i.kind == "signal.unhandled" for i in frame.attention)
+
+
+def test_charter_error_reads_live_reason_field() -> None:
+    """Live ``manage.charter.tick.error`` carries ``reason``, not ``message``."""
+    model = Model()
+    model.apply(
+        Event(
+            "manage.charter.tick.error",
+            1_000,
+            {"reason": "lease acquisition failed: manage.sock refused"},
+        )
+    )
+    health = model.derive(1_000).health
+    assert health.tick_last_error_message == "lease acquisition failed: manage.sock refused"
 
 
 def test_malformed_payload_does_not_crash_the_fold() -> None:

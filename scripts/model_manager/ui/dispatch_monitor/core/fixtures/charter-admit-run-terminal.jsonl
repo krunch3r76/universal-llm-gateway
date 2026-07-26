@@ -1,11 +1,9 @@
 # Fixture 1 -- happy path: cold-start audit, scan, admit, worker start, progress,
 # terminal, harvest window close, root close.
 #
-# AUTHORED, not captured. The corpus's staged `replay-fixtures/` was recorded as
-# done in the MC playbook §10 but is absent from
-# cortex://notes/system/specs/dispatch-supervisor-monitor/ -- see README § Fixture
-# provenance. Signal NAMES are corpus-attested; payload FIELD SETS are this pass's
-# proposal and are what G5 reconciles first.
+# G5.1 slice 4: payload shapes reconciled against event-payloads.md where the fold
+# reads the field; remaining drift is G6 gap candidates (see v3-gap-taxonomy.md).
+# Byte-identical mirror: cortex://notes/system/specs/dispatch-supervisor-monitor/replay-fixtures/
 #
 # Timebase: 1753600000000 = a fixed epoch-ms anchor. All offsets are relative.
 {"signal": "manage.charter.tick.audit", "ts_unix_ms": 1753600000000, "seq": 1000, "source": "ulg://charter-runner", "payload": {"window_start_ms": 1753599520000, "admitted": [{"root": "5735", "worker_thread": "5781"}], "closed": [], "failed": []}}

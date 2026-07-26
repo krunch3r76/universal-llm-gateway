@@ -176,6 +176,7 @@ async def emit_skip_and_maybe_state_close(
         half=decision.half,
         predicate_id=decision.predicate_id,
         wip_snippet=wip_snippet,
+        fingerprint=decision.residue_fingerprint,
     )
     skipped_by_reason[reason] = skipped_by_reason.get(reason, 0) + 1
 

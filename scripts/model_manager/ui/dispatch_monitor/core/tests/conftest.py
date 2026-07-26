@@ -15,9 +15,12 @@ FIXTURE_DIR = os.path.join(_PACKAGE_ROOT, "fixtures")
 #: Every fixture, so the coverage test can sweep them all without a hardcoded list.
 FIXTURE_NAMES = (
     "charter-admit-run-terminal.jsonl",
+    "charter-window-failed.jsonl",
     "cdp-leg.jsonl",
+    "cdp-leg-e2e.jsonl",
     "parked-parent.jsonl",
     "gs2-dual-emitter.jsonl",
+    "sdk-lifecycle-slice2.jsonl",
 )
 
 

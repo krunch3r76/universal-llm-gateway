@@ -5,16 +5,27 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import Callable
+from typing import Any
 
 from scripts.model_manager.ui.dispatch_monitor.core.codec import ProjectionCodec
 from scripts.model_manager.ui.dispatch_monitor.core.dtos import Thresholds
-from scripts.model_manager.ui.dispatch_monitor.core.model import Model
+from scripts.model_manager.ui.dispatch_monitor.core.model import Model, hints_after_drop
 from scripts.model_manager.ui.dispatch_monitor.core.protocols import EventRecord
 from scripts.model_manager.ui.dispatch_monitor.core.watch import render
-from scripts.model_manager.ui.dispatch_monitor.ulg.live_source import run_live_subscribers
+from scripts.model_manager.ui.dispatch_monitor.ulg.connection_watermarks import (
+    ConnectionWatermarks,
+    family_key_for_signal,
+)
 from scripts.model_manager.ui.dispatch_monitor.ulg.projection_hub import BroadcastHub
 from scripts.model_manager.ui.dispatch_monitor.ulg.seeder import seed_model
 from scripts.model_manager.ui.dispatch_monitor.ulg.reconcile_on_click import ReconcileOnClick
+from scripts.model_manager.ui.dispatch_monitor.ulg.subscribe_session import (
+    run_live_subscribers,
+)
+from scripts.model_manager.ui.dispatch_monitor.ulg.transport_events import (
+    fold_status_transport_event,
+    replay_truncated_event,
+)
 
 
 class LiveClock:
@@ -38,12 +49,19 @@ class MonitorController:
         self.tick_s = tick_s
         self.seed_minutes = seed_minutes
         self.hub = BroadcastHub()
+        self.watermarks = ConnectionWatermarks.fresh()
         self._reconcile = reconcile
         self._last_fingerprint: str | None = None
+        self._last_frame = None
         self._apply_lock = asyncio.Lock()
+        self._reseed_lock = asyncio.Lock()
+        self._pending_drop_hint = False
 
     def _apply(self, record: EventRecord) -> None:
         self.model.apply(record)
+        family = family_key_for_signal(record.signal)
+        if family is not None:
+            self.watermarks.advance(family, record.seq)
 
     async def _apply_async(self, record: EventRecord) -> None:
         async with self._apply_lock:
@@ -54,12 +72,84 @@ class MonitorController:
 
     def tick(self) -> bool:
         """Derive once; publish when fingerprint changes. Returns whether a frame emitted."""
-        frame = self.model.derive(self.clock.now_ms())
+        frame = self.model.derive(self.clock.now_ms(), previous=self._last_frame)
+        if self._pending_drop_hint:
+            frame = hints_after_drop(frame)
+            self._pending_drop_hint = False
         if frame.fingerprint == self._last_fingerprint:
+            self._last_frame = frame
             return False
         self._last_fingerprint = frame.fingerprint
+        self._last_frame = frame
         self.hub.publish(frame)
         return True
+
+    def mark_subscriber_drop(self) -> None:
+        """F4 hook — stamp ``("*",)`` on the next delivered frame after a hub drop."""
+        self._pending_drop_hint = True
+
+    async def _handle_truncation(
+        self,
+        connection: str,
+        requested_seq: int | None,
+        detail: dict[str, Any],
+    ) -> None:
+        ts = self.clock.now_ms()
+        reason = str(detail.get("reason") or "truncated")
+        first_seq = detail.get("first_seq")
+        first = first_seq if isinstance(first_seq, int) and not isinstance(first_seq, bool) else None
+        async with self._apply_lock:
+            self._apply(
+                replay_truncated_event(
+                    connection=connection,
+                    requested_seq=requested_seq,
+                    reason=reason,
+                    first_seq=first,
+                    ts_unix_ms=ts,
+                )
+            )
+            self._apply(
+                fold_status_transport_event(
+                    fold_status="reseeding",
+                    reason=reason,
+                    connection=connection,
+                    ts_unix_ms=ts,
+                )
+            )
+        self.tick()
+        await self._reseed_after_truncation(connection)
+
+    async def _reseed_after_truncation(self, connection: str) -> None:
+        async with self._reseed_lock:
+            thresholds = self.model.thresholds
+            async with self._apply_lock:
+                self.model = Model(thresholds)
+                self.model.replay_truncations.clear()
+                self._last_fingerprint = None
+                self._last_frame = None
+                self.watermarks = ConnectionWatermarks.fresh()
+                seeded = seed_model(self._apply, minutes=self.seed_minutes)
+                ts = self.clock.now_ms()
+                self._apply(
+                    fold_status_transport_event(
+                        fold_status="live",
+                        reason="reseed_complete",
+                        connection=connection,
+                        ts_unix_ms=ts,
+                    )
+                )
+            self.tick()
+            if seeded == 0:
+                async with self._apply_lock:
+                    self._apply(
+                        fold_status_transport_event(
+                            fold_status="suspect",
+                            reason="reseed_empty",
+                            connection=connection,
+                            ts_unix_ms=self.clock.now_ms(),
+                        )
+                    )
+                self.tick()
 
     def trigger_reconcile(self, subject: str) -> dict[str, object]:
         """Explicit operator reconcile for one subject ref; never called from tick."""
@@ -130,7 +220,11 @@ class MonitorController:
         stop = asyncio.Event()
         clock_task = asyncio.create_task(self._clock_loop(stop))
         try:
-            await run_live_subscribers(self._apply_async)
+            await run_live_subscribers(
+                self._apply_async,
+                watermarks=self.watermarks,
+                on_truncated=self._handle_truncation,
+            )
         finally:
             stop.set()
             await clock_task

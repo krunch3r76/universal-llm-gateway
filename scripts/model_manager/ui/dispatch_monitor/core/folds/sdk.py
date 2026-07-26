@@ -68,6 +68,11 @@ class SdkState:
         "divergent_fields",
         "terminal_emitter",
         "provenance",
+        "queue_position",
+        "source_repo",
+        "delivery_failed",
+        "closeout_uri",
+        "pre_park_state",
     )
 
     def __init__(self, dispatch_id: str) -> None:
@@ -91,6 +96,11 @@ class SdkState:
         self.divergent_fields: list[str] = []
         self.terminal_emitter: str | None = None
         self.provenance: str | None = None
+        self.queue_position: int | None = None
+        self.source_repo: str | None = None
+        self.delivery_failed = False
+        self.closeout_uri: str | None = None
+        self.pre_park_state: str | None = None
 
 
 def _as_int(value: Any) -> int | None:
@@ -112,6 +122,28 @@ def _dispatch_id(payload: Mapping[str, Any], record: EventRecord) -> str | None:
     return envelope_subject(record)
 
 
+def _queued_dispatch_id(payload: Mapping[str, Any], record: EventRecord) -> str | None:
+    """Resolve dispatch key for ``worker.queued`` — GS2 branch on payload shape."""
+    origin = payload.get("origin_service")
+    if origin == "stargate" or (
+        payload.get("request_id") is not None and payload.get("source_repo") is None
+    ):
+        for key in ("execution_id", "dispatch_id", "request_id"):
+            value = payload.get(key)
+            if value:
+                return str(value)
+        return None
+    return _dispatch_id(payload, record)
+
+
+def _lease_row_id(payload: Mapping[str, Any], key: str) -> str | None:
+    """Resolve a lease/park row id from ``parent_id`` / ``child_id`` / ``dispatch_id``."""
+    value = payload.get(key)
+    if value:
+        return str(value)
+    return None
+
+
 class SdkFold:
     """Accumulates one row per cursor-sdk dispatch across both emitter lanes."""
 
@@ -130,7 +162,26 @@ class SdkFold:
         table[signals.SDK_WORKER_PROGRESS] = self._on_progress
         for signal in sorted(signals.SDK_TERMINAL_SIGNALS):
             table[signal] = self._on_terminal
+        table[signals.SDK_WORKER_QUEUED] = self._on_queued
+        table[signals.SDK_WORKER_TIMEOUT] = self._on_timeout
+        table[signals.SDK_WORKER_ORPHANED] = self._on_orphaned
+        table[signals.SDK_WORKER_DELIVERY_FAILED] = self._on_delivery_failed
+        table[signals.SDK_LEASE_PROMOTED] = self._on_lease_promoted
+        table[signals.SDK_LEASE_RELEASED] = self._on_lease_released
+        table[signals.SDK_LEASE_PARK_ENTER] = self._on_park_enter
+        table[signals.SDK_LEASE_PARK_RESTORE] = self._on_park_restore
+        table[signals.SDK_CLOSEOUT_RELOCATED] = self._on_closeout_relocated
         return table
+
+    def _row_for_id(self, dispatch_id: str, record: EventRecord) -> SdkState:
+        """Return (creating if needed) the accumulator for an explicit dispatch id."""
+        row = self.dispatches.get(dispatch_id)
+        if row is None:
+            row = SdkState(dispatch_id)
+            self.dispatches[dispatch_id] = row
+        self._absorb_identity(row, record)
+        self._apply_provenance(row, record)
+        return row
 
     def _state(self, record: EventRecord) -> SdkState | None:
         """Return (creating if needed) the accumulator for this record's dispatch."""
@@ -271,6 +322,133 @@ class SdkFold:
             row.failure_reason = str(observed["failure_reason"])
         if payload.get("stall_stage"):
             row.stall_stage = str(payload["stall_stage"])
+
+    def _on_queued(self, record: EventRecord) -> None:
+        """Fold FIFO queue placement — GS2 branch on stargate vs git_worker shape."""
+        payload = record.payload
+        dispatch_id = _queued_dispatch_id(payload, record)
+        if not dispatch_id:
+            return
+        row = self._row_for_id(dispatch_id, record)
+        if row.terminal_ms is not None:
+            return
+        row.state = "queued"
+        if _as_int(payload.get("queue_position")) is not None:
+            row.queue_position = _as_int(payload.get("queue_position"))
+        if payload.get("source_repo"):
+            row.source_repo = str(payload["source_repo"])
+        self._advance_progress(row, record.ts_unix_ms)
+
+    def _on_timeout(self, record: EventRecord) -> None:
+        """Terminal: worker exceeded wall budget (v3 §5)."""
+        self._bind_lifecycle_terminal(record, state="timeout")
+
+    def _on_orphaned(self, record: EventRecord) -> None:
+        """Terminal: bridge lost while worker still running (v3 §5)."""
+        payload = record.payload
+        reason = payload.get("terminal_status") or payload.get("bridge_aborted")
+        self._bind_lifecycle_terminal(
+            record, state="orphaned", failure_reason=str(reason) if reason else None
+        )
+
+    def _on_delivery_failed(self, record: EventRecord) -> None:
+        """Run succeeded but on-behalf bus post failed — non-terminal (v3 §5/§9)."""
+        row = self._state(record)
+        if row is None or row.terminal_ms is not None:
+            return
+        payload = record.payload
+        row.delivery_failed = True
+        if row.state in ("unknown", "running", "queued"):
+            row.state = "completed"
+        code = payload.get("status_code")
+        sidecar = payload.get("sidecar_ref")
+        detail = f"status_code={code}" if code is not None else "bus delivery failed"
+        if sidecar:
+            detail = f"{detail}; sidecar={sidecar}"
+        row.failure_reason = detail
+        self._advance_progress(row, record.ts_unix_ms)
+
+    def _on_lease_promoted(self, record: EventRecord) -> None:
+        """FIFO advance — queued dispatch becomes lease holder (v3 §5)."""
+        row = self._state(record)
+        if row is None or row.terminal_ms is not None:
+            return
+        row.state = "running"
+        row.queue_position = None
+        self._advance_progress(row, record.ts_unix_ms)
+
+    def _on_lease_released(self, record: EventRecord) -> None:
+        """Write lease released for a dispatch (v3 §5)."""
+        row = self._state(record)
+        if row is None:
+            return
+        if payload := record.payload:
+            if payload.get("source_repo") and row.source_repo is None:
+                row.source_repo = str(payload["source_repo"])
+
+    def _on_park_enter(self, record: EventRecord) -> None:
+        """Parent yields lease to nested child — parent → ``parked_waiting`` (v3 §5)."""
+        payload = record.payload
+        parent_id = _lease_row_id(payload, "parent_id")
+        child_id = _lease_row_id(payload, "child_id")
+        if parent_id:
+            parent = self._row_for_id(parent_id, record)
+            if parent.terminal_ms is None and parent.state != "parked_waiting":
+                parent.pre_park_state = parent.state
+                parent.state = "parked_waiting"
+        if child_id:
+            child = self._row_for_id(child_id, record)
+            if child.terminal_ms is None:
+                child.state = "running"
+                self._advance_progress(child, record.ts_unix_ms)
+
+    def _on_park_restore(self, record: EventRecord) -> None:
+        """Child terminal returns lease to parent — restore prior parent state (v3 §5)."""
+        payload = record.payload
+        parent_id = _lease_row_id(payload, "parent_id")
+        if not parent_id:
+            return
+        parent = self.dispatches.get(parent_id)
+        if parent is None or parent.terminal_ms is not None:
+            return
+        restored = parent.pre_park_state or "running"
+        parent.state = restored
+        parent.pre_park_state = None
+        parent.last_progress_ms = record.ts_unix_ms
+
+    def _on_closeout_relocated(self, record: EventRecord) -> None:
+        """Record durable closeout URI when inline body exceeds limits (v3 §5)."""
+        row = self._state(record)
+        if row is None:
+            return
+        uri = record.payload.get("uri")
+        if uri:
+            row.closeout_uri = str(uri)
+
+    def _bind_lifecycle_terminal(
+        self,
+        record: EventRecord,
+        *,
+        state: str,
+        failure_reason: str | None = None,
+    ) -> None:
+        """Bind a worker-lane lifecycle terminal (timeout/orphaned)."""
+        row = self._state(record)
+        if row is None:
+            return
+        payload = record.payload
+        if row.terminal_ms is not None:
+            return
+        self._advance_progress(row, record.ts_unix_ms)
+        row.terminal_ms = record.ts_unix_ms
+        row.terminal_emitter = "worker"
+        row.state = state
+        reason = failure_reason or _first_str(payload, ("error", "failure_reason"))
+        if reason:
+            row.failure_reason = reason
+        model = payload.get("resolved_model")
+        if model and row.model is None:
+            row.model = str(model)
 
 
 def _first_str(payload: Mapping[str, Any], keys: tuple[str, ...]) -> str | None:

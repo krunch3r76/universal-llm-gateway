@@ -95,6 +95,24 @@ def _first_resolvable_implication(
     return None, True
 
 
+def _pickup_disambiguates_step(step: Step, parsed: ParsedCheckpoint) -> str | None:
+    """Prefer Next-pickup row when it names the same G-row with todo/source identity."""
+    if not parsed.next_pickup:
+        return None
+    step_gated = _gated_ids_in(step.title)
+    if not step_gated:
+        return None
+    for row in parsed.next_pickup:
+        row_gated = _gated_ids_in(row)
+        if not row_gated or row_gated[0] != step_gated[0]:
+            continue
+        if parsed.source_ref and parsed.source_ref.lower() in row.lower():
+            return row
+        if "todo:" in row.lower():
+            return row
+    return None
+
+
 def _work_summary(parsed: ParsedCheckpoint) -> str:
     """S1 steering: prefer Implication → gated Step/Next-pickup; else Steps."""
     steered, unresolved = _first_resolvable_implication(parsed)
@@ -108,6 +126,9 @@ def _work_summary(parsed: ParsedCheckpoint) -> str:
         return steered
     step = first_actionable_step(parsed)
     if step is not None:
+        disambiguated = _pickup_disambiguates_step(step, parsed)
+        if disambiguated is not None:
+            return disambiguated
         return f"Step {step.ordinal} — {step.title} (status: {step.status})"
     if parsed.next_pickup:
         return "; ".join(parsed.next_pickup[:3])

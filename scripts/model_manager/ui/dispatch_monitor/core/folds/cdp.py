@@ -1,33 +1,8 @@
-"""CdpFold -- folds the ``cdp.generate.*`` family into CDP leg rows.
+"""CdpFold -- folds live ``cdp.generate.*`` and CDP ``frontier.poll.hint.issued`` rows.
 
-Family status: **prospective.** The CDP lane emits no events today
-(``cortex://notes/system/threads/5718-session-review-substrate-apis.md``: "the
-entire CDP lane emits zero events"). The G4 scope packet assigns this family to
-this fold, so the fold is the *consumer half of a contract the emitter side has
-yet to honour*. Until it does, ``cdp`` derives empty -- which is correct, not
-broken. Payload keys below are taken from the satellite's attested vocabulary
-(``execution_id``, ``status``, ``archive_uri``, ``content_proof_uri``,
-``stall_stage``, ``picker_model``, ``dispatch_thread_id``) rather than invented.
-
-Negative space, and the reason this fold is deliberately dull:
-
-* **Silence is not failure.** A leg that stops emitting keeps its last observed
-  state. Absence of progress produces an *idle attention item*, never a folded
-  ``failed``. A CDP browser execution can be genuinely alive and quiet.
-* **Idle, never wall-clock.** The staleness signal is time since last progress
-  (``[universal:obs-over-timeouts]``). A leg that keeps reporting progress is
-  never stale however long it runs. ``max_wall_s`` on the caller side is a cost
-  ceiling, not a completion judgment, and the fold does not model it.
-* **``completed`` without proof is not success.** A terminal carrying neither
-  ``archive_uri`` nor ``content_proof_uri`` folds to state ``completed`` with
-  ``proof_present=False`` and earns its own attention kind. Cortex records this as
-  a live gap: the adapter treats a proofless ``completed`` as unremarkable and
-  reports a generic stall up to 600s later.
-* **The satellite's status vocabulary is the authority** -- ``pending`` /
-  ``running`` / ``completed`` / ``failed`` / ``aborted``. Cortex documents the
-  adapter drifting to ``cancelled`` (unreachable) and ``queued`` (should be
-  ``pending``); this fold maps unknown status strings to ``unknown`` and counts
-  them rather than guessing an alias.
+Authority: v3 §6 handler table (G5.2 slice 1). ``request_id`` is the sole leg key
+present on every ``cdp.generate.*`` payload. The G3 leg is a black box between
+``admitted`` and terminal — no mid-flight progress exists on the wire (§6.2).
 """
 
 from __future__ import annotations
@@ -36,185 +11,186 @@ from typing import Any, Mapping
 
 from .. import signals
 from ..correlation import CorrelationIndex
-from ..protocols import EventRecord, envelope_subject
+from ..protocols import EventRecord
 
-#: The satellite's ``ExecutionStatus`` literal set, verbatim.
-SATELLITE_STATUSES = ("pending", "running", "completed", "failed", "aborted")
+#: Default wall from ``libs/claude_bundles/cdp_model_endpoint.py`` — cost ceiling, not completion.
+DEFAULT_MAX_WALL_S = 1800
+
+CDP_REPLY_FROM = "cdp"
 
 
 class CdpState:
-    """Mutable per-leg accumulator."""
+    """Mutable per-leg accumulator keyed by ``request_id``."""
 
     __slots__ = (
+        "request_id",
         "execution_id",
+        "satellite_execution_id",
+        "thread_id",
+        "model",
+        "caller_agent",
         "state",
-        "picker_model",
-        "dispatch_thread_id",
-        "root_id",
-        "prompt_uri",
-        "submitted_ms",
-        "last_progress_ms",
+        "hint_issued_ms",
+        "admitted_at_ms",
         "terminal_ms",
+        "max_wall_s",
         "archive_uri",
         "content_proof_uri",
         "stall_stage",
         "failure_reason",
+        "root_id",
     )
 
-    def __init__(self, execution_id: str) -> None:
-        self.execution_id = execution_id
+    def __init__(self, request_id: str) -> None:
+        self.request_id = request_id
+        self.execution_id: str | None = None
+        self.satellite_execution_id: str | None = None
+        self.thread_id: str | None = None
+        self.model: str | None = None
+        self.caller_agent: str | None = None
         self.state = "unknown"
-        self.picker_model: str | None = None
-        self.dispatch_thread_id: str | None = None
-        self.root_id: str | None = None
-        self.prompt_uri: str | None = None
-        self.submitted_ms: int | None = None
-        self.last_progress_ms: int | None = None
+        self.hint_issued_ms: int | None = None
+        self.admitted_at_ms: int | None = None
         self.terminal_ms: int | None = None
+        self.max_wall_s = DEFAULT_MAX_WALL_S
         self.archive_uri: str | None = None
         self.content_proof_uri: str | None = None
         self.stall_stage: str | None = None
         self.failure_reason: str | None = None
+        self.root_id: str | None = None
 
 
-def _execution_id(payload: Mapping[str, Any], record: EventRecord) -> str | None:
-    """Resolve the leg key from the payload or the envelope subject."""
-    for key in ("execution_id", "leg_id"):
-        value = payload.get(key)
-        if value:
-            return str(value)
-    return envelope_subject(record)
+def _request_id(payload: Mapping[str, Any], record: EventRecord) -> str | None:
+    """Resolve the leg key — ``request_id`` is the only key on all five CDP rows."""
+    value = payload.get("request_id")
+    if value:
+        return str(value)
+    return None
 
 
 class CdpFold:
-    """Accumulates one row per CDP generate leg."""
+    """Accumulates one row per CDP generate leg, keyed on ``request_id``."""
 
     def __init__(self, index: CorrelationIndex) -> None:
         self._index = index
         self.legs: dict[str, CdpState] = {}
-        self.unknown_statuses: dict[str, int] = {}
 
     def handlers(self) -> dict[str, Any]:
-        """Return this fold's signal-to-handler table."""
+        """Return this fold's signal-to-handler table (v3 §6 verbatim)."""
         return {
+            signals.POLL_HINT_ISSUED: self._on_poll_hint,
+            signals.CDP_ADMITTED: self._on_admitted,
             signals.CDP_SUBMITTED: self._on_submitted,
-            signals.CDP_RUNNING: self._on_progress,
-            signals.CDP_PROGRESS: self._on_progress,
+            signals.CDP_PROOF: self._on_proof,
             signals.CDP_STALLED: self._on_stalled,
-            signals.CDP_COMPLETED: self._on_terminal,
-            signals.CDP_FAILED: self._on_terminal,
-            signals.CDP_ABORTED: self._on_terminal,
+            signals.CDP_DELIVERY_FAILED: self._on_delivery_failed,
         }
 
-    def _state(self, record: EventRecord) -> CdpState | None:
+    def _state(
+        self, record: EventRecord, request_id: str | None = None
+    ) -> CdpState | None:
         """Return (creating if needed) the accumulator for this record's leg."""
-        execution_id = _execution_id(record.payload, record)
-        if not execution_id:
+        rid = request_id or _request_id(record.payload, record)
+        if not rid:
             return None
-        row = self.legs.get(execution_id)
+        row = self.legs.get(rid)
         if row is None:
-            row = CdpState(execution_id)
-            self.legs[execution_id] = row
+            row = CdpState(rid)
+            self.legs[rid] = row
         payload = record.payload
         for src, dst in (
-            ("picker_model", "picker_model"),
-            ("model", "picker_model"),
-            ("dispatch_thread_id", "dispatch_thread_id"),
-            ("prompt_uri", "prompt_uri"),
+            ("execution_id", "execution_id"),
+            ("model", "model"),
+            ("thread_id", "thread_id"),
             ("root", "root_id"),
             ("root_id", "root_id"),
         ):
             if getattr(row, dst) is None and payload.get(src):
                 setattr(row, dst, str(payload[src]))
+        if row.thread_id and row.root_id is None:
+            row.root_id = self._index.root_for_thread(row.thread_id)
         if row.root_id:
-            self._index.link_cdp_leg(execution_id, row.root_id)
-        else:
-            row.root_id = self._index.root_for_thread(row.dispatch_thread_id)
+            self._index.link_cdp_leg(rid, row.root_id)
         return row
 
-    def _advance_progress(self, row: CdpState, ts_unix_ms: int) -> None:
-        """Move the idle clock forward only; terminal rows are frozen.
-
-        Same monotone rule as the SDK fold, for the same reason: a duplicate
-        re-delivered across a ``resume_from`` overlap carries an older timestamp,
-        and assigning it would rewind the idle clock and invent staleness.
-        """
-        if row.terminal_ms is not None:
+    def _on_poll_hint(self, record: EventRecord) -> None:
+        """Earliest G3 marker; non-CDP hints are ignored, not folded (v3 §6.3)."""
+        payload = record.payload
+        if str(payload.get("reply_from_agent", "")) != CDP_REPLY_FROM:
             return
-        if row.last_progress_ms is None or ts_unix_ms > row.last_progress_ms:
-            row.last_progress_ms = ts_unix_ms
-
-    def _record_status(self, row: CdpState, payload: Mapping[str, Any]) -> None:
-        """Adopt an explicit ``status`` only when it is in the satellite's set."""
-        status = payload.get("status")
-        if not status:
+        row = self._state(record)
+        if row is None:
             return
-        status = str(status)
-        if status in SATELLITE_STATUSES:
-            row.state = status
-        else:
-            self.unknown_statuses[status] = self.unknown_statuses.get(status, 0) + 1
+        caller = payload.get("caller_agent")
+        if caller:
+            row.caller_agent = str(caller)
+        thread = payload.get("thread_id")
+        if thread and row.thread_id is None:
+            row.thread_id = str(thread)
+        if row.state == "unknown":
+            row.state = "hint_issued"
+        if row.hint_issued_ms is None or record.ts_unix_ms < row.hint_issued_ms:
+            row.hint_issued_ms = record.ts_unix_ms
 
-    # --- handlers ---------------------------------------------------------
+    def _on_admitted(self, record: EventRecord) -> None:
+        """Open a leg row and start the elapsed clock (v3 §6)."""
+        row = self._state(record)
+        if row is None:
+            return
+        if row.admitted_at_ms is None or record.ts_unix_ms < row.admitted_at_ms:
+            row.admitted_at_ms = record.ts_unix_ms
+        if row.terminal_ms is None:
+            row.state = "admitted"
+
     def _on_submitted(self, record: EventRecord) -> None:
-        """Open a leg row on submit."""
+        """Back-fill ``satellite_execution_id`` — not a progress milestone (§6.2)."""
         row = self._state(record)
         if row is None:
             return
-        if row.submitted_ms is None or record.ts_unix_ms < row.submitted_ms:
-            row.submitted_ms = record.ts_unix_ms
-        self._advance_progress(row, record.ts_unix_ms)
-        if row.terminal_ms is None:
-            row.state = "pending"
-            self._record_status(row, record.payload)
+        sat = record.payload.get("satellite_execution_id")
+        if sat:
+            row.satellite_execution_id = str(sat)
 
-    def _on_progress(self, record: EventRecord) -> None:
-        """Advance the idle clock and, if still live, mark the leg running."""
+    def _on_proof(self, record: EventRecord) -> None:
+        """Terminal success with harvest proof (v3 §6). Idempotent: first terminal wins."""
         row = self._state(record)
-        if row is None:
-            return
-        self._advance_progress(row, record.ts_unix_ms)
-        if row.terminal_ms is None:
-            row.state = "running"
-            self._record_status(row, record.payload)
-
-    def _on_stalled(self, record: EventRecord) -> None:
-        """Record an emitter-declared stall stage without declaring the leg dead.
-
-        ``stalled`` is a diagnosis from the caller's poll ladder, not a terminal.
-        The leg keeps its state; only an explicit terminal ends it.
-        """
-        row = self._state(record)
-        if row is None:
-            return
-        stage = record.payload.get("stall_stage")
-        row.stall_stage = str(stage) if stage else "unspecified"
-
-    def _on_terminal(self, record: EventRecord) -> None:
-        """Fold an explicit terminal. Idempotent: the first terminal wins."""
-        row = self._state(record)
-        if row is None:
+        if row is None or row.terminal_ms is not None:
             return
         payload = record.payload
-        if row.terminal_ms is not None:
-            return
-        self._advance_progress(row, record.ts_unix_ms)
         row.terminal_ms = record.ts_unix_ms
-        row.state = {
-            signals.CDP_COMPLETED: "completed",
-            signals.CDP_FAILED: "failed",
-            signals.CDP_ABORTED: "aborted",
-        }.get(record.signal, "unknown")
-        self._record_status(row, payload)
+        row.state = "proof"
         for src, dst in (
             ("archive_uri", "archive_uri"),
             ("content_proof_uri", "content_proof_uri"),
         ):
             if payload.get(src):
                 setattr(row, dst, str(payload[src]))
-        for key in ("failure_reason", "error", "stall_stage"):
+
+    def _on_stalled(self, record: EventRecord) -> None:
+        """Terminal failed without proof (v3 §6)."""
+        row = self._state(record)
+        if row is None or row.terminal_ms is not None:
+            return
+        payload = record.payload
+        row.terminal_ms = record.ts_unix_ms
+        row.state = "stalled"
+        stage = payload.get("stall_stage")
+        if stage:
+            row.stall_stage = str(stage)
+        for key in ("error", "failure_reason"):
             if payload.get(key):
                 row.failure_reason = str(payload[key])
                 break
-        if payload.get("stall_stage"):
-            row.stall_stage = str(payload["stall_stage"])
+
+    def _on_delivery_failed(self, record: EventRecord) -> None:
+        """Highest-severity terminal — harvest ok, bus post exhausted (v3 §6)."""
+        row = self._state(record)
+        if row is None or row.terminal_ms is not None:
+            return
+        payload = record.payload
+        row.terminal_ms = record.ts_unix_ms
+        row.state = "delivery_failed"
+        stage = payload.get("stall_stage")
+        if stage:
+            row.stall_stage = str(stage)
+        row.failure_reason = "on-behalf bus delivery exhausted"

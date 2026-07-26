@@ -1,0 +1,9 @@
+# Byte-identical mirror of cortex://notes/system/specs/dispatch-supervisor-monitor/replay-fixtures/
+# Sync direction: repo core/fixtures/ → cortex replay-fixtures/ (G5.1 slice 4; G5.2 slice 1 CDP refresh; G5.2 slice 2 charter/SDK).
+2be3181e6dd4c639675f57b85e1228572bef3373c7b918100fd672c6598ace0a  cdp-leg.jsonl
+95dbf8e7a983c5718b9ba5a01a300b11edd199498119d90de8154e198c0dafb1  cdp-leg-e2e.jsonl
+d7a5f8fab18a0c1f9350531013b724a5ea49b2ac3dece673d09b15c947f6d82a  charter-admit-run-terminal.jsonl
+2b300ef94e733be9282581751da44eef45910eea7f6d5bd7b57ead6edcfa3558  charter-window-failed.jsonl
+62034434835514226a16b9ab25664a1d826649a6a9423f02b33ecdb5e867a27a  gs2-dual-emitter.jsonl
+c0f555e9ad839325178935089070543769c0bef8496fd9b3429a870bda80c7b3  parked-parent.jsonl
+67328751e7faed4ffa5b57e9213f4d6e55db67b47dd2c10ea0afda1bdb9b4d33  sdk-lifecycle-slice2.jsonl

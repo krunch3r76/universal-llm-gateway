@@ -25,6 +25,7 @@ from typing import Any, Callable, Mapping
 from . import fingerprint as fingerprint_mod
 from . import signals
 from .attention import derive_attention
+from .attention_transport import transport_truncation_items
 from .correlation import CorrelationIndex
 from .dtos import (
     SCHEMA_VERSION,
@@ -32,6 +33,7 @@ from .dtos import (
     HealthProjection,
     SupervisorProjection,
     Thresholds,
+    severity_rank,
 )
 from .folds import CdpFold, CharterFold, SdkFold
 from .projections import age as _age
@@ -55,6 +57,7 @@ class Model:
         self.unhandled: dict[str, int] = {}
         self.fold_status = "live"
         self.reconcile_failures: dict[str, tuple[str, str, str]] = {}
+        self.replay_truncations: dict[str, tuple[int | None, str, int | None]] = {}
         self._handlers: dict[str, Callable[[EventRecord], None]] = {}
         self._handlers.update(self.charter.handlers())
         self._handlers.update(self.sdk.handlers())
@@ -64,6 +67,9 @@ class Model:
         self._handlers[signals.MONITOR_SEED_FOLD_STATUS] = self._on_fold_status
         self._handlers[signals.MONITOR_RECONCILE_SOURCE_FAILED] = (
             self._on_reconcile_source_failed
+        )
+        self._handlers[signals.MONITOR_TRANSPORT_REPLAY_TRUNCATED] = (
+            self._on_replay_truncated
         )
 
     @property
@@ -116,6 +122,21 @@ class Model:
         key = f"monitor.reconcile.failed:{subject}:{source}"
         self.reconcile_failures[key] = (subject, source, error)
 
+    def _on_replay_truncated(self, record: EventRecord) -> None:
+        """Remember GX1 truncation per subscribe connection for attention projection."""
+        payload = record.payload
+        connection = payload.get("connection")
+        reason = payload.get("reason")
+        if not isinstance(connection, str) or not connection:
+            return
+        if not isinstance(reason, str) or not reason:
+            reason = "unknown"
+        requested = payload.get("requested_seq")
+        first_seq = payload.get("first_seq")
+        req = requested if isinstance(requested, int) and not isinstance(requested, bool) else None
+        first = first_seq if isinstance(first_seq, int) and not isinstance(first_seq, bool) else None
+        self.replay_truncations[connection] = (req, reason, first)
+
     # --- derive -----------------------------------------------------------
     def derive(
         self, now_ms: int, previous: SupervisorProjection | None = None
@@ -139,6 +160,14 @@ class Model:
             thresholds=self.thresholds,
             reconcile_failures=self.reconcile_failures,
         )
+        if self.replay_truncations:
+            merged = (*attention, *transport_truncation_items(self.replay_truncations))
+            attention = tuple(
+                sorted(
+                    merged,
+                    key=lambda i: (-severity_rank(i.severity), i.kind, i.subject, i.key),
+                )
+            )
         frame = SupervisorProjection(
             schema_version=SCHEMA_VERSION,
             generated_at_ms=now_ms,
@@ -166,8 +195,6 @@ class Model:
             degraded.append("fold_inputs_dropped")
         if self.unhandled:
             degraded.append("unhandled_signals")
-        if self.cdp.unknown_statuses:
-            degraded.append("cdp_status_vocabulary_drift")
         if self.charter.last_error_ms is not None:
             degraded.append("charter_tick_error")
         in_flight = sum(1 for r in roots if r.state in ("in_flight", "waiting_open"))
@@ -192,6 +219,9 @@ class Model:
             seq_high_water=self.seq_high_water,
             cold_start_seeded=self.charter.cold_start_seeded,
             fold_status=self.fold_status,
+            charter_loop_state=self.charter.loop_state,
+            charter_last_reload_ms=self.charter.last_reload_ms,
+            charter_reload_module_count=self.charter.reload_module_count,
             degraded=tuple(degraded),
         )
 

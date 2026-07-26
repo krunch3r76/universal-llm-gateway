@@ -21,12 +21,15 @@ Mechanism (turn shapes, boot checklist, anti-patterns): Use the `cdp-operator-pr
 
 **Protocol SOT:** `cortex://notes/system/specs/cdp-operator-proxy-v0.md` (field tables, transport).  
 **Doctrine:** `decision:operator-proxy-seat-posture`.  
-**Transport sibling:** `claude-ai-cdp-navigation` for CDP/Jupiter mechanics.
+**Transport sibling:** `claude-ai-cdp-navigation` for CDP/Jupiter mechanics (incl. warm same-CSE follow-up).
 
 ## When
 
 - Cowork holds operator seat driving cursor via `agent_bus.request`
 - Authoring or reviewing `TYPE: DIRECTIVE` / `TYPE: DISPOSITION` turns
 - cursor-auto nested dispatch arcs (5867-class dogfood)
+- Blocked on a human/cursor fact — skill § Blocked → ask ladder (observe → cursor → Cowork Ask/push); ¬ silent stop
+- Life missing a code-seat tool (`manage`, reload, …) — request **cursor**, ¬ park on Kaywan
 
 ¬ load for IDE cursor lead orchestration (use `lean-context-dispatch-first` + `operator-posture` instead).
+IDE wakes/corrections to a live CSE: Use the `claude-ai-cdp-navigation` skill § Warm follow-up (CDP into chat; ¬ bus-only + push).

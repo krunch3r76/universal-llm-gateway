@@ -26,6 +26,6 @@
 {"signal": "pipeline.frontier.dispatch.failed", "ts_unix_ms": 1753600211000, "seq": 4007, "source": "ulg://pipeline", "payload": {"execution_id": "exec-gs2-b", "status": "failed", "failure_reason": "onbehalf_post_failed", "prompt_tokens": 41200}}
 {"signal": "pipeline.frontier.dispatch.started", "ts_unix_ms": 1753600120000, "seq": 4008, "source": "ulg://pipeline", "payload": {"execution_id": "exec-gs2-c", "model": "cursor/sonnet-4.8"}}
 {"signal": "pipeline.frontier.dispatch.completed", "ts_unix_ms": 1753600220000, "seq": 4009, "source": "ulg://pipeline", "payload": {"execution_id": "exec-gs2-c", "status": "completed", "prompt_tokens": 900, "completion_tokens": 100}}
-{"signal": "manage.charter.tick.error", "ts_unix_ms": 1753600230000, "seq": 4010, "source": "ulg://charter-runner", "payload": {"message": "lease acquisition failed: manage.sock refused"}}
+{"signal": "manage.charter.tick.error", "ts_unix_ms": 1753600230000, "seq": 4010, "source": "ulg://charter-runner", "payload": {"reason": "lease acquisition failed: manage.sock refused"}}
 {"signal": "events.dropped.ingest", "ts_unix_ms": 1753600240000, "seq": 4011, "source": "ulg://event-service", "payload": {"count": 2}}
 {"signal": "some.unknown.signal.family", "ts_unix_ms": 1753600250000, "seq": 4012, "source": "ulg://mystery", "payload": {}}

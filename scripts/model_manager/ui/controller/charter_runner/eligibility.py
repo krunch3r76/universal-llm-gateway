@@ -73,6 +73,7 @@ class Decision:
     window_kind: WindowKind = "worker"
     half: GateHalf | None = None
     predicate_id: str | None = None
+    residue_fingerprint: str | None = None
 
 
 def find_enrolled_roots() -> list[dict]:
@@ -311,6 +312,27 @@ def evaluate_root(
     )
 
 
+def _residue_skip(
+    reason: str,
+    root_id: str,
+    *,
+    checkpoint: dict,
+    parsed: ParsedCheckpoint,
+    window_kind: WindowKind,
+    fingerprint: str,
+) -> Decision:
+    return Decision(
+        False,
+        reason,
+        root_id,
+        checkpoint=checkpoint,
+        parsed=parsed,
+        window_kind=window_kind,
+        half="body",
+        residue_fingerprint=fingerprint,
+    )
+
+
 def _check_env_or_eligible(
     root_id: str,
     turns: list[dict],
@@ -340,6 +362,56 @@ def _check_env_or_eligible(
             parsed=parsed,
             window_kind=window_kind,
         )
+    from .residue_fingerprint import (
+        ResidueRecord,
+        evaluate_residue_gate,
+        load_residue_record,
+        save_residue_record,
+    )
+    from .tick_loop import _admission_mode
+
+    admission_mode = _admission_mode()
+    if window_kind == "consult":
+        admission_mode = "consult"
+    cp_body = str(checkpoint.get("body") or "")
+    last = load_residue_record(root_id)
+    gate = evaluate_residue_gate(
+        checkpoint_body=cp_body,
+        parsed=parsed,
+        admission_mode=admission_mode,
+        window_kind=window_kind,
+        last=last,
+    )
+    if not gate.admit:
+        save_residue_record(
+            root_id,
+            ResidueRecord(
+                fingerprint=gate.fingerprint,
+                witness=gate.witness,
+                consecutive_skip_count=gate.consecutive_skip_count,
+                w10_consumed=gate.w10_consumed,
+            ),
+        )
+        if gate.stop_root:
+            caps.mark_failed(root_id, gate.reason)
+        return _residue_skip(
+            gate.reason,
+            root_id,
+            checkpoint=checkpoint,
+            parsed=parsed,
+            window_kind=window_kind,
+            fingerprint=gate.fingerprint,
+        )
+    if gate.w10_consumed and last is not None:
+        save_residue_record(
+            root_id,
+            ResidueRecord(
+                fingerprint=gate.fingerprint,
+                witness=gate.witness,
+                consecutive_skip_count=0,
+                w10_consumed=True,
+            ),
+        )
     reason = "eligible_consult" if window_kind == "consult" else "eligible"
     return Decision(
         True,
@@ -348,6 +420,7 @@ def _check_env_or_eligible(
         checkpoint=checkpoint,
         parsed=parsed,
         window_kind=window_kind,
+        residue_fingerprint=gate.fingerprint,
     )
 
 

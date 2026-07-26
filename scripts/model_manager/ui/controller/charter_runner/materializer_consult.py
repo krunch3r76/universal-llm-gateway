@@ -14,6 +14,7 @@ Consult seats must not dispatch nested consults (depth-1 only).
 from __future__ import annotations
 
 from .checkpoint_parse import ParsedCheckpoint
+from .residue_fingerprint import normalize_next_pickup
 
 ConsultRole = str  # r_admit | judgment_gap
 
@@ -133,7 +134,21 @@ CHECKPOINT boundary · unresolvable consult transport · depth>1 ask ⇒ BLOCKED
 </task_guidance>"""
 
 
-def _task_guidance_r_admit(*, root_id: str, scoreboard_line: str) -> str:
+def _window_identity_block(parsed: ParsedCheckpoint) -> str:
+    """Visible arc identity for consult packets — distinct work must render distinct."""
+    pickup_rows = normalize_next_pickup(parsed)
+    pickup_line = pickup_rows[0] if pickup_rows else "(none)"
+    ref = parsed.source_ref or "(unresolved)"
+    return (
+        "## Window identity (BINDING)\n"
+        f"- normalized_next_pickup: {pickup_line}\n"
+        f"- source_ref: {ref}\n"
+    )
+
+
+def _task_guidance_r_admit(
+    *, root_id: str, scoreboard_line: str, identity_block: str
+) -> str:
     return f"""\
 <task_guidance>
 ## Resume step 0 (do first)
@@ -141,6 +156,7 @@ def _task_guidance_r_admit(*, root_id: str, scoreboard_line: str) -> str:
 2. {scoreboard_line}read the latest CHECKPOINT on agent-bus:{root_id} — confirm
    CONSULT_PENDING + consult_role: r_admit and the pinned R prompt URI / corpus.
 
+{identity_block}
 ## R-admit work (this seat owns submit→poll→E2)
 ### Primary — team_dispatch model=cdp/opus-5
 - Before fire: confirm the R prompt carries the sealed unattended clause
@@ -241,10 +257,15 @@ def materialize_consult_packet(
     )
     r_admit = _is_r_admit(parsed)
     if r_admit:
+        identity_block = _window_identity_block(parsed)
         return f"""\
 {_scope_r_admit(window_index, root_id)}
 {_invariants_r_admit(root_id)}
-{_task_guidance_r_admit(root_id=root_id, scoreboard_line=scoreboard_line)}
+{_task_guidance_r_admit(
+    root_id=root_id,
+    scoreboard_line=scoreboard_line,
+    identity_block=identity_block,
+)}
 {_corpus(root_id, scoreboard_uri, r_admit=True)}
 {_MCP_CAPABILITIES_R_ADMIT}
 {_output_format_r_admit(root_id)}

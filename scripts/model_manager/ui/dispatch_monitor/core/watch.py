@@ -63,12 +63,13 @@ def _sdk_line(row: SdkDispatchRow) -> str:
 
 def _cdp_line(row: CdpLegRow) -> str:
     """Render one CDP leg row, marking proof presence."""
-    proof = "proof" if row.proof_present else "NO-PROOF"
-    timing = row.idle_age_ms if row.terminal_ms is None else None
+    proof = "proof" if row.proof_present else "-"
+    timing = row.elapsed_ms if row.terminal_ms is None else None
+    label = row.execution_id or row.request_id[:14]
     return (
-        f"  {_truncate(row.execution_id, 14)} {_truncate(row.state, 10)} "
-        f"{_truncate(row.picker_model, 18)} idle={_ms(timing):>7} "
-        f"root={_truncate(row.root_id, 8)} [{proof}]"
+        f"  {_truncate(label, 14)} {_truncate(row.state, 14)} "
+        f"{_truncate(row.model, 18)} elapsed={_ms(timing):>7} "
+        f"caller={_truncate(row.caller_agent, 8)} [{proof}]"
     )
 
 

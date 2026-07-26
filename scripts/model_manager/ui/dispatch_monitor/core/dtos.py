@@ -76,6 +76,9 @@ class HealthProjection:
     seq_high_water: int | None = None
     cold_start_seeded: bool = False
     fold_status: str = "live"
+    charter_loop_state: str = "unknown"
+    charter_last_reload_ms: int | None = None
+    charter_reload_module_count: int = 0
     degraded: tuple[str, ...] = ()
 
 
@@ -141,32 +144,38 @@ class SdkDispatchRow:
     divergent_fields: tuple[str, ...] = ()
     terminal_emitter: str | None = None
     provenance: str = "signal"
+    queue_position: int | None = None
+    closeout_uri: str | None = None
+    delivery_failed: bool = False
 
 
 @dataclass(frozen=True)
 class CdpLegRow:
-    """One CDP generate leg.
+    """One CDP generate leg (v3 §2.2 / §6).
 
-    Silence is not failure. A leg with no recent progress event stays in its last
-    observed state and earns an idle attention item; it is never folded to
-    ``failed`` on absence alone.
+    Keyed on ``request_id`` — the only field present on every ``cdp.generate.*``
+    payload. G3 is a black box between ``admitted`` and terminal; silence before
+    the wall ceiling is not failure (§6.2).
     """
 
-    execution_id: str
+    request_id: str
+    execution_id: str | None = None
+    satellite_execution_id: str | None = None
+    thread_id: str | None = None
+    model: str | None = None
+    caller_agent: str | None = None
     state: str = "unknown"
-    picker_model: str | None = None
-    dispatch_thread_id: str | None = None
-    root_id: str | None = None
-    prompt_uri: str | None = None
-    submitted_ms: int | None = None
-    last_progress_ms: int | None = None
+    admitted_at_ms: int | None = None
     terminal_ms: int | None = None
-    idle_age_ms: int | None = None
+    elapsed_ms: int | None = None
+    max_wall_s: int = 1800
     archive_uri: str | None = None
     content_proof_uri: str | None = None
     stall_stage: str | None = None
     failure_reason: str | None = None
     proof_present: bool = False
+    root_id: str | None = None
+    provenance: str = "signal"
 
 
 @dataclass(frozen=True)

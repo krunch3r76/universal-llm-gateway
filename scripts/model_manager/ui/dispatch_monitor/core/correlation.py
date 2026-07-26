@@ -52,15 +52,15 @@ class CorrelationIndex:
             if dispatch_id not in bucket:
                 bucket.append(dispatch_id)
 
-    def link_cdp_leg(self, execution_id: str, root_id: str | None) -> None:
+    def link_cdp_leg(self, request_id: str, root_id: str | None) -> None:
         """Record which root a CDP leg belongs to, when the payload names one."""
-        if not execution_id or not root_id:
+        if not request_id or not root_id:
             return
-        execution_id, root_id = str(execution_id), str(root_id)
-        self._root_by_cdp[execution_id] = root_id
+        request_id, root_id = str(request_id), str(root_id)
+        self._root_by_cdp[request_id] = root_id
         bucket = self._cdp_by_root.setdefault(root_id, [])
-        if execution_id not in bucket:
-            bucket.append(execution_id)
+        if request_id not in bucket:
+            bucket.append(request_id)
 
     # --- reads ------------------------------------------------------------
     def root_for_thread(self, thread_id: str | None) -> str | None:
@@ -77,9 +77,9 @@ class CorrelationIndex:
             return direct
         return self.root_for_thread(self._thread_by_dispatch.get(dispatch_id))
 
-    def root_for_cdp(self, execution_id: str) -> str | None:
-        """Return the root behind CDP leg ``execution_id``, if one was asserted."""
-        return self._root_by_cdp.get(str(execution_id))
+    def root_for_cdp(self, request_id: str) -> str | None:
+        """Return the root behind CDP leg ``request_id``, if one was asserted."""
+        return self._root_by_cdp.get(str(request_id))
 
     def dispatches_for_root(self, root_id: str) -> tuple[str, ...]:
         """Return every dispatch id linked to ``root_id``, in first-seen order."""
