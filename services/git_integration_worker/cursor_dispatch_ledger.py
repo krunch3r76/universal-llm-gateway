@@ -153,6 +153,7 @@ class PromotedDispatch:
     contract: str | None
     read_only: bool
     record_json: str
+    lease_key: str | None = None
 
 
 def _dispatch_record_json(req: CursorDispatchRequest) -> str:
@@ -164,6 +165,8 @@ def _dispatch_record_json(req: CursorDispatchRequest) -> str:
         "prompt_preamble": req.prompt_preamble,
         "model_knobs": req.model_knobs,
         "read_only": req.read_only,
+        "worktree_isolated": req.worktree_isolated,
+        "worktree_path": req.worktree_path,
     }
     return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
@@ -212,21 +215,29 @@ def _holder_projection(row: sqlite3.Row | None) -> dict[str, Any]:
     }
 
 
+def _resolve_lease_key(
+    *, lease_key: str | None = None, source_repo: str | None = None
+) -> str | None:
+    """Normalize lease lookup key — ``lease_key`` wins; Lane-A falls back to ``source_repo``."""
+    return lease_key if lease_key is not None else source_repo
+
+
 def _fetch_active_holder_conn(
-    conn: sqlite3.Connection, *, source_repo: str | None
+    conn: sqlite3.Connection, *, lease_key: str | None = None, source_repo: str | None = None
 ) -> sqlite3.Row | None:
-    if source_repo:
+    key = _resolve_lease_key(lease_key=lease_key, source_repo=source_repo)
+    if key:
         return conn.execute(
             "SELECT dispatch_id, thread_id, resolved_model, status, started_at, "
-            "last_heartbeat_at, record_json, packet_path, source_repo "
+            "last_heartbeat_at, record_json, packet_path, source_repo, lease_key "
             "FROM cursor_sdk_dispatches "
-            "WHERE source_repo=? AND COALESCE(read_only,0)=0 "
+            "WHERE lease_key=? AND COALESCE(read_only,0)=0 "
             "AND status IN ('admitted','running') LIMIT 1",
-            (source_repo,),
+            (key,),
         ).fetchone()
     return conn.execute(
         "SELECT dispatch_id, thread_id, resolved_model, status, started_at, "
-        "last_heartbeat_at, record_json, packet_path, source_repo "
+        "last_heartbeat_at, record_json, packet_path, source_repo, lease_key "
         "FROM cursor_sdk_dispatches "
         "WHERE COALESCE(read_only,0)=0 AND status IN ('admitted','running') LIMIT 1"
     ).fetchone()
@@ -402,6 +413,29 @@ def _migrate_parked_waiting_status(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_lease_key_column(conn: sqlite3.Connection) -> None:
+    """Add explicit ``lease_key`` column; backfill from ``source_repo``."""
+    cols = {
+        r["name"] for r in conn.execute("PRAGMA table_info(cursor_sdk_dispatches)")
+    }
+    if "lease_key" not in cols:
+        conn.execute("ALTER TABLE cursor_sdk_dispatches ADD COLUMN lease_key TEXT")
+        conn.execute(
+            "UPDATE cursor_sdk_dispatches SET lease_key=source_repo "
+            "WHERE source_repo IS NOT NULL AND lease_key IS NULL"
+        )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sdk_dispatch_queued_lease "
+        "ON cursor_sdk_dispatches(lease_key, worker_instance, status) "
+        "WHERE status = 'queued'"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sdk_dispatch_parked_lease "
+        "ON cursor_sdk_dispatches(lease_key, status) "
+        "WHERE status = 'parked_waiting'"
+    )
+
+
 class CursorDispatchLedger:
     """Durable singleton; survives worker restart. DB methods are sync (F1)."""
 
@@ -458,6 +492,12 @@ class CursorDispatchLedger:
                 )
             _migrate_queued_status(conn)
             _migrate_parked_waiting_status(conn)
+            _migrate_lease_key_column(conn)
+            from services.git_integration_worker.cursor_sdk_land_lease import (
+                ensure_land_lease_schema,
+            )
+
+            ensure_land_lease_schema(conn)
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_sdk_dispatch_queued "
                 "ON cursor_sdk_dispatches(source_repo, worker_instance, status) "
@@ -509,6 +549,7 @@ class CursorDispatchLedger:
         wt_baseline: str | None = None,
         contract: str | None = None,
         source_repo: str | None = None,
+        lease_key: str | None = None,
         read_only: bool = False,
         worker_instance: str | None = None,
         source_ref: str | None = None,
@@ -526,16 +567,17 @@ class CursorDispatchLedger:
         both observe an empty peer set and both insert.
 
         Nest park: when ``nest_under`` names the live write-lease holder for
-        ``source_repo``, that parent is moved to ``parked_waiting`` and the
+        ``lease_key``, that parent is moved to ``parked_waiting`` and the
         child inserts as ``admitted`` (caller must also ``transfer_holder``).
 
         Raises ``DispatchConflict`` on fingerprint mismatch."""
         record_json = _dispatch_record_json(req)
+        writer_key = _resolve_lease_key(lease_key=lease_key, source_repo=source_repo)
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             existing = conn.execute(
                 "SELECT dispatch_id, fingerprint, status, thread_id, resolved_model, "
-                "queued_at, source_repo FROM cursor_sdk_dispatches WHERE dispatch_id = ?",
+                "queued_at, source_repo, lease_key FROM cursor_sdk_dispatches WHERE dispatch_id = ?",
                 (req.dispatch_id,),
             ).fetchone()
             if existing is not None:
@@ -545,16 +587,18 @@ class CursorDispatchLedger:
                         "different payload fingerprint"
                     )
                 if existing["status"] == _STATUS_QUEUED:
+                    existing_key = _resolve_lease_key(
+                        lease_key=existing["lease_key"],
+                        source_repo=existing["source_repo"],
+                    )
                     pos = self._queue_position_conn(
                         conn,
                         dispatch_id=req.dispatch_id,
-                        source_repo=existing["source_repo"],
+                        lease_key=existing_key,
                         worker_instance=worker_instance,
                     )
                     holder = _holder_projection(
-                        _fetch_active_holder_conn(
-                            conn, source_repo=existing["source_repo"]
-                        )
+                        _fetch_active_holder_conn(conn, lease_key=existing_key)
                     )
                     return _response_from_row(
                         existing,
@@ -583,19 +627,19 @@ class CursorDispatchLedger:
             insert_status = _STATUS_ADMITTED
             queued_at: str | None = None
             nested_park_parent: str | None = None
-            if not read_only and source_repo:
+            if not read_only and writer_key:
                 conflict = conn.execute(
                     "SELECT dispatch_id FROM cursor_sdk_dispatches "
-                    "WHERE source_repo=? AND COALESCE(read_only,0)=0 "
+                    "WHERE lease_key=? AND COALESCE(read_only,0)=0 "
                     "AND status IN ('admitted','running') AND dispatch_id<>? "
                     "LIMIT 1",
-                    (source_repo, req.dispatch_id),
+                    (writer_key, req.dispatch_id),
                 ).fetchone()
                 prior_queued = conn.execute(
                     "SELECT dispatch_id FROM cursor_sdk_dispatches "
-                    "WHERE source_repo=? AND COALESCE(read_only,0)=0 "
+                    "WHERE lease_key=? AND COALESCE(read_only,0)=0 "
                     "AND status='queued' AND dispatch_id<>? LIMIT 1",
-                    (source_repo, req.dispatch_id),
+                    (writer_key, req.dispatch_id),
                 ).fetchone()
                 if nest_under:
                     if nest_under == req.dispatch_id:
@@ -609,7 +653,7 @@ class CursorDispatchLedger:
                     ):
                         raise NestParentNotLive(
                             f"nest_under {nest_under!r} is not the live "
-                            f"write-lease holder for {source_repo!r}"
+                            f"write-lease holder for lease_key {writer_key!r}"
                         )
                     park_stack_depth(
                         conn,
@@ -640,9 +684,9 @@ class CursorDispatchLedger:
                 "INSERT INTO cursor_sdk_dispatches "
                 "(dispatch_id, fingerprint, thread_id, execution_id, caller_agent, "
                 " resolved_model, packet_path, message_present, status, record_json, "
-                " wt_baseline, contract, source_repo, read_only, worker_instance, "
+                " wt_baseline, contract, source_repo, lease_key, read_only, worker_instance, "
                 " queued_at, source_ref) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     req.dispatch_id,
                     fingerprint,
@@ -657,6 +701,7 @@ class CursorDispatchLedger:
                     wt_baseline,
                     contract,
                     source_repo,
+                    writer_key,
                     1 if read_only else 0,
                     worker_instance,
                     queued_at,
@@ -670,17 +715,17 @@ class CursorDispatchLedger:
                 pos = self._queue_position_conn(
                     conn,
                     dispatch_id=req.dispatch_id,
-                    source_repo=source_repo,
+                    lease_key=writer_key,
                     worker_instance=worker_instance,
                 )
                 row = conn.execute(
                     "SELECT dispatch_id, fingerprint, status, thread_id, resolved_model, "
-                    "queued_at, source_repo FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+                    "queued_at, source_repo, lease_key FROM cursor_sdk_dispatches WHERE dispatch_id=?",
                     (req.dispatch_id,),
                 ).fetchone()
                 assert row is not None
                 holder = _holder_projection(
-                    _fetch_active_holder_conn(conn, source_repo=source_repo)
+                    _fetch_active_holder_conn(conn, lease_key=writer_key)
                 )
                 return _response_from_row(
                     row, admission=admission, queue_position=pos, holder=holder
@@ -731,14 +776,19 @@ class CursorDispatchLedger:
             return None
         return row["dispatch_id"], row["source_repo"]
 
-    def has_parked_parent(self, *, source_repo: str) -> bool:
-        """True when any ``parked_waiting`` row exists for ``source_repo``."""
+    def has_parked_parent(
+        self, *, lease_key: str | None = None, source_repo: str | None = None
+    ) -> bool:
+        """True when any ``parked_waiting`` row exists for ``lease_key``."""
+        key = _resolve_lease_key(lease_key=lease_key, source_repo=source_repo)
+        if not key:
+            return False
         with self._connect() as conn:
             row = conn.execute(
                 "SELECT 1 FROM cursor_sdk_dispatches "
-                "WHERE source_repo=? AND COALESCE(read_only,0)=0 "
+                "WHERE lease_key=? AND COALESCE(read_only,0)=0 "
                 "AND status=? LIMIT 1",
-                (source_repo, _STATUS_PARKED_WAITING),
+                (key, _STATUS_PARKED_WAITING),
             ).fetchone()
         return row is not None
 
@@ -758,16 +808,18 @@ class CursorDispatchLedger:
         conn: sqlite3.Connection,
         *,
         dispatch_id: str,
-        source_repo: str | None,
-        worker_instance: str | None,
+        lease_key: str | None = None,
+        source_repo: str | None = None,
+        worker_instance: str | None = None,
     ) -> int:
+        key = _resolve_lease_key(lease_key=lease_key, source_repo=source_repo)
         row = conn.execute(
             "SELECT COUNT(*) AS n FROM cursor_sdk_dispatches "
-            "WHERE source_repo=? AND COALESCE(read_only,0)=0 AND status='queued' "
+            "WHERE lease_key=? AND COALESCE(read_only,0)=0 AND status='queued' "
             "AND rowid <= ("
             "  SELECT rowid FROM cursor_sdk_dispatches WHERE dispatch_id=?"
             ")",
-            (source_repo, dispatch_id),
+            (key, dispatch_id),
         ).fetchone()
         return int(row["n"]) if row is not None else 1
 
@@ -826,57 +878,66 @@ class CursorDispatchLedger:
             )
 
     def mark_terminal(self, *, dispatch_id: str, terminal_status: str) -> str | None:
-        """Mark terminal; return ``source_repo`` when present for promotion."""
+        """Mark terminal; return ``lease_key`` when present for FIFO promotion."""
         assert terminal_status in _STATUS_TERMINAL
-        source_repo: str | None = None
+        lease_key: str | None = None
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT source_repo FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+                "SELECT lease_key, source_repo FROM cursor_sdk_dispatches WHERE dispatch_id=?",
                 (dispatch_id,),
             ).fetchone()
             if row is not None:
-                source_repo = row["source_repo"]
+                lease_key = _resolve_lease_key(
+                    lease_key=row["lease_key"], source_repo=row["source_repo"]
+                )
             conn.execute(
                 "UPDATE cursor_sdk_dispatches SET status=?, terminal_status=?, terminal_at=? "
                 "WHERE dispatch_id=?",
                 (terminal_status, terminal_status, _now(), dispatch_id),
             )
-        return source_repo
+        return lease_key
 
     def promote_next_queued(
-        self, *, source_repo: str, worker_instance: str | None
+        self,
+        *,
+        lease_key: str | None = None,
+        source_repo: str | None = None,
+        worker_instance: str | None = None,
     ) -> PromotedDispatch | None:
         """Advance the FIFO head ``queued`` row to ``admitted`` when lease is free.
 
         Queued rows from a prior worker restart remain in the durable ledger;
-        promotion is repo-global (not scoped to ``worker_instance``) and
+        promotion is lease-global (not scoped to ``worker_instance``) and
         re-homes the head row onto the live worker.
         """
+        key = _resolve_lease_key(lease_key=lease_key, source_repo=source_repo)
+        if not key:
+            return None
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             parked = conn.execute(
                 "SELECT dispatch_id FROM cursor_sdk_dispatches "
-                "WHERE source_repo=? AND COALESCE(read_only,0)=0 "
+                "WHERE lease_key=? AND COALESCE(read_only,0)=0 "
                 "AND status=? LIMIT 1",
-                (source_repo, _STATUS_PARKED_WAITING),
+                (key, _STATUS_PARKED_WAITING),
             ).fetchone()
             if parked is not None:
                 return None
             active = conn.execute(
                 "SELECT dispatch_id FROM cursor_sdk_dispatches "
-                "WHERE source_repo=? AND COALESCE(read_only,0)=0 "
+                "WHERE lease_key=? AND COALESCE(read_only,0)=0 "
                 "AND status IN ('admitted','running') LIMIT 1",
-                (source_repo,),
+                (key,),
             ).fetchone()
             if active is not None:
                 return None
             head = conn.execute(
                 "SELECT dispatch_id, thread_id, execution_id, caller_agent, "
-                "resolved_model, source_repo, contract, read_only, record_json "
+                "resolved_model, source_repo, lease_key, contract, read_only, record_json "
                 "FROM cursor_sdk_dispatches "
-                "WHERE source_repo=? AND COALESCE(read_only,0)=0 AND status='queued' "
+                "WHERE lease_key=? AND COALESCE(read_only,0)=0 AND status='queued' "
                 "ORDER BY rowid ASC LIMIT 1",
-                (source_repo,),
+                (key,),
             ).fetchone()
             if head is None:
                 return None
@@ -895,6 +956,7 @@ class CursorDispatchLedger:
             caller_agent=head["caller_agent"],
             resolved_model=head["resolved_model"],
             source_repo=head["source_repo"],
+            lease_key=head["lease_key"],
             contract=head["contract"],
             read_only=bool(head["read_only"]),
             record_json=head["record_json"] or "{}",
@@ -960,7 +1022,7 @@ class CursorDispatchLedger:
     def release_stale_writer(
         self, *, dispatch_id: str, force: bool = False
     ) -> str | None:
-        """Conservatively fail a stale lease holder; return ``source_repo``.
+        """Conservatively fail a stale lease holder; return ``lease_key``.
 
         A live registered task normally vetoes the release. ``force`` overrides
         that veto for a deliberate sweeper reap: a wedged coroutine keeps its
@@ -970,7 +1032,8 @@ class CursorDispatchLedger:
         """
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT source_repo, status FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+                "SELECT lease_key, source_repo, status FROM cursor_sdk_dispatches "
+                "WHERE dispatch_id=?",
                 (dispatch_id,),
             ).fetchone()
             if row is None or row["status"] not in _ACTIVE_WRITER_STATUSES:
@@ -986,20 +1049,28 @@ class CursorDispatchLedger:
                 "WHERE dispatch_id=? AND status IN ('admitted','running')",
                 ("failed", "failed", _now(), dispatch_id),
             )
-            return row["source_repo"]
+            return _resolve_lease_key(
+                lease_key=row["lease_key"], source_repo=row["source_repo"]
+            )
 
-    def lease_snapshot(self, *, source_repo: str | None = None) -> dict[str, Any]:
+    def lease_snapshot(
+        self,
+        *,
+        lease_key: str | None = None,
+        source_repo: str | None = None,
+    ) -> dict[str, Any]:
         """Active write-lease holder + queued depth (F-3)."""
+        key = _resolve_lease_key(lease_key=lease_key, source_repo=source_repo)
         with self._connect() as conn:
-            if source_repo:
-                holder = _fetch_active_holder_conn(conn, source_repo=source_repo)
+            if key:
+                holder = _fetch_active_holder_conn(conn, lease_key=key)
                 queued = conn.execute(
                     "SELECT COUNT(*) AS n FROM cursor_sdk_dispatches "
-                    "WHERE source_repo=? AND COALESCE(read_only,0)=0 AND status='queued'",
-                    (source_repo,),
+                    "WHERE lease_key=? AND COALESCE(read_only,0)=0 AND status='queued'",
+                    (key,),
                 ).fetchone()
             else:
-                holder = _fetch_active_holder_conn(conn, source_repo=None)
+                holder = _fetch_active_holder_conn(conn)
                 queued = conn.execute(
                     "SELECT COUNT(*) AS n FROM cursor_sdk_dispatches "
                     "WHERE COALESCE(read_only,0)=0 AND status='queued'"
@@ -1038,17 +1109,20 @@ class CursorDispatchLedger:
         }
 
     def startup_reconcile(self, *, worker_instance: str) -> list[str]:
-        """Mark restart survivors terminal; return repos needing promotion."""
-        repos: set[str] = set()
+        """Mark restart survivors terminal; return lease keys needing promotion."""
+        lease_keys: set[str] = set()
         with self._connect() as conn:
             survivors = conn.execute(
-                "SELECT dispatch_id, source_repo, status, worker_instance "
+                "SELECT dispatch_id, lease_key, source_repo, status, worker_instance "
                 "FROM cursor_sdk_dispatches "
                 "WHERE status IN ('admitted','running') "
                 "AND COALESCE(read_only,0)=0"
             ).fetchall()
         for row in survivors:
             dispatch_id = row["dispatch_id"]
+            key = _resolve_lease_key(
+                lease_key=row["lease_key"], source_repo=row["source_repo"]
+            )
             live = (
                 self._tasks.get(dispatch_id) is not None
                 and not self._tasks[dispatch_id].done()
@@ -1060,23 +1134,27 @@ class CursorDispatchLedger:
                 or row["status"] == _STATUS_RUNNING
             ):
                 self.mark_terminal(dispatch_id=dispatch_id, terminal_status="failed")
-                if row["source_repo"]:
-                    repos.add(row["source_repo"])
+                if key:
+                    lease_keys.add(key)
             elif (
                 row["status"] == _STATUS_ADMITTED
                 and row["worker_instance"] == worker_instance
             ):
                 self.mark_terminal(dispatch_id=dispatch_id, terminal_status="failed")
-                if row["source_repo"]:
-                    repos.add(row["source_repo"])
+                if key:
+                    lease_keys.add(key)
         with self._connect() as conn:
             for row in conn.execute(
-                "SELECT DISTINCT source_repo FROM cursor_sdk_dispatches "
+                "SELECT DISTINCT lease_key, source_repo FROM cursor_sdk_dispatches "
                 "WHERE status='queued' AND COALESCE(read_only,0)=0 "
-                "AND source_repo IS NOT NULL"
+                "AND (lease_key IS NOT NULL OR source_repo IS NOT NULL)"
             ):
-                repos.add(row["source_repo"])
-        return sorted(repos)
+                key = _resolve_lease_key(
+                    lease_key=row["lease_key"], source_repo=row["source_repo"]
+                )
+                if key:
+                    lease_keys.add(key)
+        return sorted(lease_keys)
 
     def load_promoted_request(
         self, promoted: PromotedDispatch
@@ -1094,6 +1172,8 @@ class CursorDispatchLedger:
             prompt_preamble=data.get("prompt_preamble"),
             model_knobs=data.get("model_knobs"),
             read_only=bool(data.get("read_only", promoted.read_only)),
+            worktree_isolated=bool(data.get("worktree_isolated", False)),
+            worktree_path=data.get("worktree_path"),
         )
 
     def running_orphans(self) -> list[LedgerRow]:

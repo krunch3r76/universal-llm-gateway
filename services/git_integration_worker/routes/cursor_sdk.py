@@ -158,6 +158,15 @@ from services.git_integration_worker.cursor_sdk_stream_capture import (
     request_id_from_sdk_error,
 )
 from services.git_integration_worker.cursor_sdk_transcript import resolve_run_body
+from services.git_integration_worker.cursor_sdk_workspace import (
+    resolve_promoted_workspace,
+)
+from services.git_integration_worker.cursor_sdk_worktree import (
+    WorktreeMintError,
+    maybe_prune_worktree_on_terminal,
+    reap_orphan_worktrees,
+    resolve_admit_binding,
+)
 from services.git_integration_worker.git_worker_lifecycle_events import (
     FailureLayer,
     build_dispatch_error_envelope,
@@ -800,43 +809,49 @@ async def _mark_terminal_and_promote(
     controller: WorkAdmissionController,
     request: Request | None = None,
 ) -> None:
-    """Mark terminal, release/restore lease, and promote FIFO head when applicable."""
+    """Mark terminal, release/restore lease, prune Lane-B worktree, promote FIFO head."""
     disposition = await release_or_restore_for_child(dispatch_id=dispatch_id)
     ledger = CursorDispatchLedger.instance()
-    source_repo = await asyncio.to_thread(
+    lease_key = await asyncio.to_thread(
         ledger.mark_terminal,
         dispatch_id=dispatch_id,
         terminal_status=terminal_status,
     )
+    cfg = _config(request) if request is not None else _CONFIG
+    await asyncio.to_thread(
+        maybe_prune_worktree_on_terminal,
+        dispatch_id=dispatch_id,
+        source_repo=cfg.source_repo,
+    )
     if disposition == "restored":
         # Parked parent regained capacity — siblings stay queued (Q4).
         return
-    emit_write_lease_released(dispatch_id=dispatch_id, source_repo=source_repo)
-    if source_repo:
-        await _promote_queued_for_repo(
-            source_repo=source_repo,
+    emit_write_lease_released(dispatch_id=dispatch_id, source_repo=lease_key)
+    if lease_key:
+        await _promote_queued_for_lease(
+            lease_key=lease_key,
             controller=controller,
             request=request,
         )
 
 
-async def _promote_queued_for_repo(
+async def _promote_queued_for_lease(
     *,
-    source_repo: str,
+    lease_key: str,
     controller: WorkAdmissionController,
     request: Request | None = None,
 ) -> None:
     ledger = CursorDispatchLedger.instance()
     promoted = await asyncio.to_thread(
         ledger.promote_next_queued,
-        source_repo=source_repo,
+        lease_key=lease_key,
         worker_instance=controller.worker_id,
     )
     if promoted is None:
         return
     emit_write_lease_promoted(
         dispatch_id=promoted.dispatch_id,
-        source_repo=source_repo,
+        source_repo=promoted.source_repo or lease_key,
     )
     await _start_promoted_dispatch(
         promoted=promoted,
@@ -855,6 +870,11 @@ async def _start_promoted_dispatch(
     req = ledger.load_promoted_request(promoted)
     cfg = _config(request) if request is not None else _CONFIG
     contract = (promoted.contract or "consult").lower()
+    dispatch_workspace = resolve_promoted_workspace(
+        lease_key=promoted.lease_key or promoted.source_repo,
+        source_repo=cfg.source_repo,
+        cfg=cfg,
+    )
     # Friction 23001: baseline capture deferred into _run_sdk_dispatch_gated
     # (post slot acquisition) — also fixes misattribution where a queued
     # dispatch's baseline included none of its predecessor's edits.
@@ -877,10 +897,11 @@ async def _start_promoted_dispatch(
             _run_sdk_dispatch_gated(
                 req=req,
                 source_repo=cfg.source_repo,
-                dispatch_workspace=cfg.dispatch_workspace,
+                dispatch_workspace=dispatch_workspace,
                 bus=bus,
                 controller=controller,
                 contract=contract,
+                worktree_isolated=req.worktree_isolated,
             ),
             controller=controller,
             op_id=promoted.dispatch_id,
@@ -893,7 +914,10 @@ async def _start_promoted_dispatch(
 
 
 async def reconcile_stale_leases(
-    controller: WorkAdmissionController, *, reap_only: bool = False
+    controller: WorkAdmissionController,
+    *,
+    reap_only: bool = False,
+    worker_cfg: WorkerConfig | None = None,
 ) -> None:
     """Periodic sweeper: release stale lease holders and promote queued writers.
 
@@ -902,6 +926,19 @@ async def reconcile_stale_leases(
     finish, but starting its queued successor would admit new work into a
     worker that is shutting down.
     """
+    from services.git_integration_worker.cursor_sdk_land_lease import (
+        reap_stale_land_leases,
+    )
+
+    await asyncio.to_thread(reap_stale_land_leases)
+    cfg = worker_cfg or _CONFIG
+    removed = await asyncio.to_thread(
+        reap_orphan_worktrees,
+        source_repo=cfg.source_repo,
+        worktree_root=cfg.worktree_root,
+    )
+    if removed:
+        logger.info("orphan worktree reaper removed=%d", removed)
     ledger = CursorDispatchLedger.instance()
     stale_ids = await asyncio.to_thread(
         ledger.stale_writers,
@@ -916,21 +953,21 @@ async def reconcile_stale_leases(
         # force=True: the capacity slot is already reclaimed above, so leaving
         # the row active because its wedged task is still "live" would strand
         # the lease in the ledger with no slot behind it.
-        source_repo = await asyncio.to_thread(
+        lease_key = await asyncio.to_thread(
             ledger.release_stale_writer, dispatch_id=dispatch_id, force=True
         )
-        if source_repo:
-            repos.add(source_repo)
+        if lease_key:
+            repos.add(lease_key)
             emit_write_lease_released(
                 dispatch_id=dispatch_id,
-                source_repo=source_repo,
+                source_repo=lease_key,
                 stale=True,
             )
     if reap_only:
         return
-    for source_repo in repos:
-        await _promote_queued_for_repo(
-            source_repo=source_repo,
+    for lease_key in repos:
+        await _promote_queued_for_lease(
+            lease_key=lease_key,
             controller=controller,
             request=None,
         )
@@ -944,7 +981,11 @@ async def stale_lease_sweeper(app: FastAPI) -> None:
         if controller is None:
             continue
         try:
-            await reconcile_stale_leases(controller, reap_only=controller.is_draining())
+            await reconcile_stale_leases(
+                controller,
+                reap_only=controller.is_draining(),
+                worker_cfg=getattr(app.state, "worker_config", None),
+            )
         except Exception as exc:  # sweeper must never kill the worker
             logger.warning("stale-lease sweeper failed: %s", exc)
 
@@ -954,6 +995,14 @@ async def startup_ledger_reconcile(app: FastAPI) -> None:
     removed = await asyncio.to_thread(prune_stale_dispatch_homes)
     if removed:
         logger.info("startup dispatch_home prune removed=%d", removed)
+    cfg: WorkerConfig = app.state.worker_config
+    wt_removed = await asyncio.to_thread(
+        reap_orphan_worktrees,
+        source_repo=cfg.source_repo,
+        worktree_root=cfg.worktree_root,
+    )
+    if wt_removed:
+        logger.info("startup orphan worktree prune removed=%d", wt_removed)
     ledger = CursorDispatchLedger.instance()
     controller = app.state.admission_controller
     repos = await asyncio.to_thread(
@@ -961,16 +1010,16 @@ async def startup_ledger_reconcile(app: FastAPI) -> None:
     )
     for orphan in ledger.running_orphans():
         await release_or_restore_for_child(dispatch_id=orphan.dispatch_id)
-        source_repo = await asyncio.to_thread(
+        lease_key = await asyncio.to_thread(
             ledger.mark_terminal,
             dispatch_id=orphan.dispatch_id,
             terminal_status="failed",
         )
-        if source_repo:
-            repos.append(source_repo)
-    for source_repo in sorted(set(repos)):
-        await _promote_queued_for_repo(
-            source_repo=source_repo,
+        if lease_key:
+            repos.append(lease_key)
+    for lease_key in sorted(set(repos)):
+        await _promote_queued_for_lease(
+            lease_key=lease_key,
             controller=controller,
             request=None,
         )
@@ -1004,6 +1053,7 @@ async def _deliver_sdk_closeout(
     deliverables_expected: bool = False,
     light_bounded_expected_paths: tuple[str, ...] = (),
     extra_deviations: tuple[str, ...] = (),
+    worktree_isolated: bool = False,
 ) -> None:
     baseline = await asyncio.to_thread(
         CursorDispatchLedger.instance().read_wt_baseline,
@@ -1022,6 +1072,7 @@ async def _deliver_sdk_closeout(
         light_bounded_expected_paths=light_bounded_expected_paths,
         execution_id=req.execution_id,
         extra_deviations=extra_deviations,
+        worktree_isolated=worktree_isolated,
     )
     run_outcome = resolve_run_outcome_label(degraded_reason)
     if delivery.closeout_status.value == "partial":
@@ -1207,6 +1258,7 @@ async def _run_sdk_dispatch_gated(
     bus: CursorBusClient,
     controller: WorkAdmissionController,
     contract: str = "consult",
+    worktree_isolated: bool = False,
 ) -> None:
     reply_to = req.caller_agent or "dispatch"
     outer_timeout_s = _SDK_TIMEOUT_S + _SDK_TIMEOUT_BUFFER_S
@@ -1413,6 +1465,7 @@ async def _run_sdk_dispatch_gated(
             bus=bus,
             reply_to=reply_to,
             controller=controller,
+            worktree_isolated=worktree_isolated,
         )
     except BaseException as exc:  # noqa: BLE001
         # The run succeeded but finalize (sidecar/cortex/bus) raised. Without
@@ -1486,6 +1539,7 @@ async def _finalize_success(
     bus: CursorBusClient,
     reply_to: str,
     controller: WorkAdmissionController,
+    worktree_isolated: bool = False,
 ) -> None:
     packet_text = _read_packet_text(req, source_repo) if req.packet_path else ""
     instruction_text = packet_text if req.packet_path else (req.message or "")
@@ -1596,6 +1650,7 @@ async def _finalize_success(
             contract=contract,
             work_item_ref=work_item_ref,
         ),
+        worktree_isolated=worktree_isolated,
     )
 
 
@@ -1692,6 +1747,24 @@ async def cursor_dispatch(
         )
     source_repo_str = str(cfg.source_repo.resolve())
     try:
+        dispatch_workspace, lease_key = await asyncio.to_thread(
+            resolve_admit_binding,
+            req=req,
+            source_repo=cfg.source_repo,
+            worktree_root=cfg.worktree_root,
+            dispatch_workspace_default=cfg.dispatch_workspace,
+        )
+    except WorktreeMintError as exc:
+        return _reject_pre_admission(
+            req,
+            worker_error_code="CURSOR_WORKTREE_MINT_FAILED",
+            failure_layer="admission",
+            http_status=503,
+            detail_summary=str(exc),
+            retryable=True,
+            validation_stage="worktree_mint",
+        )
+    try:
         cached = await asyncio.to_thread(
             ledger.admit,
             req=req,
@@ -1702,6 +1775,7 @@ async def cursor_dispatch(
             admission=admission,
             contract=contract,
             source_repo=source_repo_str,
+            lease_key=lease_key,
             read_only=req.read_only,
             worker_instance=controller.worker_id,
             source_ref=candidate_source_ref,
@@ -1841,10 +1915,11 @@ async def cursor_dispatch(
             _run_sdk_dispatch_gated(
                 req=req,
                 source_repo=cfg.source_repo,
-                dispatch_workspace=cfg.dispatch_workspace,
+                dispatch_workspace=dispatch_workspace,
                 bus=bus,
                 controller=controller,
                 contract=contract,
+                worktree_isolated=req.worktree_isolated,
             ),
             controller=controller,
             op_id=req.dispatch_id,

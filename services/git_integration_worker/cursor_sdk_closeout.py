@@ -865,6 +865,7 @@ async def prepare_closeout_delivery_async(
     execution_id: str,
     extra_deviations: tuple[str, ...] = (),
     post_closeout_sidecar_fn: Callable[..., Any] | None = None,
+    worktree_isolated: bool = False,
 ) -> CloseoutDelivery:
     """Write sidecar, resolve pinned cortex deliverables, build closeout JSON."""
     files_expected = _files_expected_for_pinning(
@@ -907,6 +908,7 @@ async def prepare_closeout_delivery_async(
         execution_id=execution_id,
         extra_deviations=extra_deviations,
         post_closeout_sidecar_fn=post_closeout_sidecar_fn,
+        worktree_isolated=worktree_isolated,
     )
 
 
@@ -1165,6 +1167,7 @@ async def _assemble_closeout_delivery_async(
     execution_id: str,
     extra_deviations: tuple[str, ...] = (),
     post_closeout_sidecar_fn: Callable[..., Any] | None = None,
+    worktree_isolated: bool = False,
 ) -> CloseoutDelivery:
     delivery = _assemble_closeout_delivery(
         source_repo=source_repo,
@@ -1184,6 +1187,7 @@ async def _assemble_closeout_delivery_async(
         execution_id=execution_id,
         extra_deviations=extra_deviations,
         finalize_oversize=False,
+        worktree_isolated=worktree_isolated,
     )
     full_body = delivery.body
     if len(full_body) <= MAX_TURN_BODY_CHARS:
