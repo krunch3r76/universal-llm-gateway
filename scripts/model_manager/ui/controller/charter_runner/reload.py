@@ -35,6 +35,7 @@ _MODULE_NAMES: tuple[str, ...] = (
     "scripts.model_manager.ui.controller.charter_runner.verification_manifest",
     "scripts.model_manager.ui.controller.charter_runner.checkpoint_parse",
     "scripts.model_manager.ui.controller.charter_runner.checkpoint_admit_gate",
+    "scripts.model_manager.ui.controller.charter_runner.checkpoint_body",
     "scripts.model_manager.ui.controller.charter_runner.env_predicates",
     "scripts.model_manager.ui.controller.charter_runner.residue_fingerprint",
     "scripts.model_manager.ui.controller.charter_runner.giw_live_hold",

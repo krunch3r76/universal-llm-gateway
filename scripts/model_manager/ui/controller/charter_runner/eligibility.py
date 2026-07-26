@@ -233,6 +233,11 @@ def evaluate_root(
     if checkpoint is None:
         return _body_skip("no_checkpoint", root_id)
 
+    # Soft-spill / sidecar-first stubs: follow Sidecar: before schema gate.
+    from .checkpoint_body import materialize_checkpoint_turn
+
+    checkpoint = materialize_checkpoint_turn(checkpoint)
+
     cp_n = _turn_number(checkpoint)
     admission = _latest_matching(
         turns, _starts_with(ADMISSION_SUBJECT_PREFIX), after=cp_n

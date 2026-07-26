@@ -134,7 +134,18 @@ async def try_recover_consult_stall(
         return False
 
     prior_body = str((decision.checkpoint or {}).get("body") or "")
-    prior = parse_checkpoint(prior_body)
+    from .checkpoint_body import resolve_checkpoint_body
+
+    prior = parse_checkpoint(
+        resolve_checkpoint_body(
+            prior_body,
+            sidecar_uri=(
+                (decision.checkpoint or {}).get("sidecar_uri")
+                if isinstance((decision.checkpoint or {}).get("sidecar_uri"), str)
+                else None
+            ),
+        )
+    )
     r_admit = find_r_admit_after(root_turns, adm_n)
 
     if r_admit is None and not prior.next_pickup_gated and not prior.next_pickup:

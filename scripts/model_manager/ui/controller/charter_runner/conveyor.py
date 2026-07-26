@@ -95,7 +95,9 @@ def _conveyor_pickup_rows(turns: list[dict[str, Any]]) -> list[str]:
             break
     if not latest_body:
         return []
-    parsed = parse_checkpoint(latest_body)
+    from .checkpoint_body import resolve_checkpoint_body
+
+    parsed = parse_checkpoint(resolve_checkpoint_body(latest_body))
     return list(parsed.next_pickup)
 
 

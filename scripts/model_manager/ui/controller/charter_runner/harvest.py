@@ -21,6 +21,7 @@ from . import (
     gate_bypass_detect,
     window_log,
 )
+from .checkpoint_body import resolve_checkpoint_body
 from .eligibility import ADMISSION_SUBJECT_PREFIX, CHECKPOINT_PREFIX
 
 logger = get_logger(__name__)
@@ -342,7 +343,14 @@ async def harvest_completed_windows(root_id: str, turns: list[dict]) -> None:
                 root_id=root_id,
                 window_index=window_index,
                 checkpoint_subject=str(checkpoint.get("subject") or ""),
-                checkpoint_body=str(checkpoint.get("body") or ""),
+                checkpoint_body=resolve_checkpoint_body(
+                    str(checkpoint.get("body") or ""),
+                    sidecar_uri=(
+                        checkpoint.get("sidecar_uri")
+                        if isinstance(checkpoint.get("sidecar_uri"), str)
+                        else None
+                    ),
+                ),
                 worker_turns=worker_turns,
                 worker_closed=worker_closed,
                 gate_bypass_count=gate_bypass_count,
@@ -372,7 +380,14 @@ async def harvest_completed_windows(root_id: str, turns: list[dict]) -> None:
             else:
                 _persist_residue_after_harvest(
                     root_id=root_id,
-                    consumed_checkpoint_body=str(consumed.get("body") or ""),
+                    consumed_checkpoint_body=resolve_checkpoint_body(
+                        str(consumed.get("body") or ""),
+                        sidecar_uri=(
+                            consumed.get("sidecar_uri")
+                            if isinstance(consumed.get("sidecar_uri"), str)
+                            else None
+                        ),
+                    ),
                     admission_meta=meta,
                 )
             await events.emit_manage_charter_tick_closed(

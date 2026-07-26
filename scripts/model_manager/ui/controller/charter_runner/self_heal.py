@@ -184,7 +184,18 @@ async def try_self_heal_incomplete_window(
                 )
         return False
     prior_body = str((decision.checkpoint or {}).get("body") or "")
-    prior = parse_checkpoint(prior_body)
+    from .checkpoint_body import resolve_checkpoint_body
+
+    prior = parse_checkpoint(
+        resolve_checkpoint_body(
+            prior_body,
+            sidecar_uri=(
+                (decision.checkpoint or {}).get("sidecar_uri")
+                if isinstance((decision.checkpoint or {}).get("sidecar_uri"), str)
+                else None
+            ),
+        )
+    )
     if not prior.next_pickup_gated and not prior.next_pickup:
         logger.warning(
             "charter-runner self-heal skipped root=%s — prior CHECKPOINT has no pickup",
