@@ -48,4 +48,5 @@ request ⟹ commit paired test when phase/spec lists it as deliverable
 
 - `modularization.mdc` — test files SLOC-exempt
 - `provenance-discipline.mdc` — test pass claims
+- `bound-invariant-falsifier.mdc` — tracked `test_falsifier_*.py` tier (G10)
 <!-- /target:* -->

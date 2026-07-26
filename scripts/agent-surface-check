@@ -24,6 +24,7 @@ scripts/gen-rules --target agent-guides-rules --check
 scripts/gen-rules --target agent-skill-bundles --check
 "$PYTHON" scripts/registry-check
 "$PYTHON" scripts/invariant-falsifier-check
+"$PYTHON" scripts/check-falsifier-surface-reach.py
 "$PYTHON" scripts/gen-mcp-dispatch-role-docs --check
 # Blocking catalog gate + import guard (parity logic retired Phase 2).
 "$PYTHON" -m scripts.gen_event_catalog check || exit 1

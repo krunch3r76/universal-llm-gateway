@@ -118,6 +118,20 @@ Stored as: rs_ea08ab (expires in 10 min).
 
 For write-side verification, querying the written artifact directly (entity_get, fs read) is the canonical path — it confirms the durable write, not just the cached response payload.
 <!-- /target:* -->
+<!-- target:* -->
+## Bound-Invariant Falsifier (G10)
+
+**Load:** `bound-invariant-falsifier.mdc` when editing dense implement specs
+(`cortex://notes/system/specs/**`), phase prompts, or `test_falsifier_*.py`.
+
+Blocking spec amendments with **Falsifier F-A*:** lines must cite ≥1 tracked
+`test_falsifier_*.py` function in Verification. Mechanical gate:
+`scripts/invariant-falsifier-check` (G10), sibling to `registry-check` — both
+run under `scripts/agent-surface-check`.
+
+Prove drift detection: `python scripts/invariant-falsifier-check --seed-drift F-A99`
+must exit non-zero.
+<!-- /target:* -->
 <!-- target:cursor -->
 ## MCP Defaults
 
