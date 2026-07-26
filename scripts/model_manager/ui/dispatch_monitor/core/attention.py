@@ -22,6 +22,8 @@ trips one of these, however long it runs.
 
 from __future__ import annotations
 
+from typing import Mapping
+
 from .dtos import (
     AttentionItem,
     CdpLegRow,
@@ -304,6 +306,25 @@ def _plane_items(health: HealthProjection) -> list[AttentionItem]:
     return items
 
 
+def _reconcile_failure_items(
+    failures: Mapping[str, tuple[str, str, str]],
+) -> list[AttentionItem]:
+    """Surface click-time reconcile source failures to the operator."""
+    items: list[AttentionItem] = []
+    for key, (subject, source, error) in sorted(failures.items()):
+        items.append(
+            AttentionItem(
+                key=key,
+                kind="monitor.reconcile.source_failed",
+                severity="warn",
+                subject=subject,
+                title=f"Reconcile {source} failed",
+                detail=f"{source}: {error}",
+            )
+        )
+    return items
+
+
 def derive_attention(
     *,
     health: HealthProjection,
@@ -311,10 +332,13 @@ def derive_attention(
     dispatches: tuple[SdkDispatchRow, ...],
     legs: tuple[CdpLegRow, ...],
     thresholds: Thresholds,
+    reconcile_failures: Mapping[str, tuple[str, str, str]] | None = None,
 ) -> tuple[AttentionItem, ...]:
     """Return the unified, totally-ordered attention list for one frame."""
     items = _charter_items(health, roots, thresholds)
     items += _sdk_items(dispatches, thresholds)
     items += _cdp_items(legs, thresholds) + _plane_items(health)
+    if reconcile_failures:
+        items += _reconcile_failure_items(reconcile_failures)
     items.sort(key=lambda i: (-severity_rank(i.severity), i.kind, i.subject, i.key))
     return tuple(items)

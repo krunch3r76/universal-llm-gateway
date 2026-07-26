@@ -14,6 +14,7 @@ from scripts.model_manager.ui.dispatch_monitor.core.watch import render
 from scripts.model_manager.ui.dispatch_monitor.ulg.live_source import run_live_subscribers
 from scripts.model_manager.ui.dispatch_monitor.ulg.projection_hub import BroadcastHub
 from scripts.model_manager.ui.dispatch_monitor.ulg.seeder import seed_model
+from scripts.model_manager.ui.dispatch_monitor.ulg.reconcile_on_click import ReconcileOnClick
 
 
 class LiveClock:
@@ -30,12 +31,14 @@ class MonitorController:
         thresholds: Thresholds | None = None,
         tick_s: float = 1.0,
         seed_minutes: int = 60,
+        reconcile: ReconcileOnClick | None = None,
     ) -> None:
         self.model = Model(thresholds or Thresholds())
         self.clock = LiveClock()
         self.tick_s = tick_s
         self.seed_minutes = seed_minutes
         self.hub = BroadcastHub()
+        self._reconcile = reconcile
         self._last_fingerprint: str | None = None
         self._apply_lock = asyncio.Lock()
 
@@ -57,6 +60,38 @@ class MonitorController:
         self._last_fingerprint = frame.fingerprint
         self.hub.publish(frame)
         return True
+
+    def trigger_reconcile(self, subject: str) -> dict[str, object]:
+        """Explicit operator reconcile for one subject ref; never called from tick."""
+        ts = self.clock.now_ms()
+        if self._reconcile is None:
+            from scripts.model_manager.ui.dispatch_monitor.ulg.reconcile_events import (
+                source_failure_event,
+            )
+
+            self._apply(
+                source_failure_event(
+                    subject=subject,
+                    source="port",
+                    error="reconcile_unwired",
+                    ts_unix_ms=ts,
+                )
+            )
+            self.tick()
+            return {"subject": subject, "error": "reconcile_unwired", "applied": 1}
+
+        events, outcomes = self._reconcile.reconcile_subject(subject)
+        for event in events:
+            self._apply(event)
+        self.tick()
+        return {
+            "subject": subject,
+            "applied": len(events),
+            "sources": [
+                {"source": item.source, "ok": item.ok, "error": item.error}
+                for item in outcomes
+            ],
+        }
 
     async def _clock_loop(self, stop: asyncio.Event) -> None:
         while not stop.is_set():

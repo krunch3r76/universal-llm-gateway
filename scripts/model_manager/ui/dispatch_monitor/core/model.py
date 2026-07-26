@@ -54,6 +54,7 @@ class Model:
         self.dropped_subscribe = 0
         self.unhandled: dict[str, int] = {}
         self.fold_status = "live"
+        self.reconcile_failures: dict[str, tuple[str, str, str]] = {}
         self._handlers: dict[str, Callable[[EventRecord], None]] = {}
         self._handlers.update(self.charter.handlers())
         self._handlers.update(self.sdk.handlers())
@@ -61,6 +62,9 @@ class Model:
         self._handlers[signals.EVENTS_DROPPED_INGEST] = self._on_dropped_ingest
         self._handlers[signals.EVENTS_DROPPED_SUBSCRIBE] = self._on_dropped_subscribe
         self._handlers[signals.MONITOR_SEED_FOLD_STATUS] = self._on_fold_status
+        self._handlers[signals.MONITOR_RECONCILE_SOURCE_FAILED] = (
+            self._on_reconcile_source_failed
+        )
 
     @property
     def handled_signals(self) -> tuple[str, ...]:
@@ -101,6 +105,17 @@ class Model:
         if isinstance(status, str) and status:
             self.fold_status = status
 
+    def _on_reconcile_source_failed(self, record: EventRecord) -> None:
+        """Remember click-time reconcile source failures for attention projection."""
+        payload = record.payload
+        subject = payload.get("subject")
+        source = payload.get("source")
+        error = payload.get("error")
+        if not all(isinstance(value, str) and value for value in (subject, source, error)):
+            return
+        key = f"monitor.reconcile.failed:{subject}:{source}"
+        self.reconcile_failures[key] = (subject, source, error)
+
     # --- derive -----------------------------------------------------------
     def derive(
         self, now_ms: int, previous: SupervisorProjection | None = None
@@ -122,6 +137,7 @@ class Model:
             dispatches=dispatches,
             legs=legs,
             thresholds=self.thresholds,
+            reconcile_failures=self.reconcile_failures,
         )
         frame = SupervisorProjection(
             schema_version=SCHEMA_VERSION,

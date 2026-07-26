@@ -17,11 +17,11 @@
 #
 # One dispatch (exec-gs2-c), pipeline lane only. Single-emitter dispatches are
 # normal and must not be flagged; absence of a second lane is not divergence.
-{"signal": "frontier.sdk.worker.started", "ts_unix_ms": 1753600100000, "seq": 4001, "source": "ulg://cursor-sdk", "payload": {"execution_id": "exec-gs2-a", "worker_thread": "6001", "seat": "cursor-sdk", "model": "cursor/opus-5", "contract": "implement"}}
+{"signal": "frontier.sdk.worker.progress", "ts_unix_ms": 1753600100000, "seq": 4001, "source": "ulg://cursor-sdk", "payload": {"execution_id": "exec-gs2-a", "dispatch_id": "exec-gs2-a", "thread_id": "6001", "resolved_model": "cursor/opus-5", "elapsed_s": 0, "tool_call_count": 0}}
 {"signal": "pipeline.frontier.dispatch.started", "ts_unix_ms": 1753600100200, "seq": 4002, "source": "ulg://pipeline", "payload": {"execution_id": "exec-gs2-a", "model": "cursor/opus-5", "remote_mcp": true}}
 {"signal": "frontier.sdk.worker.completed", "ts_unix_ms": 1753600200000, "seq": 4003, "source": "ulg://cursor-sdk", "payload": {"execution_id": "exec-gs2-a", "status": "completed", "prompt_tokens": 5000, "completion_tokens": 1200}}
 {"signal": "pipeline.frontier.dispatch.completed", "ts_unix_ms": 1753600200400, "seq": 4004, "source": "ulg://pipeline", "payload": {"execution_id": "exec-gs2-a", "status": "completed", "prompt_tokens": 5000, "completion_tokens": 1200, "cached_tokens": 400}}
-{"signal": "frontier.sdk.worker.started", "ts_unix_ms": 1753600110000, "seq": 4005, "source": "ulg://cursor-sdk", "payload": {"execution_id": "exec-gs2-b", "worker_thread": "6002", "seat": "cursor-sdk", "model": "cursor/opus-5", "contract": "implement"}}
+{"signal": "frontier.sdk.worker.progress", "ts_unix_ms": 1753600110000, "seq": 4005, "source": "ulg://cursor-sdk", "payload": {"execution_id": "exec-gs2-b", "dispatch_id": "exec-gs2-b", "thread_id": "6002", "resolved_model": "cursor/opus-5", "elapsed_s": 0, "tool_call_count": 0}}
 {"signal": "frontier.sdk.worker.completed", "ts_unix_ms": 1753600210000, "seq": 4006, "source": "ulg://cursor-sdk", "payload": {"execution_id": "exec-gs2-b", "status": "completed", "prompt_tokens": 41200, "completion_tokens": 8800}}
 {"signal": "pipeline.frontier.dispatch.failed", "ts_unix_ms": 1753600211000, "seq": 4007, "source": "ulg://pipeline", "payload": {"execution_id": "exec-gs2-b", "status": "failed", "failure_reason": "onbehalf_post_failed", "prompt_tokens": 41200}}
 {"signal": "pipeline.frontier.dispatch.started", "ts_unix_ms": 1753600120000, "seq": 4008, "source": "ulg://pipeline", "payload": {"execution_id": "exec-gs2-c", "model": "cursor/sonnet-4.8"}}

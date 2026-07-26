@@ -10,6 +10,7 @@ from collections.abc import Sequence
 from scripts.model_manager.ui.dispatch_monitor.core import __main__ as core_main
 from scripts.model_manager.ui.dispatch_monitor.ulg.controller import MonitorController
 from scripts.model_manager.ui.dispatch_monitor.ulg.manage_reload import charter_reload
+from scripts.model_manager.ui.dispatch_monitor.ulg.reconcile_on_click import ReconcileOnClick
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -39,6 +40,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--charter-reload",
         action="store_true",
         help="fire manage.sock charter_reload then exit",
+    )
+    parser.add_argument(
+        "--reconcile",
+        metavar="SUBJECT",
+        default=None,
+        help="reconcile one subject (dispatch_id|root_id|request_id) then exit",
     )
     parser.add_argument(
         "--frames",
@@ -91,6 +98,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         result = charter_reload()
         print(result, flush=True)
         return 1 if "error" in result else 0
+
+    if args.reconcile:
+        controller = MonitorController(reconcile=ReconcileOnClick())
+        result = controller.trigger_reconcile(args.reconcile)
+        print(result, flush=True)
+        return 1 if result.get("error") else 0
 
     if args.watch == "live":
         return _run_live(args)

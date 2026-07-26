@@ -122,7 +122,10 @@ class SdkFold:
     def handlers(self) -> dict[str, Any]:
         """Return this fold's signal-to-handler table."""
         table: dict[str, Any] = {}
-        for signal in (signals.SDK_WORKER_STARTED, signals.SDK_PIPELINE_STARTED):
+        for signal in (
+            signals.MONITOR_META_SDK_STARTED,
+            signals.SDK_PIPELINE_STARTED,
+        ):
             table[signal] = self._on_started
         table[signals.SDK_WORKER_PROGRESS] = self._on_progress
         for signal in sorted(signals.SDK_TERMINAL_SIGNALS):

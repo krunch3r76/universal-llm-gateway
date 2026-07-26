@@ -50,7 +50,6 @@ CHARTER_AUDIT = "manage.charter.tick.audit"
 CHARTER_COLD_START = (CHARTER_AUDIT,)
 
 # --- sdk family: worker lane (GS2 emitter A) -------------------------------
-SDK_WORKER_STARTED = "frontier.sdk.worker.started"
 SDK_WORKER_PROGRESS = "frontier.sdk.worker.progress"
 SDK_WORKER_COMPLETED = "frontier.sdk.worker.completed"
 SDK_WORKER_FAILED = "frontier.sdk.worker.failed"
@@ -66,7 +65,6 @@ EMITTER_WORKER = "worker"
 EMITTER_PIPELINE = "pipeline"
 
 SDK_EMITTER_BY_SIGNAL = {
-    SDK_WORKER_STARTED: EMITTER_WORKER,
     SDK_WORKER_PROGRESS: EMITTER_WORKER,
     SDK_WORKER_COMPLETED: EMITTER_WORKER,
     SDK_WORKER_FAILED: EMITTER_WORKER,
@@ -103,6 +101,10 @@ EVENTS_DROPPED_SUBSCRIBE = "events.dropped.subscribe"
 
 # --- cold-start seed meta (G5 graft — not emitted on the live bus) ---------
 MONITOR_SEED_FOLD_STATUS = "monitor.seed.fold_status"
+#: Synthetic SDK row injection from reconcile / lease-snapshot (D2: no live emitter).
+MONITOR_META_SDK_STARTED = "monitor.meta.sdk_started"
+#: Reconcile source failure — graft-only; drives attention, never steady-state poll.
+MONITOR_RECONCILE_SOURCE_FAILED = "monitor.reconcile.source_failed"
 
 #: Payload key graft uses to mark lease-snapshot reconcile rows. SdkFold reads
 #: this; live bus signals omit it and therefore count as ``signal`` provenance.
@@ -137,6 +139,8 @@ META_FAMILY = (
     EVENTS_DROPPED_INGEST,
     EVENTS_DROPPED_SUBSCRIBE,
     MONITOR_SEED_FOLD_STATUS,
+    MONITOR_META_SDK_STARTED,
+    MONITOR_RECONCILE_SOURCE_FAILED,
 )
 
 #: Every signal the handler table claims. ``README.md`` restates this list; the

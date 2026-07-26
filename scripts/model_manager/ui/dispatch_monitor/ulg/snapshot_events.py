@@ -68,7 +68,7 @@ def events_from_lease_snapshot(
         started_ms = _parse_ts_ms(snapshot.get("holder_started_at")) or stamp
         events.append(
             Event(
-                signal=signals.SDK_WORKER_STARTED,
+                signal=signals.MONITOR_META_SDK_STARTED,
                 ts_unix_ms=started_ms,
                 payload={
                     "execution_id": dispatch_id,
