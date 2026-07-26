@@ -1,0 +1,7 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "G1 deliberate-break fixture",
+  "description": "Used by agent-surface-check --prove-falsifier-tier-not-skipped only.",
+  "type": "object",
+  "required": ["__g1_break_fixture__"]
+}

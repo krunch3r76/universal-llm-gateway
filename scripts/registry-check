@@ -154,6 +154,8 @@ def _run_g4(tools: list[dict], skills_root: Path) -> None:
 
     def _scan_code_block(text: str, rel_path: str) -> None:
         for m in call_re.finditer(text):
+            if m.start() > 0 and text[m.start() - 1] == "¬":
+                continue
             token = m.group(1)
             if "_" not in token:
                 continue

@@ -34,10 +34,84 @@
         "density_triage": {"$ref": "#/definitions/ContractVocabularyEntry"}
       },
       "additionalProperties": false
-    }
+    },
+    "domain_endpoints": {"$ref": "#/definitions/DomainEndpoints"},
+    "surface_primary_domains": {"$ref": "#/definitions/SurfacePrimaryDomains"},
+    "cortex_families": {"$ref": "#/definitions/CortexFamilies"},
+    "overflow_register_surfaces": {"$ref": "#/definitions/OverflowRegisterSurfaces"}
   },
   "additionalProperties": false,
   "definitions": {
+    "EndpointSurface": {
+      "type": "string",
+      "enum": ["life", "code", "code_overflow"]
+    },
+    "EndpointSurfaceList": {
+      "type": "array",
+      "items": {"$ref": "#/definitions/EndpointSurface"},
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "DomainEndpoints": {
+      "type": "object",
+      "required": ["default"],
+      "properties": {
+        "default": {"$ref": "#/definitions/EndpointSurfaceList"},
+        "exceptions": {
+          "type": "object",
+          "additionalProperties": {"$ref": "#/definitions/EndpointSurfaceList"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "SurfacePrimaryDomains": {
+      "type": "object",
+      "required": ["life", "code"],
+      "properties": {
+        "life": {
+          "type": "array",
+          "items": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "code": {
+          "type": "array",
+          "items": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+          "minItems": 1,
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "CortexFamily": {
+      "type": "string",
+      "enum": ["read", "write", "session", "gate", "admin"]
+    },
+    "CortexOpList": {
+      "type": "array",
+      "items": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "CortexFamilies": {
+      "type": "object",
+      "required": ["defaults", "uncurated"],
+      "properties": {
+        "defaults": {
+          "type": "object",
+          "additionalProperties": {"$ref": "#/definitions/EndpointSurfaceList"}
+        },
+        "uncurated": {
+          "type": "object",
+          "additionalProperties": {"$ref": "#/definitions/CortexOpList"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "OverflowRegisterSurfaces": {
+      "type": "object",
+      "additionalProperties": {"$ref": "#/definitions/EndpointSurfaceList"}
+    },
     "ContractVocabularyEntry": {
       "type": "object",
       "required": ["fol_descriptor", "accepted_values", "introduced"],
@@ -151,7 +225,7 @@
         },
         "mandate_safety": {
           "type": "string",
-          "enum": ["read_only", "write", "destructive"]
+          "enum": ["read_only", "write", "destructive", "mutating"]
         },
         "cache_priority": {
           "type": "string",
@@ -175,6 +249,14 @@
         },
         "notes": {
           "type": "string"
+        },
+        "family": {
+          "$ref": "#/definitions/CortexFamily",
+          "description": "Cortex census family for curated ops (derive_cortex_surface)."
+        },
+        "endpoint_visibility": {
+          "$ref": "#/definitions/EndpointSurfaceList",
+          "description": "Per-op endpoint override; defaults come from cortex_families.defaults."
         }
       },
       "additionalProperties": false

@@ -11,20 +11,73 @@
 #      → .cursor/skills/<slug>/SKILL.md for agent-surface overlap slugs match sources.
 #   3. scripts/gen-mcp-dispatch-role-docs --check
 #      → dispatch-role advertisement clauses match dispatch_role_catalog SOT.
+#
+# Registry + falsifier tier (G1, G10, falsifier-surface-reach) aggregate: all three
+# run even when an earlier sibling fails; failures are reported before exit.
 
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
 
 PYTHON="${VIRTUAL_ENV:-${HOME}/.venvs/universal}/bin/python3"
+G1_BREAK_SCHEMA="scripts/fixtures/g1-break-schema.json"
+
+_run_registry_falsifier_tier() {
+  local rc=0
+  local -a registry_args=("$@")
+
+  if ! "$PYTHON" scripts/registry-check "${registry_args[@]}"; then
+    rc=1
+  fi
+  if ! "$PYTHON" scripts/invariant-falsifier-check; then
+    rc=1
+  fi
+  if ! "$PYTHON" scripts/check-falsifier-surface-reach.py; then
+    rc=1
+  fi
+  return "$rc"
+}
+
+if [[ "${1:-}" == "--prove-falsifier-tier-not-skipped" ]]; then
+  if [[ ! -f "$G1_BREAK_SCHEMA" ]]; then
+    echo "ERROR: missing deliberate-break schema fixture: $G1_BREAK_SCHEMA" >&2
+    exit 2
+  fi
+  tier_out="$(mktemp)"
+  set +e
+  _run_registry_falsifier_tier --schema "$G1_BREAK_SCHEMA" >"$tier_out" 2>&1
+  tier_rc=$?
+  set -e
+  cat "$tier_out"
+  if ! grep -q "FAIL G1:" "$tier_out"; then
+    rm -f "$tier_out"
+    echo "ERROR: deliberate G1 break did not fail registry-check" >&2
+    exit 2
+  fi
+  if ! grep -q "OK   G10:" "$tier_out"; then
+    rm -f "$tier_out"
+    echo "ERROR: G10 invariant-falsifier-check was skipped when G1 failed" >&2
+    exit 2
+  fi
+  if ! grep -q "OK check-falsifier-surface-reach:" "$tier_out"; then
+    rm -f "$tier_out"
+    echo "ERROR: check-falsifier-surface-reach was skipped when G1 failed" >&2
+    exit 2
+  fi
+  rm -f "$tier_out"
+  if [[ "$tier_rc" -eq 0 ]]; then
+    echo "ERROR: aggregated tier exited 0 despite deliberate G1 failure" >&2
+    exit 2
+  fi
+  echo "OK prove-falsifier-tier-not-skipped: falsifier gates ran despite G1 failure"
+  exit 0
+fi
 
 scripts/gen-rules --target cursor --check
 scripts/gen-rules --target command-map --check
 scripts/gen-rules --target agent-guides-rules --check
 scripts/gen-rules --target agent-skill-bundles --check
-"$PYTHON" scripts/registry-check
-"$PYTHON" scripts/invariant-falsifier-check
-"$PYTHON" scripts/check-falsifier-surface-reach.py
+_run_registry_falsifier_tier
 "$PYTHON" scripts/gen-mcp-dispatch-role-docs --check
 # Blocking catalog gate + import guard (parity logic retired Phase 2).
 "$PYTHON" -m scripts.gen_event_catalog check || exit 1
