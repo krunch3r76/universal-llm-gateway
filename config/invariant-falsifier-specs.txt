@@ -1,0 +1,3 @@
+# Registered dense implement specs scanned by scripts/invariant-falsifier-check (G10).
+# One cortex-relative path per line. Extend when a new spec ships bound-invariant falsifiers.
+cortex://notes/system/specs/cursor-sdk-s1a-worktree-lease-land.md

@@ -1,0 +1,226 @@
+#!/usr/bin/env python3
+"""Bound-invariant falsifier drift gate — G10 sibling to registry-check.
+
+Parses dense implement specs for F-A* / AC* falsifier references and asserts
+each in-scope reference has a matching **tracked** test_falsifier_*.py file.
+
+Gates:
+  G10 — Spec ↔ tracked falsifier parity: every non-deferred **Falsifier F-A*:**
+        line in registered specs has ≥1 git-tracked test_falsifier_*.py whose
+        source cites that ID (function name or docstring). AC* refs cited in
+        the spec Verification section with backtick test names must likewise
+        appear in tracked falsifier tests when the AC appears in the tracked
+        tier manifest.
+
+Usage:
+  scripts/invariant-falsifier-check [--spec-root PATH] [--seed-drift ID]
+
+Companion rule: .cursor/rules/bound-invariant-falsifier.mdc
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+_FALSIFIER_LINE = re.compile(r"\*\*Falsifier (F-A\d+):", re.IGNORECASE)
+_DEFERRED = re.compile(r"out of .* scope", re.IGNORECASE)
+_AC_REF = re.compile(r"\b(AC\d+)\b")
+_FA_REF = re.compile(r"\b(F-A\d+)\b")
+_VERIFICATION_HEADING = re.compile(r"^## Verification", re.IGNORECASE)
+
+
+def _fail(gate: str, message: str) -> None:
+    print(f"FAIL {gate}: {message}", file=sys.stderr)
+    sys.exit(1)
+
+
+def _ok(gate: str, detail: str) -> None:
+    print(f"OK   {gate}: {detail}")
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parent.parent
+
+
+def _default_spec_root() -> Path:
+    env = os.environ.get("CORTEX_FILES_ROOT")
+    if env:
+        return Path(env)
+    for candidate in (
+        Path("/mnt/torus/mcp-data/cortex-files"),
+        _repo_root() / "notes" / "system" / "specs",
+    ):
+        if candidate.is_dir():
+            return candidate
+    return _repo_root() / "notes" / "system" / "specs"
+
+
+def _tracked_falsifier_files(repo_root: Path) -> list[Path]:
+    result = subprocess.run(
+        ["git", "ls-files", "--", "**/test_falsifier_*.py"],
+        capture_output=True,
+        text=True,
+        cwd=repo_root,
+    )
+    if result.returncode != 0:
+        _fail("G10", f"git ls-files failed: {result.stderr.strip()}")
+    paths = [repo_root / line for line in result.stdout.splitlines() if line.strip()]
+    return paths
+
+
+def _falsifier_citations(path: Path) -> set[str]:
+    text = path.read_text(encoding="utf-8", errors="ignore")
+    refs: set[str] = set()
+    refs.update(_FA_REF.findall(text))
+    refs.update(_AC_REF.findall(text))
+    return refs
+
+
+def _registered_spec_paths(spec_root: Path, repo_root: Path) -> list[Path]:
+    manifest = repo_root / "config" / "invariant-falsifier-specs.txt"
+    if manifest.is_file():
+        paths: list[Path] = []
+        for line in manifest.read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            rel = stripped.removeprefix("cortex://")
+            candidate = spec_root / rel.removeprefix("notes/system/specs/")
+            if not candidate.is_file():
+                candidate = spec_root / rel
+            if candidate.is_file():
+                paths.append(candidate)
+            else:
+                _fail("G10", f"registered spec not found: {stripped}")
+        return paths
+    return sorted(spec_root.glob("cursor-sdk-s1a*.md"))
+
+
+def _required_fa_from_spec(text: str, *, seed_drift: str | None) -> set[str]:
+    required: set[str] = set()
+    for line in text.splitlines():
+        match = _FALSIFIER_LINE.search(line)
+        if not match:
+            continue
+        if _DEFERRED.search(line):
+            continue
+        required.add(match.group(1).upper())
+    if seed_drift:
+        required.add(seed_drift.upper())
+    return required
+
+
+def _required_ac_from_verification(text: str) -> set[str]:
+    """AC refs named in Verification pytest bullets map to tracked tier AC3/4/5."""
+    lines = text.splitlines()
+    in_verification = False
+    required: set[str] = set()
+    tracked_ac = {"AC3", "AC4", "AC5"}
+    for line in lines:
+        if _VERIFICATION_HEADING.match(line.strip()):
+            in_verification = True
+            continue
+        if in_verification and line.startswith("## "):
+            break
+        if not in_verification:
+            continue
+        if "`test_falsifier_" in line or "`test_s1a_" in line:
+            for ac in _AC_REF.findall(line):
+                if ac.upper() in tracked_ac:
+                    required.add(ac.upper())
+    return required
+
+
+def run_gate(
+    *,
+    spec_root: Path,
+    repo_root: Path,
+    seed_drift: str | None,
+) -> None:
+    spec_paths = _registered_spec_paths(spec_root, repo_root)
+    if not spec_paths:
+        _fail("G10", f"no registered specs under {spec_root}")
+
+    required_fa: set[str] = set()
+    required_ac: set[str] = set()
+    for spec_path in spec_paths:
+        text = spec_path.read_text(encoding="utf-8")
+        required_fa |= _required_fa_from_spec(text, seed_drift=seed_drift)
+        required_ac |= _required_ac_from_verification(text)
+
+    tracked_files = _tracked_falsifier_files(repo_root)
+    if not tracked_files:
+        _fail("G10", "no tracked test_falsifier_*.py files")
+
+    cited: set[str] = set()
+    for path in tracked_files:
+        cited |= _falsifier_citations(path)
+
+    missing_fa = sorted(required_fa - cited)
+    if missing_fa:
+        _fail(
+            "G10",
+            f"{len(missing_fa)} spec F-A* falsifier(s) lack tracked test citation: "
+            + ", ".join(missing_fa),
+        )
+
+    missing_ac = sorted(required_ac - cited)
+    if missing_ac:
+        _fail(
+            "G10",
+            f"{len(missing_ac)} spec AC* ref(s) lack tracked falsifier test: "
+            + ", ".join(missing_ac),
+        )
+
+    orphan = sorted(
+        ref
+        for ref in cited
+        if ref.startswith("F-A") and ref not in required_fa
+    )
+    if orphan and not seed_drift:
+        _warn_orphan = orphan  # informational only — tier may lead spec updates
+        print(
+            f"WARN G10: tracked falsifier cites {orphan} not in current spec falsifier set",
+            file=sys.stderr,
+        )
+
+    _ok(
+        "G10",
+        f"{len(required_fa)} F-A* + {len(required_ac)} AC* refs covered by "
+        f"{len(tracked_files)} tracked falsifier file(s)",
+    )
+    print("\nOK invariant-falsifier-check: all gates passed")
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    repo_root = _repo_root()
+    p = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p.add_argument(
+        "--spec-root",
+        type=Path,
+        default=_default_spec_root(),
+        help="Cortex spec mirror root (default: CORTEX_FILES_ROOT or mcp-data/cortex-files)",
+    )
+    p.add_argument(
+        "--seed-drift",
+        metavar="F-AXX",
+        help="Inject a missing falsifier ID to prove the gate fails (dev/CI proof only)",
+    )
+    return p
+
+
+if __name__ == "__main__":
+    args = _build_parser().parse_args()
+    run_gate(
+        spec_root=args.spec_root,
+        repo_root=_repo_root(),
+        seed_drift=args.seed_drift,
+    )
