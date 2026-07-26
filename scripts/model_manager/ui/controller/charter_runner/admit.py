@@ -47,12 +47,6 @@ async def admit_window(
     if decision.window_kind == "consult":
         admission_mode = "consult"
         consult_role = decision.parsed.consult_role
-    if caps.has_admit_intent(root_id, window_index):
-        caps.mark_failed(root_id, "admit_intent_orphan")
-        await events.emit_manage_charter_tick_window_failed(
-            root=root_id, reason="admit_intent_orphan"
-        )
-        return False
     if consult_role == "r_admit":
         cp_body = str((decision.checkpoint or {}).get("body") or "")
         sha_check = verify_r_corpus_sha(cp_body)

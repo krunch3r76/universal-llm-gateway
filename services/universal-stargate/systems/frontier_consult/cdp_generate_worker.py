@@ -312,15 +312,22 @@ async def run_cdp_worker(
         thread_id=thread_id,
     )
     wall = float(max_wall_s) if max_wall_s is not None else DEFAULT_MAX_WALL_S
+    # ``on_submitted`` fires inside ``asyncio.to_thread`` (no running loop).
+    # ``publish_from_sync`` requires one — hop back via call_soon_threadsafe
+    # or the event is swallowed (smoke b1fb4501: admitted+proof, no submitted).
+    loop = asyncio.get_running_loop()
 
     def _on_submitted(satellite_execution_id: str) -> None:
-        publish_cdp_kwargs(
-            CdpGenerateSubmitted,
-            request_id=request_id,
-            execution_id=execution_id,
-            satellite_execution_id=satellite_execution_id,
-            model=model_id,
-        )
+        def _publish() -> None:
+            publish_cdp_kwargs(
+                CdpGenerateSubmitted,
+                request_id=request_id,
+                execution_id=execution_id,
+                satellite_execution_id=satellite_execution_id,
+                model=model_id,
+            )
+
+        loop.call_soon_threadsafe(_publish)
 
     try:
         result = await asyncio.to_thread(

@@ -51,6 +51,10 @@ _SECTION_ACCEPTED_PATTERNS: dict[str, str] = {
     ),
     "acceptance": "heading containing 'acceptance'",
     "verification": "heading containing 'verification' or 'quality gate'",
+    "environment_preconditions": (
+        "heading containing 'Environment preconditions' with non-empty body "
+        "(required when substrate_touching=true)"
+    ),
     "reasoning_trace": (
         "<reasoning_trace>…</reasoning_trace> tag block (not a heading)"
     ),
@@ -58,6 +62,14 @@ _SECTION_ACCEPTED_PATTERNS: dict[str, str] = {
         "<reasoning_trace> body must contain 'no fork remains open'"
     ),
 }
+_SUBSTRATE_TOUCHING_RE = re.compile(
+    r"substrate[_\s-]*touching\s*[:=]\s*true",
+    re.I,
+)
+_ENV_PRECONDITIONS_HEADING_RE = re.compile(
+    r"^#{1,6}\s+environment\s+preconditions?\s*$",
+    re.I | re.M,
+)
 DENSE_SPEC_RE = re.compile(
     r"(?:tasks/specs|notes/system/specs)/[^/\s#?]+\.md", re.IGNORECASE
 )
@@ -83,6 +95,28 @@ class DenseSpecVerdict:
 def _strip_code(text: str) -> str:
     """Remove fenced blocks + inline code spans before structural checks."""
     return _INLINE_CODE_RE.sub("", _FENCE_RE.sub("", text))
+
+
+def _environment_preconditions_body(visible: str) -> str | None:
+    """Return non-empty Environment preconditions section body, if any."""
+    match = _ENV_PRECONDITIONS_HEADING_RE.search(visible)
+    if not match:
+        return None
+    tail = visible[match.end() :]
+    lines: list[str] = []
+    for line in tail.splitlines():
+        if re.match(r"^#{1,6}\s", line):
+            break
+        lines.append(line)
+    body = "\n".join(lines).strip()
+    return body or None
+
+
+def _substrate_touching_requires_env_section(visible: str) -> bool:
+    """Gate-2: substrate-touching dense specs must cite ENV preconditions."""
+    if not _SUBSTRATE_TOUCHING_RE.search(visible):
+        return True
+    return _environment_preconditions_body(visible) is not None
 
 
 def _has_stray_fence(text: str) -> bool:
@@ -119,6 +153,8 @@ def validate_dense_spec(text: str) -> DenseSpecVerdict:
         missing = (*missing, "reasoning_trace")
     elif not _ATTESTATION_RE.search(trace_body):
         missing = (*missing, "reasoning_trace_attestation")
+    if not _substrate_touching_requires_env_section(visible):
+        missing = (*missing, "environment_preconditions")
     open_markers = len(_OPEN_FORK_RE.findall(visible))
     if missing:
         hints = "; ".join(

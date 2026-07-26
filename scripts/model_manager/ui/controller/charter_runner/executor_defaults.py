@@ -1,11 +1,15 @@
 """Charter-runner executor binds — judgment (default) and implement.
 
-Operator bind 2026-07-20: default agent = **Grok 4.5 High** on the coding
+Operator bind 2026-07-20: default agent = **Grok 4.5** on the coding
 substrate. Wire: ``seat=cursor-sdk``, ``model=cursor/grok-4.5``.
 
+Operator bind 2026-07-26 (iteration speed): both judgment and implement
+windows pin ``fast=true``. Grok keeps ``effort=high`` with fast on (not the
+prior High = effort=high + fast=false mapping). Composer pins ``fast=true``
+explicitly so window_log / admit notes record the bind.
+
 Grok exposes ``effort`` + ``fast`` only (no ``thinking`` knob — live
-ListModels / ``cursor_capabilities``). \"High effort thinking\" maps to
-``effort=high`` + ``fast=false``.
+ListModels / ``cursor_capabilities``).
 
 The implement bind pins ``cursor/composer-2.5``, which is already the seat
 default (``config/agents.yaml`` ``cursor/sdk.default_model``, bound there
@@ -24,17 +28,15 @@ from typing import Any
 DEFAULT_SEAT = "cursor-sdk"
 DEFAULT_MODEL = "cursor/grok-4.5"
 DEFAULT_CONTRACT = "light-bounded"
-# \"thinking\" is not a Grok knob — non-fast + high effort is the High tier.
-DEFAULT_MODEL_KNOBS: dict[str, str] = {"effort": "high", "fast": "false"}
+# Iteration-speed bind (operator 2026-07-26): high effort + fast.
+DEFAULT_MODEL_KNOBS: dict[str, str] = {"effort": "high", "fast": "true"}
 
 IMPLEMENT_MODEL = "cursor/composer-2.5"
 IMPLEMENT_CONTRACT = "implement"
-# Composer exposes exactly one knob (``fast``, live default true) — no
-# ``effort``, no ``thinking``. ``align_cursor_knobs`` *drops* unrecognized knobs
-# with a warning instead of rejecting, so a stray ``effort=high`` carried over
-# from the Grok bind would vanish silently while the executor note still read as
-# if effort were set. Send none and inherit Composer's own default.
-IMPLEMENT_MODEL_KNOBS: dict[str, str] = {}
+# Composer exposes exactly one knob (``fast``). Pin true explicitly — do not
+# carry Grok ``effort`` onto this bind (align_cursor_knobs drops unrecognized
+# knobs silently).
+IMPLEMENT_MODEL_KNOBS: dict[str, str] = {"fast": "true"}
 
 
 def default_judgment_body(
@@ -104,7 +106,7 @@ def autonomous_generate_body(
 ) -> dict[str, Any]:
     """Wire body for the autonomous background-lead window.
 
-    Same generate wire as ``default_judgment_body`` (cursor-sdk Grok 4.5 High).
+    Same generate wire as ``default_judgment_body`` (cursor-sdk Grok 4.5 fast).
     The autonomous mandate lives in the materialized packet + root WIP pointer
     — generate schema rejects ``subject`` / ``tags`` (handoff-only fields).
     """

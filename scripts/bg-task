@@ -1,0 +1,124 @@
+#!/usr/bin/env python3
+"""Register and list tracked background shell tasks for operator /await-task.
+
+Tracked shells (Shell block_until_ms=0, ¬ nohup) notify the agent on exit.
+This registry lets /await-task resolve task_id/slug without guessing terminals.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+_REPO = Path(__file__).resolve().parents[1]
+REGISTRY = _REPO / "tmp" / "bg-tasks" / "registry.json"
+
+
+def _load() -> dict:
+    if not REGISTRY.exists():
+        return {"tasks": []}
+    return json.loads(REGISTRY.read_text())
+
+
+def _save(data: dict) -> None:
+    REGISTRY.parent.mkdir(parents=True, exist_ok=True)
+    REGISTRY.write_text(json.dumps(data, indent=2) + "\n")
+
+
+def cmd_register(args: argparse.Namespace) -> None:
+    data = _load()
+    entry = {
+        "task_id": args.task_id,
+        "slug": args.slug,
+        "title": args.title,
+        "log": args.log,
+        "wake_pattern": args.wake_pattern,
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "status": "running",
+    }
+    data["tasks"] = [t for t in data["tasks"] if t.get("task_id") != args.task_id]
+    data["tasks"].append(entry)
+    _save(data)
+    print(json.dumps(entry, indent=2))
+
+
+def cmd_complete(args: argparse.Namespace) -> None:
+    data = _load()
+    found = False
+    for t in data["tasks"]:
+        if t.get("task_id") == args.task_id or (
+            args.slug and t.get("slug") == args.slug
+        ):
+            t["status"] = "complete"
+            t["completed_at"] = datetime.now(timezone.utc).isoformat()
+            if args.exit_code is not None:
+                t["exit_code"] = args.exit_code
+            found = True
+            print(json.dumps(t, indent=2))
+            break
+    if not found:
+        print("task not found", file=sys.stderr)
+        sys.exit(1)
+    _save(data)
+
+
+def cmd_list(args: argparse.Namespace) -> None:
+    data = _load()
+    tasks = data.get("tasks", [])
+    if args.status:
+        tasks = [t for t in tasks if t.get("status") == args.status]
+    print(json.dumps({"tasks": tasks}, indent=2))
+
+
+def cmd_resolve(args: argparse.Namespace) -> None:
+    data = _load()
+    tasks = data.get("tasks", [])
+    if args.ref:
+        for t in reversed(tasks):
+            if t.get("task_id") == args.ref or t.get("slug") == args.ref:
+                print(json.dumps(t, indent=2))
+                return
+        print("task not found", file=sys.stderr)
+        sys.exit(1)
+    running = [t for t in tasks if t.get("status") == "running"]
+    if not running:
+        print(json.dumps({"tasks": [], "hint": "no running tasks"}, indent=2))
+        return
+    print(json.dumps({"tasks": running}, indent=2))
+
+
+def main() -> None:
+    p = argparse.ArgumentParser(description="Background task registry for /await-task")
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    r = sub.add_parser("register", help="Register a tracked background shell")
+    r.add_argument("--task-id", required=True)
+    r.add_argument("--slug", required=True)
+    r.add_argument("--title", required=True)
+    r.add_argument("--log", default=None)
+    r.add_argument("--wake-pattern", default=None)
+    r.set_defaults(func=cmd_register)
+
+    c = sub.add_parser("complete", help="Mark task complete")
+    c.add_argument("--task-id", default=None)
+    c.add_argument("--slug", default=None)
+    c.add_argument("--exit-code", type=int, default=None)
+    c.set_defaults(func=cmd_complete)
+
+    li = sub.add_parser("list", help="List registered tasks")
+    li.add_argument("--status", choices=["running", "complete"], default=None)
+    li.set_defaults(func=cmd_list)
+
+    res = sub.add_parser("resolve", help="Resolve task_id or slug; default running tasks")
+    res.add_argument("ref", nargs="?", default=None)
+    res.set_defaults(func=cmd_resolve)
+
+    args = p.parse_args()
+    args.func(args)
+
+
+if __name__ == "__main__":
+    main()

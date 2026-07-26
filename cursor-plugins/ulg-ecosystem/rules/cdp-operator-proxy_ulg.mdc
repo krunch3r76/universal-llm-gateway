@@ -1,0 +1,32 @@
+---
+description: Load CDP operator-proxy protocol when Cowork web-anthropic holds the operator seat via agent_bus.request — co-developer posture, DIRECTIVE/CLOSEOUT/DISPOSITION discipline.
+alwaysApply: false
+rule_category: workflow
+apply_tier: catalog
+trigger_match_terms:
+  - operator-proxy
+  - cdp-operator-proxy
+  - DIRECTIVE
+  - CLOSEOUT
+  - DISPOSITION
+  - cursor-auto
+  - assumed_state
+  - operator proxy
+---
+# CDP Operator Proxy — Stub
+
+**Invariant:** `operator-proxy episode ∧ agent_bus.request from Cowork ⇒ Use the cdp-operator-proxy skill before authoring DIRECTIVE bodies or dispositing CLOSEOUTs.`
+
+Mechanism (turn shapes, boot checklist, anti-patterns): Use the `cdp-operator-proxy` skill — not this stub.
+
+**Protocol SOT:** `cortex://notes/system/specs/cdp-operator-proxy-v0.md` (field tables, transport).  
+**Doctrine:** `decision:operator-proxy-seat-posture`.  
+**Transport sibling:** `claude-ai-cdp-navigation` for CDP/Jupiter mechanics.
+
+## When
+
+- Cowork holds operator seat driving cursor via `agent_bus.request`
+- Authoring or reviewing `TYPE: DIRECTIVE` / `TYPE: DISPOSITION` turns
+- cursor-auto nested dispatch arcs (5867-class dogfood)
+
+¬ load for IDE cursor lead orchestration (use `lean-context-dispatch-first` + `operator-posture` instead).

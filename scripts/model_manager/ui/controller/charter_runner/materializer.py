@@ -1,6 +1,6 @@
 """Build the Resume-step-0 six-block packet for one charter window.
 
-Default executor is cursor-sdk ``cursor/grok-4.5`` (effort=high, fast=false).
+Default executor is cursor-sdk ``cursor/grok-4.5`` (effort=high, fast=true).
 Attended handoff mode uses ``from=cursor`` and IDE-open language instead.
 The packet encodes Resume step 0, names one unit of work, and binds the stop
 contract — post CHECKPOINT on the charter root, then stop (no auto-chain).
@@ -8,14 +8,15 @@ contract — post CHECKPOINT on the charter root, then stop (no auto-chain).
 
 from __future__ import annotations
 
+import re
 from typing import Literal
 
 from universal_logging import get_logger
 
 from .checkpoint_parse import (
     ParsedCheckpoint,
+    Step,
     first_actionable_step,
-    first_resolvable_implication,
 )
 from .executor_defaults import DEFAULT_MODEL, DEFAULT_MODEL_KNOBS
 
@@ -32,10 +33,71 @@ _DENSIFY_FLOOR = (
     "(canonical slug — seat self-fetches; ¬ fs-read skill body)"
 )
 
+_IMPLICATION_ARROW_RE = re.compile(
+    r"^P\d+\s*(?:⇒|=>)\s*(Steps|Next-pickup|WIP)\s*:\s*(.+)$",
+    re.IGNORECASE,
+)
+_GATED_ROW_RE = re.compile(r"\b[GR]\d+[a-z]?\b")
+
+
+def _gated_ids_in(text: str) -> list[str]:
+    return _GATED_ROW_RE.findall(text)
+
+
+def _is_t_row_target(text: str) -> bool:
+    return bool(re.search(r"\bT\d+[a-z]?\b", text)) and not _GATED_ROW_RE.search(text)
+
+
+def _resolve_implication_target(
+    parsed: ParsedCheckpoint, implication: str
+) -> str | None:
+    m = _IMPLICATION_ARROW_RE.match(implication.strip())
+    if not m:
+        return None
+    target_kind = m.group(1).strip().lower()
+    rest = m.group(2).strip()
+    if _is_t_row_target(rest):
+        return None
+    gated = _gated_ids_in(rest)
+    if not gated:
+        return None
+    want = gated[0]
+    if target_kind in {"next-pickup", "steps"}:
+        for item in parsed.next_pickup:
+            if want in _gated_ids_in(item):
+                return item
+        for step in parsed.steps:
+            if step.status == "done":
+                continue
+            if want in _gated_ids_in(step.title):
+                return f"Step {step.ordinal} — {step.title} (status: {step.status})"
+        return None
+    for item in parsed.next_pickup:
+        if want in _gated_ids_in(item):
+            return item
+    for step in parsed.steps:
+        if step.status == "done":
+            continue
+        if want in _gated_ids_in(step.title):
+            return f"Step {step.ordinal} — {step.title} (status: {step.status})"
+    return None
+
+
+def _first_resolvable_implication(
+    parsed: ParsedCheckpoint,
+) -> tuple[str | None, bool]:
+    if not parsed.implications:
+        return None, False
+    for line in parsed.implications:
+        resolved = _resolve_implication_target(parsed, line)
+        if resolved is not None:
+            return resolved, False
+    return None, True
+
 
 def _work_summary(parsed: ParsedCheckpoint) -> str:
     """S1 steering: prefer Implication → gated Step/Next-pickup; else Steps."""
-    steered, unresolved = first_resolvable_implication(parsed)
+    steered, unresolved = _first_resolvable_implication(parsed)
     if unresolved:
         logger.warning(
             "implication_target_unresolved root_implications=%s next_pickup=%s",
@@ -123,9 +185,16 @@ bind or registered child thread.
 2. A formal R12 CHECKPOINT is posted on agent-bus:{root_id} (from={from_agent}).
    Required sections (inline on the bus turn body):
    - ## Steps
-   - ## Frictions (file each via cortex friction)
+   - ## Frictions — file each material defect via ``cortex(tool="friction")`` with
+     ``charter_root="{root_id}"``, ``window_index=<N>``, ``session_id``, and
+     ``actionable`` (``actionable=false`` requires ``actionable_false_reason``).
+     Cite each filed id: ``- [filed assertion:<id>] <category>: <one-line note>``.
+     Silence only when truly none: ``_None this window._`` — ceremonial Frictions
+     (prose-only bullets or fake ids) fail harvest audit.
    - ## Sidecars
    - WIP, Next-pickup, Scoreboard URI, RESUME footer
+   - ## What happened (plain) — one short layman paragraph for this window (no gate
+     IDs, assertion hashes, or machine tokens).
    Sidecar stubs leave the charter-runner blind — put mandatory sections inline.
 3. Scoreboard gated lane updated if a G-row status changed.
 4. Stop after the CHECKPOINT — no second window.

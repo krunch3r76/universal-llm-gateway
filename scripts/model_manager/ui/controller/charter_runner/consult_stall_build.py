@@ -93,6 +93,7 @@ def build_r_admit_advance_checkpoint(
     worker_thread: str,
     r_admit_turn: dict[str, Any],
     generation: int,
+    friction_id: int | None = None,
 ) -> tuple[str, str]:
     """Build an unblock CHECKPOINT that leaves merits disposition outstanding."""
     marker = _generation_marker(generation)
@@ -104,6 +105,17 @@ def build_r_admit_advance_checkpoint(
         f"G3 — read R-ADMIT at turn {r_n} and disposition it "
         "(verdict/amendments) · consult_role cleared"
     )
+    stall_note = "the consult worker was fenced after a quiet stale window"
+    if friction_id is not None:
+        from cortex_store.dispatch_ops._friction_enqueue import (
+            frictions_checkpoint_line,
+        )
+
+        frictions_block = frictions_checkpoint_line(
+            friction_id, category="protocol", note=stall_note
+        )
+    else:
+        frictions_block = f"- Machine consult-stall: {stall_note}."
     subject = (
         f"CHECKPOINT — consult-stall r_admit_on_root (window {window_index}) · {marker}"
     )
@@ -136,7 +148,10 @@ _None this window._
 {_steps_block(prior.steps)}
 
 ## Frictions
-- Machine consult-stall: the consult worker was fenced after a quiet stale window.
+{frictions_block}
+
+## What happened (plain)
+Machine consult-stall recovery fenced a quiet worker and re-queued the prior pickup.
 
 ## Sidecars
 - {scoreboard or "_None this window._"}
@@ -159,6 +174,7 @@ def build_consult_stall_requeue_checkpoint(
     worker_thread: str,
     child_refs: list[str],
     generation: int,
+    friction_id: int | None = None,
 ) -> tuple[str, str]:
     """Build a generation-stamped requeue with explicit abandonment lineage."""
     marker = _generation_marker(generation)
@@ -172,6 +188,17 @@ def build_consult_stall_requeue_checkpoint(
         if child_refs
         else "_None discovered._"
     )
+    stall_note = "fenced the abandoned worker before re-queue"
+    if friction_id is not None:
+        from cortex_store.dispatch_ops._friction_enqueue import (
+            frictions_checkpoint_line,
+        )
+
+        frictions_block = frictions_checkpoint_line(
+            friction_id, category="protocol", note=stall_note
+        )
+    else:
+        frictions_block = f"- Machine consult-stall: {stall_note}."
     subject = f"CHECKPOINT — consult-stall requeue (window {window_index}) · {marker}"
     body = f"""# {subject}
 
@@ -199,7 +226,10 @@ _None this window._
 {_steps_block(prior.steps)}
 
 ## Frictions
-- Machine consult-stall: fenced the abandoned worker before re-queue.
+{frictions_block}
+
+## What happened (plain)
+Machine consult-stall recovery fenced a quiet worker and re-queued the prior pickup.
 
 ## Sidecars
 - {scoreboard or "_None this window._"}

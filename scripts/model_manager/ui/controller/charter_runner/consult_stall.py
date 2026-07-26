@@ -10,6 +10,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from cortex_store.dispatch_ops._friction_enqueue import file_charter_protocol_friction
 from universal_logging import get_logger
 
 from scripts.model_manager import observation_event as events
@@ -158,6 +159,19 @@ async def try_recover_consult_stall(
         )
         return False
 
+    friction_id = file_charter_protocol_friction(
+        root_id=decision.root_id,
+        window_index=window_index or 0,
+        note=(
+            "consult worker fenced after quiet stale window"
+            if r_admit is None
+            else "consult worker fenced; R-ADMIT landed on root during WIP window"
+        ),
+        scoreboard_uri=prior.scoreboard_uri,
+        actionable=False,
+        actionable_false_reason="machine consult-stall recovery checkpoint",
+    )
+
     if r_admit is not None:
         reason = "r_admit_on_root"
         subject, body = build_r_admit_advance_checkpoint(
@@ -166,6 +180,7 @@ async def try_recover_consult_stall(
             worker_thread=worker_thread,
             r_admit_turn=r_admit,
             generation=heals,
+            friction_id=friction_id,
         )
     else:
         reason = "consult_stall_requeue"
@@ -175,6 +190,7 @@ async def try_recover_consult_stall(
             worker_thread=worker_thread,
             child_refs=discover_child_refs(root_turns, adm_n),
             generation=heals,
+            friction_id=friction_id,
         )
 
     try:

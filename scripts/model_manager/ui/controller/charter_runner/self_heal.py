@@ -16,15 +16,22 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from cortex_store.dispatch_ops._friction_enqueue import (
+    file_charter_protocol_friction,
+)
 from universal_logging import get_logger
 
 from scripts.model_manager import observation_event as events
 
 from . import bus_client, window_log
 from .caps import CapStore
-from .checkpoint_parse import ParsedCheckpoint, parse_checkpoint
+from .checkpoint_parse import parse_checkpoint
 from .eligibility import Decision
 from .harvest import harvest_completed_windows
+from .self_heal_checkpoint import (
+    build_self_heal_checkpoint,
+    pickup_survives_round_trip,
+)
 
 logger = get_logger(__name__)
 
@@ -34,17 +41,6 @@ CHECKPOINT_MISSING_GRACE_S = 120.0
 CHECKPOINT_MISSING_HEAL_CAP = 2
 # Bound stop vocabulary (autonomous-path-sim-charter § Stop vocabulary).
 WINDOW_TERMINALS = ("CHECKPOINT", "CONSULT_PENDING", "BLOCKED", "PACKAGING_DEFICIT")
-_STATUS_GLYPH = {
-    "done": "x",
-    "in_progress": "~",
-    "blocked": "!",
-    "pending": " ",
-}
-_RESUME = (
-    "— RESUME (any seat, no command): load agent-bus-discipline "
-    "(§ Standing root threads + § R12 completeness gate) → read scoreboard "
-    "→ this is the latest CHECKPOINT. empty Next-pickup ≠ arc complete."
-)
 
 
 def turn_number(turn: dict[str, Any]) -> int:
@@ -93,93 +89,6 @@ def incomplete_window_reason(
     if terminal is not None:
         return None, terminal
     return CHECKPOINT_MISSING, None
-
-
-def _steps_block(prior: ParsedCheckpoint) -> str:
-    lines = []
-    for s in prior.steps:
-        glyph = _STATUS_GLYPH.get(s.status, " ")
-        lines.append(f"{s.ordinal}. [{glyph}] {s.title}")
-    return "\n".join(lines) or "1. [ ] (see scoreboard gated lane)"
-
-
-def build_self_heal_checkpoint(
-    *,
-    prior: ParsedCheckpoint,
-    window_index: int,
-    worker_thread: str,
-    reason: str,
-) -> tuple[str, str]:
-    """Build (subject, body) for a machine recovery CHECKPOINT."""
-    pickup_lines = list(prior.next_pickup) or [
-        "(re-queue prior gated step — see scoreboard)"
-    ]
-    pickup_block = "\n".join(f"- {item}" for item in pickup_lines)
-    scoreboard = prior.scoreboard_uri
-    sidecar_lines: list[str] = []
-    if scoreboard:
-        sidecar_lines.append(f"- {scoreboard}")
-    if worker_thread:
-        sidecar_lines.append(f"- agent-bus:{worker_thread} — prior window transcript")
-    sidecars = "\n".join(sidecar_lines) if sidecar_lines else "_None this window._"
-    scoreboard_section = (
-        f"\n## Scoreboard URI\n{scoreboard}\n" if scoreboard else ""
-    )
-    blocked_line = (
-        "BLOCKED — carried from prior CHECKPOINT (self-heal)."
-        if prior.blocked
-        else "None."
-    )
-    subject = f"CHECKPOINT — self-heal {reason} (window {window_index})"
-    body = f"""# {subject}
-
-## Anchor
-- Author: charter-runner (machine self-heal — not an R12 worker CHECKPOINT)
-- Scoreboard: {scoreboard or "(see prior CHECKPOINT / scoreboard)"}
-
-## State
-- Self-heal: {reason} — worker `{worker_thread or "(unknown)"}` closed without root terminal
-- Window {window_index} incomplete; gated Next-pickup re-queued (not advanced)
-
-## WIP / In-flight
-_None this window._
-
-## Next-pickup
-{pickup_block}
-
-## Steps
-{_steps_block(prior)}
-
-## Frictions
-- Machine self-heal: worker reported success-shaped closeout without posting a bound window terminal on this root.
-
-## Sidecars
-{sidecars}
-
-## BLOCKED
-{blocked_line}
-{scoreboard_section}
-{_RESUME}
-"""
-    return subject, body
-
-
-def _pickup_survives_round_trip(
-    prior: ParsedCheckpoint, body: str
-) -> tuple[bool, list[str], list[str]]:
-    """True when re-parse of ``body`` preserves prior gated pickup semantics."""
-    echo = parse_checkpoint(body)
-    want = list(prior.next_pickup)
-    got = list(echo.next_pickup)
-    if prior.next_pickup_gated and not echo.next_pickup_gated:
-        return False, want, got
-    if prior.blocked and not echo.blocked:
-        return False, want, got
-    if want and got != want:
-        return False, want, got
-    if not got and not echo.next_pickup_gated:
-        return False, want, got
-    return True, want, got
 
 
 def _resolve_admission_mode(meta: dict[str, Any], fallback: str) -> str:
@@ -294,8 +203,20 @@ async def try_self_heal_incomplete_window(
         window_index=window_index or 0,
         worker_thread=worker_thread,
         reason=reason,
+        root_id=decision.root_id,
+        friction_id=file_charter_protocol_friction(
+            root_id=decision.root_id,
+            window_index=window_index or 0,
+            note=(
+                "worker reported success-shaped closeout without posting a bound "
+                "window terminal on this root"
+            ),
+            scoreboard_uri=prior.scoreboard_uri,
+            actionable=False,
+            actionable_false_reason="machine self-heal recovery checkpoint",
+        ),
     )
-    ok, want, got = _pickup_survives_round_trip(prior, body)
+    ok, want, got = pickup_survives_round_trip(prior, body)
     if not ok:
         logger.error(
             "charter-runner self-heal ABORT root=%s — pickup did not survive "

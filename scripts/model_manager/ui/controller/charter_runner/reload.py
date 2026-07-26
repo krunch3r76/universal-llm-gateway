@@ -19,9 +19,13 @@ import sys
 from typing import Any
 
 # Leaf → dependent order so reload sees fresh imports.
-# observation_event first: in-place reload updates the shared module object
-# that state_close / tick_loop / harvest already hold as ``events``.
+# observation_event_charter / conveyor BEFORE observation_event: the parent
+# re-exports emit_* by binding globals from those sibling modules. Reloading
+# only observation_event reuses a cached stale sibling (sys.modules) and leaves
+# callers with an old emit signature (wip_snippet TypeError dogfood 2026-07-26).
 _MODULE_NAMES: tuple[str, ...] = (
+    "scripts.model_manager.observation_event_charter",
+    "scripts.model_manager.observation_event_conveyor",
     "scripts.model_manager.observation_event",
     "scripts.model_manager.ui.controller.charter_runner.executor_defaults",
     "scripts.model_manager.ui.controller.charter_runner.executor_routing",
@@ -30,6 +34,8 @@ _MODULE_NAMES: tuple[str, ...] = (
     "scripts.model_manager.ui.controller.charter_runner.terminal_discipline",
     "scripts.model_manager.ui.controller.charter_runner.verification_manifest",
     "scripts.model_manager.ui.controller.charter_runner.checkpoint_parse",
+    "scripts.model_manager.ui.controller.charter_runner.checkpoint_admit_gate",
+    "scripts.model_manager.ui.controller.charter_runner.env_predicates",
     "scripts.model_manager.ui.controller.charter_runner.giw_live_hold",
     "scripts.model_manager.ui.controller.charter_runner.eligibility",
     "scripts.model_manager.ui.controller.charter_runner.window_log",
@@ -37,10 +43,13 @@ _MODULE_NAMES: tuple[str, ...] = (
     "scripts.model_manager.ui.controller.charter_runner.dispatch_client",
     "scripts.model_manager.ui.controller.charter_runner.materializer",
     "scripts.model_manager.ui.controller.charter_runner.materializer_consult",
+    "scripts.model_manager.ui.controller.charter_runner.materializer_closed_detent",
     "scripts.model_manager.ui.controller.charter_runner.materializer_autonomous",
     "scripts.model_manager.ui.controller.charter_runner.r_corpus_sha",
     "scripts.model_manager.ui.controller.charter_runner.state_close",
     "scripts.model_manager.ui.controller.charter_runner.gate_bypass_detect",
+    "scripts.model_manager.ui.controller.charter_runner.frictions_window_audit",
+    "scripts.model_manager.ui.controller.charter_runner.conveyor",
     "scripts.model_manager.ui.controller.charter_runner.harvest",
     "scripts.model_manager.ui.controller.charter_runner.self_heal",
     "scripts.model_manager.ui.controller.charter_runner.consult_stall_build",

@@ -1,0 +1,31 @@
+# Fixture 4 -- GS2 dual emitter.
+#
+# One dispatch (exec-gs2-a), two emitters, agreeing. The pipeline lane terminal
+# arrives second and must change nothing: `terminal_ms` stays at the worker lane's
+# timestamp, `emitters_seen` becomes both, `divergent_fields` stays empty. This is
+# the idempotence half -- a reconnect + resume_from overlap replaying a terminal
+# must not double-count or rewrite.
+#
+# One dispatch (exec-gs2-b), two emitters, DISAGREEING. The worker lane reports
+# completed with 41200 prompt tokens; the pipeline lane reports failed. Both cannot
+# be true. The fold keeps the first terminal, records `state` and `failure_reason`
+# as divergent, and raises a crit attention item.
+#
+# It deliberately does NOT pick a winner. Reconciling would hide exactly the class
+# of defect friction 22940 was -- dual-emitter divergence whose fix kept the second
+# emitter as a cross-check rather than trusting one lane.
+#
+# One dispatch (exec-gs2-c), pipeline lane only. Single-emitter dispatches are
+# normal and must not be flagged; absence of a second lane is not divergence.
+{"signal": "frontier.sdk.worker.started", "ts_unix_ms": 1753600100000, "seq": 4001, "source": "ulg://cursor-sdk", "payload": {"execution_id": "exec-gs2-a", "worker_thread": "6001", "seat": "cursor-sdk", "model": "cursor/opus-5", "contract": "implement"}}
+{"signal": "pipeline.frontier.dispatch.started", "ts_unix_ms": 1753600100200, "seq": 4002, "source": "ulg://pipeline", "payload": {"execution_id": "exec-gs2-a", "model": "cursor/opus-5", "remote_mcp": true}}
+{"signal": "frontier.sdk.worker.completed", "ts_unix_ms": 1753600200000, "seq": 4003, "source": "ulg://cursor-sdk", "payload": {"execution_id": "exec-gs2-a", "status": "completed", "prompt_tokens": 5000, "completion_tokens": 1200}}
+{"signal": "pipeline.frontier.dispatch.completed", "ts_unix_ms": 1753600200400, "seq": 4004, "source": "ulg://pipeline", "payload": {"execution_id": "exec-gs2-a", "status": "completed", "prompt_tokens": 5000, "completion_tokens": 1200, "cached_tokens": 400}}
+{"signal": "frontier.sdk.worker.started", "ts_unix_ms": 1753600110000, "seq": 4005, "source": "ulg://cursor-sdk", "payload": {"execution_id": "exec-gs2-b", "worker_thread": "6002", "seat": "cursor-sdk", "model": "cursor/opus-5", "contract": "implement"}}
+{"signal": "frontier.sdk.worker.completed", "ts_unix_ms": 1753600210000, "seq": 4006, "source": "ulg://cursor-sdk", "payload": {"execution_id": "exec-gs2-b", "status": "completed", "prompt_tokens": 41200, "completion_tokens": 8800}}
+{"signal": "pipeline.frontier.dispatch.failed", "ts_unix_ms": 1753600211000, "seq": 4007, "source": "ulg://pipeline", "payload": {"execution_id": "exec-gs2-b", "status": "failed", "failure_reason": "onbehalf_post_failed", "prompt_tokens": 41200}}
+{"signal": "pipeline.frontier.dispatch.started", "ts_unix_ms": 1753600120000, "seq": 4008, "source": "ulg://pipeline", "payload": {"execution_id": "exec-gs2-c", "model": "cursor/sonnet-4.8"}}
+{"signal": "pipeline.frontier.dispatch.completed", "ts_unix_ms": 1753600220000, "seq": 4009, "source": "ulg://pipeline", "payload": {"execution_id": "exec-gs2-c", "status": "completed", "prompt_tokens": 900, "completion_tokens": 100}}
+{"signal": "manage.charter.tick.error", "ts_unix_ms": 1753600230000, "seq": 4010, "source": "ulg://charter-runner", "payload": {"message": "lease acquisition failed: manage.sock refused"}}
+{"signal": "events.dropped.ingest", "ts_unix_ms": 1753600240000, "seq": 4011, "source": "ulg://event-service", "payload": {"count": 2}}
+{"signal": "some.unknown.signal.family", "ts_unix_ms": 1753600250000, "seq": 4012, "source": "ulg://mystery", "payload": {}}

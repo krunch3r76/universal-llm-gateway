@@ -51,6 +51,11 @@ def _promote_friction_to_todo(
     if any(friction_entity_id.startswith(p) for p in GUIDANCE_ID_PREFIXES):
         required_skills = [entity_slug_from_id(friction_entity_id)]
 
+    from .ops_entities import _op_entity_get, _op_entity_update
+    from .state_card import merge_state_card
+
+    promote_attrs = merge_state_card({"promoted_from_friction": friction_assertion_id})
+
     result = seed_recon_todo(
         todo_id=resolution_kind,
         name=friction_claim or f"Promoted from friction #{friction_assertion_id}",
@@ -61,10 +66,19 @@ def _promote_friction_to_todo(
             "recon pending (density_triage=recon_pending)"
         ),
         context_target_id=friction_entity_id,
-        extra_attrs={"promoted_from_friction": friction_assertion_id},
+        extra_attrs=promote_attrs,
         agent=agent,
         session_id=session_id,
     )
+    if result is None:
+        existing = _op_entity_get(entity_id=resolution_kind, intent="full")
+        if isinstance(existing, dict) and "error" not in existing:
+            prior = existing.get("attributes") or {}
+            if not isinstance(prior, dict):
+                prior = {}
+            upgraded = merge_state_card({**prior, **promote_attrs})
+            _op_entity_update(entity_id=resolution_kind, attributes=upgraded)
+        return None
     if result and "todo_created" in result:
         record(
             "cortex.friction.todo.promoted",

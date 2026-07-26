@@ -11,6 +11,7 @@ awareness_ulg
 capability-dispatch_ulg
 claude-ai-cdp-navigation_ulg
 commit-and-git-scope_ulg
+cdp-operator-proxy_ulg
 consultation-workflow_ulg
 expand-growth-loop_ulg
 jupiter-converse-batching_ulg

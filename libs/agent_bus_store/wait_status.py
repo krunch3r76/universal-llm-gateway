@@ -77,6 +77,56 @@ def qualifying_status_turn(
     return None
 
 
+DEAD_WAIT_ERROR = "dead_wait_no_auto_producer"
+DEAD_WAIT_DETAIL = (
+    "DISPOSITION one-correction does not enqueue cursor-auto. "
+    "Re-issue amendment as agent_bus.request (TYPE: DIRECTIVE, density=sparse) "
+    "and wait completion=status:done on the returned poll_hint."
+)
+
+
+def is_disposition_one_correction(turn: dict[str, Any] | None) -> bool:
+    """True when turn body is TYPE: DISPOSITION with verdict one correction."""
+    if turn is None:
+        return False
+    body = str(turn.get("body") or "").strip()
+    if not body:
+        return False
+    lines = [ln.strip() for ln in body.splitlines() if ln.strip()]
+    if not lines or lines[0].upper() != "TYPE: DISPOSITION":
+        return False
+    for ln in lines[1:6]:
+        low = ln.lower()
+        if low.startswith("verdict:") and "one correction" in low:
+            return True
+    return False
+
+
+def is_dead_wait_no_auto_producer(
+    turns: list[dict[str, Any]],
+    *,
+    after_turn: int,
+    completion: Completion,
+) -> bool:
+    """DISPOSITION one-correction + wait(from_agent=cursor) with no reply yet.
+
+    Plain send does not enqueue lane:cursor-auto; that wait has no producer
+    (operator-proxy dead-wait / friction 26253). cursor-auto and cursor-sdk
+    waits are not this class.
+    """
+    if completion.get("mode", "first_reply_from") != "first_reply_from":
+        return False
+    from_agent = completion.get("from_agent")
+    if not from_agent:
+        return False
+    if normalize_bus_address(from_agent) != "cursor":
+        return False
+    if qualifying_reply(turns, after_turn=after_turn, from_agent=from_agent):
+        return False
+    pointer = next((t for t in turns if t["turn_number"] == after_turn), None)
+    return is_disposition_one_correction(pointer)
+
+
 def qualifying_reply(
     turns: list[dict[str, Any]],
     *,

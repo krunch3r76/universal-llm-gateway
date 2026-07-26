@@ -335,6 +335,49 @@ def classify_capture_status(
     return "complete"
 
 
+def attribution_effects_paths(
+    *,
+    created: Iterable[str] = (),
+    modified: Iterable[str] = (),
+    deleted: Iterable[str] = (),
+    files_untracked_or_ignored: Iterable[str] = (),
+) -> tuple[str, ...]:
+    """Union tracked paths with non-swamp untracked/gitignored writes for ``effects``.
+
+    Semantics (AM-7): paths *touched* by this dispatch — created, modified,
+    deleted, or written untracked/gitignored — in-repo only. Offgit deliverables
+    remain in ``files_offgit_produced``.
+
+    Trust floor (AM-5): ``effects`` is authoritative only when
+    ``capture_status=complete``; under degraded capture, empty or short
+    ``effects`` must not authorize "no writes occurred".
+    """
+    seen: set[str] = set()
+    ordered: list[str] = []
+
+    def _add(path: str) -> None:
+        norm = path.lstrip("/")
+        if not norm or norm in seen:
+            return
+        seen.add(norm)
+        ordered.append(norm)
+
+    for path in created:
+        _add(path)
+    for path in modified:
+        _add(path)
+    for path in deleted:
+        _add(path)
+    for path in files_untracked_or_ignored:
+        if is_allowlisted_control_plane_path(path):
+            continue
+        if is_swamp_excluded_path(path):
+            continue
+        _add(path)
+
+    return tuple(sorted(ordered))
+
+
 def partition_gitignored_from_change_set(
     change_set: ChangeSet,
     *,

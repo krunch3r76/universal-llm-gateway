@@ -67,7 +67,7 @@ from .type_schemas import (
 )
 from .type_taxonomy import CATEGORY_SPECIES, category_species
 from .workflow_state import (
-    emit_todo_closure_gap_if_needed,
+    emit_todo_done_side_effects,
     validate_workflow_state,
     workflow_schema,
 )
@@ -566,7 +566,7 @@ def update_entity_impl(
             _new: str = _new_ws_snap,
             _prior: str | None = _prior_ws_snap,
         ) -> None:
-            emit_todo_closure_gap_if_needed(
+            emit_todo_done_side_effects(
                 _conn,
                 entity_id=_eid,
                 entity_type=_et,
@@ -744,6 +744,13 @@ def create_entity_impl(
     validate_required_attributes(conn, body.type, body.attributes)
     validate_distilled_attributes(conn, body.type, body.attributes)
     validate_surface_visibility(conn, body.type, body.attributes)
+
+    if body.type == "todo":
+        from implement_admission.density_triage_create_gate import (
+            validate_todo_density_triage_at_create,
+        )
+
+        validate_todo_density_triage_at_create(body.id, body.attributes)
 
     if body.type == "condition":
         _gate_condition_admission(conn, body)

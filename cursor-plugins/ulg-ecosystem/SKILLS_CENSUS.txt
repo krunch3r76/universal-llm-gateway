@@ -6,6 +6,7 @@
 
 advisor-timing
 cheap-recon-before-escalation
+cdp-operator-proxy
 claude-ai-cdp-navigation
 completion-provenance-discipline
 consult-posture

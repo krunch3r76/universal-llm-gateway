@@ -40,14 +40,15 @@ def resolve_desired_model(
     """Map request ``desired_model`` hint → resolved ``model_id`` + notes.
 
     ``auto`` (default) picks by contract: answer→composer, investigate→grok,
-    implement→opus, verify→composer. Explicit hints are honored and reported.
+    implement→composer, verify→composer. Explicit hints are honored and reported.
+    Opus is never the auto default (lean-context implement ladder = composer).
     """
     raw = (desired_model or "auto").strip().lower() or "auto"
     if raw == "auto":
         by_contract = {
             "answer": "cursor/composer-2.5",
             "investigate": "cursor/grok-4.5",
-            "implement": "cursor/claude-opus-5",
+            "implement": "cursor/composer-2.5",
             "verify": "cursor/composer-2.5",
         }
         model_id = by_contract.get(contract, "cursor/composer-2.5")
@@ -117,9 +118,9 @@ def resolve_contract_disposition(contract: str | None) -> dict[str, Any]:
         }
     hints: dict[str, Disposition] = {
         "answer": "answered",
-        "investigate": "answered",
-        "implement": "needs-attended",
-        "verify": "answered",
+        "investigate": "dispatched-and-relayed",
+        "implement": "dispatched-and-relayed",
+        "verify": "dispatched-and-relayed",
     }
     return {
         "requested": raw,
@@ -127,3 +128,15 @@ def resolve_contract_disposition(contract: str | None) -> dict[str, Any]:
         "disposition_hint": hints[raw],
         "notes": "ok",
     }
+
+
+def resolve_handoff_contract(contract: str | None) -> str:
+    """Map Auto ``request.contract`` → cursor-sdk ``handoff_contract``."""
+    raw = (contract or "answer").strip().lower() or "answer"
+    if raw == "implement":
+        return "pure-mechanical"
+    if raw == "investigate":
+        return "light-bounded"
+    if raw == "verify":
+        return "light-bounded"
+    return "light-bounded"

@@ -1,7 +1,7 @@
 """ATX markdown sections: parse, read/replace/append/delete, dict↔md (stdlib only).
 
 Navigation merges ATX headings with line-anchored XML blocks (handoff packets).
-Limitations: headings in blockquotes/lists count; simplified fences."""
+Limitations: headings in blockquotes/lists count; delimiter-aware fence pairing."""
 
 from __future__ import annotations
 
@@ -10,8 +10,13 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from markdown_fence import (
+    MIN_FENCE_LEN,
+    is_closing_fence_line,
+    parse_fence_open,
+)
+
 _HEADING_RE = re.compile(r"^(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$")
-_FENCE_RE = re.compile(r"^[ \t]*(```|~~~)")
 
 
 class SectionError(Exception):
@@ -63,18 +68,31 @@ def parse_sections(text: str) -> list[Section]:
     lines = text.splitlines(keepends=True)
     sections: list[Section] = []
     in_fence = False
+    fence_char = ""
+    fence_len = 0
     char_offset = 0
     path_stack: list[tuple[int, str]] = []
 
     for line_idx, line in enumerate(lines):
-        stripped = line.rstrip("\n\r")
-        if _FENCE_RE.match(stripped):
-            in_fence = not in_fence
+        fence_stripped = line.strip()
+        if not in_fence:
+            parsed = parse_fence_open(fence_stripped)
+            if parsed is not None:
+                ch, ln, _lang = parsed
+                if ln >= MIN_FENCE_LEN:
+                    in_fence = True
+                    fence_char, fence_len = ch, ln
+                    char_offset += len(line)
+                    continue
+        elif is_closing_fence_line(fence_stripped, fence_char, fence_len):
+            in_fence = False
+            fence_char, fence_len = "", 0
             char_offset += len(line)
             continue
         if in_fence:
             char_offset += len(line)
             continue
+        stripped = line.rstrip("\n\r")
         m = _HEADING_RE.match(stripped)
         if m:
             level = len(m.group(1))

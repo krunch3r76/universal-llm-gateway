@@ -78,7 +78,12 @@ class SubmitProjectAskRequest(BaseModel):
         default="auto",
         description=(
             "Submit-time harvest knob (distinct from poll ``harvest_provenance``). "
-            "``chat`` archives scraped chat body only; "
+            "Operational default: ``auto`` or ``output-file`` (Cowork). "
+            "``chat`` is wire-stub only — future Chat UI path; can cover small and "
+            "large (cortex-direct) but untested; auth gates likely on cortex/life "
+            "work; simple one-offs without cortex likely fine — ¬ production or "
+            "skill guidance yet (spec: substrate-apis-cdp-cursor § Chat harvest "
+            "stub). "
             "``output-file`` requires Output download (hard fail on miss); "
             "``auto`` tries Output then cortex-fs pointer; under ``expected_size=large`` "
             "refuses thin chat fallback (fail-closed)."

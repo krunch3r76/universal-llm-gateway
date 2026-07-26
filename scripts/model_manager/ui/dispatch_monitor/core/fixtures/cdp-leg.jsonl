@@ -1,0 +1,25 @@
+# Fixture 2 -- CDP legs. Three legs exercising the three cases the fold must
+# distinguish and one it must NOT collapse.
+#
+#   exec-cdp-01  submitted -> running -> completed WITH proof         (clean)
+#   exec-cdp-02  submitted -> running -> completed WITHOUT proof      (attention, not success)
+#   exec-cdp-03  submitted -> running -> silence                      (idle, NOT failed)
+#
+# The third leg is the load-bearing one: it emits nothing after 1753600200000 and
+# must still derive as `running` with an idle attention item. Folding silence to
+# `failed` is the defect this fixture exists to catch.
+#
+# Family status: PROSPECTIVE. The CDP lane emits zero events today
+# (cortex://notes/system/threads/5718-session-review-substrate-apis.md), so these
+# signal names are the G4 packet's assignment, not an observed capture.
+{"signal": "cdp.generate.submitted", "ts_unix_ms": 1753600100000, "seq": 2001, "source": "ulg://stargate", "payload": {"execution_id": "exec-cdp-01", "picker_model": "cdp/opus-5", "dispatch_thread_id": "5901", "prompt_uri": "cortex://notes/system/ephemeral/cdp-endpoint/aaa/prompt.md", "root": "5852", "status": "pending"}}
+{"signal": "cdp.generate.submitted", "ts_unix_ms": 1753600100500, "seq": 2002, "source": "ulg://stargate", "payload": {"execution_id": "exec-cdp-02", "picker_model": "cdp/fable-5", "dispatch_thread_id": "5902", "prompt_uri": "cortex://notes/system/ephemeral/cdp-endpoint/bbb/prompt.md", "status": "pending"}}
+{"signal": "cdp.generate.submitted", "ts_unix_ms": 1753600101000, "seq": 2003, "source": "ulg://stargate", "payload": {"execution_id": "exec-cdp-03", "picker_model": "cdp/opus-5", "dispatch_thread_id": "5903", "prompt_uri": "cortex://notes/system/ephemeral/cdp-endpoint/ccc/prompt.md", "status": "pending"}}
+{"signal": "cdp.generate.running", "ts_unix_ms": 1753600130000, "seq": 2004, "source": "ulg://stargate", "payload": {"execution_id": "exec-cdp-01", "status": "running"}}
+{"signal": "cdp.generate.running", "ts_unix_ms": 1753600130500, "seq": 2005, "source": "ulg://stargate", "payload": {"execution_id": "exec-cdp-02", "status": "running"}}
+{"signal": "cdp.generate.running", "ts_unix_ms": 1753600131000, "seq": 2006, "source": "ulg://stargate", "payload": {"execution_id": "exec-cdp-03", "status": "running"}}
+{"signal": "cdp.generate.progress", "ts_unix_ms": 1753600200000, "seq": 2007, "source": "ulg://stargate", "payload": {"execution_id": "exec-cdp-03", "status": "running"}}
+{"signal": "cdp.generate.progress", "ts_unix_ms": 1753600260000, "seq": 2008, "source": "ulg://stargate", "payload": {"execution_id": "exec-cdp-01", "status": "running"}}
+{"signal": "cdp.generate.completed", "ts_unix_ms": 1753600320000, "seq": 2009, "source": "ulg://stargate", "payload": {"execution_id": "exec-cdp-01", "status": "completed", "archive_uri": "cortex://notes/system/artifacts/cdp/exec-9a1f-archive.md", "content_proof_uri": "cortex://notes/system/artifacts/cdp/exec-9a1f-proof.json"}}
+{"signal": "cdp.generate.completed", "ts_unix_ms": 1753600330000, "seq": 2010, "source": "ulg://stargate", "payload": {"execution_id": "exec-cdp-02", "status": "completed"}}
+{"signal": "events.dropped.subscribe", "ts_unix_ms": 1753600400000, "seq": 2011, "source": "ulg://event-service", "payload": {"count": 3, "subscriber": "watch"}}

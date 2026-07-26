@@ -1,0 +1,328 @@
+"""Fire nested cursor-sdk dispatches and poll for terminal + bus closeout."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+import time
+import uuid
+from typing import Any
+
+import httpx
+from transport_utils import DEFAULT_AGENT_BUS_URL, make_async_client
+from universal_logging import get_logger
+
+from services.git_integration_worker.cursor_auto.closeout_relay import (
+    ledger_status_to_closeout,
+)
+from services.git_integration_worker.cursor_auto.queue import AutoJob
+from services.git_integration_worker.cursor_bus import CursorBusClient
+from services.git_integration_worker.cursor_dispatch_ledger import (
+    CursorDispatchLedger,
+)
+
+logger = get_logger(__name__)
+
+_TERMINAL = frozenset({"completed", "failed"})
+_WAKE_FORBIDDEN_TOKENS = frozenset(
+    {"status:done", "status:failed", "status:needs-attended"}
+)
+_WAKE_SUBJECT_PREFIX = "WAKE — closeout relayed · "
+_MAX_WAKE_SUBJECT_LEN = 80
+_DEFAULT_DISPATCH_URL = "http://127.0.0.1:8091"
+_POLL_INTERVAL_S = 2.0
+_DEFAULT_TIMEOUT_S = 3600.0
+
+
+def _dispatch_url() -> str:
+    base = (
+        os.environ.get("GIT_INTEGRATION_WORKER_URL", "").strip()
+        or _DEFAULT_DISPATCH_URL
+    )
+    return f"{base.rstrip('/')}/api/v1/cursor/dispatch"
+
+
+def _dispatch_timeout_s() -> float:
+    raw = os.environ.get("CURSOR_AUTO_DISPATCH_TIMEOUT_S", "").strip()
+    if not raw:
+        return _DEFAULT_TIMEOUT_S
+    return max(30.0, float(raw))
+
+
+async def submit_nested_dispatch(
+    job: AutoJob,
+    *,
+    model_id: str,
+    handoff_contract: str,
+    message: str,
+    nest_under: str | None = None,
+    model_knobs: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """POST ``/api/v1/cursor/dispatch`` for one nested SDK run."""
+    dispatch_id = f"auto-{uuid.uuid4().hex[:12]}"
+    execution_id = f"exec-{dispatch_id}"
+    payload: dict[str, Any] = {
+        "thread_id": job.thread_id,
+        "model": model_id,
+        "dispatch_id": dispatch_id,
+        "execution_id": execution_id,
+        "message": message,
+        "handoff_contract": handoff_contract,
+        "caller_agent": job.from_agent,
+        "close_contract": "auto",
+    }
+    if nest_under:
+        payload["nest_under"] = nest_under
+    if model_knobs:
+        payload["model_knobs"] = model_knobs
+    url = _dispatch_url()
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(url, json=payload)
+        data = resp.json() if resp.content else {}
+        if resp.status_code >= 400:
+            return {
+                "ok": False,
+                "dispatch_id": dispatch_id,
+                "execution_id": execution_id,
+                "status_code": resp.status_code,
+                "error": data,
+            }
+        return {
+            "ok": True,
+            "dispatch_id": dispatch_id,
+            "execution_id": execution_id,
+            "admitted": bool(data.get("admitted", True)),
+            "response": data,
+        }
+    except (httpx.HTTPError, ValueError, OSError) as exc:
+        logger.error("cursor-auto nested dispatch submit failed: %s", exc)
+        return {
+            "ok": False,
+            "dispatch_id": dispatch_id,
+            "execution_id": execution_id,
+            "error": str(exc),
+        }
+
+
+async def poll_dispatch_terminal(
+    *,
+    thread_id: str,
+    dispatch_id: str,
+    timeout_s: float | None = None,
+) -> dict[str, Any]:
+    """Poll ledger until nested dispatch reaches a terminal status."""
+    ledger = CursorDispatchLedger.instance()
+    budget = timeout_s if timeout_s is not None else _dispatch_timeout_s()
+    deadline = time.monotonic() + budget
+    last: dict[str, Any] | None = None
+    while time.monotonic() < deadline:
+        row = await asyncio.to_thread(
+            ledger.dispatch_status_by_thread, thread_id=thread_id
+        )
+        if row is not None:
+            last = row
+            if row.get("dispatch_id") == dispatch_id and row.get("status") in _TERMINAL:
+                return {
+                    "ok": True,
+                    "terminal": True,
+                    "status": row["status"],
+                    "row": row,
+                }
+        await asyncio.sleep(_POLL_INTERVAL_S)
+    return {
+        "ok": False,
+        "terminal": False,
+        "reason": "dispatch_poll_timeout",
+        "last": last,
+        "dispatch_id": dispatch_id,
+    }
+
+
+async def fetch_sdk_closeout_body(
+    *,
+    thread_id: str,
+    dispatch_id: str,
+    bus: CursorBusClient | None = None,
+) -> str | None:
+    """Return latest cursor-sdk bus turn body mentioning ``dispatch_id``."""
+    token = os.environ.get("AGENT_BUS_TOKEN", "").strip()
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    try:
+        async with make_async_client(DEFAULT_AGENT_BUS_URL, timeout=15.0) as client:
+            resp = await client.get(
+                "/turns",
+                params={"thread": thread_id, "last": 8},
+                headers=headers,
+            )
+        if resp.status_code >= 400:
+            return None
+        turns = (resp.json() or {}).get("turns") or []
+    except (httpx.HTTPError, ValueError, OSError):
+        return None
+    needle = dispatch_id[:8]
+    for turn in reversed(turns):
+        if turn.get("from") != "cursor-sdk":
+            continue
+        subject = str(turn.get("subject") or "")
+        body = str(turn.get("body") or "")
+        if dispatch_id in subject or needle in subject or needle in body:
+            return body or None
+    return None
+
+
+def closeout_status_from_terminal(terminal_status: str) -> str:
+    """Map ledger terminal status → operator CLOSEOUT status line."""
+    return ledger_status_to_closeout(terminal_status)
+
+
+async def post_operator_closeout(
+    job: AutoJob,
+    *,
+    status: str,
+    dispatch_id: str,
+    model_id: str,
+    sdk_body: str | None,
+    extra: dict[str, Any] | None = None,
+    bus: CursorBusClient | None = None,
+    closeout_body: str | None = None,
+    closeout_source: str | None = None,
+) -> dict[str, Any]:
+    """Post ``TYPE: CLOSEOUT`` to the operator seat (``job.from_agent``).
+
+    Prefer *closeout_body* when the caller already selected a §2 payload.
+    Legacy path: fall back to *sdk_body* (wrapper) when selection was not run.
+    """
+    client = bus or CursorBusClient()
+    meta = dict(extra or {})
+    if closeout_source:
+        meta["closeout_source"] = closeout_source
+    payload = (closeout_body if closeout_body is not None else sdk_body) or ""
+    if not payload.strip():
+        payload = "(no cursor-sdk closeout body captured)"
+    lines = [
+        "TYPE: CLOSEOUT",
+        f"status: {status}",
+        f"dispatch_id: {dispatch_id}",
+        f"model: {model_id}",
+        f"request_turn: {job.turn_number}",
+    ]
+    if meta:
+        lines.append(f"meta: {json.dumps(meta, sort_keys=True)}")
+    lines.append("")
+    lines.append(payload.strip())
+    body = "\n".join(lines)
+    resp = await client.reply(
+        thread_id=job.thread_id,
+        to_agent=job.from_agent,
+        from_agent="cursor-auto",
+        subject=f"status:done — {job.subject[:60]}",
+        body=body,
+        allow_long_body=True,
+    )
+    return {
+        "ok": resp.status_code < 400,
+        "status_code": resp.status_code,
+        "body": resp.body,
+        "closeout_source": closeout_source,
+    }
+
+
+def _normalize_closeout_status(closeout_status: str) -> str:
+    """Strip a leading ``status:`` prefix from ingress closeout status."""
+    text = closeout_status.strip()
+    if text.lower().startswith("status:"):
+        return text.split(":", 1)[1].strip()
+    return text
+
+
+def _wake_subject(dispatch_id: str) -> str:
+    """Build a deterministic WAKE subject capped at 80 characters."""
+    prefix = _WAKE_SUBJECT_PREFIX
+    full = f"{prefix}{dispatch_id}"
+    if len(full) <= _MAX_WAKE_SUBJECT_LEN:
+        return full
+    max_id = _MAX_WAKE_SUBJECT_LEN - len(prefix) - 1
+    truncated_id = f"{dispatch_id[:max_id]}…"
+    return f"{prefix}{truncated_id}"
+
+
+def _contains_wake_forbidden_tokens(text: str) -> bool:
+    return any(token in text for token in _WAKE_FORBIDDEN_TOKENS)
+
+
+async def post_operator_wake(
+    job: AutoJob,
+    *,
+    dispatch_id: str,
+    request_turn: str,
+    closeout_status: str,
+    bus: CursorBusClient | None = None,
+) -> dict[str, Any]:
+    """Post ``TYPE: WAKE`` after successful CLOSEOUT relay for absent waiters.
+
+    WAKE subject/body must not carry ``status:done`` / ``status:failed`` /
+    ``status:needs-attended`` tokens so ``completion=status:done`` waiters
+    complete on CLOSEOUT only, not on the wake ping.
+    """
+    normalized_status = _normalize_closeout_status(closeout_status)
+    subject = _wake_subject(dispatch_id)
+    body_lines = [
+        "TYPE: WAKE",
+        f"dispatch_id: {dispatch_id}",
+        f"request_turn: {request_turn}",
+        f"closeout_status: {normalized_status}",
+        f"thread: {job.thread_id}",
+        "",
+        (
+            "Unread ping for an absent operator waiter after CLOSEOUT relay; "
+            "not a new DIRECTIVE. Healthy waiters already completed on CLOSEOUT."
+        ),
+    ]
+    body = "\n".join(body_lines)
+    if _contains_wake_forbidden_tokens(subject) or _contains_wake_forbidden_tokens(body):
+        logger.warning(
+            "cursor-auto wake token guard blocked post dispatch_id=%s thread_id=%s",
+            dispatch_id,
+            job.thread_id,
+        )
+        return {"ok": False, "reason": "wake_token_guard"}
+
+    client = bus or CursorBusClient()
+    try:
+        resp = await client.reply(
+            thread_id=job.thread_id,
+            to_agent=job.from_agent,
+            from_agent="cursor-auto",
+            subject=subject,
+            body=body,
+            allow_long_body=False,
+        )
+    except (httpx.HTTPError, ValueError, OSError) as exc:
+        logger.warning(
+            "cursor-auto wake post failed dispatch_id=%s thread_id=%s to_agent=%s "
+            "status_code=%s error=%s",
+            dispatch_id,
+            job.thread_id,
+            job.from_agent,
+            None,
+            exc,
+        )
+        return {"ok": False, "reason": str(exc)}
+
+    ok = resp.status_code < 400
+    if not ok:
+        logger.warning(
+            "cursor-auto wake post failed dispatch_id=%s thread_id=%s to_agent=%s "
+            "status_code=%s",
+            dispatch_id,
+            job.thread_id,
+            job.from_agent,
+            resp.status_code,
+        )
+    return {
+        "ok": ok,
+        "status_code": resp.status_code,
+        "body": resp.body,
+    }

@@ -1,0 +1,27 @@
+# Fixture 1 -- happy path: cold-start audit, scan, admit, worker start, progress,
+# terminal, harvest window close, root close.
+#
+# AUTHORED, not captured. The corpus's staged `replay-fixtures/` was recorded as
+# done in the MC playbook §10 but is absent from
+# cortex://notes/system/specs/dispatch-supervisor-monitor/ -- see README § Fixture
+# provenance. Signal NAMES are corpus-attested; payload FIELD SETS are this pass's
+# proposal and are what G5 reconciles first.
+#
+# Timebase: 1753600000000 = a fixed epoch-ms anchor. All offsets are relative.
+{"signal": "manage.charter.tick.audit", "ts_unix_ms": 1753600000000, "seq": 1000, "source": "ulg://charter-runner", "payload": {"window_start_ms": 1753599520000, "admitted": [{"root": "5735", "worker_thread": "5781"}], "closed": [], "failed": []}}
+{"signal": "manage.charter.tick.scanned", "ts_unix_ms": 1753600060000, "seq": 1001, "source": "ulg://charter-runner", "payload": {"roots": 3, "admitted": 0, "skipped_by_reason": {"operator_fork": 1, "no_checkpoint": 1}, "lease_holder": "manage", "queue_depth": 2, "wip_capacity": 2, "wip_in_use": 1}}
+{"signal": "manage.charter.tick.scanned", "ts_unix_ms": 1753600120000, "seq": 1002, "source": "ulg://charter-runner", "payload": {"roots": 3, "admitted": 1, "skipped_by_reason": {"operator_fork": 1}, "lease_holder": "manage", "queue_depth": 1, "wip_capacity": 2, "wip_in_use": 2}}
+# The next line is a deliberate DUPLICATE of seq 1002 -- what a reconnect plus
+# `resume_from` re-delivers across the overlap window. Folding it must change
+# nothing an operator would see, so the frame's fingerprint must not move and the
+# Controller must publish nothing. This is the one record in the corpus that proves
+# fingerprint suppression actually suppresses.
+{"signal": "manage.charter.tick.scanned", "ts_unix_ms": 1753600120000, "seq": 1002, "source": "ulg://charter-runner", "payload": {"roots": 3, "admitted": 1, "skipped_by_reason": {"operator_fork": 1}, "lease_holder": "manage", "queue_depth": 1, "wip_capacity": 2, "wip_in_use": 2}}
+{"signal": "manage.charter.tick.admitted", "ts_unix_ms": 1753600120500, "seq": 1003, "source": "ulg://charter-runner", "subject": "5852", "payload": {"root": "5852", "worker_thread": "5901", "window_index": 4, "admission_mode": "handoff", "packet_path": "cortex://notes/system/ephemeral/packets/5852-w4.md", "project": "project:dispatch-supervisor-monitor"}}
+{"signal": "frontier.sdk.worker.started", "ts_unix_ms": 1753600121000, "seq": 1004, "source": "ulg://cursor-sdk", "subject": "5852", "payload": {"execution_id": "exec-9a1f", "worker_thread": "5901", "seat": "cursor-sdk", "role": "cursor-consult", "model": "cursor/opus-5", "contract": "implement"}}
+{"signal": "frontier.sdk.worker.progress", "ts_unix_ms": 1753600180000, "seq": 1005, "source": "ulg://cursor-sdk", "payload": {"execution_id": "exec-9a1f", "phase": "editing"}}
+{"signal": "frontier.sdk.worker.progress", "ts_unix_ms": 1753600240000, "seq": 1006, "source": "ulg://cursor-sdk", "payload": {"execution_id": "exec-9a1f", "phase": "quality_gate"}}
+{"signal": "frontier.sdk.worker.completed", "ts_unix_ms": 1753600300000, "seq": 1007, "source": "ulg://cursor-sdk", "payload": {"execution_id": "exec-9a1f", "status": "completed", "prompt_tokens": 41200, "completion_tokens": 8800, "cached_tokens": 30000}}
+{"signal": "manage.charter.tick.closed", "ts_unix_ms": 1753600305000, "seq": 1008, "source": "ulg://charter-runner", "payload": {"root": "5852", "window_index": 4, "worker_thread": "5901", "worker_closed": true, "checkpoint_turn": 7}}
+{"signal": "manage.charter.tick.root_closed", "ts_unix_ms": 1753600310000, "seq": 1009, "source": "ulg://charter-runner", "subject": "5852", "payload": {"root": "5852", "reason": "checkpoint_gated_complete", "checkpoint_turn": 7, "closed": true, "unenrolled": true}}
+{"signal": "manage.charter.tick.scanned", "ts_unix_ms": 1753600360000, "seq": 1010, "source": "ulg://charter-runner", "payload": {"roots": 2, "admitted": 0, "skipped_by_reason": {"operator_fork": 1}, "lease_holder": "manage", "queue_depth": 0, "wip_capacity": 2, "wip_in_use": 0}}

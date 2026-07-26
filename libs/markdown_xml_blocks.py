@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import re
 
-from markdown_sections import _FENCE_RE, Section, _char_upto
+from markdown_fence import (
+    MIN_FENCE_LEN,
+    is_closing_fence_line,
+    parse_fence_open,
+)
+from markdown_sections import Section, _char_upto
 
 _XML_TAG_RE = re.compile(r"^<([a-z][a-z0-9_]*)>\s*$")
 _XML_CLOSE_RE = re.compile(r"^</([a-z][a-z0-9_]*)>\s*$")
@@ -44,16 +49,30 @@ def parse_xml_block_sections(text: str) -> list[Section]:
     lines = text.splitlines(keepends=True)
     sections: list[Section] = []
     in_fence = False
+    fence_char = ""
+    fence_len = 0
     line_idx = 0
     while line_idx < len(lines):
-        stripped = lines[line_idx].rstrip("\n\r")
-        if _FENCE_RE.match(stripped):
-            in_fence = not in_fence
+        line = lines[line_idx]
+        fence_stripped = line.strip()
+        if not in_fence:
+            parsed = parse_fence_open(fence_stripped)
+            if parsed is not None:
+                ch, ln, _lang = parsed
+                if ln >= MIN_FENCE_LEN:
+                    in_fence = True
+                    fence_char, fence_len = ch, ln
+                    line_idx += 1
+                    continue
+        elif is_closing_fence_line(fence_stripped, fence_char, fence_len):
+            in_fence = False
+            fence_char, fence_len = "", 0
             line_idx += 1
             continue
         if in_fence:
             line_idx += 1
             continue
+        stripped = line.rstrip("\n\r")
         open_match = _XML_TAG_RE.match(stripped)
         if not open_match:
             line_idx += 1
@@ -64,15 +83,31 @@ def parse_xml_block_sections(text: str) -> list[Section]:
         close_line = line_idx + 1
         found = False
         inner_fence = False
+        inner_fence_char = ""
+        inner_fence_len = 0
         while close_line < len(lines):
-            close_stripped = lines[close_line].rstrip("\n\r")
-            if _FENCE_RE.match(close_stripped):
-                inner_fence = not inner_fence
+            close_line_text = lines[close_line]
+            fence_stripped = close_line_text.strip()
+            if not inner_fence:
+                parsed = parse_fence_open(fence_stripped)
+                if parsed is not None:
+                    ch, ln, _lang = parsed
+                    if ln >= MIN_FENCE_LEN:
+                        inner_fence = True
+                        inner_fence_char, inner_fence_len = ch, ln
+                        close_line += 1
+                        continue
+            elif is_closing_fence_line(
+                fence_stripped, inner_fence_char, inner_fence_len
+            ):
+                inner_fence = False
+                inner_fence_char, inner_fence_len = "", 0
                 close_line += 1
                 continue
             if inner_fence:
                 close_line += 1
                 continue
+            close_stripped = close_line_text.rstrip("\n\r")
             close_match = _XML_CLOSE_RE.match(close_stripped)
             if close_match and close_match.group(1) == tag:
                 content_end = _char_upto(lines, close_line)

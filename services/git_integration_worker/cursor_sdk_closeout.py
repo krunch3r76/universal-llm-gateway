@@ -26,6 +26,7 @@ from universal_logging import get_logger
 
 from services.git_integration_worker.cursor_sdk_capture_status import (
     ChangeSet,
+    attribution_effects_paths,
     baseline_dirty_in_expected,
     degrade_status_for_capture,
     filter_manifest_swamp,
@@ -618,6 +619,10 @@ def finalize_closeout_body(
     ]
     if failed_verification:
         reduced["verification"] = failed_verification
+    effects = payload.get("effects")
+    if effects is not None:
+        reduced["effects_total"] = len(effects)
+        reduced["effects"] = list(effects[:_CLOSEOUT_FILE_HEAD])
     for field, total_field in (
         ("files_created", "files_created_total"),
         ("files_modified", "files_modified_total"),
@@ -777,6 +782,21 @@ def build_implement_closeout_body(
             manifest_value, EffectsManifest
         ):
             payload["effects_manifest"] = manifest_value
+        effects = attribution_effects_paths(
+            created=repo_files.created,
+            modified=repo_files.modified,
+            deleted=repo_files.deleted,
+            files_untracked_or_ignored=files_untracked_or_ignored or [],
+        )
+        payload["effects"] = list(effects)
+        tracked_empty = not (
+            repo_files.created or repo_files.modified or repo_files.deleted
+        )
+        if tracked_empty and effects:
+            payload["summary"] = (
+                f"{payload['summary']}; {len(effects)} path(s) touched "
+                "(untracked/gitignored)"
+            )
         return json.dumps(payload, separators=(",", ":"))
 
     body = _render_body(manifest_payload)

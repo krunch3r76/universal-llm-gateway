@@ -131,6 +131,64 @@ class CapStore:
     def clear_admit_intent(self, root_id: str, window_index: int) -> None:
         self.intent_path(root_id, window_index).unlink(missing_ok=True)
 
+    def intent_worker_thread(self, root_id: str, window_index: int) -> str | None:
+        """Optional ``worker=`` line on the durable intent file (post-fire bind)."""
+        path = self.intent_path(root_id, window_index)
+        if not path.is_file():
+            return None
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return None
+        for line in lines[1:]:
+            if line.startswith("worker="):
+                val = line.split("=", 1)[1].strip()
+                return val or None
+        return None
+
+    def bind_intent_worker(
+        self, root_id: str, window_index: int, worker_thread: str
+    ) -> None:
+        """Append worker thread to intent after dispatch fire (orphan-heal probe)."""
+        if not worker_thread:
+            return
+        path = self.intent_path(root_id, window_index)
+        if not path.is_file():
+            return
+        marker = f"worker={worker_thread}"
+        try:
+            text = path.read_text(encoding="utf-8").rstrip()
+        except OSError:
+            return
+        if marker in text:
+            return
+        path.write_text(text + f"\n{marker}\n", encoding="utf-8")
+
+    def resolve_orphan_worker_thread(
+        self, root_id: str, window_index: int
+    ) -> str | None:
+        """Worker id from intent sidecar or root transcript index, if recorded."""
+        worker = self.intent_worker_thread(root_id, window_index)
+        if worker:
+            return worker
+        from . import window_log
+
+        index_path = window_log.root_index_path(root_id)
+        if not index_path.is_file():
+            return None
+        needle = f"ADMIT window={window_index}"
+        try:
+            lines = index_path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return None
+        for line in reversed(lines):
+            if needle not in line:
+                continue
+            match = re.search(r"agent-bus:(\S+)", line)
+            if match:
+                return match.group(1)
+        return None
+
     def revise_path(self, root_id: str) -> Path:
         return self._revise_dir / f"{root_id}.revise"
 

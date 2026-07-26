@@ -21,6 +21,11 @@ from universal_logging import get_logger
 from .checkpoint_parse import ParsedCheckpoint
 from .executor_defaults import DEFAULT_MODEL, DEFAULT_MODEL_KNOBS
 from .materializer import _work_summary, handoff_subject, materialize_resume_packet
+from .materializer_autonomous_arc import autonomous_arc_guidance
+from .materializer_closed_detent import (
+    closed_detent_subject,
+    materialize_closed_detent_packet,
+)
 from .materializer_consult import consult_subject, materialize_consult_packet
 
 logger = get_logger(__name__)
@@ -133,27 +138,7 @@ def _task_guidance(
    orchestrator-workflow, and path-sim (§ Autonomous charter procession).
 2. {scoreboard_line}read the latest CHECKPOINT on agent-bus:{root_id}.
 
-## Autonomous arc (G-row decomposition — lay/advance on the scoreboard)
-G1  Q (L0)           cursor-sdk Grok — ranked question table + Question set.
-G2  A + Gate-2       cursor-sdk Grok — L1/L2 tables + dense spec
-                     (doc_validate gates 6/8/9) + implement_ready assertion.
-G3  R-admit          STOP with CONSULT_PENDING + consult_role: r_admit (pin R
-                     prompt URI / dense spec on CHECKPOINT Sidecars). Do NOT
-                     self-fire R-admit from this holder window — next tick admits
-                     the R-admit consult seat which owns primary
-                     team_dispatch(model=cdp/opus-5)→poll_hint (from=cdp);
-                     MCP project_ask = escape only. Consult seat writes shared
-                     provenance via consult_provenance_from_r_admit
-                     (consultant_family=anthropic / consultant_substrate=web-anthropic).
-                     Parse with fail-closed gate before worker resumes to G4.
-G4  implement +      implement the R-admitted bind, then deploy-verify:
-    deploy-verify      quality_gate → manage(sync_restart, service=<svc>) →
-                       manage(busy_status) wait_healthy → live probe.
-                       [restart-auth: manage MCP only]
-  G4a/G4b/G4c revise  probe FAILED ⇒ clean CHECKPOINT queues the next revise step
-                      (cap={revise_cap}); on exhaustion post BLOCKED (not done).
-G5  R-after          /work-item-review · cursor-sdk cursor/grok-4.5 (checkout-native).
-G6  close            closeout; friction_close; todo-close with evidence URIs.
+{autonomous_arc_guidance(revise_cap=revise_cap)}
 
 ## Work for this window
 Advance: {work}
@@ -171,7 +156,17 @@ above as that step requires. Stay inside the gated Next-pickup.
    A failed probe queues a revise step (≤{revise_cap}), it does not crash the window.
 4. A formal R12 CHECKPOINT is posted on agent-bus:{root_id} (from=cursor-sdk).
    Required sections inline: ## Steps, ## Frictions, ## Sidecars, WIP, Next-pickup,
-   Scoreboard URI, RESUME footer. ``status=complete`` without this CHECKPOINT is
+   Scoreboard URI, RESUME footer, ## What happened (plain) (layman window summary —
+   no gate IDs or assertion hashes). **WIP body (BINDING):** under
+   ``## WIP / In-flight`` write exactly ``_None this window._`` or bare ``none``
+   when idle — the tick parser treats FOL prose ``WIP=none`` as eligible now, but
+   prefer the silence marker. Do NOT invent freeform WIP tokens
+   (``WIP=holder…``, multi-line active prose without a real holder).
+   ``## Frictions`` MUST file via
+   ``cortex(tool="friction")`` with ``charter_root="{root_id}"``, ``window_index``,
+   ``session_id``, and ``actionable``; cite ``[filed assertion:<id>]`` per row or
+   ``_None this window._`` when truly none — prose-only bullets fail harvest audit.
+   ``status=complete`` without this CHECKPOINT is
    ``checkpoint_missing`` (autonomous self-heal will re-queue — do not rely on it).
 5. Scoreboard gated lane updated if a G-row status changed.
 6. Stop after the CHECKPOINT — no second window.
@@ -299,12 +294,13 @@ def select_packet(
 ) -> tuple[str, str]:
     """Return ``(packet_body, bus_subject)`` for the given admission mode.
 
-    ``autonomous`` yields the background-lead packet; ``consult`` yields the
-    depth-1 consult seat packet (judgment vs R-admit by ``consult_role``);
-    ``generate``/``handoff`` defer to the unchanged ``materialize_resume_packet``
-    + ``handoff_subject``. ``source_ref`` stamps implement-lane front matter and
-    is passed only on the autonomous path.
+    ``autonomous`` yields the background-lead packet; when Next-pickup declares
+    ``detent=closed`` (friction conveyor triage), yields the thin closed-detent
+    packet instead of the full Q→R arc. ``consult`` yields the depth-1 consult
+    seat packet; ``generate``/``handoff`` defer to ``materialize_resume_packet``.
     """
+    from .checkpoint_parse import pickup_detent
+
     if admission_mode == "consult":
         packet = materialize_consult_packet(
             root_id, parsed, scoreboard_uri=scoreboard_uri, window_index=window_index
@@ -312,6 +308,15 @@ def select_packet(
         role = consult_role or parsed.consult_role
         return packet, consult_subject(root_id, window_index, consult_role=role)
     if admission_mode == "autonomous":
+        if pickup_detent(parsed) == "closed":
+            packet = materialize_closed_detent_packet(
+                root_id,
+                parsed,
+                scoreboard_uri=scoreboard_uri,
+                window_index=window_index,
+                source_ref=source_ref,
+            )
+            return packet, closed_detent_subject(root_id, window_index)
         packet = materialize_autonomous_packet(
             root_id,
             parsed,

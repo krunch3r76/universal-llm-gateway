@@ -81,12 +81,11 @@ Empty pickers (`cdp/`, `cursor/`) reject at wire resolve.
 
 Cursor lane continues to emit `frontier.sdk.worker.*` (existing).
 
-## Pipeline model parity (Option 3 — deferred implement)
+## Pipeline model parity (Option 3 — implemented)
 
-**Bound:** land substrate branch in `frontier_dispatch_v1` (replace
-`normalize_frontier_wire_model` refusal for `cdp/`), reusing
-`run_cdp_generate`. Do **not** register a virtual `cdp-model-endpoint`
-pipeline (Option 2 rejected — `is_pipeline` is exact string membership).
+**Shipped:** substrate branch in `frontier_dispatch_v1` (``cdp/<picker>`` passes
+`normalize_frontier_wire_model`; handler routes to `run_cdp_generate` via
+`cdp_dispatch.py`). Virtual `cdp-model-endpoint` pipeline rejected (Option 2).
 
 **Step output contract (bound): dual bind — not Cowork-only**
 
@@ -109,9 +108,27 @@ proof URIs only is valid; body-only without Cowork file harvest is valid.
 
 | `pipeline_options` key | Role |
 |---|---|
-| `harvest_source` | `chat` \| `output-file` \| `auto` — avoids Cowork Output when `chat` suffices |
-| `expected_size` | `small` \| `large` \| `auto` — `large` may trigger download path |
+| `harvest_source` | `auto` \| `output-file` (Cowork paths — **use these**) · `chat` — **stub only** (see below) |
+| `expected_size` | `small` \| `large` \| `auto` — `large` may trigger Output download on Cowork paths |
 | `download_output` | explicit Cowork Output download attempt |
+
+**Operational posture (operator bind 2026-07-26):** **Cowork is the live harvest
+interface** — `/new` compose, Output download, `cortex-uri` pointer ladder under
+`auto`+`large`, Outputs-first packet doctrine. Do **not** steer fleet docs/skills
+toward `harvest_source=chat` yet.
+
+**Chat harvest — stub (future, ¬ production):** `harvest_source=chat` remains on
+the wire for harness parity but is **not** fleet-default today. Chat is a
+**different UI interface** (authorization prompts, compose gates, failure modes
+not fully cataloged). Future intent: prefer chat harvest for **small** work;
+it **can** carry **large** work too (cortex-direct packet doctrine — life `fs` +
+`cortex://` pointer) but that path is **untested** and **likely to hit auth gates**
+on anything that touches life MCP / pinned cortex paths. **One-off asks with no
+cortex / imprint / pinned-deliverable machinery** are the low-risk chat cases —
+expected to run without a hitch once promoted. Distinct from Cowork Outputs-first.
+Until the chat arc ships (gate catalog + smoke): **stub in spec/code only**; ¬
+author skills, packets, or pipeline defaults around chat harvest; ¬ recommend
+`harvest_source=chat` in operator guidance.
 
 These knobs affect **what the satellite returns**, not which bind fields exist
 on `StepOutput`. Callers choose bind at consume time.
@@ -119,7 +136,7 @@ on `StepOutput`. Callers choose bind at consume time.
 **Rejected:** single-bind-only steps that always require `content_proof_uri` or
 always require inline body — blocks pipelines that only need the other shape.
 
-Until Option 3 ships, `pipeline_options.model=cdp/…` and
-`build_dispatch_body(model=cdp/…)` raise `substrate_capability_unimplemented`
-(`capability=pipeline_dispatch_admission` or `frontier_dispatch`). Use
-`team_dispatch(model=cdp/…)`.
+`frontier_dispatch_v1` with `pipeline_options.model=cdp/…` runs the CDP
+substrate branch (sync poll-to-proof). `build_dispatch_body(model=cdp/…)` still
+raises `substrate_capability_unimplemented` (`capability=pipeline_dispatch_admission`).
+Async spawn-only outside the step handler: `team_dispatch(model=cdp/…)`.

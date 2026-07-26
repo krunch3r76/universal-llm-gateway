@@ -1,0 +1,206 @@
+{
+  "artifact": "dispatch_monitor_core",
+  "goal": "G4 -- portable stdlib-only Model for the dispatch supervisor monitor",
+  "arc": "agent-bus:5735",
+  "project": "project:dispatch-supervisor-monitor",
+  "sidecar_root": "cortex://notes/system/artifacts/dispatch-supervisor-monitor/dispatch_monitor_core/",
+  "schema_version": 1,
+  "authority": [
+    "cortex://notes/system/threads/5735-fable-g3-architecture-answer.md",
+    "cortex://notes/system/specs/dispatch-supervisor-monitor-mc-implementation.md",
+    "cortex://notes/system/specs/dispatch-supervisor-monitor/signal-envelope-view-transport-doctrine.md",
+    "cortex://notes/system/specs/dispatch-supervisor-monitor/architecture-gap-projection-libs.md"
+  ],
+  "bind": "P2 (pure Model) + S4 + S5 (Controller hosts libs/projection BroadcastHub)",
+  "python": "3.11 (uses PEP 604 unions and sys.stdlib_module_names; 3.10+ required)",
+  "verification": {
+    "pytest": "81 passed, 0 failed, 0 skipped",
+    "ruff_check": "All checks passed (ruff 0.15.11)",
+    "compileall": "OK",
+    "non_stdlib_imports_in_core": 0,
+    "max_core_file_lines_noncomment": 298,
+    "modularize_scan": "NOT RUN -- scripts/modularize unavailable on a CDP seat; run at graft. Proxy count above is under the 300 floor.",
+    "publish_integrity": "every file below was written to the sidecar and its write-time written_sha256 compared equal to the sha256 recorded here"
+  },
+  "counts": {
+    "files": 27,
+    "python_modules_core": 17,
+    "python_modules_tests": 5,
+    "fixtures": 4,
+    "total_bytes": 176318
+  },
+  "graft_target": "dispatch_monitor_ulg (G5) -- see README.md section 5",
+  "out_of_scope": [
+    "dispatch_monitor_ulg",
+    "Event Service wiring",
+    "libs/projection implementation",
+    "rag.yaml",
+    "agent-bus schema",
+    "thread.orchestration emission",
+    "SDL View"
+  ],
+  "files": [
+    {
+      "path": "README.md",
+      "sha256": "2e4b241fefa792e5c1ecde2ea46f6862d99f7ce3449e1a91cfb2e074375babeb",
+      "bytes": 15617,
+      "lines": 269
+    },
+    {
+      "path": "__init__.py",
+      "sha256": "39ed64d0f5a7685992203b9bc16c24f3671954dbe38a46de226f0ec9943a3bc7",
+      "bytes": 1955,
+      "lines": 68
+    },
+    {
+      "path": "__main__.py",
+      "sha256": "8939287cc04a71e00adbba78007bec2e4f0741cae14c841895e5dfcf94a54bd1",
+      "bytes": 3912,
+      "lines": 119
+    },
+    {
+      "path": "attention.py",
+      "sha256": "ec3ba91fb0f5fc761e93a0403cac38fbf905df5243af0db0717330b9607ed7f8",
+      "bytes": 12770,
+      "lines": 320
+    },
+    {
+      "path": "codec.py",
+      "sha256": "00e40db80ea35e6d512cdf7f73a5ba7318cedf4ef944dbe0c7ffae2df78c4767",
+      "bytes": 6192,
+      "lines": 165
+    },
+    {
+      "path": "correlation.py",
+      "sha256": "40a67906a118c1979d89fdfc560e627516abe8174c15f426bc304036afd4bd26",
+      "bytes": 4497,
+      "lines": 94
+    },
+    {
+      "path": "dtos.py",
+      "sha256": "8337eb3a170f55518024139ced1e4b52c4604fcf8b7871177815b74adad069a1",
+      "bytes": 8413,
+      "lines": 240
+    },
+    {
+      "path": "fingerprint.py",
+      "sha256": "65ff3ce6f63409f91d49a19d0c5394f46f38f099b00f24564cfa374f61a97829",
+      "bytes": 4284,
+      "lines": 107
+    },
+    {
+      "path": "fixtures/cdp-leg.jsonl",
+      "sha256": "59515d31dceeaff93514d6665444f28e344a56a4efcc92aaf3f99eb401750d2f",
+      "bytes": 3287,
+      "lines": 25
+    },
+    {
+      "path": "fixtures/charter-admit-run-terminal.jsonl",
+      "sha256": "3fc8f9a9450f9c18851521ec942774ae1f29726b0a0cd8d1afe2a7d3b630709e",
+      "bytes": 4091,
+      "lines": 27
+    },
+    {
+      "path": "fixtures/gs2-dual-emitter.jsonl",
+      "sha256": "7c7beb15151522327ee226d12b94ce82fd7af6e4bc2a40c00c6dafc99fdbe6ed",
+      "bytes": 3649,
+      "lines": 31
+    },
+    {
+      "path": "fixtures/parked-parent.jsonl",
+      "sha256": "1406a099f77e75ac50db0c8492eb2311c66aa5c71cbe07fc6b852fc0477b22d0",
+      "bytes": 3807,
+      "lines": 32
+    },
+    {
+      "path": "folds/__init__.py",
+      "sha256": "4b53cc04b2d70ac78d17d37c56e26e630a285af9b9208bbdf8312f5d8247528b",
+      "bytes": 415,
+      "lines": 14
+    },
+    {
+      "path": "folds/cdp.py",
+      "sha256": "29bf2f0e880a10ee6863280e1c6eba18e7160ea4375ecb86dbcf82c662459a15",
+      "bytes": 9058,
+      "lines": 220
+    },
+    {
+      "path": "folds/charter.py",
+      "sha256": "1d284e0706a5d22efdcf8b69ea6c958238c6cc7da53a9f9c855b99f7390ab8fa",
+      "bytes": 13428,
+      "lines": 321
+    },
+    {
+      "path": "folds/sdk.py",
+      "sha256": "fce93a4d1cfdfb15ea7852dccc4b9cb7e1b1fd885c97d7a86990ee3d563dafed",
+      "bytes": 10976,
+      "lines": 266
+    },
+    {
+      "path": "model.py",
+      "sha256": "2529b63bb2b7aca5ea11ac94975721690ba8de8212461a70e051f908db4bf906",
+      "bytes": 9273,
+      "lines": 218
+    },
+    {
+      "path": "projections.py",
+      "sha256": "6e938ae82125d53682bddce79593a16b05590f8045b62b148fafda44b07b076b",
+      "bytes": 6911,
+      "lines": 173
+    },
+    {
+      "path": "protocols.py",
+      "sha256": "bfd97a3c281184b8ae084e129a4e099d69000f15298883309ee7f39b51b55e8c",
+      "bytes": 4998,
+      "lines": 135
+    },
+    {
+      "path": "replay.py",
+      "sha256": "d170798107dfacf9d16864a2066eed3ba5602b16c3555987d8e0a41d49a9224d",
+      "bytes": 4650,
+      "lines": 123
+    },
+    {
+      "path": "signals.py",
+      "sha256": "ad360c92ac342ac3aa8fb1125b8c364db8cab0091d8b24d9062b8117dd99e9d7",
+      "bytes": 5419,
+      "lines": 132
+    },
+    {
+      "path": "tests/conftest.py",
+      "sha256": "169585152a459c6349f1a0224a76be32b1ae9f7e5138ba01880c622d92f709a8",
+      "bytes": 1674,
+      "lines": 56
+    },
+    {
+      "path": "tests/test_codec_and_watch.py",
+      "sha256": "885b14c9dab551d09db07eb63541b5c5562b20004359e55b42a2ebd1cad36818",
+      "bytes": 7131,
+      "lines": 186
+    },
+    {
+      "path": "tests/test_contract.py",
+      "sha256": "0cbbc4e672af2651b78d9808a993f8e1d3dc47bf02126309e07e433d4c2eb1f9",
+      "bytes": 9821,
+      "lines": 234
+    },
+    {
+      "path": "tests/test_determinism.py",
+      "sha256": "7a775cef19f754a56404c73a27a2e3f6f894b5b15483fbd2af76ebb6d25f0856",
+      "bytes": 3231,
+      "lines": 80
+    },
+    {
+      "path": "tests/test_folds.py",
+      "sha256": "c4e6714386298eb3ceb4555c17bcdcd6a7b1d37d15504ff7a18c18cb0879391a",
+      "bytes": 11851,
+      "lines": 295
+    },
+    {
+      "path": "watch.py",
+      "sha256": "c1838f82ef5d4f9ea8ff77ae965e947e73e310e2b21f988f03bc037b90c105b9",
+      "bytes": 5008,
+      "lines": 113
+    }
+  ]
+}

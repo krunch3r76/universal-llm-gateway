@@ -191,6 +191,39 @@ async def fetch_thread(thread_id: str) -> dict[str, Any]:
         return dict(resp.json())
 
 
+async def find_thread_id_by_slug(slug: str) -> str | None:
+    """Return active thread id for an exact slug match, if any."""
+    async with make_async_client(DEFAULT_AGENT_BUS_URL, timeout=_TIMEOUT_S) as client:
+        resp = await client.get(
+            "/threads",
+            params=[("status", "active"), ("query", slug)],
+            headers=_auth_headers(),
+        )
+        resp.raise_for_status()
+        for thread in resp.json().get("threads") or []:
+            if str(thread.get("slug") or "") == slug:
+                return str(thread.get("id") or "") or None
+    return None
+
+
+async def create_thread(
+    *,
+    slug: str,
+    summary: str = "",
+    tags: list[str] | None = None,
+) -> str:
+    """Create a standing bus thread without a turn; return its id."""
+    payload: dict[str, Any] = {"slug": slug}
+    if summary:
+        payload["summary"] = summary
+    if tags:
+        payload["tags"] = tags
+    async with make_async_client(DEFAULT_AGENT_BUS_URL, timeout=_TIMEOUT_S) as client:
+        resp = await client.post("/threads", json=payload, headers=_auth_headers())
+        resp.raise_for_status()
+        return str(resp.json()["id"])
+
+
 def closeout_turn_from_turns(turns: list[dict[str, Any]]) -> dict[str, Any] | None:
     """Latest machine-closeout turn (JSON body with ``status``), if present."""
     ordered = sorted(

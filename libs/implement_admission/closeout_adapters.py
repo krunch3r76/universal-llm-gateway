@@ -1,11 +1,17 @@
-"""Live closeout adapters — source-specific lifecycle mutations."""
+"""Live closeout adapters that mutate source-specific lifecycle state.
+
+Each adapter applies an ``ImplementCloseout`` to one ``SourceKind`` via cortex
+dispatch and optional filesystem sidecars; registry wires kinds to instances.
+"""
 
 from __future__ import annotations
 
 from implement_admission.closeout_helpers import (
     cortex_files_root,
+    decode_todo_attributes,
     extract_embedded_source_ref,
     plan_slug_from_ref,
+    should_withhold_stage_b_todo_done,
     source_from_ref,
     thread_id_from_bus_ref,
     workspaces_root,
@@ -27,6 +33,12 @@ def _result(
 
 
 class TodoCloseoutAdapter:
+    """Close a todo in-process: sidecar, evidence assert, optional workflow done.
+
+    Path-sim arcs withhold ``workflow_state=done`` until G6 (a:26246). Avoids
+    HTTP re-entry into Stargate from the async implement-closeout handler.
+    """
+
     def apply(
         self, closeout: ImplementCloseout, *, source: Source
     ) -> list[AdapterResult]:
@@ -103,13 +115,26 @@ class TodoCloseoutAdapter:
                 errors.append(f"needs_review: {needs_review['error']}")
 
         wf: dict[str, object] = {}
+        withheld_done = False
         if deliverable_ok:
-            wf = rt.dispatch(
-                "entity_update",
-                {"entity_id": todo_id, "workflow_state": "done"},
+            entity = rt.dispatch(
+                "entity_get",
+                {"entity_id": todo_id, "intent": "full"},
             )
-            if wf.get("error"):
-                errors.append(f"workflow_update: {wf['error']}")
+            if entity.get("error"):
+                errors.append(f"entity_get: {entity['error']}")
+            else:
+                attrs = decode_todo_attributes(entity.get("attributes"))
+                if should_withhold_stage_b_todo_done(attrs):
+                    # Evidence/sidecar already written; G6 todo-close owns done.
+                    withheld_done = True
+                else:
+                    wf = rt.dispatch(
+                        "entity_update",
+                        {"entity_id": todo_id, "workflow_state": "done"},
+                    )
+                    if wf.get("error"):
+                        errors.append(f"workflow_update: {wf['error']}")
 
         if not deliverable_ok:
             status = CloseoutStatus.PARTIAL.value
@@ -120,11 +145,15 @@ class TodoCloseoutAdapter:
         else:
             status = CloseoutStatus.COMPLETE.value
 
-        mutation = (
-            f"in-process todo-close: {todo_id} workflow_state=done"
-            if deliverable_ok
-            else f"withheld done for {todo_id}: gate_d failed"
-        )
+        if not deliverable_ok:
+            mutation = f"withheld done for {todo_id}: gate_d failed"
+        elif withheld_done:
+            mutation = (
+                f"withheld done for {todo_id}: path-sim arc pending G6 "
+                f"(attendance/dispatch_lane)"
+            )
+        else:
+            mutation = f"in-process todo-close: {todo_id} workflow_state=done"
         return [
             _result(
                 adapter=CloseoutAdapterKind.TODO.value,
@@ -136,6 +165,8 @@ class TodoCloseoutAdapter:
 
 
 class PlanPhaseCloseoutAdapter:
+    """Upsert a plan_phase entity as done and link it child_of its parent plan."""
+
     def apply(
         self, closeout: ImplementCloseout, *, source: Source
     ) -> list[AdapterResult]:
@@ -203,6 +234,8 @@ class PlanPhaseCloseoutAdapter:
 
 
 class PlanCloseoutAdapter:
+    """Write arc wrap-up notes and mark the plan entity workflow_state done."""
+
     def apply(
         self, closeout: ImplementCloseout, *, source: Source
     ) -> list[AdapterResult]:
@@ -258,6 +291,8 @@ class PlanCloseoutAdapter:
 
 
 class PacketCloseoutAdapter:
+    """Persist a packet closeout report and compose any embedded source_ref."""
+
     def apply(
         self, closeout: ImplementCloseout, *, source: Source
     ) -> list[AdapterResult]:
@@ -288,6 +323,8 @@ class PacketCloseoutAdapter:
 
 
 class AgentBusCloseoutAdapter:
+    """Write a thread closeout sidecar and reply on the agent-bus thread."""
+
     def apply(
         self, closeout: ImplementCloseout, *, source: Source
     ) -> list[AdapterResult]:

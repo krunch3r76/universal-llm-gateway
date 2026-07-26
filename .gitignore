@@ -104,6 +104,7 @@ tests/*
 !services/universal-stargate/systems/frontier_consult/test_life_intent_routes.py
 !services/universal-stargate/systems/frontier_consult/test_anthropic_override_gate.py
 !libs/life_intent/test_*.py
+!libs/session_store/test_*.py
 # Root-anchored: rsync --filter=:- .gitignore ignores git ! negations.
 # Use /foo/ not foo/ when foo/ also appears as a source directory elsewhere in the tree.
 /templates/

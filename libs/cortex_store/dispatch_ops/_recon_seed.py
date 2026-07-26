@@ -44,6 +44,24 @@ def seed_recon_todo(
     if isinstance(existing, dict) and "error" not in existing:
         return None
 
+    if extra_attrs and extra_attrs.get("spawned_by_friction") is not None:
+        from ._friction_enqueue import todo_exists_for_friction
+
+        try:
+            friction_id = int(extra_attrs["spawned_by_friction"])
+        except (TypeError, ValueError):
+            friction_id = None
+        if friction_id is not None:
+            prior = todo_exists_for_friction(friction_id)
+            if prior and prior != todo_id:
+                logger.warning(
+                    "seed_recon_todo refused %s — friction %s already spawned %s",
+                    todo_id,
+                    friction_id,
+                    prior,
+                )
+                return {"error": f"spawned_by_friction={friction_id} already has {prior}"}
+
     attributes: dict[str, Any] = {
         "seed_contract_ack": seed_ack,
         "density_triage": density_triage,
@@ -56,6 +74,10 @@ def seed_recon_todo(
         attributes["required_skills"] = required_skills
     if extra_attrs:
         attributes.update(extra_attrs)
+
+    from .state_card import merge_state_card
+
+    attributes = merge_state_card(attributes)
 
     created = _op_entity_create(
         id=todo_id,

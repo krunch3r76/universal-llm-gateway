@@ -18,6 +18,7 @@ from ..protocol import StepOutput
 from ..registry import register_handler
 from .admission_checks import validate_frontier_dispatch_step
 from .admission_gate import run_admission_gate
+from .cdp_dispatch import is_cdp_dispatch_model, run_cdp_dispatch
 from .completion import build_dispatch_output
 from .gen_params import build_frontier_request
 from .native_loop import run_dispatch_loop
@@ -55,6 +56,11 @@ class FrontierDispatchHandler(BaseHandler):
             "skills_mount",
             # dispatch-surface-split Phase 1: consumed by output_short gate (Phase 3)
             "output_contract",
+            # CDP substrate harvest economics (Option 3)
+            "harvest_source",
+            "expected_size",
+            "download_output",
+            "timeout_seconds",
         }
     )
 
@@ -64,6 +70,8 @@ class FrontierDispatchHandler(BaseHandler):
         context: PipelineContext,
     ) -> StepOutput:
         admission = await run_admission_gate(self, step, context)
+        if is_cdp_dispatch_model(admission.model):
+            return await run_cdp_dispatch(self, step, context, admission)
         bundle = build_frontier_request(self, step, context, admission)
         outcome = await run_dispatch_loop(self, step, context, admission, bundle.req)
         return build_dispatch_output(context, step, admission, outcome, bundle.system)

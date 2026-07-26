@@ -11,6 +11,10 @@ import pytest
 
 from cortex_store.dispatch_ops._friction_close_impl import close_friction_assertion
 from cortex_store.dispatch_ops.ops_entities import _op_entity_get
+from cortex_store.dispatch_ops.state_card import (
+    derive_work_item_route,
+    state_card_defaults,
+)
 
 _SKILL_ENTITY = "agent_skill:test-promoted"
 _TODO_ID = "todo:promoted-sample"
@@ -37,16 +41,16 @@ def _insert_friction(conn, claim: str = _FRICTION_CLAIM) -> int:  # type: ignore
 
 def _patch_supersede_side_effects(monkeypatch: pytest.MonkeyPatch) -> None:
     """Suppress background tasks in _supersede that don't apply in test context."""
+    noop = lambda *a, **k: None  # noqa: E731
     for target in (
-        "enrich_background",
-        "enrich_old_assertion_events",
-        "reindex_assertion_fts",
-        "_embed_assertion_background",
+        "cortex_store.enrichment.enrich_old_assertion_events",
+        "cortex_store.enrichment.reindex_assertion_fts",
+        "cortex_store.enrichment_dispatch.dispatch_assertion_enrichment_background",
+        "cortex_store.predicate_extract_dispatch.dispatch_predicate_extract_background",
+        "cortex_store.substantiation_sync.recompute_entity_substantiation_status",
+        "cortex_store.routes.assertions._shared._embed_assertion_background",
     ):
-        monkeypatch.setattr(
-            f"cortex_store.routes.assertions._supersede.{target}",
-            lambda *a, **k: None,
-        )
+        monkeypatch.setattr(target, noop)
 
     class _FakeVS:
         @staticmethod
@@ -70,16 +74,8 @@ def _patch_supersede_side_effects(monkeypatch: pytest.MonkeyPatch) -> None:
         lambda *a, **k: _FakeImpact(),
     )
     monkeypatch.setattr(
-        "cortex_store.routes.assertions._supersede.dispatch_predicate_extract_background",
-        lambda *a, **k: None,
-    )
-    monkeypatch.setattr(
-        "cortex_store.routes.assertions._supersede.recompute_entity_substantiation_status",
-        lambda *a, **k: None,
-    )
-    monkeypatch.setattr(
         "cortex_store.dispatch_ops._friction_close_impl.record",
-        lambda *a, **k: None,
+        noop,
     )
 
 
@@ -123,6 +119,16 @@ def test_promoted_todo_attributes(friction_db: int) -> None:
     assert "test-promoted" in attrs.get("required_skills", [])
     assert attrs.get("seed_contract_ack")
     assert attrs.get("density_triage") == "recon_pending"
+    defaults = state_card_defaults()
+    for key in ("workflow", "stage", "bind_status", "next_action"):
+        assert attrs.get(key) == defaults[key]
+    assert (
+        derive_work_item_route(
+            bind_status=attrs["bind_status"],
+            density_triage=attrs["density_triage"],
+        )
+        == "PATH-SIM"
+    )
 
 
 @pytest.mark.offline
@@ -144,6 +150,12 @@ def test_friction_close_todo_dedup(friction_db: int) -> None:
     assert result2.get("status") == "closed"
     # dedup: todo already exists → promotion absent
     assert result2.get("promotion") is None
+
+    entity = _op_entity_get(entity_id=_TODO_ID, intent="full")
+    attrs = entity.get("attributes") or {}
+    defaults = state_card_defaults()
+    for key in ("workflow", "stage", "bind_status", "next_action"):
+        assert attrs.get(key) == defaults[key]
 
 
 @pytest.mark.offline
@@ -186,3 +198,16 @@ def test_non_skill_owner_promotion_succeeds(
     # required_skills omitted (not an empty list) for non-skill owners
     assert "required_skills" not in attrs
     assert attrs.get("density_triage") == "recon_pending"
+
+
+@pytest.mark.offline
+def test_promoted_todo_entity_get_four_card_keys_without_projection(
+    friction_db: int,
+) -> None:
+    """Post-promote entity_get returns four card keys without libs/projection."""
+    close_friction_assertion(friction_db, _TODO_ID, agent="t", session_id="t")
+    entity = _op_entity_get(entity_id=_TODO_ID, intent="full")
+    assert "error" not in entity
+    attrs = entity.get("attributes") or {}
+    for key in ("workflow", "stage", "bind_status", "next_action"):
+        assert key in attrs and attrs[key]

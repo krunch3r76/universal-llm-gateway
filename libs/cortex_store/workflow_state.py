@@ -146,3 +146,32 @@ def emit_todo_closure_gap_if_needed(
         entity_id=entity_id,
         prior_workflow_state=prior_workflow_state or "",
     )
+
+
+def emit_todo_done_side_effects(
+    conn: sqlite3.Connection,
+    *,
+    entity_id: str,
+    entity_type: str,
+    new_workflow_state: str,
+    prior_workflow_state: str | None,
+) -> None:
+    """Post-commit hooks for todo → done (gap signal + spawned friction close)."""
+    emit_todo_closure_gap_if_needed(
+        conn,
+        entity_id=entity_id,
+        entity_type=entity_type,
+        new_workflow_state=new_workflow_state,
+        prior_workflow_state=prior_workflow_state,
+    )
+    # Local import: friction close pulls assertion write path; avoid cycle at
+    # module load with entity_crud ↔ dispatch_ops.
+    from .dispatch_ops._friction_followon_close import close_spawned_friction_on_todo_done
+
+    close_spawned_friction_on_todo_done(
+        conn,
+        entity_id=entity_id,
+        entity_type=entity_type,
+        new_workflow_state=new_workflow_state,
+        prior_workflow_state=prior_workflow_state,
+    )

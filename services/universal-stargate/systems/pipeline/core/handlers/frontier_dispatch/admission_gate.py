@@ -27,6 +27,7 @@ from .admission_checks import (
     resolve_remote_mcp,
     warn_caller_mcp_disabled,
 )
+from .cdp_dispatch import build_cdp_admission_result, is_cdp_dispatch_model
 from .request import (
     resolve_agent,
     resolve_model,
@@ -87,6 +88,15 @@ async def run_admission_gate(
     opts = context.options
     agent = resolve_agent(opts, step)
     model = await resolve_model(opts, step, context, agent=agent)
+    if is_cdp_dispatch_model(model):
+        return build_cdp_admission_result(
+            handler,
+            step,
+            context,
+            model=model,
+            opts=opts,
+            role=agent,
+        )
     # Raw pipeline-op dispatches (the escape hatch documented in the package
     # docstring) bypass build_dispatch_body, so model_entity_id may not be
     # pre-populated in pipeline_options. Recompute the canonical id from the

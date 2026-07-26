@@ -14,6 +14,12 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from universal_logging import get_logger
+
+from .checkpoint_sections import find_section, split_sections
+
+logger = get_logger(__name__)
+
 # status glyph -> canonical step status (v0 minimal Steps block)
 _STEP_STATUS = {" ": "pending", "~": "in_progress", "x": "done", "!": "blocked"}
 _STEP_RE = re.compile(r"^\s*(?:\d+\.|[-*])\s*\[([ x~!])\]\s*(.+?)\s*$")
@@ -22,12 +28,28 @@ _GATED_ROW_RE = re.compile(r"\b[GR]\d+[a-z]?\b")
 # Closeout synonyms when authors omit the G-row id (a:26092). Case-sensitive:
 # lowercase ``closeout`` must NOT gate (A1). ``R-after`` is never allowlisted.
 _CLOSEOUT_GATED_RE = re.compile(r"\b(?:CLOSEOUT|arc[_-]close)\b")
+_DETENT_RE = re.compile(
+    r"\bdetent\s*=\s*(closed|standard|wide|frontier)\b",
+    re.IGNORECASE,
+)
 _SCOREBOARD_URI_RE = re.compile(r"(cortex://\S*scoreboard\S*)", re.IGNORECASE)
 _CORTEX_URI_RE = re.compile(r"cortex://[^\s)\]]+")
-_OPERATOR_FORK_RE = re.compile(r"\boperator\b", re.IGNORECASE)
+# T6 §5.4 — marker-first; bare ``operator`` mention does not block (M0 legacy telemetry).
+_AWAIT_OPERATOR_RE = re.compile(
+    r"^\s*(?:\d+\.|[-*])?\s*\[await:operator\]",
+    re.IGNORECASE,
+)
+_OPERATOR_COLON_RE = re.compile(
+    r"^\s*(?:\d+\.|[-*])?\s*OPERATOR:\s",
+    re.IGNORECASE,
+)
+_BLOCKED_OPERATOR_RE = re.compile(r"blocked:\s*operator", re.IGNORECASE)
+_OPERATOR_FORK_LEGACY_RE = re.compile(r"\boperator\b", re.IGNORECASE)
 # Bare "none" or "none (gloss)" — parenthetical notes must not flip WIP-active.
+# Accept both colon and equals prefixes: docs/FOL teach predicate ``WIP=none``;
+# body authors also write ``WIP: none``. Dogfood 5854 stalled on equals-only.
 _WIP_NONE_RE = re.compile(
-    r"^(?:[-*]\s*)?(?:wip:|in[_-]?flight:)?none(?:\s*\(.*\))?\s*$",
+    r"^(?:[-*]\s*)?(?:wip\s*[=:]|in[_-]?flight\s*[=:])?\s*none(?:\s*\(.*\))?\s*$",
     re.IGNORECASE,
 )
 # Schema §4.0 / Frictions mirror — silence ≠ none; explicit marker ⇒ empty list.
@@ -38,11 +60,6 @@ _NONE_WINDOW_RE = re.compile(
 )
 # Canonical RESUME footer prefix (schema §3.1.1 / Align-2).
 _RESUME_PREFIX = "— RESUME (any seat, no command):"
-# Implication wire: ``P1 ⇒ Steps: …`` / ``P2 => Next-pickup: …``
-_IMPLICATION_ARROW_RE = re.compile(
-    r"^P\d+\s*(?:⇒|=>)\s*(Steps|Next-pickup|WIP)\s*:\s*(.+)$",
-    re.IGNORECASE,
-)
 _CONSULT_PENDING_RE = re.compile(r"\bCONSULT_PENDING\b", re.IGNORECASE)
 # Negation markers that demote a CONSULT_PENDING mention from an active stop-class
 # directive to inert prose (a worker's own "do not re-consult" disclaimer). Scanned
@@ -75,6 +92,14 @@ _SOURCE_REF_RE = re.compile(r"\b((?:todo|plan|plan_phase):[a-z0-9][a-z0-9._-]*)"
 _JUDGMENT_GAP_SNIFF_RE = re.compile(r"\bjudgment\s+gap\b", re.IGNORECASE)
 
 
+def _sections(body: str) -> dict[str, str]:
+    return split_sections(body)
+
+
+def _find_section(sections: dict[str, str], *needles: str) -> str:
+    return find_section(sections, *needles)
+
+
 @dataclass(frozen=True)
 class Step:
     ordinal: int
@@ -102,28 +127,6 @@ class ParsedCheckpoint:
     source_ref: str | None = None  # todo:/plan:/plan_phase: ref for the implement gate
 
 
-def _sections(body: str) -> dict[str, str]:
-    """Split a markdown body into ``## heading`` -> section-text (lowercased key)."""
-    sections: dict[str, list[str]] = {}
-    current = "_preamble"
-    sections[current] = []
-    for line in body.splitlines():
-        heading = re.match(r"^#{2,}\s+(.*?)\s*$", line)
-        if heading:
-            current = heading.group(1).strip().lower()
-            sections.setdefault(current, [])
-            continue
-        sections.setdefault(current, []).append(line)
-    return {k: "\n".join(v).strip() for k, v in sections.items()}
-
-
-def _find_section(sections: dict[str, str], *needles: str) -> str:
-    for key, text in sections.items():
-        if any(n in key for n in needles):
-            return text
-    return ""
-
-
 def _parse_steps(text: str) -> list[Step]:
     steps: list[Step] = []
     ordinal = 0
@@ -139,6 +142,33 @@ def _parse_steps(text: str) -> list[Step]:
             )
         )
     return steps
+
+
+def _row_awaits_operator(row: str) -> bool:
+    """True when a Next-pickup row carries a T6 §5.4 operator-await marker."""
+    if _AWAIT_OPERATOR_RE.search(row):
+        return True
+    if _OPERATOR_COLON_RE.search(row):
+        return True
+    if _BLOCKED_OPERATOR_RE.search(row):
+        return True
+    return False
+
+
+def _detect_open_operator_fork(
+    next_pickup: list[str], sections: dict[str, str]
+) -> bool:
+    """Marker-first T6 discriminator; legacy mention-only rows do not block."""
+    for item in next_pickup:
+        if _row_awaits_operator(item):
+            return True
+        if _OPERATOR_FORK_LEGACY_RE.search(item):
+            logger.info(
+                "operator_fork_legacy_divergence row=%r",
+                item[:120],
+            )
+    operator_section = _find_section(sections, "operator fork")
+    return bool(operator_section.strip())
 
 
 def _parse_next_pickup(text: str) -> list[str]:
@@ -185,7 +215,8 @@ def _wip_is_none(text: str) -> bool:
     if _WIP_NONE_RE.match(stripped):
         return True
     # Legacy normalize path for bare tokens without gloss.
-    normalized = re.sub(r"[-*\s`_]", "", stripped).lower()
+    # Map ``=`` → ``:`` so FOL predicate form ``WIP=none`` matches ``wip:none``.
+    normalized = re.sub(r"[-*\s`_]", "", stripped).lower().replace("=", ":")
     return normalized in {"none", "wip:none", "inflight:none", "nonethiswindow."}
 
 
@@ -202,7 +233,7 @@ def parse_checkpoint(body: str) -> ParsedCheckpoint:
 
     next_pickup = _parse_next_pickup(next_text)
     next_pickup_gated = any(item_is_gated(item) for item in next_pickup)
-    open_operator_fork = any(_OPERATOR_FORK_RE.search(item) for item in next_pickup)
+    open_operator_fork = _detect_open_operator_fork(next_pickup, sections)
 
     scoreboard_uri = None
     m = _SCOREBOARD_URI_RE.search(body)
@@ -342,6 +373,15 @@ def _has_resume_footer(body: str) -> bool:
     return _RESUME_PREFIX in body
 
 
+def pickup_detent(parsed: ParsedCheckpoint) -> str | None:
+    """Return detent token from Next-pickup rows when declared (conveyor mint)."""
+    for row in parsed.next_pickup:
+        match = _DETENT_RE.search(row)
+        if match:
+            return match.group(1).lower()
+    return None
+
+
 def first_actionable_step(parsed: ParsedCheckpoint) -> Step | None:
     """First step that is not done (the window's unit of work), if any."""
     for step in parsed.steps:
@@ -359,72 +399,3 @@ def item_is_gated(text: str) -> bool:
     (a:26092 / A1).
     """
     return bool(_GATED_ROW_RE.search(text) or _CLOSEOUT_GATED_RE.search(text))
-
-
-def _gated_ids_in(text: str) -> list[str]:
-    return _GATED_ROW_RE.findall(text)
-
-
-def _is_t_row_target(text: str) -> bool:
-    """True when the implication names a T-lane id (not a gated G/R row)."""
-    return bool(re.search(r"\bT\d+[a-z]?\b", text)) and not _GATED_ROW_RE.search(text)
-
-
-def resolve_implication_target(
-    parsed: ParsedCheckpoint, implication: str
-) -> str | None:
-    """Map one Implication line to a gated Step / Next-pickup work string.
-
-    Returns None when the line is malformed, targets WIP-only without a gated
-    id, names a T-row, or the gated id is absent from Steps and Next-pickup.
-    """
-    m = _IMPLICATION_ARROW_RE.match(implication.strip())
-    if not m:
-        return None
-    target_kind = m.group(1).strip().lower()
-    rest = m.group(2).strip()
-    if _is_t_row_target(rest):
-        return None
-    gated = _gated_ids_in(rest)
-    if not gated:
-        return None
-    # Prefer the first gated id named in the implication body.
-    want = gated[0]
-    if target_kind in {"next-pickup", "steps"}:
-        for item in parsed.next_pickup:
-            if want in _gated_ids_in(item):
-                return item
-        for step in parsed.steps:
-            if step.status == "done":
-                continue
-            if want in _gated_ids_in(step.title):
-                return f"Step {step.ordinal} — {step.title} (status: {step.status})"
-        return None
-    # WIP target: only accept when a gated id still resolves to Next-pickup/Steps.
-    for item in parsed.next_pickup:
-        if want in _gated_ids_in(item):
-            return item
-    for step in parsed.steps:
-        if step.status == "done":
-            continue
-        if want in _gated_ids_in(step.title):
-            return f"Step {step.ordinal} — {step.title} (status: {step.status})"
-    return None
-
-
-def first_resolvable_implication(
-    parsed: ParsedCheckpoint,
-) -> tuple[str | None, bool]:
-    """S1: first Implication whose target resolves to a gated Step/Next-pickup.
-
-    Returns ``(work_text, unresolved)``. ``unresolved`` is True when at least
-    one Implication was present and none resolved (caller logs
-    ``implication_target_unresolved``).
-    """
-    if not parsed.implications:
-        return None, False
-    for line in parsed.implications:
-        resolved = resolve_implication_target(parsed, line)
-        if resolved is not None:
-            return resolved, False
-    return None, True

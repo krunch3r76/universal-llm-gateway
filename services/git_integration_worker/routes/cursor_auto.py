@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 from typing import Any
 
 from fastapi import APIRouter
@@ -91,15 +92,27 @@ async def enqueue(body: EnqueueBody):
 
 
 async def auto_worker_loop(app: Any) -> None:
-    """Background: heartbeat + claim/process queued Auto jobs."""
+    """Background: heartbeat + claim/process queued Auto jobs.
+
+    Heartbeat must continue during long ``process_job`` awaits (nested SDK
+    often exceeds ``heartbeat_ttl_s``). Otherwise enqueue sees a dead handler
+    mid-job and the next ``agent_bus.request`` 503s — 5867 DIRECTIVE-4 class.
+    """
     registry = get_registry()
     registry.register(_HANDLER_ID)
     logger.info("cursor-auto worker loop started handler_id=%s", _HANDLER_ID)
+
+    async def _heartbeat_while_busy() -> None:
+        while True:
+            registry.heartbeat(_HANDLER_ID)
+            await asyncio.sleep(min(5.0, _WORKER_INTERVAL_S * 4))
+
     try:
         while True:
             registry.heartbeat(_HANDLER_ID)
             job = get_queue().claim_next()
             if job is not None:
+                hb_task = asyncio.create_task(_heartbeat_while_busy())
                 try:
                     result = await process_job(job)
                     logger.info(
@@ -113,6 +126,10 @@ async def auto_worker_loop(app: Any) -> None:
                     logger.exception(
                         "cursor-auto job=%s failed: %s", job.job_id, exc
                     )
+                finally:
+                    hb_task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await hb_task
             await asyncio.sleep(_WORKER_INTERVAL_S)
     finally:
         registry.unregister(_HANDLER_ID)

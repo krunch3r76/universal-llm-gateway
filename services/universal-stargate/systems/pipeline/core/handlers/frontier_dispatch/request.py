@@ -77,16 +77,19 @@ def translate_reasoning_effort(
 def normalize_frontier_wire_model(model: str) -> str:
     """Prefix bare cloud ids (e.g. gpt-5.5) before provider routing.
 
-    Agent substrates (``cursor/``, ``cdp/``) resolve successfully but are
-    rejected here — frontier_dispatch is the cloud native-loop path.
+    ``cdp/<picker>`` passes through for the pipeline CDP branch (Option 3).
+    Other agent substrates (``cursor/``) remain rejected — cloud native-loop only.
     """
     from model_id import (
         require_cloud_api_backend,
         resolve_wire_model_id,
     )
 
+    resolution = resolve_wire_model_id(model, require_cloud=True)
+    if resolution.backend_type == "cdp":
+        return resolution.wire_id
     return require_cloud_api_backend(
-        resolve_wire_model_id(model, require_cloud=True),
+        resolution,
         capability="frontier_dispatch",
     ).wire_id
 

@@ -45,6 +45,7 @@ from ._shared import record
 from .ops_assertions import _op_assertions
 from .ops_assertions_update import _op_assertion_get, _op_assertion_update
 from .ops_entities import _op_entity_get, _op_entity_update
+from .state_card import merge_state_card
 
 logger = get_logger("cortex-api.dispatch_ops.todo_gate_distillation")
 
@@ -239,6 +240,14 @@ def _evaluate_from_persisted(
             **recon_waiver.event_payload(),
         )
 
+    # Mirror implement_ready_gate.py — post-check must honor stamped consult attrs.
+    consult_thread = str(attrs.get("consult_thread") or "").strip() or None
+    consult_verdict = (
+        str(attrs.get("verdict") or attrs.get("consult_verdict") or "").strip() or None
+    )
+    consultant_family = str(attrs.get("consultant_family") or "").strip() or None
+    consultant_substrate = str(attrs.get("consultant_substrate") or "").strip() or None
+
     return evaluate_implement_ready(
         todo_id=entity_id,
         density_triage=attrs.get("density_triage"),
@@ -257,6 +266,10 @@ def _evaluate_from_persisted(
         skeptic_evidence_grounded=skeptic_outcome.evidence_grounded,
         skeptic_evidence_unresolved=skeptic_outcome.evidence_unresolved,
         skeptic_evidence_mode=skeptic_outcome.evidence_mode,
+        consult_thread=consult_thread,
+        verdict=consult_verdict,
+        consultant_family=consultant_family,
+        consultant_substrate=consultant_substrate,
     )
 
 
@@ -300,6 +313,31 @@ def _incoming_waiver_from_params(
         waived_by=waived_by,
         spec_sha256=spec_sha256,
     )
+
+
+def _apply_gate_state_card(
+    prior_attrs: dict[str, Any], attr_patch: dict[str, Any]
+) -> dict[str, Any]:
+    """Stamp Gate-2 attrs and settle bind_status with a refreshed next_action."""
+    return merge_state_card({**prior_attrs, **attr_patch, "bind_status": "settled"})
+
+
+def _stamp_settled_state_card(
+    *,
+    entity_id: str,
+    prior_attrs: dict[str, Any],
+    attr_patch: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Persist merged Gate-2 attrs including bind_status=settled."""
+    merged = _apply_gate_state_card(prior_attrs, attr_patch)
+    card_keys = ("workflow", "stage", "bind_status", "next_action")
+    update = _op_entity_update(
+        entity_id=entity_id,
+        attributes={**attr_patch, **{k: merged[k] for k in card_keys}},
+    )
+    if "error" in update:
+        return update
+    return None
 
 
 def distill_todo_implement_gate(
@@ -418,6 +456,18 @@ def distill_todo_implement_gate(
                 assertion_id=existing_id,
                 idempotent=True,
             )
+            settle_err = _stamp_settled_state_card(
+                entity_id=resolved.entity_id,
+                prior_attrs=prior_attrs,
+                attr_patch={
+                    "density_triage": triage,
+                    "implement_ready_assertion_id": existing_id,
+                    "files_expected": expected,
+                    "acceptance_criteria": acs,
+                },
+            )
+            if settle_err is not None:
+                return settle_err
             return _success_payload(
                 entity_id=resolved.entity_id,
                 prepared=prepared,
@@ -461,10 +511,12 @@ def distill_todo_implement_gate(
         if incoming_waiver is not None:
             attr_patch["recon_waived"] = incoming_waiver.to_attr_json()
 
+        card_patch = _apply_gate_state_card(prior_attrs, attr_patch)
+        card_keys = ("workflow", "stage", "bind_status", "next_action")
         update = _op_entity_update(
             entity_id=resolved.entity_id,
             source_uri=prepared.spec_path,
-            attributes=attr_patch,
+            attributes={**attr_patch, **{k: card_patch[k] for k in card_keys}},
         )
         if "error" in update:
             retract = _retract_assertion(assertion_id)
@@ -484,7 +536,7 @@ def distill_todo_implement_gate(
             )
             return {"error": update["error"], "step": "entity_update"}
 
-        merged_attrs = {**prior_attrs, **attr_patch}
+        merged_attrs = card_patch
         verdict = _evaluate_from_persisted(
             entity_id=resolved.entity_id,
             prepared=prepared,

@@ -1,8 +1,8 @@
 """Manage-hosted charter-runner tick.
 
 Periodic supervisor that watches enrolled standing roots and admits one window
-per eligible root. Default substrate is unattended Grok 4.5 High
-(``cursor/grok-4.5``, effort=high, fast=false) via generate dispatch.
+per eligible root. Default substrate is unattended Grok 4.5
+(``cursor/grok-4.5``, effort=high, fast=true) via generate dispatch.
 Opt-in attended handoff (``CHARTER_ADMISSION_MODE=handoff``) POSTs
 ``/api/v1/team/handoff`` with ``role=cursor-consult`` for IDE observation.
 ``CHARTER_ADMISSION_MODE=autonomous`` selects the background-lead packet and
@@ -47,8 +47,10 @@ from .dispatch_client import AdmissionMode
 from .eligibility import (
     Decision,
     evaluate_root,
+    live_wip_for_window,
+    next_window_index,
 )
-from .giw_live_hold import probe_giw_live_hold
+from .giw_live_hold import build_tick_env_snapshot
 from .harvest import completed_windows, harvest_completed_windows
 
 # One-shot at tick_loop import: long-lived manage may hold pre-census modules
@@ -78,6 +80,53 @@ DEFAULT_AUTONOMOUS_STALE_S = 3600.0
 
 # Re-export for tests that import via tick_loop.
 _completed_windows = completed_windows
+
+
+async def _worker_terminal_or_absent(worker_thread: str | None) -> bool:
+    """True when the orphan-intent worker is gone or finished (heal-safe)."""
+    if not worker_thread:
+        return True
+    try:
+        failure = await bus_client.worker_failure_reason(worker_thread)
+        if failure is not None:
+            return True
+        detail = await bus_client.fetch_thread(worker_thread)
+        status = str(detail.get("status") or "").lower()
+        if not status and isinstance(detail.get("thread"), dict):
+            status = str((detail.get("thread") or {}).get("status") or "").lower()
+        return status == "closed"
+    except Exception:  # noqa: BLE001 — unreachable worker ⇒ absent
+        return True
+
+
+async def maybe_heal_admit_intent_orphan(
+    root_id: str,
+    turns: list[dict],
+    caps: CapStore,
+) -> bool:
+    """Clear orphan admit-intent when WIP is gone and the worker is terminal/absent.
+
+    Stopped roots keep intentional intents (a:26167 5xx / pointer-fail keep-intent) —
+    heal must not clear those; charter_reload clears stopped before orphans can heal.
+    """
+    window_index = next_window_index(turns)
+    if not caps.has_admit_intent(root_id, window_index):
+        return False
+    allowed, reason = caps.check(root_id)
+    if not allowed and reason and reason.startswith("stopped:"):
+        return False
+    if live_wip_for_window(turns, window_index):
+        return False
+    worker = caps.resolve_orphan_worker_thread(root_id, window_index)
+    if not await _worker_terminal_or_absent(worker):
+        return False
+    caps.clear_admit_intent(root_id, window_index)
+    await events.emit_manage_charter_tick_intent_healed(
+        root=root_id,
+        window_index=window_index,
+        worker_thread=worker or "",
+    )
+    return True
 
 
 def _env_unattended_stale_raw() -> float | None:
@@ -249,7 +298,7 @@ class CharterRunnerTickLoop:
 
     async def _tick_once(self) -> None:
         roots = await bus_client.list_enrolled_roots()
-        giw_live_hold = await probe_giw_live_hold()
+        env_snapshot = await build_tick_env_snapshot()
         admitted = 0
         skipped_by_reason: dict[str, int] = {}
         state_closes_this_tick = 0
@@ -259,8 +308,9 @@ class CharterRunnerTickLoop:
                 continue
             turns = await bus_client.fetch_turns(root_id)
             await harvest_completed_windows(root_id, turns)
+            await maybe_heal_admit_intent_orphan(root_id, turns, self._caps)
             decision = evaluate_root(
-                root_id, turns, self._caps, giw_live_hold=giw_live_hold
+                root_id, turns, self._caps, env_snapshot=env_snapshot
             )
             if decision.eligible:
                 try:
@@ -295,6 +345,12 @@ class CharterRunnerTickLoop:
             admitted=admitted,
             skipped_by_reason=skipped_by_reason,
         )
+        try:
+            from . import conveyor as _conveyor_mod
+
+            await _conveyor_mod.sweep_stale_enrollments()
+        except Exception:  # noqa: BLE001 — stale sweep must not abort tick
+            logger.exception("charter-runner conveyor stale sweep failed")
 
     async def _recover_worker_failure(self, decision: Decision) -> bool:
         """A-R3-1: failed/timeout/closed worker while in-flight → stop root."""

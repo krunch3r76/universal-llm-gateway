@@ -2,14 +2,12 @@
 
 Discovery is opt-in: only threads tagged ``charter-runner`` are considered
 (bounds blast radius per operator safety bind). Eligibility encodes the stop
-conditions: a root gets a window only when its latest CHECKPOINT has gated work
-pending, no active WIP, no open operator fork, is not BLOCKED, has no window
-already in flight, and is within caps.
+conditions: a root gets a window only when its latest CHECKPOINT passes the
+BODY half (gated work, wip_is_none, no operator fork, not BLOCKED, no in-flight
+window, within caps) **and** the ENV half (§5.1) when non-vacuous.
 
-The in-flight guard is bus-derived and restart-safe: the runner posts an
-*admission pointer* turn (``WIP charter-runner …``) on the root when it admits a
-window; a root is in-flight while such a pointer exists with a higher turn number
-than the latest CHECKPOINT. A fresh CHECKPOINT past the pointer clears it.
+Substrate facts reach the gate only via ``EnvironmentSnapshot`` — this module
+imports no GIW or intent-store adapters (anti-accretion bind).
 """
 
 from __future__ import annotations
@@ -17,21 +15,28 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Literal
 
-from ..restart_intent_store import Intent
 from .caps import CapStore
-from .checkpoint_parse import ParsedCheckpoint, parse_checkpoint
+from .checkpoint_parse import ParsedCheckpoint
+from .env_predicates import (
+    ADMIT_INTENT_ORPHAN_REASON,
+    ENV_SNAPSHOT_STALE_REASON,
+    GIW_DRAIN_BLOCKS_RESTART_REASON,
+    GIW_HOLD_BLOCKS_RESTART_REASON,
+    EnvEvalContext,
+    EnvironmentSnapshot,
+    evaluate_env_half,
+)
 
 ENROLLMENT_TAG = "charter-runner"
 ADMISSION_SUBJECT_PREFIX = "WIP charter-runner"
 CHECKPOINT_PREFIX = "CHECKPOINT"
-GIW_SERVICE = "git_integration_worker"
-GIW_DRAIN_BLOCKS_RESTART_REASON = "giw_drain_blocks_restart_pickup"
-GIW_HOLD_BLOCKS_RESTART_REASON = "giw_live_hold_blocks_restart_pickup"
 WindowKind = Literal["worker", "consult"]
+GateHalf = Literal["body", "env"]
 
-_GIW = re.escape(GIW_SERVICE)
+_GIW = re.escape("git_integration_worker")
 _SYNC_RESTART_GIW_RE = re.compile(
     rf"sync_restart[^;\n]*{_GIW}|{_GIW}[^;\n]*sync_restart",
     re.IGNORECASE,
@@ -66,6 +71,8 @@ class Decision:
     parsed: ParsedCheckpoint | None = None
     admission_turn: dict | None = None
     window_kind: WindowKind = "worker"
+    half: GateHalf | None = None
+    predicate_id: str | None = None
 
 
 def find_enrolled_roots() -> list[dict]:
@@ -110,13 +117,45 @@ def _starts_with(prefix: str) -> Callable[[str], bool]:
     return lambda subject: subject.upper().startswith(upper)
 
 
-def next_pickup_is_restart_from_holder(item: str) -> bool:
-    """True when a Next-pickup row would re-hold GIW for manage restart/drain.
+def _count_admissions(turns: list[dict]) -> int:
+    prefix = ADMISSION_SUBJECT_PREFIX.upper()
+    return sum(
+        1 for t in turns if str(t.get("subject") or "").upper().startswith(prefix)
+    )
 
-    Matches restart-from-holder phrasing (``sync_restart``, manage restart GIW,
-    in-window ``wait_healthy`` tied to GIW restart). Post-healthy probe-only rows
-    are excluded so drain can admit verification windows after the holder exits.
-    """
+
+def next_window_index(turns: list[dict]) -> int:
+    """Bus admission count + 1 — the window index ENV E7 and caps intent key on."""
+    return _count_admissions(turns) + 1
+
+
+def live_wip_for_window(turns: list[dict], window_index: int) -> bool:
+    """True when an in-flight admission pointer matches ``window_index`` on the root."""
+    from . import window_log
+
+    checkpoint = _latest_matching(turns, _starts_with(CHECKPOINT_PREFIX))
+    if checkpoint is None:
+        return False
+    cp_n = _turn_number(checkpoint)
+    prefix = ADMISSION_SUBJECT_PREFIX.upper()
+    for turn in turns:
+        if _turn_number(turn) <= cp_n:
+            continue
+        subj = str(turn.get("subject") or "").upper()
+        if not subj.startswith(prefix):
+            continue
+        meta = window_log.parse_admission_meta(str(turn.get("body") or ""))
+        try:
+            window = int(meta.get("window") or 0)
+        except (TypeError, ValueError):
+            window = 0
+        if window == window_index or window == 0:
+            return True
+    return False
+
+
+def next_pickup_is_restart_from_holder(item: str) -> bool:
+    """True when a Next-pickup row would re-hold GIW for manage restart/drain."""
     text = item.strip()
     if not text:
         return False
@@ -138,34 +177,46 @@ def next_pickup_is_restart_from_holder(item: str) -> bool:
     return True
 
 
-def giw_drain_blocks_restart_pickup(
-    next_pickup: list[str],
-    giw_intent_probe: Callable[[], Intent | None],
+def _body_skip(
+    reason: str,
+    root_id: str,
     *,
-    giw_live_hold: bool = False,
-) -> str | None:
-    """Return a skip reason when GIW state must refuse restart-shaped admission.
-
-    Two independent facts block: a non-terminal drain intent, and a live hold on
-    the worker (``busy`` ∪ write lease). The live-hold arm is load-bearing on its
-    own — a drain intent goes terminal at its alert-only deadline while the
-    holder that caused the deferral keeps running, so intent alone reopens the
-    gate mid-hold and thrashes admit→orphan against that holder.
-    """
-    if not any(next_pickup_is_restart_from_holder(item) for item in next_pickup):
-        return None
-    if giw_live_hold:
-        return GIW_HOLD_BLOCKS_RESTART_REASON
-    intent = giw_intent_probe()
-    if intent is not None and not intent.is_terminal:
-        return GIW_DRAIN_BLOCKS_RESTART_REASON
-    return None
+    checkpoint: dict | None = None,
+    parsed: ParsedCheckpoint | None = None,
+    admission_turn: dict | None = None,
+    window_kind: WindowKind = "worker",
+) -> Decision:
+    return Decision(
+        False,
+        reason,
+        root_id,
+        checkpoint=checkpoint,
+        parsed=parsed,
+        admission_turn=admission_turn,
+        window_kind=window_kind,
+        half="body",
+    )
 
 
-def _default_giw_intent_probe() -> Intent | None:
-    from ..restart_intent_store import RestartIntentStore
-
-    return RestartIntentStore.instance().active_for_service(GIW_SERVICE)
+def _env_skip(
+    reason: str,
+    root_id: str,
+    *,
+    predicate_id: str,
+    checkpoint: dict,
+    parsed: ParsedCheckpoint,
+    window_kind: WindowKind = "worker",
+) -> Decision:
+    return Decision(
+        False,
+        reason,
+        root_id,
+        checkpoint=checkpoint,
+        parsed=parsed,
+        window_kind=window_kind,
+        half="env",
+        predicate_id=predicate_id,
+    )
 
 
 def evaluate_root(
@@ -173,76 +224,67 @@ def evaluate_root(
     turns: list[dict],
     caps: CapStore,
     *,
-    giw_intent_probe: Callable[[], Intent | None] | None = None,
-    giw_live_hold: bool = False,
+    env_snapshot: EnvironmentSnapshot | None = None,
+    now: datetime | None = None,
 ) -> Decision:
-    """Evaluate admission gates over a root's turns and the caller's GIW facts.
-
-    ``giw_live_hold`` is resolved once per tick by the caller (the probe is
-    async; this evaluation is sync) and blocks restart-shaped pickups
-    independently of the drain-intent state.
-    """
+    """Evaluate BODY then ENV admission gates over a root's turns."""
     checkpoint = _latest_matching(turns, _starts_with(CHECKPOINT_PREFIX))
     if checkpoint is None:
-        return Decision(False, "no_checkpoint", root_id)
+        return _body_skip("no_checkpoint", root_id)
 
     cp_n = _turn_number(checkpoint)
     admission = _latest_matching(
         turns, _starts_with(ADMISSION_SUBJECT_PREFIX), after=cp_n
     )
     if admission is not None:
-        return Decision(
-            False,
+        return _body_skip(
             "window_in_flight",
             root_id,
             checkpoint=checkpoint,
             admission_turn=admission,
         )
 
-    try:
-        parsed = parse_checkpoint(str(checkpoint.get("body") or ""))
-    except Exception:  # noqa: BLE001 — parser is lenient; any failure => skip
-        return Decision(False, "parse_failed", root_id, checkpoint=checkpoint)
+    # Shared fail-closed schema+admit gate (fix hints on skip events via reason).
+    from .checkpoint_admit_gate import validate_checkpoint_for_admit
 
-    if parsed.blocked:
-        return Decision(False, "blocked", root_id, checkpoint=checkpoint, parsed=parsed)
-    if not parsed.wip_is_none:
-        return Decision(
-            False, "wip_active", root_id, checkpoint=checkpoint, parsed=parsed
+    verdict = validate_checkpoint_for_admit(str(checkpoint.get("body") or ""))
+    if not verdict.ok:
+        return _body_skip(
+            verdict.reason,
+            root_id,
+            checkpoint=checkpoint,
+            parsed=verdict.parsed,
         )
-    if parsed.open_operator_fork:
-        return Decision(
-            False, "operator_fork", root_id, checkpoint=checkpoint, parsed=parsed
-        )
+    parsed = verdict.parsed
+    assert parsed is not None
 
     if parsed.consult_pending:
         allowed, cap_reason = caps.check(root_id)
         if not allowed:
-            return Decision(
-                False,
+            return _body_skip(
                 cap_reason or "cap_reached",
                 root_id,
                 checkpoint=checkpoint,
                 parsed=parsed,
+                window_kind="consult",
             )
-        return Decision(
-            True,
-            "eligible_consult",
+        body_ok = _check_env_or_eligible(
             root_id,
-            checkpoint=checkpoint,
-            parsed=parsed,
+            turns,
+            caps,
+            checkpoint,
+            parsed,
+            env_snapshot,
+            now=now,
             window_kind="consult",
         )
+        return body_ok
 
-    if not parsed.next_pickup_gated:
-        return Decision(
-            False, "no_gated_pickup", root_id, checkpoint=checkpoint, parsed=parsed
-        )
+    # next_pickup_gated already enforced inside validate_checkpoint_for_admit
 
     allowed, cap_reason = caps.check(root_id)
     if not allowed:
-        return Decision(
-            False,
+        return _body_skip(
             cap_reason or "cap_reached",
             root_id,
             checkpoint=checkpoint,
@@ -251,25 +293,78 @@ def evaluate_root(
 
     revise_ok, revise_reason = caps.check_revise_admit(root_id, parsed.next_pickup)
     if not revise_ok:
-        return Decision(
-            False,
+        return _body_skip(
             revise_reason or "revise_cap_exhausted",
             root_id,
             checkpoint=checkpoint,
             parsed=parsed,
         )
 
-    probe = giw_intent_probe or _default_giw_intent_probe
-    giw_reason = giw_drain_blocks_restart_pickup(
-        parsed.next_pickup, probe, giw_live_hold=giw_live_hold
+    return _check_env_or_eligible(
+        root_id,
+        turns,
+        caps,
+        checkpoint,
+        parsed,
+        env_snapshot,
+        now=now,
     )
-    if giw_reason is not None:
-        return Decision(
-            False,
-            giw_reason,
+
+
+def _check_env_or_eligible(
+    root_id: str,
+    turns: list[dict],
+    caps: CapStore,
+    checkpoint: dict,
+    parsed: ParsedCheckpoint,
+    env_snapshot: EnvironmentSnapshot | None,
+    *,
+    now: datetime | None = None,
+    window_kind: WindowKind = "worker",
+) -> Decision:
+    next_window = next_window_index(turns)
+    restart_shaped = any(
+        next_pickup_is_restart_from_holder(item) for item in parsed.next_pickup
+    )
+    ctx = EnvEvalContext(
+        restart_shaped=restart_shaped,
+        admit_intent_orphan=caps.has_admit_intent(root_id, next_window),
+    )
+    env_skip = evaluate_env_half(env_snapshot, ctx, now=now)
+    if env_skip is not None:
+        return _env_skip(
+            env_skip.reason,
             root_id,
+            predicate_id=env_skip.predicate_id,
             checkpoint=checkpoint,
             parsed=parsed,
+            window_kind=window_kind,
         )
+    reason = "eligible_consult" if window_kind == "consult" else "eligible"
+    return Decision(
+        True,
+        reason,
+        root_id,
+        checkpoint=checkpoint,
+        parsed=parsed,
+        window_kind=window_kind,
+    )
 
-    return Decision(True, "eligible", root_id, checkpoint=checkpoint, parsed=parsed)
+
+# Re-export skip-reason constants for tests and event one-liners.
+__all__ = [
+    "ADMISSION_SUBJECT_PREFIX",
+    "CHECKPOINT_PREFIX",
+    "Decision",
+    "ENROLLMENT_TAG",
+    "GIW_DRAIN_BLOCKS_RESTART_REASON",
+    "GIW_HOLD_BLOCKS_RESTART_REASON",
+    "ADMIT_INTENT_ORPHAN_REASON",
+    "ENV_SNAPSHOT_STALE_REASON",
+    "evaluate_root",
+    "find_enrolled_roots",
+    "live_wip_for_window",
+    "load_turns",
+    "next_pickup_is_restart_from_holder",
+    "next_window_index",
+]

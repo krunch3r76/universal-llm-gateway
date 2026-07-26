@@ -27,12 +27,16 @@ class AutoLivenessRegistry:
             self._handlers[handler_id] = time.monotonic()
 
     def heartbeat(self, handler_id: str) -> bool:
-        """Refresh heartbeat; return False if handler was never registered."""
+        """Refresh heartbeat; re-register if pruned while a long job held the loop.
+
+        Mid-job silence can exceed ``heartbeat_ttl_s``; ``is_live``/snapshot prune
+        the id. A strict miss-return here left the lane permanently dead after the
+        first nested SDK job (5867 DIRECTIVE-4 / dead-handler friction).
+        """
         with self._lock:
-            if handler_id not in self._handlers:
-                return False
+            existed = handler_id in self._handlers
             self._handlers[handler_id] = time.monotonic()
-            return True
+            return existed
 
     def unregister(self, handler_id: str) -> None:
         with self._lock:

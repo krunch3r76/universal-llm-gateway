@@ -11,11 +11,9 @@ without caring about the split.
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from fastapi import HTTPException
-from universal_logging import get_logger
 
 from ..db import cortex_conn, query
 from ..entity_aliases import resolve_entity_reference
@@ -25,8 +23,9 @@ from ..routes.assertions import (
     _search_assertions_impl,
 )
 from ..routes.graph import activate, analyze_impact_semantic
-from ..status_trait_read import effective_confidence_band
-from ._shared import _FRICTION_OWNER_TYPES, _VALID_CONFIDENCE, owner_entity_id
+from ._shared import _VALID_CONFIDENCE
+from .ops_assertions_friction import _op_friction, _op_frictions
+from .ops_assertions_review_queue import _op_review_queue
 from .ops_assertions_update import (
     _op_assertion_get,
     _op_assertion_update,
@@ -34,13 +33,10 @@ from .ops_assertions_update import (
 )
 from .ops_assertions_write import (
     _op_assert,
-    _op_friction,
     _op_friction_close,
     _op_observe,
 )
-from .ops_entities import _op_entities, _resolve_read_entity_id
-
-logger = get_logger("cortex-api.dispatch_ops.assertions")
+from .ops_entities import _resolve_read_entity_id
 
 
 def _op_assertion_state(
@@ -137,64 +133,6 @@ def _op_assertions(
     return result
 
 
-def _op_frictions(
-    owner: str | None = None,
-    owner_type: str | None = None,
-    service: str | None = None,
-    category: str | None = None,
-    seeded_by: str | None = None,
-    superseded: bool | None = None,
-    limit: int | None = None,
-    intent: str | None = None,
-    include_compaction_pointers: bool = False,
-    **_: object,
-) -> dict[str, Any]:
-    """List open friction assertions across friction-owning entities
-    (service:/agent_skill:/ai_agent:), bracketed [category] claims."""
-    resolved_intent = intent if intent in ("summary", "full") else "summary"
-    if owner_type is not None and owner_type not in _FRICTION_OWNER_TYPES:
-        return {
-            "error": f"Invalid owner_type {owner_type!r}. Must be one of: {list(_FRICTION_OWNER_TYPES)}"
-        }
-    owner_arg = owner if owner is not None else service
-    entity_id = owner_entity_id(owner_arg) if owner_arg else None
-    entity_type = owner_type if (owner_type and entity_id is None) else None
-    entity_type_in = (
-        list(_FRICTION_OWNER_TYPES) if (entity_id is None and owner_type is None) else None
-    )
-    claim_filter = f"[{category}]" if category else None
-    result = _list_assertions_impl(
-        entity_id=entity_id,
-        entity_id_prefix=None,
-        entity_type=entity_type,
-        entity_type_in=entity_type_in,
-        claim_filter=claim_filter,
-        seeded_by=seeded_by,
-        superseded=False if superseded is None else superseded,
-        limit=limit or 7,
-        intent=resolved_intent,
-        include_compaction_pointers=include_compaction_pointers,
-    )
-    if not result.get("error"):
-        fix_cycle = (
-            "Actionable row → codified bug ticket, investigate→execute fix cycle: investigate "
-            "(cursor: role=cursor-consult; web: role=web-consult) → dense spec; "
-            "execute (cursor: role=cursor-implement against spec; web: inline). "
-            "DEFAULT investigate unless mechanical-only or a dense spec exists. "
-            "lifecycle investigate→fix→report. friction() is log-only. "
-            "Close via friction_close (agent_skill:|workflow:|todo:|superseded|wontfix). "
-            "Skill: .cursor/skills/friction-review/SKILL.md or consult-routing § Codified bug reports."
-        )
-        if resolved_intent == "summary":
-            result["_next"] = (
-                "Deepen one row: cortex(tool=assertion_get, assertion_id=<id>). "
-                "Full rows: re-call with intent=full. " + fix_cycle
-            )
-        else:
-            result["_next"] = fix_cycle
-    return result
-
-
 def _op_search(
     query: str | None = None,
     limit: int | None = None,
@@ -270,126 +208,6 @@ def _op_activate(
         suppress_hubs=True if suppress_hubs is None else suppress_hubs,
         decay_factor=0.5 if decay_factor is None else decay_factor,
     )
-
-
-def _op_review_queue(
-    limit: int | None = None,
-    include_compaction_pointers: bool = False,
-    **_: object,
-) -> dict[str, Any]:
-    lim = limit or 30
-    # todo:cortex-aggregate-compaction-filter — these are aggregate (no
-    # entity_id) reads; pointer rows are filtered by `list_assertions` itself
-    # unless the override is requested.
-    flagged_resp = _list_assertions_impl(
-        review_status="flagged",
-        superseded=False,
-        limit=lim,
-        intent="full",
-        include_compaction_pointers=include_compaction_pointers,
-    )
-    staged_resp = _list_assertions_impl(
-        review_status="staged",
-        superseded=False,
-        limit=lim,
-        intent="full",
-        include_compaction_pointers=include_compaction_pointers,
-    )
-    low_conf_resp = _list_assertions_impl(
-        superseded=False,
-        limit=lim,
-        intent="full",
-        include_compaction_pointers=include_compaction_pointers,
-    )
-    entities = _op_entities(limit=lim)
-    flagged = (
-        [
-            {**a, "priority": 2, "reason": "flagged"}
-            for a in flagged_resp.get("items", [])
-        ]
-        if not flagged_resp.get("error")
-        else []
-    )
-    staged = (
-        [
-            {**a, "priority": 1, "reason": "staged (quality warning)"}
-            for a in staged_resp.get("items", [])
-        ]
-        if not staged_resp.get("error")
-        else []
-    )
-    endeavor_pending = []
-    try:
-        with cortex_conn() as conn:
-            rows = query(
-                conn,
-                "SELECT id, entity_id, claim, predicate_form, attributes, "
-                "resolution_status, review_status "
-                "FROM assertions "
-                "WHERE superseded_by IS NULL AND resolution_status = 'pending' "
-                "AND predicate_form LIKE 'endeavor_strategy_row(%' "
-                "LIMIT ?",
-                (lim,),
-            )
-        for a in rows:
-            attrs_raw = a.get("attributes")
-            attrs = {}
-            if isinstance(attrs_raw, str):
-                try:
-                    attrs = json.loads(attrs_raw) if attrs_raw else {}
-                except json.JSONDecodeError:
-                    attrs = {}
-            elif isinstance(attrs_raw, dict):
-                attrs = attrs_raw
-            endeavor_pending.append(
-                {
-                    **a,
-                    "priority": 0,
-                    "reason": "endeavor_strategy_row_pending",
-                    "host": a.get("entity_id"),
-                    "row_id": attrs.get("row_id"),
-                    "affects": attrs.get("affects"),
-                }
-            )
-    except Exception:  # noqa: BLE001 — review_queue must stay best-effort
-        logger.warning("endeavor pending row surfacing failed", exc_info=True)
-
-    low_conf = []
-    if not low_conf_resp.get("error"):
-        for a in low_conf_resp.get("items", []):
-            if a.get("confidence") in ("suspected", "hypothesized"):
-                low_conf.append({**a, "priority": 3, "reason": "low_confidence"})
-
-    provisional = []
-    thin_descriptions = []
-    if not entities.get("error"):
-        for e in entities.get("items", []):
-            band = effective_confidence_band(e)
-            if band == "provisional":
-                provisional.append({**e, "priority": 4, "reason": "provisional"})
-            desc = e.get("description") or ""
-            if len(desc) < 50:
-                thin_descriptions.append(
-                    {**e, "priority": 5, "reason": "thin_description"}
-                )
-
-    total = (
-        len(endeavor_pending)
-        + len(flagged)
-        + len(staged)
-        + len(provisional)
-        + len(low_conf)
-        + len(thin_descriptions)
-    )
-    return {
-        "provisional_entities": provisional,
-        "flagged_assertions": flagged,
-        "staged_assertions": staged,
-        "endeavor_pending_rows": endeavor_pending,
-        "low_confidence_assertions": low_conf,
-        "thin_descriptions": thin_descriptions,
-        "total": total,
-    }
 
 
 __all__ = [

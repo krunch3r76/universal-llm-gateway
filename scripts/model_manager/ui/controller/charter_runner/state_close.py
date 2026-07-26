@@ -15,6 +15,7 @@ from scripts.model_manager import observation_event as events
 
 from . import bus_client
 from .eligibility import ENROLLMENT_TAG, Decision
+from .state_close_compose import prepare_state_close_summary
 
 logger = get_logger(__name__)
 
@@ -91,13 +92,25 @@ async def maybe_state_close_root(
     ckpt = checkpoint_turn_number(decision.checkpoint)
     closed = False
     unenrolled = False
+    close_summary = (
+        f"charter-runner state-close reason={reason} checkpoint_turn={ckpt}"
+    )
+    try:
+        rendered, _uri = await prepare_state_close_summary(
+            root_id=decision.root_id,
+            reason=reason,
+            checkpoint_turn=ckpt,
+        )
+        close_summary = rendered
+    except Exception:  # noqa: BLE001 — fall back to machine one-liner in comment only
+        logger.exception(
+            "charter-runner closeout render failed for root %s — using fallback",
+            decision.root_id,
+        )
     try:
         await bus_client.close_root_thread(
             decision.root_id,
-            summary=(
-                f"charter-runner state-close reason={reason} "
-                f"checkpoint_turn={ckpt}"
-            ),
+            summary=close_summary,
         )
         closed = True
     except Exception:  # noqa: BLE001 — mirror harvest swallow/log; A5 probe
@@ -153,10 +166,16 @@ async def emit_skip_and_maybe_state_close(
     """
     reason = decision.reason
     ckpt = checkpoint_turn_number(decision.checkpoint)
+    wip_snippet: str | None = None
+    if reason == "wip_active" and decision.parsed is not None:
+        wip_snippet = (decision.parsed.wip_text or "")[:120] or None
     await events.emit_manage_charter_tick_root_skipped(
         root=decision.root_id,
         reason=reason,
         checkpoint_turn=ckpt,
+        half=decision.half,
+        predicate_id=decision.predicate_id,
+        wip_snippet=wip_snippet,
     )
     skipped_by_reason[reason] = skipped_by_reason.get(reason, 0) + 1
 

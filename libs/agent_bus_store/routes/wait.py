@@ -19,11 +19,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from ..auth import require_token
 from ..db import get_thread, get_thread_turns_asc, normalize_thread_id
 from ..wait_status import (
+    DEAD_WAIT_DETAIL,
+    DEAD_WAIT_ERROR,
     STATUS_COMPLETION_MODES,
     Completion,
     build_suggested_next,
     derive_status,
     is_complete,
+    is_dead_wait_no_auto_producer,
     qualifying_reply,
     qualifying_status_turn,
 )
@@ -128,6 +131,24 @@ async def wait_thread_route(
     comp: Completion = {"mode": completion}  # type: ignore[typeddict-item]
     if from_agent:
         comp["from_agent"] = from_agent
+
+    if get_thread(thread_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Thread {thread_id} not found",
+        )
+    turns = get_thread_turns_asc(thread_id)
+    if is_dead_wait_no_auto_producer(
+        turns, after_turn=after_turn, completion=comp
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "error": DEAD_WAIT_ERROR,
+                "message": DEAD_WAIT_DETAIL,
+                "pointer_turn": after_turn,
+            },
+        )
 
     wait_clamped = max(0.0, min(wait, MAX_WAIT_SECONDS))
     loop = asyncio.get_running_loop()

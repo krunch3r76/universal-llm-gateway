@@ -58,6 +58,9 @@ skills:
   cheap-recon-before-escalation:
     surface_class: cursor_only
     mcp_surface_required: code
+  cdp-operator-proxy:
+    surface_class: shared_sync
+    mcp_surface_required: life
   claude-ai-bundle-sync:
     surface_class: cursor_only
     mcp_surface_required: none
