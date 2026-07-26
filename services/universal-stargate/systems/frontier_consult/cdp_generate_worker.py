@@ -312,6 +312,16 @@ async def run_cdp_worker(
         thread_id=thread_id,
     )
     wall = float(max_wall_s) if max_wall_s is not None else DEFAULT_MAX_WALL_S
+
+    def _on_submitted(satellite_execution_id: str) -> None:
+        publish_cdp_kwargs(
+            CdpGenerateSubmitted,
+            request_id=request_id,
+            execution_id=execution_id,
+            satellite_execution_id=satellite_execution_id,
+            model=model_id,
+        )
+
     try:
         result = await asyncio.to_thread(
             run_cdp_generate,
@@ -322,6 +332,7 @@ async def run_cdp_worker(
             harvest_source=harvest_source,  # type: ignore[arg-type]
             expected_size=expected_size,  # type: ignore[arg-type]
             download_output=download_output,
+            on_submitted=_on_submitted,
         )
     except Exception as exc:  # noqa: BLE001
         logger.exception("cdp worker crashed: execution_id=%s", execution_id)
@@ -336,14 +347,6 @@ async def run_cdp_worker(
         )
 
     sat_id = result.satellite_execution_id
-    if sat_id:
-        publish_cdp_kwargs(
-            CdpGenerateSubmitted,
-            request_id=request_id,
-            execution_id=execution_id,
-            satellite_execution_id=sat_id,
-            model=model_id,
-        )
     if result.ok:
         publish_cdp_kwargs(
             CdpGenerateProof,

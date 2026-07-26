@@ -181,6 +181,7 @@ class TeamDispatchGenerateBody(_DispatchCommon):
     cost_intent: Literal["deliberate_high_cost"] | None = None
     suppress_cost_warning: bool = False
     cost_intent_reason: str | None = None
+    nest_under: str | None = None
     # thread / subject MUST NOT appear — extra="forbid" rejects any caller that
     # supplies them (schema-level enforcement per Phase 0 contract).
 

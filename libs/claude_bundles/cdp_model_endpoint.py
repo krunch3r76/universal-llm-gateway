@@ -28,6 +28,11 @@ DEFAULT_POLL_INTERVAL_S = 2.0
 CDP_SUBSTRATE = "web-anthropic-cdp"
 CDP_REPLY_FROM = "cdp"
 
+# Phases after the page goes idle: the satellite is resolving harvest (Cowork
+# Output download, archive write) and emits no per-sample progress, so the
+# no-progress fingerprint necessarily freezes. Only ``max_wall_s`` bounds these.
+POST_IDLE_PHASES = frozenset({"turn_idle", "content_proof", "archiving"})
+
 HarvestSource = Literal["chat", "output-file", "auto"]
 ExpectedSize = Literal["small", "large", "auto"]
 
@@ -117,10 +122,13 @@ def _terminal_failure(snapshot: dict[str, Any]) -> bool:
     return False
 
 
+def _post_idle(snapshot: dict[str, Any]) -> bool:
+    """Whether the snapshot sits in a phase whose progress signal is unobservable."""
+    return str(snapshot.get("completion_phase") or "") in POST_IDLE_PHASES
+
+
 def _completed_without_proof(snapshot: dict[str, Any]) -> bool:
-    return str(snapshot.get("status") or "") == "completed" and not _has_proof(
-        snapshot
-    )
+    return str(snapshot.get("status") or "") == "completed" and not _has_proof(snapshot)
 
 
 def _abort_then_sweep(
@@ -184,12 +192,19 @@ def run_cdp_generate(
     client: httpx.Client | None = None,
     now: Callable[[], float] | None = None,
     ask_client: CdpAskClient | None = None,
+    on_submitted: Callable[[str], None] | None = None,
 ) -> CdpGenerateResult:
     """Stage → native CDP submit → poll-to-proof (or stall/fail).
 
     Harvest/output knobs (``harvest_source``, ``expected_size``,
     ``download_output``) are forwarded on the native submit body — same fields
     as Stargate ``POST /api/v1/providers/cdp/ask``.
+
+    ``on_submitted`` receives the satellite-minted execution id the moment the
+    submit is accepted. The satellite id space is disjoint from the caller's
+    ``execution_id``, and it is the only handle the poll plane accepts — so
+    callers that want in-flight discoverability must publish it here rather than
+    on return (friction a:26175).
     """
     clock = now or time.monotonic
     picker = picker_from_model_id(model_id)
@@ -254,6 +269,9 @@ def run_cdp_generate(
             error="satellite submit returned no execution_id",
         )
 
+    if on_submitted is not None:
+        on_submitted(sat_id)
+
     started = clock()
     last_fp = _progress_fingerprint(submitted)
     last_progress_at = started
@@ -287,8 +305,8 @@ def run_cdp_generate(
         if snapshot.get("error") and "status" not in snapshot:
             if clock() - last_progress_at > no_progress_s:
                 abort_info = _abort_then_sweep(
-                sat_id, execution_id, ask_client=relay, client=client
-            )
+                    sat_id, execution_id, ask_client=relay, client=client
+                )
                 return CdpGenerateResult(
                     ok=False,
                     body="",
@@ -358,7 +376,7 @@ def run_cdp_generate(
                 extras={"abort": abort_info},
             )
 
-        if clock() - last_progress_at > no_progress_s:
+        if not _post_idle(snapshot) and clock() - last_progress_at > no_progress_s:
             abort_info = _abort_then_sweep(
                 sat_id, execution_id, ask_client=relay, client=client
             )

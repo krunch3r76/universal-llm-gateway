@@ -113,6 +113,7 @@ from services.git_integration_worker.cursor_sdk_feature_probe import (
 from services.git_integration_worker.cursor_sdk_gate import (
     acquire_sdk_dispatch_slot,
     force_release_sdk_dispatch_slot,
+    sdk_dispatch_gate_stats,
 )
 from services.git_integration_worker.cursor_sdk_implement_gate import (
     implement_gate_bypass_deviations,
@@ -128,6 +129,10 @@ from services.git_integration_worker.cursor_sdk_manifest import (
     classify_mcp_capture_branch,
     merge_artifact_paths,
     merge_stream_tool_calls,
+)
+from services.git_integration_worker.cursor_sdk_nest_depth import (
+    NestDepthExceeded,
+    NestParentNotLive,
 )
 from services.git_integration_worker.cursor_sdk_orphan import (
     abort_orphaned_bridge,
@@ -222,6 +227,10 @@ _STALE_LEASE_S = float(
     )
 )
 _STALE_SWEEP_S = float(os.environ.get("CURSOR_STALE_SWEEP_S", "30"))
+# Reap horizon for a holder that took the write lease and never armed (no
+# heartbeat row at all). Must stay above _SDK_LAUNCH_TIMEOUT_S or the sweeper
+# races a bridge that is still legitimately launching.
+_SDK_ARM_TIMEOUT_S = float(os.environ.get("CURSOR_SDK_ARM_TIMEOUT", "300"))
 _DEAD_RUN_GRACE_S = float(
     os.environ.get("CURSOR_DEAD_RUN_GRACE_S", str(2.0 * _SDK_HEARTBEAT_S))
 )
@@ -239,6 +248,26 @@ _DRAIN_RETRY_AFTER_S = int(os.environ.get("GIT_WORKER_DRAIN_RETRY_AFTER", "5"))
 # notes/system/threads/cursor-sdk-bridge-token-fix.md.
 _SDK_LAUNCH_ATTEMPTS = max(1, int(os.environ.get("CURSOR_SDK_LAUNCH_ATTEMPTS", "3")))
 _SDK_LAUNCH_BACKOFFS_S = (2.0, 5.0)
+
+# Bridge handshake deadline — deliberately NOT _SDK_TIMEOUT_S. launch_bridge only
+# spawns the bridge subprocess and completes discovery; the 1800s run/wait budget
+# is for the agent's work. Sharing it meant a bridge that never armed could hold
+# the exclusive write lease for half an hour before any deadline noticed, and the
+# heartbeat that would reveal it does not start until launch returns
+# (_start_heartbeat, below). Healthy launch-to-first-toolcall measures ~13s.
+# A launch timeout is not a pre-discovery transient, so it fails on attempt 1
+# rather than consuming the retry ladder.
+_SDK_LAUNCH_TIMEOUT_S = float(os.environ.get("CURSOR_SDK_LAUNCH_TIMEOUT", "180"))
+
+# Deadline for taking the FIFO capacity slot inside a gated dispatch. Reaching
+# _run_sdk_dispatch_gated means the ledger already named this dispatch the write
+# lease holder, and the nest-park path transfers capacity before the gated run,
+# so a correct system acquires in ~0s. A longer wait is ledger/gate split-brain
+# and must fail loudly: this await sits upstream of the outer watchdog, so an
+# unbounded one is invisible to every timeout and every reap.
+_SDK_SLOT_ACQUIRE_TIMEOUT_S = float(
+    os.environ.get("CURSOR_SDK_SLOT_ACQUIRE_TIMEOUT", "300")
+)
 _PRE_DISCOVERY_TRANSIENT_MARKERS = ("before discovery", "--tool-callback-auth-token")
 
 
@@ -395,6 +424,9 @@ def _install_bridge_env_patch() -> None:
             if prepend is not None:
                 cur = env.get("PATH")
                 env["PATH"] = f"{prepend}{os.pathsep}{cur}" if cur else prepend
+            dispatch_id = overrides.get("CURSOR_SDK_DISPATCH_ID")
+            if dispatch_id is not None:
+                env["CURSOR_SDK_DISPATCH_ID"] = dispatch_id
         return env
 
     _sdk_bridge._bridge_subprocess_env = _bridge_subprocess_env_with_overlay
@@ -418,6 +450,7 @@ def _dispatch_home_overlay(
     *,
     repo_venv: Path | None = None,
     real_home: Path | str | None = None,
+    dispatch_id: str | None = None,
 ):
     """Thread-confined HOME/venv overlay for one dispatch.
 
@@ -428,6 +461,8 @@ def _dispatch_home_overlay(
     timed-out orphan thread cannot leak HOME into a newly admitted dispatch.
     """
     overrides: dict[str, str] = {"HOME": str(home)}
+    if dispatch_id is not None:
+        overrides["CURSOR_SDK_DISPATCH_ID"] = dispatch_id
     if repo_venv is not None:
         overrides["VIRTUAL_ENV"] = str(repo_venv)
         overrides[_PATH_PREPEND_KEY] = build_dispatch_path_prepend(
@@ -548,7 +583,10 @@ def _run_sdk_sync(
         agent_options = build_agent_options(source_repo, dispatch_workspace, selection)
 
         with _dispatch_home_overlay(
-            dispatch_home, repo_venv=repo_venv, real_home=real_home
+            dispatch_home,
+            repo_venv=repo_venv,
+            real_home=real_home,
+            dispatch_id=dispatch_id,
         ):
             client = None
             for attempt in range(_SDK_LAUNCH_ATTEMPTS):
@@ -557,7 +595,7 @@ def _run_sdk_sync(
                         _SDK_BRIDGE_BIN,
                         workspace=str(dispatch_workspace),
                         state_root=str(bridge_state),
-                        timeout=_SDK_TIMEOUT_S,
+                        timeout=_SDK_LAUNCH_TIMEOUT_S,
                         # Friction 23057: without this the SDK's default
                         # 600s stream read timeout kills long silent tool
                         # legs despite healthy heartbeats.
@@ -854,20 +892,32 @@ async def _start_promoted_dispatch(
     await asyncio.to_thread(ledger.mark_running, dispatch_id=promoted.dispatch_id)
 
 
-async def reconcile_stale_leases(controller: WorkAdmissionController) -> None:
-    """Periodic sweeper: release stale lease holders and promote queued writers."""
+async def reconcile_stale_leases(
+    controller: WorkAdmissionController, *, reap_only: bool = False
+) -> None:
+    """Periodic sweeper: release stale lease holders and promote queued writers.
+
+    ``reap_only`` keeps the reap half and drops the promote half. Used while
+    draining, where clearing a wedged holder is exactly what lets the drain
+    finish, but starting its queued successor would admit new work into a
+    worker that is shutting down.
+    """
     ledger = CursorDispatchLedger.instance()
     stale_ids = await asyncio.to_thread(
         ledger.stale_writers,
         threshold_s=_STALE_LEASE_S,
         dead_run_grace_s=_DEAD_RUN_GRACE_S,
         worker_instance=controller.worker_id,
+        arming_timeout_s=_SDK_ARM_TIMEOUT_S,
     )
     repos: set[str] = set()
     for dispatch_id in stale_ids:
         await force_release_sdk_dispatch_slot(dispatch_id=dispatch_id)
+        # force=True: the capacity slot is already reclaimed above, so leaving
+        # the row active because its wedged task is still "live" would strand
+        # the lease in the ledger with no slot behind it.
         source_repo = await asyncio.to_thread(
-            ledger.release_stale_writer, dispatch_id=dispatch_id
+            ledger.release_stale_writer, dispatch_id=dispatch_id, force=True
         )
         if source_repo:
             repos.add(source_repo)
@@ -876,6 +926,8 @@ async def reconcile_stale_leases(controller: WorkAdmissionController) -> None:
                 source_repo=source_repo,
                 stale=True,
             )
+    if reap_only:
+        return
     for source_repo in repos:
         await _promote_queued_for_repo(
             source_repo=source_repo,
@@ -889,10 +941,10 @@ async def stale_lease_sweeper(app: FastAPI) -> None:
     while True:
         await asyncio.sleep(_STALE_SWEEP_S)
         controller = getattr(app.state, "admission_controller", None)
-        if controller is None or controller.is_draining():
+        if controller is None:
             continue
         try:
-            await reconcile_stale_leases(controller)
+            await reconcile_stale_leases(controller, reap_only=controller.is_draining())
         except Exception as exc:  # sweeper must never kill the worker
             logger.warning("stale-lease sweeper failed: %s", exc)
 
@@ -1161,7 +1213,38 @@ async def _run_sdk_dispatch_gated(
     gate_loop = asyncio.get_running_loop()
 
     # Acquire slot before spawning — released inside _run_sdk_sync finally block.
-    await acquire_sdk_dispatch_slot(dispatch_id=req.dispatch_id)
+    # Bounded: everything below (including the outer watchdog) is downstream of
+    # this await, so an unbounded wait here is unobservable — no heartbeat row,
+    # no timeout event, no stale reap. Fail the dispatch instead of wedging the
+    # write lease.
+    try:
+        await acquire_sdk_dispatch_slot(
+            dispatch_id=req.dispatch_id, timeout=_SDK_SLOT_ACQUIRE_TIMEOUT_S
+        )
+    except TimeoutError:
+        logger.error(
+            "cursor sdk capacity slot unavailable to the ledger's lease holder: "
+            "dispatch_id=%s waited=%.0fs gate=%s",
+            req.dispatch_id,
+            _SDK_SLOT_ACQUIRE_TIMEOUT_S,
+            sdk_dispatch_gate_stats(),
+        )
+        await _finalize_failed(
+            req=req,
+            bus=bus,
+            reply_to=reply_to,
+            controller=controller,
+            code="CURSOR_SDK_SLOT_ACQUIRE_TIMEOUT",
+            message=(
+                "cursor-sdk dispatch holds the ledger write lease but could not "
+                f"acquire the capacity slot within {_SDK_SLOT_ACQUIRE_TIMEOUT_S:.0f}s"
+            ),
+            subject_suffix="FAILED (slot acquire timeout)",
+            error="capacity slot acquire timeout",
+            retryable=True,
+            data={"gate": sdk_dispatch_gate_stats()},
+        )
+        return
 
     # Friction 23001: capture the implement wt baseline here — after the FIFO
     # slot is held (predecessor edits are included) and off the admission HTTP
@@ -1650,6 +1733,26 @@ async def cursor_dispatch(
             retryable=False,
             validation_stage="ledger_dedup",
         )
+    except NestDepthExceeded as exc:
+        return _reject_pre_admission(
+            req,
+            worker_error_code="CURSOR_NEST_DEPTH_EXCEEDED",
+            failure_layer="admission",
+            http_status=422,
+            detail_summary=str(exc),
+            retryable=False,
+            validation_stage="ledger_nest_depth",
+        )
+    except NestParentNotLive as exc:
+        return _reject_pre_admission(
+            req,
+            worker_error_code="CURSOR_NEST_PARENT_NOT_LIVE",
+            failure_layer="admission",
+            http_status=422,
+            detail_summary=str(exc),
+            retryable=False,
+            validation_stage="ledger_nest_parent",
+        )
     if cached is not None:
         status_code = 202 if cached.status == "queued" else 200
         if cached.status == "queued":
@@ -1672,11 +1775,17 @@ async def cursor_dispatch(
             ledger.find_parked_parent_for_child, child_id=req.dispatch_id
         )
         if parked is not None and parked[0] == req.nest_under:
+            nest_depth = await asyncio.to_thread(
+                ledger.nest_child_depth,
+                nest_under=req.nest_under,
+                child_dispatch_id=req.dispatch_id,
+            )
             try:
                 await transfer_capacity_after_park(
                     parent_id=req.nest_under,
                     child_id=req.dispatch_id,
                     source_repo=source_repo_str,
+                    nest_depth=nest_depth,
                 )
             except Exception as exc:
                 logger.error(

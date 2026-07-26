@@ -101,14 +101,15 @@ async def admit_window(
             implement_source_ref=bind.source_ref,
         )
     except httpx.HTTPStatusError as exc:
-        caps.clear_admit_intent(root_id, window_index)
         status = exc.response.status_code
+        body_snippet = (exc.response.text or "")[:500]
         if 400 <= status < 500:
+            # Client reject: safe to clear intent and stop (no retry of same fire).
+            caps.clear_admit_intent(root_id, window_index)
             caps.mark_failed(root_id, "admission_rejected")
             await events.emit_manage_charter_tick_window_failed(
                 root=root_id, reason="admission_rejected"
             )
-            body_snippet = (exc.response.text or "")[:500]
             logger.error(
                 "charter-runner admission rejected root=%s status=%s body=%s",
                 root_id,
@@ -116,10 +117,32 @@ async def admit_window(
                 body_snippet,
             )
             return False
-        raise
-    except Exception:
-        caps.clear_admit_intent(root_id, window_index)
-        raise
+        # 5xx: keep intent (A-R3-4) + stop root. Clearing intent then re-raising
+        # let the tick re-admit every interval with no WIP pointer (a:26168 thrash
+        # on agent-bus:5777 — Stargate 503 while generate-admitted side effects).
+        caps.mark_failed(root_id, "admission_transport_error")
+        await events.emit_manage_charter_tick_window_failed(
+            root=root_id, reason="admission_transport_error"
+        )
+        logger.error(
+            "charter-runner admission transport error root=%s status=%s body=%s",
+            root_id,
+            status,
+            body_snippet,
+        )
+        return False
+    except Exception as exc:
+        # Keep intent; stop root — ¬ clear+raise into tick continue (a:26168).
+        caps.mark_failed(root_id, "admission_exception")
+        await events.emit_manage_charter_tick_window_failed(
+            root=root_id, reason="admission_exception"
+        )
+        logger.exception(
+            "charter-runner admission exception root=%s: %s",
+            root_id,
+            exc,
+        )
+        return False
     caps.record_admit(root_id)
     worker_thread = str(result.get("thread_id") or "")
     packet_path = str(result.get("packet_path") or "")

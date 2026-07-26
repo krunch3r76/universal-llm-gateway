@@ -70,3 +70,5 @@ Three-doc taxonomy (there is **no** single `docs/VISION.md` — that file does n
 
 ∀ discussion that surfaces a non-obvious architectural insight:
 - Check `tasks/discoveries/` for existing related insights before proposing new ones
+- **Hub** (`universal-llm-gateway`) = canonical discoveries + `docs/engram/`; **satellites** = local `tasks/discoveries/` for service-bound insights; platform insights → hub paths (Use the `discovery-engram-opportunity-scan` skill § Corpus partition)
+- After substantive coding arcs (revisit/expand/recurrence): Use the `discovery-engram-opportunity-scan` skill before close

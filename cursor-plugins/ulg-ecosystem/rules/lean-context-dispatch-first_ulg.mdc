@@ -79,7 +79,7 @@ then proceed. ¬ silent.
 | Trivial exception | Trivial/local touches + latency-sensitive tight-loop debug stay in-seat (dispatch overhead is anti-lean) |
 | Verification budget | ¬ rubber-stamp fork self-reports; canonical/destructive writes get lead verification (`cursor-sdk-instruction-standard`) |
 | Cost read | Pair CDP / Opus escalation with `observability(operation="dispatch-economics-dollar-equivalents", …)` |
-| CDP corpus staging | `workspaces://` unreadable on web — stage corpus to `cortex://` before CDP fire |
+| CDP corpus staging | `workspaces://` unreadable on web — stage **code/docs corpus** to `cortex://` before CDP fire. **¬** conflate with RAG: when the endpoint is **MCP-enabled for RAG** (life or code), the executing agent activates `rag` via MCP (even when a corpus URI is mapped); lead does ¬ merge staged RAG into the deliverable (`decision:cdp-rag-via-mcp-not-lead-merge`) |
 | Substrate wall | `anthropic/*` prohibited; Fable excluded; compose `anthropic-dispatch-authorization` |
 
 ## Composes with (pointers, ¬ copies)

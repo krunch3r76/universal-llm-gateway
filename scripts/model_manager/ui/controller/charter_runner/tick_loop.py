@@ -48,6 +48,7 @@ from .eligibility import (
     Decision,
     evaluate_root,
 )
+from .giw_live_hold import probe_giw_live_hold
 from .harvest import completed_windows, harvest_completed_windows
 
 # One-shot at tick_loop import: long-lived manage may hold pre-census modules
@@ -248,6 +249,7 @@ class CharterRunnerTickLoop:
 
     async def _tick_once(self) -> None:
         roots = await bus_client.list_enrolled_roots()
+        giw_live_hold = await probe_giw_live_hold()
         admitted = 0
         skipped_by_reason: dict[str, int] = {}
         state_closes_this_tick = 0
@@ -257,7 +259,9 @@ class CharterRunnerTickLoop:
                 continue
             turns = await bus_client.fetch_turns(root_id)
             await harvest_completed_windows(root_id, turns)
-            decision = evaluate_root(root_id, turns, self._caps)
+            decision = evaluate_root(
+                root_id, turns, self._caps, giw_live_hold=giw_live_hold
+            )
             if decision.eligible:
                 try:
                     if await self._admit_window(decision, turns):

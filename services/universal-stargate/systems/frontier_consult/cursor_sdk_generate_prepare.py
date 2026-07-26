@@ -74,6 +74,7 @@ async def prepare_cursor_sdk_generate(
     dispatch_id: str | None = None,
     source_ref: str | None = None,
     dispatch_lane: str | None = None,
+    nest_under: str | None = None,
 ) -> PreparedCursorSdkHandle:
     """Validate, mint/reuse IDs, create pending thread; do not POST the worker."""
     from .light_bounded_ac_observer import (
@@ -381,4 +382,5 @@ async def prepare_cursor_sdk_generate(
         admitted=admitted,
         alignment_warnings=tuple(alignment.warnings_as_dicts()),
         knob_resolution=tuple(alignment.knob_resolution_as_dicts()),
+        nest_under=nest_under,
     )

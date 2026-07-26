@@ -387,14 +387,18 @@ def FrontierWriteLeaseParkEnter(  # noqa: N802
     parent_id: str,
     child_id: str,
     source_repo: str | None,
+    nest_depth: int | None = None,
 ) -> Event:
+    payload: dict[str, object] = {
+        "parent_id": parent_id,
+        "child_id": child_id,
+        "source_repo": source_repo,
+    }
+    if nest_depth is not None:
+        payload["nest_depth"] = nest_depth
     return Event(
         signal="frontier.sdk.worker.lease.park_enter",
-        payload={
-            "parent_id": parent_id,
-            "child_id": child_id,
-            "source_repo": source_repo,
-        },
+        payload=payload,
         scope="node",
     )
 
@@ -469,7 +473,11 @@ def emit_write_lease_promoted(*, dispatch_id: str, source_repo: str | None) -> N
 
 
 def emit_write_lease_park_enter(
-    *, parent_id: str, child_id: str, source_repo: str | None
+    *,
+    parent_id: str,
+    child_id: str,
+    source_repo: str | None,
+    nest_depth: int | None = None,
 ) -> None:
     """Publish nest park-enter when parent yields lease and capacity to nested child."""
     _emit(
@@ -477,6 +485,7 @@ def emit_write_lease_park_enter(
             parent_id=parent_id,
             child_id=child_id,
             source_repo=source_repo,
+            nest_depth=nest_depth,
         )
     )
 

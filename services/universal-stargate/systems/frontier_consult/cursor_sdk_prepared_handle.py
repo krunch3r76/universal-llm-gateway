@@ -40,6 +40,7 @@ class PreparedCursorSdkHandle:
     admitted: bool
     alignment_warnings: tuple[dict[str, Any], ...]
     knob_resolution: tuple[dict[str, Any], ...]
+    nest_under: str | None = None
 
 
 def mint_cursor_sdk_ids(*, request_id: str) -> tuple[str, str]:
@@ -90,6 +91,7 @@ def handle_to_dict(handle: PreparedCursorSdkHandle) -> dict[str, Any]:
         "admitted": handle.admitted,
         "alignment_warnings": list(handle.alignment_warnings),
         "knob_resolution": list(handle.knob_resolution),
+        "nest_under": handle.nest_under,
     }
 
 
@@ -125,4 +127,5 @@ def handle_from_dict(data: dict[str, Any]) -> PreparedCursorSdkHandle:
         admitted=bool(data.get("admitted", False)),
         alignment_warnings=tuple(data.get("alignment_warnings") or ()),
         knob_resolution=tuple(data.get("knob_resolution") or ()),
+        nest_under=data.get("nest_under"),
     )

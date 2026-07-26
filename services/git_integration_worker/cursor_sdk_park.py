@@ -30,7 +30,11 @@ ReleaseDisposition = Literal["restored", "released"]
 
 
 async def transfer_capacity_after_park(
-    *, parent_id: str, child_id: str, source_repo: str | None
+    *,
+    parent_id: str,
+    child_id: str,
+    source_repo: str | None,
+    nest_depth: int | None = None,
 ) -> None:
     """Move capacity from parked parent to nested child without waking waiters.
 
@@ -41,6 +45,7 @@ async def transfer_capacity_after_park(
         parent_id=parent_id,
         child_id=child_id,
         source_repo=source_repo,
+        nest_depth=nest_depth,
     )
 
 

@@ -116,17 +116,13 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
             asyncio.create_task(_on_registered(registration_id))
 
         async def _on_turn_idle() -> None:
+            # Liveness is deliberately retained past turn_idle: it is the only
+            # per-sample progress signal a poller can use to tell post-idle
+            # harvest work apart from a hang (friction a:26175).
             await execution_store.update_ladder(
                 record.execution_id,
                 completion_phase="turn_idle",
                 turn_idle_at=time.time(),
-            )
-            await execution_store.update_liveness(
-                record.execution_id,
-                streaming=None,
-                stop=None,
-                tool_pause=None,
-                liveness_observed_at=None,
             )
 
         async def _on_content_proof(uri: str, sha: str) -> None:
@@ -224,7 +220,7 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
         if record is None:
             raise HTTPException(404, f"unknown execution_id: {execution_id}")
         payload = record.result or {}
-        live = record.status == "running" and record.completion_phase == "running"
+        live = record.status == "running"
         return ExecutionPollResponse(
             execution_id=record.execution_id,
             status=record.status,

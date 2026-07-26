@@ -30,6 +30,7 @@ _MODULE_NAMES: tuple[str, ...] = (
     "scripts.model_manager.ui.controller.charter_runner.terminal_discipline",
     "scripts.model_manager.ui.controller.charter_runner.verification_manifest",
     "scripts.model_manager.ui.controller.charter_runner.checkpoint_parse",
+    "scripts.model_manager.ui.controller.charter_runner.giw_live_hold",
     "scripts.model_manager.ui.controller.charter_runner.eligibility",
     "scripts.model_manager.ui.controller.charter_runner.window_log",
     "scripts.model_manager.ui.controller.charter_runner.bus_client",

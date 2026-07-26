@@ -54,6 +54,7 @@ def _relay(
         detail = exc.response.text[:400]
         return {
             "error": f"project-ask HTTP {exc.response.status_code}",
+            "status_code": exc.response.status_code,
             "detail": detail,
         }
     except httpx.RequestError as exc:
@@ -66,7 +67,7 @@ def register_project_ask_tool(mcp: FastMCP) -> None:
 
     @mcp.tool(title="CDP Project Ask")
     def project_ask(
-        op: Literal["submit", "poll", "abort"],
+        op: Literal["submit", "poll", "abort", "active_work"],
         execution_id: str | None = None,
         prompt_text: str | None = None,
         prompt_uri: str | None = None,
@@ -99,6 +100,13 @@ def register_project_ask_tool(mcp: FastMCP) -> None:
             ``turn_idle_at``, and ``stall_stage`` on failed terminals. ``archive_uri``
             remains archive-proof after successful harvest.
           abort — cancel in-flight execution and release CDP lane
+          active_work — in-flight satellite executions (no execution_id needed);
+            the discovery path when you hold a Stargate/dispatch execution id
+            rather than a satellite one. The two id spaces are disjoint: a
+            ``cdp/*`` dispatch mints its own id and the satellite mints another,
+            and only the satellite id polls (friction a:26175). Stargate-side
+            correlation is the ``cdp.generate.submitted`` event, which carries
+            both ids and now publishes at submit time.
 
         POLL GUARDRAIL — project-ask executions:
           NEVER curl, fetch, or HTTP GET/POST to localhost/127.0.0.1 — especially
@@ -139,8 +147,8 @@ def register_project_ask_tool(mcp: FastMCP) -> None:
             archive path before ``content_proof``.
 
         Args:
-            op: submit | poll | abort
-            execution_id: Required for poll/abort
+            op: submit | poll | abort | active_work
+            execution_id: Required for poll/abort; satellite-minted id only
             prompt_text: Inline prompt for submit
             prompt_uri: cortex:// prompt for submit
             prompt_path: Jupiter-readable file path for submit
@@ -169,7 +177,18 @@ def register_project_ask_tool(mcp: FastMCP) -> None:
                 streaming?, stop?, tool_pause?, liveness_observed_at?, ok?, body?, error?, …}
             abort: {execution_id, status, aborted, attested, still_attached,
                 abort_outcome, stop_clicked?}
+            active_work: {busy, running_count, execution_ids, soft_limit,
+                hard_limit, free_slots, at_soft_limit, at_hard_limit}
         """
+        if op == "active_work":
+            result = _relay("GET", "/v1/project-ask/active-work")
+            record(
+                "mcp.project_ask.active_work",
+                busy=result.get("busy"),
+                running_count=result.get("running_count"),
+            )
+            return result
+
         if op == "submit":
             if chat_compose:
                 ensure_cowork_auto = False
@@ -210,6 +229,14 @@ def register_project_ask_tool(mcp: FastMCP) -> None:
 
         if op == "poll":
             result = _relay("GET", f"/v1/project-ask/executions/{execution_id}")
+            if result.get("status_code") == 404:
+                result["hint"] = (
+                    "Unknown to the satellite. A Stargate/dispatch execution id "
+                    "does not poll here — the satellite mints its own id. "
+                    'Discover it via project_ask(op="active_work"), the '
+                    "cdp.generate.submitted event (carries both ids), or "
+                    "agent_bus wait from_agent=cdp."
+                )
             record(
                 "mcp.project_ask.poll",
                 execution_id=execution_id,

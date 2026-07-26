@@ -28,6 +28,7 @@ ADMISSION_SUBJECT_PREFIX = "WIP charter-runner"
 CHECKPOINT_PREFIX = "CHECKPOINT"
 GIW_SERVICE = "git_integration_worker"
 GIW_DRAIN_BLOCKS_RESTART_REASON = "giw_drain_blocks_restart_pickup"
+GIW_HOLD_BLOCKS_RESTART_REASON = "giw_live_hold_blocks_restart_pickup"
 WindowKind = Literal["worker", "consult"]
 
 _GIW = re.escape(GIW_SERVICE)
@@ -140,12 +141,25 @@ def next_pickup_is_restart_from_holder(item: str) -> bool:
 def giw_drain_blocks_restart_pickup(
     next_pickup: list[str],
     giw_intent_probe: Callable[[], Intent | None],
-) -> bool:
-    """Return True when live GIW drain intent must refuse restart-shaped admission."""
+    *,
+    giw_live_hold: bool = False,
+) -> str | None:
+    """Return a skip reason when GIW state must refuse restart-shaped admission.
+
+    Two independent facts block: a non-terminal drain intent, and a live hold on
+    the worker (``busy`` ∪ write lease). The live-hold arm is load-bearing on its
+    own — a drain intent goes terminal at its alert-only deadline while the
+    holder that caused the deferral keeps running, so intent alone reopens the
+    gate mid-hold and thrashes admit→orphan against that holder.
+    """
     if not any(next_pickup_is_restart_from_holder(item) for item in next_pickup):
-        return False
+        return None
+    if giw_live_hold:
+        return GIW_HOLD_BLOCKS_RESTART_REASON
     intent = giw_intent_probe()
-    return intent is not None and not intent.is_terminal
+    if intent is not None and not intent.is_terminal:
+        return GIW_DRAIN_BLOCKS_RESTART_REASON
+    return None
 
 
 def _default_giw_intent_probe() -> Intent | None:
@@ -160,8 +174,14 @@ def evaluate_root(
     caps: CapStore,
     *,
     giw_intent_probe: Callable[[], Intent | None] | None = None,
+    giw_live_hold: bool = False,
 ) -> Decision:
-    """Evaluate admission gates over a root's turns and optional GIW intent probe."""
+    """Evaluate admission gates over a root's turns and the caller's GIW facts.
+
+    ``giw_live_hold`` is resolved once per tick by the caller (the probe is
+    async; this evaluation is sync) and blocks restart-shaped pickups
+    independently of the drain-intent state.
+    """
     checkpoint = _latest_matching(turns, _starts_with(CHECKPOINT_PREFIX))
     if checkpoint is None:
         return Decision(False, "no_checkpoint", root_id)
@@ -240,10 +260,13 @@ def evaluate_root(
         )
 
     probe = giw_intent_probe or _default_giw_intent_probe
-    if giw_drain_blocks_restart_pickup(parsed.next_pickup, probe):
+    giw_reason = giw_drain_blocks_restart_pickup(
+        parsed.next_pickup, probe, giw_live_hold=giw_live_hold
+    )
+    if giw_reason is not None:
         return Decision(
             False,
-            GIW_DRAIN_BLOCKS_RESTART_REASON,
+            giw_reason,
             root_id,
             checkpoint=checkpoint,
             parsed=parsed,

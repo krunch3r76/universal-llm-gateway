@@ -1,4 +1,4 @@
-updated_at: '2026-07-25T18:47:24.509702+00:00'
+updated_at: '2026-07-25T23:54:05.766088+00:00'
 models:
 - model_id: ai21/jamba-large-1.7
   input_rate_per_m: 2.0
@@ -3145,11 +3145,11 @@ models:
   pinned: false
   updated_at: '2026-07-24T06:42:31.199038+00:00'
 - model_id: openrouter/z-ai/glm-5.2
-  input_rate_per_m: 0.7042
-  output_rate_per_m: 2.2132
+  input_rate_per_m: 0.7266
+  output_rate_per_m: 2.2836
   source: catalog_refresh
   pinned: false
-  updated_at: '2026-07-25T18:47:24.508928+00:00'
+  updated_at: '2026-07-25T23:54:05.765297+00:00'
 - model_id: openrouter/z-ai/glm-5v-turbo
   input_rate_per_m: 1.2
   output_rate_per_m: 4.0
@@ -3781,11 +3781,11 @@ models:
   pinned: false
   updated_at: '2026-07-24T06:42:31.199038+00:00'
 - model_id: z-ai/glm-5.2
-  input_rate_per_m: 0.7042
-  output_rate_per_m: 2.2132
+  input_rate_per_m: 0.7266
+  output_rate_per_m: 2.2836
   source: catalog_refresh
   pinned: false
-  updated_at: '2026-07-25T18:47:24.508937+00:00'
+  updated_at: '2026-07-25T23:54:05.765308+00:00'
 - model_id: z-ai/glm-5v-turbo
   input_rate_per_m: 1.2
   output_rate_per_m: 4.0

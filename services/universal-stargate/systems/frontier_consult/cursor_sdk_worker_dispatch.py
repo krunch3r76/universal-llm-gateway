@@ -284,6 +284,7 @@ async def dispatch_cursor_sdk_worker_message(
     model_knobs: dict[str, str] | None = None,
     read_only: bool = False,
     dispatch_id: str | None = None,
+    nest_under: str | None = None,
 ) -> tuple[bool, dict[str, Any]]:
     """POST ``/api/v1/cursor/dispatch`` with ``message`` (consult path)."""
     effective_dispatch_id = dispatch_id or f"{request_id}-{uuid.uuid4().hex[:8]}"
@@ -300,6 +301,8 @@ async def dispatch_cursor_sdk_worker_message(
         payload["model_knobs"] = model_knobs
     if read_only:
         payload["read_only"] = True
+    if nest_under:
+        payload["nest_under"] = nest_under
     try:
         async with make_async_client(
             worker_base_url(), timeout=_WORKER_TIMEOUT

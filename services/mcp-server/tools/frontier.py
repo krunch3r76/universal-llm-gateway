@@ -34,14 +34,13 @@ pipeline composition only — not exposed as an MCP tool.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Literal, get_args
+from typing import TYPE_CHECKING, Annotated, Any, Literal, get_args
 
 import httpx
 from mcp_events import record
+from pydantic import Field
 from transport_utils import DEFAULT_STARGATE_URL, make_async_client
 from universal_logging import get_logger
-
-from ._restart_probe import annotate_unreachable_error
 
 from ._frontier_intake import (
     normalize_dispatch_model,
@@ -52,6 +51,7 @@ from ._frontier_intake import (
     validate_inline_prompt_inputs,
     validate_wrap_inputs,
 )
+from ._restart_probe import annotate_unreachable_error
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -304,6 +304,18 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         suppress_cost_warning: bool = False,
         cost_intent_reason: str | None = None,
         spawn_review_provenance: Literal["generate_review_child"] | None = None,
+        nest_under: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Parent cursor-sdk dispatch_id to park under for product-path "
+                    "nesting (LIFO park stack, hard max depth 10; 11th nest → 422 "
+                    "CURSOR_NEST_DEPTH_EXCEEDED). cursor-sdk-seat-only: valid only "
+                    "for seat='cursor-sdk' generate/to_thread; other seats → 422 "
+                    "nest_under_sdk_only."
+                ),
+            ),
+        ] = None,
     ) -> dict[str, Any]:
         """Team-seat dispatch with explicit op discrimination.
 
@@ -518,6 +530,12 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         ``model_knobs={"effort": "low", "thinking": "false"}``. Unsupported or
         invalid knob values are dropped with a ``knob_dropped`` warning; the
         per-knob outcome is echoed in ``knob_resolution``. Ignored on API roles.
+
+        ``nest_under`` — optional parent ``dispatch_id`` for product-path nesting
+        under a live cursor-sdk write-lease holder. **cursor-sdk-seat-only**
+        (``seat="cursor-sdk"`` generate/to_thread); other seats → 422
+        ``nest_under_sdk_only``. LIFO park stack hard-caps at **depth 10**
+        (11th nest → 422 ``CURSOR_NEST_DEPTH_EXCEEDED``, ``retryable=false``).
         """
         prompt_input_err = validate_inline_prompt_inputs(
             op, contract, packet_path, source_ref, prompt, sidecar_ref
@@ -661,6 +679,17 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                 },
                 "field": "role",
             }
+        if nest_under is not None and seat != "cursor-sdk":
+            return {
+                "error": {
+                    "code": "nest_under_sdk_only",
+                    "message": (
+                        "nest_under is only valid for seat='cursor-sdk' generate/"
+                        "to_thread dispatches (max nest depth 10, fail-closed on 11th)"
+                    ),
+                },
+                "field": "nest_under",
+            }
         if role == "cursor-sdk":
             return {
                 "error": {
@@ -771,6 +800,8 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                 body["spawn_review_provenance"] = spawn_review_provenance
             if reuse_thread is not None:
                 body["reuse_thread"] = reuse_thread
+            if nest_under is not None:
+                body["nest_under"] = nest_under
         else:
             if contract in ("implement", "wrap"):
                 return {

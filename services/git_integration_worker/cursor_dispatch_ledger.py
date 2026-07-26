@@ -20,6 +20,11 @@ from typing import Any
 
 from universal_logging import get_logger
 
+from services.git_integration_worker.cursor_sdk_nest_depth import (
+    NestDepthExceeded,
+    NestParentNotLive,
+    park_stack_depth,
+)
 from services.git_integration_worker.models.cursor_api import (
     CursorDispatchRequest,
     CursorDispatchResponse,
@@ -592,11 +597,25 @@ class CursorDispatchLedger:
                     "AND status='queued' AND dispatch_id<>? LIMIT 1",
                     (source_repo, req.dispatch_id),
                 ).fetchone()
-                if (
-                    conflict is not None
-                    and nest_under
-                    and nest_under == conflict["dispatch_id"]
-                ):
+                if nest_under:
+                    if nest_under == req.dispatch_id:
+                        raise NestDepthExceeded(
+                            f"nest_under must not equal child dispatch_id "
+                            f"{req.dispatch_id!r}"
+                        )
+                    if (
+                        conflict is None
+                        or nest_under != conflict["dispatch_id"]
+                    ):
+                        raise NestParentNotLive(
+                            f"nest_under {nest_under!r} is not the live "
+                            f"write-lease holder for {source_repo!r}"
+                        )
+                    park_stack_depth(
+                        conn,
+                        nest_under=nest_under,
+                        child_dispatch_id=req.dispatch_id,
+                    )
                     parked = conn.execute(
                         "UPDATE cursor_sdk_dispatches SET status=?, "
                         "park_child_dispatch_id=? "
@@ -607,13 +626,13 @@ class CursorDispatchLedger:
                             nest_under,
                         ),
                     )
-                    if parked.rowcount == 1:
-                        nested_park_parent = nest_under
-                        insert_status = _STATUS_ADMITTED
-                        queued_at = None
-                    else:
-                        insert_status = _STATUS_QUEUED
-                        queued_at = _now()
+                    if parked.rowcount != 1:
+                        raise NestParentNotLive(
+                            f"nest_under {nest_under!r} park transition failed"
+                        )
+                    nested_park_parent = nest_under
+                    insert_status = _STATUS_ADMITTED
+                    queued_at = None
                 elif conflict is not None or prior_queued is not None:
                     insert_status = _STATUS_QUEUED
                     queued_at = _now()
@@ -722,6 +741,17 @@ class CursorDispatchLedger:
                 (source_repo, _STATUS_PARKED_WAITING),
             ).fetchone()
         return row is not None
+
+    def nest_child_depth(
+        self, *, nest_under: str, child_dispatch_id: str
+    ) -> int:
+        """Return nested child depth for telemetry after a successful nest admit."""
+        with self._connect() as conn:
+            return park_stack_depth(
+                conn,
+                nest_under=nest_under,
+                child_dispatch_id=child_dispatch_id,
+            )
 
     @staticmethod
     def _queue_position_conn(
@@ -876,12 +906,24 @@ class CursorDispatchLedger:
         threshold_s: float,
         dead_run_grace_s: float,
         worker_instance: str | None,
+        arming_timeout_s: float | None = None,
     ) -> list[str]:
         """``admitted``/``running`` rows on this instance past heartbeat staleness.
 
         Live asyncio tasks use ``threshold_s`` (long lease timeout). Rows whose task
         is missing or already done use ``dead_run_grace_s`` so finalize orphans reap
         quickly without waiting for the full lease horizon.
+
+        ``arming_timeout_s`` caps the horizon for a holder that has never armed —
+        ``last_heartbeat_at IS NULL`` measured from ``started_at``. The heartbeat
+        thread starts as soon as the bridge launch returns and bumps every
+        ``CURSOR_SDK_HEARTBEAT`` seconds, so a null heartbeat past the arming
+        horizon means the dispatch took the write lease and never came alive.
+
+        Deliberately NOT keyed on ``sdk_agent_id``: the local bridge's agent
+        object exposes no ``id``, so ``record_sdk_identity`` stores NULL for
+        every dispatch including healthy ones — using it as an arming witness
+        would reap all live work.
         """
         from datetime import datetime
 
@@ -899,6 +941,8 @@ class CursorDispatchLedger:
             task = self._tasks.get(row["dispatch_id"])
             task_live = task is not None and not task.done()
             grace_s = threshold_s if task_live else dead_run_grace_s
+            if arming_timeout_s is not None and row["last_heartbeat_at"] is None:
+                grace_s = min(grace_s, arming_timeout_s)
             cutoff = now - grace_s
             ts = row["last_heartbeat_at"] or row["started_at"]
             if ts is None:
@@ -913,8 +957,17 @@ class CursorDispatchLedger:
                 stale.append(row["dispatch_id"])
         return stale
 
-    def release_stale_writer(self, *, dispatch_id: str) -> str | None:
-        """Conservatively fail a stale lease holder; return ``source_repo``."""
+    def release_stale_writer(
+        self, *, dispatch_id: str, force: bool = False
+    ) -> str | None:
+        """Conservatively fail a stale lease holder; return ``source_repo``.
+
+        A live registered task normally vetoes the release. ``force`` overrides
+        that veto for a deliberate sweeper reap: a wedged coroutine keeps its
+        task live indefinitely, so honouring the veto would leave the row
+        ``running`` after the capacity slot has already been force-released —
+        split-brain, and the exact reason the pre-arm wedge survived two drains.
+        """
         with self._connect() as conn:
             row = conn.execute(
                 "SELECT source_repo, status FROM cursor_sdk_dispatches WHERE dispatch_id=?",
@@ -923,7 +976,8 @@ class CursorDispatchLedger:
             if row is None or row["status"] not in _ACTIVE_WRITER_STATUSES:
                 return None
             if (
-                self._tasks.get(dispatch_id) is not None
+                not force
+                and self._tasks.get(dispatch_id) is not None
                 and not self._tasks[dispatch_id].done()
             ):
                 return None

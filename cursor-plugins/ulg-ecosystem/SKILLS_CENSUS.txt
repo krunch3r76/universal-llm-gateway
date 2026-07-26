@@ -12,6 +12,7 @@ consult-posture
 consult-routing
 cortex
 dispatch-shape
+discovery-engram-opportunity-scan
 docstring-quality
 event-instrumentation-discipline
 friction-review

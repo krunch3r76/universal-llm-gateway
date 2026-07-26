@@ -74,6 +74,7 @@ async def dispatch_prepared_cursor_sdk(
             model_knobs=handle.aligned_knobs,
             read_only=handle.read_only,
             dispatch_id=handle.dispatch_id,
+            nest_under=handle.nest_under,
         )
     else:
         worker_ok, worker_detail = await dispatch_cursor_sdk_worker_message(
@@ -86,6 +87,7 @@ async def dispatch_prepared_cursor_sdk(
             model_knobs=handle.aligned_knobs,
             read_only=handle.read_only,
             dispatch_id=handle.dispatch_id,
+            nest_under=handle.nest_under,
         )
 
     if not worker_ok:
@@ -175,6 +177,7 @@ async def dispatch_cursor_sdk_generate(
     prepared_handle: PreparedCursorSdkHandle | None = None,
     source_ref: str | None = None,
     dispatch_lane: str | None = None,
+    nest_under: str | None = None,
 ) -> dict[str, Any]:
     """Execute cursor-sdk generate with to_thread default delivery.
 
@@ -211,5 +214,6 @@ async def dispatch_cursor_sdk_generate(
         max_tool_turns=max_tool_turns,
         source_ref=source_ref,
         dispatch_lane=dispatch_lane,
+        nest_under=nest_under,
     )
     return await dispatch_prepared_cursor_sdk(handle)

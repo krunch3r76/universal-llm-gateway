@@ -22,14 +22,29 @@ def _limit() -> int:
 _GATE = FifoCapacityGate(limit=_limit, gate_id="cursor-sdk-dispatch")
 
 
-async def acquire_sdk_dispatch_slot(*, dispatch_id: str | None = None) -> str:
+async def acquire_sdk_dispatch_slot(
+    *, dispatch_id: str | None = None, timeout: float | None = None
+) -> str:
     """Acquire the cursor-sdk FIFO capacity slot for ``dispatch_id``.
 
     Idempotent when ``dispatch_id`` already holds (nest park transfer path).
     Returns the holder id used for a matching release/transfer.
+
+    ``timeout`` bounds the wait and raises ``TimeoutError``. Callers on the
+    dispatch path MUST pass one: a caller that has already been made the
+    ledger's write-lease holder but cannot take the gate slot is in
+    ledger/gate split-brain, and an unbounded wait there sits upstream of
+    every watchdog — no heartbeat, no outer timeout, no reap (the pre-arm
+    lease wedge, dispatch 38611b297c16-4a1462e7).
     """
     req_id = dispatch_id or str(uuid.uuid4())
-    await _GATE.acquire(req_id)
+    try:
+        await _GATE.acquire(req_id, timeout=timeout)
+    except TimeoutError:
+        # Close the grant/cancel race: release() may have handed us the slot
+        # and registered us as holder between the deadline and the raise.
+        await _GATE.force_release(req_id)
+        raise
     return req_id
 
 
