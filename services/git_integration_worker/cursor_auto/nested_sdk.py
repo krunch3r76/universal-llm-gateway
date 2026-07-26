@@ -16,6 +16,10 @@ from universal_logging import get_logger
 from services.git_integration_worker.cursor_auto.closeout_relay import (
     ledger_status_to_closeout,
 )
+from services.git_integration_worker.cursor_auto.episode_residue import (
+    compose_closeout_body,
+    residue_for_closeout,
+)
 from services.git_integration_worker.cursor_auto.queue import AutoJob
 from services.git_integration_worker.cursor_bus import CursorBusClient
 from services.git_integration_worker.cursor_dispatch_ledger import (
@@ -212,7 +216,7 @@ async def post_operator_closeout(
         lines.append(f"meta: {json.dumps(meta, sort_keys=True)}")
     lines.append("")
     lines.append(payload.strip())
-    body = "\n".join(lines)
+    body = compose_closeout_body("\n".join(lines), residue_for_closeout(payload))
     resp = await client.reply(
         thread_id=job.thread_id,
         to_agent=job.from_agent,
