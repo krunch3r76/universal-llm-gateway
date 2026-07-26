@@ -24,6 +24,7 @@ from implement_admission.normalize import _files_from_packet
 from implement_admission.spec import CloseoutStatus, ImplementSpec
 from universal_logging import get_logger
 
+from services.git_integration_worker.cursor_auto.episode_residue import residue_actions
 from services.git_integration_worker.cursor_sdk_capture_status import (
     ChangeSet,
     attribution_effects_paths,
@@ -646,6 +647,9 @@ def finalize_closeout_body(
         reduced["dropped_non_file_entries"] = list(dropped[:_CLOSEOUT_FILE_HEAD])
     if payload.get("deviations"):
         reduced["deviations"] = list(payload["deviations"][:_CLOSEOUT_FILE_HEAD])
+    residue = payload.get("propagation_residue") or []
+    if residue:
+        reduced["propagation_residue"] = list(residue[:_CLOSEOUT_FILE_HEAD])
     if body_relocated is not None:
         reduced["body_relocated"] = body_relocated
 
@@ -667,6 +671,8 @@ def finalize_closeout_body(
         "summary": str(payload["summary"])[:200],
         "evidence_uris": payload.get("evidence_uris"),
     }
+    if residue:
+        minimal["propagation_residue"] = list(residue[:_CLOSEOUT_FILE_HEAD])
     if body_relocated is not None:
         minimal["body_relocated"] = body_relocated
     result = json.dumps(minimal, separators=(",", ":"))
@@ -741,6 +747,14 @@ def build_implement_closeout_body(
         deviations = [*(deviations or []), "capture:cortex_writes_unattributed"]
     repo_files = change_set or ChangeSet(created=(), modified=(), deleted=())
 
+    residue_paths = [
+        *repo_files.created,
+        *repo_files.modified,
+        *repo_files.deleted,
+        *(files_untracked_or_ignored or ()),
+    ]
+    propagation_residue = list(residue_actions(residue_paths))
+
     def _render_body(
         manifest_value: EffectsManifest | dict[str, Any] | None,
     ) -> str:
@@ -768,6 +782,7 @@ def build_implement_closeout_body(
                 dispatch_ids=[dispatch_id],
                 cortex_assertions=cortex_assertions,
             ),
+            propagation_residue=propagation_residue,
         )
         payload = closeout.model_dump(mode="json")
         if files_untracked_or_ignored:

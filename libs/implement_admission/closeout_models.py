@@ -71,3 +71,5 @@ class ImplementCloseout(BaseModel):
     source_ref: str
     packet_sha256: str | None = None
     adapter_results: list[AdapterResult] = Field(default_factory=list)
+    # Landed≠live: manage sync_restart / plugin-install action lines (decision:closeout-propagation-residue).
+    propagation_residue: list[str] = Field(default_factory=list)

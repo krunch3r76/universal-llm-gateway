@@ -154,13 +154,45 @@ def build_residue_block(actions: Sequence[str], *, truncated: bool = False) -> s
 
 
 def residue_for_closeout(payload: str) -> str | None:
-    """Compose residue block from closeout payload, or ``None`` when absent."""
+    """Compose residue block from closeout payload, or ``None`` when absent.
+
+    Prefers the machine field ``propagation_residue`` (survives files_* truncation
+    in ``finalize_closeout_body``); falls back to deriving actions from path lists.
+    """
+    text = payload.strip()
+    if not text:
+        return None
+    try:
+        decoded = json.loads(text)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return None
+    if not isinstance(decoded, dict):
+        return None
+
+    truncated = False
+    for field, total_field in _FILE_FIELDS:
+        raw = decoded.get(field)
+        total = decoded.get(total_field)
+        if isinstance(raw, list) and isinstance(total, int) and total > len(raw):
+            truncated = True
+            break
+
+    raw_residue = decoded.get("propagation_residue")
+    if isinstance(raw_residue, list):
+        actions = tuple(
+            entry for entry in raw_residue if isinstance(entry, str) and entry
+        )
+        if actions:
+            return build_residue_block(actions, truncated=truncated)
+
     parsed = changed_paths_from_closeout(payload)
     if parsed is None:
         return None
-    paths, truncated = parsed
-    actions = residue_actions(paths)
-    return build_residue_block(actions, truncated=truncated)
+    paths, path_truncated = parsed
+    return build_residue_block(
+        residue_actions(paths),
+        truncated=truncated or path_truncated,
+    )
 
 
 def compose_closeout_body(base_body: str, residue: str | None) -> str:

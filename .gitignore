@@ -107,6 +107,9 @@ tests/*
 !libs/session_store/test_*.py
 # Bound-invariant falsifier tier (arc 5911 G10) — path fence only; legacy test_*.py stay ignored
 !**/test_falsifier_*.py
+# Closeout propagation residue (decision:closeout-propagation-residue / friction 26340)
+!services/git_integration_worker/tests/test_cursor_auto_episode_residue.py
+!services/git_integration_worker/tests/test_cursor_sdk_closeout_residue.py
 # Root-anchored: rsync --filter=:- .gitignore ignores git ! negations.
 # Use /foo/ not foo/ when foo/ also appears as a source directory elsewhere in the tree.
 /templates/
