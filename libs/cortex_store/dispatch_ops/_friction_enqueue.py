@@ -280,7 +280,11 @@ def file_charter_protocol_friction(
     elif not actionable:
         kwargs["actionable_false_reason"] = "machine-recovery informational"
 
-    result = _op_friction(**kwargs)
+    try:
+        result = _op_friction(**kwargs)
+    except Exception as exc:  # noqa: BLE001 — recovery must not abort on cortex miss
+        logger.warning("file_charter_protocol_friction raised: %s", exc)
+        return None
     if "error" in result:
         logger.warning("file_charter_protocol_friction failed: %s", result["error"])
         return None
