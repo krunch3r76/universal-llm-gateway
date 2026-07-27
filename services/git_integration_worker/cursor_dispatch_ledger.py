@@ -970,54 +970,38 @@ class CursorDispatchLedger:
         worker_instance: str | None,
         arming_timeout_s: float | None = None,
     ) -> list[str]:
-        """``admitted``/``running`` rows on this instance past heartbeat staleness.
+        """Orphan scan via ``blocking_holders − live_holders`` (5960 L1).
 
-        Live asyncio tasks use ``threshold_s`` (long lease timeout). Rows whose task
-        is missing or already done use ``dead_run_grace_s`` so finalize orphans reap
-        quickly without waiting for the full lease horizon.
-
-        ``arming_timeout_s`` caps the horizon for a holder that has never armed —
-        ``last_heartbeat_at IS NULL`` measured from ``started_at``. The heartbeat
-        thread starts as soon as the bridge launch returns and bumps every
-        ``CURSOR_SDK_HEARTBEAT`` seconds, so a null heartbeat past the arming
-        horizon means the dispatch took the write lease and never came alive.
-
-        Deliberately NOT keyed on ``sdk_agent_id``: the local bridge's agent
-        object exposes no ``id``, so ``record_sdk_identity`` stores NULL for
-        every dispatch including healthy ones — using it as an arming witness
-        would reap all live work.
+        Heartbeat staleness downgrades an otherwise task-live admitted/running
+        holder to orphan so wedged coroutines remain reclaimable.
         """
-        from datetime import datetime
+        from services.git_integration_worker.cursor_sdk_park import orphan_holders
 
-        now = datetime.now(UTC).timestamp()
-        with self._connect() as conn:
-            rows = conn.execute(
-                "SELECT dispatch_id, last_heartbeat_at, started_at, status "
-                "FROM cursor_sdk_dispatches "
-                "WHERE worker_instance=? AND COALESCE(read_only,0)=0 "
-                "AND status IN ('admitted','running')",
-                (worker_instance,),
-            ).fetchall()
-        stale: list[str] = []
-        for row in rows:
-            task = self._tasks.get(row["dispatch_id"])
-            task_live = task is not None and not task.done()
-            grace_s = threshold_s if task_live else dead_run_grace_s
-            if arming_timeout_s is not None and row["last_heartbeat_at"] is None:
-                grace_s = min(grace_s, arming_timeout_s)
-            cutoff = now - grace_s
-            ts = row["last_heartbeat_at"] or row["started_at"]
-            if ts is None:
-                stale.append(row["dispatch_id"])
-                continue
-            try:
-                seen = datetime.fromisoformat(ts).timestamp()
-            except ValueError:
-                stale.append(row["dispatch_id"])
-                continue
-            if seen < cutoff:
-                stale.append(row["dispatch_id"])
-        return stale
+        return orphan_holders(
+            self,
+            threshold_s=threshold_s,
+            dead_run_grace_s=dead_run_grace_s,
+            worker_instance=worker_instance,
+            arming_timeout_s=arming_timeout_s,
+        )
+
+    def orphan_holders(
+        self,
+        *,
+        threshold_s: float | None = None,
+        dead_run_grace_s: float | None = None,
+        worker_instance: str | None = None,
+        arming_timeout_s: float | None = None,
+    ) -> list[str]:
+        from services.git_integration_worker.cursor_sdk_park import orphan_holders
+
+        return orphan_holders(
+            self,
+            threshold_s=threshold_s,
+            dead_run_grace_s=dead_run_grace_s,
+            worker_instance=worker_instance,
+            arming_timeout_s=arming_timeout_s,
+        )
 
     def release_stale_writer(
         self, *, dispatch_id: str, force: bool = False
@@ -1109,40 +1093,38 @@ class CursorDispatchLedger:
         }
 
     def startup_reconcile(self, *, worker_instance: str) -> list[str]:
-        """Mark restart survivors terminal; return lease keys needing promotion."""
+        """Return lease keys needing promotion after orphan scan at boot."""
+        del worker_instance
         lease_keys: set[str] = set()
-        with self._connect() as conn:
-            survivors = conn.execute(
-                "SELECT dispatch_id, lease_key, source_repo, status, worker_instance "
-                "FROM cursor_sdk_dispatches "
-                "WHERE status IN ('admitted','running') "
-                "AND COALESCE(read_only,0)=0"
-            ).fetchall()
-        for row in survivors:
-            dispatch_id = row["dispatch_id"]
+        for dispatch_id in self.orphan_holders():
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT lease_key, source_repo, status, park_child_dispatch_id "
+                    "FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+                    (dispatch_id,),
+                ).fetchone()
+            if row is None:
+                continue
             key = _resolve_lease_key(
                 lease_key=row["lease_key"], source_repo=row["source_repo"]
             )
-            live = (
-                self._tasks.get(dispatch_id) is not None
-                and not self._tasks[dispatch_id].done()
-            )
-            if live:
-                continue
-            if (
-                row["worker_instance"] != worker_instance
-                or row["status"] == _STATUS_RUNNING
-            ):
+            if row["status"] in _ACTIVE_WRITER_STATUSES:
                 self.mark_terminal(dispatch_id=dispatch_id, terminal_status="failed")
-                if key:
-                    lease_keys.add(key)
-            elif (
-                row["status"] == _STATUS_ADMITTED
-                and row["worker_instance"] == worker_instance
-            ):
-                self.mark_terminal(dispatch_id=dispatch_id, terminal_status="failed")
-                if key:
-                    lease_keys.add(key)
+            elif row["status"] == _STATUS_PARKED_WAITING:
+                child_id = row["park_child_dispatch_id"]
+                if child_id:
+                    with self._connect() as conn:
+                        child = conn.execute(
+                            "SELECT status FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+                            (child_id,),
+                        ).fetchone()
+                    if child is not None and child["status"] not in _STATUS_TERMINAL:
+                        self.mark_terminal(
+                            dispatch_id=child_id, terminal_status="failed"
+                        )
+                self.restore_from_park(parent_id=dispatch_id)
+            if key:
+                lease_keys.add(key)
         with self._connect() as conn:
             for row in conn.execute(
                 "SELECT DISTINCT lease_key, source_repo FROM cursor_sdk_dispatches "

@@ -118,7 +118,7 @@ class FrontierGenerateRequest:
     resolved_contract: str | None = None
     density_triage: str | None = None
     review_opt_out_reason_code: str | None = None
-    auto_review_child: bool = False
+    auto_review_child: bool | None = None
     packet_path: str | None = None
     skills: list[str] | None = None
     server_tools: bool | None = None

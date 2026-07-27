@@ -4,18 +4,39 @@ F5 / a:26095 — R-admit consult admission must fail closed when the Sidecars
 ``spec_sha256:<hex>`` pin has drifted from on-disk dense-spec bytes (or is
 missing / ambiguous / malformed / unreadable). Gate runs in
 ``tick_loop._admit_window`` **before** ``mark_admit_intent``.
+
+Presentation wrappers (markdown backticks, glued trailing punctuation) are
+normalized at ``materialize_checkpoint_turn`` and again inside
+``verify_r_corpus_sha``; wrap residue must surface as ``malformed_uri`` only
+when the URI shape itself cannot resolve — never as a false ``unreadable``
+missing-file fault when the path is merely wrapped.
+
+After two consecutive refusals the machine posts a holder-repair CHECKPOINT that
+re-queues a judgment-lane pin-refresh pickup — it never rewrites ``spec_sha256``.
 """
 
 from __future__ import annotations
 
 import hashlib
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from implement_admission.closeout_helpers import cortex_files_root
+from universal_logging import get_logger
+
+from . import bus_client
+from .checkpoint_admit_gate import validate_checkpoint_for_admit
+from .checkpoint_parse import parse_checkpoint
+from .self_heal_checkpoint import build_self_heal_checkpoint
 
 _REASON = "stale_r_corpus_sha"
+_REFUSAL_THRESHOLD = 2
+_HOLDER_REPAIR_PICKUP = (
+    "G3a — refresh Sidecars dense-spec pin (spec_sha256) then re-post "
+    "CONSULT_PENDING + consult_role: r_admit · executor_lane: judgment"
+)
+_logger = get_logger(__name__)
 _SUB_REASONS = frozenset(
     {
         "stale",
@@ -23,6 +44,7 @@ _SUB_REASONS = frozenset(
         "missing_uri",
         "ambiguous_pin",
         "malformed_pin",
+        "malformed_uri",
         "unreadable",
     }
 )
@@ -89,8 +111,14 @@ def _candidate_rows(sidecars: str) -> list[tuple[str, str]]:
         pin_m = _PIN_RE.search(row)
         if uri_m is None or pin_m is None:
             continue
-        found.append((uri_m.group(1).rstrip(".`'\""), pin_m.group(1)))
+        found.append((_canonical_extracted_uri(uri_m.group(1)), pin_m.group(1)))
     return found
+
+
+def _canonical_extracted_uri(raw: str) -> str:
+    """Strip residual presentation punctuation from a regex-captured URI."""
+    trail = ".,);:]`'\""
+    return (raw or "").strip().strip("`'\"").rstrip(trail)
 
 
 def extract_r_corpus_pin(checkpoint_body: str) -> ExtractResult:
@@ -170,9 +198,16 @@ def verify_r_corpus_sha(
 
     Returns ``ok=True`` only when exactly one same-row pin matches the on-disk
     SHA-256. Failures share ``reason=stale_r_corpus_sha`` with a closed
-    ``sub_reason`` set (A2).
+    ``sub_reason`` set (A2). Presentation wrappers are normalized before extract
+    (defense-in-depth; materialize is the admit choke point).
+
+    ``malformed_uri`` — URI present but not a resolvable cortex/notes path shape.
+    ``unreadable`` — path resolves but file missing or OS read fails (true I/O).
     """
-    extracted = extract_r_corpus_pin(checkpoint_body)
+    from .checkpoint_body import normalize_checkpoint_machine_fields
+
+    body = normalize_checkpoint_machine_fields(checkpoint_body or "")
+    extracted = extract_r_corpus_pin(body)
     if not extracted.ok:
         return RCorpusShaResult(
             ok=False,
@@ -184,7 +219,15 @@ def verify_r_corpus_sha(
     assert extracted.dense_spec_uri is not None and extracted.pinned_hex is not None
     root = cortex_root if cortex_root is not None else cortex_files_root()
     path = _resolve_spec_path(extracted.dense_spec_uri, root)
-    if path is None or not path.is_file():
+    if path is None:
+        return RCorpusShaResult(
+            ok=False,
+            reason=_REASON,
+            sub_reason="malformed_uri",
+            pinned_hex=extracted.pinned_hex,
+            dense_spec_uri=extracted.dense_spec_uri,
+        )
+    if not path.is_file():
         return RCorpusShaResult(
             ok=False,
             reason=_REASON,
@@ -219,6 +262,95 @@ def verify_r_corpus_sha(
     )
 
 
+def _refusal_store_dir() -> Path:
+    return Path.home() / ".local" / "share" / "charter-runner" / "r-corpus-refusals"
+
+
+def _refusal_path(root_id: str) -> Path:
+    return _refusal_store_dir() / f"{root_id}.count"
+
+
+def _read_refusal_count(root_id: str) -> int:
+    path = _refusal_path(root_id)
+    if not path.is_file():
+        return 0
+    try:
+        return max(0, int(path.read_text(encoding="utf-8").strip().splitlines()[0]))
+    except (OSError, ValueError, IndexError):
+        return 0
+
+
+def _write_refusal_count(root_id: str, n: int) -> None:
+    path = _refusal_path(root_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"{n}\n", encoding="utf-8")
+
+
+def clear_r_corpus_refusals(root_id: str) -> None:
+    """Drop the per-root stale-R refusal counter after a successful pin verify."""
+    _refusal_path(root_id).unlink(missing_ok=True)
+
+
+def _inject_state_advisory(body: str, result: RCorpusShaResult) -> str:
+    """Append holder-repair advisory lines under ``## State`` (never touches Sidecars)."""
+    lines = [
+        f"- sub_reason: {result.sub_reason or 'stale'}",
+        f"- dense_spec_uri: {result.dense_spec_uri or '(none)'}",
+        f"- pinned_hex: {result.pinned_hex or '(none)'}",
+    ]
+    if result.live_hex:
+        lines.append(f"- live_hex: {result.live_hex}")
+    advisory = "\n".join(lines)
+    marker = "## State\n"
+    if marker not in body:
+        return body
+    return body.replace(marker, marker + advisory + "\n", 1)
+
+
+async def _post_holder_repair_checkpoint(
+    *,
+    root_id: str,
+    checkpoint: dict | None,
+    result: RCorpusShaResult,
+    log: object,
+) -> bool:
+    """Post a judgment-lane pin-refresh CHECKPOINT; never rewrite ``spec_sha256``."""
+    prior_body = str((checkpoint or {}).get("body") or "")
+    try:
+        prior = parse_checkpoint(prior_body)
+    except Exception:  # noqa: BLE001 — leave refusal counter for retry
+        log.error(  # type: ignore[attr-defined]
+            "charter-runner stale_r_corpus_sha repair skipped root=%s — parse failed",
+            root_id,
+        )
+        return False
+    repair_prior = replace(
+        prior,
+        next_pickup=[_HOLDER_REPAIR_PICKUP],
+        consult_pending=False,
+    )
+    subject, body = build_self_heal_checkpoint(
+        prior=repair_prior,
+        window_index=0,
+        worker_thread="",
+        reason=f"stale_r_corpus_sha:{result.sub_reason or 'stale'}",
+        root_id=root_id,
+    )
+    body = _inject_state_advisory(body, result)
+    verdict = validate_checkpoint_for_admit(body)
+    if not verdict.ok:
+        log.error(  # type: ignore[attr-defined]
+            "charter-runner stale_r_corpus_sha repair CHECKPOINT invalid root=%s "
+            "reason=%s hint=%s — skip post",
+            root_id,
+            verdict.reason,
+            verdict.fix_hint,
+        )
+        return False
+    await bus_client.post_root_checkpoint(root_id, subject=subject, body=body)
+    return True
+
+
 async def refuse_stale_r_admit(
     *,
     root_id: str,
@@ -227,7 +359,7 @@ async def refuse_stale_r_admit(
     events_module: object,
     log: object,
 ) -> None:
-    """Log + emit ``root_skipped`` for a failed R-corpus gate (no admit_intent)."""
+    """Log + emit ``root_skipped``; after two refusals post a holder-repair CHECKPOINT."""
     skip_reason = result.reason or _REASON
     log.warning(  # type: ignore[attr-defined]
         "charter-runner skip r_admit admit root=%s reason=%s sub_reason=%s "
@@ -245,3 +377,21 @@ async def refuse_stale_r_admit(
         reason=f"{skip_reason}:{result.sub_reason or 'stale'}",
         checkpoint_turn=int(cp_turn) if cp_turn is not None else None,
     )
+    count = _read_refusal_count(root_id) + 1
+    _write_refusal_count(root_id, count)
+    if count < _REFUSAL_THRESHOLD:
+        return
+    posted = await _post_holder_repair_checkpoint(
+        root_id=root_id,
+        checkpoint=checkpoint,
+        result=result,
+        log=log,
+    )
+    if posted:
+        _write_refusal_count(root_id, 0)
+    else:
+        _logger.warning(
+            "charter-runner stale_r_corpus_sha repair post failed root=%s count=%s",
+            root_id,
+            count,
+        )

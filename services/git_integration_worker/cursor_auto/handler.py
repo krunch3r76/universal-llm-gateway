@@ -12,7 +12,9 @@ from services.git_integration_worker.cursor_auto.closeout_relay import (
     select_closeout_relay_payload,
 )
 from services.git_integration_worker.cursor_auto.directive import (
+    attendance_surface,
     build_sdk_message,
+    effective_require_attended,
     parse_request_body,
 )
 from services.git_integration_worker.cursor_auto.episode_briefing import (
@@ -71,7 +73,7 @@ async def process_job(
     work_bounded = job.contract == "answer" or (
         directive is not None and directive.density == "sparse"
     )
-    gate_plan = plan_nested_dispatch(work_bounded=work_bounded)
+    gate_plan = plan_nested_dispatch(work_bounded=work_bounded)  # pure: stats read only
 
     base_admit_body = (
         "Auto admitted lane:cursor-auto request.\n"
@@ -101,6 +103,23 @@ async def process_job(
             "body": admit.body,
         }
 
+    if effective_require_attended(job, directive):
+        surface = attendance_surface(job, directive)
+        logger.info(
+            "cursor-auto require_attended short-circuit job=%s surface=%s "
+            "preempted_gate_action=%s",
+            job.job_id,
+            surface,
+            gate_plan["action"],
+        )
+        return await _terminal_needs_attended(
+            job,
+            client=client,
+            queue=queue,
+            reason="operator_require_attended",
+            gate_plan=gate_plan,
+        )
+
     if job.contract not in _NESTED_CONTRACTS:
         return await _terminal_in_seat(
             job,
@@ -113,6 +132,7 @@ async def process_job(
         )
 
     if gate_plan["action"] == "in_seat":
+        # lane:cursor-auto in_seat is unattended Auto — not operator attendance.
         return await _terminal_needs_attended(
             job,
             client=client,

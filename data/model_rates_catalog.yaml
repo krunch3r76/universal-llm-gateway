@@ -1,4 +1,4 @@
-updated_at: '2026-07-26T14:04:02.743606+00:00'
+updated_at: '2026-07-26T20:04:04.497408+00:00'
 models:
 - model_id: ai21/jamba-large-1.7
   input_rate_per_m: 2.0
@@ -823,11 +823,11 @@ models:
   pinned: false
   updated_at: '2026-07-25T08:42:05.795400+00:00'
 - model_id: moonshotai/kimi-k2.7-code
-  input_rate_per_m: 0.75
+  input_rate_per_m: 0.73
   output_rate_per_m: 3.5
   source: catalog_refresh
   pinned: false
-  updated_at: '2026-07-26T08:04:01.021991+00:00'
+  updated_at: '2026-07-26T20:04:04.496649+00:00'
 - model_id: moonshotai/kimi-k3
   input_rate_per_m: 3.0
   output_rate_per_m: 15.0
@@ -2107,11 +2107,11 @@ models:
   pinned: false
   updated_at: '2026-07-25T08:42:05.795398+00:00'
 - model_id: openrouter/moonshotai/kimi-k2.7-code
-  input_rate_per_m: 0.75
+  input_rate_per_m: 0.73
   output_rate_per_m: 3.5
   source: catalog_refresh
   pinned: false
-  updated_at: '2026-07-26T08:04:01.021989+00:00'
+  updated_at: '2026-07-26T20:04:04.496647+00:00'
 - model_id: openrouter/moonshotai/kimi-k3
   input_rate_per_m: 3.0
   output_rate_per_m: 15.0
@@ -3145,11 +3145,11 @@ models:
   pinned: false
   updated_at: '2026-07-24T06:42:31.199038+00:00'
 - model_id: openrouter/z-ai/glm-5.2
-  input_rate_per_m: 0.6706
-  output_rate_per_m: 2.1076
+  input_rate_per_m: 0.6692
+  output_rate_per_m: 2.1032
   source: catalog_refresh
   pinned: false
-  updated_at: '2026-07-26T14:04:02.742764+00:00'
+  updated_at: '2026-07-26T20:04:04.496639+00:00'
 - model_id: openrouter/z-ai/glm-5v-turbo
   input_rate_per_m: 1.2
   output_rate_per_m: 4.0
@@ -3781,11 +3781,11 @@ models:
   pinned: false
   updated_at: '2026-07-24T06:42:31.199038+00:00'
 - model_id: z-ai/glm-5.2
-  input_rate_per_m: 0.6706
-  output_rate_per_m: 2.1076
+  input_rate_per_m: 0.6692
+  output_rate_per_m: 2.1032
   source: catalog_refresh
   pinned: false
-  updated_at: '2026-07-26T14:04:02.742773+00:00'
+  updated_at: '2026-07-26T20:04:04.496644+00:00'
 - model_id: z-ai/glm-5v-turbo
   input_rate_per_m: 1.2
   output_rate_per_m: 4.0

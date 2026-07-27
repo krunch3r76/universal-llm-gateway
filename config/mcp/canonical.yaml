@@ -1941,7 +1941,7 @@ tools:
   flat_call_shape:
     tool: agent_bus_request
     substrate_qualified: user-vortex__agent_bus_request
-  fol_descriptor: "∀ args: (new_slug ∈ args XOR thread ∈ args) ∧ to='cursor' ∧ subject ∧ body\n  ⟹ TurnSendCreated-shaped + handler_status ∈ {auto-admit-armed, no-auto-handler} + poll_hint.\nInjects lane:cursor-auto (dedupe). Arm predicate = live Auto handler heartbeat — ¬ turn-write alone (F1).\nDegrade keeps lane:cursor-auto; ¬ dual-tag lane:life-to-code.\ndesired_model/desired_effort/contract are structured hints; Auto reports requested vs actual.\nLife-callable (mcp_claude). Mutating.\n"
+  fol_descriptor: "∀ args: (new_slug ∈ args XOR thread ∈ args) ∧ to='cursor' ∧ subject ∧ body\n  ⟹ TurnSendCreated-shaped + handler_status ∈ {auto-admit-armed, no-auto-handler} + poll_hint.\nInjects lane:cursor-auto (dedupe). Arm predicate = live Auto handler heartbeat — ¬ turn-write alone (F1).\nDegrade keeps lane:cursor-auto; ¬ dual-tag lane:life-to-code.\ndesired_model/desired_effort/contract/require_attended? are structured hints; Auto reports requested vs actual.\nrequire_attended=true (wire or DIRECTIVE body OR) ⇒ terminal status:needs-attended reason=operator_require_attended.\nLife-callable (mcp_claude). Mutating.\n"
   json_schema:
     type: object
     properties:
@@ -1982,6 +1982,10 @@ tools:
       contract:
         type: string
         description: answer | investigate | implement | verify (default answer).
+      require_attended:
+        type: boolean
+        description: When true, refuse unattended nested dispatch and in-seat Auto substitute; terminal status:needs-attended with reason=operator_require_attended. ORs with DIRECTIVE body require_attended or executor_bind attended.
+        default: false
     required:
     - subject
     - body

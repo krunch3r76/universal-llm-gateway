@@ -6,9 +6,25 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from claude_bundles.project_ask import read_archive_execution_id
+
+# Sample-count thresholds on the held-page harvest ladder path
+# (``runner.make_harvest_ladder_hook`` → ``wait_assistant_reply(poll_ms=500)`` in
+# ``libs/claude_bundles/chat_reply_wait.py``). Each constant is denominated in
+# consecutive harvest samples, not wall-clock seconds.
+
+GROWTH_IDLE_SAMPLES = 2
+"""Intra-arm debounce for idle-after-growth (~1s at poll_ms=500 on the verified ladder path)."""
+
+SUSTAINED_IDLE_SAMPLES = 10
+"""Continuous quiet after ``seen_active`` (≥5s at poll_ms=500 via ``chat_reply_wait.py``)."""
+
+ESCAPE_IDLE_SAMPLES = 120
+"""Failsafe when generation never flips ``seen_active`` (~60s at poll_ms=500)."""
+
+TurnIdleArm = Literal["growth", "sustained", "escape"]
 
 
 @dataclass
@@ -34,6 +50,15 @@ class LadderAdvanceState:
     ``execution_id``: when non-empty, ``content_proof`` requires each watched
     archive file to carry a matching stamped ``execution_id``. Empty
     ``execution_id`` against an occupied file fails closed (no size-only proof).
+
+    ``seen_active``: sticky one-way latch; set on the first sample with
+    streaming, stop, or tool_pause and never reset for this progress instance.
+
+    ``idle_streak``: count of consecutive idle samples; reset to 0 on any
+    non-idle sample.
+
+    ``body_len_baseline``: ``body_len`` captured on the same sample that first
+    flips ``seen_active``; remains ``None`` until then.
     """
 
     turn_idle_sent: bool = False
@@ -44,6 +69,10 @@ class LadderAdvanceState:
     execution_id: str = ""
     output_download_pending: bool = False
     blocked_archive_paths: set[Path] = field(default_factory=set)
+    seen_active: bool = False
+    idle_streak: int = 0
+    body_len_baseline: int | None = None
+    turn_idle_arm: TurnIdleArm | None = None
 
 
 def archive_stamp_allows_content_proof(
@@ -83,6 +112,13 @@ async def advance_ladder_from_harvest(
     Callers must feed samples from the Playwright page already held by
     ``wait_assistant_reply`` / ask / converse — never open a competing CDP
     connection (friction 25671).
+
+    Turn-idle latching is gated: ``on_turn_idle`` fires only after sustained idle
+    after activity, idle-after-growth (body delta past ``min_bytes`` with debounce),
+    or the ``ESCAPE_IDLE_SAMPLES`` failsafe when generation never activates. Idle is
+    defined as ``¬(streaming ∨ stop ∨ tool_pause)`` via ``page_idle_from_state``, so
+    a sample that sets ``seen_active`` cannot co-occur with ``idle=True`` on that
+    same sample.
     """
     if callbacks.abort_check and await callbacks.abort_check():
         return
@@ -93,10 +129,56 @@ async def advance_ladder_from_harvest(
             bool(state.get("tool_pause")),
             time.time(),
         )
+
+    streaming = bool(state.get("streaming"))
+    stop = bool(state.get("stop"))
+    tool_pause = bool(state.get("tool_pause"))
+    if streaming or stop or tool_pause:
+        if not progress.seen_active:
+            progress.seen_active = True
+            progress.body_len_baseline = int(state.get("body_len") or 0)
+        else:
+            progress.seen_active = True
+
     idle = page_idle_from_state(state)
-    if idle and not progress.turn_idle_sent and callbacks.on_turn_idle:
+    if not idle:
+        progress.idle_streak = 0
+    else:
+        progress.idle_streak += 1
+
+    body_len = int(state.get("body_len") or 0)
+    baseline = progress.body_len_baseline
+    idle_after_growth = (
+        progress.seen_active
+        and baseline is not None
+        and (body_len - baseline) >= progress.min_bytes
+        and progress.idle_streak >= GROWTH_IDLE_SAMPLES
+    )
+    sustained_after_active = (
+        progress.seen_active and progress.idle_streak >= SUSTAINED_IDLE_SAMPLES
+    )
+    escape_idle = (
+        not progress.seen_active and progress.idle_streak >= ESCAPE_IDLE_SAMPLES
+    )
+    should_fire_turn_idle = (
+        idle_after_growth or sustained_after_active or escape_idle
+    )
+
+    if (
+        idle
+        and not progress.turn_idle_sent
+        and callbacks.on_turn_idle
+        and should_fire_turn_idle
+    ):
+        if idle_after_growth:
+            progress.turn_idle_arm = "growth"
+        elif sustained_after_active:
+            progress.turn_idle_arm = "sustained"
+        else:
+            progress.turn_idle_arm = "escape"
         progress.turn_idle_sent = True
         await callbacks.on_turn_idle()
+
     if (
         idle
         and progress.turn_idle_sent

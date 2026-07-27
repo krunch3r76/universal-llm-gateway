@@ -137,14 +137,20 @@ class ExecutionPollResponse(BaseModel):
     error: str | None = None
     delete_after: dict[str, Any] | None = None
     results: list[dict[str, Any]] | None = None
-    harvest_provenance: Literal["output-file", "cortex-uri", "chat"] | None = Field(
+    harvest_provenance: (
+        Literal["output-file", "cortex-uri", "chat", "chat-large"] | None
+    ) = Field(
         default=None,
         description=(
             "Resolution outcome provenance (distinct from submit ``harvest_source``). "
             "Present on successful terminals only; ``null`` on non-success. "
-            "When present: ``output-file`` | ``cortex-uri`` | ``chat``. "
+            "When present: ``output-file`` | ``cortex-uri`` | ``chat`` | ``chat-large``. "
             "Never ``ok=true`` with ``harvest_provenance=chat`` when "
-            "``expected_size=large`` (auto fail-closed)."
+            "``expected_size=large`` (auto fail-closed). ``chat-large`` marks the "
+            "measured escape from that guard: Output and cortex-uri both missed but "
+            "the scraped body exceeded ``THIN_CHAT_BODY_MAX_CHARS``, so it is a "
+            "transcript rather than a completion card. Audit ``chat-large`` archives "
+            "when an Output file was genuinely expected."
         ),
     )
     completion_phase: CompletionPhase = Field(
@@ -179,9 +185,12 @@ class ExecutionPollResponse(BaseModel):
     turn_idle_at: float | None = Field(
         default=None,
         description=(
-            "Unix epoch when the satellite first attested CDP turn idle (no Stop/streaming/"
-            "tool_pause). Required conjunct for content_proof; idle alone does not advance "
-            "R-admit or trigger delete_after."
+            "Unix epoch when the satellite first attested confirmed CDP turn idle after the "
+            "page_liveness gate (sustained idle after activity, idle-after-growth with body "
+            "delta past min_body, or ESCAPE_IDLE_SAMPLES failsafe) — not the first quiet "
+            "harvest sample. Required conjunct for content_proof; idle alone does not advance "
+            "R-admit or trigger delete_after. Worst-case added latency on paths that never "
+            "flip seen_active is ESCAPE_IDLE_SAMPLES × poll_ms (~60s at poll_ms=500)."
         ),
     )
     stall_stage: StallStage | None = Field(

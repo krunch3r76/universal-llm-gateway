@@ -16,7 +16,11 @@ from .caps import CapStore
 from .eligibility import ADMISSION_SUBJECT_PREFIX, Decision
 from .executor_routing import resolve_charter_executor
 from .materializer_autonomous import select_packet
-from .r_corpus_sha import refuse_stale_r_admit, verify_r_corpus_sha
+from .r_corpus_sha import (
+    clear_r_corpus_refusals,
+    refuse_stale_r_admit,
+    verify_r_corpus_sha,
+)
 
 logger = get_logger(__name__)
 
@@ -59,6 +63,7 @@ async def admit_window(
                 log=logger,
             )
             return False
+        clear_r_corpus_refusals(root_id)
     # Router sits *after* the consult branch: a CONSULT_PENDING pickup naming G4
     # must stay on the consult seat (R-independence), never re-route to implement.
     bind = resolve_charter_executor(

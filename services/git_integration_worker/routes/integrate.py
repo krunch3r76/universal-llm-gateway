@@ -35,6 +35,12 @@ from services.git_integration_worker.admission import (
     WorkAdmissionController,
 )
 from services.git_integration_worker.config import WorkerConfig, load_config
+from services.git_integration_worker.cursor_sdk_land_lease import (
+    DirtyMasterRefused,
+    dirty_master_envelope,
+    master_land_guard,
+    reap_stale_land_leases,
+)
 from services.git_integration_worker.models.api import (
     CommitRequest,
     DiffResponse,
@@ -137,6 +143,42 @@ async def _admit_and_slot(
         ticket.mark_running()
         yield ticket
     except Draining503:
+        raise
+    except Exception:
+        terminal = "error"
+        raise
+    finally:
+        await _GATE.release()
+        controller.close_ticket(op_id, terminal_status=terminal)
+
+
+@asynccontextmanager
+async def _admit_and_land_slot(
+    controller: WorkAdmissionController,
+    *,
+    kind: str,
+    route: str,
+    source_repo: str,
+) -> AsyncIterator[Ticket]:
+    """Admission + integrate gate + master land lease for merge-out paths."""
+    op_id = str(uuid.uuid4())
+    ticket = controller.try_admit(kind, op_id=op_id, route=route)
+    await _GATE.acquire(op_id)
+    terminal = "completed"
+    try:
+        if not ticket.should_proceed():
+            terminal = "rejected_drain"
+            raise Draining503(
+                f"git-integration-worker began draining while queued "
+                f"(epoch={controller.drain_epoch})"
+            )
+        async with master_land_guard(source_repo=source_repo, holder_op_id=op_id):
+            ticket.mark_running()
+            yield ticket
+    except Draining503:
+        raise
+    except DirtyMasterRefused:
+        terminal = "rejected"
         raise
     except Exception:
         terminal = "error"
@@ -307,8 +349,11 @@ async def integrate(
     cfg = _config(request)
     controller = _controller(request)
     try:
-        async with _admit_and_slot(
-            controller, kind="git_integrate", route="/api/v1/git/integrate"
+        async with _admit_and_land_slot(
+            controller,
+            kind="git_integrate",
+            route="/api/v1/git/integrate",
+            source_repo=str(cfg.source_repo),
         ):
             result = await integrate_op(
                 arc=req.arc,
@@ -322,6 +367,8 @@ async def integrate(
             )
     except Draining503 as exc:
         return _draining_response(exc)
+    except DirtyMasterRefused as exc:
+        return IntegrateResponse(**dirty_master_envelope(exc=exc))
     return IntegrateResponse(**result)
 
 
@@ -340,8 +387,11 @@ async def land(req: LandRequest, request: Request) -> IntegrateResponse:
     cfg = _config(request)
     controller = _controller(request)
     try:
-        async with _admit_and_slot(
-            controller, kind="git_integrate", route="/api/v1/git/land"
+        async with _admit_and_land_slot(
+            controller,
+            kind="git_integrate",
+            route="/api/v1/git/land",
+            source_repo=str(cfg.source_repo),
         ):
             result = await land_op(
                 arc=req.arc,
@@ -356,6 +406,8 @@ async def land(req: LandRequest, request: Request) -> IntegrateResponse:
             )
     except Draining503 as exc:
         return _draining_response(exc)
+    except DirtyMasterRefused as exc:
+        return IntegrateResponse(**dirty_master_envelope(exc=exc))
     return IntegrateResponse(**result)
 
 

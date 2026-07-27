@@ -62,7 +62,7 @@ def read_lb_packet_text(packet_path: str) -> str | None:
 def resolve_auto_review_child(
     *,
     contract: str,
-    auto_review_child: bool,
+    auto_review_child: bool | None,
     packet_text: str | None = None,
     message_text: str | None = None,
     packet_path: str | None = None,
@@ -70,9 +70,18 @@ def resolve_auto_review_child(
     """Return (effective auto_review_child, defaulted).
 
     Source order for the predicate: packet body → message → packet_path.
+
+    ``None`` means the caller expressed no preference and is the only state the
+    light-bounded production-code default may fill. An explicit ``False`` is a
+    caller opt-out and wins over that default: a caller-supplied value that
+    silently loses to a server default is indistinguishable from the flag not
+    working at all, and leaves the opt-out lane unreachable.
     """
+    requested = bool(auto_review_child)
     if contract != "light-bounded":
-        return auto_review_child, False
+        return requested, False
+    if auto_review_child is False:
+        return False, False
 
     instruction = _instruction_text(
         packet_text=packet_text,
@@ -80,9 +89,9 @@ def resolve_auto_review_child(
         packet_path=packet_path,
     )
     if not instruction_mentions_production_code(instruction, packet_path):
-        return auto_review_child, False
+        return requested, False
 
-    if auto_review_child:
+    if requested:
         return True, False
     return True, True
 
@@ -90,7 +99,7 @@ def resolve_auto_review_child(
 def prepare_lb_auto_review_for_generate(
     *,
     contract: Contract,
-    auto_review_child: bool,
+    auto_review_child: bool | None,
     packet_path: str | None,
     message_text: str | None,
 ) -> tuple[bool, bool, str | None]:

@@ -18,7 +18,7 @@ from services.git_integration_worker.cursor_auto.closeout_relay import (
 )
 from services.git_integration_worker.cursor_auto.episode_residue import (
     compose_closeout_body,
-    residue_for_closeout,
+    resolve_relay_residue,
 )
 from services.git_integration_worker.cursor_auto.queue import AutoJob
 from services.git_integration_worker.cursor_bus import CursorBusClient
@@ -216,7 +216,10 @@ async def post_operator_closeout(
         lines.append(f"meta: {json.dumps(meta, sort_keys=True)}")
     lines.append("")
     lines.append(payload.strip())
-    body = compose_closeout_body("\n".join(lines), residue_for_closeout(payload))
+    body = compose_closeout_body(
+        "\n".join(lines),
+        resolve_relay_residue(wrapper_body=sdk_body, relay_body=payload),
+    )
     resp = await client.reply(
         thread_id=job.thread_id,
         to_agent=job.from_agent,
@@ -285,7 +288,9 @@ async def post_operator_wake(
         ),
     ]
     body = "\n".join(body_lines)
-    if _contains_wake_forbidden_tokens(subject) or _contains_wake_forbidden_tokens(body):
+    if _contains_wake_forbidden_tokens(subject) or _contains_wake_forbidden_tokens(
+        body
+    ):
         logger.warning(
             "cursor-auto wake token guard blocked post dispatch_id=%s thread_id=%s",
             dispatch_id,

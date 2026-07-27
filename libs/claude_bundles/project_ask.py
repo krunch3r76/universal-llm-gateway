@@ -402,14 +402,15 @@ async def project_ask_on_page(
                 cortex_files_root=cortex_files_root_from_env(),
             )
         except OutputDownloadError as exc:
+            # Refuse the archive, keep the transcript — see OutputDownloadError.
             return ProjectAskResult(
                 ok=False,
-                body="",
+                body=exc.chat_body,
                 url=str(state.get("url") or page.url),
                 project_uuid=project_uuid,
                 project_url=dest,
                 model=model_info,
-                body_len=0,
+                body_len=len(exc.chat_body),
                 delete_after=None,
                 error=str(exc),
                 attested_model=attested,

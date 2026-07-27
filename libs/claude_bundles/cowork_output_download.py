@@ -16,7 +16,12 @@ from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 ExpectedSize = Literal["small", "large", "auto"]
 HarvestSource = Literal["chat", "output-file", "auto"]
-HarvestProvenance = Literal["output-file", "cortex-uri", "chat"]
+HarvestProvenance = Literal["output-file", "cortex-uri", "chat", "chat-large"]
+
+# A Cowork completion card ("written the verdict to the output file") runs a few
+# hundred chars; a real transcript runs tens of thousands. Above this bound the
+# chat body cannot be the stub the fail-closed guard exists to reject.
+THIN_CHAT_BODY_MAX_CHARS = 8000
 
 
 def cortex_files_root_from_env() -> Path | None:
@@ -79,7 +84,16 @@ class OutputDownloadError(RuntimeError):
     ``harvest_source=auto`` with ``expected_size=large`` when both Cowork Output
     download and a readable chat ``cortex://`` pointer miss (fail-closed — no
     thin chat archive).
+
+    Carries ``chat_body`` so callers can surface what was scraped. The guard
+    blocks the *archive write*, not the harvest — discarding the transcript
+    leaves no copy anywhere and reports ``body_len=0``, which reads as "the
+    model produced nothing" (agent-bus 5911, execution 23f94ae8).
     """
+
+    def __init__(self, message: str, *, chat_body: str = "") -> None:
+        super().__init__(message)
+        self.chat_body = chat_body
 
 
 @dataclass(frozen=True)
@@ -205,9 +219,16 @@ async def resolve_harvest_body(
 
     ``harvest_source=output-file`` raises ``OutputDownloadError`` on miss/empty.
     ``harvest_source=auto`` with ``expected_size=large`` tries Output download,
-    then a chat ``cortex://`` pointer; on both miss raises ``OutputDownloadError``
-    (fail-closed — no thin chat archive). Non-large ``auto`` soft-falls to chat.
-    ``harvest_source=chat`` returns scraped chat with ``provenance=chat``.
+    then a chat ``cortex://`` pointer; on both miss it measures the scraped body
+    — over ``THIN_CHAT_BODY_MAX_CHARS`` yields ``provenance=chat-large``, at or
+    under it raises ``OutputDownloadError`` (fail-closed — no thin chat archive).
+    Non-large ``auto`` soft-falls to chat. ``harvest_source=chat`` returns
+    scraped chat with ``provenance=chat``.
+
+    Measuring the body replaces "an Output affordance existed" as the thin-stub
+    discriminator. A ``converse`` operator-proxy session never mints a Cowork
+    Output — its work lands on the agent bus — so the affordance proxy rejected
+    full transcripts as stubs (agent-bus 5911).
     """
     if not should_attempt_output_download(
         harvest_source=harvest_source,
@@ -221,9 +242,11 @@ async def resolve_harvest_body(
         return HarvestBody(content=downloaded.content, provenance="output-file")
 
     if harvest_source == "output-file":
+        # Explicit caller demand for Output bytes — no size escape.
         raise OutputDownloadError(
             "Cowork Output download required (harvest_source=output-file) but "
-            "affordance missing or download empty"
+            "affordance missing or download empty",
+            chat_body=chat_body,
         )
 
     root = cortex_files_root
@@ -235,9 +258,12 @@ async def resolve_harvest_body(
                 return HarvestBody(content=copied, provenance="cortex-uri")
 
     if harvest_source == "auto" and expected_size == "large":
+        if len(chat_body.strip()) > THIN_CHAT_BODY_MAX_CHARS:
+            return HarvestBody(content=chat_body, provenance="chat-large")
         raise OutputDownloadError(
             "Cowork Output download and cortex-uri both missed for "
-            "harvest_source=auto with expected_size=large — refusing thin chat archive"
+            "harvest_source=auto with expected_size=large — refusing thin chat archive",
+            chat_body=chat_body,
         )
 
     return HarvestBody(content=chat_body, provenance="chat")

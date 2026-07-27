@@ -40,9 +40,11 @@ from scripts.model_manager.ui.model.service_state import ServiceState, ServiceSt
 
 from . import admit, bus_client, window_log
 from . import consult_stall as _consult_stall_mod
+from . import schema_skip_heal as _schema_skip_heal_mod
 from . import self_heal as _self_heal_mod
 from . import state_close as _state_close_mod
 from .caps import CapStore
+from .checkpoint_admit_gate import SCHEMA_REASONS
 from .dispatch_client import AdmissionMode
 from .eligibility import (
     Decision,
@@ -52,11 +54,13 @@ from .eligibility import (
 )
 from .giw_live_hold import build_tick_env_snapshot
 from .harvest import completed_windows, harvest_completed_windows
+from .tick_interval import tick_interval_from_env as _tick_interval_from_env
 
 # One-shot at tick_loop import: long-lived manage may hold pre-census modules
 # in sys.modules (r_corpus_sha / self_heal / state_close) until ./manage process
 # recycle picks up app.py reload-driver + reload.py census.
 _self_heal_mod = importlib.reload(_self_heal_mod)
+_schema_skip_heal_mod = importlib.reload(_schema_skip_heal_mod)
 _consult_stall_mod = importlib.reload(_consult_stall_mod)
 _state_close_mod = importlib.reload(_state_close_mod)
 MAX_STATE_CLOSES_PER_TICK = _state_close_mod.MAX_STATE_CLOSES_PER_TICK
@@ -67,7 +71,6 @@ DEFAULT_CONSULT_STALE_S = _consult_stall_mod.DEFAULT_CONSULT_STALE_S
 logger = get_logger(__name__)
 
 
-_DEFAULT_TICK_INTERVAL_S = 60.0
 _ACTIVITY = "charter_tick"
 # Soft remind only — attended handoffs may sit until the operator opens IDE.
 _WAITING_OPEN_REMIND_S = 900.0
@@ -232,7 +235,7 @@ class CharterRunnerTickLoop:
         service_state: ServiceState,
         shutdown_gate: ManageShutdownGate,
         workspace_root: Path | None = None,
-        tick_interval_s: float = _DEFAULT_TICK_INTERVAL_S,
+        tick_interval_s: float | None = None,
         caps: CapStore | None = None,
         on_admit: Callable[[str], None] | None = None,
         unattended_stale_s: float | None = None,
@@ -240,7 +243,11 @@ class CharterRunnerTickLoop:
         self._service_state = service_state
         self._shutdown_gate = shutdown_gate
         self._workspace_root = workspace_root
-        self._tick_interval_s = tick_interval_s
+        # None / omitted → env (CHARTER_TICK_INTERVAL_S); explicit float wins (tests).
+        if tick_interval_s is None:
+            self._tick_interval_s = _tick_interval_from_env()
+        else:
+            self._tick_interval_s = float(tick_interval_s)
         self._caps = caps or CapStore()
         self._on_admit = on_admit
         # None → resolve at handle time (env / autonomous default); float freezes tests.
@@ -339,6 +346,10 @@ class CharterRunnerTickLoop:
                     continue
                 state_closes_this_tick = await self._handle_waiting_open(
                     decision, turns, state_closes_this_tick=state_closes_this_tick
+                )
+            elif decision.reason in SCHEMA_REASONS:
+                await _schema_skip_heal_mod.try_self_heal_schema_skip(
+                    decision, caps=self._caps
                 )
         await events.emit_manage_charter_tick_scanned(
             roots=len(roots),

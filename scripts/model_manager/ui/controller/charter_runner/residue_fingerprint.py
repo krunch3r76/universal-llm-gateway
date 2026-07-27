@@ -1,4 +1,9 @@
-"""Residue fingerprint + progress witnesses for charter admission thrash gate."""
+"""Residue fingerprint + progress witnesses for charter admission thrash gate.
+
+Eligibility calls ``evaluate_residue_gate`` before admitting a window; harvest
+persists the last residue so unchanged CHECKPOINT bodies cannot thrash forever.
+Skip strikes advance only when ``window_index`` advances, not on every tick.
+"""
 
 from __future__ import annotations
 
@@ -6,18 +11,13 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Literal
-
-from universal_logging import get_logger
 
 from .checkpoint_parse import ParsedCheckpoint, Step, pickup_detent
 from .executor_routing import gated_row_classes
 from .r_corpus_sha import extract_r_corpus_pin
 
-logger = get_logger(__name__)
-
-UNCHANGED_RESIDUE_SKIP_THRESHOLD = 2
+UNCHANGED_RESIDUE_SKIP_THRESHOLD = 4
 REASON_UNCHANGED_RESIDUE = "unchanged_residue"
 REASON_NO_PROGRESS = "no_progress:unchanged_residue"
 
@@ -50,10 +50,6 @@ _PICKUP_STRIP_RE = re.compile(
     re.IGNORECASE,
 )
 WindowKind = Literal["worker", "consult"]
-
-
-def _default_store_dir() -> Path:
-    return Path.home() / ".local" / "share" / "charter-runner" / "last-residue"
 
 
 @dataclass(frozen=True)
@@ -109,6 +105,7 @@ class ResidueRecord:
     witness: WitnessTuple
     consecutive_skip_count: int = 0
     w10_consumed: bool = False
+    last_window_index: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -116,6 +113,7 @@ class ResidueRecord:
             "witness": self.witness.to_dict(),
             "consecutive_skip_count": self.consecutive_skip_count,
             "w10_consumed": self.w10_consumed,
+            "last_window_index": self.last_window_index,
         }
 
     @classmethod
@@ -129,6 +127,7 @@ class ResidueRecord:
             witness=WitnessTuple.from_dict(witness_raw),
             consecutive_skip_count=int(raw.get("consecutive_skip_count") or 0),
             w10_consumed=bool(raw.get("w10_consumed")),
+            last_window_index=int(raw.get("last_window_index") or 0),
         )
 
 
@@ -141,10 +140,11 @@ class ResidueGateVerdict:
     consecutive_skip_count: int
     w10_consumed: bool
     stop_root: bool = False
+    last_window_index: int = 0
 
 
 def normalize_pickup_row(text: str) -> str:
-    """Canonical pickup row with per-window transport tokens stripped."""
+    """Strip transport tokens so residue compares semantic pickup, not poll ids."""
     row = _PICKUP_STRIP_RE.sub("", text.strip())
     row = re.sub(
         r"\(\s*charter-runner\s+window\s+\d+\s*\)",
@@ -157,14 +157,19 @@ def normalize_pickup_row(text: str) -> str:
 
 
 def normalize_next_pickup(parsed: ParsedCheckpoint) -> tuple[str, ...]:
-    return tuple(normalize_pickup_row(item) for item in parsed.next_pickup if item.strip())
+    """Return transport-stripped Next-pickup rows used in residue INCLUDE hashing."""
+    return tuple(
+        normalize_pickup_row(item) for item in parsed.next_pickup if item.strip()
+    )
 
 
 def steps_signature(steps: list[Step]) -> tuple[tuple[int, str, str], ...]:
+    """Stable (ordinal, title, status) tuple used as residue INCLUDE field W8."""
     return tuple((s.ordinal, s.title, s.status) for s in steps)
 
 
 def steps_done_count(steps: list[Step]) -> int:
+    """Count steps marked done — witness W2 fires when this increases."""
     return sum(1 for s in steps if s.status == "done")
 
 
@@ -217,6 +222,7 @@ def build_witness_tuple(
     checkpoint_body: str,
     parsed: ParsedCheckpoint,
 ) -> WitnessTuple:
+    """Extract progress witnesses (pickup, steps, poll/exec ids, pin) from a body."""
     body = checkpoint_body or ""
     pickup = list(parsed.next_pickup)
     pin = extract_r_corpus_pin(body)
@@ -241,7 +247,7 @@ def compute_fingerprint(
     window_kind: WindowKind,
     witness: WitnessTuple,
 ) -> str:
-    """Hash residue-invariant INCLUDE fields only (EXCLUDE transport ids omitted)."""
+    """Hash residue INCLUDE fields only — transport ids are deliberately omitted."""
     payload = {
         "normalized_next_pickup": list(witness.normalized_next_pickup),
         "pickup_detent": pickup_detent(parsed),
@@ -263,7 +269,7 @@ def compute_fingerprint(
 
 
 def witness_fired(current: WitnessTuple, last: WitnessTuple) -> tuple[bool, str | None]:
-    """Return (fired, witness_id) for W1..W10. W9 is not implemented."""
+    """Return whether a progress witness fired and which id (W1–W8; W9 open)."""
     if current.normalized_next_pickup != last.normalized_next_pickup:
         return True, "W1"
     if current.steps_done_count > last.steps_done_count:
@@ -290,11 +296,8 @@ def w10_allows_admit(
     current: WitnessTuple,
     last: ResidueRecord,
 ) -> bool:
-    return (
-        fingerprint_matches
-        and current.self_heal_author
-        and not last.w10_consumed
-    )
+    """One-shot admit for machine self-heal authors when residue is unchanged."""
+    return fingerprint_matches and current.self_heal_author and not last.w10_consumed
 
 
 def evaluate_residue_gate(
@@ -304,7 +307,9 @@ def evaluate_residue_gate(
     admission_mode: str,
     window_kind: WindowKind,
     last: ResidueRecord | None,
+    window_index: int,
 ) -> ResidueGateVerdict:
+    """Admit or skip based on residue fingerprint; strikes count per window advance."""
     witness = build_witness_tuple(checkpoint_body=checkpoint_body, parsed=parsed)
     fingerprint = compute_fingerprint(
         parsed=parsed,
@@ -320,6 +325,7 @@ def evaluate_residue_gate(
             witness=witness,
             consecutive_skip_count=0,
             w10_consumed=False,
+            last_window_index=window_index,
         )
     fingerprint_matches = fingerprint == last.fingerprint
     if not fingerprint_matches:
@@ -330,6 +336,7 @@ def evaluate_residue_gate(
             witness=witness,
             consecutive_skip_count=0,
             w10_consumed=False,
+            last_window_index=window_index,
         )
     fired, _ = witness_fired(witness, last.witness)
     if fired:
@@ -340,10 +347,9 @@ def evaluate_residue_gate(
             witness=witness,
             consecutive_skip_count=0,
             w10_consumed=False,
+            last_window_index=window_index,
         )
-    if w10_allows_admit(
-        fingerprint_matches=True, current=witness, last=last
-    ):
+    if w10_allows_admit(fingerprint_matches=True, current=witness, last=last):
         return ResidueGateVerdict(
             admit=True,
             reason="eligible",
@@ -351,8 +357,11 @@ def evaluate_residue_gate(
             witness=witness,
             consecutive_skip_count=0,
             w10_consumed=True,
+            last_window_index=window_index,
         )
-    new_skip = last.consecutive_skip_count + 1
+    # Count strikes per admitted-window advance, not per tick (latency a:5918).
+    window_advanced = window_index != last.last_window_index
+    new_skip = last.consecutive_skip_count + (1 if window_advanced else 0)
     if new_skip >= UNCHANGED_RESIDUE_SKIP_THRESHOLD:
         return ResidueGateVerdict(
             admit=False,
@@ -362,6 +371,7 @@ def evaluate_residue_gate(
             consecutive_skip_count=new_skip,
             w10_consumed=last.w10_consumed,
             stop_root=True,
+            last_window_index=window_index,
         )
     return ResidueGateVerdict(
         admit=False,
@@ -370,53 +380,15 @@ def evaluate_residue_gate(
         witness=witness,
         consecutive_skip_count=new_skip,
         w10_consumed=last.w10_consumed,
+        last_window_index=window_index,
     )
 
 
-def store_path(root_id: str, *, store_dir: Path | None = None) -> Path:
-    base = store_dir if store_dir is not None else _default_store_dir()
-    return base / f"{root_id}.json"
-
-
-def load_residue_record(
-    root_id: str, *, store_dir: Path | None = None
-) -> ResidueRecord | None:
-    path = store_path(root_id, store_dir=store_dir)
-    if not path.is_file():
-        return None
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError, TypeError, ValueError):
-        logger.warning(
-            "charter-runner residue store unreadable root=%s path=%s — first-window",
-            root_id,
-            path,
-        )
-        return None
-    if not isinstance(raw, dict):
-        return None
-    record = ResidueRecord.from_dict(raw)
-    if record is None:
-        logger.warning(
-            "charter-runner residue store corrupt root=%s path=%s — first-window",
-            root_id,
-            path,
-        )
-    return record
-
-
-def save_residue_record(
-    root_id: str,
-    record: ResidueRecord,
-    *,
-    store_dir: Path | None = None,
-) -> None:
-    path = store_path(root_id, store_dir=store_dir)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(record.to_dict(), indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+# Store I/O lives in residue_store; re-export keeps call-site imports stable.
+from .residue_store import (  # noqa: E402
+    load_residue_record,
+    save_residue_record,
+)
 
 
 def record_from_harvest(
@@ -427,6 +399,7 @@ def record_from_harvest(
     window_kind: WindowKind,
     w10_consumed: bool = False,
 ) -> ResidueRecord:
+    """Build a fresh residue record from the CHECKPOINT a harvested window consumed."""
     witness = build_witness_tuple(checkpoint_body=checkpoint_body, parsed=parsed)
     fingerprint = compute_fingerprint(
         parsed=parsed,

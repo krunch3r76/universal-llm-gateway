@@ -21,6 +21,7 @@ Arc-status ascriptions are completion claims (per `completion-provenance-discipl
 
 **P4 — Do not hold the turn on long Shell waits.**
 `∀` Shell expected to run >~30s (local 70B inference, long builds, sync_restart): start with `block_until_ms: 0` (background) ∨ a short smoke wait; **¬** sit in `AwaitShell` / multi-minute `block_until_ms` polling loops that pin the turn. Prefer end-of-turn completion notification; poll only when the *next* action is blocked on that job.
+**Exception (project_ask):** when the next action *is* blocked on a CDP `project_ask` harvest, P4 does **not** license bare long sleeps between polls — keep `project_ask(op=poll)` on **short slices** (≤5–10s once `turn_idle`/`stop`); see `claude-ai-cdp-navigation` § Dual-completion · Post-idle poll cadence (friction a:26348).
 
 **Structural (Shell):** project hook `.cursor/hooks/shell-timeout-cap.py` caps harness `tool_input.timeout` (agent `block_until_ms`) at 30s via `preToolUse` `updated_input`. Escape: include `# close-monitoring` (or `CLOSE_MONITORING=1`) in the command. Audit: `/tmp/cursor-shell-timeout-cap.jsonl`.
 

@@ -62,7 +62,7 @@ async def prepare_cursor_sdk_generate(
     is_auto_consolidation: bool = False,
     density_triage: str | None = None,
     review_opt_out_reason_code: str | None = None,
-    auto_review_child: bool = False,
+    auto_review_child: bool | None = None,
     read_only: bool = False,
     model_knobs: dict[str, str] | None = None,
     cost_intent: Literal["deliberate_high_cost"] | None = None,

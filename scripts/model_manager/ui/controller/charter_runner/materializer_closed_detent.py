@@ -51,6 +51,9 @@ decorrelated rivals + one-line research-anchor gloss) → one-line dissent beat 
 bind (patch loci + falsifier) → implement (Composer ok when mechanical) →
 deploy-verify if code landed → friction_close + todo-close.
 [R-independence] closed path skips external R by design; escalation restores it.
+External review for this arc is the G3 cdp/opus-5 R-admit. Do NOT open
+implement-todo §3b Gate-6, and do NOT dispatch role=reviewer or role=skeptic —
+check_requested is not set on charter work items.
 [restart-auth] deploy-verify via manage MCP only when code changed.
 [window] prefer one window to done; if escalate, CHECKPOINT with detent raised.
 {_DENSIFY_FLOOR}

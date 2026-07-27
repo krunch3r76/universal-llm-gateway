@@ -175,7 +175,7 @@ class TeamDispatchGenerateBody(_DispatchCommon):
         ]
         | None
     ) = None
-    auto_review_child: bool = False
+    auto_review_child: bool | None = None
     model_knobs: dict[str, str] | None = None
     spawn_review_provenance: Literal["generate_review_child"] | None = None
     cost_intent: Literal["deliberate_high_cost"] | None = None
@@ -242,7 +242,7 @@ class TeamDispatchToThreadBody(_DispatchCommon):
     contract: Literal["light-bounded", "pure-mechanical", "implement"]
     prompt: str | None = None
     sidecar_ref: str | None = None
-    auto_review_child: bool = False
+    auto_review_child: bool | None = None
     read_only: bool = False
     spawn_review_provenance: Literal["generate_review_child"] | None = None
     cost_intent: Literal["deliberate_high_cost"] | None = None

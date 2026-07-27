@@ -18,10 +18,10 @@ trigger_match_terms:
 |---|---|
 | `anthropic/*` (Stargate API) | **PROHIBITED** by default |
 | `cursor/*` (cursor-sdk) | **OK** except **Fable** |
-| Opus / Sonnet product consult | **web-anthropic-cdp** preferred (cortex-packaged corpus) |
-| Need live checkout browse | **`cursor/claude-opus-*`** acceptable |
+| Opus / Sonnet product consult | **web-anthropic-cdp** preferred (cortex-packaged corpus); **encourage Fable** when outside perspective helps |
+| Need live checkout browse | **`cursor/claude-opus-*`** — **inform-then-proceed** when escalation warrants (announce); ¬ default wait for approval |
 
-¬ equate “Opus High” with `anthropic/claude-opus-*`.  
+¬ equate “Opus High” with `anthropic/claude-opus-*`. 
 ¬ use `cost_intent=deliberate_high_cost` as routine license for API.
 
-**SOT:** Use the `consult-routing` skill § Anthropic-family substrate · rule `anthropic-dispatch-authorization_ws.mdc` · `decision:anthropic-family-dispatch-substrate`.
+**SOT:** Use the `consult-routing` skill § Anthropic-family substrate · rule `anthropic-dispatch-authorization_ws.mdc` · `decision:anthropic-family-dispatch-substrate` · Fable/opus inform: `decision:operator-proxy-seat-posture`.

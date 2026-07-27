@@ -386,6 +386,7 @@ def _check_env_or_eligible(
         admission_mode=admission_mode,
         window_kind=window_kind,
         last=last,
+        window_index=next_window,
     )
     if not gate.admit:
         save_residue_record(
@@ -395,6 +396,7 @@ def _check_env_or_eligible(
                 witness=gate.witness,
                 consecutive_skip_count=gate.consecutive_skip_count,
                 w10_consumed=gate.w10_consumed,
+                last_window_index=gate.last_window_index,
             ),
         )
         if gate.stop_root:
@@ -415,6 +417,7 @@ def _check_env_or_eligible(
                 witness=gate.witness,
                 consecutive_skip_count=0,
                 w10_consumed=True,
+                last_window_index=gate.last_window_index,
             ),
         )
     reason = "eligible_consult" if window_kind == "consult" else "eligible"

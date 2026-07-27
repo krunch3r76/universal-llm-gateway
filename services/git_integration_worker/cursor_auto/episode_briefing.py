@@ -11,7 +11,7 @@ from transport_utils import DEFAULT_AGENT_BUS_URL, make_async_client
 _FROM_AUTO = "cursor-auto"
 _ADMIT_SUBJECT_PREFIX = "status:admitted"
 _TURN_FETCH_LIMIT = 200
-_MAX_BRIEFING_LINES = 15
+_MAX_BRIEFING_LINES = 18
 
 
 def is_first_episode_admit(turns: list[dict[str, Any]]) -> bool:
@@ -36,6 +36,10 @@ def build_briefing_block(*, live_deltas: str | None = None) -> str:
         "- manage / charter_reload — service lifecycle, charter windows",
         "- observability — liveness, busy_status, lane health",
         "- lifecycle — nested dispatch, gate status, closeout relay",
+        "",
+        "Outside perspective: fleet (cursor) often encourages Fable via Cowork",
+        "picker/multitask when architecture-suitability is live — you may also",
+        "self-route Fable; cursor/claude-opus-5 is an escalation option (inform Kaywan).",
         "",
         deltas,
         "",

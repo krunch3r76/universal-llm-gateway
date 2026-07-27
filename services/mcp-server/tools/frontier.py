@@ -288,7 +288,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             ]
             | None
         ) = None,
-        auto_review_child: bool = False,
+        auto_review_child: bool | None = None,
         model_knobs: dict[str, str] | None = None,
         reuse_thread: str | None = None,
         executor_override: str | None = None,
@@ -794,7 +794,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                 body["density_triage"] = density_triage
             if review_opt_out_reason_code is not None:
                 body["review_opt_out_reason_code"] = review_opt_out_reason_code
-            if auto_review_child:
+            if auto_review_child is not None:
                 body["auto_review_child"] = auto_review_child
             if spawn_review_provenance is not None:
                 body["spawn_review_provenance"] = spawn_review_provenance
@@ -829,7 +829,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             if sidecar_ref is not None:
                 body["sidecar_ref"] = sidecar_ref
             body["contract"] = contract
-            if auto_review_child:
+            if auto_review_child is not None:
                 body["auto_review_child"] = auto_review_child
             if spawn_review_provenance is not None:
                 body["spawn_review_provenance"] = spawn_review_provenance

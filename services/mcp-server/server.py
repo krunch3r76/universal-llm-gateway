@@ -51,6 +51,7 @@ from surface_enum import register_surface_enum_transform
 from surface_registration import register_tools_for_surface
 from tool_access import dispatch_denial_reason, is_dispatch_tool_allowed
 from tool_error_enricher import (
+    LIFE_WORKSPACES_READ_OPS,
     apply_life_sandbox_default,
     fs_missing_sandbox_hint,
     life_workspaces_fs_refusal,
@@ -555,10 +556,14 @@ def _build_server(
                     f"got {target_sandbox!r}"
                 )
             }
-        if surface == "life" and (
-            effective_sandbox == "workspaces" or target_sandbox == "workspaces"
-        ):
-            return life_workspaces_fs_refusal()
+        if surface == "life":
+            if target_sandbox == "workspaces":
+                return life_workspaces_fs_refusal()
+            if (
+                effective_sandbox == "workspaces"
+                and op not in LIFE_WORKSPACES_READ_OPS
+            ):
+                return life_workspaces_fs_refusal(op)
 
         # Uniform param-contract guard (todo:fs-dispatch-param-contract-audit):
         # reject confusable selector params an op does not consume, and missing

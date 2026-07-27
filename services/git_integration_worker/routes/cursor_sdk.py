@@ -103,6 +103,7 @@ from services.git_integration_worker.cursor_sdk_events import (
     emit_sdk_worker_queued,
     emit_sdk_worker_timeout,
     emit_write_lease_promoted,
+    emit_write_lease_queue_stalled,
     emit_write_lease_released,
 )
 from services.git_integration_worker.cursor_sdk_feature_probe import (
@@ -147,6 +148,8 @@ from services.git_integration_worker.cursor_sdk_packet import (
     resolve_prompt_preamble,
 )
 from services.git_integration_worker.cursor_sdk_park import (
+    reclaim_orphan_holder,
+    queue_stall_lease_keys,
     release_or_restore_for_child,
     release_or_restore_for_child_sync,
     transfer_capacity_after_park,
@@ -885,6 +888,7 @@ async def _start_promoted_dispatch(
             route="/api/v1/cursor/dispatch",
         )
     except Draining503:
+        await release_or_restore_for_child(dispatch_id=promoted.dispatch_id)
         await asyncio.to_thread(
             ledger.mark_terminal,
             dispatch_id=promoted.dispatch_id,
@@ -940,22 +944,16 @@ async def reconcile_stale_leases(
     if removed:
         logger.info("orphan worktree reaper removed=%d", removed)
     ledger = CursorDispatchLedger.instance()
-    stale_ids = await asyncio.to_thread(
-        ledger.stale_writers,
+    orphan_ids = await asyncio.to_thread(
+        ledger.orphan_holders,
         threshold_s=_STALE_LEASE_S,
         dead_run_grace_s=_DEAD_RUN_GRACE_S,
         worker_instance=controller.worker_id,
         arming_timeout_s=_SDK_ARM_TIMEOUT_S,
     )
     repos: set[str] = set()
-    for dispatch_id in stale_ids:
-        await force_release_sdk_dispatch_slot(dispatch_id=dispatch_id)
-        # force=True: the capacity slot is already reclaimed above, so leaving
-        # the row active because its wedged task is still "live" would strand
-        # the lease in the ledger with no slot behind it.
-        lease_key = await asyncio.to_thread(
-            ledger.release_stale_writer, dispatch_id=dispatch_id, force=True
-        )
+    for dispatch_id in orphan_ids:
+        lease_key = await reclaim_orphan_holder(ledger, dispatch_id=dispatch_id)
         if lease_key:
             repos.add(lease_key)
             emit_write_lease_released(
@@ -971,6 +969,8 @@ async def reconcile_stale_leases(
             controller=controller,
             request=None,
         )
+    for lease_key in await asyncio.to_thread(queue_stall_lease_keys, ledger):
+        emit_write_lease_queue_stalled(source_repo=lease_key)
 
 
 async def stale_lease_sweeper(app: FastAPI) -> None:
@@ -1868,13 +1868,11 @@ async def cursor_dispatch(
                     req.dispatch_id[:8],
                     exc,
                 )
+                await release_or_restore_for_child(dispatch_id=req.dispatch_id)
                 await asyncio.to_thread(
                     ledger.mark_terminal,
                     dispatch_id=req.dispatch_id,
                     terminal_status="failed",
-                )
-                await asyncio.to_thread(
-                    ledger.restore_from_park, parent_id=req.nest_under
                 )
                 return _reject_pre_admission(
                     req,
@@ -1902,6 +1900,7 @@ async def cursor_dispatch(
             route="/api/v1/cursor/dispatch",
         )
     except Draining503 as exc:
+        await release_or_restore_for_child(dispatch_id=req.dispatch_id)
         await asyncio.to_thread(
             ledger.mark_terminal,
             dispatch_id=req.dispatch_id,

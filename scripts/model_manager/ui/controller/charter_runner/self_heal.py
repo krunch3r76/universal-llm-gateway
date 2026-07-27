@@ -9,6 +9,7 @@ tick re-admit.
 
 Attested by R-admit (agent-bus:5743 / cortex archive deeffdcd): A1–A7.
 Attended handoff mode does not auto-heal (operator may still be open in IDE).
+Schema-class skips are healed via ``schema_skip_heal.try_self_heal_schema_skip``.
 """
 
 from __future__ import annotations
@@ -44,15 +45,14 @@ WINDOW_TERMINALS = ("CHECKPOINT", "CONSULT_PENDING", "BLOCKED", "PACKAGING_DEFIC
 
 
 def turn_number(turn: dict[str, Any]) -> int:
+    """Parse a turn's ``turn_number`` as int; corrupt/missing values become 0."""
     try:
         return int(turn.get("turn_number") or 0)
     except (TypeError, ValueError):
         return 0
 
 
-def window_terminal_after(
-    turns: list[dict[str, Any]], after_n: int
-) -> str | None:
+def window_terminal_after(turns: list[dict[str, Any]], after_n: int) -> str | None:
     """Subject-prefix match on bound stop vocabulary; None = no terminal posted."""
     for turn in turns:
         if turn_number(turn) <= after_n:
@@ -173,9 +173,7 @@ async def try_self_heal_incomplete_window(
     if reason is None:
         if terminal and terminal != "CHECKPOINT":
             cp_turn = (decision.checkpoint or {}).get("turn_number")
-            emit_skip = getattr(
-                events, "emit_manage_charter_tick_root_skipped", None
-            )
+            emit_skip = getattr(events, "emit_manage_charter_tick_root_skipped", None)
             if emit_skip is not None:
                 await emit_skip(
                     root=decision.root_id,

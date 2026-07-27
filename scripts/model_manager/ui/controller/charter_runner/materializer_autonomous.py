@@ -67,11 +67,13 @@ decompose the arc into gated G-rows, dispatch sub-legs (team_dispatch Q/A/
 implement), fire satellite R-admit, restart services for deploy-verify, and
 revise — NOT the one-gated-step-then-stop generate default.
 [R-independence] R-admit MUST be hosted on a consult seat with consult_role: r_admit
-— the autonomous holder posts CONSULT_PENDING at G3 and STOPs; it must NOT fire
+— the autonomous holder posts CONSULT_PENDING at the end of G2 and STOPs; it must NOT fire
 R-admit transport from this window. The consult seat owns primary submit→poll→E2
 via team_dispatch(model=cdp/opus-5) (web-anthropic Opus). MCP project_ask =
 escape only. Autonomous ≠ self-certify. Never collapse R-admit into your own
-self-assessment.
+self-assessment. External review for this arc is the G3 cdp/opus-5 R-admit. Do NOT open
+implement-todo §3b Gate-6, and do NOT dispatch role=reviewer or role=skeptic —
+check_requested is not set on charter work items.
 [sealed-unattended] When pinning the R prompt URI at G3, the prompt body MUST
 include the sealed unattended clause (a:26156): answer with best judgment;
 state assumptions; ¬ clarifying questions; ¬ wait for a human. Cowork Qs
@@ -121,7 +123,7 @@ heuristic, and anything ambiguous ⇒ judgment.
 [stale-r-corpus-sha] On CONSULT_PENDING + consult_role: r_admit, Sidecars MUST pin
 the live dense-spec hash on the **same row** as the dense-spec URI
 (`Dense spec: cortex://… · spec_sha256:<64-hex>`). Machine pre-fire refuses
-mismatch/missing/ambiguous/malformed/unreadable (reason=stale_r_corpus_sha).
+mismatch/missing/ambiguous/malformed/malformed_uri/unreadable (reason=stale_r_corpus_sha).
 Refresh = holder re-fs.read → rewrite Sidecars same-row hash → re-CHECKPOINT;
 ¬ consult-seat auto-rewrite (a:26095).
 {_DENSIFY_FLOOR}
@@ -149,12 +151,18 @@ above as that step requires. Stay inside the gated Next-pickup.
 ## Acceptance criteria
 1. The window's gated step is advanced, revised (clean CHECKPOINT queuing the next
    revise step), or BLOCKED with a clear reason.
-2. If this step is G3 R-admit: post CONSULT_PENDING + consult_role: r_admit with
-   pinned R corpus — do NOT self-fire cdp/ or project_ask from this holder window.
+2. If this step is G2: the window ENDS with CONSULT_PENDING + consult_role: r_admit,
+   R prompt URI pinned, and the dense-spec `spec_sha256:<64-hex>` on the SAME
+   Sidecars row as the dense-spec URI. Do NOT self-fire cdp/ or project_ask from
+   this holder window — the next tick admits the consult seat.
 3. If this step runs deploy-verify: the restart-auth loop (quality_gate →
    manage sync_restart → wait_healthy → live probe) ran via the `manage` MCP only.
    A failed probe queues a revise step (≤{revise_cap}), it does not crash the window.
-4. A formal R12 CHECKPOINT is posted on agent-bus:{root_id} (from=cursor-sdk).
+4. If this step is G4: run the G5 mechanical R-after inline (quality_gate +
+   files_expected diff + acceptance_criteria + docstring scan). Escalate to a second
+   CONSULT_PENDING + consult_role: r_admit only under the G5 escalation predicate;
+   otherwise proceed straight to G6 close. Do NOT queue a standalone G5 window.
+5. A formal R12 CHECKPOINT is posted on agent-bus:{root_id} (from=cursor-sdk).
    Required sections inline: ## Steps, ## Frictions, ## Sidecars, WIP, Next-pickup,
    Scoreboard URI, RESUME footer, ## What happened (plain) (layman window summary —
    no gate IDs or assertion hashes). **WIP body (BINDING):** under
@@ -168,8 +176,8 @@ above as that step requires. Stay inside the gated Next-pickup.
    ``_None this window._`` when truly none — prose-only bullets fail harvest audit.
    ``status=complete`` without this CHECKPOINT is
    ``checkpoint_missing`` (autonomous self-heal will re-queue — do not rely on it).
-5. Scoreboard gated lane updated if a G-row status changed.
-6. Stop after the CHECKPOINT — no second window.
+6. Scoreboard gated lane updated if a G-row status changed.
+7. Stop after the CHECKPOINT — no second window.
 
 ## Stop conditions (first wins)
 CHECKPOINT boundary · CONSULT_PENDING (external consult — stop; no nested SDK) ·

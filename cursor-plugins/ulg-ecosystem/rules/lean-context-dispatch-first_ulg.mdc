@@ -31,11 +31,12 @@ trivial/local or latency-sensitive tight-loop debugging.
 |---|---|---|
 | Mechanical implement | `team_dispatch(op=generate, seat=cursor-sdk)` → `cursor/composer-2.5` | Autonomous (default) |
 | Investigate / judgment | `cursor/grok-4.5` effort ∈ {low, medium, **high**} (+ fast) — ¬ xhigh/max | In-seat or gated seat switch |
-| Greater reasoning | **CDP** web-anthropic Opus via `team_dispatch(model=cdp/opus-5)` (`project_ask` = escape only) | **AUTONOMOUS** under trigger below |
-| Premium metered | `cursor/claude-opus-5` effort ∈ {low, medium, high, **xhigh**, **max**} | **OPERATOR-GATED** — propose tier, wait |
+| Greater reasoning | **CDP** web-anthropic Opus via `team_dispatch(model=cdp/opus-5)` (`project_ask` = escape only); **encourage Fable** (picker/multitask) when outside perspective helps — cursor usually prompts | **AUTONOMOUS** under trigger below |
+| Premium metered | `cursor/claude-opus-5` effort ∈ {low, medium, high, **xhigh**, **max**} | **INFORM-THEN-PROCEED** when escalation warrants (live checkout / premium judgment) — one announce line; ¬ wait for approval by default. **Wait** if Kaywan paused premium spend, or for `xhigh`/`max` without a standing trigger |
 
-Asymmetric effort: Grok tops at `high`; only Opus has `xhigh`/`max`. Fable excluded.
+Asymmetric effort: Grok tops at `high`; only Opus has `xhigh`/`max`. Fable = CDP/web product only (¬ `cursor/*` Fable, ¬ `anthropic/*` API).
 `anthropic/*` API **PROHIBITED** — see `anthropic-dispatch-authorization`.
+Doctrine: `decision:operator-proxy-seat-posture` (Fable encourage + opus inform).
 
 ## Non-primary cursor model gate (operator 2026-07-25)
 
@@ -46,11 +47,11 @@ work class, else **OPERATOR-GATED** (propose the slug + why, wait).
 | Term | Meaning |
 |---|---|
 | **Workflow-primary** | Model a standing rule/skill already names as the autonomous default for that need (this ladder · `consult-routing` · `path-sim` · `subagent-strategy`). Omitting `model=` when the harness inherits the session / role default counts as primary. |
-| **Non-primary** | Any other explicit bind — e.g. `gpt-5.6-sol-*`, off-table Task slugs, `cursor/claude-opus-*` (also premium row above), or a ladder model used for the **wrong** work class (Sol/Opus for mechanical after judgment closed). |
+| **Non-primary** | Any other explicit bind — e.g. `gpt-5.6-sol-*`, off-table Task slugs, or a ladder model used for the **wrong** work class (Sol/Opus for mechanical after judgment closed). |
 
 **Exception:** another workflow/rule already specifies that exact model for that class
 (e.g. path-sim Q/A → `cursor/grok-4.5`; implement → `cursor/composer-2.5`; CDP
-trigger → `cdp/opus-5`). Then fire without re-asking.
+trigger → `cdp/opus-5`; **escalation-warranted `cursor/claude-opus-5`** under the premium **inform-then-proceed** row). Then fire without re-asking — still announce.
 
 **Anti-pattern:** re-spend frontier reasoning (`sol` / Opus / Fable) to *implement*
 amendments a prior consult already densified — that is non-primary for the

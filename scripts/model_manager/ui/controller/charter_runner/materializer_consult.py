@@ -96,7 +96,7 @@ delete emergency path.
 [stale-r-corpus-sha] Before firing cdp/, confirm CHECKPOINT Sidecars pins live
 dense-spec hash on the **same row** as the dense-spec URI
 (`Dense spec: cortex://… · spec_sha256:<64-hex>`). Machine pre-fire refuses
-mismatch/missing/ambiguous/malformed/unreadable (reason=stale_r_corpus_sha).
+mismatch/missing/ambiguous/malformed/malformed_uri/unreadable (reason=stale_r_corpus_sha).
 If refused: holder refreshes Sidecars (re-fs.read → rewrite hash → re-CHECKPOINT);
 ¬ this consult seat auto-rewrites Sidecars (a:26095).
 - Use the `consult-routing` skill (canonical slug — seat self-fetches)

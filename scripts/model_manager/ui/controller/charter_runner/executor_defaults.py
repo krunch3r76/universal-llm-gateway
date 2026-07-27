@@ -156,14 +156,19 @@ def r_admit_consult_generate_body(
     Same cursor-sdk Grok generate schema as worker windows; the R-admit mandate
     lives in the materialized consult packet. Distinct from ``consult_handoff_body``
     (web-consult judgment-gap handoff — no ``project_ask`` on that wire).
+
+    ``read_only=True`` releases the cursor dispatch write lease — the consult seat
+    polls CDP and writes cortex provenance only, never checkout edits.
     """
-    return default_judgment_body(
+    body = default_judgment_body(
         root_id=root_id,
         window_index=window_index,
         packet_path=packet_path,
         subject=subject,
         caller_agent=caller_agent,
     )
+    body["read_only"] = True
+    return body
 
 
 def consult_handoff_body(

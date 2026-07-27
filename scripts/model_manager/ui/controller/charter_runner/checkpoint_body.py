@@ -18,9 +18,38 @@ from universal_logging import get_logger
 logger = get_logger(__name__)
 
 _SIDECAR_LINE_RE = re.compile(
-    r"(?im)^\s*Sidecar:\s*(cortex://notes/system/threads/\S+)"
+    r"(?im)^\s*Sidecar:\s*`?(cortex://notes/system/threads/[^\s`]+)`?"
 )
 _CHECKPOINT_MARK_RE = re.compile(r"(?im)^#\s*CHECKPOINT\b|^##\s+Steps\b|^##\s+Next pickup\b")
+# Optional markdown backticks + trailing prose punctuation glued to machine URIs.
+_MACHINE_URI_RE = re.compile(
+    r"`*(cortex://notes/system/(?:specs|threads)/[^\s`|]+)`*([.,);:\]]*)",
+    re.IGNORECASE,
+)
+_WRAPPED_SHA_PIN_RE = re.compile(
+    r"`((?:spec_sha256|sha256)\s*:\s*[0-9a-fA-F]+)`",
+    re.IGNORECASE,
+)
+
+
+def _canonical_cortex_uri(raw: str) -> str:
+    """Strip presentation wrappers; return bare ``cortex://…`` (no trailing punct)."""
+    uri = (raw or "").strip().strip("`'\"").rstrip(".,);:]`'\"").lstrip("`'")
+    return uri
+
+
+def normalize_checkpoint_machine_fields(body: str) -> str:
+    """Rewrite Sidecars / Sidecar: machine URIs+pins to canonical bare form.
+
+    Choke-point guarantee: markdown backticks and glued trailing punctuation
+    (``. ) ]``) must not reach R-corpus / admit gates as path residue. Idempotent.
+    """
+
+    def _uri_repl(match: re.Match[str]) -> str:
+        return _canonical_cortex_uri(match.group(1))
+
+    text = _MACHINE_URI_RE.sub(_uri_repl, body or "")
+    return _WRAPPED_SHA_PIN_RE.sub(r"\1", text)
 
 
 def extract_sidecar_uri(
@@ -29,11 +58,13 @@ def extract_sidecar_uri(
     sidecar_uri: str | None = None,
 ) -> str | None:
     """Prefer the turn's ``sidecar_uri`` field; else parse a trailing Sidecar: line."""
-    field = (sidecar_uri or "").strip()
+    field = _canonical_cortex_uri(sidecar_uri or "")
     if field.startswith("cortex://"):
         return field
     match = _SIDECAR_LINE_RE.search(body or "")
-    return match.group(1).rstrip(".,);]") if match else None
+    if match is None:
+        return None
+    return _canonical_cortex_uri(match.group(1))
 
 
 def strip_sidecar_frontmatter(raw: str) -> str:
@@ -111,22 +142,28 @@ def materialize_checkpoint_turn(
     *,
     cortex_root: Path | None = None,
 ) -> dict[str, Any]:
-    """Shallow-copy ``turn`` with ``body`` resolved through any Sidecar pointer."""
+    """Shallow-copy ``turn`` with body resolved + machine fields normalized.
+
+    Every admit/residue/R-corpus consumer that materializes sees canonical
+    ``cortex://`` URIs (no backticks / glued trailing punctuation).
+    """
     resolved = resolve_checkpoint_body(
         str(turn.get("body") or ""),
         sidecar_uri=turn.get("sidecar_uri") if isinstance(turn.get("sidecar_uri"), str) else None,
         cortex_root=cortex_root,
     )
-    if resolved == turn.get("body"):
+    normalized = normalize_checkpoint_machine_fields(resolved)
+    if normalized == (turn.get("body") or ""):
         return turn
     out = dict(turn)
-    out["body"] = resolved
+    out["body"] = normalized
     return out
 
 
 __all__ = [
     "extract_sidecar_uri",
     "materialize_checkpoint_turn",
+    "normalize_checkpoint_machine_fields",
     "resolve_checkpoint_body",
     "strip_sidecar_frontmatter",
 ]

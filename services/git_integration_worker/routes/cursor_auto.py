@@ -8,7 +8,7 @@ from typing import Any
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from universal_logging import get_logger
 
 from services.git_integration_worker.cursor_auto.handler import process_job
@@ -27,6 +27,8 @@ _ORPHAN_INTERVAL_S = 15.0
 class EnqueueBody(BaseModel):
     """Payload from MCP ``agent_bus.request`` after turn write."""
 
+    model_config = ConfigDict(extra="forbid")
+
     thread_id: str
     turn_number: int = Field(ge=1)
     subject: str
@@ -36,6 +38,7 @@ class EnqueueBody(BaseModel):
     desired_model: str = "auto"
     desired_effort: str = "medium"
     contract: str = "answer"
+    require_attended: bool = False
 
 
 @router.get("/liveness")
@@ -73,6 +76,7 @@ async def enqueue(body: EnqueueBody):
         desired_model=body.desired_model,
         desired_effort=body.desired_effort,
         contract=body.contract,
+        require_attended=body.require_attended,
     )
     logger.info(
         "cursor-auto enqueued job=%s thread=%s turn=%s",

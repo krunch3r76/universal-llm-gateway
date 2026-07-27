@@ -110,12 +110,44 @@ def fs_missing_sandbox_hint(path: str = "", *, surface: str = "") -> str:
     return f"{_FS_SANDBOX_HINT}"
 
 
-def life_workspaces_fs_refusal() -> dict[str, str]:
+# Read-only workspaces ops the /mcp/life surface may serve. The life seat holds
+# the operator role over code work it cannot otherwise reach: without independent
+# reads it can only see repository state that the cursor lead selected for it, so
+# every review it renders is shaped by the party under review. Reads break that
+# curation monopoly; writes would put a second author outside the shared-checkout
+# write lease, which is why the boundary is asymmetric rather than lifted.
+LIFE_WORKSPACES_READ_OPS = frozenset(
+    {
+        "read",
+        "read_multi",
+        "list",
+        "find",
+        "search",
+        "md_read",
+        "md_list",
+        "md_to_dict",
+    }
+)
+
+
+def life_workspaces_fs_refusal(op: str | None = None) -> dict[str, str]:
     """Explicit /mcp/life boundary when callers target the workspaces sandbox."""
+    if op is not None and op not in LIFE_WORKSPACES_READ_OPS:
+        allowed = ", ".join(sorted(LIFE_WORKSPACES_READ_OPS))
+        return {
+            "error": (
+                f"op={op!r} is not available for sandbox='workspaces' on the "
+                "/mcp/life surface — repository source is READ-ONLY here. "
+                f"Readable ops: {allowed}. Repository edits are served on "
+                "/mcp/code only; a life seat that needs a write should request "
+                "it from cursor rather than author it directly, so the write "
+                "stays inside the shared-checkout lease."
+            )
+        }
     return {
         "error": (
-            "sandbox='workspaces' is not available on the /mcp/life surface. "
-            "Repository source reads and edits are served on /mcp/code only. "
+            "sandbox='workspaces' is not writable on the /mcp/life surface. "
+            "Repository source is readable here and editable on /mcp/code only. "
             "For agent-process artifacts (specs, packets, closeouts, sidecars), "
             "omit sandbox (defaults to cortex) or use a cortex:// Share URI. "
             "Life-seat handoff packets must carry a cortex:// sidecar mirror."

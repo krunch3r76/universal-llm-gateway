@@ -803,14 +803,22 @@ def build_implement_closeout_body(
             deleted=repo_files.deleted,
             files_untracked_or_ignored=files_untracked_or_ignored or [],
         )
-        payload["effects"] = list(effects)
+        # §4.7 / a:26354 — off-git cortex URIs belong in effects so codeblind
+        # operators see durable writes even when the repo ChangeSet is empty.
+        merged_effects: list[str] = list(effects)
+        seen_effects = set(merged_effects)
+        for uri in offgit_deliverable_uris or []:
+            if uri and uri not in seen_effects:
+                seen_effects.add(uri)
+                merged_effects.append(uri)
+        payload["effects"] = merged_effects
         tracked_empty = not (
             repo_files.created or repo_files.modified or repo_files.deleted
         )
-        if tracked_empty and effects:
+        if tracked_empty and merged_effects:
             payload["summary"] = (
-                f"{payload['summary']}; {len(effects)} path(s) touched "
-                "(untracked/gitignored)"
+                f"{payload['summary']}; {len(merged_effects)} path(s) touched "
+                "(untracked/gitignored/off-git)"
             )
         return json.dumps(payload, separators=(",", ":"))
 
@@ -1069,11 +1077,7 @@ def _assemble_closeout_delivery(
     if outcome.stream_only_deviations:
         deviations = [
             *deviations,
-            *(
-                d
-                for d in outcome.stream_only_deviations
-                if d not in deviations
-            ),
+            *(d for d in outcome.stream_only_deviations if d not in deviations),
         ]
     for reason in outcome.degraded_reasons:
         token = f"degraded:{reason}"

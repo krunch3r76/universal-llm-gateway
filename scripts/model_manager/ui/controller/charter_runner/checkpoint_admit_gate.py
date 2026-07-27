@@ -15,7 +15,10 @@ from .checkpoint_sections import split_sections
 # Required ## headings (substring match via split_sections keys).
 _REQUIRED_SECTION_NEEDLES: tuple[tuple[str, str], ...] = (
     ("steps", "Add `## Steps` with glyph list (`[ ]`/`[~]`/`[x]`)."),
-    ("next pickup", "Add `## Next pickup` (not bold `**Next pickup:**`) with gated G/R rows."),
+    (
+        "next pickup",
+        "Add `## Next pickup` (not bold `**Next pickup:**`) with gated G/R rows.",
+    ),
     ("wip", "Add `## In-flight / WIP` (or `## WIP`) with `none` when idle."),
     ("frictions", "Add `## Frictions` — list or `_None this window._`."),
     ("sidecars", "Add `## Sidecars` — list or `_None this window._`."),
@@ -36,6 +39,16 @@ _FIX_HINTS: dict[str, str] = {
     ),
     "missing_sections": "Add required ## Steps, Next pickup, WIP, Frictions, Sidecars.",
 }
+
+# Schema-class skips eligible for machine self-heal (not window_in_flight-only).
+SCHEMA_REASONS = frozenset(
+    {
+        "missing_sections",
+        "missing_resume_footer",
+        "no_gated_pickup",
+        "parse_failed",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -58,7 +71,9 @@ def _missing_required_sections(body: str) -> list[str]:
     missing: list[str] = []
     for needle, _hint in _REQUIRED_SECTION_NEEDLES:
         if needle == "wip":
-            if not any("wip" in k or "in-flight" in k or "in flight" in k for k in keys):
+            if not any(
+                "wip" in k or "in-flight" in k or "in flight" in k for k in keys
+            ):
                 missing.append("wip")
             continue
         if needle == "next pickup":
@@ -141,5 +156,6 @@ def validate_checkpoint_for_admit(
 
 __all__ = [
     "CheckpointAdmitVerdict",
+    "SCHEMA_REASONS",
     "validate_checkpoint_for_admit",
 ]

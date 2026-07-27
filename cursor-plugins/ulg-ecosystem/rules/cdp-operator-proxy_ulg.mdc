@@ -17,6 +17,8 @@ trigger_match_terms:
 
 **Invariant:** `operator-proxy episode ∧ agent_bus.request from Cowork ⇒ Use the cdp-operator-proxy skill before authoring DIRECTIVE bodies or dispositing CLOSEOUTs.`
 
+**Thread privacy:** operator-proxy DIRECTIVE/CLOSEOUT/DISPOSITION live on a **private `request` thread** — ¬ the IDE orchestrator’s endeavor root (cite root in `arc:` only). Skill invariant 11.
+
 Mechanism (turn shapes, boot checklist, anti-patterns): Use the `cdp-operator-proxy` skill — not this stub.
 
 **Protocol SOT:** `cortex://notes/system/specs/cdp-operator-proxy-v0.md` (field tables, transport).  

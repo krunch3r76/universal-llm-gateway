@@ -66,14 +66,15 @@ async def project_followup_on_page(
                 cortex_files_root=cortex_files_root_from_env(),
             )
         except OutputDownloadError as exc:
+            # Refuse the archive, keep the transcript — see OutputDownloadError.
             return ProjectAskResult(
                 ok=False,
-                body="",
+                body=exc.chat_body,
                 url=str(state.get("url") or page.url),
                 project_uuid=project_uuid or "",
                 project_url=dest,
                 model={},
-                body_len=0,
+                body_len=len(exc.chat_body),
                 delete_after=None,
                 error=str(exc),
                 harvest_provenance=None,
@@ -186,15 +187,16 @@ async def run_project_conversation(
                     cortex_files_root=cortex_files_root_from_env(),
                 )
             except OutputDownloadError as exc:
+                # Refuse the archive, keep the transcript — see OutputDownloadError.
                 return [
                     ProjectAskResult(
                         ok=False,
-                        body="",
+                        body=exc.chat_body,
                         url=str(state.get("url") or page.url),
                         project_uuid="",
                         project_url=url,
                         model=model_info,
-                        body_len=0,
+                        body_len=len(exc.chat_body),
                         delete_after=None,
                         error=str(exc),
                         harvest_provenance=None,

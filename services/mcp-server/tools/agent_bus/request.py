@@ -97,6 +97,7 @@ def enqueue_auto_job(
     desired_model: str,
     desired_effort: str,
     contract: str,
+    require_attended: bool = False,
     base_url: str | None = None,
     timeout_s: float = 10.0,
 ) -> dict[str, Any]:
@@ -112,6 +113,7 @@ def enqueue_auto_job(
         "desired_model": desired_model,
         "desired_effort": desired_effort,
         "contract": contract,
+        "require_attended": bool(require_attended),
     }
     try:
         with httpx.Client(timeout=timeout_s) as client:
@@ -170,6 +172,7 @@ def _request_impl(
     desired_model: str,
     desired_effort: str,
     contract: str,
+    require_attended: bool,
     after_turn: int,
 ) -> dict[str, Any]:
     """Write turn via send path, then arm/enqueue Auto when live."""
@@ -224,6 +227,7 @@ def _request_impl(
         desired_model=desired_model,
         desired_effort=desired_effort,
         contract=contract,
+        require_attended=require_attended,
     )
     handler_status = (
         "auto-admit-armed" if enq.get("ok") else "no-auto-handler"
@@ -260,9 +264,16 @@ def _request_dispatch(
     desired_model: str = "auto",
     desired_effort: str = "medium",
     contract: str = "answer",
+    require_attended: bool = False,
     after_turn: int = 0,
 ) -> dict[str, Any]:
-    """Validate + dispatch ``agent_bus.request``."""
+    """Validate + dispatch ``agent_bus.request``.
+
+    ``require_attended`` (default false): when true, Auto refuses unattended
+    nested dispatch and in-seat substitute — terminal ``status:needs-attended``
+    with ``reason=operator_require_attended``. Body field ``require_attended:
+    true`` or ``executor_bind: attended`` ORs with the wire param.
+    """
     if isinstance(thread, int):
         thread = str(thread)
 
@@ -307,5 +318,6 @@ def _request_dispatch(
         desired_model=desired_model or "auto",
         desired_effort=desired_effort or "medium",
         contract=contract or "answer",
+        require_attended=bool(require_attended),
         after_turn=after_turn,
     )

@@ -98,7 +98,7 @@ def validate_wrap_inputs(
     *,
     density_triage: str | None = None,
     review_opt_out_reason_code: str | None = None,
-    auto_review_child: bool = False,
+    auto_review_child: bool | None = None,
 ) -> dict[str, Any] | None:
     """Admission guard for ``contract=wrap`` on the MCP relay."""
     if contract != "wrap":

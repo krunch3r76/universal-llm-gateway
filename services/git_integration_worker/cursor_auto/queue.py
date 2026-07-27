@@ -23,6 +23,7 @@ class AutoJob:
     desired_model: str
     desired_effort: str
     contract: str
+    require_attended: bool = False
     enqueued_at: float = field(default_factory=time.monotonic)
     status: str = "queued"  # queued | claimed | done | failed
 

@@ -57,9 +57,7 @@ def changed_paths_from_closeout(payload: str) -> tuple[tuple[str, ...], bool] | 
 
 
 def _sync_restart_line(slug: str) -> str:
-    return (
-        f'sync_restart: {slug} — manage(action="sync_restart", service="{slug}")'
-    )
+    return f'sync_restart: {slug} — manage(action="sync_restart", service="{slug}")'
 
 
 def _install_plugin_line() -> str:
@@ -74,7 +72,9 @@ def _unresolved_line(path: str) -> str:
 
 
 def _libs_touched_line(path: str) -> str:
-    return f"libs_touched: {path} — shared lib; lead must decide which consumers restart"
+    return (
+        f"libs_touched: {path} — shared lib; lead must decide which consumers restart"
+    )
 
 
 def _action_for_path(path: str) -> str | None:
@@ -123,7 +123,9 @@ def residue_actions(paths: Sequence[str]) -> tuple[str, ...]:
     return tuple(ordered)
 
 
-def build_residue_block(actions: Sequence[str], *, truncated: bool = False) -> str | None:
+def build_residue_block(
+    actions: Sequence[str], *, truncated: bool = False
+) -> str | None:
     """Build ``TYPE: RESIDUE`` block, eliding overflow to stay within the line budget.
 
     Overflow elides rather than raises: this runs inside CLOSEOUT delivery, so an
@@ -144,13 +146,27 @@ def build_residue_block(actions: Sequence[str], *, truncated: bool = False) -> s
         *[f"- {action}" for action in shown],
     ]
     if elided:
-        lines.append(f"- (+{elided} further action(s) elided — see files_* in this body)")
-    if truncated:
         lines.append(
-            "(paths truncated in this closeout — residue may be incomplete)"
+            f"- (+{elided} further action(s) elided — see files_* in this body)"
         )
+    if truncated:
+        lines.append("(paths truncated in this closeout — residue may be incomplete)")
     lines.append("Owner: this closeout's requesting seat. Not auto-executed.")
     return "\n".join(lines)
+
+
+def resolve_relay_residue(*, wrapper_body: str | None, relay_body: str) -> str | None:
+    """Prefer wrapper JSON for residue; fall back to *relay_body*.
+
+    The §2 relay body is markdown, so ``propagation_residue`` lives only on the
+    machine wrapper manifest — deriving residue from relayed prose alone returns
+    ``None`` even when propagation actions exist.
+    """
+    if wrapper_body:
+        block = residue_for_closeout(wrapper_body)
+        if block is not None:
+            return block
+    return residue_for_closeout(relay_body)
 
 
 def residue_for_closeout(payload: str) -> str | None:

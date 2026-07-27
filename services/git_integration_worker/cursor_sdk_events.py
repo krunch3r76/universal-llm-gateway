@@ -383,6 +383,22 @@ def FrontierWriteLeasePromoted(  # noqa: N802
 
 
 @event_factory
+def FrontierWriteLeaseQueueStalled(  # noqa: N802
+    source_repo: str | None,
+) -> Event:
+    return Event(
+        signal="frontier.sdk.worker.lease.queue_stalled",
+        payload={"source_repo": source_repo},
+        scope="node",
+    )
+
+
+def emit_write_lease_queue_stalled(*, source_repo: str | None) -> None:
+    """Emit when queued writers exist but no live blocking holder can promote."""
+    _emit(FrontierWriteLeaseQueueStalled(source_repo=source_repo))
+
+
+@event_factory
 def FrontierWriteLeaseParkEnter(  # noqa: N802
     parent_id: str,
     child_id: str,

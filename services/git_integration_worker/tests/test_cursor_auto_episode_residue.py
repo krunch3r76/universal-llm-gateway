@@ -7,6 +7,7 @@ import json
 from services.git_integration_worker.cursor_auto.episode_residue import (
     compose_closeout_body,
     residue_for_closeout,
+    resolve_relay_residue,
 )
 
 
@@ -137,3 +138,33 @@ def test_compose_closeout_body_with_and_without_residue():
     composed = compose_closeout_body(base, residue)
     assert composed.endswith(residue)
     assert composed == f"{base}\n\n{residue}"
+
+
+def test_relay_residue_prefers_wrapper_over_prose_body():
+    wrapper = _closeout_payload(
+        files_modified=["docs/architecture/overview.md"],
+        propagation_residue=[
+            'sync_restart: git_integration_worker — manage(action="sync_restart", '
+            'service="git_integration_worker")'
+        ],
+    )
+    section2 = """\
+TYPE: CLOSEOUT
+status: complete
+
+**ac_verdict:** PASS
+**deltas_to_spec:** none
+"""
+    block = resolve_relay_residue(wrapper_body=wrapper, relay_body=section2)
+    assert block is not None
+    assert block.startswith("TYPE: RESIDUE")
+    assert "sync_restart: git_integration_worker" in block
+
+
+def test_relay_residue_falls_back_to_relay_body_when_no_wrapper():
+    wrapperless = _closeout_payload(
+        files_modified=["services/git_integration_worker/cursor_auto/handler.py"],
+    )
+    block = resolve_relay_residue(wrapper_body=None, relay_body=wrapperless)
+    assert block is not None
+    assert "sync_restart: git_integration_worker" in block
