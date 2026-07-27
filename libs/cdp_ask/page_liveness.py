@@ -10,6 +10,11 @@ from typing import Any, Literal
 
 from claude_bundles.project_ask import read_archive_execution_id
 
+from cdp_ask.structural_quiet import (
+    STRUCTURAL_QUIET_SAMPLES,
+    StructuralQuietTracker,
+)
+
 # Sample-count thresholds on the held-page harvest ladder path
 # (``runner.make_harvest_ladder_hook`` → ``wait_assistant_reply(poll_ms=500)`` in
 # ``libs/claude_bundles/chat_reply_wait.py``). Each constant is denominated in
@@ -24,7 +29,7 @@ SUSTAINED_IDLE_SAMPLES = 10
 ESCAPE_IDLE_SAMPLES = 120
 """Failsafe when generation never flips ``seen_active`` (~60s at poll_ms=500)."""
 
-TurnIdleArm = Literal["growth", "sustained", "escape"]
+TurnIdleArm = Literal["growth", "sustained", "escape", "structural_quiet"]
 
 
 @dataclass
@@ -73,6 +78,9 @@ class LadderAdvanceState:
     idle_streak: int = 0
     body_len_baseline: int | None = None
     turn_idle_arm: TurnIdleArm | None = None
+    structural_quiet: StructuralQuietTracker = field(
+        default_factory=StructuralQuietTracker
+    )
 
 
 def archive_stamp_allows_content_proof(
@@ -140,6 +148,8 @@ async def advance_ladder_from_harvest(
         else:
             progress.seen_active = True
 
+    progress.structural_quiet.observe(state)
+
     idle = page_idle_from_state(state)
     if not idle:
         progress.idle_streak = 0
@@ -160,17 +170,29 @@ async def advance_ladder_from_harvest(
     escape_idle = (
         not progress.seen_active and progress.idle_streak >= ESCAPE_IDLE_SAMPLES
     )
+    structural_quiet_arm = (
+        progress.structural_quiet.quiet_satisfied
+        and (streaming or stop or tool_pause)
+        and progress.seen_active
+        and baseline is not None
+        and (body_len - baseline) >= progress.min_bytes
+    )
     should_fire_turn_idle = (
-        idle_after_growth or sustained_after_active or escape_idle
+        idle_after_growth
+        or sustained_after_active
+        or escape_idle
+        or structural_quiet_arm
     )
 
     if (
-        idle
+        (idle or structural_quiet_arm)
         and not progress.turn_idle_sent
         and callbacks.on_turn_idle
         and should_fire_turn_idle
     ):
-        if idle_after_growth:
+        if structural_quiet_arm:
+            progress.turn_idle_arm = "structural_quiet"
+        elif idle_after_growth:
             progress.turn_idle_arm = "growth"
         elif sustained_after_active:
             progress.turn_idle_arm = "sustained"

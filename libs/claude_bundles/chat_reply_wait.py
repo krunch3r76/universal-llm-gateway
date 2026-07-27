@@ -31,6 +31,8 @@ import asyncio
 import time
 from collections.abc import Awaitable, Callable
 
+from cdp_ask.structural_quiet import StructuralQuietTracker
+
 HARVEST_JS = """
 ({ minMsgChars }) => {
   const url = location.href || '';
@@ -254,6 +256,7 @@ def _complete_enough(
     base_n: int,
     min_growth: int,
     min_body: int,
+    ignore_in_flight: bool = False,
 ) -> bool:
     """Structural turn complete — ¬ a prose-length gate.
 
@@ -262,7 +265,8 @@ def _complete_enough(
     del min_growth, min_body, base_len
     cur_len = state.get("body_len", 0)
     cur_n = state.get("n", 0)
-    return bool(cur_n > base_n and cur_len > 0 and not _in_flight(state))
+    in_flight = _in_flight(state) and not ignore_in_flight
+    return bool(cur_n > base_n and cur_len > 0 and not in_flight)
 
 
 def _cowork_complete_enough(
@@ -273,6 +277,7 @@ def _cowork_complete_enough(
     min_growth: int,
     min_body: int,
     saw_working: bool,
+    ignore_in_flight: bool = False,
 ) -> bool:
     """URL-guarded Cowork fallback (24864) with positive new-turn guard.
 
@@ -284,7 +289,7 @@ def _cowork_complete_enough(
         return False
     # Lingering delay overlays (Overloaded) must not veto Cowork completion
     # once the turn is idle (friction 25684) — same as chat path.
-    if _in_flight(state):
+    if _in_flight(state) and not ignore_in_flight:
         return False
     del min_body, min_growth
     cur_len = state.get("body_len", 0)
@@ -333,23 +338,30 @@ async def wait_assistant_reply(
     last_len = -1
     saw_working = False
     idle_deadline = time.monotonic() + max(timeout_s, 1)
+    structural_quiet = StructuralQuietTracker()
 
     while True:
         state = await harvest_assistant(page, min_msg_chars=msg_floor)
         if on_harvest is not None:
             await on_harvest(state)
+        structural_quiet.observe(state)
         # Never raise mid-poll on banner alone (friction 25654): Overloaded /
         # rate-limit overlays often appear while Stop/streaming is still up, or
         # briefly between product retries. Fail-closed only after idle timeout
         # with match text attached.
         cur_len = state.get("body_len", 0)
+        cur_n = state.get("n", 0)
         in_flight = _in_flight(state)
+        tier_a_escape = structural_quiet.quiet_satisfied and cur_n > base_n
+        tier_b_unlatch = structural_quiet.quiet_satisfied and cur_n <= base_n
+        effective_in_flight = in_flight and not tier_a_escape
 
         if state.get("task_map_working"):
             saw_working = True
 
-        if in_flight:
-            idle_deadline = time.monotonic() + max(timeout_s, 1)
+        if effective_in_flight:
+            if not tier_b_unlatch:
+                idle_deadline = time.monotonic() + max(timeout_s, 1)
             stable = 0
             cowork_stable = 0
         else:
@@ -357,12 +369,14 @@ async def wait_assistant_reply(
             # (Overloaded can remain in the DOM after the answer landed —
             # friction 25684). Banner without a completed turn still holds
             # stable counters so a delayed retry can resume before fail-closed.
+            ignore_in_flight = tier_a_escape
             if _complete_enough(
                 state,
                 base_len=base_len,
                 base_n=base_n,
                 min_growth=min_growth,
                 min_body=min_body,
+                ignore_in_flight=ignore_in_flight,
             ):
                 if cur_len == last_len:
                     stable += 1
@@ -378,6 +392,7 @@ async def wait_assistant_reply(
                 min_growth=min_growth,
                 min_body=min_body,
                 saw_working=saw_working,
+                ignore_in_flight=ignore_in_flight,
             ):
                 if cur_len == last_len:
                     cowork_stable += 1
@@ -392,7 +407,7 @@ async def wait_assistant_reply(
             else:
                 cowork_stable = 0
 
-        if not in_flight and time.monotonic() >= idle_deadline:
+        if (not effective_in_flight or tier_b_unlatch) and time.monotonic() >= idle_deadline:
             break
         await asyncio.sleep(poll_ms / 1000)
 

@@ -18,7 +18,7 @@ from cdp_ask.models import SubmitProjectAskRequest
 
 from claude_bundles.cdp_model_endpoint_staging import (
     CdpStagingError,
-    stage_prompt_uri,
+    stage_cdp_prompt_with_skills,
     sweep_ephemeral,
 )
 
@@ -96,9 +96,40 @@ def _has_proof(snapshot: dict[str, Any]) -> bool:
     if snapshot.get("archive_uri"):
         return True
     phase = str(snapshot.get("completion_phase") or "")
-    if phase == "content_proof" and snapshot.get("content_proof_uri"):
+    if phase == "failed":
+        return False
+    if snapshot.get("content_proof_uri") and phase in {"content_proof", "archiving"}:
         return True
     return False
+
+
+@dataclass
+class _ProofCarry:
+    """Last-known harvest proof fields from status-bearing poll snapshots."""
+
+    archive_uri: str | None = None
+    content_proof_uri: str | None = None
+    content_proof_sha256: str | None = None
+
+    def absorb_status_snapshot(self, snapshot: dict[str, Any]) -> None:
+        if "status" not in snapshot:
+            return
+        uri = snapshot.get("archive_uri")
+        if uri is not None:
+            self.archive_uri = uri
+        proof_uri = snapshot.get("content_proof_uri")
+        if proof_uri is not None:
+            self.content_proof_uri = proof_uri
+        proof_sha = snapshot.get("content_proof_sha256")
+        if proof_sha is not None:
+            self.content_proof_sha256 = proof_sha
+
+    def as_result_fields(self) -> dict[str, str | None]:
+        return {
+            "archive_uri": self.archive_uri,
+            "content_proof_uri": self.content_proof_uri,
+            "content_proof_sha256": self.content_proof_sha256,
+        }
 
 
 def _progress_fingerprint(snapshot: dict[str, Any]) -> tuple[Any, ...]:
@@ -188,6 +219,7 @@ def run_cdp_generate(
     harvest_source: HarvestSource = "auto",
     expected_size: ExpectedSize = "auto",
     download_output: bool = False,
+    skills: list[str] | None = None,
     sleep: Callable[[float], None] = time.sleep,
     client: httpx.Client | None = None,
     now: Callable[[], float] | None = None,
@@ -200,6 +232,10 @@ def run_cdp_generate(
     ``download_output``) are forwarded on the native submit body — same fields
     as Stargate ``POST /api/v1/providers/cdp/ask``.
 
+    ``skills`` (optional): catalog slugs prepended via
+    ``stage_cdp_prompt_with_skills`` — ``shared_sync`` as leading ``/<slug>\\n``
+    manifest lines; satellite attaches via **+ → Skills → pick** (never typed).
+
     ``on_submitted`` receives the satellite-minted execution id the moment the
     submit is accepted. The satellite id space is disjoint from the caller's
     ``execution_id``, and it is the only handle the poll plane accepts — so
@@ -210,12 +246,13 @@ def run_cdp_generate(
     picker = picker_from_model_id(model_id)
     relay = ask_client or CdpAskClient()
     try:
-        staged = stage_prompt_uri(
+        staged = stage_cdp_prompt_with_skills(
             execution_id=execution_id,
-            prompt_uri=prompt_uri,
             prompt_text=prompt_text,
+            prompt_uri=prompt_uri,
             packet_path=packet_path,
             sidecar_ref=sidecar_ref,
+            skills=skills if isinstance(skills, list) else None,
         )
     except CdpStagingError as exc:
         return CdpGenerateResult(
@@ -276,6 +313,8 @@ def run_cdp_generate(
     last_fp = _progress_fingerprint(submitted)
     last_progress_at = started
     polls = 0
+    proof_carry = _ProofCarry()
+    proof_carry.absorb_status_snapshot(submitted)
 
     while True:
         elapsed = clock() - started
@@ -294,6 +333,7 @@ def run_cdp_generate(
                 error=f"CDP generate exceeded max_wall_s={max_wall_s}",
                 poll_snapshots=polls,
                 extras={"abort": abort_info},
+                **proof_carry.as_result_fields(),
             )
 
         sleep(poll_interval_s)
@@ -318,8 +358,11 @@ def run_cdp_generate(
                     error=str(snapshot.get("error")),
                     poll_snapshots=polls,
                     extras={"abort": abort_info},
+                    **proof_carry.as_result_fields(),
                 )
             continue
+
+        proof_carry.absorb_status_snapshot(snapshot)
 
         fp = _progress_fingerprint(snapshot)
         if fp != last_fp:
@@ -357,6 +400,7 @@ def run_cdp_generate(
                 error="satellite completed without archive_uri or content_proof",
                 poll_snapshots=polls,
                 extras={"abort": abort_info},
+                **proof_carry.as_result_fields(),
             )
 
         if _terminal_failure(snapshot):
@@ -374,6 +418,7 @@ def run_cdp_generate(
                 error=str(snapshot.get("error") or snapshot.get("status")),
                 poll_snapshots=polls,
                 extras={"abort": abort_info},
+                **proof_carry.as_result_fields(),
             )
 
         if not _post_idle(snapshot) and clock() - last_progress_at > no_progress_s:
@@ -394,4 +439,5 @@ def run_cdp_generate(
                 ),
                 poll_snapshots=polls,
                 extras={"abort": abort_info},
+                **proof_carry.as_result_fields(),
             )

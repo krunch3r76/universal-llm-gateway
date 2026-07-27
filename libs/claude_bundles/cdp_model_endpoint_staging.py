@@ -122,6 +122,55 @@ def read_prompt_text(
     )
 
 
+def stage_cdp_prompt_with_skills(
+    *,
+    execution_id: str,
+    prompt_text: str | None = None,
+    prompt_uri: str | None = None,
+    packet_path: str | None = None,
+    sidecar_ref: str | None = None,
+    skills: list[str] | None = None,
+) -> StagedPrompt:
+    """Stage CDP input; optional ``skills`` prepends slash/inline manifest.
+
+    Leading ``/<slug>\\n`` lines are **manifest only** — the Jupiter satellite
+    attaches each ``shared_sync`` slug via composer **+ → Skills → pick**
+    (``composer_session_skills.attach_session_skills``), never slash-type.
+    """
+    if not skills:
+        return stage_prompt_uri(
+            execution_id=execution_id,
+            prompt_text=prompt_text,
+            prompt_uri=prompt_uri,
+            packet_path=packet_path,
+            sidecar_ref=sidecar_ref,
+        )
+    from claude_bundles.cowork_skill_delivery import (
+        SkillDeliveryError,
+        prepend_cdp_dispatch_skills,
+    )
+
+    body = read_prompt_text(
+        prompt_text=prompt_text,
+        prompt_uri=prompt_uri,
+        packet_path=packet_path,
+        sidecar_ref=sidecar_ref,
+    )
+    try:
+        merged, _, _ = prepend_cdp_dispatch_skills(body, skills)
+    except KeyError as exc:
+        raise CdpStagingError(
+            f"unknown skill in skills=: {exc.args[0] if exc.args else exc}",
+            code="cdp_skills_unknown",
+        ) from exc
+    except SkillDeliveryError as exc:
+        raise CdpStagingError(str(exc), code="cdp_skills_delivery") from exc
+    return stage_prompt_uri(
+        execution_id=execution_id,
+        prompt_text=merged,
+    )
+
+
 def stage_prompt_uri(
     *,
     execution_id: str,
