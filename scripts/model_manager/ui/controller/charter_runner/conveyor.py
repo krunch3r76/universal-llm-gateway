@@ -17,7 +17,8 @@ from scripts.model_manager import observation_event_conveyor as conv_events
 
 from . import bus_client
 from .checkpoint_parse import parse_checkpoint
-from .eligibility import CHECKPOINT_PREFIX, ENROLLMENT_TAG
+from .window_terminal_contract import is_tip_class
+from .eligibility import ENROLLMENT_TAG
 from .friction_ledger import CONVEYOR_OFF_TAG
 
 logger = get_logger(__name__)
@@ -86,11 +87,9 @@ def is_stale_unenrolled(friction_id: int) -> bool:
 
 
 def _conveyor_pickup_rows(turns: list[dict[str, Any]]) -> list[str]:
-    cp_prefix = CHECKPOINT_PREFIX.upper()
     latest_body = ""
     for turn in sorted(turns, key=lambda t: int(t.get("turn_number") or 0), reverse=True):
-        subj = str(turn.get("subject") or "").upper()
-        if subj.startswith(cp_prefix):
+        if is_tip_class(str(turn.get("subject") or ""), body=str(turn.get("body") or "")):
             latest_body = str(turn.get("body") or "")
             break
     if not latest_body:

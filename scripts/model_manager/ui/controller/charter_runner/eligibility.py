@@ -255,7 +255,7 @@ def evaluate_root(
         validate_checkpoint_for_admit,
     )
     from .executor_routing import resolve_charter_executor
-    from .tick_loop import _admission_mode
+    from .attendance import admission_mode_for_root
 
     verdict = validate_checkpoint_for_admit(str(checkpoint.get("body") or ""))
     if not verdict.ok:
@@ -268,7 +268,7 @@ def evaluate_root(
     parsed = verdict.parsed
     assert parsed is not None
 
-    admission_mode = _admission_mode()
+    admission_mode = admission_mode_for_root(root_id)
     consult_role: str | None = None
     window_kind: WindowKind = "worker"
     if parsed.consult_pending:
@@ -405,9 +405,9 @@ def _check_env_or_eligible(
         load_residue_record,
         save_residue_record,
     )
-    from .tick_loop import _admission_mode
+    from .attendance import admission_mode_for_root
 
-    admission_mode = _admission_mode()
+    admission_mode = admission_mode_for_root(root_id)
     if window_kind == "consult":
         admission_mode = "consult"
     cp_body = str(checkpoint.get("body") or "")

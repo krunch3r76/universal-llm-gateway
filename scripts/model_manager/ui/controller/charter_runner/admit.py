@@ -43,10 +43,10 @@ async def admit_window(
     """Fire one charter window and post the admission pointer on the root."""
     root_id = decision.root_id
     assert decision.parsed is not None and decision.checkpoint is not None
-    from .tick_loop import _admission_mode
+    from .attendance import admission_mode_for_root
 
     window_index = _count_admissions(turns) + 1
-    admission_mode = _admission_mode()
+    admission_mode = admission_mode_for_root(root_id)
     consult_role: str | None = None
     if decision.window_kind == "consult":
         admission_mode = "consult"

@@ -3,26 +3,16 @@
 Manage-hosted tick that admits one window per eligible enrolled root.
 See ``cortex://notes/system/specs/charter-runner-tick.md``.
 
-Admission modes (``CHARTER_ADMISSION_MODE`` / durable admission_mode file):
+Per-root todo ``attendance`` is SOT for admission mode:
 
-- **Attended** — ``handoff``: POST ``/api/v1/team/handoff`` with
-  ``role=cursor-consult``; soft ``waiting_open`` remind only unless
-  ``CHARTER_UNATTENDED_STALE_S`` is explicitly set.
-- **Unattended generate** — default: ``seat=cursor-sdk`` generate; hard stall
-  env-opt-in only.
-- **Autonomous** — background-lead packet; hard stall **default-on** at
+- **attended** (default) — unattended generate via ``seat=cursor-sdk``; hard stall
+  env-opt-in only (``CHARTER_UNATTENDED_STALE_S``).
+- **autonomous** — background-lead packet; hard stall **default-on** at
   ``DEFAULT_AUTONOMOUS_STALE_S`` (3600s, margin over CURSOR_SDK_TIMEOUT).
-  Explicit ``CHARTER_UNATTENDED_STALE_S`` always wins (``0`` = force OFF;
-  malformed → treated as unset → default; negative → force OFF).
-  Incomplete windows (worker ``complete``/``partial`` without a bound root
-  terminal after the WIP pointer) self-heal after ``CHECKPOINT_MISSING_GRACE_S``
-  from worker closeout via a machine CHECKPOINT that re-queues Next-pickup
-  (see ``self_heal``; R-admit A1–A7). Consult-mode hung WIP past
-  ``DEFAULT_CONSULT_STALE_S`` (900s) recovers via ``consult_stall`` (R-ADMIT on
-  root advances; else re-queue CONSULT_PENDING) — a:26131.
-
-Do not label the code contract as bare ``cursor-consult`` — that handoff role
-is an attended operator path, not the unattended runner wire.
+  Explicit ``CHARTER_UNATTENDED_STALE_S`` always wins (``0`` = force OFF).
+  Incomplete windows self-heal after ``CHECKPOINT_MISSING_GRACE_S`` (``self_heal``).
+  Consult-mode hung WIP past ``DEFAULT_CONSULT_STALE_S`` (900s) recovers via
+  ``consult_stall`` (a:26131).
 """
 
 from .reload import charter_runner_loop_class, reload_charter_runner_modules

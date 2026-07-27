@@ -3,9 +3,7 @@
 Periodic supervisor that watches enrolled standing roots and admits one window
 per eligible root. Default substrate is unattended Grok 4.5
 (``cursor/grok-4.5``, effort=high, fast=true) via generate dispatch.
-Opt-in attended handoff (``CHARTER_ADMISSION_MODE=handoff``) POSTs
-``/api/v1/team/handoff`` with ``role=cursor-consult`` for IDE observation.
-``CHARTER_ADMISSION_MODE=autonomous`` selects the background-lead packet and
+Per-root todo ``attendance=autonomous`` selects the background-lead packet and
 auto-arms hard stall at ``DEFAULT_AUTONOMOUS_STALE_S`` (3600s) unless
 ``CHARTER_UNATTENDED_STALE_S`` overrides (incl. ``0`` = force OFF).
 Consult-mode windows additionally recover at ``DEFAULT_CONSULT_STALE_S`` (900s)
@@ -36,7 +34,14 @@ if not hasattr(events, "emit_manage_charter_tick_root_skipped"):
 
 from scripts.model_manager.ui.controller.service_config import build_mcp_env
 from scripts.model_manager.ui.controller.shutdown_gate import ManageShutdownGate
+from typing import TYPE_CHECKING, Any, Callable
+
 from scripts.model_manager.ui.model.service_state import ServiceState, ServiceStatus
+
+if TYPE_CHECKING:
+    from universal_event_bus import EventBus
+
+    from scripts.model_manager.ui.controller.service_ctl.core import ServiceController
 
 from . import admit, bus_client, window_log
 from . import consult_stall as _consult_stall_mod
@@ -76,7 +81,6 @@ _ACTIVITY = "charter_tick"
 _WAITING_OPEN_REMIND_S = 900.0
 # Hard stall (stale_window): autonomous default-on; other modes env-opt-in.
 _ENV_UNATTENDED_STALE_S = "CHARTER_UNATTENDED_STALE_S"
-_ENV_ADMISSION_MODE = "CHARTER_ADMISSION_MODE"
 _ENV_KEYS = ("AGENT_BUS_TOKEN",)
 # Margin over CURSOR_SDK_TIMEOUT (1800) so stale cannot race worker_failed (A1).
 DEFAULT_AUTONOMOUS_STALE_S = 3600.0
@@ -153,69 +157,32 @@ def _unattended_stale_s_from_env() -> float:
     return 0.0 if val is None else val
 
 
-def _effective_unattended_stale_s(*, constructor_override: float | None) -> float:
-    """Resolve hard-stall seconds: constructor → env → autonomous default → 0.
+def _effective_unattended_stale_s(
+    *, constructor_override: float | None, root_id: str | None = None
+) -> float:
+    """Resolve hard-stall seconds: constructor → env → per-root autonomous default → 0.
 
-    Under admission_mode=autonomous with env unset, returns DEFAULT_AUTONOMOUS_STALE_S
-    (3600). Explicit env (including 0) always wins. Constructor override freezes for tests.
+    When ``root_id`` carries todo ``attendance=autonomous`` and env is unset,
+    returns DEFAULT_AUTONOMOUS_STALE_S (3600). Explicit env always wins.
     """
     if constructor_override is not None:
         return max(0.0, float(constructor_override))
     env_val = _env_unattended_stale_raw()
     if env_val is not None:
         return env_val
-    if _admission_mode() == "autonomous":
-        return DEFAULT_AUTONOMOUS_STALE_S
+    if root_id is not None:
+        from .attendance import admission_mode_for_root
+
+        if admission_mode_for_root(root_id) == "autonomous":
+            return DEFAULT_AUTONOMOUS_STALE_S
     return 0.0
 
 
-def _admission_mode_path() -> Path:
-    """Durable arming file — overrides env so tick can re-arm without process restart."""
-    return Path.home() / ".local" / "share" / "charter-runner" / "admission_mode"
+def _admission_mode_for_root(root_id: str) -> AdmissionMode:
+    """Per-root admission mode from durable todo ``attendance`` attr."""
+    from .attendance import admission_mode_for_root
 
-
-def _resolve_admission_token(raw: str) -> AdmissionMode | None:
-    token = raw.strip().lower()
-    if not token or token == "generate":
-        return "generate"
-    if token == "handoff":
-        return "handoff"
-    if token == "autonomous":
-        return "autonomous"
-    if token == "consult":
-        return "consult"
-    return None
-
-
-def _admission_mode() -> AdmissionMode:
-    """Resolve admission mode: durable file (if present) then ``CHARTER_ADMISSION_MODE``.
-
-    ``autonomous`` selects the background-lead packet (full path-sim arc via
-    satellite R-admit + capped revise loop). ``generate`` (default) and ``handoff``
-    are unchanged. File path: ``~/.local/share/charter-runner/admission_mode``.
-    """
-    path = _admission_mode_path()
-    if path.is_file():
-        try:
-            file_raw = path.read_text(encoding="utf-8").splitlines()[0]
-        except (OSError, IndexError):
-            file_raw = ""
-        resolved = _resolve_admission_token(file_raw)
-        if resolved is not None:
-            return resolved
-        logger.warning(
-            "charter-runner: unknown admission_mode file %r — falling through to env",
-            file_raw,
-        )
-    raw = os.environ.get(_ENV_ADMISSION_MODE, "").strip().lower()
-    resolved = _resolve_admission_token(raw)
-    if resolved is not None:
-        return resolved
-    logger.warning(
-        "charter-runner: unknown CHARTER_ADMISSION_MODE=%r — treating as generate",
-        raw,
-    )
-    return "generate"
+    return admission_mode_for_root(root_id)
 
 
 def ensure_charter_tick_env(workspace_root: Path) -> None:
@@ -239,10 +206,14 @@ class CharterRunnerTickLoop:
         caps: CapStore | None = None,
         on_admit: Callable[[str], None] | None = None,
         unattended_stale_s: float | None = None,
+        service_controller: ServiceController | None = None,
+        event_bus: EventBus | None = None,
     ) -> None:
         self._service_state = service_state
         self._shutdown_gate = shutdown_gate
         self._workspace_root = workspace_root
+        self._service_controller = service_controller
+        self._event_bus = event_bus
         # None / omitted → env (CHARTER_TICK_INTERVAL_S); explicit float wins (tests).
         if tick_interval_s is None:
             self._tick_interval_s = _tick_interval_from_env()
@@ -260,6 +231,12 @@ class CharterRunnerTickLoop:
             return
         if self._workspace_root is not None:
             ensure_charter_tick_env(self._workspace_root)
+        from .propagation_execute import install_propagation_context
+
+        install_propagation_context(
+            self._service_controller,
+            event_bus=self._event_bus,
+        )
         self._loop_task = asyncio.create_task(self._run_loop())
         await events.emit_manage_charter_tick_started()
 
@@ -273,6 +250,9 @@ class CharterRunnerTickLoop:
         except asyncio.CancelledError:
             pass
         self._loop_task = None
+        from .propagation_execute import install_propagation_context
+
+        install_propagation_context(None)
         await events.emit_manage_charter_tick_stopped()
 
     async def _run_loop(self) -> None:
@@ -309,6 +289,7 @@ class CharterRunnerTickLoop:
         admitted = 0
         skipped_by_reason: dict[str, int] = {}
         state_closes_this_tick = 0
+        old_decisions: dict[str, str] = {}
         for thread in roots:
             root_id = str(thread.get("id") or "")
             if not root_id:
@@ -318,6 +299,9 @@ class CharterRunnerTickLoop:
             await maybe_heal_admit_intent_orphan(root_id, turns, self._caps)
             decision = evaluate_root(
                 root_id, turns, self._caps, env_snapshot=env_snapshot
+            )
+            old_decisions[root_id] = (
+                "eligible" if decision.eligible else decision.reason
             )
             if decision.eligible:
                 try:
@@ -351,6 +335,19 @@ class CharterRunnerTickLoop:
                 await _schema_skip_heal_mod.try_self_heal_schema_skip(
                     decision, caps=self._caps
                 )
+        try:
+            from .kernel import record_shadow_pass
+            from .telemetry import emit_shadow_diff
+
+            for row in record_shadow_pass(old_decisions):
+                await emit_shadow_diff(
+                    root=row["root"],
+                    old_decision=row["old_decision"],
+                    kernel_transition=row["kernel_transition"],
+                    classification=row["classification"],
+                )
+        except Exception:  # noqa: BLE001 — shadow must not abort tick
+            logger.exception("charter-runner shadow pass failed")
         await events.emit_manage_charter_tick_scanned(
             roots=len(roots),
             admitted=admitted,
@@ -362,6 +359,13 @@ class CharterRunnerTickLoop:
             await _conveyor_mod.sweep_stale_enrollments()
         except Exception:  # noqa: BLE001 — stale sweep must not abort tick
             logger.exception("charter-runner conveyor stale sweep failed")
+        from .propagation_execute import consume_pending_charter_reload
+
+        if consume_pending_charter_reload() and self._service_controller is not None:
+            try:
+                await self._service_controller.reload_charter_tick()
+            except Exception:  # noqa: BLE001 — reload must not abort tick
+                logger.exception("charter-runner deferred charter_reload failed")
 
     async def _recover_worker_failure(self, decision: Decision) -> bool:
         """A-R3-1: failed/timeout/closed worker while in-flight → stop root."""
@@ -413,7 +417,7 @@ class CharterRunnerTickLoop:
             root_turns=turns,
             caps=self._caps,
             age_s=age,
-            admission_mode=_admission_mode(),
+            admission_mode=_admission_mode_for_root(decision.root_id),
         )
 
     async def _try_consult_stall(self, decision: Decision, turns: list[dict]) -> bool:
@@ -428,7 +432,7 @@ class CharterRunnerTickLoop:
             root_turns=turns,
             caps=self._caps,
             age_s=age,
-            admission_mode=_admission_mode(),
+            admission_mode=_admission_mode_for_root(decision.root_id),
         )
 
     async def _handle_waiting_open(
@@ -460,7 +464,8 @@ class CharterRunnerTickLoop:
             return state_closes_this_tick
         age = (datetime.now(UTC) - posted_at).total_seconds()
         stale_s = _effective_unattended_stale_s(
-            constructor_override=self._unattended_stale_override
+            constructor_override=self._unattended_stale_override,
+            root_id=decision.root_id,
         )
         if stale_s > 0 and age >= stale_s:
             if await self._try_self_heal(decision, turns):

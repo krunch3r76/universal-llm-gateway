@@ -27,6 +27,7 @@ from scripts.model_manager import observation_event as events
 from . import bus_client, window_log
 from .caps import CapStore
 from .checkpoint_parse import parse_checkpoint
+from .window_terminal_contract import terminal_verb
 from .eligibility import Decision
 from .harvest import harvest_completed_windows
 from .self_heal_checkpoint import (
@@ -40,8 +41,6 @@ CHECKPOINT_MISSING = "checkpoint_missing"
 # Grace after worker closeout so a late root CHECKPOINT can land before heal.
 CHECKPOINT_MISSING_GRACE_S = 120.0
 CHECKPOINT_MISSING_HEAL_CAP = 2
-# Bound stop vocabulary (autonomous-path-sim-charter § Stop vocabulary).
-WINDOW_TERMINALS = ("CHECKPOINT", "CONSULT_PENDING", "BLOCKED", "PACKAGING_DEFICIT")
 
 
 def turn_number(turn: dict[str, Any]) -> int:
@@ -57,10 +56,11 @@ def window_terminal_after(turns: list[dict[str, Any]], after_n: int) -> str | No
     for turn in turns:
         if turn_number(turn) <= after_n:
             continue
-        subj = str(turn.get("subject") or "").upper().strip()
-        for verb in WINDOW_TERMINALS:
-            if subj.startswith(verb):
-                return verb
+        verb = terminal_verb(
+            str(turn.get("subject") or ""), body=str(turn.get("body") or "")
+        )
+        if verb is not None:
+            return verb
     return None
 
 

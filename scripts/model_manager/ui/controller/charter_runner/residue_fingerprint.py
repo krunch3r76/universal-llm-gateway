@@ -200,6 +200,11 @@ def _consult_provenance_present(body: str) -> bool:
     return _PROVENANCE_VERDICT_RE.search(body) is not None
 
 
+def consult_provenance_present(body: str) -> bool:
+    """True when CHECKPOINT includes ## Consult provenance with a verdict line."""
+    return _consult_provenance_present(body)
+
+
 def _self_heal_author(body: str) -> bool:
     anchor_match = re.search(
         r"^##\s+Anchor\b.*?(?=^##\s|\Z)",
@@ -424,6 +429,7 @@ __all__ = [
     "WitnessTuple",
     "build_witness_tuple",
     "compute_fingerprint",
+    "consult_provenance_present",
     "evaluate_residue_gate",
     "load_residue_record",
     "normalize_next_pickup",

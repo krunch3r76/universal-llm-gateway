@@ -2,27 +2,18 @@
 
 from __future__ import annotations
 
-from cortex_store.dispatch_ops._friction_enqueue import (
-    mint_friction_followon,
-    mint_repair_todo,
-    reconcile_charter_frictions,
-    todo_exists_for_friction,
-)
-from cortex_store.dispatch_ops.ops_assertions import _op_frictions
-from cortex_store.dispatch_ops.ops_assertions_update import _op_assertion_get
 from universal_logging import get_logger
 
 from scripts.model_manager import observation_event as events
 
 from . import (
     bus_client,
-    conveyor,
-    frictions_window_audit,
     gate_bypass_detect,
     window_log,
 )
 from .checkpoint_body import resolve_checkpoint_body
-from .eligibility import ADMISSION_SUBJECT_PREFIX, CHECKPOINT_PREFIX
+from .eligibility import ADMISSION_SUBJECT_PREFIX
+from .window_terminal_contract import after_window_terminal_harvested, is_tip_class
 
 logger = get_logger(__name__)
 
@@ -48,10 +39,12 @@ def _persist_residue_after_harvest(
         record_from_harvest,
         save_residue_record,
     )
-    from .tick_loop import _admission_mode
+    from .attendance import admission_mode_for_root
 
     parsed = parse_checkpoint(consumed_checkpoint_body)
-    admission_mode = str(admission_meta.get("admission_mode") or _admission_mode())
+    admission_mode = str(
+        admission_meta.get("admission_mode") or admission_mode_for_root(root_id)
+    )
     window_kind = "consult" if admission_mode == "consult" else "worker"
     prior = load_residue_record(root_id)
     w10_consumed = prior.w10_consumed if prior is not None else False
@@ -95,155 +88,6 @@ async def _flag_gate_bypass(
         )
 
 
-async def _audit_and_enqueue_frictions(
-    *,
-    root_id: str,
-    window_index: int,
-    checkpoint_subject: str,
-    checkpoint_body: str,
-    worker_turns: list[dict],
-    worker_closed: bool | None,
-    gate_bypass_count: int,
-) -> None:
-    """Post-window Frictions audit, row-scoped enqueue, repair todo, sweep."""
-    closeout_status = bus_client.closeout_status_from_turns(worker_turns)
-    audit = frictions_window_audit.audit_window_frictions(
-        checkpoint_body=checkpoint_body,
-        root_id=root_id,
-        window_index=window_index,
-        assertion_get=lambda aid: _op_assertion_get(assertion_id=aid),
-        frictions=_op_frictions,
-        worker_closeout_status=closeout_status,
-        checkpoint_subject=checkpoint_subject,
-        worker_closed=worker_closed,
-        gate_bypass_count=gate_bypass_count,
-        worker_turns=worker_turns,
-    )
-    if not audit.applicable:
-        await events.emit_manage_charter_tick_frictions_audit_not_applicable(
-            root=root_id,
-            window_index=window_index,
-            reason=audit.not_applicable_reason or "not_applicable",
-        )
-        try:
-            reconcile_charter_frictions(root_id)
-        except Exception:  # noqa: BLE001
-            logger.exception("charter-runner friction reconcile sweep failed")
-        return
-
-    if audit.audit_failed:
-        await events.emit_manage_charter_tick_frictions_audit_failed(
-            root=root_id,
-            window_index=window_index,
-            failure_class=audit.audit_failure_class or "unknown",
-            non_actionable_rate=audit.non_actionable_rate,
-        )
-        try:
-            mint_repair_todo(
-                root_id=root_id,
-                window_index=window_index,
-                audit_failure_class=audit.audit_failure_class or "unknown",
-            )
-        except Exception:  # noqa: BLE001
-            logger.exception("charter-runner repair todo mint failed")
-    else:
-        await events.emit_manage_charter_tick_frictions_audit_passed(
-            root=root_id,
-            window_index=window_index,
-            non_actionable_rate=audit.non_actionable_rate,
-        )
-
-    if audit.uncited_ids:
-        await events.emit_manage_charter_tick_frictions_filed_uncited(
-            root=root_id,
-            window_index=window_index,
-            uncited_ids=sorted(audit.uncited_ids),
-        )
-
-    if audit.ceremonial_suspected:
-        await events.emit_manage_charter_tick_frictions_ceremonial_suspected(
-            root=root_id,
-            window_index=window_index,
-            non_actionable_rate=audit.non_actionable_rate,
-        )
-
-    for row in audit.resolved_actionable_rows:
-        try:
-            got = _op_assertion_get(assertion_id=row.assertion_id)
-            if "error" not in got:
-                slug = mint_friction_followon(got, root_id=root_id)
-                if slug:
-                    audit.enqueued_ids.add(row.assertion_id)
-        except Exception:  # noqa: BLE001
-            logger.exception(
-                "charter-runner friction enqueue failed id=%s", row.assertion_id
-            )
-
-    for fid in audit.uncited_ids:
-        try:
-            got = _op_assertion_get(assertion_id=fid)
-            if "error" not in got:
-                slug = mint_friction_followon(got, root_id=root_id)
-                if slug:
-                    audit.enqueued_ids.add(fid)
-        except Exception:  # noqa: BLE001
-            logger.exception("charter-runner uncited friction enqueue failed id=%s", fid)
-
-    try:
-        reconcile_charter_frictions(root_id)
-    except Exception:  # noqa: BLE001
-        logger.exception("charter-runner friction reconcile sweep failed")
-
-    try:
-        detail = await bus_client.fetch_thread(root_id)
-        tags = list(detail.get("tags") or [])
-        friction_resp = _op_frictions(
-            charter_root=root_id,
-            superseded=False,
-            limit=200,
-            intent="full",
-        )
-        friction_items = [
-            item
-            for item in friction_resp.get("items") or []
-            if isinstance(item, dict)
-            and todo_exists_for_friction(int(item["id"]))
-        ]
-        await conveyor.enroll_rows(
-            root_id=root_id,
-            root_tags=tags,
-            friction_rows=friction_items,
-        )
-    except Exception as exc:  # noqa: BLE001 — surface; do not abort harvest closeout
-        logger.exception("charter-runner conveyor enroll failed root=%s", root_id)
-        try:
-            from scripts.model_manager import observation_event_conveyor as conv_events
-
-            await conv_events.emit_manage_charter_conveyor_enroll_failed(
-                root=root_id,
-                window_index=window_index,
-                error=f"{type(exc).__name__}: {exc}",
-                minted_count=len(audit.enqueued_ids),
-            )
-        except Exception:  # noqa: BLE001
-            logger.exception(
-                "charter-runner failed emitting conveyor enroll_failed root=%s",
-                root_id,
-            )
-        try:
-            # Repair todo (not a new actionable friction) — avoids enroll cascade.
-            mint_repair_todo(
-                root_id=root_id,
-                window_index=window_index,
-                audit_failure_class="conveyor_enroll_failed",
-            )
-        except Exception:  # noqa: BLE001
-            logger.exception(
-                "charter-runner conveyor enroll repair-todo mint failed root=%s",
-                root_id,
-            )
-
-
 def turn_number(turn: dict) -> int:
     try:
         return int(turn.get("turn_number") or 0)
@@ -252,11 +96,10 @@ def turn_number(turn: dict) -> int:
 
 
 def completed_windows(turns: list[dict]) -> list[tuple[dict, dict]]:
-    """Pairs of (admission, following CHECKPOINT) for closed windows."""
+    """Pairs of (admission, following tip-class terminal) for closed windows."""
     ordered = sorted(turns, key=turn_number)
     pairs: list[tuple[dict, dict]] = []
     adm_prefix = ADMISSION_SUBJECT_PREFIX.upper()
-    cp_prefix = CHECKPOINT_PREFIX.upper()
     for i, turn in enumerate(ordered):
         subj = str(turn.get("subject") or "").upper()
         if not subj.startswith(adm_prefix):
@@ -266,8 +109,9 @@ def completed_windows(turns: list[dict]) -> list[tuple[dict, dict]]:
         for later in ordered[i + 1 :]:
             if turn_number(later) <= n:
                 continue
-            later_subj = str(later.get("subject") or "").upper()
-            if later_subj.startswith(cp_prefix):
+            subj_later = str(later.get("subject") or "")
+            body_later = str(later.get("body") or "")
+            if is_tip_class(subj_later, body=body_later):
                 following_cp = later
                 break
         if following_cp is not None:
@@ -276,15 +120,16 @@ def completed_windows(turns: list[dict]) -> list[tuple[dict, dict]]:
 
 
 def consumed_checkpoint(turns: list[dict], admission: dict) -> dict | None:
-    """Latest CHECKPOINT preceding an admission — the residue that window ran on."""
+    """Latest tip-class terminal preceding an admission — residue that window ran on."""
     adm_n = turn_number(admission)
-    cp_prefix = CHECKPOINT_PREFIX.upper()
     best: dict | None = None
     for turn in turns:
         n = turn_number(turn)
         if n >= adm_n or n <= 0:
             continue
-        if not str(turn.get("subject") or "").upper().startswith(cp_prefix):
+        subj = str(turn.get("subject") or "")
+        body = str(turn.get("body") or "")
+        if not is_tip_class(subj, body=body):
             continue
         if best is None or n > turn_number(best):
             best = turn
@@ -338,25 +183,37 @@ async def harvest_completed_windows(root_id: str, turns: list[dict]) -> None:
                 logger.exception(
                     "charter-runner failed closing worker %s", worker_thread
                 )
+        resolved_body = resolve_checkpoint_body(
+            str(checkpoint.get("body") or ""),
+            sidecar_uri=(
+                checkpoint.get("sidecar_uri")
+                if isinstance(checkpoint.get("sidecar_uri"), str)
+                else None
+            ),
+        )
         try:
-            await _audit_and_enqueue_frictions(
+            await after_window_terminal_harvested(
                 root_id=root_id,
                 window_index=window_index,
+                checkpoint_turn=turn_number(checkpoint),
                 checkpoint_subject=str(checkpoint.get("subject") or ""),
-                checkpoint_body=resolve_checkpoint_body(
-                    str(checkpoint.get("body") or ""),
-                    sidecar_uri=(
-                        checkpoint.get("sidecar_uri")
-                        if isinstance(checkpoint.get("sidecar_uri"), str)
-                        else None
-                    ),
-                ),
+                checkpoint_body=resolved_body,
                 worker_turns=worker_turns,
                 worker_closed=worker_closed,
                 gate_bypass_count=gate_bypass_count,
             )
         except Exception:  # noqa: BLE001 — audit must never abort harvest
             logger.exception("charter-runner frictions audit failed")
+        try:
+            from .propagation_execute import maybe_execute_window_propagation
+
+            await maybe_execute_window_propagation(
+                root_id=root_id,
+                window_index=window_index,
+                worker_turns=worker_turns,
+            )
+        except Exception:  # noqa: BLE001 — propagation must not abort harvest
+            logger.exception("charter-runner propagation execute failed")
         try:
             window_log.append_closeout(
                 root_id=root_id,
@@ -369,8 +226,6 @@ async def harvest_completed_windows(root_id: str, turns: list[dict]) -> None:
             )
             consumed = consumed_checkpoint(turns, admission)
             if consumed is None:
-                # Leaving the store untouched is the safe branch: writing this
-                # window's own CHECKPOINT would deadlock the next tick.
                 logger.warning(
                     "charter-runner window %s (root=%s) has no preceding "
                     "CHECKPOINT — last-residue store left unchanged",

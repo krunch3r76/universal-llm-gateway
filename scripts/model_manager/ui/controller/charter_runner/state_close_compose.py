@@ -14,20 +14,20 @@ from .checkpoint_sections import (
     extract_remaining_work,
 )
 from .closeout_render import render_closeout
-from .eligibility import CHECKPOINT_PREFIX
+from .window_terminal_contract import is_tip_class
 from .friction_ledger import build_ledger
 from .harvest import completed_windows
 
 
 def _checkpoint_bodies(turns: list[dict[str, Any]]) -> list[str]:
-    cp_prefix = CHECKPOINT_PREFIX.upper()
     bodies: list[str] = []
     for _adm, checkpoint in completed_windows(turns):
         bodies.append(str(checkpoint.get("body") or ""))
     if not bodies:
         for turn in sorted(turns, key=lambda t: int(t.get("turn_number") or 0)):
-            subj = str(turn.get("subject") or "").upper()
-            if subj.startswith(cp_prefix):
+            if is_tip_class(
+                str(turn.get("subject") or ""), body=str(turn.get("body") or "")
+            ):
                 bodies.append(str(turn.get("body") or ""))
     return bodies
 
