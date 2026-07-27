@@ -1,0 +1,146 @@
+"""Unit tests for charter-state footer schema and materializer dual-write."""
+
+from __future__ import annotations
+
+import pytest
+
+from scripts.model_manager.ui.controller.charter_runner.checkpoint_parse import (
+    parse_checkpoint,
+)
+from scripts.model_manager.ui.controller.charter_runner.checkpoint_schema import (
+    append_footer_to_packet,
+    emit_footer,
+    validate_checkpoint_footer,
+)
+from scripts.model_manager.ui.controller.charter_runner.materializer import (
+    materialize_resume_packet,
+)
+from scripts.model_manager.ui.controller.charter_runner.materializer_autonomous import (
+    materialize_autonomous_packet,
+)
+from scripts.model_manager.ui.controller.charter_runner.materializer_closed_detent import (
+    materialize_closed_detent_packet,
+)
+from scripts.model_manager.ui.controller.charter_runner.materializer_consult import (
+    materialize_consult_packet,
+)
+
+pytestmark = pytest.mark.offline
+
+_MIN_CHECKPOINT = """\
+# CHECKPOINT
+
+## WIP / In-flight
+_None this window._
+
+## Next pickup
+1. G1 — first gated step
+
+## Steps
+1. [ ] G1 — first gated step
+
+## Frictions
+_None this window._
+
+— RESUME (any seat, no command): load agent-bus-discipline → this CHECKPOINT.
+"""
+
+_VALID_FOOTER = emit_footer(
+    schema_version=1,
+    status="CHECKPOINT",
+    next_pickup={"gid": "G1", "lane": "judgment", "executor": "cursor-sdk"},
+    wip=None,
+    consult={"role": None, "poll_hint": None, "from": None},
+    revise_count=0,
+    evidence=[],
+    window_id="charter-5998-w1",
+    transition_id=None,
+)
+
+
+def test_valid_footer_passes_validate() -> None:
+    body = f"prose\n\n{_VALID_FOOTER}"
+    result = validate_checkpoint_footer(body)
+    assert result.ok is True
+    assert result.errors == ()
+
+
+def test_missing_fence_fails_with_path() -> None:
+    result = validate_checkpoint_footer("no footer here")
+    assert result.ok is False
+    assert "charter-state fence missing" in result.errors[0]
+
+
+def test_malformed_json_names_field_path() -> None:
+    body = "```charter-state\n{not json}\n```"
+    result = validate_checkpoint_footer(body)
+    assert result.ok is False
+    assert any("malformed" in err for err in result.errors)
+
+
+def test_invalid_next_pickup_gid_names_field_path() -> None:
+    footer = emit_footer(
+        schema_version=1,
+        status="CHECKPOINT",
+        next_pickup={"gid": "", "lane": "judgment", "executor": "x"},
+        wip=None,
+        consult={"role": None, "poll_hint": None, "from": None},
+        revise_count=0,
+        evidence=[],
+        window_id="charter-5998-w1",
+        transition_id=None,
+    )
+    result = validate_checkpoint_footer(footer)
+    assert result.ok is False
+    assert "next_pickup.gid" in result.errors
+
+
+def test_append_footer_to_packet_replaces_existing() -> None:
+    first = append_footer_to_packet(
+        "packet body",
+        schema_version=1,
+        status="CHECKPOINT",
+        next_pickup={"gid": "G1", "lane": "judgment", "executor": "x"},
+        wip=None,
+        consult={"role": None, "poll_hint": None, "from": None},
+        revise_count=0,
+        evidence=[],
+        window_id="charter-5998-w1",
+        transition_id=None,
+    )
+    second = append_footer_to_packet(
+        first,
+        schema_version=1,
+        status="BLOCKED",
+        next_pickup={"gid": "G2", "lane": "mechanical", "executor": "y"},
+        wip=None,
+        consult={"role": None, "poll_hint": None, "from": None},
+        revise_count=1,
+        evidence=[],
+        window_id="charter-5998-w2",
+        transition_id="t-1",
+    )
+    assert second.count("```charter-state") == 1
+    assert '"status": "BLOCKED"' in second
+    assert validate_checkpoint_footer(second).ok is True
+
+
+@pytest.mark.parametrize(
+    ("materializer", "extra_kwargs"),
+    [
+        (materialize_resume_packet, {}),
+        (materialize_autonomous_packet, {}),
+        (materialize_consult_packet, {}),
+        (materialize_closed_detent_packet, {"scoreboard_uri": None}),
+    ],
+)
+def test_materializer_body_contains_charter_state_fence(
+    materializer,
+    extra_kwargs: dict,
+) -> None:
+    parsed = parse_checkpoint(_MIN_CHECKPOINT)
+    packet = materializer("5998", parsed, window_index=3, **extra_kwargs)
+    assert "```charter-state" in packet
+    result = validate_checkpoint_footer(packet)
+    assert result.ok is True
+    assert '"window_id": "charter-5998-w3"' in packet

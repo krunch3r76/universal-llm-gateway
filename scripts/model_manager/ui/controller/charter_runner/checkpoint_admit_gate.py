@@ -7,10 +7,17 @@ cursor densifies; this gate refuses bad shapes with one-line fix hints.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from .checkpoint_parse import ParsedCheckpoint, parse_checkpoint
 from .checkpoint_sections import split_sections
+from .window_terminal_contract import (
+    admitted_arc,
+    arc_is_weaker_than,
+    effective_required_arc,
+    todo_refs_for_arc,
+)
 
 # Required ## headings (substring match via split_sections keys).
 _REQUIRED_SECTION_NEEDLES: tuple[tuple[str, str], ...] = (
@@ -154,8 +161,49 @@ def validate_checkpoint_for_admit(
     return CheckpointAdmitVerdict(True, "eligible", "", parsed=parsed)
 
 
+def validate_arc_for_admit(
+    parsed: ParsedCheckpoint,
+    *,
+    window_kind: str,
+    admission_mode: str,
+    consult_role: str | None,
+    executor_lane: str,
+    checkpoint_body: str = "",
+    density_triage_lookup: Callable[[str], str | None] | None = None,
+) -> CheckpointAdmitVerdict | None:
+    """Refuse when the admit lane is weaker than the row's derived arc."""
+    lookup = density_triage_lookup
+    if lookup is None:
+        from .window_terminal_contract import default_density_triage_lookup as lookup
+    refs = todo_refs_for_arc(parsed)
+    if not refs:
+        return None
+    triage = lookup(refs[0])
+    g_row_lane = parsed.executor_lane or executor_lane
+    need = effective_required_arc(
+        triage=triage,
+        executor_lane=g_row_lane,
+        consult_pending=parsed.consult_pending,
+        checkpoint_body=checkpoint_body,
+    )
+    got = admitted_arc(
+        window_kind=window_kind,
+        admission_mode=admission_mode,
+        consult_role=consult_role,
+        executor_lane=executor_lane,
+    )
+    if not arc_is_weaker_than(got, need):
+        return None
+    hint = (
+        f"G-row requires {need} arc (density_triage={triage or 'unset'}) — "
+        f"admit {need} consult/recon seat, not {got} in-seat lane."
+    )
+    return CheckpointAdmitVerdict(False, "arc_lane_too_weak", hint, parsed=parsed)
+
+
 __all__ = [
     "CheckpointAdmitVerdict",
     "SCHEMA_REASONS",
+    "validate_arc_for_admit",
     "validate_checkpoint_for_admit",
 ]

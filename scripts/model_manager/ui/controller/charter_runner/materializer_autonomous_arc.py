@@ -1,4 +1,8 @@
-"""Autonomous arc G-row decomposition text for materializer_autonomous."""
+"""Autonomous arc G-row decomposition text for materializer_autonomous.
+
+Emitted packet bodies append ``charter-state`` via
+``checkpoint_schema.append_footer_to_packet`` in ``materialize_autonomous_packet``.
+"""
 
 from __future__ import annotations
 

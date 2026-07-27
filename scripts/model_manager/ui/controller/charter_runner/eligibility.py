@@ -20,6 +20,7 @@ from typing import Literal
 
 from .caps import CapStore
 from .checkpoint_parse import ParsedCheckpoint
+from .window_terminal_contract import CHECKPOINT_PREFIX, is_tip_class
 from .env_predicates import (
     ADMIT_INTENT_ORPHAN_REASON,
     ENV_SNAPSHOT_STALE_REASON,
@@ -32,7 +33,6 @@ from .env_predicates import (
 
 ENROLLMENT_TAG = "charter-runner"
 ADMISSION_SUBJECT_PREFIX = "WIP charter-runner"
-CHECKPOINT_PREFIX = "CHECKPOINT"
 WindowKind = Literal["worker", "consult"]
 GateHalf = Literal["body", "env"]
 
@@ -134,7 +134,7 @@ def live_wip_for_window(turns: list[dict], window_index: int) -> bool:
     """True when an in-flight admission pointer matches ``window_index`` on the root."""
     from . import window_log
 
-    checkpoint = _latest_matching(turns, _starts_with(CHECKPOINT_PREFIX))
+    checkpoint = _latest_matching(turns, is_tip_class)
     if checkpoint is None:
         return False
     cp_n = _turn_number(checkpoint)
@@ -229,7 +229,7 @@ def evaluate_root(
     now: datetime | None = None,
 ) -> Decision:
     """Evaluate BODY then ENV admission gates over a root's turns."""
-    checkpoint = _latest_matching(turns, _starts_with(CHECKPOINT_PREFIX))
+    checkpoint = _latest_matching(turns, is_tip_class)
     if checkpoint is None:
         return _body_skip("no_checkpoint", root_id)
 
@@ -250,8 +250,12 @@ def evaluate_root(
             admission_turn=admission,
         )
 
-    # Shared fail-closed schema+admit gate (fix hints on skip events via reason).
-    from .checkpoint_admit_gate import validate_checkpoint_for_admit
+    from .checkpoint_admit_gate import (
+        validate_arc_for_admit,
+        validate_checkpoint_for_admit,
+    )
+    from .executor_routing import resolve_charter_executor
+    from .tick_loop import _admission_mode
 
     verdict = validate_checkpoint_for_admit(str(checkpoint.get("body") or ""))
     if not verdict.ok:
@@ -263,6 +267,34 @@ def evaluate_root(
         )
     parsed = verdict.parsed
     assert parsed is not None
+
+    admission_mode = _admission_mode()
+    consult_role: str | None = None
+    window_kind: WindowKind = "worker"
+    if parsed.consult_pending:
+        window_kind = "consult"
+        admission_mode = "consult"
+        consult_role = parsed.consult_role
+    bind = resolve_charter_executor(
+        parsed=parsed,
+        admission_mode=admission_mode,
+        consult_role=consult_role,
+    )
+    arc_verdict = validate_arc_for_admit(
+        parsed,
+        window_kind=window_kind,
+        admission_mode=admission_mode,
+        consult_role=consult_role,
+        executor_lane=bind.lane,
+        checkpoint_body=str(checkpoint.get("body") or ""),
+    )
+    if arc_verdict is not None and not arc_verdict.ok:
+        return _body_skip(
+            arc_verdict.reason,
+            root_id,
+            checkpoint=checkpoint,
+            parsed=parsed,
+        )
 
     if parsed.consult_pending:
         allowed, cap_reason = caps.check(root_id)

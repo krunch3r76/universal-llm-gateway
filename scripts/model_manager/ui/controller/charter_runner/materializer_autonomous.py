@@ -19,6 +19,7 @@ from __future__ import annotations
 from universal_logging import get_logger
 
 from .checkpoint_parse import ParsedCheckpoint
+from .checkpoint_schema import append_footer_to_packet, footer_kwargs_for_window
 from .executor_defaults import DEFAULT_MODEL, DEFAULT_MODEL_KNOBS
 from .materializer import _work_summary, handoff_subject, materialize_resume_packet
 from .materializer_autonomous_arc import autonomous_arc_guidance
@@ -83,7 +84,9 @@ dual-host emergency path; do not delete or disable that path in code.
 [restart-auth] service restart for deploy-verify is EXPLICITLY authorized here,
 overriding implement-work-item §4B ask-before-restart: quality_gate →
 manage(sync_restart) → wait_healthy → live probe. Only the `manage` MCP —
-never systemctl / pkill / docker / raw shell kill.
+never systemctl / pkill / docker / raw shell kill. When the worker does not
+run deploy-verify, charter harvest propagation executes propagation_residue
+sync_restart actions after the window closes (blocking drain for GIW).
 [R-verdict-gate] after R-admit harvest, parse the merits verdict with the
 fail-closed gate: only ADMIT or RATIFY may advance to implement; ADMIT_WITH_AMENDMENTS
 requires amendments folded + dense spec re-validated before implement; RETURN,
@@ -163,6 +166,9 @@ above as that step requires. Stay inside the gated Next-pickup.
    CONSULT_PENDING + consult_role: r_admit only under the G5 escalation predicate;
    otherwise proceed straight to G6 close. Do NOT queue a standalone G5 window.
 5. A formal R12 CHECKPOINT is posted on agent-bus:{root_id} (from=cursor-sdk).
+   **Subject MUST start with ``CHECKPOINT``** (e.g. ``CHECKPOINT wave N — …``) even
+   when the stop class is CONSULT_PENDING — the tick tip-classifier keys on subject
+   prefix; put ``CONSULT_PENDING`` in the body + Next-pickup, not as the subject verb.
    Required sections inline: ## Steps, ## Frictions, ## Sidecars, WIP, Next-pickup,
    Scoreboard URI, RESUME footer, ## What happened (plain) (layman window summary —
    no gate IDs or assertion hashes). **WIP body (BINDING):** under
@@ -268,7 +274,7 @@ def materialize_autonomous_packet(
     )
     corpus = _corpus(root_id, scoreboard_uri)
     output = _output_format(root_id)
-    return f"""\
+    body = f"""\
 {_front_matter(source_ref)}{scope}
 {invariants}
 {task}
@@ -276,6 +282,9 @@ def materialize_autonomous_packet(
 {_MCP_CAPABILITIES}
 {output}
 """
+    return append_footer_to_packet(
+        body, **footer_kwargs_for_window(root_id, window_index)
+    )
 
 
 def autonomous_subject(root_id: str, window_index: int) -> str:

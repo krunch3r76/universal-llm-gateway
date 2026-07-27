@@ -77,6 +77,11 @@ _CONSULT_NEGATION_MARKERS = (
     "cease",
     "stop re",
 )
+# Post-token markers demote ``CONSULT_PENDING cleared`` / ``resolved`` prose.
+_CONSULT_POST_NEGATION_RE = re.compile(
+    r"\s*(?:cleared|resolved|done|complete|lifted)\b",
+    re.IGNORECASE,
+)
 _CONSULT_ROLE_RE = re.compile(
     r"consult_role:\s*(r_admit|judgment_gap)\b", re.IGNORECASE
 )
@@ -269,7 +274,7 @@ def parse_checkpoint(body: str) -> ParsedCheckpoint:
         consult_role=consult_role,
         executor_lane=executor_lane,
         executor_lane_ambiguous=executor_lane_ambiguous,
-        source_ref=_parse_source_ref(body),
+        source_ref=_parse_source_ref(body, next_pickup),
     )
 
 
@@ -290,12 +295,26 @@ def _parse_executor_lane(next_pickup: list[str]) -> tuple[str | None, bool]:
     return (declared.pop() if declared else None), False
 
 
-def _parse_source_ref(body: str) -> str | None:
-    """First ``todo:``/``plan:``/``plan_phase:`` work-item ref named in the body.
+def _parse_source_ref(body: str, next_pickup: list[str] | None = None) -> str | None:
+    """First unambiguous ``todo:``/``plan:``/``plan_phase:`` ref for implement gate.
 
-    ``None`` when absent or when the body names more than one distinct ref —
-    the implement gate must bind a single unambiguous work item.
+  Prefer the gated Next-pickup row, then Anchor, then the full body. Open G-rows
+  in ``## Steps`` must not block Stage-B implement on a different todo.
     """
+    if next_pickup:
+        pickup_refs = {
+            m.group(1).lower()
+            for row in next_pickup
+            for m in _SOURCE_REF_RE.finditer(row)
+        }
+        if len(pickup_refs) == 1:
+            return pickup_refs.pop()
+    sections = _sections(body)
+    anchor = _find_section(sections, "anchor")
+    if anchor:
+        anchor_refs = {m.group(1).lower() for m in _SOURCE_REF_RE.finditer(anchor)}
+        if len(anchor_refs) == 1:
+            return anchor_refs.pop()
     found = {m.group(1).lower() for m in _SOURCE_REF_RE.finditer(body or "")}
     return found.pop() if len(found) == 1 else None
 
@@ -334,9 +353,12 @@ def _active_consult_token(text: str) -> bool:
     lowered = text.lower()
     for m in _CONSULT_PENDING_RE.finditer(text):
         window = lowered[max(0, m.start() - 16) : m.start()]
-        if not any(marker in window for marker in _CONSULT_NEGATION_MARKERS):
-            return True
-    return False
+        if any(marker in window for marker in _CONSULT_NEGATION_MARKERS):
+            continue
+        after = text[m.end() : m.end() + 24]
+        if _CONSULT_POST_NEGATION_RE.match(after):
+            continue
+        return True
 
 
 def _detect_consult_pending(body: str, next_pickup: list[str]) -> bool:
@@ -347,12 +369,17 @@ def _detect_consult_pending(body: str, next_pickup: list[str]) -> bool:
     stop_text = _find_section(sections, "stop", "stop class", "stop condition")
     if stop_text and _active_consult_token(stop_text):
         return True
+    state_text = _find_section(sections, "state")
+    if state_text and _active_consult_token(state_text):
+        return True
     for line in body.splitlines():
         if re.match(
             r"^\s*(?:[-*]\s*)?(?:Stop|Status)\s*[:\-—]\s*CONSULT_PENDING\b",
             line,
             re.IGNORECASE,
         ):
+            return True
+        if re.match(r"^\s*CONSULT_PENDING\s*$", line, re.IGNORECASE):
             return True
     return False
 

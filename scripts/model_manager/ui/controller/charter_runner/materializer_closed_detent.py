@@ -7,6 +7,7 @@ Skill recipe: scope-lock → thin L2 → dissent beat → bind → implement →
 from __future__ import annotations
 
 from .checkpoint_parse import ParsedCheckpoint
+from .checkpoint_schema import append_footer_to_packet, footer_kwargs_for_window
 from .executor_defaults import DEFAULT_MODEL, DEFAULT_MODEL_KNOBS
 from .materializer import _work_summary
 
@@ -54,7 +55,9 @@ deploy-verify if code landed → friction_close + todo-close.
 External review for this arc is the G3 cdp/opus-5 R-admit. Do NOT open
 implement-todo §3b Gate-6, and do NOT dispatch role=reviewer or role=skeptic —
 check_requested is not set on charter work items.
-[restart-auth] deploy-verify via manage MCP only when code changed.
+[restart-auth] deploy-verify via manage MCP only when code changed; charter
+harvest executes propagation_residue sync_restart after window close when the
+worker skipped in-window deploy-verify.
 [window] prefer one window to done; if escalate, CHECKPOINT with detent raised.
 {_DENSIFY_FLOOR}
 </invariants>"""
@@ -107,7 +110,7 @@ def materialize_closed_detent_packet(
     """Six-block packet for detent=closed friction follow-ons."""
     work = _work_summary(parsed)
     board = scoreboard_uri or "(none — derive from CHECKPOINT)"
-    return f"""\
+    body = f"""\
 {_front_matter(source_ref)}{_scope(window_index, root_id)}
 
 {_invariants(root_id)}
@@ -127,6 +130,9 @@ cortex, agent_bus, team_dispatch, fs, manage (deploy-verify only), observability
 
 {_output_format(root_id)}
 """
+    return append_footer_to_packet(
+        body, **footer_kwargs_for_window(root_id, window_index)
+    )
 
 
 def closed_detent_subject(root_id: str, window_index: int) -> str:

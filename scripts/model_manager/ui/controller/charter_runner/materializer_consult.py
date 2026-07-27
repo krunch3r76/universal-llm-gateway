@@ -14,6 +14,7 @@ Consult seats must not dispatch nested consults (depth-1 only).
 from __future__ import annotations
 
 from .checkpoint_parse import ParsedCheckpoint
+from .checkpoint_schema import append_footer_to_packet, footer_kwargs_for_window
 from .residue_fingerprint import normalize_next_pickup
 
 ConsultRole = str  # r_admit | judgment_gap
@@ -256,9 +257,10 @@ def materialize_consult_packet(
         else ""
     )
     r_admit = _is_r_admit(parsed)
+    footer = footer_kwargs_for_window(root_id, window_index)
     if r_admit:
         identity_block = _window_identity_block(parsed)
-        return f"""\
+        body = f"""\
 {_scope_r_admit(window_index, root_id)}
 {_invariants_r_admit(root_id)}
 {_task_guidance_r_admit(
@@ -270,7 +272,8 @@ def materialize_consult_packet(
 {_MCP_CAPABILITIES_R_ADMIT}
 {_output_format_r_admit(root_id)}
 """
-    return f"""\
+        return append_footer_to_packet(body, **footer)
+    body = f"""\
 {_scope_judgment(window_index, root_id)}
 {_invariants_judgment(root_id)}
 {_task_guidance_judgment(root_id=root_id, scoreboard_line=scoreboard_line)}
@@ -278,6 +281,7 @@ def materialize_consult_packet(
 {_MCP_CAPABILITIES_JUDGMENT}
 {_output_format_judgment(root_id)}
 """
+    return append_footer_to_packet(body, **footer)
 
 
 def consult_subject(

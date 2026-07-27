@@ -18,6 +18,7 @@ from .checkpoint_parse import (
     Step,
     first_actionable_step,
 )
+from .checkpoint_schema import append_footer_to_packet, footer_kwargs_for_window
 from .executor_defaults import DEFAULT_MODEL, DEFAULT_MODEL_KNOBS
 
 logger = get_logger(__name__)
@@ -274,7 +275,7 @@ def materialize_resume_packet(
         admission_mode=admission_mode,
     )
     output = _output_format(root_id, admission_mode)
-    return f"""\
+    body = f"""\
 {scope}
 {invariants}
 {task}
@@ -287,6 +288,9 @@ CODE/VORTEX MCP: ON — workspaces fs, observability as needed for verify.
 </mcp_capabilities>
 {output}
 """
+    return append_footer_to_packet(
+        body, **footer_kwargs_for_window(root_id, window_index)
+    )
 
 
 def handoff_subject(
