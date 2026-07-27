@@ -90,7 +90,7 @@ def test_residue_unresolved_for_unmapped_service_py():
     block = residue_for_closeout(payload)
     assert block is not None
     assert "unresolved:" in block
-    assert "sync_restart" not in block
+    assert "unresolved: services/cdp-ask/main.py" in block
 
 
 def test_residue_elides_overflow_instead_of_raising():
@@ -115,7 +115,7 @@ def test_residue_elides_overflow_instead_of_raising():
     assert block is not None
     assert "elided" in block
     assert len(block.splitlines()) <= 12
-    assert block.rstrip().endswith("Not auto-executed.")
+    assert block.rstrip().endswith("install_plugin remains manual.")
 
 
 def test_residue_prefers_propagation_residue_field():

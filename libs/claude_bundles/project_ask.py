@@ -248,47 +248,69 @@ def submit_control_names() -> tuple[str, ...]:
     return ("Start task", "Send message")
 
 
-async def _insert_prompt_text(page: Page, text: str) -> None:
-    """Fill the composer, binding leading ``/skill`` chip lines before the body.
+async def _insert_prompt_text(page: Page, text: str, *, composer) -> None:
+    """Fill the composer: attach Claude skills via + menu, then paste body.
 
-    Claude.ai slash skills need the chip token typed and confirmed with Enter
-    (menu select / chip bind) before the rest of the sealed prompt. A single
-    ``insert_text`` of ``/prose-discipline\\n\\nROLE…`` skips that bind.
+    **Canonical skill attach (operator 2026-07-26):** ``+`` → **Skills** →
+    pick each Customize skill from the list. Slash-type multi-chip is broken
+    (friction a25806 — only the first ``/<slug>`` binds).
 
-    Multi-skill CDP delivery uses hybrid formatting (one ``/<slug>\\n`` chip
-    plus trailing ``Use the … skill`` lines) — ``split_leading_slash_skills``
-    therefore sees at most one slash token; remaining skills paste via
-    ``insert_text``. Escape-after-Enter is not used (dogfood 5590).
+    Leading ``/<slug>\\n`` lines in the sealed prompt are the **skill manifest**
+    for attach (``shared_sync`` only); they are stripped and never typed.
+    Non-Claude / ``cursor_only`` slugs must not appear as slash lines
+    (``prepend_cdp_dispatch_skills`` / ``partition_cdp_skills``). Hybrid
+    ``Use the … skill`` / ``<skills_inline>`` ride in ``rest`` via insert_text.
     """
+    from claude_bundles.composer_session_skills import attach_session_skills
+    from claude_bundles.cowork_skill_delivery import (
+        SkillDeliveryError,
+        attest_skills_chip_enabled,
+        is_claude_slug,
+    )
+
     slash_tokens, rest = split_leading_slash_skills(text)
     if not slash_tokens:
         await page.keyboard.insert_text(text)
         return
-    for slash in slash_tokens:
-        # Character typing surfaces the slash menu; paste does not.
-        await page.keyboard.type(slash, delay=25)
-        await page.wait_for_timeout(450)
-        await page.keyboard.press("Enter")
-        await page.wait_for_timeout(350)
+    slugs = [t.removeprefix("/") for t in slash_tokens]
+    bad = [s for s in slugs if not is_claude_slug(s)]
+    if bad:
+        raise SkillDeliveryError(
+            f"refusing session-skill attach for non-Claude slug(s) {bad} — "
+            "only shared_sync Customize skills may be attached via + → Skills; "
+            "cursor_only / other surfaces must use prepend_cdp_dispatch_skills "
+            "inline delivery"
+        )
+    attached = await attach_session_skills(page, slugs, composer=composer)
+    attest_skills_chip_enabled(attached, required=slugs)
     if rest:
-        await page.keyboard.insert_text(rest)
+        body = rest
+        if not body.startswith(("\n", "\r")):
+            body = f"\n\n{body}"
+        await composer.click(force=True)
+        await page.wait_for_timeout(200)
+        await page.keyboard.insert_text(body)
 
 
 async def send_prompt(page: Page, text: str) -> None:
-    """Clear the composer, chip-bind leading slash skills, then click submit.
+    """Clear the composer, attach leading slash skills, then click submit.
 
-    Contract: hybrid CDP prefixes yield at most one ``/<slug>\\n`` chip token;
-    remaining Use-the lines paste with the body. Fail-closed submit (no Enter
-    fallback) via compose attestation / live_discover.
+    Contract: leading ``/<slug>\\n`` tokens name Customize skills to attach via
+    ``+`` → Skills → pick-each (not typed); remaining body (incl. hybrid escape
+    Use-the lines / ``<skills_inline>``) pastes via insert_text. Fail-closed
+    submit (no Enter fallback) via compose attestation / live_discover.
     """
+    from claude_bundles.composer_session_skills import require_compose_surface
+
+    require_compose_surface(page)
     composer = await find_composer(page)
     if composer is None:
-        raise RuntimeError("composer not found on page")
+        raise RuntimeError(f"composer not found on page url={page.url!r}")
     await composer.click(force=True)
     await page.wait_for_timeout(300)
     await page.keyboard.press("Control+A")
     await page.keyboard.press("Backspace")
-    await _insert_prompt_text(page, text)
+    await _insert_prompt_text(page, text, composer=composer)
     await page.wait_for_timeout(600)
 
     fp = await compose_mode_fingerprint(page)

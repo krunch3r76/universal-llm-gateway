@@ -61,6 +61,7 @@ class FrontierDispatchHandler(BaseHandler):
             "expected_size",
             "download_output",
             "timeout_seconds",
+            "skills",
         }
     )
 

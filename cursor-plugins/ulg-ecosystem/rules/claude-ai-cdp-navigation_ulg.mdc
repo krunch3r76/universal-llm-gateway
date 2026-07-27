@@ -34,7 +34,7 @@ Until operator override or substrate change (friction 24906):
 |---|---|
 | ¬ `workspaces://` readable on web | Stage corpus to `cortex://` (life MCP); ¬ cite workspaces paths as openable |
 | GitHub connector down | ¬ rely on connector for codebase browse |
-| Skill delivery | Claude slug → `/` or `Use the … skill`; not a Claude slug → **inline** excerpt (skill § Skill delivery — fleet rule) |
+| Skill delivery | Claude slug → leading `/<slug>` **manifest** (attached via **+ → Skills → pick**, not typed); hybrid `Use the …` = escape only; not a Claude slug → **inline** excerpt (skill § Skill delivery) |
 | RAG | When endpoint is **MCP-enabled for RAG** (life or code): executing agent calls `rag` via MCP (live or `mapped=true`) even if a corpus URI is mapped; ¬ lead merge into deliverable (`decision:cdp-rag-via-mcp-not-lead-merge`) |
 
 ## Anti-patterns

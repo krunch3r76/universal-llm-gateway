@@ -803,8 +803,8 @@ def build_implement_closeout_body(
             deleted=repo_files.deleted,
             files_untracked_or_ignored=files_untracked_or_ignored or [],
         )
-        # §4.7 / a:26354 — off-git cortex URIs belong in effects so codeblind
-        # operators see durable writes even when the repo ChangeSet is empty.
+        # §4.7 / a:26354 — off-git cortex URIs belong in effects so operator
+        # disposition via closeout schema sees durable writes even when the repo ChangeSet is empty.
         merged_effects: list[str] = list(effects)
         seen_effects = set(merged_effects)
         for uri in offgit_deliverable_uris or []:

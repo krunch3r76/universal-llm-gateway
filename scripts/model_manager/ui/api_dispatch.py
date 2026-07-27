@@ -20,6 +20,7 @@ from .controller.restart_drain import (
     run_gated,
     run_gated_deferred,
     run_gated_drain_supervised,
+    run_gated_drain_supervised_blocking,
 )
 from .controller.restart_intent_store import intent_status_view
 from .controller.restart_window_ctl import lifecycle_with_restart_window
@@ -241,6 +242,105 @@ def require_service(service: str) -> None:
         raise ValueError(
             f"Unknown service: '{service}'. Valid: {', '.join(sorted(VALID_SERVICES))}"
         )
+
+
+_CHARTER_HARVEST_WAIT_HEALTHY_S = 120.0
+_CHARTER_HARVEST_DEFER_MAX_ATTEMPTS = 40
+
+
+async def sync_restart_charter_harvest(
+    ctl: ServiceController,
+    service: str,
+    *,
+    event_bus: EventBus | None = None,
+) -> dict[str, Any]:
+    """Blocking sync_restart for charter harvest — awaits drain and health.
+
+    Unlike MCP agent calls, the charter tick runs after the worker window closed,
+    so git-integration-worker uses the blocking drain supervisor and other
+    services poll until healthy or retry budget exhausts.
+    """
+    if service not in SYNC_RESTART_SERVICES:
+        return {
+            "status": "skipped",
+            "service": service,
+            "reason": "unsupported_service",
+        }
+
+    if service == "git_integration_worker":
+        supervisor = ctl.build_git_worker_drain_supervisor(
+            kill=ctl.git_worker_kill_for("sync_restart")
+        )
+        return await run_gated_drain_supervised_blocking(
+            ctl.restart_gate,
+            "sync_restart",
+            service,
+            store=ctl.restart_intent_store,
+            supervisor=supervisor,
+            reason="charter harvest propagation",
+        )
+
+    if service == "mcp":
+        result = await _mcp_deferred_sync_restart(
+            ctl,
+            event_bus,
+            method="sync_restart",
+            force=False,
+            no_cache=False,
+        )
+        if result.get("status") == "deferred":
+            try:
+                waited = await _wait_healthy(
+                    ctl.service_state, "mcp", _CHARTER_HARVEST_WAIT_HEALTHY_S
+                )
+            except TimeoutError as exc:
+                return {
+                    "status": "error",
+                    "service": service,
+                    "reason": str(exc),
+                    "scheduled": result,
+                }
+            return {
+                "status": "ok",
+                "service": service,
+                "message": "mcp sync_restart completed",
+                "wait_healthy_s": waited,
+            }
+        return result
+
+    last: dict[str, Any] = {"status": "error", "reason": "no_attempt"}
+    for _ in range(_CHARTER_HARVEST_DEFER_MAX_ATTEMPTS):
+        last = await run_gated(
+            ctl.restart_gate,
+            "sync_restart",
+            service,
+            force=False,
+            lifecycle=lambda svc=service: _lifecycle_with_restart_window(
+                ctl,
+                svc,
+                "sync_restart",
+                lambda svc=service: _sync_restart(ctl, svc),
+            ),
+        )
+        if last.get("status") != "deferred":
+            break
+        retry_s = max(1, int(last.get("retry_after_s") or 30))
+        await asyncio.sleep(retry_s)
+
+    if last.get("status") == "ok":
+        try:
+            waited = await _wait_healthy(
+                ctl.service_state, service, _CHARTER_HARVEST_WAIT_HEALTHY_S
+            )
+            last = {**last, "wait_healthy_s": waited}
+        except TimeoutError as exc:
+            return {
+                "status": "error",
+                "service": service,
+                "reason": str(exc),
+                "restart": last,
+            }
+    return last
 
 
 async def _git_worker_drain_supervised(

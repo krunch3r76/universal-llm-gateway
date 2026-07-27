@@ -151,7 +151,7 @@ def build_residue_block(
         )
     if truncated:
         lines.append("(paths truncated in this closeout — residue may be incomplete)")
-    lines.append("Owner: this closeout's requesting seat. Not auto-executed.")
+    lines.append("Owner: charter tick executes sync_restart at harvest; install_plugin remains manual.")
     return "\n".join(lines)
 
 

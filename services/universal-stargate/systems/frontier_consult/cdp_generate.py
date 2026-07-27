@@ -14,12 +14,7 @@ from typing import TYPE_CHECKING, Any
 from claude_bundles.cdp_model_endpoint import CDP_REPLY_FROM, CDP_SUBSTRATE
 from claude_bundles.cdp_model_endpoint_staging import (
     CdpStagingError,
-    read_prompt_text,
-    stage_prompt_uri,
-)
-from claude_bundles.cowork_skill_delivery import (
-    SkillDeliveryError,
-    prepend_cdp_dispatch_skills,
+    stage_cdp_prompt_with_skills,
 )
 from model_id import ModelId
 
@@ -106,7 +101,7 @@ def _stage_inputs(
     packet_path: str | None,
     skills: list[str] | None = None,
 ) -> Any:
-    """Stage prompt; when ``skills`` is set, prepend slash/inline delivery first."""
+    """Stage prompt; ``skills`` → slash manifest for + → Skills attach at runtime."""
     cortex_uri = None
     if isinstance(sidecar_ref, str) and sidecar_ref.startswith("cortex://"):
         cortex_uri = sidecar_ref
@@ -122,33 +117,17 @@ def _stage_inputs(
         if isinstance(sidecar_ref, str) and not sidecar_ref.startswith("cortex://")
         else None
     )
-    if skills:
-        text = read_prompt_text(
+    try:
+        return stage_cdp_prompt_with_skills(
+            execution_id=execution_id,
             prompt_text=prompt,
             prompt_uri=cortex_uri,
             packet_path=packet_non_cortex,
             sidecar_ref=sidecar_non_cortex,
+            skills=skills if isinstance(skills, list) else None,
         )
-        try:
-            text, _, _ = prepend_cdp_dispatch_skills(text, skills)
-        except KeyError as exc:
-            raise CdpStagingError(
-                f"unknown skill in skills=: {exc.args[0] if exc.args else exc}",
-                code="cdp_skills_unknown",
-            ) from exc
-        except SkillDeliveryError as exc:
-            raise CdpStagingError(str(exc), code="cdp_skills_delivery") from exc
-        return stage_prompt_uri(
-            execution_id=execution_id,
-            prompt_text=text,
-        )
-    return stage_prompt_uri(
-        execution_id=execution_id,
-        prompt_text=prompt,
-        prompt_uri=cortex_uri,
-        packet_path=packet_non_cortex,
-        sidecar_ref=sidecar_non_cortex,
-    )
+    except CdpStagingError:
+        raise
 
 
 async def dispatch_cdp_generate(

@@ -224,6 +224,8 @@ class ModelManagerApp(App):
                 shutdown_gate=self._service_controller.shutdown_gate,
                 workspace_root=self._workspace_root,
                 on_admit=lambda msg: self.notify(msg, timeout=45),
+                service_controller=self._service_controller,
+                event_bus=self._event_bus,
             )
             await self._charter_tick_loop.start()
             self._service_controller.set_charter_tick_reload(self.reload_charter_tick)
@@ -269,6 +271,8 @@ class ModelManagerApp(App):
             shutdown_gate=self._service_controller.shutdown_gate,
             workspace_root=self._workspace_root,
             on_admit=lambda msg: self.notify(msg, timeout=45),
+            service_controller=self._service_controller,
+            event_bus=self._event_bus,
         )
         await self._charter_tick_loop.start()
         self._service_controller.set_charter_tick_reload(self.reload_charter_tick)

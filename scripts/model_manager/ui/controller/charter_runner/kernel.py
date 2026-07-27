@@ -8,10 +8,30 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .admission import CapsView, EnvFacts, classify_shadow_diff, decide, map_old_skip_to_kernel
+from libs.charter_runner_store.db import charter_runner_data_dir
+
+from .admission import (
+    CapsView,
+    EnvFacts,
+    classify_shadow_diff,
+    decide,
+    map_old_skip_to_kernel,
+)
+from .env_predicates import EnvironmentSnapshot
 from .caps import CapStore
 from .env_snapshot import EnvSnapshot, build_env_snapshot
 from .root_ledger import RootLedgerRow, Transition, load_all_roots, open_default_ledger
+
+SHADOW_LEDGER_STARVE_ROOT = "_shadow_ledger_"
+SHADOW_STARVE_CLASS = "starved:ledger_empty"
+
+
+@dataclass(frozen=True)
+class ShadowPassResult:
+    rows: list[dict[str, Any]]
+    starved: bool = False
+    starve_reason: str | None = None
+    bus_roots: int = 0
 
 
 @dataclass(frozen=True)
@@ -20,7 +40,7 @@ class ShadowDiffRow:
     root: str
     old_decision: str
     kernel_transition: str
-    classification: str | None
+    classification: str
 
 
 class ShadowKernel:
@@ -103,13 +123,15 @@ def run_shadow_for_roots(
     ]
 
 
-_SHADOW_DIFF_PATH = (
-    Path.home() / ".local" / "share" / "charter-runner" / "shadow-diff.sqlite"
-)
+_SHADOW_DIFF_PATH = charter_runner_data_dir() / "shadow-diff.sqlite"
+
+
+def shadow_diff_db_path(db_path: Path | None = None) -> Path:
+    return db_path or _SHADOW_DIFF_PATH
 
 
 def _open_shadow_db(path: Path | None = None) -> sqlite3.Connection:
-    db_path = path or _SHADOW_DIFF_PATH
+    db_path = shadow_diff_db_path(path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(db_path))
     conn.execute(
@@ -128,39 +150,124 @@ def _open_shadow_db(path: Path | None = None) -> sqlite3.Connection:
     return conn
 
 
+def _persist_shadow_rows(
+    conn: sqlite3.Connection,
+    rows: list[dict[str, Any]],
+) -> None:
+    for row in rows:
+        conn.execute(
+            """
+            INSERT INTO shadow_diff
+              (ts, root, old_decision, kernel_transition, classification)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                row["ts"],
+                row["root"],
+                row["old_decision"],
+                row["kernel_transition"],
+                row["classification"],
+            ),
+        )
+
+
+def _ledger_row_count() -> int:
+    conn = open_default_ledger()
+    try:
+        row = conn.execute("SELECT COUNT(*) FROM root_ledger").fetchone()
+        return int(row[0] if row else 0)
+    finally:
+        conn.close()
+
+
+def _build_starve_row(*, bus_roots: int) -> dict[str, Any]:
+    return {
+        "ts": time.time(),
+        "root": SHADOW_LEDGER_STARVE_ROOT,
+        "old_decision": "",
+        "kernel_transition": "",
+        "classification": SHADOW_STARVE_CLASS,
+        "bus_roots": bus_roots,
+        "starved": True,
+    }
+
+
 def record_shadow_pass(
     old_decisions: dict[str, str],
     *,
+    env: EnvSnapshot | None = None,
+    env_half: EnvironmentSnapshot | None = None,
     db_path: Path | None = None,
-) -> list[dict[str, Any]]:
-    """Run shadow kernel and persist rows; return inserted records."""
-    rows = run_shadow_for_roots(old_decisions)
+) -> ShadowPassResult:
+    """Run shadow kernel and persist rows; emit starve when ledger enrolled set is empty."""
+    bus_roots = len(old_decisions)
+    if _ledger_row_count() == 0:
+        starve_row = _build_starve_row(bus_roots=bus_roots)
+        conn = _open_shadow_db(db_path)
+        try:
+            _persist_shadow_rows(conn, [starve_row])
+            conn.commit()
+        finally:
+            conn.close()
+        return ShadowPassResult(
+            rows=[starve_row],
+            starved=True,
+            starve_reason="ledger_empty",
+            bus_roots=bus_roots,
+        )
+
+    snapshot = env
+    if snapshot is None and env_half is not None:
+        snapshot = build_env_snapshot(
+            root_ids=list(old_decisions.keys()),
+            env_half=env_half,
+        )
+    rows = run_shadow_for_roots(old_decisions, env=snapshot)
     conn = _open_shadow_db(db_path)
     try:
-        for row in rows:
-            conn.execute(
-                """
-                INSERT INTO shadow_diff
-                  (ts, root, old_decision, kernel_transition, classification)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (
-                    row["ts"],
-                    row["root"],
-                    row["old_decision"],
-                    row["kernel_transition"],
-                    row["classification"],
-                ),
-            )
+        _persist_shadow_rows(conn, rows)
         conn.commit()
     finally:
         conn.close()
-    return rows
+    return ShadowPassResult(rows=rows, bus_roots=bus_roots)
+
+
+def backfill_shadow_classifications(*, db_path: Path | None = None) -> int:
+    """Re-derive classification for all non-starve shadow rows."""
+    conn = _open_shadow_db(db_path)
+    try:
+        cur = conn.execute(
+            """
+            SELECT id, old_decision, kernel_transition
+            FROM shadow_diff
+            WHERE root != ?
+            """,
+            (SHADOW_LEDGER_STARVE_ROOT,),
+        )
+        updated = 0
+        for row_id, old_decision, kernel_transition in cur.fetchall():
+            classification = classify_shadow_diff(
+                old_decision, Transition(kernel_transition)
+            )
+            conn.execute(
+                "UPDATE shadow_diff SET classification = ? WHERE id = ?",
+                (classification, row_id),
+            )
+            updated += 1
+        conn.commit()
+        return updated
+    finally:
+        conn.close()
 
 
 __all__ = [
+    "SHADOW_LEDGER_STARVE_ROOT",
+    "SHADOW_STARVE_CLASS",
     "ShadowDiffRow",
     "ShadowKernel",
+    "ShadowPassResult",
+    "backfill_shadow_classifications",
     "record_shadow_pass",
     "run_shadow_for_roots",
+    "shadow_diff_db_path",
 ]

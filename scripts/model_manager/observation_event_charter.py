@@ -328,3 +328,40 @@ async def emit_manage_charter_tick_reloaded(*, modules: list[str]) -> None:
         "manage.charter.tick.reloaded",
         {"modules": modules, "count": len(modules)},
     )
+
+
+async def emit_manage_charter_tick_propagation_started(
+    *,
+    root: str,
+    window_index: int,
+    services: list[str],
+    charter_reload: bool,
+) -> None:
+    await _emit(
+        "manage.charter.tick.propagation_started",
+        {
+            "root": root,
+            "window_index": window_index,
+            "services": services,
+            "charter_reload": charter_reload,
+        },
+    )
+
+
+async def emit_manage_charter_tick_propagation_completed(
+    *,
+    root: str,
+    window_index: int,
+    results: dict,
+) -> None:
+    await _emit(
+        "manage.charter.tick.propagation_completed",
+        {
+            "root": root,
+            "window_index": window_index,
+            "status": results.get("status"),
+            "services": results.get("services"),
+            "charter_reload": results.get("charter_reload"),
+            "skipped_lines": results.get("skipped_lines"),
+        },
+    )

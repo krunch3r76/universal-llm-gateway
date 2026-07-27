@@ -7,6 +7,7 @@ import json
 import os
 import time
 import uuid
+from collections.abc import Callable
 from typing import Any
 
 import httpx
@@ -115,13 +116,26 @@ async def poll_dispatch_terminal(
     thread_id: str,
     dispatch_id: str,
     timeout_s: float | None = None,
+    superseded: Callable[[], bool] | None = None,
 ) -> dict[str, Any]:
-    """Poll ledger until nested dispatch reaches a terminal status."""
+    """Poll ledger until nested dispatch reaches a terminal status.
+
+    *superseded* is checked each tick so a job displaced by a newer same-thread
+    request abandons the poll immediately instead of burning the remaining
+    dispatch budget on an episode the operator already backtracked.
+    """
     ledger = CursorDispatchLedger.instance()
     budget = timeout_s if timeout_s is not None else _dispatch_timeout_s()
     deadline = time.monotonic() + budget
     last: dict[str, Any] | None = None
     while time.monotonic() < deadline:
+        if superseded is not None and superseded():
+            return {
+                "ok": False,
+                "terminal": False,
+                "superseded": True,
+                "dispatch_id": dispatch_id,
+            }
         row = await asyncio.to_thread(
             ledger.dispatch_status_by_thread, thread_id=thread_id
         )
@@ -179,6 +193,42 @@ async def fetch_sdk_closeout_body(
 def closeout_status_from_terminal(terminal_status: str) -> str:
     """Map ledger terminal status → operator CLOSEOUT status line."""
     return ledger_status_to_closeout(terminal_status)
+
+
+async def post_operator_confer(
+    job: AutoJob,
+    *,
+    dispatch_id: str,
+    model_id: str,
+    status: str,
+    closeout_body: str | None,
+    bus: CursorBusClient | None = None,
+) -> dict[str, Any]:
+    """Post confer §2 body to operator under ``TYPE: CONFER`` with status line."""
+    client = bus or CursorBusClient()
+    payload = (closeout_body or "").strip() or "(no confer closeout captured)"
+    lines = [
+        "TYPE: CONFER",
+        f"status: {status}",
+        f"dispatch_id: {dispatch_id}",
+        f"model: {model_id}",
+        f"request_turn: {job.turn_number}",
+        "",
+        payload,
+    ]
+    resp = await client.reply(
+        thread_id=job.thread_id,
+        to_agent=job.from_agent,
+        from_agent="cursor-auto",
+        subject=f"status:done — {job.subject[:60]}",
+        body="\n".join(lines),
+        allow_long_body=True,
+    )
+    return {
+        "ok": resp.status_code < 400,
+        "status_code": resp.status_code,
+        "body": resp.body,
+    }
 
 
 async def post_operator_closeout(

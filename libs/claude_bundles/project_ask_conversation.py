@@ -165,6 +165,13 @@ async def run_project_conversation(
                         error=f"model select failed: {model_info}",
                     )
                 ]
+            # Model/chrome clicks can leave scheduled-task or settings — re-land.
+            if "/new" not in (page.url or "") and "/cowork/" not in (page.url or ""):
+                await goto_fresh_compose(
+                    page,
+                    compose_url=url,
+                    ensure_cowork_auto=ensure_cowork_auto,
+                )
             before = await harvest_assistant(page)
             await send_prompt(page, prompts[0])
             state = await wait_assistant_reply(

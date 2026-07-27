@@ -330,6 +330,7 @@ async def dispatch_cursor_sdk_generate_route(
             source_ref=getattr(body, "source_ref", None),
             dispatch_lane=getattr(body, "dispatch_lane", None),
             nest_under=getattr(body, "nest_under", None),
+            read_only=getattr(body, "read_only", False),
         )
         if isinstance(result, dict):
             split_warning = consolidation_split_warning(

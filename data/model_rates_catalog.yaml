@@ -1,4 +1,4 @@
-updated_at: '2026-07-26T20:04:04.497408+00:00'
+updated_at: '2026-07-27T13:09:05.297547+00:00'
 models:
 - model_id: ai21/jamba-large-1.7
   input_rate_per_m: 2.0
@@ -522,18 +522,6 @@ models:
   source: catalog_refresh
   pinned: false
   updated_at: '2026-07-24T06:42:31.198975+00:00'
-- model_id: inflection/inflection-3-pi
-  input_rate_per_m: 2.5
-  output_rate_per_m: 10.0
-  source: catalog_refresh
-  pinned: false
-  updated_at: '2026-07-24T06:42:31.199453+00:00'
-- model_id: inflection/inflection-3-productivity
-  input_rate_per_m: 2.5
-  output_rate_per_m: 10.0
-  source: catalog_refresh
-  pinned: false
-  updated_at: '2026-07-24T06:42:31.199455+00:00'
 - model_id: kwaipilot/kat-coder-air-v2.5
   input_rate_per_m: 0.15
   output_rate_per_m: 0.6
@@ -895,11 +883,11 @@ models:
   pinned: false
   updated_at: '2026-07-24T20:42:01.267401+00:00'
 - model_id: nvidia/nemotron-3-ultra-550b-a55b
-  input_rate_per_m: 0.6
-  output_rate_per_m: 3.6
+  input_rate_per_m: 0.5
+  output_rate_per_m: 2.2
   source: catalog_refresh
   pinned: false
-  updated_at: '2026-07-25T02:42:03.485264+00:00'
+  updated_at: '2026-07-27T07:09:03.455024+00:00'
 - model_id: openai/gpt-3.5-turbo
   input_rate_per_m: 0.5
   output_rate_per_m: 1.5
@@ -990,12 +978,6 @@ models:
   source: catalog_refresh
   pinned: false
   updated_at: '2026-07-24T06:42:31.199484+00:00'
-- model_id: openai/gpt-4o-mini-search-preview
-  input_rate_per_m: 0.15
-  output_rate_per_m: 0.6
-  source: catalog_refresh
-  pinned: false
-  updated_at: '2026-07-24T06:42:31.199389+00:00'
 - model_id: openai/gpt-4o-search-preview
   input_rate_per_m: 2.5
   output_rate_per_m: 10.0
@@ -1806,18 +1788,6 @@ models:
   source: catalog_refresh
   pinned: false
   updated_at: '2026-07-24T06:42:31.198975+00:00'
-- model_id: openrouter/inflection/inflection-3-pi
-  input_rate_per_m: 2.5
-  output_rate_per_m: 10.0
-  source: catalog_refresh
-  pinned: false
-  updated_at: '2026-07-24T06:42:31.199453+00:00'
-- model_id: openrouter/inflection/inflection-3-productivity
-  input_rate_per_m: 2.5
-  output_rate_per_m: 10.0
-  source: catalog_refresh
-  pinned: false
-  updated_at: '2026-07-24T06:42:31.199455+00:00'
 - model_id: openrouter/kwaipilot/kat-coder-air-v2.5
   input_rate_per_m: 0.15
   output_rate_per_m: 0.6
@@ -2179,11 +2149,11 @@ models:
   pinned: false
   updated_at: '2026-07-24T20:42:01.267399+00:00'
 - model_id: openrouter/nvidia/nemotron-3-ultra-550b-a55b
-  input_rate_per_m: 0.6
-  output_rate_per_m: 3.6
+  input_rate_per_m: 0.5
+  output_rate_per_m: 2.2
   source: catalog_refresh
   pinned: false
-  updated_at: '2026-07-25T02:42:03.485262+00:00'
+  updated_at: '2026-07-27T07:09:03.455022+00:00'
 - model_id: openrouter/openai/gpt-3.5-turbo
   input_rate_per_m: 0.5
   output_rate_per_m: 1.5
@@ -2280,12 +2250,6 @@ models:
   source: catalog_refresh
   pinned: false
   updated_at: '2026-07-24T06:42:31.199484+00:00'
-- model_id: openrouter/openai/gpt-4o-mini-search-preview
-  input_rate_per_m: 0.15
-  output_rate_per_m: 0.6
-  source: catalog_refresh
-  pinned: false
-  updated_at: '2026-07-24T06:42:31.199389+00:00'
 - model_id: openrouter/openai/gpt-4o-search-preview
   input_rate_per_m: 2.5
   output_rate_per_m: 10.0
@@ -3145,11 +3109,11 @@ models:
   pinned: false
   updated_at: '2026-07-24T06:42:31.199038+00:00'
 - model_id: openrouter/z-ai/glm-5.2
-  input_rate_per_m: 0.6692
-  output_rate_per_m: 2.1032
+  input_rate_per_m: 0.791
+  output_rate_per_m: 2.486
   source: catalog_refresh
   pinned: false
-  updated_at: '2026-07-26T20:04:04.496639+00:00'
+  updated_at: '2026-07-27T13:09:05.296704+00:00'
 - model_id: openrouter/z-ai/glm-5v-turbo
   input_rate_per_m: 1.2
   output_rate_per_m: 4.0
@@ -3781,11 +3745,11 @@ models:
   pinned: false
   updated_at: '2026-07-24T06:42:31.199038+00:00'
 - model_id: z-ai/glm-5.2
-  input_rate_per_m: 0.6692
-  output_rate_per_m: 2.1032
+  input_rate_per_m: 0.791
+  output_rate_per_m: 2.486
   source: catalog_refresh
   pinned: false
-  updated_at: '2026-07-26T20:04:04.496644+00:00'
+  updated_at: '2026-07-27T13:09:05.296713+00:00'
 - model_id: z-ai/glm-5v-turbo
   input_rate_per_m: 1.2
   output_rate_per_m: 4.0

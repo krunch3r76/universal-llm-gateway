@@ -106,15 +106,27 @@ def map_old_skip_to_kernel(
     return Transition.ADMIT_WORKER
 
 
+def _old_admits(decision: str) -> bool:
+    return decision in ("eligible", "admit")
+
+
 def classify_shadow_diff(
     old_decision: str,
     kernel_transition: Transition,
-) -> str | None:
-    """Return ``old-correct`` | ``kernel-correct`` | None when they agree."""
+) -> str:
+    """Return ``agree`` | ``old-correct`` | ``kernel-correct``."""
     mapped = _normalize_old(old_decision)
     kernel = kernel_transition.value
-    if mapped == kernel or (mapped == "admit" and kernel == Transition.ADMIT_WORKER.value):
-        return None
+    if mapped == kernel or (
+        mapped == Transition.ADMIT_WORKER.value
+        and kernel == Transition.ADMIT_WORKER.value
+    ):
+        return "agree"
+    if _old_admits(old_decision) and kernel_transition == Transition.ADMIT_WORKER:
+        return "agree"
+    # Outcome-equivalent non-admit: old skip reason ↔ kernel NOOP (e.g. window_in_flight).
+    if not _old_admits(old_decision) and kernel_transition == Transition.NOOP:
+        return "agree"
     if old_decision == "arc_lane_too_weak" and kernel in (
         Transition.QUEUE_CONSULT.value,
         Transition.DEFER_CONSULT.value,

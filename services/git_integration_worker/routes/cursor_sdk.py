@@ -160,6 +160,10 @@ from services.git_integration_worker.cursor_sdk_stream_capture import (
     observe_run_stream,
     request_id_from_sdk_error,
 )
+from services.git_integration_worker.cursor_sdk_supersede import (
+    register_live_run,
+    unregister_live_run,
+)
 from services.git_integration_worker.cursor_sdk_transcript import resolve_run_body
 from services.git_integration_worker.cursor_sdk_workspace import (
     resolve_promoted_workspace,
@@ -675,6 +679,14 @@ def _run_sdk_sync(
                 agent = client.create_agent(agent_options)
                 # Local bridge Send rejects Idempotency-Key (cloud-only in SDK v1).
                 run = agent.send(prompt)
+                # Publish the run before the blocking wait: this is the only
+                # handle a same-thread supersede can cancel mid-flight.
+                register_live_run(
+                    dispatch_id=dispatch_id,
+                    thread_id=thread_id,
+                    source_repo=str(source_repo),
+                    run=run,
+                )
                 CursorDispatchLedger.instance().record_sdk_identity(
                     dispatch_id=dispatch_id,
                     agent_id=getattr(agent, "id", None),
@@ -795,6 +807,7 @@ def _run_sdk_sync(
             finally:
                 hb_stop.set()
                 hb_thread.join(timeout=5.0)
+                unregister_live_run(dispatch_id=dispatch_id)
                 if client is not None:
                     client.close()
                 clear_dispatch_orphan_state(dispatch_id=dispatch_id)

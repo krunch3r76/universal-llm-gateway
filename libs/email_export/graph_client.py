@@ -170,6 +170,240 @@ class GraphClient:
             raise RuntimeError(f"mailFolder create returned no id for {name!r}")
         return str(folder_id)
 
+    def create_reply_draft(
+        self,
+        mailbox_upn: str,
+        selector: Selector,
+        *,
+        body: str,
+    ) -> str:
+        """Create an unsent reply draft for the message matched by selector.
+
+        Resolves selector to a Graph message id, POSTs createReply to seed a
+        draft in the mailbox Drafts folder, then PATCHes the draft body.
+        The caller's text is placed above any quoted thread history Graph
+        attaches beneath the reply (preserves long-running thread quotes).
+        Returns the new draft Graph message id. Raises GraphNotFoundError on
+        404 and GraphAuthError on other Graph 4xx/5xx, including
+        ApplicationAccessPolicy denials on app-only tokens.
+        """
+        graph_id = self.resolve_graph_id(mailbox_upn, selector)
+        upn = quote(mailbox_upn, safe="@.")
+        item_id = quote(graph_id, safe="=")
+        create_url = f"{GRAPH_BASE}/users/{upn}/messages/{item_id}/createReply"
+        with self._client() as client:
+            response = client.post(create_url, headers=self._headers(), json={})
+            if response.status_code == 404:
+                raise GraphNotFoundError(
+                    f"message not found for createReply: {graph_id}"
+                )
+            if response.status_code >= 400:
+                raise GraphAuthError(
+                    f"createReply failed: {response.status_code} "
+                    f"{response.text[:300]}"
+                )
+            draft = response.json()
+        if not isinstance(draft, dict) or not draft.get("id"):
+            raise RuntimeError("createReply returned no draft id")
+        draft_id = str(draft["id"])
+
+        existing_body = draft.get("body")
+        existing_content = ""
+        content_type = "text"
+        if isinstance(existing_body, dict):
+            existing_content = str(existing_body.get("content") or "")
+            content_type = str(existing_body.get("contentType") or "text")
+
+        if existing_content.strip():
+            if content_type.lower() == "text":
+                patched_content = (
+                    f"{body.rstrip()}\r\n\r\n{existing_content.lstrip()}"
+                )
+            else:
+                escaped = (
+                    body.replace("&", "&amp;")
+                    .replace("<", "&lt;")
+                    .replace(">", "&gt;")
+                    .replace("\r\n", "<br>")
+                    .replace("\n", "<br>")
+                )
+                patched_content = f"<div>{escaped}</div>{existing_content}"
+        else:
+            patched_content = body
+            content_type = "text"
+
+        patch_url = (
+            f"{GRAPH_BASE}/users/{upn}/messages/{quote(draft_id, safe='=')}"
+        )
+        with self._client() as client:
+            response = client.patch(
+                patch_url,
+                headers=self._headers(),
+                json={
+                    "body": {
+                        "contentType": content_type,
+                        "content": patched_content,
+                    }
+                },
+            )
+            if response.status_code == 404:
+                raise GraphNotFoundError(
+                    f"draft not found for patch: {draft_id}"
+                )
+            if response.status_code >= 400:
+                raise GraphAuthError(
+                    f"patch draft body failed: {response.status_code} "
+                    f"{response.text[:300]}"
+                )
+        return draft_id
+
+    def patch_draft_body(
+        self,
+        mailbox_upn: str,
+        draft_id: str,
+        *,
+        body: str,
+    ) -> int:
+        """Replace the reply text above quoted history on an existing draft.
+
+        Reads the draft body, swaps only the leading reply block (the first
+        HTML div or plain-text preamble), and PATCHes body content alone.
+        Returns the Graph HTTP status from the PATCH response.
+        """
+        upn = quote(mailbox_upn, safe="@.")
+        item_id = quote(draft_id, safe="=")
+        get_url = (
+            f"{GRAPH_BASE}/users/{upn}/messages/{item_id}"
+            f"?$select=body"
+        )
+        payload = self._get_json(get_url)
+        existing_body = payload.get("body")
+        existing_content = ""
+        content_type = "text"
+        if isinstance(existing_body, dict):
+            existing_content = str(existing_body.get("content") or "")
+            content_type = str(existing_body.get("contentType") or "text")
+
+        if content_type.lower() == "html":
+            quote_markers = (
+                '<meta name="Generator"',
+                '<div id="divRplyFwdMsg"',
+            )
+            quote_idx = len(existing_content)
+            for marker in quote_markers:
+                idx = existing_content.find(marker)
+                if idx != -1:
+                    quote_idx = min(quote_idx, idx)
+            if quote_idx < len(existing_content):
+                prefix = existing_content[:quote_idx]
+                quoted = existing_content[quote_idx:]
+            elif existing_content.lower().startswith("<div"):
+                close_idx = existing_content.find("</div>")
+                prefix = existing_content[: close_idx + len("</div>")]
+                quoted = (
+                    existing_content[close_idx + len("</div>") :]
+                    if close_idx != -1
+                    else ""
+                )
+            else:
+                prefix = ""
+                quoted = existing_content
+            body_open = prefix.lower().find("<body")
+            if body_open != -1:
+                close_tag = prefix.find(">", body_open)
+                wrapper = prefix[: close_tag + 1] if close_tag != -1 else prefix
+            else:
+                wrapper = ""
+            escaped = (
+                body.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("\r\n", "<br>")
+                .replace("\n", "<br>")
+            )
+            patched_content = f"{wrapper}<div>{escaped}</div>{quoted}"
+        else:
+            if existing_content.strip():
+                parts = existing_content.split("\r\n\r\n", 1)
+                quoted = parts[1] if len(parts) == 2 else ""
+                patched_content = (
+                    f"{body.rstrip()}\r\n\r\n{quoted.lstrip()}" if quoted else body
+                )
+            else:
+                patched_content = body
+
+        patch_url = f"{GRAPH_BASE}/users/{upn}/messages/{item_id}"
+        with self._client() as client:
+            response = client.patch(
+                patch_url,
+                headers=self._headers(),
+                json={
+                    "body": {
+                        "contentType": content_type,
+                        "content": patched_content,
+                    }
+                },
+            )
+            if response.status_code == 404:
+                raise GraphNotFoundError(
+                    f"draft not found for patch: {draft_id}"
+                )
+            if response.status_code >= 400:
+                raise GraphAuthError(
+                    f"patch draft body failed: {response.status_code} "
+                    f"{response.text[:300]}"
+                )
+        return int(response.status_code)
+
+    def get_message_fields(
+        self, mailbox_upn: str, graph_id: str, *, select: str
+    ) -> dict[str, Any]:
+        upn = quote(mailbox_upn, safe="@.")
+        item_id = quote(graph_id, safe="=")
+        url = f"{GRAPH_BASE}/users/{upn}/messages/{item_id}?$select={select}"
+        return self._get_json(url)
+
+    def list_sent_to_recipient_on_date(
+        self,
+        mailbox_upn: str,
+        *,
+        recipient: str,
+        date_prefix: str,
+    ) -> list[dict[str, Any]]:
+        """Return Sent Items messages to recipient whose sentDateTime starts with date_prefix."""
+        upn = quote(mailbox_upn, safe="@.")
+        escaped = recipient.replace("'", "''")
+        filt = quote(
+            f"sentDateTime ge {date_prefix}T00:00:00Z"
+            f" and sentDateTime lt {date_prefix}T23:59:59Z",
+            safe="='",
+        )
+        url = (
+            f"{GRAPH_BASE}/users/{upn}/mailFolders/sentitems/messages"
+            f"?$filter={filt}&$select=id,subject,sentDateTime,toRecipients,isDraft"
+            f"&$top=50"
+        )
+        payload = self._get_json(url)
+        values = payload.get("value")
+        if not isinstance(values, list):
+            return []
+        needle = recipient.lower()
+        matched: list[dict[str, Any]] = []
+        for item in values:
+            if not isinstance(item, dict):
+                continue
+            recipients = item.get("toRecipients")
+            if not isinstance(recipients, list):
+                continue
+            addrs = [
+                str(r.get("emailAddress", {}).get("address", "")).lower()
+                for r in recipients
+                if isinstance(r, dict)
+            ]
+            if needle in addrs:
+                matched.append(item)
+        return matched
+
     def move_message(
         self, mailbox_upn: str, graph_id: str, destination_folder_id: str
     ) -> str:

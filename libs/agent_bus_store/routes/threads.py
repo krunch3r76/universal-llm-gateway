@@ -633,6 +633,8 @@ def _send_with_sidecar(body: TurnSendCreate) -> TurnSendCreated:
             thread=thread_id,
             turn_number=turn_number,
             created_at=datetime.fromisoformat(ts),
+            sidecar_uri=sidecar.uri,
+            sidecar_sha256=sidecar.sha256,
         ),
         marked_read=marked_read,
         sidecar_uri=sidecar.uri,

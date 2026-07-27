@@ -287,6 +287,7 @@ class CharterRunnerTickLoop:
         roots = await bus_client.list_enrolled_roots()
         env_snapshot = await build_tick_env_snapshot()
         admitted = 0
+        in_flight = 0
         skipped_by_reason: dict[str, int] = {}
         state_closes_this_tick = 0
         old_decisions: dict[str, str] = {}
@@ -322,6 +323,7 @@ class CharterRunnerTickLoop:
                 caps=self._caps,
             )
             if decision.reason == "window_in_flight":
+                in_flight += 1
                 if await self._recover_worker_failure(decision):
                     continue
                 if await self._try_consult_stall(decision, turns):
@@ -336,10 +338,23 @@ class CharterRunnerTickLoop:
                     decision, caps=self._caps
                 )
         try:
+            from .env_snapshot import build_env_snapshot
             from .kernel import record_shadow_pass
-            from .telemetry import emit_shadow_diff
+            from .telemetry import emit_shadow_diff, emit_shadow_ledger_starved
 
-            for row in record_shadow_pass(old_decisions):
+            kernel_env = build_env_snapshot(
+                root_ids=list(old_decisions.keys()),
+                env_half=env_snapshot,
+            )
+            shadow = record_shadow_pass(old_decisions, env=kernel_env)
+            if shadow.starved:
+                await emit_shadow_ledger_starved(
+                    reason=shadow.starve_reason or "ledger_empty",
+                    bus_roots=shadow.bus_roots,
+                )
+            for row in shadow.rows:
+                if row.get("starved"):
+                    continue
                 await emit_shadow_diff(
                     root=row["root"],
                     old_decision=row["old_decision"],
@@ -353,6 +368,18 @@ class CharterRunnerTickLoop:
             admitted=admitted,
             skipped_by_reason=skipped_by_reason,
         )
+        try:
+            from pager_notify import notify_tick_complete, scan_operator_bus_turns
+
+            await notify_tick_complete(
+                roots=len(roots),
+                in_flight=in_flight,
+                admitted=admitted,
+                skipped_by_reason=skipped_by_reason,
+            )
+            await scan_operator_bus_turns()
+        except Exception:  # noqa: BLE001 — pager must not abort tick
+            logger.exception("charter-runner pager notify failed")
         try:
             from . import conveyor as _conveyor_mod
 

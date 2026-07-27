@@ -244,13 +244,16 @@ class TurnCreated(BaseModel):
     created_at: datetime
     sidecar_uri: str | None = Field(
         default=None,
-        description="Cortex URI when soft-spill auto-wrote a sidecar for this turn.",
+        description=(
+            "Cortex URI when sidecar_content (E4) or soft-spill wrote a sidecar "
+            "for this turn."
+        ),
     )
     sidecar_sha256: str | None = Field(
         default=None,
         description=(
-            "SHA-256 of spill content bytes (same domain as "
-            "write_thread_sidecar_for_send); None when no auto-spill."
+            "SHA-256 of sidecar content bytes (same domain as "
+            "write_thread_sidecar_for_send); None when no sidecar was written."
         ),
     )
 

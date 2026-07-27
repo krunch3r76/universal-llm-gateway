@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import pwd
 import sqlite3
 import time
 from pathlib import Path
@@ -12,19 +14,35 @@ from .migrations.migration_001_root_ledger import MIGRATION_ID, migrate
 
 logger = get_logger(__name__)
 
-_DEFAULT_DIR = Path.home() / ".local" / "share" / "charter-runner"
-_DEFAULT_PATH = _DEFAULT_DIR / "root-ledger.sqlite"
+_DISPATCH_HOME_MARKER = "cursor-dispatch-homes"
 _WRITE_RETRIES = 3
 _WRITE_BACKOFF_S = 0.05
 
 
+def _operator_home() -> Path:
+    """Real operator home — not cursor-sdk per-dispatch HOME swap."""
+    if op_home := os.environ.get("CHARTER_RUNNER_OPERATOR_HOME"):
+        return Path(op_home).expanduser()
+    current = Path.home()
+    if _DISPATCH_HOME_MARKER in current.as_posix():
+        return Path(pwd.getpwuid(os.getuid()).pw_dir)
+    return current
+
+
+def charter_runner_data_dir() -> Path:
+    """Stable charter-runner state dir shared by manage and dispatch contexts."""
+    if override := os.environ.get("CHARTER_RUNNER_DATA_DIR"):
+        return Path(override).expanduser()
+    return _operator_home() / ".local" / "share" / "charter-runner"
+
+
 def default_ledger_path() -> Path:
-    return _DEFAULT_PATH
+    return charter_runner_data_dir() / "root-ledger.sqlite"
 
 
 def open_ledger_db(path: Path | None = None) -> sqlite3.Connection:
     """Open ledger db with WAL; create parent dir and apply migrations."""
-    db_path = path or _DEFAULT_PATH
+    db_path = path or default_ledger_path()
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(db_path), timeout=30.0)
     conn.row_factory = sqlite3.Row

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from services.git_integration_worker.cursor_auto.closeout_relay import (
     is_wrapper_manifest,
@@ -11,6 +12,11 @@ from services.git_integration_worker.cursor_auto.closeout_relay import (
     status_from_section2,
     strip_machine_tail,
     synthesize_section2,
+)
+from services.git_integration_worker.cursor_auto.closeout_relay_cortex import (
+    _MAX_RELAYED_CORTEX_CHARS,
+    cap_relayed_cortex_text,
+    read_cortex_text,
 )
 
 _WRAPPER = json.dumps(
@@ -147,6 +153,25 @@ def test_synthesized_section2_does_not_fabricate_pass():
     assert "PASS" not in payload.body
 
 
+def test_synthesized_status_forced_partial_even_when_wrapper_complete():
+    wrapper = json.dumps(
+        {
+            "schema_version": 1,
+            "status": "complete",
+            "files_created": [],
+            "capture_status": "partial",
+            "effects_manifest": {"schema_version": 1},
+        }
+    )
+    payload = select_closeout_relay_payload(
+        sdk_body=wrapper,
+        sidecar_text=None,
+        ledger_status="completed",
+    )
+    assert payload.source == "section2_synthesized"
+    assert payload.status == "partial"
+
+
 def test_synthesized_status_matches_wrapper_payload_status():
     payload = select_closeout_relay_payload(
         sdk_body=_WRAPPER,
@@ -198,3 +223,367 @@ def test_select_empty_when_nothing_captured():
     assert payload.source == "empty"
     assert payload.status == "blocked"
     assert "no cursor-sdk closeout" in payload.body
+
+
+_BARE_UNAUTHORIZED = (
+    "unauthored — not reported by executor",
+    "unknown — executor emitted no §2",
+)
+
+
+def _write_cortex_file(cortex_root: Path, uri: str, body: str) -> None:
+    rel = uri.removeprefix("cortex://")
+    path = cortex_root / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(body, encoding="utf-8")
+
+
+def _wrapper_with_cortex_uris(*uris: str, dispatch_id: str = "D-TEST") -> str:
+    return json.dumps(
+        {
+            "schema_version": 1,
+            "status": "partial",
+            "summary": f"dispatch {dispatch_id}",
+            "files_created": [],
+            "files_modified": [],
+            "files_deleted": [],
+            "effects": list(uris),
+            "files_offgit_produced": [],
+            "capture_status": "partial",
+            "effects_manifest": {"schema_version": 1},
+        }
+    )
+
+
+def test_select_promotes_cortex_looks_section2_over_synthesize(tmp_path: Path):
+    dispatch_id = "D-PROMOTE"
+    uri = "cortex://notes/reviews/promote-closeout.md"
+    section2 = f"""\
+TYPE: CLOSEOUT
+status: complete
+
+dispatch_id: {dispatch_id}
+
+**ac_verdict:**
+1. AC1 — PASS — pytest green
+
+**deltas_to_spec:** none
+"""
+    _write_cortex_file(tmp_path, uri, section2)
+    wrapper = _wrapper_with_cortex_uris(uri, dispatch_id=dispatch_id)
+    payload = select_closeout_relay_payload(
+        sdk_body=wrapper,
+        sidecar_text=None,
+        ledger_status="completed",
+        dispatch_id=dispatch_id,
+        cortex_root=tmp_path,
+    )
+    assert payload.source == "section2_sidecar"
+    assert payload.body.startswith("TYPE: CLOSEOUT")
+    assert "ac_verdict" in payload.body
+    assert "machine-derived envelope" not in payload.body
+
+
+def test_select_field_fills_when_cortex_lacks_section2_markers(tmp_path: Path):
+    dispatch_id = "D-WEDGE"
+    uri = "cortex://notes/reviews/wedge-snapshots.md"
+    wedge_body = (
+        f"Investigation for {dispatch_id}\n\n"
+        "Observed wedge regression across three snapshots; root cause is timing."
+    )
+    _write_cortex_file(tmp_path, uri, wedge_body)
+    wrapper = _wrapper_with_cortex_uris(uri, dispatch_id=dispatch_id)
+    payload = select_closeout_relay_payload(
+        sdk_body=wrapper,
+        sidecar_text=None,
+        ledger_status="completed",
+        dispatch_id=dispatch_id,
+        cortex_root=tmp_path,
+    )
+    assert payload.source == "section2_synthesized"
+    assert looks_section2(payload.body) is True
+    for literal in _BARE_UNAUTHORIZED:
+        assert literal not in payload.body
+    assert uri in payload.body
+    assert "wedge regression" in payload.body
+
+
+def test_select_field_fills_extracts_heading_cells(tmp_path: Path):
+    dispatch_id = "D-5996"
+    uri = "cortex://notes/reviews/investigate-5996-closeout.md"
+    body = f"""\
+dispatch {dispatch_id}
+
+## deltas_to_spec
+Added cortex scan before synthesize.
+
+## decisions_taken
+Promote-first with field-fill fallback.
+"""
+    _write_cortex_file(tmp_path, uri, body)
+    wrapper = _wrapper_with_cortex_uris(uri, dispatch_id=dispatch_id)
+    payload = select_closeout_relay_payload(
+        sdk_body=wrapper,
+        sidecar_text=None,
+        ledger_status="completed",
+        dispatch_id=dispatch_id,
+        cortex_root=tmp_path,
+    )
+    assert payload.source == "section2_synthesized"
+    assert "Added cortex scan before synthesize." in payload.body
+    assert "Promote-first with field-fill fallback." in payload.body
+    assert payload.body.count(f"see {uri}") < 4
+
+
+def test_select_skips_unreadable_cortex_uri(tmp_path: Path):
+    dispatch_id = "D-MISSING"
+    missing_uri = "cortex://notes/reviews/missing-closeout.md"
+    wrapper = _wrapper_with_cortex_uris(missing_uri, dispatch_id=dispatch_id)
+    payload = select_closeout_relay_payload(
+        sdk_body=wrapper,
+        sidecar_text=None,
+        ledger_status="completed",
+        dispatch_id=dispatch_id,
+        cortex_root=tmp_path,
+    )
+    assert payload.source == "section2_synthesized"
+    assert "unauthored" in payload.body.lower()
+
+
+def test_repo_sidecar_still_beats_cortex_uri(tmp_path: Path):
+    dispatch_id = "D-REPO-WIN"
+    uri = "cortex://notes/reviews/cortex-closeout.md"
+    cortex_body = f"""\
+TYPE: CLOSEOUT
+status: complete
+dispatch_id: {dispatch_id}
+**ac_verdict:** PASS
+**deltas_to_spec:** none
+"""
+    _write_cortex_file(tmp_path, uri, cortex_body)
+    wrapper = _wrapper_with_cortex_uris(uri, dispatch_id=dispatch_id)
+    payload = select_closeout_relay_payload(
+        sdk_body=wrapper,
+        sidecar_text=_SECTION2,
+        ledger_status="completed",
+        dispatch_id=dispatch_id,
+        cortex_root=tmp_path,
+    )
+    assert payload.source == "section2_sidecar"
+    assert payload.body == _SECTION2.strip()
+
+
+def test_no_cortex_uri_synthesize_unchanged():
+    payload = select_closeout_relay_payload(
+        sdk_body=_T9_WRAPPER,
+        sidecar_text=None,
+        ledger_status="completed",
+    )
+    assert payload.source == "section2_synthesized"
+    assert _T9_OFFGIT_A in payload.body
+    assert _T9_OFFGIT_B in payload.body
+
+
+def test_marker_complete_wrong_dispatch_demotes_to_field_fill(tmp_path: Path):
+    dispatch_id = "D-UNDER-TEST"
+    other_dispatch = "D-OTHER"
+    uri = "cortex://notes/reviews/wrong-bind-closeout.md"
+    body = f"""\
+TYPE: CLOSEOUT
+status: complete
+dispatch_id: {other_dispatch}
+
+**ac_verdict:**
+1. AC1 — PASS
+
+**deltas_to_spec:** none
+"""
+    _write_cortex_file(tmp_path, uri, body)
+    wrapper = _wrapper_with_cortex_uris(uri, dispatch_id=dispatch_id)
+    payload = select_closeout_relay_payload(
+        sdk_body=wrapper,
+        sidecar_text=None,
+        ledger_status="completed",
+        dispatch_id=dispatch_id,
+        cortex_root=tmp_path,
+    )
+    assert payload.source == "section2_synthesized"
+    assert payload.status == "partial"
+    assert uri in payload.body
+
+
+def test_promoted_status_clamped_when_section2_complete(tmp_path: Path):
+    dispatch_id = "D-CLAMP"
+    uri = "cortex://notes/reviews/clamp-closeout.md"
+    body = f"""\
+TYPE: CLOSEOUT
+status: complete
+dispatch_id: {dispatch_id}
+
+**ac_verdict:** PASS — all green
+
+**deltas_to_spec:** none
+"""
+    _write_cortex_file(tmp_path, uri, body)
+    wrapper = _wrapper_with_cortex_uris(uri, dispatch_id=dispatch_id)
+    payload = select_closeout_relay_payload(
+        sdk_body=wrapper,
+        sidecar_text=None,
+        ledger_status="completed",
+        dispatch_id=dispatch_id,
+        cortex_root=tmp_path,
+    )
+    assert payload.source == "section2_sidecar"
+    assert payload.status == "partial"
+
+
+def test_cortex_path_traversal_skipped(tmp_path: Path):
+    dispatch_id = "D-TRAVERSAL"
+    outside = tmp_path.parent / "outside-secret.txt"
+    outside.write_text("secret", encoding="utf-8")
+    traversal_uri = "cortex://../outside-secret.txt"
+    wrapper = _wrapper_with_cortex_uris(traversal_uri, dispatch_id=dispatch_id)
+    payload = select_closeout_relay_payload(
+        sdk_body=wrapper,
+        sidecar_text=None,
+        ledger_status="completed",
+        dispatch_id=dispatch_id,
+        cortex_root=tmp_path,
+    )
+    assert payload.source == "section2_synthesized"
+    assert read_cortex_text(traversal_uri, cortex_root=tmp_path) is None
+    assert read_cortex_text("cortex:///etc/passwd", cortex_root=tmp_path) is None
+
+
+def test_oversized_cortex_body_truncated(tmp_path: Path):
+    dispatch_id = "D-HUGE"
+    uri = "cortex://notes/reviews/huge-closeout.md"
+    body = (
+        f"TYPE: CLOSEOUT\nstatus: complete\ndispatch_id: {dispatch_id}\n\n"
+        f"**ac_verdict:**\n{'x' * (_MAX_RELAYED_CORTEX_CHARS + 500)}\n\n"
+        "**deltas_to_spec:** none\n"
+    )
+    _write_cortex_file(tmp_path, uri, body)
+    wrapper = _wrapper_with_cortex_uris(uri, dispatch_id=dispatch_id)
+    payload = select_closeout_relay_payload(
+        sdk_body=wrapper,
+        sidecar_text=None,
+        ledger_status="completed",
+        dispatch_id=dispatch_id,
+        cortex_root=tmp_path,
+    )
+    assert payload.source == "section2_sidecar"
+    assert len(payload.body) <= _MAX_RELAYED_CORTEX_CHARS
+    assert "truncated" in payload.body.lower()
+    assert uri in payload.body
+
+
+def test_two_promote_eligible_first_wins(tmp_path: Path):
+    dispatch_id = "D-FIRST-WIN"
+    uri_a = "cortex://notes/reviews/first-promote.md"
+    uri_b = "cortex://notes/reviews/second-promote.md"
+    first_body = f"""\
+TYPE: CLOSEOUT
+status: complete
+dispatch_id: {dispatch_id}
+**ac_verdict:** first wins
+**deltas_to_spec:** none
+"""
+    second_body = f"""\
+TYPE: CLOSEOUT
+status: complete
+dispatch_id: {dispatch_id}
+**ac_verdict:** second loses
+**deltas_to_spec:** none
+"""
+    _write_cortex_file(tmp_path, uri_a, first_body)
+    _write_cortex_file(tmp_path, uri_b, second_body)
+    wrapper = _wrapper_with_cortex_uris(uri_a, uri_b, dispatch_id=dispatch_id)
+    payload = select_closeout_relay_payload(
+        sdk_body=wrapper,
+        sidecar_text=None,
+        ledger_status="completed",
+        dispatch_id=dispatch_id,
+        cortex_root=tmp_path,
+    )
+    assert payload.source == "section2_sidecar"
+    assert "first wins" in payload.body
+    assert "second loses" not in payload.body
+
+
+def test_cap_relayed_cortex_text_appends_marker():
+    uri = "cortex://notes/reviews/huge.md"
+    text = "a" * (_MAX_RELAYED_CORTEX_CHARS + 10)
+    capped = cap_relayed_cortex_text(text, uri)
+    assert len(capped) <= _MAX_RELAYED_CORTEX_CHARS
+    assert uri in capped
+    assert "truncated" in capped.lower()
+
+
+_AUTHORED_UNDERCLAIM = """\
+TYPE: CLOSEOUT
+status: complete
+
+**ac_verdict:**
+1. AC1 — PASS — all criteria met
+
+**deltas_to_spec:** none
+
+**effects:** (none — confer contract; no repo writes this episode)
+
+**open_forks:** none
+"""
+
+
+def test_authored_underclaim_amends_effects_preserves_judgment():
+    wrapper = json.dumps(
+        {
+            "schema_version": 1,
+            "status": "complete",
+            "files_offgit_produced": [_T9_OFFGIT_A],
+            "capture_status": "partial",
+            "effects_manifest": {"schema_version": 1},
+        }
+    )
+    payload = select_closeout_relay_payload(
+        sdk_body=wrapper,
+        sidecar_text=_AUTHORED_UNDERCLAIM,
+        ledger_status="completed",
+    )
+    assert payload.source == "section2_sidecar"
+    assert _T9_OFFGIT_A in payload.body
+    assert "no repo writes" not in payload.body.lower()
+    assert "AC1 — PASS" in payload.body
+    assert payload.status != "complete"
+
+
+def test_cortex_promote_underclaim_still_amended(tmp_path: Path):
+    dispatch_id = "D-UNDERCLAIM-PROMOTE"
+    uri = "cortex://notes/reviews/promote-underclaim.md"
+    section2 = f"""\
+TYPE: CLOSEOUT
+status: complete
+dispatch_id: {dispatch_id}
+
+**ac_verdict:**
+1. AC1 — PASS
+
+**deltas_to_spec:** none
+
+**effects:** none
+"""
+    _write_cortex_file(tmp_path, uri, section2)
+    wrapper = _wrapper_with_cortex_uris(uri, dispatch_id=dispatch_id)
+    wrapper_data = json.loads(wrapper)
+    wrapper_data["files_offgit_produced"] = [uri]
+    wrapper = json.dumps(wrapper_data)
+    payload = select_closeout_relay_payload(
+        sdk_body=wrapper,
+        sidecar_text=None,
+        ledger_status="completed",
+        dispatch_id=dispatch_id,
+        cortex_root=tmp_path,
+    )
+    assert payload.source == "section2_sidecar"
+    assert uri in payload.body
+    assert payload.status != "complete"

@@ -97,7 +97,19 @@ def _page_score(url: str) -> int:
     if "/chat/" in u or "/cowork/cse_" in u:
         return 100
     if u.rstrip("/").endswith("/new") or "/new?" in u:
-        return 80
+        return 100
+    # Settings / scheduled / customize are hostile to sealed compose.
+    if any(
+        tok in u
+        for tok in (
+            "scheduled-task",
+            "settings",
+            "customize",
+            "/artifacts",
+            "/recents",
+        )
+    ):
+        return 5
     if "/cowork/project/" in u:
         return 10
     if "claude.ai" in u:

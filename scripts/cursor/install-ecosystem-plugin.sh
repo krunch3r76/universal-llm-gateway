@@ -230,6 +230,7 @@ echo "  commands: $(ls "$INSTALL_DIR/commands" | wc -l)"
 echo "  rules:    $(ls "$INSTALL_DIR/rules" 2>/dev/null | wc -l)"
 echo "  manifest: $INSTALL_DIR/.cursor-plugin/plugin.json"
 echo
-echo "NEXT: Cursor → Developer: Reload Window (or restart Cursor)"
+echo "DONE: plugin install is cursor-seat duty (¬ ask operator to sync/install)."
+echo "NOTE: Developer → Reload Window only if IDE skill/rule picker still stale after install."
 echo "THEN: Settings → Plugins → confirm 'ulg-ecosystem' is Installed"
 echo "Venv: all satellites in SATELLITES.txt pinned to \$HOME/.venvs/universal (re-run install to correct drift)"

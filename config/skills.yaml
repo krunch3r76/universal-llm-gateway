@@ -424,6 +424,9 @@ skills:
   web-anthropic-canvas-dialogue:
     surface_class: cursor_only
     mcp_surface_required: code
+  web-automation-discipline:
+    surface_class: cursor_only
+    mcp_surface_required: code
   web-generate-substrate:
     surface_class: cursor_only
     mcp_surface_required: none

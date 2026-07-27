@@ -4,11 +4,20 @@ Skill trees under ``.cursor/`` and ``.*`` are gitignored. Listing a checkout
 ``SKILL.md`` path in a prompt does **not** load the skill via the GitHub
 connector. Customize → Skills only carries ``shared_sync`` ∪ ``life_local``.
 
-Roleless ``team_dispatch(model=cdp/…)`` skills= delivery (fleet rule):
-- One ``shared_sync`` slug → single ``/<slug>\\n`` chip line
-- Two or more ``shared_sync`` slugs → hybrid: ``/<first>\\n`` chip + ``Use the … skill``
-  lines for the rest (consecutive multi-slash silently misses skills — friction 5588/5590)
-- Not a Claude slug → inline SOT bodies at top of sealed prompt
+Roleless ``team_dispatch(model=cdp/…)`` skills= delivery (fleet rule;
+operator bind 2026-07-26 — multi-skill via composer **+ → Skills → pick**):
+- ``shared_sync`` slugs → leading ``/<slug>\\n`` **manifest** lines (not typed);
+  ``project_ask`` / ``send_prompt`` attaches each via + → Skills → list select
+- Non-Claude / ``cursor_only`` → ``<skills_inline>`` XML bodies
+- Hybrid (``/<first>\\n`` + ``Use the … skill``) is **escape only** when live
+  chip-glue is observed (friction 5588/5590) — not the default
+- Slash-type multi-chip is **retired** (a25806 — only first `/slug` binds)
+- Manual Cowork composer paste does **not** chip-bind; automation path only
+
+Entry points that must hit attach (not type):
+``team_dispatch(model=cdp/…)`` staging → satellite ``run_project_ask`` /
+``send_prompt``; MCP ``project_ask``; converse follow-ups; CLI
+``cowork_project_ask``. Shared runtime: ``attach_session_skills``.
 """
 
 from __future__ import annotations
@@ -23,10 +32,13 @@ from claude_bundles.catalog import get_skill_catalog
 DeliveryChannel = Literal["inject", "customize_skills", "unavailable"]
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_LEADING_SLASH_SKILL = re.compile(r"^(/[\w-]+)(?:\r?\n)+")
+_LEADING_SLASH_SKILL = re.compile(r"^(/[\w-]+)\r?\n")
 
-# Flip only after ≥2 green harvests across Chat and Cowork with archive URIs.
-MULTI_CHIP_PROVEN: bool = False
+# Operator 2026-07-26: multi-skill attach = composer + → Skills → pick-each.
+# Flag name is historical (pre-attach era); True means multi-shared_sync
+# slash *manifest* lines are lawful — runtime still attaches via + → Skills.
+# Slash-type is retired (a25806).
+MULTI_CHIP_PROVEN: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,12 +119,11 @@ def partition_cdp_skills(slugs: list[str]) -> tuple[list[str], list[str]]:
 
 
 def format_cdp_use_the_lines(slugs: list[str]) -> str:
-    """Render ``Use the `{slug}` skill\\n`` lines for trailing shared_sync slugs.
+    """Render ``Use the `{slug}` skill\\n`` lines — hybrid **escape** remainder.
 
-    Cowork/Chat composer binds only the first leading ``/<slug>\\n`` as a
-    ``<command-name>`` chip. Additional shared_sync slugs must use the
-    Customize ``Use the … skill`` idiom so each body loads — not consecutive
-    slash lines (dogfood 5588/5590 silent miss).
+    Default CDP delivery is consecutive ``/<slug>\\n`` (``format_cdp_slash_prefix``).
+    Use this only when composing ``format_cdp_hybrid_prefix`` after live chip-glue
+    (friction 5588/5590).
 
     Contract: ``slugs`` is the *remaining* shared_sync list after the chip
     slug; empty → ``""``; order preserved; one line per slug.
@@ -123,14 +134,15 @@ def format_cdp_use_the_lines(slugs: list[str]) -> str:
 
 
 def format_cdp_hybrid_prefix(slugs: list[str]) -> str:
-    """Render hybrid CDP prefix for ordered ``shared_sync`` slugs.
+    """Escape-path CDP prefix when multi-slash chip-glue is observed.
 
-    Why: only ``slug[0]`` reliably chip-binds; ``|slugs|≥2`` consecutive
-    ``/<slug>\\n`` lines glue later slugs into the first skill's args.
+    Default path is ``format_cdp_slash_prefix`` (operator bind 2026-07-26).
+    Keep this helper for recovery: first chip + ``Use the … skill`` remainder
+    (friction 5588/5590).
 
     Contract:
     - ``len==0`` → ``""``
-    - ``len==1`` → ``/{slug}\\n`` (pure chip — unchanged N=1 path)
+    - ``len==1`` → ``/{slug}\\n``
     - ``len≥2`` → ``/{first}\\n`` + ``Use the `{rest}` skill\\n`` per remainder
     """
     if not slugs:
@@ -145,27 +157,30 @@ def format_cdp_slash_prefix(
     *,
     allow_proven_multi_chip: bool = False,
 ) -> str:
-    """Render consecutive ``/<slug>\\n`` lines — **single-slug or proven multi only**.
+    """Render consecutive ``/<slug>\\n`` lines — CDP canonical skill prefix.
 
-    Fail-closed at the lowest slash emitter: ``|slugs|≥2`` without an explicit
-    ``allow_proven_multi_chip`` (or ``MULTI_CHIP_PROVEN``) raises
-    ``SkillDeliveryError`` — consecutive multi-slash silently drops skills
-    (friction 5588/5590). Callers delivering ``|shared_sync|≥2`` must use
-    ``format_cdp_hybrid_prefix`` instead.
+    Multi-slash is the default when ``MULTI_CHIP_PROVEN`` (operator-confirmed
+    2026-07-26). Explicit ``allow_proven_multi_chip=False`` with the flag off
+    still fail-closes so callers can force hybrid escape via
+    ``format_cdp_hybrid_prefix``.
     """
     if not slugs:
         return ""
     if len(slugs) >= 2 and not (allow_proven_multi_chip or MULTI_CHIP_PROVEN):
         raise SkillDeliveryError(
             f"refusing consecutive multi-slash for {len(slugs)} shared_sync slugs "
-            f"{slugs!r} — only first chip binds; use format_cdp_hybrid_prefix "
-            "(friction 5588/5590)"
+            f"{slugs!r} — MULTI_CHIP_PROVEN is False; use format_cdp_hybrid_prefix "
+            "(friction 5588/5590 escape) or set allow_proven_multi_chip=True"
         )
     return "".join(f"/{slug}\n" for slug in slugs)
 
 
 def split_leading_slash_skills(text: str) -> tuple[list[str], str]:
-    """Parse consecutive leading ``/<slug>\\n`` lines for composer chip bind."""
+    """Parse consecutive leading ``/<slug>\\n`` lines for composer chip bind.
+
+    Consumes exactly one line break per slash line so trailing blank lines before
+    body prose remain in ``rest`` for ``insert_text`` replay.
+    """
     tokens: list[str] = []
     rest = text
     while True:
@@ -206,18 +221,24 @@ def prepend_cdp_dispatch_skills(
     slugs: list[str] | None,
     *,
     repo_root: Path | None = None,
+    hybrid_escape: bool = False,
 ) -> tuple[str, list[str], list[InjectedSkillBody]]:
     """Prepend CDP skills= delivery to a sealed prompt.
 
-    ``shared_sync`` slugs use hybrid delivery (``|slash|==1`` → chip;
-    ``|slash|≥2`` → first chip + ``Use the … skill`` for rest). All other
-    catalog skills are inlined inside ``<skills_inline>`` XML with a blank
-    line separator when both blocks are present.
+    ``shared_sync`` slugs default to consecutive ``/<slug>\\n`` chip lines
+    (``format_cdp_slash_prefix``). Pass ``hybrid_escape=True`` only when live
+    chip-glue forces the friction 5588/5590 escape. All other catalog skills
+    are inlined inside ``<skills_inline>`` XML with a blank line separator
+    when both blocks are present.
     """
     if not slugs:
         return prompt, [], []
     slash_slugs, inline_slugs = partition_cdp_skills(list(slugs))
-    slash_block = format_cdp_hybrid_prefix(slash_slugs)
+    slash_block = (
+        format_cdp_hybrid_prefix(slash_slugs)
+        if hybrid_escape
+        else format_cdp_slash_prefix(slash_slugs)
+    )
     bodies: list[InjectedSkillBody] = []
     inline_block = ""
     if inline_slugs:

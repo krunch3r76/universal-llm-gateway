@@ -14,6 +14,9 @@ from universal_logging import get_logger
 from services.git_integration_worker.cursor_auto.handler import process_job
 from services.git_integration_worker.cursor_auto.liveness import get_registry
 from services.git_integration_worker.cursor_auto.queue import get_queue
+from services.git_integration_worker.cursor_auto.supersede import (
+    supersede_same_thread_inflight,
+)
 
 logger = get_logger(__name__)
 
@@ -66,7 +69,8 @@ async def enqueue(body: EnqueueBody):
                 "liveness": registry.snapshot(),
             },
         )
-    job = get_queue().enqueue(
+    queue = get_queue()
+    job = queue.enqueue(
         thread_id=body.thread_id,
         turn_number=body.turn_number,
         subject=body.subject,
@@ -84,13 +88,17 @@ async def enqueue(body: EnqueueBody):
         body.thread_id,
         body.turn_number,
     )
+    # A second request on a private thread is a backtrack, not a queue append:
+    # interrupt the live episode so the new DIRECTIVE does not wait it out.
+    interrupt = await supersede_same_thread_inflight(job, queue=queue)
     return JSONResponse(
         status_code=200,
         content={
             "ok": True,
             "handler_status": "auto-admit-armed",
             "job_id": job.job_id,
-            "queue": get_queue().snapshot(),
+            "superseded": interrupt,
+            "queue": queue.snapshot(),
         },
     )
 

@@ -25,7 +25,10 @@ class AutoJob:
     contract: str
     require_attended: bool = False
     enqueued_at: float = field(default_factory=time.monotonic)
-    status: str = "queued"  # queued | claimed | done | failed
+    status: str = "queued"  # queued | claimed | done | failed | superseded
+    superseded_by: str | None = None
+    supersedes: str | None = None
+    superseded_dispatch_id: str | None = None
 
 
 class AutoJobQueue:
@@ -53,10 +56,42 @@ class AutoJobQueue:
         return None
 
     def mark_done(self, job_id: str, *, failed: bool = False) -> None:
+        """Terminalize a job; a superseded job keeps its interrupt status."""
         with self._lock:
             job = self._jobs.get(job_id)
-            if job is not None:
-                job.status = "failed" if failed else "done"
+            if job is None or job.status == "superseded":
+                return
+            job.status = "failed" if failed else "done"
+
+    def get(self, job_id: str) -> AutoJob | None:
+        """Return the job record for *job_id*, if the process still holds it."""
+        with self._lock:
+            return self._jobs.get(job_id)
+
+    def claimed_for_thread(self, thread_id: str) -> AutoJob | None:
+        """Return the in-flight job on *thread_id* — the supersede candidate."""
+        with self._lock:
+            for jid in self._order:
+                job = self._jobs[jid]
+                if job.thread_id == thread_id and job.status == "claimed":
+                    return job
+        return None
+
+    def mark_superseded(self, job_id: str, *, superseded_by: str) -> AutoJob | None:
+        """Flag an in-flight job as displaced by *superseded_by* and return it."""
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                return None
+            job.status = "superseded"
+            job.superseded_by = superseded_by
+            return job
+
+    def is_superseded(self, job_id: str) -> bool:
+        """True once a newer same-thread request has displaced this job."""
+        with self._lock:
+            job = self._jobs.get(job_id)
+            return job is not None and job.status == "superseded"
 
     def pending_count(self) -> int:
         with self._lock:
@@ -69,6 +104,9 @@ class AutoJobQueue:
                 "claimed": sum(1 for j in self._jobs.values() if j.status == "claimed"),
                 "done": sum(1 for j in self._jobs.values() if j.status == "done"),
                 "failed": sum(1 for j in self._jobs.values() if j.status == "failed"),
+                "superseded": sum(
+                    1 for j in self._jobs.values() if j.status == "superseded"
+                ),
                 "total": len(self._jobs),
             }
 

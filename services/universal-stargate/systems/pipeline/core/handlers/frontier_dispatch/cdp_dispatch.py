@@ -7,6 +7,10 @@ Harvest posture: Cowork paths (`auto`, `output-file`) are operational default.
 ``harvest_source=chat`` is wire-stub only (future small-work interface) — see
 ``notes/system/specs/substrate-apis-cdp-cursor.md`` § Chat harvest stub; ¬ steer
 skills/packets toward chat harvest yet.
+
+``pipeline_options.skills`` (optional list): forwarded to ``run_cdp_generate``;
+``shared_sync`` slugs stage as leading ``/<slug>\\n`` manifest and attach via
+composer **+ → Skills → pick** at satellite runtime.
 """
 
 from __future__ import annotations
@@ -228,6 +232,8 @@ async def run_cdp_dispatch(
     publish = admission.publish
     harvest = parse_cdp_harvest_options(opts)
     prompt_text = compose_cdp_prompt_text(admission.user_prompt, admission.system)
+    skills_raw = opts.get("skills")
+    skills = skills_raw if isinstance(skills_raw, list) else None
     request_id = context.execution_id
 
     publish(
@@ -268,6 +274,7 @@ async def run_cdp_dispatch(
         execution_id=context.execution_id,
         model_id=model,
         prompt_text=prompt_text,
+        skills=skills,
         max_wall_s=harvest["max_wall_s"],
         harvest_source=harvest["harvest_source"],
         expected_size=harvest["expected_size"],

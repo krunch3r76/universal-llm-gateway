@@ -8,6 +8,7 @@ from typing import Any
 from fastapi import HTTPException
 from universal_logging import get_logger
 
+from ..confidence_policy import CONFIDENCE_WEIGHT
 from ..db import cortex_conn
 from ..entity_aliases import resolve_entity_reference
 from ..routes.assertions import _create_assertion_impl, _list_assertions_impl
@@ -19,10 +20,37 @@ from ._friction_charter_attrs import (
 from ._shared import (
     _FRICTION_CATEGORIES,
     _FRICTION_OWNER_TYPES,
+    _VALID_CONFIDENCE,
     owner_entity_id,
     owner_type_of,
     record,
 )
+
+# Historical friction default when confidence is omitted or hypothesized.
+# Distinct from CONFIDENCE_WEIGHT["hypothesized"] (0.20) — keep 0.5 so
+# existing callers do not silently change score mass.
+_FRICTION_DEFAULT_CONFIDENCE = "hypothesized"
+_FRICTION_DEFAULT_SCORE = 0.5
+
+
+def _resolve_friction_confidence(
+    confidence: str | None,
+    confidence_score: float | None,
+) -> tuple[str, float] | dict[str, str]:
+    """Honour caller confidence; reject invalid; default hypothesized/0.5."""
+    resolved = _FRICTION_DEFAULT_CONFIDENCE if confidence is None else confidence
+    if resolved not in _VALID_CONFIDENCE:
+        return {
+            "error": (
+                f"Invalid confidence {confidence!r}. "
+                f"Must be one of: {sorted(_VALID_CONFIDENCE)}"
+            )
+        }
+    if confidence_score is not None:
+        return resolved, float(confidence_score)
+    if resolved == _FRICTION_DEFAULT_CONFIDENCE:
+        return resolved, _FRICTION_DEFAULT_SCORE
+    return resolved, float(CONFIDENCE_WEIGHT[resolved])
 
 logger = get_logger("cortex-api.dispatch_ops.assertions")
 
@@ -43,9 +71,16 @@ def _op_friction(
     checkpoint_turn: int | None = None,
     evidence_uris: list[str] | str | None = None,
     defer_enqueue: bool | None = None,
+    confidence: str | None = None,
+    confidence_score: float | None = None,
     **_: object,
 ) -> dict[str, Any]:
-    """Log a friction assertion; protocol category requires charter context."""
+    """Log a friction assertion; protocol category requires charter context.
+
+    ``confidence`` is honoured when supplied (ladder:
+    confirmed/believed/suspected/hypothesized). Omitted → hypothesized/0.5.
+    Invalid values are rejected — never silently downgraded.
+    """
     if (
         owner is not None
         and service is not None
@@ -65,6 +100,10 @@ def _op_friction(
         return {
             "error": f"Invalid category {category!r}. Must be one of: {sorted(_FRICTION_CATEGORIES)}"
         }
+    conf_resolved = _resolve_friction_confidence(confidence, confidence_score)
+    if isinstance(conf_resolved, dict):
+        return conf_resolved
+    resolved_confidence, resolved_score = conf_resolved
     if category == "protocol" and actionable is not False:
         root_present = charter_root is not None and str(charter_root).strip()
         if not (root_present and window_index is not None):
@@ -111,11 +150,11 @@ def _op_friction(
     body: dict[str, Any] = {
         "entity_id": entity_id,
         "claim": claim,
-        "confidence": "hypothesized",
+        "confidence": resolved_confidence,
         "evidence": evidence,
         "derivation_type": "agent_observation",
         "observed_at": datetime.now(UTC).isoformat(),
-        "confidence_score": 0.5,
+        "confidence_score": resolved_score,
     }
     if agent:
         body["seeded_by"] = agent

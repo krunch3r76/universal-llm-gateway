@@ -27,6 +27,18 @@ async def emit_tick_transition(
     await _emit("manage.charter.tick.transition", payload)
 
 
+async def emit_shadow_ledger_starved(
+    *,
+    reason: str,
+    bus_roots: int,
+) -> None:
+    """Shadow path starved — ledger enrolled set empty at tick time."""
+    await _emit(
+        "manage.charter.tick.shadow.starved",
+        {"reason": reason, "bus_roots": bus_roots},
+    )
+
+
 async def emit_shadow_diff(
     *,
     root: str,
@@ -64,5 +76,6 @@ __all__ = [
     "emit_consult_deferred",
     "emit_consult_queued",
     "emit_shadow_diff",
+    "emit_shadow_ledger_starved",
     "emit_tick_transition",
 ]

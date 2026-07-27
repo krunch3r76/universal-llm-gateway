@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from universal_logging import get_logger
 
-from services.git_integration_worker.cursor_auto.closeout_relay import (
-    read_repo_closeout_sidecar,
-    select_closeout_relay_payload,
+from services.git_integration_worker.cursor_auto.admit_gates import (
+    blocking_admit_gate,
 )
 from services.git_integration_worker.cursor_auto.directive import (
     attendance_surface,
@@ -22,16 +20,30 @@ from services.git_integration_worker.cursor_auto.episode_briefing import (
     maybe_briefing_for_admit,
 )
 from services.git_integration_worker.cursor_auto.gate_serialize import (
+    NESTED_IN_SEAT_REASON,
     plan_nested_dispatch,
+    prefer_dispatch_over_park,
+)
+from services.git_integration_worker.cursor_auto.handler_terminal import (
+    terminal_failed,
+    terminal_in_seat,
+    terminal_needs_attended,
+)
+from services.git_integration_worker.cursor_auto.nested_outcome import (
+    relay_closeout_outcome,
+    relay_confer_outcome,
 )
 from services.git_integration_worker.cursor_auto.nested_sdk import (
     fetch_sdk_closeout_body,
     poll_dispatch_terminal,
-    post_operator_closeout,
-    post_operator_wake,
     submit_nested_dispatch,
 )
 from services.git_integration_worker.cursor_auto.queue import AutoJob, get_queue
+from services.git_integration_worker.cursor_auto.supersede import (
+    compose_supersede_preamble,
+    post_superseded_terminal,
+    settle_supersede,
+)
 from services.git_integration_worker.cursor_auto.wire_map import (
     resolve_contract_disposition,
     resolve_desired_effort,
@@ -46,7 +58,7 @@ from services.git_integration_worker.cursor_dispatch_ledger import (
 logger = get_logger(__name__)
 
 _FROM_AUTO = "cursor-auto"
-_NESTED_CONTRACTS = frozenset({"implement", "investigate", "verify"})
+_NESTED_CONTRACTS = frozenset({"confer", "implement", "investigate", "verify"})
 
 
 async def process_job(
@@ -62,6 +74,10 @@ async def process_job(
     relay failed; failed / token-guard ``{ok: False, reason: …}`` when wake
     post was blocked or errored. Wake failure does not flip ``failed`` when
     CLOSEOUT succeeded.
+
+    A job displaced mid-flight by a newer same-thread request returns
+    ``phase: superseded`` with terminal ``status:superseded`` — never a
+    success-shaped CLOSEOUT for the void episode.
     """
     client = bus or CursorBusClient()
     queue = get_queue()
@@ -70,10 +86,18 @@ async def process_job(
     contract_info = resolve_contract_disposition(job.contract)
     handoff_contract = resolve_handoff_contract(job.contract)
     directive = parse_request_body(job.body)
+    if directive is not None:
+        blocked = await blocking_admit_gate(job, client=client, queue=queue)
+        if blocked is not None:
+            return blocked
+
     work_bounded = job.contract == "answer" or (
         directive is not None and directive.density == "sparse"
     )
-    gate_plan = plan_nested_dispatch(work_bounded=work_bounded)  # pure: stats read only
+    gate_plan = prefer_dispatch_over_park(
+        plan_nested_dispatch(work_bounded=work_bounded),
+        work_bounded=work_bounded,
+    )
 
     base_admit_body = (
         "Auto admitted lane:cursor-auto request.\n"
@@ -86,7 +110,7 @@ async def process_job(
         f"gate_plan={gate_plan['action']}\n"
         f"directive={directive is not None}"
     )
-    briefing = await maybe_briefing_for_admit(job.thread_id)
+    briefing = await maybe_briefing_for_admit(job.thread_id, contract=job.contract)
     admit = await client.reply(
         thread_id=job.thread_id,
         to_agent=job.from_agent,
@@ -103,6 +127,10 @@ async def process_job(
             "body": admit.body,
         }
 
+    # Settle before any refusal branch: the superseded episode is void whatever
+    # this job's own fate, so its writes must come back regardless.
+    settlement = await settle_supersede(job)
+
     if effective_require_attended(job, directive):
         surface = attendance_surface(job, directive)
         logger.info(
@@ -112,7 +140,7 @@ async def process_job(
             surface,
             gate_plan["action"],
         )
-        return await _terminal_needs_attended(
+        return await terminal_needs_attended(
             job,
             client=client,
             queue=queue,
@@ -121,7 +149,7 @@ async def process_job(
         )
 
     if job.contract not in _NESTED_CONTRACTS:
-        return await _terminal_in_seat(
+        return await terminal_in_seat(
             job,
             client=client,
             queue=queue,
@@ -132,29 +160,33 @@ async def process_job(
         )
 
     if gate_plan["action"] == "in_seat":
-        # lane:cursor-auto in_seat is unattended Auto — not operator attendance.
-        return await _terminal_needs_attended(
+        # Nested contracts refuse in-seat execution; nest_park is the capacity path.
+        return await terminal_needs_attended(
             job,
             client=client,
             queue=queue,
-            reason="gate_in_seat_fallback",
+            reason=NESTED_IN_SEAT_REASON,
             gate_plan=gate_plan,
         )
 
-    nest_under: str | None = None
-    if gate_plan["action"] == "nest_park":
-        snap = CursorDispatchLedger.instance().lease_snapshot()
-        nest_under = snap.get("holder_dispatch_id")
-        if not nest_under:
-            return await _terminal_needs_attended(
-                job,
-                client=client,
-                queue=queue,
-                reason="nest_park_without_holder",
-                gate_plan=gate_plan,
-            )
+    nest_under = await _resolve_nest_under(
+        job,
+        client=client,
+        queue=queue,
+        gate_plan=gate_plan,
+        work_bounded=work_bounded,
+    )
+    if isinstance(nest_under, dict):
+        return nest_under
 
     message = build_sdk_message(job.body, contract=job.contract)
+    if settlement is not None:
+        message = f"{compose_supersede_preamble(settlement)}\n\n{message}"
+    if queue.is_superseded(job.job_id):
+        return await post_superseded_terminal(
+            job, client=client, queue=queue, dispatch_id=None
+        )
+
     submit = await submit_nested_dispatch(
         job,
         model_id=str(model["resolved_model_id"]),
@@ -164,7 +196,7 @@ async def process_job(
         model_knobs=model.get("model_knobs"),
     )
     if not submit.get("ok"):
-        return await _terminal_failed(
+        return await terminal_failed(
             job,
             client=client,
             queue=queue,
@@ -176,9 +208,14 @@ async def process_job(
     polled = await poll_dispatch_terminal(
         thread_id=job.thread_id,
         dispatch_id=dispatch_id,
+        superseded=lambda: queue.is_superseded(job.job_id),
     )
+    if polled.get("superseded"):
+        return await post_superseded_terminal(
+            job, client=client, queue=queue, dispatch_id=dispatch_id
+        )
     if not polled.get("terminal"):
-        return await _terminal_failed(
+        return await terminal_failed(
             job,
             client=client,
             queue=queue,
@@ -193,156 +230,61 @@ async def process_job(
         dispatch_id=dispatch_id,
         bus=client,
     )
-    payload = select_closeout_relay_payload(
-        sdk_body=sdk_body,
-        sidecar_text=read_repo_closeout_sidecar(dispatch_id),
-        ledger_status=terminal_status,
-    )
-    relay = await post_operator_closeout(
-        job,
-        status=payload.status,
-        dispatch_id=dispatch_id,
-        model_id=str(model["resolved_model_id"]),
-        sdk_body=sdk_body,
-        closeout_body=payload.body,
-        closeout_source=payload.source,
-        extra={
-            "gate_plan": gate_plan,
-            "terminal_status": terminal_status,
-            "nest_under": nest_under,
-        },
-        bus=client,
-    )
-    if relay.get("ok"):
-        wake = await post_operator_wake(
+
+    if job.contract == "confer":
+        return await relay_confer_outcome(
             job,
+            client=client,
+            queue=queue,
             dispatch_id=dispatch_id,
-            request_turn=str(job.turn_number),
-            closeout_status=payload.status,
-            bus=client,
+            model=model,
+            effort=effort,
+            gate_plan=gate_plan,
+            sdk_body=sdk_body,
+            terminal_status=terminal_status,
         )
-    else:
-        wake = {"ok": False, "skipped": True, "reason": "closeout_not_ok"}
-    failed = not relay.get("ok") or terminal_status == "failed"
-    queue.mark_done(job.job_id, failed=failed)
-    return {
-        "ok": not failed,
-        "phase": "nested_dispatch",
-        "terminal_status": terminal_status,
-        "closeout_status": payload.status,
-        "closeout_source": payload.source,
-        "dispatch_id": dispatch_id,
-        "relay": relay,
-        "wake": wake,
-        "model": model,
-        "effort": effort,
-        "gate_plan": gate_plan,
-    }
+
+    return await relay_closeout_outcome(
+        job,
+        client=client,
+        queue=queue,
+        dispatch_id=dispatch_id,
+        model=model,
+        effort=effort,
+        gate_plan=gate_plan,
+        contract_info=contract_info,
+        sdk_body=sdk_body,
+        terminal_status=terminal_status,
+        nest_under=nest_under,
+    )
 
 
-async def _terminal_in_seat(
+async def _resolve_nest_under(
     job: AutoJob,
     *,
     client: CursorBusClient,
     queue: Any,
-    model: dict[str, Any],
-    effort: dict[str, Any],
-    contract_info: dict[str, Any],
     gate_plan: dict[str, Any],
-) -> dict[str, Any]:
-    summary = (
-        f"v0 in-seat Auto handled contract={contract_info['contract']} "
-        f"(gate_plan={gate_plan['action']})."
+    work_bounded: bool,
+) -> str | None | dict[str, Any]:
+    """Resolve the park parent for ``nest_park``; a dict means terminal refusal."""
+    if gate_plan["action"] != "nest_park":
+        return None
+    snap = CursorDispatchLedger.instance().lease_snapshot()
+    nest_under = snap.get("holder_dispatch_id")
+    if nest_under:
+        return str(nest_under)
+    replan = prefer_dispatch_over_park(
+        {**gate_plan, "action": "in_seat", "reason": "nest_park_without_holder"},
+        work_bounded=work_bounded,
     )
-    return await _post_status_done(
+    gate_plan.update(replan)
+    if replan["action"] == "dispatch_now":
+        return None
+    return await terminal_needs_attended(
         job,
         client=client,
         queue=queue,
-        summary=summary,
-        disposition=str(contract_info["disposition_hint"]),
-        payload={
-            "summary": summary,
-            "disposition": contract_info["disposition_hint"],
-            "requested_model": model["requested"],
-            "actual_model": model["resolved_model_id"],
-            "requested_effort": effort["requested"],
-            "actual_effort": effort["resolved_effort"],
-            "gate_plan": gate_plan,
-            "request_turn": job.turn_number,
-        },
+        reason="nest_park_without_holder",
+        gate_plan=gate_plan,
     )
-
-
-async def _terminal_needs_attended(
-    job: AutoJob,
-    *,
-    client: CursorBusClient,
-    queue: Any,
-    reason: str,
-    gate_plan: dict[str, Any],
-) -> dict[str, Any]:
-    summary = f"Auto cannot run unattended: {reason}"
-    return await _post_status_done(
-        job,
-        client=client,
-        queue=queue,
-        summary=summary,
-        disposition="needs-attended",
-        terminal_status="status:needs-attended",
-        payload={"summary": summary, "reason": reason, "gate_plan": gate_plan},
-        failed=True,
-    )
-
-
-async def _terminal_failed(
-    job: AutoJob,
-    *,
-    client: CursorBusClient,
-    queue: Any,
-    summary: str,
-    extra: dict[str, Any],
-    dispatch_id: str | None = None,
-) -> dict[str, Any]:
-    payload = {"summary": summary, **extra}
-    if dispatch_id:
-        payload["dispatch_id"] = dispatch_id
-    return await _post_status_done(
-        job,
-        client=client,
-        queue=queue,
-        summary=summary,
-        disposition="blocked",
-        terminal_status="status:failed",
-        payload=payload,
-        failed=True,
-    )
-
-
-async def _post_status_done(
-    job: AutoJob,
-    *,
-    client: CursorBusClient,
-    queue: Any,
-    summary: str,
-    disposition: str,
-    payload: dict[str, Any],
-    terminal_status: str = "status:done",
-    failed: bool = False,
-) -> dict[str, Any]:
-    terminal = await client.reply(
-        thread_id=job.thread_id,
-        to_agent=job.from_agent,
-        from_agent=_FROM_AUTO,
-        subject=f"{terminal_status} — {job.subject[:60]}",
-        body=json.dumps(payload, indent=2),
-        allow_long_body=True,
-    )
-    queue.mark_done(job.job_id, failed=failed)
-    return {
-        "ok": not failed and terminal.status_code < 400,
-        "phase": "terminal",
-        "terminal_status": terminal_status,
-        "disposition": disposition,
-        "status_code": terminal.status_code,
-        "summary": summary,
-    }

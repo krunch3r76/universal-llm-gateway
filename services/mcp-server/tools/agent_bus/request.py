@@ -197,6 +197,15 @@ def _request_impl(
     turn_obj = send_result.get("turn") or {}
     thread_id = str(thread_obj.get("id") or thread or "")
     turn_number = int(turn_obj.get("turn_number") or 1)
+    # Hoist send-path sidecar fields — callers (esp. Cowork) check top-level
+    # sidecar_uri; dropping them made successful writes look like failures
+    # (a:26439 item 5 / todo:agent-bus-sidecar-uri-null-on-write).
+    sidecar_uri = send_result.get("sidecar_uri")
+    sidecar_sha256 = send_result.get("sidecar_sha256")
+    if sidecar_uri is None and isinstance(turn_obj, dict):
+        sidecar_uri = turn_obj.get("sidecar_uri")
+    if sidecar_sha256 is None and isinstance(turn_obj, dict):
+        sidecar_sha256 = turn_obj.get("sidecar_sha256")
 
     liveness = probe_auto_liveness()
     if not liveness.get("live"):
@@ -215,6 +224,8 @@ def _request_impl(
             ),
             "liveness": liveness,
             "tags": merged_tags,
+            "sidecar_uri": sidecar_uri,
+            "sidecar_sha256": sidecar_sha256,
         }
 
     enq = enqueue_auto_job(
@@ -247,6 +258,8 @@ def _request_impl(
         "poll_hint": _build_poll_hint(thread_id=thread_id, after_turn=turn_number),
         "enqueue": enq,
         "tags": merged_tags,
+        "sidecar_uri": sidecar_uri,
+        "sidecar_sha256": sidecar_sha256,
     }
 
 

@@ -50,24 +50,12 @@ from starlette.middleware.gzip import GZipMiddleware
 from surface_enum import register_surface_enum_transform
 from surface_registration import register_tools_for_surface
 from tool_access import dispatch_denial_reason, is_dispatch_tool_allowed
-from tool_error_enricher import (
-    LIFE_WORKSPACES_READ_OPS,
-    apply_life_sandbox_default,
-    fs_missing_sandbox_hint,
-    life_workspaces_fs_refusal,
-    register_tool_error_enricher,
-)
+from fs_description import build_fs_tool_description
+from fs_impl import fs_impl
+from tool_error_enricher import register_tool_error_enricher
 from tool_search import capture_overflow_metadata, register_tool_search_tool
 from tools._agent_tools import JsonArgStr
 from tools.filesystem._cross_sandbox import copy_between_sandboxes_impl
-from tools.filesystem._fs_dispatch import (
-    SEARCH_MODES,
-    dispatch_workspaces_op,
-    md_section_op_doc,
-    sandbox_op_doc,
-    validate_op_params,
-)
-from tools.filesystem._paths import FS_WORKFLOW_HINTS
 from universal_logging import get_logger
 
 if TYPE_CHECKING:
@@ -300,120 +288,7 @@ def _build_server(
     )
     register_tool_search_tool(mcp, overflow_metadata, surface=surface)
 
-    valid_sandboxes = {"cortex", "workspaces"}
-    sandbox_tool: dict[str, str] = {
-        "cortex": "files",
-    }
-    md_op_map: dict[str, str] = {
-        "md_list": "list_sections",
-        "md_read": "read_section",
-        "md_to_dict": "to_dict",
-        "md_replace": "replace_section",
-        "md_append": "append_section",
-        "md_insert": "insert_section",
-        "md_delete": "delete_section",
-    }
-
-    _fs_standard_ops_doc = sandbox_op_doc()
-    if surface == "life":
-        _fs_sandbox_intro = (
-            "File I/O for the cortex sandbox on /mcp/life. `op` is REQUIRED.\n"
-            "On this surface, an unqualified relative path defaults to cortex "
-            "when `sandbox` is omitted; `cortex://{rel}` is the canonical form. "
-            "Repository source (`workspaces`) is not available here — use "
-            "/mcp/code for workspaces:// paths; mirror agent-process artifacts "
-            "to cortex:// for life-seat handoffs.\n\n"
-            "Share URI grammar (canonical cross-resident refs on this surface):\n"
-            "  cortex://{rel}             — notes, agent-skills, dropbox, uploads\n\n"
-            "Examples:\n"
-            '  fs(op="write", path="cortex://notes/system/threads/foo.md", content="...")\n'
-            '  fs(op="write", path="notes/system/threads/foo.md", content="...")  # sandbox defaults to cortex\n'
-            '  fs(sandbox="cortex", op="read", path="notes/system/specs/foo.md")\n\n'
-        )
-        _fs_find_blurb = (
-            "``find`` (filename glob) and ``search`` ``mode=filename`` are "
-            "/mcp/code (/ workspaces) capabilities only — not on /mcp/life.\n\n"
-        )
-        _fs_search_blurb = (
-            "**Literal content search (cortex):** ``op=search`` scans file "
-            "*contents* with a case-sensitive regex — NOT semantic retrieval. "
-            "Pass the pattern in ``content`` (not ``pattern``). ``path`` may "
-            "be a file or directory (e.g. ``ephemeral/handoffs/`` for "
-            "bug-class token sweeps). ``mode`` accepts ``auto`` or "
-            "``content`` only; ``filename`` is rejected on cortex. For "
-            "meaning-based lookup use ``rag(op=search, …)`` or "
-            "``cortex(tool=search, …)`` — not ``fs`` search.\n\n"
-            'Example: ``fs(op="search", path="ephemeral/handoffs/", '
-            'content="--cdp-url")``\n\n'
-        )
-    else:
-        _fs_sandbox_intro = (
-            "File I/O across sandboxes (cortex, workspaces). `op` is REQUIRED; "
-            "`sandbox` is optional when `path` carries a Share URI scheme.\n\n"
-            "Share URI grammar (canonical cross-resident refs):\n"
-            "  workspaces://{repo}/{rel}  — repository source, tasks, docs\n"
-            "  cortex://{rel}             — notes, agent-skills, dropbox, uploads\n\n"
-            "Examples:\n"
-            '  fs(op="read", path="cortex://notes/system/specs/foo.md")\n'
-            '  fs(op="read", path="workspaces://universal-llm-gateway/tasks/specs/foo.md")  # legacy back-compat\n'
-            '  fs(sandbox="workspaces", op="read", path="universal-llm-gateway/libs/foo.py")\n\n'
-        )
-        _fs_find_blurb = (
-            "``find`` (workspaces only): locate files by name/glob — use instead of\n"
-            "``search`` for filenames. ``search`` scans file *contents* with a regex.\n\n"
-        )
-        _fs_search_blurb = (
-            "**Literal content search:** ``op=search`` is case-sensitive regex "
-            "over file contents (cortex + workspaces) — NOT semantic retrieval. "
-            "Pattern goes in ``content=``. For meaning-based lookup use "
-            "``rag(op=search, …)`` or ``cortex(tool=search, …)``.\n\n"
-        )
-    _fs_tool_description = (
-        f"{_fs_sandbox_intro}"
-        "`read` is unified across sandboxes: source files plus text-oriented\n"
-        "document formats such as PDF, DOCX, ODT, EML, and HTML can be read in\n"
-        "text mode from `cortex` or `workspaces`. Optional `offset` (0-based lines\n"
-        "to skip) and `limit` (max lines) return a bounded line window on decoded\n"
-        "text — response adds `line_range`, `total_lines`, and `truncated` when\n"
-        "either param is non-zero; binary reads ignore the range and set\n"
-        "`line_range_applied: false`. Image files, archives, and other\n"
-        "binary formats auto-route to base64 even without `binary=True` — reading a\n"
-        "`.png`, `.jpg`, or archive returns {content_base64, auto_binary: true}\n"
-        "rather than corrupted text. Pass `binary=True` explicitly when you need base64\n"
-        "for an arbitrary file type or to make the intent clear. Use `write_binary`\n"
-        "(cortex sandbox only) to stage base64-encoded binary files (PDFs, images)\n"
-        "— pass the base64 string as `content`. Use `move` to rename or relocate\n"
-        "a file within the selected sandbox. Prefer the markdown ops for large\n"
-        "structured docs when you need sections/TOC; for PDFs, ``md_list`` / ``md_read``\n"
-        "/ ``md_to_dict`` use the embedded outline (TOC) with coordinate-clipped\n"
-        "page regions — not ATX markdown from ``pymupdf4llm``.\n\n"
-        "**PDF extraction**: Default uses pymupdf4llm (prose-oriented markdown).\n"
-        "For tabular or columnar PDFs (statements, invoices, ledger exports),\n"
-        'prefer ``finance(op="inspect", path=...)`` which uses pdfplumber and\n'
-        'preserves table structure, or ``dispatch(tool="extract_document", ...)``\n'
-        "for scanned documents needing OCR sidecars. PDF reads include an\n"
-        "``extraction`` field with method info and alternative suggestions.\n\n"
-        "Responses dual-carry `path` (sandbox-relative) and `uri` (canonical Share URI).\n"
-        "Host mount paths are accepted at ingress and normalized with an advisory;\n"
-        "egress never returns absolute mount paths.\n\n"
-        'Use op="list" for directories; op="read" on a directory path returns an error.\n\n'
-        f"{_fs_find_blurb}"
-        f"{_fs_search_blurb}"
-        "Write responses (``write``, ``replace``, ``append``, ``prepend``,\n"
-        "``insert_at_line``, ``write_binary``) include ``written_sha256``: bare\n"
-        "lowercase hex of the resulting file bytes (``write_binary`` hashes the\n"
-        "decoded bytes written). Callers compose ``sha256:`` / ``spec_sha256:``\n"
-        "prefixes when citing hashes on assertions — the field itself has no prefix.\n"
-        "Read-only ops do not return ``written_sha256``. Read responses (``read``)\n"
-        "include ``read_sha256``: bare lowercase hex of the on-disk source file\n"
-        "bytes, computed before text decode, format conversion, or offset/limit\n"
-        "windowing. When ``offset``/``limit`` slice the returned ``content``,\n"
-        "``read_sha256`` still covers the full source file. Callers compose\n"
-        "``sha256:`` / ``spec_sha256:`` prefixes when citing — the field itself\n"
-        "has no prefix.\n\n"
-        f"{_fs_standard_ops_doc}\n\n"
-        f"{md_section_op_doc()}"
-    )
+    _fs_tool_description = build_fs_tool_description(surface)
 
     @mcp.tool(title="File I/O (Sandboxed)", description=_fs_tool_description)
     def fs(
@@ -442,236 +317,33 @@ def _build_server(
     ) -> dict[str, Any]:
         """Sandboxed file I/O (cortex, workspaces). Full catalog in tool description."""
         try:
-            return _fs_impl(
-                op,
-                sandbox,
-                path,
-                paths,
-                content,
-                target,
-                target_sandbox,
-                line,
-                section,
-                all_occurrences,
-                include_untracked,
-                binary,
-                max_depth,
-                offset,
-                limit,
-                expected_sha256,
-                if_absent,
-                heading,
-                level,
-                position,
-                mode,
-            )
-        except Exception as exc:
-            return _tool_error_envelope("fs", op, exc)
-
-    def _fs_impl(
-        op: str,
-        sandbox: str,
-        path: str,
-        paths: list[str] | None,
-        content: str,
-        target: str,
-        target_sandbox: str,
-        line: int,
-        section: str,
-        all_occurrences: bool,
-        include_untracked: bool,
-        binary: bool,
-        max_depth: int,
-        offset: int,
-        limit: int,
-        expected_sha256: str,
-        if_absent: bool,
-        heading: str = "",
-        level: int = 0,
-        position: str = "",
-        mode: str = "",
-    ) -> dict[str, Any]:
-        if not op:
-            return {"error": "'op' is required"}
-        if mode and mode not in SEARCH_MODES:
-            return {
-                "error": (
-                    f"Invalid mode: {mode!r}. Accepted values: auto (default — "
-                    "heuristic routing), content (force content regex search), "
-                    "filename (glob filename find, workspaces only)."
-                )
-            }
-
-        ingress_meta: dict[str, Any] = {}
-        effective_sandbox = apply_life_sandbox_default(
-            surface=surface,
-            sandbox=sandbox,
-            path=path,
-        )
-        effective_path = path
-        if path.strip():
-            from implement_admission.closeout_helpers import cortex_files_root
-            from implement_admission.scheme_resolve import resolve_fs_ingress
-
-            # Path-arg for_write: mutating single-path ops True; move/copy
-            # source stays False (target resolved per-arg in ops / cross-sandbox).
-            _path_write_ops = frozenset(
-                {
-                    "write",
-                    "append",
-                    "prepend",
-                    "replace",
-                    "insert_at_line",
-                    "write_binary",
-                    "append_binary",
-                    "delete",
-                    "md_replace",
-                    "md_append",
-                    "md_insert",
-                    "md_delete",
-                }
-            )
-            try:
-                ingress = resolve_fs_ingress(
-                    path,
-                    sandbox=effective_sandbox or None,
-                    cortex_root=cortex_files_root(),
-                    for_write=op in _path_write_ops,
-                )
-            except ValueError as exc:
-                return {"error": str(exc)}
-            effective_sandbox = ingress.sandbox
-            effective_path = ingress.rel_path
-            if ingress.path_input_normalized:
-                ingress_meta["path_input_normalized"] = True
-            if ingress.normalization_advisory:
-                ingress_meta["normalization_advisory"] = ingress.normalization_advisory
-
-        if effective_sandbox not in valid_sandboxes:
-            return {"error": fs_missing_sandbox_hint(path, surface=surface)}
-        if target_sandbox and target_sandbox not in valid_sandboxes:
-            return {
-                "error": (
-                    "target_sandbox must be 'cortex' or 'workspaces', "
-                    f"got {target_sandbox!r}"
-                )
-            }
-        if surface == "life":
-            if target_sandbox == "workspaces":
-                return life_workspaces_fs_refusal()
-            if (
-                effective_sandbox == "workspaces"
-                and op not in LIFE_WORKSPACES_READ_OPS
-            ):
-                return life_workspaces_fs_refusal(op)
-
-        # Uniform param-contract guard (todo:fs-dispatch-param-contract-audit):
-        # reject confusable selector params an op does not consume, and missing
-        # destructive-default selectors, at the single fs chokepoint — before any
-        # of the three dispatch paths. Generalizes the assertion-21250 fix.
-        contract_error = validate_op_params(
-            op,
-            {
-                "target": target,
-                "section": section,
-                "line": line,
-                "heading": heading,
-                "level": level,
-                "position": position,
-                "all_occurrences": all_occurrences,
-                "mode": mode,
-            },
-        )
-        if contract_error is not None:
-            return contract_error
-
-        if op.startswith("md_"):
-            md_fn = overflow_registry.get("markdown")
-            if md_fn is None:
-                return {"error": "markdown tool not available"}
-            md_op = md_op_map.get(op)
-            if md_op is None:
-                valid = ", ".join(sorted(md_op_map))
-                return {"error": f"Unknown markdown op: {op!r}. Available: {valid}"}
-            result = md_fn(
-                op=md_op,
-                path=effective_path,
-                sandbox=effective_sandbox,
-                section=section,
-                content=content,
-                heading=heading,
-                level=level,
-                position=position,
-            )
-            if isinstance(result, dict) and "error" not in result:
-                result.update(ingress_meta)
-            return result
-
-        if op == "copy" and target_sandbox and target_sandbox != effective_sandbox:
-            if not effective_path:
-                return {"error": "'path' is required for copy"}
-            if not target:
-                return {"error": "'target' is required for copy"}
-            result = copy_between_sandboxes_impl(
-                effective_sandbox,
-                effective_path,
-                target_sandbox,
-                target,
-            )
-            result["_next"] = FS_WORKFLOW_HINTS["copy"]
-            result.update(ingress_meta)
-            return result
-
-        if effective_sandbox == "workspaces":
-            result = dispatch_workspaces_op(
-                op,
-                effective_path,
-                paths,
-                content,
-                target,
-                line,
-                all_occurrences,
-                include_untracked,
-                binary,
-                max_depth,
-                offset,
-                limit,
-                overflow_registry,
-                FS_WORKFLOW_HINTS,
-                mode=mode,
-            )
-            if isinstance(result, dict) and "error" not in result:
-                result.update(ingress_meta)
-            return result
-
-        tool_name = sandbox_tool[effective_sandbox]
-        fn = overflow_registry.get(tool_name)
-        if fn is None:
-            return {"error": f"{tool_name} tool not available"}
-        # Catch ValueError from the cortex dispatcher (raises for unknown ops /
-        # missing params) so both sandbox paths return uniform {error: str} dicts.
-        # ∀ non-ValueError (I/O, etc.) still propagates to the outer envelope.
-        try:
-            result = fn(
+            return fs_impl(
+                surface=surface,
+                overflow_registry=overflow_registry,
                 op=op,
-                path=effective_path,
-                paths=paths or [],
+                sandbox=sandbox,
+                path=path,
+                paths=paths,
                 content=content,
                 target=target,
+                target_sandbox=target_sandbox,
                 line=line,
+                section=section,
                 all_occurrences=all_occurrences,
+                include_untracked=include_untracked,
                 binary=binary,
+                max_depth=max_depth,
                 offset=offset,
                 limit=limit,
                 expected_sha256=expected_sha256,
                 if_absent=if_absent,
+                heading=heading,
+                level=level,
+                position=position,
                 mode=mode,
             )
-            if isinstance(result, dict) and "error" not in result:
-                result.update(ingress_meta)
-            return result
-        except ValueError as exc:
-            return {"error": str(exc)}
+        except Exception as exc:
+            return _tool_error_envelope("fs", op, exc)
 
     rag_op_tool: dict[str, str] = {
         "search": "rag_search",

@@ -7,9 +7,10 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-Contract = Literal["answer", "investigate", "implement", "verify"]
+Contract = Literal["answer", "confer", "investigate", "implement", "verify"]
 Disposition = Literal[
     "answered",
+    "conferred",
     "dispatched-and-relayed",
     "needs-attended",
     "declined",
@@ -29,7 +30,7 @@ _EFFORT_ALIASES: dict[str, str] = {
     "extra_high": "xhigh",
     "extrahigh": "xhigh",
 }
-_CONTRACTS = frozenset({"answer", "investigate", "implement", "verify"})
+_CONTRACTS = frozenset({"answer", "confer", "investigate", "implement", "verify"})
 
 
 def resolve_desired_model(
@@ -47,6 +48,7 @@ def resolve_desired_model(
     if raw == "auto":
         by_contract = {
             "answer": "cursor/composer-2.5",
+            "confer": "cursor/grok-4.5",
             "investigate": "cursor/grok-4.5",
             "implement": "cursor/composer-2.5",
             "verify": "cursor/composer-2.5",
@@ -118,6 +120,7 @@ def resolve_contract_disposition(contract: str | None) -> dict[str, Any]:
         }
     hints: dict[str, Disposition] = {
         "answer": "answered",
+        "confer": "conferred",
         "investigate": "dispatched-and-relayed",
         "implement": "dispatched-and-relayed",
         "verify": "dispatched-and-relayed",
@@ -135,7 +138,7 @@ def resolve_handoff_contract(contract: str | None) -> str:
     raw = (contract or "answer").strip().lower() or "answer"
     if raw == "implement":
         return "pure-mechanical"
-    if raw == "investigate":
+    if raw in {"investigate", "confer"}:
         return "light-bounded"
     if raw == "verify":
         return "light-bounded"
