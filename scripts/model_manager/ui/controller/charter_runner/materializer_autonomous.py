@@ -12,6 +12,14 @@ fire R-admit via consult_role: r_admit CONSULT_PENDING (consult seat owns primar
 services for deploy-verify, and run a capped revise loop. The substrate separation
 for R-admit is the sole thing that keeps autonomous R honest (autonomous !=
 self-certify); see ``cortex://notes/system/specs/autonomous-path-sim-charter.md``.
+
+``decision:densify-abstraction-layering`` supersedes path-sim ratification windows
+for codework, but this packet's G1-G6 prose *is* the path-sim arc and its R
+independence is load-bearing for unattended runs — swapping it for the layer
+contract is the tick kernel rewrite's job, not a floor edit
+(``cortex://notes/system/specs/charter-tick-kernel-rewrite.md``). The attended
+generate/handoff floor in ``materializer.py`` already routes codework steps to the
+``densify-abstraction-layering`` skill.
 """
 
 from __future__ import annotations
@@ -19,7 +27,11 @@ from __future__ import annotations
 from universal_logging import get_logger
 
 from .checkpoint_parse import ParsedCheckpoint
-from .checkpoint_schema import append_footer_to_packet, footer_kwargs_for_window
+from .checkpoint_schema import (
+    append_footer_to_packet,
+    footer_kwargs_for_window,
+    output_format_footer_requirement,
+)
 from .executor_defaults import DEFAULT_MODEL, DEFAULT_MODEL_KNOBS
 from .materializer import _work_summary, handoff_subject, materialize_resume_packet
 from .materializer_autonomous_arc import autonomous_arc_guidance
@@ -123,6 +135,11 @@ single `todo:<slug>`, else the machine fails closed to judgment. Revise rows
 (G4a/G4b/G4c) stay judgment: probe-fail windows post a CHECKPOINT and no file
 change, which `contract=implement` would label degraded. Undeclared ⇒ G-ordinal
 heuristic, and anything ambiguous ⇒ judgment.
+[steps-lane-annotations] Steps titles MUST carry machine lane tokens
+(`[consult:r_admit]`, `[consult:judgment_gap]`, `[implement]`, `[inline]`,
+`[judgment]`). The charter tick classifier owns window_kind from the first
+open annotated row — CONSULT_PENDING on Next-pickup is a cross-check only.
+A G4 implement window MUST NOT mark a Steps row annotated `[consult:*]` as done.
 [stale-r-corpus-sha] On CONSULT_PENDING + consult_role: r_admit, Sidecars MUST pin
 the live dense-spec hash on the **same row** as the dense-spec URI
 (`Dense spec: cortex://… · spec_sha256:<64-hex>`). Machine pre-fire refuses
@@ -171,7 +188,11 @@ above as that step requires. Stay inside the gated Next-pickup.
    prefix; put ``CONSULT_PENDING`` in the body + Next-pickup, not as the subject verb.
    Required sections inline: ## Steps, ## Frictions, ## Sidecars, WIP, Next-pickup,
    Scoreboard URI, RESUME footer, ## What happened (plain) (layman window summary —
-   no gate IDs or assertion hashes). **WIP body (BINDING):** under
+   no gate IDs or assertion hashes). **Steps lane tokens (BINDING):** each G-row
+   title carries `[consult:r_admit]`, `[consult:judgment_gap]`, `[implement]`,
+   `[inline]`, or `[judgment]` — e.g. `3. [ ] G3 — R-admit · [consult:r_admit]`.
+   Post CONSULT_PENDING on Next-pickup as cross-check when stopping for consult.
+   **WIP body (BINDING):** under
    ``## WIP / In-flight`` write exactly ``_None this window._`` or bare ``none``
    when idle — the tick parser treats FOL prose ``WIP=none`` as eligible now, but
    prefer the silence marker. Do NOT invent freeform WIP tokens
@@ -214,13 +235,16 @@ project_ask at G3 (consult seat owns primary cdp/; project_ask = escape).
 </mcp_capabilities>"""
 
 
-def _output_format(root_id: str) -> str:
+def _output_format(root_id: str, window_index: int) -> str:
+    window_id = f"charter-{root_id}-w{window_index}"
+    footer_req = output_format_footer_requirement(window_id=window_id)
     return f"""\
 <output_format>
 Post the CHECKPOINT on agent-bus:{root_id} with from=cursor-sdk. Include the
 CHECKPOINT turn number + scoreboard URI in the worker closeout. On a failed
 deploy-verify probe, the CHECKPOINT's gated Next-pickup is the next revise step —
 NOT a failure status. Then stop. Agent for friction filing: cursor-sdk.
+{footer_req}
 </output_format>"""
 
 
@@ -273,7 +297,7 @@ def materialize_autonomous_packet(
         revise_cap=revise_cap,
     )
     corpus = _corpus(root_id, scoreboard_uri)
-    output = _output_format(root_id)
+    output = _output_format(root_id, window_index)
     body = f"""\
 {_front_matter(source_ref)}{scope}
 {invariants}

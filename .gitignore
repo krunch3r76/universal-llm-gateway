@@ -193,14 +193,9 @@ README_REVISED.md
 !services/universal-stargate/systems/federation/README.md
 !agent-surface/
 !agent-surface/**/*.md
-!notes/
-!notes/system/
-!notes/system/specs/
-!notes/system/specs/*.md
-!notes/system/verifications/
-!notes/system/verifications/*.md
-!notes/system/threads/
-!notes/system/threads/role-schema-migration-seed.md
+
+# Cortex notes tree — lives on disk / cortex://, not in git
+notes/
 
 # Internal architecture/proposal notes
 **/proposals/

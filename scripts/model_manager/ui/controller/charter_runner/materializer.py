@@ -18,7 +18,11 @@ from .checkpoint_parse import (
     Step,
     first_actionable_step,
 )
-from .checkpoint_schema import append_footer_to_packet, footer_kwargs_for_window
+from .checkpoint_schema import (
+    append_footer_to_packet,
+    footer_kwargs_for_window,
+    output_format_footer_requirement,
+)
 from .executor_defaults import DEFAULT_MODEL, DEFAULT_MODEL_KNOBS
 
 logger = get_logger(__name__)
@@ -31,7 +35,13 @@ _DENSIFY_FLOOR = (
     "- Use the `orchestrator-workflow` skill "
     "(canonical slug — seat self-fetches; ¬ fs-read skill body)\n"
     "- Use the `consult-routing` skill "
-    "(canonical slug — seat self-fetches; ¬ fs-read skill body)"
+    "(canonical slug — seat self-fetches; ¬ fs-read skill body)\n"
+    "- Use the `densify-abstraction-layering` skill when this window's step "
+    "changes the codebase (canonical slug — seat self-fetches; ¬ fs-read skill "
+    "body): enter at the highest still-open layer of architecture → frame → "
+    "densify → check → implement; ratification is inherited from the layer "
+    "above, so a mechanical leg goes straight to implement and ¬ opens an "
+    "R-admit / R-after path-sim window (decision:densify-abstraction-layering)"
 )
 
 _IMPLICATION_ARROW_RE = re.compile(
@@ -227,14 +237,17 @@ failure.
 </task_guidance>"""
 
 
-def _output_format(root_id: str, admission_mode: AdmissionMode) -> str:
+def _output_format(root_id: str, admission_mode: AdmissionMode, window_index: int) -> str:
     from_agent = "cursor" if admission_mode == "handoff" else "cursor-sdk"
     friction_agent = from_agent
+    window_id = f"charter-{root_id}-w{window_index}"
+    footer_req = output_format_footer_requirement(window_id=window_id)
     return f"""\
 <output_format>
 Post the CHECKPOINT on agent-bus:{root_id} with from={from_agent}. Include the
 CHECKPOINT turn number + scoreboard URI in the worker closeout. Then stop.
 Agent for friction filing: {friction_agent}.
+{footer_req}
 </output_format>"""
 
 
@@ -274,7 +287,7 @@ def materialize_resume_packet(
         scoreboard_line=scoreboard_line,
         admission_mode=admission_mode,
     )
-    output = _output_format(root_id, admission_mode)
+    output = _output_format(root_id, admission_mode, window_index)
     body = f"""\
 {scope}
 {invariants}
@@ -298,10 +311,8 @@ def handoff_subject(
 ) -> str:
     if admission_mode == "handoff":
         return (
-            f"Charter-runner window {window_index} — agent-bus:{root_id} "
-            "(attended IDE)"
+            f"Charter-runner window {window_index} — agent-bus:{root_id} (attended IDE)"
         )
     return (
-        f"Charter-runner window {window_index} — agent-bus:{root_id} "
-        f"({DEFAULT_MODEL})"
+        f"Charter-runner window {window_index} — agent-bus:{root_id} ({DEFAULT_MODEL})"
     )

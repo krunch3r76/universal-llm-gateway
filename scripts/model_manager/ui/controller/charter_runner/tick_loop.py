@@ -290,13 +290,16 @@ class CharterRunnerTickLoop:
         in_flight = 0
         skipped_by_reason: dict[str, int] = {}
         state_closes_this_tick = 0
+        closed_attributions: list[str] = []
         old_decisions: dict[str, str] = {}
         for thread in roots:
             root_id = str(thread.get("id") or "")
             if not root_id:
                 continue
             turns = await bus_client.fetch_turns(root_id)
-            await harvest_completed_windows(root_id, turns)
+            closed_attributions.extend(
+                await harvest_completed_windows(root_id, turns)
+            )
             await maybe_heal_admit_intent_orphan(root_id, turns, self._caps)
             decision = evaluate_root(
                 root_id, turns, self._caps, env_snapshot=env_snapshot
@@ -376,6 +379,7 @@ class CharterRunnerTickLoop:
                 in_flight=in_flight,
                 admitted=admitted,
                 skipped_by_reason=skipped_by_reason,
+                closed_attributions=closed_attributions or None,
             )
             await scan_operator_bus_turns()
         except Exception:  # noqa: BLE001 — pager must not abort tick

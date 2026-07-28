@@ -1,12 +1,13 @@
 """Build the depth-1 consult-seat six-block packet for one charter window.
 
 When the latest CHECKPOINT stop is ``CONSULT_PENDING``, the tick admits a consult
-seat — dual-wire under the same ``window_kind=consult``:
+seat — dual-role under the same ``window_kind=consult`` host wire
+(``consult_host_generate_body`` → cursor-sdk generate ``read_only``):
 
-- ``consult_role: judgment_gap`` → web-consult handoff (scope-lock harvest, no
-  R-admit transport).
-- ``consult_role: r_admit`` → unattended cursor-sdk generate; primary R host is
-  ``team_dispatch(model=cdp/opus-5)`` with MCP ``project_ask`` as escape only.
+- ``consult_role: judgment_gap`` → host fires ``team_dispatch(model=cdp/opus-5)``
+  for the path-sim judgment consult (auto-wake; no ``push_reminder`` handoff).
+- ``consult_role: r_admit`` → host fires ``team_dispatch(model=cdp/opus-5)`` for
+  R-admit; MCP ``project_ask`` = escape only.
 
 Consult seats must not dispatch nested consults (depth-1 only).
 """
@@ -14,7 +15,11 @@ Consult seats must not dispatch nested consults (depth-1 only).
 from __future__ import annotations
 
 from .checkpoint_parse import ParsedCheckpoint
-from .checkpoint_schema import append_footer_to_packet, footer_kwargs_for_window
+from .checkpoint_schema import (
+    append_footer_to_packet,
+    footer_kwargs_for_window,
+    output_format_footer_requirement,
+)
 from .residue_fingerprint import normalize_next_pickup
 
 ConsultRole = str  # r_admit | judgment_gap
@@ -27,10 +32,12 @@ def _is_r_admit(parsed: ParsedCheckpoint) -> bool:
 def _scope_judgment(window_index: int, root_id: str) -> str:
     return f"""\
 <scope>
-Goal: Charter-runner CONSULT window {window_index} — external consult on
-agent-bus:{root_id}. The autonomous holder posted CONSULT_PENDING; this window
-is the depth-1 consult seat only (single round, no nested consult dispatch).
-Default executor: web-consult (web-anthropic).
+Goal: Charter-runner CONSULT window {window_index} — external judgment consult on
+agent-bus:{root_id}. The autonomous holder posted CONSULT_PENDING with
+consult_role: judgment_gap; this window owns primary consult via
+team_dispatch(model=cdp/opus-5) submit→poll_hint→provenance (depth-1 only —
+no nested consult dispatch). Default executor: cursor-sdk Grok (unattended
+generate wire; Opus reviewer via cdp/ model-endpoint). MCP project_ask = escape.
 </scope>"""
 
 
@@ -49,21 +56,34 @@ generate wire; Opus reviewer via cdp/ model-endpoint). MCP project_ask = escape.
 def _invariants_judgment(root_id: str) -> str:
     return f"""\
 <invariants>
-[consult-boundary] CONSULT_PENDING stop on agent-bus:{root_id} — corpus +
-scope-lock fields are pinned on the root CHECKPOINT; do not re-open scope.
+[consult-boundary] CONSULT_PENDING + consult_role: judgment_gap on
+agent-bus:{root_id} — corpus + scope-lock fields are pinned on the root
+CHECKPOINT; do not re-open scope.
 [scope-lock] the consult ask is path-sim-shaped: Question (verbatim) · Out-of-scope
 · detent · layers (L0/L1/L2 as declared) · deliverable gate. Do not invent a
 tick-local ask grammar.
-[depth-1] harvest exactly one consult reply; write verdict + consultant_family +
-consultant_substrate (+ consult_thread URI) onto the root CHECKPOINT / todo
-attrs; then STOP. This seat must NOT dispatch team_dispatch/cursor-sdk consults.
-[verdict-grammar] emit a path-sim merits verdict token (ADMIT | ADMIT_WITH_AMENDMENTS
-| RATIFY | RATIFY_WITH_CONDITIONS | RETURN | SCOPE-DRIFT) — same grammar R-admit
-uses so implement_ready / r_verdict_gate share one parser surface.
-[independence] you are the external consult seat — your family/substrate must
-differ from the autonomous cursor-sdk holder that fired CONSULT_PENDING.
-[window] end with exactly one CHECKPOINT on the root (from=web-anthropic or the
-resolved consult seat), then stop — no worker resume in this window.
+[consult-independence] fire the consult via team_dispatch(model=cdp/opus-5,
+contract=light-bounded) to web-anthropic Opus — a DIFFERENT substrate/family than
+the cursor-sdk seat running this window. Never self-answer the judgment gap.
+MCP project_ask is escape only (IF6 / satellite-direct).
+[sealed-unattended] CDP prompt MUST include the sealed unattended clause
+(a:26156 / claude-ai-cdp-navigation § Sealed / unattended): answer with best
+judgment; state assumptions; ¬ blocking wait for clarifying questions; ESCALATE
+flag allowed when self-resolution fails (see [escalate-channel]).
+[depth-1] cdp/ generate is the single depth-1 external boundary. Harvest one
+consult reply; write shared provenance (consult_thread, verdict,
+consultant_family, consultant_substrate) with consultant_family=anthropic /
+consultant_substrate=web-anthropic (reviewer family, not this firing seat).
+[escalate-channel] Sealed ¬ clarifying-questions forbids BLOCKING on a question,
+not forbidding an escalation flag. When Opus cannot self-resolve, CHECKPOINT
+verdict MAY be:
+  ESCALATE(reason=<one line>, minimal_question=<one line>, provisional_verdict=<token>)
+Opus still answers with best judgment + provisional_verdict; ESCALATE flags
+human confirm. Do not wait for human in-window.
+[OF2-resume] if the window ends mid-poll, Next-pickup MUST keep CONSULT_PENDING +
+consult_role: judgment_gap + poll_hint / from=cdp bus-turn so the next tick
+re-admits.
+[window] end with exactly one CHECKPOINT on the root, then stop — no worker resume.
 - Use the `consult-routing` skill (canonical slug — seat self-fetches)
 - Use the `agent-bus-discipline` skill (canonical slug — seat self-fetches)
 - Use the `path-sim` skill § Autonomous charter procession (consult-stop awareness)
@@ -80,8 +100,16 @@ to web-anthropic Opus — a DIFFERENT substrate/family than the cursor-sdk seat 
 this window. Never self-assess R. MCP project_ask is escape only (IF6 / satellite-direct).
 [sealed-unattended] R prompt MUST include the sealed unattended clause (a:26156 /
 claude-ai-cdp-navigation § Sealed / unattended): answer with best judgment; state
-assumptions; ¬ clarifying questions; ¬ wait for a human. Cowork Qs false-complete
+assumptions; ¬ blocking wait for clarifying questions; ESCALATE flag allowed when
+self-resolution fails (see [escalate-channel]). Cowork Qs false-complete
 the harvest — do NOT auto-reply from this seat or the charter-runner.
+[escalate-channel] Sealed ¬ clarifying-questions forbids BLOCKING on a question,
+not forbidding an escalation flag. When Opus cannot self-resolve, CHECKPOINT
+verdict MAY be:
+  ESCALATE(reason=<one line>, minimal_question=<one line>, provisional_verdict=<token>)
+Opus still answers with best judgment + provisional_verdict; ESCALATE flags
+human confirm. Do not wait for human in-window. Transport of the flag is
+pager/operator-proxy (out of this packet) — emit the shape so transport can carry it.
 [depth-1] cdp/ generate is the single depth-1 external boundary (cross-family
 model-endpoint ≠ nested SDK consult). Harvest one R reply; write the shared four-field
 consult schema via `r_verdict_gate.consult_provenance_from_r_admit` with
@@ -106,32 +134,48 @@ If refused: holder refreshes Sidecars (re-fs.read → rewrite hash → re-CHECKP
 </invariants>"""
 
 
-def _task_guidance_judgment(*, root_id: str, scoreboard_line: str) -> str:
+def _task_guidance_judgment(
+    *, root_id: str, scoreboard_line: str, identity_block: str
+) -> str:
     return f"""\
 <task_guidance>
 ## Resume step 0 (do first)
 1. Load consult-routing + agent-bus-discipline (§ Standing root threads) +
    path-sim (§ Autonomous charter procession — consult-stop awareness).
 2. {scoreboard_line}read the latest CHECKPOINT on agent-bus:{root_id} — confirm
-   CONSULT_PENDING and pinned scope-lock: Question verbatim, OOS, detent, layers,
-   deliverable gate, plus corpus manifest.
+   CONSULT_PENDING + consult_role: judgment_gap and pinned scope-lock: Question
+   verbatim, OOS, detent, layers, deliverable gate, plus corpus manifest.
 
-## Consult work (depth-1)
-- Answer the pinned Question; respect declared Out-of-scope; honor detent/layers
-  and the deliverable gate (do not invent a parallel ask shape).
-- Post your reply on the consult thread referenced by the CHECKPOINT (or create
-  one and cite agent-bus:{{tid}} in the root CHECKPOINT Sidecars).
+{identity_block}
+## Judgment consult work (this seat owns submit→poll→provenance)
+### Primary — team_dispatch model=cdp/opus-5
+- Before fire: confirm the CDP prompt carries the sealed unattended clause
+  (best judgment · state assumptions · ¬ blocking wait on clarifying questions ·
+  ESCALATE allowed when self-resolution fails).
+- If resuming: agent_bus.wait from the pinned poll_hint / from=cdp bus-turn until
+  a qualifying cdp turn lands (reply or DELIVERY FAILED). Long running ≠ stalled.
+- If fresh: team_dispatch(op=generate, model=cdp/opus-5, contract=light-bounded,
+  prompt=<scope-locked Question + OOS + detent + layers + corpus>,
+  dispatch_thread_id=…) → poll via agent_bus.wait from poll_hint (from_agent=cdp).
 - Record on the root CHECKPOINT / todo attrs the **shared** provenance schema
   (same fields G3 R-admit writes): consult_thread, verdict, consultant_family,
   consultant_substrate (and evidence URI for the reply).
+  consultant_family=anthropic / consultant_substrate=web-anthropic.
+- On incomplete poll: Next-pickup = CONSULT_PENDING + consult_role: judgment_gap +
+  poll_hint / from=cdp bus-turn anchor (OF2).
+
+### Escape — MCP project_ask (IF6 / satellite-direct / holder emergency only)
+- project_ask(op=submit, prompt_uri or inline prompt, converse=true,
+  no_project_uuid=true, model=opus-5) → poll to content_proof/archive_uri.
 
 ## Acceptance criteria
 1. One consult reply harvested with resolvable evidence URI.
-2. Root CHECKPOINT updated with shared consult provenance fields for implement_ready.
+2. Root CHECKPOINT updated with shared consult provenance fields.
 3. Stop after CHECKPOINT — do NOT fire nested consults or cursor-sdk workers.
 
 ## Stop conditions
-CHECKPOINT boundary · unresolvable consult transport · depth>1 ask ⇒ BLOCKED.
+CHECKPOINT boundary · unresolvable cdp/ transport · IF6 tripwire ⇒ BLOCKED ·
+ESCALATE when self-resolution fails (do not block in-window on a question).
 </task_guidance>"""
 
 
@@ -161,7 +205,8 @@ def _task_guidance_r_admit(
 ## R-admit work (this seat owns submit→poll→E2)
 ### Primary — team_dispatch model=cdp/opus-5
 - Before fire: confirm the R prompt carries the sealed unattended clause
-  (best judgment · state assumptions · ¬ clarifying questions · ¬ wait for human).
+  (best judgment · state assumptions · ¬ blocking wait on clarifying questions ·
+  ESCALATE allowed when self-resolution fails).
 - If resuming: agent_bus.wait from the pinned poll_hint / from=cdp bus-turn until
   a qualifying cdp turn lands (reply or DELIVERY FAILED). Long running ≠ stalled.
 - If fresh: team_dispatch(op=generate, model=cdp/opus-5, contract=light-bounded,
@@ -186,7 +231,8 @@ def _task_guidance_r_admit(
 3. Stop after CHECKPOINT — no nested SDK consult fan-out.
 
 ## Stop conditions
-CHECKPOINT boundary · unresolvable cdp/ transport · IF6 tripwire ⇒ BLOCKED.
+CHECKPOINT boundary · unresolvable cdp/ transport · IF6 tripwire ⇒ BLOCKED ·
+ESCALATE when self-resolution fails (do not block in-window on a question).
 </task_guidance>"""
 
 
@@ -204,42 +250,45 @@ Design: {design}.
 </corpus>"""
 
 
-_MCP_CAPABILITIES_JUDGMENT = """\
+_MCP_CAPABILITIES_CONSULT_HOST = """\
 <mcp_capabilities>
 LIFE/CORTEX MCP: ON — cortex, agent_bus, fs (cortex sandbox).
-CODE/VORTEX MCP: ON — workspaces fs for read-only corpus inspection.
-This consult seat must NOT use team_dispatch generate/cursor-sdk or nested SDK
-consult under the autonomous holder (forbidden — depth-1 window boundary only).
-</mcp_capabilities>"""
-
-
-_MCP_CAPABILITIES_R_ADMIT = """\
-<mcp_capabilities>
-LIFE/CORTEX MCP: ON — cortex, agent_bus, fs (cortex sandbox).
-CODE/VORTEX MCP: ON — workspaces fs, team_dispatch (primary R-admit:
+CODE/VORTEX MCP: ON — workspaces fs, team_dispatch (primary consult:
 model=cdp/opus-5), agent_bus wait/poll_hint, project_ask (escape only).
 This seat owns cdp/ submit→poll_hint (depth-1 external boundary). Nested
 cursor-sdk consult fan-out is forbidden in this window.
 </mcp_capabilities>"""
 
 
-def _output_format_judgment(root_id: str) -> str:
+def _output_format_judgment(root_id: str, window_index: int) -> str:
+    window_id = f"charter-{root_id}-w{window_index}"
+    footer_req = output_format_footer_requirement(window_id=window_id)
     return f"""\
 <output_format>
 Post the CHECKPOINT on agent-bus:{root_id} with consult provenance fields filled.
 Include consult_thread URI + verdict + consultant_family + consultant_substrate.
+On incomplete poll preserve CONSULT_PENDING + consult_role: judgment_gap +
+poll_hint / from=cdp bus-turn (or execution_id when on project_ask escape).
+When self-resolution fails, emit ESCALATE(reason=…, minimal_question=…,
+provisional_verdict=…) alongside best-judgment answer — do not block in-window.
 Then stop — the next tick admits the worker resume window.
+{footer_req}
 </output_format>"""
 
 
-def _output_format_r_admit(root_id: str) -> str:
+def _output_format_r_admit(root_id: str, window_index: int) -> str:
+    window_id = f"charter-{root_id}-w{window_index}"
+    footer_req = output_format_footer_requirement(window_id=window_id)
     return f"""\
 <output_format>
 Post the CHECKPOINT on agent-bus:{root_id} with the four shared consult provenance
 fields (consult_thread, verdict, consultant_family, consultant_substrate).
 On incomplete poll preserve CONSULT_PENDING + consult_role: r_admit + poll_hint /
 from=cdp bus-turn (or execution_id when on project_ask escape).
+When self-resolution fails, emit ESCALATE(reason=…, minimal_question=…,
+provisional_verdict=…) alongside best-judgment answer — do not block in-window.
 Then stop — the next tick re-admits R-admit consult or worker resume after proof.
+{footer_req}
 </output_format>"""
 
 
@@ -258,8 +307,8 @@ def materialize_consult_packet(
     )
     r_admit = _is_r_admit(parsed)
     footer = footer_kwargs_for_window(root_id, window_index)
+    identity_block = _window_identity_block(parsed)
     if r_admit:
-        identity_block = _window_identity_block(parsed)
         body = f"""\
 {_scope_r_admit(window_index, root_id)}
 {_invariants_r_admit(root_id)}
@@ -269,17 +318,21 @@ def materialize_consult_packet(
     identity_block=identity_block,
 )}
 {_corpus(root_id, scoreboard_uri, r_admit=True)}
-{_MCP_CAPABILITIES_R_ADMIT}
-{_output_format_r_admit(root_id)}
+{_MCP_CAPABILITIES_CONSULT_HOST}
+{_output_format_r_admit(root_id, window_index)}
 """
         return append_footer_to_packet(body, **footer)
     body = f"""\
 {_scope_judgment(window_index, root_id)}
 {_invariants_judgment(root_id)}
-{_task_guidance_judgment(root_id=root_id, scoreboard_line=scoreboard_line)}
+{_task_guidance_judgment(
+    root_id=root_id,
+    scoreboard_line=scoreboard_line,
+    identity_block=identity_block,
+)}
 {_corpus(root_id, scoreboard_uri, r_admit=False)}
-{_MCP_CAPABILITIES_JUDGMENT}
-{_output_format_judgment(root_id)}
+{_MCP_CAPABILITIES_CONSULT_HOST}
+{_output_format_judgment(root_id, window_index)}
 """
     return append_footer_to_packet(body, **footer)
 
@@ -295,7 +348,7 @@ def consult_subject(
         )
     return (
         f"Charter-runner consult window {window_index} — agent-bus:{root_id} "
-        "(CONSULT_PENDING — web-consult)"
+        "(CONSULT_PENDING — judgment_gap via cdp/opus-5)"
     )
 
 

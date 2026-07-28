@@ -169,16 +169,24 @@ _PRIMARY_TOOLS: set[str] = set(derive_surface_primary_tools("code"))
 
 def _discover_private_tools(
     mcp: FastMCP,
+    *,
+    surface: Surface = "code",
 ) -> list[str]:
     """Discover and register tools from ``tools.local/`` (gitignored private layer).
 
     Walks ``tools.local/`` for modules containing ``register_*_tools(mcp)``
     functions — same convention as the static ``tools/`` registrations.
+    On ``surface="life"`` only modules in ``LIFE_PRIVATE_TOOL_MODULES`` load;
+    code retains the full private tree.
     Returns a list of registered tool names for logging.
     """
     import importlib
     import inspect
     import pkgutil
+
+    from tools.local._life_private_allowlist import (  # noqa: PLC0415
+        LIFE_PRIVATE_TOOL_MODULES,
+    )
 
     registered: list[str] = []
     try:
@@ -190,7 +198,10 @@ def _discover_private_tools(
     for finder, mod_name, _is_pkg in pkgutil.iter_modules(
         pkg.__path__, prefix="tools.local."
     ):
-        if mod_name.rsplit(".", 1)[-1].startswith("_"):
+        short_name = mod_name.rsplit(".", 1)[-1]
+        if short_name.startswith("_"):
+            continue
+        if surface == "life" and short_name not in LIFE_PRIVATE_TOOL_MODULES:
             continue
         try:
             module = importlib.import_module(mod_name)
@@ -243,8 +254,7 @@ def _build_server(
     primary_tools = set(derive_surface_primary_tools(surface))
     mcp: FastMCP = FastMCP(f"gateway-tools-{surface}")
     register_tools_for_surface(mcp, surface)
-    if surface == "code":
-        _discover_private_tools(mcp)
+    _discover_private_tools(mcp, surface=surface)
 
     @mcp.tool(title="Server Health Check")
     def health() -> dict[str, str]:

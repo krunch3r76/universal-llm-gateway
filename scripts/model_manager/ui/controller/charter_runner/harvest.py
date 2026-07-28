@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import re
+
 from universal_logging import get_logger
 
+from pager_notify.tick import ClosedAttribution, task_hint_from_next_pickup
 from scripts.model_manager import observation_event as events
 
 from . import (
@@ -12,10 +15,94 @@ from . import (
     window_log,
 )
 from .checkpoint_body import resolve_checkpoint_body
+from .checkpoint_parse import parse_checkpoint
 from .eligibility import ADMISSION_SUBJECT_PREFIX
+from .harvest_footer_gate import reject_harvest_without_footer
 from .window_terminal_contract import after_window_terminal_harvested, is_tip_class
 
 logger = get_logger(__name__)
+
+_GATED_ID_RE = re.compile(r"\b([GR]\d+[a-z]?)\b")
+
+
+def _executor_slug_for_sms(
+    admission_mode: str,
+    *,
+    executor_lane: str | None,
+    consult_role: str | None,
+) -> str:
+    """Map admit mode + checkpoint lane to the SMS executor slug."""
+    del consult_role  # both consult roles host cdp/opus-5 as reviewer
+    mode = (admission_mode or "generate").strip().lower()
+    if mode == "consult":
+        # Both roles host CDP Opus as the cross-family reviewer (a:26476).
+        return "cdp/opus-5"
+    if mode == "handoff":
+        return "cursor"
+    if (executor_lane or "").strip().lower() == "implement":
+        return "cursor/composer-2.5"
+    return "cursor/grok-4.5"
+
+
+_CONSULT_ROLE_SNIFF_RE = re.compile(
+    r"consult_role:\s*(r_admit|judgment_gap)\b", re.IGNORECASE
+)
+
+
+def _consult_role_from_pickup(next_pickup: list[str]) -> str | None:
+    """Sniff consult_role from Next-pickup when parse leaves it unset."""
+    for item in next_pickup:
+        m = _CONSULT_ROLE_SNIFF_RE.search(item)
+        if m:
+            return m.group(1).lower()
+        if re.search(r"\bR-admit\b", item, re.IGNORECASE):
+            return "r_admit"
+    return None
+
+
+def attribution_for_harvested_window(
+    *,
+    root_id: str,
+    consumed_checkpoint_body: str,
+    admission_mode: str,
+    thread_slug: str = "",
+    completing_subject: str = "",
+    window_index: int = 0,
+    so_what: str = "",
+) -> ClosedAttribution | None:
+    """Build harvest-close provenance from the CHECKPOINT the window consumed."""
+    parsed = parse_checkpoint(consumed_checkpoint_body)
+    gid: str | None = None
+    for item in parsed.next_pickup:
+        m = _GATED_ID_RE.search(item)
+        if m:
+            gid = m.group(1)
+            break
+    if not gid:
+        return None
+    consult_role = parsed.consult_role or _consult_role_from_pickup(
+        parsed.next_pickup
+    )
+    executor_slug = _executor_slug_for_sms(
+        admission_mode,
+        executor_lane=parsed.executor_lane,
+        consult_role=consult_role,
+    )
+    return ClosedAttribution(
+        gid=gid,
+        executor_slug=executor_slug,
+        root_id=root_id,
+        thread_slug=thread_slug,
+        task_hint=task_hint_from_next_pickup(
+            parsed.next_pickup,
+            gid,
+            source_ref=parsed.source_ref,
+        ),
+        source_ref=parsed.source_ref or "",
+        checkpoint_subject=completing_subject,
+        window_index=window_index,
+        so_what=so_what,
+    )
 
 
 def _persist_residue_after_harvest(
@@ -33,7 +120,6 @@ def _persist_residue_after_harvest(
     produce a newer CHECKPOINT. Thrash detection needs the pair to straddle a
     window boundary.
     """
-    from .checkpoint_parse import parse_checkpoint
     from .residue_fingerprint import (
         load_residue_record,
         record_from_harvest,
@@ -136,8 +222,28 @@ def consumed_checkpoint(turns: list[dict], admission: dict) -> dict | None:
     return best
 
 
-async def harvest_completed_windows(root_id: str, turns: list[dict]) -> None:
-    """Append worker turns + CHECKPOINT for windows that closed since last tick."""
+async def harvest_completed_windows(
+    root_id: str, turns: list[dict]
+) -> list[ClosedAttribution]:
+    """Append worker turns + CHECKPOINT for windows that closed since last tick.
+
+    Returns SMS close attributions for windows newly harvested in this call.
+    """
+    attributions: list[ClosedAttribution] = []
+    thread_slug = ""
+    so_what = ""
+    try:
+        detail = await bus_client.fetch_thread(root_id)
+        thread_slug = str(detail.get("slug") or "")
+        so_what = str(detail.get("summary") or "")
+        if isinstance(detail.get("thread"), dict):
+            nested = detail.get("thread") or {}
+            if not thread_slug:
+                thread_slug = str(nested.get("slug") or "")
+            if not so_what:
+                so_what = str(nested.get("summary") or "")
+    except Exception:  # noqa: BLE001 — slug/so-what are optional SMS garnish
+        logger.debug("charter-runner harvest slug fetch failed root=%s", root_id)
     for admission, checkpoint in completed_windows(turns):
         meta = window_log.parse_admission_meta(str(admission.get("body") or ""))
         try:
@@ -146,6 +252,22 @@ async def harvest_completed_windows(root_id: str, turns: list[dict]) -> None:
             window_index = 0
         # Durable harvested markers (outside /tmp) make this restart-safe (A-R3-3).
         if window_index <= 0 or window_log.already_harvested(root_id, window_index):
+            continue
+        checkpoint_subject = str(checkpoint.get("subject") or "")
+        resolved_body = resolve_checkpoint_body(
+            str(checkpoint.get("body") or ""),
+            sidecar_uri=(
+                checkpoint.get("sidecar_uri")
+                if isinstance(checkpoint.get("sidecar_uri"), str)
+                else None
+            ),
+        )
+        if reject_harvest_without_footer(
+            root_id=root_id,
+            window_index=window_index,
+            checkpoint_subject=checkpoint_subject,
+            checkpoint_body=resolved_body,
+        ):
             continue
         worker_thread = str(meta.get("worker_thread") or "")
         worker_turns: list[dict] = []
@@ -169,12 +291,25 @@ async def harvest_completed_windows(root_id: str, turns: list[dict]) -> None:
         worker_closed: bool | None = None
         if worker_thread:
             try:
+                from pager_notify.so_what import compose_done_summary
+
+                worker_prior = ""
+                try:
+                    wdetail = await bus_client.fetch_thread(worker_thread)
+                    worker_prior = str(wdetail.get("summary") or "")
+                    if not worker_prior and isinstance(wdetail.get("thread"), dict):
+                        worker_prior = str(
+                            (wdetail.get("thread") or {}).get("summary") or ""
+                        )
+                except Exception:  # noqa: BLE001 — close still proceeds
+                    worker_prior = ""
                 await bus_client.close_worker_thread(
                     worker_thread,
-                    summary=(
-                        f"charter-runner window {window_index} complete — "
-                        f"root {root_id} CHECKPOINT "
-                        f"{checkpoint.get('subject') or ''}"
+                    summary=compose_done_summary(
+                        worker_prior or so_what,
+                        reason=(
+                            f"window {window_index} complete — root {root_id}"
+                        ),
                     ),
                 )
                 worker_closed = True
@@ -196,7 +331,7 @@ async def harvest_completed_windows(root_id: str, turns: list[dict]) -> None:
                 root_id=root_id,
                 window_index=window_index,
                 checkpoint_turn=turn_number(checkpoint),
-                checkpoint_subject=str(checkpoint.get("subject") or ""),
+                checkpoint_subject=checkpoint_subject,
                 checkpoint_body=resolved_body,
                 worker_turns=worker_turns,
                 worker_closed=worker_closed,
@@ -219,7 +354,7 @@ async def harvest_completed_windows(root_id: str, turns: list[dict]) -> None:
                 root_id=root_id,
                 window_index=window_index,
                 worker_thread=worker_thread,
-                checkpoint_subject=str(checkpoint.get("subject") or ""),
+                checkpoint_subject=checkpoint_subject,
                 checkpoint_body=str(checkpoint.get("body") or ""),
                 worker_turns=worker_turns,
                 worker_closed=worker_closed,
@@ -233,18 +368,30 @@ async def harvest_completed_windows(root_id: str, turns: list[dict]) -> None:
                     root_id,
                 )
             else:
+                consumed_body = resolve_checkpoint_body(
+                    str(consumed.get("body") or ""),
+                    sidecar_uri=(
+                        consumed.get("sidecar_uri")
+                        if isinstance(consumed.get("sidecar_uri"), str)
+                        else None
+                    ),
+                )
                 _persist_residue_after_harvest(
                     root_id=root_id,
-                    consumed_checkpoint_body=resolve_checkpoint_body(
-                        str(consumed.get("body") or ""),
-                        sidecar_uri=(
-                            consumed.get("sidecar_uri")
-                            if isinstance(consumed.get("sidecar_uri"), str)
-                            else None
-                        ),
-                    ),
+                    consumed_checkpoint_body=consumed_body,
                     admission_meta=meta,
                 )
+                attr = attribution_for_harvested_window(
+                    root_id=root_id,
+                    consumed_checkpoint_body=consumed_body,
+                    admission_mode=str(meta.get("admission_mode") or "generate"),
+                    thread_slug=thread_slug,
+                    completing_subject=checkpoint_subject,
+                    window_index=window_index,
+                    so_what=so_what,
+                )
+                if attr is not None:
+                    attributions.append(attr)
             await events.emit_manage_charter_tick_closed(
                 root=root_id,
                 window_index=window_index,
@@ -254,3 +401,4 @@ async def harvest_completed_windows(root_id: str, turns: list[dict]) -> None:
             )
         except Exception:  # noqa: BLE001 — transcript must not kill the tick
             logger.exception("charter-runner window_log append_closeout failed")
+    return attributions

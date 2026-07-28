@@ -7,7 +7,11 @@ Skill recipe: scope-lock → thin L2 → dissent beat → bind → implement →
 from __future__ import annotations
 
 from .checkpoint_parse import ParsedCheckpoint
-from .checkpoint_schema import append_footer_to_packet, footer_kwargs_for_window
+from .checkpoint_schema import (
+    append_footer_to_packet,
+    footer_kwargs_for_window,
+    output_format_footer_requirement,
+)
 from .executor_defaults import DEFAULT_MODEL, DEFAULT_MODEL_KNOBS
 from .materializer import _work_summary
 
@@ -87,7 +91,9 @@ full autonomous arc. Do not silently self-certify a wide bind under closed.
 </task_guidance>"""
 
 
-def _output_format(root_id: str) -> str:
+def _output_format(root_id: str, window_index: int) -> str:
+    window_id = f"charter-{root_id}-w{window_index}"
+    footer_req = output_format_footer_requirement(window_id=window_id)
     return f"""\
 <output_format>
 Post exactly one R12 CHECKPOINT on agent-bus:{root_id} (from=cursor-sdk) with
@@ -96,6 +102,7 @@ Post exactly one R12 CHECKPOINT on agent-bus:{root_id} (from=cursor-sdk) with
 If done under closed: Next-pickup empty; friction_close cited in Frictions or
 Precedents. If escalated: Next-pickup carries detent=standard|wide + gated step.
 Then stop — no auto-chain.
+{footer_req}
 </output_format>"""
 
 
@@ -128,7 +135,7 @@ def materialize_closed_detent_packet(
 cortex, agent_bus, team_dispatch, fs, manage (deploy-verify only), observability
 </mcp_capabilities>
 
-{_output_format(root_id)}
+{_output_format(root_id, window_index)}
 """
     return append_footer_to_packet(
         body, **footer_kwargs_for_window(root_id, window_index)

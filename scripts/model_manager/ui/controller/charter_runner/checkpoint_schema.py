@@ -74,6 +74,23 @@ class ValidationResult:
     errors: tuple[str, ...] = field(default_factory=tuple)
 
 
+def output_format_footer_requirement(*, window_id: str = "") -> str:
+    """Return-contract text for packet ``<output_format>`` and materializer output."""
+    wid_clause = (
+        f"window_id must be `{window_id}`."
+        if window_id
+        else "window_id must match this window (charter-{root_id}-w{window_index})."
+    )
+    return (
+        "Append exactly one ```charter-state``` fenced JSON block at the end of the "
+        "CHECKPOINT body. Required fields (identical to the inbound packet footer "
+        "schema §C.3): schema_version, status, next_pickup {gid, lane, executor}, "
+        "wip, consult {role, poll_hint, from}, revise_count, evidence "
+        "[{uri, sha256}], window_id, transition_id. Populate status, next_pickup, "
+        f"wip, consult, and evidence from the CHECKPOINT you post; {wid_clause}"
+    )
+
+
 def footer_kwargs_for_window(
     root_id: str,
     window_index: int,
@@ -236,5 +253,6 @@ __all__ = [
     "append_footer_to_packet",
     "emit_footer",
     "footer_kwargs_for_window",
+    "output_format_footer_requirement",
     "validate_checkpoint_footer",
 ]

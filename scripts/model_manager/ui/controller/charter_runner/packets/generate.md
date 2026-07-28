@@ -21,6 +21,7 @@ LIFE/CORTEX MCP: ON — cortex, agent_bus, fs.
 
 <output_format>
 Post CHECKPOINT on the charter root, then stop.
+Append exactly one ```charter-state``` fenced JSON block at the end of the CHECKPOINT body. Required fields (identical to the inbound packet footer schema §C.3): schema_version, status, next_pickup {gid, lane, executor}, wip, consult {role, poll_hint, from}, revise_count, evidence [{uri, sha256}], window_id, transition_id. Populate status, next_pickup, wip, consult, and evidence from the CHECKPOINT you post; window_id must match this window (charter-{root_id}-w{window_index}).
 </output_format>
 
-<!-- charter-state footer appended at materialize time via checkpoint_schema.emit_footer -->
+<!-- inbound charter-state footer appended at materialize time via checkpoint_schema.emit_footer -->
