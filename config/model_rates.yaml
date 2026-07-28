@@ -1,6 +1,7 @@
 # Manual seed + override rows for dispatch economics dollar equivalents.
-# Catalog refresh upserts OpenRouter pricing to model_rates_catalog.yaml;
-# pinned rows here win over catalog projection (non-pinned seeds fill gaps only).
+# Catalog refresh upserts OpenRouter pricing to ~/.gateway/model_rates_catalog.yaml
+# (MODEL_RATES_CATALOG_PATH override); pinned rows here win over catalog projection
+# (non-pinned seeds fill gaps only).
 #
 # cursor/* rates: SOT = https://cursor.com/docs/models-and-pricing (API pool table).
 # Optional cache_*_rate_per_m omitted when docs list "-" for that tier.

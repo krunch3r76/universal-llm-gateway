@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -14,8 +15,10 @@ import yaml
 logger = logging.getLogger(__name__)
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_DEFAULT_RATES_PATH = _REPO_ROOT / "data" / "model_rates.yaml"
-_CATALOG_PATH = _REPO_ROOT / "data" / "model_rates_catalog.yaml"
+# Curated seed (tracked). Override: MODEL_RATES_PATH.
+_DEFAULT_RATES_PATH = _REPO_ROOT / "config" / "model_rates.yaml"
+# Runtime catalog projection (gitignored host state). Override: MODEL_RATES_CATALOG_PATH.
+_CATALOG_PATH = Path.home() / ".gateway" / "model_rates_catalog.yaml"
 
 _CATALOG_ROWS: dict[str, dict[str, Any]] = {}
 
@@ -36,11 +39,17 @@ class ModelRateRow:
 
 def rates_yaml_path() -> Path:
     """Return the manual override + seed YAML path."""
+    override = os.environ.get("MODEL_RATES_PATH", "").strip()
+    if override:
+        return Path(override)
     return _DEFAULT_RATES_PATH
 
 
 def catalog_yaml_path() -> Path:
     """Return the persisted catalog-ingest projection path."""
+    override = os.environ.get("MODEL_RATES_CATALOG_PATH", "").strip()
+    if override:
+        return Path(override)
     return _CATALOG_PATH
 
 
@@ -207,7 +216,7 @@ def upsert_catalog_models(
     """Upsert catalog pricing rows; pinned manual rows are not overwritten.
 
     Disk write is skipped when no pricing fields changed (timestamp-only
-    refreshes must not dirty the tracked catalog YAML).
+    refreshes must not rewrite the host catalog projection).
     """
     manual_rows, _ = load_manual_rows()
     prior: dict[str, dict[str, Any]] = _load_catalog_raw_from_disk()

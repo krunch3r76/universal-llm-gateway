@@ -272,7 +272,8 @@ def _build_pricing_audit(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "unavailable_rate_all_rows": round(unavailable_rate_all_rows, 6),
         "expected_unavailable_fraction_note": (
             "unavailable_rate excludes CDP stubs (token-less by design). "
-            "Seed + catalog projection in data/model_rates*.yaml cover charter "
+            "Seed + catalog projection (config/model_rates.yaml + "
+            "~/.gateway/model_rates_catalog.yaml) cover charter "
             "seats; rows without rate row or authoritative wire remain unavailable."
         ),
     }
