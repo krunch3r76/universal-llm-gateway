@@ -5,7 +5,14 @@ from __future__ import annotations
 import re
 
 _FIELD_HEADING_ALIASES: dict[str, tuple[str, ...]] = {
-    "deltas_to_spec": ("deltas_to_spec", "deltas to spec"),
+    "ac_verdict": (
+        "ac_verdict",
+        "ac verdict",
+        "verdict",
+        "ac1 per-site disposition",
+        "ac1",
+    ),
+    "deltas_to_spec": ("deltas_to_spec", "deltas to spec", "delta to spec"),
     "decisions_taken": ("decisions_taken", "decisions taken"),
     "next": ("next", "next steps"),
     "open forks": ("open_forks", "open forks"),

@@ -17,19 +17,21 @@ from services.git_integration_worker.cursor_auto.closeout_relay_common import (
     _as_str_list,
     _order_preserving_dedup,
     _table_cell,
+    build_ac_verdict_cell,
+    fill_judgment_cell,
     is_wrapper_manifest,
     looks_section2,
     status_from_section2,
     strip_machine_tail,
     wrapper_status,
 )
+from services.git_integration_worker.cursor_auto.closeout_relay_effects import (
+    machine_write_uris,
+)
 from services.git_integration_worker.cursor_auto.closeout_relay_cortex_fence import (
     apply_write_fence,
     guard_matches_write,
     guarded_write_violations,
-)
-from services.git_integration_worker.cursor_auto.closeout_relay_cortex_fields import (
-    extract_field_section,
 )
 from services.git_integration_worker.cursor_auto.closeout_relay_cortex_uri import (
     _MAX_RELAYED_CORTEX_CHARS,
@@ -58,11 +60,6 @@ def _build_wrapper_effect_rows(wrapper_text: str) -> tuple[dict[str, str], objec
         return {}, None
 
     status = data.get("status", "partial")
-    files_created = _as_str_list(data.get("files_created"))
-    files_modified = _as_str_list(data.get("files_modified"))
-    files_deleted = _as_str_list(data.get("files_deleted"))
-    files_offgit_produced = _as_str_list(data.get("files_offgit_produced"))
-    effects = _as_str_list(data.get("effects"))
     deviations = _as_str_list(data.get("deviations"))
     capture_status = data.get("capture_status")
     evidence_uris = data.get("evidence_uris")
@@ -70,13 +67,7 @@ def _build_wrapper_effect_rows(wrapper_text: str) -> tuple[dict[str, str], objec
     if isinstance(evidence_uris, dict):
         artifact_paths = _as_str_list(evidence_uris.get("artifact_paths"))
 
-    effects_union = _order_preserving_dedup(
-        effects,
-        files_created,
-        files_modified,
-        files_deleted,
-        files_offgit_produced,
-    )
+    effects_union = machine_write_uris(wrapper_text)
 
     if effects_union:
         effects_cell = "<br>".join(f"- {item}" for item in effects_union)
@@ -110,23 +101,22 @@ def field_fill_from_cortex(
     effect_rows, wrapper_status_value = _build_wrapper_effect_rows(wrapper_text)
     status = str(wrapper_status_value or "partial")
 
-    excerpt = cortex_body.strip()
-    if len(excerpt) > _MAX_EXECUTOR_EXCERPT_CHARS:
-        excerpt = excerpt[:_MAX_EXECUTOR_EXCERPT_CHARS] + "…"
-    ac_verdict = (
-        f"cortex substance found at {cortex_uri} but body failed looks_section2; "
-        f"not a pass.<br><br>{excerpt}"
+    ac_verdict = build_ac_verdict_cell(
+        cortex_body,
+        provenance=cortex_uri,
+        cap=cap_relayed_cortex_text,
+        max_excerpt_chars=_MAX_EXECUTOR_EXCERPT_CHARS,
     )
-    ac_verdict = cap_relayed_cortex_text(ac_verdict, cortex_uri)
 
     judgment_fields = ("deltas_to_spec", "decisions_taken", "next", "open forks")
     cells: dict[str, str] = {}
     for field in judgment_fields:
-        extracted = extract_field_section(cortex_body, field)
-        if extracted:
-            cells[field] = cap_relayed_cortex_text(extracted, cortex_uri)
-        else:
-            cells[field] = f"see {cortex_uri}"
+        cells[field] = fill_judgment_cell(
+            cortex_body,
+            field,
+            provenance=cortex_uri,
+            cap=cap_relayed_cortex_text,
+        )
 
     rows = (
         ("status", status),
@@ -173,13 +163,9 @@ def run_cortex_scan(
     for uri, prose in readable:
         if looks_section2(prose) and cortex_body_binds_dispatch(prose, dispatch_id):
             raw_status = status_from_section2(prose) or fallback_status
-            clamped = enforce_synthesized_partial(
-                raw_status,
-                closeout_source="section2_synthesized",
-            )
             return CloseoutRelayPayload(
                 body=cap_relayed_cortex_text(prose, uri),
-                status=clamped,
+                status=raw_status,
                 source="section2_sidecar",
             )
 
@@ -214,7 +200,6 @@ __all__ = [
     "cortex_body_binds_dispatch",
     "cortex_relpath",
     "extract_cortex_uris_from_wrapper",
-    "extract_field_section",
     "field_fill_from_cortex",
     "guard_matches_write",
     "guarded_write_violations",

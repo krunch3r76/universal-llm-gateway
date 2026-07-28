@@ -19,6 +19,8 @@ from services.git_integration_worker.cursor_auto.closeout_relay_common import (
     _as_str_list,
     _order_preserving_dedup,
     _table_cell,
+    build_ac_verdict_cell,
+    fill_judgment_cell,
     is_wrapper_manifest,
     looks_section2,
     status_from_section2,
@@ -70,7 +72,6 @@ def synthesize_section2(
     dispatch_id: str,
 ) -> str | None:
     """Build operator-facing §2 markdown from a machine wrapper manifest."""
-    del dispatch_id  # reserved for future trace headers; selection uses sdk metadata
     if not wrapper_text or not is_wrapper_manifest(wrapper_text):
         return None
     try:
@@ -103,16 +104,38 @@ def synthesize_section2(
             files_offgit_produced,
         )
 
-    ac_verdict = (
-        "unauthored — executor emitted no §2 body; machine-derived envelope below. "
-        "Not a pass."
+    provenance = (
+        f"repo sidecar for {dispatch_id}"
+        if sidecar_text and sidecar_text.strip()
+        else "machine wrapper manifest"
     )
-    if sidecar_text:
-        excerpt = strip_machine_tail(sidecar_text).strip()
-        if excerpt:
-            if len(excerpt) > _MAX_EXECUTOR_EXCERPT_CHARS:
-                excerpt = excerpt[:_MAX_EXECUTOR_EXCERPT_CHARS] + "…"
-            ac_verdict = f"{ac_verdict}<br><br>{excerpt}"
+    sidecar_prose = strip_machine_tail(sidecar_text).strip() if sidecar_text else ""
+
+    if sidecar_prose:
+        ac_verdict = build_ac_verdict_cell(
+            sidecar_prose,
+            provenance=provenance,
+            max_excerpt_chars=_MAX_EXECUTOR_EXCERPT_CHARS,
+        )
+        deltas_to_spec = fill_judgment_cell(
+            sidecar_prose, "deltas_to_spec", provenance=provenance
+        )
+        decisions_taken = fill_judgment_cell(
+            sidecar_prose, "decisions_taken", provenance=provenance
+        )
+        next_cell = fill_judgment_cell(sidecar_prose, "next", provenance=provenance)
+        open_forks = fill_judgment_cell(
+            sidecar_prose, "open forks", provenance=provenance
+        )
+    else:
+        ac_verdict = (
+            "unauthored — executor emitted no §2 body; machine-derived envelope below. "
+            "Not a pass."
+        )
+        deltas_to_spec = "unauthored — not reported by executor"
+        decisions_taken = "unauthored — not reported by executor"
+        next_cell = "unauthored — operator must derive from effects above"
+        open_forks = "unknown — executor emitted no §2"
 
     if effects_union:
         effects_cell = "<br>".join(f"- {item}" for item in effects_union)
@@ -134,12 +157,12 @@ def synthesize_section2(
     rows = (
         ("status", str(status)),
         ("ac_verdict", ac_verdict),
-        ("deltas_to_spec", "unauthored — not reported by executor"),
-        ("decisions_taken", "unauthored — not reported by executor"),
+        ("deltas_to_spec", deltas_to_spec),
+        ("decisions_taken", decisions_taken),
         ("effects", effects_cell),
         ("evidence", evidence_cell),
-        ("next", "unauthored — operator must derive from effects above"),
-        ("open forks", "unknown — executor emitted no §2"),
+        ("next", next_cell),
+        ("open forks", open_forks),
     )
     lines = [
         "TYPE: CLOSEOUT",

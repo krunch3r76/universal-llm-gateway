@@ -34,7 +34,7 @@ _FS_WRITE_OPS = frozenset(
 )
 _OOB_DEVIATION_PREFIX = "capture:oob_cortex_write_unobserved:"
 _EFFECTS_EMPTY_RE = re.compile(
-    r"(?i)(?:^|\b)(?:none|\(none|no repo writes|not reported|unauthored — not reported)"
+    r"(?i)(?:^|\b)(?:none|\(none|no repo writes|not reported|unauthored — not reported|none captured)"
 )
 _EFFECTS_TABLE_ROW_RE = re.compile(r"(?im)^\|\s+effects\s+\|\s+(.*?)\s+\|")
 _EFFECTS_INLINE_RE = re.compile(r"(?im)^effects:\s*(.+)$")
@@ -114,6 +114,20 @@ def _oob_deviation_uris(deviations: list[str]) -> list[str]:
     return uris
 
 
+def _evidence_uri_pointers(data: dict[str, object]) -> list[str]:
+    """Collect artifact paths and bus-thread refs from wrapper evidence_uris."""
+    evidence_uris = data.get("evidence_uris")
+    if not isinstance(evidence_uris, dict):
+        return []
+    pointers: list[str] = []
+    pointers.extend(_as_str_list(evidence_uris.get("artifact_paths")))
+    for thread in _as_str_list(evidence_uris.get("bus_threads")):
+        thread_id = thread.strip()
+        if thread_id:
+            pointers.append(f"agent-bus:{thread_id}")
+    return pointers
+
+
 def machine_write_uris(wrapper_text: str | None) -> list[str]:
     """Order-preserving union of machine-captured write URIs from a wrapper manifest."""
     if not wrapper_text or not is_wrapper_manifest(wrapper_text):
@@ -132,6 +146,7 @@ def machine_write_uris(wrapper_text: str | None) -> list[str]:
         _as_str_list(data.get("files_offgit_produced")),
         _manifest_fs_write_uris(data),
         _oob_deviation_uris(_as_str_list(data.get("deviations"))),
+        _evidence_uri_pointers(data),
     )
 
 

@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+
+from services.git_integration_worker.cursor_auto.closeout_relay_cortex_fields import (
+    extract_field_section,
+)
 
 _SECTION2_MARKERS = ("ac_verdict", "deltas_to_spec")
 _TAIL_MARKERS = (
@@ -77,10 +81,77 @@ def is_wrapper_manifest(text: str) -> bool:
     )
 
 
+def has_closeout_substance(text: str) -> bool:
+    """True when *text* carries non-empty executor closeout prose."""
+    return bool(strip_machine_tail(text).strip())
+
+
 def looks_section2(text: str) -> bool:
-    """True when *text* carries the load-bearing §2 field markers."""
-    low = text.lower()
-    return all(marker in low for marker in _SECTION2_MARKERS)
+    """True when *text* carries load-bearing §2 judgment anchors.
+
+    Structural field extraction is authoritative; legacy marker substrings
+    remain as a compatibility fast-path for authored inline §2.
+    """
+    prose = strip_machine_tail(text)
+    if not prose.strip():
+        return False
+    low = prose.lower()
+    if all(marker in low for marker in _SECTION2_MARKERS):
+        return True
+    return (
+        extract_field_section(prose, "ac_verdict") is not None
+        and extract_field_section(prose, "deltas_to_spec") is not None
+    )
+
+
+def unclassified_relay_prefix(*, provenance: str, body: str) -> str:
+    """Relay-local uncertainty when substance was obtained but §2 is unparsed."""
+    nbytes = len(body.encode("utf-8"))
+    return f"unclassified — relay could not parse §2 from {nbytes} bytes at {provenance}"
+
+
+def fill_judgment_cell(
+    body: str,
+    field: str,
+    *,
+    provenance: str,
+    cap: Callable[[str, str], str] | None = None,
+) -> str:
+    """Return extracted field text or relay uncertainty — never false absence."""
+    extracted = extract_field_section(body, field)
+    if extracted:
+        return cap(extracted, provenance) if cap is not None else extracted
+    if has_closeout_substance(body):
+        return (
+            f"unclassified — relay could not parse §2 field `{field}` "
+            f"from substance at {provenance}"
+        )
+    return f"unauthored — not reported by executor"
+
+
+def build_ac_verdict_cell(
+    body: str,
+    *,
+    provenance: str,
+    cap: Callable[[str, str], str] | None = None,
+    max_excerpt_chars: int = 1500,
+) -> str:
+    """Build ``ac_verdict`` without asserting executor absence when substance exists."""
+    extracted = extract_field_section(body, "ac_verdict")
+    if extracted:
+        value = cap(extracted, provenance) if cap is not None else extracted
+        return value
+    excerpt = strip_machine_tail(body).strip()
+    if not excerpt:
+        return (
+            "unauthored — executor emitted no §2 body; machine-derived envelope below. "
+            "Not a pass."
+        )
+    if len(excerpt) > max_excerpt_chars:
+        excerpt = excerpt[:max_excerpt_chars] + "…"
+    prefix = unclassified_relay_prefix(provenance=provenance, body=body)
+    combined = f"{prefix}<br><br>{excerpt}"
+    return cap(combined, provenance) if cap is not None else combined
 
 
 def strip_machine_tail(text: str) -> str:
@@ -127,11 +198,15 @@ __all__ = [
     "_order_preserving_dedup",
     "_table_cell",
     "as_str_list",
+    "build_ac_verdict_cell",
+    "fill_judgment_cell",
+    "has_closeout_substance",
     "is_wrapper_manifest",
     "looks_section2",
     "order_preserving_dedup",
     "status_from_section2",
     "strip_machine_tail",
     "table_cell",
+    "unclassified_relay_prefix",
     "wrapper_status",
 ]

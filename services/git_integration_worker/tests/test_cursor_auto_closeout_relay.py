@@ -18,6 +18,9 @@ from services.git_integration_worker.cursor_auto.closeout_relay_cortex import (
     cap_relayed_cortex_text,
     read_cortex_text,
 )
+from services.git_integration_worker.cursor_auto.relay_trust import (
+    enforce_synthesized_partial,
+)
 
 _WRAPPER = json.dumps(
     {
@@ -412,7 +415,8 @@ dispatch_id: {other_dispatch}
     assert uri in payload.body
 
 
-def test_promoted_status_clamped_when_section2_complete(tmp_path: Path):
+def test_promoted_authored_sidecar_preserves_complete_status(tmp_path: Path):
+    """Authored cortex promote relays §2 status — not synthesized partial clamp."""
     dispatch_id = "D-CLAMP"
     uri = "cortex://notes/reviews/clamp-closeout.md"
     body = f"""\
@@ -434,7 +438,7 @@ dispatch_id: {dispatch_id}
         cortex_root=tmp_path,
     )
     assert payload.source == "section2_sidecar"
-    assert payload.status == "partial"
+    assert payload.status == "complete"
 
 
 def test_cortex_path_traversal_skipped(tmp_path: Path):
@@ -587,3 +591,205 @@ dispatch_id: {dispatch_id}
     assert payload.source == "section2_sidecar"
     assert uri in payload.body
     assert payload.status != "complete"
+
+
+# --- agent-bus:6222 exemplar fixtures (t5 / t12 / t19) ---
+
+_T12_CORTEX_URI = (
+    "cortex://notes/system/dispatch-closeouts/fable-edit1-falsifier4-tail-2026-07-28.md"
+)
+
+_FIXTURE_6222_T12_SIDECAR = """\
+# Closeout — fable edit-1 falsifier-4 tail
+
+## Verdict
+
+**DONE** — falsifier-4 class pillar-law restatements retired on skills/rules surface.
+
+## AC1 per-site disposition
+
+### 1. implement-todo/SKILL.md
+
+**Verdict:** `restatement — retired`
+
+## deltas_to_spec
+
+- **Spec:** fable-vision-permeation edit-1
+- **Delta landed:** digest endpoint cites at choke points
+
+## decisions_taken
+
+Retired implement-todo and todo_ulg restatements; left awareness_ulg pointer alone.
+
+## next
+
+- install_plugin propagation residue
+
+## open forks
+
+none
+"""
+
+_FIXTURE_6222_T12_WRAPPER = json.dumps(
+    {
+        "schema_version": 1,
+        "status": "complete",
+        "summary": "dispatch auto-1fcdc4411e03: 47 tool calls",
+        "files_created": [],
+        "files_modified": ["cursor-plugins/ulg-ecosystem/rules/todo_ulg.mdc"],
+        "files_deleted": [],
+        "effects": [
+            "cursor-plugins/ulg-ecosystem/rules/todo_ulg.mdc",
+            "cursor-plugins/ulg-ecosystem/skills/implement-todo/SKILL.md",
+            _T12_CORTEX_URI,
+        ],
+        "files_offgit_produced": [_T12_CORTEX_URI],
+        "capture_status": None,
+        "effects_manifest": {"schema_version": 1},
+        "evidence_uris": {
+            "artifact_paths": [
+                "workspaces://universal-llm-gateway/tmp/reviews/closeouts/auto-1fcdc4411e03.md",
+                _T12_CORTEX_URI,
+            ],
+        },
+    }
+)
+
+_FIXTURE_6222_T19_SIDECAR = """\
+## §2 CLOSEOUT
+
+**status:** complete
+
+### ac_verdict
+
+| AC | Verdict |
+|---|---|
+| AC1 | pass — CHECKPOINT on agent-bus:6205 turn **13** |
+| AC2 | pass — bind falsifier watch items in Frictions |
+| AC3 | pass — todo:operator-proxy-closeout-section2-relay-recurrence minted |
+| AC4 | pass — write URIs inline below |
+
+### assumed_state
+
+Confirmed — task:vision-permeation carries ARC COMPLETE.
+
+### write_uris (inline — AC4)
+
+- **CHECKPOINT:** agent-bus:**6205** turn **13**
+- **Todo:** **todo:operator-proxy-closeout-section2-relay-recurrence**
+
+### operator_lane_pointer
+
+CHECKPOINT Sidecars names Private operator lane: agent-bus:6222.
+
+### todo_seed
+
+Fifth observation of section2_synthesized / looks_section2 class.
+"""
+
+_FIXTURE_6222_T19_WRAPPER = json.dumps(
+    {
+        "schema_version": 1,
+        "status": "complete",
+        "summary": "dispatch auto-a64bd88d9f2b: 55 tool calls",
+        "files_created": [],
+        "files_modified": [],
+        "files_deleted": [],
+        "effects": [],
+        "capture_status": None,
+        "effects_manifest": {"schema_version": 1},
+        "evidence_uris": {
+            "dispatch_ids": ["auto-a64bd88d9f2b"],
+            "bus_threads": ["6222"],
+            "artifact_paths": [
+                "workspaces://universal-llm-gateway/tmp/reviews/closeouts/auto-a64bd88d9f2b.md",
+            ],
+        },
+        "deviations": [
+            "stream_only_effect",
+            "degraded:sdk_git_probe_absent",
+            "capture:non_file_manifest_entry_dropped",
+        ],
+    }
+)
+
+_FIXTURE_6222_T5_SECTION2 = """\
+TYPE: CLOSEOUT
+status: complete
+
+**ac_verdict:**
+1. AC1 — PASS — mechanical trigger table landed
+
+**deltas_to_spec:** R3 on skill-resident R-admit per advisor bind X1.
+
+**decisions_taken:** Aptness ungated — symmetric with vision_field_missing.
+
+**next:** FOLLOW-ON implement-todo/SKILL.md:71-72
+
+**open_forks:** none
+"""
+
+_FALSE_NEGATIVE_LITERALS = (
+    "failed looks_section2",
+    "unauthored — executor emitted no §2 body",
+    "unauthored — not reported by executor",
+    "unknown — executor emitted no §2",
+)
+
+
+def test_fixture_6222_t12_mode_a_no_false_negative(tmp_path: Path):
+    """AC1 — t12 cortex sidecar: no detector false-negative or bare see-uri flatten."""
+    _write_cortex_file(tmp_path, _T12_CORTEX_URI, _FIXTURE_6222_T12_SIDECAR)
+    payload = select_closeout_relay_payload(
+        sdk_body=_FIXTURE_6222_T12_WRAPPER,
+        sidecar_text=None,
+        ledger_status="completed",
+        dispatch_id="auto-1fcdc4411e03",
+        cortex_root=tmp_path,
+    )
+    for literal in _FALSE_NEGATIVE_LITERALS:
+        assert literal not in payload.body
+    assert f"see {_T12_CORTEX_URI}" not in payload.body
+    assert "digest endpoint cites at choke points" in payload.body
+    assert "Retired implement-todo" in payload.body
+
+
+def test_fixture_6222_t19_mode_b_no_false_unauthored():
+    """AC2 — t19 repo sidecar: no unauthored literals while §2 substance present."""
+    payload = select_closeout_relay_payload(
+        sdk_body=_FIXTURE_6222_T19_WRAPPER,
+        sidecar_text=_FIXTURE_6222_T19_SIDECAR,
+        ledger_status="completed",
+        dispatch_id="auto-a64bd88d9f2b",
+    )
+    for literal in _FALSE_NEGATIVE_LITERALS:
+        assert literal not in payload.body
+    assert "none captured" not in payload.body.lower()
+    assert "AC1 | pass" in payload.body or "AC1" in payload.body
+    assert "agent-bus:6205" in payload.body
+    assert "todo:operator-proxy-closeout-section2-relay-recurrence" in payload.body
+
+
+def test_fixture_6222_t5_pass_path_section2_sidecar():
+    """AC5 — t5 shape still classifies section2_sidecar with authored §2 inline."""
+    payload = select_closeout_relay_payload(
+        sdk_body=_WRAPPER,
+        sidecar_text=_FIXTURE_6222_T5_SECTION2,
+        ledger_status="completed",
+    )
+    assert payload.source == "section2_sidecar"
+    assert payload.status == "complete"
+    assert looks_section2(payload.body)
+    assert "AC1 — PASS" in payload.body
+
+
+def test_enforce_synthesized_partial_branches():
+    """AC6 — synthesized §2 forced partial; authored source preserves status."""
+    assert (
+        enforce_synthesized_partial("complete", closeout_source="section2_synthesized")
+        == "partial"
+    )
+    assert (
+        enforce_synthesized_partial("complete", closeout_source="section2_sidecar")
+        == "complete"
+    )
