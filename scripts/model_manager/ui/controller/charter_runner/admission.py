@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 from .caps import CapStore
 from .root_ledger import RootLedgerRow, RootStatus, Transition
@@ -49,6 +49,21 @@ class EnvFacts:
     substrate_up: bool
     has_wip: bool
     attendance: str
+    propagation_residue: dict[str, Any] | None = None
+    giw_holder_lease: dict[str, Any] | None = None
+    restart_shaped: bool = False
+    now: float | None = None
+
+
+def _propagation_defers(state: RootLedgerRow, env: EnvFacts) -> bool:
+    """Holder-lease + sync_restart residue defer restart-shaped pickups only."""
+    residue = env.propagation_residue or {}
+    if residue.get("kind") != "git_integration_worker":
+        return False
+    if not env.restart_shaped:
+        return False
+    lease = env.giw_holder_lease or {}
+    return bool(lease.get("held"))
 
 
 def decide(
@@ -63,6 +78,8 @@ def decide(
         return Transition.NOOP
     if env.has_wip or state.wip_window_id:
         return Transition.NOOP
+    if _propagation_defers(state, env):
+        return Transition.DEFER_CONSULT
     if not caps.allowed:
         if caps.stopped_reason:
             return Transition.BLOCK
@@ -72,6 +89,14 @@ def decide(
 
     lane = (state.pickup_lane or "judgment").lower()
     attendance = (state.attendance or env.attendance or "attended").lower()
+
+    if state.status in (RootStatus.CONSULT_QUEUED, RootStatus.CONSULT_DEFERRED):
+        if not env.substrate_up:
+            return Transition.DEFER_CONSULT
+        now = env.now if env.now is not None else __import__("time").time()
+        if state.consult_next_retry and now < state.consult_next_retry:
+            return Transition.NOOP
+        return Transition.ADMIT_CONSULT
 
     if lane in ("judgment", "consult") and attendance == "autonomous":
         if not env.substrate_up:

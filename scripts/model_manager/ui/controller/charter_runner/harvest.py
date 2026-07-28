@@ -22,6 +22,64 @@ from .window_terminal_contract import after_window_terminal_harvested, is_tip_cl
 
 logger = get_logger(__name__)
 
+
+async def _maybe_harvest_cdp_consult_provenance(
+    *,
+    root_id: str,
+    window_index: int,
+    worker_thread: str,
+    worker_turns: list[dict],
+    admission_meta: dict,
+) -> dict[str, str] | None:
+    """B8 — parse ``cdp/opus-*`` harvest and write consult provenance."""
+    mode = str(admission_meta.get("admission_mode") or "").strip().lower()
+    if mode != "consult":
+        return None
+    from .consult_lane import (
+        parse_cdp_consult_harvest,
+        provenance_from_cdp_harvest,
+        write_consult_provenance,
+    )
+    from .window_log import worker_transcript_path
+
+    executor: dict = {}
+    transcript = worker_transcript_path(worker_thread)
+    if transcript.is_file():
+        text = transcript.read_text(encoding="utf-8", errors="replace")
+        if "reviewer_model=" in text or "model=cdp/" in text:
+            for line in text.splitlines():
+                if line.startswith("seat=") or line.startswith("model="):
+                    parts = line.split("=", 1)
+                    if len(parts) == 2:
+                        executor[parts[0].strip()] = parts[1].strip()
+    executor.setdefault("reviewer_model", "cdp/opus-5")
+    parsed = parse_cdp_consult_harvest(
+        worker_turns,
+        executor=executor,
+        worker_thread=worker_thread,
+    )
+    if parsed is None or parsed.escape_path:
+        return None
+    record = provenance_from_cdp_harvest(parsed)
+    if record is None:
+        return None
+    uri = write_consult_provenance(record, root_id=root_id)
+    logger.info(
+        "charter-runner cdp consult provenance root=%s window=%s model=%s verdict=%s",
+        root_id,
+        window_index,
+        record.consultant_model,
+        record.verdict,
+    )
+    return {
+        "consult_thread": record.consult_thread,
+        "verdict": record.verdict,
+        "consultant_family": record.consultant_family,
+        "consultant_substrate": record.consultant_substrate,
+        "cortex_mirror": uri,
+        "consultant_model": record.consultant_model,
+    }
+
 _GATED_ID_RE = re.compile(r"\b([GR]\d+[a-z]?)\b")
 
 
@@ -350,6 +408,14 @@ async def harvest_completed_windows(
         except Exception:  # noqa: BLE001 — propagation must not abort harvest
             logger.exception("charter-runner propagation execute failed")
         try:
+            provenance: dict[str, str] | None = None
+            provenance = await _maybe_harvest_cdp_consult_provenance(
+                root_id=root_id,
+                window_index=window_index,
+                worker_thread=worker_thread,
+                worker_turns=worker_turns,
+                admission_meta=meta,
+            )
             window_log.append_closeout(
                 root_id=root_id,
                 window_index=window_index,
@@ -399,6 +465,12 @@ async def harvest_completed_windows(
                 checkpoint_turn=turn_number(checkpoint),
                 worker_closed=worker_closed,
             )
+            if provenance is not None:
+                emit_harvested = getattr(
+                    events, "emit_manage_charter_tick_consult_harvested", None
+                )
+                if emit_harvested is not None:
+                    await emit_harvested(root=root_id, window_index=window_index, **provenance)
         except Exception:  # noqa: BLE001 — transcript must not kill the tick
             logger.exception("charter-runner window_log append_closeout failed")
     return attributions

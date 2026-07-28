@@ -1,0 +1,117 @@
+---
+description: Judgment escalation ladder — any cursor seat (including cursor/opus) unsure consults an independent binder (CDP/Fable or GPT terra/sol — different model family than the producing seat); binder unsure consults human operator (rare). Standing bind for fork resolution without routine operator gates.
+alwaysApply: true
+rule_category: workflow
+apply_tier: required_gate
+trigger_match_terms:
+  - judgment-escalation-ladder
+  - unsure
+  - consult CDP
+  - escalate to operator
+  - human gate
+  - permissive father
+  - lane entry
+  - cursor/opus
+  - cursor opus
+  - Fable
+  - cross-family
+  - independent binder
+  - gpt-5.6-terra
+  - gpt-5.6-sol
+  - self-review
+---
+# Judgment Escalation Ladder
+
+**Invariant:** `seat_unsure ⇒ consult(independent_binder)` · `binder_unsure ⇒ consult(human_operator)` (rare).
+
+**Independence is the load-bearing property, not human-ness** (operator bind
+2026-07-28 · `decision:gate-independence-not-human-ness`). A gate is honest when the
+checking seat is independent of the producing seat on **weight class ∨ family** —
+`independent(binder, producer) ⇔ weight_class(binder) ≠ weight_class(producer) ∨
+family(binder) ≠ family(producer)`. Routing a judgment fork through the human adds
+latency and zero epistemic value when the operator's answer is "consult Opus" — a
+relay is not a check.
+
+**Independence has two axes — weight class and family.** Either can carry a gate:
+
+- **Weight class** — `cdp/opus-5 → cdp/fable` is a genuine check, not a hat swap.
+  Fable is a **different weight class**, and the standing posture already encourages
+  it "when outside perspective helps" (`anthropic-substrate`). In-family does **not**
+  imply self-review.
+- **Family** — crossing to OpenAI / xAI additionally clears **shared-lineage**
+  blind spots (correlated error the whole Anthropic family may share).
+
+Self-review is **the same model at the same tier grading its own output** — not any
+two Anthropic seats. `cdp/opus-5` ratifying an artifact `cdp/opus-5` authored is
+self-review; escalating that artifact to **Fable** is not.
+
+**Substrate scope:** step 1 is **any cursor-family seat** — IDE lead, cursor-sdk,
+subagents, and **`cursor/*` premium models including `cursor/claude-opus-5`**.
+Premium metered Opus in Cursor is **not** the top of the ladder; it is still step 1.
+When unsure, even cursor/opus consults **CDP Opus or Fable** (step 2) before the
+human operator (step 3). `anthropic/*` API remains prohibited — CDP/Fable is the
+web product lane, per `anthropic-dispatch-authorization`.
+
+Operator bind (2026-07-28): the human is the permissive parent — intervene only when
+necessary. **Lane entry, fork resolution, and routine orchestration are the fleet's
+job** — cursor and siblings act; ¬ park on the operator for decisions the ladder
+already covers.
+
+## Ladder (binding)
+
+| Step | Seat | When | Transport |
+|---|---|---|---|
+| 1 | **Cursor** (IDE lead, cursor-sdk, subagents, **`cursor/*` including Opus**) | Default — execute, orchestrate, dispatch | In-seat + `team_dispatch` / `Task` per `lean-context-dispatch-first` |
+| 2 | **Independent binder** — pick a family ≠ producer (table below) | **Any** cursor step-1 seat is **unsure** — including when that seat is already `cursor/claude-opus-5` | Anthropic: `team_dispatch(model=cdp/opus-5)` · **encourage Fable** · `project_ask` · lane `agent_bus:6006`. OpenAI: `team_dispatch(model=gpt-5.6-terra)`; `gpt-5.6-sol` for **targeted low-token** consults — per `consult-routing` + `claude-ai-cdp-navigation` |
+| 3 | **Human operator** | The step-2 binder is **unsure** OR true operator-only gate (credentials, irreversible non-revertible act, spend pause, genuine *what we want* ambiguity the binder cannot resolve) | Cowork Ask / direct — **rare**; one question + recommended answer |
+
+### Step-2 binder order (operator bind 2026-07-28)
+
+Try in order; stop at the first that clears independence for the artifact in hand.
+
+| Order | Binder | Independence axis | Use when |
+|---|---|---|---|
+| **2a** | `cdp/opus-5` | family (vs Composer / Grok / GPT producers) | Default step 2 — producer is **not** Anthropic |
+| **2b** | **`cdp/fable`** | **weight class** (vs Opus) | Producer is `cdp/opus-5` (incl. its own output), **or** Opus is unsure. **Preferred before crossing families** — Fable is the in-lane escalation, not a formality |
+| **2c** | `gpt-5.6-terra` (default) · `gpt-5.6-sol` (**targeted, low-token only**) | family + lineage | **Fable** is unsure, **or** the risk is Anthropic-lineage **correlated error** the family may share |
+| **2d** | `cursor/grok-4.5` (≤ `high`) | family | Cheap breadth / third opinion; ¬ a substitute for 2b–2c on material binds |
+
+`anthropic/*` API stays **PROHIBITED** — CDP/Fable is the Anthropic web product lane,
+per `anthropic-dispatch-authorization`.
+
+**Non-primary gate carve-out:** `lean-context-dispatch-first` §"Non-primary cursor
+model gate" normally makes an explicit `gpt-5.6-*` bind operator-gated. Naming
+`gpt-5.6-terra` / `gpt-5.6-sol` here as the 2c binder **is** the standing
+authorization — fire without re-asking; still announce the slug + why.
+
+`seat_unsure` (was `cursor_unsure`) ≠ permission-seeking on clear work. It means a
+**genuine fork** remains after recon and the seat lacks authority or evidence to bind —
+**regardless of whether the active model is Composer, Grok, or cursor/opus**.
+
+`binder_unsure` ≠ cursor relaying every closeout. It means the step-2 binder exhausted
+self-resolution under sealed-unattended rules and needs a human bind (or an `ESCALATE`
+flag with `minimal_question` per `cdp-operator-proxy`).
+
+## Anti-patterns
+
+| Bad | Good |
+|---|---|
+| Ask operator which lane to enter when spec + scoreboard already bind | Enter the lane; report shape on CHECKPOINT |
+| Wait for Opus to ratify a shape cursor already built and verified | Inform Opus executed; continue on tick |
+| Park on Kaywan for `manage` / `charter_reload` / git-tracked implement | Cursor or CDP dispatches; operator only on operator-only gates |
+| Treat every consult as operator-gated | CDP consult is **autonomous** under `lean-context-dispatch-first` CDP trigger |
+| Skip CDP and go straight to human on judgment forks | Cursor (incl. cursor/opus) → CDP/Fable first; human only when CDP/Fable flags `ESCALATE` or operator-only |
+| Treat `cursor/claude-opus-5` as ladder-top — ask human when Opus is unsure | Opus-in-cursor is step 1; consult an independent binder (step 2) before human |
+| `cdp/opus-5` ratifies its own output at the same tier | Escalate that artifact to **Fable** (2b) — weight-class independence |
+| Treat any two Anthropic seats as self-review and skip straight to GPT | Opus→**Fable** is a genuine check; 2b **precedes** 2c |
+| Reach for `gpt-5.6-terra` before Fable has been tried | 2c is for **Fable unsure** or lineage-correlated risk |
+| Ask operator to approve `gpt-5.6-terra`/`sol` as a consult binder | Standing authorization (2026-07-28) — fire and announce; ¬ re-gate |
+| Spend `gpt-5.6-sol` on broad open-ended review | `sol` is **targeted, low-token** only; `terra` is the OpenAI default |
+
+## Composes with
+
+- `lean-context-dispatch-first` — dispatch + CDP trigger predicate
+- `consult-routing` — transport choice for step 2
+- `operator-posture` — co-developer autonomy; operator gates are joint/rare
+- `cdp-operator-proxy` — blocked → ask ladder; operator-doctrine carve-outs
+- `advisor-timing` — pause before bind, not before every action

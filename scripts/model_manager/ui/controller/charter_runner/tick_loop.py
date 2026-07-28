@@ -286,6 +286,13 @@ class CharterRunnerTickLoop:
         return bus.status == ServiceStatus.RUNNING
 
     async def _tick_once(self) -> None:
+        from .consult_lane import (
+            apply_kernel_tick_for_root,
+            is_kernel_migrated,
+            record_old_tick_admit_blocked,
+        )
+        from .env_snapshot import build_env_snapshot
+
         roots = await bus_client.list_enrolled_roots()
         env_snapshot = await build_tick_env_snapshot()
         admitted = 0
@@ -302,6 +309,27 @@ class CharterRunnerTickLoop:
             closed_attributions.extend(
                 await harvest_completed_windows(root_id, turns)
             )
+            if is_kernel_migrated(root_id):
+                kernel_env = build_env_snapshot(
+                    root_ids=[root_id],
+                    env_half=env_snapshot,
+                )
+                kernel_outcome = await apply_kernel_tick_for_root(
+                    root_id,
+                    turns,
+                    caps=self._caps,
+                    workspace_root=self._workspace_root,
+                    env=kernel_env,
+                    on_admit=self._on_admit,
+                )
+                old_decisions[root_id] = kernel_outcome.old_decision_label
+                if kernel_outcome.admitted:
+                    admitted += 1
+                if kernel_outcome.skipped_reason:
+                    skipped_by_reason[kernel_outcome.skipped_reason] = (
+                        skipped_by_reason.get(kernel_outcome.skipped_reason, 0) + 1
+                    )
+                continue
             await maybe_heal_admit_intent_orphan(root_id, turns, self._caps)
             decision = evaluate_root(
                 root_id, turns, self._caps, env_snapshot=env_snapshot
@@ -325,6 +353,9 @@ class CharterRunnerTickLoop:
                     )
                     continue
                 try:
+                    if is_kernel_migrated(decision.root_id):
+                        record_old_tick_admit_blocked(decision.root_id)
+                        continue
                     if await self._admit_window(decision, turns):
                         admitted += 1
                 except Exception:
@@ -359,7 +390,6 @@ class CharterRunnerTickLoop:
                     decision, caps=self._caps
                 )
         try:
-            from .env_snapshot import build_env_snapshot
             from .kernel import record_shadow_pass
             from .telemetry import emit_shadow_diff, emit_shadow_ledger_starved
 

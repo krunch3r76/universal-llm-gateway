@@ -28,6 +28,10 @@ from scripts.model_manager.ui.controller.charter_runner.window_terminal_contract
     required_arc,
     terminal_verb,
 )
+from scripts.model_manager.ui.controller.charter_runner.checkpoint_schema import (
+    append_footer_to_packet,
+    footer_kwargs_for_window,
+)
 
 _CONSULT_SUBJECT = (
     "CONSULT_PENDING wave 2 — G3 r_admit · git-worker-restart anti-pattern"
@@ -92,6 +96,9 @@ def _turn(n: int, subject: str, body: str = "") -> dict[str, Any]:
 
 
 def _w2_turns() -> list[dict[str, Any]]:
+    consult_body = append_footer_to_packet(
+        _CONSULT_BODY, **footer_kwargs_for_window("5975", 2, status="CONSULT_PENDING")
+    )
     return [
         _turn(4, "CHECKPOINT wave 1 — G1 investigate done · G2 next", _CONSULT_BODY),
         _turn(
@@ -99,7 +106,7 @@ def _w2_turns() -> list[dict[str, Any]]:
             "WIP charter-runner window 2",
             '{"charter_runner":true,"window":2,"worker_thread":"5977"}',
         ),
-        _turn(7, _CONSULT_SUBJECT, _CONSULT_BODY),
+        _turn(7, _CONSULT_SUBJECT, consult_body),
     ]
 
 
@@ -352,6 +359,11 @@ async def test_harvest_skips_second_close_for_same_window(
     monkeypatch.setattr(harvest.window_log, "append_closeout", lambda **_k: None)
     monkeypatch.setattr(
         harvest.bus_client, "fetch_turns", AsyncMock(return_value=[])
+    )
+    monkeypatch.setattr(
+        harvest.bus_client,
+        "fetch_thread",
+        AsyncMock(return_value={"slug": "arc", "summary": "so what"}),
     )
     monkeypatch.setattr(
         harvest.bus_client, "close_worker_thread", AsyncMock(return_value=None)

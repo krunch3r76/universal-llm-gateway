@@ -14,6 +14,7 @@ commit-and-git-scope_ulg
 cdp-operator-proxy_ulg
 consultation-workflow_ulg
 expand-growth-loop_ulg
+judgment-escalation-ladder_ulg
 jupiter-converse-batching_ulg
 lean-context-dispatch-first_ulg
 mcp-debugging-ux_ulg

@@ -31,6 +31,22 @@ class EnvSnapshot:
             return False
         return True
 
+    def restart_shaped_for_root(self, root_id: str) -> bool:
+        """True when the ledger pickup names a GIW sync_restart manage step."""
+        from .eligibility import next_pickup_is_restart_from_holder
+
+        pointer = self.scoreboard_pointer.get(root_id, "")
+        _ = pointer  # scoreboard is advisory; restart shape comes from bus tip meta
+        tip = self.bus_tip_meta.get(root_id) or {}
+        pickup_lines = tip.get("next_pickup") or []
+        if isinstance(pickup_lines, str):
+            pickup_lines = [pickup_lines]
+        return any(
+            next_pickup_is_restart_from_holder(str(item))
+            for item in pickup_lines
+            if item
+        )
+
     def facts_for_root(self, root_id: str, *, has_wip: bool = False) -> EnvFacts:
         attendance = self.attendance_by_root.get(
             root_id, default_attendance_lookup(root_id)
@@ -39,6 +55,9 @@ class EnvSnapshot:
             substrate_up=self.substrate_up(),
             has_wip=has_wip,
             attendance=attendance,
+            propagation_residue=self.propagation_residue,
+            giw_holder_lease=self.giw_holder_lease,
+            restart_shaped=self.restart_shaped_for_root(root_id),
         )
 
     def to_json(self) -> str:
@@ -65,7 +84,7 @@ def build_env_snapshot(
 ) -> EnvSnapshot:
     """Assemble kernel env facts from tick-scoped substrate reads."""
     giw_lease = {"held": False, "holder": None, "residue": None}
-    propagation = {"kind": None, "detail": None}
+    propagation: dict[str, Any] = {"kind": None, "detail": None}
     if env_half is not None:
         giw_src = env_half.sources.get("giw_live_hold")
         if giw_src is not None and hasattr(giw_src, "payload"):
@@ -73,10 +92,16 @@ def build_env_snapshot(
             if isinstance(payload, dict):
                 giw_lease["held"] = bool(payload.get("held"))
                 giw_lease["holder"] = payload.get("holder")
+                giw_lease["residue"] = payload.get("residue")
+            elif isinstance(payload, bool):
+                giw_lease["held"] = payload
         drain = env_half.sources.get("giw_drain_intent")
         if drain is not None and hasattr(drain, "payload"):
-            propagation["kind"] = "giw_drain"
-            propagation["detail"] = str(drain.payload)
+            intent = drain.payload
+            propagation["kind"] = "git_integration_worker"
+            propagation["detail"] = "sync_restart"
+            if intent is not None:
+                propagation["intent"] = str(getattr(intent, "intent_id", intent))
 
     attendance = {rid: default_attendance_lookup(rid) for rid in root_ids}
     scoreboards = {
