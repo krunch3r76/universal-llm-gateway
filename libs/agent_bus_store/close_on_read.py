@@ -6,7 +6,7 @@ from typing import Any, Literal
 
 from .db.threads import get_thread, get_thread_turns_asc
 from .db.threads_atomic import close_thread
-from .disposition import agents_match, resolve_bus_lifecycle
+from .disposition import agents_match, resolve_bus_lifecycle, summary_for_auto_close
 from .turns_models import ThreadStatus
 
 CLOSE_ON_READ_TAG = "dispatch:close_on_read"
@@ -107,9 +107,7 @@ def maybe_close_generate_thread_on_read(thread_id: str) -> dict[str, Any] | None
     ):
         return None
 
-    summary = (
-        f"Generate result read (turn {result_number}) — auto-closed (close-on-read)."
-    )
+    summary = summary_for_auto_close(thread.get("summary"))
     return close_thread(
         thread_id,
         summary=summary,

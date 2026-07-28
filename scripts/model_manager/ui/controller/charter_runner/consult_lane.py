@@ -194,8 +194,14 @@ def parse_cdp_consult_harvest(
     *,
     executor: dict[str, Any] | None = None,
     worker_thread: str = "",
+    delivery_turns: list[dict[str, Any]] | None = None,
+    root_id: str = "",
 ) -> CdpHarvestResult | None:
-    """Parse ``cdp/opus-*`` primary harvest (B8 — not ``project_ask`` escape)."""
+    """Parse ``cdp/opus-*`` primary harvest (B8 — not ``project_ask`` escape).
+
+    Worker turns supply the machine closeout / escape detection; delivery (root)
+    turns supply CDP reply bodies when the consult reply lands on the charter root.
+    """
     reviewer = str((executor or {}).get("reviewer_model") or "")
     seat_model = str((executor or {}).get("model") or "")
     model_id = reviewer if reviewer.startswith("cdp/") else seat_model
@@ -223,8 +229,15 @@ def parse_cdp_consult_harvest(
                 escape_path=True,
             )
         return None
-    harvest_text = _harvest_text_from_turns(worker_turns, payload)
-    thread = str(payload.get("consult_thread") or worker_thread or "")
+    harvest_text = _harvest_text_from_turns(
+        worker_turns, payload, delivery_turns=delivery_turns
+    )
+    thread = str(
+        payload.get("consult_thread")
+        or (f"agent-bus:{root_id}" if root_id else "")
+        or worker_thread
+        or ""
+    )
     if not harvest_text.strip():
         return None
     return CdpHarvestResult(
@@ -236,26 +249,38 @@ def parse_cdp_consult_harvest(
 
 
 def _harvest_text_from_turns(
-    worker_turns: list[dict[str, Any]], closeout: dict[str, Any]
+    worker_turns: list[dict[str, Any]],
+    closeout: dict[str, Any],
+    *,
+    delivery_turns: list[dict[str, Any]] | None = None,
 ) -> str:
-    for key in ("content_proof_uri", "archive_uri", "harvest_text", "summary"):
+    for key in ("content_proof_uri", "archive_uri", "harvest_text"):
         val = closeout.get(key)
         if isinstance(val, str) and val.strip():
             return val
-    chunks: list[str] = []
-    for turn in sorted(worker_turns, key=lambda t: int(t.get("turn_number") or 0)):
-        frm = str(turn.get("from") or "").lower()
-        body = str(turn.get("body") or "").strip()
-        if not body or body.startswith("{"):
-            continue
-        if "cdp" in frm or "opus" in frm or "anthropic" in frm:
-            chunks.append(body)
-    if chunks:
-        return chunks[-1]
-    for turn in reversed(worker_turns):
-        body = str(turn.get("body") or "").strip()
-        if body and not body.startswith("{"):
-            return body
+    scan_sets: list[list[dict[str, Any]]] = []
+    if delivery_turns:
+        scan_sets.append(delivery_turns)
+    scan_sets.append(worker_turns)
+    for turns in scan_sets:
+        chunks: list[str] = []
+        for turn in sorted(turns, key=lambda t: int(t.get("turn_number") or 0)):
+            frm = str(turn.get("from") or "").lower()
+            body = str(turn.get("body") or "").strip()
+            if not body or body.startswith("{"):
+                continue
+            if "cdp" in frm or "opus" in frm or "anthropic" in frm:
+                chunks.append(body)
+        if chunks:
+            return chunks[-1]
+    summary = closeout.get("summary")
+    if isinstance(summary, str) and summary.strip():
+        return summary
+    for turns in scan_sets:
+        for turn in reversed(turns):
+            body = str(turn.get("body") or "").strip()
+            if body and not body.startswith("{"):
+                return body
     return ""
 
 

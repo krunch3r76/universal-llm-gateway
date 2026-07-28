@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, Literal
 
 from agent_seat.registry import normalize_bus_address
@@ -13,6 +14,40 @@ from .turns_models import ThreadStatus
 BusLifecycle = Literal["persistent", "ephemeral"]
 _LIFECYCLE_EPHEMERAL = "bus_lifecycle:ephemeral"
 _LIFECYCLE_PERSISTENT = "bus_lifecycle:persistent"
+_DONE_PREFIX = "DONE — "
+# Machine close one-liners that must never become standing so-what titles
+# (pager_notify / bus_scan prefix SMS with ThreadDetail.summary).
+_MACHINE_CLOSE_MARKERS = (
+    "auto-closed (ephemeral default)",
+    "auto-closed (close-on-read)",
+)
+_DONE_STRIP_RE = re.compile(r"(?i)^DONE\s*[—\-:]?\s*")
+
+
+def is_machine_close_summary(summary: str | None) -> bool:
+    """True when summary is (or wraps) an auto-close machine one-liner."""
+    text = (summary or "").strip().lower()
+    if not text:
+        return False
+    return any(marker in text for marker in _MACHINE_CLOSE_MARKERS)
+
+
+def summary_for_auto_close(prior: str | None) -> str | None:
+    """Preserve standing so-what on auto-close; never write machine junk alone.
+
+    Returns ``None`` so ``close_thread`` leaves the DB ``summary`` column
+    unchanged (it only writes when the arg is not None). Real so-what titles
+    become ``DONE — {so_what}``.
+    """
+    prior = (prior or "").strip()
+    if not prior or is_machine_close_summary(prior):
+        return None
+    if prior.startswith(_DONE_PREFIX):
+        return prior
+    cleaned = _DONE_STRIP_RE.sub("", prior).strip()
+    if not cleaned or is_machine_close_summary(cleaned):
+        return None
+    return f"{_DONE_PREFIX}{cleaned}"
 
 
 def _dispatch_base_seat(agent: str) -> str:
@@ -103,7 +138,8 @@ def maybe_auto_close_after_dispatch_terminate(
     turns = get_thread_turns_asc(thread_id)
     if not _has_delivered_result_turn(turns):
         return None
-    summary = f"Dispatch {terminal_status} — auto-closed (ephemeral default)."
+    # Preserve standing so-what; ¬ wipe with machine one-liner (pager reads summary).
+    summary = summary_for_auto_close(thread.get("summary"))
     # Leave the closeout turn unread so wait()->fetch_unread consumers still
     # surface it; status=closed already halts further work on the thread.
     return close_thread(thread_id, summary=summary, mark_all_read=False)
@@ -133,5 +169,5 @@ def maybe_auto_close_after_implement_handoff_reply(
         return None
     if normalize_bus_address(from_agent) != normalize_bus_address(implement_seat):
         return None
-    summary = f"Implement reply (turn {turn_number}) — auto-closed (ephemeral default)."
+    summary = summary_for_auto_close(thread.get("summary"))
     return close_thread(thread_id, summary=summary, mark_all_read=False)

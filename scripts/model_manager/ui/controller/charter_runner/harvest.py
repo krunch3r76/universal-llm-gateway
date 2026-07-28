@@ -53,10 +53,19 @@ async def _maybe_harvest_cdp_consult_provenance(
                     if len(parts) == 2:
                         executor[parts[0].strip()] = parts[1].strip()
     executor.setdefault("reviewer_model", "cdp/opus-5")
+    root_turns: list[dict] = []
+    try:
+        root_turns = await bus_client.fetch_turns(root_id)
+    except Exception:  # noqa: BLE001 — root fetch must not abort B8
+        logger.exception(
+            "charter-runner cdp harvest root fetch failed root=%s", root_id
+        )
     parsed = parse_cdp_consult_harvest(
         worker_turns,
         executor=executor,
         worker_thread=worker_thread,
+        delivery_turns=root_turns,
+        root_id=root_id,
     )
     if parsed is None or parsed.escape_path:
         return None
@@ -467,13 +476,9 @@ async def harvest_completed_windows(
                 worker_closed=worker_closed,
             )
             if provenance is not None:
-                emit_harvested = getattr(
-                    events, "emit_manage_charter_tick_consult_harvested", None
+                await events.emit_manage_charter_tick_consult_harvested(
+                    root=root_id, window_index=window_index, **provenance
                 )
-                if emit_harvested is not None:
-                    await emit_harvested(
-                        root=root_id, window_index=window_index, **provenance
-                    )
         except Exception:  # noqa: BLE001 — transcript must not kill the tick
             logger.exception("charter-runner window_log append_closeout failed")
     return attributions
