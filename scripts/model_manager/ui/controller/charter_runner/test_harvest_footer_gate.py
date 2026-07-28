@@ -196,3 +196,57 @@ def test_machine_self_heal_not_rejected_by_gate() -> None:
         checkpoint_subject="CHECKPOINT — self-heal checkpoint_missing",
         checkpoint_body="no charter-state fence",
     )
+
+
+@pytest.mark.asyncio
+async def test_harvest_emits_footer_carveout_for_machine_checkpoint(
+    tmp_path, monkeypatch
+) -> None:
+    """C2: machine-CHECKPOINT accept must emit harvest_footer_carveout."""
+    from scripts.model_manager.ui.controller.charter_runner import window_log
+
+    monkeypatch.setattr(window_log, "_HARVESTED_DIR", tmp_path)
+
+    admission = {
+        "turn_number": 10,
+        "subject": "WIP charter-runner window 1",
+        "body": (
+            '{"charter_runner":true,"window":1,"posted_at":"2026-07-27T00:00:00Z",'
+            '"worker_thread":"worker-1","admission_mode":"autonomous"}'
+        ),
+    }
+    checkpoint = {
+        "turn_number": 20,
+        "subject": "CHECKPOINT — self-heal checkpoint_missing",
+        "body": "no charter-state fence",
+    }
+    turns = [admission, checkpoint]
+
+    with patch(
+        "scripts.model_manager.ui.controller.charter_runner.harvest.bus_client.fetch_thread",
+        new=AsyncMock(return_value={"slug": "arc", "summary": "so what"}),
+    ), patch(
+        "scripts.model_manager.ui.controller.charter_runner.harvest.bus_client.fetch_turns",
+        new=AsyncMock(return_value=[]),
+    ), patch(
+        "scripts.model_manager.ui.controller.charter_runner.harvest.bus_client.close_worker_thread",
+        new=AsyncMock(),
+    ), patch(
+        "scripts.model_manager.ui.controller.charter_runner.harvest.after_window_terminal_harvested",
+        new=AsyncMock(),
+    ), patch(
+        "scripts.model_manager.ui.controller.charter_runner.harvest.events.emit_manage_charter_tick_closed",
+        new=AsyncMock(),
+    ), patch(
+        "scripts.model_manager.ui.controller.charter_runner.harvest.events"
+        ".emit_manage_charter_tick_harvest_footer_carveout",
+        new=AsyncMock(),
+    ) as emit_carveout:
+        await harvest_completed_windows("6006", turns)
+
+    assert window_log.already_harvested("6006", 1)
+    emit_carveout.assert_awaited_once()
+    kwargs = emit_carveout.await_args.kwargs
+    assert kwargs["root"] == "6006"
+    assert kwargs["window_index"] == 1
+    assert "self-heal" in kwargs["checkpoint_subject"]

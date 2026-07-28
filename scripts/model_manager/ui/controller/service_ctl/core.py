@@ -160,6 +160,63 @@ class ServiceController:
             )
         return await hook()
 
+    async def charter_pause(self, *, reason: str = "", set_by: str = "manage") -> dict:
+        """Arm durable tick hold; current ``_tick_once`` finishes, then skips."""
+        from scripts.model_manager import observation_event as events
+        from scripts.model_manager.ui.controller.charter_runner.kernel import hold
+
+        payload = hold.set_hold(reason, set_by)
+        await events.emit_manage_charter_tick_paused(
+            reason=payload.reason,
+            set_by=payload.set_by,
+            set_at=payload.set_at,
+        )
+        tick_in_flight = "charter_tick" in self._shutdown_gate.snapshot().activities
+        return {
+            "status": "ok",
+            "held": True,
+            "reason": payload.reason,
+            "set_by": payload.set_by,
+            "set_at": payload.set_at,
+            "tick_in_flight": tick_in_flight,
+            "path": str(hold.hold_path()),
+        }
+
+    async def charter_resume(self) -> dict:
+        """Clear durable tick hold; next interval runs a normal tick."""
+        from scripts.model_manager import observation_event as events
+        from scripts.model_manager.ui.controller.charter_runner.kernel import hold
+
+        prior = hold.read_hold()
+        was_held = hold.clear_hold()
+        await events.emit_manage_charter_tick_resumed(
+            was_held=was_held,
+            reason=prior.reason if prior is not None else None,
+        )
+        return {
+            "status": "ok",
+            "held": False,
+            "was_held": was_held,
+            "path": str(hold.hold_path()),
+        }
+
+    async def charter_hold_status(self) -> dict:
+        """Report durable hold + whether quit is safe (no charter_tick activity)."""
+        from scripts.model_manager.ui.controller.charter_runner.kernel import hold
+
+        held = hold.read_hold()
+        tick_in_flight = "charter_tick" in self._shutdown_gate.snapshot().activities
+        safe_to_quit = held is not None and not tick_in_flight
+        result: dict = {
+            "held": held is not None,
+            "tick_in_flight": tick_in_flight,
+            "safe_to_quit": safe_to_quit,
+            "path": str(hold.hold_path()),
+        }
+        if held is not None:
+            result.update(hold.hold_as_dict(held) or {})
+        return result
+
     @property
     def root(self) -> Path:
         """Workspace root (read-only); fleet orchestration needs it headless."""

@@ -16,7 +16,11 @@ from .admission import ADMISSION_SUBJECT_PREFIX
 from .checkpoint_schema import resolve_checkpoint_body
 from .harvest_attribution import attribution_for_harvested_window
 from .harvest_cdp import maybe_harvest_cdp_consult_provenance
-from .harvest_footer_gate import footer_field_path, reject_harvest_without_footer
+from .harvest_footer_gate import (
+    footer_field_path,
+    is_machine_authored_checkpoint,
+    reject_harvest_without_footer,
+)
 from .harvest_side_effects import flag_gate_bypass, persist_residue_after_harvest
 from .window_sequence import release_window_on_harvest
 from .window_terminal_contract import after_window_terminal_harvested, is_tip_class
@@ -146,6 +150,27 @@ async def harvest_completed_windows(
                     root_id,
                 )
             continue
+        # C2 / P3-AC3 instrument: machine self-heal + consult-stall subjects bypass
+        # the footer gate — emit so the carve-out cannot silently vacate AC3.
+        if is_machine_authored_checkpoint(checkpoint_subject):
+            carve_sha = window_log.checkpoint_body_sha(resolved_body)
+            if not window_log.already_marked(
+                root_id, window_index, kind="footer_carveout", token=carve_sha
+            ):
+                window_log.mark(
+                    root_id, window_index, kind="footer_carveout", token=carve_sha
+                )
+                try:
+                    await events.emit_manage_charter_tick_harvest_footer_carveout(
+                        root=root_id,
+                        window_index=window_index,
+                        checkpoint_subject=checkpoint_subject,
+                    )
+                except Exception:  # noqa: BLE001 — emit must not block harvest
+                    logger.exception(
+                        "charter-runner harvest_footer_carveout emit failed root=%s",
+                        root_id,
+                    )
         # Claim the window before side effects. Mid-block raises after this cannot
         # re-enter harvest and re-emit closed / re-release ledger WIP (a:26596).
         # append_closeout re-marks idempotently.

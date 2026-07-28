@@ -16,6 +16,7 @@ from .interval import (
     ENV_TICK_INTERVAL_S,
     tick_interval_from_env,
 )
+from . import hold
 from .shadow import (
     SHADOW_LEDGER_STARVE_ROOT,
     SHADOW_STARVE_CLASS,
@@ -43,6 +44,7 @@ __all__ = [
     "bus_client",
     "completed_windows",
     "harvest_completed_windows",
+    "hold",
     "maybe_heal_admit_intent_orphan",
     "probe_giw_live_hold",
     "record_shadow_pass",

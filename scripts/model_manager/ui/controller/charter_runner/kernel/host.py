@@ -15,10 +15,8 @@ CHECKPOINT on the charter root clears in-flight.
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 from collections.abc import Callable
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -54,10 +52,6 @@ logger = get_logger(__name__)
 
 
 _ACTIVITY = "charter_tick"
-# Soft remind only — attended handoffs may sit until the operator opens IDE.
-_WAITING_OPEN_REMIND_S = 900.0
-# Hard stall (stale_window): autonomous default-on; other modes env-opt-in.
-_ENV_UNATTENDED_STALE_S = "CHARTER_UNATTENDED_STALE_S"
 _ENV_KEYS = ("AGENT_BUS_TOKEN",)
 # Margin over CURSOR_SDK_TIMEOUT (1800) so stale cannot race worker_failed (A1).
 DEFAULT_AUTONOMOUS_STALE_S = 3600.0
@@ -74,27 +68,6 @@ async def maybe_heal_admit_intent_orphan(
     """Phase 3: heal retired — always no-op (kept for test import stability)."""
     _ = (root_id, turns, caps)
     return False
-
-
-def _env_unattended_stale_raw() -> float | None:
-    """Parse CHARTER_UNATTENDED_STALE_S; None means unset or malformed (A5).
-
-    Empty/whitespace → None (unset). Non-float → None (malformed→unset).
-    Negatives clamp to 0.0 (force-OFF). Explicit 0.0 is force-OFF, not unset.
-    """
-    raw = os.environ.get(_ENV_UNATTENDED_STALE_S, "").strip()
-    if not raw:
-        return None  # unset
-    try:
-        return max(0.0, float(raw))
-    except ValueError:
-        return None  # malformed → treat as unset (A5)
-
-
-def _unattended_stale_s_from_env() -> float:
-    """Legacy shim: unset/malformed → 0.0; else parsed seconds. Delegates to raw."""
-    val = _env_unattended_stale_raw()
-    return 0.0 if val is None else val
 
 
 def _attendance_for_root(env: EnvSnapshot, root_id: str) -> Attendance:
@@ -116,28 +89,6 @@ def _attendance_for_root(env: EnvSnapshot, root_id: str) -> Attendance:
 def _admission_mode_from_env(env: EnvSnapshot, root_id: str) -> AdmissionMode:
     """Per-root admission mode from tick-scoped env snapshot."""
     return admission_mode_for_attendance(_attendance_for_root(env, root_id))
-
-
-def _effective_unattended_stale_s(
-    *,
-    constructor_override: float | None,
-    root_id: str | None = None,
-    env: EnvSnapshot | None = None,
-) -> float:
-    """Resolve hard-stall seconds: constructor → env → per-root autonomous default → 0.
-
-    When ``root_id`` carries todo ``attendance=autonomous`` and env is unset,
-    returns DEFAULT_AUTONOMOUS_STALE_S (3600). Explicit env always wins.
-    """
-    if constructor_override is not None:
-        return max(0.0, float(constructor_override))
-    env_val = _env_unattended_stale_raw()
-    if env_val is not None:
-        return env_val
-    if root_id is not None and env is not None:
-        if _admission_mode_from_env(env, root_id) == "autonomous":
-            return DEFAULT_AUTONOMOUS_STALE_S
-    return 0.0
 
 
 def ensure_charter_tick_env(workspace_root: Path) -> None:
@@ -176,10 +127,10 @@ class CharterRunnerTickLoop:
             self._tick_interval_s = float(tick_interval_s)
         self._caps = caps or CapStore()
         self._on_admit = on_admit
-        # None → resolve at handle time (env / autonomous default); float freezes tests.
+        # Retained for test kwargs; Phase-3 kernel owns stall recovery.
         self._unattended_stale_override = unattended_stale_s
         self._loop_task: asyncio.Task[None] | None = None
-        self._reminded: set[str] = set()
+        self._held_heartbeat_at: float = 0.0
 
     async def start(self) -> None:
         if self._loop_task is not None:
@@ -187,6 +138,7 @@ class CharterRunnerTickLoop:
         if self._workspace_root is not None:
             ensure_charter_tick_env(self._workspace_root)
         from ..propagation_execute import install_propagation_context
+        from . import hold as tick_hold
 
         install_propagation_context(
             self._service_controller,
@@ -194,6 +146,11 @@ class CharterRunnerTickLoop:
         )
         self._loop_task = asyncio.create_task(self._run_loop())
         await events.emit_manage_charter_tick_started()
+        held = tick_hold.read_hold()
+        if held is not None:
+            self._held_heartbeat_at = await tick_hold.emit_held_if_due(
+                held, last_emitted_at=self._held_heartbeat_at, force=True
+            )
 
     async def stop(self) -> None:
         loop_task = self._loop_task
@@ -211,8 +168,17 @@ class CharterRunnerTickLoop:
         await events.emit_manage_charter_tick_stopped()
 
     async def _run_loop(self) -> None:
+        from . import hold as tick_hold
+
         try:
             while True:
+                held = tick_hold.read_hold()
+                if held is not None:
+                    self._held_heartbeat_at = await tick_hold.emit_held_if_due(
+                        held, last_emitted_at=self._held_heartbeat_at
+                    )
+                    await asyncio.sleep(self._tick_interval_s)
+                    continue
                 if not self._services_healthy():
                     await asyncio.sleep(self._tick_interval_s)
                     continue
@@ -369,15 +335,3 @@ class CharterRunnerTickLoop:
             await _conveyor_mod.sweep_stale_enrollments()
         except Exception:  # noqa: BLE001 — stale sweep must not abort tick
             logger.exception("charter-runner conveyor stale sweep failed")
-
-
-def _admission_posted_at(admission_turn: dict) -> datetime | None:
-    try:
-        meta = json.loads(str(admission_turn.get("body") or ""))
-        raw = meta.get("posted_at")
-        if not raw:
-            return None
-        parsed = datetime.fromisoformat(raw)
-        return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
-    except (ValueError, TypeError):
-        return None

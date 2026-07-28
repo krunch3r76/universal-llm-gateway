@@ -271,7 +271,14 @@ class ModelManagerApp(App):
         await self._charter_tick_loop.start()
         self._service_controller.set_charter_tick_reload(self.reload_charter_tick)
         self.notify("charter tick restarted (no module reload)", timeout=15)
-        return {"status": "ok", "reloaded_modules": [], "count": 0}
+        from scripts.model_manager.ui.controller.charter_runner.kernel import hold
+
+        return {
+            "status": "ok",
+            "reloaded_modules": [],
+            "count": 0,
+            "held": hold.read_hold() is not None,
+        }
 
     async def _retry_api_server(self) -> None:
         """Retry binding manage.sock after a startup failure.

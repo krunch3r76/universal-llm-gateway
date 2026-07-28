@@ -221,6 +221,18 @@ async def execute(
             # In-process charter-runner module reload + tick restart (no TUI quit).
             return await ctl.reload_charter_tick()
 
+        case "charter_pause":
+            return await ctl.charter_pause(
+                reason=str(params.get("reason") or ""),
+                set_by=str(params.get("set_by") or "manage"),
+            )
+
+        case "charter_resume":
+            return await ctl.charter_resume()
+
+        case "charter_hold_status":
+            return await ctl.charter_hold_status()
+
         case "fleet_sync_restart":
             return await _fleet(ctl, build=False, scope=str(params.get("scope", "all")))
 
@@ -232,6 +244,7 @@ async def execute(
                 f"Unknown method: '{method}'. "
                 "Valid: status, health, wait_healthy, start, stop, restart, "
                 "sync_restart, rebuild, busy_status, charter_reload, "
+                "charter_pause, charter_resume, charter_hold_status, "
                 "fleet_sync_restart, fleet_rebuild_deploy"
             )
 
@@ -396,6 +409,7 @@ async def _busy_status(ctl: ServiceController) -> dict[str, Any]:
         )
     extra = ("build_image",) if ctl.build_running else ()
     snap = ctl.shutdown_gate.snapshot(extra_activities=extra)
+    hold_status = await ctl.charter_hold_status()
     return {
         "services": report,
         "restart_windows": store.restart_window_projection(now=now),
@@ -403,6 +417,7 @@ async def _busy_status(ctl: ServiceController) -> dict[str, Any]:
             "manage_inflight": snap.manage_inflight,
             "activities": list(snap.activities),
         },
+        "charter_hold": hold_status,
     }
 
 

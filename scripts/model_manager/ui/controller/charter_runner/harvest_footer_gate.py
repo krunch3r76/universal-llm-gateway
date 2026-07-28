@@ -39,7 +39,13 @@ def reject_harvest_without_footer(
     checkpoint_subject: str,
     checkpoint_body: str,
 ) -> bool:
-    """Return True when harvest must be rejected (fail closed)."""
+    """Return True when harvest must be rejected (fail closed).
+
+    Machine self-heal / consult-stall subjects are accepted here (detector kept
+    as the P3-AC3 instrument). Callers MUST emit
+    ``manage.charter.tick.harvest_footer_carveout`` on that accept branch —
+    silent accept would make AC3 vacuously passable (G3b C2).
+    """
     if is_machine_authored_checkpoint(checkpoint_subject):
         return False
     ok, field_path = footer_field_path(checkpoint_body)

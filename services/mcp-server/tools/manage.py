@@ -2,7 +2,8 @@
 
 Connects to /tmp/universal-protocol/manage.sock (JSON-RPC 2.0 over UDS).
 Exposes status, health, start, stop, restart, sync_restart, rebuild,
-wait_healthy, busy_status, and charter_reload for gateway-managed services.
+wait_healthy, busy_status, charter_reload, charter_pause, charter_resume,
+and charter_hold_status for gateway-managed services.
 Single entry point reduces agent context overhead.
 """
 
@@ -37,6 +38,9 @@ _VALID_ACTIONS = frozenset(
         "wait_healthy",
         "busy_status",
         "charter_reload",
+        "charter_pause",
+        "charter_resume",
+        "charter_hold_status",
     }
 )
 
@@ -210,6 +214,7 @@ def register_manage_tools(mcp: FastMCP) -> None:
         service: str = "",
         timeout: float = 120.0,
         force: bool = False,
+        reason: str = "",
     ) -> dict[str, Any]:
         """Service lifecycle — start, stop, restart, sync_restart, rebuild, health, wait_healthy.
 
@@ -217,6 +222,7 @@ def register_manage_tools(mcp: FastMCP) -> None:
         service: service name (required for most actions)
         timeout: seconds to wait for wait_healthy (default 120)
         force: bypass the drain check for stop/restart/sync_restart (default False)
+        reason: optional reason for charter_pause
 
         Actions:
           status        (no service needed) — running/stopped for all services
@@ -265,9 +271,15 @@ def register_manage_tools(mcp: FastMCP) -> None:
                                              retry_after_s, elapsed_s}. Reads the
                                              drain probes WITHOUT acquiring any
                                              restart slot — safe to poll live.
+                                             Also returns charter_hold {held, …}.
           charter_reload (no service needed) — in-process reload of charter-runner
                                              modules + restart tick loop (no TUI quit).
                                              Prefer after charter-runner code edits.
+          charter_pause (reason?)            — durable hold: finish current tick,
+                                             then skip until charter_resume. Survives
+                                             manage quit/start.
+          charter_resume                     — clear durable hold; next interval ticks.
+          charter_hold_status                — {held, safe_to_quit, tick_in_flight, …}.
 
         Services: gateway, stargate, rag, cloud_proxy, mcp, event_service,
                   cortex_api, agent_bus, email_bridge, git_integration_worker
@@ -328,6 +340,9 @@ def register_manage_tools(mcp: FastMCP) -> None:
             params["timeout"] = timeout
         if force and action in {"stop", "restart", "sync_restart"}:
             params["force"] = True
+        if action == "charter_pause" and reason:
+            params["reason"] = reason
+            params["set_by"] = "mcp"
 
         # Long-running actions hold the connection open until done; extend socket timeout.
         sock_timeout = (

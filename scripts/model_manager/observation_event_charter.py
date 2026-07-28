@@ -224,6 +224,30 @@ async def emit_manage_charter_tick_harvest_rejected(
     await _emit("manage.charter.tick.harvest_rejected", payload)
 
 
+async def emit_manage_charter_tick_harvest_footer_carveout(
+    *,
+    root: str,
+    window_index: int,
+    checkpoint_subject: str,
+    carveout: str = "machine_authored",
+) -> None:
+    """Machine-CHECKPOINT footer-gate bypass — P3-AC3 observability instrument.
+
+    ``reject_harvest_without_footer`` accepts self-heal / consult-stall subjects
+    without the fail-closed footer check. Emit on that branch so a silent accept
+    cannot vacate the AC3 bus audit (G3b R-admit C2).
+    """
+    await _emit(
+        "manage.charter.tick.harvest_footer_carveout",
+        {
+            "root": root,
+            "window_index": window_index,
+            "checkpoint_subject": (checkpoint_subject or "")[:120],
+            "carveout": carveout,
+        },
+    )
+
+
 async def emit_manage_charter_tick_closed(
     *,
     root: str,
@@ -376,6 +400,44 @@ async def emit_manage_charter_tick_reloaded(*, modules: list[str]) -> None:
     await _emit(
         "manage.charter.tick.reloaded",
         {"modules": modules, "count": len(modules)},
+    )
+
+
+async def emit_manage_charter_tick_paused(
+    *,
+    reason: str,
+    set_by: str,
+    set_at: float,
+) -> None:
+    """Operator armed the durable tick hold (survives manage quit/start)."""
+    await _emit(
+        "manage.charter.tick.paused",
+        {"reason": reason, "set_by": set_by, "set_at": set_at},
+    )
+
+
+async def emit_manage_charter_tick_resumed(
+    *,
+    was_held: bool,
+    reason: str | None = None,
+) -> None:
+    """Operator cleared the durable tick hold; next interval runs a normal tick."""
+    payload: dict = {"was_held": was_held}
+    if reason is not None:
+        payload["reason"] = reason
+    await _emit("manage.charter.tick.resumed", payload)
+
+
+async def emit_manage_charter_tick_held(
+    *,
+    reason: str,
+    set_by: str,
+    set_at: float,
+) -> None:
+    """Rate-limited heartbeat while the tick loop skips passes under hold."""
+    await _emit(
+        "manage.charter.tick.held",
+        {"reason": reason, "set_by": set_by, "set_at": set_at},
     )
 
 
