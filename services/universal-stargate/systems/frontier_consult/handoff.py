@@ -494,7 +494,8 @@ def build_pointer_body(
     Uses caller override if given, else the standard handoff-dispatchers.mdc
     pointer template with a one-line ``Contract:`` annotation derived from
     ``handoff_contract``. Life/web receivers get a cortex:// read instruction
-    (a23964); workspaces-capable seats keep the workspaces template.
+    because cortex packaging costs them fewer tool calls (``workspaces://`` is
+    readable on web — a:26424); other seats keep the workspaces template.
     Enforces ≤ _POINTER_MAX_LINES lines on the final body regardless of path.
     """
     if pointer_body is not None:

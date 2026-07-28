@@ -1,7 +1,8 @@
 """Stage CDP generate inputs to cortex:// for the web-anthropic satellite.
 
-Life/web cannot read ``workspaces://`` (friction a23964). The model-endpoint
-adapter stages checkout-relative and workspaces:// refs under
+``cortex://`` is the preferred packaging for web-anthropic — fewer tool calls on
+the satellite side, faster first response. The model-endpoint adapter stages
+checkout-relative and workspaces:// refs under
 ``cortex://notes/system/ephemeral/cdp-endpoint/<execution_id>/`` before submit.
 Pre-staged ``cortex://`` URIs pass through. Unstageable inputs fail closed.
 """
