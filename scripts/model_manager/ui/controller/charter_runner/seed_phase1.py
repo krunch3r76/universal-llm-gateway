@@ -5,6 +5,7 @@ from __future__ import annotations
 from scripts.model_manager.ui.controller.charter_runner.root_ledger import (
     SeedConfirm,
     load_all_roots,
+    load_root,
     open_default_ledger,
     seed_from_confirm,
 )
@@ -31,7 +32,81 @@ PHASE1_SEEDS: tuple[SeedConfirm, ...] = (
         attendance="attended",
         scoreboard_uri="cortex://notes/system/threads/5994-charter-scoreboard.md",
     ),
+    # Phase 3 sole-admitter: continuous drive root (G3 implement).
+    SeedConfirm(
+        root_id="6091",
+        pickup_gid="G3",
+        pickup_lane="mechanical",
+        pickup_executor="cursor/composer-2.5",
+        attendance="autonomous",
+        scoreboard_uri=(
+            "cortex://notes/system/threads/"
+            "charter-tick-kernel-continuous-scoreboard.md"
+        ),
+    ),
+    # Friction conveyor — must be ledger-seeded before Phase-3 manage recycle
+    # (a:26610 / a:26619). attendance=attended ⇒ ADMIT_WORKER (not consult).
+    SeedConfirm(
+        root_id="6110",
+        pickup_gid="G9",
+        pickup_lane="judgment",
+        pickup_executor="cursor/grok-4.5",
+        attendance="attended",
+        scoreboard_uri="cortex://notes/system/threads/6110-charter-scoreboard.md",
+    ),
 )
+
+_PHASE1_BY_ID = {seed.root_id: seed for seed in PHASE1_SEEDS}
+
+
+def ensure_root_ledger_seed(
+    root_id: str,
+    *,
+    default: SeedConfirm | None = None,
+) -> bool:
+    """Idempotently seed a ledger row; never overwrite an existing row.
+
+    Returns True when a row exists after the call (pre-existing or newly seeded).
+    """
+    if not root_id:
+        return False
+    confirm = _PHASE1_BY_ID.get(root_id) or default
+    if confirm is None:
+        return False
+    if confirm.root_id != root_id:
+        confirm = SeedConfirm(
+            root_id=root_id,
+            pickup_gid=confirm.pickup_gid,
+            pickup_lane=confirm.pickup_lane,
+            attendance=confirm.attendance,
+            pickup_executor=confirm.pickup_executor,
+            scoreboard_uri=confirm.scoreboard_uri,
+        )
+    conn = open_default_ledger()
+    try:
+        if load_root(conn, root_id) is not None:
+            return True
+        seed_from_confirm(conn, confirm)
+        return True
+    finally:
+        conn.close()
+
+
+def conveyor_default_seed(root_id: str) -> SeedConfirm:
+    """Default SeedConfirm for the friction conveyor (worker path)."""
+    known = _PHASE1_BY_ID.get(root_id)
+    if known is not None:
+        return known
+    return SeedConfirm(
+        root_id=root_id,
+        pickup_gid="G9",
+        pickup_lane="judgment",
+        pickup_executor="cursor/grok-4.5",
+        attendance="attended",
+        scoreboard_uri=(
+            f"cortex://notes/system/threads/{root_id}-charter-scoreboard.md"
+        ),
+    )
 
 
 def seed_phase1_roots() -> list[dict]:

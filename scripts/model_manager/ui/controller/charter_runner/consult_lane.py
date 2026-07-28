@@ -8,37 +8,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from libs.charter_runner_store.db import charter_runner_data_dir, execute_with_retry
 from universal_logging import get_logger
 
-from scripts.model_manager import observation_event as events
+from libs.charter_runner_store.db import charter_runner_data_dir, execute_with_retry
 
-from . import bus_client, dispatch_client, window_log
-from .admission import CapsView, EnvFacts, decide
-from .admit import _count_admissions
-from .caps import CapStore
-from .env_snapshot import EnvSnapshot
-from .materializer_consult import consult_subject, materialize_consult_packet
-from .root_ledger import (
-    RootLedgerRow,
-    RootStatus,
-    Transition,
-    load_root,
-    open_default_ledger,
-    upsert_root,
-    write_cortex_mirror,
-)
-from .seed_phase1 import PHASE1_SEEDS
-from .telemetry import emit_consult_deferred, emit_consult_queued, emit_tick_transition
+from . import bus_client
+from .root_ledger import RootLedgerRow
 
 logger = get_logger(__name__)
 
-MIGRATED_ROOTS = frozenset(seed.root_id for seed in PHASE1_SEEDS)
 BACKOFF_SECONDS = (60.0, 300.0, 900.0, 3600.0)
 CONSULT_EXHAUST_BUDGET_S = 86400.0
 CDP_PRIMARY_MODEL = "cdp/opus-5"
-
-_old_tick_admit_counts: dict[str, int] = {rid: 0 for rid in MIGRATED_ROOTS}
 
 
 @dataclass(frozen=True)
@@ -50,13 +31,6 @@ class ConsultQueueRow:
     attempts: int
     next_retry: float | None
     status: str
-
-
-@dataclass(frozen=True)
-class KernelTickOutcome:
-    old_decision_label: str
-    admitted: bool = False
-    skipped_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -77,36 +51,24 @@ class ConsultProvenanceRecord:
     evidence_uri: str | None = None
 
 
-def is_kernel_migrated(root_id: str) -> bool:
-    return root_id in MIGRATED_ROOTS
-
-
-def old_tick_admit_count(root_id: str) -> int:
-    return _old_tick_admit_counts.get(root_id, 0)
-
-
-def record_old_tick_admit_blocked(root_id: str) -> None:
-    """Filter caught an old-path admit attempt — count must stay zero."""
-    if root_id in MIGRATED_ROOTS:
-        logger.warning(
-            "charter-runner old-tick admit blocked for kernel-migrated root=%s",
-            root_id,
-        )
-
-
-def _consult_role_for_row(row: RootLedgerRow) -> str:
+def consult_role_for_row(row: RootLedgerRow) -> str:
     if row.consult_role in {"r_admit", "judgment_gap"}:
         return row.consult_role
     lane = (row.pickup_lane or "judgment").lower()
     return "r_admit" if lane == "consult" else "judgment_gap"
 
 
-def _backoff_s(attempts: int) -> float:
+def backoff_s(attempts: int) -> float:
     idx = min(max(attempts, 1) - 1, len(BACKOFF_SECONDS) - 1)
     return BACKOFF_SECONDS[idx]
 
 
-def _load_queue_row(conn, root_id: str, gid: str, role: str) -> ConsultQueueRow | None:
+# Back-compat aliases for kernel_tick / tests during Phase 3 cutover.
+_consult_role_for_row = consult_role_for_row
+_backoff_s = backoff_s
+
+
+def load_queue_row(conn, root_id: str, gid: str, role: str) -> ConsultQueueRow | None:
     row = conn.execute(
         """
         SELECT root_id, gid, consult_role, corpus_sha, attempts, next_retry, status
@@ -126,6 +88,9 @@ def _load_queue_row(conn, root_id: str, gid: str, role: str) -> ConsultQueueRow 
         next_retry=row["next_retry"],
         status=row["status"],
     )
+
+
+_load_queue_row = load_queue_row
 
 
 def enqueue_consult(
@@ -149,7 +114,7 @@ def enqueue_consult(
         """,
         (row.root_id, gid, consult_role, corpus_sha, now, now),
     )
-    return _load_queue_row(conn, row.root_id, gid, consult_role)  # type: ignore[return-value]
+    return load_queue_row(conn, row.root_id, gid, consult_role)  # type: ignore[return-value]
 
 
 def _provenance_path(root_id: str) -> Path:
@@ -197,11 +162,7 @@ def parse_cdp_consult_harvest(
     delivery_turns: list[dict[str, Any]] | None = None,
     root_id: str = "",
 ) -> CdpHarvestResult | None:
-    """Parse ``cdp/opus-*`` primary harvest (B8 — not ``project_ask`` escape).
-
-    Worker turns supply the machine closeout / escape detection; delivery (root)
-    turns supply CDP reply bodies when the consult reply lands on the charter root.
-    """
+    """Parse ``cdp/opus-*`` primary harvest (B8 — not ``project_ask`` escape)."""
     reviewer = str((executor or {}).get("reviewer_model") or "")
     seat_model = str((executor or {}).get("model") or "")
     model_id = reviewer if reviewer.startswith("cdp/") else seat_model
@@ -285,7 +246,9 @@ def _harvest_text_from_turns(
 
 
 def provenance_from_cdp_harvest(result: CdpHarvestResult) -> ConsultProvenanceRecord | None:
-    from .r_verdict_gate import consult_provenance_from_r_admit
+    from scripts.model_manager.charter_control.r_verdict_gate import (
+        consult_provenance_from_r_admit,
+    )
 
     if result.escape_path:
         return None
@@ -305,258 +268,19 @@ def provenance_from_cdp_harvest(result: CdpHarvestResult) -> ConsultProvenanceRe
     )
 
 
-def _ledger_row_from_state(
-    conn,
-    root_id: str,
-    *,
-    status: RootStatus,
-    transition: Transition,
-    wip: str | None = None,
-    consult_attempts: int | None = None,
-    consult_next_retry: float | None = None,
-) -> RootLedgerRow:
-    existing = load_root(conn, root_id)
-    if existing is None:
-        raise KeyError(f"ledger row missing for {root_id}")
-    row = RootLedgerRow(
-        root_id=existing.root_id,
-        status=status,
-        pickup_gid=existing.pickup_gid,
-        pickup_lane=existing.pickup_lane,
-        pickup_executor=existing.pickup_executor,
-        attendance=existing.attendance,
-        scoreboard_uri=existing.scoreboard_uri,
-        wip_window_id=wip if wip is not None else existing.wip_window_id,
-        revise_count=existing.revise_count,
-        consult_role=existing.consult_role or _consult_role_for_row(existing),
-        consult_attempts=(
-            consult_attempts
-            if consult_attempts is not None
-            else existing.consult_attempts
-        ),
-        consult_next_retry=(
-            consult_next_retry
-            if consult_next_retry is not None
-            else existing.consult_next_retry
-        ),
-        consult_poll_from=existing.consult_poll_from,
-        harvest_deadline=existing.harvest_deadline,
-        last_window_id=existing.last_window_id,
-        last_transition=transition.value,
-        last_error=existing.last_error,
-        env_facts_json=existing.env_facts_json,
-        updated_at=time.time(),
-    )
-    upsert_root(conn, row)
-    write_cortex_mirror(row)
-    return row
-
-
-async def _admit_consult_window(
-    *,
-    row: RootLedgerRow,
-    turns: list[dict],
-    caps: CapStore,
-    workspace_root: Path,
-    consult_role: str,
-    on_admit,
-) -> bool:
-    from .checkpoint_parse import parse_checkpoint
-    from .checkpoint_body import resolve_checkpoint_body
-
-    # fetch_turns returns newest-first; pick max turn_number (eligibility._latest_matching).
-    checkpoint = max(
-        (
-            t
-            for t in turns
-            if str(t.get("subject") or "").upper().startswith("CHECKPOINT")
-        ),
-        key=lambda t: int(t.get("turn_number") or 0),
-        default=None,
-    )
-    if checkpoint is None:
-        return False
-    body = resolve_checkpoint_body(
-        str(checkpoint.get("body") or ""),
-        sidecar_uri=(
-            checkpoint.get("sidecar_uri")
-            if isinstance(checkpoint.get("sidecar_uri"), str)
-            else None
-        ),
-    )
-    parsed = parse_checkpoint(body)
-    window_index = _count_admissions(turns) + 1
-    packet = materialize_consult_packet(
-        row.root_id,
-        parsed,
-        scoreboard_uri=row.scoreboard_uri,
-        window_index=window_index,
-    )
-    subject = consult_subject(row.root_id, window_index, consult_role=consult_role)
-    caps.mark_admit_intent(row.root_id, window_index)
-    result = await dispatch_client.fire_window(
-        row.root_id,
-        packet,
-        workspace_root=workspace_root,
-        window_index=window_index,
-        subject=subject,
-        admission_mode="consult",
-        consult_role=consult_role,
-    )
-    caps.record_admit(row.root_id)
-    worker_thread = str(result.get("thread_id") or "")
-    caps.bind_intent_worker(row.root_id, window_index, worker_thread)
-    now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    await bus_client.post_admission_pointer(
-        row.root_id,
-        window_index=window_index,
-        posted_at_iso=now_iso,
-        worker_thread=worker_thread,
-        packet_path=str(result.get("packet_path") or ""),
-        admission_mode="consult",
-    )
-    await events.emit_manage_charter_tick_admitted(
-        root=row.root_id,
-        dispatch_id=str(result.get("dispatch_id") or worker_thread),
-        worker_thread=worker_thread,
-    )
-    window_log.append_admit(
-        root_id=row.root_id,
-        window_index=window_index,
-        worker_thread=worker_thread,
-        packet_path=str(result.get("packet_path") or ""),
-        packet_text=packet,
-        dispatch_id=str(result.get("dispatch_id") or ""),
-    )
-    executor = result.get("executor") or {}
-    window_log.append_executor_note(worker_thread, executor)
-    if on_admit is not None:
-        try:
-            on_admit(
-                f"charter-runner kernel consult admitted {worker_thread} "
-                f"root={row.root_id} role={consult_role} model={executor.get('reviewer_model')}"
-            )
-        except Exception:  # noqa: BLE001
-            logger.exception("kernel consult on_admit failed")
-    return True
-
-
-async def apply_kernel_tick_for_root(
-    root_id: str,
-    turns: list[dict],
-    *,
-    caps: CapStore,
-    workspace_root: Path | None,
-    env: EnvSnapshot,
-    on_admit=None,
-) -> KernelTickOutcome:
-    """Live kernel path for Phase-2 migrated roots."""
-    conn = open_default_ledger()
-    try:
-        row = load_root(conn, root_id)
-        if row is None:
-            return KernelTickOutcome("kernel_unseeded")
-        # Tip-aware only — historical WIP subjects must not permanently NOOP (P2 dogfood).
-        from .eligibility import ADMISSION_SUBJECT_PREFIX, _latest_matching, _turn_number
-        from .window_terminal_contract import is_tip_class
-
-        tip = _latest_matching(turns, is_tip_class)
-        tip_n = _turn_number(tip) if tip is not None else 0
-        prefix = ADMISSION_SUBJECT_PREFIX.upper()
-        has_wip = any(
-            _turn_number(t) > tip_n
-            and str(t.get("subject") or "").upper().startswith(prefix)
-            for t in turns
-        )
-        facts = env.facts_for_root(root_id, has_wip=has_wip)
-        facts = EnvFacts(
-            substrate_up=facts.substrate_up,
-            has_wip=facts.has_wip,
-            attendance=row.attendance,
-            propagation_residue=env.propagation_residue,
-            giw_holder_lease=env.giw_holder_lease,
-            restart_shaped=env.restart_shaped_for_root(root_id),
-        )
-        caps_view = CapsView.from_cap_store(caps, root_id)
-        transition = decide(row, facts, caps_view)
-        if transition == Transition.QUEUE_CONSULT:
-            role = _consult_role_for_row(row)
-            enqueue_consult(conn, row=row, consult_role=role)
-            updated = _ledger_row_from_state(
-                conn,
-                root_id,
-                status=RootStatus.CONSULT_QUEUED,
-                transition=Transition.QUEUE_CONSULT,
-            )
-            await emit_consult_queued(root=root_id, gid=updated.pickup_gid or "?", role=role)
-            await emit_tick_transition(
-                root=root_id,
-                from_status=row.status.value,
-                to_status=updated.status.value,
-                transition=transition.value,
-                gid=updated.pickup_gid,
-            )
-            return KernelTickOutcome("kernel_queue_consult")
-        if transition == Transition.DEFER_CONSULT:
-            retry = time.time() + _backoff_s(max(row.consult_attempts, 1))
-            _ledger_row_from_state(
-                conn,
-                root_id,
-                status=RootStatus.CONSULT_DEFERRED,
-                transition=Transition.DEFER_CONSULT,
-                consult_next_retry=retry,
-                consult_attempts=row.consult_attempts + 1,
-            )
-            await emit_consult_deferred(
-                root=root_id, gid=row.pickup_gid or "?", next_retry=retry
-            )
-            return KernelTickOutcome("kernel_defer_consult")
-        if transition == Transition.ADMIT_CONSULT:
-            if workspace_root is None:
-                return KernelTickOutcome("kernel_no_workspace")
-            if row.consult_next_retry and time.time() < row.consult_next_retry:
-                return KernelTickOutcome("kernel_consult_backoff")
-            role = _consult_role_for_row(row)
-            admitted = await _admit_consult_window(
-                row=row,
-                turns=turns,
-                caps=caps,
-                workspace_root=workspace_root,
-                consult_role=role,
-                on_admit=on_admit,
-            )
-            if admitted:
-                _ledger_row_from_state(
-                    conn,
-                    root_id,
-                    status=RootStatus.CONSULT_ADMITTED,
-                    transition=Transition.ADMIT_CONSULT,
-                    wip=f"charter-{root_id}-consult",
-                )
-            return KernelTickOutcome(
-                "kernel_admit_consult" if admitted else "kernel_admit_failed",
-                admitted=admitted,
-            )
-        return KernelTickOutcome(transition.value)
-    finally:
-        conn.close()
-
-
 __all__ = [
     "BACKOFF_SECONDS",
     "CDP_PRIMARY_MODEL",
+    "CONSULT_EXHAUST_BUDGET_S",
     "CdpHarvestResult",
     "ConsultProvenanceRecord",
     "ConsultQueueRow",
-    "KernelTickOutcome",
-    "MIGRATED_ROOTS",
-    "apply_kernel_tick_for_root",
+    "backoff_s",
+    "consult_role_for_row",
     "enqueue_consult",
-    "is_kernel_migrated",
     "load_consult_provenance",
-    "old_tick_admit_count",
+    "load_queue_row",
     "parse_cdp_consult_harvest",
     "provenance_from_cdp_harvest",
-    "record_old_tick_admit_blocked",
     "write_consult_provenance",
 ]

@@ -72,9 +72,18 @@ async def emit_consult_deferred(*, root: str, gid: str, next_retry: float) -> No
     )
 
 
+async def emit_enrollment_filtered(*, root: str, reason: str) -> None:
+    """Old-tick path blocked for a ledger-migrated root (P2C-AC5 observability)."""
+    await _emit(
+        "manage.charter.tick.enrollment.filtered",
+        {"root": root, "reason": reason},
+    )
+
+
 __all__ = [
     "emit_consult_deferred",
     "emit_consult_queued",
+    "emit_enrollment_filtered",
     "emit_shadow_diff",
     "emit_shadow_ledger_starved",
     "emit_tick_transition",

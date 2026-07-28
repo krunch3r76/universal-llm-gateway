@@ -10,6 +10,7 @@ from scripts.model_manager.ui.controller.charter_runner.checkpoint_parse import 
 from scripts.model_manager.ui.controller.charter_runner.checkpoint_schema import (
     append_footer_to_packet,
     emit_footer,
+    output_format_footer_requirement,
     validate_checkpoint_footer,
 )
 from scripts.model_manager.ui.controller.charter_runner.materializer import (
@@ -144,3 +145,28 @@ def test_materializer_body_contains_charter_state_fence(
     result = validate_checkpoint_footer(packet)
     assert result.ok is True
     assert '"window_id": "charter-5998-w3"' in packet
+
+
+def test_string_wip_fails_validate_naming_wip() -> None:
+    """6091 shape: bare-string cross-root wip must fail-closed on field path wip."""
+    footer = emit_footer(
+        schema_version=1,
+        status="CHECKPOINT",
+        next_pickup={"gid": "G1", "lane": "judgment", "executor": "cursor-sdk"},
+        wip=None,
+        consult={"role": None, "poll_hint": None, "from": None},
+        revise_count=0,
+        evidence=[],
+        window_id="charter-6091-w7",
+        transition_id=None,
+    )
+    bad = footer.replace('"wip": null', '"wip": "charter-5975-consult@6099"')
+    result = validate_checkpoint_footer(bad)
+    assert result.ok is False
+    assert "wip" in result.errors
+
+
+def test_output_format_states_phase0_wip_null_rule() -> None:
+    text = output_format_footer_requirement(window_id="charter-6110-w3")
+    assert "wip to null" in text
+    assert "cross-root" in text

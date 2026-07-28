@@ -202,6 +202,28 @@ async def emit_manage_charter_tick_consult_harvested(
     await _emit("manage.charter.tick.consult.harvested", payload)
 
 
+async def emit_manage_charter_tick_harvest_rejected(
+    *,
+    root: str,
+    window_index: int,
+    field_path: str,
+    checkpoint_subject: str | None = None,
+) -> None:
+    """Footer-invalid harvest reject — ``manage.charter.tick.harvest_rejected``.
+
+    Parallel to ``root_skipped`` (admission half): makes the harvest-half
+    fail-closed visible without reading per-root logs.
+    """
+    payload: dict = {
+        "root": root,
+        "window_index": window_index,
+        "field_path": field_path,
+    }
+    if checkpoint_subject:
+        payload["checkpoint_subject"] = checkpoint_subject[:120]
+    await _emit("manage.charter.tick.harvest_rejected", payload)
+
+
 async def emit_manage_charter_tick_closed(
     *,
     root: str,

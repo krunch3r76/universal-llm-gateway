@@ -138,6 +138,35 @@ def _row_actionable(assertion: dict[str, Any]) -> bool:
     return attrs.get("actionable", True) is not False
 
 
+def _assertion_still_open(assertion: dict[str, Any]) -> bool:
+    """False after friction_close / supersede (valid_until or superseded_by set)."""
+    if assertion.get("superseded_by") is not None:
+        return False
+    if assertion.get("valid_until"):
+        return False
+    return True
+
+
+# Capture/pipeline closeout tokens are SDK harness noise — not worker material
+# defects. Treating them as defect_signal mints false ceremonial_suspected
+# repair todos when Frictions correctly says silence (6110 w1–w3).
+_NOISE_DEVIATION_EXACT = frozenset(
+    {
+        "gate:implement_source_ref_unresolved",
+        "stream_only_effect",
+    }
+)
+_NOISE_DEVIATION_PREFIXES = ("capture:", "degraded:")
+
+
+def is_material_deviation(token: str) -> bool:
+    """True when a closeout deviation token indicates a material worker defect."""
+    text = str(token or "").strip()
+    if not text or text in _NOISE_DEVIATION_EXACT:
+        return False
+    return not any(text.startswith(prefix) for prefix in _NOISE_DEVIATION_PREFIXES)
+
+
 def defect_signal(
     *,
     gate_bypass_count: int = 0,
@@ -149,8 +178,7 @@ def defect_signal(
         return True
     if worker_closeout_status == "partial":
         return True
-    devs = closeout_deviations or []
-    return any(d for d in devs if d != "gate:implement_source_ref_unresolved")
+    return any(is_material_deviation(d) for d in (closeout_deviations or []))
 
 
 def closeout_deviations(worker_turns: list[dict[str, Any]]) -> list[str]:
@@ -205,6 +233,10 @@ def audit_window_frictions(
     if root_digits.lower().startswith("agent-bus:"):
         root_digits = root_digits.split(":", 1)[1].strip()
 
+    # Citations that resolve to this root via assertion_get (including same-window
+    # closed/superseded rows). Live frictions() defaults to superseded=False, so a
+    # filed-then-closed citation would otherwise look like a phantom (6110-w4).
+    resolved_same_root_ids: set[int] = set()
     for row in rows:
         result.cited_ids.add(row.assertion_id)
         got = assertion_get(row.assertion_id)
@@ -218,7 +250,9 @@ def audit_window_frictions(
         if filed_root and filed_root != root_digits:
             result.unresolved_ids.add(row.assertion_id)
             continue
-        if _row_actionable(got):
+        if filed_root == root_digits:
+            resolved_same_root_ids.add(row.assertion_id)
+        if _row_actionable(got) and _assertion_still_open(got):
             result.resolved_actionable_rows.append(row)
 
     filed_resp = frictions(
@@ -233,7 +267,9 @@ def audit_window_frictions(
             result.filed_ids.add(int(item["id"]))
 
     result.uncited_ids = result.filed_ids - result.cited_ids
-    result.phantom_ids = result.cited_ids - result.filed_ids
+    result.phantom_ids = (
+        result.cited_ids - result.filed_ids - resolved_same_root_ids
+    )
 
     non_actionable = 0
     total_filed = len(result.filed_ids)
@@ -285,5 +321,6 @@ __all__ = [
     "closeout_deviations",
     "defect_signal",
     "extract_frictions_section",
+    "is_material_deviation",
     "parse_frictions_section",
 ]

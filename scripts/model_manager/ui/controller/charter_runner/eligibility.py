@@ -12,7 +12,6 @@ imports no GIW or intent-store adapters (anti-accretion bind).
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -22,14 +21,13 @@ from universal_logging import get_logger
 
 from .caps import CapStore
 from .checkpoint_parse import ParsedCheckpoint
+from .eligibility_restart import next_pickup_is_restart_from_holder
 from .env_predicates import (
     ADMIT_INTENT_ORPHAN_REASON,
     ENV_SNAPSHOT_STALE_REASON,
     GIW_DRAIN_BLOCKS_RESTART_REASON,
     GIW_HOLD_BLOCKS_RESTART_REASON,
-    EnvEvalContext,
     EnvironmentSnapshot,
-    evaluate_env_half,
 )
 from .window_terminal_contract import CHECKPOINT_PREFIX, is_tip_class
 
@@ -39,31 +37,6 @@ ENROLLMENT_TAG = "charter-runner"
 ADMISSION_SUBJECT_PREFIX = "WIP charter-runner"
 WindowKind = Literal["worker", "consult"]
 GateHalf = Literal["body", "env"]
-
-_GIW = re.escape("git_integration_worker")
-_SYNC_RESTART_GIW_RE = re.compile(
-    rf"sync_restart[^;\n]*{_GIW}|{_GIW}[^;\n]*sync_restart",
-    re.IGNORECASE,
-)
-_MANAGE_GIW_RESTART_RE = re.compile(
-    rf"manage\s*\([^)]*(?:restart|sync_restart|stop)[^)]*{_GIW}|"
-    rf"manage\s*\([^)]*{_GIW}[^)]*(?:restart|sync_restart|stop)",
-    re.IGNORECASE,
-)
-_WAIT_HEALTHY_GIW_RESTART_RE = re.compile(
-    rf"wait_healthy[^;\n]*(?:sync_restart|restart)[^;\n]*{_GIW}|"
-    rf"(?:sync_restart|restart)[^;\n]*wait_healthy[^;\n]*{_GIW}|"
-    rf"wait_healthy[^;\n]*{_GIW}[^;\n]*(?:sync_restart|restart)",
-    re.IGNORECASE,
-)
-_BARE_GIW_RESTART_RE = re.compile(
-    rf"\brestart\b[^;\n]*{_GIW}|{_GIW}[^;\n]*\brestart\b",
-    re.IGNORECASE,
-)
-_PROBE_ONLY_PICKUP_RE = re.compile(
-    r"\b(?:live\s+)?probe\b(?:\s+only|\s+after\s+(?:healthy|restart))",
-    re.IGNORECASE,
-)
 
 
 @dataclass(frozen=True)
@@ -159,29 +132,6 @@ def live_wip_for_window(turns: list[dict], window_index: int) -> bool:
     return False
 
 
-def next_pickup_is_restart_from_holder(item: str) -> bool:
-    """True when a Next-pickup row would re-hold GIW for manage restart/drain."""
-    text = item.strip()
-    if not text:
-        return False
-    restart_shaped = any(
-        pattern.search(text)
-        for pattern in (
-            _SYNC_RESTART_GIW_RE,
-            _MANAGE_GIW_RESTART_RE,
-            _WAIT_HEALTHY_GIW_RESTART_RE,
-            _BARE_GIW_RESTART_RE,
-        )
-    )
-    if not restart_shaped:
-        return False
-    if _PROBE_ONLY_PICKUP_RE.search(text) and not (
-        _SYNC_RESTART_GIW_RE.search(text) or _MANAGE_GIW_RESTART_RE.search(text)
-    ):
-        return False
-    return True
-
-
 def _body_skip(
     reason: str,
     root_id: str,
@@ -203,27 +153,6 @@ def _body_skip(
     )
 
 
-def _env_skip(
-    reason: str,
-    root_id: str,
-    *,
-    predicate_id: str,
-    checkpoint: dict,
-    parsed: ParsedCheckpoint,
-    window_kind: WindowKind = "worker",
-) -> Decision:
-    return Decision(
-        False,
-        reason,
-        root_id,
-        checkpoint=checkpoint,
-        parsed=parsed,
-        window_kind=window_kind,
-        half="env",
-        predicate_id=predicate_id,
-    )
-
-
 def evaluate_root(
     root_id: str,
     turns: list[dict],
@@ -234,6 +163,8 @@ def evaluate_root(
     now: datetime | None = None,
 ) -> Decision:
     """Evaluate BODY then ENV admission gates over a root's turns."""
+    from .eligibility_env import check_env_or_eligible
+
     checkpoint = _latest_matching(turns, is_tip_class)
     if checkpoint is None:
         return _body_skip("no_checkpoint", root_id)
@@ -313,7 +244,7 @@ def evaluate_root(
                 parsed=parsed,
                 window_kind="consult",
             )
-        body_ok = _check_env_or_eligible(
+        return check_env_or_eligible(
             root_id,
             turns,
             caps,
@@ -324,7 +255,6 @@ def evaluate_root(
             now=now,
             window_kind="consult",
         )
-        return body_ok
 
     # next_pickup_gated already enforced inside validate_checkpoint_for_admit
 
@@ -346,7 +276,7 @@ def evaluate_root(
             parsed=parsed,
         )
 
-    return _check_env_or_eligible(
+    return check_env_or_eligible(
         root_id,
         turns,
         caps,
@@ -355,120 +285,6 @@ def evaluate_root(
         env_snapshot,
         admission_mode,
         now=now,
-    )
-
-
-def _residue_skip(
-    reason: str,
-    root_id: str,
-    *,
-    checkpoint: dict,
-    parsed: ParsedCheckpoint,
-    window_kind: WindowKind,
-    fingerprint: str,
-) -> Decision:
-    return Decision(
-        False,
-        reason,
-        root_id,
-        checkpoint=checkpoint,
-        parsed=parsed,
-        window_kind=window_kind,
-        half="body",
-        residue_fingerprint=fingerprint,
-    )
-
-
-def _check_env_or_eligible(
-    root_id: str,
-    turns: list[dict],
-    caps: CapStore,
-    checkpoint: dict,
-    parsed: ParsedCheckpoint,
-    env_snapshot: EnvironmentSnapshot | None,
-    admission_mode: str,
-    *,
-    now: datetime | None = None,
-    window_kind: WindowKind = "worker",
-) -> Decision:
-    next_window = next_window_index(turns)
-    restart_shaped = any(
-        next_pickup_is_restart_from_holder(item) for item in parsed.next_pickup
-    )
-    ctx = EnvEvalContext(
-        restart_shaped=restart_shaped,
-        admit_intent_orphan=caps.has_admit_intent(root_id, next_window),
-    )
-    env_skip = evaluate_env_half(env_snapshot, ctx, now=now)
-    if env_skip is not None:
-        return _env_skip(
-            env_skip.reason,
-            root_id,
-            predicate_id=env_skip.predicate_id,
-            checkpoint=checkpoint,
-            parsed=parsed,
-            window_kind=window_kind,
-        )
-    from .residue_fingerprint import (
-        ResidueRecord,
-        evaluate_residue_gate,
-        load_residue_record,
-        save_residue_record,
-    )
-
-    if parsed.consult_pending:
-        admission_mode = "consult"
-    cp_body = str(checkpoint.get("body") or "")
-    last = load_residue_record(root_id)
-    gate = evaluate_residue_gate(
-        checkpoint_body=cp_body,
-        parsed=parsed,
-        admission_mode=admission_mode,
-        window_kind=window_kind,
-        last=last,
-        window_index=next_window,
-    )
-    if not gate.admit:
-        save_residue_record(
-            root_id,
-            ResidueRecord(
-                fingerprint=gate.fingerprint,
-                witness=gate.witness,
-                consecutive_skip_count=gate.consecutive_skip_count,
-                w10_consumed=gate.w10_consumed,
-                last_window_index=gate.last_window_index,
-            ),
-        )
-        if gate.stop_root:
-            caps.mark_failed(root_id, gate.reason)
-        return _residue_skip(
-            gate.reason,
-            root_id,
-            checkpoint=checkpoint,
-            parsed=parsed,
-            window_kind=window_kind,
-            fingerprint=gate.fingerprint,
-        )
-    if gate.w10_consumed and last is not None:
-        save_residue_record(
-            root_id,
-            ResidueRecord(
-                fingerprint=gate.fingerprint,
-                witness=gate.witness,
-                consecutive_skip_count=0,
-                w10_consumed=True,
-                last_window_index=gate.last_window_index,
-            ),
-        )
-    reason = "eligible_consult" if window_kind == "consult" else "eligible"
-    return Decision(
-        True,
-        reason,
-        root_id,
-        checkpoint=checkpoint,
-        parsed=parsed,
-        window_kind=window_kind,
-        residue_fingerprint=gate.fingerprint,
     )
 
 

@@ -11,31 +11,22 @@ normalized at ``materialize_checkpoint_turn`` and again inside
 when the URI shape itself cannot resolve — never as a false ``unreadable``
 missing-file fault when the path is merely wrapped.
 
-After two consecutive refusals the machine posts a holder-repair CHECKPOINT that
-re-queues a judgment-lane pin-refresh pickup — it never rewrites ``spec_sha256``.
+Phase 3: supervisor never authors CHECKPOINTs — after threshold refusals the
+gate keeps fail-closing (holder must refresh the pin); no machine repair tip.
 """
 
 from __future__ import annotations
 
 import hashlib
 import re
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 
 from implement_admission.closeout_helpers import cortex_files_root
 from universal_logging import get_logger
 
-from . import bus_client
-from .checkpoint_admit_gate import validate_checkpoint_for_admit
-from .checkpoint_parse import parse_checkpoint
-from .self_heal_checkpoint import build_self_heal_checkpoint
-
 _REASON = "stale_r_corpus_sha"
 _REFUSAL_THRESHOLD = 2
-_HOLDER_REPAIR_PICKUP = (
-    "G3a — refresh Sidecars dense-spec pin (spec_sha256) then re-post "
-    "CONSULT_PENDING + consult_role: r_admit · executor_lane: judgment"
-)
 _logger = get_logger(__name__)
 _SUB_REASONS = frozenset(
     {
@@ -291,66 +282,6 @@ def clear_r_corpus_refusals(root_id: str) -> None:
     _refusal_path(root_id).unlink(missing_ok=True)
 
 
-def _inject_state_advisory(body: str, result: RCorpusShaResult) -> str:
-    """Append holder-repair advisory lines under ``## State`` (never touches Sidecars)."""
-    lines = [
-        f"- sub_reason: {result.sub_reason or 'stale'}",
-        f"- dense_spec_uri: {result.dense_spec_uri or '(none)'}",
-        f"- pinned_hex: {result.pinned_hex or '(none)'}",
-    ]
-    if result.live_hex:
-        lines.append(f"- live_hex: {result.live_hex}")
-    advisory = "\n".join(lines)
-    marker = "## State\n"
-    if marker not in body:
-        return body
-    return body.replace(marker, marker + advisory + "\n", 1)
-
-
-async def _post_holder_repair_checkpoint(
-    *,
-    root_id: str,
-    checkpoint: dict | None,
-    result: RCorpusShaResult,
-    log: object,
-) -> bool:
-    """Post a judgment-lane pin-refresh CHECKPOINT; never rewrite ``spec_sha256``."""
-    prior_body = str((checkpoint or {}).get("body") or "")
-    try:
-        prior = parse_checkpoint(prior_body)
-    except Exception:  # noqa: BLE001 — leave refusal counter for retry
-        log.error(  # type: ignore[attr-defined]
-            "charter-runner stale_r_corpus_sha repair skipped root=%s — parse failed",
-            root_id,
-        )
-        return False
-    repair_prior = replace(
-        prior,
-        next_pickup=[_HOLDER_REPAIR_PICKUP],
-        consult_pending=False,
-    )
-    subject, body = build_self_heal_checkpoint(
-        prior=repair_prior,
-        window_index=0,
-        worker_thread="",
-        reason=f"stale_r_corpus_sha:{result.sub_reason or 'stale'}",
-        root_id=root_id,
-    )
-    body = _inject_state_advisory(body, result)
-    verdict = validate_checkpoint_for_admit(body)
-    if not verdict.ok:
-        log.error(  # type: ignore[attr-defined]
-            "charter-runner stale_r_corpus_sha repair CHECKPOINT invalid root=%s "
-            "reason=%s hint=%s — skip post",
-            root_id,
-            verdict.reason,
-            verdict.fix_hint,
-        )
-        return False
-    await bus_client.post_root_checkpoint(root_id, subject=subject, body=body)
-    return True
-
-
 async def refuse_stale_r_admit(
     *,
     root_id: str,
@@ -359,7 +290,7 @@ async def refuse_stale_r_admit(
     events_module: object,
     log: object,
 ) -> None:
-    """Log + emit ``root_skipped``; after two refusals post a holder-repair CHECKPOINT."""
+    """Log + emit ``root_skipped``; keep fail-closed (no machine CHECKPOINT author)."""
     skip_reason = result.reason or _REASON
     log.warning(  # type: ignore[attr-defined]
         "charter-runner skip r_admit admit root=%s reason=%s sub_reason=%s "
@@ -379,19 +310,10 @@ async def refuse_stale_r_admit(
     )
     count = _read_refusal_count(root_id) + 1
     _write_refusal_count(root_id, count)
-    if count < _REFUSAL_THRESHOLD:
-        return
-    posted = await _post_holder_repair_checkpoint(
-        root_id=root_id,
-        checkpoint=checkpoint,
-        result=result,
-        log=log,
-    )
-    if posted:
-        _write_refusal_count(root_id, 0)
-    else:
+    if count >= _REFUSAL_THRESHOLD:
         _logger.warning(
-            "charter-runner stale_r_corpus_sha repair post failed root=%s count=%s",
+            "charter-runner stale_r_corpus_sha refusals>=%s root=%s — "
+            "holder must refresh Sidecars pin (supervisor does not author CHECKPOINT)",
+            _REFUSAL_THRESHOLD,
             root_id,
-            count,
         )

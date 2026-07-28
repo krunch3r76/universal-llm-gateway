@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 from universal_logging import get_logger
 
 if TYPE_CHECKING:
-    from .residue_fingerprint import ResidueRecord
+    from .residue_witness import ResidueRecord
 
 logger = get_logger(__name__)
 
@@ -32,7 +32,7 @@ def load_residue_record(
     root_id: str, *, store_dir: Path | None = None
 ) -> ResidueRecord | None:
     """Load last residue for ``root_id``; corrupt/missing store ⇒ first-window None."""
-    from .residue_fingerprint import ResidueRecord
+    from .residue_witness import ResidueRecord
 
     path = store_path(root_id, store_dir=store_dir)
     if not path.is_file():

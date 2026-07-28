@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import re
-
-from pager_notify.tick import ClosedAttribution, task_hint_from_next_pickup
+from pager_notify.tick import ClosedAttribution
 from universal_logging import get_logger
 
 from scripts.model_manager import observation_event as events
@@ -15,229 +13,17 @@ from . import (
     window_log,
 )
 from .checkpoint_body import resolve_checkpoint_body
-from .checkpoint_parse import parse_checkpoint
 from .eligibility import ADMISSION_SUBJECT_PREFIX
-from .harvest_footer_gate import reject_harvest_without_footer
+from .harvest_attribution import attribution_for_harvested_window
+from .harvest_cdp import maybe_harvest_cdp_consult_provenance
+from .harvest_footer_gate import footer_field_path, reject_harvest_without_footer
+from .harvest_side_effects import flag_gate_bypass, persist_residue_after_harvest
 from .window_terminal_contract import after_window_terminal_harvested, is_tip_class
 
+# Test/compat alias — body lives in harvest_side_effects.
+_persist_residue_after_harvest = persist_residue_after_harvest
+
 logger = get_logger(__name__)
-
-
-async def _maybe_harvest_cdp_consult_provenance(
-    *,
-    root_id: str,
-    window_index: int,
-    worker_thread: str,
-    worker_turns: list[dict],
-    admission_meta: dict,
-) -> dict[str, str] | None:
-    """B8 — parse ``cdp/opus-*`` harvest and write consult provenance."""
-    mode = str(admission_meta.get("admission_mode") or "").strip().lower()
-    if mode != "consult":
-        return None
-    from .consult_lane import (
-        parse_cdp_consult_harvest,
-        provenance_from_cdp_harvest,
-        write_consult_provenance,
-    )
-    from .window_log import worker_transcript_path
-
-    executor: dict = {}
-    transcript = worker_transcript_path(worker_thread)
-    if transcript.is_file():
-        text = transcript.read_text(encoding="utf-8", errors="replace")
-        if "reviewer_model=" in text or "model=cdp/" in text:
-            for line in text.splitlines():
-                if line.startswith("seat=") or line.startswith("model="):
-                    parts = line.split("=", 1)
-                    if len(parts) == 2:
-                        executor[parts[0].strip()] = parts[1].strip()
-    executor.setdefault("reviewer_model", "cdp/opus-5")
-    root_turns: list[dict] = []
-    try:
-        root_turns = await bus_client.fetch_turns(root_id)
-    except Exception:  # noqa: BLE001 — root fetch must not abort B8
-        logger.exception(
-            "charter-runner cdp harvest root fetch failed root=%s", root_id
-        )
-    parsed = parse_cdp_consult_harvest(
-        worker_turns,
-        executor=executor,
-        worker_thread=worker_thread,
-        delivery_turns=root_turns,
-        root_id=root_id,
-    )
-    if parsed is None or parsed.escape_path:
-        return None
-    record = provenance_from_cdp_harvest(parsed)
-    if record is None:
-        return None
-    uri = write_consult_provenance(record, root_id=root_id)
-    logger.info(
-        "charter-runner cdp consult provenance root=%s window=%s model=%s verdict=%s",
-        root_id,
-        window_index,
-        record.consultant_model,
-        record.verdict,
-    )
-    return {
-        "consult_thread": record.consult_thread,
-        "verdict": record.verdict,
-        "consultant_family": record.consultant_family,
-        "consultant_substrate": record.consultant_substrate,
-        "cortex_mirror": uri,
-        "consultant_model": record.consultant_model,
-    }
-
-
-_GATED_ID_RE = re.compile(r"\b([GR]\d+[a-z]?)\b")
-
-
-def _executor_slug_for_sms(
-    admission_mode: str,
-    *,
-    executor_lane: str | None,
-    consult_role: str | None,
-) -> str:
-    """Map admit mode + checkpoint lane to the SMS executor slug."""
-    del consult_role  # both consult roles host cdp/opus-5 as reviewer
-    mode = (admission_mode or "generate").strip().lower()
-    if mode == "consult":
-        # Both roles host CDP Opus as the cross-family reviewer (a:26476).
-        return "cdp/opus-5"
-    if mode == "handoff":
-        return "cursor"
-    if (executor_lane or "").strip().lower() == "implement":
-        return "cursor/composer-2.5"
-    return "cursor/grok-4.5"
-
-
-_CONSULT_ROLE_SNIFF_RE = re.compile(
-    r"consult_role:\s*(r_admit|judgment_gap)\b", re.IGNORECASE
-)
-
-
-def _consult_role_from_pickup(next_pickup: list[str]) -> str | None:
-    """Sniff consult_role from Next-pickup when parse leaves it unset."""
-    for item in next_pickup:
-        m = _CONSULT_ROLE_SNIFF_RE.search(item)
-        if m:
-            return m.group(1).lower()
-        if re.search(r"\bR-admit\b", item, re.IGNORECASE):
-            return "r_admit"
-    return None
-
-
-def attribution_for_harvested_window(
-    *,
-    root_id: str,
-    consumed_checkpoint_body: str,
-    admission_mode: str,
-    thread_slug: str = "",
-    completing_subject: str = "",
-    window_index: int = 0,
-    so_what: str = "",
-) -> ClosedAttribution | None:
-    """Build harvest-close provenance from the CHECKPOINT the window consumed."""
-    parsed = parse_checkpoint(consumed_checkpoint_body)
-    gid: str | None = None
-    for item in parsed.next_pickup:
-        m = _GATED_ID_RE.search(item)
-        if m:
-            gid = m.group(1)
-            break
-    if not gid:
-        return None
-    consult_role = parsed.consult_role or _consult_role_from_pickup(parsed.next_pickup)
-    executor_slug = _executor_slug_for_sms(
-        admission_mode,
-        executor_lane=parsed.executor_lane,
-        consult_role=consult_role,
-    )
-    return ClosedAttribution(
-        gid=gid,
-        executor_slug=executor_slug,
-        root_id=root_id,
-        thread_slug=thread_slug,
-        task_hint=task_hint_from_next_pickup(
-            parsed.next_pickup,
-            gid,
-            source_ref=parsed.source_ref,
-        ),
-        source_ref=parsed.source_ref or "",
-        checkpoint_subject=completing_subject,
-        window_index=window_index,
-        so_what=so_what,
-    )
-
-
-def _persist_residue_after_harvest(
-    *,
-    root_id: str,
-    consumed_checkpoint_body: str,
-    admission_meta: dict,
-    admission_mode: str | None = None,
-) -> None:
-    """Record the residue the closed window CONSUMED, not the one it produced.
-
-    The gate compares the current tip against this record, so storing the
-    post-window CHECKPOINT would compare the tip against itself: no witness can
-    fire against an identical witness, so every root would take an
-    ``unchanged_residue`` skip per tick and stop at the threshold with no way to
-    produce a newer CHECKPOINT. Thrash detection needs the pair to straddle a
-    window boundary.
-    """
-    from .residue_fingerprint import (
-        load_residue_record,
-        record_from_harvest,
-        save_residue_record,
-    )
-
-    parsed = parse_checkpoint(consumed_checkpoint_body)
-    resolved_mode = str(
-        admission_meta.get("admission_mode") or admission_mode or "generate"
-    )
-    window_kind = "consult" if resolved_mode == "consult" else "worker"
-    prior = load_residue_record(root_id)
-    w10_consumed = prior.w10_consumed if prior is not None else False
-    record = record_from_harvest(
-        checkpoint_body=consumed_checkpoint_body,
-        parsed=parsed,
-        admission_mode=resolved_mode,
-        window_kind=window_kind,
-        w10_consumed=w10_consumed,
-    )
-    save_residue_record(root_id, record)
-
-
-async def _flag_gate_bypass(
-    *,
-    root_id: str,
-    window_index: int,
-    worker_thread: str,
-    worker_turns: list[dict],
-) -> None:
-    """Emit the second detector's signal for any ungated implement closeout."""
-    for finding in gate_bypass_detect.detect_gate_bypass(worker_turns):
-        logger.error(
-            "charter-runner window %s (root=%s) closed out ungated: worker closeout "
-            "t%s reported %s dispatch=%s source_ref=%s — require_implement_ready "
-            "no-opped; treat this window's output as unreviewed",
-            window_index,
-            root_id,
-            finding.turn_number,
-            gate_bypass_detect.GATE_BYPASS_DEVIATION,
-            finding.dispatch_id,
-            finding.source_ref,
-        )
-        await events.emit_manage_charter_implement_gate_bypassed(
-            root=root_id,
-            window_index=window_index,
-            worker_thread=worker_thread,
-            dispatch_id=finding.dispatch_id,
-            source_ref=finding.source_ref,
-            turn_number=finding.turn_number,
-        )
 
 
 def turn_number(turn: dict) -> int:
@@ -337,6 +123,19 @@ async def harvest_completed_windows(
             checkpoint_subject=checkpoint_subject,
             checkpoint_body=resolved_body,
         ):
+            _, field_path = footer_field_path(resolved_body)
+            try:
+                await events.emit_manage_charter_tick_harvest_rejected(
+                    root=root_id,
+                    window_index=window_index,
+                    field_path=field_path or "charter-state invalid",
+                    checkpoint_subject=checkpoint_subject or None,
+                )
+            except Exception:  # noqa: BLE001 — emit must not unblock reject
+                logger.exception(
+                    "charter-runner harvest_rejected emit failed root=%s",
+                    root_id,
+                )
             continue
         worker_thread = str(meta.get("worker_thread") or "")
         worker_turns: list[dict] = []
@@ -348,7 +147,7 @@ async def harvest_completed_windows(
                     "charter-runner failed fetching worker %s", worker_thread
                 )
         try:
-            await _flag_gate_bypass(
+            await flag_gate_bypass(
                 root_id=root_id,
                 window_index=window_index,
                 worker_thread=worker_thread,
@@ -418,7 +217,7 @@ async def harvest_completed_windows(
             logger.exception("charter-runner propagation execute failed")
         try:
             provenance: dict[str, str] | None = None
-            provenance = await _maybe_harvest_cdp_consult_provenance(
+            provenance = await maybe_harvest_cdp_consult_provenance(
                 root_id=root_id,
                 window_index=window_index,
                 worker_thread=worker_thread,
@@ -451,7 +250,7 @@ async def harvest_completed_windows(
                         else None
                     ),
                 )
-                _persist_residue_after_harvest(
+                persist_residue_after_harvest(
                     root_id=root_id,
                     consumed_checkpoint_body=consumed_body,
                     admission_meta=meta,

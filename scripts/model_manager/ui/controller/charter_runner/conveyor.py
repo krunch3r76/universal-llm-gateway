@@ -126,16 +126,25 @@ def _already_on_conveyor(rows: list[str], *, friction_id: int, todo_slug: str) -
 
 
 async def ensure_conveyor_root() -> str:
-    """Return the standing conveyor root id, creating it on first use."""
+    """Return the standing conveyor root id, creating it on first use.
+
+    Also idempotently ledger-seeds the resolved id so Phase-3 kernel does not
+    ``kernel_unseeded``-starve the conveyor after manage recycle (a:26619).
+    """
+    from .seed_phase1 import conveyor_default_seed, ensure_root_ledger_seed
+
     existing = await bus_client.find_thread_id_by_slug(CONVEYOR_SLUG)
     if existing:
-        return existing
-    return await bus_client.create_thread(
-        slug=CONVEYOR_SLUG,
-        summary="Standing fleet conveyor for charter friction follow-ons",
-        tags=[ENROLLMENT_TAG],
-        enroll_charter_runner=True,
-    )
+        root_id = existing
+    else:
+        root_id = await bus_client.create_thread(
+            slug=CONVEYOR_SLUG,
+            summary="Standing fleet conveyor for charter friction follow-ons",
+            tags=[ENROLLMENT_TAG],
+            enroll_charter_runner=True,
+        )
+    ensure_root_ledger_seed(root_id, default=conveyor_default_seed(root_id))
+    return root_id
 
 
 async def _append_conveyor_pickup(*, conveyor_id: str, row: str) -> None:

@@ -125,12 +125,21 @@ async def test_harvest_skips_footerless_checkpoint(tmp_path, monkeypatch) -> Non
         new=AsyncMock(),
     ), patch(
         "scripts.model_manager.ui.controller.charter_runner.harvest.window_log.append_closeout",
-    ) as append_closeout:
+    ) as append_closeout, patch(
+        "scripts.model_manager.ui.controller.charter_runner.harvest.events"
+        ".emit_manage_charter_tick_harvest_rejected",
+        new=AsyncMock(),
+    ) as emit_rejected:
         attrs = await harvest_completed_windows("6006", turns)
 
     assert attrs == []
     append_closeout.assert_not_called()
     assert not window_log.already_harvested("6006", 1)
+    emit_rejected.assert_awaited_once()
+    kwargs = emit_rejected.await_args.kwargs
+    assert kwargs["root"] == "6006"
+    assert kwargs["window_index"] == 1
+    assert kwargs["field_path"]
 
 
 @pytest.mark.asyncio
@@ -169,10 +178,15 @@ async def test_harvest_accepts_valid_footer(tmp_path, monkeypatch) -> None:
     ), patch(
         "scripts.model_manager.ui.controller.charter_runner.harvest.events.emit_manage_charter_tick_closed",
         new=AsyncMock(),
-    ):
+    ), patch(
+        "scripts.model_manager.ui.controller.charter_runner.harvest.events"
+        ".emit_manage_charter_tick_harvest_rejected",
+        new=AsyncMock(),
+    ) as emit_rejected:
         await harvest_completed_windows("6006", turns)
 
     assert window_log.already_harvested("6006", 1)
+    emit_rejected.assert_not_awaited()
 
 
 def test_machine_self_heal_not_rejected_by_gate() -> None:

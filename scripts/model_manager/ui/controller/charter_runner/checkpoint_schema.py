@@ -87,7 +87,10 @@ def output_format_footer_requirement(*, window_id: str = "") -> str:
         "schema §C.3): schema_version, status, next_pickup {gid, lane, executor}, "
         "wip, consult {role, poll_hint, from}, revise_count, evidence "
         "[{uri, sha256}], window_id, transition_id. Populate status, next_pickup, "
-        f"wip, consult, and evidence from the CHECKPOINT you post; {wid_clause}"
+        f"wip, consult, and evidence from the CHECKPOINT you post; {wid_clause} "
+        "Phase-0 rule: set wip to null (never a bare string or cross-root window "
+        "id); cross-root dependencies belong in next_pickup / Next pickup — invalid "
+        "wip fail-closes harvest; remedy is author reseed, not runner heal."
     )
 
 

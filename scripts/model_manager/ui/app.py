@@ -248,13 +248,10 @@ class ModelManagerApp(App):
         picks up disk edits (otherwise a long-lived manage process keeps a stale
         census and skips new modules like ``self_heal``).
         """
-        import importlib
-
-        from scripts.model_manager import observation_event as events
-        from scripts.model_manager.ui.controller import charter_runner as cr_pkg
-        from scripts.model_manager.ui.controller.charter_runner import reload as reload_mod
-
-        importlib.reload(reload_mod)
+        # Phase 3: importlib.reload retired — restart the loop class in-place.
+        from scripts.model_manager.ui.controller.charter_runner import (
+            CharterRunnerTickLoop,
+        )
 
         if self._charter_tick_loop is not None:
             try:
@@ -263,10 +260,7 @@ class ModelManagerApp(App):
                 logger.exception("Error stopping charter tick before reload: %s", e)
             self._charter_tick_loop = None
 
-        reloaded = reload_mod.reload_charter_runner_modules()
-        importlib.reload(cr_pkg)
-        loop_cls = reload_mod.charter_runner_loop_class()
-        self._charter_tick_loop = loop_cls(
+        self._charter_tick_loop = CharterRunnerTickLoop(
             service_state=self._service_controller.service_state,
             shutdown_gate=self._service_controller.shutdown_gate,
             workspace_root=self._workspace_root,
@@ -276,12 +270,8 @@ class ModelManagerApp(App):
         )
         await self._charter_tick_loop.start()
         self._service_controller.set_charter_tick_reload(self.reload_charter_tick)
-        await events.emit_manage_charter_tick_reloaded(modules=reloaded)
-        self.notify(
-            f"charter tick reloaded ({len(reloaded)} modules)",
-            timeout=15,
-        )
-        return {"status": "ok", "reloaded_modules": reloaded, "count": len(reloaded)}
+        self.notify("charter tick restarted (no module reload)", timeout=15)
+        return {"status": "ok", "reloaded_modules": [], "count": 0}
 
     async def _retry_api_server(self) -> None:
         """Retry binding manage.sock after a startup failure.

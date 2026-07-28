@@ -15,25 +15,16 @@ CHECKPOINT on the charter root clears in-flight.
 from __future__ import annotations
 
 import asyncio
-import importlib
 import json
 import os
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from universal_logging import get_logger
 
 from scripts.model_manager import observation_event as events
-
-# Stale-manage heal: charter_reload historically omitted observation_event, so a
-# manage process started before G3 emitters lacks root_skipped and dies on first
-# skip. Reload in-place before state_close binds ``events`` (module object shared).
-if not hasattr(events, "emit_manage_charter_tick_root_skipped"):
-    importlib.reload(events)
-
-from typing import TYPE_CHECKING
-
 from scripts.model_manager.ui.controller.service_config import build_mcp_env
 from scripts.model_manager.ui.controller.shutdown_gate import ManageShutdownGate
 from scripts.model_manager.ui.model.service_state import ServiceState, ServiceStatus
@@ -43,39 +34,21 @@ if TYPE_CHECKING:
 
     from scripts.model_manager.ui.controller.service_ctl.core import ServiceController
 
-from . import admit, bus_client, window_log
-from . import consult_stall as _consult_stall_mod
-from . import orphan_dispatch_heal as _orphan_dispatch_mod
-from . import schema_skip_heal as _schema_skip_heal_mod
-from . import self_heal as _self_heal_mod
+from . import bus_client
 from . import state_close as _state_close_mod
 from .attendance import Attendance, admission_mode_for_attendance
 from .caps import CapStore
-from .checkpoint_admit_gate import SCHEMA_REASONS
 from .dispatch_client import AdmissionMode
-from .eligibility import (
-    Decision,
-    evaluate_root,
-    live_wip_for_window,
-    next_window_index,
-)
 from .env_snapshot import EnvSnapshot
-from .giw_live_hold import build_tick_env_snapshot, probe_giw_live_hold
+from .giw_live_hold import build_tick_env_snapshot
 from .harvest import completed_windows, harvest_completed_windows
 from .tick_interval import tick_interval_from_env as _tick_interval_from_env
 
-# One-shot at tick_loop import: long-lived manage may hold pre-census modules
-# in sys.modules (r_corpus_sha / self_heal / state_close) until ./manage process
-# recycle picks up app.py reload-driver + reload.py census.
-_self_heal_mod = importlib.reload(_self_heal_mod)
-_orphan_dispatch_mod = importlib.reload(_orphan_dispatch_mod)
-_schema_skip_heal_mod = importlib.reload(_schema_skip_heal_mod)
-_consult_stall_mod = importlib.reload(_consult_stall_mod)
-_state_close_mod = importlib.reload(_state_close_mod)
 MAX_STATE_CLOSES_PER_TICK = _state_close_mod.MAX_STATE_CLOSES_PER_TICK
 emit_skip_and_maybe_state_close = _state_close_mod.emit_skip_and_maybe_state_close
 maybe_state_close_root = _state_close_mod.maybe_state_close_root
-DEFAULT_CONSULT_STALE_S = _consult_stall_mod.DEFAULT_CONSULT_STALE_S
+# Consult stall recover retired at Phase 3 — constant retained for test imports.
+DEFAULT_CONSULT_STALE_S = 900.0
 
 logger = get_logger(__name__)
 
@@ -93,51 +66,14 @@ DEFAULT_AUTONOMOUS_STALE_S = 3600.0
 _completed_windows = completed_windows
 
 
-async def _worker_terminal_or_absent(worker_thread: str | None) -> bool:
-    """True when the orphan-intent worker is gone or finished (heal-safe)."""
-    if not worker_thread:
-        return True
-    try:
-        failure = await bus_client.worker_failure_reason(worker_thread)
-        if failure is not None:
-            return True
-        detail = await bus_client.fetch_thread(worker_thread)
-        status = str(detail.get("status") or "").lower()
-        if not status and isinstance(detail.get("thread"), dict):
-            status = str((detail.get("thread") or {}).get("status") or "").lower()
-        return status == "closed"
-    except Exception:  # noqa: BLE001 — unreachable worker ⇒ absent
-        return True
-
-
 async def maybe_heal_admit_intent_orphan(
     root_id: str,
     turns: list[dict],
     caps: CapStore,
 ) -> bool:
-    """Clear orphan admit-intent when WIP is gone and the worker is terminal/absent.
-
-    Stopped roots keep intentional intents (a:26167 5xx / pointer-fail keep-intent) —
-    heal must not clear those; charter_reload clears stopped before orphans can heal.
-    """
-    window_index = next_window_index(turns)
-    if not caps.has_admit_intent(root_id, window_index):
-        return False
-    allowed, reason = caps.check(root_id)
-    if not allowed and reason and reason.startswith("stopped:"):
-        return False
-    if live_wip_for_window(turns, window_index):
-        return False
-    worker = caps.resolve_orphan_worker_thread(root_id, window_index)
-    if not await _worker_terminal_or_absent(worker):
-        return False
-    caps.clear_admit_intent(root_id, window_index)
-    await events.emit_manage_charter_tick_intent_healed(
-        root=root_id,
-        window_index=window_index,
-        worker_thread=worker or "",
-    )
-    return True
+    """Phase 3: heal retired — always no-op (kept for test import stability)."""
+    _ = (root_id, turns, caps)
+    return False
 
 
 def _env_unattended_stale_raw() -> float | None:
@@ -303,13 +239,12 @@ class CharterRunnerTickLoop:
         return bus.status == ServiceStatus.RUNNING
 
     async def _tick_once(self) -> None:
-        from .consult_lane import (
-            apply_kernel_tick_for_root,
-            is_kernel_migrated,
-            record_old_tick_admit_blocked,
-        )
+        """Phase 3: kernel is sole admitter for all enrolled roots."""
+        from .enrollment_filter import refresh_migrated_roots_cache
         from .env_snapshot import build_env_snapshot
+        from .kernel_tick import apply_kernel_tick_for_root
 
+        refresh_migrated_roots_cache()
         roots = await bus_client.list_enrolled_roots()
         env_snapshot = await build_tick_env_snapshot()
         root_ids = [str(thread.get("id") or "") for thread in roots if thread.get("id")]
@@ -320,7 +255,6 @@ class CharterRunnerTickLoop:
         admitted = 0
         in_flight = 0
         skipped_by_reason: dict[str, int] = {}
-        state_closes_this_tick = 0
         closed_attributions: list[str] = []
         old_decisions: dict[str, str] = {}
         for thread in roots:
@@ -335,91 +269,33 @@ class CharterRunnerTickLoop:
                     admission_mode=_admission_mode_from_env(kernel_env, root_id),
                 )
             )
-            if is_kernel_migrated(root_id):
-                kernel_outcome = await apply_kernel_tick_for_root(
-                    root_id,
-                    turns,
-                    caps=self._caps,
-                    workspace_root=self._workspace_root,
-                    env=kernel_env,
-                    on_admit=self._on_admit,
-                )
-                old_decisions[root_id] = kernel_outcome.old_decision_label
-                if kernel_outcome.admitted:
-                    admitted += 1
-                if kernel_outcome.skipped_reason:
-                    skipped_by_reason[kernel_outcome.skipped_reason] = (
-                        skipped_by_reason.get(kernel_outcome.skipped_reason, 0) + 1
-                    )
-                continue
-            await maybe_heal_admit_intent_orphan(root_id, turns, self._caps)
-            decision = evaluate_root(
+            kernel_outcome = await apply_kernel_tick_for_root(
                 root_id,
                 turns,
-                self._caps,
-                env_snapshot=env_snapshot,
+                caps=self._caps,
+                workspace_root=self._workspace_root,
+                env=kernel_env,
+                on_admit=self._on_admit,
                 admission_mode=_admission_mode_from_env(kernel_env, root_id),
             )
-            old_decisions[root_id] = (
-                "eligible" if decision.eligible else decision.reason
-            )
-            if decision.eligible:
-                if (
-                    _orphan_dispatch_mod.decision_needs_fleet_slot(
-                        decision,
-                        admission_mode=_admission_mode_from_env(kernel_env, root_id),
-                    )
-                    and await probe_giw_live_hold()
-                ):
-                    ckpt = _state_close_mod.checkpoint_turn_number(decision.checkpoint)
-                    await events.emit_manage_charter_tick_root_skipped(
-                        root=root_id,
-                        reason="giw_fleet_busy",
-                        checkpoint_turn=ckpt,
-                    )
-                    skipped_by_reason["giw_fleet_busy"] = (
-                        skipped_by_reason.get("giw_fleet_busy", 0) + 1
-                    )
-                    continue
-                try:
-                    if is_kernel_migrated(decision.root_id):
-                        record_old_tick_admit_blocked(decision.root_id)
-                        continue
-                    if await self._admit_window(decision, turns, kernel_env):
-                        admitted += 1
-                except Exception:
-                    logger.exception(
-                        "charter-runner admit failed root=%s — continuing scan",
-                        root_id,
-                    )
-                continue
-            # Every ineligible Decision emits root_skipped (silent-starve fix).
-            state_closes_this_tick = await emit_skip_and_maybe_state_close(
-                decision,
-                state_closes_this_tick=state_closes_this_tick,
-                skipped_by_reason=skipped_by_reason,
-                max_state_closes=MAX_STATE_CLOSES_PER_TICK,
-                caps=self._caps,
-            )
-            if decision.reason == "window_in_flight":
+            old_decisions[root_id] = kernel_outcome.old_decision_label
+            if kernel_outcome.admitted:
+                admitted += 1
+            label = kernel_outcome.old_decision_label
+            if label == "NOOP":
                 in_flight += 1
-                if await self._recover_worker_failure(decision):
-                    continue
-                if await self._try_orphan_dispatch(decision, kernel_env):
-                    continue
-                if await self._try_consult_stall(decision, turns, kernel_env):
-                    continue
-                if await self._try_self_heal(decision, turns, kernel_env):
-                    continue
-                state_closes_this_tick = await self._handle_waiting_open(
-                    decision,
-                    turns,
-                    kernel_env,
-                    state_closes_this_tick=state_closes_this_tick,
+            if kernel_outcome.skipped_reason:
+                skipped_by_reason[kernel_outcome.skipped_reason] = (
+                    skipped_by_reason.get(kernel_outcome.skipped_reason, 0) + 1
                 )
-            elif decision.reason in SCHEMA_REASONS:
-                await _schema_skip_heal_mod.try_self_heal_schema_skip(
-                    decision, caps=self._caps
+            elif label == "kernel_unseeded":
+                skipped_by_reason["kernel_unseeded"] = (
+                    skipped_by_reason.get("kernel_unseeded", 0) + 1
+                )
+                await events.emit_manage_charter_tick_root_skipped(
+                    root=root_id,
+                    reason="kernel_unseeded",
+                    checkpoint_turn=None,
                 )
         try:
             from .kernel import record_shadow_pass
@@ -461,168 +337,17 @@ class CharterRunnerTickLoop:
         except Exception:  # noqa: BLE001 — pager must not abort tick
             logger.exception("charter-runner pager notify failed")
         try:
+            from . import tick_friction_reconcile as _tick_reconcile
+
+            await _tick_reconcile.reconcile_enrolled_roots_on_tick(roots)
+        except Exception:  # noqa: BLE001 — reconcile must not abort tick
+            logger.exception("charter-runner tick-scan friction reconcile failed")
+        try:
             from . import conveyor as _conveyor_mod
 
             await _conveyor_mod.sweep_stale_enrollments()
         except Exception:  # noqa: BLE001 — stale sweep must not abort tick
             logger.exception("charter-runner conveyor stale sweep failed")
-        from .propagation_execute import consume_pending_charter_reload
-
-        if consume_pending_charter_reload() and self._service_controller is not None:
-            try:
-                await self._service_controller.reload_charter_tick()
-            except Exception:  # noqa: BLE001 — reload must not abort tick
-                logger.exception("charter-runner deferred charter_reload failed")
-
-    async def _recover_worker_failure(self, decision: Decision) -> bool:
-        """A-R3-1: failed/timeout/closed worker while in-flight → stop root."""
-        adm = decision.admission_turn or {}
-        meta = window_log.parse_admission_meta(str(adm.get("body") or ""))
-        worker_thread = str(meta.get("worker_thread") or "")
-        if not worker_thread:
-            return False
-        try:
-            reason = await bus_client.worker_failure_reason(worker_thread)
-        except Exception:  # noqa: BLE001 — leave in-flight; soft-remind path
-            logger.exception(
-                "charter-runner worker-failure probe failed for %s", worker_thread
-            )
-            return False
-        if reason is None:
-            return False
-        self._caps.mark_failed(decision.root_id, "worker_failed")
-        await events.emit_manage_charter_tick_window_failed(
-            root=decision.root_id, reason="worker_failed"
-        )
-        return True
-
-    async def _admit_window(
-        self, decision: Decision, turns: list[dict], env: EnvSnapshot
-    ) -> bool:
-        if self._workspace_root is None:
-            raise RuntimeError(
-                "charter-runner requires workspace_root for handoff packets"
-            )
-        admitted = await admit.admit_window(
-            decision=decision,
-            turns=turns,
-            caps=self._caps,
-            workspace_root=self._workspace_root,
-            on_admit=self._on_admit,
-            admission_mode=_admission_mode_from_env(env, decision.root_id),
-        )
-        if admitted:
-            self._reminded.discard(decision.root_id)
-        return admitted
-
-    async def _try_orphan_dispatch(self, decision: Decision, env: EnvSnapshot) -> bool:
-        """GIW lost the dispatch while the root still shows window_in_flight."""
-        adm = decision.admission_turn or {}
-        posted_at = _admission_posted_at(adm)
-        if posted_at is None:
-            return False
-        age = (datetime.now(UTC) - posted_at).total_seconds()
-        return await _orphan_dispatch_mod.try_recover_orphan_dispatch(
-            decision,
-            caps=self._caps,
-            age_s=age,
-            admission_mode=_admission_mode_from_env(env, decision.root_id),
-        )
-
-    async def _try_self_heal(
-        self, decision: Decision, turns: list[dict], env: EnvSnapshot
-    ) -> bool:
-        """Autonomous: complete/partial without root terminal → machine heal."""
-        adm = decision.admission_turn or {}
-        posted_at = _admission_posted_at(adm)
-        if posted_at is None:
-            return False
-        age = (datetime.now(UTC) - posted_at).total_seconds()
-        return await _self_heal_mod.try_self_heal_incomplete_window(
-            decision,
-            root_turns=turns,
-            caps=self._caps,
-            age_s=age,
-            admission_mode=_admission_mode_from_env(env, decision.root_id),
-        )
-
-    async def _try_consult_stall(
-        self, decision: Decision, turns: list[dict], env: EnvSnapshot
-    ) -> bool:
-        """Consult-mode: hung WIP past DEFAULT_CONSULT_STALE_S → recover (a:26131)."""
-        adm = decision.admission_turn or {}
-        posted_at = _admission_posted_at(adm)
-        if posted_at is None:
-            return False
-        age = (datetime.now(UTC) - posted_at).total_seconds()
-        return await _consult_stall_mod.try_recover_consult_stall(
-            decision,
-            root_turns=turns,
-            caps=self._caps,
-            age_s=age,
-            admission_mode=_admission_mode_from_env(env, decision.root_id),
-        )
-
-    async def _handle_waiting_open(
-        self,
-        decision: Decision,
-        turns: list[dict],
-        env: EnvSnapshot,
-        *,
-        state_closes_this_tick: int = 0,
-    ) -> int:
-        """Soft remind by default; unattended hard-fail past effective stale threshold.
-
-        Broad ``stopped:*`` early-out (A2): once a root is already stopped for any
-        reason, do not re-emit ``window_failed`` / overwrite ``stopped_reason`` —
-        ``window_in_flight`` short-circuits before caps in ``evaluate_root``, so
-        this guard is the only barrier against stale restop. Exact
-        ``stopped:stale_window`` state-close lives in ``emit_skip_and_maybe_state_close``
-        / transition close below — not in this early-out.
-
-        Prefer self-heal over ``stale_window`` when the closeout-grace window has
-        elapsed (may re-probe after an earlier grace-blocked attempt). Returns the
-        updated A4 ``state_closes_this_tick`` counter for ``_tick_once`` to consume.
-        """
-        allowed, cap_reason = self._caps.check(decision.root_id)
-        if not allowed and (cap_reason or "").startswith("stopped:"):
-            return state_closes_this_tick
-        adm = decision.admission_turn or {}
-        posted_at = _admission_posted_at(adm)
-        if posted_at is None:
-            return state_closes_this_tick
-        age = (datetime.now(UTC) - posted_at).total_seconds()
-        stale_s = _effective_unattended_stale_s(
-            constructor_override=self._unattended_stale_override,
-            root_id=decision.root_id,
-            env=env,
-        )
-        if stale_s > 0 and age >= stale_s:
-            if await self._try_self_heal(decision, turns, env):
-                return state_closes_this_tick
-            if await self._try_consult_stall(decision, turns, env):
-                return state_closes_this_tick
-            if await _self_heal_mod.closeout_within_grace(decision):
-                return state_closes_this_tick
-            self._caps.mark_failed(decision.root_id, "stale_window")
-            await events.emit_manage_charter_tick_window_failed(
-                root=decision.root_id, reason="stale_window"
-            )
-            return await maybe_state_close_root(
-                decision,
-                reason="stale_window",
-                state_closes_this_tick=state_closes_this_tick,
-                max_state_closes=MAX_STATE_CLOSES_PER_TICK,
-            )
-        if age < _WAITING_OPEN_REMIND_S:
-            return state_closes_this_tick
-        if decision.root_id in self._reminded:
-            return state_closes_this_tick
-        self._reminded.add(decision.root_id)
-        await events.emit_manage_charter_tick_waiting_open(
-            root=decision.root_id, age_s=int(age)
-        )
-        return state_closes_this_tick
 
 
 def _admission_posted_at(admission_turn: dict) -> datetime | None:
