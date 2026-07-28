@@ -6,12 +6,13 @@ lead_claim_authority: server_contract_overrides_packet_prose
 # Auto-dispatch default seat for code-lane generate (seat= selector, not role=).
 default_seat: cursor-sdk
 
-# Check/review default *model family* (F1 — assertion:23920 / decision:autonomous-work-item-spine).
-# Explicit model= overrides this key. Substrate is NOT selected by this key alone —
-# `openai/…` on role=reviewer ⇒ API; live-source / Gate-6 with workspaces:// citations
-# ⇒ seat=cursor-sdk + model=cursor/gpt-5.6-terra|sol|luna (or cursor/grok-4.5)
-# (friction a24082 / todo:gate6-code-lane-substrate). code_on_api = fully pre-staged only.
-check_review_default_model: openai/gpt-5.6-terra
+# Check/review standing default (decision:code-review-panel-cursor-substrate).
+# Code-lane automated review → cursor/* (checkout present). Explicit model=openai/*
+# on role=reviewer still admits API (life / checkout-free). Omit-model on
+# role=reviewer coerces to seat=cursor-sdk + this key when the key is cursor/*.
+# CDP (cdp/opus-5 / Fable) remains judgment / path-sim R-admit — not this default.
+# Prior API-default bind: assertion:23920 (superseded for code-lane default).
+check_review_default_model: cursor/gpt-5.6-terra  # decision:code-review-panel-cursor-substrate
 
 # Doc-layer dispatch_lane (advisory, not a RoleProfile or hard gate).
 # Derive code vs non-code from platform: sdk ⇒ code (checkout present);

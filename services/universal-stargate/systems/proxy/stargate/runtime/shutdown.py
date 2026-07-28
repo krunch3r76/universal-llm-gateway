@@ -16,6 +16,19 @@ async def shutdown_proxy(proxy: StargateProxy) -> None:
     """Cleanup async components in reverse startup order."""
     logger.info("Shutting down Stargate Proxy...")
 
+    from .pipeline_orphan_sweep import cancel_running_pipelines_for_shutdown
+
+    try:
+        reaped = await cancel_running_pipelines_for_shutdown(
+            proxy, reason="process_shutdown"
+        )
+        if reaped:
+            logger.info(
+                "Orphan-swept %d running pipeline(s) before shutdown", reaped
+            )
+    except Exception as exc:  # pragma: no cover - defensive logging
+        logger.warning("Pipeline orphan sweep failed: %s", exc)
+
     # Stop background cleanup task first
     from src.core.gateway_tracker import gateway_tracker
 

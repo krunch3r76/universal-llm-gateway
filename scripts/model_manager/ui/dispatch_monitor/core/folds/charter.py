@@ -39,7 +39,10 @@ class RootState:
         "packet_path",
         "arc_g_step",
         "arc_g_step_label",
+        "pickup_gid",
         "objective",
+        "bus_slug",
+        "bus_summary",
         "last_signal_ms",
         "last_signal",
         "admitted_at_ms",
@@ -61,7 +64,10 @@ class RootState:
         self.packet_path: str | None = None
         self.arc_g_step: str | None = None
         self.arc_g_step_label: str | None = None
+        self.pickup_gid: str | None = None
         self.objective: str | None = None
+        self.bus_slug: str | None = None
+        self.bus_summary: str | None = None
         self.last_signal_ms: int | None = None
         self.last_signal: str | None = None
         self.admitted_at_ms: int | None = None
@@ -222,13 +228,22 @@ class CharterFold:
         self.admitted_total += 1
 
     def _on_objective(self, record: EventRecord) -> None:
-        """Graft scoreboard objective onto a root (seed / reconcile / admit mirror)."""
+        """Graft scoreboard / ledger tip / bus identity onto a root."""
         payload = record.payload
         root_id = _root_id(payload, record)
         if not root_id:
             return
         row = self._root(root_id, record)
         self._absorb_objective(row, payload)
+        pickup = payload.get("pickup_gid")
+        if pickup:
+            row.pickup_gid = str(pickup).strip() or row.pickup_gid
+        slug = payload.get("bus_slug")
+        if slug:
+            row.bus_slug = str(slug).strip() or row.bus_slug
+        summary = payload.get("bus_summary")
+        if summary:
+            row.bus_summary = str(summary).strip() or row.bus_summary
 
     def _absorb_objective(self, row: RootState, payload: Mapping[str, Any]) -> None:
         for key in ("objective", "charter_objective", "original_objective"):

@@ -32,49 +32,46 @@ def build_briefing_block(
     live_deltas: str | None = None,
     contract: str | None = None,
 ) -> str:
-    """Build ``TYPE: BRIEFING`` — soft versatile hello; denser when code work.
+    """Build ``TYPE: BRIEFING`` — dual register: soldier on DIRECTIVE, confer when asked.
 
-    First-episode register is life/teammate, not a maintenance console.
-    When ``contract`` ∈ implement|investigate|verify, append a short
-    codebase-work stanza naming the lane the request will run: the
-    ``abstraction-layering`` skill (architecture → frame → densify →
-    check → implement, entered at the highest still-open layer), which
-    supersedes path-sim ratification windows for codework per
-    ``decision:abstraction-layering``. Path-sim stays the charter-tick
-    lane.
+    Clear instruction (DIRECTIVE / implement-shaped): bind front-door Q1/Q2
+    silently and execute — ¬ prompt Kaywan for routing or ack.
 
-    The stanza names the **skill slug**, not the ``/layer`` command: the
-    nested dispatch that picks this up is headless and self-fetches skills, so a
-    command reference would be unresolvable there. Wire tokens and AC evidence
-    stay on CLOSEOUT, not in this hello.
+    When the operator (CDP Opus or human) seeks input before deciding
+    (``contract=confer`` / explicit ask): Auto MAY advise — life/Kaywan cannot
+    replace cursor's codebase knowledge. Confer ≠ invent a front-door fork ask.
+
+    When ``contract`` ∈ implement|investigate|verify, append the codebase-work
+    stanza naming ``abstraction-layering`` (highest open layer). Path-sim stays
+    the charter-tick lane. Skill slug only — headless nested seats cannot resolve
+    ``/layer`` commands.
     """
     deltas = live_deltas if live_deltas else "live_deltas: (none this episode)"
     lines = [
         "TYPE: BRIEFING",
-        "cursor-auto lane — first request on this thread this episode.",
+        "cursor-auto lane — first request this episode.",
         "",
-        "Versatile teammate: route a consult or question to another model,",
-        "take operational checks, or do codebase work when that's the job.",
-        "Not only maintenance — ask what you need.",
-        "",
-        "When an architecture question is live, Fable via Cowork is encouraged;",
-        "you may also self-route. Premium cursor Opus is an escalation",
-        "(inform Kaywan).",
+        "Clear DIRECTIVE/implement → soldier: silent front-door bind + execute;",
+        "¬ ask Kaywan which path. Confer/explicit ask → advise with codebase judgment",
+        "(life/Kaywan cannot replace it). ¬ invent front-door polls.",
+        "SOT: decision:operator-request-front-door. Operator-only → needs-attended.",
         "",
         deltas,
-        "",
-        "Ask what's optimal next on a follow-up and I'll confer.",
     ]
     raw = (contract or "").strip().lower()
     if raw in _CODE_WORK_CONTRACTS:
         lines.extend(
             [
                 "",
-                f"Codebase work ({raw}): abstraction-layering skill —",
-                "architecture → frame → densify → check → implement "
-                "(highest open layer; path-sim stays the tick lane).",
-                "Tick: mint+enroll enrolled root — ¬ tip improvise "
-                "(cursor-auto-tick-work-posting). AC on CLOSEOUT.",
+                f"Codework ({raw}): abstraction-layering at highest open layer;",
+                "tick mint+enroll enrolled root — ¬ tip improvise. AC on CLOSEOUT.",
+            ]
+        )
+    elif raw == "confer":
+        lines.extend(
+            [
+                "",
+                "Confer: codebase-grounded recommendation; ¬ front-door routing poll.",
             ]
         )
     block = "\n".join(lines)

@@ -83,25 +83,36 @@ def attention_line(
 
 def primary_tick_objective(
     roots_active: list[CharterRootRow],
-) -> tuple[str, str] | None:
-    """Pick (root_id, objective) for the TICK section subtitle.
+) -> tuple[str, str, str] | None:
+    """Pick (root_id, kind, text) for the TICK section subtitle.
 
-    Prefer an ``in_flight`` root with an objective; else any active root that
-    carries one. Truncation belongs to the paint helper.
+    Prefer an ``in_flight`` root with an objective; else any active root with
+    scoreboard objective; else bus summary/slug. Truncation belongs to paint.
     """
     preferred = [r for r in roots_active if r.state == "in_flight" and r.objective]
     if not preferred:
         preferred = [r for r in roots_active if r.objective]
+    if preferred:
+        row = preferred[0]
+        assert row.objective is not None
+        return row.root_id, "obj", row.objective
+    preferred = [
+        r for r in roots_active if r.state == "in_flight" and (r.bus_summary or r.bus_slug)
+    ]
+    if not preferred:
+        preferred = [r for r in roots_active if r.bus_summary or r.bus_slug]
     if not preferred:
         return None
     row = preferred[0]
-    assert row.objective is not None
-    return row.root_id, row.objective
+    text = row.bus_summary or row.bus_slug
+    assert text is not None
+    return row.root_id, "bus", text
 
 
-def tick_objective_line(root_id: str, objective: str, width: int) -> str:
-    """One glance line under TICK / ACTIVE for the charter original objective."""
-    return _truncate(f"  obj[{root_id}]: {objective}", width)
+def tick_objective_line(root_id: str, text: str, width: int, *, kind: str = "obj") -> str:
+    """One glance line under TICK / ACTIVE for charter identity."""
+    prefix = "obj" if kind == "obj" else "bus"
+    return _truncate(f"  {prefix}[{root_id}]: {text}", width)
 
 
 def live_sdk(rows: tuple[SdkDispatchRow, ...]) -> list[SdkDispatchRow]:
@@ -232,11 +243,27 @@ def root_line_live(
     cdp_n: int,
     width: int = 120,
     sdk_dispatch_id: str | None = None,
+    omit_identity_tail: bool = False,
 ) -> str:
-    step = row.arc_g_step or "-"
+    """Paint one root row.
+
+    When ``omit_identity_tail`` is set (TICK subtitle already shows this root's
+    ``obj:``/``bus:``), skip repeating that identity on the row — keep skip_reason
+    only when it is the sole leftover cue.
+    """
+    step = row.arc_g_step or row.pickup_gid or "-"
     d_col = f" d={_truncate(sdk_dispatch_id, 12)}" if sdk_dispatch_id else ""
-    if row.objective:
+    if omit_identity_tail:
+        # Subtitle owns purpose; row keeps operational columns only.
+        if row.skip_reason and not (row.objective or row.bus_summary or row.bus_slug):
+            tail = f" {_truncate(row.skip_reason, 20)}"
+        else:
+            tail = ""
+    elif row.objective:
         tail = f" obj: {_truncate(row.objective, max(24, width - 84))}"
+    elif row.bus_summary or row.bus_slug:
+        identity = row.bus_summary or row.bus_slug or ""
+        tail = f" bus: {_truncate(identity, max(24, width - 84))}"
     elif row.skip_reason:
         tail = f" {_truncate(row.skip_reason, 20)}"
     else:

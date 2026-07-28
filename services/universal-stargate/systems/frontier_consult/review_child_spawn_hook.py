@@ -28,7 +28,6 @@ from .skill_suggest_durable_state import DurableTerminalEvent, durable_catch_up_
 
 logger = get_logger(__name__)
 
-_DEFAULT_CROSS_FAMILY_REVIEWER = "openai/gpt-5.5"
 # Prefer cursor/* Anthropic-family over anthropic/* API (house rule).
 _OPENAI_EXECUTOR_ALTERNATE = "cursor/claude-opus-5"
 _GENERATE_OP = "generate"
@@ -57,22 +56,19 @@ def is_generate_review_child_lane_wired() -> bool:
 
 
 def resolve_executor_family(resolved_model: str) -> str:
-    from model_id import ModelId
+    """Independence family for cross-family review (model weight-class, ¬ substrate)."""
+    from implement_admission.check_review_substrate import independence_family
 
-    parsed = ModelId.parse(resolved_model)
-    if parsed.provider == "openai":
-        return "openai"
-    if parsed.provider == "anthropic":
-        return "anthropic"
-    if parsed.provider == "google":
-        return "google"
-    if parsed.provider == "xai":
-        return "xai"
-    if parsed.backend_type == "cursor_sdk":
-        return "cursor"
-    if parsed.provider:
-        return parsed.provider.lower()
-    return "unknown"
+    return independence_family(resolved_model)
+
+
+def _default_cross_family_reviewer_model() -> str:
+    from implement_admission.check_review_substrate import (
+        load_check_review_default_model,
+    )
+    from implement_admission.routing import load_route_policy
+
+    return load_check_review_default_model(load_route_policy())
 
 
 def select_cross_family_reviewer(resolved_model: str) -> ReviewerSelection | None:
@@ -80,7 +76,7 @@ def select_cross_family_reviewer(resolved_model: str) -> ReviewerSelection | Non
     if family == "openai":
         model = _OPENAI_EXECUTOR_ALTERNATE
     else:
-        model = _DEFAULT_CROSS_FAMILY_REVIEWER
+        model = _default_cross_family_reviewer_model()
     reviewer_family = resolve_executor_family(model)
     if reviewer_family == family:
         return None
@@ -167,9 +163,12 @@ async def _dispatch_review_child(
     ``cursor/*`` → ``op=generate`` + ``seat=cursor-sdk`` (house preference).
     Cloud API models → ``op=to_thread`` + ``role=reviewer`` (existing path).
     """
+    from model_id import ModelId
+
     from .route import TeamDispatchGenerateBody, TeamDispatchToThreadBody, team_dispatch
 
-    if reviewer.family == "cursor":
+    use_cursor_sdk = ModelId.parse(reviewer.model).backend_type == "cursor_sdk"
+    if use_cursor_sdk:
         child_body: TeamDispatchGenerateBody | TeamDispatchToThreadBody = (
             TeamDispatchGenerateBody(
                 op=_GENERATE_OP,

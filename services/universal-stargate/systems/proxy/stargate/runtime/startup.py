@@ -55,6 +55,9 @@ async def startup_proxy(proxy: StargateProxy, app: FastAPI | None = None) -> Non
         proxy: Initialized proxy instance to wire and bootstrap.
         app: Optional FastAPI app, required for federation HTTP integration.
     """
+    if app is not None:
+        proxy._fastapi_app = app
+
     gateway_config = proxy.gateway_config
     gateway_name = gateway_config.name if gateway_config else None
     gateway_socket_path = gateway_config.socket_path if gateway_config else None
@@ -125,6 +128,21 @@ async def startup_proxy(proxy: StargateProxy, app: FastAPI | None = None) -> Non
     await initialize_pipeline_system(proxy)
 
     await initialize_dispatch_journal(proxy)
+
+    from .pipeline_orphan_sweep import cancel_running_pipelines_for_shutdown
+
+    try:
+        reaped = await cancel_running_pipelines_for_shutdown(
+            proxy, reason="startup_reconcile"
+        )
+        if reaped:
+            logger.warning(
+                "Startup reconciled %d in-process running pipeline(s) "
+                "(unclean prior shutdown)",
+                reaped,
+            )
+    except Exception as exc:  # pragma: no cover - defensive logging
+        logger.warning("Startup pipeline orphan reconcile failed: %s", exc)
 
     await initialize_hot_reload(proxy)
 

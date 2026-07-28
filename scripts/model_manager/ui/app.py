@@ -59,12 +59,11 @@ _QUIT_DRAIN_POLL_S = 0.5
 def _configure_manage_api_logging() -> None:
     """Persist manage-api logger output to disk.
 
-    Textual captures stdout/stderr and routes it to its own devlog, so
-    `logger.exception` calls from the manage API connection handler vanish
-    by default. Without persisted logs, a sync_restart wedge leaves no
-    forensic trail. A bounded RotatingFileHandler attached to the
-    api_server module's logger ensures every traceback lands in a file
-    agents can read after the fact.
+    The manage TUI strips console handlers (``tui_logging``) so stderr cannot
+    punch the Textual frame. Without a dedicated file handler, manage-api
+    ``logger.exception`` traces would only hit the shared ``LOG_DIR`` root
+    file — a bounded RotatingFileHandler on the api_server logger keeps a
+    forensic trail agents can read after a sync_restart wedge.
     """
     api_logger = logging.getLogger("scripts.model_manager.ui.api_server")
     if any(getattr(h, "_manage_api_handler", False) for h in api_logger.handlers):
@@ -448,6 +447,8 @@ def run() -> None:
     """Entry point for the TUI."""
     import logging
 
+    from .tui_logging import silence_manage_tui_console_handlers
+
     # Avoid polluting the TUI with DEBUG/INFO from probes and third-party libs.
     for _logger in (
         "httpcore",
@@ -461,6 +462,8 @@ def run() -> None:
 
     _TUI_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     _configure_manage_api_logging()
+    # universal_logging JSON console → stderr punches through Textual; file-only.
+    silence_manage_tui_console_handlers()
 
     # Claim /tmp/universal-protocol as the current user before any container
     # starts. /tmp is 1777 so mkdir succeeds unconditionally when the path is

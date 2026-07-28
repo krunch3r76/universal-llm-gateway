@@ -85,6 +85,7 @@ SDK_LEASE_PARK_RESTORE = "frontier.sdk.worker.lease.park_restore"
 SDK_CLOSEOUT_RELOCATED = "frontier.sdk.closeout.relocated"
 SDK_CLOSEOUT_RECONCILED = "frontier.sdk.closeout.reconciled"
 SDK_WORKER_DISPATCHED = "frontier.sdk.worker.dispatched"
+SDK_REVIEW_CHILD_SPAWNED = "frontier.sdk.review_child.spawned"
 
 # --- sdk family: pipeline lane (GS2 emitter B) -----------------------------
 SDK_PIPELINE_STARTED = "pipeline.frontier.dispatch.started"
@@ -139,6 +140,7 @@ SDK_LIFECYCLE_SIGNALS = (
     SDK_CLOSEOUT_RELOCATED,
     SDK_CLOSEOUT_RECONCILED,
     SDK_WORKER_DISPATCHED,
+    SDK_REVIEW_CHILD_SPAWNED,
 )
 
 # --- cdp family (VERIFIED live — v3 §6) ------------------------------------
@@ -175,6 +177,8 @@ MONITOR_META_SDK_STARTED = "monitor.meta.sdk_started"
 MONITOR_META_CHARTER_OBJECTIVE = "monitor.meta.charter_objective"
 #: Reconcile source failure — graft-only; drives attention, never steady-state poll.
 MONITOR_RECONCILE_SOURCE_FAILED = "monitor.reconcile.source_failed"
+#: Stargate session boundary — used to terminalize restart-survivor review children.
+SYSTEM_STARTED = "system.started"
 
 #: Payload key graft uses to mark lease-snapshot reconcile rows. SdkFold reads
 #: this; live bus signals omit it and therefore count as ``signal`` provenance.
@@ -230,6 +234,7 @@ META_FAMILY = (
     MONITOR_META_SDK_STARTED,
     MONITOR_META_CHARTER_OBJECTIVE,
     MONITOR_RECONCILE_SOURCE_FAILED,
+    SYSTEM_STARTED,
 )
 
 #: Every signal the handler table claims. ``README.md`` restates this list; the

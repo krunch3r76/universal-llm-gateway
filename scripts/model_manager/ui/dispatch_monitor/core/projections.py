@@ -82,6 +82,8 @@ def sdk_rows(
                 last_tool_name=state.last_tool_name,
                 last_tool_status=state.last_tool_status,
                 tool_call_count=state.tool_call_count,
+                parent_execution_id=state.parent_execution_id,
+                review_child=state.review_child,
             )
         )
     rows.sort(key=lambda r: r.dispatch_id)
@@ -182,7 +184,10 @@ def root_rows(
                 packet_path=state.packet_path,
                 arc_g_step=state.arc_g_step,
                 arc_g_step_label=state.arc_g_step_label,
+                pickup_gid=state.pickup_gid,
                 objective=state.objective,
+                bus_slug=state.bus_slug,
+                bus_summary=state.bus_summary,
                 last_signal_ms=state.last_signal_ms,
                 last_signal=state.last_signal,
                 admitted_at_ms=state.admitted_at_ms,

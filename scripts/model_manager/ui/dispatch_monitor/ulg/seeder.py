@@ -7,7 +7,7 @@ from collections.abc import Callable
 
 from scripts.model_manager.ui.charter_scoreboard_objective import (
     objective_meta_event,
-    read_objective_for_root,
+    tip_meta_for_root,
 )
 from scripts.model_manager.ui.dispatch_monitor.core import signals
 from scripts.model_manager.ui.dispatch_monitor.core.protocols import Event, EventRecord
@@ -28,6 +28,7 @@ _LIVE_FILTERS: tuple[str, ...] = (
     "frontier.sdk.*",
     "cdp.generate.*",
     "frontier.poll.hint.issued",
+    "system.started",
 )
 
 #: Exact pulls that must survive glob crowding (shadow.diff / toolcall flood the
@@ -57,6 +58,25 @@ _PRIORITY_SIGNALS: tuple[str, ...] = (
     "pipeline.frontier.dispatch.started",
     "pipeline.frontier.dispatch.completed",
     "pipeline.frontier.dispatch.failed",
+    "frontier.sdk.review_child.spawned",
+    "system.started",
+)
+
+#: Signals whose payload names a charter root worth tip-grafting.
+_ROOT_TIP_SIGNALS = frozenset(
+    {
+        signals.CHARTER_ADMITTED,
+        signals.CHARTER_CLOSED,
+        signals.CHARTER_ROOT_SKIPPED,
+        signals.CHARTER_ROOT_CLOSED,
+        signals.CHARTER_WAITING_OPEN,
+        signals.CHARTER_WINDOW_FAILED,
+        signals.CHARTER_TRANSITION,
+        signals.CHARTER_CONSULT_QUEUED,
+        signals.CHARTER_CONSULT_DEFERRED,
+        signals.CHARTER_ENROLLMENT_FILTERED,
+        signals.CHARTER_FRICTIONS_AUDIT_PASSED,
+    }
 )
 
 
@@ -96,24 +116,42 @@ def _lease_snapshot_events(
     return events_from_lease_snapshot(snapshot)
 
 
-def _graft_charter_objectives(
+def _payload_root_id(payload: dict, subject: str | None) -> str | None:
+    for key in ("root", "root_id", "root_thread", "thread"):
+        value = payload.get(key)
+        if value:
+            return str(value)
+    if subject:
+        return str(subject)
+    return None
+
+
+def _graft_charter_tips(
     apply: Callable[[EventRecord], None],
     root_ids: set[str],
 ) -> int:
-    """Cold-start graft of scoreboard objectives for roots seen in the seed window."""
+    """Cold-start graft of ledger tip + bus slug/summary identity."""
     if not root_ids:
         return 0
     ts = int(time.time() * 1000)
     count = 0
     for root_id in sorted(root_ids):
-        objective = read_objective_for_root(root_id)
-        if not objective:
+        tip = tip_meta_for_root(root_id)
+        if not tip.has_identity:
             continue
         apply(
             Event(
                 signal=signals.MONITOR_META_CHARTER_OBJECTIVE,
                 ts_unix_ms=ts,
-                payload=objective_meta_event(root_id, objective, ts_unix_ms=ts),
+                payload=objective_meta_event(
+                    root_id,
+                    tip.objective,
+                    pickup_gid=tip.pickup_gid,
+                    scoreboard_uri=tip.scoreboard_uri,
+                    bus_slug=tip.bus_slug,
+                    bus_summary=tip.bus_summary,
+                    ts_unix_ms=ts,
+                ),
                 source="ulg://dispatch-monitor/seed",
                 subject=root_id,
             )
@@ -144,10 +182,10 @@ def seed_model(
             if event.seq in seen_seq:
                 return
             seen_seq.add(event.seq)
-        if event.signal == signals.CHARTER_ADMITTED:
-            root = event.payload.get("root") or event.subject
+        if event.signal in _ROOT_TIP_SIGNALS:
+            root = _payload_root_id(dict(event.payload), event.subject)
             if root:
-                seeded_roots.add(str(root))
+                seeded_roots.add(root)
         pending.append(event)
 
     audit = charter_tick_audit(minutes=minutes, limit=limit)
@@ -174,5 +212,5 @@ def seed_model(
     pending.sort(key=lambda item: (item.seq if item.seq is not None else 0, item.ts_unix_ms))
     for event in pending:
         apply(event)
-    _graft_charter_objectives(apply, seeded_roots)
+    _graft_charter_tips(apply, seeded_roots)
     return len(pending)

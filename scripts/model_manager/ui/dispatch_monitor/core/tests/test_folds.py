@@ -267,7 +267,7 @@ def test_cancelled_terminals_row() -> None:
 
 
 def test_completed_closes_execution_id_sibling_ghost() -> None:
-    """Terminal on dispatch_id also closes a prior row keyed only on execution_id."""
+    """Dual-id terminal merges the execution_id row into dispatch_id before close."""
     model = Model()
     model.apply(
         Event(
@@ -276,13 +276,9 @@ def test_completed_closes_execution_id_sibling_ghost() -> None:
             {
                 "request_id": "rid",
                 "execution_id": "exec-ghost",
-                # Pre-fix: keying preferred execution_id; seed a ghost row that way
-                # by omitting dispatch_id so only execution_id remains.
             },
         )
     )
-    # Force ghost: apply via progress keyed on execution_id alone, then complete
-    # with both ids so sibling terminalize closes the ghost.
     model.apply(
         Event(
             "frontier.sdk.worker.progress",
@@ -309,12 +305,11 @@ def test_completed_closes_execution_id_sibling_ghost() -> None:
         )
     )
     frame = model.derive(3_000)
-    ghost = _row(frame.sdk, "dispatch_id", "exec-ghost")
-    primary = _row(frame.sdk, "dispatch_id", "real-dispatch")
+    assert len(frame.sdk) == 1
+    primary = next(r for r in frame.sdk if r.dispatch_id == "real-dispatch")
     assert primary.terminal_ms == 2_000
     assert primary.state == "completed"
-    assert ghost.terminal_ms == 2_000
-    assert ghost.state == "completed"
+    assert not any(r.dispatch_id == "exec-ghost" for r in frame.sdk)
 
 
 def test_toolcall_updates_last_tool_and_idle() -> None:

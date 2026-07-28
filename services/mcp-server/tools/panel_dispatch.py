@@ -182,7 +182,8 @@ def register_panel_dispatch_tools(mcp: FastMCP) -> None:
 
         **When ``consensus_disposition=panel``** on a material decision: admits
         the default ≥2-family roster (``skeptic`` → grok/xai,
-        ``reviewer`` → gpt-5.5/openai) via ``team_dispatch(op=generate)``.
+        ``reviewer`` → cursor/gpt-5.6-terra on cursor-sdk) via
+        ``team_dispatch(op=generate)``.
         Optional ``include_synthesizer`` adds the gemini tiebreaker (inline-only).
 
         Returns ``panel_executions`` (role → ``execution_id``),

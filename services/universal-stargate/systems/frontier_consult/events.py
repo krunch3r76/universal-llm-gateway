@@ -176,15 +176,23 @@ def FrontierSdkWorkerDispatched(  # noqa: N802
     request_id: str,
     thread_id: str,
     execution_id: str,
+    dispatch_id: str | None = None,
 ) -> Event:
-    """SDK worker dispatch accepted."""
+    """SDK worker dispatch accepted.
+
+    Stamps both execution_id and dispatch_id when known so the monitor fold
+    keys one row (agent-bus 6164).
+    """
+    payload: dict[str, object] = {
+        "request_id": request_id,
+        "thread_id": thread_id,
+        "execution_id": execution_id,
+    }
+    if dispatch_id:
+        payload["dispatch_id"] = dispatch_id
     return Event(
         signal="frontier.sdk.worker.dispatched",
-        payload={
-            "request_id": request_id,
-            "thread_id": thread_id,
-            "execution_id": execution_id,
-        },
+        payload=payload,
         scope="node",
     )
 
@@ -251,19 +259,21 @@ def FrontierSdkWorkerQueued(  # noqa: N802
     request_id: str,
     thread_id: str,
     execution_id: str,
-    dispatch_id: str,
+    dispatch_id: str | None = None,
     queue_position: int | None = None,
 ) -> Event:
     """SDK worker dispatch durably queued awaiting write-lease."""
+    payload: dict[str, object] = {
+        "request_id": request_id,
+        "thread_id": thread_id,
+        "execution_id": execution_id,
+        "queue_position": queue_position,
+    }
+    if dispatch_id:
+        payload["dispatch_id"] = dispatch_id
     return Event(
         signal="frontier.sdk.worker.queued",
-        payload={
-            "request_id": request_id,
-            "thread_id": thread_id,
-            "execution_id": execution_id,
-            "dispatch_id": dispatch_id,
-            "queue_position": queue_position,
-        },
+        payload=payload,
         scope="node",
     )
 

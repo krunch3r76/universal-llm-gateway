@@ -531,6 +531,7 @@ def _start_heartbeat(
     dispatch_id: str,
     thread_id: str,
     resolved_model: str,
+    execution_id: str | None = None,
     tool_call_count_fn: Callable[[], int] | None = None,
 ) -> tuple[Thread, _ThreadEvent]:
     stop = _ThreadEvent()
@@ -550,6 +551,7 @@ def _start_heartbeat(
                     tool_call_count=(
                         tool_call_count_fn() if tool_call_count_fn is not None else 0
                     ),
+                    execution_id=execution_id,
                 )
                 CursorDispatchLedger.instance().bump_heartbeat(dispatch_id=dispatch_id)
             except Exception as exc:  # heartbeat must never kill the dispatch
@@ -574,6 +576,7 @@ def _run_sdk_sync(
     dispatch_id: str,
     thread_id: str,
     resolved_model: str,
+    execution_id: str | None = None,
     gate_loop: asyncio.AbstractEventLoop,
 ) -> SdkRunOutcome:
     dispatch_home = setup_cursor_dispatch_home(dispatch_id)
@@ -643,6 +646,7 @@ def _run_sdk_sync(
                 dispatch_id=dispatch_id,
                 thread_id=thread_id,
                 resolved_model=resolved_model,
+                execution_id=execution_id,
                 tool_call_count_fn=live_counter.value,
             )
             run_started = time.monotonic()
@@ -703,6 +707,7 @@ def _run_sdk_sync(
                     dispatch_id=dispatch_id,
                     thread_id=thread_id,
                     resolved_model=resolved_model,
+                    execution_id=execution_id,
                     on_tool_call=live_counter.bump,
                 )
                 result = run.wait()
@@ -1340,6 +1345,7 @@ async def _run_sdk_dispatch_gated(
             dispatch_id=req.dispatch_id,
             thread_id=req.thread_id,
             resolved_model=req.model,
+            execution_id=req.execution_id,
             gate_loop=gate_loop,
         ),
         op_id=f"{req.dispatch_id}:worker",

@@ -71,12 +71,15 @@ def emit_sdk_worker_outcome(
     if worker_ok:
         if worker_detail.get("queued"):
             ticket = worker_detail.get("ticket") or {}
+            queued_dispatch_id = ticket.get("dispatch_id") or worker_detail.get(
+                "dispatch_id"
+            )
             publish_frontier_event(
                 FrontierSdkWorkerQueued(
                     request_id=request_id,
                     thread_id=thread_id,
                     execution_id=execution_id,
-                    dispatch_id=str(ticket.get("dispatch_id") or ""),
+                    dispatch_id=queued_dispatch_id or None,
                     queue_position=ticket.get("queue_position"),
                 )
             )
@@ -86,6 +89,7 @@ def emit_sdk_worker_outcome(
                 request_id=request_id,
                 thread_id=thread_id,
                 execution_id=execution_id,
+                dispatch_id=worker_detail.get("dispatch_id"),
             )
         )
         return

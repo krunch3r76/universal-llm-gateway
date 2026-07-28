@@ -38,15 +38,21 @@ from typing import Any, Mapping
 from .. import signals
 from ..correlation import CorrelationIndex
 from ..protocols import EventRecord, envelope_source
+from .sdk_review_child import (
+    close_terminal_row,
+    on_review_child_spawned,
+    on_system_started,
+)
 from .sdk_state import (
+    SdkIdAliases,
     SdkState,
     absorb_tool_call_count,
     as_int as _as_int,
-    dispatch_id as _dispatch_id,
+    ensure_canonical_row,
     first_str as _first_str,
     lease_row_id as _lease_row_id,
     note_tool_call_id,
-    queued_dispatch_id as _queued_dispatch_id,
+    payload_alt_ids as _payload_alt_ids,
 )
 
 #: Terminal fields compared across emitters. Chosen because a disagreement on any
@@ -60,6 +66,7 @@ class SdkFold:
     def __init__(self, index: CorrelationIndex) -> None:
         self._index = index
         self.dispatches: dict[str, SdkState] = {}
+        self._aliases = SdkIdAliases()
         #: Model stamps from ``generate.requested`` before a dispatch row exists.
         self._pending_models: dict[str, str] = {}
 
@@ -88,28 +95,29 @@ class SdkFold:
         table[signals.SDK_LEASE_PARK_RESTORE] = self._on_park_restore
         table[signals.SDK_CLOSEOUT_RELOCATED] = self._on_closeout_relocated
         table[signals.SDK_CLOSEOUT_RECONCILED] = self._on_closeout_reconciled
+        table[signals.SDK_REVIEW_CHILD_SPAWNED] = (
+            lambda record: on_review_child_spawned(self, record)
+        )
+        table[signals.SYSTEM_STARTED] = lambda record: on_system_started(self, record)
         return table
 
-    def _row_for_id(self, dispatch_id: str, record: EventRecord) -> SdkState:
-        """Return (creating if needed) the accumulator for an explicit dispatch id."""
-        row = self.dispatches.get(dispatch_id)
-        if row is None:
-            row = SdkState(dispatch_id)
-            self.dispatches[dispatch_id] = row
-        self._absorb_identity(row, record)
-        self._apply_provenance(row, record)
-        self._apply_pending_model(row)
-        return row
-
-    def _state(self, record: EventRecord) -> SdkState | None:
-        """Return (creating if needed) the accumulator for this record's dispatch."""
-        dispatch_id = _dispatch_id(record.payload, record)
-        if not dispatch_id:
+    def _resolve_row(
+        self,
+        record: EventRecord,
+        preferred_id: str | None,
+        *,
+        payload_ids: tuple[str, ...] | None = None,
+        queued: bool = False,
+    ) -> SdkState | None:
+        """Resolve canonical row, collapsing live alt-id siblings when needed."""
+        if not preferred_id:
             return None
-        row = self.dispatches.get(dispatch_id)
-        if row is None:
-            row = SdkState(dispatch_id)
-            self.dispatches[dispatch_id] = row
+        ids = payload_ids or _payload_alt_ids(
+            record.payload, record, queued=queued
+        )[1]
+        row = ensure_canonical_row(
+            self.dispatches, self._aliases, preferred_id, ids
+        )
         emitter = signals.SDK_EMITTER_BY_SIGNAL.get(
             record.signal, envelope_source(record) or "unknown"
         )
@@ -119,6 +127,19 @@ class SdkFold:
         self._apply_provenance(row, record)
         self._apply_pending_model(row)
         return row
+
+    def _row_for_id(self, dispatch_id: str, record: EventRecord) -> SdkState:
+        """Return (creating if needed) the accumulator for an explicit dispatch id."""
+        _, payload_ids = _payload_alt_ids(record.payload, record)
+        merged_ids = tuple(dict.fromkeys((dispatch_id, *payload_ids)))
+        row = self._resolve_row(record, dispatch_id, payload_ids=merged_ids)
+        assert row is not None
+        return row
+
+    def _state(self, record: EventRecord) -> SdkState | None:
+        """Return (creating if needed) the accumulator for this record's dispatch."""
+        preferred, payload_ids = _payload_alt_ids(record.payload, record)
+        return self._resolve_row(record, preferred, payload_ids=payload_ids)
 
     def _apply_pending_model(self, row: SdkState) -> None:
         """Apply a stashed generate.requested model once the dispatch row exists."""
@@ -288,7 +309,8 @@ class SdkFold:
         if payload.get("stall_stage"):
             row.stall_stage = str(payload["stall_stage"])
         absorb_tool_call_count(row, payload)
-        self._terminalize_id_siblings(
+        close_terminal_row(
+            self,
             row,
             record,
             state=str(observed["state"]),
@@ -299,10 +321,14 @@ class SdkFold:
     def _on_queued(self, record: EventRecord) -> None:
         """Fold FIFO queue placement — GS2 branch on stargate vs git_worker shape."""
         payload = record.payload
-        dispatch_id = _queued_dispatch_id(payload, record)
-        if not dispatch_id:
+        preferred, payload_ids = _payload_alt_ids(payload, record, queued=True)
+        if not preferred:
             return
-        row = self._row_for_id(dispatch_id, record)
+        row = self._resolve_row(
+            record, preferred, payload_ids=payload_ids, queued=True
+        )
+        if row is None:
+            return
         if row.terminal_ms is not None:
             return
         row.state = "queued"
@@ -397,6 +423,7 @@ class SdkFold:
         parent_id = _lease_row_id(payload, "parent_id")
         if not parent_id:
             return
+        parent_id = self._aliases.resolve(parent_id)
         parent = self.dispatches.get(parent_id)
         if parent is None or parent.terminal_ms is not None:
             return
@@ -423,33 +450,6 @@ class SdkFold:
         if path and row.closeout_uri is None:
             row.closeout_uri = str(path)
 
-    def _terminalize_id_siblings(
-        self,
-        primary: SdkState,
-        record: EventRecord,
-        *,
-        state: str,
-        failure_reason: str | None,
-        emitter: str,
-    ) -> None:
-        """Close alternate-id ghost rows (execution_id vs dispatch_id split)."""
-        payload = record.payload
-        alt_ids: list[str] = []
-        for key in ("dispatch_id", "execution_id", "worker_id"):
-            value = payload.get(key)
-            if value and str(value) != primary.dispatch_id:
-                alt_ids.append(str(value))
-        for alt_id in alt_ids:
-            sibling = self.dispatches.get(alt_id)
-            if sibling is None or sibling.terminal_ms is not None:
-                continue
-            self._advance_progress(sibling, record.ts_unix_ms)
-            sibling.terminal_ms = record.ts_unix_ms
-            sibling.terminal_emitter = emitter
-            sibling.state = state
-            if failure_reason:
-                sibling.failure_reason = failure_reason
-
     def _bind_lifecycle_terminal(
         self,
         record: EventRecord,
@@ -474,7 +474,8 @@ class SdkFold:
         model = payload.get("resolved_model")
         if model and row.model is None:
             row.model = str(model)
-        self._terminalize_id_siblings(
+        close_terminal_row(
+            self,
             row,
             record,
             state=state,

@@ -109,25 +109,29 @@ def FrontierSdkWorkerToolCall(  # noqa: N802
     result_bytes: int,
     truncated: list[str],
     truncated_any: bool,
+    execution_id: str | None = None,
 ) -> Event:
     # Per-tool-call detail from run.stream() — a channel distinct from the
     # finalized run.conversation() RPC. A call the runtime truncates/rejects
     # can surface here (running/error) while dropped from the conversation,
     # which is what an aggregate tool_call_count over conversation() can't see.
+    payload: dict[str, object] = {
+        "dispatch_id": dispatch_id,
+        "thread_id": thread_id,
+        "resolved_model": resolved_model,
+        "call_id": call_id,
+        "tool_name": tool_name,
+        "status": status,
+        "arg_bytes": arg_bytes,
+        "result_bytes": result_bytes,
+        "truncated": truncated,
+        "truncated_any": truncated_any,
+    }
+    if execution_id:
+        payload["execution_id"] = execution_id
     return Event(
         signal="frontier.sdk.worker.toolcall",
-        payload={
-            "dispatch_id": dispatch_id,
-            "thread_id": thread_id,
-            "resolved_model": resolved_model,
-            "call_id": call_id,
-            "tool_name": tool_name,
-            "status": status,
-            "arg_bytes": arg_bytes,
-            "result_bytes": result_bytes,
-            "truncated": truncated,
-            "truncated_any": truncated_any,
-        },
+        payload=payload,
         scope="node",
         role="realtime",
     )
@@ -222,6 +226,7 @@ def observe_run_stream(
     dispatch_id: str,
     thread_id: str,
     resolved_model: str,
+    execution_id: str | None = None,
     on_tool_call: Callable[[ToolCallObservation], None] | None = None,
 ) -> StreamCapture:
     """Drain run events, emitting one ``frontier.sdk.worker.toolcall`` event
@@ -263,6 +268,7 @@ def observe_run_stream(
                 result_bytes=observation.result_bytes,
                 truncated=list(observation.truncated_fields),
                 truncated_any=observation.truncated_any,
+                execution_id=execution_id,
             )
         )
 

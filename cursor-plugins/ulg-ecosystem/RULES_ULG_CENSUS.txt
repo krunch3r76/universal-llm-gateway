@@ -24,6 +24,7 @@ mcp-tool-param-types_ulg
 pager-notify_ulg
 phase-vocabulary_ulg
 plan-slug-coherence_ulg
+operator-request-front-door_ulg
 presence-discipline_ulg
 python-universal-venv_ulg
 reasoning-posture_ulg

@@ -29,6 +29,8 @@ def family_key_for_signal(signal: str) -> str | None:
         return "cdp.generate.*"
     if signal == "frontier.poll.hint.issued":
         return "frontier.poll.hint.issued"
+    if signal == "system.started":
+        return "system.started"
     return None
 
 

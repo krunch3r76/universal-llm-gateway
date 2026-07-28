@@ -91,6 +91,10 @@ class CharterRootRow:
     ``arc_g_step`` / ``arc_g_step_label`` are **mirror fields**: they carry
     ``path_sim_g_step`` straight off the admission payload when G5 lands it, and
     stay ``None`` otherwise. The core never parses a CHECKPOINT to fill them.
+
+    ``pickup_gid`` is the standing ledger tip (next gated row), grafted from the
+    root ledger at cold-start. Paint prefers ``arc_g_step`` when present, else
+    ``pickup_gid``.
     """
 
     root_id: str
@@ -102,7 +106,10 @@ class CharterRootRow:
     packet_path: str | None = None
     arc_g_step: str | None = None
     arc_g_step_label: str | None = None
+    pickup_gid: str | None = None
     objective: str | None = None
+    bus_slug: str | None = None
+    bus_summary: str | None = None
     last_signal_ms: int | None = None
     last_signal: str | None = None
     admitted_at_ms: int | None = None
@@ -153,6 +160,8 @@ class SdkDispatchRow:
     last_tool_name: str | None = None
     last_tool_status: str | None = None
     tool_call_count: int | None = None
+    parent_execution_id: str | None = None
+    review_child: bool = False
 
 
 @dataclass(frozen=True)

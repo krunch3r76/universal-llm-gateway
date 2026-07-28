@@ -40,9 +40,12 @@ def _truncate(text: str | None, width: int) -> str:
 
 def _root_line(row: CharterRootRow) -> str:
     """Render one charter root row."""
-    step = row.arc_g_step or "-"
+    step = row.arc_g_step or row.pickup_gid or "-"
     if row.objective:
         tail = f" obj: {_truncate(row.objective, 48)}"
+    elif row.bus_summary or row.bus_slug:
+        identity = row.bus_summary or row.bus_slug or ""
+        tail = f" bus: {_truncate(identity, 48)}"
     elif row.skip_reason:
         tail = f" {_truncate(row.skip_reason, 28)}"
     else:

@@ -201,12 +201,14 @@ class CursesBoard:
         self._safe_addstr(y, 0, f"─{bar}{'─' * max(0, width - len(bar) - 2)}", 4)
         y += 1
         primary = primary_tick_objective(roots_active)
+        subtitle_root: str | None = None
         if primary and y < height - 1:
-            root_id, objective = primary
+            root_id, kind, text = primary
+            subtitle_root = root_id
             self._safe_addstr(
                 y,
                 0,
-                tick_objective_line(root_id, objective, width - 1),
+                tick_objective_line(root_id, text, width - 1, kind=kind),
                 3,
             )
             y += 1
@@ -220,6 +222,7 @@ class CursesBoard:
             active_cap,
             empty="  idle — no root enqueued",
             sdk_rows=projection.sdk,
+            identity_on_subtitle_root=subtitle_root,
         )
         if roots_aside and y < height - 1:
             aside_bar = f" SET ASIDE ({len(roots_aside)}) "
@@ -254,6 +257,7 @@ class CursesBoard:
         empty: str | None,
         color: int = 0,
         sdk_rows: tuple[SdkDispatchRow, ...] = (),
+        identity_on_subtitle_root: str | None = None,
     ) -> int:
         shown = 0
         for row in rows:
@@ -266,6 +270,7 @@ class CursesBoard:
                 cdp_n=by_root_cdp.get(rid, 0),
                 width=width,
                 sdk_dispatch_id=primary_sdk_dispatch_for_root(rid, sdk_rows),
+                omit_identity_tail=identity_on_subtitle_root == rid,
             )
             pair = 1 if row.state == "failed" else color
             self._safe_addstr(y, 0, line[: width - 1], pair)

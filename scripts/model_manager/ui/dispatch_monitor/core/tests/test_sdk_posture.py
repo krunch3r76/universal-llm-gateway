@@ -19,6 +19,9 @@ def _row(
     tool_call_count: int | None = None,
     last_tool_name: str | None = None,
     idle_age_ms: int | None = 0,
+    parent_execution_id: str | None = None,
+    review_child: bool = False,
+    model: str | None = None,
 ) -> SdkDispatchRow:
     return SdkDispatchRow(
         dispatch_id=dispatch_id,
@@ -27,6 +30,9 @@ def _row(
         tool_call_count=tool_call_count,
         last_tool_name=last_tool_name,
         idle_age_ms=idle_age_ms,
+        parent_execution_id=parent_execution_id,
+        review_child=review_child,
+        model=model,
     )
 
 
@@ -50,6 +56,20 @@ def test_nested_when_parent_parked() -> None:
     assert "nested" in (posture_legend("nested") or "")
 
 
+def test_nested_when_review_child_linked() -> None:
+    live = [
+        _row("parent-exec", root_id="6164", tool_call_count=10),
+        _row(
+            "child-exec",
+            root_id="6164",
+            review_child=True,
+            parent_execution_id="parent-exec",
+            model="gpt-5.5",
+        ),
+    ]
+    assert classify_sdk_live(live) == "nested"
+    assert row_role(live[0], live, "nested") == "parent"
+    assert row_role(live[1], live, "nested") == "child"
 def test_id_split_same_root_without_park() -> None:
     live = [
         _row("fc8437a1", root_id="6186", idle_age_ms=120_000),

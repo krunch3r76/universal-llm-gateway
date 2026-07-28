@@ -463,6 +463,18 @@ async def team_dispatch(
     role = getattr(body, "role", None)
     seat = getattr(body, "seat", None)
     model = getattr(body, "model", None)
+    if body.op == "generate":
+        from implement_admission.check_review_substrate import (
+            coerce_check_review_omit_to_cursor_seat,
+        )
+
+        role, seat, model, coerced = coerce_check_review_omit_to_cursor_seat(
+            role, seat, model
+        )
+        if coerced:
+            body.role = role
+            body.seat = seat
+            body.model = model
     if body.op == "generate" and is_cdp_model(model):
         try:
             reject_cursor_sdk_seat_with_cdp(

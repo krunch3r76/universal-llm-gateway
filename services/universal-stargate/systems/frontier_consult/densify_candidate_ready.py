@@ -24,7 +24,15 @@ from .material_decision_gate import material_decision_closeout_flags
 EventPublisher = Callable[[Any], None]
 
 _DEFAULT_REVIEWER_ROLE = "reviewer"
-_DEFAULT_REVIEWER_MODEL = "openai/gpt-5.5"
+
+
+def _default_reviewer_model() -> str:
+    from implement_admission.check_review_substrate import (
+        load_check_review_default_model,
+    )
+    from implement_admission.routing import load_route_policy
+
+    return load_check_review_default_model(load_route_policy())
 
 
 class DensifyCandidateReadyBody(BaseModel):
@@ -170,21 +178,43 @@ async def spawn_densify_reviewer_child(
     reviewer_prompt: str,
     response: Response,
 ) -> dict[str, Any]:
-    """Spawn one cross-family reviewer via op=to_thread on the densify thread."""
-    from .route import TeamDispatchToThreadBody, team_dispatch
+    """Spawn one cross-family reviewer on check/review standing default substrate."""
+    from model_id import ModelId
 
-    child_body = TeamDispatchToThreadBody(
-        op="to_thread",
-        role=_DEFAULT_REVIEWER_ROLE,
-        dispatch_thread_id=parent_dispatch_thread_id,
-        thread=parent_dispatch_thread_id,
-        subject=f"densify cross-family review — {request_id[:8]}",
-        contract="light-bounded",
-        model=_DEFAULT_REVIEWER_MODEL,
-        auto_review_child=True,
+    from .route import (
+        TeamDispatchGenerateBody,
+        TeamDispatchToThreadBody,
+        team_dispatch,
     )
-    with _PromptOverride(reviewer_prompt):
+
+    reviewer_model = _default_reviewer_model()
+    if ModelId.parse(reviewer_model).backend_type == "cursor_sdk":
+        child_body: TeamDispatchGenerateBody | TeamDispatchToThreadBody = (
+            TeamDispatchGenerateBody(
+                op="generate",
+                seat="cursor-sdk",
+                dispatch_thread_id=parent_dispatch_thread_id,
+                model=reviewer_model,
+                contract="light-bounded",
+                prompt=reviewer_prompt,
+                auto_review_child=False,
+                spawn_review_provenance="generate_review_child",
+            )
+        )
         result = await team_dispatch(child_body, response)
+    else:
+        child_body = TeamDispatchToThreadBody(
+            op="to_thread",
+            role=_DEFAULT_REVIEWER_ROLE,
+            dispatch_thread_id=parent_dispatch_thread_id,
+            thread=parent_dispatch_thread_id,
+            subject=f"densify cross-family review — {request_id[:8]}",
+            contract="light-bounded",
+            model=reviewer_model,
+            auto_review_child=True,
+        )
+        with _PromptOverride(reviewer_prompt):
+            result = await team_dispatch(child_body, response)
     if isinstance(result, JSONResponse):
         return {"error": "reviewer_spawn_failed"}
     return result if isinstance(result, dict) else {}
@@ -272,6 +302,9 @@ async def handle_densify_candidate_ready(
         )
 
     if event_publisher is not None and default_on:
+        from implement_admission.check_review_substrate import independence_family
+
+        spawned_model = _default_reviewer_model() if should_spawn else None
         event_publisher(
             FrontierDensifyReviewAdmitted(
                 parent_request_id=parent_request_id,
@@ -284,8 +317,10 @@ async def handle_densify_candidate_ready(
                 draft_adequacy=body.draft_adequacy,
                 opt_out=opted_out,
                 opt_out_reason_code=body.review_opt_out_reason_code,
-                reviewer_family="openai" if should_spawn else None,
-                reviewer_model=_DEFAULT_REVIEWER_MODEL if should_spawn else None,
+                reviewer_family=(
+                    independence_family(spawned_model) if spawned_model else None
+                ),
+                reviewer_model=spawned_model,
                 target_thread_id=densify_thread_id if should_spawn else None,
                 review_execution_id=review_execution_id,
                 review_spawned=review_spawned,

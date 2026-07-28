@@ -105,6 +105,11 @@ def fetch_ledger_dispatch(
 
 
 def _scoreboard_uri_for_thread(thread_id: str, bus: dict[str, Any] | None) -> str:
+    from scripts.model_manager.ui.charter_scoreboard_objective import _read_ledger_tip
+
+    uri, _gid = _read_ledger_tip(thread_id)
+    if uri and uri.startswith("cortex://"):
+        return uri
     if isinstance(bus, dict):
         for key in ("scoreboard_uri", "scoreboard"):
             value = bus.get(key)

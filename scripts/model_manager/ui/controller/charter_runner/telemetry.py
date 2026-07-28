@@ -120,6 +120,32 @@ async def emit_enrollment_filtered(*, root: str, reason: str) -> None:
     )
 
 
+async def emit_storm_fuse_tripped(
+    *,
+    root: str,
+    identity_key: str,
+    category: str,
+    tip_gid: str,
+    mismatch_class: str,
+    consecutive_count: int,
+    held_friction_id: int,
+) -> None:
+    """Forbid §5 — conveyor hold + operator flag after N identical park frictions."""
+    await _emit(
+        "manage.charter.conveyor.storm_fuse_tripped",
+        {
+            "root": root,
+            "identity_key": identity_key,
+            "category": category,
+            "tip_gid": tip_gid,
+            "mismatch_class": mismatch_class,
+            "consecutive_count": consecutive_count,
+            "held_friction_id": held_friction_id,
+            "fuse_threshold": 3,
+        },
+    )
+
+
 __all__ = [
     "emit_admission_defer_escalated",
     "emit_admission_deferred_gate_held",
@@ -128,5 +154,6 @@ __all__ = [
     "emit_enrollment_filtered",
     "emit_shadow_diff",
     "emit_shadow_ledger_starved",
+    "emit_storm_fuse_tripped",
     "emit_tick_transition",
 ]

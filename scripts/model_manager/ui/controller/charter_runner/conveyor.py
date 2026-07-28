@@ -25,13 +25,16 @@ from .checkpoint_schema import (
     split_sections,
 )
 from .friction_ledger import CONVEYOR_OFF_TAG
+from .storm_fuse import is_quarantined
 from .pickup_advance import gid_of_row
 from .window_sequence import next_window_index, window_id_for
 from .window_terminal_contract import is_tip_class, is_window_terminal
 
 logger = get_logger(__name__)
 
-CONVEYOR_SLUG = "charter-friction-conveyor"
+# Standing conveyor root is the F3 birth charter (6186), not the retired
+# `charter-friction-conveyor` slug (6171 closed → empty 6191 shell re-mint).
+CONVEYOR_SLUG = "charter-friction-enroll-on-arrival"
 CONVEYOR_STALE_TICKS = 48
 _STATE_DIR = Path.home() / ".local/share" / "charter-runner"
 _STATE_PATH = _STATE_DIR / "conveyor-enrollments.json"
@@ -369,6 +372,8 @@ async def enroll_rows(
 
     for row in eligible:
         friction_id = int(row["id"])
+        if is_quarantined(friction_id):
+            continue
         attrs = row.get("attributes") or {}
         if not isinstance(attrs, dict):
             attrs = {}

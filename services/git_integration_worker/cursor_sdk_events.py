@@ -150,18 +150,22 @@ def FrontierSdkWorkerProgress(  # noqa: N802
     resolved_model: str,
     elapsed_s: float,
     tool_call_count: int,
+    execution_id: str | None = None,
 ) -> Event:
     # Sibling-asymmetry (intentional): progress carries resolved_model+elapsed_s for
     # liveness; completed/failed carry outcome. OQ2: resolved_model, NEVER model_entity_id.
+    payload: dict[str, object] = {
+        "dispatch_id": dispatch_id,
+        "thread_id": thread_id,
+        "resolved_model": resolved_model,
+        "elapsed_s": elapsed_s,
+        "tool_call_count": tool_call_count,
+    }
+    if execution_id:
+        payload["execution_id"] = execution_id
     return Event(
         signal="frontier.sdk.worker.progress",
-        payload={
-            "dispatch_id": dispatch_id,
-            "thread_id": thread_id,
-            "resolved_model": resolved_model,
-            "elapsed_s": elapsed_s,
-            "tool_call_count": tool_call_count,
-        },
+        payload=payload,
         scope="node",
         role="realtime",
     )
@@ -236,6 +240,7 @@ def emit_sdk_worker_progress(
     resolved_model: str,
     elapsed_s: float,
     tool_call_count: int,
+    execution_id: str | None = None,
 ) -> None:
     """Publish mid-run progress for a live cursor-sdk worker dispatch."""
     _emit(
@@ -245,6 +250,7 @@ def emit_sdk_worker_progress(
             resolved_model=resolved_model,
             elapsed_s=elapsed_s,
             tool_call_count=tool_call_count,
+            execution_id=execution_id,
         )
     )
 

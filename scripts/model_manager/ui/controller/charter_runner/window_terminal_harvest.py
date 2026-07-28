@@ -20,7 +20,6 @@ async def after_window_terminal_harvested(
 ) -> None:
     """Post-close hook: friction audit → G3 mint → reconcile → conveyor enroll."""
     from cortex_store.dispatch_ops._friction_enqueue import (
-        mint_friction_followon,
         mint_repair_todo,
         reconcile_charter_frictions,
         todo_exists_for_friction,
@@ -31,6 +30,7 @@ async def after_window_terminal_harvested(
     from scripts.model_manager import observation_event as events
 
     from . import bus_client, conveyor, frictions_window_audit
+    from .park_friction_mint import mint_followon_with_fuse
 
     _ = checkpoint_turn  # bound in contract signature for closeout correlation
 
@@ -99,7 +99,7 @@ async def after_window_terminal_harvested(
         try:
             got = _op_assertion_get(assertion_id=row.assertion_id)
             if "error" not in got:
-                slug = mint_friction_followon(got, root_id=root_id)
+                slug = mint_followon_with_fuse(got, root_id=root_id)
                 if slug:
                     audit.enqueued_ids.add(row.assertion_id)
         except Exception:  # noqa: BLE001
@@ -111,7 +111,7 @@ async def after_window_terminal_harvested(
         try:
             got = _op_assertion_get(assertion_id=fid)
             if "error" not in got:
-                slug = mint_friction_followon(got, root_id=root_id)
+                slug = mint_followon_with_fuse(got, root_id=root_id)
                 if slug:
                     audit.enqueued_ids.add(fid)
         except Exception:  # noqa: BLE001

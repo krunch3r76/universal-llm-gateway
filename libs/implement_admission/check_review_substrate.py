@@ -8,10 +8,12 @@ from typing import Any
 
 from model_id import ModelId
 
-CHECK_REVIEW_DEFAULT_MODEL = "openai/gpt-5.6-terra"
+# Code-lane standing default (decision:code-review-panel-cursor-substrate).
+# Explicit model=openai/* still admits on role=reviewer API path.
+CHECK_REVIEW_DEFAULT_MODEL = "cursor/gpt-5.6-terra"
 CHECK_REVIEW_POLICY_KEY = "check_review_default_model"
-CHECK_REVIEW_DECISION_CITATION = "decision:autonomous-work-item-spine"
-CHECK_REVIEW_ASSERTION_CITATION = "assertion:23920"
+CHECK_REVIEW_DECISION_CITATION = "decision:code-review-panel-cursor-substrate"
+CHECK_REVIEW_ASSERTION_CITATION = "assertion:26392"
 
 CHECK_REVIEW_API_ROLES = frozenset({"reviewer", "skeptic"})
 CURSOR_CHECK_REVIEW_MODELS = frozenset(
@@ -69,6 +71,54 @@ def verify_check_review_default_conformance(
 
 def is_check_review_api_role(role: str) -> bool:
     return role.strip().lower() in CHECK_REVIEW_API_ROLES
+
+
+def coerce_check_review_omit_to_cursor_seat(
+    role: str | None,
+    seat: str | None,
+    model: str | None,
+    *,
+    policy: dict[str, Any] | None = None,
+) -> tuple[str | None, str | None, str | None, bool]:
+    """When check/review role omits model= and default is cursor/, coerce to seat=.
+
+    ``role=reviewer`` + omit model must not land on the API path with a cursor
+    default (substrate_model_role_conflict / broken API transport). Returns
+    ``(role, seat, model, coerced)``.
+    """
+    if seat is not None and str(seat).strip():
+        return role, seat, model, False
+    if model is not None:
+        return role, seat, model, False
+    if role is None or not is_check_review_api_role(role):
+        return role, seat, model, False
+    resolution = resolve_check_review_model(role, None, policy=policy)
+    if resolution.substrate != "cursor-sdk":
+        return role, seat, model, False
+    return None, "cursor-sdk", resolution.resolved_model, True
+
+
+def independence_family(model: str) -> str:
+    """Weight-class / model-family for cross-family review (not substrate provider).
+
+    ``cursor/gpt-5.6-terra`` is openai-family; ``cursor/claude-opus-5`` is
+    anthropic-family — substrate ``cursor`` must not collapse independence.
+    """
+    parsed = ModelId.parse(model)
+    bare = (parsed.api_model_id or "").lower()
+    if bare.startswith(("gpt-", "o1", "o3", "o4")):
+        return "openai"
+    if bare.startswith("claude"):
+        return "anthropic"
+    if bare.startswith("grok"):
+        return "xai"
+    if bare.startswith("gemini"):
+        return "google"
+    if bare.startswith("composer"):
+        return "composer"
+    if parsed.provider:
+        return parsed.provider.lower()
+    return "unknown"
 
 
 def cursor_delivery_from_role(model: str) -> str | None:

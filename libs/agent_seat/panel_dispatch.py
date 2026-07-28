@@ -30,7 +30,7 @@ _PROVIDER_FAMILY_LABEL: dict[str, str] = {
 
 DEFAULT_PANEL_MEMBERS: tuple[tuple[str, str | None], ...] = (
     ("skeptic", None),
-    ("reviewer", "openai/gpt-5.6-terra"),
+    ("reviewer", "cursor/gpt-5.6-terra"),
 )
 
 TIEBREAKER_ROLE = "synthesizer"
@@ -161,9 +161,15 @@ def verify_panel_role_model_resolution(
 
 
 def provider_family_label(model: str) -> str:
-    """Display family label from effective model (Guard 3 — distinct provider)."""
-    provider = ModelId.parse(model).provider
-    return _PROVIDER_FAMILY_LABEL.get(provider, provider)
+    """Display family label from effective model (Guard 3 — distinct provider).
+
+    Cursor-substrate models use weight-class family (gpt→GPT, grok→Grok), not
+    the substrate provider label ``cursor``.
+    """
+    from implement_admission.check_review_substrate import independence_family
+
+    family = independence_family(model)
+    return _PROVIDER_FAMILY_LABEL.get(family, family)
 
 
 def panel_provider_families(member_models: dict[str, str]) -> list[str]:
@@ -214,13 +220,19 @@ def build_team_dispatch_body(
     """``team_dispatch(op=generate)`` body for one panel member."""
     body: dict[str, Any] = {
         "op": "generate",
-        "role": spec.role,
         "dispatch_thread_id": dispatch_thread_id,
         "contract": "light-bounded",
         "system": system,
     }
-    if spec.model is not None:
-        body["model"] = spec.model
+    model = spec.model
+    if model is not None and ModelId.parse(model).backend_type == "cursor_sdk":
+        # cursor/* cannot combine with role= (substrate_model_role_conflict).
+        body["seat"] = "cursor-sdk"
+        body["model"] = model
+    else:
+        body["role"] = spec.role
+        if model is not None:
+            body["model"] = model
     for key, val in (
         ("caller_agent", caller_agent),
         ("reasoning_effort", reasoning_effort),
