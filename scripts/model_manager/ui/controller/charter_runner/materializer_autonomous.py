@@ -40,6 +40,10 @@ from .materializer_closed_detent import (
     materialize_closed_detent_packet,
 )
 from .materializer_consult import consult_subject, materialize_consult_packet
+from .materializer_operator_proxy import (
+    materialize_operator_proxy_packet,
+    operator_proxy_subject,
+)
 
 logger = get_logger(__name__)
 
@@ -348,6 +352,11 @@ def select_packet(
         )
         role = consult_role or parsed.consult_role
         return packet, consult_subject(root_id, window_index, consult_role=role)
+    if admission_mode == "operator_proxy":
+        packet = materialize_operator_proxy_packet(
+            root_id, parsed, scoreboard_uri=scoreboard_uri, window_index=window_index
+        )
+        return packet, operator_proxy_subject(root_id, window_index)
     if admission_mode == "autonomous":
         if pickup_detent(parsed) == "closed":
             packet = materialize_closed_detent_packet(

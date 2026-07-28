@@ -6,7 +6,7 @@ from typing import Literal
 
 from .dispatch_client import AdmissionMode
 
-Attendance = Literal["attended", "autonomous"]
+Attendance = Literal["attended", "autonomous", "operator_proxy"]
 
 
 def attendance_from_todo_attrs(attrs: dict | None) -> Attendance:
@@ -16,18 +16,22 @@ def attendance_from_todo_attrs(attrs: dict | None) -> Attendance:
     raw = str(attrs.get("attendance") or "").strip().lower()
     if raw == "autonomous":
         return "autonomous"
+    if raw == "operator_proxy":
+        return "operator_proxy"
     return "attended"
 
 
 def admission_mode_for_attendance(attendance: Attendance) -> AdmissionMode:
-    """Kernel/tick bind: autonomous → autonomous packet; attended → generate."""
+    """Kernel/tick bind: autonomous → autonomous; operator_proxy → operator_proxy; attended → generate."""
     if attendance == "autonomous":
         return "autonomous"
+    if attendance == "operator_proxy":
+        return "operator_proxy"
     return "generate"
 
 
 def _attendance_from_bus_tags(root_id: str) -> Attendance | None:
-    """Honor ``attendance:autonomous`` on the enrolled bus thread when set."""
+    """Honor ``attendance:autonomous`` / ``attendance:operator_proxy`` on the enrolled bus thread."""
     rid = root_id.removeprefix("agent-bus:")
     try:
         from agent_bus_store.db.threads import get_thread
@@ -40,6 +44,8 @@ def _attendance_from_bus_tags(root_id: str) -> Attendance | None:
     tags = [str(t).strip().lower() for t in (thread.get("tags") or [])]
     if "attendance:autonomous" in tags:
         return "autonomous"
+    if "attendance:operator_proxy" in tags:
+        return "operator_proxy"
     return None
 
 
@@ -58,8 +64,8 @@ def default_attendance_lookup(root_id: str) -> Attendance:
             mode = attendance_from_todo_attrs(
                 attrs if isinstance(attrs, dict) else None
             )
-            if mode == "autonomous":
-                return "autonomous"
+            if mode != "attended":
+                return mode
     tagged = _attendance_from_bus_tags(root_id)
     if tagged is not None:
         return tagged

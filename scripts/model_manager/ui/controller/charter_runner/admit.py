@@ -219,6 +219,8 @@ async def admit_window(
     elif admission_mode == "autonomous":
         lane = "implement" if bind.is_implement else "background lead"
         mode_note = f" (autonomous {lane} — {fired_model})"
+    elif admission_mode == "operator_proxy":
+        mode_note = " (operator-proxy host — polls CDP lane)"
     else:
         mode_note = f" ({fired_model})"
     msg = f"charter-runner: admitted {worker_thread} for root {root_id}" + mode_note

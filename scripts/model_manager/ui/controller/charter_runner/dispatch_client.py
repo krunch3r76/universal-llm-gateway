@@ -22,11 +22,12 @@ from .executor_defaults import (
     default_handoff_body,
     default_judgment_body,
     implement_body,
+    operator_proxy_host_generate_body,
 )
 
 logger = get_logger(__name__)
 
-AdmissionMode = Literal["generate", "handoff", "autonomous", "consult"]
+AdmissionMode = Literal["generate", "handoff", "autonomous", "consult", "operator_proxy"]
 
 _TIMEOUT_S = 30.0
 _DISPATCH_PATH = "/api/v1/team/dispatch"
@@ -114,6 +115,15 @@ async def fire_window(
                 subject=subj,
                 caller_agent=_CALLER,
             )
+        path = _DISPATCH_PATH
+    elif admission_mode == "operator_proxy":
+        body = operator_proxy_host_generate_body(
+            root_id=root_id,
+            window_index=window_index,
+            packet_path=packet_path,
+            subject=subj,
+            caller_agent=_CALLER,
+        )
         path = _DISPATCH_PATH
     else:
         body = default_judgment_body(

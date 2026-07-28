@@ -172,6 +172,32 @@ def consult_host_generate_body(
     return body
 
 
+def operator_proxy_host_generate_body(
+    *,
+    root_id: str,
+    window_index: int,
+    packet_path: str,
+    subject: str,
+    caller_agent: str,
+) -> dict[str, Any]:
+    """Unattended host wire for the CDP operator-proxy lane (agent-bus:6006).
+
+    Same cursor-sdk generate schema as consult hosts. The host polls the private
+    ``request`` thread and CDP executions and re-admits to keep the operator seat
+    live; ``read_only=True`` releases the write lease so Opus's own cursor-auto
+    implement dispatches nest under this holder rather than contending.
+    """
+    body = default_judgment_body(
+        root_id=root_id,
+        window_index=window_index,
+        packet_path=packet_path,
+        subject=subject,
+        caller_agent=caller_agent,
+    )
+    body["read_only"] = True
+    return body
+
+
 def r_admit_consult_generate_body(
     *,
     root_id: str,
