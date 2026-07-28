@@ -153,6 +153,8 @@ scope_vocabulary.yaml
 # Model rates catalog projection (cloud-proxy ingest → host state; ¬ tracked)
 # Seed SOT: config/model_rates.yaml. Override: MODEL_RATES_CATALOG_PATH.
 # Default path is ~/.gateway/model_rates_catalog.yaml (outside the repo).
+# Legacy repo data/ regen from pre-refactor processes — ignore if it reappears.
+data/
 
 # Development artifacts
 report.txt
