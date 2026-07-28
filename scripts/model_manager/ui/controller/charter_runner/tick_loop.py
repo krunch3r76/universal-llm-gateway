@@ -32,10 +32,10 @@ from scripts.model_manager import observation_event as events
 if not hasattr(events, "emit_manage_charter_tick_root_skipped"):
     importlib.reload(events)
 
+from typing import TYPE_CHECKING
+
 from scripts.model_manager.ui.controller.service_config import build_mcp_env
 from scripts.model_manager.ui.controller.shutdown_gate import ManageShutdownGate
-from typing import TYPE_CHECKING, Any, Callable
-
 from scripts.model_manager.ui.model.service_state import ServiceState, ServiceStatus
 
 if TYPE_CHECKING:
@@ -49,6 +49,7 @@ from . import orphan_dispatch_heal as _orphan_dispatch_mod
 from . import schema_skip_heal as _schema_skip_heal_mod
 from . import self_heal as _self_heal_mod
 from . import state_close as _state_close_mod
+from .attendance import Attendance, admission_mode_for_attendance
 from .caps import CapStore
 from .checkpoint_admit_gate import SCHEMA_REASONS
 from .dispatch_client import AdmissionMode
@@ -58,6 +59,7 @@ from .eligibility import (
     live_wip_for_window,
     next_window_index,
 )
+from .env_snapshot import EnvSnapshot
 from .giw_live_hold import build_tick_env_snapshot, probe_giw_live_hold
 from .harvest import completed_windows, harvest_completed_windows
 from .tick_interval import tick_interval_from_env as _tick_interval_from_env
@@ -159,8 +161,32 @@ def _unattended_stale_s_from_env() -> float:
     return 0.0 if val is None else val
 
 
+def _attendance_for_root(env: EnvSnapshot, root_id: str) -> Attendance:
+    """Attendance from tick-scoped env snapshot; warn and default attended when missing."""
+    attendance = env.attendance_by_root.get(root_id)
+    if attendance is None:
+        logger.warning(
+            "attendance missing from env snapshot root_id=%s — defaulting attended",
+            root_id,
+        )
+        return "attended"
+    if attendance == "autonomous":
+        return "autonomous"
+    if attendance == "operator_proxy":
+        return "operator_proxy"
+    return "attended"
+
+
+def _admission_mode_from_env(env: EnvSnapshot, root_id: str) -> AdmissionMode:
+    """Per-root admission mode from tick-scoped env snapshot."""
+    return admission_mode_for_attendance(_attendance_for_root(env, root_id))
+
+
 def _effective_unattended_stale_s(
-    *, constructor_override: float | None, root_id: str | None = None
+    *,
+    constructor_override: float | None,
+    root_id: str | None = None,
+    env: EnvSnapshot | None = None,
 ) -> float:
     """Resolve hard-stall seconds: constructor → env → per-root autonomous default → 0.
 
@@ -172,19 +198,10 @@ def _effective_unattended_stale_s(
     env_val = _env_unattended_stale_raw()
     if env_val is not None:
         return env_val
-    if root_id is not None:
-        from .attendance import admission_mode_for_root
-
-        if admission_mode_for_root(root_id) == "autonomous":
+    if root_id is not None and env is not None:
+        if _admission_mode_from_env(env, root_id) == "autonomous":
             return DEFAULT_AUTONOMOUS_STALE_S
     return 0.0
-
-
-def _admission_mode_for_root(root_id: str) -> AdmissionMode:
-    """Per-root admission mode from durable todo ``attendance`` attr."""
-    from .attendance import admission_mode_for_root
-
-    return admission_mode_for_root(root_id)
 
 
 def ensure_charter_tick_env(workspace_root: Path) -> None:
@@ -295,6 +312,11 @@ class CharterRunnerTickLoop:
 
         roots = await bus_client.list_enrolled_roots()
         env_snapshot = await build_tick_env_snapshot()
+        root_ids = [str(thread.get("id") or "") for thread in roots if thread.get("id")]
+        kernel_env = await build_env_snapshot(
+            root_ids=root_ids,
+            env_half=env_snapshot,
+        )
         admitted = 0
         in_flight = 0
         skipped_by_reason: dict[str, int] = {}
@@ -307,13 +329,13 @@ class CharterRunnerTickLoop:
                 continue
             turns = await bus_client.fetch_turns(root_id)
             closed_attributions.extend(
-                await harvest_completed_windows(root_id, turns)
+                await harvest_completed_windows(
+                    root_id,
+                    turns,
+                    admission_mode=_admission_mode_from_env(kernel_env, root_id),
+                )
             )
             if is_kernel_migrated(root_id):
-                kernel_env = build_env_snapshot(
-                    root_ids=[root_id],
-                    env_half=env_snapshot,
-                )
                 kernel_outcome = await apply_kernel_tick_for_root(
                     root_id,
                     turns,
@@ -332,14 +354,21 @@ class CharterRunnerTickLoop:
                 continue
             await maybe_heal_admit_intent_orphan(root_id, turns, self._caps)
             decision = evaluate_root(
-                root_id, turns, self._caps, env_snapshot=env_snapshot
+                root_id,
+                turns,
+                self._caps,
+                env_snapshot=env_snapshot,
+                admission_mode=_admission_mode_from_env(kernel_env, root_id),
             )
             old_decisions[root_id] = (
                 "eligible" if decision.eligible else decision.reason
             )
             if decision.eligible:
                 if (
-                    _orphan_dispatch_mod.decision_needs_fleet_slot(decision)
+                    _orphan_dispatch_mod.decision_needs_fleet_slot(
+                        decision,
+                        admission_mode=_admission_mode_from_env(kernel_env, root_id),
+                    )
                     and await probe_giw_live_hold()
                 ):
                     ckpt = _state_close_mod.checkpoint_turn_number(decision.checkpoint)
@@ -356,7 +385,7 @@ class CharterRunnerTickLoop:
                     if is_kernel_migrated(decision.root_id):
                         record_old_tick_admit_blocked(decision.root_id)
                         continue
-                    if await self._admit_window(decision, turns):
+                    if await self._admit_window(decision, turns, kernel_env):
                         admitted += 1
                 except Exception:
                     logger.exception(
@@ -376,14 +405,17 @@ class CharterRunnerTickLoop:
                 in_flight += 1
                 if await self._recover_worker_failure(decision):
                     continue
-                if await self._try_orphan_dispatch(decision):
+                if await self._try_orphan_dispatch(decision, kernel_env):
                     continue
-                if await self._try_consult_stall(decision, turns):
+                if await self._try_consult_stall(decision, turns, kernel_env):
                     continue
-                if await self._try_self_heal(decision, turns):
+                if await self._try_self_heal(decision, turns, kernel_env):
                     continue
                 state_closes_this_tick = await self._handle_waiting_open(
-                    decision, turns, state_closes_this_tick=state_closes_this_tick
+                    decision,
+                    turns,
+                    kernel_env,
+                    state_closes_this_tick=state_closes_this_tick,
                 )
             elif decision.reason in SCHEMA_REASONS:
                 await _schema_skip_heal_mod.try_self_heal_schema_skip(
@@ -393,10 +425,6 @@ class CharterRunnerTickLoop:
             from .kernel import record_shadow_pass
             from .telemetry import emit_shadow_diff, emit_shadow_ledger_starved
 
-            kernel_env = build_env_snapshot(
-                root_ids=list(old_decisions.keys()),
-                env_half=env_snapshot,
-            )
             shadow = record_shadow_pass(old_decisions, env=kernel_env)
             if shadow.starved:
                 await emit_shadow_ledger_starved(
@@ -468,7 +496,9 @@ class CharterRunnerTickLoop:
         )
         return True
 
-    async def _admit_window(self, decision: Decision, turns: list[dict]) -> bool:
+    async def _admit_window(
+        self, decision: Decision, turns: list[dict], env: EnvSnapshot
+    ) -> bool:
         if self._workspace_root is None:
             raise RuntimeError(
                 "charter-runner requires workspace_root for handoff packets"
@@ -479,12 +509,13 @@ class CharterRunnerTickLoop:
             caps=self._caps,
             workspace_root=self._workspace_root,
             on_admit=self._on_admit,
+            admission_mode=_admission_mode_from_env(env, decision.root_id),
         )
         if admitted:
             self._reminded.discard(decision.root_id)
         return admitted
 
-    async def _try_orphan_dispatch(self, decision: Decision) -> bool:
+    async def _try_orphan_dispatch(self, decision: Decision, env: EnvSnapshot) -> bool:
         """GIW lost the dispatch while the root still shows window_in_flight."""
         adm = decision.admission_turn or {}
         posted_at = _admission_posted_at(adm)
@@ -495,9 +526,12 @@ class CharterRunnerTickLoop:
             decision,
             caps=self._caps,
             age_s=age,
+            admission_mode=_admission_mode_from_env(env, decision.root_id),
         )
 
-    async def _try_self_heal(self, decision: Decision, turns: list[dict]) -> bool:
+    async def _try_self_heal(
+        self, decision: Decision, turns: list[dict], env: EnvSnapshot
+    ) -> bool:
         """Autonomous: complete/partial without root terminal → machine heal."""
         adm = decision.admission_turn or {}
         posted_at = _admission_posted_at(adm)
@@ -509,10 +543,12 @@ class CharterRunnerTickLoop:
             root_turns=turns,
             caps=self._caps,
             age_s=age,
-            admission_mode=_admission_mode_for_root(decision.root_id),
+            admission_mode=_admission_mode_from_env(env, decision.root_id),
         )
 
-    async def _try_consult_stall(self, decision: Decision, turns: list[dict]) -> bool:
+    async def _try_consult_stall(
+        self, decision: Decision, turns: list[dict], env: EnvSnapshot
+    ) -> bool:
         """Consult-mode: hung WIP past DEFAULT_CONSULT_STALE_S → recover (a:26131)."""
         adm = decision.admission_turn or {}
         posted_at = _admission_posted_at(adm)
@@ -524,13 +560,14 @@ class CharterRunnerTickLoop:
             root_turns=turns,
             caps=self._caps,
             age_s=age,
-            admission_mode=_admission_mode_for_root(decision.root_id),
+            admission_mode=_admission_mode_from_env(env, decision.root_id),
         )
 
     async def _handle_waiting_open(
         self,
         decision: Decision,
         turns: list[dict],
+        env: EnvSnapshot,
         *,
         state_closes_this_tick: int = 0,
     ) -> int:
@@ -558,11 +595,12 @@ class CharterRunnerTickLoop:
         stale_s = _effective_unattended_stale_s(
             constructor_override=self._unattended_stale_override,
             root_id=decision.root_id,
+            env=env,
         )
         if stale_s > 0 and age >= stale_s:
-            if await self._try_self_heal(decision, turns):
+            if await self._try_self_heal(decision, turns, env):
                 return state_closes_this_tick
-            if await self._try_consult_stall(decision, turns):
+            if await self._try_consult_stall(decision, turns, env):
                 return state_closes_this_tick
             if await _self_heal_mod.closeout_within_grace(decision):
                 return state_closes_this_tick

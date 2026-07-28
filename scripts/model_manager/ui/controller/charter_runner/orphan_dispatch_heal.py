@@ -7,10 +7,10 @@ from universal_logging import get_logger
 from scripts.model_manager import observation_event as events
 
 from . import bus_client, window_log
-from .attendance import admission_mode_for_root
 from .caps import CapStore
 from .checkpoint_body import resolve_checkpoint_body
 from .checkpoint_parse import parse_checkpoint
+from .dispatch_client import AdmissionMode
 from .eligibility import Decision
 from .giw_live_hold import dispatch_ids_from_active_work, fetch_giw_active_work_payload
 from .self_heal import CHECKPOINT_MISSING_HEAL_CAP
@@ -22,9 +22,11 @@ DISPATCH_ORPHAN = "dispatch_orphan"
 ORPHAN_GRACE_S = 120.0
 
 
-def decision_needs_fleet_slot(decision: Decision) -> bool:
+def decision_needs_fleet_slot(
+    decision: Decision, *, admission_mode: AdmissionMode
+) -> bool:
     """True when admission would consume the GIW cursor-sdk fleet slot."""
-    if admission_mode_for_root(decision.root_id) == "handoff":
+    if admission_mode == "handoff":
         return False
     if decision.window_kind == "consult" and decision.parsed is not None:
         role = (decision.parsed.consult_role or "").strip().lower()
@@ -38,10 +40,11 @@ async def try_recover_orphan_dispatch(
     *,
     caps: CapStore,
     age_s: float,
+    admission_mode: AdmissionMode,
     grace_s: float = ORPHAN_GRACE_S,
 ) -> bool:
     """Post machine CHECKPOINT when a window is in-flight but GIW lost the dispatch."""
-    if admission_mode_for_root(decision.root_id) == "handoff":
+    if admission_mode == "handoff":
         return False
     if age_s < grace_s:
         return False

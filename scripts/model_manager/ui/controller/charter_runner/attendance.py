@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from typing import Literal
 
+from universal_logging import get_logger
+
+from . import bus_client
 from .dispatch_client import AdmissionMode
+
+logger = get_logger(__name__)
 
 Attendance = Literal["attended", "autonomous", "operator_proxy"]
 
@@ -30,14 +35,37 @@ def admission_mode_for_attendance(attendance: Attendance) -> AdmissionMode:
     return "generate"
 
 
-def _attendance_from_bus_tags(root_id: str) -> Attendance | None:
+async def _charter_todo_for_root(root_id: str) -> str | None:
+    """Resolve charter todo slug from root thread metadata or latest CHECKPOINT."""
+    rid = root_id.removeprefix("agent-bus:")
+    try:
+        turns = await bus_client.fetch_turns(rid)
+    except Exception as exc:
+        logger.warning("charter todo lookup failed root_id=%s: %s", root_id, exc)
+        return None
+    for turn in reversed(turns):
+        subj = str(turn.get("subject") or "")
+        if not subj.upper().startswith("CHECKPOINT"):
+            continue
+        body = str(turn.get("body") or "")
+        from .checkpoint_parse import parse_checkpoint
+
+        try:
+            parsed = parse_checkpoint(body)
+        except Exception:
+            continue
+        if parsed.source_ref:
+            return parsed.source_ref.lower()
+    return None
+
+
+async def _attendance_from_bus_tags(root_id: str) -> Attendance | None:
     """Honor ``attendance:autonomous`` / ``attendance:operator_proxy`` on the enrolled bus thread."""
     rid = root_id.removeprefix("agent-bus:")
     try:
-        from agent_bus_store.db.threads import get_thread
-
-        thread = get_thread(rid)
-    except Exception:  # noqa: BLE001
+        thread = await bus_client.fetch_thread(rid)
+    except Exception as exc:
+        logger.warning("bus tag attendance lookup failed root_id=%s: %s", root_id, exc)
         return None
     if not thread:
         return None
@@ -49,15 +77,21 @@ def _attendance_from_bus_tags(root_id: str) -> Attendance | None:
     return None
 
 
-def default_attendance_lookup(root_id: str) -> Attendance:
-    """Read attendance from todo attrs, else enrolled bus thread tag."""
-    todo_ref = _charter_todo_for_root(root_id)
+async def resolve_attendance(root_id: str) -> Attendance:
+    """Resolve attendance once per tick: todo attrs → bus thread tag → attended."""
+    todo_ref = await _charter_todo_for_root(root_id)
     if todo_ref:
         try:
             from cortex_store.dispatch_ops.ops_entities import _op_entity_get
 
             ent = _op_entity_get(entity_id=todo_ref, intent="full")
-        except Exception:  # noqa: BLE001 — offline / missing cortex
+        except Exception as exc:
+            logger.warning(
+                "cortex todo attrs lookup failed root_id=%s todo=%s: %s",
+                root_id,
+                todo_ref,
+                exc,
+            )
             ent = {}
         if "error" not in ent:
             attrs = ent.get("attributes")
@@ -66,46 +100,15 @@ def default_attendance_lookup(root_id: str) -> Attendance:
             )
             if mode != "attended":
                 return mode
-    tagged = _attendance_from_bus_tags(root_id)
+    tagged = await _attendance_from_bus_tags(root_id)
     if tagged is not None:
         return tagged
     return "attended"
 
 
-def admission_mode_for_root(root_id: str) -> AdmissionMode:
-    """Per-root admission mode — replaces global ``CHARTER_ADMISSION_MODE`` arming."""
-    return admission_mode_for_attendance(default_attendance_lookup(root_id))
-
-
-def _charter_todo_for_root(root_id: str) -> str | None:
-    """Resolve charter todo slug from root thread metadata or latest CHECKPOINT."""
-    rid = root_id.removeprefix("agent-bus:")
-    try:
-        from agent_bus_store.db import get_thread_turns_asc
-
-        turns = get_thread_turns_asc(rid)
-    except Exception:  # noqa: BLE001
-        turns = []
-    for turn in reversed(turns):
-        subj = str(turn.get("subject") or "")
-        if not subj.upper().startswith("CHECKPOINT"):
-            continue
-        body = str(turn.get("body") or "")
-        from .checkpoint_parse import parse_checkpoint
-
-        try:
-            parsed = parse_checkpoint(body)
-        except Exception:  # noqa: BLE001
-            continue
-        if parsed.source_ref:
-            return parsed.source_ref.lower()
-    return None
-
-
 __all__ = [
     "Attendance",
     "admission_mode_for_attendance",
-    "admission_mode_for_root",
     "attendance_from_todo_attrs",
-    "default_attendance_lookup",
+    "resolve_attendance",
 ]

@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from universal_logging import get_logger
+
 from .admission import EnvFacts
-from .attendance import default_attendance_lookup
+from .attendance import resolve_attendance
 from .env_predicates import EnvironmentSnapshot
+
+logger = get_logger(__name__)
 
 
 @dataclass(frozen=True)
@@ -48,9 +53,13 @@ class EnvSnapshot:
         )
 
     def facts_for_root(self, root_id: str, *, has_wip: bool = False) -> EnvFacts:
-        attendance = self.attendance_by_root.get(
-            root_id, default_attendance_lookup(root_id)
-        )
+        attendance = self.attendance_by_root.get(root_id)
+        if attendance is None:
+            logger.warning(
+                "attendance missing from env snapshot root_id=%s — defaulting attended",
+                root_id,
+            )
+            attendance = "attended"
         return EnvFacts(
             substrate_up=self.substrate_up(),
             has_wip=has_wip,
@@ -76,7 +85,7 @@ class EnvSnapshot:
         )
 
 
-def build_env_snapshot(
+async def build_env_snapshot(
     *,
     root_ids: list[str],
     env_half: EnvironmentSnapshot | None = None,
@@ -103,7 +112,8 @@ def build_env_snapshot(
             if intent is not None:
                 propagation["intent"] = str(getattr(intent, "intent_id", intent))
 
-    attendance = {rid: default_attendance_lookup(rid) for rid in root_ids}
+    resolved = await asyncio.gather(*(resolve_attendance(rid) for rid in root_ids))
+    attendance = dict(zip(root_ids, resolved, strict=True))
     scoreboards = {
         rid: f"cortex://notes/system/threads/{rid}-charter-scoreboard.md"
         for rid in root_ids

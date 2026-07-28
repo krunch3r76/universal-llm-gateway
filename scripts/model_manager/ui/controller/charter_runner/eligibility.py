@@ -230,6 +230,7 @@ def evaluate_root(
     caps: CapStore,
     *,
     env_snapshot: EnvironmentSnapshot | None = None,
+    admission_mode: str = "generate",
     now: datetime | None = None,
 ) -> Decision:
     """Evaluate BODY then ENV admission gates over a root's turns."""
@@ -254,7 +255,6 @@ def evaluate_root(
             admission_turn=admission,
         )
 
-    from .attendance import admission_mode_for_root
     from .checkpoint_admit_gate import (
         validate_arc_for_admit,
         validate_checkpoint_for_admit,
@@ -272,7 +272,6 @@ def evaluate_root(
     parsed = verdict.parsed
     assert parsed is not None
 
-    admission_mode = admission_mode_for_root(root_id)
     from .gate_lane_classifier import resolve_admit_lane
 
     window_kind, admission_mode, consult_role, parsed, lane_refuse = resolve_admit_lane(
@@ -321,6 +320,7 @@ def evaluate_root(
             checkpoint,
             parsed,
             env_snapshot,
+            admission_mode,
             now=now,
             window_kind="consult",
         )
@@ -353,6 +353,7 @@ def evaluate_root(
         checkpoint,
         parsed,
         env_snapshot,
+        admission_mode,
         now=now,
     )
 
@@ -385,6 +386,7 @@ def _check_env_or_eligible(
     checkpoint: dict,
     parsed: ParsedCheckpoint,
     env_snapshot: EnvironmentSnapshot | None,
+    admission_mode: str,
     *,
     now: datetime | None = None,
     window_kind: WindowKind = "worker",
@@ -407,7 +409,6 @@ def _check_env_or_eligible(
             parsed=parsed,
             window_kind=window_kind,
         )
-    from .attendance import admission_mode_for_root
     from .residue_fingerprint import (
         ResidueRecord,
         evaluate_residue_gate,
@@ -415,7 +416,6 @@ def _check_env_or_eligible(
         save_residue_record,
     )
 
-    admission_mode = admission_mode_for_root(root_id)
     if parsed.consult_pending:
         admission_mode = "consult"
     cp_body = str(checkpoint.get("body") or "")

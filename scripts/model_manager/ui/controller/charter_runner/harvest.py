@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import re
 
+from pager_notify.tick import ClosedAttribution, task_hint_from_next_pickup
 from universal_logging import get_logger
 
-from pager_notify.tick import ClosedAttribution, task_hint_from_next_pickup
 from scripts.model_manager import observation_event as events
 
 from . import (
@@ -80,6 +80,7 @@ async def _maybe_harvest_cdp_consult_provenance(
         "consultant_model": record.consultant_model,
     }
 
+
 _GATED_ID_RE = re.compile(r"\b([GR]\d+[a-z]?)\b")
 
 
@@ -138,9 +139,7 @@ def attribution_for_harvested_window(
             break
     if not gid:
         return None
-    consult_role = parsed.consult_role or _consult_role_from_pickup(
-        parsed.next_pickup
-    )
+    consult_role = parsed.consult_role or _consult_role_from_pickup(parsed.next_pickup)
     executor_slug = _executor_slug_for_sms(
         admission_mode,
         executor_lane=parsed.executor_lane,
@@ -168,6 +167,7 @@ def _persist_residue_after_harvest(
     root_id: str,
     consumed_checkpoint_body: str,
     admission_meta: dict,
+    admission_mode: str | None = None,
 ) -> None:
     """Record the residue the closed window CONSUMED, not the one it produced.
 
@@ -183,19 +183,18 @@ def _persist_residue_after_harvest(
         record_from_harvest,
         save_residue_record,
     )
-    from .attendance import admission_mode_for_root
 
     parsed = parse_checkpoint(consumed_checkpoint_body)
-    admission_mode = str(
-        admission_meta.get("admission_mode") or admission_mode_for_root(root_id)
+    resolved_mode = str(
+        admission_meta.get("admission_mode") or admission_mode or "generate"
     )
-    window_kind = "consult" if admission_mode == "consult" else "worker"
+    window_kind = "consult" if resolved_mode == "consult" else "worker"
     prior = load_residue_record(root_id)
     w10_consumed = prior.w10_consumed if prior is not None else False
     record = record_from_harvest(
         checkpoint_body=consumed_checkpoint_body,
         parsed=parsed,
-        admission_mode=admission_mode,
+        admission_mode=resolved_mode,
         window_kind=window_kind,
         w10_consumed=w10_consumed,
     )
@@ -281,7 +280,10 @@ def consumed_checkpoint(turns: list[dict], admission: dict) -> dict | None:
 
 
 async def harvest_completed_windows(
-    root_id: str, turns: list[dict]
+    root_id: str,
+    turns: list[dict],
+    *,
+    admission_mode: str | None = None,
 ) -> list[ClosedAttribution]:
     """Append worker turns + CHECKPOINT for windows that closed since last tick.
 
@@ -365,9 +367,7 @@ async def harvest_completed_windows(
                     worker_thread,
                     summary=compose_done_summary(
                         worker_prior or so_what,
-                        reason=(
-                            f"window {window_index} complete — root {root_id}"
-                        ),
+                        reason=(f"window {window_index} complete — root {root_id}"),
                     ),
                 )
                 worker_closed = True
@@ -446,6 +446,7 @@ async def harvest_completed_windows(
                     root_id=root_id,
                     consumed_checkpoint_body=consumed_body,
                     admission_meta=meta,
+                    admission_mode=admission_mode,
                 )
                 attr = attribution_for_harvested_window(
                     root_id=root_id,
@@ -470,7 +471,9 @@ async def harvest_completed_windows(
                     events, "emit_manage_charter_tick_consult_harvested", None
                 )
                 if emit_harvested is not None:
-                    await emit_harvested(root=root_id, window_index=window_index, **provenance)
+                    await emit_harvested(
+                        root=root_id, window_index=window_index, **provenance
+                    )
         except Exception:  # noqa: BLE001 — transcript must not kill the tick
             logger.exception("charter-runner window_log append_closeout failed")
     return attributions

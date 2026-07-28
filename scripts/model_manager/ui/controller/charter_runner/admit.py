@@ -40,6 +40,7 @@ async def admit_window(
     caps: CapStore,
     workspace_root: Path,
     on_admit: Callable[[str], None] | None,
+    admission_mode: str = "generate",
 ) -> bool:
     """Fire one charter window and post the admission pointer on the root."""
     root_id = decision.root_id
@@ -50,10 +51,8 @@ async def admit_window(
             "charter-runner so-what ensure failed root=%s", root_id, exc_info=True
         )
     assert decision.parsed is not None and decision.checkpoint is not None
-    from .attendance import admission_mode_for_root
 
     window_index = _count_admissions(turns) + 1
-    admission_mode = admission_mode_for_root(root_id)
     consult_role: str | None = None
     if decision.window_kind == "consult":
         admission_mode = "consult"
@@ -209,13 +208,9 @@ async def admit_window(
         mode_note = " (attended IDE — open worker thread)"
     elif admission_mode == "consult":
         if consult_role == "r_admit":
-            mode_note = (
-                " (CONSULT_PENDING — R-admit host → cdp/opus-5)"
-            )
+            mode_note = " (CONSULT_PENDING — R-admit host → cdp/opus-5)"
         else:
-            mode_note = (
-                " (CONSULT_PENDING — judgment_gap host → cdp/opus-5)"
-            )
+            mode_note = " (CONSULT_PENDING — judgment_gap host → cdp/opus-5)"
     elif admission_mode == "autonomous":
         lane = "implement" if bind.is_implement else "background lead"
         mode_note = f" (autonomous {lane} — {fired_model})"

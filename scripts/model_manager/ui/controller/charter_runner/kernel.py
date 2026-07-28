@@ -17,10 +17,9 @@ from .admission import (
     decide,
     map_old_skip_to_kernel,
 )
-from .env_predicates import EnvironmentSnapshot
 from .caps import CapStore
-from .env_snapshot import EnvSnapshot, build_env_snapshot
-from .root_ledger import RootLedgerRow, Transition, load_all_roots, open_default_ledger
+from .env_snapshot import EnvSnapshot
+from .root_ledger import Transition, load_all_roots, open_default_ledger
 
 SHADOW_LEDGER_STARVE_ROOT = "_shadow_ledger_"
 SHADOW_STARVE_CLASS = "starved:ledger_empty"
@@ -59,7 +58,7 @@ class ShadowKernel:
         self,
         *,
         old_decisions: dict[str, str],
-        env: EnvSnapshot | None = None,
+        env: EnvSnapshot,
     ) -> list[ShadowDiffRow]:
         """Run decide for each ledger root; compare to old tick outcomes."""
         conn = open_default_ledger()
@@ -69,8 +68,7 @@ class ShadowKernel:
             conn.close()
         if not rows:
             return []
-        root_ids = [r.root_id for r in rows]
-        snapshot = env or build_env_snapshot(root_ids=root_ids)
+        snapshot = env
         diffs: list[ShadowDiffRow] = []
         for state in rows:
             old = old_decisions.get(state.root_id, "noop")
@@ -107,7 +105,7 @@ class ShadowKernel:
 def run_shadow_for_roots(
     old_decisions: dict[str, str],
     *,
-    env: EnvSnapshot | None = None,
+    env: EnvSnapshot,
 ) -> list[dict[str, Any]]:
     """Convenience entry for harness — returns serializable rows."""
     kernel = ShadowKernel()
@@ -195,8 +193,7 @@ def _build_starve_row(*, bus_roots: int) -> dict[str, Any]:
 def record_shadow_pass(
     old_decisions: dict[str, str],
     *,
-    env: EnvSnapshot | None = None,
-    env_half: EnvironmentSnapshot | None = None,
+    env: EnvSnapshot,
     db_path: Path | None = None,
 ) -> ShadowPassResult:
     """Run shadow kernel and persist rows; emit starve when ledger enrolled set is empty."""
@@ -216,13 +213,7 @@ def record_shadow_pass(
             bus_roots=bus_roots,
         )
 
-    snapshot = env
-    if snapshot is None and env_half is not None:
-        snapshot = build_env_snapshot(
-            root_ids=list(old_decisions.keys()),
-            env_half=env_half,
-        )
-    rows = run_shadow_for_roots(old_decisions, env=snapshot)
+    rows = run_shadow_for_roots(old_decisions, env=env)
     conn = _open_shadow_db(db_path)
     try:
         _persist_shadow_rows(conn, rows)
