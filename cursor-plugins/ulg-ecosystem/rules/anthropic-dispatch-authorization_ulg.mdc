@@ -26,7 +26,7 @@ trigger_match_terms:
 |---|---|
 | `model=anthropic/*` on `team_dispatch` / Stargate Anthropic Messages API | **PROHIBITED** |
 | `model=cursor/*` on `seat=cursor-sdk` | **PERMITTED** except **Fable** |
-| Anthropic-family consult (Opus / Sonnet / web-anthropic product) | **web-anthropic-cdp preferred** — corpus must be **cortex-packaged** (`cortex://`; ¬ rely on `workspaces://` / GitHub browse) |
+| Anthropic-family consult (Opus / Sonnet / web-anthropic product) | **web-anthropic-cdp preferred** — **prefer** cortex-packaged hot paths (`cortex://`) for fewer tool calls; `workspaces://` is readable (name it when exploration is encouraged); ¬ GitHub connector browse |
 | Codebase must be navigable on the executor | **`cursor/claude-opus-*`** (cursor-sdk) is acceptable |
 
 **Fable:** CDP / web-anthropic product picker only — ¬ `anthropic/claude-fable-*` API and ¬ `cursor/*` Fable as standing default.

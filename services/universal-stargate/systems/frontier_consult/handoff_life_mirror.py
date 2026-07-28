@@ -1,11 +1,13 @@
 """Life-surface (/mcp/life) packet + corpus mirror for web-anthropic handoffs.
 
-Option 2 (`todo:life-fs-workspaces-unbound`): life refuses workspaces reads.
-Web handoffs must land a cortex mirror and point the bus turn at it.
-Friction a23964; live NEED agent-bus:4986.
+Prefer cortex-packaged hot paths (fewer tool calls, faster response).
+``workspaces://`` is readable on web (a:26424) — do not claim otherwise;
+name it when exploration is encouraged. Prefer ``cortex://`` for artifacts
+that must outlive the session. Friction a23964; live NEED agent-bus:4986;
+read-sight bind a:26424.
 
 Mirror target (`todo:life-handoff-ephemeral-prefix`): dedicated ephemeral
-prefix ``ephemeral/handoffs/`` — life-readable, ¬ durable
+prefix ``ephemeral/handoffs/`` — preferred packaged corpus, ¬ durable
 ``notes/system/threads/``, ¬ ``dropbox/`` ingest staging.
 """
 

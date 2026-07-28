@@ -339,9 +339,15 @@ async def _admit_consult_window(
     from .checkpoint_parse import parse_checkpoint
     from .checkpoint_body import resolve_checkpoint_body
 
-    checkpoint = next(
-        (t for t in reversed(turns) if str(t.get("subject") or "").upper().startswith("CHECKPOINT")),
-        None,
+    # fetch_turns returns newest-first; pick max turn_number (eligibility._latest_matching).
+    checkpoint = max(
+        (
+            t
+            for t in turns
+            if str(t.get("subject") or "").upper().startswith("CHECKPOINT")
+        ),
+        key=lambda t: int(t.get("turn_number") or 0),
+        default=None,
     )
     if checkpoint is None:
         return False
@@ -425,8 +431,16 @@ async def apply_kernel_tick_for_root(
         row = load_root(conn, root_id)
         if row is None:
             return KernelTickOutcome("kernel_unseeded")
+        # Tip-aware only — historical WIP subjects must not permanently NOOP (P2 dogfood).
+        from .eligibility import ADMISSION_SUBJECT_PREFIX, _latest_matching, _turn_number
+        from .window_terminal_contract import is_tip_class
+
+        tip = _latest_matching(turns, is_tip_class)
+        tip_n = _turn_number(tip) if tip is not None else 0
+        prefix = ADMISSION_SUBJECT_PREFIX.upper()
         has_wip = any(
-            str(t.get("subject") or "").upper().startswith("WIP CHARTER-RUNNER")
+            _turn_number(t) > tip_n
+            and str(t.get("subject") or "").upper().startswith(prefix)
             for t in turns
         )
         facts = env.facts_for_root(root_id, has_wip=has_wip)
