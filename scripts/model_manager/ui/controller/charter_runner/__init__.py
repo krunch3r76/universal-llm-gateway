@@ -3,10 +3,11 @@
 Manage-hosted tick that admits one window per eligible enrolled root.
 See ``cortex://notes/system/specs/charter-runner-tick.md``.
 
-Phase 3: kernel is sole admitter; heal/reload surfaces deleted.
+Phase 3: kernel is sole admitter; heal/reload/eligibility/parse/materializer
+surfaces deleted or absorbed into kernel packages.
 """
 
-from .tick_loop import CharterRunnerTickLoop
+from .kernel import CharterRunnerTickLoop
 
 __all__ = [
     "CharterRunnerTickLoop",

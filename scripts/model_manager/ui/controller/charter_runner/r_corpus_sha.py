@@ -195,7 +195,7 @@ def verify_r_corpus_sha(
     ``malformed_uri`` — URI present but not a resolvable cortex/notes path shape.
     ``unreadable`` — path resolves but file missing or OS read fails (true I/O).
     """
-    from .checkpoint_body import normalize_checkpoint_machine_fields
+    from .checkpoint_schema import normalize_checkpoint_machine_fields
 
     body = normalize_checkpoint_machine_fields(checkpoint_body or "")
     extracted = extract_r_corpus_pin(body)

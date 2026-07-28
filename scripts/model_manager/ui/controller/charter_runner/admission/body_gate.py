@@ -19,17 +19,17 @@ from typing import Literal
 
 from universal_logging import get_logger
 
-from .caps import CapStore
-from .checkpoint_parse import ParsedCheckpoint
-from .eligibility_restart import next_pickup_is_restart_from_holder
-from .env_predicates import (
+from ..checkpoint_schema import ParsedCheckpoint
+from ..env_predicates import (
     ADMIT_INTENT_ORPHAN_REASON,
     ENV_SNAPSHOT_STALE_REASON,
     GIW_DRAIN_BLOCKS_RESTART_REASON,
     GIW_HOLD_BLOCKS_RESTART_REASON,
     EnvironmentSnapshot,
 )
-from .window_terminal_contract import CHECKPOINT_PREFIX, is_tip_class
+from ..window_terminal_contract import CHECKPOINT_PREFIX, is_tip_class
+from .caps import CapStore
+from .restart_pickup import next_pickup_is_restart_from_holder
 
 logger = get_logger(__name__)
 
@@ -109,7 +109,7 @@ def next_window_index(turns: list[dict]) -> int:
 
 def live_wip_for_window(turns: list[dict], window_index: int) -> bool:
     """True when an in-flight admission pointer matches ``window_index`` on the root."""
-    from . import window_log
+    from .. import window_log
 
     checkpoint = _latest_matching(turns, is_tip_class)
     if checkpoint is None:
@@ -163,14 +163,14 @@ def evaluate_root(
     now: datetime | None = None,
 ) -> Decision:
     """Evaluate BODY then ENV admission gates over a root's turns."""
-    from .eligibility_env import check_env_or_eligible
+    from .env_half import check_env_or_eligible
 
     checkpoint = _latest_matching(turns, is_tip_class)
     if checkpoint is None:
         return _body_skip("no_checkpoint", root_id)
 
     # Soft-spill / sidecar-first stubs: follow Sidecar: before schema gate.
-    from .checkpoint_body import materialize_checkpoint_turn
+    from ..checkpoint_schema import materialize_checkpoint_turn
 
     checkpoint = materialize_checkpoint_turn(checkpoint)
 
@@ -186,11 +186,11 @@ def evaluate_root(
             admission_turn=admission,
         )
 
-    from .checkpoint_admit_gate import (
+    from ..checkpoint_admit_gate import (
         validate_arc_for_admit,
         validate_checkpoint_for_admit,
     )
-    from .executor_routing import resolve_charter_executor
+    from ..executor_routing import resolve_charter_executor
 
     verdict = validate_checkpoint_for_admit(str(checkpoint.get("body") or ""))
     if not verdict.ok:
@@ -203,7 +203,7 @@ def evaluate_root(
     parsed = verdict.parsed
     assert parsed is not None
 
-    from .gate_lane_classifier import resolve_admit_lane
+    from ..gate_lane_classifier import resolve_admit_lane
 
     window_kind, admission_mode, consult_role, parsed, lane_refuse = resolve_admit_lane(
         parsed,

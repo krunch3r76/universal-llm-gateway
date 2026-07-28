@@ -8,11 +8,11 @@ import sys
 from pathlib import Path
 
 _EMITTER_SOURCES = (
-    "materializer.py",
-    "materializer_autonomous.py",
-    "materializer_autonomous_arc.py",
-    "materializer_consult.py",
-    "materializer_closed_detent.py",
+    "window_exec/materializer.py",
+    "window_exec/materializer_autonomous.py",
+    "window_exec/materializer_autonomous_arc.py",
+    "window_exec/materializer_consult.py",
+    "window_exec/materializer_closed_detent.py",
 )
 
 _EMITTER_PATTERN = re.compile(

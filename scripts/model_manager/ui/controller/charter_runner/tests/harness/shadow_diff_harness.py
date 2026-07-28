@@ -2,16 +2,13 @@
 
 from __future__ import annotations
 
-import json
 import sqlite3
-import time
 from pathlib import Path
 from typing import Any
 
 from scripts.model_manager.ui.controller.charter_runner.kernel import (
     _SHADOW_DIFF_PATH,
     record_shadow_pass,
-    run_shadow_for_roots,
 )
 
 _DEFAULT_PATH = _SHADOW_DIFF_PATH

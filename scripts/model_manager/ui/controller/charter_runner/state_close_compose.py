@@ -9,14 +9,14 @@ from cortex_store.dispatch_ops._thread_sidecar import write_thread_sidecar_for_s
 from scripts.model_manager import observation_event_conveyor as conv_events
 
 from . import bus_client, conveyor
-from .checkpoint_sections import (
+from .checkpoint_schema import (
     aggregate_what_happened_plain,
     extract_remaining_work,
 )
 from .closeout_render import render_closeout
-from .window_terminal_contract import is_tip_class
 from .friction_ledger import build_ledger
 from .harvest import completed_windows
+from .window_terminal_contract import is_tip_class
 
 
 def _checkpoint_bodies(turns: list[dict[str, Any]]) -> list[str]:

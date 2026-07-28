@@ -32,7 +32,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from .checkpoint_parse import ParsedCheckpoint
+from .checkpoint_schema import ParsedCheckpoint
 from .window_terminal_contract import implement_ready_declared
 
 JUDGMENT_LANE = "judgment"

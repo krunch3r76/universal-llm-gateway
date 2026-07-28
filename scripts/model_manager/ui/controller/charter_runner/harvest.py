@@ -12,8 +12,8 @@ from . import (
     gate_bypass_detect,
     window_log,
 )
-from .checkpoint_body import resolve_checkpoint_body
-from .eligibility import ADMISSION_SUBJECT_PREFIX
+from .admission import ADMISSION_SUBJECT_PREFIX
+from .checkpoint_schema import resolve_checkpoint_body
 from .harvest_attribution import attribution_for_harvested_window
 from .harvest_cdp import maybe_harvest_cdp_consult_provenance
 from .harvest_footer_gate import footer_field_path, reject_harvest_without_footer
@@ -146,6 +146,10 @@ async def harvest_completed_windows(
                     root_id,
                 )
             continue
+        # Claim the window before side effects. Mid-block raises after this cannot
+        # re-enter harvest and re-emit closed / re-release ledger WIP (a:26596).
+        # append_closeout re-marks idempotently.
+        window_log.mark_harvested(root_id, window_index)
         worker_thread = str(meta.get("worker_thread") or "")
         worker_turns: list[dict] = []
         if worker_thread:
@@ -242,9 +246,9 @@ async def harvest_completed_windows(
                 worker_turns=worker_turns,
                 worker_closed=worker_closed,
             )
-            # HARVEST_OK: the window that just closed is the ledger's last, its WIP is
-            # released, and the pickup moves to whatever this CHECKPOINT gated.
-            release_window_on_harvest(root_id, window_index, resolved_body)
+            # HARVEST_OK: the closed window becomes the ledger's last and its WIP is
+            # released. The pickup is the kernel's to advance, from the tip.
+            release_window_on_harvest(root_id, window_index)
             consumed = consumed_checkpoint(turns, admission)
             if consumed is None:
                 logger.warning(

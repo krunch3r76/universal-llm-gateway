@@ -21,7 +21,7 @@ from dataclasses import dataclass, replace
 
 from universal_logging import get_logger
 
-from .checkpoint_parse import ParsedCheckpoint, item_is_gated
+from .checkpoint_schema import ParsedCheckpoint, item_is_gated
 from .root_ledger import (
     RootLedgerRow,
     Transition,

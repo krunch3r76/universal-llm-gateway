@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 
 from universal_logging import get_logger
 
-from .checkpoint_sections import find_section, split_sections
+from .sections import find_section, split_sections
 
 logger = get_logger(__name__)
 

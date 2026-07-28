@@ -10,8 +10,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from .checkpoint_parse import ParsedCheckpoint, parse_checkpoint
-from .checkpoint_sections import split_sections
+from .checkpoint_schema import ParsedCheckpoint, parse_checkpoint, split_sections
 from .window_terminal_contract import (
     admitted_arc,
     arc_is_weaker_than,

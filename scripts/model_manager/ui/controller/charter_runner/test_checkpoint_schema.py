@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from scripts.model_manager.ui.controller.charter_runner.checkpoint_parse import (
+from scripts.model_manager.ui.controller.charter_runner.checkpoint_schema import (
     parse_checkpoint,
 )
 from scripts.model_manager.ui.controller.charter_runner.checkpoint_schema import (
@@ -13,16 +13,16 @@ from scripts.model_manager.ui.controller.charter_runner.checkpoint_schema import
     output_format_footer_requirement,
     validate_checkpoint_footer,
 )
-from scripts.model_manager.ui.controller.charter_runner.materializer import (
+from scripts.model_manager.ui.controller.charter_runner.window_exec import (
     materialize_resume_packet,
 )
-from scripts.model_manager.ui.controller.charter_runner.materializer_autonomous import (
+from scripts.model_manager.ui.controller.charter_runner.window_exec import (
     materialize_autonomous_packet,
 )
-from scripts.model_manager.ui.controller.charter_runner.materializer_closed_detent import (
+from scripts.model_manager.ui.controller.charter_runner.window_exec import (
     materialize_closed_detent_packet,
 )
-from scripts.model_manager.ui.controller.charter_runner.materializer_consult import (
+from scripts.model_manager.ui.controller.charter_runner.window_exec import (
     materialize_consult_packet,
 )
 

@@ -13,7 +13,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from .checkpoint_parse import ParsedCheckpoint, Step, pickup_detent
+from .checkpoint_schema import ParsedCheckpoint, Step, pickup_detent
 from .executor_routing import gated_row_classes
 from .r_corpus_sha import extract_r_corpus_pin
 

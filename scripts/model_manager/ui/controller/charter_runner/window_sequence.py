@@ -24,9 +24,7 @@ from dataclasses import replace
 from universal_logging import get_logger
 
 from . import window_log
-from .checkpoint_parse import parse_checkpoint
-from .eligibility import next_window_index as bus_next_window_index
-from .pickup_advance import gated_pickup_from_parsed
+from .admission import next_window_index as bus_next_window_index
 from .root_ledger import (
     RootLedgerRow,
     RootStatus,
@@ -100,43 +98,46 @@ def clear_uncorrelatable_wip(conn, row: RootLedgerRow) -> RootLedgerRow:
     return cleared
 
 
-def release_window_on_harvest(
-    root_id: str,
-    window_index: int,
-    checkpoint_body: str,
-) -> bool:
-    """Apply ``HARVEST_OK``: record the window, clear WIP, advance the pickup.
+def release_window_on_harvest(root_id: str, window_index: int) -> bool:
+    """Apply ``HARVEST_OK``: record the closed window and clear its WIP.
 
-    Returns False when the root has no ledger row (unseeded roots harvest without
-    a ledger). Idempotent — a repeat call for the same window writes the same
-    values, so the durable harvested marker and this release cannot disagree.
+    Deliberately leaves ``pickup_gid`` alone. ``kernel_tick`` advances the pickup
+    from the **tip** before every ``decide``, and harvest runs earlier in the same
+    tick, so the advance happens regardless — with the tip as its single source.
+    Advancing here as well made the *harvested* window's CHECKPOINT a second
+    source: right for a window that just closed, since its terminal is the tip,
+    but stale for a backlog window, where it walked root 5975's pickup backwards
+    onto a gid the tip had long left behind.
+
+    Returns False when there is nothing to release — an unseeded root, or a window
+    already recorded with its WIP clear. Restating ``IDLE`` on a re-harvest is not
+    idempotent in effect: it flipped 5975 out of ``CONSULT_QUEUED`` on every pass
+    of the re-harvest loop (a:26582), re-arming a transition that had settled.
     """
     conn = open_default_ledger()
     try:
         row = load_root(conn, root_id)
         if row is None:
             return False
-        live = gated_pickup_from_parsed(parse_checkpoint(checkpoint_body or ""))
+        window_id = window_id_for(root_id, window_index)
+        holds_wip = row.wip_window_id == window_id
+        if not holds_wip and window_index_from_id(row.last_window_id) >= window_index:
+            return False
         released = replace(
             row,
-            status=RootStatus.IDLE,
-            pickup_gid=live.gid if live is not None else row.pickup_gid,
-            wip_window_id=None,
-            last_window_id=window_id_for(root_id, window_index),
+            status=RootStatus.IDLE if holds_wip else row.status,
+            wip_window_id=None if holds_wip else row.wip_window_id,
+            last_window_id=window_id,
             last_transition=Transition.HARVEST_OK.value,
-            consult_role=None,
-            consult_attempts=0,
-            consult_next_retry=None,
             updated_at=time.time(),
         )
         upsert_root(conn, released)
         write_cortex_mirror(released)
         logger.info(
-            "charter-runner ledger release root=%s window=%s pickup=%s (was %s)",
+            "charter-runner ledger release root=%s window=%s wip_held=%s",
             root_id,
             window_index,
-            released.pickup_gid,
-            row.pickup_gid,
+            holds_wip,
         )
         return True
     finally:

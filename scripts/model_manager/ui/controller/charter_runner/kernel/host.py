@@ -34,15 +34,15 @@ if TYPE_CHECKING:
 
     from scripts.model_manager.ui.controller.service_ctl.core import ServiceController
 
-from . import bus_client
-from . import state_close as _state_close_mod
-from .attendance import Attendance, admission_mode_for_attendance
-from .caps import CapStore
-from .dispatch_client import AdmissionMode
-from .env_snapshot import EnvSnapshot
-from .giw_live_hold import build_tick_env_snapshot
-from .harvest import completed_windows, harvest_completed_windows
-from .tick_interval import tick_interval_from_env as _tick_interval_from_env
+from .. import bus_client
+from .. import state_close as _state_close_mod
+from ..admission import CapStore
+from ..attendance import Attendance, admission_mode_for_attendance
+from ..dispatch_client import AdmissionMode
+from ..env_snapshot import EnvSnapshot
+from ..giw_live_hold import build_tick_env_snapshot
+from ..harvest import completed_windows, harvest_completed_windows
+from .interval import tick_interval_from_env as _tick_interval_from_env
 
 MAX_STATE_CLOSES_PER_TICK = _state_close_mod.MAX_STATE_CLOSES_PER_TICK
 emit_skip_and_maybe_state_close = _state_close_mod.emit_skip_and_maybe_state_close
@@ -186,7 +186,7 @@ class CharterRunnerTickLoop:
             return
         if self._workspace_root is not None:
             ensure_charter_tick_env(self._workspace_root)
-        from .propagation_execute import install_propagation_context
+        from ..propagation_execute import install_propagation_context
 
         install_propagation_context(
             self._service_controller,
@@ -205,7 +205,7 @@ class CharterRunnerTickLoop:
         except asyncio.CancelledError:
             pass
         self._loop_task = None
-        from .propagation_execute import install_propagation_context
+        from ..propagation_execute import install_propagation_context
 
         install_propagation_context(None)
         await events.emit_manage_charter_tick_stopped()
@@ -240,9 +240,9 @@ class CharterRunnerTickLoop:
 
     async def _tick_once(self) -> None:
         """Phase 3: kernel is sole admitter for all enrolled roots."""
-        from .enrollment_filter import refresh_migrated_roots_cache
-        from .env_snapshot import build_env_snapshot
-        from .kernel_tick import apply_kernel_tick_for_root
+        from ..enrollment_filter import refresh_migrated_roots_cache
+        from ..env_snapshot import build_env_snapshot
+        from ..kernel_tick import apply_kernel_tick_for_root
 
         refresh_migrated_roots_cache()
         roots = await bus_client.list_enrolled_roots()
@@ -254,6 +254,7 @@ class CharterRunnerTickLoop:
         )
         admitted = 0
         in_flight = 0
+        state_closes_this_tick = 0
         skipped_by_reason: dict[str, int] = {}
         closed_attributions: list[str] = []
         old_decisions: dict[str, str] = {}
@@ -284,7 +285,27 @@ class CharterRunnerTickLoop:
             label = kernel_outcome.old_decision_label
             if label == "NOOP":
                 in_flight += 1
-            if kernel_outcome.skipped_reason:
+            if kernel_outcome.skipped_reason == "no_gated_pickup":
+                # A4 silent-starve: Phase-3 previously only counted the skip and
+                # left the root enrolled, so IDLE tips re-queued forever (a:26596).
+                from ..admission import Decision
+                from ..window_exec import parse_tip_checkpoint
+
+                tip = parse_tip_checkpoint(turns)
+                decision = Decision(
+                    eligible=False,
+                    reason="no_gated_pickup",
+                    root_id=root_id,
+                    checkpoint=tip[0] if tip is not None else None,
+                    parsed=tip[1] if tip is not None else None,
+                )
+                state_closes_this_tick = await emit_skip_and_maybe_state_close(
+                    decision,
+                    state_closes_this_tick=state_closes_this_tick,
+                    skipped_by_reason=skipped_by_reason,
+                    caps=self._caps,
+                )
+            elif kernel_outcome.skipped_reason:
                 skipped_by_reason[kernel_outcome.skipped_reason] = (
                     skipped_by_reason.get(kernel_outcome.skipped_reason, 0) + 1
                 )
@@ -298,8 +319,8 @@ class CharterRunnerTickLoop:
                     checkpoint_turn=None,
                 )
         try:
-            from .kernel import record_shadow_pass
-            from .telemetry import emit_shadow_diff, emit_shadow_ledger_starved
+            from ..telemetry import emit_shadow_diff, emit_shadow_ledger_starved
+            from .shadow import record_shadow_pass
 
             shadow = record_shadow_pass(old_decisions, env=kernel_env)
             if shadow.starved:
@@ -337,13 +358,13 @@ class CharterRunnerTickLoop:
         except Exception:  # noqa: BLE001 — pager must not abort tick
             logger.exception("charter-runner pager notify failed")
         try:
-            from . import tick_friction_reconcile as _tick_reconcile
+            from .. import tick_friction_reconcile as _tick_reconcile
 
             await _tick_reconcile.reconcile_enrolled_roots_on_tick(roots)
         except Exception:  # noqa: BLE001 — reconcile must not abort tick
             logger.exception("charter-runner tick-scan friction reconcile failed")
         try:
-            from . import conveyor as _conveyor_mod
+            from .. import conveyor as _conveyor_mod
 
             await _conveyor_mod.sweep_stale_enrollments()
         except Exception:  # noqa: BLE001 — stale sweep must not abort tick

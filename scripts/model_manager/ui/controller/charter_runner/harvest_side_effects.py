@@ -7,7 +7,7 @@ from universal_logging import get_logger
 from scripts.model_manager import observation_event as events
 
 from . import gate_bypass_detect
-from .checkpoint_parse import parse_checkpoint
+from .checkpoint_schema import parse_checkpoint
 
 logger = get_logger(__name__)
 

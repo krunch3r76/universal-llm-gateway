@@ -11,7 +11,7 @@ import re
 
 from universal_logging import get_logger
 
-from .checkpoint_parse import ParsedCheckpoint, parse_checkpoint
+from .checkpoint_schema import ParsedCheckpoint, parse_checkpoint
 from .window_terminal_harvest import after_window_terminal_harvested
 
 logger = get_logger(__name__)

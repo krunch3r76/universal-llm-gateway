@@ -13,7 +13,7 @@ from typing import Any
 
 from universal_logging import get_logger
 
-from . import bus_client, conveyor
+from . import conveyor
 
 logger = get_logger(__name__)
 

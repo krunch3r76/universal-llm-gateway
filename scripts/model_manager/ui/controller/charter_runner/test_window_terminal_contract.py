@@ -7,14 +7,14 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from scripts.model_manager.ui.controller.charter_runner.caps import CapStore
+from scripts.model_manager.ui.controller.charter_runner.admission import CapStore
 from scripts.model_manager.ui.controller.charter_runner.checkpoint_admit_gate import (
     validate_arc_for_admit,
 )
-from scripts.model_manager.ui.controller.charter_runner.checkpoint_parse import (
+from scripts.model_manager.ui.controller.charter_runner.checkpoint_schema import (
     parse_checkpoint,
 )
-from scripts.model_manager.ui.controller.charter_runner.eligibility import (
+from scripts.model_manager.ui.controller.charter_runner.admission import (
     evaluate_root,
 )
 from scripts.model_manager.ui.controller.charter_runner.harvest import (

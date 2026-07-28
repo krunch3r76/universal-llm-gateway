@@ -14,7 +14,7 @@ from universal_logging import get_logger
 from scripts.model_manager import observation_event as events
 
 from . import bus_client
-from .eligibility import ENROLLMENT_TAG, Decision
+from .admission import ENROLLMENT_TAG, Decision
 from .state_close_compose import prepare_state_close_summary
 
 logger = get_logger(__name__)

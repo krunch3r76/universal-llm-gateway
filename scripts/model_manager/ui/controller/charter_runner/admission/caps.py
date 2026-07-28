@@ -171,7 +171,7 @@ class CapStore:
         worker = self.intent_worker_thread(root_id, window_index)
         if worker:
             return worker
-        from . import window_log
+        from .. import window_log
 
         index_path = window_log.root_index_path(root_id)
         if not index_path.is_file():

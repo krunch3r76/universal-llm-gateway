@@ -16,9 +16,8 @@ from universal_logging import get_logger
 from scripts.model_manager import observation_event_conveyor as conv_events
 
 from . import bus_client
-from .checkpoint_parse import parse_checkpoint
-from .checkpoint_schema import emit_footer
-from .eligibility import ENROLLMENT_TAG
+from .admission import ENROLLMENT_TAG
+from .checkpoint_schema import emit_footer, parse_checkpoint
 from .friction_ledger import CONVEYOR_OFF_TAG
 from .pickup_advance import gid_of_row
 from .window_sequence import next_window_index, window_id_for
@@ -97,7 +96,7 @@ def _conveyor_pickup_rows(turns: list[dict[str, Any]]) -> list[str]:
             break
     if not latest_body:
         return []
-    from .checkpoint_body import resolve_checkpoint_body
+    from .checkpoint_schema import resolve_checkpoint_body
 
     parsed = parse_checkpoint(resolve_checkpoint_body(latest_body))
     return list(parsed.next_pickup)

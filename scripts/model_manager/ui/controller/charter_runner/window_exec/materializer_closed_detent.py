@@ -6,13 +6,13 @@ Skill recipe: scope-lock → thin L2 → dissent beat → bind → implement →
 
 from __future__ import annotations
 
-from .checkpoint_parse import ParsedCheckpoint
-from .checkpoint_schema import (
+from ..checkpoint_schema import (
+    ParsedCheckpoint,
     append_footer_to_packet,
     footer_kwargs_for_window,
     output_format_footer_requirement,
 )
-from .executor_defaults import DEFAULT_MODEL, DEFAULT_MODEL_KNOBS
+from ..executor_defaults import DEFAULT_MODEL, DEFAULT_MODEL_KNOBS
 from .materializer import _work_summary
 
 _DENSIFY_FLOOR = (

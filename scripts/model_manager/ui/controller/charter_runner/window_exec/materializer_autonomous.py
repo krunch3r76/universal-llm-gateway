@@ -26,13 +26,13 @@ from __future__ import annotations
 
 from universal_logging import get_logger
 
-from .checkpoint_parse import ParsedCheckpoint
-from .checkpoint_schema import (
+from ..checkpoint_schema import (
+    ParsedCheckpoint,
     append_footer_to_packet,
     footer_kwargs_for_window,
     output_format_footer_requirement,
 )
-from .executor_defaults import DEFAULT_MODEL, DEFAULT_MODEL_KNOBS
+from ..executor_defaults import DEFAULT_MODEL, DEFAULT_MODEL_KNOBS
 from .materializer import _work_summary, handoff_subject, materialize_resume_packet
 from .materializer_autonomous_arc import autonomous_arc_guidance
 from .materializer_closed_detent import (
@@ -344,7 +344,7 @@ def select_packet(
     packet instead of the full Q→R arc. ``consult`` yields the depth-1 consult
     seat packet; ``generate``/``handoff`` defer to ``materialize_resume_packet``.
     """
-    from .checkpoint_parse import pickup_detent
+    from ..checkpoint_schema import pickup_detent
 
     if admission_mode == "consult":
         packet = materialize_consult_packet(

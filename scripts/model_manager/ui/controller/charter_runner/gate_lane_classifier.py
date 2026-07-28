@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from .checkpoint_parse import Step
+from .checkpoint_schema import Step
 
 # Lane tokens on Steps titles (machine-authored):
 #   [consult:r_admit] | [consult:judgment_gap] | [implement] | [inline] | [judgment]

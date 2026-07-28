@@ -8,8 +8,7 @@ from pathlib import Path
 
 from universal_logging import get_logger
 
-from .admission import CapsView, EnvFacts, decide
-from .caps import CapStore
+from .admission import CapStore, CapsView, EnvFacts, decide
 from .consult_lane import (
     _backoff_s,
     _consult_role_for_row,
@@ -37,10 +36,11 @@ from .window_sequence import (
 
 logger = get_logger(__name__)
 
-# Transitions that spend substrate. The gated-pickup precondition binds here and not
-# on QUEUE_CONSULT, which is a durable ledger enqueue: a root whose tip has nothing
-# gated should still record the consult it wants and stall loudly at admit.
-_ADMITTING = frozenset({Transition.ADMIT_CONSULT, Transition.ADMIT_WORKER})
+# Gated tip required — QUEUE/DEFER included (a:26596; enqueue-then-stall never closed).
+_NEEDS_GATED_PICKUP = frozenset({
+    Transition.ADMIT_CONSULT, Transition.ADMIT_WORKER,
+    Transition.QUEUE_CONSULT, Transition.DEFER_CONSULT,
+})
 
 
 @dataclass(frozen=True)
@@ -99,7 +99,7 @@ def _ledger_row_from_state(
 
 
 def _tip_has_wip(turns: list[dict]) -> bool:
-    from .eligibility import ADMISSION_SUBJECT_PREFIX, _latest_matching, _turn_number
+    from .admission import ADMISSION_SUBJECT_PREFIX, _latest_matching, _turn_number
     from .window_terminal_contract import is_tip_class
 
     tip = _latest_matching(turns, is_tip_class)
@@ -151,9 +151,8 @@ async def apply_kernel_tick_for_root(
         )
         caps_view = CapsView.from_cap_store(caps, root_id)
         transition = decide(row, facts, caps_view)
-        if transition in _ADMITTING and gated_pickup_from_parsed(parsed) is None:
-            # decide() reads the ledger only; without this the kernel fires on a
-            # tip whose gated lane is idle — 5975 took seven such windows.
+        if transition in _NEEDS_GATED_PICKUP and gated_pickup_from_parsed(parsed) is None:
+            # decide() is ledger-only; idle tip must not admit or re-queue (a:26596).
             return KernelTickOutcome(
                 "kernel_no_gated_pickup", skipped_reason="no_gated_pickup"
             )

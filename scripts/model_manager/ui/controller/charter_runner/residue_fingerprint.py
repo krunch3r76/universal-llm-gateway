@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .checkpoint_parse import ParsedCheckpoint
+from .checkpoint_schema import ParsedCheckpoint
 from .residue_witness import (
     REASON_NO_PROGRESS,
     REASON_UNCHANGED_RESIDUE,

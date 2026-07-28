@@ -15,7 +15,7 @@ from typing import Any
 
 from transport_utils import DEFAULT_AGENT_BUS_URL, make_async_client
 
-from .eligibility import ADMISSION_SUBJECT_PREFIX, ENROLLMENT_TAG
+from .admission import ADMISSION_SUBJECT_PREFIX, ENROLLMENT_TAG
 
 _TIMEOUT_S = 15.0
 _TURN_FETCH_LIMIT = 10_000

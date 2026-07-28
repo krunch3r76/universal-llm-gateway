@@ -6,7 +6,7 @@ import re
 
 from pager_notify.tick import ClosedAttribution, task_hint_from_next_pickup
 
-from .checkpoint_parse import parse_checkpoint
+from .checkpoint_schema import parse_checkpoint
 
 _GATED_ID_RE = re.compile(r"\b([GR]\d+[a-z]?)\b")
 _CONSULT_ROLE_SNIFF_RE = re.compile(

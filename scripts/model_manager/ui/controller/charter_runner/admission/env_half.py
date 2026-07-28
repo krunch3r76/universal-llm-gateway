@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from ..checkpoint_schema import ParsedCheckpoint
+from ..env_predicates import EnvEvalContext, EnvironmentSnapshot, evaluate_env_half
+from .body_gate import Decision, WindowKind, next_window_index
 from .caps import CapStore
-from .checkpoint_parse import ParsedCheckpoint
-from .eligibility import Decision, WindowKind, next_window_index
-from .eligibility_restart import next_pickup_is_restart_from_holder
-from .env_predicates import EnvEvalContext, EnvironmentSnapshot, evaluate_env_half
+from .restart_pickup import next_pickup_is_restart_from_holder
 
 
 def _env_skip(
@@ -84,7 +84,7 @@ def check_env_or_eligible(
             parsed=parsed,
             window_kind=window_kind,
         )
-    from .residue_fingerprint import (
+    from ..residue_fingerprint import (
         ResidueRecord,
         evaluate_residue_gate,
         load_residue_record,

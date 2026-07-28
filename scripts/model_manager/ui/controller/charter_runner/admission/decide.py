@@ -5,8 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from ..root_ledger import RootLedgerRow, RootStatus, Transition
 from .caps import CapStore
-from .root_ledger import RootLedgerRow, RootStatus, Transition
 
 Lane = Literal["mechanical", "judgment", "consult"]
 

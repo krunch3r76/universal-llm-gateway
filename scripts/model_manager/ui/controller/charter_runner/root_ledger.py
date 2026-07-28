@@ -9,7 +9,11 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
-from libs.charter_runner_store.db import default_ledger_path, execute_with_retry, open_ledger_db
+from libs.charter_runner_store.db import (
+    default_ledger_path,
+    execute_with_retry,
+    open_ledger_db,
+)
 
 Attendance = str  # attended | autonomous
 

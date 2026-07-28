@@ -1,7 +1,7 @@
 """Post-window Frictions audit — parse, verify, reverse check, classify.
 
 Pure logic with injected ``assertion_get`` / ``frictions`` for unit tests.
-Does not extend ``checkpoint_parse.ParsedCheckpoint`` (5812 partition).
+Does not extend ``checkpoint_schema.ParsedCheckpoint`` (5812 partition).
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from .checkpoint_parse import _NONE_WINDOW_RE
+from .checkpoint_schema import _NONE_WINDOW_RE
 
 _FILED_ASSERTION_RE = re.compile(
     r"^\s*[-*]\s*\[filed\s+assertion:(\d+)\]\s*([^:]+):\s*(.+)$",

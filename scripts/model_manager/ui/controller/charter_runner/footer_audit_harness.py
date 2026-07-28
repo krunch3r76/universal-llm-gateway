@@ -10,14 +10,13 @@ from __future__ import annotations
 import argparse
 import asyncio
 import subprocess
-import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from scripts.model_manager.ui.controller.charter_runner import bus_client
-from scripts.model_manager.ui.controller.charter_runner.checkpoint_body import (
+from scripts.model_manager.ui.controller.charter_runner.checkpoint_schema import (
     resolve_checkpoint_body,
 )
 from scripts.model_manager.ui.controller.charter_runner.harvest import (

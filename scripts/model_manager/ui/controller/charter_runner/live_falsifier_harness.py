@@ -6,7 +6,6 @@ import os
 from typing import Any
 
 import httpx
-
 from transport_utils import CORTEX_API_SOCK
 
 

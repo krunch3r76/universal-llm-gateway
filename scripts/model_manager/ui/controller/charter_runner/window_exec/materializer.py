@@ -13,17 +13,15 @@ from typing import Literal
 
 from universal_logging import get_logger
 
-from .checkpoint_parse import (
+from ..checkpoint_schema import (
     ParsedCheckpoint,
     Step,
-    first_actionable_step,
-)
-from .checkpoint_schema import (
     append_footer_to_packet,
+    first_actionable_step,
     footer_kwargs_for_window,
     output_format_footer_requirement,
 )
-from .executor_defaults import DEFAULT_MODEL, DEFAULT_MODEL_KNOBS
+from ..executor_defaults import DEFAULT_MODEL, DEFAULT_MODEL_KNOBS
 
 logger = get_logger(__name__)
 

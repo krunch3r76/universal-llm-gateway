@@ -48,7 +48,7 @@ async def _charter_todo_for_root(root_id: str) -> str | None:
         if not subj.upper().startswith("CHECKPOINT"):
             continue
         body = str(turn.get("body") or "")
-        from .checkpoint_parse import parse_checkpoint
+        from .checkpoint_schema import parse_checkpoint
 
         try:
             parsed = parse_checkpoint(body)

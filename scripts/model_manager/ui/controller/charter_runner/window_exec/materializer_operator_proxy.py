@@ -8,13 +8,13 @@ re-admits to keep the operator seat live without an attended IDE or Cowork wait.
 
 from __future__ import annotations
 
-from .checkpoint_parse import ParsedCheckpoint
-from .checkpoint_schema import (
+from ..checkpoint_schema import (
+    ParsedCheckpoint,
     append_footer_to_packet,
     footer_kwargs_for_window,
     output_format_footer_requirement,
 )
-from .residue_fingerprint import normalize_next_pickup
+from ..residue_fingerprint import normalize_next_pickup
 
 
 def _scope(window_index: int, root_id: str) -> str:

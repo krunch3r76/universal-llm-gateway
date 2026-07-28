@@ -38,7 +38,7 @@ class EnvSnapshot:
 
     def restart_shaped_for_root(self, root_id: str) -> bool:
         """True when the ledger pickup names a GIW sync_restart manage step."""
-        from .eligibility import next_pickup_is_restart_from_holder
+        from .admission import next_pickup_is_restart_from_holder
 
         pointer = self.scoreboard_pointer.get(root_id, "")
         _ = pointer  # scoreboard is advisory; restart shape comes from bus tip meta
