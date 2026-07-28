@@ -12,6 +12,7 @@ from services.git_integration_worker.cursor_auto.admit_gates import (
 from services.git_integration_worker.cursor_auto.directive import (
     attendance_surface,
     build_sdk_message,
+    effective_contract,
     effective_require_attended,
     parse_request_body,
 )
@@ -81,17 +82,20 @@ async def process_job(
     """
     client = bus or CursorBusClient()
     queue = get_queue()
-    model = resolve_desired_model(job.desired_model, contract=job.contract)
-    effort = resolve_desired_effort(job.desired_effort)
-    contract_info = resolve_contract_disposition(job.contract)
-    handoff_contract = resolve_handoff_contract(job.contract)
     directive = parse_request_body(job.body)
-    if directive is not None:
+    contract = effective_contract(job.contract, job.body)
+    # Downstream closeout/journal/meta read job.contract — stamp effective.
+    job.contract = contract
+    model = resolve_desired_model(job.desired_model, contract=contract)
+    effort = resolve_desired_effort(job.desired_effort)
+    contract_info = resolve_contract_disposition(contract)
+    handoff_contract = resolve_handoff_contract(contract)
+    if directive is not None or contract in _NESTED_CONTRACTS:
         blocked = await blocking_admit_gate(job, client=client, queue=queue)
         if blocked is not None:
             return blocked
 
-    work_bounded = job.contract == "answer" or (
+    work_bounded = contract == "answer" or (
         directive is not None and directive.density == "sparse"
     )
     gate_plan = prefer_dispatch_over_park(
@@ -110,7 +114,7 @@ async def process_job(
         f"gate_plan={gate_plan['action']}\n"
         f"directive={directive is not None}"
     )
-    briefing = await maybe_briefing_for_admit(job.thread_id, contract=job.contract)
+    briefing = await maybe_briefing_for_admit(job.thread_id, contract=contract)
     admit = await client.reply(
         thread_id=job.thread_id,
         to_agent=job.from_agent,
@@ -148,7 +152,7 @@ async def process_job(
             gate_plan=gate_plan,
         )
 
-    if job.contract not in _NESTED_CONTRACTS:
+    if contract not in _NESTED_CONTRACTS:
         return await terminal_in_seat(
             job,
             client=client,
@@ -179,7 +183,7 @@ async def process_job(
     if isinstance(nest_under, dict):
         return nest_under
 
-    message = build_sdk_message(job.body, contract=job.contract)
+    message = build_sdk_message(job.body, contract=contract)
     if settlement is not None:
         message = f"{compose_supersede_preamble(settlement)}\n\n{message}"
     if queue.is_superseded(job.job_id):
@@ -231,7 +235,7 @@ async def process_job(
         bus=client,
     )
 
-    if job.contract == "confer":
+    if contract == "confer":
         return await relay_confer_outcome(
             job,
             client=client,
@@ -256,6 +260,7 @@ async def process_job(
         sdk_body=sdk_body,
         terminal_status=terminal_status,
         nest_under=nest_under,
+        execution_id=str(submit.get("execution_id") or f"exec-{dispatch_id}"),
     )
 
 

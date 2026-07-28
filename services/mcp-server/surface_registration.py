@@ -18,6 +18,7 @@ from tools.cortex_named_tools import register_cortex_named_tools
 from tools.delegate import register_delegate_schema_transform, register_delegate_tools
 from tools.events import register_event_tools
 from tools.extract_directory import register_extract_directory_tools
+from tools.vision_digest import register_vision_digest_tools
 from tools.extract_document import register_extract_document_tools
 from tools.filesystem import register_filesystem_tools
 from tools.frontier import register_frontier_tools
@@ -83,6 +84,7 @@ def register_tools_for_surface(mcp: FastMCP, surface: Surface) -> None:
     register_extract_document_tools(mcp)
     register_promote_document_to_evidence_tools(mcp)
     register_extract_directory_tools(mcp)
+    register_vision_digest_tools(mcp)
     register_agent_bus_tools(mcp)
     register_agent_bus_read_tool(mcp)
     register_cortex_tools(mcp, surface=surface)

@@ -68,3 +68,78 @@ paths:
       responses:
         "200":
           description: Assertion list (summary or full projection)
+  /api/v1/doctrine/vision-digest:
+    get:
+      summary: Posture-stack vision digest
+      operationId: getVisionDigest
+      description: >-
+        Live served projection of the foundation MAP with verbatim pillar law
+        sentences, sha-pinned to the MAP bytes under CORTEX_FILES_ROOT.
+      responses:
+        "200":
+          description: Vision digest
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VisionDigest"
+        "404":
+          description: MAP file missing under CORTEX_FILES_ROOT
+        "400":
+          description: MAP path resolves outside CORTEX_FILES_ROOT
+components:
+  schemas:
+    VisionPillar:
+      type: object
+      required:
+        - id
+        - law_verbatim
+        - must_not_redecide
+        - falsifier
+        - sot_uris
+      properties:
+        id:
+          type: string
+          description: Stable pillar id (pillar-1 … pillar-4)
+        law_verbatim:
+          type: string
+          description: Byte-for-byte MAP **Law:** sentence (strip only)
+        must_not_redecide:
+          type: array
+          items:
+            type: string
+          description: Clauses from Child arcs must not re-decide (split on ;)
+        falsifier:
+          type: string
+        sot_uris:
+          type: array
+          items:
+            type: string
+          description: cortex:// and http(s) URIs from the SoT bullet
+    VisionDigest:
+      type: object
+      required:
+        - pillars
+        - map_uri
+        - map_sha256
+        - generated_at
+        - stale
+        - source
+      properties:
+        pillars:
+          type: array
+          items:
+            $ref: "#/components/schemas/VisionPillar"
+          minItems: 4
+          maxItems: 4
+        map_uri:
+          type: string
+        map_sha256:
+          type: string
+        generated_at:
+          type: string
+          format: date-time
+        stale:
+          type: boolean
+        source:
+          type: string
+          enum: [live]

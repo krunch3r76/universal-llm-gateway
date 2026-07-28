@@ -70,6 +70,7 @@ def render_briefing_card(
     cross_domain_sentinel: str | None = None,
     life_suppressed: bool = False,
     life_lane_sentinel: str | None = None,
+    vision_digest_md: str | None = None,
 ) -> tuple[str, list[dict[str, Any]]]:
     """Render a compact briefing card and section manifest.
 
@@ -172,6 +173,9 @@ def render_briefing_card(
     # Surface-aware: grok seats get the flat direct-call form; claude/gpt/gemini
     # get the dispatch-route (OVERFLOW) form (thread 1167, 2026-06-01).
     parts.extend(render_orientation_blocks(family=family, agent=agent, domain=domain))
+
+    if vision_digest_md:
+        parts.extend(vision_digest_md.split("\n"))
 
     # Arc digest — been → are → going (directive 3 / assertion 13717). Absorbs
     # the former Last Session + Continuity + Open arcs + Recent Work blocks;

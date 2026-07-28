@@ -14,6 +14,7 @@ from pager_notify.so_what import (
     format_closeout_pager,
     resolve_so_what_summary,
 )
+from pager_notify.state import claim_closeout_page
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +86,8 @@ async def notify_closeout_complete(
         summary=achieved or prior,
         dispatch_id=dispatch_id,
     )
+    if not claim_closeout_page(thread_id, status):
+        return False
     return await notify_pager(subject, body, tag="closeout")
 
 

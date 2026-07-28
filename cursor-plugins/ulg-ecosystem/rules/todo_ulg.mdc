@@ -61,14 +61,14 @@ skills on top of the ULG pair.
 | plan arc (multi-phase) | + `implementation-plan-workflow` |
 | rag / corpus | + `research-article-ingest` |
 
-**Posture layer above the floor (vision/MAP).** The architecture pair is the
+**Posture layer above the floor (vision).** The architecture pair is the
 *code-invariant* floor (transport, REST, events, topology, service-ops). On
-`judgment_required` or **pillar-touching** todos — seat-lane (P1), imprint/continuity
-(P2), HTTP/tooling substrate (P3), or claim-record/WWP (P4) — the pickup additionally
-consults the **foundation MAP** and emits a `VISION-ALIGN` footer (grammar + corpus SOT:
-`path-sim` § Vision-align flag). This is a **choke-point cue, not a `required_skills`
-entry** — do not stuff the MAP or vision into every leaf's skill set; mechanical/trivial
-leaves skip it. MAP extends the floor; it does not replace it.
+`judgment_required` or **pillar-touching** todos — pull rubric from GET
+`/api/v1/doctrine/vision-digest`; escalate via `sot_uris[]` / full MAP read only at wide
+detent — and emit a `VISION-ALIGN` footer (grammar + corpus SOT: `path-sim` §
+Vision-align flag). This is a **choke-point cue, not a `required_skills` entry** — do not
+stuff vision digest or MAP into every leaf's skill set; mechanical/trivial leaves skip it.
+Vision digest extends the floor; it does not replace it.
 
 **Tier rules:**
 

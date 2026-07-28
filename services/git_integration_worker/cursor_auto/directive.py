@@ -23,6 +23,7 @@ class ParsedDirective:
 
 _TYPE_RE = re.compile(r"^TYPE:\s*(\S+)", re.MULTILINE | re.IGNORECASE)
 _DENSITY_RE = re.compile(r"^density:\s*(\S+)", re.MULTILINE | re.IGNORECASE)
+_CONTRACT_RE = re.compile(r"^contract:\s*(\S+)", re.MULTILINE | re.IGNORECASE)
 _REQUIRE_ATTENDED_RE = re.compile(
     r"^[ \t]*(?:[-*][ \t]+)?require_attended:\s*(true|yes|1)\b",
     re.MULTILINE | re.IGNORECASE,
@@ -137,6 +138,76 @@ def attendance_surface(
     if body:
         return "body"
     return None
+
+
+_SCOPE_HEADING_RE = re.compile(r"(?im)^#{1,3}\s*scope\b")
+_SCOPE_TAG_RE = re.compile(r"<scope>", re.IGNORECASE)
+_SOURCE_REF_LINE_RE = re.compile(r"(?im)^source_ref:\s*\S+")
+_TODO_TOKEN_RE = re.compile(r"\btodo:[a-z0-9][a-z0-9._-]*", re.IGNORECASE)
+_PACKET_TOKEN_RE = re.compile(r"\bpacket:", re.IGNORECASE)
+_FILES_EXPECTED_RE = re.compile(r"(?im)\bfiles_expected\b")
+_VISION_FIELD_RE = re.compile(r"^vision\s*:", re.MULTILINE | re.IGNORECASE)
+NESTED_SCOPE_CONTRACTS = frozenset({"implement", "investigate", "verify"})
+VISION_REQUIRED_CONTRACTS = frozenset({"implement", "investigate"})
+
+
+def has_actionable_scope(body: str) -> bool:
+    """True when the body carries an actionable nest scope per friction-26765.
+
+    Matches markdown ``## Scope`` headings, ``<scope>`` tags, ``source_ref:``
+    lines, ``todo:`` / ``packet:`` tokens, or ``files_expected`` labels.
+    Prose may mention ``todo:`` / ``packet:`` (accepted looseness). Body
+    ``contract:`` is handled separately as an escape hatch in admit gates.
+    """
+    text = body or ""
+    return bool(
+        _SCOPE_HEADING_RE.search(text)
+        or _SCOPE_TAG_RE.search(text)
+        or _SOURCE_REF_LINE_RE.search(text)
+        or _TODO_TOKEN_RE.search(text)
+        or _PACKET_TOKEN_RE.search(text)
+        or _FILES_EXPECTED_RE.search(text)
+    )
+
+
+def body_has_contract_override(body: str) -> bool:
+    """True when the DIRECTIVE body declares an explicit ``contract:`` line."""
+    return _CONTRACT_RE.search(body or "") is not None
+
+
+def has_vision_field(body: str) -> bool:
+    """True when the DIRECTIVE body declares a ``vision:`` line (presence-only)."""
+    return _VISION_FIELD_RE.search(body or "") is not None
+
+
+def empty_directive_missed_tokens(body: str) -> tuple[str, ...]:
+    """Return scope-predicate labels absent from *body* for observation payloads.
+
+    Used by the empty-scope blocked event to list which actionable tokens were
+    not found in the operator DIRECTIVE body.
+    """
+    text = body or ""
+    checks: tuple[tuple[str, bool], ...] = (
+        ("scope_heading", bool(_SCOPE_HEADING_RE.search(text))),
+        ("scope_tag", bool(_SCOPE_TAG_RE.search(text))),
+        ("source_ref", bool(_SOURCE_REF_LINE_RE.search(text))),
+        ("todo", bool(_TODO_TOKEN_RE.search(text))),
+        ("packet", bool(_PACKET_TOKEN_RE.search(text))),
+        ("files_expected", bool(_FILES_EXPECTED_RE.search(text))),
+    )
+    return tuple(name for name, present in checks if not present)
+
+
+def effective_contract(wire: str | None, body: str) -> str:
+    """Resolve wire contract with DIRECTIVE body upgrade and explicit body override."""
+    wire_norm = (wire or "answer").strip().lower() or "answer"
+    text = body or ""
+    contract_match = _CONTRACT_RE.search(text)
+    if contract_match is not None:
+        return contract_match.group(1).strip().lower()
+    if parse_request_body(body) is not None and wire_norm == "answer":
+        return "implement"
+    return wire_norm
 
 
 def parse_request_body(body: str) -> ParsedDirective | None:

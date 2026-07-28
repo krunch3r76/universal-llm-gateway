@@ -14,6 +14,7 @@ from .events import (
     FrontierSdkWorkerDispatchFailed,
     FrontierSdkWorkerQueued,
 )
+from .story_wire import build_association_envelope
 
 
 def publish_frontier_event(event: Any) -> None:
@@ -67,7 +68,26 @@ def emit_sdk_worker_outcome(
     execution_id: str,
     worker_ok: bool,
     worker_detail: dict[str, Any],
+    caller_agent: str | None = None,
+    purpose_body: str | None = None,
+    packet_path: str | None = None,
 ) -> None:
+    envelope = build_association_envelope(
+        purpose_body=purpose_body,
+        caller_agent=caller_agent,
+        request_id=request_id,
+        dispatch_id=(
+            str(worker_detail["dispatch_id"])
+            if worker_detail.get("dispatch_id")
+            else None
+        ),
+        packet_path=packet_path,
+    )
+    association = {
+        "asked_by": envelope.asked_by,
+        "purpose": envelope.purpose,
+        "story_id": envelope.story_id,
+    }
     if worker_ok:
         if worker_detail.get("queued"):
             ticket = worker_detail.get("ticket") or {}
@@ -90,6 +110,7 @@ def emit_sdk_worker_outcome(
                 thread_id=thread_id,
                 execution_id=execution_id,
                 dispatch_id=worker_detail.get("dispatch_id"),
+                **association,
             )
         )
         return

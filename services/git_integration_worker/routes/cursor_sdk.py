@@ -80,6 +80,7 @@ from services.git_integration_worker.cursor_sdk_closeout_trigger import (
     build_closeout_idempotency_key,
     emit_implement_closeout_trigger,
     extract_turn_number,
+    normalize_closeout_source_ref,
 )
 from services.git_integration_worker.cursor_sdk_context import (
     CursorSdkParityError,
@@ -96,6 +97,7 @@ from services.git_integration_worker.cursor_sdk_deliverables import (
 from services.git_integration_worker.cursor_sdk_events import (
     emit_sdk_closeout_reconciled,
     emit_sdk_implement_unresolved_source_ref,
+    emit_sdk_restart_bridge_reap_failed,
     emit_sdk_worker_completed,
     emit_sdk_worker_delivery_failed,
     emit_sdk_worker_failed,
@@ -114,7 +116,6 @@ from services.git_integration_worker.cursor_sdk_feature_probe import (
 )
 from services.git_integration_worker.cursor_sdk_gate import (
     acquire_sdk_dispatch_slot,
-    force_release_sdk_dispatch_slot,
     sdk_dispatch_gate_stats,
 )
 from services.git_integration_worker.cursor_sdk_implement_gate import (
@@ -141,6 +142,7 @@ from services.git_integration_worker.cursor_sdk_orphan import (
     clear_dispatch_orphan_state,
     is_dispatch_orphaned,
     mark_dispatch_orphaned,
+    reap_orphan_bridge_os,
     register_active_client,
 )
 from services.git_integration_worker.cursor_sdk_packet import (
@@ -149,11 +151,14 @@ from services.git_integration_worker.cursor_sdk_packet import (
     resolve_prompt_preamble,
 )
 from services.git_integration_worker.cursor_sdk_park import (
-    reclaim_orphan_holder,
     queue_stall_lease_keys,
+    reclaim_orphan_holder,
     release_or_restore_for_child,
     release_or_restore_for_child_sync,
     transfer_capacity_after_park,
+)
+from services.git_integration_worker.cursor_sdk_restart_orphan import (
+    emit_restart_survivor_terminal,
 )
 from services.git_integration_worker.cursor_sdk_stream_capture import (
     finalize_request_id_capture,
@@ -1010,7 +1015,12 @@ async def stale_lease_sweeper(app: FastAPI) -> None:
 
 
 async def startup_ledger_reconcile(app: FastAPI) -> None:
-    """Reconcile restart survivors and promote any queued heads."""
+    """Reconcile restart survivors: OS-reap bridges before lease release.
+
+    For each ledger ``running`` orphan, reap via env∧bridge identity, emit
+    honest ``bridge_aborted``, then release/restore and mark terminal; finally
+    promote queued heads.
+    """
     removed = await asyncio.to_thread(prune_stale_dispatch_homes)
     if removed:
         logger.info("startup dispatch_home prune removed=%d", removed)
@@ -1024,16 +1034,28 @@ async def startup_ledger_reconcile(app: FastAPI) -> None:
         logger.info("startup orphan worktree prune removed=%d", wt_removed)
     ledger = CursorDispatchLedger.instance()
     controller = app.state.admission_controller
+    # Snapshot before startup_reconcile mutates status — survivors it marks
+    # failed would otherwise never reach running_orphans() and skip ES terminal.
+    survivors = {orphan.dispatch_id: orphan for orphan in ledger.running_orphans()}
     repos = await asyncio.to_thread(
         ledger.startup_reconcile, worker_instance=controller.worker_id
     )
     for orphan in ledger.running_orphans():
+        survivors.setdefault(orphan.dispatch_id, orphan)
+    for orphan in survivors.values():
+        reap = await asyncio.to_thread(reap_orphan_bridge_os, orphan.dispatch_id)
+        if reap.kill_failed:
+            emit_sdk_restart_bridge_reap_failed(
+                dispatch_id=orphan.dispatch_id,
+                thread_id=orphan.thread_id,
+            )
         await release_or_restore_for_child(dispatch_id=orphan.dispatch_id)
         lease_key = await asyncio.to_thread(
             ledger.mark_terminal,
             dispatch_id=orphan.dispatch_id,
             terminal_status="failed",
         )
+        emit_restart_survivor_terminal(orphan, bridge_aborted=reap.bridge_aborted)
         if lease_key:
             repos.append(lease_key)
     for lease_key in sorted(set(repos)):
@@ -1101,6 +1123,20 @@ async def _deliver_sdk_closeout(
         merge_degraded_reasons(degraded_reason, *outcome.degraded_reasons)
     )
     envelope_request_id = request_id_from_dispatch_id(req.dispatch_id)
+    from systems.frontier_consult.story_wire import build_association_envelope
+
+    association = build_association_envelope(
+        purpose_body=packet_text or req.message,
+        caller_agent=req.caller_agent,
+        request_id=envelope_request_id,
+        dispatch_id=req.dispatch_id,
+        packet_path=req.packet_path,
+    )
+    association_fields = {
+        "asked_by": association.asked_by,
+        "purpose": association.purpose,
+        "story_id": association.story_id,
+    }
 
     bus_result = await bus.reply(
         thread_id=req.thread_id,
@@ -1173,11 +1209,14 @@ async def _deliver_sdk_closeout(
             sdk_run_id=outcome.sdk_run_id,
             sdk_agent_id=outcome.sdk_agent_id,
             degraded_reasons=completed_reasons,
+            **association_fields,
         )
         turn_number = extract_turn_number(bus_result.body)
         await emit_implement_closeout_trigger(
             body_json=delivery.body,
-            source_ref=work_item_ref or delivery.sidecar_ref,
+            source_ref=normalize_closeout_source_ref(
+                work_item_ref or delivery.sidecar_ref
+            ),
             idempotency_key=build_closeout_idempotency_key(
                 execution_id=req.execution_id,
                 thread_id=req.thread_id,
@@ -1235,6 +1274,7 @@ async def _deliver_sdk_closeout(
         sdk_run_id=outcome.sdk_run_id,
         sdk_agent_id=outcome.sdk_agent_id,
         degraded_reasons=completed_reasons,
+        **association_fields,
     )
     await _terminate_link(bus, thread_id=req.thread_id, terminal_status="failed")
     await _mark_terminal_and_promote(

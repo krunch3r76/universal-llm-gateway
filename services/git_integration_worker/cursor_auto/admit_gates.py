@@ -13,7 +13,17 @@ from services.git_integration_worker.cursor_auto.auth_gate_budget import (
     effective_auth_gate_budget,
     pending_auth_gate_block,
 )
+from services.git_integration_worker.cursor_auto.directive import (
+    NESTED_SCOPE_CONTRACTS,
+    VISION_REQUIRED_CONTRACTS,
+    body_has_contract_override,
+    empty_directive_missed_tokens,
+    has_actionable_scope,
+    has_vision_field,
+    parse_request_body,
+)
 from services.git_integration_worker.cursor_auto.episode_briefing import (
+    fetch_thread_status,
     fetch_thread_turns,
 )
 from services.git_integration_worker.cursor_auto.handler_terminal import (
@@ -26,6 +36,9 @@ from services.git_integration_worker.cursor_auto.relay_trust import (
 from services.git_integration_worker.cursor_bus import CursorBusClient
 from services.git_integration_worker.cursor_sdk_events import (
     emit_frontier_sdk_auto_auth_gate_blocked,
+    emit_frontier_sdk_auto_empty_directive_scope_blocked,
+    emit_frontier_sdk_auto_empty_directive_scope_waived,
+    emit_frontier_sdk_auto_thread_status_refused,
 )
 
 
@@ -39,6 +52,80 @@ async def blocking_admit_gate(
 
     ``None`` means all gates passed and the caller may continue to nest.
     """
+    contract = (job.contract or "answer").strip().lower()
+    if contract in NESTED_SCOPE_CONTRACTS and not has_actionable_scope(job.body):
+        directive = parse_request_body(job.body)
+        density = directive.density if directive is not None else None
+        if body_has_contract_override(job.body):
+            emit_frontier_sdk_auto_empty_directive_scope_waived(
+                thread_id=job.thread_id,
+                contract=contract,
+            )
+        else:
+            missed = empty_directive_missed_tokens(job.body)
+            summary = (
+                "Empty directive scope — no actionable scope/todo/packet/"
+                "files_expected (empty_directive_scope)."
+            )
+            emit_frontier_sdk_auto_empty_directive_scope_blocked(
+                thread_id=job.thread_id,
+                contract=contract,
+                density=density,
+                missed_tokens=missed,
+            )
+            return await _blocked(
+                job,
+                client=client,
+                queue=queue,
+                summary=summary,
+                payload={
+                    "summary": summary,
+                    "reason": "empty_directive_scope",
+                    "contract": contract,
+                    "density": density,
+                    "missed_tokens": list(missed),
+                },
+            )
+    directive = parse_request_body(job.body)
+    if contract in VISION_REQUIRED_CONTRACTS and directive is not None:
+        if not has_vision_field(job.body):
+            density = directive.density
+            summary = (
+                "Directive vision field missing — implement/investigate DIRECTIVEs "
+                "require a vision: line (vision_field_missing)."
+            )
+            return await _blocked(
+                job,
+                client=client,
+                queue=queue,
+                summary=summary,
+                payload={
+                    "summary": summary,
+                    "reason": "vision_field_missing",
+                    "contract": contract,
+                    "density": density,
+                },
+            )
+    status = await fetch_thread_status(job.thread_id)
+    if status in {"closed", "blocked"}:
+        emit_frontier_sdk_auto_thread_status_refused(
+            thread_id=job.thread_id,
+            status=status,
+        )
+        summary = (
+            f"Thread status {status} — refuse nest (thread_terminal_status_refused)."
+        )
+        return await _blocked(
+            job,
+            client=client,
+            queue=queue,
+            summary=summary,
+            payload={
+                "summary": summary,
+                "reason": "thread_terminal_status_refused",
+                "thread_status": status,
+            },
+        )
     turns = await fetch_thread_turns(job.thread_id)
     if turns is None:
         summary = (

@@ -15,8 +15,10 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import sys
 import time
+from dataclasses import dataclass
 from datetime import datetime
 from functools import lru_cache
 from typing import Any
@@ -54,8 +56,20 @@ _LIVE_FILTERS: tuple[dict[str, str], ...] = (
     {"signal": "cdp.generate.*"},
 )
 
-# request_id / execution_id → model (filled from generate.requested / submitted)
-_model_by_key: dict[str, str] = {}
+_THIN_SUBJECT_RE = re.compile(
+    r"^cursor-sdk generate — [0-9a-f]{6,10}$",
+    re.IGNORECASE,
+)
+
+
+@dataclass
+class _LegMeta:
+    model: str | None = None
+    thread_id: str | None = None
+
+
+# request_id / execution_id / dispatch_id → model + thread (admitted / submitted / requested)
+_leg_by_key: dict[str, _LegMeta] = {}
 
 
 def _sock() -> str:
@@ -91,26 +105,58 @@ def _model_label(raw: str) -> str:
     return raw
 
 
-def _remember_model(payload: dict[str, Any]) -> None:
-    model = payload.get("resolved_model") or payload.get("model")
-    if not model:
-        return
-    label = _model_label(str(model))
-    for key_name in ("request_id", "execution_id", "dispatch_id"):
+def _is_thin_subject(text: str) -> bool:
+    cleaned = " ".join(text.split()).strip()
+    if not cleaned:
+        return True
+    if len(cleaned) < 15:
+        return True
+    return bool(_THIN_SUBJECT_RE.match(cleaned))
+
+
+def _leg_keys(payload: dict[str, Any]) -> list[str]:
+    keys: list[str] = []
+    for key_name in (
+        "request_id",
+        "execution_id",
+        "dispatch_id",
+        "satellite_execution_id",
+    ):
         key = payload.get(key_name)
         if key:
-            _model_by_key[str(key)] = label
+            keys.append(str(key))
+    return keys
 
 
-def _lookup_model(payload: dict[str, Any]) -> str:
-    direct = payload.get("resolved_model") or payload.get("model")
-    if direct:
-        return _model_label(str(direct))
-    for key_name in ("request_id", "execution_id", "dispatch_id"):
-        key = payload.get(key_name)
-        if key and str(key) in _model_by_key:
-            return _model_by_key[str(key)]
-    return "-"
+def _remember_leg(payload: dict[str, Any]) -> None:
+    model = payload.get("resolved_model") or payload.get("model")
+    thread = payload.get("thread_id")
+    if not model and not thread:
+        return
+    label = _model_label(str(model)) if model else None
+    thread_s = str(thread) if thread else None
+    for key in _leg_keys(payload):
+        row = _leg_by_key.setdefault(key, _LegMeta())
+        if label:
+            row.model = label
+        if thread_s:
+            row.thread_id = thread_s
+
+
+def _lookup_leg(payload: dict[str, Any]) -> tuple[str, str]:
+    direct_model = payload.get("resolved_model") or payload.get("model")
+    direct_thread = payload.get("thread_id")
+    model = _model_label(str(direct_model)) if direct_model else None
+    thread = str(direct_thread) if direct_thread else None
+    for key in _leg_keys(payload):
+        row = _leg_by_key.get(key)
+        if row is None:
+            continue
+        if not model and row.model:
+            model = row.model
+        if not thread and row.thread_id:
+            thread = row.thread_id
+    return model or "-", thread or "-"
 
 
 @lru_cache(maxsize=256)
@@ -134,8 +180,17 @@ def _bus_blurb(thread_id: str) -> str:
         summary, slug = (row[0] or "").strip(), (row[1] or "").strip()
         if summary.upper().startswith("DONE"):
             summary = summary.split("—", 1)[-1].strip() or summary
-        if summary:
+        if summary and not _is_thin_subject(summary):
             return summary
+        latest = conn.execute(
+            "SELECT subject FROM turns WHERE thread = ? "
+            "ORDER BY turn_number DESC LIMIT 5",
+            (thread_id,),
+        ).fetchall()
+        for row in latest:
+            subject = (row[0] or "").strip()
+            if subject and not _is_thin_subject(subject):
+                return subject
         first = conn.execute(
             "SELECT subject FROM turns WHERE thread = ? "
             "ORDER BY turn_number ASC LIMIT 1",
@@ -175,16 +230,18 @@ def summarize(event: dict[str, Any]) -> str | None:
     payload = _payload(event.get("payload"))
 
     if signal in _CACHE_SIGNALS:
-        _remember_model(payload)
+        _remember_leg(payload)
         return None
+
+    if signal in {"cdp.generate.admitted", "frontier.sdk.worker.dispatched"}:
+        _remember_leg(payload)
 
     phase = _phase(signal)
     if phase is None:
         return None
     lane, verb = phase
 
-    model = _lookup_model(payload)
-    thread = str(payload.get("thread_id") or "-")
+    model, thread = _lookup_leg(payload)
     ts = event.get("ts_unix_ms") or event.get("ts")
     bits = [
         _fmt_ts(ts if isinstance(ts, (int, float)) else None),

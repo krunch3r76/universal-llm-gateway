@@ -29,6 +29,7 @@ from .routes import (
     close_draft,
     deadlines,
     dispatch,
+    doctrine,
     documents,
     edges,
     entities,
@@ -234,6 +235,7 @@ def create_app(*, db_path: str | None = None) -> FastAPI:
     app.include_router(staging.router)
     app.include_router(gated.router)
     app.include_router(documents.router)
+    app.include_router(doctrine.router)
     app.include_router(resolve.router)
     app.include_router(tags.router)
     app.include_router(graph.router)

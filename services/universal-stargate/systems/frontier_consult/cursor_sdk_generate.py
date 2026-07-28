@@ -99,6 +99,9 @@ async def dispatch_prepared_cursor_sdk(
             execution_id=handle.execution_id,
             worker_ok=False,
             worker_detail=worker_detail,
+            caller_agent=handle.caller_agent,
+            purpose_body=handle.message,
+            packet_path=handle.packet_path,
         )
         _worker_dispatch_error(request_id=handle.request_id, detail=worker_detail)
 
@@ -109,6 +112,9 @@ async def dispatch_prepared_cursor_sdk(
         execution_id=handle.execution_id,
         worker_ok=True,
         worker_detail=worker_detail,
+        caller_agent=handle.caller_agent,
+        purpose_body=handle.message,
+        packet_path=handle.packet_path,
     )
 
     profile = get_profile(handle.family, handle.platform)

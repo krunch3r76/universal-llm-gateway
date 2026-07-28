@@ -80,6 +80,31 @@ def build_briefing_block(
     return block
 
 
+async def fetch_thread_status(thread_id: str) -> str | None:
+    """Fetch agent-bus thread status; ``None`` on transport/parse failure (fail-open).
+
+    Performs GET ``/threads/{thread_id}`` with the same bearer transport as
+    ``fetch_thread_turns``. Normalizes status from top-level or nested
+    ``thread.status`` (strip + lower). Callers treat ``None`` as unknown status.
+    """
+    token = os.environ.get("AGENT_BUS_TOKEN", "").strip()
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    try:
+        async with make_async_client(DEFAULT_AGENT_BUS_URL, timeout=15.0) as client:
+            resp = await client.get(f"/threads/{thread_id}", headers=headers)
+        if resp.status_code >= 400:
+            return None
+        detail = resp.json() or {}
+        raw = detail.get("status")
+        if raw is None and isinstance(detail.get("thread"), dict):
+            raw = (detail.get("thread") or {}).get("status")
+        if raw is None:
+            return None
+        return str(raw).strip().lower()
+    except (httpx.HTTPError, ValueError, OSError, TypeError):
+        return None
+
+
 async def fetch_thread_turns(thread_id: str) -> list[dict[str, Any]] | None:
     """Fetch recent thread turns; ``None`` on transport/parse failure (fail-closed)."""
     token = os.environ.get("AGENT_BUS_TOKEN", "").strip()

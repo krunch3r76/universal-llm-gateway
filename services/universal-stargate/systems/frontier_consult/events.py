@@ -177,6 +177,9 @@ def FrontierSdkWorkerDispatched(  # noqa: N802
     thread_id: str,
     execution_id: str,
     dispatch_id: str | None = None,
+    asked_by: str | None = None,
+    purpose: str | None = None,
+    story_id: str | None = None,
 ) -> Event:
     """SDK worker dispatch accepted.
 
@@ -190,6 +193,12 @@ def FrontierSdkWorkerDispatched(  # noqa: N802
     }
     if dispatch_id:
         payload["dispatch_id"] = dispatch_id
+    if asked_by is not None:
+        payload["asked_by"] = asked_by
+    if purpose is not None:
+        payload["purpose"] = purpose
+    if story_id is not None:
+        payload["story_id"] = story_id
     return Event(
         signal="frontier.sdk.worker.dispatched",
         payload=payload,

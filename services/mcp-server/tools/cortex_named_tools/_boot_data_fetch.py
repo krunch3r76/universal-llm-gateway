@@ -240,6 +240,19 @@ def build_futures_spec(
             f"/boot-principal-context?{principal_qs}",
         )
 
+    # claude-web only: live posture-stack MAP digest (soft-fail on 404).
+    parts = agent.split("-", 1)
+    family = parts[0] if parts else agent
+    platform = parts[1] if len(parts) == 2 else ""
+    if family == "claude" and platform == "web":
+        from .._boot_helpers._vision_digest_section import vision_digest_fetch_path
+
+        futures_spec["vision_digest"] = (
+            wrapped_cx,
+            "GET",
+            vision_digest_fetch_path(),
+        )
+
     return futures_spec
 
 
@@ -374,6 +387,12 @@ def extract_boot_results(
     if isinstance(_pc_raw, dict) and _pc_raw.get("principal_id"):
         principal_context = _pc_raw
 
+    from .._boot_helpers._vision_digest_section import format_vision_digest_for_card
+
+    vision_digest_md = format_vision_digest_for_card(
+        raw.get("vision_digest") if isinstance(raw.get("vision_digest"), dict) else None
+    )
+
     return {
         "sessions": sessions,
         "continuity": raw.get("continuity")
@@ -406,4 +425,5 @@ def extract_boot_results(
         "principal_context": principal_context,
         "cross_domain_sentinel": cross_domain_sentinel,
         "boot_domain": boot_domain,
+        "vision_digest_md": vision_digest_md,
     }

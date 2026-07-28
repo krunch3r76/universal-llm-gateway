@@ -91,6 +91,122 @@ def emit_frontier_sdk_auto_auth_gate_blocked(
 
 
 @event_factory
+def FrontierSdkAutoEmptyDirectiveScopeBlocked(  # noqa: N802
+    thread_id: str,
+    contract: str,
+    density: str | None,
+    missed_tokens: tuple[str, ...],
+) -> Event:
+    return Event(
+        signal="frontier.sdk.auto.empty_directive_scope_blocked",
+        payload={
+            "thread_id": thread_id,
+            "contract": contract,
+            "density": density,
+            "missed_tokens": list(missed_tokens),
+        },
+        scope="node",
+    )
+
+
+def emit_frontier_sdk_auto_empty_directive_scope_blocked(
+    *,
+    thread_id: str,
+    contract: str,
+    density: str | None,
+    missed_tokens: tuple[str, ...],
+) -> None:
+    """Emit when cursor-auto blocks a nest for missing actionable scope."""
+    _emit(
+        FrontierSdkAutoEmptyDirectiveScopeBlocked(
+            thread_id=thread_id,
+            contract=contract,
+            density=density,
+            missed_tokens=missed_tokens,
+        )
+    )
+    logger.info(
+        "cursor-auto empty_directive_scope_blocked: thread_id=%s contract=%s "
+        "density=%s missed=%s",
+        thread_id,
+        contract,
+        density,
+        missed_tokens,
+    )
+
+
+@event_factory
+def FrontierSdkAutoEmptyDirectiveScopeWaived(  # noqa: N802
+    thread_id: str,
+    contract: str,
+) -> Event:
+    return Event(
+        signal="frontier.sdk.auto.empty_directive_scope_waived",
+        payload={
+            "thread_id": thread_id,
+            "contract": contract,
+        },
+        scope="node",
+    )
+
+
+def emit_frontier_sdk_auto_empty_directive_scope_waived(
+    *,
+    thread_id: str,
+    contract: str,
+) -> None:
+    """Emit observation when body ``contract:`` waives empty-scope refuse.
+
+    Carries *thread_id* and stamped *contract* so waive storms stay measurable.
+    """
+    _emit(
+        FrontierSdkAutoEmptyDirectiveScopeWaived(
+            thread_id=thread_id,
+            contract=contract,
+        )
+    )
+    logger.info(
+        "cursor-auto empty_directive_scope_waived: thread_id=%s contract=%s",
+        thread_id,
+        contract,
+    )
+
+
+@event_factory
+def FrontierSdkAutoThreadStatusRefused(  # noqa: N802
+    thread_id: str,
+    status: str,
+) -> Event:
+    return Event(
+        signal="frontier.sdk.auto.thread_status_refused",
+        payload={
+            "thread_id": thread_id,
+            "status": status,
+        },
+        scope="node",
+    )
+
+
+def emit_frontier_sdk_auto_thread_status_refused(
+    *,
+    thread_id: str,
+    status: str,
+) -> None:
+    """Emit when cursor-auto refuses nest onto a closed/blocked bus thread."""
+    _emit(
+        FrontierSdkAutoThreadStatusRefused(
+            thread_id=thread_id,
+            status=status,
+        )
+    )
+    logger.info(
+        "cursor-auto thread_status_refused: thread_id=%s status=%s",
+        thread_id,
+        status,
+    )
+
+
+@event_factory
 def FrontierSdkWorkerCompleted(  # noqa: N802
     dispatch_id: str,
     thread_id: str,
@@ -109,6 +225,9 @@ def FrontierSdkWorkerCompleted(  # noqa: N802
     sdk_run_id: str | None = None,
     sdk_agent_id: str | None = None,
     degraded_reasons: list[str] | None = None,
+    asked_by: str | None = None,
+    purpose: str | None = None,
+    story_id: str | None = None,
 ) -> Event:
     payload: dict[str, Any] = {
         "dispatch_id": dispatch_id,
@@ -136,6 +255,12 @@ def FrontierSdkWorkerCompleted(  # noqa: N802
         payload["sdk_agent_id"] = sdk_agent_id
     if degraded_reasons is not None:
         payload["degraded_reasons"] = degraded_reasons
+    if asked_by is not None:
+        payload["asked_by"] = asked_by
+    if purpose is not None:
+        payload["purpose"] = purpose
+    if story_id is not None:
+        payload["story_id"] = story_id
     return Event(
         signal="frontier.sdk.worker.completed",
         payload=payload,
@@ -274,6 +399,9 @@ def emit_sdk_worker_completed(
     sdk_run_id: str | None = None,
     sdk_agent_id: str | None = None,
     degraded_reasons: list[str] | None = None,
+    asked_by: str | None = None,
+    purpose: str | None = None,
+    story_id: str | None = None,
 ) -> None:
     """Publish terminal success/outcome telemetry for a finished cursor-sdk worker."""
     _emit(
@@ -295,6 +423,9 @@ def emit_sdk_worker_completed(
             sdk_run_id=sdk_run_id,
             sdk_agent_id=sdk_agent_id,
             degraded_reasons=degraded_reasons,
+            asked_by=asked_by,
+            purpose=purpose,
+            story_id=story_id,
         )
     )
     logger.info(
@@ -678,6 +809,40 @@ def emit_sdk_worker_orphaned(
     )
 
 
+@event_factory
+def FrontierSdkRestartBridgeReapFailed(  # noqa: N802
+    dispatch_id: str,
+    thread_id: str,
+) -> Event:
+    return Event(
+        signal="frontier.sdk.restart.bridge_reap_failed",
+        payload={
+            "dispatch_id": dispatch_id,
+            "thread_id": thread_id,
+        },
+        scope="node",
+    )
+
+
+def emit_sdk_restart_bridge_reap_failed(
+    *,
+    dispatch_id: str,
+    thread_id: str,
+) -> None:
+    """Emit when startup OS bridge reap fails but lease recovery continues."""
+    _emit(
+        FrontierSdkRestartBridgeReapFailed(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+        )
+    )
+    logger.warning(
+        "cursor sdk restart bridge reap failed: dispatch_id=%s thread_id=%s",
+        dispatch_id,
+        thread_id,
+    )
+
+
 def emit_sdk_worker_failed(
     *,
     dispatch_id: str,
@@ -833,4 +998,69 @@ def emit_sdk_closeout_reconciled(
         thread_id,
         suppressed_reason,
         verifying_path,
+    )
+
+
+@event_factory
+def FrontierSdkCloseoutRelayed(  # noqa: N802
+    dispatch_id: str,
+    thread_id: str,
+    execution_id: str,
+    closeout_status: str,
+    receipt_path: str,
+    asked_by: str,
+    purpose: str,
+    story_id: str,
+) -> Event:
+    return Event(
+        signal="frontier.sdk.closeout.relayed",
+        payload={
+            "dispatch_id": dispatch_id,
+            "thread_id": thread_id,
+            "execution_id": execution_id,
+            "closeout_status": closeout_status,
+            "receipt_path": receipt_path,
+            "asked_by": asked_by,
+            "purpose": purpose,
+            "story_id": story_id,
+        },
+        scope="node",
+        role="observation",
+    )
+
+
+def emit_sdk_closeout_relayed(
+    *,
+    dispatch_id: str,
+    thread_id: str,
+    execution_id: str,
+    closeout_status: str,
+    receipt_path: str,
+    asked_by: str,
+    purpose: str,
+    story_id: str,
+) -> None:
+    """Emit when cursor-auto relays operator CLOSEOUT after nested SDK terminal."""
+    _emit(
+        FrontierSdkCloseoutRelayed(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            execution_id=execution_id,
+            closeout_status=closeout_status,
+            receipt_path=receipt_path,
+            asked_by=asked_by,
+            purpose=purpose,
+            story_id=story_id,
+        )
+    )
+    logger.info(
+        "cursor sdk closeout relayed: dispatch_id=%s thread_id=%s "
+        "closeout_status=%s story_id=%s asked_by=%s purpose=%s receipt_path=%s",
+        dispatch_id,
+        thread_id,
+        closeout_status,
+        story_id,
+        asked_by,
+        purpose,
+        receipt_path,
     )

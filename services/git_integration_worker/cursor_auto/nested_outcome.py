@@ -29,6 +29,14 @@ from services.git_integration_worker.cursor_auto.work_journal import (
     append_journal_entry,
 )
 from services.git_integration_worker.cursor_bus import CursorBusClient
+from services.git_integration_worker.cursor_sdk_deliverables import (
+    sidecar_workspaces_ref,
+)
+from services.git_integration_worker.cursor_sdk_events import emit_sdk_closeout_relayed
+from systems.frontier_consult.story_wire import (
+    build_association_envelope,
+    safe_emit_observation,
+)
 
 
 async def relay_confer_outcome(
@@ -108,6 +116,33 @@ async def relay_confer_outcome(
     }
 
 
+async def _emit_closeout_relayed_observation(
+    job: AutoJob,
+    *,
+    dispatch_id: str,
+    execution_id: str,
+    closeout_status: str,
+) -> None:
+    def _emit() -> None:
+        envelope = build_association_envelope(
+            purpose_body=job.body,
+            from_agent=job.from_agent,
+            dispatch_id=dispatch_id,
+        )
+        emit_sdk_closeout_relayed(
+            dispatch_id=dispatch_id,
+            thread_id=job.thread_id,
+            execution_id=execution_id,
+            closeout_status=closeout_status,
+            receipt_path=sidecar_workspaces_ref(dispatch_id),
+            asked_by=envelope.asked_by,
+            purpose=envelope.purpose,
+            story_id=envelope.story_id,
+        )
+
+    safe_emit_observation(_emit, label="frontier.sdk.closeout.relayed")
+
+
 async def relay_closeout_outcome(
     job: AutoJob,
     *,
@@ -121,6 +156,7 @@ async def relay_closeout_outcome(
     sdk_body: str | None,
     terminal_status: str,
     nest_under: str | None,
+    execution_id: str | None = None,
 ) -> dict[str, Any]:
     """Select the closeout payload, relay it, then WAKE + substrate feedback."""
     payload = select_closeout_relay_payload(
@@ -143,6 +179,13 @@ async def relay_closeout_outcome(
             "nest_under": nest_under,
         },
         bus=client,
+    )
+    resolved_execution_id = execution_id or f"exec-{dispatch_id}"
+    await _emit_closeout_relayed_observation(
+        job,
+        dispatch_id=dispatch_id,
+        execution_id=resolved_execution_id,
+        closeout_status=payload.status,
     )
     if relay.get("ok"):
         wake = await post_operator_wake(

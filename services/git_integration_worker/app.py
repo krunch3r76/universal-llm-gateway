@@ -26,6 +26,7 @@ from services.git_integration_worker.cursor_dispatch_ledger import (
 from services.git_integration_worker.cursor_sdk_events import (
     register_cursor_sdk_event_publisher,
 )
+from services.git_integration_worker.cursor_sdk_orphan import shutdown_active_bridges
 from services.git_integration_worker.events import publish_lib_signal
 from services.git_integration_worker.git_worker_drain_events import (
     register_git_worker_drain_event_publisher,
@@ -54,6 +55,7 @@ from services.git_integration_worker.routes.cursor_sdk import (
 )
 from services.git_integration_worker.routes.health import router as health_router
 from services.git_integration_worker.routes.integrate import router as integrate_router
+from services.git_integration_worker.ulg_story_projector import ulg_story_projector_loop
 
 _DRAIN_LIFESPAN_TIMEOUT_S = float(os.getenv("GIT_WORKER_DRAIN_LIFESPAN_TIMEOUT", "30"))
 
@@ -111,6 +113,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.cursor_auto_worker = auto_worker
     orphan_scanner = asyncio.create_task(orphan_scanner_loop(app))
     app.state.cursor_auto_orphan_scanner = orphan_scanner
+    story_projector = asyncio.create_task(ulg_story_projector_loop(app))
+    app.state.ulg_story_projector = story_projector
     logger.info(
         "git-integration-worker started: version=%s port=%d source_repo=%s "
         "worker_id=%s",
@@ -136,10 +140,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        shutdown_active_bridges()
         for attr in (
             "stale_lease_sweeper",
             "cursor_auto_worker",
             "cursor_auto_orphan_scanner",
+            "ulg_story_projector",
         ):
             task = getattr(app.state, attr, None)
             if task is not None:
@@ -172,6 +178,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 def create_app() -> FastAPI:
+    """Build and return the git-integration-worker FastAPI application instance."""
     app = FastAPI(
         title="git-integration-worker",
         version="0.1.0",

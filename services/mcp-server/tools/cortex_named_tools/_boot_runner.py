@@ -578,6 +578,7 @@ def run_cortex_brief(
         ),
         life_suppressed=suppress_life,
         life_lane_sentinel=life_lane_sentinel_line,
+        vision_digest_md=extracted.get("vision_digest_md"),
     )
 
     card_bytes = len(card.encode("utf-8"))
