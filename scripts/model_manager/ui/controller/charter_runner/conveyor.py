@@ -17,8 +17,11 @@ from scripts.model_manager import observation_event_conveyor as conv_events
 
 from . import bus_client
 from .checkpoint_parse import parse_checkpoint
+from .checkpoint_schema import emit_footer
 from .eligibility import ENROLLMENT_TAG
 from .friction_ledger import CONVEYOR_OFF_TAG
+from .pickup_advance import gid_of_row
+from .window_sequence import next_window_index, window_id_for
 from .window_terminal_contract import is_tip_class
 
 logger = get_logger(__name__)
@@ -147,6 +150,27 @@ async def ensure_conveyor_root() -> str:
     return root_id
 
 
+def _conveyor_footer(conveyor_id: str, turns: list[dict[str, Any]], gid: str) -> str:
+    """``charter-state`` block for a conveyor-authored CHECKPOINT.
+
+    The conveyor posts its own tips, so it must satisfy the same harvest footer gate
+    as a worker seat — a footerless conveyor tip fails closed and strands every
+    follow-on row it carries (a:26625). ``window_id`` names the window this state
+    follows, since a pickup append is a state post between windows, not a closeout.
+    """
+    high = max(next_window_index(conveyor_id, turns) - 1, 0)
+    return emit_footer(
+        status="CHECKPOINT",
+        next_pickup={"gid": gid, "lane": "judgment", "executor": "pending"},
+        wip=None,
+        consult={"role": None, "poll_hint": None, "from": None},
+        revise_count=0,
+        evidence=[],
+        window_id=window_id_for(conveyor_id, high),
+        transition_id=None,
+    )
+
+
 async def _append_conveyor_pickup(*, conveyor_id: str, row: str) -> None:
     turns = await bus_client.fetch_turns(conveyor_id)
     existing = _conveyor_pickup_rows(turns)
@@ -176,7 +200,8 @@ _None this window._
 None.
 
 — RESUME (any seat, no command): friction conveyor — process gated Next-pickup.
-"""
+
+{_conveyor_footer(conveyor_id, turns, gid_of_row(merged[0]) or "pending")}"""
     await bus_client.post_root_checkpoint(conveyor_id, subject=subject, body=body)
 
 

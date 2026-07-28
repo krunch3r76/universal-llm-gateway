@@ -2,12 +2,20 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
+from scripts.model_manager.ui.controller.charter_runner import window_log
 from scripts.model_manager.ui.controller.charter_runner.root_ledger import (
+    RootLedgerRow,
     SeedConfirm,
     load_all_roots,
     load_root,
     open_default_ledger,
     seed_from_confirm,
+    upsert_root,
+)
+from scripts.model_manager.ui.controller.charter_runner.window_sequence import (
+    window_id_for,
 )
 
 PHASE1_SEEDS: tuple[SeedConfirm, ...] = (
@@ -59,6 +67,23 @@ PHASE1_SEEDS: tuple[SeedConfirm, ...] = (
 _PHASE1_BY_ID = {seed.root_id: seed for seed in PHASE1_SEEDS}
 
 
+def _reconcile_window_history(conn, row: RootLedgerRow) -> RootLedgerRow:
+    """Carry a root's existing window history onto a fresh seed row.
+
+    A seed writes ``last_window_id=None``, which reads as "no window ever ran" — so
+    a root re-seeded after a manage recycle restarted numbering at w1 and re-fired
+    packets that already existed (a:26592). The transcript index is the sync-readable
+    record of what already ran; bus pointers remain authoritative at admit time,
+    where ``next_window_index`` takes the max of all three.
+    """
+    high = window_log.max_window_index(row.root_id)
+    if high <= 0:
+        return row
+    reconciled = replace(row, last_window_id=window_id_for(row.root_id, high))
+    upsert_root(conn, reconciled)
+    return reconciled
+
+
 def ensure_root_ledger_seed(
     root_id: str,
     *,
@@ -86,7 +111,7 @@ def ensure_root_ledger_seed(
     try:
         if load_root(conn, root_id) is not None:
             return True
-        seed_from_confirm(conn, confirm)
+        _reconcile_window_history(conn, seed_from_confirm(conn, confirm))
         return True
     finally:
         conn.close()
@@ -115,7 +140,7 @@ def seed_phase1_roots() -> list[dict]:
     try:
         results = []
         for confirm in PHASE1_SEEDS:
-            row = seed_from_confirm(conn, confirm)
+            row = _reconcile_window_history(conn, seed_from_confirm(conn, confirm))
             results.append(
                 {
                     "root": row.root_id,
@@ -123,6 +148,7 @@ def seed_phase1_roots() -> list[dict]:
                     "pickup": row.pickup_gid,
                     "lane": row.pickup_lane,
                     "attendance": row.attendance,
+                    "last_window_id": row.last_window_id,
                 }
             )
         return results

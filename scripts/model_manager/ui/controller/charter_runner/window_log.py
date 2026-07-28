@@ -11,13 +11,16 @@ or re-close historical workers (A-R3-3).
 
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 LOG_DIR = Path("/tmp/logs/charter-runner")
 _HARVESTED_DIR = Path.home() / ".local" / "share" / "charter-runner" / "harvested"
+_ADMIT_WINDOW_RE = re.compile(r"\bADMIT window=(\d+)\b")
 
 
 def _stamp() -> str:
@@ -57,6 +60,53 @@ def already_harvested(root_id: str, window_index: int) -> bool:
 def mark_harvested(root_id: str, window_index: int) -> None:
     _ensure_dirs()
     harvest_marker(root_id, window_index).write_text(_stamp() + "\n", encoding="utf-8")
+
+
+def token_marker(root_id: str, window_index: int, kind: str) -> Path:
+    return _HARVESTED_DIR / f"{root_id}-w{window_index}.{kind}"
+
+
+def already_marked(root_id: str, window_index: int, *, kind: str, token: str) -> bool:
+    """True when ``(window, kind, token)`` was already recorded durably.
+
+    Token-keyed rather than window-keyed so a repeat is suppressed without
+    suppressing a genuinely different event on the same window: a rejected
+    CHECKPOINT stops re-emitting every tick, yet a re-posted (corrected) body is
+    re-evaluated, and a re-fired window's new worker still emits its own closeout.
+    """
+    path = token_marker(root_id, window_index, kind)
+    if not path.is_file():
+        return False
+    try:
+        return token in path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+
+
+def mark(root_id: str, window_index: int, *, kind: str, token: str) -> None:
+    _ensure_dirs()
+    token_marker(root_id, window_index, kind).write_text(
+        f"{_stamp()} {token}\n", encoding="utf-8"
+    )
+
+
+def checkpoint_body_sha(body: str) -> str:
+    return hashlib.sha256((body or "").encode("utf-8")).hexdigest()[:16]
+
+
+def max_window_index(root_id: str) -> int:
+    """Highest ``ADMIT window=N`` in the root transcript index; 0 when absent."""
+    path = root_index_path(root_id)
+    if not path.is_file():
+        return 0
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return 0
+    return max(
+        (int(m.group(1)) for m in _ADMIT_WINDOW_RE.finditer(text)),
+        default=0,
+    )
 
 
 def append_admit(

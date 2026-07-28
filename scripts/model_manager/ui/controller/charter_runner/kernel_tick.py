@@ -17,6 +17,7 @@ from .consult_lane import (
     enqueue_consult,
 )
 from .env_snapshot import EnvSnapshot
+from .pickup_advance import advance_pickup_gid, gated_pickup_from_parsed
 from .root_ledger import (
     RootLedgerRow,
     RootStatus,
@@ -27,9 +28,19 @@ from .root_ledger import (
     write_cortex_mirror,
 )
 from .telemetry import emit_consult_deferred, emit_consult_queued, emit_tick_transition
-from .window_exec import admit_consult_window, admit_worker_window
+from .window_exec import admit_consult_window, admit_worker_window, parse_tip_checkpoint
+from .window_sequence import (
+    clear_uncorrelatable_wip,
+    next_window_index,
+    window_id_for,
+)
 
 logger = get_logger(__name__)
+
+# Transitions that spend substrate. The gated-pickup precondition binds here and not
+# on QUEUE_CONSULT, which is a durable ledger enqueue: a root whose tip has nothing
+# gated should still record the consult it wants and stall loudly at admit.
+_ADMITTING = frozenset({Transition.ADMIT_CONSULT, Transition.ADMIT_WORKER})
 
 
 @dataclass(frozen=True)
@@ -46,6 +57,7 @@ def _ledger_row_from_state(
     status: RootStatus,
     transition: Transition,
     wip: str | None = None,
+    last_window: str | None = None,
     consult_attempts: int | None = None,
     consult_next_retry: float | None = None,
 ) -> RootLedgerRow:
@@ -75,7 +87,7 @@ def _ledger_row_from_state(
         ),
         consult_poll_from=existing.consult_poll_from,
         harvest_deadline=existing.harvest_deadline,
-        last_window_id=existing.last_window_id,
+        last_window_id=last_window or existing.last_window_id,
         last_transition=transition.value,
         last_error=existing.last_error,
         env_facts_json=existing.env_facts_json,
@@ -123,6 +135,11 @@ async def apply_kernel_tick_for_root(
         if row is None:
             return KernelTickOutcome("kernel_unseeded")
         has_wip = _tip_has_wip(turns)
+        tip = parse_tip_checkpoint(turns)
+        parsed = tip[1] if tip is not None else None
+        row = clear_uncorrelatable_wip(conn, row)
+        if not has_wip and not row.wip_window_id:
+            row = await _maybe_advance_pickup(conn, row, parsed)
         facts = env.facts_for_root(root_id, has_wip=has_wip)
         facts = EnvFacts(
             substrate_up=facts.substrate_up,
@@ -134,16 +151,24 @@ async def apply_kernel_tick_for_root(
         )
         caps_view = CapsView.from_cap_store(caps, root_id)
         transition = decide(row, facts, caps_view)
+        if transition in _ADMITTING and gated_pickup_from_parsed(parsed) is None:
+            # decide() reads the ledger only; without this the kernel fires on a
+            # tip whose gated lane is idle — 5975 took seven such windows.
+            return KernelTickOutcome(
+                "kernel_no_gated_pickup", skipped_reason="no_gated_pickup"
+            )
         if transition == Transition.QUEUE_CONSULT:
             return await _queue_consult(conn, row, root_id, transition)
         if transition == Transition.DEFER_CONSULT:
             return await _defer_consult(conn, row, root_id)
+        window_index = next_window_index(root_id, turns, row=row)
         if transition == Transition.ADMIT_CONSULT:
             return await _admit_consult(
                 conn,
                 row,
                 root_id,
                 turns,
+                window_index=window_index,
                 caps=caps,
                 workspace_root=workspace_root,
                 on_admit=on_admit,
@@ -153,6 +178,7 @@ async def apply_kernel_tick_for_root(
                 conn,
                 root_id,
                 turns,
+                window_index=window_index,
                 caps=caps,
                 workspace_root=workspace_root,
                 admission_mode=admission_mode,
@@ -163,6 +189,26 @@ async def apply_kernel_tick_for_root(
         return KernelTickOutcome(transition.value)
     finally:
         conn.close()
+
+
+async def _maybe_advance_pickup(conn, row: RootLedgerRow, parsed) -> RootLedgerRow:
+    """Realign ``pickup_gid`` with the tip before ``decide`` reads it.
+
+    Only runs at a clean tip (no in-flight window): mutating the pickup while a
+    window is out would decorrelate the consult queue key from the packet the
+    worker is holding.
+    """
+    live = advance_pickup_gid(conn, row, parsed)
+    if live is None:
+        return row
+    await emit_tick_transition(
+        root=row.root_id,
+        from_status=row.status.value,
+        to_status=row.status.value,
+        transition=Transition.ADVANCE_PICKUP.value,
+        gid=live.gid,
+    )
+    return load_root(conn, row.root_id) or row
 
 
 async def _queue_consult(conn, row, root_id: str, transition: Transition) -> KernelTickOutcome:
@@ -213,6 +259,7 @@ async def _admit_consult(
     root_id: str,
     turns: list[dict],
     *,
+    window_index: int,
     caps: CapStore,
     workspace_root: Path | None,
     on_admit,
@@ -228,6 +275,7 @@ async def _admit_consult(
         caps=caps,
         workspace_root=workspace_root,
         consult_role=role,
+        window_index=window_index,
         on_admit=on_admit,
     )
     if admitted:
@@ -236,7 +284,8 @@ async def _admit_consult(
             root_id,
             status=RootStatus.CONSULT_ADMITTED,
             transition=Transition.ADMIT_CONSULT,
-            wip=f"charter-{root_id}-consult",
+            wip=window_id_for(root_id, window_index),
+            last_window=window_id_for(root_id, window_index),
         )
     return KernelTickOutcome(
         "kernel_admit_consult" if admitted else "kernel_admit_failed",
@@ -249,6 +298,7 @@ async def _admit_worker(
     root_id: str,
     turns: list[dict],
     *,
+    window_index: int,
     caps: CapStore,
     workspace_root: Path | None,
     admission_mode: str,
@@ -262,6 +312,7 @@ async def _admit_worker(
         caps=caps,
         workspace_root=workspace_root,
         admission_mode=admission_mode,
+        window_index=window_index,
         on_admit=on_admit,
     )
     if admitted:
@@ -270,7 +321,8 @@ async def _admit_worker(
             root_id,
             status=RootStatus.ADMITTED,
             transition=Transition.ADMIT_WORKER,
-            wip=f"charter-{root_id}-w",
+            wip=window_id_for(root_id, window_index),
+            last_window=window_id_for(root_id, window_index),
         )
     return KernelTickOutcome(
         "kernel_admit_worker" if admitted else "kernel_admit_failed",

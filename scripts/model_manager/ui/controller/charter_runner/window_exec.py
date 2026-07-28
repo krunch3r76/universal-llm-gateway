@@ -72,9 +72,16 @@ async def admit_worker_window(
     caps: CapStore,
     workspace_root: Path,
     admission_mode: str,
+    window_index: int | None = None,
     on_admit: Callable[[str], None] | None = None,
 ) -> bool:
-    """Fire one mechanical/attended worker window from the tip CHECKPOINT."""
+    """Fire one mechanical/attended worker window from the tip CHECKPOINT.
+
+    ``window_index`` comes from the kernel, which reconciles the bus pointers with
+    the ledger and transcript; the bus-only fallback here restarts numbering
+    whenever a turn fetch comes back short (a:26628) and exists only for callers
+    with no ledger.
+    """
     tip = parse_tip_checkpoint(turns)
     if tip is None:
         return False
@@ -85,7 +92,8 @@ async def admit_worker_window(
         logger.debug(
             "charter-runner so-what ensure failed root=%s", root_id, exc_info=True
         )
-    window_index = count_admissions(turns) + 1
+    if window_index is None:
+        window_index = count_admissions(turns) + 1
     consult_role: str | None = None
     if parsed.consult_pending:
         admission_mode = "consult"
@@ -143,6 +151,7 @@ async def admit_consult_window(
     caps: CapStore,
     workspace_root: Path,
     consult_role: str,
+    window_index: int | None = None,
     on_admit: Callable[[str], None] | None = None,
 ) -> bool:
     """Fire a depth-1 consult seat window for a ledger root."""
@@ -150,7 +159,8 @@ async def admit_consult_window(
     if tip is None:
         return False
     _checkpoint, parsed = tip
-    window_index = count_admissions(turns) + 1
+    if window_index is None:
+        window_index = count_admissions(turns) + 1
     packet = materialize_consult_packet(
         row.root_id,
         parsed,

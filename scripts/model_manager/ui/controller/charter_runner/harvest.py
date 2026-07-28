@@ -18,6 +18,7 @@ from .harvest_attribution import attribution_for_harvested_window
 from .harvest_cdp import maybe_harvest_cdp_consult_provenance
 from .harvest_footer_gate import footer_field_path, reject_harvest_without_footer
 from .harvest_side_effects import flag_gate_bypass, persist_residue_after_harvest
+from .window_sequence import release_window_on_harvest
 from .window_terminal_contract import after_window_terminal_harvested, is_tip_class
 
 # Test/compat alias — body lives in harvest_side_effects.
@@ -123,6 +124,14 @@ async def harvest_completed_windows(
             checkpoint_subject=checkpoint_subject,
             checkpoint_body=resolved_body,
         ):
+            # A rejected window stays rejected until its body changes, so the reject
+            # event fires once per bad CHECKPOINT rather than once per tick (a:26601).
+            body_sha = window_log.checkpoint_body_sha(resolved_body)
+            if window_log.already_marked(
+                root_id, window_index, kind="rejected", token=body_sha
+            ):
+                continue
+            window_log.mark(root_id, window_index, kind="rejected", token=body_sha)
             _, field_path = footer_field_path(resolved_body)
             try:
                 await events.emit_manage_charter_tick_harvest_rejected(
@@ -233,6 +242,9 @@ async def harvest_completed_windows(
                 worker_turns=worker_turns,
                 worker_closed=worker_closed,
             )
+            # HARVEST_OK: the window that just closed is the ledger's last, its WIP is
+            # released, and the pickup moves to whatever this CHECKPOINT gated.
+            release_window_on_harvest(root_id, window_index, resolved_body)
             consumed = consumed_checkpoint(turns, admission)
             if consumed is None:
                 logger.warning(
@@ -267,13 +279,21 @@ async def harvest_completed_windows(
                 )
                 if attr is not None:
                     attributions.append(attr)
-            await events.emit_manage_charter_tick_closed(
-                root=root_id,
-                window_index=window_index,
-                worker_thread=worker_thread,
-                checkpoint_turn=turn_number(checkpoint),
-                worker_closed=worker_closed,
-            )
+            # Durable per-(window, worker) marker: the harvested marker above can be
+            # missed when an earlier step in this block raises, and the next tick
+            # would then re-announce a close that already happened (a:26592 class).
+            closed_token = worker_thread or f"w{window_index}"
+            if not window_log.already_marked(
+                root_id, window_index, kind="closed", token=closed_token
+            ):
+                window_log.mark(root_id, window_index, kind="closed", token=closed_token)
+                await events.emit_manage_charter_tick_closed(
+                    root=root_id,
+                    window_index=window_index,
+                    worker_thread=worker_thread,
+                    checkpoint_turn=turn_number(checkpoint),
+                    worker_closed=worker_closed,
+                )
             if provenance is not None:
                 await events.emit_manage_charter_tick_consult_harvested(
                     root=root_id, window_index=window_index, **provenance
