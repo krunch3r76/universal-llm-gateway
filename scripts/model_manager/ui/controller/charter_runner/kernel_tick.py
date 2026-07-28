@@ -20,6 +20,7 @@ from .pickup_advance import (
     advance_pickup_gid,
     gated_pickup_from_parsed,
     tip_executor_is_cdp_family,
+    tip_is_empty_hopper,
     worker_substrate_compatible,
 )
 from .root_ledger import (
@@ -30,6 +31,10 @@ from .root_ledger import (
     open_default_ledger,
     upsert_root,
     write_cortex_mirror,
+)
+from .conveyor_phase import (
+    record_admit_cursor,
+    wake_conveyor_if_fresh_append,
 )
 from .telemetry import emit_consult_deferred, emit_consult_queued, emit_tick_transition
 from .window_exec import admit_consult_window, admit_worker_window, parse_tip_checkpoint
@@ -98,6 +103,8 @@ def _ledger_row_from_state(
         last_transition=transition.value,
         last_error=existing.last_error,
         env_facts_json=existing.env_facts_json,
+        conveyor_phase=existing.conveyor_phase,
+        pickup_append_cursor=existing.pickup_append_cursor,
         updated_at=time.time(),
     )
     upsert_root(conn, row)
@@ -107,9 +114,9 @@ def _ledger_row_from_state(
 
 def _tip_has_wip(turns: list[dict]) -> bool:
     from .admission import ADMISSION_SUBJECT_PREFIX, _latest_matching, _turn_number
-    from .window_terminal_contract import is_tip_class
+    from .window_terminal_contract import is_window_terminal
 
-    tip = _latest_matching(turns, is_tip_class)
+    tip = _latest_matching(turns, is_window_terminal)
     tip_n = _turn_number(tip) if tip is not None else 0
     prefix = ADMISSION_SUBJECT_PREFIX.upper()
     return any(
@@ -144,10 +151,23 @@ async def apply_kernel_tick_for_root(
         has_wip = _tip_has_wip(turns)
         tip = parse_tip_checkpoint(turns)
         parsed = tip[1] if tip is not None else None
+        row = wake_conveyor_if_fresh_append(conn, row, parsed)
+        row = load_root(conn, root_id) or row
+        if (
+            row.conveyor_phase == "dormant"
+            and not has_wip
+            and not row.wip_window_id
+        ):
+            return KernelTickOutcome("kernel_dormant", skipped_reason="dormant")
         row = clear_uncorrelatable_wip(conn, row)
         if not has_wip and not row.wip_window_id:
             row = await _maybe_advance_pickup(conn, row, parsed)
         facts = env.facts_for_root(root_id, has_wip=has_wip)
+        empty_hopper = tip_is_empty_hopper(
+            parsed,
+            has_wip=has_wip,
+            wip_window_id=row.wip_window_id,
+        )
         facts = EnvFacts(
             substrate_up=facts.substrate_up,
             has_wip=facts.has_wip,
@@ -155,9 +175,14 @@ async def apply_kernel_tick_for_root(
             propagation_residue=env.propagation_residue,
             giw_holder_lease=env.giw_holder_lease,
             restart_shaped=env.restart_shaped_for_root(root_id),
+            empty_hopper=empty_hopper,
         )
         caps_view = CapsView.from_cap_store(caps, root_id)
         transition = decide(row, facts, caps_view)
+        if transition == Transition.NOOP and empty_hopper:
+            return KernelTickOutcome(
+                "kernel_empty_hopper", skipped_reason="empty_hopper"
+            )
         # Already-queued/deferred consults may DEFER on substrate_down even when
         # the tip gated lane is idle — blocking that (a:26596 admit/re-queue
         # fence) left P4-AC1 unobservable for unenrolled-idle tips (G4a).
@@ -332,6 +357,11 @@ async def _admit_consult(
             wip=window_id_for(root_id, window_index),
             last_window=window_id_for(root_id, window_index),
         )
+        tip = parse_tip_checkpoint(turns)
+        parsed = tip[1] if tip is not None else None
+        existing = load_root(conn, root_id)
+        if existing is not None:
+            record_admit_cursor(conn, existing, parsed)
     return KernelTickOutcome(
         "kernel_admit_consult" if admitted else "kernel_admit_failed",
         admitted=admitted,
@@ -369,6 +399,11 @@ async def _admit_worker(
             wip=window_id_for(root_id, window_index),
             last_window=window_id_for(root_id, window_index),
         )
+        tip = parse_tip_checkpoint(turns)
+        parsed = tip[1] if tip is not None else None
+        existing = load_root(conn, root_id)
+        if existing is not None:
+            record_admit_cursor(conn, existing, parsed)
     return KernelTickOutcome(
         "kernel_admit_worker" if admitted else "kernel_admit_failed",
         admitted=admitted,

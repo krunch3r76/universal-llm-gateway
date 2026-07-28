@@ -34,6 +34,12 @@ logger = get_logger(__name__)
 # Scoreboard G-rows and charter R-beats — same shape checkpoint_parse gates on.
 _GID_RE = re.compile(r"\b([GR]\d+[a-z]?)\b")
 _EXECUTOR_RE = re.compile(r"executor\s*=\s*([A-Za-z0-9._/\-]+)")
+# Same charset as ``_EXECUTOR_RE``, but ``*`` so bare ``executor=`` matches.
+# Do **not** use ``(.*)`` — tips routinely continue with ``· executor_lane: …``
+# after the value; a greedy capture made ``pending`` compare fail (a:26710 resume).
+_EXECUTOR_TOKEN_RE = re.compile(
+    r"executor\s*=\s*([A-Za-z0-9._/\-]*)", re.IGNORECASE
+)
 _EXECUTOR_LANE_RE = re.compile(r"executor_lane:\s*(implement|judgment)\b", re.IGNORECASE)
 
 
@@ -95,6 +101,46 @@ def worker_substrate_compatible(executor: str | None) -> bool:
     return cleaned.startswith("cursor/")
 
 
+def tip_executor_is_explicitly_unbound(live: LivePickup | None) -> bool:
+    """Whether the gated tip row names ``executor=`` with empty or pending value.
+
+    Inputs: ``live`` — gated pickup extracted from the tip (or None).
+    Output: True when the row contains an ``executor=`` token **and** the value
+    is blank or ``pending`` (case-insensitive). A gated row that **omits**
+    ``executor=`` entirely is **not** unbound (fail-open to existing admit
+    behaviour — distinct from ``worker_substrate_compatible(None)``).
+    """
+    if live is None:
+        return False
+    match = _EXECUTOR_TOKEN_RE.search(live.row)
+    if match is None:
+        return False
+    value = match.group(1).strip()
+    if not value:
+        return True
+    return value.lower() == "pending"
+
+
+def tip_is_empty_hopper(
+    parsed: ParsedCheckpoint | None,
+    *,
+    has_wip: bool,
+    wip_window_id: str | None,
+) -> bool:
+    """True when a gated tip is an empty hopper (standing wait, no actionable work).
+
+    Predicate: gated Next-pickup present, no in-flight WIP (bus or ledger
+    ``wip_window_id``), and tip ``executor=`` is explicitly empty or ``pending``.
+    Missing ``executor=`` token ⇒ False (fail-open).
+    """
+    if has_wip or wip_window_id:
+        return False
+    live = gated_pickup_from_parsed(parsed)
+    if live is None:
+        return False
+    return tip_executor_is_explicitly_unbound(live)
+
+
 def tip_executor_is_cdp_family(executor: str | None) -> bool:
     """True when tip ``executor=`` is a CDP / web-anthropic substrate family.
 
@@ -151,5 +197,7 @@ __all__ = [
     "gated_pickup_from_parsed",
     "gid_of_row",
     "tip_executor_is_cdp_family",
+    "tip_executor_is_explicitly_unbound",
+    "tip_is_empty_hopper",
     "worker_substrate_compatible",
 ]

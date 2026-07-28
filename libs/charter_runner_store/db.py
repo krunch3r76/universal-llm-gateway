@@ -10,7 +10,14 @@ from pathlib import Path
 
 from universal_logging import get_logger
 
-from .migrations.migration_001_root_ledger import MIGRATION_ID, migrate
+from .migrations.migration_001_root_ledger import (
+    MIGRATION_ID as MIGRATION_001_ID,
+    migrate as migrate_001,
+)
+from .migrations.migration_002_conveyor_phase import (
+    MIGRATION_ID as MIGRATION_002_ID,
+    migrate as migrate_002,
+)
 
 logger = get_logger(__name__)
 
@@ -66,7 +73,10 @@ def apply_migrations(conn: sqlite3.Connection) -> None:
         row[0]
         for row in conn.execute("SELECT id FROM schema_migrations").fetchall()
     }
-    pending = [(MIGRATION_ID, migrate)]
+    pending = [
+        (MIGRATION_001_ID, migrate_001),
+        (MIGRATION_002_ID, migrate_002),
+    ]
     for mig_id, migrate_fn in pending:
         if mig_id in applied:
             continue

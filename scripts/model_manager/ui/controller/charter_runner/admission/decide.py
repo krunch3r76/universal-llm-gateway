@@ -44,7 +44,14 @@ class CapsView:
 
 @dataclass(frozen=True)
 class EnvFacts:
-    """Kernel env snapshot subset for admission."""
+    """Kernel env snapshot subset for admission.
+
+    ``empty_hopper``: gated Next-pickup present, no WIP (``has_wip`` or
+    ``wip_window_id`` on the ledger row), and tip ``executor=`` is explicitly
+    empty or ``pending`` — **not** a missing ``executor=`` token (fail-open).
+    When True, ``decide`` returns ``Transition.NOOP`` (empty_hopper fence);
+    the root stays enrolled (legal marked standing wait).
+    """
 
     substrate_up: bool
     has_wip: bool
@@ -53,6 +60,7 @@ class EnvFacts:
     giw_holder_lease: dict[str, Any] | None = None
     restart_shaped: bool = False
     now: float | None = None
+    empty_hopper: bool = False
 
 
 def _propagation_defers(state: RootLedgerRow, env: EnvFacts) -> bool:
@@ -86,6 +94,8 @@ def decide(
         return Transition.NOOP
     if not caps.revise_ok:
         return Transition.BLOCK
+    if env.empty_hopper:
+        return Transition.NOOP
 
     lane = (state.pickup_lane or "judgment").lower()
     attendance = (state.attendance or env.attendance or "attended").lower()

@@ -81,12 +81,23 @@ async def emit_manage_charter_tick_root_closed(
 
 
 async def emit_manage_charter_tick_admitted(
-    *, root: str, dispatch_id: str, worker_thread: str
+    *,
+    root: str,
+    dispatch_id: str,
+    worker_thread: str,
+    objective: str | None = None,
 ) -> None:
     """A fresh windowed cursor-sdk continuation was admitted for a root."""
+    payload: dict[str, str] = {
+        "root": root,
+        "dispatch_id": dispatch_id,
+        "worker_thread": worker_thread,
+    }
+    if objective:
+        payload["objective"] = objective
     await _emit(
         "manage.charter.tick.admitted",
-        {"root": root, "dispatch_id": dispatch_id, "worker_thread": worker_thread},
+        payload,
     )
 
 

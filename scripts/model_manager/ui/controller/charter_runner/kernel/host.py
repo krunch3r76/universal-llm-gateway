@@ -271,6 +271,35 @@ class CharterRunnerTickLoop:
                     skipped_by_reason=skipped_by_reason,
                     caps=self._caps,
                 )
+            elif kernel_outcome.skipped_reason == "empty_hopper":
+                # Legal marked standing wait — root stays enrolled (a:26710).
+                # Must not enter emit_skip_and_maybe_state_close (no state_close).
+                from ..state_close import checkpoint_turn_number
+                from ..window_exec import parse_tip_checkpoint
+
+                tip = parse_tip_checkpoint(turns)
+                ckpt = tip[0] if tip is not None else None
+                skipped_by_reason["empty_hopper"] = (
+                    skipped_by_reason.get("empty_hopper", 0) + 1
+                )
+                await events.emit_manage_charter_tick_root_skipped(
+                    root=root_id,
+                    reason="empty_hopper",
+                    checkpoint_turn=checkpoint_turn_number(ckpt),
+                )
+            elif kernel_outcome.skipped_reason == "dormant":
+                # Structured dormancy — enrolled root with zero open G-rows (§7.2).
+                from ..state_close import checkpoint_turn_number
+                from ..window_exec import parse_tip_checkpoint
+
+                tip = parse_tip_checkpoint(turns)
+                ckpt = tip[0] if tip is not None else None
+                skipped_by_reason["dormant"] = skipped_by_reason.get("dormant", 0) + 1
+                await events.emit_manage_charter_tick_root_skipped(
+                    root=root_id,
+                    reason="dormant",
+                    checkpoint_turn=checkpoint_turn_number(ckpt),
+                )
             elif kernel_outcome.skipped_reason:
                 skipped_by_reason[kernel_outcome.skipped_reason] = (
                     skipped_by_reason.get(kernel_outcome.skipped_reason, 0) + 1

@@ -23,7 +23,7 @@ from .harvest_footer_gate import (
 )
 from .harvest_side_effects import flag_gate_bypass, persist_residue_after_harvest
 from .window_sequence import release_window_on_harvest
-from .window_terminal_contract import after_window_terminal_harvested, is_tip_class
+from .window_terminal_contract import after_window_terminal_harvested, is_window_terminal
 
 # Test/compat alias — body lives in harvest_side_effects.
 _persist_residue_after_harvest = persist_residue_after_harvest
@@ -54,7 +54,7 @@ def completed_windows(turns: list[dict]) -> list[tuple[dict, dict]]:
                 continue
             subj_later = str(later.get("subject") or "")
             body_later = str(later.get("body") or "")
-            if is_tip_class(subj_later, body=body_later):
+            if is_window_terminal(subj_later, body=body_later):
                 following_cp = later
                 break
         if following_cp is not None:
@@ -72,7 +72,7 @@ def consumed_checkpoint(turns: list[dict], admission: dict) -> dict | None:
             continue
         subj = str(turn.get("subject") or "")
         body = str(turn.get("body") or "")
-        if not is_tip_class(subj, body=body):
+        if not is_window_terminal(subj, body=body):
             continue
         if best is None or n > turn_number(best):
             best = turn
@@ -230,6 +230,17 @@ async def harvest_completed_windows(
                 else None
             ),
         )
+        try:
+            from .conveyor_phase import maybe_set_dormant_on_window_close
+            from .root_ledger import open_default_ledger
+
+            conn = open_default_ledger()
+            try:
+                maybe_set_dormant_on_window_close(conn, root_id, resolved_body)
+            finally:
+                conn.close()
+        except Exception:  # noqa: BLE001 — dormancy must not abort harvest
+            logger.exception("charter-runner conveyor dormancy update failed")
         try:
             await after_window_terminal_harvested(
                 root_id=root_id,

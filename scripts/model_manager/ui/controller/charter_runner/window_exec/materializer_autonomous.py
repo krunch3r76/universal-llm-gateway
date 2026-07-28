@@ -13,13 +13,13 @@ services for deploy-verify, and run a capped revise loop. The substrate separati
 for R-admit is the sole thing that keeps autonomous R honest (autonomous !=
 self-certify); see ``cortex://notes/system/specs/autonomous-path-sim-charter.md``.
 
-``decision:densify-abstraction-layering`` supersedes path-sim ratification windows
+``decision:abstraction-layering`` supersedes path-sim ratification windows
 for codework, but this packet's G1-G6 prose *is* the path-sim arc and its R
 independence is load-bearing for unattended runs — swapping it for the layer
 contract is the tick kernel rewrite's job, not a floor edit
 (``cortex://notes/system/specs/charter-tick-kernel-rewrite.md``). The attended
 generate/handoff floor in ``materializer.py`` already routes codework steps to the
-``densify-abstraction-layering`` skill.
+``abstraction-layering`` skill.
 """
 
 from __future__ import annotations

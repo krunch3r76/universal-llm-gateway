@@ -104,6 +104,7 @@ def validate_checkpoint_for_admit(
     body: str,
     *,
     require_schema: bool = True,
+    conveyor_phase: str | None = None,
 ) -> CheckpointAdmitVerdict:
     """Validate a tick_charter CHECKPOINT body for admit eligibility.
 
@@ -152,6 +153,10 @@ def validate_checkpoint_for_admit(
     if parsed.consult_pending:
         return CheckpointAdmitVerdict(True, "consult_pending", "", parsed=parsed)
     if not parsed.next_pickup_gated:
+        if conveyor_phase == "dormant":
+            return CheckpointAdmitVerdict(
+                True, "dormant_update", "", parsed=parsed
+            )
         return CheckpointAdmitVerdict(
             False,
             "no_gated_pickup",

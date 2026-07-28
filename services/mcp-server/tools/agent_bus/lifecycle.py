@@ -29,7 +29,7 @@ def _close_impl(
     if "error" in result:
         return {"error": f"agent-bus error: {result['error']}"}
     logger.info("agent_bus close: thread=%s", thread)
-    record("mcp.agentbus.thread.closed", thread=thread)
+    # Store close_thread emits mcp.agentbus.thread.closed (SoT for CLI + HTTP).
     return result
 
 
@@ -60,6 +60,8 @@ def _update_thread_impl(
         return {"error": f"agent-bus error: {result['error']}"}
     logger.info("agent_bus update_thread: thread=%s status=%s", thread, status)
     record("mcp.agentbus.thread.updated", thread=thread, status=status or "")
+    # status=closed → store update_thread also emits mcp.agentbus.thread.closed
+    # and charter unenroll-on-closed emits manage.charter.tick.root_closed.
     if tags is not None:
         record(
             "mcp.agentbus.thread.tags.updated",

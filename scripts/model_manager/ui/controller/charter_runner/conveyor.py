@@ -21,7 +21,7 @@ from .checkpoint_schema import emit_footer, parse_checkpoint
 from .friction_ledger import CONVEYOR_OFF_TAG
 from .pickup_advance import gid_of_row
 from .window_sequence import next_window_index, window_id_for
-from .window_terminal_contract import is_tip_class
+from .window_terminal_contract import is_tip_class, is_window_terminal
 
 logger = get_logger(__name__)
 
@@ -156,11 +156,33 @@ def _conveyor_footer(conveyor_id: str, turns: list[dict[str, Any]], gid: str) ->
     as a worker seat — a footerless conveyor tip fails closed and strands every
     follow-on row it carries (a:26625). ``window_id`` names the window this state
     follows, since a pickup append is a state post between windows, not a closeout.
+
+    Preserve the prior window-terminal tip's executor — hardcoding ``pending`` made
+    pickup appends the admit tip and clobbered densify G4 gpt → grok (6110 storm).
     """
     high = max(next_window_index(conveyor_id, turns) - 1, 0)
+    executor = "pending"
+    lane = "judgment"
+    for turn in sorted(turns, key=lambda t: int(t.get("turn_number") or 0), reverse=True):
+        subj = str(turn.get("subject") or "")
+        body = str(turn.get("body") or "")
+        if not is_window_terminal(subj, body=body):
+            continue
+        from .checkpoint_schema import resolve_checkpoint_body
+        from .pickup_advance import gated_pickup_from_parsed
+
+        prior = parse_checkpoint(resolve_checkpoint_body(body))
+        live = gated_pickup_from_parsed(prior)
+        if live is not None:
+            gid = live.gid or gid
+            if live.lane:
+                lane = live.lane
+            if live.executor:
+                executor = live.executor
+        break
     return emit_footer(
         status="CHECKPOINT",
-        next_pickup={"gid": gid, "lane": "judgment", "executor": "pending"},
+        next_pickup={"gid": gid, "lane": lane, "executor": executor},
         wip=None,
         consult={"role": None, "poll_hint": None, "from": None},
         revise_count=0,
@@ -274,6 +296,14 @@ async def enroll_rows(
         )
         await _append_conveyor_pickup(conveyor_id=conveyor_id, row=pickup)
         pickup_rows.append(pickup)
+        from .conveyor_phase import set_conveyor_phase
+        from .root_ledger import open_default_ledger
+
+        conn = open_default_ledger()
+        try:
+            set_conveyor_phase(conn, conveyor_id, "active")
+        finally:
+            conn.close()
         record = {
             "todo_slug": todo_slug,
             "root_id": root_id,
@@ -325,9 +355,55 @@ async def sweep_stale_enrollments() -> list[int]:
     return stale_ids
 
 
+async def disenroll_frictions(
+    friction_ids: list[int],
+    *,
+    reason: str,
+) -> list[dict[str, Any]]:
+    """Remove enrollments from conveyor SoT and emit ``disenrolled`` per id.
+
+    Idempotent: missing ids are skipped (no event). Stale rows still disenroll —
+    ``stale`` is demotion, not belt exit.
+    """
+    state = _load_state()
+    on_conveyor = dict(state.get("on_conveyor") or {})
+    enrollments = dict(state.get("enrollments") or {})
+    removed: list[dict[str, Any]] = []
+    for friction_id in friction_ids:
+        key = str(friction_id)
+        raw = on_conveyor.get(key) or enrollments.get(key)
+        if not isinstance(raw, dict):
+            continue
+        todo_slug = str(raw.get("todo_slug") or "")
+        root = str(raw.get("root_id") or "")
+        was_stale = bool(raw.get("stale"))
+        on_conveyor.pop(key, None)
+        enrollments.pop(key, None)
+        await conv_events.emit_manage_charter_conveyor_disenrolled(
+            friction_id=friction_id,
+            todo_slug=todo_slug,
+            root=root,
+            reason=reason,
+            was_stale=was_stale,
+        )
+        removed.append(
+            {
+                "friction_id": friction_id,
+                "todo_slug": todo_slug,
+                "root_id": root,
+                "was_stale": was_stale,
+            }
+        )
+    state["on_conveyor"] = on_conveyor
+    state["enrollments"] = enrollments
+    _save_state(state)
+    return removed
+
+
 __all__ = [
     "CONVEYOR_SLUG",
     "CONVEYOR_STALE_TICKS",
+    "disenroll_frictions",
     "enroll_rows",
     "ensure_conveyor_root",
     "is_on_conveyor",

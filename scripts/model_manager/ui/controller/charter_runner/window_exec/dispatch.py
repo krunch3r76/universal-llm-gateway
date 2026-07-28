@@ -10,6 +10,7 @@ import httpx
 from universal_logging import get_logger
 
 from scripts.model_manager import observation_event as events
+from scripts.model_manager.ui.charter_scoreboard_objective import read_objective_for_root
 
 from .. import bus_client, dispatch_client, window_log
 from ..admission import ADMISSION_SUBJECT_PREFIX, CapStore
@@ -25,11 +26,16 @@ from ..r_corpus_sha import (
     verify_r_corpus_sha,
 )
 from ..root_ledger import RootLedgerRow
-from ..window_terminal_contract import implement_ready_declared
+from ..window_terminal_contract import implement_ready_declared, is_pickup_append
 from .materializer_autonomous import select_packet
 from .materializer_consult import consult_subject, materialize_consult_packet
 
 logger = get_logger(__name__)
+
+
+def _charter_objective_for_emit(root_id: str) -> str | None:
+    """Scoreboard objective mirrored on ``manage.charter.tick.admitted`` when present."""
+    return read_objective_for_root(root_id)
 
 
 def count_admissions(turns: list[dict]) -> int:
@@ -40,12 +46,17 @@ def count_admissions(turns: list[dict]) -> int:
 
 
 def latest_checkpoint(turns: list[dict]) -> dict | None:
-    """Newest CHECKPOINT turn (fetch_turns is newest-first)."""
+    """Newest window-terminal CHECKPOINT (skip conveyor pickup appends).
+
+    Pickup appends are tip-class for Next-pickup merge, but admit materialization
+    must not bind ``executor=pending`` from an inter-window state post.
+    """
     return max(
         (
             t
             for t in turns
             if str(t.get("subject") or "").upper().startswith("CHECKPOINT")
+            and not is_pickup_append(t.get("subject"))
         ),
         key=lambda t: int(t.get("turn_number") or 0),
         default=None,
@@ -278,6 +289,7 @@ async def _fire_and_pointer(
         root=root_id,
         dispatch_id=str(result.get("dispatch_id") or worker_thread),
         worker_thread=worker_thread,
+        objective=_charter_objective_for_emit(root_id),
     )
     try:
         window_log.append_admit(

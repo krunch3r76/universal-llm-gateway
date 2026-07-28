@@ -452,18 +452,25 @@ def update_thread(
     matching the dedicated /close route. Closing a thread clears its unread
     queue regardless of which endpoint is used.
     """
-    from agent_bus_store.enrollment_guard import gate_enrollment_tags
+    from agent_bus_store.enrollment_guard import ENROLLMENT_TAG, gate_enrollment_tags
+
+    from ..events.thread_closed import (
+        emit_charter_root_closed_on_unenroll,
+        emit_thread_closed,
+    )
 
     ts = now()
+    prior_status: str | None = None
+    prior_tags: list[str] = []
     with connect() as conn:
         row = conn.execute(
-            "SELECT id FROM threads WHERE id = ?", (thread_id,)
+            "SELECT id, status FROM threads WHERE id = ?", (thread_id,)
         ).fetchone()
         if row is None:
             return None
-        prior_tags: list[str] = []
+        prior_status = str(row["status"] or "")
+        prior_tags = _load_thread_tags(conn, [thread_id]).get(thread_id, [])
         if tags is not None:
-            prior_tags = _load_thread_tags(conn, [thread_id]).get(thread_id, [])
             tags = gate_enrollment_tags(
                 tags,
                 prior_tags=prior_tags,
@@ -486,7 +493,19 @@ def update_thread(
             )
         if tags is not None:
             set_thread_tags(conn, thread_id, tags)
-    return get_thread(thread_id)
+    detail = get_thread(thread_id)
+    if detail is None:
+        return None
+    if status == "closed" and prior_status != "closed":
+        emit_thread_closed(thread_id, via="update_thread")
+    if (
+        tags is not None
+        and ENROLLMENT_TAG in prior_tags
+        and ENROLLMENT_TAG not in tags
+        and str(detail.get("status") or "") == "closed"
+    ):
+        emit_charter_root_closed_on_unenroll(root=thread_id)
+    return detail
 
 
 def delete_thread(thread_id: str, *, force: bool = False) -> dict[str, Any]:

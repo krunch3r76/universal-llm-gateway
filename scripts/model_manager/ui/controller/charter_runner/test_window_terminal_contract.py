@@ -128,6 +128,61 @@ def test_is_tip_class_accepts_consult_pending_subject() -> None:
 
 
 @pytest.mark.offline
+def test_pickup_append_is_tip_class_but_not_window_terminal() -> None:
+    """Conveyor pickup appends must not close windows (6110 w31–33 storm)."""
+    from scripts.model_manager.ui.controller.charter_runner.window_terminal_contract import (
+        is_pickup_append,
+        is_window_terminal,
+    )
+
+    subject = "CHECKPOINT — charter-friction-conveyor pickup append"
+    assert is_pickup_append(subject) is True
+    assert is_tip_class(subject) is True
+    assert is_window_terminal(subject) is False
+    assert terminal_verb(subject) is None
+
+
+@pytest.mark.offline
+def test_completed_windows_skips_pickup_append_as_closeout() -> None:
+    """Admission + pickup append must not pair as a harvested window."""
+    turns = [
+        _turn(10, "CHECKPOINT wave 0 — seed", "seed tip"),
+        _turn(
+            11,
+            "WIP charter-runner window 31",
+            '{"charter_runner":true,"window":31,"worker_thread":"x"}',
+        ),
+        _turn(12, "CHECKPOINT — charter-friction-conveyor pickup append", "append"),
+        _turn(13, "CHECKPOINT — charter-friction-conveyor pickup append", "append2"),
+        _turn(20, "CHECKPOINT wave 28 — G9 w31 done", "worker closeout"),
+    ]
+    pairs = completed_windows(turns)
+    assert len(pairs) == 1
+    admission, terminal = pairs[0]
+    assert admission["turn_number"] == 11
+    assert terminal["turn_number"] == 20
+    assert "pickup append" not in str(terminal["subject"]).lower()
+
+
+@pytest.mark.offline
+def test_evaluate_root_window_in_flight_despite_pickup_append() -> None:
+    """Pickup append after WIP must not clear window_in_flight (storm root)."""
+    turns = [
+        _turn(10, "CHECKPOINT wave 0 — seed tip advance", _CONSULT_BODY),
+        _turn(
+            11,
+            "WIP charter-runner window 31",
+            '{"charter_runner":true,"window":31,"worker_thread":"x"}',
+        ),
+        _turn(12, "CHECKPOINT — charter-friction-conveyor pickup append", "append"),
+        _turn(13, "CHECKPOINT — charter-friction-conveyor pickup append", "append2"),
+    ]
+    decision = evaluate_root("6110", turns, CapStore())
+    assert decision.eligible is False
+    assert decision.reason == "window_in_flight"
+
+
+@pytest.mark.offline
 def test_is_tip_class_accepts_checkpoint_subject_with_consult_in_body() -> None:
     body = _CONSULT_BODY
     subject = "CHECKPOINT wave 2 — G2 densify done · consult next"

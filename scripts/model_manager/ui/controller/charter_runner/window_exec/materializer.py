@@ -27,19 +27,19 @@ logger = get_logger(__name__)
 
 AdmissionMode = Literal["generate", "handoff"]
 
-_DENSIFY_FLOOR = (
+_LAYER_FLOOR = (
     "- Use the `agent-bus-discipline` skill "
     "(canonical slug — seat self-fetches; ¬ fs-read skill body)\n"
     "- Use the `orchestrator-workflow` skill "
     "(canonical slug — seat self-fetches; ¬ fs-read skill body)\n"
     "- Use the `consult-routing` skill "
     "(canonical slug — seat self-fetches; ¬ fs-read skill body)\n"
-    "- Use the `densify-abstraction-layering` skill when this window's step "
+    "- Use the `abstraction-layering` skill when this window's step "
     "changes the codebase (canonical slug — seat self-fetches; ¬ fs-read skill "
     "body): enter at the highest still-open layer of architecture → frame → "
     "densify → check → implement; ratification is inherited from the layer "
     "above, so a mechanical leg goes straight to implement and ¬ opens an "
-    "R-admit / R-after path-sim window (decision:densify-abstraction-layering)"
+    "R-admit / R-after path-sim window (decision:abstraction-layering)"
 )
 
 _IMPLICATION_ARROW_RE = re.compile(
@@ -172,7 +172,7 @@ thread read.
 [window] exactly one window; do not auto-chain a second window.
 [executor] default seat is cursor-sdk / {DEFAULT_MODEL}; do not silently switch
 models. Opus-class code review is a separate CDP step — not this default window.
-{_DENSIFY_FLOOR}
+{_LAYER_FLOOR}
 </invariants>"""
 
 
@@ -185,7 +185,7 @@ thread read.
 [window] exactly one window; do not auto-chain a second window.
 [executor] attended Composer on IDE worker thread (from=cursor); operator opens
 the thread — do not silently switch to unattended generate.
-{_DENSIFY_FLOOR}
+{_LAYER_FLOOR}
 </invariants>"""
 
 

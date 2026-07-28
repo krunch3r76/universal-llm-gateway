@@ -54,15 +54,35 @@ PHASE1_SEEDS: tuple[SeedConfirm, ...] = (
     ),
     # Friction conveyor — must be ledger-seeded before Phase-3 manage recycle
     # (a:26610 / a:26619). attendance=attended ⇒ ADMIT_WORKER (not consult).
+    # 6110 closed 2026-07-28 (executor-mismatch storm); rewrite root=6171.
+    # Ledger defaults (attended·G9·judgment·grok) do NOT license admit-shaped
+    # empty standing tip birth — tip birth-shape owns legality (marked wait with
+    # explicit executor=pending fenced by empty_hopper NOOP, or concrete work
+    # + concrete executor=cursor/*); see orchestrator-workflow R12 (a:26710).
     SeedConfirm(
-        root_id="6110",
+        root_id="6171",
         pickup_gid="G9",
         pickup_lane="judgment",
         pickup_executor="cursor/grok-4.5",
         attendance="attended",
-        scoreboard_uri="cortex://notes/system/threads/6110-charter-scoreboard.md",
+        scoreboard_uri="cortex://notes/system/threads/6171-charter-scoreboard.md",
     ),
 )
+
+def enroll_on_arrival_default_seed(root_id: str) -> SeedConfirm:
+    """Event-driven friction conveyor — birth seed for ``charter-friction-enroll-on-arrival``."""
+    return SeedConfirm(
+        root_id=root_id,
+        pickup_gid="G1",
+        pickup_lane="judgment",
+        pickup_executor="cursor/composer-2.5",
+        attendance="autonomous",
+        scoreboard_uri=(
+            "cortex://notes/system/threads/"
+            "charter-friction-enroll-on-arrival-scoreboard.md"
+        ),
+    )
+
 
 _PHASE1_BY_ID = {seed.root_id: seed for seed in PHASE1_SEEDS}
 
@@ -118,7 +138,13 @@ def ensure_root_ledger_seed(
 
 
 def conveyor_default_seed(root_id: str) -> SeedConfirm:
-    """Default SeedConfirm for the friction conveyor (worker path)."""
+    """Default SeedConfirm for the friction conveyor (worker path).
+
+    Ledger field defaults here do not license admit-shaped empty standing tip
+    birth — a forever-open gated tip dressed as work with ``executor=pending``
+    thrashes the sole admitter; legal wait = marked gated standing tip fenced
+    by kernel ``empty_hopper`` NOOP (a:26710).
+    """
     known = _PHASE1_BY_ID.get(root_id)
     if known is not None:
         return known

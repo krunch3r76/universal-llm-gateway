@@ -25,6 +25,9 @@ WINDOW_TERMINALS: tuple[str, ...] = (
 )
 
 CHECKPOINT_PREFIX = "CHECKPOINT"
+# Conveyor inter-window state posts (a:6110 storm w31–33): subject stays
+# CHECKPOINT-shaped for Next-pickup content, but must NOT close a window.
+PICKUP_APPEND_MARKER = "pickup append"
 
 ARC_MECHANICAL = "mechanical"
 ARC_INVESTIGATE = "investigate"
@@ -69,8 +72,18 @@ def parse_stop_vocabulary_window_terminals(spec_text: str) -> tuple[str, ...]:
     return tuple(verbs)
 
 
+def is_pickup_append(subject: str | None) -> bool:
+    """True for conveyor pickup-append state posts (not window closeouts)."""
+    return PICKUP_APPEND_MARKER in str(subject or "").lower()
+
+
 def is_tip_class(subject: str | None, *, body: str | None = None) -> bool:
-    """True when the turn is a tip-class window terminal."""
+    """True when the turn is tip-class (incl. conveyor pickup appends).
+
+    Tip-class covers Next-pickup content authority. Window closeout / WIP
+    fencing uses ``is_window_terminal`` — pickup appends are tip-class for
+    content but must not release ``wip_window_id`` or clear ``has_wip``.
+    """
     subj = str(subject or "").upper().strip()
     if subj and any(subj.startswith(verb) for verb in WINDOW_TERMINALS):
         return True
@@ -84,8 +97,23 @@ def is_tip_class(subject: str | None, *, body: str | None = None) -> bool:
     return False
 
 
+def is_window_terminal(subject: str | None, *, body: str | None = None) -> bool:
+    """True when the turn closes a window (harvest / has_wip tip fence).
+
+    Excludes conveyor ``pickup append`` CHECKPOINTs: those are inter-window
+    state posts. Treating them as terminals prematurely called
+    ``release_window_on_harvest`` and cleared ``_tip_has_wip`` while workers
+    were still running (6110 overlapping admits w31–33).
+    """
+    if is_pickup_append(subject):
+        return False
+    return is_tip_class(subject, body=body)
+
+
 def terminal_verb(subject: str | None, *, body: str | None = None) -> str | None:
     """Return the matched stop verb, or None when the turn is not tip-class."""
+    if is_pickup_append(subject):
+        return None
     subj = str(subject or "").upper().strip()
     if body and subj.startswith(CHECKPOINT_PREFIX):
         try:
@@ -230,6 +258,7 @@ __all__ = [
     "ARC_MECHANICAL",
     "ARC_R_ADMIT_REQUIRED",
     "CHECKPOINT_PREFIX",
+    "PICKUP_APPEND_MARKER",
     "WINDOW_TERMINALS",
     "admitted_arc",
     "after_window_terminal_harvested",
@@ -237,7 +266,9 @@ __all__ = [
     "default_density_triage_lookup",
     "effective_required_arc",
     "is_checkpoint_class",
+    "is_pickup_append",
     "is_tip_class",
+    "is_window_terminal",
     "parse_stop_vocabulary_window_terminals",
     "required_arc",
     "terminal_verb",

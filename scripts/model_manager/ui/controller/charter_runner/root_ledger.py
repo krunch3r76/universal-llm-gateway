@@ -7,7 +7,9 @@ import time
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
+
+ConveyorPhase = Literal["dormant", "active"]
 
 from libs.charter_runner_store.db import (
     default_ledger_path,
@@ -63,6 +65,8 @@ class RootLedgerRow:
     last_transition: str | None = None
     last_error: str | None = None
     env_facts_json: str | None = None
+    conveyor_phase: ConveyorPhase = "dormant"
+    pickup_append_cursor: int = 0
     updated_at: float = 0.0
 
 
@@ -102,8 +106,8 @@ def upsert_root(conn, row: RootLedgerRow) -> None:
           wip_window_id, revise_count, consult_role, consult_attempts,
           consult_next_retry, consult_poll_from, harvest_deadline, attendance,
           scoreboard_uri, last_window_id, last_transition, last_error,
-          env_facts_json, updated_at
-        ) VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          env_facts_json, conveyor_phase, pickup_append_cursor, updated_at
+        ) VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(root_id) DO UPDATE SET
           status=excluded.status, pickup_gid=excluded.pickup_gid,
           pickup_lane=excluded.pickup_lane, pickup_executor=excluded.pickup_executor,
@@ -114,7 +118,10 @@ def upsert_root(conn, row: RootLedgerRow) -> None:
           harvest_deadline=excluded.harvest_deadline, attendance=excluded.attendance,
           scoreboard_uri=excluded.scoreboard_uri, last_window_id=excluded.last_window_id,
           last_transition=excluded.last_transition, last_error=excluded.last_error,
-          env_facts_json=excluded.env_facts_json, updated_at=excluded.updated_at
+          env_facts_json=excluded.env_facts_json,
+          conveyor_phase=excluded.conveyor_phase,
+          pickup_append_cursor=excluded.pickup_append_cursor,
+          updated_at=excluded.updated_at
         """,
         (
             row.root_id,
@@ -135,6 +142,8 @@ def upsert_root(conn, row: RootLedgerRow) -> None:
             row.last_transition,
             row.last_error,
             row.env_facts_json,
+            row.conveyor_phase,
+            row.pickup_append_cursor,
             now,
         ),
     )
@@ -172,6 +181,8 @@ def write_cortex_mirror(row: RootLedgerRow) -> str:
         "scoreboard_uri": row.scoreboard_uri,
         "last_transition": row.last_transition,
         "last_error": row.last_error,
+        "conveyor_phase": row.conveyor_phase,
+        "pickup_append_cursor": row.pickup_append_cursor,
         "updated_at": row.updated_at,
     }
     try:
@@ -214,6 +225,8 @@ def _row_from_sqlite(row) -> RootLedgerRow:
         last_transition=row["last_transition"],
         last_error=row["last_error"],
         env_facts_json=row["env_facts_json"],
+        conveyor_phase=row["conveyor_phase"] or "dormant",
+        pickup_append_cursor=int(row["pickup_append_cursor"] or 0),
         updated_at=float(row["updated_at"] or 0),
     )
 
@@ -223,6 +236,7 @@ def open_default_ledger():
 
 
 __all__ = [
+    "ConveyorPhase",
     "RootLedgerRow",
     "RootStatus",
     "SeedConfirm",

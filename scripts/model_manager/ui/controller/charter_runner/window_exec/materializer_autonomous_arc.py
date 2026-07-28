@@ -16,7 +16,9 @@ Steps template (machine lane annotations — BINDING on mint):
 4. [ ] G4 — implement · [implement]
 5. [ ] G5 — R-after · [consult:judgment_gap]   # or [inline] when folded into G4
 
-G1  Q (L0)           cursor-sdk Grok — ranked question table + Question set.
+G1  Q (L0)           lead CDP Fable — ranked question table + Question set
+                     (team_dispatch model=cdp/fable / project_ask fable-5;
+                     ¬ default Grok on bundled arc; closed-detent carve-out stays Grok).
 G2  A + Gate-2       cursor-sdk Grok — L1/L2 tables + dense spec
                      (doc_validate gates 6/8/9) + implement_ready assertion.
                      END THIS WINDOW with CONSULT_PENDING + consult_role: r_admit

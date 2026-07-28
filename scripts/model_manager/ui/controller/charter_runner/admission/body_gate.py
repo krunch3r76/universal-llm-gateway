@@ -27,7 +27,7 @@ from ..env_predicates import (
     GIW_HOLD_BLOCKS_RESTART_REASON,
     EnvironmentSnapshot,
 )
-from ..window_terminal_contract import CHECKPOINT_PREFIX, is_tip_class
+from ..window_terminal_contract import CHECKPOINT_PREFIX, is_tip_class, is_window_terminal
 from .caps import CapStore
 from .restart_pickup import next_pickup_is_restart_from_holder
 
@@ -111,7 +111,8 @@ def live_wip_for_window(turns: list[dict], window_index: int) -> bool:
     """True when an in-flight admission pointer matches ``window_index`` on the root."""
     from .. import window_log
 
-    checkpoint = _latest_matching(turns, is_tip_class)
+    # Window-terminal tip only — pickup appends must not shadow in-flight WIP.
+    checkpoint = _latest_matching(turns, is_window_terminal)
     if checkpoint is None:
         return False
     cp_n = _turn_number(checkpoint)
@@ -165,16 +166,15 @@ def evaluate_root(
     """Evaluate BODY then ENV admission gates over a root's turns."""
     from .env_half import check_env_or_eligible
 
-    checkpoint = _latest_matching(turns, is_tip_class)
-    if checkpoint is None:
+    # In-flight fence keys off window terminals only (not conveyor pickup appends).
+    terminal = _latest_matching(turns, is_window_terminal)
+    if terminal is None:
+        # No worker/seat terminal yet — fall back to any tip-class (bootstrap).
+        terminal = _latest_matching(turns, is_tip_class)
+    if terminal is None:
         return _body_skip("no_checkpoint", root_id)
 
-    # Soft-spill / sidecar-first stubs: follow Sidecar: before schema gate.
-    from ..checkpoint_schema import materialize_checkpoint_turn
-
-    checkpoint = materialize_checkpoint_turn(checkpoint)
-
-    cp_n = _turn_number(checkpoint)
+    cp_n = _turn_number(terminal)
     admission = _latest_matching(
         turns, _starts_with(ADMISSION_SUBJECT_PREFIX), after=cp_n
     )
@@ -182,9 +182,17 @@ def evaluate_root(
         return _body_skip(
             "window_in_flight",
             root_id,
-            checkpoint=checkpoint,
+            checkpoint=terminal,
             admission_turn=admission,
         )
+
+    # Content tip may be a newer pickup append (Next-pickup merge authority).
+    checkpoint = _latest_matching(turns, is_tip_class) or terminal
+
+    # Soft-spill / sidecar-first stubs: follow Sidecar: before schema gate.
+    from ..checkpoint_schema import materialize_checkpoint_turn
+
+    checkpoint = materialize_checkpoint_turn(checkpoint)
 
     from ..checkpoint_admit_gate import (
         validate_arc_for_admit,

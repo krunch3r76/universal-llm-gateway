@@ -175,7 +175,16 @@ def close_thread(
                 conn, thread_id, "completed", lifecycle_trigger
             )
 
-    return get_thread_with_links(thread_id)
+    detail = get_thread_with_links(thread_id)
+    # Observation: CLI / direct HTTP /close previously emitted nothing when
+    # bus_lifecycle_state was NULL (standing roots). MCP close also records;
+    # dual emit is acceptable for this low-frequency lifecycle edge.
+    if detail is not None:
+        from ..events.thread_closed import emit_thread_closed
+
+        via = None if lifecycle_trigger == "close" else lifecycle_trigger
+        emit_thread_closed(thread_id, via=via)
+    return detail
 
 
 def admit_dispatch(
