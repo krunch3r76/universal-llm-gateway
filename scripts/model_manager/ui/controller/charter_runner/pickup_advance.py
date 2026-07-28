@@ -80,6 +80,21 @@ def gated_pickup_from_parsed(parsed: ParsedCheckpoint | None) -> LivePickup | No
     return None
 
 
+def worker_substrate_compatible(executor: str | None) -> bool:
+    """Whether tip ``executor=`` may ride the worker generate seat.
+
+    None / empty / ``pending`` leave the attended→generate path open (no tip
+    authority). ``cursor/*`` is worker-native. ``cdp/*`` and any other family
+    must refuse ``ADMIT_WORKER`` (a:26659 executor-mismatch class).
+    """
+    if executor is None:
+        return True
+    cleaned = str(executor).strip()
+    if not cleaned or cleaned.lower() == "pending":
+        return True
+    return cleaned.startswith("cursor/")
+
+
 def advance_pickup_gid(
     conn,
     row: RootLedgerRow,
@@ -123,4 +138,5 @@ __all__ = [
     "advance_pickup_gid",
     "gated_pickup_from_parsed",
     "gid_of_row",
+    "worker_substrate_compatible",
 ]

@@ -21,6 +21,7 @@ mcp-debugging-ux_ulg
 mcp-selector-naming_ulg
 mcp-tool-awareness_ulg
 mcp-tool-param-types_ulg
+pager-notify_ulg
 phase-vocabulary_ulg
 plan-slug-coherence_ulg
 presence-discipline_ulg

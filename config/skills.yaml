@@ -310,6 +310,9 @@ skills:
   operator-posture:
     surface_class: shared_sync
     mcp_surface_required: none
+  pager-notify:
+    surface_class: cursor_only
+    mcp_surface_required: none
   orchestrator-core:
     surface_class: cursor_only
     mcp_surface_required: none

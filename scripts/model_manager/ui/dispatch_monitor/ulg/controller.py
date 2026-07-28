@@ -8,7 +8,10 @@ from collections.abc import Callable
 from typing import Any
 
 from scripts.model_manager.ui.dispatch_monitor.core.codec import ProjectionCodec
-from scripts.model_manager.ui.dispatch_monitor.core.dtos import Thresholds
+from scripts.model_manager.ui.dispatch_monitor.core.dtos import (
+    SupervisorProjection,
+    Thresholds,
+)
 from scripts.model_manager.ui.dispatch_monitor.core.model import Model, hints_after_drop
 from scripts.model_manager.ui.dispatch_monitor.core.protocols import EventRecord
 from scripts.model_manager.ui.dispatch_monitor.core.watch import render
@@ -17,8 +20,10 @@ from scripts.model_manager.ui.dispatch_monitor.ulg.connection_watermarks import 
     family_key_for_signal,
 )
 from scripts.model_manager.ui.dispatch_monitor.ulg.projection_hub import BroadcastHub
+from scripts.model_manager.ui.dispatch_monitor.ulg.reconcile_on_click import (
+    ReconcileOnClick,
+)
 from scripts.model_manager.ui.dispatch_monitor.ulg.seeder import seed_model
-from scripts.model_manager.ui.dispatch_monitor.ulg.reconcile_on_click import ReconcileOnClick
 from scripts.model_manager.ui.dispatch_monitor.ulg.subscribe_session import (
     run_live_subscribers,
 )
@@ -195,6 +200,7 @@ class MonitorController:
         self,
         *,
         on_frame: Callable[[str], None] | None = None,
+        on_projection: Callable[[SupervisorProjection], None] | None = None,
         json_frames: bool = False,
         command_endpoint: str | None = None,
     ) -> None:
@@ -210,10 +216,12 @@ class MonitorController:
             if on_frame is not None:
                 on_frame(frame_text)
 
-        def hub_sink(frame) -> None:  # noqa: ANN001
+        def hub_sink(frame: SupervisorProjection) -> None:
+            if on_projection is not None:
+                on_projection(frame)
             if json_frames:
                 emit(ProjectionCodec.encode_snapshot(frame))
-            else:
+            elif on_frame is not None:
                 emit(render(frame))
 
         self.hub.subscribe(hub_sink)

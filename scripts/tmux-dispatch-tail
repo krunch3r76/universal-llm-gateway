@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Tmux launcher for minimalist start/done dispatch tail (LA time + bus summary).
+#
+#   tmux new-window -t '0:' -n dispatch-tail \
+#     /mnt/torus/projects/universal-llm-gateway/scripts/tmux-dispatch-tail
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+PY="${PYTHON:-$HOME/.venvs/universal/bin/python}"
+export AGENT_BUS_DB_PATH="${AGENT_BUS_DB_PATH:-$HOME/.agent-bus/messages.db}"
+ARGS=()
+[[ -n "${MINUTES:-}" ]] && ARGS+=(--minutes "$MINUTES")
+[[ "${SEED_ONLY:-0}" == "1" ]] && ARGS+=(--seed-only)
+exec "$PY" "$ROOT/scripts/watch-dispatch-tail" "$@" "${ARGS[@]}"

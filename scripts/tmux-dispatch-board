@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Tmux-friendly launcher for scripts/watch-dispatch-board (folded state dashboard).
+#
+#   tmux new-window -n dispatch-board /mnt/torus/projects/universal-llm-gateway/scripts/tmux-dispatch-board
+#
+# Env: SEED_MINUTES HOLD_POLL_S
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+PY="${PYTHON:-$HOME/.venvs/universal/bin/python}"
+export PYTHONPATH="${ROOT}${PYTHONPATH:+:$PYTHONPATH}"
+ARGS=()
+[[ -n "${SEED_MINUTES:-}" ]] && ARGS+=(--seed-minutes "$SEED_MINUTES")
+[[ -n "${HOLD_POLL_S:-}" ]] && ARGS+=(--hold-poll-s "$HOLD_POLL_S")
+exec "$PY" "$ROOT/scripts/watch-dispatch-board" "${ARGS[@]}"

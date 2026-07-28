@@ -24,6 +24,7 @@ implement-todo
 multi-model-review
 operator-posture
 orchestrator-workflow
+pager-notify
 path-sim
 reasoning-posture
 satellite-workspace

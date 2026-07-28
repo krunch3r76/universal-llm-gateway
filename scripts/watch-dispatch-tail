@@ -1,0 +1,322 @@
+#!/usr/bin/env python3
+"""Minimalist dispatch tail — start + done only (SDK + CDP), LA time.
+
+Optional agent-bus thread summary when ``thread_id`` is present.
+
+::
+
+  ./scripts/tmux-dispatch-tail
+  ./scripts/watch-dispatch-tail --seed-only --minutes 60
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import os
+import sys
+import time
+from datetime import datetime
+from functools import lru_cache
+from typing import Any
+from zoneinfo import ZoneInfo
+
+from event_store.client import subscribe_events
+
+_DEFAULT_SOCK = "/tmp/universal-protocol/events-query.sock"
+_TZ = ZoneInfo("America/Los_Angeles")
+_BUS_DB = os.environ.get(
+    "AGENT_BUS_DB_PATH",
+    os.path.expanduser("~/.agent-bus/messages.db"),
+)
+
+# Start / terminal only. generate.requested is cached for model, not printed.
+_SHOW = frozenset(
+    {
+        "frontier.sdk.worker.dispatched",
+        "frontier.sdk.worker.completed",
+        "frontier.sdk.worker.failed",
+        "frontier.sdk.worker.timeout",
+        "frontier.sdk.worker.orphaned",
+        "frontier.sdk.worker.delivery_failed",
+        "cdp.generate.admitted",
+        "cdp.generate.proof",
+        "cdp.generate.stalled",
+        "cdp.generate.delivery_failed",
+    }
+)
+_CACHE_SIGNALS = frozenset({"frontier.sdk.generate.requested", "cdp.generate.submitted"})
+_SEED_SIGNALS = tuple(sorted(_SHOW | _CACHE_SIGNALS))
+
+_LIVE_FILTERS: tuple[dict[str, str], ...] = (
+    {"signal": "frontier.sdk.*"},
+    {"signal": "cdp.generate.*"},
+)
+
+# request_id / execution_id → model (filled from generate.requested / submitted)
+_model_by_key: dict[str, str] = {}
+
+
+def _sock() -> str:
+    return os.environ.get("EVENTS_QUERY_SOCK", _DEFAULT_SOCK)
+
+
+def _fmt_ts(ts_ms: int | float | None) -> str:
+    when = (
+        datetime.now(_TZ)
+        if not ts_ms
+        else datetime.fromtimestamp(float(ts_ms) / 1000.0, tz=_TZ)
+    )
+    return when.strftime("%H:%M:%S %Z")
+
+
+def _payload(raw: Any) -> dict[str, Any]:
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str) and raw:
+        try:
+            parsed = json.loads(raw)
+            return parsed if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError:
+            return {}
+    return {}
+
+
+def _model_label(raw: str) -> str:
+    if raw.startswith("cursor/"):
+        return raw[len("cursor/") :]
+    if raw.startswith("cdp/"):
+        return raw
+    return raw
+
+
+def _remember_model(payload: dict[str, Any]) -> None:
+    model = payload.get("resolved_model") or payload.get("model")
+    if not model:
+        return
+    label = _model_label(str(model))
+    for key_name in ("request_id", "execution_id", "dispatch_id"):
+        key = payload.get(key_name)
+        if key:
+            _model_by_key[str(key)] = label
+
+
+def _lookup_model(payload: dict[str, Any]) -> str:
+    direct = payload.get("resolved_model") or payload.get("model")
+    if direct:
+        return _model_label(str(direct))
+    for key_name in ("request_id", "execution_id", "dispatch_id"):
+        key = payload.get(key_name)
+        if key and str(key) in _model_by_key:
+            return _model_by_key[str(key)]
+    return "-"
+
+
+@lru_cache(maxsize=256)
+def _bus_blurb(thread_id: str) -> str:
+    """Thread summary (or latest turn subject) from agent-bus SQLite — best-effort."""
+    if not thread_id or thread_id == "-":
+        return ""
+    import sqlite3
+
+    try:
+        conn = sqlite3.connect(f"file:{_BUS_DB}?mode=ro", uri=True, timeout=2.0)
+    except sqlite3.Error:
+        return ""
+    try:
+        row = conn.execute(
+            "SELECT summary, slug FROM threads WHERE id = ?",
+            (thread_id,),
+        ).fetchone()
+        if not row:
+            return ""
+        summary, slug = (row[0] or "").strip(), (row[1] or "").strip()
+        if summary.upper().startswith("DONE"):
+            summary = summary.split("—", 1)[-1].strip() or summary
+        if summary:
+            return summary
+        first = conn.execute(
+            "SELECT subject FROM turns WHERE thread = ? "
+            "ORDER BY turn_number ASC LIMIT 1",
+            (thread_id,),
+        ).fetchone()
+        if first and first[0]:
+            return str(first[0]).strip()
+        return slug
+    except sqlite3.Error:
+        return ""
+    finally:
+        conn.close()
+
+
+def _clip(text: str, width: int = 72) -> str:
+    text = " ".join(text.split())
+    if len(text) <= width:
+        return text
+    return text[: width - 1] + "…"
+
+
+def _phase(signal: str) -> tuple[str, str] | None:
+    """Return (lane, start|done) or None if not displayed."""
+    if signal == "frontier.sdk.worker.dispatched":
+        return "SDK", "start"
+    if signal.startswith("frontier.sdk.worker.") and signal in _SHOW:
+        return "SDK", "done"
+    if signal == "cdp.generate.admitted":
+        return "CDP", "start"
+    if signal.startswith("cdp.generate.") and signal in _SHOW:
+        return "CDP", "done"
+    return None
+
+
+def summarize(event: dict[str, Any]) -> str | None:
+    signal = str(event.get("signal") or "")
+    payload = _payload(event.get("payload"))
+
+    if signal in _CACHE_SIGNALS:
+        _remember_model(payload)
+        return None
+
+    phase = _phase(signal)
+    if phase is None:
+        return None
+    lane, verb = phase
+
+    model = _lookup_model(payload)
+    thread = str(payload.get("thread_id") or "-")
+    ts = event.get("ts_unix_ms") or event.get("ts")
+    bits = [
+        _fmt_ts(ts if isinstance(ts, (int, float)) else None),
+        f"{lane} {verb}",
+        model,
+    ]
+    if thread != "-":
+        bits.append(f"bus:{thread}")
+
+    if verb == "done":
+        outcome = payload.get("outcome")
+        if signal.endswith("failed") or signal.endswith("timeout") or signal.endswith(
+            "orphaned"
+        ) or signal.endswith("stalled") or signal.endswith("delivery_failed"):
+            outcome = outcome or signal.rsplit(".", 1)[-1]
+        if signal == "cdp.generate.proof":
+            outcome = outcome or "proof"
+        if outcome:
+            bits.append(str(outcome))
+        duration = payload.get("duration_s")
+        if isinstance(duration, (int, float)):
+            bits.append(f"{int(duration)}s")
+
+    blurb = _bus_blurb(thread) if thread != "-" else ""
+    if blurb:
+        bits.append(_clip(blurb))
+
+    return "  ".join(bits)
+
+
+def _seed_rows(*, minutes: int, limit: int) -> list[dict[str, Any]]:
+    import httpx
+
+    placeholders = ",".join("?" for _ in _SEED_SIGNALS)
+    sql = (
+        "SELECT seq, signal, ts_unix_ms, payload FROM events "
+        f"WHERE signal IN ({placeholders}) "
+        "AND ts_unix_ms >= ? "
+        "ORDER BY ts_unix_ms ASC LIMIT ?"
+    )
+    since_ms = int((time.time() - minutes * 60) * 1000)
+    params = list(_SEED_SIGNALS) + [str(since_ms), str(limit)]
+    body = {"type": "sql", "sql": sql, "params": params, "limit": limit}
+    transport = httpx.HTTPTransport(uds=_sock())
+    with httpx.Client(transport=transport, timeout=30.0) as client:
+        resp = client.post("http://localhost/v1/query", json=body)
+        resp.raise_for_status()
+        data = resp.json()
+    rows = data.get("rows")
+    return list(rows) if isinstance(rows, list) else []
+
+
+def _emit(line: str | None) -> None:
+    if line:
+        print(line, flush=True)
+
+
+async def _consume_filter(
+    filt: dict[str, str],
+    *,
+    seen: set[int],
+    lock: asyncio.Lock,
+) -> None:
+    sock = _sock()
+    while True:
+        try:
+            async for raw in subscribe_events(sock, filter=filt):
+                if not isinstance(raw, dict):
+                    continue
+                if raw.get("type") in {
+                    "subscribed",
+                    "events.dropped.subscribe",
+                    "replay.truncated",
+                }:
+                    continue
+                if not raw.get("signal"):
+                    continue
+                seq = raw.get("seq")
+                async with lock:
+                    if isinstance(seq, int):
+                        if seq in seen:
+                            continue
+                        seen.add(seq)
+                        if len(seen) > 50_000:
+                            seen.clear()
+                    _emit(summarize(raw))
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            print(f"# reconnect: {exc}", flush=True)
+            await asyncio.sleep(2.0)
+
+
+async def _run_live() -> None:
+    seen: set[int] = set()
+    lock = asyncio.Lock()
+    print(f"# live start/done  sock={_sock()}  bus={_BUS_DB}", flush=True)
+    await asyncio.gather(
+        *[_consume_filter(f, seen=seen, lock=lock) for f in _LIVE_FILTERS]
+    )
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--minutes", type=int, default=60)
+    parser.add_argument("--limit", type=int, default=400)
+    parser.add_argument("--seed-only", action="store_true")
+    args = parser.parse_args(argv)
+
+    print(f"# seed last {args.minutes}m (start/done only)…", flush=True)
+    try:
+        rows = _seed_rows(minutes=args.minutes, limit=args.limit)
+    except Exception as exc:  # noqa: BLE001
+        print(f"# seed failed: {exc}", file=sys.stderr)
+        return 1
+
+    shown = 0
+    for row in rows:
+        line = summarize(row)
+        if line:
+            shown += 1
+            _emit(line)
+    print(f"# seeded {shown} lines ({len(rows)} raw)", flush=True)
+
+    if args.seed_only:
+        return 0
+    try:
+        asyncio.run(_run_live())
+    except KeyboardInterrupt:
+        print("# stopped", flush=True)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

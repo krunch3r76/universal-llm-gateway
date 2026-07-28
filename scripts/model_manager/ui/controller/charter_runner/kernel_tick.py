@@ -16,7 +16,11 @@ from .consult_lane import (
     enqueue_consult,
 )
 from .env_snapshot import EnvSnapshot
-from .pickup_advance import advance_pickup_gid, gated_pickup_from_parsed
+from .pickup_advance import (
+    advance_pickup_gid,
+    gated_pickup_from_parsed,
+    worker_substrate_compatible,
+)
 from .root_ledger import (
     RootLedgerRow,
     RootStatus,
@@ -187,6 +191,21 @@ async def apply_kernel_tick_for_root(
                 on_admit=on_admit,
             )
         if transition == Transition.ADMIT_WORKER:
+            # Tip next_pickup.executor is admit-substrate authority (a:26659).
+            # Ledger pickup_executor / attendance→generate must not override a
+            # non-worker family (e.g. cdp/opus) into admit_worker_window.
+            live = gated_pickup_from_parsed(parsed)
+            tip_executor = live.executor if live is not None else None
+            if not worker_substrate_compatible(tip_executor):
+                logger.info(
+                    "charter-runner executor_mismatch root=%s tip_executor=%s",
+                    root_id,
+                    tip_executor,
+                )
+                return KernelTickOutcome(
+                    "kernel_executor_mismatch",
+                    skipped_reason="executor_mismatch",
+                )
             return await _admit_worker(
                 conn,
                 root_id,

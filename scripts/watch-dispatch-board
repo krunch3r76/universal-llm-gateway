@@ -1,0 +1,158 @@
+#!/usr/bin/env python3
+"""Full-screen curses dispatch board — folded state dashboard for tmux.
+
+Consumes ``SupervisorProjection`` frames from :class:`MonitorController` (same
+path as ``python -m scripts.model_manager.ui.dispatch_monitor --watch live``).
+Sibling scroll tail: ``scripts/watch-dispatch-tail``.
+
+Usage::
+
+  ./scripts/watch-dispatch-board
+  tmux new-window -n dispatch-board ./scripts/tmux-dispatch-board
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import curses
+import os
+import sys
+import threading
+from typing import Any
+
+_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+
+from scripts.model_manager.ui.dispatch_monitor.core.curses_board import (  # noqa: E402
+    CursesBoard,
+)
+from scripts.model_manager.ui.dispatch_monitor.core.dtos import (  # noqa: E402
+    SupervisorProjection,
+)
+from scripts.model_manager.ui.dispatch_monitor.ulg.controller import (  # noqa: E402
+    MonitorController,
+)
+from scripts.model_manager.ui.dispatch_monitor.ulg.manage_charter_hold import (  # noqa: E402
+    charter_hold_status,
+)
+
+
+class _SharedState:
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.frame: SupervisorProjection | None = None
+        self.hold: bool | None = None
+        self.status = "starting…"
+        self.stop = threading.Event()
+
+
+def _poll_hold(state: _SharedState, *, interval_s: float) -> None:
+    while not state.stop.is_set():
+        try:
+            result = charter_hold_status(timeout=5.0)
+            held = result.get("held")
+            if isinstance(held, bool):
+                with state.lock:
+                    state.hold = held
+            elif "error" in result:
+                with state.lock:
+                    state.hold = None
+        except Exception:  # noqa: BLE001 — keep board alive
+            with state.lock:
+                state.hold = None
+        state.stop.wait(interval_s)
+
+
+def _run_controller(state: _SharedState, *, seed_minutes: int) -> None:
+    controller = MonitorController(seed_minutes=seed_minutes)
+
+    def on_projection(frame: SupervisorProjection) -> None:
+        with state.lock:
+            state.frame = frame
+            if state.status in {"starting…", "seeding…"}:
+                state.status = "live"
+
+    async def _main() -> None:
+        with state.lock:
+            state.status = "seeding…"
+        try:
+            await controller.run(on_projection=on_projection)
+        except Exception as exc:  # noqa: BLE001
+            with state.lock:
+                state.status = f"controller error: {exc}"
+
+    try:
+        asyncio.run(_main())
+    except KeyboardInterrupt:
+        pass
+    finally:
+        state.stop.set()
+
+
+def _curses_main(stdscr: Any, state: _SharedState) -> None:
+    board = CursesBoard(stdscr)
+    while not state.stop.is_set():
+        with state.lock:
+            frame = state.frame
+            hold = state.hold
+            status = state.status
+        board.set_hold(hold)
+        board.set_status(status)
+        board.paint(frame)
+        try:
+            key = stdscr.getch()
+            if key in (ord("q"), ord("Q"), 27):
+                state.stop.set()
+                break
+        except curses.error:
+            pass
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--seed-minutes",
+        type=int,
+        default=60,
+        help="cold-start history window (default 60)",
+    )
+    parser.add_argument(
+        "--hold-poll-s",
+        type=float,
+        default=5.0,
+        help="charter hold status poll interval (default 5)",
+    )
+    args = parser.parse_args(argv)
+
+    state = _SharedState()
+    hold_thread = threading.Thread(
+        target=_poll_hold,
+        args=(state,),
+        kwargs={"interval_s": args.hold_poll_s},
+        daemon=True,
+    )
+    ctrl_thread = threading.Thread(
+        target=_run_controller,
+        args=(state,),
+        kwargs={"seed_minutes": args.seed_minutes},
+        daemon=True,
+    )
+    hold_thread.start()
+    ctrl_thread.start()
+
+    try:
+        curses.wrapper(lambda stdscr: _curses_main(stdscr, state))
+    except KeyboardInterrupt:
+        state.stop.set()
+        return 0
+    finally:
+        state.stop.set()
+        ctrl_thread.join(timeout=2.0)
+        hold_thread.join(timeout=1.0)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,22 @@
+---
+description: Load pager-notify when waking/pinging the operator via SMS — email-bridge Fi /pager/notify; no personal endpoints in prose.
+alwaysApply: true
+rule_category: workflow
+apply_tier: catalog
+trigger_match_terms:
+  - ping me
+  - wake me
+  - page me
+  - pager
+  - Fi SMS
+  - /pager/notify
+  - email-bridge
+  - operator notify
+---
+# Operator Pager — Stub
+
+**Invariant:** `operator asked to be woken ∨ long away-from-chat wait complete ⇒ Use the pager-notify skill` · `¬ put personal phone/email in skills/rules/packets`.
+
+Mechanics (UDS curl, payload caps, watch-script pattern, anti-patterns): Use the `pager-notify` skill — not this stub.
+
+email-bridge is ULG fleet infra (`/tmp/universal-protocol/email-bridge.sock`). Mailbox IMAP/`dispatch(tool="email")` stays on `email-tool-dispatch` — do not conflate.
