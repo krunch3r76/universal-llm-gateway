@@ -28,6 +28,9 @@ from services.git_integration_worker.cursor_sdk_revert import (
     RevertReport,
     revert_dispatch_writes,
 )
+from services.git_integration_worker.cursor_sdk_cancel_events import (
+    emit_sdk_worker_cancelled,
+)
 from services.git_integration_worker.cursor_sdk_supersede import (
     escalate_supersede_abort,
     is_dispatch_live,
@@ -76,6 +79,15 @@ async def supersede_same_thread_inflight(
             dispatch_id=live.dispatch_id,
             superseded_by=new_job.job_id,
             reason=reason,
+        )
+    else:
+        # Claimed Auto job with no live SDK bridge — cancel before start.
+        emit_sdk_worker_cancelled(
+            dispatch_id=old_job.job_id,
+            method="queued_only",
+            reason=reason,
+            thread_id=new_job.thread_id,
+            superseded_by=new_job.job_id,
         )
     queue.mark_superseded(old_job.job_id, superseded_by=new_job.job_id)
     new_job.supersedes = old_job.job_id

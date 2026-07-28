@@ -239,16 +239,13 @@ class ModelManagerApp(App):
             )
 
     async def reload_charter_tick(self) -> dict:
-        """Reload charter-runner modules in-process and restart the tick loop.
+        """Restart the charter tick loop in place. Wired to ``charter_reload``.
 
-        Prefer this over quitting ``./manage`` when only charter-runner code
-        changed. Wired to manage.sock method ``charter_reload``.
-
-        Always ``importlib.reload`` the reload driver first so ``_MODULE_NAMES``
-        picks up disk edits (otherwise a long-lived manage process keeps a stale
-        census and skips new modules like ``self_heal``).
+        Phase 3 retired ``importlib.reload``, so this does **not** re-import
+        charter-runner modules — it returns ``count=0`` and the process keeps the
+        code it booted with. Charter-runner code edits require a manage
+        quit/start; this method only bounces the loop.
         """
-        # Phase 3: importlib.reload retired — restart the loop class in-place.
         from scripts.model_manager.ui.controller.charter_runner import (
             CharterRunnerTickLoop,
         )

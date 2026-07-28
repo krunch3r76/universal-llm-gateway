@@ -222,6 +222,18 @@ def _sdk_items(
                     since_ms=row.terminal_ms,
                 )
             )
+        if row.state == "cancelled":
+            items.append(
+                AttentionItem(
+                    key=f"sdk.dispatch.cancelled:{row.dispatch_id}",
+                    kind="sdk.dispatch.cancelled",
+                    severity="warn",
+                    subject=row.dispatch_id,
+                    title="Dispatch cancelled",
+                    detail=row.failure_reason or "supersede/interrupt cancelled worker",
+                    since_ms=row.terminal_ms,
+                )
+            )
         if row.delivery_failed:
             items.append(
                 AttentionItem(

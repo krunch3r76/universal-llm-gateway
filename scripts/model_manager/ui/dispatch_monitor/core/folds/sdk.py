@@ -73,6 +73,8 @@ class SdkState:
         "delivery_failed",
         "closeout_uri",
         "pre_park_state",
+        "last_tool_name",
+        "last_tool_status",
     )
 
     def __init__(self, dispatch_id: str) -> None:
@@ -101,6 +103,8 @@ class SdkState:
         self.delivery_failed = False
         self.closeout_uri: str | None = None
         self.pre_park_state: str | None = None
+        self.last_tool_name: str | None = None
+        self.last_tool_status: str | None = None
 
 
 def _as_int(value: Any) -> int | None:
@@ -114,8 +118,15 @@ def _as_int(value: Any) -> int | None:
 
 
 def _dispatch_id(payload: Mapping[str, Any], record: EventRecord) -> str | None:
-    """Resolve the dispatch key, preferring ``execution_id`` as both lanes carry it."""
-    for key in ("execution_id", "dispatch_id", "worker_id"):
+    """Resolve the dispatch row key.
+
+    Prefer ``dispatch_id`` over ``execution_id``. GIW ``worker.completed`` carries
+    both with *different* values (cursor-sdk id vs run UUID); preferring
+    ``execution_id`` split the fold into a live progress row and a sibling
+    terminal row — zombies that looked "live" forever while terminals counted
+    as a separate "done" population.
+    """
+    for key in ("dispatch_id", "execution_id", "worker_id"):
         value = payload.get(key)
         if value:
             return str(value)
@@ -150,6 +161,8 @@ class SdkFold:
     def __init__(self, index: CorrelationIndex) -> None:
         self._index = index
         self.dispatches: dict[str, SdkState] = {}
+        #: Model stamps from ``generate.requested`` before a dispatch row exists.
+        self._pending_models: dict[str, str] = {}
 
     def handlers(self) -> dict[str, Any]:
         """Return this fold's signal-to-handler table."""
@@ -160,11 +173,14 @@ class SdkFold:
         ):
             table[signal] = self._on_started
         table[signals.SDK_WORKER_PROGRESS] = self._on_progress
+        table[signals.SDK_WORKER_TOOLCALL] = self._on_toolcall
         for signal in sorted(signals.SDK_TERMINAL_SIGNALS):
             table[signal] = self._on_terminal
         table[signals.SDK_WORKER_QUEUED] = self._on_queued
+        table[signals.SDK_GENERATE_REQUESTED] = self._on_generate_requested
         table[signals.SDK_WORKER_TIMEOUT] = self._on_timeout
         table[signals.SDK_WORKER_ORPHANED] = self._on_orphaned
+        table[signals.SDK_WORKER_CANCELLED] = self._on_cancelled
         table[signals.SDK_WORKER_DELIVERY_FAILED] = self._on_delivery_failed
         table[signals.SDK_LEASE_PROMOTED] = self._on_lease_promoted
         table[signals.SDK_LEASE_RELEASED] = self._on_lease_released
@@ -181,6 +197,7 @@ class SdkFold:
             self.dispatches[dispatch_id] = row
         self._absorb_identity(row, record)
         self._apply_provenance(row, record)
+        self._apply_pending_model(row)
         return row
 
     def _state(self, record: EventRecord) -> SdkState | None:
@@ -199,7 +216,33 @@ class SdkFold:
             row.emitters_seen.append(emitter)
         self._absorb_identity(row, record)
         self._apply_provenance(row, record)
+        self._apply_pending_model(row)
         return row
+
+    def _apply_pending_model(self, row: SdkState) -> None:
+        """Apply a stashed generate.requested model once the dispatch row exists."""
+        if row.model is not None or not self._pending_models:
+            return
+        for key, model in self._pending_models.items():
+            if row.dispatch_id == key or row.dispatch_id.startswith(f"{key}-"):
+                row.model = model
+                return
+
+    def _on_generate_requested(self, record: EventRecord) -> None:
+        """Stamp model early — often the only model source while queued."""
+        payload = record.payload
+        model = payload.get("resolved_model") or payload.get("model")
+        if not model:
+            return
+        model_s = str(model)
+        request_id = payload.get("request_id")
+        execution_id = payload.get("execution_id")
+        if request_id:
+            self._pending_models[str(request_id)] = model_s
+        if execution_id:
+            self._pending_models[str(execution_id)] = model_s
+        for row in self.dispatches.values():
+            self._apply_pending_model(row)
 
     def _apply_provenance(self, row: SdkState, record: EventRecord) -> None:
         """Track row provenance; live signals upgrade, reconciled never clobbers."""
@@ -222,7 +265,9 @@ class SdkFold:
             ("seat", "seat"),
             ("role", "role"),
             ("model", "model"),
+            ("resolved_model", "model"),
             ("contract", "contract"),
+            ("handoff_contract", "contract"),
             ("thread_id", "thread_id"),
             ("dispatch_thread_id", "thread_id"),
             ("worker_thread", "thread_id"),
@@ -272,6 +317,22 @@ class SdkFold:
         stage = record.payload.get("stall_stage") or record.payload.get("phase")
         if stage and row.terminal_ms is None:
             row.stall_stage = str(stage)
+
+    def _on_toolcall(self, record: EventRecord) -> None:
+        """Ephemeral last-tool overlay — overwrite only; advances idle clock."""
+        row = self._state(record)
+        if row is None or row.terminal_ms is not None:
+            return
+        payload = record.payload
+        name = payload.get("tool_name")
+        status = payload.get("status")
+        if name:
+            row.last_tool_name = str(name)
+        if status:
+            row.last_tool_status = str(status)
+        self._advance_progress(row, record.ts_unix_ms)
+        if row.state in ("unknown", "queued"):
+            row.state = "running"
 
     def _on_terminal(self, record: EventRecord) -> None:
         """Fold a terminal from either lane; reconcile rather than overwrite."""
@@ -337,6 +398,11 @@ class SdkFold:
             row.queue_position = _as_int(payload.get("queue_position"))
         if payload.get("source_repo"):
             row.source_repo = str(payload["source_repo"])
+        if row.model is None:
+            for key in ("resolved_model", "model", "model_id"):
+                if payload.get(key):
+                    row.model = str(payload[key])
+                    break
         self._advance_progress(row, record.ts_unix_ms)
 
     def _on_timeout(self, record: EventRecord) -> None:
@@ -349,6 +415,17 @@ class SdkFold:
         reason = payload.get("terminal_status") or payload.get("bridge_aborted")
         self._bind_lifecycle_terminal(
             record, state="orphaned", failure_reason=str(reason) if reason else None
+        )
+
+    def _on_cancelled(self, record: EventRecord) -> None:
+        """Terminal: supersede / interrupt cancelled the worker."""
+        payload = record.payload
+        method = payload.get("method")
+        reason = payload.get("reason") or payload.get("error")
+        detail_parts = [p for p in (method, reason) if p]
+        detail = ": ".join(str(p) for p in detail_parts) if detail_parts else None
+        self._bind_lifecycle_terminal(
+            record, state="cancelled", failure_reason=detail
         )
 
     def _on_delivery_failed(self, record: EventRecord) -> None:

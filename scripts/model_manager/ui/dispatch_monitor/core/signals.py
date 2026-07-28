@@ -46,18 +46,24 @@ CHARTER_STARTED = "manage.charter.tick.started"
 CHARTER_STOPPED = "manage.charter.tick.stopped"
 CHARTER_RELOADED = "manage.charter.tick.reloaded"
 CHARTER_WINDOW_FAILED = "manage.charter.tick.window_failed"
+CHARTER_PAUSED = "manage.charter.tick.paused"
+CHARTER_HELD = "manage.charter.tick.held"
+CHARTER_RESUMED = "manage.charter.tick.resumed"
 
 #: Signals accepted only as cold-start seed material, never as live transitions.
 CHARTER_COLD_START = (CHARTER_AUDIT,)
 
 # --- sdk family: worker lane (GS2 emitter A) -------------------------------
 SDK_WORKER_PROGRESS = "frontier.sdk.worker.progress"
+SDK_WORKER_TOOLCALL = "frontier.sdk.worker.toolcall"
 SDK_WORKER_COMPLETED = "frontier.sdk.worker.completed"
 SDK_WORKER_FAILED = "frontier.sdk.worker.failed"
 SDK_WORKER_QUEUED = "frontier.sdk.worker.queued"
 SDK_WORKER_TIMEOUT = "frontier.sdk.worker.timeout"
 SDK_WORKER_ORPHANED = "frontier.sdk.worker.orphaned"
+SDK_WORKER_CANCELLED = "frontier.sdk.worker.cancelled"
 SDK_WORKER_DELIVERY_FAILED = "frontier.sdk.worker.delivery_failed"
+SDK_GENERATE_REQUESTED = "frontier.sdk.generate.requested"
 SDK_LEASE_PROMOTED = "frontier.sdk.worker.lease.promoted"
 SDK_LEASE_RELEASED = "frontier.sdk.worker.lease.released"
 SDK_LEASE_PARK_ENTER = "frontier.sdk.worker.lease.park_enter"
@@ -76,6 +82,7 @@ EMITTER_PIPELINE = "pipeline"
 
 SDK_EMITTER_BY_SIGNAL = {
     SDK_WORKER_PROGRESS: EMITTER_WORKER,
+    SDK_WORKER_TOOLCALL: EMITTER_WORKER,
     SDK_WORKER_COMPLETED: EMITTER_WORKER,
     SDK_WORKER_FAILED: EMITTER_WORKER,
     SDK_PIPELINE_STARTED: EMITTER_PIPELINE,
@@ -93,14 +100,22 @@ SDK_TERMINAL_SIGNALS = frozenset(
 )
 
 SDK_FAILURE_SIGNALS = frozenset(
-    {SDK_WORKER_FAILED, SDK_PIPELINE_FAILED, SDK_WORKER_TIMEOUT, SDK_WORKER_ORPHANED}
+    {
+        SDK_WORKER_FAILED,
+        SDK_PIPELINE_FAILED,
+        SDK_WORKER_TIMEOUT,
+        SDK_WORKER_ORPHANED,
+        SDK_WORKER_CANCELLED,
+    }
 )
 
 SDK_LIFECYCLE_SIGNALS = (
     SDK_WORKER_QUEUED,
     SDK_WORKER_TIMEOUT,
     SDK_WORKER_ORPHANED,
+    SDK_WORKER_CANCELLED,
     SDK_WORKER_DELIVERY_FAILED,
+    SDK_GENERATE_REQUESTED,
     SDK_LEASE_PROMOTED,
     SDK_LEASE_RELEASED,
     SDK_LEASE_PARK_ENTER,
@@ -161,6 +176,9 @@ CHARTER_FAMILY = (
     CHARTER_STOPPED,
     CHARTER_RELOADED,
     CHARTER_WINDOW_FAILED,
+    CHARTER_PAUSED,
+    CHARTER_HELD,
+    CHARTER_RESUMED,
 )
 
 SDK_FAMILY = tuple(SDK_EMITTER_BY_SIGNAL) + SDK_LIFECYCLE_SIGNALS

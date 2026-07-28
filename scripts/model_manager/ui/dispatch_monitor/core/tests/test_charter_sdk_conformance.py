@@ -128,6 +128,7 @@ def test_handler_registry_covers_slice2_signals() -> None:
         signals.SDK_WORKER_QUEUED,
         signals.SDK_WORKER_TIMEOUT,
         signals.SDK_WORKER_ORPHANED,
+        signals.SDK_WORKER_CANCELLED,
         signals.SDK_WORKER_DELIVERY_FAILED,
         signals.SDK_LEASE_PROMOTED,
         signals.SDK_LEASE_RELEASED,

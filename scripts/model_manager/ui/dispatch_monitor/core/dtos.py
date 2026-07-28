@@ -79,6 +79,8 @@ class HealthProjection:
     charter_loop_state: str = "unknown"
     charter_last_reload_ms: int | None = None
     charter_reload_module_count: int = 0
+    charter_hold: bool | None = None
+    charter_hold_reason: str | None = None
     degraded: tuple[str, ...] = ()
 
 
@@ -147,6 +149,8 @@ class SdkDispatchRow:
     queue_position: int | None = None
     closeout_uri: str | None = None
     delivery_failed: bool = False
+    last_tool_name: str | None = None
+    last_tool_status: str | None = None
 
 
 @dataclass(frozen=True)

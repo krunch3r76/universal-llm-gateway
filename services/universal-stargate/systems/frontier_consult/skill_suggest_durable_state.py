@@ -17,6 +17,7 @@ TerminalSignal = Literal[
     "frontier.sdk.worker.failed",
     "frontier.sdk.worker.delivery_failed",
     "frontier.sdk.worker.timeout",
+    "frontier.sdk.worker.cancelled",
 ]
 
 TERMINAL_SIGNALS: tuple[TerminalSignal, ...] = (
@@ -24,6 +25,7 @@ TERMINAL_SIGNALS: tuple[TerminalSignal, ...] = (
     "frontier.sdk.worker.failed",
     "frontier.sdk.worker.delivery_failed",
     "frontier.sdk.worker.timeout",
+    "frontier.sdk.worker.cancelled",
 )
 
 _EVENTS_QUERY_URL = f"unix://{EVENTS_QUERY_SOCK}"

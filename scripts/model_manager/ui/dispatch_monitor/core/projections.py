@@ -19,7 +19,7 @@ from .folds import CdpFold, CharterFold, SdkFold
 ROOT_CLOSED_STATES = ("closed",)
 
 #: Dispatch states meaning the worker leg is over, one way or another.
-SDK_TERMINAL_STATES = ("completed", "failed", "timeout", "orphaned")
+SDK_TERMINAL_STATES = ("completed", "failed", "timeout", "orphaned", "cancelled")
 
 
 def age(now_ms: int, since_ms: int | None) -> int | None:
@@ -73,6 +73,8 @@ def sdk_rows(
                 queue_position=state.queue_position,
                 closeout_uri=state.closeout_uri,
                 delivery_failed=state.delivery_failed,
+                last_tool_name=state.last_tool_name,
+                last_tool_status=state.last_tool_status,
             )
         )
     rows.sort(key=lambda r: r.dispatch_id)

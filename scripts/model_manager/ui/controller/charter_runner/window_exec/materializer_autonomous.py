@@ -117,9 +117,10 @@ never mask a crash as a probe revise.
 admits the next gated step. Do NOT run an immortal loop inside one window.
 [checkpoint-contract] worker closeout ``status=complete`` without a root
 CHECKPOINT after the WIP admission pointer is a contract breach
-(``checkpoint_missing``). The autonomous runner self-heals by posting a
-machine CHECKPOINT that re-queues Next-pickup — but you MUST still post the
-R12 CHECKPOINT yourself before closeout; do not rely on self-heal.
+(``checkpoint_missing``). Nothing repairs it — the runner never authors a
+CHECKPOINT for you (Phase 3 retired self-heal), so the window is lost and this
+root's pickup stalls until a human reseeds the tip. You MUST post the R12
+CHECKPOINT yourself before closeout.
 [consult-boundary] when judgment/ambitious work needs external consult, post
 CONSULT_PENDING with consult_role: judgment_gap (pin Question/OOS + corpus manifest)
 or consult_role: r_admit at G3 (pin R prompt URI) and STOP — never nested
@@ -206,7 +207,7 @@ above as that step requires. Stay inside the gated Next-pickup.
    ``session_id``, and ``actionable``; cite ``[filed assertion:<id>]`` per row or
    ``_None this window._`` when truly none — prose-only bullets fail harvest audit.
    ``status=complete`` without this CHECKPOINT is
-   ``checkpoint_missing`` (autonomous self-heal will re-queue — do not rely on it).
+   ``checkpoint_missing`` — unrecoverable; nothing re-queues the window.
 6. Scoreboard gated lane updated if a G-row status changed.
 7. Stop after the CHECKPOINT — no second window.
 

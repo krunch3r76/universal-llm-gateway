@@ -1,66 +1,45 @@
-"""Curses View — full-screen dispatch board from ``SupervisorProjection`` frames.
+"""Curses View — posture dashboard from ``SupervisorProjection`` (Rival A bind).
 
-Pure rendering: reads projection DTOs only, derives nothing. Formatting helpers
-mirror :mod:`.watch` so the board shows the same vocabulary as ``--watch live``.
+Governing invariant: a row is painted iff it is an open obligation.
+``terminal_ms is not None`` ⇒ never a row in SDK/CDP. Terminals survive as
+ribbon counters, ATTENTION judgments, or ``watch-dispatch-tail`` history.
+
+Bind: ``cortex://notes/system/threads/dispatch-board-redesign-opus/bind.md``.
 """
 
 from __future__ import annotations
 
 import curses
-from datetime import datetime
 from typing import Any
-from zoneinfo import ZoneInfo
 
-from .dtos import AttentionItem, SupervisorProjection
-from .watch import SEVERITY_MARK, _cdp_line, _ms, _root_line, _sdk_line, _truncate
-
-_TZ = ZoneInfo("America/Los_Angeles")
-
-
-def _la_clock() -> str:
-    return datetime.now(_TZ).strftime("%H:%M:%S %Z")
-
-
-def _hold_label(held: bool | None) -> str:
-    if held is True:
-        return "yes"
-    if held is False:
-        return "no"
-    return "?"
-
-
-def _section_bar(title: str, count: int, width: int) -> str:
-    label = f" {title} ({count}) "
-    pad = max(0, width - len(label) - 2)
-    return f"─{label}{'─' * pad}"
-
-
-def _attention_line(item: AttentionItem, width: int) -> str:
-    mark = SEVERITY_MARK.get(item.severity, "  ")
-    body = f"{mark} [{item.kind}] {item.subject}: {item.title}"
-    if item.detail and len(body) < width - 8:
-        body = f"{body} — {item.detail[: width - len(body) - 3]}"
-    return _truncate(body, width)
-
-
-def _sdk_active_first(rows: tuple) -> list:
-    """In-flight rows first so a full history seed does not crowd the pane."""
-    active = [row for row in rows if row.terminal_ms is None]
-    done = [row for row in rows if row.terminal_ms is not None]
-    return active + done
-
-
-def _cdp_active_first(rows: tuple) -> list:
-    active = [row for row in rows if row.terminal_ms is None]
-    done = [row for row in rows if row.terminal_ms is not None]
-    return active + done
+from .board_lines import (
+    active_roots,
+    aside_roots,
+    attention_line,
+    cdp_ribbon,
+    count_by_root,
+    hold_label,
+    la_clock,
+    live_cdp,
+    live_sdk,
+    oldest_idle_ms,
+    resolve_hold,
+    root_line_live,
+    sdk_live_line,
+    sdk_ribbon,
+    sdk_terminal_tally,
+    section_bar,
+)
+from .dtos import CdpLegRow, CharterRootRow, SdkDispatchRow, SupervisorProjection
+from .watch import _cdp_line, _ms, _truncate
 
 
 class CursesBoard:
     """Paint one projection frame onto a curses stdscr."""
 
-    def __init__(self, stdscr: Any) -> None:
+    def __init__(self, stdscr: Any, *, seed_minutes: int = 60) -> None:
         self._scr = stdscr
+        self._seed_minutes = seed_minutes
         curses.curs_set(0)
         stdscr.nodelay(True)
         stdscr.timeout(250)
@@ -96,16 +75,57 @@ class CursesBoard:
         self._scr.erase()
         if projection is None:
             self._safe_addstr(
-                0, 0, f"DISPATCH BOARD  {_la_clock()}  {self._status}", 3
+                0, 0, f"DISPATCH BOARD  {la_clock()}  {self._status}", 3
             )
             self._safe_addstr(2, 0, "Waiting for first projection frame…", 0)
             self._scr.refresh()
             return
 
+        sdk_live = live_sdk(projection.sdk)
+        cdp_live = live_cdp(projection.cdp)
+        roots_active = active_roots(projection.roots)
+        roots_aside = aside_roots(projection.roots)
+        by_sdk = count_by_root(sdk_live)
+        by_cdp = count_by_root(cdp_live)
+
+        self._paint_header(projection, sdk_live, cdp_live, width)
+        y = 3
+        budgets = self._section_budgets(
+            height, sdk_live, cdp_live, roots_active, roots_aside, projection
+        )
+        y = self._paint_tick(
+            roots_active,
+            roots_aside,
+            projection,
+            by_sdk,
+            by_cdp,
+            y,
+            width,
+            height,
+            budgets["roots"],
+            budgets["aside"],
+        )
+        y = self._paint_lease(projection, y, width, height)
+        y = self._paint_sdk(projection, sdk_live, y, width, height, budgets["sdk"])
+        y = self._paint_cdp(projection, cdp_live, y, width, height, budgets["cdp"])
+        self._paint_attention(projection, y, width, height, budgets["attention"])
+        self._scr.refresh()
+
+    def _paint_header(
+        self,
+        projection: SupervisorProjection,
+        sdk_live: list[SdkDispatchRow],
+        cdp_live: list[CdpLegRow],
+        width: int,
+    ) -> None:
         health = projection.health
         seq = health.seq_high_water if health.seq_high_water is not None else "-"
+        held = resolve_hold(from_events=health.charter_hold, from_poll=self._hold)
+        hold_txt = hold_label(held)
+        if held and health.charter_hold_reason:
+            hold_txt = f"{hold_txt}({_truncate(health.charter_hold_reason, 28)})"
         header = (
-            f"DISPATCH BOARD  {_la_clock()}  hold={_hold_label(self._hold)}  "
+            f"DISPATCH BOARD  {la_clock()}  hold={hold_txt}  "
             f"tick={_ms(health.tick_last_scan_age_ms)} ago  "
             f"loop={health.charter_loop_state}  seq={seq}  fp={projection.fingerprint[:8]}"
         )
@@ -116,68 +136,132 @@ class CursesBoard:
             f"fold={health.fold_status}  {self._status}"
         )
         self._safe_addstr(1, 0, _truncate(sub, width), 0)
+        crit = sum(1 for item in projection.attention if item.severity == "crit")
+        warn = sum(1 for item in projection.attention if item.severity == "warn")
+        cap = health.wip_capacity if health.wip_capacity is not None else "?"
+        flight = (
+            f"flight: sdk {len(sdk_live)} (oldest idle {_ms(oldest_idle_ms(sdk_live))}) · "
+            f"cdp {len(cdp_live)} (oldest {_ms(oldest_idle_ms(cdp_live))}) · "
+            f"queue {health.queue_depth} wip {health.wip_in_use}/{cap} · "
+            f"attn {crit}crit {warn}warn"
+        )
+        self._safe_addstr(2, 0, _truncate(flight, width), 3)
 
-        y = 2
-        budgets = self._section_budgets(height, projection)
-        y = self._paint_tick_section(projection, y, width, height, budgets["roots"])
-        y = self._paint_lease_section(projection, y, width, height)
-        y = self._paint_sdk_section(projection, y, width, height, budgets["sdk"])
-        y = self._paint_cdp_section(projection, y, width, height, budgets["cdp"])
-        self._paint_attention_section(projection, y, width, height, budgets["attention"])
-        self._scr.refresh()
-
-    def _section_budgets(self, height: int, projection: SupervisorProjection) -> dict[str, int]:
-        """Reserve rows so ATTENTION and CDP stay visible on short panes."""
-        attention_n = len(projection.attention)
-        cdp_n = len(projection.cdp)
-        sdk_n = len(_sdk_active_first(projection.sdk))
-        roots_n = len(projection.roots)
-        usable = max(8, height - 2)
-        att = min(attention_n, max(2, usable // 6)) if attention_n else 1
-        cdp = min(cdp_n, max(2, usable // 8)) if cdp_n else 1
-        sdk = min(sdk_n, max(3, usable // 5)) if sdk_n else 1
-        roots = min(roots_n, max(2, usable // 8)) if roots_n else 1
-        lease = 4
-        overhead = 2 + att + cdp + sdk + roots + lease + 5  # section bars + lease body
-        if overhead > usable:
-            sdk = max(1, sdk - (overhead - usable))
-        return {"attention": att, "cdp": cdp, "sdk": sdk, "roots": roots}
-
-    def _paint_tick_section(
+    def _section_budgets(
         self,
+        height: int,
+        sdk_live: list[SdkDispatchRow],
+        cdp_live: list[CdpLegRow],
+        roots_active: list[CharterRootRow],
+        roots_aside: list[CharterRootRow],
         projection: SupervisorProjection,
+    ) -> dict[str, int]:
+        usable = max(8, height - 3)
+        att_n = len(projection.attention)
+        att = min(att_n, max(2, usable // 3)) if att_n else 1
+        sdk = min(len(sdk_live), max(3, usable // 5)) if sdk_live else 0
+        cdp = min(len(cdp_live), max(2, usable // 6)) if cdp_live else 0
+        roots = min(len(roots_active), max(2, usable // 5)) if roots_active else 1
+        aside = min(len(roots_aside), max(1, usable // 8)) if roots_aside else 0
+        return {
+            "attention": att,
+            "cdp": cdp,
+            "sdk": sdk,
+            "roots": roots,
+            "aside": aside,
+        }
+
+    def _paint_tick(
+        self,
+        roots_active: list[CharterRootRow],
+        roots_aside: list[CharterRootRow],
+        projection: SupervisorProjection,
+        by_root_sdk: dict[str, int],
+        by_root_cdp: dict[str, int],
+        y: int,
+        width: int,
+        height: int,
+        active_cap: int,
+        aside_cap: int,
+    ) -> int:
+        if y >= height - 1:
+            return y
+        closed = sum(1 for row in projection.roots if row.closed or row.unenrolled)
+        bar = f" TICK / ACTIVE ({len(roots_active)} enqueued · +{closed} closed) "
+        self._safe_addstr(y, 0, f"─{bar}{'─' * max(0, width - len(bar) - 2)}", 4)
+        y += 1
+        y = self._paint_root_rows(
+            roots_active,
+            by_root_sdk,
+            by_root_cdp,
+            y,
+            width,
+            height,
+            active_cap,
+            empty="  idle — no root enqueued",
+        )
+        if roots_aside and y < height - 1:
+            aside_bar = f" SET ASIDE ({len(roots_aside)}) "
+            self._safe_addstr(
+                y, 0, f"─{aside_bar}{'─' * max(0, width - len(aside_bar) - 2)}", 2
+            )
+            y += 1
+            y = self._paint_root_rows(
+                roots_aside,
+                by_root_sdk,
+                by_root_cdp,
+                y,
+                width,
+                height,
+                aside_cap,
+                empty=None,
+                color=2,
+            )
+        return y
+
+    def _paint_root_rows(
+        self,
+        rows: list[CharterRootRow],
+        by_root_sdk: dict[str, int],
+        by_root_cdp: dict[str, int],
         y: int,
         width: int,
         height: int,
         row_cap: int,
+        *,
+        empty: str | None,
+        color: int = 0,
     ) -> int:
-        if y >= height - 1:
-            return y
-        roots = projection.roots
-        self._safe_addstr(y, 0, _section_bar("TICK / ROOTS", len(roots), width), 4)
-        y += 1
         shown = 0
-        for row in roots:
+        for row in rows:
             if y >= height - 1 or shown >= row_cap:
                 break
-            self._safe_addstr(y, 0, _root_line(row)[: width - 1], 0)
+            rid = row.root_id
+            line = root_line_live(
+                row, sdk_n=by_root_sdk.get(rid, 0), cdp_n=by_root_cdp.get(rid, 0)
+            )
+            pair = 1 if row.state == "failed" else color
+            self._safe_addstr(y, 0, line[: width - 1], pair)
             y += 1
             shown += 1
-        if shown < len(roots) and y < height - 1:
-            self._safe_addstr(y, 0, f"  … +{len(roots) - shown} more", 0)
+        if shown < len(rows) and y < height - 1:
+            self._safe_addstr(y, 0, f"  … +{len(rows) - shown} more", 0)
             y += 1
-        if not roots and y < height - 1:
-            self._safe_addstr(y, 0, "  (no enrolled roots)", 0)
+        if not rows and empty and y < height - 1:
+            self._safe_addstr(y, 0, empty, 0)
             y += 1
         return y
 
-    def _paint_lease_section(
+    def _paint_lease(
         self, projection: SupervisorProjection, y: int, width: int, height: int
     ) -> int:
         if y >= height - 1:
             return y
         health = projection.health
-        self._safe_addstr(y, 0, _section_bar("LEASE / QUEUE", health.queue_depth, width), 4)
+        lease_bar = f" LEASE / QUEUE (q={health.queue_depth}) "
+        self._safe_addstr(
+            y, 0, f"─{lease_bar}{'─' * max(0, width - len(lease_bar) - 2)}", 4
+        )
         y += 1
         cap = health.wip_capacity if health.wip_capacity is not None else "?"
         lease = (
@@ -188,11 +272,17 @@ class CursesBoard:
         if y < height - 1:
             self._safe_addstr(y, 0, lease[: width - 1], 0)
             y += 1
-        if health.skipped_by_reason and y < height - 1:
-            hist = "  ".join(
-                f"{reason}={count}" for reason, count in health.skipped_by_reason.items()
-            )
-            self._safe_addstr(y, 0, f"  skips: {hist}"[: width - 1], 2)
+        if y < height - 1:
+            if health.skipped_by_reason:
+                hist = "  ".join(
+                    f"{reason}={count}"
+                    for reason, count in health.skipped_by_reason.items()
+                )
+                skips = f"  skips: {hist}"
+            else:
+                skips = "  skips: none"
+            mismatch = int(health.skipped_by_reason.get("executor_mismatch", 0) or 0)
+            self._safe_addstr(y, 0, skips[: width - 1], 2 if mismatch > 0 else 0)
             y += 1
         if health.degraded and y < height - 1:
             self._safe_addstr(
@@ -201,9 +291,10 @@ class CursesBoard:
             y += 1
         return y
 
-    def _paint_sdk_section(
+    def _paint_sdk(
         self,
         projection: SupervisorProjection,
+        live: list[SdkDispatchRow],
         y: int,
         width: int,
         height: int,
@@ -211,29 +302,45 @@ class CursesBoard:
     ) -> int:
         if y >= height - 1:
             return y
-        rows = _sdk_active_first(projection.sdk)
-        total = len(projection.sdk)
-        self._safe_addstr(y, 0, _section_bar("SDK", total, width), 4)
+        window_done = sum(1 for row in projection.sdk if row.terminal_ms is not None)
+        self._safe_addstr(
+            y,
+            0,
+            section_bar(
+                "SDK", len(live), window_done, width, unit=f"done/{self._seed_minutes}m"
+            ),
+            4,
+        )
         y += 1
-        if not rows and y < height - 1:
-            self._safe_addstr(y, 0, "  (no sdk dispatches in flight)", 0)
-            return y + 2
+        if not live and y < height - 1:
+            self._safe_addstr(y, 0, "  idle — no sdk dispatch in flight", 0)
+            y += 1
         shown = 0
-        for row in rows:
+        for row in live:
             if y >= height - 1 or shown >= row_cap:
                 break
             pair = 2 if row.divergent_fields else 0
-            self._safe_addstr(y, 0, _sdk_line(row)[: width - 1], pair)
+            self._safe_addstr(y, 0, sdk_live_line(row)[: width - 1], pair)
             y += 1
             shown += 1
-        if shown < len(rows) and y < height - 1:
-            self._safe_addstr(y, 0, f"  … +{len(rows) - shown} more", 0)
+        if shown < len(live) and y < height - 1:
+            self._safe_addstr(y, 0, f"  … +{len(live) - shown} more", 0)
+            y += 1
+        if y < height - 1:
+            ribbon = sdk_ribbon(
+                projection.sdk,
+                now_ms=projection.generated_at_ms,
+                window_m=self._seed_minutes,
+            )
+            _, fail_n, _, _ = sdk_terminal_tally(projection.sdk)
+            self._safe_addstr(y, 0, ribbon[: width - 1], 1 if fail_n > 0 else 0)
             y += 1
         return y
 
-    def _paint_cdp_section(
+    def _paint_cdp(
         self,
         projection: SupervisorProjection,
+        live: list[CdpLegRow],
         y: int,
         width: int,
         height: int,
@@ -241,26 +348,40 @@ class CursesBoard:
     ) -> int:
         if y >= height - 1:
             return y
-        rows = _cdp_active_first(projection.cdp)
-        total = len(projection.cdp)
-        self._safe_addstr(y, 0, _section_bar("CDP", total, width), 4)
+        window_done = sum(1 for row in projection.cdp if row.terminal_ms is not None)
+        self._safe_addstr(
+            y,
+            0,
+            section_bar(
+                "CDP", len(live), window_done, width, unit=f"done/{self._seed_minutes}m"
+            ),
+            4,
+        )
         y += 1
-        if not rows and y < height - 1:
-            self._safe_addstr(y, 0, "  (no cdp legs in flight)", 0)
-            return y + 2
+        if not live and y < height - 1:
+            self._safe_addstr(y, 0, "  idle — no cdp legs in flight", 0)
+            y += 1
         shown = 0
-        for row in rows:
+        for row in live:
             if y >= height - 1 or shown >= row_cap:
                 break
             self._safe_addstr(y, 0, _cdp_line(row)[: width - 1], 0)
             y += 1
             shown += 1
-        if shown < len(rows) and y < height - 1:
-            self._safe_addstr(y, 0, f"  … +{len(rows) - shown} more", 0)
+        if shown < len(live) and y < height - 1:
+            self._safe_addstr(y, 0, f"  … +{len(live) - shown} more", 0)
+            y += 1
+        if y < height - 1:
+            ribbon = cdp_ribbon(
+                projection.cdp,
+                now_ms=projection.generated_at_ms,
+                window_m=self._seed_minutes,
+            )
+            self._safe_addstr(y, 0, ribbon[: width - 1], 0)
             y += 1
         return y
 
-    def _paint_attention_section(
+    def _paint_attention(
         self,
         projection: SupervisorProjection,
         y: int,
@@ -271,7 +392,8 @@ class CursesBoard:
         if y >= height - 1:
             return
         items = projection.attention
-        self._safe_addstr(y, 0, _section_bar("ATTENTION", len(items), width), 4)
+        bar = f" ATTENTION ({len(items)}) "
+        self._safe_addstr(y, 0, f"─{bar}{'─' * max(0, width - len(bar) - 2)}", 4)
         y += 1
         if not items and y < height - 1:
             self._safe_addstr(y, 0, "  (none)", 0)
@@ -281,7 +403,10 @@ class CursesBoard:
             if y >= height - 1 or shown >= row_cap:
                 break
             self._safe_addstr(
-                y, 0, _attention_line(item, width - 1), self._pair_for_severity(item.severity)
+                y,
+                0,
+                attention_line(item, width - 1),
+                self._pair_for_severity(item.severity),
             )
             y += 1
             shown += 1

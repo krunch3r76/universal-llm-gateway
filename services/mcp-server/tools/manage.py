@@ -272,9 +272,15 @@ def register_manage_tools(mcp: FastMCP) -> None:
                                              drain probes WITHOUT acquiring any
                                              restart slot — safe to poll live.
                                              Also returns charter_hold {held, …}.
-          charter_reload (no service needed) — in-process reload of charter-runner
-                                             modules + restart tick loop (no TUI quit).
-                                             Prefer after charter-runner code edits.
+          charter_reload (no service needed) — restart the charter tick loop in place
+                                             (no TUI quit). Phase 3 retired
+                                             importlib.reload: this does NOT re-import
+                                             modules and returns count=0 /
+                                             reloaded_modules=[]. Charter-runner code
+                                             edits need a manage quit/start to go live
+                                             (charter_pause -> charter_hold_status
+                                             safe_to_quit -> ./manage q -> ./manage ->
+                                             charter_resume).
           charter_pause (reason?, timeout?)  — durable hold: arm immediately (no
                                              new admits), then **block** until
                                              in-flight charter cursor-sdk

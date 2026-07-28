@@ -324,6 +324,7 @@ def FrontierSdkWorkerQueued(  # noqa: N802
     holder_thread_id: str | None = None,
     holder_resolved_model: str | None = None,
     holder_subject_preview: str | None = None,
+    resolved_model: str | None = None,
 ) -> Event:
     payload: dict[str, object] = {
         "dispatch_id": dispatch_id,
@@ -339,6 +340,8 @@ def FrontierSdkWorkerQueued(  # noqa: N802
         payload["holder_resolved_model"] = holder_resolved_model
     if holder_subject_preview is not None:
         payload["holder_subject_preview"] = holder_subject_preview
+    if resolved_model is not None:
+        payload["resolved_model"] = resolved_model
     return Event(
         signal="frontier.sdk.worker.queued",
         payload=payload,
@@ -491,6 +494,7 @@ def emit_sdk_worker_queued(
     holder_thread_id: str | None = None,
     holder_resolved_model: str | None = None,
     holder_subject_preview: str | None = None,
+    resolved_model: str | None = None,
 ) -> None:
     """Publish FIFO queue placement while another dispatch holds the write lease."""
     _emit(
@@ -503,6 +507,7 @@ def emit_sdk_worker_queued(
             holder_thread_id=holder_thread_id,
             holder_resolved_model=holder_resolved_model,
             holder_subject_preview=holder_subject_preview,
+            resolved_model=resolved_model,
         )
     )
 

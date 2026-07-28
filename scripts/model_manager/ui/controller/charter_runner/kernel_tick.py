@@ -19,6 +19,7 @@ from .env_snapshot import EnvSnapshot
 from .pickup_advance import (
     advance_pickup_gid,
     gated_pickup_from_parsed,
+    tip_executor_is_cdp_family,
     worker_substrate_compatible,
 )
 from .root_ledger import (
@@ -194,9 +195,21 @@ async def apply_kernel_tick_for_root(
             # Tip next_pickup.executor is admit-substrate authority (a:26659).
             # Ledger pickup_executor / attendance→generate must not override a
             # non-worker family (e.g. cdp/opus) into admit_worker_window.
+            # Stage-B: cdp/* tips positively rebind to QUEUE_CONSULT (never
+            # ADMIT_WORKER; bare refuse parks forever — 6163 completion monitor).
             live = gated_pickup_from_parsed(parsed)
             tip_executor = live.executor if live is not None else None
             if not worker_substrate_compatible(tip_executor):
+                if tip_executor_is_cdp_family(tip_executor):
+                    logger.info(
+                        "charter-runner executor_mismatch_rebind_consult "
+                        "root=%s tip_executor=%s",
+                        root_id,
+                        tip_executor,
+                    )
+                    return await _queue_consult(
+                        conn, row, root_id, Transition.QUEUE_CONSULT
+                    )
                 logger.info(
                     "charter-runner executor_mismatch root=%s tip_executor=%s",
                     root_id,

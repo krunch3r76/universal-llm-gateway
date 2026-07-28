@@ -188,9 +188,10 @@ def test_fixture_inventory_is_complete() -> None:
 
 def test_model_does_not_read_the_clock() -> None:
     """The Model has no clock. Time enters only as the ``now_ms`` argument."""
+    view_modules = {"__main__.py", "replay.py", "board_lines.py", "curses_board.py", "watch.py"}
     for path in _core_modules():
         name = os.path.relpath(path, _PACKAGE_ROOT)
-        if name in ("__main__.py", "replay.py"):
+        if name in view_modules:
             continue
         with open(path, "r", encoding="utf-8") as handle:
             source = handle.read()

@@ -140,6 +140,114 @@ def test_admission_alone_creates_no_sdk_row() -> None:
 
 
 # --- sdk / GS2 -------------------------------------------------------------
+def test_giw_completed_keys_on_dispatch_id_not_execution_id() -> None:
+    """GIW completed carries distinct dispatch_id + execution_id — one row, not two.
+
+    Preferring execution_id left progress under dispatch_id live forever while the
+    terminal landed on a sibling execution_id row (board: N live · N done).
+    """
+    model = Model()
+    model.apply(
+        Event(
+            "frontier.sdk.worker.progress",
+            1_000,
+            {"dispatch_id": "efe9-sdk", "thread_id": "6160", "resolved_model": "cursor/opus-5"},
+        )
+    )
+    model.apply(
+        Event(
+            "frontier.sdk.worker.completed",
+            2_000,
+            {
+                "dispatch_id": "efe9-sdk",
+                "execution_id": "37568616-run-uuid",
+                "outcome": "ok",
+                "thread_id": "6160",
+            },
+        )
+    )
+    frame = model.derive(3_000)
+    assert len(frame.sdk) == 1
+    row = _row(frame.sdk, "dispatch_id", "efe9-sdk")
+    assert row.terminal_ms == 2_000
+    assert row.state == "completed"
+
+
+def test_toolcall_updates_last_tool_and_idle() -> None:
+    """Last toolcall is ephemeral overlay; also resets idle via progress clock."""
+    model = Model()
+    model.apply(
+        Event(
+            "frontier.sdk.worker.progress",
+            1_000,
+            {"dispatch_id": "d1", "resolved_model": "cursor/grok-4.5"},
+        )
+    )
+    model.apply(
+        Event(
+            "frontier.sdk.worker.toolcall",
+            1_500,
+            {"dispatch_id": "d1", "tool_name": "mcp", "status": "completed"},
+        )
+    )
+    row = _row(model.derive(2_000).sdk, "dispatch_id", "d1")
+    assert row.last_tool_name == "mcp"
+    assert row.last_tool_status == "completed"
+    assert row.last_progress_ms == 1_500
+
+
+def test_queued_and_generate_requested_carry_model() -> None:
+    """Queued rows show model from queued.resolved_model or generate.requested."""
+    model = Model()
+    model.apply(
+        Event(
+            "frontier.sdk.generate.requested",
+            900,
+            {
+                "request_id": "5ed13fdd78a1",
+                "execution_id": "39369a01-0936",
+                "resolved_model": "cursor/grok-4.5",
+                "role": "cursor-sdk",
+            },
+        )
+    )
+    model.apply(
+        Event(
+            "frontier.sdk.worker.queued",
+            1_000,
+            {
+                "dispatch_id": "5ed13fdd78a1-abc",
+                "thread_id": "6170",
+                "queue_position": 2,
+                "resolved_model": "cursor/grok-4.5",
+            },
+        )
+    )
+    frame = model.derive(2_000)
+    queued = _row(frame.sdk, "dispatch_id", "5ed13fdd78a1-abc")
+    assert queued.state == "queued"
+    assert queued.model == "cursor/grok-4.5"
+
+
+def test_hold_paused_and_resumed_project_to_health() -> None:
+    """tick.paused/held set hold; resumed clears — board paints from events."""
+    model = Model()
+    model.apply(
+        Event(
+            "manage.charter.tick.paused",
+            1_000,
+            {"reason": "admit storm", "set_by": "mcp", "set_at": 1.0},
+        )
+    )
+    health = model.derive(2_000).health
+    assert health.charter_hold is True
+    assert health.charter_hold_reason == "admit storm"
+    model.apply(Event("manage.charter.tick.resumed", 3_000, {"was_held": True}))
+    health2 = model.derive(4_000).health
+    assert health2.charter_hold is False
+    assert health2.charter_hold_reason is None
+
+
 def test_agreeing_emitters_do_not_flag_divergence() -> None:
     """Both lanes seen, terminal kept from the first, no divergence."""
     model, now = replay("gs2-dual-emitter.jsonl")

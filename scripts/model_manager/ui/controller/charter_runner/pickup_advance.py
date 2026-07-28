@@ -95,6 +95,18 @@ def worker_substrate_compatible(executor: str | None) -> bool:
     return cleaned.startswith("cursor/")
 
 
+def tip_executor_is_cdp_family(executor: str | None) -> bool:
+    """True when tip ``executor=`` is a CDP / web-anthropic substrate family.
+
+    Stage-B (a:26659 elaboration): incompatible ``cdp/*`` tips positively rebind
+    to ``QUEUE_CONSULT`` instead of bare refuse — never ``ADMIT_WORKER``.
+    """
+    if executor is None:
+        return False
+    cleaned = str(executor).strip().lower()
+    return cleaned.startswith("cdp/")
+
+
 def advance_pickup_gid(
     conn,
     row: RootLedgerRow,
@@ -138,5 +150,6 @@ __all__ = [
     "advance_pickup_gid",
     "gated_pickup_from_parsed",
     "gid_of_row",
+    "tip_executor_is_cdp_family",
     "worker_substrate_compatible",
 ]

@@ -222,6 +222,8 @@ class Model:
             charter_loop_state=self.charter.loop_state,
             charter_last_reload_ms=self.charter.last_reload_ms,
             charter_reload_module_count=self.charter.reload_module_count,
+            charter_hold=self.charter.hold_active,
+            charter_hold_reason=self.charter.hold_reason,
             degraded=tuple(degraded),
         )
 

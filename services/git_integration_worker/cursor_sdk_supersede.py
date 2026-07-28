@@ -21,6 +21,9 @@ from typing import Any
 
 from universal_logging import get_logger
 
+from services.git_integration_worker.cursor_sdk_cancel_events import (
+    emit_sdk_worker_cancelled,
+)
 from services.git_integration_worker.cursor_sdk_orphan import abort_orphaned_bridge
 
 logger = get_logger(__name__)
@@ -128,6 +131,7 @@ def signal_supersede(
         record = _live.get(dispatch_id)
     method = "not_live"
     error: str | None = None
+    thread_id: str | None = record.thread_id if record is not None else None
     if record is not None:
         try:
             record.run.cancel()
@@ -157,15 +161,37 @@ def signal_supersede(
         reason,
         error,
     )
-    return {**mark.as_dict(), "error": error}
+    emit_sdk_worker_cancelled(
+        dispatch_id=dispatch_id,
+        method=method,
+        reason=reason,
+        thread_id=thread_id,
+        superseded_by=superseded_by,
+        error=error,
+    )
+    return {**mark.as_dict(), "error": error, "thread_id": thread_id}
 
 
 def escalate_supersede_abort(*, dispatch_id: str) -> bool:
     """Hard-close the bridge when a cancelled run has not released its slot."""
+    with _lock:
+        record = _live.get(dispatch_id)
+        mark = _marks.get(dispatch_id)
+    thread_id = record.thread_id if record is not None else None
+    superseded_by = mark.superseded_by if mark is not None else None
+    reason = mark.reason if mark is not None else "supersede_release_grace_exhausted"
     aborted = abort_orphaned_bridge(dispatch_id=dispatch_id)
     logger.warning(
         "cursor-sdk supersede escalated to bridge abort dispatch_id=%s aborted=%s",
         dispatch_id,
         aborted,
+    )
+    emit_sdk_worker_cancelled(
+        dispatch_id=dispatch_id,
+        method="bridge_abort_escalate" if aborted else "cancel_failed",
+        reason=reason,
+        thread_id=thread_id,
+        superseded_by=superseded_by,
+        error=None if aborted else "bridge_abort_returned_false",
     )
     return aborted

@@ -112,6 +112,8 @@ class CharterFold:
         self.loop_state = "unknown"
         self.last_reload_ms: int | None = None
         self.reload_module_count = 0
+        self.hold_active: bool | None = None
+        self.hold_reason: str | None = None
 
     def handlers(self) -> dict[str, Any]:
         """Return this fold's signal-to-handler table."""
@@ -129,6 +131,9 @@ class CharterFold:
             signals.CHARTER_STOPPED: self._on_lifecycle,
             signals.CHARTER_RELOADED: self._on_reload,
             signals.CHARTER_WINDOW_FAILED: self._on_window_failed,
+            signals.CHARTER_PAUSED: self._on_hold_armed,
+            signals.CHARTER_HELD: self._on_hold_armed,
+            signals.CHARTER_RESUMED: self._on_hold_cleared,
         }
 
     def _root(self, root_id: str, record: EventRecord) -> RootState:
@@ -314,6 +319,19 @@ class CharterFold:
         row.skip_reason = str(reason) if reason else None
         row.state = "failed"
         row.waiting_open_since_ms = None
+
+    def _on_hold_armed(self, record: EventRecord) -> None:
+        """Durable tick hold armed or heartbeat — board reads ``hold_active``."""
+        payload = record.payload
+        self.hold_active = True
+        reason = payload.get("reason")
+        if reason:
+            self.hold_reason = str(reason)
+
+    def _on_hold_cleared(self, record: EventRecord) -> None:
+        """Durable tick hold cleared — next interval runs a normal tick."""
+        self.hold_active = False
+        self.hold_reason = None
 
     def _on_audit(self, record: EventRecord) -> None:
         """Seed cold-start state from a windowed audit snapshot.
