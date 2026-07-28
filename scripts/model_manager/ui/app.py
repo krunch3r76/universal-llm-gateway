@@ -94,7 +94,7 @@ class ModelManagerApp(App):
     SUB_TITLE = "Universal LLM Gateway"
 
     BINDINGS = [
-        Binding("q", "quit", "Quit", show=True),
+        Binding("q", "quit", "Quit (fleet stays up)", show=True),
         Binding("ctrl+c", "quit", "Quit", show=False),
     ]
 

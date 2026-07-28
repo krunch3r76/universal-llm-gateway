@@ -18,7 +18,8 @@ from ..service_config import (
     build_service_env,
     ensure_socket_dir,
 )
-from .startup_probe import StartupOutcome, await_subprocess_started, uds_socket_live
+from .host_spawn import await_popen_started, spawn_detached_host_process
+from .startup_probe import StartupOutcome, uds_socket_live
 from .utils import (
     _acquire_lock,
     _find_uvicorn_pid_by_cmdline,
@@ -139,17 +140,14 @@ async def _start_uvicorn_service(
             host, port = tcp_config
             uvicorn_args.extend(["--host", host, "--port", str(port)])
 
-        with log_file.open("w") as log_fh:
-            process = await asyncio.create_subprocess_exec(
-                python,
-                *uvicorn_args,
-                stdin=asyncio.subprocess.DEVNULL,
-                env=env,
-                cwd=str(root),
-                stdout=log_fh,
-                stderr=asyncio.subprocess.STDOUT,
-                start_new_session=True,
-            )
+        # Popen (not asyncio.create_subprocess_exec): loop shutdown must not
+        # kill long-lived host services when ./manage quits.
+        process = spawn_detached_host_process(
+            [python, *uvicorn_args],
+            cwd=root,
+            env=env,
+            log_file=log_file,
+        )
 
         def _ready() -> bool:
             if uds_mode and socket_path is not None:
@@ -159,7 +157,7 @@ async def _start_uvicorn_service(
                 return service_state._port_open(port, host)
             return False
 
-        outcome, exit_code = await await_subprocess_started(process, ready=_ready)
+        outcome, exit_code = await await_popen_started(process, ready=_ready)
         if outcome is StartupOutcome.CRASHED:
             tail = _read_log_tail(log_file)
             return f"{service_name} failed (exit {exit_code}).\n{tail}"

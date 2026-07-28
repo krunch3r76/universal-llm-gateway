@@ -25,14 +25,18 @@ class RGateAction(StrEnum):
 _ADVANCE = frozenset({"ADMIT", "RATIFY"})
 _AMEND = frozenset({"ADMIT_WITH_AMENDMENTS", "RATIFY_WITH_CONDITIONS"})
 _BLOCK = frozenset({"RETURN", "SCOPE-DRIFT", "SCOPE_DRIFT"})
+# Optional markdown emphasis around the Merits label / colon (a:26595 — bold
+# **Merits:** otherwise falls through to subject fallback and grabs Scope RATIFY).
 _VERDICT_RE = re.compile(
-    r"\b(?:Merits(?:\s+verdict)?|merits)\s*[:\-—]\s*"
+    r"\*{0,2}\b(?:Merits(?:\s+(?:verdict|disposition))?|merits)\b\*{0,2}"
+    r"\s*[:\-—]\s*\*{0,2}\s*"
     r"(ADMIT_WITH_AMENDMENTS|ADMIT|RATIFY_WITH_CONDITIONS|RATIFY|RETURN|SCOPE-DRIFT|SCOPE_DRIFT)\b",
     re.IGNORECASE,
 )
 _SUBJECT_VERDICT_RE = re.compile(
     r"\b(ADMIT_WITH_AMENDMENTS|ADMIT|RATIFY_WITH_CONDITIONS|RATIFY|RETURN|SCOPE-DRIFT|SCOPE_DRIFT)\b"
 )
+_SCOPE_CHECK_PREFIX_RE = re.compile(r"(?i)scope\s*check")
 
 
 @dataclass(frozen=True)
@@ -48,22 +52,32 @@ def _normalize_verdict(raw: str) -> str:
     return raw.upper().replace("SCOPE_DRIFT", "SCOPE-DRIFT")
 
 
+def _token_in_scope_check_context(body: str, start: int) -> bool:
+    """True when a bare verdict token sits under a Scope-check label (not Merits)."""
+    prefix = body[max(0, start - 64) : start]
+    return _SCOPE_CHECK_PREFIX_RE.search(prefix) is not None
+
+
 def parse_r_verdict(text: str) -> ParsedRVerdict:
     """Extract the merits verdict from R sidecar/harvest text; fail closed."""
     body = text or ""
     match = _VERDICT_RE.search(body)
-    if match is None:
-        # Subject-line fallback: "G5 R-admit verdict — ADMIT_WITH_AMENDMENTS"
-        for m in _SUBJECT_VERDICT_RE.finditer(body):
-            token = _normalize_verdict(m.group(1))
-            if token in _ADVANCE | _AMEND | _BLOCK:
-                return _classify(token)
-        return ParsedRVerdict(
-            None,
-            RGateAction.BLOCKED,
-            "unparseable_r_verdict",
-        )
-    return _classify(_normalize_verdict(match.group(1)))
+    if match is not None:
+        return _classify(_normalize_verdict(match.group(1)))
+    # Subject-line fallback: "G5 R-admit verdict — ADMIT_WITH_AMENDMENTS".
+    # Skip Scope-check tokens so a leading "Scope check: RATIFY" cannot mask Merits.
+    for m in _SUBJECT_VERDICT_RE.finditer(body):
+        token = _normalize_verdict(m.group(1))
+        if token not in _ADVANCE | _AMEND | _BLOCK:
+            continue
+        if _token_in_scope_check_context(body, m.start()):
+            continue
+        return _classify(token)
+    return ParsedRVerdict(
+        None,
+        RGateAction.BLOCKED,
+        "unparseable_r_verdict",
+    )
 
 
 def _classify(verdict: str) -> ParsedRVerdict:

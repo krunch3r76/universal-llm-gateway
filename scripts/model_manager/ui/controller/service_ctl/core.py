@@ -55,7 +55,8 @@ from . import (
     mcp_service,
     rag_service,
 )
-from .startup_probe import StartupOutcome, await_subprocess_started
+from .host_spawn import await_popen_started, spawn_detached_host_process
+from .startup_probe import StartupOutcome
 
 try:
     from .local import email_bridge_service as _email_bridge_svc
@@ -487,30 +488,19 @@ class ServiceController:
             return f"Failed to start Stargate: could not set up logging ({e})."
 
         try:
-            log_fh = log_path.open("w")
-        except OSError as e:
-            logger.error("Failed to open Stargate startup log %s: %s", log_path, e)
-            return f"Failed to start Stargate: {e}"
-
-        try:
-            process = await asyncio.create_subprocess_exec(
-                str(script),
-                "debug",
-                stdin=_DETACHED_STDIN,
+            # Popen: asyncio SubprocessTransport.close() would kill Stargate on
+            # manage quit even with start_new_session=True.
+            process = spawn_detached_host_process(
+                [str(script), "debug"],
+                cwd=self._root,
                 env=env,
-                cwd=str(self._root),
-                stdout=log_fh,
-                stderr=asyncio.subprocess.STDOUT,
-                start_new_session=True,
+                log_file=log_path,
             )
-            # Child process owns its duplicated FD; parent can close immediately.
-            log_fh.close()
         except OSError as e:
             logger.error("Failed to start Stargate subprocess: %s", e)
-            log_fh.close()
             return f"Failed to start Stargate: {e}"
 
-        if process.returncode is not None:
+        if process.poll() is not None:
             tail = log_path.read_text(errors="replace")[-1500:]
             return f"Stargate failed (exit {process.returncode}).\n{tail}"
 
@@ -520,7 +510,7 @@ class ServiceController:
         def _stargate_ready() -> bool:
             return self._service_state._port_open(port)
 
-        outcome, exit_code = await await_subprocess_started(
+        outcome, exit_code = await await_popen_started(
             process, ready=_stargate_ready
         )
         if outcome is StartupOutcome.CRASHED:

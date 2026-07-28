@@ -21,7 +21,8 @@ from ..service_config import (
     ensure_socket_dir,
     load_event_service_config,
 )
-from .startup_probe import StartupOutcome, await_subprocess_started
+from .host_spawn import await_popen_started, spawn_detached_host_process
+from .startup_probe import StartupOutcome
 from .utils import (
     _acquire_lock,
     _find_module_pid_by_cmdline,
@@ -145,23 +146,19 @@ async def start_event_service(
                 cmd_args.extend(["--tcp-ingest-port", str(cfg.tcp_ingest_port)])
                 cmd_args.extend(["--tcp-query-port", str(cfg.tcp_query_port)])
 
-        with log_file.open("w") as log_fh:
-            process = await asyncio.create_subprocess_exec(
-                *cmd_args,
-                stdin=asyncio.subprocess.DEVNULL,
-                env=env,
-                cwd=str(root),
-                stdout=log_fh,
-                stderr=asyncio.subprocess.STDOUT,
-                start_new_session=True,
-            )
+        process = spawn_detached_host_process(
+            cmd_args,
+            cwd=root,
+            env=env,
+            log_file=log_file,
+        )
 
         def _ready() -> bool:
             if not query_sock.exists():
                 return False
             return service_state._probe_uds_health(query_sock, "/health")
 
-        outcome, exit_code = await await_subprocess_started(process, ready=_ready)
+        outcome, exit_code = await await_popen_started(process, ready=_ready)
         if outcome is StartupOutcome.CRASHED:
             tail = _read_log_tail(log_file)
             return f"{_SERVICE_NAME} failed (exit {exit_code}).\n{tail}"

@@ -14,7 +14,8 @@ from ..service_config import (
     build_service_env,
     cdp_ask_url_config,
 )
-from .startup_probe import StartupOutcome, await_subprocess_started
+from .host_spawn import await_popen_started, spawn_detached_host_process
+from .startup_probe import StartupOutcome
 from .utils import _acquire_lock, _release_lock
 
 logger = logging.getLogger(__name__)
@@ -81,28 +82,19 @@ async def start_cdp_ask(
     venv_python = Path.home() / ".venvs" / "universal" / "bin" / "python"
     python = str(venv_python) if venv_python.exists() else "python3"
 
-    with log_file.open("w") as log_fh:
-        process = await asyncio.create_subprocess_exec(
-            python,
-            str(script),
-            "--host",
-            host,
-            "--port",
-            str(port),
-            stdin=asyncio.subprocess.DEVNULL,
-            env=env,
-            cwd=str(root),
-            stdout=log_fh,
-            stderr=asyncio.subprocess.STDOUT,
-            start_new_session=True,
-        )
+    process = spawn_detached_host_process(
+        [python, str(script), "--host", host, "--port", str(port)],
+        cwd=root,
+        env=env,
+        log_file=log_file,
+    )
 
     probe_host = "127.0.0.1" if host == "0.0.0.0" else host
 
     def _ready() -> bool:
         return service_state._port_open(port, probe_host)
 
-    outcome, exit_code = await await_subprocess_started(process, ready=_ready)
+    outcome, exit_code = await await_popen_started(process, ready=_ready)
     if outcome is StartupOutcome.CRASHED:
         tail = log_file.read_text(errors="replace")[-1000:]
         return f"{_SERVICE_NAME} failed (exit {exit_code}).\n{tail}"
