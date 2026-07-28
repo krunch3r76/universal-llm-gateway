@@ -15,6 +15,7 @@ from .checkpoint_sections import split_sections
 from .window_terminal_contract import (
     admitted_arc,
     arc_is_weaker_than,
+    density_triage_from_pickup,
     effective_required_arc,
     todo_refs_for_arc,
 )
@@ -178,19 +179,23 @@ def validate_arc_for_admit(
     refs = todo_refs_for_arc(parsed)
     if not refs:
         return None
-    triage = lookup(refs[0])
+    triage = density_triage_from_pickup(parsed)
+    if triage is None:
+        triage = lookup(refs[0])
     g_row_lane = parsed.executor_lane or executor_lane
     need = effective_required_arc(
         triage=triage,
         executor_lane=g_row_lane,
         consult_pending=parsed.consult_pending,
         checkpoint_body=checkpoint_body,
+        parsed=parsed,
     )
     got = admitted_arc(
         window_kind=window_kind,
         admission_mode=admission_mode,
         consult_role=consult_role,
         executor_lane=executor_lane,
+        parsed=parsed,
     )
     if not arc_is_weaker_than(got, need):
         return None

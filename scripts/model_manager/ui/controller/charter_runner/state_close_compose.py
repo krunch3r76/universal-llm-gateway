@@ -106,14 +106,24 @@ async def prepare_state_close_summary(
     checkpoint_turn: int | None,
     turns: list[dict[str, Any]] | None = None,
 ) -> tuple[str, str | None]:
-    """Return (rendered_summary, sidecar_uri) for a charter state-close."""
+    """Return (rendered_summary, sidecar_uri) for a charter state-close.
+
+    Bus close ``summary`` preserves the standing so-what as ``DONE — …``; the
+    full rendered body still goes to the closeout sidecar.
+    """
+    from pager_notify.so_what import compose_done_summary
+
     if turns is None:
         turns = await bus_client.fetch_turns(root_id)
     detail = await bus_client.fetch_thread(root_id)
     tags = list(detail.get("tags") or [])
+    prior_so_what = str(detail.get("summary") or "")
     if isinstance(detail.get("thread"), dict):
-        tags = list((detail.get("thread") or {}).get("tags") or tags)
-    subject = str(detail.get("summary") or detail.get("slug") or root_id)
+        nested = detail.get("thread") or {}
+        tags = list(nested.get("tags") or tags)
+        if not prior_so_what:
+            prior_so_what = str(nested.get("summary") or "")
+    subject = prior_so_what or str(detail.get("slug") or root_id)
     body = compose_closeout_body(
         root_id=root_id,
         root_subject=subject,
@@ -130,7 +140,8 @@ async def prepare_state_close_summary(
         sidecar_uri=sidecar_uri,
         window_count=window_count,
     )
-    return body, sidecar_uri
+    close_summary = compose_done_summary(prior_so_what, reason=reason)
+    return close_summary, sidecar_uri
 
 
 __all__ = [

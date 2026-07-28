@@ -154,6 +154,7 @@ def _build_poll_hint(*, thread_id: str, after_turn: int) -> dict[str, Any]:
         "alternate_completions": [
             "status:failed",
             "status:needs-attended",
+            "status:blocked",
         ],
     }
 
@@ -174,9 +175,15 @@ def _request_impl(
     contract: str,
     require_attended: bool,
     after_turn: int,
+    summary: str | None = None,
 ) -> dict[str, Any]:
     """Write turn via send path, then arm/enqueue Auto when live."""
+    from pager_notify.so_what import resolve_so_what_summary
+
+    from .lifecycle import _update_thread_impl
+
     merged_tags = _merge_lane_tags(tags)
+    resolved_summary = resolve_so_what_summary(summary, body)
     send_result = _send_dispatch(
         new_slug=new_slug,
         thread=thread,
@@ -184,6 +191,7 @@ def _request_impl(
         subject=subject,
         body=body,
         from_agent=from_agent,
+        summary=resolved_summary,
         tags=merged_tags,
         after_turn=after_turn,
         sidecar_content=sidecar_content,
@@ -197,6 +205,21 @@ def _request_impl(
     turn_obj = send_result.get("turn") or {}
     thread_id = str(thread_obj.get("id") or thread or "")
     turn_number = int(turn_obj.get("turn_number") or 1)
+    # Continue-path send does not PATCH summary; mint already applied it.
+    if resolved_summary and thread_id and not new_slug:
+        patched = _update_thread_impl(
+            thread=thread_id,
+            status=None,
+            summary=resolved_summary,
+            tags=None,
+            from_agent=from_agent,
+        )
+        if isinstance(patched, dict) and "error" not in patched and patched.get("id"):
+            thread_obj = patched
+        else:
+            thread_obj = {**dict(thread_obj), "summary": resolved_summary}
+    elif resolved_summary and isinstance(thread_obj, dict):
+        thread_obj = {**dict(thread_obj), "summary": resolved_summary}
     # Hoist send-path sidecar fields — callers (esp. Cowork) check top-level
     # sidecar_uri; dropping them made successful writes look like failures
     # (a:26439 item 5 / todo:agent-bus-sidecar-uri-null-on-write).
@@ -279,6 +302,7 @@ def _request_dispatch(
     contract: str = "answer",
     require_attended: bool = False,
     after_turn: int = 0,
+    summary: str | None = None,
 ) -> dict[str, Any]:
     """Validate + dispatch ``agent_bus.request``.
 
@@ -286,6 +310,9 @@ def _request_dispatch(
     nested dispatch and in-seat substitute — terminal ``status:needs-attended``
     with ``reason=operator_require_attended``. Body field ``require_attended:
     true`` or ``executor_bind: attended`` ORs with the wire param.
+
+    ``summary``: standing human so-what title (ULG outcome line). Also accepted
+    fail-soft via body ``so_what:`` / ``ulg_gain:`` when wire summary omitted.
     """
     if isinstance(thread, int):
         thread = str(thread)
@@ -333,4 +360,5 @@ def _request_dispatch(
         contract=contract or "answer",
         require_attended=bool(require_attended),
         after_turn=after_turn,
+        summary=summary,
     )

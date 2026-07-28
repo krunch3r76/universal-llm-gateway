@@ -245,8 +245,94 @@ Machine consult-stall recovery fenced a quiet worker and re-queued the prior pic
     return subject, body
 
 
+def build_consult_stall_exhausted_checkpoint(
+    *,
+    prior: ParsedCheckpoint,
+    window_index: int,
+    worker_thread: str,
+    child_refs: list[str],
+    generation: int,
+    friction_id: int | None = None,
+) -> tuple[str, str]:
+    """Park CHECKPOINT after heal_cap — clears WIP; preserves prior pickup for re-enroll."""
+    marker = _generation_marker(generation)
+    scoreboard = prior.scoreboard_uri
+    pickup_lines = list(prior.next_pickup) or [
+        "(re-queue prior gated step — see scoreboard)"
+    ]
+    pickup = "\n".join(f"- {item}" for item in pickup_lines)
+    child_lines = (
+        "\n".join(f"- {ref}" for ref in child_refs)
+        if child_refs
+        else "_None discovered._"
+    )
+    stall_note = (
+        "consult-stall heal_cap exhausted — fenced worker, parked, unenroll; "
+        "re-enroll after wire fix (do not leave window_in_flight thrashing)"
+    )
+    if friction_id is not None:
+        from cortex_store.dispatch_ops._friction_enqueue import (
+            frictions_checkpoint_line,
+        )
+
+        frictions_block = frictions_checkpoint_line(
+            friction_id, category="protocol", note=stall_note
+        )
+    else:
+        frictions_block = f"- Machine consult-stall: {stall_note}."
+    subject = (
+        f"CHECKPOINT — consult-stall exhausted (window {window_index}) · {marker}"
+    )
+    body = f"""# {subject}
+
+## Anchor
+- Author: charter-runner (machine consult-stall heal_cap park — not an R12 worker CHECKPOINT)
+- Scoreboard: {scoreboard or "(see prior CHECKPOINT / scoreboard)"}
+- Generation: {marker}
+
+## State
+- Consult-stall: heal_cap exhausted after quiet stale windows; WIP cleared
+- abandoned_worker: {worker_thread}
+- supersedes_window: {window_index}
+- supersedes:{window_index}
+
+## Abandoned child refs
+{child_lines}
+
+## WIP / In-flight
+_None this window._
+
+## Next-pickup
+{pickup}
+
+## Steps
+{_steps_block(prior.steps)}
+
+## Frictions
+{frictions_block}
+
+## What happened (plain)
+Machine consult-stall exhausted heal budget, fenced the quiet worker, parked
+the prior pickup, and unenrolls so the tick stops thrashing. Re-enroll after
+the consult wake wire is fixed.
+
+## Sidecars
+- {scoreboard or "_None this window._"}
+
+## BLOCKED
+BLOCKED — consult_stall heal_cap exhausted (re-enroll to resume; ¬ done).
+
+## Scoreboard URI
+{scoreboard or ""}
+
+{_RESUME}
+"""
+    return subject, body
+
+
 __all__ = [
     "R_ADMIT_SUBJECT_PREFIX",
+    "build_consult_stall_exhausted_checkpoint",
     "build_consult_stall_requeue_checkpoint",
     "build_r_admit_advance_checkpoint",
     "discover_child_refs",

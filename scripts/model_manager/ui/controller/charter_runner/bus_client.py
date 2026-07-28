@@ -191,6 +191,49 @@ async def fetch_thread(thread_id: str) -> dict[str, Any]:
         return dict(resp.json())
 
 
+async def update_thread_summary(thread_id: str, summary: str) -> dict[str, Any]:
+    """PATCH standing so-what title onto ``ThreadDetail.summary``."""
+    payload = {"summary": summary}
+    async with make_async_client(DEFAULT_AGENT_BUS_URL, timeout=_TIMEOUT_S) as client:
+        resp = await client.patch(
+            f"/threads/{thread_id}",
+            json=payload,
+            headers=_auth_headers(),
+        )
+        resp.raise_for_status()
+        return dict(resp.json())
+
+
+def _thread_summary(detail: dict[str, Any]) -> str:
+    raw = str(detail.get("summary") or "")
+    if not raw and isinstance(detail.get("thread"), dict):
+        raw = str((detail.get("thread") or {}).get("summary") or "")
+    return raw.strip()
+
+
+async def ensure_root_so_what(root_id: str) -> str | None:
+    """If enrolled root has empty summary, set a humanized so-what from slug.
+
+    Seats should pass an explicit ULG so-what at mint; this is a fail-soft fill
+    so pager/close never see a blank title.
+    """
+    from pager_notify.so_what import clip
+
+    detail = await fetch_thread(root_id)
+    prior = _thread_summary(detail)
+    if prior:
+        return prior
+    slug = str(detail.get("slug") or "")
+    if not slug and isinstance(detail.get("thread"), dict):
+        slug = str((detail.get("thread") or {}).get("slug") or "")
+    if not slug:
+        return None
+    human = slug.replace("-", " ").replace("_", " ").strip()
+    summary = clip(f"ULG: {human}", 120)
+    await update_thread_summary(root_id, summary)
+    return summary
+
+
 async def find_thread_id_by_slug(slug: str) -> str | None:
     """Return active thread id for an exact slug match, if any."""
     async with make_async_client(DEFAULT_AGENT_BUS_URL, timeout=_TIMEOUT_S) as client:

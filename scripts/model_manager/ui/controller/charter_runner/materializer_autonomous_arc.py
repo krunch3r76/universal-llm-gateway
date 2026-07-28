@@ -11,6 +11,11 @@ def autonomous_arc_guidance(*, revise_cap: int) -> str:
     """Return the G-row decomposition block for autonomous task guidance."""
     return f"""\
 ## Autonomous arc (G-row decomposition — lay/advance on the scoreboard)
+Steps template (machine lane annotations — BINDING on mint):
+3. [ ] G3 — R-admit · [consult:r_admit]
+4. [ ] G4 — implement · [implement]
+5. [ ] G5 — R-after · [consult:judgment_gap]   # or [inline] when folded into G4
+
 G1  Q (L0)           cursor-sdk Grok — ranked question table + Question set.
 G2  A + Gate-2       cursor-sdk Grok — L1/L2 tables + dense spec
                      (doc_validate gates 6/8/9) + implement_ready assertion.

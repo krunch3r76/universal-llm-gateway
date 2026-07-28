@@ -26,19 +26,25 @@ async def post_terminal_status(
     terminal_status: str = "status:done",
     failed: bool = False,
     dispatch_id: str | None = None,
+    journal_extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Journal the episode and post one terminal ``status:*`` turn to the operator.
 
     The subject carries *terminal_status* verbatim, so waiters keyed on a
     completion token see exactly the vocabulary the caller chose.
     """
+    extra: dict[str, Any] = {"summary": summary}
+    if journal_extra:
+        extra.update(journal_extra)
+        if "summary" not in journal_extra:
+            extra["summary"] = summary
     append_journal_entry(
         thread_id=job.thread_id,
         dispatch_id=dispatch_id,
         contract=contract,
         terminal_status=terminal_status,
         disposition=disposition,
-        extra={"summary": summary},
+        extra=extra,
     )
     terminal = await client.reply(
         thread_id=job.thread_id,

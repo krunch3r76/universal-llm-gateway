@@ -18,11 +18,10 @@ from universal_logging import get_logger
 
 from .executor_defaults import (
     autonomous_generate_body,
-    consult_handoff_body,
+    consult_host_generate_body,
     default_handoff_body,
     default_judgment_body,
     implement_body,
-    r_admit_consult_generate_body,
 )
 
 logger = get_logger(__name__)
@@ -86,24 +85,17 @@ async def fire_window(
         )
         path = _HANDOFF_PATH
     elif admission_mode == "consult":
-        if consult_role == "r_admit":
-            body = r_admit_consult_generate_body(
-                root_id=root_id,
-                window_index=window_index,
-                packet_path=packet_path,
-                subject=subj,
-                caller_agent=_CALLER,
-            )
-            path = _DISPATCH_PATH
-        else:
-            body = consult_handoff_body(
-                root_id=root_id,
-                window_index=window_index,
-                packet_path=packet_path,
-                subject=subj,
-                caller_agent=_CALLER,
-            )
-            path = _HANDOFF_PATH
+        # Both judgment_gap and r_admit: cursor-sdk host → CDP auto-wake.
+        # Handoff web-consult (push_reminder) left the autonomous tick hung
+        # (a:26476) — host generate is the on-tick wire.
+        body = consult_host_generate_body(
+            root_id=root_id,
+            window_index=window_index,
+            packet_path=packet_path,
+            subject=subj,
+            caller_agent=_CALLER,
+        )
+        path = _DISPATCH_PATH
     elif admission_mode == "autonomous":
         if implement_source_ref:
             body = implement_body(
@@ -146,16 +138,15 @@ async def fire_window(
     if admission_mode == "handoff":
         result["executor"] = {"role": "cursor-consult", "seat": "cursor"}
     elif admission_mode == "consult":
-        if consult_role == "r_admit":
-            result["executor"] = {
-                "seat": body["seat"],
-                "model": body["model"],
-                "model_knobs": body["model_knobs"],
-                "contract": body["contract"],
-                "consult_role": "r_admit",
-            }
-        else:
-            result["executor"] = {"role": "web-consult", "seat": "web-anthropic"}
+        role = (consult_role or "judgment_gap").strip().lower() or "judgment_gap"
+        result["executor"] = {
+            "seat": body["seat"],
+            "model": body["model"],
+            "model_knobs": body["model_knobs"],
+            "contract": body["contract"],
+            "consult_role": role,
+            "reviewer_model": "cdp/opus-5",
+        }
     else:
         result["executor"] = {
             "seat": body["seat"],

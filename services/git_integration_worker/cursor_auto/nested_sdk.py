@@ -248,6 +248,10 @@ async def post_operator_closeout(
     Prefer *closeout_body* when the caller already selected a §2 payload.
     Legacy path: fall back to *sdk_body* (wrapper) when selection was not run.
     """
+    from services.git_integration_worker.cursor_auto.auth_gate_budget import (
+        tag_gate_class_for_payload,
+    )
+
     client = bus or CursorBusClient()
     meta = dict(extra or {})
     if closeout_source:
@@ -255,6 +259,11 @@ async def post_operator_closeout(
     payload = (closeout_body if closeout_body is not None else sdk_body) or ""
     if not payload.strip():
         payload = "(no cursor-sdk closeout body captured)"
+    gate_class = tag_gate_class_for_payload(payload)
+    if gate_class:
+        meta["gate_class"] = gate_class
+    if getattr(job, "contract", None):
+        meta.setdefault("contract", job.contract)
     lines = [
         "TYPE: CLOSEOUT",
         f"status: {status}",

@@ -8,6 +8,7 @@ import os
 from transport_utils import DEFAULT_AGENT_BUS_URL, make_async_client
 
 from pager_notify.client import notify_pager
+from pager_notify.so_what import clip
 from pager_notify.state import load_last_turns, save_last_turn
 
 logger = logging.getLogger(__name__)
@@ -49,13 +50,18 @@ def _turn_is_pageable(turn: dict) -> bool:
     return False
 
 
-def _summarize_turn(turn: dict) -> tuple[str, str]:
+def _summarize_turn(turn: dict, *, thread_summary: str = "") -> tuple[str, str]:
     thread = str(turn.get("thread") or "?")
     turn_no = turn.get("turn_number", "?")
     subject = str(turn.get("subject") or "")[:80]
     sender = str(turn.get("from") or "")
-    subj = f"bus {thread} t{turn_no}"
-    body = f"{sender}: {subject}"
+    so_what = (thread_summary or "").strip()
+    if so_what:
+        subj = clip(f"{so_what} · bus {thread} t{turn_no}", 120)
+        body = clip(f"{sender}: {subject}", 300)
+    else:
+        subj = f"bus {thread} t{turn_no}"
+        body = f"{sender}: {subject}"
     return subj, body
 
 
@@ -87,6 +93,19 @@ async def scan_operator_bus_turns() -> int:
                 thread_id = str(thread.get("id") or "")
                 if not thread_id:
                     continue
+                thread_summary = str(thread.get("summary") or "")
+                if not thread_summary:
+                    try:
+                        detail_resp = await client.get(
+                            f"/threads/{thread_id}",
+                            headers=_auth_headers(),
+                        )
+                        if detail_resp.status_code == 200:
+                            thread_summary = str(
+                                detail_resp.json().get("summary") or ""
+                            )
+                    except Exception:
+                        thread_summary = ""
                 resp = await client.get(
                     "/turns",
                     params={"thread": thread_id, "last": 20, "compact": "false"},
@@ -108,7 +127,9 @@ async def scan_operator_bus_turns() -> int:
                     if not _turn_is_pageable(turn):
                         save_last_turn(thread_id, turn_id)
                         continue
-                    subject, body = _summarize_turn(turn)
+                    subject, body = _summarize_turn(
+                        turn, thread_summary=thread_summary
+                    )
                     if await notify_pager(subject, body, tag="bus"):
                         sent += 1
                     save_last_turn(thread_id, turn_id)

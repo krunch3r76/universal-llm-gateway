@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 import sqlite3
+import time
 from dataclasses import dataclass
 from datetime import UTC
 from pathlib import Path
@@ -114,11 +115,30 @@ def _ledger_path() -> Path:
 
 
 def _connect(path: Path | None = None) -> sqlite3.Connection:
-    conn = sqlite3.connect(path or _ledger_path(), timeout=30.0)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-    return conn
+    """Open ledger DB; retry WAL pragma under concurrent first-open races.
+
+    Fresh DBs hit ``PRAGMA journal_mode=WAL`` from many threads at once during
+    Lane-B concurrent mint (F-A5); SQLite can raise ``database is locked``
+    before the connect busy-timeout absorbs it (assertion:26528).
+    """
+    db_path = path or _ledger_path()
+    last_err: sqlite3.OperationalError | None = None
+    for attempt in range(40):
+        conn = sqlite3.connect(db_path, timeout=30.0)
+        conn.row_factory = sqlite3.Row
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA foreign_keys=ON")
+            return conn
+        except sqlite3.OperationalError as exc:
+            conn.close()
+            msg = str(exc).lower()
+            if "locked" not in msg and "busy" not in msg:
+                raise
+            last_err = exc
+            time.sleep(0.02 * (attempt + 1))
+    assert last_err is not None
+    raise last_err
 
 
 @dataclass(frozen=True, slots=True)

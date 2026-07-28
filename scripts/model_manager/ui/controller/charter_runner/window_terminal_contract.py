@@ -35,6 +35,10 @@ _ARC_RANK: dict[str, int] = {
     ARC_R_ADMIT_REQUIRED: 2,
 }
 
+_PICKUP_DENSITY_RE = re.compile(r"\bdensity=(\w+)", re.IGNORECASE)
+_IMPLEMENT_READY_RE = re.compile(r"\bimplement_ready=", re.IGNORECASE)
+_R_ADMIT_DONE_RE = re.compile(r"\bR-admit\b", re.IGNORECASE)
+
 _STOP_VOCAB_SECTION_RE = re.compile(
     r"^###\s+Stop vocabulary\b", re.MULTILINE | re.IGNORECASE
 )
@@ -112,15 +116,46 @@ def admitted_arc(
     admission_mode: str,
     consult_role: str | None,
     executor_lane: str,
+    parsed: ParsedCheckpoint | None = None,
 ) -> str:
     """Map the lane about to admit into arc vocabulary."""
     if window_kind == "consult" or admission_mode == "consult":
         if consult_role == "r_admit":
             return ARC_R_ADMIT_REQUIRED
         return ARC_INVESTIGATE
-    if executor_lane == "implement" and admission_mode == "autonomous":
+    if executor_lane == "implement" and (
+        admission_mode == "autonomous" or implement_ready_declared(parsed)
+    ):
         return ARC_MECHANICAL
     return ARC_INVESTIGATE
+
+
+def density_triage_from_pickup(parsed: ParsedCheckpoint) -> str | None:
+    """``density=`` on a Next-pickup row overrides todo ``density_triage`` for arc."""
+    for row in parsed.next_pickup:
+        match = _PICKUP_DENSITY_RE.search(row)
+        if match:
+            return match.group(1).strip().lower()
+    return None
+
+
+def implement_ready_declared(parsed: ParsedCheckpoint | None) -> bool:
+    """True when Next-pickup names ``implement_ready=`` (post-R-admit implement)."""
+    if parsed is None:
+        return False
+    return any(_IMPLEMENT_READY_RE.search(row) for row in parsed.next_pickup)
+
+
+def r_admit_step_done(parsed: ParsedCheckpoint | None) -> bool:
+    """True when Steps show a completed R-admit row (G3 satisfied)."""
+    if parsed is None:
+        return False
+    for step in parsed.steps:
+        if step.status != "done":
+            continue
+        if _R_ADMIT_DONE_RE.search(step.title):
+            return True
+    return False
 
 
 def arc_is_weaker_than(admitted: str, required: str) -> bool:
@@ -133,16 +168,16 @@ def effective_required_arc(
     executor_lane: str,
     consult_pending: bool,
     checkpoint_body: str,
+    parsed: ParsedCheckpoint | None = None,
 ) -> str:
     """Derive required arc from G-row lane; todo ``density_triage`` is secondary."""
     from .residue_fingerprint import consult_provenance_present
 
-    if (
-        executor_lane == "implement"
-        and not consult_pending
-        and consult_provenance_present(checkpoint_body)
-    ):
-        return ARC_MECHANICAL
+    if executor_lane == "implement" and not consult_pending:
+        if consult_provenance_present(checkpoint_body):
+            return ARC_MECHANICAL
+        if r_admit_step_done(parsed) or implement_ready_declared(parsed):
+            return ARC_MECHANICAL
     base = required_arc(triage)
     # G-row ``executor_lane: judgment`` (G1/G2 Grok densify) satisfies
     # ``judgment_required`` without escalating to G3 R-admit consult.

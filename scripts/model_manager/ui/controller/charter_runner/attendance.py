@@ -26,21 +26,44 @@ def admission_mode_for_attendance(attendance: Attendance) -> AdmissionMode:
     return "generate"
 
 
-def default_attendance_lookup(root_id: str) -> Attendance:
-    """Read attendance from the root charter todo entity."""
-    todo_ref = _charter_todo_for_root(root_id)
-    if not todo_ref:
-        return "attended"
+def _attendance_from_bus_tags(root_id: str) -> Attendance | None:
+    """Honor ``attendance:autonomous`` on the enrolled bus thread when set."""
+    rid = root_id.removeprefix("agent-bus:")
     try:
-        from cortex_store.dispatch_ops.ops_entities import _op_entity_get
+        from agent_bus_store.db.threads import get_thread
 
-        ent = _op_entity_get(entity_id=todo_ref, intent="full")
-    except Exception:  # noqa: BLE001 — offline / missing cortex
-        return "attended"
-    if "error" in ent:
-        return "attended"
-    attrs = ent.get("attributes")
-    return attendance_from_todo_attrs(attrs if isinstance(attrs, dict) else None)
+        thread = get_thread(rid)
+    except Exception:  # noqa: BLE001
+        return None
+    if not thread:
+        return None
+    tags = [str(t).strip().lower() for t in (thread.get("tags") or [])]
+    if "attendance:autonomous" in tags:
+        return "autonomous"
+    return None
+
+
+def default_attendance_lookup(root_id: str) -> Attendance:
+    """Read attendance from todo attrs, else enrolled bus thread tag."""
+    todo_ref = _charter_todo_for_root(root_id)
+    if todo_ref:
+        try:
+            from cortex_store.dispatch_ops.ops_entities import _op_entity_get
+
+            ent = _op_entity_get(entity_id=todo_ref, intent="full")
+        except Exception:  # noqa: BLE001 — offline / missing cortex
+            ent = {}
+        if "error" not in ent:
+            attrs = ent.get("attributes")
+            mode = attendance_from_todo_attrs(
+                attrs if isinstance(attrs, dict) else None
+            )
+            if mode == "autonomous":
+                return "autonomous"
+    tagged = _attendance_from_bus_tags(root_id)
+    if tagged is not None:
+        return tagged
+    return "attended"
 
 
 def admission_mode_for_root(root_id: str) -> AdmissionMode:

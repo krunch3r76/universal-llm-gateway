@@ -143,7 +143,7 @@ def default_handoff_body(
     }
 
 
-def r_admit_consult_generate_body(
+def consult_host_generate_body(
     *,
     root_id: str,
     window_index: int,
@@ -151,14 +151,15 @@ def r_admit_consult_generate_body(
     subject: str,
     caller_agent: str,
 ) -> dict[str, Any]:
-    """Unattended generate wire for R-admit consult hosting (project_ask-capable).
+    """Unattended host wire for consult seats that fire CDP (judgment_gap + r_admit).
 
-    Same cursor-sdk Grok generate schema as worker windows; the R-admit mandate
-    lives in the materialized consult packet. Distinct from ``consult_handoff_body``
-    (web-consult judgment-gap handoff — no ``project_ask`` on that wire).
+    Same cursor-sdk Grok generate schema as worker windows; the consult mandate
+    (path-sim judgment OR R-admit) lives in the materialized packet. The host
+    owns ``team_dispatch(model=cdp/opus-5)`` submit→poll — auto-wake, no human
+    ``push_reminder`` (a:26476 / web-consult on-tick).
 
-    ``read_only=True`` releases the cursor dispatch write lease — the consult seat
-    polls CDP and writes cortex provenance only, never checkout edits.
+    ``read_only=True`` releases the cursor dispatch write lease — the host polls
+    CDP and writes cortex provenance only, never checkout edits.
     """
     body = default_judgment_body(
         root_id=root_id,
@@ -171,6 +172,24 @@ def r_admit_consult_generate_body(
     return body
 
 
+def r_admit_consult_generate_body(
+    *,
+    root_id: str,
+    window_index: int,
+    packet_path: str,
+    subject: str,
+    caller_agent: str,
+) -> dict[str, Any]:
+    """Alias — R-admit uses the shared consult-host generate wire."""
+    return consult_host_generate_body(
+        root_id=root_id,
+        window_index=window_index,
+        packet_path=packet_path,
+        subject=subject,
+        caller_agent=caller_agent,
+    )
+
+
 def consult_handoff_body(
     *,
     root_id: str,
@@ -179,7 +198,11 @@ def consult_handoff_body(
     subject: str,
     caller_agent: str,
 ) -> dict[str, Any]:
-    """Wire body for charter CONSULT_PENDING pickup (cross-family web-consult)."""
+    """Attended-only web-consult handoff (push_reminder). Not used on autonomous tick.
+
+    Autonomous ``judgment_gap`` admits via ``consult_host_generate_body`` so CDP
+    auto-wakes. Kept for tests / explicit attended handoff callers.
+    """
     return {
         "op": "handoff",
         "role": "web-consult",

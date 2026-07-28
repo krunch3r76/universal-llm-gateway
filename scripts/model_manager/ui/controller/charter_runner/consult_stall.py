@@ -25,6 +25,7 @@ from .consult_stall_build import (
     discover_child_refs,
     find_r_admit_after,
 )
+from .consult_stall_exhaust import exhaust_consult_stall
 from .eligibility import Decision
 from .harvest import harvest_completed_windows
 from .self_heal import turn_number, window_terminal_after
@@ -162,13 +163,23 @@ async def try_recover_consult_stall(
             )
         return False
 
+    # Already parked/stopped — do not re-increment or re-emit every tick.
+    allowed, cap_reason = caps.check(decision.root_id)
+    if not allowed and (cap_reason or "") == "stopped:no_progress:consult_stall":
+        return False
+
     heals = caps.increment_consult_stall_heal(decision.root_id)
     if heals > heal_cap:
-        caps.mark_failed(decision.root_id, "no_progress:consult_stall")
-        await events.emit_manage_charter_tick_window_failed(
-            root=decision.root_id, reason="no_progress:consult_stall"
+        return await exhaust_consult_stall(
+            decision,
+            caps=caps,
+            worker_thread=worker_thread,
+            window_index=window_index,
+            prior=prior,
+            adm_n=adm_n,
+            root_turns=root_turns,
+            heals=heals,
         )
-        return False
 
     friction_id = file_charter_protocol_friction(
         root_id=decision.root_id,

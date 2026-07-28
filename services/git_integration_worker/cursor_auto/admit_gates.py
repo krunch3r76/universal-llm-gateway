@@ -1,6 +1,6 @@
-"""Pre-nest admit gates — relay trust and unacknowledged synthesized closeouts.
+"""Pre-nest admit gates — relay trust, synthesized closeouts, auth-gate budget.
 
-Both gates refuse the job before any nested SDK capacity is spent, so a thread
+Gates refuse the job before any nested SDK capacity is spent, so a thread
 whose history cannot be verified never reaches ``submit_nested_dispatch``.
 """
 
@@ -8,6 +8,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from services.git_integration_worker.cursor_auto.auth_gate_budget import (
+    count_auth_gate_failures,
+    effective_auth_gate_budget,
+    pending_auth_gate_block,
+)
 from services.git_integration_worker.cursor_auto.episode_briefing import (
     fetch_thread_turns,
 )
@@ -19,6 +24,9 @@ from services.git_integration_worker.cursor_auto.relay_trust import (
     pending_synthesized_closeout,
 )
 from services.git_integration_worker.cursor_bus import CursorBusClient
+from services.git_integration_worker.cursor_sdk_events import (
+    emit_frontier_sdk_auto_auth_gate_blocked,
+)
 
 
 async def blocking_admit_gate(
@@ -29,7 +37,7 @@ async def blocking_admit_gate(
 ) -> dict[str, Any] | None:
     """Return a terminal ``status:blocked`` result when an admit gate refuses.
 
-    ``None`` means both gates passed and the caller may continue to nest.
+    ``None`` means all gates passed and the caller may continue to nest.
     """
     turns = await fetch_thread_turns(job.thread_id)
     if turns is None:
@@ -57,6 +65,50 @@ async def blocking_admit_gate(
             summary=summary,
             payload={"summary": summary, "pending_synthesized_closeout": pending},
         )
+    if pending_auth_gate_block(turns, operator_from=job.from_agent):
+        failures = count_auth_gate_failures(
+            turns, operator_from=job.from_agent
+        )
+        budget, post_ack = effective_auth_gate_budget(
+            turns, operator_from=job.from_agent
+        )
+        summary = (
+            "auth_gate_budget_exhausted — "
+            f"{failures} classified auth-gate CLOSEOUTs "
+            f"(budget={budget}, post_ack={post_ack}). "
+            "Post auth_gate_ack: <thread_id|dispatch_id> then confer."
+        )
+        emit_frontier_sdk_auto_auth_gate_blocked(
+            thread_id=job.thread_id,
+            failure_count=failures,
+            budget=budget,
+            post_ack=post_ack,
+        )
+        return await _blocked(
+            job,
+            client=client,
+            queue=queue,
+            summary=summary,
+            payload={
+                "summary": summary,
+                "reason": "auth_gate_budget_exhausted",
+                "gate_class": "auth_gate",
+                "failures": failures,
+                "budget": budget,
+                "post_ack": post_ack,
+                "scope": f"thread:{job.thread_id}",
+                "recommended_next": (
+                    "contract:confer — ask cursor/grok-4.5 or CDP Opus whether "
+                    "auth path is automatable; else operator human gate"
+                ),
+            },
+            journal_extra={
+                "gate_class": "auth_gate",
+                "summary": summary,
+                "budget": budget,
+                "post_ack": post_ack,
+            },
+        )
     return None
 
 
@@ -67,6 +119,7 @@ async def _blocked(
     queue: Any,
     summary: str,
     payload: dict[str, Any],
+    journal_extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return await post_terminal_status(
         job,
@@ -78,4 +131,5 @@ async def _blocked(
         terminal_status="status:blocked",
         payload=payload,
         failed=True,
+        journal_extra=journal_extra,
     )

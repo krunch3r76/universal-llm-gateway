@@ -12,6 +12,7 @@ completion-provenance-discipline
 consult-posture
 consult-routing
 cortex
+densify-abstraction-layering
 dispatch-shape
 discovery-engram-opportunity-scan
 docstring-quality

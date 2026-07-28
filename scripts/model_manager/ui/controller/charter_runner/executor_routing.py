@@ -33,6 +33,7 @@ import re
 from dataclasses import dataclass
 
 from .checkpoint_parse import ParsedCheckpoint
+from .window_terminal_contract import implement_ready_declared
 
 JUDGMENT_LANE = "judgment"
 IMPLEMENT_LANE = "implement"
@@ -103,6 +104,16 @@ def resolve_charter_executor(
     seat or the R-independence invariant breaks (review §5).
     """
     if consult_role is not None or admission_mode != "autonomous":
+        if (
+            parsed.executor_lane == IMPLEMENT_LANE
+            and parsed.source_ref
+            and implement_ready_declared(parsed)
+        ):
+            return ExecutorBind(
+                IMPLEMENT_LANE,
+                "declared_implement_ready",
+                source_ref=parsed.source_ref,
+            )
         # ``generate`` mode materializes a one-gated-step packet with no G-row
         # arc in its task_guidance — routing it to implement would authorize
         # work the packet never described.

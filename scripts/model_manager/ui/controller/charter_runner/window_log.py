@@ -169,3 +169,21 @@ def parse_admission_meta(body: str | None) -> dict[str, Any]:
         return data if isinstance(data, dict) else {}
     except (ValueError, TypeError):
         return {}
+
+
+def dispatch_id_from_transcript(worker_thread: str) -> str | None:
+    """Read ``dispatch_id=`` from the worker transcript banner when present."""
+    if not worker_thread:
+        return None
+    path = worker_transcript_path(worker_thread)
+    if not path.is_file():
+        return None
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    for line in text.splitlines():
+        if line.startswith("dispatch_id="):
+            val = line.split("=", 1)[1].strip()
+            return val or None
+    return None

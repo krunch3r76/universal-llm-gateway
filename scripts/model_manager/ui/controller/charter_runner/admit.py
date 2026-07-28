@@ -21,6 +21,7 @@ from .r_corpus_sha import (
     refuse_stale_r_admit,
     verify_r_corpus_sha,
 )
+from .window_terminal_contract import implement_ready_declared
 
 logger = get_logger(__name__)
 
@@ -42,6 +43,12 @@ async def admit_window(
 ) -> bool:
     """Fire one charter window and post the admission pointer on the root."""
     root_id = decision.root_id
+    try:
+        await bus_client.ensure_root_so_what(root_id)
+    except Exception:  # noqa: BLE001 — title fill must not block admit
+        logger.debug(
+            "charter-runner so-what ensure failed root=%s", root_id, exc_info=True
+        )
     assert decision.parsed is not None and decision.checkpoint is not None
     from .attendance import admission_mode_for_root
 
@@ -51,6 +58,14 @@ async def admit_window(
     if decision.window_kind == "consult":
         admission_mode = "consult"
         consult_role = decision.parsed.consult_role
+        if (
+            decision.parsed.executor_lane == "implement"
+            and not implement_ready_declared(decision.parsed)
+        ):
+            logger.warning(
+                "classifier_consult_overrides_implement_lane root=%s",
+                root_id,
+            )
     if consult_role == "r_admit":
         cp_body = str((decision.checkpoint or {}).get("body") or "")
         sha_check = verify_r_corpus_sha(cp_body)
@@ -144,6 +159,7 @@ async def admit_window(
         return False
     caps.record_admit(root_id)
     worker_thread = str(result.get("thread_id") or "")
+    caps.bind_intent_worker(root_id, window_index, worker_thread)
     packet_path = str(result.get("packet_path") or "")
     push = str(result.get("push_reminder") or "")
     now_iso = datetime.now(UTC).isoformat()
@@ -193,9 +209,13 @@ async def admit_window(
         mode_note = " (attended IDE — open worker thread)"
     elif admission_mode == "consult":
         if consult_role == "r_admit":
-            mode_note = " (CONSULT_PENDING — R-admit consult, cursor-sdk generate)"
+            mode_note = (
+                " (CONSULT_PENDING — R-admit host → cdp/opus-5)"
+            )
         else:
-            mode_note = " (CONSULT_PENDING — web-consult cross-family)"
+            mode_note = (
+                " (CONSULT_PENDING — judgment_gap host → cdp/opus-5)"
+            )
     elif admission_mode == "autonomous":
         lane = "implement" if bind.is_implement else "background lead"
         mode_note = f" (autonomous {lane} — {fired_model})"

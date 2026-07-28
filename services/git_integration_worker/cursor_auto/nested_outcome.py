@@ -159,12 +159,14 @@ async def relay_closeout_outcome(
             bus=client,
         )
         try:
-            from pager_notify.client import notify_pager
+            from pager_notify.closeout import notify_closeout_complete
 
-            await notify_pager(
-                f"CLOSEOUT {payload.status}",
-                f"bus:{job.thread_id} {job.subject[:60]} id={dispatch_id}",
-                tag="closeout",
+            await notify_closeout_complete(
+                thread_id=str(job.thread_id),
+                status=str(payload.status or "complete"),
+                dispatch_id=str(dispatch_id),
+                closeout_body=str(payload.body or ""),
+                sdk_body=str(sdk_body or ""),
             )
         except Exception:
             pass

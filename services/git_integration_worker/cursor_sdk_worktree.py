@@ -135,8 +135,13 @@ def acquire_mint_mutex_blocking(
     mutex_key = master_mint_mutex_key(source_repo)
     deadline = time.monotonic() + timeout_s
     while True:
-        if _try_acquire_mint_mutex(mutex_key=mutex_key, holder_id=holder_id):
-            return mutex_key
+        try:
+            if _try_acquire_mint_mutex(mutex_key=mutex_key, holder_id=holder_id):
+                return mutex_key
+        except sqlite3.OperationalError as exc:
+            # Transient SQLite busy during concurrent mint connect/BEGIN — poll again.
+            if "locked" not in str(exc).lower() and "busy" not in str(exc).lower():
+                raise
         if time.monotonic() >= deadline:
             raise TimeoutError(
                 f"mint mutex unavailable for {mutex_key!r} after {timeout_s:.0f}s"

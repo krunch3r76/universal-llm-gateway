@@ -1,4 +1,4 @@
-updated_at: '2026-07-27T13:09:05.297547+00:00'
+updated_at: '2026-07-27T19:09:07.064140+00:00'
 models:
 - model_id: ai21/jamba-large-1.7
   input_rate_per_m: 2.0
@@ -469,11 +469,11 @@ models:
   pinned: false
   updated_at: '2026-07-24T06:42:31.199332+00:00'
 - model_id: google/gemma-4-26b-a4b-it
-  input_rate_per_m: 0.12
-  output_rate_per_m: 0.35
+  input_rate_per_m: 0.14
+  output_rate_per_m: 0.42
   source: catalog_refresh
   pinned: false
-  updated_at: '2026-07-24T06:42:31.199039+00:00'
+  updated_at: '2026-07-27T19:09:07.063456+00:00'
 - model_id: google/gemma-4-31b-it
   input_rate_per_m: 0.14
   output_rate_per_m: 0.4
@@ -1135,17 +1135,17 @@ models:
   pinned: false
   updated_at: '2026-07-24T06:42:31.199012+00:00'
 - model_id: openai/gpt-5.6-luna
-  input_rate_per_m: 1.0
-  output_rate_per_m: 6.0
+  input_rate_per_m: 0.5
+  output_rate_per_m: 3.0
   source: catalog_refresh
   pinned: false
-  updated_at: '2026-07-24T06:42:31.198910+00:00'
+  updated_at: '2026-07-27T19:09:07.063255+00:00'
 - model_id: openai/gpt-5.6-luna-pro
-  input_rate_per_m: 1.0
-  output_rate_per_m: 6.0
+  input_rate_per_m: 0.5
+  output_rate_per_m: 3.0
   source: catalog_refresh
   pinned: false
-  updated_at: '2026-07-24T06:42:31.198908+00:00'
+  updated_at: '2026-07-27T19:09:07.063249+00:00'
 - model_id: openai/gpt-5.6-sol
   input_rate_per_m: 5.0
   output_rate_per_m: 30.0
@@ -1159,17 +1159,17 @@ models:
   pinned: false
   updated_at: '2026-07-24T06:42:31.198916+00:00'
 - model_id: openai/gpt-5.6-terra
-  input_rate_per_m: 2.5
-  output_rate_per_m: 15.0
+  input_rate_per_m: 1.25
+  output_rate_per_m: 7.5
   source: catalog_refresh
   pinned: false
-  updated_at: '2026-07-24T06:42:31.198914+00:00'
+  updated_at: '2026-07-27T19:09:07.063265+00:00'
 - model_id: openai/gpt-5.6-terra-pro
-  input_rate_per_m: 2.5
-  output_rate_per_m: 15.0
+  input_rate_per_m: 1.25
+  output_rate_per_m: 7.5
   source: catalog_refresh
   pinned: false
-  updated_at: '2026-07-24T06:42:31.198912+00:00'
+  updated_at: '2026-07-27T19:09:07.063260+00:00'
 - model_id: openai/gpt-audio
   input_rate_per_m: 2.5
   output_rate_per_m: 10.0
@@ -1735,11 +1735,11 @@ models:
   pinned: false
   updated_at: '2026-07-24T06:42:31.199332+00:00'
 - model_id: openrouter/google/gemma-4-26b-a4b-it
-  input_rate_per_m: 0.12
-  output_rate_per_m: 0.35
+  input_rate_per_m: 0.14
+  output_rate_per_m: 0.42
   source: catalog_refresh
   pinned: false
-  updated_at: '2026-07-24T06:42:31.199039+00:00'
+  updated_at: '2026-07-27T19:09:07.063455+00:00'
 - model_id: openrouter/google/gemma-4-31b-it
   input_rate_per_m: 0.14
   output_rate_per_m: 0.4
@@ -2413,17 +2413,17 @@ models:
   pinned: false
   updated_at: '2026-07-24T06:42:31.199012+00:00'
 - model_id: openrouter/openai/gpt-5.6-luna
-  input_rate_per_m: 1.0
-  output_rate_per_m: 6.0
+  input_rate_per_m: 0.5
+  output_rate_per_m: 3.0
   source: catalog_refresh
   pinned: false
-  updated_at: '2026-07-24T06:42:31.198910+00:00'
+  updated_at: '2026-07-27T19:09:07.063253+00:00'
 - model_id: openrouter/openai/gpt-5.6-luna-pro
-  input_rate_per_m: 1.0
-  output_rate_per_m: 6.0
+  input_rate_per_m: 0.5
+  output_rate_per_m: 3.0
   source: catalog_refresh
   pinned: false
-  updated_at: '2026-07-24T06:42:31.198908+00:00'
+  updated_at: '2026-07-27T19:09:07.063240+00:00'
 - model_id: openrouter/openai/gpt-5.6-sol
   input_rate_per_m: 5.0
   output_rate_per_m: 30.0
@@ -2437,17 +2437,17 @@ models:
   pinned: false
   updated_at: '2026-07-24T06:42:31.198916+00:00'
 - model_id: openrouter/openai/gpt-5.6-terra
-  input_rate_per_m: 2.5
-  output_rate_per_m: 15.0
+  input_rate_per_m: 1.25
+  output_rate_per_m: 7.5
   source: catalog_refresh
   pinned: false
-  updated_at: '2026-07-24T06:42:31.198914+00:00'
+  updated_at: '2026-07-27T19:09:07.063263+00:00'
 - model_id: openrouter/openai/gpt-5.6-terra-pro
-  input_rate_per_m: 2.5
-  output_rate_per_m: 15.0
+  input_rate_per_m: 1.25
+  output_rate_per_m: 7.5
   source: catalog_refresh
   pinned: false
-  updated_at: '2026-07-24T06:42:31.198912+00:00'
+  updated_at: '2026-07-27T19:09:07.063258+00:00'
 - model_id: openrouter/openai/gpt-audio
   input_rate_per_m: 2.5
   output_rate_per_m: 10.0
@@ -3109,11 +3109,11 @@ models:
   pinned: false
   updated_at: '2026-07-24T06:42:31.199038+00:00'
 - model_id: openrouter/z-ai/glm-5.2
-  input_rate_per_m: 0.791
-  output_rate_per_m: 2.486
+  input_rate_per_m: 0.7644
+  output_rate_per_m: 2.4024
   source: catalog_refresh
   pinned: false
-  updated_at: '2026-07-27T13:09:05.296704+00:00'
+  updated_at: '2026-07-27T19:09:07.063310+00:00'
 - model_id: openrouter/z-ai/glm-5v-turbo
   input_rate_per_m: 1.2
   output_rate_per_m: 4.0
@@ -3745,11 +3745,11 @@ models:
   pinned: false
   updated_at: '2026-07-24T06:42:31.199038+00:00'
 - model_id: z-ai/glm-5.2
-  input_rate_per_m: 0.791
-  output_rate_per_m: 2.486
+  input_rate_per_m: 0.7644
+  output_rate_per_m: 2.4024
   source: catalog_refresh
   pinned: false
-  updated_at: '2026-07-27T13:09:05.296713+00:00'
+  updated_at: '2026-07-27T19:09:07.063312+00:00'
 - model_id: z-ai/glm-5v-turbo
   input_rate_per_m: 1.2
   output_rate_per_m: 4.0

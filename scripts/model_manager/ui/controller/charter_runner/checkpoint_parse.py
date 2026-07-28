@@ -93,10 +93,6 @@ _EXECUTOR_LANE_RE = re.compile(
 # Work-item ref the implement gate needs (``require_implement_ready``). Charter
 # CHECKPOINTs name it in the Anchor block: ``- Todo: todo:<slug> · …``.
 _SOURCE_REF_RE = re.compile(r"\b((?:todo|plan|plan_phase):[a-z0-9][a-z0-9._-]*)")
-# Fallback sniff when explicit consult_role marker is absent (demoted per E5).
-_JUDGMENT_GAP_SNIFF_RE = re.compile(r"\bjudgment\s+gap\b", re.IGNORECASE)
-
-
 def _sections(body: str) -> dict[str, str]:
     return split_sections(body)
 
@@ -320,7 +316,7 @@ def _parse_source_ref(body: str, next_pickup: list[str] | None = None) -> str | 
 
 
 def _parse_consult_role(body: str, next_pickup: list[str]) -> str | None:
-    """Extract ``consult_role: r_admit | judgment_gap``; content-sniff fallback."""
+    """Extract ``consult_role: r_admit | judgment_gap`` from explicit markers only."""
     sections = _sections(body)
     stop_text = _find_section(sections, "stop", "stop class", "stop condition")
     for text in [*next_pickup, stop_text, body]:
@@ -329,15 +325,6 @@ def _parse_consult_role(body: str, next_pickup: list[str]) -> str | None:
         m = _CONSULT_ROLE_RE.search(text)
         if m:
             return m.group(1).lower()
-    combined = "\n".join(next_pickup)
-    if _JUDGMENT_GAP_SNIFF_RE.search(combined):
-        return "judgment_gap"
-    if re.search(r"\bR-admit\b", combined, re.IGNORECASE):
-        return "r_admit"
-    if re.search(r"\bG3\b", combined, re.IGNORECASE) and re.search(
-        r"execution_id=", combined, re.IGNORECASE
-    ):
-        return "r_admit"
     return "judgment_gap"
 
 
@@ -362,7 +349,7 @@ def _active_consult_token(text: str) -> bool:
 
 
 def _detect_consult_pending(body: str, next_pickup: list[str]) -> bool:
-    """True when the active CHECKPOINT stop class is CONSULT_PENDING."""
+    """True when the worker declares CONSULT_PENDING (cross-check; not lane authority)."""
     if any(_active_consult_token(item) for item in next_pickup):
         return True
     sections = _sections(body)

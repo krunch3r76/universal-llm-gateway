@@ -18,9 +18,10 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
 
+from universal_logging import get_logger
+
 from .caps import CapStore
 from .checkpoint_parse import ParsedCheckpoint
-from .window_terminal_contract import CHECKPOINT_PREFIX, is_tip_class
 from .env_predicates import (
     ADMIT_INTENT_ORPHAN_REASON,
     ENV_SNAPSHOT_STALE_REASON,
@@ -30,6 +31,9 @@ from .env_predicates import (
     EnvironmentSnapshot,
     evaluate_env_half,
 )
+from .window_terminal_contract import CHECKPOINT_PREFIX, is_tip_class
+
+logger = get_logger(__name__)
 
 ENROLLMENT_TAG = "charter-runner"
 ADMISSION_SUBJECT_PREFIX = "WIP charter-runner"
@@ -250,12 +254,12 @@ def evaluate_root(
             admission_turn=admission,
         )
 
+    from .attendance import admission_mode_for_root
     from .checkpoint_admit_gate import (
         validate_arc_for_admit,
         validate_checkpoint_for_admit,
     )
     from .executor_routing import resolve_charter_executor
-    from .attendance import admission_mode_for_root
 
     verdict = validate_checkpoint_for_admit(str(checkpoint.get("body") or ""))
     if not verdict.ok:
@@ -269,12 +273,16 @@ def evaluate_root(
     assert parsed is not None
 
     admission_mode = admission_mode_for_root(root_id)
-    consult_role: str | None = None
-    window_kind: WindowKind = "worker"
-    if parsed.consult_pending:
-        window_kind = "consult"
-        admission_mode = "consult"
-        consult_role = parsed.consult_role
+    from .gate_lane_classifier import resolve_admit_lane
+
+    window_kind, admission_mode, consult_role, parsed, lane_refuse = resolve_admit_lane(
+        parsed,
+        default_admission_mode=admission_mode,
+        root_id=root_id,
+        log=logger,
+    )
+    if lane_refuse:
+        return _body_skip(lane_refuse, root_id, checkpoint=checkpoint, parsed=parsed)
     bind = resolve_charter_executor(
         parsed=parsed,
         admission_mode=admission_mode,
@@ -296,7 +304,7 @@ def evaluate_root(
             parsed=parsed,
         )
 
-    if parsed.consult_pending:
+    if window_kind == "consult":
         allowed, cap_reason = caps.check(root_id)
         if not allowed:
             return _body_skip(
@@ -399,16 +407,16 @@ def _check_env_or_eligible(
             parsed=parsed,
             window_kind=window_kind,
         )
+    from .attendance import admission_mode_for_root
     from .residue_fingerprint import (
         ResidueRecord,
         evaluate_residue_gate,
         load_residue_record,
         save_residue_record,
     )
-    from .attendance import admission_mode_for_root
 
     admission_mode = admission_mode_for_root(root_id)
-    if window_kind == "consult":
+    if parsed.consult_pending:
         admission_mode = "consult"
     cp_body = str(checkpoint.get("body") or "")
     last = load_residue_record(root_id)

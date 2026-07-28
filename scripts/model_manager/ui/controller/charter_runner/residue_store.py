@@ -73,4 +73,14 @@ def save_residue_record(
     )
 
 
-__all__ = ["load_residue_record", "save_residue_record", "store_path"]
+def clear_residue_record(root_id: str, *, store_dir: Path | None = None) -> None:
+    """Drop last-residue so a recovery CHECKPOINT can admit without thrash skip."""
+    store_path(root_id, store_dir=store_dir).unlink(missing_ok=True)
+
+
+__all__ = [
+    "clear_residue_record",
+    "load_residue_record",
+    "save_residue_record",
+    "store_path",
+]

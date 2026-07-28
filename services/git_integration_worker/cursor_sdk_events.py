@@ -46,6 +46,51 @@ def emit_frontier_event(event: Event) -> None:
 
 
 @event_factory
+def FrontierSdkAutoAuthGateBlocked(  # noqa: N802
+    thread_id: str,
+    failure_count: int,
+    budget: int,
+    post_ack: bool,
+) -> Event:
+    return Event(
+        signal="frontier.sdk.auto.auth_gate_blocked",
+        payload={
+            "thread_id": thread_id,
+            "failure_count": failure_count,
+            "budget": budget,
+            "post_ack": post_ack,
+        },
+        scope="node",
+    )
+
+
+def emit_frontier_sdk_auto_auth_gate_blocked(
+    *,
+    thread_id: str,
+    failure_count: int,
+    budget: int,
+    post_ack: bool,
+) -> None:
+    """Emit when cursor-auto refuse-admits on auth-gate budget exhaustion."""
+    _emit(
+        FrontierSdkAutoAuthGateBlocked(
+            thread_id=thread_id,
+            failure_count=failure_count,
+            budget=budget,
+            post_ack=post_ack,
+        )
+    )
+    logger.info(
+        "cursor-auto auth_gate_blocked: thread_id=%s failure_count=%s "
+        "budget=%s post_ack=%s",
+        thread_id,
+        failure_count,
+        budget,
+        post_ack,
+    )
+
+
+@event_factory
 def FrontierSdkWorkerCompleted(  # noqa: N802
     dispatch_id: str,
     thread_id: str,

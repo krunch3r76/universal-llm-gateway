@@ -45,6 +45,7 @@ if TYPE_CHECKING:
 
 from . import admit, bus_client, window_log
 from . import consult_stall as _consult_stall_mod
+from . import orphan_dispatch_heal as _orphan_dispatch_mod
 from . import schema_skip_heal as _schema_skip_heal_mod
 from . import self_heal as _self_heal_mod
 from . import state_close as _state_close_mod
@@ -57,7 +58,7 @@ from .eligibility import (
     live_wip_for_window,
     next_window_index,
 )
-from .giw_live_hold import build_tick_env_snapshot
+from .giw_live_hold import build_tick_env_snapshot, probe_giw_live_hold
 from .harvest import completed_windows, harvest_completed_windows
 from .tick_interval import tick_interval_from_env as _tick_interval_from_env
 
@@ -65,6 +66,7 @@ from .tick_interval import tick_interval_from_env as _tick_interval_from_env
 # in sys.modules (r_corpus_sha / self_heal / state_close) until ./manage process
 # recycle picks up app.py reload-driver + reload.py census.
 _self_heal_mod = importlib.reload(_self_heal_mod)
+_orphan_dispatch_mod = importlib.reload(_orphan_dispatch_mod)
 _schema_skip_heal_mod = importlib.reload(_schema_skip_heal_mod)
 _consult_stall_mod = importlib.reload(_consult_stall_mod)
 _state_close_mod = importlib.reload(_state_close_mod)
@@ -308,6 +310,20 @@ class CharterRunnerTickLoop:
                 "eligible" if decision.eligible else decision.reason
             )
             if decision.eligible:
+                if (
+                    _orphan_dispatch_mod.decision_needs_fleet_slot(decision)
+                    and await probe_giw_live_hold()
+                ):
+                    ckpt = _state_close_mod.checkpoint_turn_number(decision.checkpoint)
+                    await events.emit_manage_charter_tick_root_skipped(
+                        root=root_id,
+                        reason="giw_fleet_busy",
+                        checkpoint_turn=ckpt,
+                    )
+                    skipped_by_reason["giw_fleet_busy"] = (
+                        skipped_by_reason.get("giw_fleet_busy", 0) + 1
+                    )
+                    continue
                 try:
                     if await self._admit_window(decision, turns):
                         admitted += 1
@@ -328,6 +344,8 @@ class CharterRunnerTickLoop:
             if decision.reason == "window_in_flight":
                 in_flight += 1
                 if await self._recover_worker_failure(decision):
+                    continue
+                if await self._try_orphan_dispatch(decision):
                     continue
                 if await self._try_consult_stall(decision, turns):
                     continue
@@ -435,6 +453,19 @@ class CharterRunnerTickLoop:
         if admitted:
             self._reminded.discard(decision.root_id)
         return admitted
+
+    async def _try_orphan_dispatch(self, decision: Decision) -> bool:
+        """GIW lost the dispatch while the root still shows window_in_flight."""
+        adm = decision.admission_turn or {}
+        posted_at = _admission_posted_at(adm)
+        if posted_at is None:
+            return False
+        age = (datetime.now(UTC) - posted_at).total_seconds()
+        return await _orphan_dispatch_mod.try_recover_orphan_dispatch(
+            decision,
+            caps=self._caps,
+            age_s=age,
+        )
 
     async def _try_self_heal(self, decision: Decision, turns: list[dict]) -> bool:
         """Autonomous: complete/partial without root terminal → machine heal."""

@@ -57,9 +57,28 @@ def build_self_heal_checkpoint(
         if prior.blocked
         else "None."
     )
-    heal_note = (
+    heal_note = {
+        "checkpoint_missing": (
+            "worker reported success-shaped closeout without posting a bound "
+            "window terminal on this root"
+        ),
+        "dispatch_orphan": (
+            "fleet dispatch never ran or left GIW without worker closeout"
+        ),
+    }.get(
+        reason,
         "worker reported success-shaped closeout without posting a bound "
-        "window terminal on this root"
+        "window terminal on this root",
+    )
+    plain_note = {
+        "dispatch_orphan": (
+            "The fleet slot was busy or the dispatch left GIW without a worker "
+            "closeout, so the runner re-queued the prior gated pickup."
+        ),
+    }.get(
+        reason,
+        "The worker closed without posting a CHECKPOINT on the charter root, "
+        "so the runner re-queued the prior gated pickup.",
     )
     if friction_id is not None:
         frictions_block = frictions_checkpoint_line(
@@ -91,7 +110,7 @@ _None this window._
 {frictions_block}
 
 ## What happened (plain)
-The worker closed without posting a CHECKPOINT on the charter root, so the runner re-queued the prior gated pickup.
+{plain_note}
 
 ## Sidecars
 {sidecars}

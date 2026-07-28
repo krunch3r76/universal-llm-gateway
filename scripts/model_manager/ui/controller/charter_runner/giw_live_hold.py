@@ -118,3 +118,38 @@ async def probe_giw_live_hold() -> bool:
     if read.status == "ok":
         return bool(read.payload)
     return True
+
+
+async def fetch_giw_active_work_payload() -> dict[str, Any] | None:
+    """Return the raw GIW ``/api/v1/git/active-work`` JSON object when reachable."""
+    from transport_utils import make_async_client
+
+    from ..restart_drain import GIT_INTEGRATION_WORKER_URL
+
+    try:
+        async with make_async_client(
+            GIT_INTEGRATION_WORKER_URL, timeout=_PROBE_TIMEOUT_S
+        ) as client:
+            resp = await client.get("/api/v1/git/active-work")
+            resp.raise_for_status()
+            payload = resp.json()
+    except Exception:  # noqa: BLE001
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def dispatch_ids_from_active_work(payload: dict[str, Any]) -> set[str]:
+    """Collect active cursor-sdk dispatch ids from a GIW active-work payload."""
+    ids: set[str] = set()
+    cursor = payload.get("cursor_dispatches")
+    if isinstance(cursor, dict):
+        for raw in cursor.get("dispatch_ids") or []:
+            if raw:
+                ids.add(str(raw))
+    lease = payload.get("write_lease")
+    if isinstance(lease, dict) and lease.get("holder_dispatch_id"):
+        ids.add(str(lease["holder_dispatch_id"]))
+    for op in payload.get("active_ops") or []:
+        if isinstance(op, dict) and op.get("op_id"):
+            ids.add(str(op["op_id"]))
+    return ids
