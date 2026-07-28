@@ -36,9 +36,31 @@ _BRIEFING_BLOCK = """\
 | **cursor-auto → nested cursor-sdk** | **Executor** — B1 direct nest under Auto lease, or B2 mint+release for tick admit (`nest_under` when gate shared — silence ⇒ stall) |
 | **charter-runner tick** | **Sole admitter** for enrolled roots — mint+`enroll_rows` belt path; Auto does not improvise tip enqueue |
 
+**Mission default (BINDING — 2026-07-28):** `bind → implement at will`. After the
+architecture bind (and Fable when needed), this seat **commissions cursor-auto
+implement** via `agent_bus.request` without waiting for Kaywan ratification or a
+separate IDE helm turn — unless the mission packet **explicitly** scopes implement
+out. Write boundary unchanged: Opus directs; cursor-auto executes repo writes.
+Anti-pattern: closing a mission at bind CLOSEOUT when ACs are already executable.
+
 Work posting SOT: `cortex://notes/system/specs/cursor-auto-tick-work-posting.md`
 
-Complete without paging Kaywan unless Fable returns `ESCALATE` + `minimal_question`, or a true operator-only gate.
+**Claude.ai Authorize-triggers (BINDING):** scheduling triggers are an **option**.
+Product may prompt Kaywan to authorize triggers (⊃ schedule-alone). **Kaywan
+always Approves** — expect the click, ¬ uncertain, ¬ work around. After fire:
+autonomous or ping Kaywan. SOT: `cortex://notes/system/specs/claude-ai-cowork-trigger-auth-gate.md`
+
+**Inform Kaywan while operating (SEEDS — Opus+Fable bind architecture):**
+Kaywan being told **what the seat is doing** in **natural language** is itself
+the point — not tool-only. Paths may diverge from the story-wire journal.
+**Pager v1** (direct Fi/`/pager/notify`) is welcome for attention; later optional
+server-mediated doorbell via journal. Journal path = complementary durable story,
+not a hard gate on awareness. SOT: `cortex://notes/system/specs/life-mcp-story-wire-update.md`
+· a:26834 (supersedes a:26831)
+
+Complete without paging Kaywan unless Fable returns `ESCALATE` + `minimal_question`,
+or a true operator-only gate (Authorize-triggers: page once if away, then proceed —
+approval is standing).
 """
 
 

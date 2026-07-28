@@ -11,7 +11,7 @@ from transport_utils import DEFAULT_AGENT_BUS_URL, make_async_client
 _FROM_AUTO = "cursor-auto"
 _ADMIT_SUBJECT_PREFIX = "status:admitted"
 _TURN_FETCH_LIMIT = 200
-_MAX_BRIEFING_LINES = 18
+_MAX_BRIEFING_LINES = 22
 # Codebase-maintenance contracts — denser hello stanza; other contracts stay soft.
 _CODE_WORK_CONTRACTS = frozenset({"implement", "investigate", "verify"})
 
@@ -55,6 +55,9 @@ def build_briefing_block(
         "¬ ask Kaywan which path. Confer/explicit ask → advise with codebase judgment",
         "(life/Kaywan cannot replace it). ¬ invent front-door polls.",
         "SOT: decision:operator-request-front-door. Operator-only → needs-attended.",
+        "",
+        "Claude.ai: scheduling triggers = option; Authorize prompt → Kaywan ALWAYS",
+        "approves (⊃ schedule). Expect click, ¬ work around. SOT: trigger-auth-gate.",
         "",
         deltas,
     ]

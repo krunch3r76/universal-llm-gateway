@@ -14,6 +14,37 @@ from .allowlist import SignalMapping, StoryClass, mapping_for
 EnvelopeMode = Literal["pre_envelope", "caller_omitted", "full"]
 _ENVELOPE_KEYS = ("purpose", "asked_by", "story_id")
 
+# Bind 3 render-time length discipline — presentation only; payload keeps full text.
+PURPOSE_RENDER_MAX = 80
+
+_DANGLING_PURPOSE_TAIL = frozenset(
+    {
+        "a",
+        "an",
+        "and",
+        "as",
+        "at",
+        "but",
+        "by",
+        "for",
+        "if",
+        "in",
+        "into",
+        "must",
+        "not",
+        "of",
+        "on",
+        "or",
+        "so",
+        "that",
+        "the",
+        "to",
+        "when",
+        "while",
+        "with",
+    },
+)
+
 
 def _humanize_agent(agent: str) -> str:
     known = {
@@ -45,13 +76,59 @@ def envelope_mode(payload: dict[str, Any]) -> EnvelopeMode:
     return "full"
 
 
+def _clean_truncated_purpose(text: str) -> str:
+    """Drop broken tail punctuation and dangling words after a cut."""
+    cleaned = text.rstrip(" ,;:")
+    if cleaned.count("`") % 2 == 1:
+        idx = cleaned.rfind("`")
+        if idx > 0:
+            cleaned = cleaned[:idx].rstrip(" ,;:")
+    if cleaned.count('"') % 2 == 1:
+        idx = cleaned.rfind('"')
+        if idx > 0:
+            cleaned = cleaned[:idx].rstrip(" ,;:")
+
+    words = cleaned.split()
+    while len(words) > 1 and words[-1].lower().rstrip(".,;:`\"") in _DANGLING_PURPOSE_TAIL:
+        words.pop()
+    return " ".join(words).rstrip(".,;:")
+
+
+def truncate_purpose_for_render(
+    purpose: str,
+    *,
+    max_chars: int = PURPOSE_RENDER_MAX,
+) -> str:
+    """Cap purpose at render time; word/sentence boundary, no ellipsis."""
+    text = purpose.strip()
+    if len(text) <= max_chars:
+        return text
+
+    window = text[:max_chars]
+    cutoff_floor = max(max_chars // 3, 20)
+    for marker in (". ", "! ", "? ", "; "):
+        idx = window.rfind(marker)
+        if idx >= cutoff_floor:
+            candidate = _clean_truncated_purpose(text[: idx + len(marker.rstrip())])
+            if candidate:
+                return candidate
+
+    last_space = window.rfind(" ")
+    if last_space > 0:
+        candidate = _clean_truncated_purpose(text[:last_space])
+    else:
+        candidate = _clean_truncated_purpose(window)
+
+    return candidate or text[:max_chars].rstrip()
+
+
 def _purpose_clause(payload: dict[str, Any], mode: EnvelopeMode) -> str:
     if mode == "pre_envelope":
         return "a task"
     purpose = str(payload.get("purpose") or "").strip()
     if mode == "caller_omitted" or purpose == PURPOSE_UNSTATED or not purpose:
         return "a task (purpose not stated)"
-    return purpose
+    return truncate_purpose_for_render(purpose)
 
 
 def _seat_clause(payload: dict[str, Any], mode: EnvelopeMode) -> str:
