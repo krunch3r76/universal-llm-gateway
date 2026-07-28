@@ -254,13 +254,21 @@ async def create_thread(
     slug: str,
     summary: str = "",
     tags: list[str] | None = None,
+    enroll_charter_runner: bool = False,
 ) -> str:
-    """Create a standing bus thread without a turn; return its id."""
+    """Create a standing bus thread without a turn; return its id.
+
+    ``enroll_charter_runner`` is the dual-key the bus requires to newly add the
+    reserved ``charter-runner`` tag; without it the write is denied with 422
+    (``agent_bus_store.enrollment_guard``).
+    """
     payload: dict[str, Any] = {"slug": slug}
     if summary:
         payload["summary"] = summary
     if tags:
         payload["tags"] = tags
+    if enroll_charter_runner:
+        payload["enroll_charter_runner"] = True
     async with make_async_client(DEFAULT_AGENT_BUS_URL, timeout=_TIMEOUT_S) as client:
         resp = await client.post("/threads", json=payload, headers=_auth_headers())
         resp.raise_for_status()

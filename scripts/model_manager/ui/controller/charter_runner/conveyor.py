@@ -17,9 +17,9 @@ from scripts.model_manager import observation_event_conveyor as conv_events
 
 from . import bus_client
 from .checkpoint_parse import parse_checkpoint
-from .window_terminal_contract import is_tip_class
 from .eligibility import ENROLLMENT_TAG
 from .friction_ledger import CONVEYOR_OFF_TAG
+from .window_terminal_contract import is_tip_class
 
 logger = get_logger(__name__)
 
@@ -134,6 +134,7 @@ async def ensure_conveyor_root() -> str:
         slug=CONVEYOR_SLUG,
         summary="Standing fleet conveyor for charter friction follow-ons",
         tags=[ENROLLMENT_TAG],
+        enroll_charter_runner=True,
     )
 
 
