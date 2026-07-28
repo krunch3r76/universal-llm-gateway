@@ -275,9 +275,12 @@ def register_manage_tools(mcp: FastMCP) -> None:
           charter_reload (no service needed) — in-process reload of charter-runner
                                              modules + restart tick loop (no TUI quit).
                                              Prefer after charter-runner code edits.
-          charter_pause (reason?)            — durable hold: finish current tick,
-                                             then skip until charter_resume. Survives
-                                             manage quit/start.
+          charter_pause (reason?, timeout?)  — durable hold: arm immediately (no
+                                             new admits), then **block** until
+                                             in-flight charter cursor-sdk
+                                             dispatches finish (default timeout
+                                             1800s). Returns drained/safe_to_quit.
+                                             Survives manage quit/start.
           charter_resume                     — clear durable hold; next interval ticks.
           charter_hold_status                — {held, safe_to_quit, tick_in_flight, …}.
 
@@ -340,14 +343,24 @@ def register_manage_tools(mcp: FastMCP) -> None:
             params["timeout"] = timeout
         if force and action in {"stop", "restart", "sync_restart"}:
             params["force"] = True
-        if action == "charter_pause" and reason:
-            params["reason"] = reason
+        if action == "charter_pause":
             params["set_by"] = "mcp"
+            if reason:
+                params["reason"] = reason
+            params["timeout"] = timeout
 
         # Long-running actions hold the connection open until done; extend socket timeout.
         sock_timeout = (
             timeout + _WAIT_HEALTHY_BUFFER
-            if action in {"wait_healthy", "start", "restart", "sync_restart", "rebuild"}
+            if action
+            in {
+                "wait_healthy",
+                "start",
+                "restart",
+                "sync_restart",
+                "rebuild",
+                "charter_pause",
+            }
             else _DEFAULT_TIMEOUT
         )
 

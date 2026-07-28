@@ -9,15 +9,25 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from libs.charter_runner_store.db import charter_runner_data_dir
 
 HOLD_FILENAME = "tick-hold.json"
 HOLD_SCHEMA_VERSION = 1
 UNPARSEABLE_REASON = "unparseable"
+HELD_HEARTBEAT_INTERVAL_S = 300.0
+# Match charter packet subjects (``6091-w16.md``, ``charter-…``, tmp/charter-runner/).
+_CHARTER_SUBJECT_RE = re.compile(
+    r"(?:charter[-_/]|charter-runner|\b\d{3,5}-w\d+\b)",
+    re.IGNORECASE,
+)
+DEFAULT_PAUSE_DRAIN_TIMEOUT_S = 1800.0
+DEFAULT_PAUSE_POLL_S = 2.0
 
 
 @dataclass(frozen=True)
@@ -125,7 +135,60 @@ def hold_as_dict(held: Hold | None) -> dict | None:
     }
 
 
-HELD_HEARTBEAT_INTERVAL_S = 300.0
+def is_charter_dispatch_subject(text: str) -> bool:
+    """True when a GIW subject/path looks like a charter-runner window packet."""
+    return bool(_CHARTER_SUBJECT_RE.search(str(text or "")))
+
+
+def live_charter_dispatches_from_payload(
+    payload: dict[str, Any],
+) -> list[dict[str, str]]:
+    """Extract live charter-shaped cursor-sdk ops from a GIW active-work payload."""
+    found: list[dict[str, str]] = []
+    seen: set[str] = set()
+
+    def _add(dispatch_id: str, subject: str, thread_id: str = "") -> None:
+        if not dispatch_id or dispatch_id in seen:
+            return
+        if not is_charter_dispatch_subject(subject) and not is_charter_dispatch_subject(
+            thread_id
+        ):
+            return
+        seen.add(dispatch_id)
+        found.append(
+            {
+                "dispatch_id": dispatch_id,
+                "subject": subject,
+                "thread_id": thread_id,
+            }
+        )
+
+    lease = payload.get("write_lease")
+    if isinstance(lease, dict) and lease.get("holder_dispatch_id"):
+        _add(
+            str(lease["holder_dispatch_id"]),
+            str(lease.get("holder_subject_preview") or ""),
+            str(lease.get("holder_thread_id") or ""),
+        )
+    for op in payload.get("active_ops") or []:
+        if not isinstance(op, dict):
+            continue
+        _add(
+            str(op.get("op_id") or op.get("dispatch_id") or ""),
+            str(op.get("subject_preview") or op.get("subject") or ""),
+            str(op.get("thread_id") or ""),
+        )
+    return found
+
+
+async def list_live_charter_dispatches() -> list[dict[str, str]]:
+    """Probe GIW for in-flight cursor-sdk dispatches that look charter-admitted."""
+    from ..giw_live_hold import fetch_giw_active_work_payload
+
+    payload = await fetch_giw_active_work_payload()
+    if not payload:
+        return []
+    return live_charter_dispatches_from_payload(payload)
 
 
 async def emit_held_if_due(
@@ -147,4 +210,3 @@ async def emit_held_if_due(
         set_at=held.set_at,
     )
     return now
-

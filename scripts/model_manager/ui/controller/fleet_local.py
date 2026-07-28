@@ -18,6 +18,10 @@ from scripts.model_manager.observation_event import (
     emit_fleet_service_step,
 )
 
+from .fleet_local_drain import (
+    FLEET_SKIP_GIT_WORKER,
+    drain_local_barriers_before_stop,
+)
 from .fleet_remote import (
     _MASTER_ROW_KEY,
     _build_summary_failed,
@@ -26,7 +30,6 @@ from .fleet_remote import (
     deploy_and_build_remote,
 )
 from .operation_log import tee_with_summary
-from .restart_drain import run_gated_drain_supervised_blocking
 from .service_config import (
     is_agent_bus_configured,
     is_cdp_ask_manage_enabled,
@@ -46,14 +49,6 @@ if TYPE_CHECKING:
     from .service_ctl.core import ServiceController
 
 logger = get_logger(__name__)
-
-# git-integration-worker now participates in fleet Sync+Restart / Rebuild+Deploy
-# cycles via P2's event-driven cooperative drain: the fleet STOP phase routes it
-# through a supervised action=stop drain (await git_worker.drain.completed then
-# SIGTERM) so in-flight cursor-sdk dispatches are not killed mid-run; fleet START
-# brings it back. Retained as a toggle (set True to re-exclude). See
-# todo:git-worker-drain-p3-fleet.
-_FLEET_SKIP_GIT_WORKER = False
 
 
 async def wait_event_service_healthy(
@@ -196,55 +191,34 @@ async def parallel_build(
     return local_build.result(), results
 
 
-async def _drain_stop_git_worker(ctl: ServiceController) -> str:
-    """Fleet git-worker STOP via P2's supervised drain (action=stop).
-
-    Awaits the cooperative drain to terminal state (begin-drain -> worker
-    git_worker.drain.completed -> SIGTERM) so the fleet START phase does not race
-    the supervisor. Busy in-flight work is NOT a stop failure: the blocking
-    helper busy-skips the active-work probe and waits for ``active_count→0``.
-    On success the worker is not running; the returned message is scored by
-    ``_classify_result``. See todo:git-worker-drain-p3-fleet
-    (gpt-5.5 review thread 2018).
-    """
-    from ..model.service_state import ServiceStatus
-
-    info = await asyncio.to_thread(ctl.service_state.check_git_integration_worker)
-    if info.status is ServiceStatus.STOPPED:
-        # Drain gate probes /health and defers with probe_error when the worker is
-        # down — that would fail-closed the entire fleet stop/restart cycle even
-        # though there is nothing to drain.
-        return "git-integration-worker is not running."
-
-    supervisor = ctl.build_git_worker_drain_supervisor(
-        kill=ctl.git_worker_kill_for("stop")
-    )
-    result = await run_gated_drain_supervised_blocking(
-        ctl.restart_gate,
-        "stop",
-        "git_integration_worker",
-        store=ctl.restart_intent_store,
-        supervisor=supervisor,
-        reason="fleet stop (supervised drain)",
-    )
-    intent_id = str(result.get("restart_intent_id", ""))[:8]
-    drain_status = result.get("drain_status", result.get("status"))
-    if result.get("status") == "ok":
-        return (
-            "git-integration-worker drained and stopped — worker is not running "
-            f"(intent {intent_id})"
-        )
-    return (
-        "git-integration-worker supervised drain did not converge: "
-        f"{drain_status} (intent {intent_id})"
-    )
-
-
 async def stop_local_services(
-    ctl: ServiceController, sink: FleetProgressSink
+    ctl: ServiceController,
+    sink: FleetProgressSink,
+    *,
+    barriers_done: bool = False,
+    prior_results: list[tuple[str, bool, str, float]] | None = None,
 ) -> list[str]:
-    """Stop local services in parallel and return any failures."""
+    """Stop local services: drain barriers first, then peers in parallel.
+
+    Invariant: peers must not stop while any drain-gated service is still busy.
+    When ``barriers_done`` is True, the caller already ran
+    ``drain_local_barriers_before_stop`` (fleet path — remotes also wait) and
+    should pass those tuples as ``prior_results`` for unified stop events.
+    """
     mk = _MASTER_ROW_KEY
+    stop_results: list[tuple[str, bool, str, float]] = list(prior_results or [])
+    failures: list[str] = []
+
+    if not barriers_done:
+        barrier_results = await drain_local_barriers_before_stop(ctl, sink)
+        stop_results.extend(barrier_results)
+        for name, ok, msg, _elapsed in barrier_results:
+            if not ok:
+                failures.append(name)
+                logger.warning("stop %s: %s", name, msg)
+        if failures:
+            await _emit_stop_results(stop_results)
+            return failures
 
     stop_ops: list[tuple[str, Callable[[], Awaitable[str]]]] = [
         ("gateway", ctl.stop_gateway),
@@ -264,20 +238,26 @@ async def stop_local_services(
         stop_ops.append(("agent_bus", ctl.stop_agent_bus))
     if is_email_bridge_configured():
         stop_ops.append(("email_bridge", ctl.stop_email_bridge))
-    if not _FLEET_SKIP_GIT_WORKER:
-        stop_ops.append(("git_integration_worker", lambda: _drain_stop_git_worker(ctl)))
+    # GIW is drain-gated — never parallel with peers (see fleet_local_drain).
     if is_cdp_ask_manage_enabled() and ctl._cdp_ask_runs_local():  # noqa: SLF001
         stop_ops.append(("cdp_ask", ctl.stop_cdp_ask))
 
-    stop_results = await run_ops_parallel(stop_ops)
-    stop_dict: dict[str, bool] = {}
-    failures: list[str] = []
-    for name, ok, msg, elapsed in stop_results:
-        stop_dict[name] = ok
+    peer_results = await run_ops_parallel(stop_ops)
+    stop_results.extend(peer_results)
+    for name, ok, msg, elapsed in peer_results:
         sink.line(mk, f"  {'✓' if ok else '⚠'} stop {name} ({elapsed:.1f}s)")
         if not ok:
             failures.append(name)
             logger.warning("stop %s: %s", name, msg)
+    await _emit_stop_results(stop_results)
+    return failures
+
+
+async def _emit_stop_results(
+    stop_results: list[tuple[str, bool, str, float]],
+) -> None:
+    """Emit fleet stop phase + per-service step events."""
+    stop_dict = {name: ok for name, ok, _, _ in stop_results}
     await emit_fleet_service_phase(
         phase="stop",
         services=[n for n, _, _, _ in stop_results],
@@ -287,7 +267,6 @@ async def stop_local_services(
         await emit_fleet_service_step(
             phase="stop", service=name, success=ok, duration_s=elapsed
         )
-    return failures
 
 
 def _build_start_ops(
@@ -305,7 +284,7 @@ def _build_start_ops(
             else ctl.start_agent_bus
         )
         start_ops.append(("agent_bus", agent_bus_op))
-    if not _FLEET_SKIP_GIT_WORKER:
+    if not FLEET_SKIP_GIT_WORKER:
         giw_op = (
             ctl.rebuild_git_integration_worker
             if rebuild_supporting_services
@@ -366,7 +345,7 @@ async def restart_local_services(
     sink.focus(mk)
     sink.status(mk, "⟳ restarting...")
     sink.line(mk, "Restarting services...")
-    if _FLEET_SKIP_GIT_WORKER:
+    if FLEET_SKIP_GIT_WORKER:
         sink.line(
             mk,
             "  ○ git_integration_worker skipped (manual restart per operator policy)",

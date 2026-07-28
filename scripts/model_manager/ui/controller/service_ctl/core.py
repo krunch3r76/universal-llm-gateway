@@ -160,8 +160,22 @@ class ServiceController:
             )
         return await hook()
 
-    async def charter_pause(self, *, reason: str = "", set_by: str = "manage") -> dict:
-        """Arm durable tick hold; current ``_tick_once`` finishes, then skips."""
+    async def charter_pause(
+        self,
+        *,
+        reason: str = "",
+        set_by: str = "manage",
+        timeout_s: float = 1800.0,
+        poll_s: float = 2.0,
+    ) -> dict:
+        """Arm durable tick hold and block until in-flight charter dispatches finish.
+
+        Hold is written immediately (no new admits). Then waits until the current
+        ``_tick_once`` returns **and** GIW reports no live charter-shaped
+        cursor-sdk dispatches. Hold stays armed on timeout.
+        """
+        import asyncio
+
         from scripts.model_manager import observation_event as events
         from scripts.model_manager.ui.controller.charter_runner.kernel import hold
 
@@ -171,16 +185,44 @@ class ServiceController:
             set_by=payload.set_by,
             set_at=payload.set_at,
         )
-        tick_in_flight = "charter_tick" in self._shutdown_gate.snapshot().activities
-        return {
-            "status": "ok",
-            "held": True,
-            "reason": payload.reason,
-            "set_by": payload.set_by,
-            "set_at": payload.set_at,
-            "tick_in_flight": tick_in_flight,
-            "path": str(hold.hold_path()),
-        }
+        started = time.monotonic()
+        deadline = started + max(0.0, float(timeout_s))
+        live: list[dict] = []
+        tick_in_flight = True
+        while True:
+            tick_in_flight = "charter_tick" in self._shutdown_gate.snapshot().activities
+            live = await hold.list_live_charter_dispatches()
+            if not tick_in_flight and not live:
+                waited_s = time.monotonic() - started
+                return {
+                    "status": "ok",
+                    "held": True,
+                    "drained": True,
+                    "reason": payload.reason,
+                    "set_by": payload.set_by,
+                    "set_at": payload.set_at,
+                    "tick_in_flight": False,
+                    "live_charter_dispatches": [],
+                    "waited_s": round(waited_s, 3),
+                    "safe_to_quit": True,
+                    "path": str(hold.hold_path()),
+                }
+            if time.monotonic() >= deadline:
+                waited_s = time.monotonic() - started
+                return {
+                    "status": "timeout",
+                    "held": True,
+                    "drained": False,
+                    "reason": payload.reason,
+                    "set_by": payload.set_by,
+                    "set_at": payload.set_at,
+                    "tick_in_flight": tick_in_flight,
+                    "live_charter_dispatches": live,
+                    "waited_s": round(waited_s, 3),
+                    "safe_to_quit": False,
+                    "path": str(hold.hold_path()),
+                }
+            await asyncio.sleep(max(0.1, float(poll_s)))
 
     async def charter_resume(self) -> dict:
         """Clear durable tick hold; next interval runs a normal tick."""
@@ -201,15 +243,19 @@ class ServiceController:
         }
 
     async def charter_hold_status(self) -> dict:
-        """Report durable hold + whether quit is safe (no charter_tick activity)."""
+        """Report durable hold + whether quit is safe (no tick, no charter WIP)."""
         from scripts.model_manager.ui.controller.charter_runner.kernel import hold
 
         held = hold.read_hold()
         tick_in_flight = "charter_tick" in self._shutdown_gate.snapshot().activities
-        safe_to_quit = held is not None and not tick_in_flight
+        live = await hold.list_live_charter_dispatches()
+        safe_to_quit = (
+            held is not None and not tick_in_flight and not live
+        )
         result: dict = {
             "held": held is not None,
             "tick_in_flight": tick_in_flight,
+            "live_charter_dispatches": live,
             "safe_to_quit": safe_to_quit,
             "path": str(hold.hold_path()),
         }

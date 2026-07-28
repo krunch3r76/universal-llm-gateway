@@ -266,11 +266,18 @@ def test_service_controller_pause_resume_status(
     from scripts.model_manager.ui.controller.service_ctl.core import ServiceController
 
     ctl = ServiceController(workspace_root=tmp_path)
-    # Ensure hold uses our temp data dir (env already set by data_dir fixture).
+
+    async def no_live() -> list[dict[str, str]]:
+        return []
+
+    monkeypatch.setattr(hold, "list_live_charter_dispatches", no_live)
 
     async def _run() -> None:
-        paused = await ctl.charter_pause(reason="ops", set_by="test")
+        paused = await ctl.charter_pause(
+            reason="ops", set_by="test", timeout_s=2.0, poll_s=0.01
+        )
         assert paused["held"] is True
+        assert paused["drained"] is True
         assert paused["reason"] == "ops"
         status = await ctl.charter_hold_status()
         assert status["held"] is True
@@ -285,6 +292,107 @@ def test_service_controller_pause_resume_status(
     asyncio.run(_run())
     assert any(s == "manage.charter.tick.paused" for s, _ in events_log)
     assert any(s == "manage.charter.tick.resumed" for s, _ in events_log)
+
+
+@pytest.mark.offline
+def test_live_charter_dispatch_subject_filter() -> None:
+    assert hold.is_charter_dispatch_subject("6091-w16.md")
+    assert hold.is_charter_dispatch_subject("tmp/charter-runner/6110-w25.md")
+    assert hold.is_charter_dispatch_subject("charter-5975-w3")
+    assert not hold.is_charter_dispatch_subject("random-refactor.md")
+    assert not hold.is_charter_dispatch_subject("")
+
+
+@pytest.mark.offline
+def test_live_charter_dispatches_from_payload() -> None:
+    payload = {
+        "write_lease": {
+            "holder_dispatch_id": "aaa",
+            "holder_subject_preview": "6091-w16.md",
+            "holder_thread_id": "6140",
+        },
+        "active_ops": [
+            {
+                "op_id": "bbb",
+                "subject_preview": "manual-note.md",
+                "thread_id": "9999",
+            },
+            {
+                "op_id": "ccc",
+                "subject_preview": "6110-w25.md",
+                "thread_id": "6149",
+            },
+        ],
+    }
+    live = hold.live_charter_dispatches_from_payload(payload)
+    ids = {row["dispatch_id"] for row in live}
+    assert ids == {"aaa", "ccc"}
+
+
+@pytest.mark.offline
+def test_charter_pause_blocks_until_dispatches_clear(
+    data_dir: Path,
+    events_log: list[tuple[str, dict[str, Any]]],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from scripts.model_manager.ui.controller.service_ctl.core import ServiceController
+
+    ctl = ServiceController(workspace_root=tmp_path)
+    calls = {"n": 0}
+    live_then_clear = [
+        [{"dispatch_id": "x", "subject": "6091-w16.md", "thread_id": "1"}],
+        [{"dispatch_id": "x", "subject": "6091-w16.md", "thread_id": "1"}],
+        [],
+    ]
+
+    async def fake_live() -> list[dict[str, str]]:
+        idx = min(calls["n"], len(live_then_clear) - 1)
+        calls["n"] += 1
+        return list(live_then_clear[idx])
+
+    monkeypatch.setattr(hold, "list_live_charter_dispatches", fake_live)
+
+    async def _run() -> None:
+        result = await ctl.charter_pause(
+            reason="drain-test", set_by="test", timeout_s=5.0, poll_s=0.01
+        )
+        assert result["status"] == "ok"
+        assert result["drained"] is True
+        assert result["safe_to_quit"] is True
+        assert result["live_charter_dispatches"] == []
+        assert calls["n"] >= 3
+
+    asyncio.run(_run())
+
+
+@pytest.mark.offline
+def test_charter_pause_timeout_keeps_hold(
+    data_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from scripts.model_manager.ui.controller.service_ctl.core import ServiceController
+
+    ctl = ServiceController(workspace_root=tmp_path)
+
+    async def always_live() -> list[dict[str, str]]:
+        return [{"dispatch_id": "x", "subject": "6091-w16.md", "thread_id": "1"}]
+
+    monkeypatch.setattr(hold, "list_live_charter_dispatches", always_live)
+
+    async def _run() -> None:
+        result = await ctl.charter_pause(
+            reason="timeout-test", set_by="test", timeout_s=0.05, poll_s=0.01
+        )
+        assert result["status"] == "timeout"
+        assert result["drained"] is False
+        assert result["held"] is True
+        assert result["safe_to_quit"] is False
+        assert hold.read_hold(data_dir=data_dir) is not None
+        hold.clear_hold(data_dir=data_dir)
+
+    asyncio.run(_run())
 
 
 @pytest.mark.offline

@@ -22,14 +22,13 @@ from scripts.model_manager.observation_event import (
     emit_fleet_operation_started,
 )
 
-from .restart_window_ctl import clear_fleet_windows, open_fleet_window
-
 from .fleet_local import (
     parallel_build,
     restart_local_services,
     stop_local_services,
     wait_event_service_healthy,
 )
+from .fleet_local_drain import drain_local_barriers_before_stop
 from .fleet_remote import (
     _MASTER_ROW_KEY,
     _parse_remote_targets,
@@ -37,6 +36,7 @@ from .fleet_remote import (
     stop_remote_before_operation,
     verify_relay_connection,
 )
+from .restart_window_ctl import clear_fleet_windows, open_fleet_window
 from .topology import list_remotes
 
 if TYPE_CHECKING:
@@ -235,16 +235,45 @@ class FleetOrchestrator:
                 failures.append(f"remote_restart:{hostname}")
 
     async def _stop_fleet_before_operation(self, operation: str) -> bool:
-        """Bring local and remote edge processes down before fleet operations."""
+        """Bring local and remote edge processes down before fleet operations.
+
+        Drain-gated locals (e.g. git_integration_worker) clear first while peers
+        and remotes stay up. Only after barriers succeed do peer + remote stops
+        run in parallel.
+        """
+        mk = _MASTER_ROW_KEY
+        self._sink.focus(mk)
+        self._sink.line(
+            mk,
+            f"Waiting for drain barriers before {operation} "
+            "(fleet stays up until drain completes)...",
+        )
+        barrier_results = await drain_local_barriers_before_stop(self._ctl, self._sink)
+        if any(not ok for _, ok, _, _ in barrier_results):
+            failed = [n for n, ok, _, _ in barrier_results if not ok]
+            self._sink.status(mk, "✗ drain barrier failed")
+            self._sink.line(
+                mk,
+                f"Drain barrier failed ({', '.join(failed)}); "
+                "aborted peer/remote stop — fleet remains up.",
+            )
+            return False
+
         targets = _parse_remote_targets(list_remotes())
         results: dict[str, bool] = {}
 
-        self._sink.status(_MASTER_ROW_KEY, f"⟳ stopping before {operation}...")
+        self._sink.status(mk, f"⟳ stopping before {operation}...")
         for hostname, _ in targets:
             self._sink.status(hostname, f"⟳ stopping before {operation}...")
 
         async with asyncio.TaskGroup() as tg:
-            local_stop = tg.create_task(self._stop_local_before_operation(operation))
+            local_stop = tg.create_task(
+                self._stop_local_before_operation(
+                    operation,
+                    barriers_done=True,
+                    prior_results=barrier_results,
+                )
+            )
             for hostname, address in targets:
                 tg.create_task(
                     stop_remote_before_operation(
@@ -258,12 +287,23 @@ class FleetOrchestrator:
 
         return local_stop.result() and all(results.values())
 
-    async def _stop_local_before_operation(self, operation: str) -> bool:
+    async def _stop_local_before_operation(
+        self,
+        operation: str,
+        *,
+        barriers_done: bool = False,
+        prior_results: list[tuple[str, bool, str, float]] | None = None,
+    ) -> bool:
         """Stop local services and fail closed if anything stays up."""
         mk = _MASTER_ROW_KEY
         self._sink.focus(mk)
         self._sink.line(mk, f"Stopping local services before {operation}...")
-        failures = await stop_local_services(self._ctl, self._sink)
+        failures = await stop_local_services(
+            self._ctl,
+            self._sink,
+            barriers_done=barriers_done,
+            prior_results=prior_results,
+        )
         if failures:
             self._sink.status(mk, "✗ stop failed")
             self._sink.line(mk, f"Stop failed: {', '.join(failures)}")

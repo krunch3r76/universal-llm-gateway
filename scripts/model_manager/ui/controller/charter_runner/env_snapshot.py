@@ -6,8 +6,9 @@ import asyncio
 import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
+import httpx
 from universal_logging import get_logger
 
 from .admission import EnvFacts
@@ -15,6 +16,10 @@ from .attendance import resolve_attendance
 from .env_predicates import EnvironmentSnapshot
 
 logger = get_logger(__name__)
+
+SatelliteState = Literal["up", "down", "unknown"]
+_SATELLITE_PROBE_TIMEOUT_S = 2.0
+_LOCALHOST = frozenset({"localhost", "127.0.0.1", "::1"})
 
 
 @dataclass(frozen=True)
@@ -85,6 +90,70 @@ class EnvSnapshot:
         )
 
 
+async def _probe_cdp_health(host: str, port: int, base_url: str) -> SatelliteState:
+    """GET ``/health`` on the cdp-ask satellite; map to up|down|unknown.
+
+    Connect/refused → ``down`` (P4-AC1 outage signal). Timeout / unexpected
+    transport → ``unknown`` so merely-slow consults do not flip substrate_up
+    false (P4-AC4). ``status!=ok`` / non-200 → ``down``.
+    """
+    from transport_utils import make_async_client
+
+    try:
+        async with make_async_client(
+            base_url, timeout=_SATELLITE_PROBE_TIMEOUT_S
+        ) as client:
+            resp = await client.get("/health")
+    except httpx.ConnectError:
+        return "down"
+    except httpx.TimeoutException:
+        logger.warning(
+            "cdp-ask health probe timed out host=%s port=%s — treating unknown",
+            host,
+            port,
+        )
+        return "unknown"
+    except Exception as exc:  # noqa: BLE001 — probe must not crash the tick
+        logger.warning(
+            "cdp-ask health probe failed (%s) host=%s port=%s — treating unknown",
+            type(exc).__name__,
+            host,
+            port,
+        )
+        return "unknown"
+
+    if resp.status_code != 200:
+        return "down"
+    try:
+        body = resp.json()
+    except Exception:  # noqa: BLE001
+        return "down"
+    if not isinstance(body, dict) or body.get("status") != "ok":
+        return "down"
+    return "up"
+
+
+async def probe_satellite_health() -> dict[str, SatelliteState]:
+    """Live ``{cdp, project_ask}`` health from PROJECT_ASK_URL ``/health``.
+
+    Both keys share the cdp-ask satellite (same URL). Unconfigured URL →
+    ``unknown`` (substrate_up stays true — fail-open when the satellite is not
+    part of the fleet).
+    """
+    from ..service_config import cdp_ask_url_config
+
+    cfg = cdp_ask_url_config()
+    if cfg is None:
+        return {"cdp": "unknown", "project_ask": "unknown"}
+    host, port, base_url = cfg
+    probe_host = "127.0.0.1" if host in _LOCALHOST else host
+    # Rebuild base when localhost-aliased so the client hits the loopback probe.
+    if probe_host != host:
+        base_url = f"http://{probe_host}:{port}"
+    state = await _probe_cdp_health(probe_host, port, base_url)
+    return {"cdp": state, "project_ask": state}
+
+
 async def build_env_snapshot(
     *,
     root_ids: list[str],
@@ -112,7 +181,10 @@ async def build_env_snapshot(
             if intent is not None:
                 propagation["intent"] = str(getattr(intent, "intent_id", intent))
 
-    resolved = await asyncio.gather(*(resolve_attendance(rid) for rid in root_ids))
+    resolved, satellite_health = await asyncio.gather(
+        asyncio.gather(*(resolve_attendance(rid) for rid in root_ids)),
+        probe_satellite_health(),
+    )
     attendance = dict(zip(root_ids, resolved, strict=True))
     scoreboards = {
         rid: f"cortex://notes/system/threads/{rid}-charter-scoreboard.md"
@@ -122,11 +194,11 @@ async def build_env_snapshot(
         giw_holder_lease=giw_lease,
         propagation_residue=propagation,
         in_flight_windows=in_flight or [],
-        satellite_health={"cdp": "up", "project_ask": "up"},
+        satellite_health=dict(satellite_health),
         attendance_by_root=attendance,
         scoreboard_pointer=scoreboards,
         bus_tip_meta={rid: {"has_checkpoint": True, "turn_id": ""} for rid in root_ids},
     )
 
 
-__all__ = ["EnvSnapshot", "build_env_snapshot"]
+__all__ = ["EnvSnapshot", "build_env_snapshot", "probe_satellite_health"]

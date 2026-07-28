@@ -36,7 +36,9 @@ from .window_sequence import (
 
 logger = get_logger(__name__)
 
-# Gated tip required — QUEUE/DEFER included (a:26596; enqueue-then-stall never closed).
+# Gated tip required for admit/queue (a:26596; enqueue-then-stall never closed).
+# DEFER stays listed so IDLE→DEFER still fails closed on idle tips; already-queued
+# CONSULT_QUEUED/DEFERRED deferrals are exempted at the call site (P4-AC1 / G4a).
 _NEEDS_GATED_PICKUP = frozenset({
     Transition.ADMIT_CONSULT, Transition.ADMIT_WORKER,
     Transition.QUEUE_CONSULT, Transition.DEFER_CONSULT,
@@ -151,7 +153,19 @@ async def apply_kernel_tick_for_root(
         )
         caps_view = CapsView.from_cap_store(caps, root_id)
         transition = decide(row, facts, caps_view)
-        if transition in _NEEDS_GATED_PICKUP and gated_pickup_from_parsed(parsed) is None:
+        # Already-queued/deferred consults may DEFER on substrate_down even when
+        # the tip gated lane is idle — blocking that (a:26596 admit/re-queue
+        # fence) left P4-AC1 unobservable for unenrolled-idle tips (G4a).
+        _defer_existing = (
+            transition == Transition.DEFER_CONSULT
+            and row.status
+            in (RootStatus.CONSULT_QUEUED, RootStatus.CONSULT_DEFERRED)
+        )
+        if (
+            transition in _NEEDS_GATED_PICKUP
+            and gated_pickup_from_parsed(parsed) is None
+            and not _defer_existing
+        ):
             # decide() is ledger-only; idle tip must not admit or re-queue (a:26596).
             return KernelTickOutcome(
                 "kernel_no_gated_pickup", skipped_reason="no_gated_pickup"

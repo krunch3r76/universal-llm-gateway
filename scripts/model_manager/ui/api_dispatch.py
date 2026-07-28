@@ -222,9 +222,15 @@ async def execute(
             return await ctl.reload_charter_tick()
 
         case "charter_pause":
+            timeout_raw = params.get("timeout", params.get("timeout_s", 1800.0))
+            try:
+                timeout_s = float(timeout_raw)
+            except (TypeError, ValueError):
+                timeout_s = 1800.0
             return await ctl.charter_pause(
                 reason=str(params.get("reason") or ""),
                 set_by=str(params.get("set_by") or "manage"),
+                timeout_s=timeout_s,
             )
 
         case "charter_resume":

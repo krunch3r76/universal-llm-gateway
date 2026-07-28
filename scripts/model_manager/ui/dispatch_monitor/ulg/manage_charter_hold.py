@@ -39,10 +39,13 @@ def _call(
 
 
 def charter_pause(
-    *, reason: str = "", set_by: str = "dispatch_monitor", timeout: float = 30.0
+    *,
+    reason: str = "",
+    set_by: str = "dispatch_monitor",
+    timeout: float = 1830.0,
 ) -> dict[str, Any]:
-    """Arm durable tick hold via manage.sock."""
-    params: dict[str, Any] = {"set_by": set_by}
+    """Arm durable tick hold and wait for charter dispatches to drain."""
+    params: dict[str, Any] = {"set_by": set_by, "timeout": max(0.0, timeout - 30.0)}
     if reason:
         params["reason"] = reason
     return _call("charter_pause", params, timeout=timeout)
