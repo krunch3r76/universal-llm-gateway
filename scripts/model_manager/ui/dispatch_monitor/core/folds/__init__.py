@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from .cdp import CdpFold
 from .charter import CharterFold
+from .conveyor import ConveyorFold
 from .sdk import SdkFold
 
-__all__ = ["CdpFold", "CharterFold", "SdkFold"]
+__all__ = ["CdpFold", "CharterFold", "ConveyorFold", "SdkFold"]

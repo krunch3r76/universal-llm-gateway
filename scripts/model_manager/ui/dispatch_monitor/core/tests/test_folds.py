@@ -103,6 +103,51 @@ def test_parked_parent_requires_both_folds() -> None:
     assert any(i.kind == "charter.root.parked" for i in frame.attention)
 
 
+def test_readmit_clears_parked_from_prior_window_terminal() -> None:
+    """A new admit binds a new worker — prior window terminals must not park it."""
+    model = Model()
+    model.apply(
+        Event(
+            "manage.charter.tick.admitted",
+            1_000,
+            {"root": "6171", "worker_thread": "6177"},
+        )
+    )
+    model.apply(
+        Event(
+            "frontier.sdk.worker.progress",
+            1_100,
+            {
+                "dispatch_id": "w6177",
+                "thread_id": "6177",
+                "resolved_model": "cursor/grok-4.5",
+            },
+        )
+    )
+    model.apply(
+        Event(
+            "frontier.sdk.worker.completed",
+            1_200,
+            {"dispatch_id": "w6177", "thread_id": "6177", "status": "completed"},
+        )
+    )
+    parked = model.derive(10_000_000)
+    assert _row(parked.roots, "root_id", "6171").state == "parked"
+
+    model.apply(
+        Event(
+            "manage.charter.tick.admitted",
+            1_300,
+            {"root": "6171", "worker_thread": "6183"},
+        )
+    )
+    frame = model.derive(10_000_000)
+    root = _row(frame.roots, "root_id", "6171")
+    assert root.state == "in_flight"
+    assert root.worker_thread == "6183"
+    assert not any(i.kind == "charter.root.parked" for i in frame.attention)
+
+
 def test_parked_state_needs_the_correlation_edge() -> None:
     """Without the worker-thread edge, the root stays in flight rather than parked.
 
@@ -173,6 +218,105 @@ def test_giw_completed_keys_on_dispatch_id_not_execution_id() -> None:
     assert row.state == "completed"
 
 
+def test_stargate_queued_prefers_dispatch_id_not_execution_id() -> None:
+    """Stargate-shaped queued (request_id, no source_repo) must key on dispatch_id."""
+    model = Model()
+    model.apply(
+        Event(
+            "frontier.sdk.worker.queued",
+            1_000,
+            {
+                "request_id": "5ed13fdd78a1",
+                "execution_id": "39369a01-0936",
+                "dispatch_id": "5ed13fdd78a1-badcb93b",
+                "queue_position": 2,
+            },
+        )
+    )
+    frame = model.derive(2_000)
+    assert len(frame.sdk) == 1
+    row = _row(frame.sdk, "dispatch_id", "5ed13fdd78a1-badcb93b")
+    assert row.state == "queued"
+
+
+def test_cancelled_terminals_row() -> None:
+    """frontier.sdk.worker.cancelled is a lifecycle terminal."""
+    model = Model()
+    model.apply(
+        Event(
+            "frontier.sdk.worker.queued",
+            1_000,
+            {"dispatch_id": "ghost-exec", "queue_position": 1},
+        )
+    )
+    model.apply(
+        Event(
+            "frontier.sdk.worker.cancelled",
+            2_000,
+            {
+                "dispatch_id": "ghost-exec",
+                "method": "queued_only",
+                "reason": "operator backfill",
+            },
+        )
+    )
+    row = _row(model.derive(3_000).sdk, "dispatch_id", "ghost-exec")
+    assert row.terminal_ms == 2_000
+    assert row.state == "cancelled"
+    assert "queued_only" in (row.failure_reason or "")
+
+
+def test_completed_closes_execution_id_sibling_ghost() -> None:
+    """Terminal on dispatch_id also closes a prior row keyed only on execution_id."""
+    model = Model()
+    model.apply(
+        Event(
+            "frontier.sdk.worker.queued",
+            1_000,
+            {
+                "request_id": "rid",
+                "execution_id": "exec-ghost",
+                # Pre-fix: keying preferred execution_id; seed a ghost row that way
+                # by omitting dispatch_id so only execution_id remains.
+            },
+        )
+    )
+    # Force ghost: apply via progress keyed on execution_id alone, then complete
+    # with both ids so sibling terminalize closes the ghost.
+    model.apply(
+        Event(
+            "frontier.sdk.worker.progress",
+            1_100,
+            {"execution_id": "exec-ghost", "resolved_model": "cursor/grok-4.5"},
+        )
+    )
+    model.apply(
+        Event(
+            "frontier.sdk.worker.progress",
+            1_200,
+            {"dispatch_id": "real-dispatch", "resolved_model": "cursor/grok-4.5"},
+        )
+    )
+    model.apply(
+        Event(
+            "frontier.sdk.worker.completed",
+            2_000,
+            {
+                "dispatch_id": "real-dispatch",
+                "execution_id": "exec-ghost",
+                "outcome": "ok",
+            },
+        )
+    )
+    frame = model.derive(3_000)
+    ghost = _row(frame.sdk, "dispatch_id", "exec-ghost")
+    primary = _row(frame.sdk, "dispatch_id", "real-dispatch")
+    assert primary.terminal_ms == 2_000
+    assert primary.state == "completed"
+    assert ghost.terminal_ms == 2_000
+    assert ghost.state == "completed"
+
+
 def test_toolcall_updates_last_tool_and_idle() -> None:
     """Last toolcall is ephemeral overlay; also resets idle via progress clock."""
     model = Model()
@@ -194,6 +338,203 @@ def test_toolcall_updates_last_tool_and_idle() -> None:
     assert row.last_tool_name == "mcp"
     assert row.last_tool_status == "completed"
     assert row.last_progress_ms == 1_500
+
+
+def test_progress_carries_live_tool_call_count() -> None:
+    """worker.progress.tool_call_count is the live SDK row count (monotonic max)."""
+    model = Model()
+    model.apply(
+        Event(
+            "frontier.sdk.worker.progress",
+            1_000,
+            {
+                "dispatch_id": "d-tc",
+                "resolved_model": "cursor/grok-4.5",
+                "tool_call_count": 3,
+            },
+        )
+    )
+    model.apply(
+        Event(
+            "frontier.sdk.worker.progress",
+            1_500,
+            {"dispatch_id": "d-tc", "tool_call_count": 7},
+        )
+    )
+    model.apply(
+        Event(
+            "frontier.sdk.worker.progress",
+            1_600,
+            {"dispatch_id": "d-tc", "tool_call_count": 5},
+        )
+    )
+    row = _row(model.derive(2_000).sdk, "dispatch_id", "d-tc")
+    assert row.tool_call_count == 7
+    model.apply(
+        Event(
+            "frontier.sdk.worker.completed",
+            2_500,
+            {
+                "dispatch_id": "d-tc",
+                "outcome": "ok",
+                "tool_call_count": 9,
+            },
+        )
+    )
+    assert _row(model.derive(3_000).sdk, "dispatch_id", "d-tc").tool_call_count == 9
+
+
+def test_toolcall_events_raise_live_tool_call_count() -> None:
+    """Distinct worker.toolcall call_ids bump tc between 30s progress heartbeats."""
+    model = Model()
+    model.apply(
+        Event(
+            "frontier.sdk.worker.progress",
+            1_000,
+            {"dispatch_id": "d-live-tc", "tool_call_count": 40},
+        )
+    )
+    model.apply(
+        Event(
+            "frontier.sdk.worker.toolcall",
+            1_100,
+            {
+                "dispatch_id": "d-live-tc",
+                "call_id": "c-a",
+                "tool_name": "mcp",
+                "status": "completed",
+            },
+        )
+    )
+    model.apply(
+        Event(
+            "frontier.sdk.worker.toolcall",
+            1_200,
+            {
+                "dispatch_id": "d-live-tc",
+                "call_id": "c-b",
+                "tool_name": "Shell",
+                "status": "completed",
+            },
+        )
+    )
+    # Duplicate call_id must not double-count (reconnect / redelivery).
+    model.apply(
+        Event(
+            "frontier.sdk.worker.toolcall",
+            1_250,
+            {
+                "dispatch_id": "d-live-tc",
+                "call_id": "c-b",
+                "tool_name": "Shell",
+                "status": "completed",
+            },
+        )
+    )
+    row = _row(model.derive(1_300).sdk, "dispatch_id", "d-live-tc")
+    assert row.tool_call_count == 42  # 40 floor + 2 distinct call_ids
+    model.apply(
+        Event(
+            "frontier.sdk.worker.progress",
+            1_400,
+            {"dispatch_id": "d-live-tc", "tool_call_count": 45},
+        )
+    )
+    assert _row(model.derive(1_500).sdk, "dispatch_id", "d-live-tc").tool_call_count == 45
+
+
+def test_friction_belt_conveyor_enrolled_and_stale() -> None:
+    """Conveyor enroll/stale fold into the FRICTION BELT projection section."""
+    model = Model()
+    model.apply(
+        Event(
+            "manage.charter.conveyor.enrolled",
+            1_000,
+            {
+                "root": "6110",
+                "friction_id": 26664,
+                "todo_slug": "todo:friction-26664",
+                "conveyor_root": "6110",
+            },
+        )
+    )
+    model.apply(
+        Event(
+            "manage.charter.conveyor.enrolled",
+            1_100,
+            {
+                "root": "6091",
+                "friction_id": 26670,
+                "todo_slug": "todo:friction-26670",
+                "conveyor_root": "6110",
+            },
+        )
+    )
+    model.apply(
+        Event(
+            "manage.charter.conveyor.stale",
+            2_000,
+            {
+                "friction_id": 26664,
+                "todo_slug": "todo:friction-26664",
+                "root": "6110",
+                "ticks_idle": 48,
+            },
+        )
+    )
+    # Non-belt conveyor root ignored.
+    model.apply(
+        Event(
+            "manage.charter.conveyor.enrolled",
+            2_100,
+            {
+                "root": "9999",
+                "friction_id": 1,
+                "todo_slug": "todo:noise",
+                "conveyor_root": "9999",
+            },
+        )
+    )
+    frame = model.derive(3_000)
+    assert len(frame.conveyor) == 2
+    by_id = {row.friction_id: row for row in frame.conveyor}
+    assert by_id[26670].state == "enrolled"
+    assert by_id[26664].state == "stale"
+    assert by_id[26664].ticks_idle == 48
+    assert frame.conveyor[0].friction_id == 26670  # enrolled before stale
+
+
+def test_friction_belt_conveyor_disenrolled_drops_from_belt() -> None:
+    """disenrolled leaves the fold but drops out of the FRICTION BELT projection."""
+    model = Model()
+    model.apply(
+        Event(
+            "manage.charter.conveyor.enrolled",
+            1_000,
+            {
+                "root": "6110",
+                "friction_id": 26664,
+                "todo_slug": "todo:friction-26664",
+                "conveyor_root": "6110",
+            },
+        )
+    )
+    model.apply(
+        Event(
+            "manage.charter.conveyor.disenrolled",
+            2_000,
+            {
+                "friction_id": 26664,
+                "todo_slug": "todo:friction-26664",
+                "root": "6110",
+                "reason": "operator_cancel_closed_root",
+                "was_stale": True,
+            },
+        )
+    )
+    assert model.conveyor.items[26664].state == "disenrolled"
+    frame = model.derive(3_000)
+    assert frame.conveyor == ()
 
 
 def test_queued_and_generate_requested_carry_model() -> None:
@@ -391,6 +732,46 @@ def test_unknown_signal_is_counted_never_raised() -> None:
     assert frame.health.unhandled_signals == {"some.unknown.signal.family": 1}
     assert "unhandled_signals" in frame.health.degraded
     assert any(i.kind == "signal.unhandled" for i in frame.attention)
+
+
+def test_charter_telemetry_facade_signals_are_handled() -> None:
+    """Kernel telemetry.py emitters must not flood signal.unhandled / DEGRADED."""
+    model = Model()
+    events = (
+        ("manage.charter.tick.transition", {"root": "9001", "from_status": "idle", "to_status": "parked", "transition": "park"}),
+        ("manage.charter.tick.shadow.diff", {"root": "9001", "old_decision": "skip", "kernel_transition": "admit", "classification": "disagree"}),
+        ("manage.charter.tick.shadow.starved", {"reason": "empty_ledger", "bus_roots": 0}),
+        ("manage.charter.tick.consult.queued", {"root": "9001", "gid": "g1", "role": "skeptic"}),
+        ("manage.charter.tick.consult.deferred", {"root": "9001", "gid": "g1", "next_retry": 1.5}),
+        ("manage.charter.tick.enrollment.filtered", {"root": "9001", "reason": "ledger_migrated"}),
+        ("manage.charter.tick.frictions_audit_passed", {"root": "9001"}),
+    )
+    for i, (signal, payload) in enumerate(events, start=1):
+        model.apply(Event(signal, i * 1_000, payload))
+    health = model.derive(10_000).health
+    assert health.unhandled_signals == {}
+    assert "unhandled_signals" not in health.degraded
+
+
+def test_shadow_diff_does_not_mint_unknown_root_rows() -> None:
+    """shadow.diff is high-volume Phase-1 noise — swallow without creating ACTIVE unknowns."""
+    model = Model()
+    for i, root in enumerate(("5975", "5993", "6153"), start=1):
+        model.apply(
+            Event(
+                "manage.charter.tick.shadow.diff",
+                i * 1_000,
+                {
+                    "root": root,
+                    "old_decision": "skip",
+                    "kernel_transition": "noop",
+                    "classification": "agree",
+                },
+            )
+        )
+    frame = model.derive(10_000)
+    assert frame.roots == ()
+    assert frame.health.unhandled_signals == {}
 
 
 def test_charter_error_reads_live_reason_field() -> None:

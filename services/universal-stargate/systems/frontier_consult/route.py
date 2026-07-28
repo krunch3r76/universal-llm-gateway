@@ -183,6 +183,7 @@ class TeamDispatchGenerateBody(_DispatchCommon):
     cost_intent_reason: str | None = None
     nest_under: str | None = None
     read_only: bool = False
+    refuse_if_lease_held: bool = False
     # thread / subject MUST NOT appear — extra="forbid" rejects any caller that
     # supplies them (schema-level enforcement per Phase 0 contract).
 

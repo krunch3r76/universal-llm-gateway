@@ -108,6 +108,12 @@ def register_project_ask_tool(mcp: FastMCP) -> None:
             correlation is the ``cdp.generate.submitted`` event, which carries
             both ids and now publishes at submit time.
 
+        ``purpose``: default ``ask``. For operator-proxy missions set
+        ``purpose=operator-proxy`` (or ``mission``) — the cdp-ask runner
+        auto-ensures ``/cdp-operator-proxy`` + ``/reasoning-posture`` chips and
+        the Opus-operator / Fable-advisor seat-map briefing
+        (``libs/claude_bundles/operator_proxy_mission.py``).
+
         POLL GUARDRAIL — project-ask executions:
           NEVER curl, fetch, or HTTP GET/POST to localhost/127.0.0.1 — especially
           :8765 — for ``/v1/project-ask/*``. Port 8765 is web-fetcher, NOT

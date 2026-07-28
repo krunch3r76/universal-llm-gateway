@@ -38,6 +38,9 @@ IMPLEMENT_CONTRACT = "implement"
 # knobs silently).
 IMPLEMENT_MODEL_KNOBS: dict[str, str] = {"fast": "true"}
 
+# R1 L2: charter-origin write windows refuse silent queue behind a live lease.
+_WRITE_LEASE_FENCE: dict[str, bool] = {"refuse_if_lease_held": True}
+
 
 def default_judgment_body(
     *,
@@ -63,6 +66,7 @@ def default_judgment_body(
         "packet_path": packet_path,
         "dispatch_thread_id": root_id,
         "caller_agent": caller_agent,
+        **_WRITE_LEASE_FENCE,
     }
 
 
@@ -93,6 +97,7 @@ def implement_body(
         "dispatch_thread_id": root_id,
         "caller_agent": caller_agent,
         "source_ref": source_ref,
+        **_WRITE_LEASE_FENCE,
     }
 
 
@@ -169,6 +174,7 @@ def consult_host_generate_body(
         caller_agent=caller_agent,
     )
     body["read_only"] = True
+    body.pop("refuse_if_lease_held", None)
     return body
 
 
@@ -195,6 +201,7 @@ def operator_proxy_host_generate_body(
         caller_agent=caller_agent,
     )
     body["read_only"] = True
+    body.pop("refuse_if_lease_held", None)
     return body
 
 

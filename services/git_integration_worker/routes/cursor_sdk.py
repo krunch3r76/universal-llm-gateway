@@ -46,6 +46,7 @@ from services.git_integration_worker.cursor_dispatch_ledger import (
     DispatchConflict,
     PromotedDispatch,
     SourceRefConflict,
+    WriteLeaseHeld,
 )
 from services.git_integration_worker.cursor_home import (
     CursorHomeConfigError,
@@ -1794,6 +1795,23 @@ async def cursor_dispatch(
             source_ref=candidate_source_ref,
             force=req.force,
             nest_under=req.nest_under,
+            refuse_if_lease_held=req.refuse_if_lease_held,
+        )
+    except WriteLeaseHeld as exc:
+        return _reject_pre_admission(
+            req,
+            worker_error_code="CURSOR_WRITE_LEASE_HELD",
+            failure_layer="admission",
+            http_status=409,
+            detail_summary=str(exc),
+            retryable=True,
+            validation_stage="ledger_write_lease",
+            extra_data={
+                "lease_key": exc.lease_key,
+                "holder_dispatch_id": exc.holder_dispatch_id,
+                "holder_thread_id": exc.holder_thread_id,
+                "queue_depth": exc.queue_depth,
+            },
         )
     except SourceRefConflict as exc:
         return _reject_pre_admission(

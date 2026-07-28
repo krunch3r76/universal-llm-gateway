@@ -49,6 +49,20 @@ CHARTER_WINDOW_FAILED = "manage.charter.tick.window_failed"
 CHARTER_PAUSED = "manage.charter.tick.paused"
 CHARTER_HELD = "manage.charter.tick.held"
 CHARTER_RESUMED = "manage.charter.tick.resumed"
+CHARTER_FRICTIONS_AUDIT_PASSED = "manage.charter.tick.frictions_audit_passed"
+#: Kernel telemetry facade (``charter_runner/telemetry.py``) — informational.
+CHARTER_TRANSITION = "manage.charter.tick.transition"
+CHARTER_SHADOW_DIFF = "manage.charter.tick.shadow.diff"
+CHARTER_SHADOW_STARVED = "manage.charter.tick.shadow.starved"
+CHARTER_CONSULT_QUEUED = "manage.charter.tick.consult.queued"
+CHARTER_CONSULT_DEFERRED = "manage.charter.tick.consult.deferred"
+CHARTER_ENROLLMENT_FILTERED = "manage.charter.tick.enrollment.filtered"
+
+# --- charter conveyor (friction belt) --------------------------------------
+CHARTER_CONVEYOR_ENROLLED = "manage.charter.conveyor.enrolled"
+CHARTER_CONVEYOR_STALE = "manage.charter.conveyor.stale"
+CHARTER_CONVEYOR_DISENROLLED = "manage.charter.conveyor.disenrolled"
+CHARTER_CONVEYOR_ENROLL_FAILED = "manage.charter.conveyor.enroll_failed"
 
 #: Signals accepted only as cold-start seed material, never as live transitions.
 CHARTER_COLD_START = (CHARTER_AUDIT,)
@@ -69,6 +83,8 @@ SDK_LEASE_RELEASED = "frontier.sdk.worker.lease.released"
 SDK_LEASE_PARK_ENTER = "frontier.sdk.worker.lease.park_enter"
 SDK_LEASE_PARK_RESTORE = "frontier.sdk.worker.lease.park_restore"
 SDK_CLOSEOUT_RELOCATED = "frontier.sdk.closeout.relocated"
+SDK_CLOSEOUT_RECONCILED = "frontier.sdk.closeout.reconciled"
+SDK_WORKER_DISPATCHED = "frontier.sdk.worker.dispatched"
 
 # --- sdk family: pipeline lane (GS2 emitter B) -----------------------------
 SDK_PIPELINE_STARTED = "pipeline.frontier.dispatch.started"
@@ -121,6 +137,8 @@ SDK_LIFECYCLE_SIGNALS = (
     SDK_LEASE_PARK_ENTER,
     SDK_LEASE_PARK_RESTORE,
     SDK_CLOSEOUT_RELOCATED,
+    SDK_CLOSEOUT_RECONCILED,
+    SDK_WORKER_DISPATCHED,
 )
 
 # --- cdp family (VERIFIED live — v3 §6) ------------------------------------
@@ -154,6 +172,7 @@ MONITOR_SEED_FOLD_STATUS = "monitor.seed.fold_status"
 MONITOR_TRANSPORT_REPLAY_TRUNCATED = "monitor.transport.replay_truncated"
 #: Synthetic SDK row injection from reconcile / lease-snapshot (D2: no live emitter).
 MONITOR_META_SDK_STARTED = "monitor.meta.sdk_started"
+MONITOR_META_CHARTER_OBJECTIVE = "monitor.meta.charter_objective"
 #: Reconcile source failure — graft-only; drives attention, never steady-state poll.
 MONITOR_RECONCILE_SOURCE_FAILED = "monitor.reconcile.source_failed"
 
@@ -179,6 +198,17 @@ CHARTER_FAMILY = (
     CHARTER_PAUSED,
     CHARTER_HELD,
     CHARTER_RESUMED,
+    CHARTER_FRICTIONS_AUDIT_PASSED,
+    CHARTER_TRANSITION,
+    CHARTER_SHADOW_DIFF,
+    CHARTER_SHADOW_STARVED,
+    CHARTER_CONSULT_QUEUED,
+    CHARTER_CONSULT_DEFERRED,
+    CHARTER_ENROLLMENT_FILTERED,
+    CHARTER_CONVEYOR_ENROLLED,
+    CHARTER_CONVEYOR_STALE,
+    CHARTER_CONVEYOR_DISENROLLED,
+    CHARTER_CONVEYOR_ENROLL_FAILED,
 )
 
 SDK_FAMILY = tuple(SDK_EMITTER_BY_SIGNAL) + SDK_LIFECYCLE_SIGNALS
@@ -198,6 +228,7 @@ META_FAMILY = (
     MONITOR_SEED_FOLD_STATUS,
     MONITOR_TRANSPORT_REPLAY_TRUNCATED,
     MONITOR_META_SDK_STARTED,
+    MONITOR_META_CHARTER_OBJECTIVE,
     MONITOR_RECONCILE_SOURCE_FAILED,
 )
 

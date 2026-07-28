@@ -12,8 +12,14 @@ fingerprint non-reproducible and the F2 determinism test meaningless.
 from __future__ import annotations
 
 from .correlation import CorrelationIndex
-from .dtos import CdpLegRow, CharterRootRow, SdkDispatchRow, Thresholds
-from .folds import CdpFold, CharterFold, SdkFold
+from .dtos import (
+    CdpLegRow,
+    CharterRootRow,
+    ConveyorItemRow,
+    SdkDispatchRow,
+    Thresholds,
+)
+from .folds import CdpFold, CharterFold, ConveyorFold, SdkFold
 
 #: Root states meaning the root's own lifecycle has ended.
 ROOT_CLOSED_STATES = ("closed",)
@@ -75,6 +81,7 @@ def sdk_rows(
                 delivery_failed=state.delivery_failed,
                 last_tool_name=state.last_tool_name,
                 last_tool_status=state.last_tool_status,
+                tool_call_count=state.tool_call_count,
             )
         )
     rows.sort(key=lambda r: r.dispatch_id)
@@ -114,15 +121,25 @@ def cdp_rows(
     return tuple(rows)
 
 
-def _latest_terminal_by_root(
+def _terminal_ms_for_current_worker(
+    root_id: str,
+    worker_thread: str | None,
     dispatches: tuple[SdkDispatchRow, ...],
-) -> dict[str, int]:
-    """Return each root's latest worker-leg terminal timestamp."""
-    latest: dict[str, int] = {}
+) -> int | None:
+    """Terminal timestamp for the worker leg that can park this root.
+
+    A fresh ``manage.charter.tick.admitted`` binds a new ``worker_thread``; prior
+    window terminals must not keep the root parked after re-admit.
+    """
+    latest: int | None = None
     for row in dispatches:
-        if row.root_id and row.state in SDK_TERMINAL_STATES and row.terminal_ms:
-            if row.terminal_ms > latest.get(row.root_id, 0):
-                latest[row.root_id] = row.terminal_ms
+        if row.root_id != root_id:
+            continue
+        if worker_thread and row.thread_id and row.thread_id != worker_thread:
+            continue
+        if row.state in SDK_TERMINAL_STATES and row.terminal_ms:
+            if latest is None or row.terminal_ms > latest:
+                latest = row.terminal_ms
     return latest
 
 
@@ -141,11 +158,12 @@ def root_rows(
     :class:`~dispatch_monitor_core.correlation.CorrelationIndex` -- never on
     timestamp proximity.
     """
-    terminal_by_root = _latest_terminal_by_root(dispatches)
     rows = []
     for state in fold.roots.values():
         row_state = state.state
-        terminal_ms = terminal_by_root.get(state.root_id)
+        terminal_ms = _terminal_ms_for_current_worker(
+            state.root_id, state.worker_thread, dispatches
+        )
         if (
             row_state not in ROOT_CLOSED_STATES
             and not state.closed
@@ -164,6 +182,7 @@ def root_rows(
                 packet_path=state.packet_path,
                 arc_g_step=state.arc_g_step,
                 arc_g_step_label=state.arc_g_step_label,
+                objective=state.objective,
                 last_signal_ms=state.last_signal_ms,
                 last_signal=state.last_signal,
                 admitted_at_ms=state.admitted_at_ms,
@@ -179,4 +198,27 @@ def root_rows(
             )
         )
     rows.sort(key=lambda r: r.root_id)
+    return tuple(rows)
+
+
+def conveyor_rows(fold: ConveyorFold, now_ms: int) -> tuple[ConveyorItemRow, ...]:
+    """Project friction-belt enrollments — enrolled, stale; drop disenrolled."""
+    rows: list[ConveyorItemRow] = []
+    for state in fold.items.values():
+        if state.state == "disenrolled":
+            continue
+        rows.append(
+            ConveyorItemRow(
+                friction_id=state.friction_id,
+                todo_slug=state.todo_slug,
+                root_id=state.root_id,
+                conveyor_root=state.conveyor_root,
+                state=state.state,
+                ticks_idle=state.ticks_idle,
+                enrolled_ms=state.enrolled_ms,
+                last_signal_ms=state.last_signal_ms,
+                age_ms=age(now_ms, state.last_signal_ms or state.enrolled_ms),
+            )
+        )
+    rows.sort(key=lambda r: (0 if r.state == "enrolled" else 1, r.friction_id))
     return tuple(rows)

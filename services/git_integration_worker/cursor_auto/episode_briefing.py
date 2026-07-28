@@ -37,13 +37,13 @@ def build_briefing_block(
     First-episode register is life/teammate, not a maintenance console.
     When ``contract`` ∈ implement|investigate|verify, append a short
     codebase-work stanza naming the lane the request will run: the
-    ``densify-abstraction-layering`` skill (architecture → frame → densify →
+    ``abstraction-layering`` skill (architecture → frame → densify →
     check → implement, entered at the highest still-open layer), which
     supersedes path-sim ratification windows for codework per
-    ``decision:densify-abstraction-layering``. Path-sim stays the charter-tick
+    ``decision:abstraction-layering``. Path-sim stays the charter-tick
     lane.
 
-    The stanza names the **skill slug**, not the ``/densify`` command: the
+    The stanza names the **skill slug**, not the ``/layer`` command: the
     nested dispatch that picks this up is headless and self-fetches skills, so a
     command reference would be unresolvable there. Wire tokens and AC evidence
     stay on CLOSEOUT, not in this hello.
@@ -70,9 +70,11 @@ def build_briefing_block(
         lines.extend(
             [
                 "",
-                f"Codebase work ({raw}): densify-abstraction-layering skill —",
-                "architecture → frame → densify → check → implement, entered at the",
-                "highest open layer (path-sim stays the tick lane). AC lands on CLOSEOUT.",
+                f"Codebase work ({raw}): abstraction-layering skill —",
+                "architecture → frame → densify → check → implement "
+                "(highest open layer; path-sim stays the tick lane).",
+                "Tick: mint+enroll enrolled root — ¬ tip improvise "
+                "(cursor-auto-tick-work-posting). AC on CLOSEOUT.",
             ]
         )
     block = "\n".join(lines)

@@ -209,6 +209,7 @@ async def dispatch_cursor_sdk_worker(
     close_contract: CloseContract = "auto",
     dispatch_id: str | None = None,
     nest_under: str | None = None,
+    refuse_if_lease_held: bool = False,
 ) -> tuple[bool, dict[str, Any]]:
     """POST ``/api/v1/cursor/dispatch``; return structured ``(ok, detail)``.
 
@@ -239,6 +240,8 @@ async def dispatch_cursor_sdk_worker(
         payload["close_contract"] = close_contract
     if nest_under:
         payload["nest_under"] = nest_under
+    if refuse_if_lease_held:
+        payload["refuse_if_lease_held"] = True
     try:
         async with make_async_client(
             worker_base_url(), timeout=_WORKER_TIMEOUT
@@ -285,6 +288,7 @@ async def dispatch_cursor_sdk_worker_message(
     read_only: bool = False,
     dispatch_id: str | None = None,
     nest_under: str | None = None,
+    refuse_if_lease_held: bool = False,
 ) -> tuple[bool, dict[str, Any]]:
     """POST ``/api/v1/cursor/dispatch`` with ``message`` (consult path)."""
     effective_dispatch_id = dispatch_id or f"{request_id}-{uuid.uuid4().hex[:8]}"
@@ -303,6 +307,8 @@ async def dispatch_cursor_sdk_worker_message(
         payload["read_only"] = True
     if nest_under:
         payload["nest_under"] = nest_under
+    if refuse_if_lease_held:
+        payload["refuse_if_lease_held"] = True
     try:
         async with make_async_client(
             worker_base_url(), timeout=_WORKER_TIMEOUT

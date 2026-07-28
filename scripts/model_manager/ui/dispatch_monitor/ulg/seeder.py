@@ -5,7 +5,12 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 
-from scripts.model_manager.ui.dispatch_monitor.core.protocols import EventRecord
+from scripts.model_manager.ui.charter_scoreboard_objective import (
+    objective_meta_event,
+    read_objective_for_root,
+)
+from scripts.model_manager.ui.dispatch_monitor.core import signals
+from scripts.model_manager.ui.dispatch_monitor.core.protocols import Event, EventRecord
 from scripts.model_manager.ui.dispatch_monitor.ulg.event_query import (
     charter_tick_audit,
     signal_events,
@@ -19,6 +24,7 @@ from scripts.model_manager.ui.dispatch_monitor.ulg.snapshot_events import (
 
 _LIVE_FILTERS: tuple[str, ...] = (
     "manage.charter.tick.*",
+    "manage.charter.conveyor.*",
     "frontier.sdk.*",
     "cdp.generate.*",
     "frontier.poll.hint.issued",
@@ -37,6 +43,9 @@ _PRIORITY_SIGNALS: tuple[str, ...] = (
     "manage.charter.tick.paused",
     "manage.charter.tick.held",
     "manage.charter.tick.resumed",
+    "manage.charter.conveyor.enrolled",
+    "manage.charter.conveyor.stale",
+    "manage.charter.conveyor.disenrolled",
     "frontier.sdk.worker.completed",
     "frontier.sdk.worker.failed",
     "frontier.sdk.worker.queued",
@@ -87,6 +96,32 @@ def _lease_snapshot_events(
     return events_from_lease_snapshot(snapshot)
 
 
+def _graft_charter_objectives(
+    apply: Callable[[EventRecord], None],
+    root_ids: set[str],
+) -> int:
+    """Cold-start graft of scoreboard objectives for roots seen in the seed window."""
+    if not root_ids:
+        return 0
+    ts = int(time.time() * 1000)
+    count = 0
+    for root_id in sorted(root_ids):
+        objective = read_objective_for_root(root_id)
+        if not objective:
+            continue
+        apply(
+            Event(
+                signal=signals.MONITOR_META_CHARTER_OBJECTIVE,
+                ts_unix_ms=ts,
+                payload=objective_meta_event(root_id, objective, ts_unix_ms=ts),
+                source="ulg://dispatch-monitor/seed",
+                subject=root_id,
+            )
+        )
+        count += 1
+    return count
+
+
 def seed_model(
     apply: Callable[[EventRecord], None],
     *,
@@ -99,6 +134,7 @@ def seed_model(
     """Fold cold-start history into ``apply``. Returns count of records applied."""
     seen_seq: set[int] = set()
     pending: list[EventRecord] = []
+    seeded_roots: set[str] = set()
 
     def _ingest(row: dict) -> None:
         event = event_from_row(row)
@@ -108,6 +144,10 @@ def seed_model(
             if event.seq in seen_seq:
                 return
             seen_seq.add(event.seq)
+        if event.signal == signals.CHARTER_ADMITTED:
+            root = event.payload.get("root") or event.subject
+            if root:
+                seeded_roots.add(str(root))
         pending.append(event)
 
     audit = charter_tick_audit(minutes=minutes, limit=limit)
@@ -134,4 +174,5 @@ def seed_model(
     pending.sort(key=lambda item: (item.seq if item.seq is not None else 0, item.ts_unix_ms))
     for event in pending:
         apply(event)
+    _graft_charter_objectives(apply, seeded_roots)
     return len(pending)

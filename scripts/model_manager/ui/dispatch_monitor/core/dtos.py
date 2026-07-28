@@ -102,6 +102,7 @@ class CharterRootRow:
     packet_path: str | None = None
     arc_g_step: str | None = None
     arc_g_step_label: str | None = None
+    objective: str | None = None
     last_signal_ms: int | None = None
     last_signal: str | None = None
     admitted_at_ms: int | None = None
@@ -151,6 +152,7 @@ class SdkDispatchRow:
     delivery_failed: bool = False
     last_tool_name: str | None = None
     last_tool_status: str | None = None
+    tool_call_count: int | None = None
 
 
 @dataclass(frozen=True)
@@ -180,6 +182,21 @@ class CdpLegRow:
     proof_present: bool = False
     root_id: str | None = None
     provenance: str = "signal"
+
+
+@dataclass(frozen=True)
+class ConveyorItemRow:
+    """One friction-belt conveyor enrollment (``manage.charter.conveyor.*``)."""
+
+    friction_id: int
+    todo_slug: str | None = None
+    root_id: str | None = None
+    conveyor_root: str | None = None
+    state: str = "enrolled"
+    ticks_idle: int | None = None
+    enrolled_ms: int | None = None
+    last_signal_ms: int | None = None
+    age_ms: int | None = None
 
 
 @dataclass(frozen=True)
@@ -242,6 +259,7 @@ class SupervisorProjection:
     roots: tuple[CharterRootRow, ...] = ()
     sdk: tuple[SdkDispatchRow, ...] = ()
     cdp: tuple[CdpLegRow, ...] = ()
+    conveyor: tuple[ConveyorItemRow, ...] = ()
     attention: tuple[AttentionItem, ...] = ()
     arcs: Mapping[str, PathSimArcRow] = field(default_factory=dict)
     changed_hints: tuple[str, ...] = ()

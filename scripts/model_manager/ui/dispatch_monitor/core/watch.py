@@ -41,11 +41,17 @@ def _truncate(text: str | None, width: int) -> str:
 def _root_line(row: CharterRootRow) -> str:
     """Render one charter root row."""
     step = row.arc_g_step or "-"
+    if row.objective:
+        tail = f" obj: {_truncate(row.objective, 48)}"
+    elif row.skip_reason:
+        tail = f" {_truncate(row.skip_reason, 28)}"
+    else:
+        tail = ""
     return (
         f"  {_truncate(row.root_id, 8)} {_truncate(row.state, 14)} "
         f"g={_truncate(step, 5)} worker={_truncate(row.worker_thread, 8)} "
         f"age={_ms(row.in_flight_age_ms):>7} skips={row.skip_streak:<3} "
-        f"{_truncate(row.skip_reason, 28)}"
+        f"{tail}"
     )
 
 

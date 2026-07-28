@@ -7,6 +7,7 @@ from typing import Any, Mapping
 from scripts.model_manager.ui.dispatch_monitor.core import signals
 from scripts.model_manager.ui.dispatch_monitor.core.protocols import Event
 from scripts.model_manager.ui.dispatch_monitor.core.protocols import EventRecord
+from scripts.model_manager.ui.charter_scoreboard_objective import parse_original_objective
 
 _RECONCILED_SOURCE = "ulg://dispatch-monitor/reconciled"
 
@@ -154,10 +155,10 @@ def events_from_cortex(
     subject: str,
     ts_unix_ms: int,
 ) -> list[EventRecord]:
-    """Record scoreboard presence as a reconciled charter scan hint."""
+    """Record scoreboard presence and graft objective when the section exists."""
     uri = data.get("uri")
     line_count = data.get("line_count")
-    return [
+    events: list[EventRecord] = [
         Event(
             signal=signals.CHARTER_SCANNED,
             ts_unix_ms=ts_unix_ms,
@@ -174,3 +175,19 @@ def events_from_cortex(
             subject=subject,
         )
     ]
+    content = data.get("content")
+    if isinstance(content, str):
+        objective = parse_original_objective(content)
+        if objective:
+            events.append(
+                Event(
+                    signal=signals.MONITOR_META_CHARTER_OBJECTIVE,
+                    ts_unix_ms=ts_unix_ms,
+                    payload=_with_provenance(
+                        {"root": subject, "objective": objective}
+                    ),
+                    source=_RECONCILED_SOURCE,
+                    subject=subject,
+                )
+            )
+    return events

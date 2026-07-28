@@ -62,7 +62,7 @@ already covers.
 | Step | Seat | When | Transport |
 |---|---|---|---|
 | 1 | **Cursor** (IDE lead, cursor-sdk, subagents, **`cursor/*` including Opus**) | Default — execute, orchestrate, dispatch | In-seat + `team_dispatch` / `Task` per `lean-context-dispatch-first` |
-| 2 | **Independent binder** — pick a family ≠ producer (table below) | **Any** cursor step-1 seat is **unsure** — including when that seat is already `cursor/claude-opus-5` | Anthropic: `team_dispatch(model=cdp/opus-5)` · **encourage Fable** · `project_ask` · lane `agent_bus:6006`. OpenAI: `team_dispatch(model=gpt-5.6-terra)`; `gpt-5.6-sol` for **targeted low-token** consults — per `consult-routing` + `claude-ai-cdp-navigation` |
+| 2 | **Independent binder** — pick a family ≠ producer (table below) | **Any** cursor step-1 seat is **unsure** — including when that seat is already `cursor/claude-opus-5` | Anthropic: **`team_dispatch(model=cdp/opus-5)`** · **encourage Fable** via **`team_dispatch(model=cdp/fable)`** (`project_ask` = escape only) · lane `agent_bus:6006`. OpenAI: `team_dispatch(model=gpt-5.6-terra)`; `gpt-5.6-sol` for **targeted low-token** consults — per `consult-routing` + `claude-ai-cdp-navigation` |
 | 3 | **Human operator** | The step-2 binder is **unsure** OR true operator-only gate (credentials, irreversible non-revertible act, spend pause, genuine *what we want* ambiguity the binder cannot resolve) | Cowork Ask / direct — **rare**; one question + recommended answer |
 
 ### Step-2 binder order (operator bind 2026-07-28)
@@ -107,6 +107,7 @@ flag with `minimal_question` per `cdp-operator-proxy`).
 | Reach for `gpt-5.6-terra` before Fable has been tried | 2c is for **Fable unsure** or lineage-correlated risk |
 | Ask operator to approve `gpt-5.6-terra`/`sol` as a consult binder | Standing authorization (2026-07-28) — fire and announce; ¬ re-gate |
 | Spend `gpt-5.6-sol` on broad open-ended review | `sol` is **targeted, low-token** only; `terra` is the OpenAI default |
+| Default Opus/Fable binder consult to bare `project_ask` | `team_dispatch(model=cdp/…)` — `project_ask` = escape / mission `purpose=` only |
 
 ## Composes with
 

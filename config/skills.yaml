@@ -130,12 +130,12 @@ skills:
   debug-with-events:
     surface_class: cursor_only
     mcp_surface_required: code
-  densify-abstraction-layering:
+  abstraction-layering:
     # Codework layer contract (architecture → frame → densify → check → implement).
     # Supersedes path-sim ratification windows for codework
-    # (decision:densify-abstraction-layering). cursor_only: the lane is driven from a
+    # (decision:abstraction-layering). cursor_only: the lane is driven from a
     # Cursor/cursor-sdk seat that dispatches the CDP layers — web receives per-layer
-    # packets, it does not run the lane.
+    # packets, it does not run the lane. G3 stage token densify unchanged.
     surface_class: cursor_only
     mcp_surface_required: code
   descriptor-authoring-discipline:

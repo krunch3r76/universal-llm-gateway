@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -17,7 +18,12 @@ from scripts.model_manager import observation_event_conveyor as conv_events
 
 from . import bus_client
 from .admission import ENROLLMENT_TAG
-from .checkpoint_schema import emit_footer, parse_checkpoint
+from .checkpoint_schema import (
+    FOOTER_FENCE,
+    emit_footer,
+    parse_checkpoint,
+    split_sections,
+)
 from .friction_ledger import CONVEYOR_OFF_TAG
 from .pickup_advance import gid_of_row
 from .window_sequence import next_window_index, window_id_for
@@ -192,12 +198,82 @@ def _conveyor_footer(conveyor_id: str, turns: list[dict[str, Any]], gid: str) ->
     )
 
 
-async def _append_conveyor_pickup(*, conveyor_id: str, row: str) -> None:
-    turns = await bus_client.fetch_turns(conveyor_id)
-    existing = _conveyor_pickup_rows(turns)
-    if row in existing:
-        return
-    merged = existing + [row]
+_NEXT_PICKUP_SECTION_RE = re.compile(
+    r"(?m)^##\s+(Next[- ]pickup)\s*\n.*?(?=^##\s+|^—\s+RESUME|^```\s*charter-state|\Z)",
+    re.DOTALL | re.IGNORECASE,
+)
+
+
+def _latest_tip_turn(turns: list[dict[str, Any]]) -> dict[str, Any] | None:
+    for turn in sorted(turns, key=lambda t: int(t.get("turn_number") or 0), reverse=True):
+        if is_tip_class(str(turn.get("subject") or ""), body=str(turn.get("body") or "")):
+            return turn
+    return None
+
+
+def _is_conveyor_shaped(subject: str, body: str) -> bool:
+    if "charter-friction-conveyor pickup append" in subject.lower():
+        return True
+    return "friction conveyor — process gated next-pickup" in body.lower()
+
+
+def _is_charter_profile_checkpoint(body: str, subject: str) -> bool:
+    """True when the tip is a charter CHECKPOINT worth merging, not conveyor-only."""
+    if _is_conveyor_shaped(subject, body):
+        return False
+    from .checkpoint_schema.footer import validate_checkpoint_footer
+
+    if validate_checkpoint_footer(body).ok:
+        return True
+    sections = split_sections(body)
+    charter_keys = ("steps", "frictions", "sidecars", "in one line", "state", "scoreboard uri")
+    if any(key in sections for key in charter_keys):
+        return True
+    return "— RESUME (any seat, no command):".lower() in body.lower()
+
+
+def _format_pickup_block(rows: list[str], template_section: str) -> str:
+    if re.search(r"(?m)^\s*\d+\.\s", template_section):
+        return "\n".join(f"{idx + 1}. {row}" for idx, row in enumerate(rows))
+    return "\n".join(f"- {row}" for row in rows)
+
+
+def _replace_next_pickup_section(body: str, rows: list[str]) -> str:
+    match = _NEXT_PICKUP_SECTION_RE.search(body)
+    pickup_block = _format_pickup_block(rows, match.group(0) if match else "")
+    if match:
+        heading = match.group(1)
+        replacement = f"## {heading}\n{pickup_block}\n\n"
+        return body[: match.start()] + replacement + body[match.end() :]
+    insert = f"\n## Next-pickup\n{pickup_block}\n\n"
+    for marker in ("— RESUME", f"```{FOOTER_FENCE}"):
+        idx = body.find(marker)
+        if idx >= 0:
+            return body[:idx] + insert + body[idx:]
+    return body.rstrip() + insert
+
+
+def _merge_charter_pickup_body(*, body: str, merged_rows: list[str]) -> str:
+    from .checkpoint_schema.footer import (
+        _FENCE_TAIL_RE,
+        _extract_footer_json,
+        append_footer_to_packet,
+    )
+
+    footer_data, _ = _extract_footer_json(body)
+    trimmed = _FENCE_TAIL_RE.sub("", body.rstrip())
+    updated = _replace_next_pickup_section(trimmed, merged_rows)
+    if not footer_data:
+        return updated
+    gid = gid_of_row(merged_rows[0]) if merged_rows else None
+    if gid and isinstance(footer_data.get("next_pickup"), dict):
+        footer_data = dict(footer_data)
+        footer_data["next_pickup"] = dict(footer_data["next_pickup"])
+        footer_data["next_pickup"]["gid"] = gid
+    return append_footer_to_packet(updated, **footer_data)
+
+
+def _post_conveyor_pickup_body(*, root_id: str, merged: list[str], turns: list[dict[str, Any]]) -> tuple[str, str]:
     pickup_block = "\n".join(f"- {item}" for item in merged)
     subject = "CHECKPOINT — charter-friction-conveyor pickup append"
     body = f"""# {subject}
@@ -222,8 +298,38 @@ None.
 
 — RESUME (any seat, no command): friction conveyor — process gated Next-pickup.
 
-{_conveyor_footer(conveyor_id, turns, gid_of_row(merged[0]) or "pending")}"""
-    await bus_client.post_root_checkpoint(conveyor_id, subject=subject, body=body)
+{_conveyor_footer(root_id, turns, gid_of_row(merged[0]) or "pending")}"""
+    return subject, body
+
+
+async def _append_pickup_to_root(
+    *,
+    root_id: str,
+    row: str,
+    turns: list[dict[str, Any]] | None = None,
+) -> None:
+    """Append a friction follow-on row to the caller root's tip Next-pickup."""
+    if turns is None:
+        turns = await bus_client.fetch_turns(root_id)
+    existing = _conveyor_pickup_rows(turns)
+    if row in existing:
+        return
+    merged = existing + [row]
+    latest = _latest_tip_turn(turns)
+    if latest and _is_charter_profile_checkpoint(
+        str(latest.get("body") or ""),
+        str(latest.get("subject") or ""),
+    ):
+        subject = str(latest.get("subject") or "")
+        body = _merge_charter_pickup_body(body=str(latest.get("body") or ""), merged_rows=merged)
+        await bus_client.post_root_checkpoint(root_id, subject=subject, body=body)
+        return
+    subject, body = _post_conveyor_pickup_body(root_id=root_id, merged=merged, turns=turns)
+    await bus_client.post_root_checkpoint(root_id, subject=subject, body=body)
+
+
+async def _append_conveyor_pickup(*, conveyor_id: str, row: str) -> None:
+    await _append_pickup_to_root(root_id=conveyor_id, row=row)
 
 
 async def enroll_rows(
@@ -252,8 +358,10 @@ async def enroll_rows(
         return []
 
     enrolled: list[str] = []
-    conveyor_id = await ensure_conveyor_root()
-    turns = await bus_client.fetch_turns(conveyor_id)
+    if not root_id or not str(root_id).strip():
+        return []
+    append_root = str(root_id).strip()
+    turns = await bus_client.fetch_turns(append_root)
     pickup_rows = _conveyor_pickup_rows(turns)
     state = _load_state()
     on_conveyor = dict(state.get("on_conveyor") or {})
@@ -294,14 +402,14 @@ async def enroll_rows(
             note=note,
             detent=str(detent) if detent else None,
         )
-        await _append_conveyor_pickup(conveyor_id=conveyor_id, row=pickup)
+        await _append_pickup_to_root(root_id=append_root, row=pickup, turns=turns)
         pickup_rows.append(pickup)
         from .conveyor_phase import set_conveyor_phase
         from .root_ledger import open_default_ledger
 
         conn = open_default_ledger()
         try:
-            set_conveyor_phase(conn, conveyor_id, "active")
+            set_conveyor_phase(conn, append_root, "active")
         finally:
             conn.close()
         record = {
@@ -317,7 +425,7 @@ async def enroll_rows(
             root=root_id,
             friction_id=friction_id,
             todo_slug=todo_slug,
-            conveyor_root=conveyor_id,
+            conveyor_root=append_root,
         )
 
     state["on_conveyor"] = on_conveyor

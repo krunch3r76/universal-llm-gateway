@@ -35,9 +35,9 @@ from .dtos import (
     Thresholds,
     severity_rank,
 )
-from .folds import CdpFold, CharterFold, SdkFold
+from .folds import CdpFold, CharterFold, ConveyorFold, SdkFold
 from .projections import age as _age
-from .projections import cdp_rows, root_rows, sdk_rows
+from .projections import cdp_rows, conveyor_rows, root_rows, sdk_rows
 from .protocols import EventRecord
 
 
@@ -50,6 +50,7 @@ class Model:
         self.charter = CharterFold(self.index)
         self.sdk = SdkFold(self.index)
         self.cdp = CdpFold(self.index)
+        self.conveyor = ConveyorFold()
         self.records_folded = 0
         self.seq_high_water: int | None = None
         self.dropped_ingest = 0
@@ -62,6 +63,7 @@ class Model:
         self._handlers.update(self.charter.handlers())
         self._handlers.update(self.sdk.handlers())
         self._handlers.update(self.cdp.handlers())
+        self._handlers.update(self.conveyor.handlers())
         self._handlers[signals.EVENTS_DROPPED_INGEST] = self._on_dropped_ingest
         self._handlers[signals.EVENTS_DROPPED_SUBSCRIBE] = self._on_dropped_subscribe
         self._handlers[signals.MONITOR_SEED_FOLD_STATUS] = self._on_fold_status
@@ -151,6 +153,7 @@ class Model:
         dispatches = sdk_rows(self.sdk, self.index, now_ms)
         legs = cdp_rows(self.cdp, self.index, now_ms)
         roots = root_rows(self.charter, dispatches, self.thresholds, now_ms)
+        belt = conveyor_rows(self.conveyor, now_ms)
         health = self._health(now_ms, roots)
         attention = derive_attention(
             health=health,
@@ -176,6 +179,7 @@ class Model:
             roots=roots,
             sdk=dispatches,
             cdp=legs,
+            conveyor=belt,
             attention=attention,
             arcs={},
             changed_hints=(),
@@ -195,7 +199,11 @@ class Model:
             degraded.append("fold_inputs_dropped")
         if self.unhandled:
             degraded.append("unhandled_signals")
-        if self.charter.last_error_ms is not None:
+        # Match attention: recovered ticks (scan after error) are not degraded.
+        if self.charter.last_error_ms is not None and (
+            self.charter.last_scan_ms is None
+            or self.charter.last_error_ms >= self.charter.last_scan_ms
+        ):
             degraded.append("charter_tick_error")
         in_flight = sum(1 for r in roots if r.state in ("in_flight", "waiting_open"))
         return HealthProjection(
@@ -238,7 +246,7 @@ def _count(payload: Mapping[str, Any]) -> int:
 
 
 #: Frame sections a hint may name, in render order.
-HINT_SECTIONS = ("health", "roots", "sdk", "cdp", "attention", "arcs")
+HINT_SECTIONS = ("health", "roots", "sdk", "cdp", "conveyor", "attention", "arcs")
 
 
 def _hints(

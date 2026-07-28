@@ -4,6 +4,7 @@
 # (sole Cursor discovery after install — ¬ also under hub .cursor/skills or .claude/skills)
 # Co-required: every census slug MUST have a matching config/skills.yaml row (install + pre-commit gate).
 
+abstraction-layering
 advisor-timing
 cheap-recon-before-escalation
 cdp-operator-proxy
@@ -12,7 +13,6 @@ completion-provenance-discipline
 consult-posture
 consult-routing
 cortex
-densify-abstraction-layering
 dispatch-shape
 discovery-engram-opportunity-scan
 docstring-quality

@@ -58,6 +58,46 @@ async def emit_shadow_diff(
     )
 
 
+async def emit_admission_deferred_gate_held(
+    *,
+    root: str,
+    holder_dispatch_id: str | None,
+    holder_age_s: float | None,
+    defer_count: int,
+    queue_depth: int = 0,
+) -> None:
+    """G1 — observable defer when cursor_sdk_gate is held (not silent queue)."""
+    payload: dict[str, Any] = {
+        "root": root,
+        "holder_dispatch_id": holder_dispatch_id,
+        "defer_count": defer_count,
+        "queue_depth": queue_depth,
+    }
+    if holder_age_s is not None:
+        payload["holder_age_s"] = holder_age_s
+    await _emit("manage.charter.tick.admission_deferred_gate_held", payload)
+
+
+async def emit_admission_defer_escalated(
+    *,
+    root: str,
+    reason: str,
+    holder_dispatch_id: str | None,
+    defer_count: int,
+    holder_age_s: float | None = None,
+) -> None:
+    """G2/G3 — bounded defer age or orphan holder → needs-attended class."""
+    payload: dict[str, Any] = {
+        "root": root,
+        "reason": reason,
+        "holder_dispatch_id": holder_dispatch_id,
+        "defer_count": defer_count,
+    }
+    if holder_age_s is not None:
+        payload["holder_age_s"] = holder_age_s
+    await _emit("manage.charter.tick.admission_defer_escalated", payload)
+
+
 async def emit_consult_queued(*, root: str, gid: str, role: str) -> None:
     await _emit(
         "manage.charter.tick.consult.queued",
@@ -81,6 +121,8 @@ async def emit_enrollment_filtered(*, root: str, reason: str) -> None:
 
 
 __all__ = [
+    "emit_admission_defer_escalated",
+    "emit_admission_deferred_gate_held",
     "emit_consult_deferred",
     "emit_consult_queued",
     "emit_enrollment_filtered",

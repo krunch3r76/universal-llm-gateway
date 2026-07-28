@@ -54,9 +54,10 @@ async def _collect_apply(rows: list[dict], event_filter: dict[str, str]) -> tupl
     ("event_filter", "signal", "seq"),
     [
         (LIVE_FILTERS[0], "manage.charter.tick.scanned", 101),
-        (LIVE_FILTERS[1], "frontier.sdk.worker.progress", 202),
-        (LIVE_FILTERS[2], "cdp.generate.running", 303),
-        (LIVE_FILTERS[3], "frontier.poll.hint.issued", 404),
+        (LIVE_FILTERS[1], "manage.charter.conveyor.enrolled", 151),
+        (LIVE_FILTERS[2], "frontier.sdk.worker.progress", 202),
+        (LIVE_FILTERS[3], "cdp.generate.running", 303),
+        (LIVE_FILTERS[4], "frontier.poll.hint.issued", 404),
     ],
 )
 def test_each_connection_watermark_advances_only_on_its_family(
@@ -64,7 +65,7 @@ def test_each_connection_watermark_advances_only_on_its_family(
     signal: str,
     seq: int,
 ) -> None:
-    """AC1 — four independent watermarks; each advances only on its own events."""
+    """AC1 — independent watermarks; each advances only on its own events."""
     watermarks = ConnectionWatermarks.fresh()
     before = watermarks.snapshot()
     key = filter_key(event_filter)
@@ -79,13 +80,16 @@ def test_each_connection_watermark_advances_only_on_its_family(
 
 def test_family_key_routes_pipeline_under_sdk_filter() -> None:
     assert family_key_for_signal("pipeline.frontier.dispatch.started") == "frontier.sdk.*"
+    assert family_key_for_signal("manage.charter.conveyor.enrolled") == (
+        "manage.charter.conveyor.*"
+    )
 
 
 @pytest.mark.asyncio
 async def test_reconnect_resubscribes_one_connection_with_its_watermark() -> None:
     """AC2 — drop one connection; only it replays from its own resume_from."""
     charter_filter = LIVE_FILTERS[0]
-    sdk_filter = LIVE_FILTERS[1]
+    sdk_filter = LIVE_FILTERS[2]
     watermarks = ConnectionWatermarks.fresh()
 
     applied_charter: list[Event] = []
@@ -186,7 +190,7 @@ async def test_gx1_seq_gap_detects_truncation_and_stops_replay() -> None:
                 },
             ]
         ),
-        event_filter=LIVE_FILTERS[1],
+        event_filter=LIVE_FILTERS[2],
         watermarks=watermarks,
         handler=handler,
         on_truncated=on_truncated,

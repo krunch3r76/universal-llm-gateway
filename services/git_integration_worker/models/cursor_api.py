@@ -27,6 +27,7 @@ class CursorDispatchRequest(BaseModel):
     force: bool = False
     source_ref: str | None = None
     nest_under: str | None = None
+    refuse_if_lease_held: bool = False
     worktree_isolated: bool = False
     worktree_path: str | None = None
 

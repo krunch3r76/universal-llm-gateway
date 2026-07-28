@@ -37,122 +37,21 @@ from typing import Any, Mapping
 
 from .. import signals
 from ..correlation import CorrelationIndex
-from ..protocols import EventRecord, envelope_source, envelope_subject
+from ..protocols import EventRecord, envelope_source
+from .sdk_state import (
+    SdkState,
+    absorb_tool_call_count,
+    as_int as _as_int,
+    dispatch_id as _dispatch_id,
+    first_str as _first_str,
+    lease_row_id as _lease_row_id,
+    note_tool_call_id,
+    queued_dispatch_id as _queued_dispatch_id,
+)
 
 #: Terminal fields compared across emitters. Chosen because a disagreement on any
 #: of them changes what an operator would *do*, unlike e.g. a log line.
 MATERIAL_FIELDS = ("state", "prompt_tokens", "completion_tokens", "failure_reason")
-
-
-class SdkState:
-    """Mutable per-dispatch accumulator."""
-
-    __slots__ = (
-        "dispatch_id",
-        "state",
-        "root_id",
-        "thread_id",
-        "seat",
-        "role",
-        "model",
-        "contract",
-        "started_ms",
-        "last_progress_ms",
-        "terminal_ms",
-        "prompt_tokens",
-        "completion_tokens",
-        "cached_tokens",
-        "stall_stage",
-        "failure_reason",
-        "emitters_seen",
-        "divergent_fields",
-        "terminal_emitter",
-        "provenance",
-        "queue_position",
-        "source_repo",
-        "delivery_failed",
-        "closeout_uri",
-        "pre_park_state",
-        "last_tool_name",
-        "last_tool_status",
-    )
-
-    def __init__(self, dispatch_id: str) -> None:
-        self.dispatch_id = dispatch_id
-        self.state = "unknown"
-        self.root_id: str | None = None
-        self.thread_id: str | None = None
-        self.seat: str | None = None
-        self.role: str | None = None
-        self.model: str | None = None
-        self.contract: str | None = None
-        self.started_ms: int | None = None
-        self.last_progress_ms: int | None = None
-        self.terminal_ms: int | None = None
-        self.prompt_tokens: int | None = None
-        self.completion_tokens: int | None = None
-        self.cached_tokens: int | None = None
-        self.stall_stage: str | None = None
-        self.failure_reason: str | None = None
-        self.emitters_seen: list[str] = []
-        self.divergent_fields: list[str] = []
-        self.terminal_emitter: str | None = None
-        self.provenance: str | None = None
-        self.queue_position: int | None = None
-        self.source_repo: str | None = None
-        self.delivery_failed = False
-        self.closeout_uri: str | None = None
-        self.pre_park_state: str | None = None
-        self.last_tool_name: str | None = None
-        self.last_tool_status: str | None = None
-
-
-def _as_int(value: Any) -> int | None:
-    """Coerce ``value`` to ``int``, returning ``None`` when it is not numeric."""
-    if isinstance(value, bool) or value is None:
-        return None
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _dispatch_id(payload: Mapping[str, Any], record: EventRecord) -> str | None:
-    """Resolve the dispatch row key.
-
-    Prefer ``dispatch_id`` over ``execution_id``. GIW ``worker.completed`` carries
-    both with *different* values (cursor-sdk id vs run UUID); preferring
-    ``execution_id`` split the fold into a live progress row and a sibling
-    terminal row — zombies that looked "live" forever while terminals counted
-    as a separate "done" population.
-    """
-    for key in ("dispatch_id", "execution_id", "worker_id"):
-        value = payload.get(key)
-        if value:
-            return str(value)
-    return envelope_subject(record)
-
-
-def _queued_dispatch_id(payload: Mapping[str, Any], record: EventRecord) -> str | None:
-    """Resolve dispatch key for ``worker.queued`` — GS2 branch on payload shape."""
-    origin = payload.get("origin_service")
-    if origin == "stargate" or (
-        payload.get("request_id") is not None and payload.get("source_repo") is None
-    ):
-        for key in ("execution_id", "dispatch_id", "request_id"):
-            value = payload.get(key)
-            if value:
-                return str(value)
-        return None
-    return _dispatch_id(payload, record)
-
-
-def _lease_row_id(payload: Mapping[str, Any], key: str) -> str | None:
-    """Resolve a lease/park row id from ``parent_id`` / ``child_id`` / ``dispatch_id``."""
-    value = payload.get(key)
-    if value:
-        return str(value)
-    return None
 
 
 class SdkFold:
@@ -170,6 +69,7 @@ class SdkFold:
         for signal in (
             signals.MONITOR_META_SDK_STARTED,
             signals.SDK_PIPELINE_STARTED,
+            signals.SDK_WORKER_DISPATCHED,
         ):
             table[signal] = self._on_started
         table[signals.SDK_WORKER_PROGRESS] = self._on_progress
@@ -187,6 +87,7 @@ class SdkFold:
         table[signals.SDK_LEASE_PARK_ENTER] = self._on_park_enter
         table[signals.SDK_LEASE_PARK_RESTORE] = self._on_park_restore
         table[signals.SDK_CLOSEOUT_RELOCATED] = self._on_closeout_relocated
+        table[signals.SDK_CLOSEOUT_RECONCILED] = self._on_closeout_reconciled
         return table
 
     def _row_for_id(self, dispatch_id: str, record: EventRecord) -> SdkState:
@@ -314,12 +215,13 @@ class SdkFold:
         self._advance_progress(row, record.ts_unix_ms)
         if row.terminal_ms is None:
             row.state = "running"
+        absorb_tool_call_count(row, record.payload)
         stage = record.payload.get("stall_stage") or record.payload.get("phase")
         if stage and row.terminal_ms is None:
             row.stall_stage = str(stage)
 
     def _on_toolcall(self, record: EventRecord) -> None:
-        """Ephemeral last-tool overlay — overwrite only; advances idle clock."""
+        """Last-tool overlay + live tc bump; also advances idle clock."""
         row = self._state(record)
         if row is None or row.terminal_ms is not None:
             return
@@ -330,6 +232,8 @@ class SdkFold:
             row.last_tool_name = str(name)
         if status:
             row.last_tool_status = str(status)
+        call_id = payload.get("call_id")
+        note_tool_call_id(row, str(call_id) if call_id else None)
         self._advance_progress(row, record.ts_unix_ms)
         if row.state in ("unknown", "queued"):
             row.state = "running"
@@ -383,6 +287,14 @@ class SdkFold:
             row.failure_reason = str(observed["failure_reason"])
         if payload.get("stall_stage"):
             row.stall_stage = str(payload["stall_stage"])
+        absorb_tool_call_count(row, payload)
+        self._terminalize_id_siblings(
+            row,
+            record,
+            state=str(observed["state"]),
+            failure_reason=row.failure_reason,
+            emitter=emitter,
+        )
 
     def _on_queued(self, record: EventRecord) -> None:
         """Fold FIFO queue placement — GS2 branch on stargate vs git_worker shape."""
@@ -502,6 +414,42 @@ class SdkFold:
         if uri:
             row.closeout_uri = str(uri)
 
+    def _on_closeout_reconciled(self, record: EventRecord) -> None:
+        """Filesystem ground truth suppressed a would-be closeout degrade (v3 §5)."""
+        row = self._state(record)
+        if row is None:
+            return
+        path = record.payload.get("verifying_path")
+        if path and row.closeout_uri is None:
+            row.closeout_uri = str(path)
+
+    def _terminalize_id_siblings(
+        self,
+        primary: SdkState,
+        record: EventRecord,
+        *,
+        state: str,
+        failure_reason: str | None,
+        emitter: str,
+    ) -> None:
+        """Close alternate-id ghost rows (execution_id vs dispatch_id split)."""
+        payload = record.payload
+        alt_ids: list[str] = []
+        for key in ("dispatch_id", "execution_id", "worker_id"):
+            value = payload.get(key)
+            if value and str(value) != primary.dispatch_id:
+                alt_ids.append(str(value))
+        for alt_id in alt_ids:
+            sibling = self.dispatches.get(alt_id)
+            if sibling is None or sibling.terminal_ms is not None:
+                continue
+            self._advance_progress(sibling, record.ts_unix_ms)
+            sibling.terminal_ms = record.ts_unix_ms
+            sibling.terminal_emitter = emitter
+            sibling.state = state
+            if failure_reason:
+                sibling.failure_reason = failure_reason
+
     def _bind_lifecycle_terminal(
         self,
         record: EventRecord,
@@ -509,7 +457,7 @@ class SdkFold:
         state: str,
         failure_reason: str | None = None,
     ) -> None:
-        """Bind a worker-lane lifecycle terminal (timeout/orphaned)."""
+        """Bind a worker-lane lifecycle terminal (timeout/orphaned/cancelled)."""
         row = self._state(record)
         if row is None:
             return
@@ -526,11 +474,10 @@ class SdkFold:
         model = payload.get("resolved_model")
         if model and row.model is None:
             row.model = str(model)
-
-
-def _first_str(payload: Mapping[str, Any], keys: tuple[str, ...]) -> str | None:
-    """Return the first truthy value among ``keys`` as a string, else ``None``."""
-    for key in keys:
-        if payload.get(key):
-            return str(payload[key])
-    return None
+        self._terminalize_id_siblings(
+            row,
+            record,
+            state=state,
+            failure_reason=row.failure_reason,
+            emitter="worker",
+        )

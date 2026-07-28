@@ -15,7 +15,6 @@ from typing import Any
 from .board_lines import (
     active_roots,
     aside_roots,
-    attention_line,
     cdp_ribbon,
     count_by_root,
     hold_label,
@@ -23,14 +22,21 @@ from .board_lines import (
     live_cdp,
     live_sdk,
     oldest_idle_ms,
+    primary_sdk_dispatch_for_root,
+    primary_tick_objective,
     resolve_hold,
     root_line_live,
     sdk_live_line,
+    sdk_live_posture,
+    sdk_posture_legend,
     sdk_ribbon,
     sdk_terminal_tally,
     section_bar,
+    tick_objective_line,
 )
+from .curses_sections import paint_attention, paint_belt, paint_lease
 from .dtos import CdpLegRow, CharterRootRow, SdkDispatchRow, SupervisorProjection
+from .sdk_posture import row_role
 from .watch import _cdp_line, _ms, _truncate
 
 
@@ -105,10 +111,11 @@ class CursesBoard:
             budgets["roots"],
             budgets["aside"],
         )
+        y = self._paint_belt(projection, y, width, height, budgets["belt"])
         y = self._paint_lease(projection, y, width, height)
         y = self._paint_sdk(projection, sdk_live, y, width, height, budgets["sdk"])
         y = self._paint_cdp(projection, cdp_live, y, width, height, budgets["cdp"])
-        self._paint_attention(projection, y, width, height, budgets["attention"])
+        paint_attention(self, projection, y, width, height, budgets["attention"])
         self._scr.refresh()
 
     def _paint_header(
@@ -163,12 +170,15 @@ class CursesBoard:
         cdp = min(len(cdp_live), max(2, usable // 6)) if cdp_live else 0
         roots = min(len(roots_active), max(2, usable // 5)) if roots_active else 1
         aside = min(len(roots_aside), max(1, usable // 8)) if roots_aside else 0
+        belt_n = len(projection.conveyor)
+        belt = min(belt_n, max(3, usable // 6)) if belt_n else 1
         return {
             "attention": att,
             "cdp": cdp,
             "sdk": sdk,
             "roots": roots,
             "aside": aside,
+            "belt": belt,
         }
 
     def _paint_tick(
@@ -190,6 +200,16 @@ class CursesBoard:
         bar = f" TICK / ACTIVE ({len(roots_active)} enqueued · +{closed} closed) "
         self._safe_addstr(y, 0, f"─{bar}{'─' * max(0, width - len(bar) - 2)}", 4)
         y += 1
+        primary = primary_tick_objective(roots_active)
+        if primary and y < height - 1:
+            root_id, objective = primary
+            self._safe_addstr(
+                y,
+                0,
+                tick_objective_line(root_id, objective, width - 1),
+                3,
+            )
+            y += 1
         y = self._paint_root_rows(
             roots_active,
             by_root_sdk,
@@ -199,6 +219,7 @@ class CursesBoard:
             height,
             active_cap,
             empty="  idle — no root enqueued",
+            sdk_rows=projection.sdk,
         )
         if roots_aside and y < height - 1:
             aside_bar = f" SET ASIDE ({len(roots_aside)}) "
@@ -216,6 +237,7 @@ class CursesBoard:
                 aside_cap,
                 empty=None,
                 color=2,
+                sdk_rows=projection.sdk,
             )
         return y
 
@@ -231,6 +253,7 @@ class CursesBoard:
         *,
         empty: str | None,
         color: int = 0,
+        sdk_rows: tuple[SdkDispatchRow, ...] = (),
     ) -> int:
         shown = 0
         for row in rows:
@@ -238,7 +261,11 @@ class CursesBoard:
                 break
             rid = row.root_id
             line = root_line_live(
-                row, sdk_n=by_root_sdk.get(rid, 0), cdp_n=by_root_cdp.get(rid, 0)
+                row,
+                sdk_n=by_root_sdk.get(rid, 0),
+                cdp_n=by_root_cdp.get(rid, 0),
+                width=width,
+                sdk_dispatch_id=primary_sdk_dispatch_for_root(rid, sdk_rows),
             )
             pair = 1 if row.state == "failed" else color
             self._safe_addstr(y, 0, line[: width - 1], pair)
@@ -252,44 +279,20 @@ class CursesBoard:
             y += 1
         return y
 
+    def _paint_belt(
+        self,
+        projection: SupervisorProjection,
+        y: int,
+        width: int,
+        height: int,
+        row_cap: int,
+    ) -> int:
+        return paint_belt(self, projection, y, width, height, row_cap)
+
     def _paint_lease(
         self, projection: SupervisorProjection, y: int, width: int, height: int
     ) -> int:
-        if y >= height - 1:
-            return y
-        health = projection.health
-        lease_bar = f" LEASE / QUEUE (q={health.queue_depth}) "
-        self._safe_addstr(
-            y, 0, f"─{lease_bar}{'─' * max(0, width - len(lease_bar) - 2)}", 4
-        )
-        y += 1
-        cap = health.wip_capacity if health.wip_capacity is not None else "?"
-        lease = (
-            f"  holder={health.lease_holder or '-'}  queue={health.queue_depth}  "
-            f"wip={health.wip_in_use}/{cap}  "
-            f"dropped={health.events_dropped_ingest}/{health.events_dropped_subscribe}"
-        )
-        if y < height - 1:
-            self._safe_addstr(y, 0, lease[: width - 1], 0)
-            y += 1
-        if y < height - 1:
-            if health.skipped_by_reason:
-                hist = "  ".join(
-                    f"{reason}={count}"
-                    for reason, count in health.skipped_by_reason.items()
-                )
-                skips = f"  skips: {hist}"
-            else:
-                skips = "  skips: none"
-            mismatch = int(health.skipped_by_reason.get("executor_mismatch", 0) or 0)
-            self._safe_addstr(y, 0, skips[: width - 1], 2 if mismatch > 0 else 0)
-            y += 1
-        if health.degraded and y < height - 1:
-            self._safe_addstr(
-                y, 0, f"  DEGRADED: {', '.join(health.degraded)}"[: width - 1], 1
-            )
-            y += 1
-        return y
+        return paint_lease(self, projection, y, width, height)
 
     def _paint_sdk(
         self,
@@ -303,15 +306,25 @@ class CursesBoard:
         if y >= height - 1:
             return y
         window_done = sum(1 for row in projection.sdk if row.terminal_ms is not None)
+        posture = sdk_live_posture(live)
+        title = "SDK" if posture == "solo" else f"SDK · {posture}"
         self._safe_addstr(
             y,
             0,
             section_bar(
-                "SDK", len(live), window_done, width, unit=f"done/{self._seed_minutes}m"
+                title,
+                len(live),
+                window_done,
+                width,
+                unit=f"done/{self._seed_minutes}m",
             ),
             4,
         )
         y += 1
+        legend = sdk_posture_legend(posture)
+        if legend and y < height - 1:
+            self._safe_addstr(y, 0, legend[: width - 1], 3)
+            y += 1
         if not live and y < height - 1:
             self._safe_addstr(y, 0, "  idle — no sdk dispatch in flight", 0)
             y += 1
@@ -319,8 +332,15 @@ class CursesBoard:
         for row in live:
             if y >= height - 1 or shown >= row_cap:
                 break
-            pair = 2 if row.divergent_fields else 0
-            self._safe_addstr(y, 0, sdk_live_line(row)[: width - 1], pair)
+            role = row_role(row, live, posture)
+            if row.divergent_fields:
+                pair = 2
+            elif role == "ghost":
+                pair = 3
+            else:
+                pair = 0
+            line = sdk_live_line(row, live=live, posture=posture)
+            self._safe_addstr(y, 0, line[: width - 1], pair)
             y += 1
             shown += 1
         if shown < len(live) and y < height - 1:
@@ -380,38 +400,6 @@ class CursesBoard:
             self._safe_addstr(y, 0, ribbon[: width - 1], 0)
             y += 1
         return y
-
-    def _paint_attention(
-        self,
-        projection: SupervisorProjection,
-        y: int,
-        width: int,
-        height: int,
-        row_cap: int,
-    ) -> None:
-        if y >= height - 1:
-            return
-        items = projection.attention
-        bar = f" ATTENTION ({len(items)}) "
-        self._safe_addstr(y, 0, f"─{bar}{'─' * max(0, width - len(bar) - 2)}", 4)
-        y += 1
-        if not items and y < height - 1:
-            self._safe_addstr(y, 0, "  (none)", 0)
-            return
-        shown = 0
-        for item in items:
-            if y >= height - 1 or shown >= row_cap:
-                break
-            self._safe_addstr(
-                y,
-                0,
-                attention_line(item, width - 1),
-                self._pair_for_severity(item.severity),
-            )
-            y += 1
-            shown += 1
-        if shown < len(items) and y < height - 1:
-            self._safe_addstr(y, 0, f"  … +{len(items) - shown} more", 0)
 
     def _safe_addstr(self, y: int, x: int, text: str, pair: int) -> None:
         if y < 0 or x < 0:

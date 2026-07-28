@@ -86,7 +86,12 @@ def _charter_items(
                     age_ms=health.tick_last_scan_age_ms,
                 )
             )
-    if health.tick_last_error_ms is not None:
+    # Only surface when the error is still current: a later successful scan
+    # (or fold clear-on-scan) means the loop recovered — do not latch forever.
+    if health.tick_last_error_ms is not None and (
+        health.tick_last_scan_ms is None
+        or health.tick_last_error_ms >= health.tick_last_scan_ms
+    ):
         items.append(
             AttentionItem(
                 key="charter.tick.error",

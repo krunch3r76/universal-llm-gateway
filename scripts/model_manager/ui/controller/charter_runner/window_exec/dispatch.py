@@ -13,6 +13,12 @@ from scripts.model_manager import observation_event as events
 from scripts.model_manager.ui.charter_scoreboard_objective import read_objective_for_root
 
 from .. import bus_client, dispatch_client, window_log
+from ..gate_admission_defer import (
+    admission_mode_requires_write_fence,
+    clear_gate_defer,
+    preflight_write_lease,
+)
+from ..telemetry import emit_admission_defer_escalated, emit_admission_deferred_gate_held
 from ..admission import ADMISSION_SUBJECT_PREFIX, CapStore
 from ..checkpoint_schema import (
     ParsedCheckpoint,
@@ -210,6 +216,44 @@ async def _fire_and_pointer(
     on_admit: Callable[[str], None] | None,
     is_implement: bool,
 ) -> bool:
+    if admission_mode_requires_write_fence(admission_mode):
+        preflight = await preflight_write_lease(root_id=root_id)
+        if preflight.outcome == "escalate":
+            caps.mark_failed(
+                root_id,
+                f"gate_defer_escalated:{preflight.escalation_reason}",
+            )
+            await emit_admission_defer_escalated(
+                root=root_id,
+                reason=str(preflight.escalation_reason or "unknown"),
+                holder_dispatch_id=preflight.holder_dispatch_id,
+                defer_count=preflight.defer_count,
+                holder_age_s=preflight.holder_age_s,
+            )
+            logger.error(
+                "charter-runner gate defer escalated root=%s reason=%s holder=%s",
+                root_id,
+                preflight.escalation_reason,
+                preflight.holder_dispatch_id,
+            )
+            return False
+        if preflight.outcome == "defer":
+            await emit_admission_deferred_gate_held(
+                root=root_id,
+                holder_dispatch_id=preflight.holder_dispatch_id,
+                holder_age_s=preflight.holder_age_s,
+                defer_count=preflight.defer_count,
+                queue_depth=preflight.queue_depth,
+            )
+            logger.info(
+                "charter-runner admission deferred (gate held) root=%s holder=%s "
+                "defer_count=%s",
+                root_id,
+                preflight.holder_dispatch_id,
+                preflight.defer_count,
+            )
+            return False
+
     caps.mark_admit_intent(root_id, window_index)
     try:
         result = await dispatch_client.fire_window(
@@ -225,6 +269,19 @@ async def _fire_and_pointer(
     except httpx.HTTPStatusError as exc:
         status = exc.response.status_code
         body_snippet = (exc.response.text or "")[:500]
+        if status == 409 and "CURSOR_WRITE_LEASE_HELD" in body_snippet:
+            caps.clear_admit_intent(root_id, window_index)
+            await emit_admission_deferred_gate_held(
+                root=root_id,
+                holder_dispatch_id=None,
+                holder_age_s=None,
+                defer_count=1,
+            )
+            logger.info(
+                "charter-runner admission refused at ledger (409 lease held) root=%s",
+                root_id,
+            )
+            return False
         if 400 <= status < 500:
             caps.clear_admit_intent(root_id, window_index)
             caps.mark_failed(root_id, "admission_rejected")
@@ -260,6 +317,7 @@ async def _fire_and_pointer(
             exc,
         )
         return False
+    clear_gate_defer(root_id)
     caps.record_admit(root_id)
     worker_thread = str(result.get("thread_id") or "")
     caps.bind_intent_worker(root_id, window_index, worker_thread)

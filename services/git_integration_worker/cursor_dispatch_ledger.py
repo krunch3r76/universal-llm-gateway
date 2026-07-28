@@ -76,6 +76,32 @@ class DispatchConflict(Exception):  # noqa: N818 — spec name (preserved from r
     """Raised when dispatch_id fingerprint does not match a prior admission."""
 
 
+class WriteLeaseHeld(Exception):  # noqa: N818 — release-before-admit fence (25956)
+    """Raised when ``refuse_if_lease_held`` blocks a would-be queued write admit.
+
+    Evaluated inside the same ``BEGIN IMMEDIATE`` transaction as the conflict
+    SELECT — preflight alone is racy (TOCTOU). R1 soundness depends on orphan
+    reclaim via ``cursor_sdk_park.orphan_holders`` / ``queue_stall_lease_keys``.
+    """
+
+    def __init__(
+        self,
+        *,
+        lease_key: str,
+        holder_dispatch_id: str | None,
+        holder_thread_id: str | None,
+        queue_depth: int = 0,
+    ) -> None:
+        self.lease_key = lease_key
+        self.holder_dispatch_id = holder_dispatch_id
+        self.holder_thread_id = holder_thread_id
+        self.queue_depth = queue_depth
+        super().__init__(
+            f"write lease {lease_key!r} held by {holder_dispatch_id!r} "
+            f"(queue_depth={queue_depth})"
+        )
+
+
 class SourceRefConflict(Exception):  # noqa: N818 — peer implement gate
     """Raised when a non-terminal implement already holds the same ``source_ref``.
 
@@ -575,6 +601,7 @@ class CursorDispatchLedger:
         source_ref: str | None = None,
         force: bool = False,
         nest_under: str | None = None,
+        refuse_if_lease_held: bool = False,
     ) -> CursorDispatchResponse | None:
         """Durable idempotency (F2). Returns cached admission on hit, None on first
         admitted insert, or a queued ticket when the write-lease is held.
@@ -698,6 +725,26 @@ class CursorDispatchLedger:
                     insert_status = _STATUS_ADMITTED
                     queued_at = None
                 elif conflict is not None or prior_queued is not None:
+                    if refuse_if_lease_held:
+                        holder = _fetch_active_holder_conn(
+                            conn, lease_key=writer_key
+                        )
+                        projection = _holder_projection(holder)
+                        depth_row = conn.execute(
+                            "SELECT COUNT(*) AS n FROM cursor_sdk_dispatches "
+                            "WHERE lease_key=? AND COALESCE(read_only,0)=0 "
+                            "AND status='queued'",
+                            (writer_key,),
+                        ).fetchone()
+                        queue_depth = (
+                            int(depth_row["n"]) if depth_row is not None else 0
+                        )
+                        raise WriteLeaseHeld(
+                            lease_key=writer_key or "",
+                            holder_dispatch_id=projection["holder_dispatch_id"],
+                            holder_thread_id=projection["holder_thread_id"],
+                            queue_depth=queue_depth,
+                        )
                     insert_status = _STATUS_QUEUED
                     queued_at = _now()
             conn.execute(

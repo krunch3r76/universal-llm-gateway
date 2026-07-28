@@ -39,6 +39,7 @@ class RootState:
         "packet_path",
         "arc_g_step",
         "arc_g_step_label",
+        "objective",
         "last_signal_ms",
         "last_signal",
         "admitted_at_ms",
@@ -60,6 +61,7 @@ class RootState:
         self.packet_path: str | None = None
         self.arc_g_step: str | None = None
         self.arc_g_step_label: str | None = None
+        self.objective: str | None = None
         self.last_signal_ms: int | None = None
         self.last_signal: str | None = None
         self.admitted_at_ms: int | None = None
@@ -134,6 +136,15 @@ class CharterFold:
             signals.CHARTER_PAUSED: self._on_hold_armed,
             signals.CHARTER_HELD: self._on_hold_armed,
             signals.CHARTER_RESUMED: self._on_hold_cleared,
+            signals.MONITOR_META_CHARTER_OBJECTIVE: self._on_objective,
+            signals.CHARTER_FRICTIONS_AUDIT_PASSED: self._on_informational_root,
+            signals.CHARTER_TRANSITION: self._on_informational_root,
+            signals.CHARTER_CONSULT_QUEUED: self._on_informational_root,
+            signals.CHARTER_CONSULT_DEFERRED: self._on_informational_root,
+            signals.CHARTER_ENROLLMENT_FILTERED: self._on_informational_root,
+            # Shadow path floods every tick for many roots — ack only; never mint rows.
+            signals.CHARTER_SHADOW_DIFF: self._on_telemetry_ack,
+            signals.CHARTER_SHADOW_STARVED: self._on_telemetry_ack,
         }
 
     def _root(self, root_id: str, record: EventRecord) -> RootState:
@@ -157,6 +168,10 @@ class CharterFold:
         """Fold the aggregate scan: counts, skip histogram, lease and WIP posture."""
         payload = record.payload
         self.last_scan_ms = record.ts_unix_ms
+        # A completed scan means the tick loop imported and ran — supersede any
+        # prior tick.error latch (e.g. ImportError storm cleared by quit/start).
+        self.last_error_ms = None
+        self.last_error_message = None
         self.roots_scanned = _as_int(payload.get("roots")) or 0
         self.admitted_last_scan = _as_int(payload.get("admitted")) or 0
         histogram = payload.get("skipped_by_reason")
@@ -203,7 +218,24 @@ class CharterFold:
         ):
             if payload.get(src):
                 setattr(row, dst, str(payload[src]))
+        self._absorb_objective(row, payload)
         self.admitted_total += 1
+
+    def _on_objective(self, record: EventRecord) -> None:
+        """Graft scoreboard objective onto a root (seed / reconcile / admit mirror)."""
+        payload = record.payload
+        root_id = _root_id(payload, record)
+        if not root_id:
+            return
+        row = self._root(root_id, record)
+        self._absorb_objective(row, payload)
+
+    def _absorb_objective(self, row: RootState, payload: Mapping[str, Any]) -> None:
+        for key in ("objective", "charter_objective", "original_objective"):
+            value = payload.get(key)
+            if value:
+                row.objective = str(value).strip()
+                return
 
     def _on_window_closed(self, record: EventRecord) -> None:
         """Fold a harvest-window close. Records the window; does NOT close the root."""
@@ -295,6 +327,9 @@ class CharterFold:
         """Fold tick loop start/stop — v3 §4 ``on_lifecycle``."""
         if record.signal == signals.CHARTER_STARTED:
             self.loop_state = "running"
+            # Fresh loop boot — prior process errors are not this loop's fault.
+            self.last_error_ms = None
+            self.last_error_message = None
         elif record.signal == signals.CHARTER_STOPPED:
             self.loop_state = "stopped"
 
@@ -332,6 +367,17 @@ class CharterFold:
         """Durable tick hold cleared — next interval runs a normal tick."""
         self.hold_active = False
         self.hold_reason = None
+
+    def _on_informational_root(self, record: EventRecord) -> None:
+        """Root-keyed telemetry (audit/transition/shadow/consult) — no state flip."""
+        root_id = _root_id(record.payload, record)
+        if not root_id:
+            return
+        self._root(root_id, record)
+
+    def _on_telemetry_ack(self, _record: EventRecord) -> None:
+        """Global telemetry with no root row (e.g. shadow.starved) — swallow only."""
+        return
 
     def _on_audit(self, record: EventRecord) -> None:
         """Seed cold-start state from a windowed audit snapshot.

@@ -12,7 +12,17 @@ from .dtos import (
     AttentionItem,
     CdpLegRow,
     CharterRootRow,
+    ConveyorItemRow,
+    HealthProjection,
     SdkDispatchRow,
+)
+from .sdk_posture import (
+    ROW_TAG,
+    SdkMultiPosture,
+    classify_sdk_live,
+    posture_legend,
+    row_role,
+    sort_sdk_live,
 )
 from .watch import SEVERITY_MARK, _ms, _truncate
 
@@ -48,24 +58,65 @@ def section_bar(title: str, live: int, window_total: int, width: int, *, unit: s
     return f"─{label}{'─' * pad}"
 
 
-def attention_line(item: AttentionItem, width: int) -> str:
+def la_wall_from_ms(ms: int) -> str:
+    """Format an event timestamp as local wall clock (board TZ)."""
+    return datetime.fromtimestamp(ms / 1000.0, tz=_TZ).strftime("%H:%M %Z")
+
+
+def attention_line(
+    item: AttentionItem,
+    width: int,
+    *,
+    now_ms: int | None = None,
+) -> str:
     mark = SEVERITY_MARK.get(item.severity, "  ")
-    body = f"{mark} [{item.kind}] {item.subject}: {item.title}"
+    when = ""
+    if item.since_ms is not None:
+        when = f" @{la_wall_from_ms(item.since_ms)}"
+        if now_ms is not None and now_ms >= item.since_ms:
+            when += f"/{_ms(now_ms - item.since_ms)}"
+    body = f"{mark} [{item.kind}] {item.subject}: {item.title}{when}"
     if item.detail and len(body) < width - 8:
         body = f"{body} — {item.detail[: width - len(body) - 3]}"
     return _truncate(body, width)
 
 
+def primary_tick_objective(
+    roots_active: list[CharterRootRow],
+) -> tuple[str, str] | None:
+    """Pick (root_id, objective) for the TICK section subtitle.
+
+    Prefer an ``in_flight`` root with an objective; else any active root that
+    carries one. Truncation belongs to the paint helper.
+    """
+    preferred = [r for r in roots_active if r.state == "in_flight" and r.objective]
+    if not preferred:
+        preferred = [r for r in roots_active if r.objective]
+    if not preferred:
+        return None
+    row = preferred[0]
+    assert row.objective is not None
+    return row.root_id, row.objective
+
+
+def tick_objective_line(root_id: str, objective: str, width: int) -> str:
+    """One glance line under TICK / ACTIVE for the charter original objective."""
+    return _truncate(f"  obj[{root_id}]: {objective}", width)
+
+
 def live_sdk(rows: tuple[SdkDispatchRow, ...]) -> list[SdkDispatchRow]:
     live = [row for row in rows if row.terminal_ms is None]
-    live.sort(
-        key=lambda row: (
-            0 if row.divergent_fields else 1,
-            0 if row.queue_position is None else 1,
-            -(row.idle_age_ms or 0),
-        )
-    )
-    return live
+    return sort_sdk_live(live, classify_sdk_live(live))
+
+
+def sdk_live_posture(live: list[SdkDispatchRow]) -> SdkMultiPosture:
+    """Expose multi-row posture for section bar / legend paint."""
+    return classify_sdk_live(live)
+
+
+def sdk_posture_legend(posture: SdkMultiPosture) -> str | None:
+    """Legend line under the SDK bar when multi; None for solo."""
+    return posture_legend(posture)
 
 
 def live_cdp(rows: tuple[CdpLegRow, ...]) -> list[CdpLegRow]:
@@ -125,13 +176,23 @@ def oldest_idle_ms(rows: list[SdkDispatchRow] | list[CdpLegRow]) -> int | None:
     return max(ages) if ages else None
 
 
-def sdk_live_line(row: SdkDispatchRow) -> str:
+def sdk_live_line(
+    row: SdkDispatchRow,
+    *,
+    live: list[SdkDispatchRow] | None = None,
+    posture: SdkMultiPosture | None = None,
+) -> str:
+    peers = live if live is not None else [row]
+    multi = posture if posture is not None else classify_sdk_live(peers)
+    role = row_role(row, peers, multi)
+    role_tag = f"{ROW_TAG[role]} " if role else ""
     flag = "DIVERGENT" if row.divergent_fields else ",".join(row.emitters_seen) or "-"
     if row.queue_position is not None:
         timing = f"q{row.queue_position}"
     else:
         timing = f"idle={_ms(row.idle_age_ms)}"
     stall = f" stall={row.stall_stage}" if row.stall_stage else ""
+    tc = f" tc={row.tool_call_count}" if row.tool_call_count is not None else ""
     if row.last_tool_name:
         tool = row.last_tool_name
         if row.last_tool_status and row.last_tool_status != "completed":
@@ -140,19 +201,51 @@ def sdk_live_line(row: SdkDispatchRow) -> str:
     else:
         tool_col = ""
     return (
-        f"  {_truncate(row.dispatch_id, 14)} {_truncate(row.state, 10)} "
-        f"root={_truncate(row.root_id, 8)} {_truncate(row.model, 18)} "
-        f"{timing:<12}{tool_col} [{flag}]{stall}"
+        f"  {role_tag}{_truncate(row.dispatch_id, 14)} {_truncate(row.state, 10)} "
+        f"root={_truncate(row.root_id, 8)} "
+        f"w={_truncate(row.thread_id, 8)} "
+        f"{_truncate(row.model, 18)} "
+        f"{timing:<12}{tc}{tool_col} [{flag}]{stall}"
     )
 
 
-def root_line_live(row: CharterRootRow, *, sdk_n: int, cdp_n: int) -> str:
+def primary_sdk_dispatch_for_root(
+    root_id: str,
+    sdk_rows: tuple[SdkDispatchRow, ...],
+) -> str | None:
+    """Best dispatch_id linked to ``root_id`` — live first, else newest terminal."""
+    linked = [row for row in sdk_rows if row.root_id == root_id]
+    if not linked:
+        return None
+    live = [row for row in linked if row.terminal_ms is None]
+    if live:
+        live.sort(key=lambda row: -(row.idle_age_ms or 0))
+        return live[0].dispatch_id
+    linked.sort(key=lambda row: -(row.terminal_ms or 0))
+    return linked[0].dispatch_id
+
+
+def root_line_live(
+    row: CharterRootRow,
+    *,
+    sdk_n: int,
+    cdp_n: int,
+    width: int = 120,
+    sdk_dispatch_id: str | None = None,
+) -> str:
     step = row.arc_g_step or "-"
+    d_col = f" d={_truncate(sdk_dispatch_id, 12)}" if sdk_dispatch_id else ""
+    if row.objective:
+        tail = f" obj: {_truncate(row.objective, max(24, width - 84))}"
+    elif row.skip_reason:
+        tail = f" {_truncate(row.skip_reason, 20)}"
+    else:
+        tail = ""
     return (
         f"  {_truncate(row.root_id, 8)} {_truncate(row.state, 14)} "
         f"g={_truncate(step, 5)} worker={_truncate(row.worker_thread, 8)} "
         f"age={_ms(row.in_flight_age_ms):>7} skips={row.skip_streak:<3} "
-        f"sdk={sdk_n} cdp={cdp_n} {_truncate(row.skip_reason, 20)}"
+        f"sdk={sdk_n} cdp={cdp_n}{d_col}{tail}"
     )
 
 
@@ -196,3 +289,54 @@ def count_by_root(rows: list[SdkDispatchRow] | list[CdpLegRow]) -> dict[str, int
             continue
         counts[rid] = counts.get(rid, 0) + 1
     return counts
+
+
+def conveyor_enrolled(rows: tuple[ConveyorItemRow, ...]) -> list[ConveyorItemRow]:
+    """Active friction-belt enrollments (not demoted stale)."""
+    return [row for row in rows if row.state == "enrolled"]
+
+
+def conveyor_stale(rows: tuple[ConveyorItemRow, ...]) -> list[ConveyorItemRow]:
+    return [row for row in rows if row.state == "stale"]
+
+
+def conveyor_belt_label(rows: tuple[ConveyorItemRow, ...]) -> str:
+    """Section title — observed conveyor_root values, else standing belt 6110."""
+    roots = sorted({row.conveyor_root for row in rows if row.conveyor_root})
+    return "/".join(roots) if roots else "6110"
+
+
+def conveyor_item_line(row: ConveyorItemRow) -> str:
+    slug = row.todo_slug or f"a:{row.friction_id}"
+    ticks = f" idle={row.ticks_idle}t" if row.ticks_idle is not None else ""
+    src = row.root_id or "-"
+    return (
+        f"  a:{row.friction_id:<6} {_truncate(row.state, 8)} "
+        f"{_truncate(slug, 28)} src={_truncate(src, 8)}{ticks}"
+    )
+
+
+def lease_body_lines(health: HealthProjection) -> list[tuple[str, int]]:
+    """Return (line, color_pair) rows for the LEASE / QUEUE body."""
+    lines: list[tuple[str, int]] = []
+    cap = health.wip_capacity if health.wip_capacity is not None else "?"
+    lines.append(
+        (
+            f"  holder={health.lease_holder or '-'}  queue={health.queue_depth}  "
+            f"wip={health.wip_in_use}/{cap}  "
+            f"dropped={health.events_dropped_ingest}/{health.events_dropped_subscribe}",
+            0,
+        )
+    )
+    if health.skipped_by_reason:
+        hist = "  ".join(
+            f"{reason}={count}" for reason, count in health.skipped_by_reason.items()
+        )
+        skips = f"  skips: {hist}"
+    else:
+        skips = "  skips: none"
+    mismatch = int(health.skipped_by_reason.get("executor_mismatch", 0) or 0)
+    lines.append((skips, 2 if mismatch > 0 else 0))
+    if health.degraded:
+        lines.append((f"  DEGRADED: {', '.join(health.degraded)}", 1))
+    return lines

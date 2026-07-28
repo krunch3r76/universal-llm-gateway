@@ -122,17 +122,31 @@ def resolve_archive_path(raw: str) -> str:
 
 
 def resolve_prompt(req: SubmitProjectAskRequest) -> list[str]:
-    """Load prompt text from inline body, cortex URI, or checkout-relative path."""
+    """Load prompt text from inline body, cortex URI, or checkout-relative path.
+
+    When ``purpose`` is an operator-proxy mission tag, ensure CDP skill chips
+    and the Opus-operator / Fable-advisor seat-map briefing
+    (``claude_bundles.operator_proxy_mission``).
+    """
     if req.prompt_text and req.prompt_text.strip():
-        return [req.prompt_text.strip()]
-    if req.prompt_uri and req.prompt_uri.strip():
-        return [_load_prompt_uri(req.prompt_uri.strip())]
-    if req.prompt_path and req.prompt_path.strip():
+        text = req.prompt_text.strip()
+    elif req.prompt_uri and req.prompt_uri.strip():
+        text = _load_prompt_uri(req.prompt_uri.strip())
+    elif req.prompt_path and req.prompt_path.strip():
         path = resolve_prompt_path(req.prompt_path.strip(), project_root_base())
         if not path.is_file():
             raise ValueError(f"prompt_path not found: {req.prompt_path!r}")
-        return [path.read_text(encoding="utf-8")]
-    raise ValueError("provide prompt_text, prompt_uri, or prompt_path")
+        text = path.read_text(encoding="utf-8")
+    else:
+        raise ValueError("provide prompt_text, prompt_uri, or prompt_path")
+    from claude_bundles.operator_proxy_mission import (
+        ensure_operator_proxy_mission_prompt,
+        purpose_implies_mission,
+    )
+
+    if purpose_implies_mission(req.purpose, text):
+        text = ensure_operator_proxy_mission_prompt(text)
+    return [text]
 
 
 def _load_prompt_uri(uri: str) -> str:
