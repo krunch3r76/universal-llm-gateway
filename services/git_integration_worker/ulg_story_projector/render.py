@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from systems.frontier_consult.story_wire import (
     ASKED_BY_UNRESOLVED,
@@ -11,45 +11,69 @@ from systems.frontier_consult.story_wire import (
 
 from .allowlist import SignalMapping, StoryClass, mapping_for
 
-_MISSING_ASKED_BY = "asked-by not recorded"
+EnvelopeMode = Literal["pre_envelope", "caller_omitted", "full"]
+_ENVELOPE_KEYS = ("purpose", "asked_by", "story_id")
 
 
-def _humanize_agent(agent: str | None) -> str:
-    if not agent or not agent.strip():
-        return _MISSING_ASKED_BY
-    value = agent.strip()
-    if value.startswith("(") and "unresolved" in value.lower():
-        return _MISSING_ASKED_BY
+def _humanize_agent(agent: str) -> str:
     known = {
         "web-anthropic": "Claude-web",
         "cursor-auto": "cursor-auto",
     }
-    if value in known:
-        return known[value]
-    if value.startswith("web-"):
-        slug = value.removeprefix("web-").replace("-", " ")
+    if agent in known:
+        return known[agent]
+    if agent.startswith("web-"):
+        slug = agent.removeprefix("web-").replace("-", " ")
         return slug.title()
-    return value
+    return agent
 
 
-def _purpose_text(payload: dict[str, Any]) -> tuple[str, bool]:
-    raw = payload.get("purpose")
-    if raw is None or not str(raw).strip():
-        return PURPOSE_UNSTATED, True
-    text = str(raw).strip()
-    if text == PURPOSE_UNSTATED:
-        return text, True
-    return text, False
+def envelope_mode(payload: dict[str, Any]) -> EnvelopeMode:
+    """Distinguish pre-envelope (keys absent) from caller-omitted (sentinels)."""
+    if not all(key in payload for key in _ENVELOPE_KEYS):
+        return "pre_envelope"
+    purpose = str(payload.get("purpose") or "").strip()
+    asked_by = str(payload.get("asked_by") or "").strip()
+    if not purpose or purpose == PURPOSE_UNSTATED:
+        return "caller_omitted"
+    if (
+        not asked_by
+        or asked_by == ASKED_BY_UNRESOLVED
+        or asked_by.startswith("(unresolved")
+    ):
+        return "caller_omitted"
+    return "full"
 
 
-def _asked_by_text(payload: dict[str, Any]) -> tuple[str, bool]:
-    raw = payload.get("asked_by")
-    if raw is None or not str(raw).strip():
-        return _MISSING_ASKED_BY, True
-    text = str(raw).strip()
-    if text == ASKED_BY_UNRESOLVED:
-        return _MISSING_ASKED_BY, True
-    return _humanize_agent(text), False
+def _purpose_clause(payload: dict[str, Any], mode: EnvelopeMode) -> str:
+    if mode == "pre_envelope":
+        return "a task"
+    purpose = str(payload.get("purpose") or "").strip()
+    if mode == "caller_omitted" or purpose == PURPOSE_UNSTATED or not purpose:
+        return "a task (purpose not stated)"
+    return purpose
+
+
+def _seat_clause(payload: dict[str, Any], mode: EnvelopeMode) -> str:
+    if mode == "pre_envelope":
+        return "an operator seat"
+    asked_by = str(payload.get("asked_by") or "").strip()
+    if (
+        mode == "caller_omitted"
+        or not asked_by
+        or asked_by == ASKED_BY_UNRESOLVED
+        or asked_by.startswith("(unresolved")
+    ):
+        return "an operator seat (asked-by not recorded)"
+    return f"{_humanize_agent(asked_by)} (operator seat)"
+
+
+def _seat_subject(payload: dict[str, Any], mode: EnvelopeMode) -> str:
+    """Seat phrase when it leads the sentence."""
+    clause = _seat_clause(payload, mode)
+    if clause.startswith("an "):
+        return "An" + clause[2:]
+    return clause
 
 
 def _story_id(payload: dict[str, Any]) -> str:
@@ -65,21 +89,42 @@ def _dispatch_id(payload: dict[str, Any]) -> str:
     return "-"
 
 
-def _seat_phrase(asked_by: str) -> str:
-    if asked_by == _MISSING_ASKED_BY:
-        return f"({asked_by})"
-    return f"{asked_by} (operator seat)"
+def _format_duration(duration_s: Any) -> str:
+    if duration_s is None:
+        return ""
+    try:
+        val = float(duration_s)
+    except (TypeError, ValueError):
+        return f" in {duration_s}s"
+    if val >= 100:
+        rounded = round(val)
+    else:
+        rounded = round(val, 1)
+    if rounded == int(rounded):
+        return f" in {int(rounded)}s"
+    return f" in {rounded}s"
 
 
-def _effective_class(
-    mapping: SignalMapping,
-    *,
-    purpose_thin: bool,
-    asked_by_missing: bool,
-) -> StoryClass:
-    if purpose_thin or asked_by_missing:
+def _effective_class(mapping: SignalMapping, mode: EnvelopeMode) -> StoryClass:
+    if mapping.story_class == "attention":
         return "attention"
+    if mode == "caller_omitted":
+        return "attention"
+    if mode == "pre_envelope":
+        return "routine"
     return mapping.story_class
+
+
+def _apply_class_prefix(sentence: str, story_class: StoryClass) -> str:
+    body = sentence.removeprefix("Attention: ").strip()
+    if story_class == "attention" and not sentence.startswith("Attention:"):
+        return f"Attention: {body.rstrip('.')}."
+    if story_class != "attention" and sentence.startswith("Attention:"):
+        body = body.rstrip(".")
+        return f"{body}."
+    if not body.endswith("."):
+        return f"{body}."
+    return body
 
 
 def provenance_tail(
@@ -130,47 +175,41 @@ def render_event_line(
     if mapping is None:
         return None
 
-    purpose, purpose_thin = _purpose_text(payload)
-    asked_by, asked_by_missing = _asked_by_text(payload)
-    story_class = _effective_class(
-        mapping,
-        purpose_thin=purpose_thin,
-        asked_by_missing=asked_by_missing,
-    )
-    seat = _seat_phrase(asked_by)
+    mode = envelope_mode(payload)
+    story_class = _effective_class(mapping, mode)
+    purpose = _purpose_clause(payload, mode)
+    seat = _seat_clause(payload, mode)
     tail = provenance_tail(seq=seq, payload=payload)
 
     if signal == "frontier.sdk.closeout.relayed":
         receipt = str(payload.get("receipt_path") or "receipt path not recorded")
-        sentence = (
-            f"cursor-sdk finished {purpose} for {seat} — receipt at {receipt}."
-        )
+        sentence = f"cursor-sdk finished {purpose} for {seat} — receipt at {receipt}."
     elif signal == "frontier.sdk.worker.dispatched":
         thread = str(payload.get("thread_id") or "unknown thread")
-        sentence = (
-            f"{seat} dispatched cursor-sdk to {purpose} on thread {thread}."
-        )
+        seat_subject = _seat_subject(payload, mode)
+        if mode == "pre_envelope":
+            sentence = f"{seat_subject} dispatched cursor-sdk on thread {thread}."
+        elif mode == "caller_omitted":
+            sentence = (
+                f"{seat} dispatched cursor-sdk {purpose} on thread {thread}."
+            )
+        else:
+            sentence = f"{seat} dispatched cursor-sdk to {purpose} on thread {thread}."
     elif signal == "frontier.sdk.worker.completed":
-        duration = payload.get("duration_s")
-        duration_bit = f" in {duration}s" if duration is not None else ""
-        sentence = (
-            f"cursor-sdk {mapping.verb} {purpose} for {seat}{duration_bit}."
-        )
+        duration_bit = _format_duration(payload.get("duration_s"))
+        sentence = f"cursor-sdk {mapping.verb} {purpose} for {seat}{duration_bit}."
     elif signal == "frontier.sdk.worker.failed":
-        detail = str(payload.get("error") or payload.get("detail_summary") or "error not recorded")
-        sentence = (
-            f"Attention: cursor-sdk {mapping.verb} {purpose} for {seat} — {detail}."
+        detail = str(
+            payload.get("error")
+            or payload.get("detail_summary")
+            or "error not recorded",
         )
+        sentence = f"cursor-sdk {mapping.verb} {purpose} for {seat} — {detail}."
     elif signal == "frontier.sdk.worker.timeout":
-        timeout_s = payload.get("timeout_s")
-        timeout_bit = f" after {timeout_s}s" if timeout_s is not None else ""
-        sentence = (
-            f"Attention: cursor-sdk {mapping.verb} {purpose} for {seat}{timeout_bit}."
-        )
+        timeout_bit = _format_duration(payload.get("timeout_s"))
+        sentence = f"cursor-sdk {mapping.verb} {purpose} for {seat}{timeout_bit}."
     elif signal == "frontier.sdk.worker.orphaned":
-        sentence = (
-            f"Attention: cursor-sdk {mapping.verb} {purpose} for {seat}."
-        )
+        sentence = f"cursor-sdk {mapping.verb} {purpose} for {seat}."
     elif signal == "frontier.sdk.auto.auth_gate_blocked":
         thread = str(payload.get("thread_id") or "unknown thread")
         failures = payload.get("failure_count")
@@ -178,32 +217,37 @@ def render_event_line(
         detail = ""
         if failures is not None and budget is not None:
             detail = f" ({failures}/{budget} failures)"
-        sentence = (
-            f"Attention: cursor-auto {mapping.verb} {thread}{detail} — "
-            f"asked by {asked_by}, purpose {purpose}."
-        )
+        if mode == "pre_envelope":
+            sentence = f"cursor-auto {mapping.verb} {thread}{detail}."
+        else:
+            sentence = (
+                f"cursor-auto {mapping.verb} {thread}{detail} — "
+                f"asked by {seat}, {purpose}."
+            )
     elif signal == "frontier.sdk.auto.empty_directive_scope_blocked":
         thread = str(payload.get("thread_id") or "unknown thread")
         contract = str(payload.get("contract") or "unknown contract")
-        sentence = (
-            f"Attention: cursor-auto {mapping.verb} {thread} "
-            f"(contract {contract}) — asked by {asked_by}, purpose {purpose}."
-        )
+        if mode == "pre_envelope":
+            sentence = (
+                f"cursor-auto {mapping.verb} {thread} (contract {contract})."
+            )
+        else:
+            sentence = (
+                f"cursor-auto {mapping.verb} {thread} (contract {contract}) — "
+                f"asked by {seat}, {purpose}."
+            )
     elif signal == "frontier.sdk.auto.thread_status_refused":
         thread = str(payload.get("thread_id") or "unknown thread")
         status = str(payload.get("status") or "unknown status")
-        sentence = (
-            f"Attention: cursor-auto {mapping.verb} {thread} "
-            f"(status {status}) — asked by {asked_by}, purpose {purpose}."
-        )
+        if mode == "pre_envelope":
+            sentence = f"cursor-auto {mapping.verb} {thread} (status {status})."
+        else:
+            sentence = (
+                f"cursor-auto {mapping.verb} {thread} (status {status}) — "
+                f"asked by {seat}, {purpose}."
+            )
     else:
         return None
 
-    if story_class == "routine" and sentence.startswith("Attention:"):
-        sentence = sentence.removeprefix("Attention: ").strip()
-        if not sentence.endswith("."):
-            sentence += "."
-    elif story_class == "attention" and not sentence.startswith("Attention:"):
-        sentence = f"Attention: {sentence.rstrip('.')}."
-
+    sentence = _apply_class_prefix(sentence, story_class)
     return f"{sentence} {tail}"

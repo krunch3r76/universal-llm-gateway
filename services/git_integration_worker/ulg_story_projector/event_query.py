@@ -72,6 +72,21 @@ def query_oldest_live_seq() -> int | None:
     return int(value) if value is not None else None
 
 
+def query_event_by_seq(seq: int) -> dict[str, Any] | None:
+    """Return a single event row by seq, or None if pruned/missing."""
+    rows = _raw_sql(
+        "SELECT seq, signal, timestamp, ts_unix_ms, execution_id, payload "
+        "FROM events WHERE seq = ? LIMIT 1",
+        [seq],
+        limit=1,
+    )
+    if not rows:
+        return None
+    row = rows[0]
+    row["payload"] = parse_payload(row.get("payload"))
+    return row
+
+
 def query_event_timestamp(seq: int) -> int | None:
     rows = _raw_sql(
         "SELECT ts_unix_ms FROM events WHERE seq = ? LIMIT 1",
