@@ -98,7 +98,7 @@ flag with `minimal_question` per `cdp-operator-proxy`).
 |---|---|
 | Ask operator which lane to enter when spec + scoreboard already bind | Enter the lane; report shape on CHECKPOINT |
 | Wait for Opus to ratify a shape cursor already built and verified | Inform Opus executed; continue on tick |
-| Park on Kaywan for `manage` / `charter_reload` / manage quit-start / git-tracked implement | Cursor or CDP dispatches; operator only on operator-only gates. (`charter_reload` bounces the tick loop only — charter-runner code pickup needs a manage quit/start, still a seat op, ¬ an operator gate) |
+| Park on Kaywan for `manage` / `charter_reload` / manage quit-start / git-tracked implement | Seat executes; operator only on operator-only gates. (`charter_reload` = loop bounce only; charter-runner / manage recycle recipe → hub `services_ws.mdc` § Manage process recycle — tmux `0:0`, ¬ ask Kaywan) |
 | Treat every consult as operator-gated | CDP consult is **autonomous** under `lean-context-dispatch-first` CDP trigger |
 | Skip CDP and go straight to human on judgment forks | Cursor (incl. cursor/opus) → CDP/Fable first; human only when CDP/Fable flags `ESCALATE` or operator-only |
 | Treat `cursor/claude-opus-5` as ladder-top — ask human when Opus is unsure | Opus-in-cursor is step 1; consult an independent binder (step 2) before human |

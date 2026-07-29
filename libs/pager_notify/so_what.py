@@ -85,6 +85,43 @@ def format_closeout_pager(
     return subject, body
 
 
+# Standing-class skips page once until the signature changes (see claim_tick_standing_page).
+_STANDING_SKIP_EXACT = frozenset(
+    {
+        "blocked",
+        "revise_cap_exhausted",
+        "admission_rejected",
+        "admission_transport_error",
+        "worker_failed",
+        "giw_fleet_busy",
+        "stale_window",
+    }
+)
+
+
+def standing_skip_signature(
+    skipped_by_reason: dict[str, int] | None,
+) -> str | None:
+    """Return a stable signature when *all* positive skips are standing-class.
+
+    ``None`` means there is a non-standing skip (or no skips) — caller pages
+    without standing dedupe (or does not page at all).
+    """
+    standing: list[str] = []
+    for reason, count in sorted((skipped_by_reason or {}).items()):
+        if count <= 0:
+            continue
+        if (
+            reason in _STANDING_SKIP_EXACT
+            or reason.startswith("stopped:")
+            or reason.startswith("no_progress:")
+        ):
+            standing.append(f"{reason}:{count}")
+            continue
+        return None
+    return "|".join(standing) if standing else None
+
+
 def tick_should_page(
     *,
     admitted: int,
@@ -126,5 +163,6 @@ __all__ = [
     "extract_so_what_from_body",
     "format_closeout_pager",
     "resolve_so_what_summary",
+    "standing_skip_signature",
     "tick_should_page",
 ]

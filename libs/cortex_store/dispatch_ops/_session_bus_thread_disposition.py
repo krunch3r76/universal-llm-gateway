@@ -81,8 +81,9 @@ def bus_thread_disposition_warning(pending: list[dict[str, str]]) -> str | None:
         f"bus_thread_disposition.required: {refs} still open in entity_ids — "
         "include Agent-bus thread disposition in the close report "
         "(agent-bus-discipline § Session-close thread disposition): "
-        "standing root ⇒ advise-close + checkpoint fields; one-off/dispatch ⇒ "
-        "exactly one of advise-close | closed | leave-open+reason + thread id. "
+        "spine=root ⇒ standing-root disposition (advise-close + checkpoint "
+        "fields); spine=work ⇒ one-off (exactly one of advise-close | closed | "
+        "leave-open+reason + thread id). "
         "Thread 480 is debrief-only, not a disposition target."
     )
 

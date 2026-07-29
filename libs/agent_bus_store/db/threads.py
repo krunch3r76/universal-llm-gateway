@@ -368,11 +368,11 @@ def create_thread(
     enroll_charter_runner: bool = False,
 ) -> dict[str, Any] | None:
     """Returns thread detail with dispatch_links, or None if thread_id already exists."""
-    from agent_bus_store.enrollment_guard import gate_enrollment_tags
+    from agent_bus_store.thread_classification import gate_thread_tags
 
     from .lifecycle import _transition_lifecycle_state
 
-    gated_tags = gate_enrollment_tags(
+    gated_tags = gate_thread_tags(
         tags, prior_tags=[], enroll_charter_runner=enroll_charter_runner
     )
     if thread_id is None:
@@ -452,7 +452,8 @@ def update_thread(
     matching the dedicated /close route. Closing a thread clears its unread
     queue regardless of which endpoint is used.
     """
-    from agent_bus_store.enrollment_guard import ENROLLMENT_TAG, gate_enrollment_tags
+    from agent_bus_store.enrollment_guard import ENROLLMENT_TAG
+    from agent_bus_store.thread_classification import gate_thread_tags
 
     from ..events.thread_closed import (
         emit_charter_root_closed_on_unenroll,
@@ -471,7 +472,7 @@ def update_thread(
         prior_status = str(row["status"] or "")
         prior_tags = _load_thread_tags(conn, [thread_id]).get(thread_id, [])
         if tags is not None:
-            tags = gate_enrollment_tags(
+            tags = gate_thread_tags(
                 tags,
                 prior_tags=prior_tags,
                 enroll_charter_runner=enroll_charter_runner,

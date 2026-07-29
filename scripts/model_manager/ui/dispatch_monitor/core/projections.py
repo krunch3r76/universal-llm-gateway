@@ -15,11 +15,10 @@ from .correlation import CorrelationIndex
 from .dtos import (
     CdpLegRow,
     CharterRootRow,
-    ConveyorItemRow,
     SdkDispatchRow,
     Thresholds,
 )
-from .folds import CdpFold, CharterFold, ConveyorFold, SdkFold
+from .folds import CdpFold, CharterFold, SdkFold
 
 #: Root states meaning the root's own lifecycle has ended.
 ROOT_CLOSED_STATES = ("closed",)
@@ -203,27 +202,4 @@ def root_rows(
             )
         )
     rows.sort(key=lambda r: r.root_id)
-    return tuple(rows)
-
-
-def conveyor_rows(fold: ConveyorFold, now_ms: int) -> tuple[ConveyorItemRow, ...]:
-    """Project friction-belt enrollments — enrolled, stale; drop disenrolled."""
-    rows: list[ConveyorItemRow] = []
-    for state in fold.items.values():
-        if state.state == "disenrolled":
-            continue
-        rows.append(
-            ConveyorItemRow(
-                friction_id=state.friction_id,
-                todo_slug=state.todo_slug,
-                root_id=state.root_id,
-                conveyor_root=state.conveyor_root,
-                state=state.state,
-                ticks_idle=state.ticks_idle,
-                enrolled_ms=state.enrolled_ms,
-                last_signal_ms=state.last_signal_ms,
-                age_ms=age(now_ms, state.last_signal_ms or state.enrolled_ms),
-            )
-        )
-    rows.sort(key=lambda r: (0 if r.state == "enrolled" else 1, r.friction_id))
     return tuple(rows)

@@ -33,12 +33,16 @@ def _expanded_env_path(key: str, default: str) -> str:
 
 
 def _runtime_env() -> dict[str, str]:
+    repo = _expanded_env_path("GIT_INTEGRATION_SOURCE_REPO", _DEFAULT_SOURCE_REPO)
+    stargate = str(Path(repo) / "services" / "universal-stargate")
+    libs = str(Path(repo) / "libs")
+    # nested_outcome → systems.frontier_consult (lives under stargate).
+    # extra_env replaces uvicorn_service's libs-only PYTHONPATH, so include both.
     env: dict[str, str] = {
+        "PYTHONPATH": f"{stargate}:{libs}",
         "GIT_INTEGRATION_WORKER_HOST": _DEFAULT_HOST,
         "GIT_INTEGRATION_WORKER_PORT": str(_DEFAULT_PORT),
-        "GIT_INTEGRATION_SOURCE_REPO": _expanded_env_path(
-            "GIT_INTEGRATION_SOURCE_REPO", _DEFAULT_SOURCE_REPO
-        ),
+        "GIT_INTEGRATION_SOURCE_REPO": repo,
         "GIT_INTEGRATION_WORKTREE_ROOT": _expanded_env_path(
             "GIT_INTEGRATION_WORKTREE_ROOT", _DEFAULT_WORKTREE_ROOT
         ),
@@ -46,6 +50,11 @@ def _runtime_env() -> dict[str, str]:
     green_gate = os.environ.get("GIT_INTEGRATION_GREEN_GATE_CMD")
     if green_gate:
         env["GIT_INTEGRATION_GREEN_GATE_CMD"] = green_gate
+    # Prefer venv bin so fastmcp-remote resolves even when unit PATH is thin.
+    venv_bin = str(Path.home() / ".venvs" / "universal" / "bin")
+    path = os.environ.get("PATH", "/usr/bin:/bin")
+    if venv_bin not in path.split(":"):
+        env["PATH"] = f"{venv_bin}:{path}"
     return env
 
 

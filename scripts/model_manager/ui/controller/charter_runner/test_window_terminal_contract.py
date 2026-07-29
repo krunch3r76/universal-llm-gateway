@@ -165,6 +165,61 @@ def test_completed_windows_skips_pickup_append_as_closeout() -> None:
 
 
 @pytest.mark.offline
+def test_completed_windows_pairs_latest_terminal_after_admit_not_first() -> None:
+    """Post-admit birth CHECKPOINT thrash must not poison harvest pairing (6237).
+
+    First-following pairing glued w1 to a fence-less birth tip forever; reject
+    markers then skipped every tick while a later footer-valid closeout sat
+    unread. Pair with the latest terminal inside the admission window instead.
+    """
+    turns = [
+        _turn(1, "CHECKPOINT — charter birth (wave 0)", "birth pre-admit"),
+        _turn(
+            12,
+            "WIP charter-runner window 1",
+            '{"charter_runner":true,"window":1,"worker_thread":"6238"}',
+        ),
+        _turn(13, "CHECKPOINT — charter birth (wave 0)", "birth thrash post-admit"),
+        _turn(14, "CHECKPOINT — charter birth (wave 0)", "birth thrash again"),
+        _turn(16, "CHECKPOINT wave 1 — G1 Q done; next G2 A+Gate-2", "real closeout"),
+        _turn(26, "CHECKPOINT wave 1 — G1 Q done; next G2 A+Gate-2", "closeout tip"),
+        _turn(27, "DIRECTIVE — G5 executor-primaries", "operator note, not terminal"),
+    ]
+    pairs = completed_windows(turns)
+    assert len(pairs) == 1
+    admission, terminal = pairs[0]
+    assert admission["turn_number"] == 12
+    assert terminal["turn_number"] == 26
+    assert "wave 1" in str(terminal["subject"])
+
+
+@pytest.mark.offline
+def test_completed_windows_latest_stays_inside_admission_window() -> None:
+    """Latest terminal must not cross into a later admission's span."""
+    turns = [
+        _turn(
+            10,
+            "WIP charter-runner window 1",
+            '{"charter_runner":true,"window":1,"worker_thread":"a"}',
+        ),
+        _turn(11, "CHECKPOINT — birth thrash", "poison"),
+        _turn(12, "CHECKPOINT wave 1 — w1 closeout", "w1 tip"),
+        _turn(
+            20,
+            "WIP charter-runner window 2",
+            '{"charter_runner":true,"window":2,"worker_thread":"b"}',
+        ),
+        _turn(21, "CHECKPOINT wave 2 — w2 closeout", "w2 tip"),
+    ]
+    pairs = completed_windows(turns)
+    assert len(pairs) == 2
+    assert pairs[0][0]["turn_number"] == 10
+    assert pairs[0][1]["turn_number"] == 12
+    assert pairs[1][0]["turn_number"] == 20
+    assert pairs[1][1]["turn_number"] == 21
+
+
+@pytest.mark.offline
 def test_evaluate_root_window_in_flight_despite_pickup_append() -> None:
     """Pickup append after WIP must not clear window_in_flight (storm root)."""
     turns = [

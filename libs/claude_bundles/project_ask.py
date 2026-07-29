@@ -47,7 +47,6 @@ from claude_bundles.cowork_output_download import (
     cortex_files_root_from_env,
     resolve_harvest_body,
 )
-from claude_bundles.cowork_skill_delivery import split_leading_slash_skills
 from claude_bundles.project_chrome import project_url
 from claude_bundles.skills_ui_panel import DEFAULT_CDP_URL, connect_cdp
 
@@ -256,33 +255,41 @@ async def _insert_prompt_text(page: Page, text: str, *, composer) -> None:
     (friction a25806 — only the first ``/<slug>`` binds).
 
     Leading ``/<slug>\\n`` lines in the sealed prompt are the **skill manifest**
-    for attach (``shared_sync`` only); they are stripped and never typed.
-    Non-Claude / ``cursor_only`` slugs must not appear as slash lines
-    (``prepend_cdp_dispatch_skills`` / ``partition_cdp_skills``). Hybrid
-    ``Use the … skill`` / ``<skills_inline>`` ride in ``rest`` via insert_text.
+    for attach (``shared_sync`` / known Claude Customize slugs only); they are
+    stripped and never typed. Non-Claude / ``cursor_only`` slugs must not
+    appear as slash lines (``prepend_cdp_dispatch_skills`` / ``partition_cdp_skills``)
+    — if they do, attach is skipped (inline ``<skills_inline>`` carries delivery).
+    Hybrid ``Use the … skill`` / ``<skills_inline>`` ride in ``rest`` via insert_text.
+
+    After attach, channel attest verifies every **required** slug (from the
+    staging ``<!--cdp-required-skills:…-->`` authority marker, not rebuilt from
+    delivery channels alone) was delivered via attach ∪ inline.
     """
     from claude_bundles.composer_session_skills import attach_session_skills
     from claude_bundles.cowork_skill_delivery import (
-        SkillDeliveryError,
-        attest_skills_chip_enabled,
-        is_claude_slug,
+        attest_delivery_channels,
+        extract_cdp_required_authority,
+        parse_cdp_sealed_skill_channels,
     )
 
-    slash_tokens, rest = split_leading_slash_skills(text)
-    if not slash_tokens:
+    required_authority = extract_cdp_required_authority(text)
+    attach_slugs, inline_slugs, rest = parse_cdp_sealed_skill_channels(text)
+    if required_authority is not None:
+        required = required_authority
+    else:
+        # Legacy / non-staged prompts: no authority marker — channel union only.
+        required = attach_slugs + inline_slugs
+    if not required and not attach_slugs and not inline_slugs:
         await page.keyboard.insert_text(text)
         return
-    slugs = [t.removeprefix("/") for t in slash_tokens]
-    bad = [s for s in slugs if not is_claude_slug(s)]
-    if bad:
-        raise SkillDeliveryError(
-            f"refusing session-skill attach for non-Claude slug(s) {bad} — "
-            "only shared_sync Customize skills may be attached via + → Skills; "
-            "cursor_only / other surfaces must use prepend_cdp_dispatch_skills "
-            "inline delivery"
-        )
-    attached = await attach_session_skills(page, slugs, composer=composer)
-    attest_skills_chip_enabled(attached, required=slugs)
+
+    attached: list[str] = []
+    if attach_slugs:
+        attached = await attach_session_skills(page, attach_slugs, composer=composer)
+        attest_delivery_channels(required, attached=attached, inlined=inline_slugs)
+    else:
+        attest_delivery_channels(required, attached=[], inlined=inline_slugs)
+
     if rest:
         body = rest
         if not body.startswith(("\n", "\r")):

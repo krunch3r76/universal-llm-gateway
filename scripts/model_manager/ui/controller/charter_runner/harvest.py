@@ -39,24 +39,40 @@ def turn_number(turn: dict) -> int:
 
 
 def completed_windows(turns: list[dict]) -> list[tuple[dict, dict]]:
-    """Pairs of (admission, following tip-class terminal) for closed windows."""
+    """Pairs of (admission, closeout tip-class terminal) for closed windows.
+
+    Closeout is the **latest** window-terminal after this admission and before
+    the next admission (or end of thread). Pairing with the *first* terminal
+    poisoned harvest when a fence-less birth CHECKPOINT was posted after admit
+    (live 6237 w1: birth thrash → ``harvest_rejected`` → permanent ``ADMITTED``
+    NOOP while a later footer-valid CHECKPOINT sat unread by harvest).
+    """
     ordered = sorted(turns, key=turn_number)
     pairs: list[tuple[dict, dict]] = []
     adm_prefix = ADMISSION_SUBJECT_PREFIX.upper()
-    for i, turn in enumerate(ordered):
-        subj = str(turn.get("subject") or "").upper()
-        if not subj.startswith(adm_prefix):
-            continue
+    admissions = [
+        (i, turn)
+        for i, turn in enumerate(ordered)
+        if str(turn.get("subject") or "").upper().startswith(adm_prefix)
+    ]
+    for adm_pos, (i, turn) in enumerate(admissions):
         n = turn_number(turn)
+        next_adm_n = (
+            turn_number(admissions[adm_pos + 1][1])
+            if adm_pos + 1 < len(admissions)
+            else None
+        )
         following_cp = None
         for later in ordered[i + 1 :]:
-            if turn_number(later) <= n:
+            later_n = turn_number(later)
+            if later_n <= n:
                 continue
+            if next_adm_n is not None and later_n >= next_adm_n:
+                break
             subj_later = str(later.get("subject") or "")
             body_later = str(later.get("body") or "")
             if is_window_terminal(subj_later, body=body_later):
                 following_cp = later
-                break
         if following_cp is not None:
             pairs.append((turn, following_cp))
     return pairs

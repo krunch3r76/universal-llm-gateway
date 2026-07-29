@@ -13,6 +13,7 @@ logger = get_logger(__name__)
 
 PURPOSE_UNSTATED = "(unstated)"
 ASKED_BY_UNRESOLVED = "(unresolved: no from_agent or caller_agent)"
+DEFAULT_TRIGGER_PURPOSE = "operator-proxy"
 
 _INTENT_RE = re.compile(r"^intent:\s*(.+)$", re.MULTILINE | re.IGNORECASE)
 _CHARTER_PACKET_RE = re.compile(

@@ -58,6 +58,9 @@ def _parse_attributes(raw: Any) -> dict[str, Any]:
     return {}
 
 
+_TODO_CLOSED_WORKFLOW_STATES = frozenset({"done", "deferred", "cancelled", "blocked"})
+
+
 def todo_exists_for_friction(assertion_id: int) -> str | None:
     """Return the todo slug when one cites ``spawned_by_friction=<id>``."""
     with cortex_conn() as conn:
@@ -71,6 +74,42 @@ def todo_exists_for_friction(assertion_id: int) -> str | None:
     if not rows:
         return None
     return str(rows[0]["id"])
+
+
+def todo_open_for_friction(assertion_id: int) -> str | None:
+    """Return follow-on slug only when workflow_state is not in the closed set."""
+    with cortex_conn() as conn:
+        rows = query(
+            conn,
+            "SELECT id, workflow_state FROM entities WHERE type = 'todo' "
+            "AND CAST(json_extract(attributes, '$.spawned_by_friction') AS INTEGER) = ? "
+            "LIMIT 1",
+            (assertion_id,),
+        )
+    if not rows:
+        return None
+    workflow_state = rows[0].get("workflow_state")
+    if workflow_state is not None and str(workflow_state) in _TODO_CLOSED_WORKFLOW_STATES:
+        return None
+    return str(rows[0]["id"])
+
+
+def todo_resolved_for_friction(assertion_id: int) -> bool:
+    """True when a follow-on todo exists in a closed workflow_state set."""
+    with cortex_conn() as conn:
+        rows = query(
+            conn,
+            "SELECT workflow_state FROM entities WHERE type = 'todo' "
+            "AND CAST(json_extract(attributes, '$.spawned_by_friction') AS INTEGER) = ? "
+            "LIMIT 1",
+            (assertion_id,),
+        )
+    if not rows:
+        return False
+    workflow_state = rows[0].get("workflow_state")
+    if workflow_state is None:
+        return False
+    return str(workflow_state) in _TODO_CLOSED_WORKFLOW_STATES
 
 
 def repair_todo_exists(root_id: str, window_index: int) -> bool:
@@ -313,4 +352,6 @@ __all__ = [
     "repair_todo_exists",
     "repair_todo_slug",
     "todo_exists_for_friction",
+    "todo_open_for_friction",
+    "todo_resolved_for_friction",
 ]

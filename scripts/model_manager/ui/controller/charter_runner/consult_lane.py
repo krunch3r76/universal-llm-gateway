@@ -13,7 +13,9 @@ from universal_logging import get_logger
 from libs.charter_runner_store.db import charter_runner_data_dir, execute_with_retry
 
 from . import bus_client
-from .root_ledger import RootLedgerRow
+from .checkpoint_schema import ParsedCheckpoint
+from .harvest_attribution import consult_role_from_pickup
+from .root_ledger import RootLedgerRow, RootStatus, Transition, load_root, upsert_root, write_cortex_mirror
 
 logger = get_logger(__name__)
 
@@ -58,6 +60,20 @@ def consult_role_for_row(row: RootLedgerRow) -> str:
     return "r_admit" if lane == "consult" else "judgment_gap"
 
 
+def resolve_consult_role(
+    row: RootLedgerRow,
+    parsed: ParsedCheckpoint | None,
+) -> str:
+    """Tip-declared consult role wins over ledger lane inference (a:26872)."""
+    if parsed is not None and parsed.consult_role in {"r_admit", "judgment_gap"}:
+        return parsed.consult_role
+    if parsed is not None:
+        sniffed = consult_role_from_pickup(parsed.next_pickup)
+        if sniffed in {"r_admit", "judgment_gap"}:
+            return sniffed
+    return consult_role_for_row(row)
+
+
 def backoff_s(attempts: int) -> float:
     idx = min(max(attempts, 1) - 1, len(BACKOFF_SECONDS) - 1)
     return BACKOFF_SECONDS[idx]
@@ -93,6 +109,52 @@ def load_queue_row(conn, root_id: str, gid: str, role: str) -> ConsultQueueRow |
 _load_queue_row = load_queue_row
 
 
+def _ledger_row_consult_queued(
+    existing: RootLedgerRow,
+    *,
+    consult_role: str,
+    now: float,
+) -> RootLedgerRow:
+    return RootLedgerRow(
+        root_id=existing.root_id,
+        status=RootStatus.CONSULT_QUEUED,
+        pickup_gid=existing.pickup_gid,
+        pickup_lane=existing.pickup_lane,
+        pickup_executor=existing.pickup_executor,
+        attendance=existing.attendance,
+        scoreboard_uri=existing.scoreboard_uri,
+        wip_window_id=existing.wip_window_id,
+        revise_count=existing.revise_count,
+        consult_role=consult_role,
+        consult_attempts=existing.consult_attempts,
+        consult_next_retry=existing.consult_next_retry,
+        consult_poll_from=existing.consult_poll_from,
+        harvest_deadline=existing.harvest_deadline,
+        last_window_id=existing.last_window_id,
+        last_transition=Transition.QUEUE_CONSULT.value,
+        last_error=existing.last_error,
+        env_facts_json=existing.env_facts_json,
+        conveyor_phase=existing.conveyor_phase,
+        pickup_append_cursor=existing.pickup_append_cursor,
+        updated_at=now,
+    )
+
+
+def sync_ledger_consult_queued(
+    conn,
+    *,
+    row: RootLedgerRow,
+    consult_role: str,
+) -> RootLedgerRow:
+    """Align ledger to ``CONSULT_QUEUED`` when the durable queue already holds a row."""
+    now = time.time()
+    existing = load_root(conn, row.root_id) or row
+    updated = _ledger_row_consult_queued(existing, consult_role=consult_role, now=now)
+    upsert_root(conn, updated)
+    write_cortex_mirror(updated)
+    return updated
+
+
 def enqueue_consult(
     conn,
     *,
@@ -100,6 +162,7 @@ def enqueue_consult(
     consult_role: str,
     corpus_sha: str | None = None,
 ) -> ConsultQueueRow:
+    """Insert/update consult_queue and atomically set ledger ``CONSULT_QUEUED`` (a:26936)."""
     gid = row.pickup_gid or "G?"
     now = time.time()
     execute_with_retry(
@@ -114,6 +177,7 @@ def enqueue_consult(
         """,
         (row.root_id, gid, consult_role, corpus_sha, now, now),
     )
+    sync_ledger_consult_queued(conn, row=row, consult_role=consult_role)
     return load_queue_row(conn, row.root_id, gid, consult_role)  # type: ignore[return-value]
 
 
@@ -277,7 +341,9 @@ __all__ = [
     "ConsultQueueRow",
     "backoff_s",
     "consult_role_for_row",
+    "resolve_consult_role",
     "enqueue_consult",
+    "sync_ledger_consult_queued",
     "load_consult_provenance",
     "load_queue_row",
     "parse_cdp_consult_harvest",

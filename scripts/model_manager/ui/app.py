@@ -238,7 +238,7 @@ class ModelManagerApp(App):
             )
 
     async def reload_charter_tick(self) -> dict:
-        """Restart the charter tick loop in place. Wired to ``charter_reload``.
+        """Restart the charter runner loop in place. Wired to ``charter_reload``.
 
         Phase 3 retired ``importlib.reload``, so this does **not** re-import
         charter-runner modules — it returns ``count=0`` and the process keeps the
@@ -253,7 +253,7 @@ class ModelManagerApp(App):
             try:
                 await self._charter_tick_loop.stop()
             except Exception as e:
-                logger.exception("Error stopping charter tick before reload: %s", e)
+                logger.exception("Error stopping charter runner before reload: %s", e)
             self._charter_tick_loop = None
 
         self._charter_tick_loop = CharterRunnerTickLoop(
@@ -266,7 +266,7 @@ class ModelManagerApp(App):
         )
         await self._charter_tick_loop.start()
         self._service_controller.set_charter_tick_reload(self.reload_charter_tick)
-        self.notify("charter tick restarted (no module reload)", timeout=15)
+        self.notify("charter runner restarted (no module reload)", timeout=15)
         from scripts.model_manager.ui.controller.charter_runner.kernel import hold
 
         return {

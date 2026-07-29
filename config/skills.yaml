@@ -33,6 +33,9 @@ skills:
   agent-bus-discipline:
     surface_class: shared_sync
     mcp_surface_required: life
+  checkpoint-discipline:
+    surface_class: shared_sync
+    mcp_surface_required: life
   agent-bus-multitask:
     surface_class: cursor_only
     mcp_surface_required: code
@@ -283,6 +286,11 @@ skills:
   markdown-navigation:
     surface_class: cursor_only
     mcp_surface_required: life
+  messages-check:
+    # Checkout-local IDE router stub under .cursor/skills/; card SoT is cortex.
+    # ¬ ulg-ecosystem census unless operator asks.
+    surface_class: cursor_only
+    mcp_surface_required: none
   matter-playbook-lifecycle:
     surface_class: life_local
     mcp_surface_required: none

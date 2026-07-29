@@ -6,7 +6,8 @@ auto-admission — set to very-long bounds per operator bind (2026-07-19). A roo
 that hits a worker failure/timeout is *stopped* (no re-admit) until a human
 resets it; there is no auto-retry.
 
-Admit counters are in-memory (manage restart resets them). Pre-fire intent
+Admit counters are in-memory (manage restart resets admit counts). ``stopped_reason``
+is durable under ``charter_runner_data_dir()`` (S2). Pre-fire intent markers are
 markers are durable on disk so a crash between ``fire_window`` and the
 admission pointer cannot re-dispatch the same (root, window) on restart
 (A-R3-4). The bus in-flight guard remains authoritative once the pointer lands.
@@ -14,11 +15,15 @@ admission pointer cannot re-dispatch the same (root, window) on restart
 
 from __future__ import annotations
 
+import asyncio
+import json
 import os
 import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from libs.charter_runner_store.db import charter_runner_data_dir
 
 
 def _env_int(name: str, default: int) -> int:
@@ -38,6 +43,21 @@ def _default_revise_dir() -> Path:
 
 
 _REVISE_PICKUP_RE = re.compile(r"\brevise\b|\bG\d+[a-c]\b", re.IGNORECASE)
+_STOP_DIR = "cap-stops"
+_MALFORMED_STOP = "malformed_stop_state"
+
+
+def _schedule_caps_cleared_emit(root_id: str) -> None:
+    """Best-effort async emit when cap stop clears (§B3 manage.charter.caps.cleared)."""
+    from scripts.model_manager.observation_event_charter import (
+        emit_manage_charter_caps_cleared,
+    )
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    loop.create_task(emit_manage_charter_caps_cleared(root=root_id))
 
 
 @dataclass(frozen=True)
@@ -86,6 +106,40 @@ class CapStore:
         self._heal_counts: dict[str, int] = {}
         # Consult-stall generations are independent and monotonic across root resets.
         self._consult_stall_heals: dict[str, int] = {}
+        self._stop_dir = charter_runner_data_dir() / _STOP_DIR
+        self._load_stops()
+
+    def _stop_path(self, root_id: str) -> Path:
+        return self._stop_dir / f"{root_id}.json"
+
+    def _load_stops(self) -> None:
+        if not self._stop_dir.is_dir():
+            return
+        for path in self._stop_dir.glob("*.json"):
+            root_id = path.stem
+            try:
+                raw = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                self._roots.setdefault(root_id, _RootState()).stopped_reason = _MALFORMED_STOP
+                continue
+            reason = raw.get("stopped_reason") if isinstance(raw, dict) else None
+            if not isinstance(reason, str) or not reason.strip():
+                self._roots.setdefault(root_id, _RootState()).stopped_reason = _MALFORMED_STOP
+            else:
+                self._roots.setdefault(root_id, _RootState()).stopped_reason = reason
+
+    def _persist_stop(self, root_id: str, reason: str) -> None:
+        self._stop_dir.mkdir(parents=True, exist_ok=True)
+        path = self._stop_path(root_id)
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(
+            json.dumps({"stopped_reason": reason}, indent=2),
+            encoding="utf-8",
+        )
+        tmp.replace(path)
+
+    def _clear_stop(self, root_id: str) -> None:
+        self._stop_path(root_id).unlink(missing_ok=True)
 
     def check(
         self, root_id: str, *, now: float | None = None
@@ -111,9 +165,21 @@ class CapStore:
     def mark_failed(self, root_id: str, reason: str) -> None:
         state = self._roots.setdefault(root_id, _RootState())
         state.stopped_reason = reason
+        self._persist_stop(root_id, reason)
 
-    def reset(self, root_id: str) -> None:
+    def reset(self, root_id: str) -> bool:
+        """Clear in-memory + durable stop state. Returns True when a stop was cleared."""
+        had_stop = False
+        state = self._roots.get(root_id)
+        if state is not None and state.stopped_reason is not None:
+            had_stop = True
+        if self._stop_path(root_id).is_file():
+            had_stop = True
         self._roots.pop(root_id, None)
+        self._clear_stop(root_id)
+        if had_stop:
+            _schedule_caps_cleared_emit(root_id)
+        return had_stop
 
     def intent_path(self, root_id: str, window_index: int) -> Path:
         return self._intent_dir / f"{root_id}-w{window_index}.intent"

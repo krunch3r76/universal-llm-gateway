@@ -6,11 +6,12 @@ Stargate body — evaluated transactionally in ``CursorDispatchLedger.admit``.
 
 R1 orphan-reclaim soundness: a holder with no live backing is not a wait — G3
 escalates on first observation (``queue_stall_lease_keys`` class).
+
+Gate defer age (45m) is durable via ``ledger_age`` — survives manage recycle.
 """
 
 from __future__ import annotations
 
-import os
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -18,13 +19,21 @@ from typing import Any, Literal
 
 from universal_logging import get_logger
 
+from .ledger_age import (
+    TICK_STALL_MAX_AGE_S,
+)
+from .ledger_age import (
+    clear as age_watch_clear,
+)
+from .ledger_age import (
+    observe as age_watch_observe,
+)
 from .giw_live_hold import fetch_giw_active_work_payload
 
 logger = get_logger(__name__)
 
-# Wall bound: long enough for typical cursor-auto implement windows; short
-# enough that an overnight gate wedge surfaces before the next session.
-DEFER_MAX_AGE_S = float(os.environ.get("CHARTER_GATE_DEFER_MAX_AGE_S", str(45 * 60)))
+# Wall bound alias — same env var as ledger_age tick_stall class.
+DEFER_MAX_AGE_S = TICK_STALL_MAX_AGE_S
 
 GatePreflightOutcome = Literal["proceed", "defer", "escalate"]
 
@@ -37,15 +46,6 @@ class GatePreflightResult:
     defer_count: int = 0
     escalation_reason: str | None = None
     queue_depth: int = 0
-
-
-@dataclass
-class _GateDeferState:
-    first_deferred_at: float
-    defer_count: int = 0
-
-
-_gate_defer_by_root: dict[str, _GateDeferState] = {}
 
 
 def admission_mode_requires_write_fence(admission_mode: str) -> bool:
@@ -97,21 +97,18 @@ def _orphan_holder_no_live_backing(
 def record_gate_defer(root_id: str, *, now: float | None = None) -> int:
     """Bump cumulative defer count; return the new total."""
     now = time.time() if now is None else now
-    state = _gate_defer_by_root.get(root_id)
-    if state is None:
-        _gate_defer_by_root[root_id] = _GateDeferState(first_deferred_at=now, defer_count=1)
-        return 1
-    state.defer_count += 1
-    return state.defer_count
+    result = age_watch_observe("tick_stall", root_id, present=True, now=now)
+    return result.observation_count
 
 
 def clear_gate_defer(root_id: str) -> None:
-    _gate_defer_by_root.pop(root_id, None)
+    age_watch_clear("tick_stall", root_id)
 
 
 def gate_defer_count(root_id: str) -> int:
-    state = _gate_defer_by_root.get(root_id)
-    return state.defer_count if state is not None else 0
+    from .ledger_age import observation_count
+
+    return observation_count("tick_stall", root_id)
 
 
 async def preflight_write_lease(*, root_id: str) -> GatePreflightResult:
@@ -134,8 +131,7 @@ async def preflight_write_lease(*, root_id: str) -> GatePreflightResult:
         else None
     )
     queue_depth = int(lease.get("queue_depth") or 0)
-    defer_state = _gate_defer_by_root.get(root_id)
-    defer_count = defer_state.defer_count if defer_state is not None else 0
+    defer_count = gate_defer_count(root_id)
 
     if _orphan_holder_no_live_backing(holder_id, payload):
         logger.error(
@@ -153,31 +149,29 @@ async def preflight_write_lease(*, root_id: str) -> GatePreflightResult:
             queue_depth=queue_depth,
         )
 
-    if defer_state is not None:
-        age_since_first = time.time() - defer_state.first_deferred_at
-        if age_since_first >= DEFER_MAX_AGE_S:
-            logger.error(
-                "charter gate defer age exceeded root=%s holder=%s age_s=%.0f bound=%.0f",
-                root_id,
-                holder_id,
-                age_since_first,
-                DEFER_MAX_AGE_S,
-            )
-            return GatePreflightResult(
-                outcome="escalate",
-                holder_dispatch_id=holder_id,
-                holder_age_s=holder_age,
-                defer_count=defer_count,
-                escalation_reason="defer_age_exceeded",
-                queue_depth=queue_depth,
-            )
+    watch = age_watch_observe("tick_stall", root_id, present=True)
+    if watch.outcome == "escalate":
+        logger.error(
+            "charter gate defer age exceeded root=%s holder=%s age_s=%.0f bound=%.0f",
+            root_id,
+            holder_id,
+            watch.age_s,
+            DEFER_MAX_AGE_S,
+        )
+        return GatePreflightResult(
+            outcome="escalate",
+            holder_dispatch_id=holder_id,
+            holder_age_s=holder_age,
+            defer_count=watch.observation_count,
+            escalation_reason="defer_age_exceeded",
+            queue_depth=queue_depth,
+        )
 
-    new_count = record_gate_defer(root_id)
     return GatePreflightResult(
         outcome="defer",
         holder_dispatch_id=holder_id,
         holder_age_s=holder_age,
-        defer_count=new_count,
+        defer_count=watch.observation_count,
         queue_depth=queue_depth,
     )
 

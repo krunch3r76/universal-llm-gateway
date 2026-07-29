@@ -58,12 +58,6 @@ CHARTER_CONSULT_QUEUED = "manage.charter.tick.consult.queued"
 CHARTER_CONSULT_DEFERRED = "manage.charter.tick.consult.deferred"
 CHARTER_ENROLLMENT_FILTERED = "manage.charter.tick.enrollment.filtered"
 
-# --- charter conveyor (friction belt) --------------------------------------
-CHARTER_CONVEYOR_ENROLLED = "manage.charter.conveyor.enrolled"
-CHARTER_CONVEYOR_STALE = "manage.charter.conveyor.stale"
-CHARTER_CONVEYOR_DISENROLLED = "manage.charter.conveyor.disenrolled"
-CHARTER_CONVEYOR_ENROLL_FAILED = "manage.charter.conveyor.enroll_failed"
-
 #: Signals accepted only as cold-start seed material, never as live transitions.
 CHARTER_COLD_START = (CHARTER_AUDIT,)
 
@@ -209,10 +203,6 @@ CHARTER_FAMILY = (
     CHARTER_CONSULT_QUEUED,
     CHARTER_CONSULT_DEFERRED,
     CHARTER_ENROLLMENT_FILTERED,
-    CHARTER_CONVEYOR_ENROLLED,
-    CHARTER_CONVEYOR_STALE,
-    CHARTER_CONVEYOR_DISENROLLED,
-    CHARTER_CONVEYOR_ENROLL_FAILED,
 )
 
 SDK_FAMILY = tuple(SDK_EMITTER_BY_SIGNAL) + SDK_LIFECYCLE_SIGNALS

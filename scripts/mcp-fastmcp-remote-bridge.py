@@ -11,7 +11,6 @@ from __future__ import annotations
 import datetime
 import json
 import os
-import shutil
 import socket
 import sys
 from pathlib import Path
@@ -22,6 +21,7 @@ if str(_REPO_ROOT) not in sys.path:
 
 from services.git_integration_worker.cursor_sdk_context import (  # noqa: E402
     CursorSdkParityError,
+    resolve_fastmcp_remote_cmd,
     resolve_mcp_bridge,
     resolve_mcp_token,
 )
@@ -105,15 +105,11 @@ def main() -> None:
         raise SystemExit(2)
 
     mcp_url = os.environ.get("MCP_URL", DEFAULT_MCP_URL).strip() or DEFAULT_MCP_URL
-    bridge_cmd = shutil.which("fastmcp-remote")
-    if bridge_cmd is None:
-        print(
-            "mcp-fastmcp-remote-bridge: fastmcp-remote not on PATH "
-            "(pip install fastmcp-remote==3.4.2)",
-            file=sys.stderr,
-            flush=True,
-        )
-        raise SystemExit(2)
+    try:
+        bridge_cmd = resolve_fastmcp_remote_cmd()
+    except CursorSdkParityError as exc:
+        print(f"mcp-fastmcp-remote-bridge: {exc}", file=sys.stderr, flush=True)
+        raise SystemExit(2) from exc
 
     _emit_startup(mcp_url=mcp_url, bridge_cmd=bridge_cmd)
     env = os.environ.copy()

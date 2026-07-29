@@ -66,6 +66,30 @@ def reject_cursor_sdk_seat_with_cdp(
         )
 
 
+def reject_dispatch_lane_with_cdp(
+    *,
+    dispatch_lane: str | None,
+    model: str | None,
+    request_id: str,
+) -> None:
+    """Reject ``dispatch_lane`` on CDP — code-lane routing token, not life substrate."""
+    if not is_cdp_model(model):
+        return
+    if not dispatch_lane or not str(dispatch_lane).strip():
+        return
+    raise FrontierEndpointError(
+        request_id=request_id,
+        field="dispatch_lane",
+        reason=(
+            "dispatch_lane is a cursor-sdk/todo routing attribute and cannot "
+            "combine with model=cdp/… (life substrate); omit dispatch_lane — "
+            "use model, contract, and dispatch_thread_id to identify the leg"
+        ),
+        status_code=422,
+        code="cdp_dispatch_lane_rejected",
+    )
+
+
 def reject_role_with_substrate_model(
     *,
     role: str | None,
@@ -153,6 +177,11 @@ async def dispatch_cdp_generate(
     )
     reject_role_with_substrate_model(
         role=getattr(body, "role", None),
+        model=model,
+        request_id=request_id,
+    )
+    reject_dispatch_lane_with_cdp(
+        dispatch_lane=getattr(body, "dispatch_lane", None),
         model=model,
         request_id=request_id,
     )

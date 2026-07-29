@@ -9,6 +9,7 @@ from pager_notify.so_what import (
     resolve_so_what_summary,
     tick_should_page,
 )
+from pager_notify.sos import claim_tick_sos, notify_tick_sos
 from pager_notify.tick import (
     ClosedAttribution,
     format_closed_attribution,
@@ -19,6 +20,7 @@ from pager_notify.tick import (
 
 __all__ = [
     "ClosedAttribution",
+    "claim_tick_sos",
     "compose_done_summary",
     "format_closed_attribution",
     "format_closeout_pager",
@@ -27,6 +29,7 @@ __all__ = [
     "notify_closeout_complete",
     "notify_pager",
     "notify_tick_complete",
+    "notify_tick_sos",
     "resolve_so_what_summary",
     "scan_operator_bus_turns",
     "tick_should_page",

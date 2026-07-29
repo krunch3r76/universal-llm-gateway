@@ -1,7 +1,7 @@
-"""Manage-hosted charter-runner tick.
+"""Manage-hosted charter runner host.
 
-Periodic supervisor that watches enrolled standing roots and admits one window
-per eligible root. Default substrate is unattended Grok 4.5
+Periodic supervisor that watches enrollments on the roster and launches one run
+per eligible enrollment. Default substrate is unattended Grok 4.5
 (``cursor/grok-4.5``, effort=high, fast=true) via generate dispatch.
 Per-root todo ``attendance=autonomous`` selects the background-lead packet and
 auto-arms hard stall at ``DEFAULT_AUTONOMOUS_STALE_S`` (3600s) unless
@@ -9,7 +9,7 @@ auto-arms hard stall at ``DEFAULT_AUTONOMOUS_STALE_S`` (3600s) unless
 Consult-mode windows additionally recover at ``DEFAULT_CONSULT_STALE_S`` (900s)
 via ``consult_stall`` (R-ADMIT on root advances; else re-queue CONSULT_PENDING)
 so a hung CDP/consult seat cannot pin the root for a full hour (a:26131).
-CHECKPOINT on the charter root clears in-flight.
+CHECKPOINT on the enrollment bus clears in-flight runs.
 """
 
 from __future__ import annotations
@@ -40,7 +40,12 @@ from ..dispatch_client import AdmissionMode
 from ..env_snapshot import EnvSnapshot
 from ..giw_live_hold import build_tick_env_snapshot
 from ..harvest import completed_windows, harvest_completed_windows
-from .interval import tick_interval_from_env as _tick_interval_from_env
+from .interval import (
+    reconcile_interval_from_env as _reconcile_interval_from_env,
+)
+from .interval import (
+    tick_interval_from_env as _tick_interval_from_env,
+)
 
 MAX_STATE_CLOSES_PER_TICK = _state_close_mod.MAX_STATE_CLOSES_PER_TICK
 emit_skip_and_maybe_state_close = _state_close_mod.emit_skip_and_maybe_state_close
@@ -100,7 +105,7 @@ def ensure_charter_tick_env(workspace_root: Path) -> None:
 
 
 class CharterRunnerTickLoop:
-    """Async supervisor: scan enrolled roots + admit generate or handoff windows."""
+    """Async supervisor: scan roster + launch generate or handoff runs."""
 
     def __init__(
         self,
@@ -109,6 +114,7 @@ class CharterRunnerTickLoop:
         shutdown_gate: ManageShutdownGate,
         workspace_root: Path | None = None,
         tick_interval_s: float | None = None,
+        reconcile_interval_s: float | None = None,
         caps: CapStore | None = None,
         on_admit: Callable[[str], None] | None = None,
         unattended_stale_s: float | None = None,
@@ -120,7 +126,13 @@ class CharterRunnerTickLoop:
         self._workspace_root = workspace_root
         self._service_controller = service_controller
         self._event_bus = event_bus
-        # None / omitted → env (CHARTER_TICK_INTERVAL_S); explicit float wins (tests).
+        # Explicit float wins (tests). Floor default: CHARTER_RECONCILE_INTERVAL_S (300s).
+        if reconcile_interval_s is not None:
+            self._reconcile_interval_s = float(reconcile_interval_s)
+        elif tick_interval_s is not None:
+            self._reconcile_interval_s = float(tick_interval_s)
+        else:
+            self._reconcile_interval_s = _reconcile_interval_from_env()
         if tick_interval_s is None:
             self._tick_interval_s = _tick_interval_from_env()
         else:
@@ -131,6 +143,8 @@ class CharterRunnerTickLoop:
         self._unattended_stale_override = unattended_stale_s
         self._loop_task: asyncio.Task[None] | None = None
         self._held_heartbeat_at: float = 0.0
+        self._wake_hub = None
+        self._wake_consumer = None
 
     async def start(self) -> None:
         if self._loop_task is not None:
@@ -138,12 +152,57 @@ class CharterRunnerTickLoop:
         if self._workspace_root is not None:
             ensure_charter_tick_env(self._workspace_root)
         from ..propagation_execute import install_propagation_context
+        from ..wake_consumer import WakeConsumer
+        from ..wake_hub import (
+            WakeDirtySet,
+            WakeHub,
+            WakeRootMapper,
+            build_wake_subscribe_factory,
+        )
         from . import hold as tick_hold
 
         install_propagation_context(
             self._service_controller,
             event_bus=self._event_bus,
         )
+        dirty = WakeDirtySet()
+        mapper = WakeRootMapper(bus_client.list_enrolled_roots)
+
+        async def _on_wake(root_id: str, signal: str, coalesced_n: int) -> None:
+            from scripts.model_manager import (
+                observation_event_charter as charter_events,
+            )
+
+            await charter_events.emit_manage_charter_tick_wake(
+                root=root_id,
+                signal=signal,
+                coalesced_n=coalesced_n,
+            )
+
+        async def _on_full_roster_wake() -> None:
+            if self._wake_consumer is not None:
+                await self._wake_consumer.enqueue_full_roster()
+
+        self._wake_hub = WakeHub(
+            dirty=dirty,
+            mapper=mapper,
+            caps=self._caps,
+            subscribe_events=build_wake_subscribe_factory(),
+            on_wake=_on_wake,
+            on_full_roster_wake=_on_full_roster_wake,
+        )
+        self._wake_consumer = WakeConsumer(
+            tick_loop=self,
+            dirty=dirty,
+            mapper=mapper,
+            floor_interval_s=self._reconcile_interval_s,
+            services_healthy=self._services_healthy,
+            _shutdown_gate_activity=lambda active: self._shutdown_gate.set_activity(
+                _ACTIVITY, active
+            ),
+        )
+        await self._wake_hub.start()
+        await self._wake_consumer.start()
         self._loop_task = asyncio.create_task(self._run_loop())
         await events.emit_manage_charter_tick_started()
         held = tick_hold.read_hold()
@@ -162,12 +221,19 @@ class CharterRunnerTickLoop:
         except asyncio.CancelledError:
             pass
         self._loop_task = None
+        if self._wake_consumer is not None:
+            await self._wake_consumer.stop()
+            self._wake_consumer = None
+        if self._wake_hub is not None:
+            await self._wake_hub.stop()
+            self._wake_hub = None
         from ..propagation_execute import install_propagation_context
 
         install_propagation_context(None)
         await events.emit_manage_charter_tick_stopped()
 
     async def _run_loop(self) -> None:
+        """Hold heartbeat loop — wake consumer owns floor + dirty passes."""
         from . import hold as tick_hold
 
         try:
@@ -177,24 +243,8 @@ class CharterRunnerTickLoop:
                     self._held_heartbeat_at = await tick_hold.emit_held_if_due(
                         held, last_emitted_at=self._held_heartbeat_at
                     )
-                    await asyncio.sleep(self._tick_interval_s)
-                    continue
-                if not self._services_healthy():
-                    await asyncio.sleep(self._tick_interval_s)
-                    continue
-                self._shutdown_gate.set_activity(_ACTIVITY, True)
-                try:
-                    await self._tick_once()
-                except asyncio.CancelledError:
-                    raise
-                except Exception as exc:  # noqa: BLE001 — tick errors are non-fatal
-                    logger.exception("charter tick failed")
-                    await events.emit_manage_charter_tick_error(reason=str(exc))
-                finally:
-                    self._shutdown_gate.set_activity(_ACTIVITY, False)
-                await asyncio.sleep(self._tick_interval_s)
+                await asyncio.sleep(self._reconcile_interval_s)
         except asyncio.CancelledError:
-            self._shutdown_gate.set_activity(_ACTIVITY, False)
             raise
 
     def _services_healthy(self) -> bool:
@@ -205,7 +255,7 @@ class CharterRunnerTickLoop:
         return bus.status == ServiceStatus.RUNNING
 
     async def _tick_once(self) -> None:
-        """Phase 3: kernel is sole admitter for all enrolled roots."""
+        """Phase 3: kernel is sole launcher for all enrollments."""
         from ..enrollment_filter import refresh_migrated_roots_cache
         from ..env_snapshot import build_env_snapshot
         from ..kernel_tick import apply_kernel_tick_for_root
@@ -251,68 +301,23 @@ class CharterRunnerTickLoop:
             label = kernel_outcome.old_decision_label
             if label == "NOOP":
                 in_flight += 1
-            if kernel_outcome.skipped_reason == "no_gated_pickup":
-                # A4 silent-starve: Phase-3 previously only counted the skip and
-                # left the root enrolled, so IDLE tips re-queued forever (a:26596).
-                from ..admission import Decision
-                from ..window_exec import parse_tip_checkpoint
+            from .skip_side_effects import apply_skip_side_effects
 
-                tip = parse_tip_checkpoint(turns)
-                decision = Decision(
-                    eligible=False,
-                    reason="no_gated_pickup",
+            try:
+                state_closes_this_tick = await apply_skip_side_effects(
                     root_id=root_id,
-                    checkpoint=tip[0] if tip is not None else None,
-                    parsed=tip[1] if tip is not None else None,
-                )
-                state_closes_this_tick = await emit_skip_and_maybe_state_close(
-                    decision,
+                    turns=turns,
+                    skipped_reason=kernel_outcome.skipped_reason,
+                    old_decision_label=label,
+                    admitted=kernel_outcome.admitted,
                     state_closes_this_tick=state_closes_this_tick,
                     skipped_by_reason=skipped_by_reason,
                     caps=self._caps,
+                    fire_attempt_outcome=kernel_outcome.fire_attempt_outcome,
+                    fire_attempt_reason=kernel_outcome.fire_attempt_reason,
                 )
-            elif kernel_outcome.skipped_reason == "empty_hopper":
-                # Legal marked standing wait — root stays enrolled (a:26710).
-                # Must not enter emit_skip_and_maybe_state_close (no state_close).
-                from ..state_close import checkpoint_turn_number
-                from ..window_exec import parse_tip_checkpoint
-
-                tip = parse_tip_checkpoint(turns)
-                ckpt = tip[0] if tip is not None else None
-                skipped_by_reason["empty_hopper"] = (
-                    skipped_by_reason.get("empty_hopper", 0) + 1
-                )
-                await events.emit_manage_charter_tick_root_skipped(
-                    root=root_id,
-                    reason="empty_hopper",
-                    checkpoint_turn=checkpoint_turn_number(ckpt),
-                )
-            elif kernel_outcome.skipped_reason == "dormant":
-                # Structured dormancy — enrolled root with zero open G-rows (§7.2).
-                from ..state_close import checkpoint_turn_number
-                from ..window_exec import parse_tip_checkpoint
-
-                tip = parse_tip_checkpoint(turns)
-                ckpt = tip[0] if tip is not None else None
-                skipped_by_reason["dormant"] = skipped_by_reason.get("dormant", 0) + 1
-                await events.emit_manage_charter_tick_root_skipped(
-                    root=root_id,
-                    reason="dormant",
-                    checkpoint_turn=checkpoint_turn_number(ckpt),
-                )
-            elif kernel_outcome.skipped_reason:
-                skipped_by_reason[kernel_outcome.skipped_reason] = (
-                    skipped_by_reason.get(kernel_outcome.skipped_reason, 0) + 1
-                )
-            elif label == "kernel_unseeded":
-                skipped_by_reason["kernel_unseeded"] = (
-                    skipped_by_reason.get("kernel_unseeded", 0) + 1
-                )
-                await events.emit_manage_charter_tick_root_skipped(
-                    root=root_id,
-                    reason="kernel_unseeded",
-                    checkpoint_turn=None,
-                )
+            except Exception:  # noqa: BLE001 — skip/SOS must not abort tick
+                logger.exception("charter-runner skip side-effects failed")
         try:
             from ..telemetry import emit_shadow_diff, emit_shadow_ledger_starved
             from .shadow import record_shadow_pass
@@ -358,9 +363,3 @@ class CharterRunnerTickLoop:
             await _tick_reconcile.reconcile_enrolled_roots_on_tick(roots)
         except Exception:  # noqa: BLE001 — reconcile must not abort tick
             logger.exception("charter-runner tick-scan friction reconcile failed")
-        try:
-            from .. import conveyor as _conveyor_mod
-
-            await _conveyor_mod.sweep_stale_enrollments()
-        except Exception:  # noqa: BLE001 — stale sweep must not abort tick
-            logger.exception("charter-runner conveyor stale sweep failed")

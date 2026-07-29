@@ -21,7 +21,7 @@ from dataclasses import dataclass, replace
 
 from universal_logging import get_logger
 
-from .checkpoint_schema import ParsedCheckpoint, item_is_gated
+from .checkpoint_schema import ParsedCheckpoint, first_actionable_step, item_is_gated
 from .root_ledger import (
     RootLedgerRow,
     Transition,
@@ -33,12 +33,16 @@ logger = get_logger(__name__)
 
 # Scoreboard G-rows and charter R-beats — same shape checkpoint_parse gates on.
 _GID_RE = re.compile(r"\b([GR]\d+[a-z]?)\b")
-_EXECUTOR_RE = re.compile(r"executor\s*=\s*([A-Za-z0-9._/\-]+)")
+# Optional markdown backticks around the value — tips routinely write
+# ``executor=`cursor/grok-4.5` ``; without allowing `` ` `` the token regex
+# captured empty and tip_is_empty_hopper permanently fenced admit (6237 after
+# harvest heal).
+_EXECUTOR_RE = re.compile(r"executor\s*=\s*`?([A-Za-z0-9._/\-]+)`?")
 # Same charset as ``_EXECUTOR_RE``, but ``*`` so bare ``executor=`` matches.
 # Do **not** use ``(.*)`` — tips routinely continue with ``· executor_lane: …``
 # after the value; a greedy capture made ``pending`` compare fail (a:26710 resume).
 _EXECUTOR_TOKEN_RE = re.compile(
-    r"executor\s*=\s*([A-Za-z0-9._/\-]*)", re.IGNORECASE
+    r"executor\s*=\s*`?([A-Za-z0-9._/\-]*)`?", re.IGNORECASE
 )
 _EXECUTOR_LANE_RE = re.compile(r"executor_lane:\s*(implement|judgment)\b", re.IGNORECASE)
 
@@ -121,6 +125,44 @@ def tip_executor_is_explicitly_unbound(live: LivePickup | None) -> bool:
     return value.lower() == "pending"
 
 
+def actionable_pickup_aligned(parsed: ParsedCheckpoint | None) -> bool:
+    """True when gated Next-pickup matches the first incomplete Steps row gid.
+
+    ``executor=pending`` on such a tip is bind-at-admit work (6237 G5b fold), not
+    a standing-wait empty hopper.
+    """
+    if parsed is None:
+        return False
+    live = gated_pickup_from_parsed(parsed)
+    actionable = first_actionable_step(parsed)
+    if live is None or actionable is None:
+        return False
+    step_gid = gid_of_row(actionable.title)
+    return step_gid is not None and step_gid == live.gid
+
+
+def empty_hopper_row_rejections(
+    parsed: ParsedCheckpoint | None,
+) -> list[dict[str, str]]:
+    """Per-row rejections when ``tip_is_empty_hopper`` would fire (AC4 telemetry)."""
+    if parsed is None:
+        return []
+    live = gated_pickup_from_parsed(parsed)
+    if live is None:
+        return []
+    if parsed.consult_pending or actionable_pickup_aligned(parsed):
+        return []
+    if tip_executor_is_explicitly_unbound(live):
+        return [
+            {
+                "row_id": live.gid,
+                "predicate": "tip_executor_is_explicitly_unbound",
+                "reason": "executor_pending_or_empty",
+            }
+        ]
+    return []
+
+
 def tip_is_empty_hopper(
     parsed: ParsedCheckpoint | None,
     *,
@@ -132,8 +174,19 @@ def tip_is_empty_hopper(
     Predicate: gated Next-pickup present, no in-flight WIP (bus or ledger
     ``wip_window_id``), and tip ``executor=`` is explicitly empty or ``pending``.
     Missing ``executor=`` token ⇒ False (fail-open).
+
+    ``CONSULT_PENDING`` tips are **not** empty hoppers — ``executor=pending``
+    there means the consult seat owns the model (R-admit / judgment_gap). Treating
+    them as empty_hopper fenced ``QUEUE_CONSULT`` forever (live 6237 G3 after w2).
+
+    Actionable Steps alignment (first incomplete step gid == gated pickup gid) is
+    also **not** an empty hopper — pending executor binds at admit (6237 G5b).
     """
     if has_wip or wip_window_id:
+        return False
+    if parsed is not None and parsed.consult_pending:
+        return False
+    if actionable_pickup_aligned(parsed):
         return False
     live = gated_pickup_from_parsed(parsed)
     if live is None:
@@ -193,7 +246,9 @@ def advance_pickup_gid(
 
 __all__ = [
     "LivePickup",
+    "actionable_pickup_aligned",
     "advance_pickup_gid",
+    "empty_hopper_row_rejections",
     "gated_pickup_from_parsed",
     "gid_of_row",
     "tip_executor_is_cdp_family",

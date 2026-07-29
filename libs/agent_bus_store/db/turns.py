@@ -260,6 +260,17 @@ def insert_turn(
         subject=subject,
         turn_id=turn_id,
     )
+    from ..events.turn_created import emit_turn_created
+
+    emit_turn_created(
+        thread=thread,
+        turn_id=turn_id,
+        turn_number=turn_number,
+        from_agent=from_agent,
+        to_agent=to_agent,
+        subject=subject,
+        created_at=ts,
+    )
     return turn_id, ts, turn_number
 
 

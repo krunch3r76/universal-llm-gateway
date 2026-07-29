@@ -55,6 +55,8 @@ from services.git_integration_worker.routes.cursor_sdk import (
 )
 from services.git_integration_worker.routes.health import router as health_router
 from services.git_integration_worker.routes.integrate import router as integrate_router
+from services.git_integration_worker.routes.triggers import router as triggers_router
+from services.git_integration_worker.trigger_service.loop import trigger_fire_loop
 from services.git_integration_worker.ulg_story_projector import ulg_story_projector_loop
 
 _DRAIN_LIFESPAN_TIMEOUT_S = float(os.getenv("GIT_WORKER_DRAIN_LIFESPAN_TIMEOUT", "30"))
@@ -115,6 +117,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.cursor_auto_orphan_scanner = orphan_scanner
     story_projector = asyncio.create_task(ulg_story_projector_loop(app))
     app.state.ulg_story_projector = story_projector
+    trigger_loop = asyncio.create_task(trigger_fire_loop(app))
+    app.state.trigger_fire_loop = trigger_loop
     logger.info(
         "git-integration-worker started: version=%s port=%d source_repo=%s "
         "worker_id=%s",
@@ -146,6 +150,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             "cursor_auto_worker",
             "cursor_auto_orphan_scanner",
             "ulg_story_projector",
+            "trigger_fire_loop",
         ):
             task = getattr(app.state, attr, None)
             if task is not None:
@@ -204,6 +209,7 @@ def create_app() -> FastAPI:
     app.include_router(cursor_catalog_router)
     app.include_router(cursor_auto_router)
     app.include_router(admin_router)
+    app.include_router(triggers_router)
     return app
 
 

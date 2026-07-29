@@ -37,6 +37,7 @@ from ..db import (
 )
 from ..db.turns import UnreadTurnsExist
 from ..enrollment_guard import EnrollmentTagError, enrollment_denied_http
+from ..thread_classification import ThreadClassificationError
 from ..turns_models import (
     TRIAGE_THREAD_CAP,
     DispatchAdmit,
@@ -338,7 +339,7 @@ async def create_thread_route(body: ThreadCreate) -> ThreadDetail:
             lifecycle_state=body.lifecycle_state,
             enroll_charter_runner=body.enroll_charter_runner,
         )
-    except EnrollmentTagError as exc:
+    except (EnrollmentTagError, ThreadClassificationError) as exc:
         _raise_enrollment_denied(exc)
         raise
     if row is None:
@@ -392,7 +393,7 @@ async def create_thread_with_turn_route(
         if mapped is not None:
             status_code, detail = mapped
             raise HTTPException(status_code=status_code, detail=detail) from exc
-        if isinstance(exc, EnrollmentTagError):
+        if isinstance(exc, (EnrollmentTagError, ThreadClassificationError)):
             _raise_enrollment_denied(exc)
             raise
         if isinstance(exc, UnreadTurnsExist):
@@ -507,7 +508,7 @@ def _send_with_sidecar(body: TurnSendCreate) -> TurnSendCreated:
                 lifecycle_state=body.lifecycle_state,
                 enroll_charter_runner=body.enroll_charter_runner,
             )
-        except EnrollmentTagError as exc:
+        except (EnrollmentTagError, ThreadClassificationError) as exc:
             _raise_enrollment_denied(exc)
             raise
         if thread_row is None:
@@ -713,7 +714,7 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
             if mapped is not None:
                 status_code, detail = mapped
                 raise HTTPException(status_code=status_code, detail=detail) from exc
-            if isinstance(exc, EnrollmentTagError):
+            if isinstance(exc, (EnrollmentTagError, ThreadClassificationError)):
                 _raise_enrollment_denied(exc)
                 raise
             if isinstance(exc, SlugExists):
@@ -853,7 +854,7 @@ async def update_thread_route(thread_id: str, body: ThreadUpdate) -> ThreadDetai
             tags=body.tags,
             enroll_charter_runner=body.enroll_charter_runner,
         )
-    except EnrollmentTagError as exc:
+    except (EnrollmentTagError, ThreadClassificationError) as exc:
         _raise_enrollment_denied(exc)
         raise
     if row is None:

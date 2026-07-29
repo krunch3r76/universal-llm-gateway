@@ -87,15 +87,39 @@ def resolve_cursor_auth_source(*, real_home: Path | str | None = None) -> str:
     return ""
 
 
+def resolve_fastmcp_remote_cmd() -> str:
+    """Locate ``fastmcp-remote`` for parity + stdio exec.
+
+    Prefer ``PATH``, then the active interpreter's venv ``bin/``. GIW's
+    systemd unit historically omitted the venv from ``PATH`` while still
+    launching via ``~/.venvs/universal/bin/python`` — ``shutil.which`` alone
+    then 422s every nested cursor-sdk submit (a:26890) even when the
+    package is installed next to that interpreter.
+    """
+    found = shutil.which(_FASTMCP_REMOTE_CMD)
+    if found:
+        return found
+    # Prefer sys.prefix (venv root); avoid Path(sys.executable).resolve()
+    # which follows the python symlink into /usr/bin and loses the venv.
+    candidates = (
+        Path(sys.prefix) / "bin" / _FASTMCP_REMOTE_CMD,
+        Path(sys.executable).parent / _FASTMCP_REMOTE_CMD,
+    )
+    for candidate in candidates:
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
+    raise CursorSdkParityError(
+        f"{_FASTMCP_REMOTE_CMD} not on PATH or under sys.prefix/bin — "
+        "install fastmcp-remote==3.4.2 into the active venv"
+    )
+
+
 def resolve_mcp_bridge(source_repo: Path) -> Path:
     """Return the vortex stdio bridge script; fail closed at parity checks."""
     bridge = (source_repo / _MCP_BRIDGE_RELPATH).resolve()
     if not bridge.is_file():
         raise CursorSdkParityError(f"vortex MCP bridge missing: {bridge}")
-    if not shutil.which(_FASTMCP_REMOTE_CMD):
-        raise CursorSdkParityError(
-            f"{_FASTMCP_REMOTE_CMD} not on PATH — install fastmcp-remote==3.4.2"
-        )
+    resolve_fastmcp_remote_cmd()
     return bridge
 
 
@@ -107,6 +131,7 @@ def validate_dispatch_context(
     """Verify IDE-parity substrate before admitting a dispatch."""
     home = _operator_home(real_home)
     bridge = resolve_mcp_bridge(source_repo)
+    remote_cmd = resolve_fastmcp_remote_cmd()
 
     token, token_source = resolve_mcp_token(real_home=home)
     if not token:
@@ -127,7 +152,7 @@ def validate_dispatch_context(
         "setting_sources": list(_SETTING_SOURCES),
         "mcp_server": _VORTEX_MCP_SERVER,
         "mcp_bridge": str(bridge),
-        "mcp_remote_cmd": _FASTMCP_REMOTE_CMD,
+        "mcp_remote_cmd": remote_cmd,
         "mcp_token_source": token_source,
         "cursor_auth_source": cursor_auth,
         "user_rules_dir_present": user_rules.is_dir(),

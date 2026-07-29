@@ -142,6 +142,8 @@ def attendance_surface(
 
 _SCOPE_HEADING_RE = re.compile(r"(?im)^#{1,3}\s*scope\b")
 _SCOPE_TAG_RE = re.compile(r"<scope>", re.IGNORECASE)
+# cdp-operator-proxy-v0 §2 inline field — must match has_actionable_scope (a:26888).
+_SCOPE_FIELD_RE = re.compile(r"(?im)^scope:\s*\S+")
 _SOURCE_REF_LINE_RE = re.compile(r"(?im)^source_ref:\s*\S+")
 _TODO_TOKEN_RE = re.compile(r"\btodo:[a-z0-9][a-z0-9._-]*", re.IGNORECASE)
 _PACKET_TOKEN_RE = re.compile(r"\bpacket:", re.IGNORECASE)
@@ -154,14 +156,16 @@ VISION_REQUIRED_CONTRACTS = frozenset({"implement", "investigate"})
 def has_actionable_scope(body: str) -> bool:
     """True when the body carries an actionable nest scope per friction-26765.
 
-    Matches markdown ``## Scope`` headings, ``<scope>`` tags, ``source_ref:``
-    lines, ``todo:`` / ``packet:`` tokens, or ``files_expected`` labels.
-    Prose may mention ``todo:`` / ``packet:`` (accepted looseness). Body
-    ``contract:`` is handled separately as an escape hatch in admit gates.
+    Matches markdown ``## Scope`` headings, §2 lowercase ``scope:`` fields,
+    ``<scope>`` tags, ``source_ref:`` lines, ``todo:`` / ``packet:`` tokens,
+    or ``files_expected`` labels. Prose may mention ``todo:`` / ``packet:``
+    (accepted looseness). Body ``contract:`` is handled separately as an
+    escape hatch in admit gates.
     """
     text = body or ""
     return bool(
         _SCOPE_HEADING_RE.search(text)
+        or _SCOPE_FIELD_RE.search(text)
         or _SCOPE_TAG_RE.search(text)
         or _SOURCE_REF_LINE_RE.search(text)
         or _TODO_TOKEN_RE.search(text)
@@ -189,6 +193,7 @@ def empty_directive_missed_tokens(body: str) -> tuple[str, ...]:
     text = body or ""
     checks: tuple[tuple[str, bool], ...] = (
         ("scope_heading", bool(_SCOPE_HEADING_RE.search(text))),
+        ("scope_field", bool(_SCOPE_FIELD_RE.search(text))),
         ("scope_tag", bool(_SCOPE_TAG_RE.search(text))),
         ("source_ref", bool(_SOURCE_REF_LINE_RE.search(text))),
         ("todo", bool(_TODO_TOKEN_RE.search(text))),

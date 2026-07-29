@@ -121,6 +121,7 @@
 "mcp.agentbus.thread.reopened" = "Emitted alongside `mcp.agentbus.thread.lifecycle.transitioned` when a turn POST transitions a thread out of a terminal state (completed, abandoned, or failed) back to active"
 "mcp.agentbus.thread.updated" = "Thread status/summary updated (non-close)"
 "mcp.agentbus.threads.listed" = "Thread listing retrieved"
+"mcp.agentbus.turn.created" = "Turn inserted in agent-bus store (all transport paths)"
 "mcp.agentbus.turn.deleted" = "Single turn deleted"
 "mcp.agentbus.turn.detail.fetched" = "Single turn fetched by number"
 "mcp.agentbus.turn.posted" = "Reply turn posted to existing thread"

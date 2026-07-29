@@ -10,15 +10,11 @@ import httpx
 from universal_logging import get_logger
 
 from scripts.model_manager import observation_event as events
-from scripts.model_manager.ui.charter_scoreboard_objective import read_objective_for_root
+from scripts.model_manager.ui.charter_scoreboard_objective import (
+    read_objective_for_root,
+)
 
 from .. import bus_client, dispatch_client, window_log
-from ..gate_admission_defer import (
-    admission_mode_requires_write_fence,
-    clear_gate_defer,
-    preflight_write_lease,
-)
-from ..telemetry import emit_admission_defer_escalated, emit_admission_deferred_gate_held
 from ..admission import ADMISSION_SUBJECT_PREFIX, CapStore
 from ..checkpoint_schema import (
     ParsedCheckpoint,
@@ -26,17 +22,35 @@ from ..checkpoint_schema import (
     resolve_checkpoint_body,
 )
 from ..executor_routing import resolve_charter_executor
+from ..gate_admission_defer import (
+    admission_mode_requires_write_fence,
+    clear_gate_defer,
+    preflight_write_lease,
+)
 from ..r_corpus_sha import (
     clear_r_corpus_refusals,
     refuse_stale_r_admit,
     verify_r_corpus_sha,
 )
+from ..root_health import AdmitResult, FireAttemptOutcome
 from ..root_ledger import RootLedgerRow
+from ..telemetry import (
+    emit_admission_defer_escalated,
+    emit_admission_deferred_gate_held,
+)
 from ..window_terminal_contract import implement_ready_declared, is_pickup_append
 from .materializer_autonomous import select_packet
 from .materializer_consult import consult_subject, materialize_consult_packet
 
 logger = get_logger(__name__)
+
+
+def _fail(outcome: FireAttemptOutcome, reason: str) -> AdmitResult:
+    return AdmitResult(False, outcome, reason)
+
+
+def _ok() -> AdmitResult:
+    return AdmitResult(True, FireAttemptOutcome.FIRED, "")
 
 
 def _charter_objective_for_emit(root_id: str) -> str | None:
@@ -93,7 +107,7 @@ async def admit_worker_window(
     admission_mode: str,
     window_index: int | None = None,
     on_admit: Callable[[str], None] | None = None,
-) -> bool:
+) -> AdmitResult:
     """Fire one mechanical/attended worker window from the tip CHECKPOINT.
 
     ``window_index`` comes from the kernel, which reconciles the bus pointers with
@@ -103,7 +117,7 @@ async def admit_worker_window(
     """
     tip = parse_tip_checkpoint(turns)
     if tip is None:
-        return False
+        return _fail(FireAttemptOutcome.ERRORED_PRE_FIRE, "no_checkpoint")
     checkpoint, parsed = tip
     try:
         await bus_client.ensure_root_so_what(root_id)
@@ -132,7 +146,7 @@ async def admit_worker_window(
                 events_module=events,
                 log=logger,
             )
-            return False
+            return _fail(FireAttemptOutcome.REFUSED_PRE_FIRE, "stale_r_corpus")
         clear_r_corpus_refusals(root_id)
     bind = resolve_charter_executor(
         parsed=parsed,
@@ -172,11 +186,11 @@ async def admit_consult_window(
     consult_role: str,
     window_index: int | None = None,
     on_admit: Callable[[str], None] | None = None,
-) -> bool:
+) -> AdmitResult:
     """Fire a depth-1 consult seat window for a ledger root."""
     tip = parse_tip_checkpoint(turns)
     if tip is None:
-        return False
+        return _fail(FireAttemptOutcome.ERRORED_PRE_FIRE, "no_checkpoint")
     _checkpoint, parsed = tip
     if window_index is None:
         window_index = count_admissions(turns) + 1
@@ -215,7 +229,7 @@ async def _fire_and_pointer(
     implement_source_ref: str | None,
     on_admit: Callable[[str], None] | None,
     is_implement: bool,
-) -> bool:
+) -> AdmitResult:
     if admission_mode_requires_write_fence(admission_mode):
         preflight = await preflight_write_lease(root_id=root_id)
         if preflight.outcome == "escalate":
@@ -236,7 +250,10 @@ async def _fire_and_pointer(
                 preflight.escalation_reason,
                 preflight.holder_dispatch_id,
             )
-            return False
+            return _fail(
+                FireAttemptOutcome.REFUSED_PRE_FIRE,
+                f"gate_defer_escalated:{preflight.escalation_reason or 'unknown'}",
+            )
         if preflight.outcome == "defer":
             await emit_admission_deferred_gate_held(
                 root=root_id,
@@ -252,7 +269,7 @@ async def _fire_and_pointer(
                 preflight.holder_dispatch_id,
                 preflight.defer_count,
             )
-            return False
+            return _fail(FireAttemptOutcome.DEFERRED_LEGAL, "gate_defer")
 
     caps.mark_admit_intent(root_id, window_index)
     try:
@@ -281,9 +298,38 @@ async def _fire_and_pointer(
                 "charter-runner admission refused at ledger (409 lease held) root=%s",
                 root_id,
             )
-            return False
+            return _fail(FireAttemptOutcome.DEFERRED_LEGAL, "lease_held")
+        if status == 503 and "GIT_WORKER_DRAINING" in body_snippet:
+            caps.clear_admit_intent(root_id, window_index)
+            await emit_admission_deferred_gate_held(
+                root=root_id,
+                holder_dispatch_id=None,
+                holder_age_s=None,
+                defer_count=1,
+            )
+            logger.info(
+                "charter-runner admission deferred (GIW draining, no CapStore stop) "
+                "root=%s status=%s",
+                root_id,
+                status,
+            )
+            return _fail(FireAttemptOutcome.DEFERRED_LEGAL, "giw_draining")
         if 400 <= status < 500:
             caps.clear_admit_intent(root_id, window_index)
+            # CURSOR_SDK_PARITY is a live substrate/PATH gap — permanent CapStore
+            # stop turns every tick into pager spam (blocked:1) until manage restart.
+            if "CURSOR_SDK_PARITY" in body_snippet:
+                await events.emit_manage_charter_tick_window_failed(
+                    root=root_id, reason="admission_parity"
+                )
+                logger.error(
+                    "charter-runner admission parity (no CapStore stop) "
+                    "root=%s status=%s body=%s",
+                    root_id,
+                    status,
+                    body_snippet,
+                )
+                return _fail(FireAttemptOutcome.REFUSED_PRE_FIRE, "admission_parity")
             caps.mark_failed(root_id, "admission_rejected")
             await events.emit_manage_charter_tick_window_failed(
                 root=root_id, reason="admission_rejected"
@@ -294,7 +340,7 @@ async def _fire_and_pointer(
                 status,
                 body_snippet,
             )
-            return False
+            return _fail(FireAttemptOutcome.REFUSED_PRE_FIRE, "admission_rejected")
         caps.mark_failed(root_id, "admission_transport_error")
         await events.emit_manage_charter_tick_window_failed(
             root=root_id, reason="admission_transport_error"
@@ -305,7 +351,7 @@ async def _fire_and_pointer(
             status,
             body_snippet,
         )
-        return False
+        return _fail(FireAttemptOutcome.ERRORED_PRE_FIRE, "admission_transport_error")
     except Exception as exc:
         caps.mark_failed(root_id, "admission_exception")
         await events.emit_manage_charter_tick_window_failed(
@@ -316,7 +362,7 @@ async def _fire_and_pointer(
             root_id,
             exc,
         )
-        return False
+        return _fail(FireAttemptOutcome.ERRORED_PRE_FIRE, "admission_exception")
     clear_gate_defer(root_id)
     caps.record_admit(root_id)
     worker_thread = str(result.get("thread_id") or "")
@@ -342,7 +388,7 @@ async def _fire_and_pointer(
         await events.emit_manage_charter_tick_window_failed(
             root=root_id, reason="pointer_post_failed"
         )
-        return False
+        return _fail(FireAttemptOutcome.FIRED_BOOKKEEPING_FAILED, "pointer_post_failed")
     await events.emit_manage_charter_tick_admitted(
         root=root_id,
         dispatch_id=str(result.get("dispatch_id") or worker_thread),
@@ -381,7 +427,7 @@ async def _fire_and_pointer(
             on_admit(msg)
         except Exception:  # noqa: BLE001
             logger.exception("charter-runner on_admit notify failed")
-    return True
+    return _ok()
 
 
 __all__ = [

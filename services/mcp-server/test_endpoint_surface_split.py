@@ -30,6 +30,8 @@ LIFE_PRIMARY = frozenset(
         "dispatch",
         "imprint",
         "delegate",
+        "notify",
+        "trigger",
     }
 )
 CODE_EXTRA = frozenset(
@@ -40,6 +42,7 @@ CODE_EXTRA = frozenset(
         "team_dispatch",
         "panel_dispatch",
         "project_ask",
+        "trigger",
     }
 )
 CODE_PRIMARY = (LIFE_PRIMARY - frozenset({"imprint", "delegate"})) | CODE_EXTRA

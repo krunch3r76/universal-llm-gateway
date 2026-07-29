@@ -1,4 +1,4 @@
-"""Post-harvest friction audit / conveyor enroll for window terminals."""
+"""Post-harvest friction audit for window terminals."""
 
 from __future__ import annotations
 
@@ -18,18 +18,17 @@ async def after_window_terminal_harvested(
     worker_closed: bool | None,
     gate_bypass_count: int,
 ) -> None:
-    """Post-close hook: friction audit → G3 mint → reconcile → conveyor enroll."""
+    """Post-close hook: friction audit → G3 mint → reconcile."""
     from cortex_store.dispatch_ops._friction_enqueue import (
         mint_repair_todo,
         reconcile_charter_frictions,
-        todo_exists_for_friction,
     )
     from cortex_store.dispatch_ops.ops_assertions import _op_frictions
     from cortex_store.dispatch_ops.ops_assertions_update import _op_assertion_get
 
     from scripts.model_manager import observation_event as events
 
-    from . import bus_client, conveyor, frictions_window_audit
+    from . import bus_client, frictions_window_audit
     from .park_friction_mint import mint_followon_with_fuse
 
     _ = checkpoint_turn  # bound in contract signature for closeout correlation
@@ -122,51 +121,5 @@ async def after_window_terminal_harvested(
     except Exception:  # noqa: BLE001
         logger.exception("charter-runner friction reconcile sweep failed")
 
-    try:
-        detail = await bus_client.fetch_thread(root_id)
-        tags = list(detail.get("tags") or [])
-        friction_resp = _op_frictions(
-            charter_root=root_id,
-            superseded=False,
-            limit=200,
-            intent="full",
-        )
-        friction_items = [
-            item
-            for item in friction_resp.get("items") or []
-            if isinstance(item, dict) and todo_exists_for_friction(int(item["id"]))
-        ]
-        await conveyor.enroll_rows(
-            root_id=root_id,
-            root_tags=tags,
-            friction_rows=friction_items,
-        )
-    except Exception as exc:  # noqa: BLE001 — surface; do not abort harvest closeout
-        logger.exception("charter-runner conveyor enroll failed root=%s", root_id)
-        try:
-            from scripts.model_manager import observation_event_conveyor as conv_events
-
-            await conv_events.emit_manage_charter_conveyor_enroll_failed(
-                root=root_id,
-                window_index=window_index,
-                error=f"{type(exc).__name__}: {exc}",
-                minted_count=len(audit.enqueued_ids),
-            )
-        except Exception:  # noqa: BLE001
-            logger.exception(
-                "charter-runner failed emitting conveyor enroll_failed root=%s",
-                root_id,
-            )
-        try:
-            mint_repair_todo(
-                root_id=root_id,
-                window_index=window_index,
-                audit_failure_class="conveyor_enroll_failed",
-            )
-        except Exception:  # noqa: BLE001
-            logger.exception(
-                "charter-runner conveyor enroll repair-todo mint failed root=%s",
-                root_id,
-            )
 
 __all__ = ["after_window_terminal_harvested"]

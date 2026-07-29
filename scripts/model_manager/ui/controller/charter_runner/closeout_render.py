@@ -9,11 +9,10 @@ from datetime import UTC, datetime
 from .friction_ledger import EnrollState, FrictionLedgerRow
 
 _STATUS_LABEL: dict[EnrollState, str] = {
-    "on_tick": "**on tick**",
+    "queued": "**queued**",
     "minted_only": "minted only",
     "filed_only": "filed only",
     "opted_out": "opted_out",
-    "stale_unenrolled": "stale (unenrolled)",
 }
 
 
@@ -27,9 +26,7 @@ def render_frictions_table(rows: list[FrictionLedgerRow]) -> str:
     ]
     for row in rows:
         label = _STATUS_LABEL.get(row.enroll_state, row.enroll_state)
-        if row.todo_slug and row.enroll_state == "on_tick":
-            status = f"{label} — `{row.todo_slug}`"
-        elif row.todo_slug and row.enroll_state == "minted_only":
+        if row.todo_slug and row.enroll_state in ("queued", "minted_only"):
             status = f"{label} — `{row.todo_slug}`"
         else:
             status = label

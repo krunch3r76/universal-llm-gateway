@@ -59,7 +59,7 @@ an operator-authored CHECKPOINT (CHECKPOINT authorship is cursor-owned).
 the next tick to re-admit another host window so the operator seat stays live.
 - Use the `cdp-operator-proxy` skill (canonical slug — seat self-fetches)
 - Use the `claude-ai-cdp-navigation` skill § Dual-completion poll ladder
-- Use the `agent-bus-discipline` skill (canonical slug — seat self-fetches)
+- Use the `checkpoint-discipline` skill (canonical slug — seat self-fetches)
 </invariants>"""
 
 
@@ -81,7 +81,7 @@ def _task_guidance(
 <task_guidance>
 ## Resume step 0 (do first)
 1. Load cdp-operator-proxy + claude-ai-cdp-navigation (§ Dual-completion poll
-   ladder) + agent-bus-discipline (§ Standing root threads).
+   ladder) + checkpoint-discipline.
 2. {scoreboard_line}read the latest CHECKPOINT on agent-bus:{root_id} — resolve
    the operator-proxy private lane thread id from Sidecars / corpus (not hardcoded).
 

@@ -12,7 +12,6 @@ from .dtos import (
     AttentionItem,
     CdpLegRow,
     CharterRootRow,
-    ConveyorItemRow,
     HealthProjection,
     SdkDispatchRow,
 )
@@ -316,31 +315,6 @@ def count_by_root(rows: list[SdkDispatchRow] | list[CdpLegRow]) -> dict[str, int
             continue
         counts[rid] = counts.get(rid, 0) + 1
     return counts
-
-
-def conveyor_enrolled(rows: tuple[ConveyorItemRow, ...]) -> list[ConveyorItemRow]:
-    """Active friction-belt enrollments (not demoted stale)."""
-    return [row for row in rows if row.state == "enrolled"]
-
-
-def conveyor_stale(rows: tuple[ConveyorItemRow, ...]) -> list[ConveyorItemRow]:
-    return [row for row in rows if row.state == "stale"]
-
-
-def conveyor_belt_label(rows: tuple[ConveyorItemRow, ...]) -> str:
-    """Section title — observed conveyor_root values, else standing belt 6110."""
-    roots = sorted({row.conveyor_root for row in rows if row.conveyor_root})
-    return "/".join(roots) if roots else "6110"
-
-
-def conveyor_item_line(row: ConveyorItemRow) -> str:
-    slug = row.todo_slug or f"a:{row.friction_id}"
-    ticks = f" idle={row.ticks_idle}t" if row.ticks_idle is not None else ""
-    src = row.root_id or "-"
-    return (
-        f"  a:{row.friction_id:<6} {_truncate(row.state, 8)} "
-        f"{_truncate(slug, 28)} src={_truncate(src, 8)}{ticks}"
-    )
 
 
 def lease_body_lines(health: HealthProjection) -> list[tuple[str, int]]:

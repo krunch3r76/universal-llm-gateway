@@ -90,14 +90,14 @@ async def post_admission_pointer(
         return dict(resp.json())
 
 
-async def post_root_checkpoint(
+async def post_root_turn(
     root_id: str,
     *,
     subject: str,
     body: str,
     to: str = "charter-runner",
 ) -> dict[str, Any]:
-    """Post a CHECKPOINT turn on the charter root (clears in-flight after WIP)."""
+    """Post an arbitrary turn on the charter root (NOTE / CHECKPOINT / etc.)."""
     payload = {
         "thread": root_id,
         "from": _RUNNER_AGENT,
@@ -109,6 +109,19 @@ async def post_root_checkpoint(
         resp = await client.post("/threads/send", json=payload, headers=_auth_headers())
         resp.raise_for_status()
         return dict(resp.json())
+
+
+async def post_root_checkpoint(
+    root_id: str,
+    *,
+    subject: str,
+    body: str,
+    to: str = "charter-runner",
+) -> dict[str, Any]:
+    """Post a CHECKPOINT turn on the charter root (clears in-flight after WIP)."""
+    return await post_root_turn(
+        root_id, subject=subject, body=body, to=to
+    )
 
 
 async def close_worker_thread(

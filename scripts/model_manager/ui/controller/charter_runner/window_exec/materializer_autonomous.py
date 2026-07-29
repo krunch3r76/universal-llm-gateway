@@ -50,7 +50,7 @@ logger = get_logger(__name__)
 REVISE_CAP_DEFAULT = 3
 
 _DENSIFY_FLOOR = (
-    "- Use the `agent-bus-discipline` skill "
+    "- Use the `checkpoint-discipline` skill "
     "(canonical slug — seat self-fetches; ¬ fs-read skill body)\n"
     "- Use the `orchestrator-workflow` skill "
     "(canonical slug — seat self-fetches; ¬ fs-read skill body)\n"
@@ -161,7 +161,7 @@ def _task_guidance(
     return f"""\
 <task_guidance>
 ## Resume step 0 (do first)
-1. Load agent-bus-discipline (§ Standing root threads + § R12),
+1. Load checkpoint-discipline + agent-bus-discipline § R12,
    orchestrator-workflow, and path-sim (§ Autonomous charter procession).
 2. {scoreboard_line}read the latest CHECKPOINT on agent-bus:{root_id}.
 

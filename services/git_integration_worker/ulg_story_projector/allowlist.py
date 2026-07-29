@@ -1,4 +1,12 @@
-"""Hardcoded lifecycle signal allowlist and sentence-class mapping (spec Bind 3)."""
+"""Hardcoded lifecycle signal allowlist and sentence-class mapping (spec Bind 3).
+
+Bind 3's ~12 is a **cap**, not a census: nine existing ``frontier.sdk.*`` members
+plus four ``giw.trigger.*`` (``fired``, ``reconciled``, ``fire_failed``,
+``reclaimed``) — thirteen tolerated. Six ``giw.trigger.*`` families stay **out**:
+``.scheduled``, ``.claimed``, ``.cancelled``, ``.predicate_*``, ``.expired``,
+``.act_*``. ``.reclaimed`` is the pre-agreed shed candidate before anything
+else is added (S-B14).
+"""
 
 from __future__ import annotations
 
@@ -19,6 +27,10 @@ SIGNAL_ALLOWLIST: tuple[str, ...] = (
     "frontier.sdk.auto.auth_gate_blocked",
     "frontier.sdk.auto.empty_directive_scope_blocked",
     "frontier.sdk.auto.thread_status_refused",
+    "giw.trigger.fired",
+    "giw.trigger.reconciled",
+    "giw.trigger.fire_failed",
+    "giw.trigger.reclaimed",
 )
 
 
@@ -75,8 +87,29 @@ SIGNAL_MAPPINGS: dict[str, SignalMapping] = {
         story_class="attention",
         verb="refused dispatch (thread status) on thread",
     ),
+    "giw.trigger.fired": SignalMapping(
+        signal="giw.trigger.fired",
+        story_class="milestone",
+        verb="fired scheduled trigger for",
+    ),
+    "giw.trigger.reconciled": SignalMapping(
+        signal="giw.trigger.reconciled",
+        story_class="milestone",
+        verb="reconciled trigger episode for",
+    ),
+    "giw.trigger.fire_failed": SignalMapping(
+        signal="giw.trigger.fire_failed",
+        story_class="attention",
+        verb="failed to fire trigger for",
+    ),
+    "giw.trigger.reclaimed": SignalMapping(
+        signal="giw.trigger.reclaimed",
+        story_class="attention",
+        verb="reclaimed stale firing for",
+    ),
 }
 
 
 def mapping_for(signal: str) -> SignalMapping | None:
+    """Return allowlist mapping for ``signal``, or None when not projectable."""
     return SIGNAL_MAPPINGS.get(signal)

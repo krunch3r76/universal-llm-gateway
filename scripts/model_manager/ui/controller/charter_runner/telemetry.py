@@ -14,6 +14,7 @@ async def emit_tick_transition(
     to_status: str,
     transition: str,
     gid: str | None = None,
+    pass_source: str | None = None,
 ) -> None:
     """Per-root transition applied (spec § Event Vocabulary)."""
     payload: dict[str, Any] = {
@@ -24,6 +25,8 @@ async def emit_tick_transition(
     }
     if gid:
         payload["gid"] = gid
+    if pass_source:
+        payload["pass_source"] = pass_source
     await _emit("manage.charter.tick.transition", payload)
 
 
@@ -98,6 +101,50 @@ async def emit_admission_defer_escalated(
     await _emit("manage.charter.tick.admission_defer_escalated", payload)
 
 
+async def emit_tick_escalation(
+    *,
+    root: str,
+    fire_attempt_outcome: str | None,
+    fire_attempt_reason: str | None,
+    worker_thread: str | None = None,
+    refired: bool = False,
+) -> None:
+    """Episode open or TTL re-fire for unhealthy root (BIND 6249)."""
+    payload: dict[str, Any] = {
+        "root": root,
+        "fire_attempt_outcome": fire_attempt_outcome,
+        "fire_attempt_reason": fire_attempt_reason,
+        "refired": refired,
+    }
+    if worker_thread:
+        payload["worker_thread"] = worker_thread
+    await _emit("manage.charter.tick.escalation", payload)
+
+
+async def emit_root_skip_observed(
+    *,
+    root: str,
+    skipped_reason: str | None,
+    sos_reason: str | None,
+    sticky_backing: str | None,
+    holder_dispatch_id: str | None,
+    skip_count: int,
+    holder_age_s: float | None = None,
+) -> None:
+    """G1 analog — every root-skip observation is audible (a:26885)."""
+    payload: dict[str, Any] = {
+        "root": root,
+        "skipped_reason": skipped_reason,
+        "sos_reason": sos_reason,
+        "sticky_backing": sticky_backing,
+        "holder_dispatch_id": holder_dispatch_id,
+        "skip_count": skip_count,
+    }
+    if holder_age_s is not None:
+        payload["holder_age_s"] = holder_age_s
+    await _emit("manage.charter.tick.root_skip_observed", payload)
+
+
 async def emit_consult_queued(*, root: str, gid: str, role: str) -> None:
     await _emit(
         "manage.charter.tick.consult.queued",
@@ -152,8 +199,10 @@ __all__ = [
     "emit_consult_deferred",
     "emit_consult_queued",
     "emit_enrollment_filtered",
+    "emit_root_skip_observed",
     "emit_shadow_diff",
     "emit_shadow_ledger_starved",
     "emit_storm_fuse_tripped",
+    "emit_tick_escalation",
     "emit_tick_transition",
 ]

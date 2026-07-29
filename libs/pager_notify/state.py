@@ -15,6 +15,7 @@ _STATE_DIR = Path(
 )
 _STATE_FILE = _STATE_DIR / "bus_cursor.json"
 _CLOSEOUT_DEDUPE_FILE = _STATE_DIR / "closeout_pager_dedupe.json"
+_TICK_STANDING_FILE = _STATE_DIR / "tick_standing_pager.json"
 
 
 def load_last_turns() -> dict[str, int]:
@@ -80,4 +81,35 @@ def claim_closeout_page(
         return False
     state[key] = epoch
     _save_closeout_dedupe(state)
+    return True
+
+
+def _load_tick_standing() -> dict[str, str]:
+    if not _TICK_STANDING_FILE.is_file():
+        return {}
+    try:
+        raw = json.loads(_TICK_STANDING_FILE.read_text(encoding="utf-8"))
+        if isinstance(raw, dict):
+            return {str(k): str(v) for k, v in raw.items()}
+    except (OSError, ValueError, TypeError):
+        pass
+    return {}
+
+
+def claim_tick_standing_page(signature: str) -> bool:
+    """Claim one SMS for a standing tick-skip signature until it changes.
+
+    Standing stops (``blocked`` / ``stopped:*``) otherwise page every ~30s tick.
+    Same *signature* → suppress; new signature → page once and remember.
+    Key is fixed (``standing``); value is the last-paged signature string.
+    """
+    sig = str(signature or "").strip()
+    if not sig:
+        return False
+    state = _load_tick_standing()
+    if state.get("standing") == sig:
+        return False
+    state["standing"] = sig
+    _STATE_DIR.mkdir(parents=True, exist_ok=True)
+    _TICK_STANDING_FILE.write_text(json.dumps(state, indent=2), encoding="utf-8")
     return True

@@ -52,11 +52,11 @@ def create_thread_with_turn(
     thread row is inserted and before the turn insert (same transaction).
     Used for soft-spill so a raise rolls back the thread (no orphan).
     """
-    from agent_bus_store.enrollment_guard import gate_enrollment_tags
+    from agent_bus_store.thread_classification import gate_thread_tags
 
     from .turns import SlugExists, UnreadTurnsExist, _insert_attachments
 
-    gated_tags = gate_enrollment_tags(
+    gated_tags = gate_thread_tags(
         tags, prior_tags=[], enroll_charter_runner=enroll_charter_runner
     )
     ts = now()
@@ -127,6 +127,17 @@ def create_thread_with_turn(
         if gated_tags:
             set_thread_tags(conn, thread_id, gated_tags)
 
+    from ..events.turn_created import emit_turn_created
+
+    emit_turn_created(
+        thread=thread_id,
+        turn_id=turn_id,
+        turn_number=turn_number,
+        from_agent=from_agent,
+        to_agent=to_agent,
+        subject=subject,
+        created_at=ts,
+    )
     thread_detail = get_thread_with_links(thread_id)
     assert thread_detail is not None
     return thread_detail, turn_id, ts, turn_number
@@ -329,6 +340,7 @@ def claim_and_post_turn(
         )
         if cur.lastrowid is None:
             raise RuntimeError("claim_and_post_turn: sqlite returned no row id")
+        turn_id = cur.lastrowid
 
         # Transition admitted -> active (first delivery/pointer turn posted).
         _transition_lifecycle_state(conn, thread_id, "active", "claim_and_post")
@@ -341,6 +353,17 @@ def claim_and_post_turn(
             (thread_id, execution_id, pipeline_id, caller_agent, ts),
         )
 
+    from ..events.turn_created import emit_turn_created
+
+    emit_turn_created(
+        thread=thread_id,
+        turn_id=turn_id,
+        turn_number=1,
+        from_agent=from_agent,
+        to_agent=to_agent,
+        subject=subject,
+        created_at=ts,
+    )
     result = get_thread_with_links(thread_id)
     assert result is not None
     return result

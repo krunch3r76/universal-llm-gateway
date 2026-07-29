@@ -15,6 +15,19 @@ async def emit_manage_charter_tick_stopped() -> None:
     await _emit("manage.charter.tick.stopped", {})
 
 
+async def emit_manage_charter_tick_wake(
+    *,
+    root: str,
+    signal: str,
+    coalesced_n: int,
+) -> None:
+    """WakeHub enqueued a root into the dirty set (M2 telemetry)."""
+    await _emit(
+        "manage.charter.tick.wake",
+        {"root": root, "signal": signal, "coalesced_n": coalesced_n},
+    )
+
+
 async def emit_manage_charter_tick_scanned(
     *,
     roots: int,
@@ -37,11 +50,17 @@ async def emit_manage_charter_tick_root_skipped(
     predicate_id: str | None = None,
     wip_snippet: str | None = None,
     fingerprint: str | None = None,
+    row_rejections: list[dict[str, str]] | None = None,
+    rows_considered: int | None = None,
 ) -> None:
     """Emit per-root ineligible Decision so silent starve is observable.
 
     ``wip_snippet`` is set when ``reason=wip_active`` so operators can see the
     rejected WIP body token without fetching the full CHECKPOINT (dogfood 5854).
+
+    ``row_rejections`` lists per-row predicate failures for empty-hopper skips;
+    ``rows_considered`` is the count of gated Next-pickup rows evaluated (0 when
+    none were enumerated).
     """
     payload: dict = {
         "root": root,
@@ -56,6 +75,10 @@ async def emit_manage_charter_tick_root_skipped(
         payload["wip_snippet"] = wip_snippet[:120]
     if fingerprint is not None:
         payload["fingerprint"] = fingerprint
+    if row_rejections is not None:
+        payload["row_rejections"] = row_rejections
+    if rows_considered is not None:
+        payload["rows_considered"] = rows_considered
     await _emit("manage.charter.tick.root_skipped", payload)
 
 
@@ -437,6 +460,14 @@ async def emit_manage_charter_tick_resumed(
     if reason is not None:
         payload["reason"] = reason
     await _emit("manage.charter.tick.resumed", payload)
+
+
+async def emit_manage_charter_caps_cleared(*, root: str, reason: str | None = None) -> None:
+    """CapStore stop cleared — wakes root for immediate re-admit check (§B3)."""
+    payload: dict = {"root": root}
+    if reason is not None:
+        payload["reason"] = reason
+    await _emit("manage.charter.caps.cleared", payload)
 
 
 async def emit_manage_charter_tick_held(

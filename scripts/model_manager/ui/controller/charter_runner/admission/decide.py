@@ -49,8 +49,9 @@ class EnvFacts:
     ``empty_hopper``: gated Next-pickup present, no WIP (``has_wip`` or
     ``wip_window_id`` on the ledger row), and tip ``executor=`` is explicitly
     empty or ``pending`` — **not** a missing ``executor=`` token (fail-open).
-    When True, ``decide`` returns ``Transition.NOOP`` (empty_hopper fence);
-    the root stays enrolled (legal marked standing wait).
+    ``CONSULT_PENDING`` tips are never empty hoppers (``executor=pending`` is
+    the consult seat bind). When True, ``decide`` returns ``Transition.NOOP``
+    (empty_hopper fence); the root stays enrolled (legal marked standing wait).
     """
 
     substrate_up: bool
@@ -94,12 +95,8 @@ def decide(
         return Transition.NOOP
     if not caps.revise_ok:
         return Transition.BLOCK
-    if env.empty_hopper:
-        return Transition.NOOP
-
-    lane = (state.pickup_lane or "judgment").lower()
-    attendance = (state.attendance or env.attendance or "attended").lower()
-
+    # Live consult queue must not be stranded by empty_hopper NOOP (6237 sibling
+    # hole: CONSULT_QUEUED + executor=pending tip read as standing wait).
     if state.status in (RootStatus.CONSULT_QUEUED, RootStatus.CONSULT_DEFERRED):
         if not env.substrate_up:
             return Transition.DEFER_CONSULT
@@ -107,6 +104,11 @@ def decide(
         if state.consult_next_retry and now < state.consult_next_retry:
             return Transition.NOOP
         return Transition.ADMIT_CONSULT
+    if env.empty_hopper:
+        return Transition.NOOP
+
+    lane = (state.pickup_lane or "judgment").lower()
+    attendance = (state.attendance or env.attendance or "attended").lower()
 
     if lane in ("judgment", "consult") and attendance == "autonomous":
         if not env.substrate_up:

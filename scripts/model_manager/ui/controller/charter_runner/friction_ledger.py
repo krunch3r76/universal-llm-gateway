@@ -10,15 +10,15 @@ from typing import Any, Literal
 from cortex_store.dispatch_ops._friction_enqueue import (
     normalize_charter_root,
     todo_exists_for_friction,
+    todo_open_for_friction,
 )
 from cortex_store.dispatch_ops.ops_assertions import _op_frictions
 
 EnrollState = Literal[
-    "on_tick",
+    "queued",
     "minted_only",
     "filed_only",
     "opted_out",
-    "stale_unenrolled",
 ]
 
 CONVEYOR_OFF_TAG = "conveyor-off"
@@ -58,24 +58,28 @@ def derive_enroll_state(
     attrs: dict[str, Any],
     root_has_charter_runner: bool,
     root_conveyor_off: bool,
-    todo_slug: str | None,
-    on_conveyor: bool,
-    stale: bool,
-) -> EnrollState:
-    """Map friction + root context to a closeout enroll_state."""
+    open_todo_slug: str | None,
+    any_todo_slug: str | None,
+) -> EnrollState | None:
+    """Map friction + root context to a closeout enroll_state.
+
+    Returns ``None`` when the row should be omitted from the ledger.
+    """
     if attrs.get("defer_enqueue"):
         return "opted_out"
-    if stale and todo_slug:
-        return "stale_unenrolled"
-    if not root_has_charter_runner:
-        return "minted_only" if todo_slug else "filed_only"
-    if root_conveyor_off:
-        return "minted_only" if todo_slug else "filed_only"
-    if on_conveyor and todo_slug:
-        return "on_tick"
-    if todo_slug:
+    if not root_has_charter_runner or root_conveyor_off:
+        if any_todo_slug:
+            return "minted_only"
+        if _actionable(attrs):
+            return "filed_only"
+        return None
+    if open_todo_slug:
+        return "queued"
+    if any_todo_slug:
         return "minted_only"
-    return "filed_only"
+    if _actionable(attrs):
+        return "filed_only"
+    return None
 
 
 def build_ledger(
@@ -83,8 +87,6 @@ def build_ledger(
     *,
     root_tags: list[str] | None = None,
     frictions_fn: Callable[..., dict[str, Any]] | None = None,
-    on_conveyor_fn: Callable[[int, str | None], bool] | None = None,
-    stale_fn: Callable[[int], bool] | None = None,
 ) -> list[FrictionLedgerRow]:
     """Build the arc friction ledger for one charter root."""
     root = normalize_charter_root(root_id)
@@ -99,29 +101,23 @@ def build_ledger(
             continue
         assertion_id = int(item["id"])
         attrs = _parse_attributes(item.get("attributes"))
-        todo_slug = todo_exists_for_friction(assertion_id)
-        on_conveyor = (
-            on_conveyor_fn(assertion_id, todo_slug)
-            if on_conveyor_fn is not None
-            else False
-        )
-        stale = stale_fn(assertion_id) if stale_fn is not None else False
+        open_slug = todo_open_for_friction(assertion_id)
+        any_slug = open_slug or todo_exists_for_friction(assertion_id)
         state = derive_enroll_state(
             attrs=attrs,
             root_has_charter_runner=has_runner,
             root_conveyor_off=conveyor_off,
-            todo_slug=todo_slug,
-            on_conveyor=on_conveyor,
-            stale=stale,
+            open_todo_slug=open_slug,
+            any_todo_slug=any_slug,
         )
-        if not todo_slug and not _actionable(attrs) and state == "filed_only":
-            pass
+        if state is None:
+            continue
         rows.append(
             FrictionLedgerRow(
                 assertion_id=assertion_id,
                 note=_friction_note(item),
                 enroll_state=state,
-                todo_slug=todo_slug,
+                todo_slug=any_slug,
             )
         )
     rows.sort(key=lambda r: r.assertion_id)

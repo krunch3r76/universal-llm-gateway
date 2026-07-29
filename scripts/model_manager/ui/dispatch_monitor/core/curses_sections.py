@@ -2,16 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any, Protocol
+from typing import Protocol
 
-from .board_lines import (
-    attention_line,
-    conveyor_belt_label,
-    conveyor_enrolled,
-    conveyor_item_line,
-    conveyor_stale,
-    lease_body_lines,
-)
+from .board_lines import attention_line, lease_body_lines
 from .dtos import SupervisorProjection
 
 
@@ -19,41 +12,6 @@ class _BoardSurface(Protocol):
     def _safe_addstr(self, y: int, x: int, text: str, pair: int) -> None: ...
 
     def _pair_for_severity(self, severity: str) -> int: ...
-
-
-def paint_belt(
-    board: _BoardSurface,
-    projection: SupervisorProjection,
-    y: int,
-    width: int,
-    height: int,
-    row_cap: int,
-) -> int:
-    """Paint FRICTION BELT enrollments; return next y."""
-    if y >= height - 1:
-        return y
-    rows = projection.conveyor
-    enrolled = conveyor_enrolled(rows)
-    stale = conveyor_stale(rows)
-    label = conveyor_belt_label(rows)
-    bar = f" FRICTION BELT {label} ({len(enrolled)} enq · {len(stale)} stale) "
-    board._safe_addstr(y, 0, f"─{bar}{'─' * max(0, width - len(bar) - 2)}", 4)
-    y += 1
-    if not rows and y < height - 1:
-        board._safe_addstr(y, 0, "  idle — nothing enqueued on friction belt", 0)
-        return y + 1
-    shown = 0
-    for row in rows:
-        if y >= height - 1 or shown >= row_cap:
-            break
-        pair = 2 if row.state == "stale" else 0
-        board._safe_addstr(y, 0, conveyor_item_line(row)[: width - 1], pair)
-        y += 1
-        shown += 1
-    if shown < len(rows) and y < height - 1:
-        board._safe_addstr(y, 0, f"  … +{len(rows) - shown} more", 0)
-        y += 1
-    return y
 
 
 def paint_lease(

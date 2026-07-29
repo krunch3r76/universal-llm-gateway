@@ -16,7 +16,7 @@ from ..executor_defaults import DEFAULT_MODEL, DEFAULT_MODEL_KNOBS
 from .materializer import _work_summary
 
 _DENSIFY_FLOOR = (
-    "- Use the `agent-bus-discipline` skill "
+    "- Use the `checkpoint-discipline` skill "
     "(canonical slug — seat self-fetches; ¬ fs-read skill body)\n"
     "- Use the `path-sim` skill "
     "(§ Closed-detent quick recipe — seat self-fetches; ¬ fs-read skill body)\n"
@@ -127,7 +127,7 @@ def materialize_closed_detent_packet(
 <corpus>
 - Scoreboard: {board}
 - Use the `path-sim` skill (§ Closed-detent quick recipe; detent=closed)
-- Use the `agent-bus-discipline` skill
+- Use the `checkpoint-discipline` skill
 - Friction follow-on todo / spawned_by_friction on the gated Next-pickup row
 </corpus>
 

@@ -8,7 +8,7 @@ from cortex_store.dispatch_ops._thread_sidecar import write_thread_sidecar_for_s
 
 from scripts.model_manager import observation_event_conveyor as conv_events
 
-from . import bus_client, conveyor
+from . import bus_client
 from .checkpoint_schema import (
     aggregate_what_happened_plain,
     extract_remaining_work,
@@ -46,12 +46,7 @@ def compose_closeout_body(
     what_happened = aggregate_what_happened_plain(bodies)
     final_body = bodies[-1] if bodies else ""
     where_left = extract_remaining_work(final_body)
-    ledger = build_ledger(
-        root_id,
-        root_tags=root_tags,
-        on_conveyor_fn=lambda fid, slug: conveyor.is_on_conveyor(fid, slug),
-        stale_fn=conveyor.is_stale_unenrolled,
-    )
+    ledger = build_ledger(root_id, root_tags=root_tags)
     return render_closeout(
         root_id=root_id,
         root_subject=root_subject,
@@ -85,11 +80,7 @@ async def emit_closeout_rendered(
     window_count: int,
 ) -> None:
     """Emit manage.charter.closeout.rendered."""
-    ledger = build_ledger(
-        root_id,
-        on_conveyor_fn=lambda fid, slug: conveyor.is_on_conveyor(fid, slug),
-        stale_fn=conveyor.is_stale_unenrolled,
-    )
+    ledger = build_ledger(root_id)
     await conv_events.emit_manage_charter_closeout_rendered(
         root=root_id,
         reason=reason,

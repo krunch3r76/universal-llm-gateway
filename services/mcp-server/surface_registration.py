@@ -25,6 +25,7 @@ from tools.frontier import register_frontier_tools
 from tools.frontier_imagine import register_imagine_tools
 from tools.git_integrate import register_git_integrate_tools
 from tools.imprint import register_imprint_tools
+from tools.notify import register_notify_tools
 from tools.manage import register_manage_tools
 from tools.markdown_tool import register_markdown_tools
 from tools.model_status import register_model_status_tools
@@ -33,6 +34,7 @@ from tools.pipeline import register_pipeline_tools
 from tools.pipeline_consult import register_pipeline_consult_tools
 from tools.project import register_project_tools
 from tools.project_ask import register_project_ask_tool
+from tools.trigger import register_trigger_tool
 from tools.promote_document_to_evidence import (
     register_promote_document_to_evidence_tools,
 )
@@ -97,6 +99,8 @@ def register_tools_for_surface(mcp: FastMCP, surface: Surface) -> None:
         register_imprint_tools(mcp)
         register_delegate_tools(mcp)
         register_delegate_schema_transform(mcp)
+        register_notify_tools(mcp)
+        register_trigger_tool(mcp)
 
     if surface == "code":
         register_manage_tools(mcp)
@@ -115,3 +119,4 @@ def register_tools_for_surface(mcp: FastMCP, surface: Surface) -> None:
         register_security_tools(mcp)
         register_security_js_tools(mcp)
         register_project_ask_tool(mcp)
+        register_trigger_tool(mcp)

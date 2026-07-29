@@ -1,9 +1,9 @@
-"""Charter runner — CHECKPOINT continuation for standing roots.
+"""Charter runner — CHECKPOINT continuation for standing enrollments.
 
-Manage-hosted tick that admits one window per eligible enrolled root.
+Manage-hosted supervisor that launches one run per eligible enrollment on the roster.
 See ``cortex://notes/system/specs/charter-runner-tick.md``.
 
-Phase 3: kernel is sole admitter; heal/reload/eligibility/parse/materializer
+Phase 3: kernel is sole launcher; heal/reload/eligibility/parse/materializer
 surfaces deleted or absorbed into kernel packages.
 """
 

@@ -194,21 +194,6 @@ class CdpLegRow:
 
 
 @dataclass(frozen=True)
-class ConveyorItemRow:
-    """One friction-belt conveyor enrollment (``manage.charter.conveyor.*``)."""
-
-    friction_id: int
-    todo_slug: str | None = None
-    root_id: str | None = None
-    conveyor_root: str | None = None
-    state: str = "enrolled"
-    ticks_idle: int | None = None
-    enrolled_ms: int | None = None
-    last_signal_ms: int | None = None
-    age_ms: int | None = None
-
-
-@dataclass(frozen=True)
 class PathSimArcRow:
     """A path-sim arc. Declared for v1.1; ``arcs`` is present-but-empty in v1.
 
@@ -268,7 +253,6 @@ class SupervisorProjection:
     roots: tuple[CharterRootRow, ...] = ()
     sdk: tuple[SdkDispatchRow, ...] = ()
     cdp: tuple[CdpLegRow, ...] = ()
-    conveyor: tuple[ConveyorItemRow, ...] = ()
     attention: tuple[AttentionItem, ...] = ()
     arcs: Mapping[str, PathSimArcRow] = field(default_factory=dict)
     changed_hints: tuple[str, ...] = ()

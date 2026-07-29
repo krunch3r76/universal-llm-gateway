@@ -501,6 +501,13 @@ def register_frontier_tools(mcp: FastMCP) -> None:
           MCP-predicated skills on a non-MCP dispatch reject 422
           ``skills_mcp_predicated`` naming the offenders; scope-default
           predicated skills are skipped with an event, never rejected.
+          On roleless CDP generate (``model=cdp/<picker>``): code-MCP /
+          ``cursor_only`` skills (e.g. ``path-sim``) are inlined in
+          ``<skills_inline>`` XML — only ``shared_sync`` Claude slugs become
+          leading ``/<slug>\\n`` manifest lines for + → Skills attach.
+          Attach is best-effort: a slug not in the Customize list or a missing
+          + control is skipped silently; inline bodies in the prompt carry
+          delivery (friction a:26986).
 
         ``dispatch_thread_id`` — required compaction key and caller-owned
         thread persistence on the ``team-dispatch`` pipeline (generate/to_thread

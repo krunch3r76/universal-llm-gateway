@@ -12,8 +12,11 @@ from .host import (
     maybe_heal_admit_intent_orphan,
 )
 from .interval import (
+    DEFAULT_RECONCILE_INTERVAL_S,
     DEFAULT_TICK_INTERVAL_S,
+    ENV_RECONCILE_INTERVAL_S,
     ENV_TICK_INTERVAL_S,
+    reconcile_interval_from_env,
     tick_interval_from_env,
 )
 from . import hold
@@ -31,7 +34,9 @@ from .shadow import (
 __all__ = [
     "DEFAULT_AUTONOMOUS_STALE_S",
     "DEFAULT_CONSULT_STALE_S",
+    "DEFAULT_RECONCILE_INTERVAL_S",
     "DEFAULT_TICK_INTERVAL_S",
+    "ENV_RECONCILE_INTERVAL_S",
     "ENV_TICK_INTERVAL_S",
     "CharterRunnerTickLoop",
     "SHADOW_LEDGER_STARVE_ROOT",
@@ -49,5 +54,6 @@ __all__ = [
     "probe_giw_live_hold",
     "record_shadow_pass",
     "run_shadow_for_roots",
+    "reconcile_interval_from_env",
     "tick_interval_from_env",
 ]

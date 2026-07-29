@@ -24,7 +24,6 @@ from scripts.model_manager.ui.dispatch_monitor.ulg.snapshot_events import (
 
 _LIVE_FILTERS: tuple[str, ...] = (
     "manage.charter.tick.*",
-    "manage.charter.conveyor.*",
     "frontier.sdk.*",
     "cdp.generate.*",
     "frontier.poll.hint.issued",
@@ -44,9 +43,6 @@ _PRIORITY_SIGNALS: tuple[str, ...] = (
     "manage.charter.tick.paused",
     "manage.charter.tick.held",
     "manage.charter.tick.resumed",
-    "manage.charter.conveyor.enrolled",
-    "manage.charter.conveyor.stale",
-    "manage.charter.conveyor.disenrolled",
     "frontier.sdk.worker.completed",
     "frontier.sdk.worker.failed",
     "frontier.sdk.worker.queued",

@@ -1,4 +1,4 @@
-"""Charter closeout + conveyor observation emitters."""
+"""Charter closeout observation emitters."""
 
 from __future__ import annotations
 
@@ -26,92 +26,6 @@ async def emit_manage_charter_closeout_rendered(
     )
 
 
-async def emit_manage_charter_conveyor_enrolled(
-    *,
-    root: str,
-    friction_id: int,
-    todo_slug: str,
-    conveyor_root: str,
-) -> None:
-    """Follow-on todo appended to the standing friction conveyor."""
-    await _emit(
-        "manage.charter.conveyor.enrolled",
-        {
-            "root": root,
-            "friction_id": friction_id,
-            "todo_slug": todo_slug,
-            "conveyor_root": conveyor_root,
-        },
-    )
-
-
-async def emit_manage_charter_conveyor_stale(
-    *,
-    friction_id: int,
-    todo_slug: str,
-    root: str,
-    ticks_idle: int,
-) -> None:
-    """Conveyor enrollment demoted after CONVEYOR_STALE_TICKS without dispatch."""
-    await _emit(
-        "manage.charter.conveyor.stale",
-        {
-            "friction_id": friction_id,
-            "todo_slug": todo_slug,
-            "root": root,
-            "ticks_idle": ticks_idle,
-        },
-    )
-
-
-async def emit_manage_charter_conveyor_enroll_failed(
-    *,
-    root: str,
-    window_index: int,
-    error: str,
-    minted_count: int,
-) -> None:
-    """Harvest minted follow-ons but conveyor enroll raised — not silent."""
-    await _emit(
-        "manage.charter.conveyor.enroll_failed",
-        {
-            "root": root,
-            "window_index": window_index,
-            "error": error,
-            "minted_count": minted_count,
-        },
-    )
-
-
-async def emit_manage_charter_conveyor_disenrolled(
-    *,
-    friction_id: int,
-    todo_slug: str,
-    root: str,
-    reason: str,
-    was_stale: bool = False,
-) -> None:
-    """Enrollment removed from conveyor SoT (operator cancel, root close, …).
-
-    Distinct from ``stale`` (idle demotion that keeps the row). Disenroll deletes
-    the enrollment record and is the primary observability signal for belt exit.
-    """
-    await _emit(
-        "manage.charter.conveyor.disenrolled",
-        {
-            "friction_id": friction_id,
-            "todo_slug": todo_slug,
-            "root": root,
-            "reason": reason,
-            "was_stale": was_stale,
-        },
-    )
-
-
 __all__ = [
     "emit_manage_charter_closeout_rendered",
-    "emit_manage_charter_conveyor_disenrolled",
-    "emit_manage_charter_conveyor_enrolled",
-    "emit_manage_charter_conveyor_enroll_failed",
-    "emit_manage_charter_conveyor_stale",
 ]

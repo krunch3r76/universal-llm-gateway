@@ -185,7 +185,7 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
         Write path — use ``send`` (``post``/``reply`` are legacy aliases until 2026-09-01):
 
         Operations:
-          send          (new_slug XOR thread, to, subject, body, from?, from_agent?, summary?, tags?, enroll_charter_runner?, lifecycle_state?, after_turn?, status?, mark_read?, close?, attachments?, allow_long_body?, sidecar_content?, sidecar_slug?, supersedes_turn?) — **primary write op**. Exactly one of new_slug (new thread) or thread (continue) required; supersedes_turn (continue path only) is the database turn id to supersede structurally. slug uniqueness enforced on new_slug path (409 slug_exists on collision). Tag ``charter-runner`` is **reserved enrollment** — newly adding it requires ``enroll_charter_runner=true`` (422 reserved_enrollment_tag otherwise); keeping/removing never needs the flag. When sidecar_content is set the server writes cortex://notes/system/threads/<thread_id>-<slug>.md before inserting the turn, appends a trailing Sidecar: pointer to the body, and returns sidecar_uri + sidecar_sha256. sidecar_content cap 256KB. Prefer ``from=``; ``from_agent`` is a permanent alias. When omitted on ``/mcp/life`` or ``/mcp/code``, the server autofills ``web-anthropic`` or ``cursor`` respectively.
+          send          (new_slug XOR thread, to, subject, body, from?, from_agent?, summary?, tags?, enroll_charter_runner?, lifecycle_state?, after_turn?, status?, mark_read?, close?, attachments?, allow_long_body?, sidecar_content?, sidecar_slug?, supersedes_turn?) — **primary write op**. Exactly one of new_slug (new thread) or thread (continue) required; supersedes_turn (continue path only) is the database turn id to supersede structurally. slug uniqueness enforced on new_slug path (409 slug_exists on collision). Tag ``charter-runner`` is **reserved enrollment** — newly adding it requires ``enroll_charter_runner=true`` (422 reserved_enrollment_tag otherwise); keeping/removing never needs the flag. Enrollment auto-stamps spine tag ``role:root``. When sidecar_content is set the server writes cortex://notes/system/threads/<thread_id>-<slug>.md before inserting the turn, appends a trailing Sidecar: pointer to the body, and returns sidecar_uri + sidecar_sha256. sidecar_content cap 256KB. Prefer ``from=``; ``from_agent`` is a permanent alias. When omitted on ``/mcp/life`` or ``/mcp/code``, the server autofills ``web-anthropic`` or ``cursor`` respectively.
           request       (new_slug XOR thread, to='cursor', subject, body, from?, from_agent?, summary?, tags?, sidecar_content?, sidecar_slug?, desired_model?, desired_effort?, contract?, require_attended?) — life-callable Cursor Auto channel. Injects lane:cursor-auto; arms Auto when a live handler heartbeats (else handler_status=no-auto-handler); returns {thread, turn, handler_status, poll_hint}. ``summary`` = standing ULG so-what title (also fail-soft from body ``so_what:`` / ``ulg_gain:``). require_attended=true (wire or DIRECTIVE body OR) ⇒ terminal status:needs-attended reason=operator_require_attended. ¬ dual-tag lane:life-to-code on degrade.
           threads       (status?, tags?, lifecycle_state?)              — list threads; status: active|blocked|waiting|closed|all (default active); tags: AND-filter; lifecycle_state: pending|admitted|delivered|failed (exact match)
           create_thread (slug, summary?, tags?, enroll_charter_runner?, lifecycle_state?, thread_id?) — create a thread without a turn; use lifecycle_state="pending" for lifecycle-managed threads that will be dispatched later; ``enroll_charter_runner=true`` required to include tag ``charter-runner``
@@ -230,12 +230,18 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
           TurnStatus   (per-turn workflow state, on each Turn):     open | resolved | superseded | waiting
           ThreadStatus (thread-level lifecycle, on ThreadDetail):   active | blocked | waiting | closed
 
-        Tags (free-form strings on threads):
-          Suggested `namespace:value` convention — nothing is enforced:
+        Tags — thin classification + free-form facets:
+          Classification (enforced on write):
+            Spine: role:root ⇒ root (standing continuity); absent ⇒ work (default).
+              Only role:root is reserved; other role:* tags → 422 unknown_role_tag.
+            Enrollment: charter-runner (dual-key; enroll_charter_runner=true to newly
+              add). Enrolled ⇒ auto-stamps role:root.
+          Facet convention (suggested, not enforced):
             project:<name>   — project scoping (e.g. project:claudeburst)
-            type:<kind>      — intent (bug|feature|discussion|review|post-mortem)
+            type:<kind>      — intent (bug|feature|discussion|review|post-mortem|monitor)
             agent:<name>     — agent ownership/origin
             priority:<level> — if useful (high|medium|low)
+          Not classification: bus_lifecycle:*, DB status/bus_lifecycle_state, thread 480.
           `threads(tags=[a,b])` matches threads that have ALL listed tags.
 
         Examples:

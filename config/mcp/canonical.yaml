@@ -18,6 +18,7 @@ domains:
 - dispatch
 - imprint
 - delegate
+- notify
 - retrieve
 - tool_search
 - team_dispatch
@@ -4416,6 +4417,48 @@ tools:
   introduced: '2026-07-13'
   endpoint_visibility:
   - life
+- canonical_name: notify_send
+  domain: notify
+  operation: send
+  dispatcher_call_shape:
+    tool: notify
+    dispatch_key: op
+    dispatch_value: send
+  flat_call_shape:
+    tool: notify
+    substrate_qualified: user-vortex__notify
+  fol_descriptor: "Attention pager — server-side proxy to email-bridge /pager/notify.\n\
+    Fields: subject (≤120), body (≤300), tag (≤40), ref (turn or cortex:// URI — mandatory\n\
+    from caller; missing ref degrades to (unreferenced)). Server stamps from_agent +\n\
+    timestamp. Honors PAGER_NOTIFY_ENABLED=0. Delivery identity stays in email-bridge\n\
+    config — never in agent prose. Cowork operator seat only; agent_skill:pager-notify\n\
+    is cursor_only and not executable here.\n"
+  json_schema:
+    type: object
+    properties:
+      subject:
+        type: string
+        maxLength: 120
+      body:
+        type: string
+        maxLength: 300
+      ref:
+        type: string
+      tag:
+        type: string
+        maxLength: 40
+    required:
+    - subject
+    - body
+  skill_uri: agent_skill:pager-notify
+  seat_visibility:
+  - mcp
+  - mcp_claude
+  mandate_safety: mutating
+  cache_priority: on_demand
+  introduced: '2026-07-28'
+  endpoint_visibility:
+  - life
 domain_endpoints:
   default:
   - life
@@ -4450,6 +4493,8 @@ domain_endpoints:
     - life
     delegate:
     - life
+    notify:
+    - life
 surface_primary_domains:
   life:
   - cortex
@@ -4463,6 +4508,7 @@ surface_primary_domains:
   - dispatch
   - imprint
   - delegate
+  - notify
   code:
   - cortex
   - cortex_brief

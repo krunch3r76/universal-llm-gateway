@@ -34,7 +34,7 @@ from .board_lines import (
     section_bar,
     tick_objective_line,
 )
-from .curses_sections import paint_attention, paint_belt, paint_lease
+from .curses_sections import paint_attention, paint_lease
 from .dtos import CdpLegRow, CharterRootRow, SdkDispatchRow, SupervisorProjection
 from .sdk_posture import row_role
 from .watch import _cdp_line, _ms, _truncate
@@ -111,7 +111,6 @@ class CursesBoard:
             budgets["roots"],
             budgets["aside"],
         )
-        y = self._paint_belt(projection, y, width, height, budgets["belt"])
         y = self._paint_lease(projection, y, width, height)
         y = self._paint_sdk(projection, sdk_live, y, width, height, budgets["sdk"])
         y = self._paint_cdp(projection, cdp_live, y, width, height, budgets["cdp"])
@@ -170,15 +169,12 @@ class CursesBoard:
         cdp = min(len(cdp_live), max(2, usable // 6)) if cdp_live else 0
         roots = min(len(roots_active), max(2, usable // 5)) if roots_active else 1
         aside = min(len(roots_aside), max(1, usable // 8)) if roots_aside else 0
-        belt_n = len(projection.conveyor)
-        belt = min(belt_n, max(3, usable // 6)) if belt_n else 1
         return {
             "attention": att,
             "cdp": cdp,
             "sdk": sdk,
             "roots": roots,
             "aside": aside,
-            "belt": belt,
         }
 
     def _paint_tick(
@@ -283,16 +279,6 @@ class CursesBoard:
             self._safe_addstr(y, 0, empty, 0)
             y += 1
         return y
-
-    def _paint_belt(
-        self,
-        projection: SupervisorProjection,
-        y: int,
-        width: int,
-        height: int,
-        row_cap: int,
-    ) -> int:
-        return paint_belt(self, projection, y, width, height, row_cap)
 
     def _paint_lease(
         self, projection: SupervisorProjection, y: int, width: int, height: int

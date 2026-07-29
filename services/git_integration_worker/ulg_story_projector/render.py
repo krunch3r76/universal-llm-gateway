@@ -155,7 +155,25 @@ def _seat_subject(payload: dict[str, Any], mode: EnvelopeMode) -> str:
 
 def _story_id(payload: dict[str, Any]) -> str:
     value = payload.get("story_id")
-    return str(value).strip() if value else "-"
+    if value is None or (isinstance(value, str) and not str(value).strip()):
+        trigger_id = payload.get("trigger_id")
+        if trigger_id:
+            return str(trigger_id)
+        return "-"
+    return str(value).strip()
+
+
+def _provenance_source_tags(payload: dict[str, Any]) -> str:
+    parts: list[str] = []
+    story_src = payload.get("story_id_source")
+    if story_src:
+        parts.append(f"src:{story_src}")
+    purpose_src = payload.get("purpose_source")
+    if purpose_src:
+        parts.append(f"ps:{purpose_src}")
+    if not parts:
+        return ""
+    return " " + " ".join(parts)
 
 
 def _dispatch_id(payload: dict[str, Any]) -> str:
@@ -209,8 +227,9 @@ def provenance_tail(
     seq: int,
     payload: dict[str, Any],
 ) -> str:
+    tags = _provenance_source_tags(payload)
     return (
-        f"[seq:{seq} story:{_story_id(payload)} dispatch:{_dispatch_id(payload)}]"
+        f"[seq:{seq} story:{_story_id(payload)} dispatch:{_dispatch_id(payload)}{tags}]"
     )
 
 
@@ -323,6 +342,30 @@ def render_event_line(
                 f"cursor-auto {mapping.verb} {thread} (status {status}) — "
                 f"asked by {seat}, {purpose}."
             )
+    elif signal == "giw.trigger.fired":
+        exec_id = str(payload.get("execution_id") or "unknown execution")
+        sentence = (
+            f"Trigger service {mapping.verb} {purpose} ({seat}) — "
+            f"execution {exec_id}."
+        )
+    elif signal == "giw.trigger.reconciled":
+        terminal = str(payload.get("terminal_status") or "unknown")
+        sentence = (
+            f"Trigger service {mapping.verb} {purpose} ({seat}) — "
+            f"terminal {terminal}."
+        )
+    elif signal == "giw.trigger.fire_failed":
+        reason = str(payload.get("reason") or "error not recorded")
+        retryable = payload.get("retryable")
+        retry_bit = " (retryable)" if retryable else ""
+        sentence = (
+            f"Trigger service {mapping.verb} {purpose} ({seat}) — "
+            f"{reason}{retry_bit}."
+        )
+    elif signal == "giw.trigger.reclaimed":
+        sentence = (
+            f"Trigger service {mapping.verb} {purpose} ({seat})."
+        )
     else:
         return None
 

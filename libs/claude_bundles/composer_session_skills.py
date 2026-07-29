@@ -487,21 +487,30 @@ async def _click_skill_slug(page: Page, slug: str) -> None:
 
 
 async def attach_session_skills(page: Page, slugs: list[str], *, composer) -> list[str]:
-    """Attach each Customize skill via + → Skills → pick. Returns attached slugs."""
+    """Attach each Customize skill via + → Skills → pick.
+
+    Best-effort per slug: a missing list entry or unavailable + control is
+    skipped and omitted from the return list so callers can fail closed via
+    ``attest_delivery_channels`` for **required shared_sync** (24594). Inline
+    ``<skills_inline>`` bodies do **not** substitute for a failed required
+    attach — they deliver non-attach / ``cursor_only`` surfaces only (26986).
+    """
     if not slugs:
         return []
-    require_compose_surface(page)
     attached: list[str] = []
     for slug in slugs:
-        require_compose_surface(page)
-        await composer.click(force=True)
-        await page.wait_for_timeout(350)
-        await _open_plus_skills_menu(page)
-        await _click_skills_entry(page)
-        await page.wait_for_timeout(600)
-        await _click_skill_slug(page, slug)
-        await page.wait_for_timeout(450)
-        await page.keyboard.press("Escape")
-        await page.wait_for_timeout(250)
+        try:
+            require_compose_surface(page)
+            await composer.click(force=True)
+            await page.wait_for_timeout(350)
+            await _open_plus_skills_menu(page)
+            await _click_skills_entry(page)
+            await page.wait_for_timeout(600)
+            await _click_skill_slug(page, slug)
+            await page.wait_for_timeout(450)
+            await page.keyboard.press("Escape")
+            await page.wait_for_timeout(250)
+        except SkillDeliveryError:
+            continue
         attached.append(slug)
     return attached

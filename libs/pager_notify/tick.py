@@ -11,8 +11,10 @@ from pager_notify.so_what import (
     SMS_BODY_MAX,
     SMS_SUBJECT_MAX,
     clip,
+    standing_skip_signature,
     tick_should_page,
 )
+from pager_notify.state import claim_tick_standing_page
 
 # Fi SMS body budget (email-bridge /pager/notify also truncates at 300).
 
@@ -167,6 +169,11 @@ async def notify_tick_complete(
         skipped_by_reason=skipped_by_reason,
     ):
         return False
+    # Standing stops (blocked / stopped:*) otherwise SMS every tick interval.
+    if admitted <= 0 and closed_count <= 0:
+        standing_sig = standing_skip_signature(skipped_by_reason)
+        if standing_sig is not None and not claim_tick_standing_page(standing_sig):
+            return False
     subject = format_tick_subject(
         roots=roots,
         in_flight=in_flight,

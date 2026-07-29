@@ -21,8 +21,6 @@ def family_key_for_signal(signal: str) -> str | None:
     """Map a folded signal to the subscribe family it belongs to."""
     if signal.startswith("manage.charter.tick."):
         return "manage.charter.tick.*"
-    if signal.startswith("manage.charter.conveyor."):
-        return "manage.charter.conveyor.*"
     if signal.startswith("frontier.sdk.") or signal.startswith("pipeline.frontier."):
         return "frontier.sdk.*"
     if signal.startswith("cdp.generate."):

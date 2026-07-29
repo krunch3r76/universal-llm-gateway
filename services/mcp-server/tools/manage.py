@@ -272,7 +272,7 @@ def register_manage_tools(mcp: FastMCP) -> None:
                                              drain probes WITHOUT acquiring any
                                              restart slot — safe to poll live.
                                              Also returns charter_hold {held, …}.
-          charter_reload (no service needed) — restart the charter tick loop in place
+          charter_reload (no service needed) — restart the charter runner loop in place
                                              (no TUI quit). Phase 3 retired
                                              importlib.reload: this does NOT re-import
                                              modules and returns count=0 /

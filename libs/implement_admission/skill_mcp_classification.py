@@ -29,3 +29,14 @@ def skill_mcp_surface_required(slug_or_entity_id: str) -> str:
         raise SkillClassificationMissingError(
             f"canonical slug absent from skill catalog: {slug_or_entity_id!r}"
         ) from exc
+
+
+def skill_requires_code_mcp(slug_or_entity_id: str) -> bool:
+    """True when the skill needs the code MCP surface (runtime residency signal).
+
+    ``mcp_surface_required: code`` gates tool-surface availability for seats that
+    mount the code MCP — it is **not** a CDP ``skills=`` reject predicate.
+    CDP delivery disposition uses ``surface_class`` only (see
+    ``partition_cdp_skills``).
+    """
+    return skill_mcp_surface_required(slug_or_entity_id) == "code"

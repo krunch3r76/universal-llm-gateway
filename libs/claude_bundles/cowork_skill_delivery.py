@@ -33,6 +33,13 @@ DeliveryChannel = Literal["inject", "customize_skills", "unavailable"]
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _LEADING_SLASH_SKILL = re.compile(r"^(/[\w-]+)\r?\n")
+# Wire contract for inline channel tags — pin in tests (R-after A4 / H1).
+_INLINE_SKILL_SLUG = re.compile(r'<skill slug="([^"]+)"')
+# Required authority sealed at staging — NOT derived from attach/inline channels
+# (amended A4: required must survive XML drop/rename; R-after decisive_falsifier).
+_CDP_REQUIRED_AUTHORITY = re.compile(
+    r"<!--cdp-required-skills:([^\n]*?)-->\r?\n?"
+)
 
 # Operator 2026-07-26: multi-skill attach = composer + → Skills → pick-each.
 # Flag name is historical (pre-attach era); True means multi-shared_sync
@@ -98,7 +105,13 @@ def classify_skill_delivery(slug: str) -> SkillDeliveryPlan:
 
 
 def partition_cdp_skills(slugs: list[str]) -> tuple[list[str], list[str]]:
-    """Split caller skills into (claude slash slugs, inline slugs).
+    """Sole CDP ``skills=`` disposition authority — ``surface_class`` → channel.
+
+    ``shared_sync`` slugs route to the Customize attach manifest (leading
+    ``/<slug>\\n`` lines). All other catalog surface classes (e.g.
+    ``cursor_only`` such as ``path-sim``) route to ``<skills_inline>`` XML.
+    ``mcp_surface_required`` is **not** consulted here — code-MCP classification
+    does not reject or reroute CDP delivery.
 
     Raises ``SkillDeliveryError`` / ``KeyError`` when a slug is not catalogued.
     """
@@ -233,6 +246,7 @@ def prepend_cdp_dispatch_skills(
     """
     if not slugs:
         return prompt, [], []
+    requested = [str(s).strip() for s in slugs if str(s).strip()]
     slash_slugs, inline_slugs = partition_cdp_skills(list(slugs))
     slash_block = (
         format_cdp_hybrid_prefix(slash_slugs)
@@ -248,12 +262,13 @@ def prepend_cdp_dispatch_skills(
         prefix = f"{slash_block}\n{inline_block}"
     else:
         prefix = f"{slash_block}{inline_block}"
+    authority = render_cdp_required_authority(requested)
     if not prefix:
-        return prompt, slash_slugs, bodies
+        return f"{authority}{prompt}", slash_slugs, bodies
     # Blank line between slash chip lines and body when no XML inline follows.
     if slash_block and not inline_block and not prompt.startswith("\n"):
         prefix = f"{slash_block}\n"
-    return f"{prefix}{prompt}", slash_slugs, bodies
+    return f"{prefix}{authority}{prompt}", slash_slugs, bodies
 
 
 def plan_skill_delivery(slugs: list[str]) -> list[SkillDeliveryPlan]:
@@ -325,6 +340,123 @@ def prepend_injected_skills(
     return f"{block}{prompt}", bodies
 
 
+def render_cdp_required_authority(slugs: list[str]) -> str:
+    """Seal ``skills=`` required authority outside attach/inline channels.
+
+    Marker wire shape: ``<!--cdp-required-skills:slug1,slug2-->`` (comma-separated,
+    no spaces). Authority must not be reconstructed solely from delivery channels
+    — dropping ``<skills_inline>`` must not shrink ``required`` (A4 / R-after H1).
+    """
+    canon = [str(s).strip() for s in slugs if str(s).strip()]
+    return f"<!--cdp-required-skills:{','.join(canon)}-->\n"
+
+
+def extract_cdp_required_authority(text: str) -> list[str] | None:
+    """Return sealed required slugs, or ``None`` when the marker is absent."""
+    match = _CDP_REQUIRED_AUTHORITY.search(text)
+    if match is None:
+        return None
+    raw = match.group(1).strip()
+    if not raw:
+        return []
+    return [part.strip() for part in raw.split(",") if part.strip()]
+
+
+def strip_cdp_required_authority(text: str) -> str:
+    """Remove the first required-authority marker from a sealed prompt."""
+    return _CDP_REQUIRED_AUTHORITY.sub("", text, count=1)
+
+
+def extract_inline_slugs_from_sealed(rest: str) -> list[str]:
+    """Return slug names from a staged ``<skills_inline>`` XML block in ``rest``.
+
+    Pin: only ``<skill slug=\"…\">`` attributes match (``_INLINE_SKILL_SLUG``).
+    A rename to ``name=`` yields no inline slug — required authority must still
+    come from ``<!--cdp-required-skills:…-->``, not this parse.
+    """
+    if "<skills_inline>" not in rest:
+        return []
+    return _INLINE_SKILL_SLUG.findall(rest)
+
+
+def parse_cdp_sealed_skill_channels(
+    text: str,
+) -> tuple[list[str], list[str], str]:
+    """Reconstruct attach vs inline *delivery channels* from a sealed CDP prompt.
+
+    Combines the leading slash manifest (attach) with ``<skills_inline>`` tags
+    (inline). Does **not** own ``required`` — callers must use
+    ``extract_cdp_required_authority`` (staging ``skills=``) so attest cannot
+    go skill-blind when a delivery channel is dropped from the seal.
+    """
+    cleaned = strip_cdp_required_authority(text)
+    slash_tokens, rest = split_leading_slash_skills(cleaned)
+    slugs_from_slash = [token.removeprefix("/") for token in slash_tokens]
+    attach_slugs = [slug for slug in slugs_from_slash if is_claude_slug(slug)]
+    inline_slugs = extract_inline_slugs_from_sealed(rest)
+    return attach_slugs, inline_slugs, rest
+
+
+def attest_delivery_channels(
+    required: list[str],
+    *,
+    attached: list[str],
+    inlined: list[str],
+) -> list[str]:
+    """Fail closed when a required slug lacks attach or inline delivery.
+
+    Abort predicate: ``abort iff ∃ required slug with no delivery channel after
+    attach + seal scan`` — a slug is delivered when it appears in ``attached``
+    (Customize + → Skills chip) or ``inlined`` (``<skills_inline>`` sealed at
+    staging).
+
+    Axes (do not conflate):
+    - ``surface_class`` — CDP delivery channel via ``partition_cdp_skills``
+    - ``mcp_surface_required`` — runtime MCP residency signal; **not** a CDP
+      ``skills=`` reject predicate (friction a:26986 / QA-1).
+    """
+    if not required:
+        return []
+    attached_set = {str(s).strip() for s in attached if str(s).strip()}
+    inlined_set = {str(s).strip() for s in inlined if str(s).strip()}
+    missing = [
+        slug
+        for slug in required
+        if slug not in attached_set and slug not in inlined_set
+    ]
+    if missing:
+        raise SkillDeliveryError(
+            "required skills undelivered after attach + inline seal: "
+            f"{missing} (attached={sorted(attached_set)}, "
+            f"inlined={sorted(inlined_set)}) — fail closed (friction 24594)"
+        )
+    return list(required)
+
+
+def ledger_skills_channels(
+    required: list[str],
+    *,
+    attached: list[str],
+    inlined: list[str],
+) -> list[dict[str, str]]:
+    """Build one ledger row per requested slug with ``delivered_via`` channel.
+
+    Each row records ``attach``, ``inline``, or ``undelivered``. Callers assert
+    ``len(rows) == len(required)`` before treating a dispatch as skill-backed.
+    """
+    attached_set = {str(s).strip() for s in attached if str(s).strip()}
+    inlined_set = {str(s).strip() for s in inlined if str(s).strip()}
+    rows: list[dict[str, str]] = []
+    for slug in required:
+        if slug in attached_set:
+            rows.append({"slug": slug, "delivered_via": "attach"})
+        elif slug in inlined_set:
+            rows.append({"slug": slug, "delivered_via": "inline"})
+        else:
+            rows.append({"slug": slug, "delivered_via": "undelivered"})
+    return rows
+
+
 def attest_skills_chip_enabled(
     enabled: list[str] | None,
     *,
@@ -379,14 +511,20 @@ def ledger_skills_record(
     *,
     enabled: list[str],
     injected: list[str],
+    required: list[str] | None = None,
     channel: str = "inject",
 ) -> dict[str, Any]:
-    """Ledger shape for CDP runners — ok iff delivery succeeded."""
-    delivered = sorted(set(enabled) | set(injected))
+    """Ledger shape for CDP runners — ok iff every required slug has a channel."""
+    attached = list(enabled)
+    inlined = list(injected)
+    req = list(required) if required is not None else sorted(set(attached) | set(inlined))
+    rows = ledger_skills_channels(req, attached=attached, inlined=inlined)
+    delivered = [row["slug"] for row in rows if row["delivered_via"] != "undelivered"]
     return {
-        "ok": bool(delivered),
+        "ok": bool(req) and len(delivered) == len(req),
         "enabled": list(enabled),
         "injected": list(injected),
+        "rows": rows,
         "channel": channel,
         "note": github_cannot_load_skill_trees_note(),
     }

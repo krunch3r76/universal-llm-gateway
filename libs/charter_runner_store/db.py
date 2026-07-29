@@ -18,6 +18,10 @@ from .migrations.migration_002_conveyor_phase import (
     MIGRATION_ID as MIGRATION_002_ID,
     migrate as migrate_002,
 )
+from .migrations.migration_003_ledger_age import (
+    MIGRATION_ID as MIGRATION_003_ID,
+    migrate as migrate_003,
+)
 
 logger = get_logger(__name__)
 
@@ -76,6 +80,7 @@ def apply_migrations(conn: sqlite3.Connection) -> None:
     pending = [
         (MIGRATION_001_ID, migrate_001),
         (MIGRATION_002_ID, migrate_002),
+        (MIGRATION_003_ID, migrate_003),
     ]
     for mig_id, migrate_fn in pending:
         if mig_id in applied:

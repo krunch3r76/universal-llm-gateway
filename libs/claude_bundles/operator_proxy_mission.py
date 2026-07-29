@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import re
 
+from claude_bundles.act_receipt import format_act_receipt
 from claude_bundles.cowork_skill_delivery import (
     format_cdp_slash_prefix,
     split_leading_slash_skills,
@@ -25,43 +26,129 @@ MISSION_SKILL_SLUGS: tuple[str, ...] = (
     "reasoning-posture",
 )
 
+# Derived from config/mcp/canonical.yaml surface_primary_domains.life (A9).
+LIFE_SURFACE_LEGAL_TOOLS: frozenset[str] = frozenset(
+    {
+        "cortex",
+        "cortex_brief",
+        "agent_bus",
+        "agent_bus_read",
+        "fs",
+        "rag",
+        "retrieve",
+        "tool_search",
+        "dispatch",
+        "imprint",
+        "delegate",
+        "notify",
+    }
+)
+
+# CODE_EXTRA on /mcp/code — forbidden as direct life-seat tool calls (A9).
+LIFE_SURFACE_FORBIDDEN_TOOLS: frozenset[str] = frozenset(
+    {
+        "team_dispatch",
+        "manage",
+        "observability",
+        "panel_dispatch",
+        "pipeline",
+        "project_ask",
+    }
+)
+
 _BRIEFING_MARKER = "## Mission seat map (BINDING"
-_BRIEFING_BLOCK = """\
+_FORBIDDEN_HEADING = "## Life surface — FORBIDDEN verbs (BINDING)"
+_ACT_RECEIPT_HEADING = "## ACT-RECEIPT (BINDING — trigger-fired / mission closeout)"
+
+
+def _legal_tools_line() -> str:
+    return ", ".join(f"`{t}`" for t in sorted(LIFE_SURFACE_LEGAL_TOOLS))
+
+
+def _forbidden_tools_line() -> str:
+    return ", ".join(f"`{t}`" for t in sorted(LIFE_SURFACE_FORBIDDEN_TOOLS))
+
+
+def _receipt_example() -> str:
+    return format_act_receipt(
+        commission_kind="agent_bus_request",
+        evidence_uri="cortex://notes/system/ephemeral/example/act-evidence.md",
+        trigger_id="example-trigger-id",
+    )
+
+
+def _build_briefing_block() -> str:
+    receipt_example = _receipt_example()
+    return f"""\
 ## Mission seat map (BINDING — operator-proxy mission)
 
 | Seat | Role |
 |---|---|
 | **CDP Opus (this seat)** | **Operator** — DIRECTIVE / DISPOSITION on a private `agent_bus.request` lane; cite endeavor root in `arc:` only |
-| **CDP Fable** | **Advisor** — escalate via `team_dispatch(model=cdp/fable)` (`project_ask` escape only); Opus may fire Fable without paging Kaywan |
+| **CDP Fable** | **Advisor** — escalate via **`agent_bus.request`** to a code-seat consult thread (life-reachable); code-surface tools are **not** callable from this life seat |
 | **cursor-auto → nested cursor-sdk** | **Executor** — B1 direct nest under Auto lease, or B2 mint+release for tick admit (`nest_under` when gate shared — silence ⇒ stall) |
-| **charter-runner tick** | **Sole admitter** for enrolled roots — mint+`enroll_rows` belt path; Auto does not improvise tip enqueue |
+| **charter-runner** | **Sole launcher** for enrollments — mint+`enroll_rows` belt path; Auto does not improvise tip enqueue |
 
-**Mission default (BINDING — 2026-07-28):** `bind → implement at will`. After the
-architecture bind (and Fable when needed), this seat **commissions cursor-auto
+## Life surface act path (BINDING)
+
+Legal verbs on `/mcp/life` (mechanized from `surface_primary_domains.life`): {_legal_tools_line()}.
+
+Act on code-surface capabilities only by **commissioning** through life-reachable paths:
+`agent_bus.request` (B1/B2 to cursor-auto) or charter enroll (`enroll_charter_runner=true`).
+
+{_FORBIDDEN_HEADING}
+
+Never invoke these as life-seat MCP tools (they live on `/mcp/code` only): {_forbidden_tools_line()}.
+
+Within the seat-map / escalate section above, the Fable escalate verb is **`agent_bus`**, never life-tool `team_dispatch`.
+
+{_ACT_RECEIPT_HEADING}
+
+Before CLOSEOUT on trigger-fired or operator-proxy mission work, emit an ACT-RECEIPT fence
+(grammar SOT: `libs/claude_bundles/act_receipt.py`). Shipped `commission_kind` values:
+`agent_bus_request`, `charter_enroll` only.
+
+Example (must parse via `parse_act_receipt`):
+
+{receipt_example}
+
+**Mission default (BINDING — 2026-07-28):** `idea → bind → implement at will → live autonomy`.
+After the architecture bind (and Fable when needed), this seat **commissions cursor-auto
 implement** via `agent_bus.request` without waiting for Kaywan ratification or a
 separate IDE helm turn — unless the mission packet **explicitly** scopes implement
 out. Write boundary unchanged: Opus directs; cursor-auto executes repo writes.
-Anti-pattern: closing a mission at bind CLOSEOUT when ACs are already executable.
+**Verify independently with cursor-auto** (tests, probes, health) — do not wake Kaywan
+to confirm what Auto can confirm. **cursor-auto may itself be modified** when that
+extends capability or effectiveness. Anti-pattern: closing at bind CLOSEOUT when ACs
+are already executable, or `COME TO IDE` for ordinary progress.
 
 Work posting SOT: `cortex://notes/system/specs/cursor-auto-tick-work-posting.md`
+
+**Revocation (BINDING):** disable the trigger row via GIW schedule API for future fires;
+revoke in-flight code-side commission lanes via operator action on the endeavor root —
+do not rely on briefing prose alone.
 
 **Claude.ai Authorize-triggers (BINDING):** scheduling triggers are an **option**.
 Product may prompt Kaywan to authorize triggers (⊃ schedule-alone). **Kaywan
 always Approves** — expect the click, ¬ uncertain, ¬ work around. After fire:
 autonomous or ping Kaywan. SOT: `cortex://notes/system/specs/claude-ai-cowork-trigger-auth-gate.md`
 
-**Inform Kaywan while operating (SEEDS — Opus+Fable bind architecture):**
-Kaywan being told **what the seat is doing** in **natural language** is itself
-the point — not tool-only. Paths may diverge from the story-wire journal.
-**Pager v1** (direct Fi/`/pager/notify`) is welcome for attention; later optional
-server-mediated doorbell via journal. Journal path = complementary durable story,
-not a hard gate on awareness. SOT: `cortex://notes/system/specs/life-mcp-story-wire-update.md`
-· a:26834 (supersedes a:26831)
+**Inform Kaywan (BINDING):** two pager classes — (1) **Awareness** welcome: NL pings for
+progress, insights, or anything interesting (subject must **not** say `COME TO IDE`;
+he need not open Cursor). (2) **Interrupt:** subject **`COME TO IDE`** only for
+**mission debrief** or when **all other options are exhausted**. Write facts to the
+turn/sidecar first, then deliver. Never page while he is in chat with you. Do not wait
+on the story-wire projector for attention. v1 delivery = life MCP `notify` (ref required;
+`(unreferenced)` degrade OK). SOT: `cortex://notes/system/specs/life-mcp-story-wire-update.md`
+· a:26834 · a:26841 · `cdp-operator-proxy` inv 22(d).
 
-Complete without paging Kaywan unless Fable returns `ESCALATE` + `minimal_question`,
-or a true operator-only gate (Authorize-triggers: page once if away, then proceed —
-approval is standing).
+Complete without `COME TO IDE` unless mission debrief or options exhausted (Fable
+`ESCALATE` + `minimal_question`, or a true operator-only gate). Authorize-triggers:
+page once if away, then proceed — approval is standing.
 """
+
+
+_BRIEFING_BLOCK = _build_briefing_block()
 
 
 def is_operator_proxy_mission_purpose(purpose: str | None) -> bool:
@@ -91,7 +178,6 @@ def ensure_operator_proxy_mission_prompt(text: str) -> str:
     rest_body = rest.lstrip("\n")
     if _BRIEFING_MARKER not in rest_body:
         rest_body = f"{_BRIEFING_BLOCK.strip()}\n\n{rest_body}".rstrip() + "\n"
-    # format_cdp_slash_prefix ends with \\n per slug; keep one blank line before body.
     return f"{prefix}\n{rest_body}"
 
 
@@ -111,8 +197,11 @@ def purpose_implies_mission(purpose: str | None, prompt: str | None = None) -> b
 
 
 __all__ = [
+    "LIFE_SURFACE_FORBIDDEN_TOOLS",
+    "LIFE_SURFACE_LEGAL_TOOLS",
     "MISSION_SKILL_SLUGS",
     "OPERATOR_PROXY_MISSION_PURPOSES",
+    "_FORBIDDEN_HEADING",
     "ensure_operator_proxy_mission_prompt",
     "is_operator_proxy_mission_purpose",
     "purpose_implies_mission",

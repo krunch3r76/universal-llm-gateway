@@ -69,21 +69,6 @@ PHASE1_SEEDS: tuple[SeedConfirm, ...] = (
     ),
 )
 
-def enroll_on_arrival_default_seed(root_id: str) -> SeedConfirm:
-    """Event-driven friction conveyor — birth seed for ``charter-friction-enroll-on-arrival``."""
-    return SeedConfirm(
-        root_id=root_id,
-        pickup_gid="G1",
-        pickup_lane="judgment",
-        pickup_executor="cursor/composer-2.5",
-        attendance="autonomous",
-        scoreboard_uri=(
-            "cortex://notes/system/threads/"
-            "charter-friction-enroll-on-arrival-scoreboard.md"
-        ),
-    )
-
-
 _PHASE1_BY_ID = {seed.root_id: seed for seed in PHASE1_SEEDS}
 
 
@@ -135,29 +120,6 @@ def ensure_root_ledger_seed(
         return True
     finally:
         conn.close()
-
-
-def conveyor_default_seed(root_id: str) -> SeedConfirm:
-    """Default SeedConfirm for the friction conveyor (worker path).
-
-    Ledger field defaults here do not license admit-shaped empty standing tip
-    birth — a forever-open gated tip dressed as work with ``executor=pending``
-    thrashes the sole admitter; legal wait = marked gated standing tip fenced
-    by kernel ``empty_hopper`` NOOP (a:26710).
-    """
-    known = _PHASE1_BY_ID.get(root_id)
-    if known is not None:
-        return known
-    return SeedConfirm(
-        root_id=root_id,
-        pickup_gid="G9",
-        pickup_lane="judgment",
-        pickup_executor="cursor/grok-4.5",
-        attendance="attended",
-        scoreboard_uri=(
-            f"cortex://notes/system/threads/{root_id}-charter-scoreboard.md"
-        ),
-    )
 
 
 def seed_phase1_roots() -> list[dict]:

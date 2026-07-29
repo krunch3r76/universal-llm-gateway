@@ -85,7 +85,7 @@ consult_role: judgment_gap + poll_hint / from=cdp bus-turn so the next tick
 re-admits.
 [window] end with exactly one CHECKPOINT on the root, then stop — no worker resume.
 - Use the `consult-routing` skill (canonical slug — seat self-fetches)
-- Use the `agent-bus-discipline` skill (canonical slug — seat self-fetches)
+- Use the `checkpoint-discipline` skill (canonical slug — seat self-fetches)
 - Use the `path-sim` skill § Autonomous charter procession (consult-stop awareness)
 </invariants>"""
 
@@ -129,7 +129,7 @@ mismatch/missing/ambiguous/malformed/malformed_uri/unreadable (reason=stale_r_co
 If refused: holder refreshes Sidecars (re-fs.read → rewrite hash → re-CHECKPOINT);
 ¬ this consult seat auto-rewrites Sidecars (a:26095).
 - Use the `consult-routing` skill (canonical slug — seat self-fetches)
-- Use the `agent-bus-discipline` skill (canonical slug — seat self-fetches)
+- Use the `checkpoint-discipline` skill (canonical slug — seat self-fetches)
 - Use the `path-sim` skill § Autonomous charter procession (R-admit consult hosting)
 </invariants>"""
 
@@ -140,7 +140,7 @@ def _task_guidance_judgment(
     return f"""\
 <task_guidance>
 ## Resume step 0 (do first)
-1. Load consult-routing + agent-bus-discipline (§ Standing root threads) +
+1. Load consult-routing + checkpoint-discipline +
    path-sim (§ Autonomous charter procession — consult-stop awareness).
 2. {scoreboard_line}read the latest CHECKPOINT on agent-bus:{root_id} — confirm
    CONSULT_PENDING + consult_role: judgment_gap and pinned scope-lock: Question
@@ -197,7 +197,7 @@ def _task_guidance_r_admit(
     return f"""\
 <task_guidance>
 ## Resume step 0 (do first)
-1. Load consult-routing + agent-bus-discipline + path-sim (§ R-admit consult hosting).
+1. Load consult-routing + checkpoint-discipline + path-sim (§ R-admit consult hosting).
 2. {scoreboard_line}read the latest CHECKPOINT on agent-bus:{root_id} — confirm
    CONSULT_PENDING + consult_role: r_admit and the pinned R prompt URI / corpus.
 

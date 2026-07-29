@@ -1,9 +1,9 @@
 """Reserved enrollment-tag gate for agent-bus.
 
 ``charter-runner`` is not a free-form descriptive tag — it enrolls a thread into
-the manage-hosted charter-runner tick. Accidental inclusion (e.g. a review
-thread tagged ``charter-runner`` alongside ``type:review``) causes the tick to
-scan a non-charter root (``no_checkpoint`` noise / wasted capacity).
+the manage-hosted charter runner. Accidental inclusion (e.g. a review
+thread tagged ``charter-runner`` alongside ``type:review``) causes the charter runner to
+scan a non-charter enrollment (``no_checkpoint`` noise / wasted capacity).
 
 Structural rule: **adding** the enrollment tag requires an explicit
 ``enroll_charter_runner=true`` on the write. Keeping an already-enrolled tag or
@@ -70,10 +70,18 @@ def gate_enrollment_tags(
 
 
 def enrollment_denied_http(exc: BaseException) -> tuple[int, dict[str, Any]] | None:
-    """Map ``EnrollmentTagError`` → (422, detail dict) for FastAPI routes."""
-    if not isinstance(exc, EnrollmentTagError):
-        return None
-    return 422, {"error": exc.error_code, "detail": exc.detail}
+    """Map tag-gate errors → (422, detail dict) for FastAPI routes.
+
+    Handles ``EnrollmentTagError`` and ``ThreadClassificationError`` (spine
+    role guard) so write routes can share one mapper.
+    """
+    if isinstance(exc, EnrollmentTagError):
+        return 422, {"error": exc.error_code, "detail": exc.detail}
+    from agent_bus_store.thread_classification import ThreadClassificationError
+
+    if isinstance(exc, ThreadClassificationError):
+        return 422, {"error": exc.error_code, "detail": exc.detail}
+    return None
 
 
 __all__ = [
