@@ -15,11 +15,13 @@ per the situation.
 
 ## Surface gate (life vs code)
 
-Life MCP excludes CODE_EXTRA (`team_dispatch`, `panel_dispatch`, `pipeline`,
-`manage`, `observability`). Checkpoint cognitive legs in this skill run on every
-seat. CODE_EXTRA call sites = **code MCP only**. On life/claude.ai: (1) run
-cognitive legs in-seat; (2) `agent_bus` ask a code seat to fire transport; or
-(3) skip transport-dependent legs when no code seat — ¬ call CODE_EXTRA from life.
+Life MCP excludes **CODE_EXTRA** (code primaries absent from `/mcp/life` — derived,
+not hand-enumerated; includes `project_ask` while code-primary). Checkpoint
+cognitive legs in this skill run on every seat. CODE_EXTRA call sites = **code MCP
+only**. On life/claude.ai: (1) run cognitive legs in-seat; (2) `agent_bus` ask a
+code seat to fire transport; or (3) skip transport-dependent legs when no code seat
+— ¬ call CODE_EXTRA from life. Gate SoT: skill `consult-routing` § Surface gate
+(`project_ask` = escape-only; prefer `team_dispatch(model=cdp/…)`).
 
 ## Checkpoints
 

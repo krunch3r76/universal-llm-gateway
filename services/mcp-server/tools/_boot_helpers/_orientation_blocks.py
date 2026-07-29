@@ -17,6 +17,8 @@ capability-axis handoff notes under ``cortex:notes/system/threads/`` and
 
 from __future__ import annotations
 
+from typing import Literal
+
 from agent_seat.inject_channels import (
     ORIENTATION_BLOCK_SKILL_MAP,
     orientation_block_keys_for_agent,
@@ -38,6 +40,13 @@ from agent_seat.inject_channels import (
 # Binding caveat (thread 1292 / todo:mcp-web-ops-primary-surface): server-primary
 # (_PRIMARY_TOOLS / tools/list) ≠ connector-bound callable set on claude-web.
 # Dispatch shapes below apply only to tools bound THIS session — probe first.
+#
+# Surface caveat (thread 6310 / todo:life-mcp-story-wire-update): the two layers
+# above are orthogonal to the DUAL-ENDPOINT split. A life seat is bound to
+# /mcp/life, whose tools/list never carries the code-infra family — so for those
+# names the absence is real, not a deferred bind. Both the manifest line and the
+# Dispatch block are therefore rendered per SEAT SURFACE (agents.yaml
+# `mcp_surface`, via seat_capability_map), never from the unified manifest.
 
 # inject-channel block key: gates-strip
 _GATES_STRIP = """\
@@ -71,6 +80,40 @@ To consult a MODEL you do NOT use a build harness. When connector-bound, `team_d
 - **Panel** → `panel_dispatch(…, disposition="panel")`. **Role-less one-shot** → `pipeline(chat-dispatch, model=…)`. **Advisor** → `dispatch(tool="advisor")` [overflow].
 ⚠ Build harness ≠ model picker: coding-lane Grok → `seat=cursor-sdk, model=cursor/grok-4.5`; non-code artisan Grok → `role=artisan, model=xai/grok-4.5`.
 Full shapes / wrap / executor tiers: skill `consult-routing`."""
+
+
+def _code_only_primary_names() -> str:
+    """Derivation-sourced CODE_EXTRA — the primaries life ``tools/list`` omits.
+
+    Rendered, never hardcoded: a literal list drifts the moment
+    ``surface_primary_domains`` moves, which is the drift that put
+    ``team_dispatch`` on a life boot card in the first place (thread 6310).
+    Includes ``project_ask`` while code-primary; escape-only transport — see
+    ``consult-routing`` § Surface gate.
+    """
+    from endpoint_surface import derive_code_extra_primary_tools  # noqa: PLC0415
+
+    absent = derive_code_extra_primary_tools()
+    return ", ".join(f"`{name}`" for name in sorted(absent))
+
+
+def _dispatch_consult_block_life() -> str:
+    """Life-surface form of the Dispatch & Consult block (``/mcp/life`` seats).
+
+    The code form prescribes direct ``team_dispatch`` calls, which on a life
+    seat is an instruction to call a tool that ``tools/list`` does not carry —
+    the contradiction the web seat hit empirically before routing over the bus
+    (thread 6310). Life gets the sanctioned transport instead: in-seat cognitive
+    legs, ``agent_bus`` to a code seat, or honest deferral.
+    """
+    return f"""\
+## Dispatch & Consult — life surface: delegate, ¬ dispatch
+`/mcp/life` omits the code-infra primaries: {_code_only_primary_names()}. Their absence is REAL — the one carve-out from GATES §1: ¬ call them by name, ¬ route them through `dispatch`, ¬ read an empty `tool_search` as a deferred bind. Life→code is teach + bus, never a new life-intent verb.
+- **Cognitive leg** (reasoning, adjudication, cortex/rag/fs reads, bus synthesis) → run it in-seat. Consulting a MODEL is not a build-harness errand.
+- **Needs code MCP** (dispatch a model/seat, build, deploy, observability, repo write) → `agent_bus(tool="request", to="cursor", new_slug|thread=…, subject=…, body=…, contract=…, desired_model=?)` — life-callable Cursor Auto channel; poll the returned `poll_hint` with `agent_bus(tool="wait", …)`. Attended seat instead → `agent_bus(tool="send", to="cursor", …)`.
+- **Neither** → honest deferral + `cortex(tool="friction", …)`; ¬ silent substitution.
+Full table: skill `consult-routing` § Surface gate. Capability gap: skill `life-to-code-request-lane` (`lane:life-to-code`)."""
+
 
 # Co-located liveness block (2a durable home). Trimmed per F4-A finding (thread
 # 1289): 3-question redirect + salience line kept inline; substrate table collapsed
@@ -107,20 +150,41 @@ Call primary `rag` directly — ¬ `dispatch(tool="rag_search")` / overflow.
 Default search is AUTO-SCOPED — before "not in corpus": `list_scopes` then explicit `scope=`. `pipeline_consult` needs a prior `execution_id`; project file grep is `search_project_files` / `fs` find — not RAG."""
 
 
-def _render_server_primary_manifest_line() -> str:
-    """Inject live ``tools/list`` primary names from derivation (layer 1 truth).
+def _seat_mcp_surface(agent: str | None) -> Literal["life", "code"]:
+    """Endpoint surface (``life`` | ``code``) the seat's card describes.
+
+    Single-sourced from ``agents.yaml`` ``mcp_surface`` via the derived
+    ``seat_capability_map`` (``mcp_code`` token ⟺ code endpoint), so the card is
+    truthful for the seat it names regardless of which mount rendered it — a
+    ``seat=web-anthropic`` preview from a code checkout still describes
+    ``/mcp/life``. Unknown seats resolve to the NARROWER life surface: claiming
+    fewer primaries than a mount carries is recoverable by GATES §1 (call by
+    name), whereas claiming more is the failure this predicate exists to stop.
+    """
+    from agent_seat.profiles import seat_capability_map  # noqa: PLC0415
+
+    return "code" if "mcp_code" in seat_capability_map().get(agent or "", ()) else "life"
+
+
+def _render_server_primary_manifest_line(surface: Literal["life", "code"]) -> str:
+    """Inject the live ``tools/list`` primary names for *surface* (layer 1 truth).
+
+    Surface-scoped, not the unified manifest: ``get_claude_manifest`` is the
+    union over both mounts (N=18), so on life it advertised the whole code-infra
+    family and on code it advertised life-only tools — neither mount's real
+    ``tools/list``. ``derive_surface_primary_tools`` is the same function
+    ``_build_server`` prunes with, so this line cannot disagree with the mount.
 
     Body only (no leading newline) — ``render_orientation_blocks`` adds the
     blank-line separator when it wraps each selected block.
     """
-    from _derive import get_claude_manifest  # noqa: PLC0415
+    from endpoint_surface import derive_surface_primary_tools  # noqa: PLC0415
 
-    manifest = get_claude_manifest()
-    names = sorted(e["tool_name"] for e in manifest)
+    names = sorted(derive_surface_primary_tools(surface))
     joined = ", ".join(names)
     return (
-        f"## MCP server primary (`tools/list`, N={len(names)})\n"
-        f"Assembly advertises: `{joined}`.\n"
+        f"## MCP server primary — `/mcp/{surface}` (`tools/list`, N={len(names)})\n"
+        f"This mount advertises: `{joined}`.\n"
         f"¬ identical to connector-bound callables — see MCP binding block above."
     )
 
@@ -257,19 +321,28 @@ _CORE_BLOCK_ORDER: dict[str, tuple[str, ...]] = {
 }
 
 
-def _orientation_block_bodies() -> dict[str, str]:
+def _orientation_block_bodies(surface: Literal["life", "code"]) -> dict[str, str]:
     """Map each orientation block key → its rendered body (no leading newline).
 
     ``render_orientation_blocks`` wraps each selected body with a leading
     newline so the card's ``"\\n".join(parts)`` yields consistent blank-line
     separators. The block→body mapping and the per-seat SELECTION
     (``orientation_block_keys_for_agent``) are the two halves of the SOT.
+
+    ``surface`` selects the two endpoint-dependent bodies (manifest line +
+    Dispatch & Consult); every other body is surface-invariant. Block KEYS are
+    identical across surfaces, so inject-channel accounting
+    (``ORIENTATION_BLOCK_SKILL_MAP``) and the per-seat selection are untouched.
     """
     return {
         "operator-posture-block": _OPERATOR_POSTURE_BLOCK,
         "mcp-binding-block": _MCP_BINDING_LIVENESS_BLOCK,
-        "mcp-server-primary-block": _render_server_primary_manifest_line(),
-        "dispatch-consult-block": _DISPATCH_CONSULT_BLOCK_CLAUDE,
+        "mcp-server-primary-block": _render_server_primary_manifest_line(surface),
+        "dispatch-consult-block": (
+            _DISPATCH_CONSULT_BLOCK_CLAUDE
+            if surface == "code"
+            else _dispatch_consult_block_life()
+        ),
         "consult-routing-gate-block": _CONSULT_ROUTING_GATE,
         "rag-scope-awareness-block": _RAG_SCOPE_AWARENESS_BLOCK,
         "liveness-block": _LIVENESS_BLOCK,
@@ -299,10 +372,16 @@ def render_orientation_blocks(
     GATES is always emitted first on every seat (fire-before-any-tool-call is
     not deferrable to a skill fetch). ``family`` is accepted for signature
     stability; selection is seat-predicated on ``agent``.
+
+    ``domain`` (the boot AXIS: which state the seat is oriented toward) is
+    distinct from the seat's MCP surface (which endpoint it is bound to): a
+    cursor seat may boot ``domain=life`` while still holding code MCP. The
+    endpoint-dependent bodies key off ``_seat_mcp_surface(agent)``, never
+    ``domain``.
     """
     del family  # seat selection is agent-predicated; family retained for API compat
     selected = orientation_block_keys_for_agent(agent)
-    bodies = _orientation_block_bodies()
+    bodies = _orientation_block_bodies(_seat_mcp_surface(agent))
     domain_key = (domain or "mixed-minimal").strip().lower()
     core_order = _CORE_BLOCK_ORDER.get(domain_key, _CORE_BLOCK_ORDER["mixed-minimal"])
 

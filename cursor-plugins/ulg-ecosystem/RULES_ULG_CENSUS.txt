@@ -8,6 +8,7 @@ anthropic-dispatch-authorization_ulg
 cursor-rule-placement_ulg
 anthropic-substrate_ulg
 awareness_ulg
+bind-then-compose-dispatch_ulg
 capability-dispatch_ulg
 claude-ai-cdp-navigation_ulg
 commit-and-git-scope_ulg

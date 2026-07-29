@@ -110,6 +110,9 @@ tests/*
 # Closeout propagation residue (decision:closeout-propagation-residue / friction 26340)
 !services/git_integration_worker/tests/test_cursor_auto_episode_residue.py
 !services/git_integration_worker/tests/test_cursor_sdk_closeout_residue.py
+# MCP boot-card / dual-endpoint surface contracts (thread 6310)
+!services/mcp-server/test_endpoint_surface_split.py
+!services/mcp-server/tools/test_boot_orientation_gates.py
 # Root-anchored: rsync --filter=:- .gitignore ignores git ! negations.
 # Use /foo/ not foo/ when foo/ also appears as a source directory elsewhere in the tree.
 /templates/

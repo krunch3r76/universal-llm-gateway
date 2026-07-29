@@ -83,8 +83,17 @@ then proceed. ¬ silent.
 | CDP corpus staging | **Prefer** staging hot **code/docs corpus** to `cortex://` before CDP fire (fewer tool calls, faster). `workspaces://` is readable on web — ¬ claim unreachable; name it explicitly when exploration is encouraged. **¬** conflate with RAG: when the endpoint is **MCP-enabled for RAG** (life or code), the executing agent activates `rag` via MCP (even when a corpus URI is mapped); lead does ¬ merge staged RAG into the deliverable (`decision:cdp-rag-via-mcp-not-lead-merge`) |
 | Substrate wall | `anthropic/*` prohibited; Fable excluded; compose `anthropic-dispatch-authorization` |
 
+## Bind-then-compose (resident pointer)
+
+Judgment closed ∧ mechanical work remains ⇒ **split dispatch** — premium/CDP/Grok/Opus
+**binds** (`light-bounded`); nested `seat=cursor-sdk` **Composer** implements
+(`contract=implement`, `nest_under` when gated). ¬ one Opus `light-bounded` packet
+carrying implement acceptance. Full gate: `bind-then-compose-dispatch_ulg.mdc` ·
+`consult-routing` § Bind-then-compose split.
+
 ## Composes with (pointers, ¬ copies)
 
+- `bind-then-compose-dispatch` — judgment closed → nested Composer
 - `consult-routing` — surface / role routing
 - `model-tier-awareness` — escalation tier taxonomy
 - `anthropic-dispatch-authorization` — Anthropic-family substrate house rules

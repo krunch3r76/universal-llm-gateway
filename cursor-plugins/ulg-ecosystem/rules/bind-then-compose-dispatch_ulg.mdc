@@ -1,0 +1,82 @@
+---
+description: Bind-then-compose dispatch split — after judgment closes, nested cursor-sdk Composer (or pure-mechanical) for the mechanical leg; premium models bind only. Fires on team_dispatch, Opus, Composer, nest_under, light-bounded implement bundles.
+alwaysApply: true
+rule_category: workflow
+apply_tier: required_gate
+trigger_match_terms:
+  - bind-then-compose
+  - bind then compose
+  - nested composer
+  - opus implement
+  - sdk_cost_risk
+  - judgment closed
+  - mechanical leg
+  - nest_under
+  - executor_override
+  - light-bounded implement
+---
+# Bind-Then-Compose Dispatch — Stub
+
+**SOT:** Use the `consult-routing` skill § Bind-then-compose split — transport shapes,
+`nest_under`, packet scoping. This stub is the resident gate.
+
+## Invariant (one line)
+
+`judgment_closed ∧ mechanical_remainder ⇒ split_dispatch(bind_leg, compose_leg)` —
+premium / reasoning models **bind**; **`cursor/composer-2.5`** (default `seat=cursor-sdk`
+generate) **implements** nested — ¬ one dispatch doing both.
+
+## When the split is mandatory
+
+Fire **two legs** (or bind in-seat + compose dispatch) when **ANY**:
+
+- Packet / todo carries `files_expected` + `acceptance_criteria` (implement-shaped)
+- `contract=implement` or densified spec is the deliverable
+- `density_triage=judgment_required` and the arc still has a write/edit step after bind
+- Admit emits `sdk_cost_risk` / mechanical `KnobRecommendation` (`dispatch_knob_policy`)
+- `executor_override` names Opus/Sonnet/Fable for work that is mechanical after bind
+
+## Two legs (default)
+
+| Leg | Seat / model | Contract | Output |
+|---|---|---|---|
+| **1 — Bind** | `cdp/opus-5`, `cdp/fable`, `cursor/grok-4.5`, or `cursor/claude-opus-5` (inform-then-proceed) | `light-bounded` | Dense packet, spec, or sidecar: scope, invariants, `files_expected`, `acceptance_criteria` — **no repo writes** unless bind requires a spec file |
+| **2 — Compose** | `seat=cursor-sdk` (omit `model=` → Composer) | `implement` or `pure-mechanical` | Edits + verify per packet; poll `poll_hint` |
+
+```python
+# Leg 2 — after bind closes (same arc thread)
+team_dispatch(
+    op="generate",
+    seat="cursor-sdk",
+    contract="implement",  # or pure-mechanical when packet is fully pinned
+    packet_path="tmp/reviews/{slug}-implement.md",  # or source_ref=todo:{slug}
+    dispatch_thread_id="{arc-id}",
+    nest_under="{parent_dispatch_id}",  # when parent still holds cursor_sdk_gate
+)
+```
+
+Chained hops (CDP → auto → specialist) **must** `nest_under` the live lease holder
+(`cdp-operator-proxy` invariant 19). ¬ fresh top-level contend under an active gate.
+
+## Exempt (single leg OK)
+
+- Trivial/local: ≤ few lines, loci known, self-verifiable (lean-context trivial row)
+- **Bind-only** consult: no write intent; answer closes the arc
+- Implement packet already dense **before** premium consult — bind leg was a prior turn;
+  compose leg only (¬ re-spend Opus on amendments: `lean-context-dispatch-first` non-primary gate)
+
+## Anti-patterns
+
+| Bad | Good |
+|---|---|
+| `cursor/claude-opus-5` + `light-bounded` + implement acceptance in one packet | Opus bind sidecar → nested `cursor-sdk` `contract=implement` |
+| `executor_override: cursor/claude-opus-5` on mechanical implement | Omit `model=` on `seat=cursor-sdk` implement (Composer default) |
+| Ignore `sdk_cost_risk` at admit | Split or downgrade to Composer before edits |
+| Premium model runs quality_gate/pytest loops on known files | Composer leg + lead verify sample |
+
+## Composes with
+
+- `lean-context-dispatch-first` — dispatch-first + non-primary model gate
+- `consult-routing` — implement lane, model split, surface gate
+- `path-sim` — bundled Q→A→R→implement cascade (compose = Stage-B)
+- `model-tier-stub` — reasoning→mechanical transition downgrade note

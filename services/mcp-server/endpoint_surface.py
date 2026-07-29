@@ -114,6 +114,21 @@ def derive_surface_primary_tools(
     return frozenset(tools)
 
 
+def derive_code_extra_primary_tools(
+    canonical_yaml_path: Path | None = None,
+) -> frozenset[str]:
+    """Primaries on ``/mcp/code`` absent from ``/mcp/life`` (CODE_EXTRA).
+
+    Single derivation for boot-card copy, surface-gate docs, and tests — ¬ a
+    hand-maintained enum (drift put ``team_dispatch`` on life cards, thread 6310).
+    Includes ``project_ask`` while that domain stays code-primary; transport
+    posture for it is escape-only (``team_dispatch(model=cdp/…)`` preferred).
+    """
+    return derive_surface_primary_tools("code", canonical_yaml_path) - (
+        derive_surface_primary_tools("life", canonical_yaml_path)
+    )
+
+
 def overflow_tool_allowed_on_surface(
     tool_name: str,
     surface: Surface,

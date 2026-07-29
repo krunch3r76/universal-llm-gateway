@@ -58,9 +58,9 @@ tool_search(query="<keywords>")          # overflow catalog → dispatch_templat
 dispatch(tool="<name>", arguments='...') # invokes the overflow tool
 ```
 
-Server-primary tools (fs, manage, team_dispatch, …) are **not** in this
+Server-primary tools (`cortex`, `fs`, `agent_bus`, …) are **not** in this
 overflow catalog — load them as direct callables by name after a deferred-load
-hop; do not route primary names through `dispatch` (it rejects them).
+hop; do not route primary names through `dispatch` (it rejects them). Membership is PER MOUNT (boot manifest line = your mount's set): code-infra is primary on `/mcp/code` only, and on `/mcp/life` no deferred-load hop reaches it.
 
 Examples (overflow; require bound `dispatch`):
 ```
@@ -123,11 +123,12 @@ tools (xAI multi-agent rejects them; standard API path has no vortex). This plat
 
 CLAUDE_WEB_TOOL_SURFACE = """\
 ## Web-anthropic life surface
-`/mcp/life` is ON. Use `cortex`, `cortex_brief`, `agent_bus`,
-`agent_bus_read`, cortex-sandbox `fs`, `rag`, and `retrieve`.
+`/mcp/life` is ON. Your primary set is the boot card's `## MCP server primary` line
+(derived per mount — do not re-derive it from prose). `fs` writes land in the cortex
+sandbox; repository source is READ-ONLY here (`workspaces://{repo}/{rel}` reads and
+`md_*` navigation are sanctioned — the tool description lists the readable ops).
 
-`/mcp/code` is OFF. Do not use the workspaces sandbox, checkout/source paths,
-`team_dispatch`, `panel_dispatch`, `pipeline`, `manage`, or `observability`.
+`/mcp/code` is OFF: `team_dispatch`, `panel_dispatch`, `pipeline`, `manage`, `observability`, `project_ask`, and every workspaces WRITE are absent from this mount — a REAL absence, not a deferred bind. Need one? Ask a code seat: `agent_bus(tool="request", to="cursor", …)` (Cursor Auto; poll `poll_hint` with `wait`) or `send` for an attended seat — skill `life-to-code-request-lane` (`lane:life-to-code`). Gate SoT: boot card `## Dispatch & Consult` + skill `consult-routing` § Surface gate.
 Handoff defaults are read/coordination + bus reply. Graph walks or durable life
 writes require explicit task/output authority; they are not inferred from MCP-on.
 
@@ -196,7 +197,7 @@ Inference routing (pick by capability — see boot briefing):
 TEAM_CONSULTATION = """\
 ## Team Consultation
 Reach out to other agents on substantive work. Consulting peers should be a
-natural part of how you work, not an exceptional event.
+natural part of how you work, not an exceptional event. **Surface gate first**: the `team_dispatch` / `panel_dispatch` / `pipeline` shapes below are code-MCP only — on `/mcp/life` the transport is `agent_bus(tool="request"|"send", to="cursor", …)`.
 
 **Pick by capability** (same axis as the boot briefing — not "always team first"):
 - Consult via **API role** (`reviewer`, `artisan`, `skeptic`, `gatherer`, …) →
@@ -280,7 +281,7 @@ agent bus — the next session picks it up.
 
 FRONTIER_MODEL_ROUTING = """\
 ## Team Dispatch Routing
-Pick by capability (aligned with boot briefing and `claude-web-dispatch-decision-table` §3):
+Code-MCP only — on `/mcp/life` these are shapes you ASK a code seat to run, not shapes you call. Pick by capability (aligned with boot briefing and `claude-web-dispatch-decision-table` §3):
 
 **Consult by API role** — `team_dispatch`:
 ```
