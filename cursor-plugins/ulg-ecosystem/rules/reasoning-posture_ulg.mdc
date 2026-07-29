@@ -22,11 +22,20 @@ Full body: Use the `reasoning-posture` skill — not this stub.
 `cascade_live ⇒ greater_explores ∧ lesser_binds` ·
 `consult_live ⇒ posture ≺ transport` · **`thinking_off ⇏ waive`**.
 
+## Pairing (BINDING)
+
+`material_judgment_injection ⇒ pair(reasoning-posture, frontier-reasoning-discipline)` —
+scope rails alone are incomplete. On substantive turns also:
+**Use the `frontier-reasoning-discipline` skill** (steelman / calibration /
+courage / framing / one-determinate-step). Carve-out: mechanical executor
+against a dense pre-staged spec (dispatcher owns discipline).
+
 ## Composition (do not fatten consult-posture)
 
 | Concern | Owner |
 |---|---|
 | These rails | `reasoning-posture` (this) |
+| Epistemic quality (paired) | `frontier-reasoning-discipline` |
 | Consult fire grammar | `consult-posture` (trigger-gated) |
 | Pause timing | `advisor-timing` |
 | L0/L1/L2 machinery | `path-sim` |

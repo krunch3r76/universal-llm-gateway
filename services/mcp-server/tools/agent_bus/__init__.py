@@ -186,11 +186,11 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
 
         Operations:
           send          (new_slug XOR thread, to, subject, body, from?, from_agent?, summary?, tags?, enroll_charter_runner?, lifecycle_state?, after_turn?, status?, mark_read?, close?, attachments?, allow_long_body?, sidecar_content?, sidecar_slug?, supersedes_turn?) — **primary write op**. Exactly one of new_slug (new thread) or thread (continue) required; supersedes_turn (continue path only) is the database turn id to supersede structurally. slug uniqueness enforced on new_slug path (409 slug_exists on collision). Tag ``charter-runner`` is **reserved enrollment** — newly adding it requires ``enroll_charter_runner=true`` (422 reserved_enrollment_tag otherwise); keeping/removing never needs the flag. Enrollment auto-stamps spine tag ``role:root``. When sidecar_content is set the server writes cortex://notes/system/threads/<thread_id>-<slug>.md before inserting the turn, appends a trailing Sidecar: pointer to the body, and returns sidecar_uri + sidecar_sha256. sidecar_content cap 256KB. Prefer ``from=``; ``from_agent`` is a permanent alias. When omitted on ``/mcp/life`` or ``/mcp/code``, the server autofills ``web-anthropic`` or ``cursor`` respectively.
-          request       (new_slug XOR thread, to='cursor', subject, body, from?, from_agent?, summary?, tags?, sidecar_content?, sidecar_slug?, desired_model?, desired_effort?, contract?, require_attended?) — life-callable Cursor Auto channel. Injects lane:cursor-auto; arms Auto when a live handler heartbeats (else handler_status=no-auto-handler); returns {thread, turn, handler_status, poll_hint}. ``summary`` = standing ULG so-what title (also fail-soft from body ``so_what:`` / ``ulg_gain:``). require_attended=true (wire or DIRECTIVE body OR) ⇒ terminal status:needs-attended reason=operator_require_attended. ¬ dual-tag lane:life-to-code on degrade.
-          threads       (status?, tags?, lifecycle_state?)              — list threads; status: active|blocked|waiting|closed|all (default active); tags: AND-filter; lifecycle_state: pending|admitted|delivered|failed (exact match)
+          request       (new_slug XOR thread, to='cursor', subject, body, from?, from_agent?, summary?, tags?, sidecar_content?, sidecar_slug?, desired_model?, desired_effort?, contract?, require_attended?) — life-callable Cursor Auto channel. Injects lane:cursor-auto; arms Auto when a live handler heartbeats (else handler_status=no-auto-handler); returns {thread, turn, handler_status, poll_hint}. ``summary`` = standing ULG so-what title (also fail-soft from body ``so_what:`` / ``ulg_gain:``). require_attended=true (wire or DIRECTIVE body OR) ⇒ terminal status:needs-attended reason=operator_require_attended. ¬ dual-tag lane:life-to-code on degrade. ``contract`` ∈ answer|confer|investigate|implement|verify|execute|propagate — unknown value ⇒ 422 request_contract_unknown before the turn is written; legacy ``consult`` aliases to ``confer`` with a deprecation note. ``execute`` fires ONE tier-M tool op in seat against the allowlist manifest (body: ``tool_op: <tool>.<op>`` + ``effects_expected:`` + optional single-line JSON ``tool_args:``); closeout carries the raw payload under ``tool_payload``. ``propagate`` mints structured propagation ledger rows and coordinates drain-gated ``sync_restart`` via manage.sock (body: ``effects_expected:`` + ``## propagation`` YAML or ``scope: propagation sync_restart <service>``); ``manage.*`` via ``execute`` remains denied. Optional ``request_id`` is an idempotency key echoed enqueue→closeout (minted when omitted; a replayed key is refused 422 ``duplicate_request_id``). DIRECTIVE ``deadline: +15m`` (or ISO-8601) terminates a still-queued job ``status:failed reason=expired``. Narrower alternative for approval-gated harnesses: the dedicated ``cursor_request`` tool.
+          threads       (status?, tags?, lifecycle_state?, limit?, last?, has_unread?, query?) — list threads; status: active|blocked|waiting|closed|all (default active); tags: AND-filter; lifecycle_state: pending|admitted|delivered|failed (exact match). Default limit=50 when neither limit nor last is set; response includes limit_applied and truncated.
           create_thread (slug, summary?, tags?, enroll_charter_runner?, lifecycle_state?, thread_id?) — create a thread without a turn; use lifecycle_state="pending" for lifecycle-managed threads that will be dispatched later; ``enroll_charter_runner=true`` required to include tag ``charter-runner``
           fetch_unread  (to?, thread?, mark_read?, compact?, active_since?, limit?, all?) — recipient scope (to set, thread unset): enriched per-thread unread digest (slug, last_subject, last_activity_at; default 14d window, limit 50; unwindowed totals in response). thread scope: that thread's full unread turn list (no count cap; compact controls bodies). At least one of to/thread required.
-          fetch         (to?, thread?, last?, unread?, compact?, mark_read?, all?)  — get turns; at least one of to/thread required; all=true fetches every turn (no limit); unread=true fetches all unread (last ignored; prefer fetch_unread); last caps windowed fetches (default 10, unread default false); compact default false (bodies projected) — pass compact=true for metadata-only
+          fetch         (to?, thread?, last?, unread?, compact?, mark_read?, all?)  — get turns; at least one of to/thread required; all=true fetches every turn (no limit); unread=true fetches all unread (last ignored; prefer fetch_unread); last caps windowed fetches (default 10, unread default false); compact default false (bodies projected) — pass compact=true for metadata-only (compact nulls turn bodies, it does not truncate them)
           get           (thread, turn_number)                           — get one specific turn; turn_number may be int or "latest"
           update        (thread, turn_number, body?, append?, subject?) — edit or append to an existing turn while read_at is null; 409 turn_already_acknowledged once marked read (use send(thread=...) for follow-up)
           mark_read     (thread, turn_numbers[] XOR through_turn, agent?) — bulk mark read; through_turn requires agent
@@ -209,8 +209,7 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
           id, slug, status, summary, turn_count, unread_count, tags, created_at, updated_at
           bus_lifecycle_state: str | null — lifecycle state for dispatch-managed threads
             (pending → admitted → delivered; null = not lifecycle-managed)
-          dispatch_links: list — pipeline executions linked to this thread via dispatch-admit;
-            each entry has: execution_id, pipeline_id, linked_at, terminal_status, delivery_at
+          dispatch_links: list — on single-thread detail only; list_threads responses always carry [] (links are not loaded on list)
 
         Turn response fields (Turn — returned by fetch, fetch_unread, get, and as
         the created turn inside send):
@@ -246,8 +245,9 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
 
         Examples:
           agent_bus(tool="fetch", arguments='{"thread": "111", "last": 3, "compact": true}')
+          agent_bus(tool="request", arguments='{"new_slug": "arm-auto", "to": "cursor", "subject": "Implement X", "body": "TYPE: DIRECTIVE\\ncontract: implement\\n...", "contract": "implement"}')  # arms cursor-auto; poll returned poll_hint with wait. to MUST be "cursor" — never "cursor-auto".
           agent_bus(tool="send", arguments='{"thread": "111", "to": "web", "subject": "Re: topic", "body": "## Reply\\n...", "after_turn": 5, "from": "cursor"}')
-          agent_bus(tool="send", arguments='{"new_slug": "review-bug", "to": "cursor", "subject": "Bug found", "body": "Details: cortex:notes/system/threads/review-bug-details.md", "from": "web-anthropic", "tags": ["project:ulg", "type:bug"]}')
+          agent_bus(tool="send", arguments='{"new_slug": "review-bug", "to": "cursor", "subject": "Bug found", "body": "Details: cortex:notes/system/threads/review-bug-details.md", "from": "web-anthropic", "tags": ["project:ulg", "type:bug"]}')  # attended cursor seat only — send never arms Auto; use request for that.
           agent_bus(tool="send", arguments='{"thread": "111", "to": "web", "subject": "Re: long-form handoff", "body": "...", "after_turn": 5, "from_agent": "cursor", "allow_long_body": true, "sidecar_content": "# Full spec\\n..."}')
           fs(sandbox="cortex", op="write", path="notes/system/threads/review-bug-details.md", content="...")
           agent_bus(tool="threads", arguments='{"tags": ["project:claudeburst", "type:bug"]}')
@@ -286,6 +286,10 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
             if tool == "send":
                 parsed, alias_error = reconcile_send_arguments(parsed)
                 if alias_error is not None:
+                    record(
+                        "mcp.agentbus.send.rejected",
+                        reason=str(alias_error.get("reason", "")),
+                    )
                     return alias_error
             if tool in AUTHOR_AUTOFILL_OPS:
                 parsed, author_error = reconcile_author_arguments(parsed)

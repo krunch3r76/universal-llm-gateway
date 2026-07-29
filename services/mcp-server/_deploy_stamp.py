@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from deploy_identity.code_version import resolve_code_version
+
 _STAMP_PATH = Path("/app/.source_sync_stamp")
 
 
@@ -17,5 +19,9 @@ def read_source_sync_stamp() -> dict[str, str | None]:
 
 
 def health_json() -> dict[str, str | None]:
-    """Base /health payload including deploy stamp."""
-    return {"status": "ok", **read_source_sync_stamp()}
+    """Base /health payload including deploy stamp and code version."""
+    return {
+        "status": "ok",
+        "code_version": resolve_code_version(),
+        **read_source_sync_stamp(),
+    }

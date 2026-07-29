@@ -148,6 +148,11 @@ _SOURCE_REF_LINE_RE = re.compile(r"(?im)^source_ref:\s*\S+")
 _TODO_TOKEN_RE = re.compile(r"\btodo:[a-z0-9][a-z0-9._-]*", re.IGNORECASE)
 _PACKET_TOKEN_RE = re.compile(r"\bpacket:", re.IGNORECASE)
 _FILES_EXPECTED_RE = re.compile(r"(?im)\bfiles_expected\b")
+# Tier-M tool asks have no file scope — these are their first-class scope tokens.
+_TOOL_OP_FIELD_RE = re.compile(r"(?im)^tool_op:\s*\S+")
+_EFFECTS_EXPECTED_RE = re.compile(r"(?im)^effects_expected:\s*\S+")
+_PROPAGATION_SCOPE_RE = re.compile(r"(?im)^scope:\s*propagation\b")
+_PROPAGATION_HEADING_RE = re.compile(r"(?im)^##\s+propagation(?:\s*\([^)]*\))?\s*$")
 _VISION_FIELD_RE = re.compile(r"^vision\s*:", re.MULTILINE | re.IGNORECASE)
 NESTED_SCOPE_CONTRACTS = frozenset({"implement", "investigate", "verify"})
 VISION_REQUIRED_CONTRACTS = frozenset({"implement", "investigate"})
@@ -158,7 +163,8 @@ def has_actionable_scope(body: str) -> bool:
 
     Matches markdown ``## Scope`` headings, §2 lowercase ``scope:`` fields,
     ``<scope>`` tags, ``source_ref:`` lines, ``todo:`` / ``packet:`` tokens,
-    or ``files_expected`` labels. Prose may mention ``todo:`` / ``packet:``
+    ``files_expected`` labels, or the tier-M tool-ask tokens ``tool_op:`` /
+    ``effects_expected:``. Prose may mention ``todo:`` / ``packet:``
     (accepted looseness). Body ``contract:`` is handled separately as an
     escape hatch in admit gates.
     """
@@ -171,6 +177,10 @@ def has_actionable_scope(body: str) -> bool:
         or _TODO_TOKEN_RE.search(text)
         or _PACKET_TOKEN_RE.search(text)
         or _FILES_EXPECTED_RE.search(text)
+        or _TOOL_OP_FIELD_RE.search(text)
+        or _EFFECTS_EXPECTED_RE.search(text)
+        or _PROPAGATION_SCOPE_RE.search(text)
+        or _PROPAGATION_HEADING_RE.search(text)
     )
 
 
@@ -199,6 +209,10 @@ def empty_directive_missed_tokens(body: str) -> tuple[str, ...]:
         ("todo", bool(_TODO_TOKEN_RE.search(text))),
         ("packet", bool(_PACKET_TOKEN_RE.search(text))),
         ("files_expected", bool(_FILES_EXPECTED_RE.search(text))),
+        ("tool_op", bool(_TOOL_OP_FIELD_RE.search(text))),
+        ("effects_expected", bool(_EFFECTS_EXPECTED_RE.search(text))),
+        ("propagation_scope", bool(_PROPAGATION_SCOPE_RE.search(text))),
+        ("propagation_heading", bool(_PROPAGATION_HEADING_RE.search(text))),
     )
     return tuple(name for name, present in checks if not present)
 

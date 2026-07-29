@@ -61,8 +61,18 @@ The `.eml`, `.pdf`, or other original file is the canonical source — use its p
 
 AGENT_BUS_COMPACT = """\
 ## Agent Bus Protocol
-New thread: `agent_bus(tool="send", arguments='{{"new_slug": "topic", "to": "TARGET", "subject": "…", "body": "…", "from_agent": "{agent}"}}')`
-Continue thread: `agent_bus(tool="send", arguments='{{"thread": "ID", "to": "TARGET", "subject": "…", "body": "…", "after_turn": N, "from_agent": "{agent}"}}')`
+**Recipient (`to`) — canonical bus addresses only:** `cursor` (every cursor seat: IDE, Auto, SDK), `web-anthropic`, `api-{{provider}}`, `charter-runner`, `all`.
+`cursor-auto` is an executor ROLE and a valid turn AUTHOR (`from`), but **never a valid `to`** — it resolves to a mailbox no seat fetches, so a turn addressed there reaches nobody and arms nothing. Address cursor work to `cursor`.
+**Arm cursor-auto (code MCP, repo write, build, deploy, observability) → `request`, ¬ `send`:**
+`agent_bus(tool="request", arguments='{{"new_slug": "topic", "to": "cursor", "subject": "…", "body": "…", "contract": "answer"}}')`
+probes a live Auto handler, enqueues when armed, returns `handler_status` + `poll_hint` — poll it with `agent_bus(tool="wait", …)`. Read `handler_status`: `auto-admit-armed` = Auto is running it; `no-auto-handler` = the turn was written but nothing will act on it.
+**Valid `contract` values: `answer`, `confer`, `investigate`, `implement`, `verify`, `execute`, `propagate`.** `consult` is NOT a wire contract — it is deprecated and aliased to `confer`; any other unknown value is rejected 422 (`request_contract_unknown`) before the turn is written.
+Wire `contract` is an admission/routing label, ¬ a permission claim: the wire-neutral pattern ships `contract=answer` (or omits it) with `TYPE: DIRECTIVE` + a body `contract: implement` line, and the server upgrades the effective contract while every admission gate still runs. `answer` never executes work — a `status:done` on `answer` comes back `disposition: declined` with a `routing_hint`.
+`execute` fires one tier-M allowlisted tool op in seat (`tool_op:` + `effects_expected:`); `manage.*` is denied. `propagate` requests drain-gated service restart: mint propagation ledger rows + coordinate `sync_restart` via manage.sock (`scope: propagation sync_restart <service>` or `## propagation` YAML + `effects_expected:`).
+Tier-M tool asks (no file scope) clear the scope gate with `tool_op: <tool>.<op>` + `effects_expected: <observable result>`; blocked replies carry `missed_tokens` plus a `fix_hint` naming the lines to add.
+`send` writes a bus turn and NOTHING ELSE — it never arms Auto. Use it for attended seats and ordinary correspondence.
+New thread: `agent_bus(tool="send", arguments='{{"new_slug": "topic", "to": "cursor", "subject": "…", "body": "…", "from_agent": "{agent}"}}')`
+Continue thread: `agent_bus(tool="send", arguments='{{"thread": "ID", "to": "cursor", "subject": "…", "body": "…", "after_turn": N, "from_agent": "{agent}"}}')`
 Fetch inbox: `agent_bus(tool="fetch", arguments='{{"to": "{agent}", "last": 5, "unread": true}}')`
 Always pass `mark_read: true` when fetching turns you intend to act on — stale unread counts create false urgency.
 **Outgoing body rule — turns are briefings, not documents (body ≤ ~1KB).**
@@ -89,9 +99,20 @@ A *directive* means implement now. A *ticket* or *todo* means deferred work. Ack
 AGENT_BUS_EXAMPLES = """\
 ### Continuing a thread (send)
 ```
-agent_bus(tool="send", arguments='{{"thread": "THREAD_ID", "to": "TARGET", "subject": "Re: topic", "body": "Response text.", "after_turn": TURN_NUMBER, "from_agent": "{agent}"}}')
+agent_bus(tool="send", arguments='{{"thread": "THREAD_ID", "to": "cursor", "subject": "Re: topic", "body": "Response text.", "after_turn": TURN_NUMBER, "from_agent": "{agent}"}}')
 ```
-After implementing a work order, request confirmation from the requesting agent."""
+After implementing a work order, request confirmation from the requesting agent.
+
+### Anti-pattern: long inline body without declaration
+```
+# Bad — 3KB spec pasted inline; no sidecar, no allow_long_body
+agent_bus(tool="send", arguments='{{"thread": "THREAD_ID", "to": "cursor", "subject": "Spec dump", "body": "<3000 chars of markdown>", "after_turn": N, "from_agent": "{agent}"}}')
+# Good — write sidecar first, post a short pointer body
+fs(sandbox="cortex", op="write", path="notes/system/threads/topic-spec.md", content="...")
+agent_bus(tool="send", arguments='{{"thread": "THREAD_ID", "to": "cursor", "subject": "Spec ready", "body": "Full spec at cortex://notes/system/threads/topic-spec.md", "after_turn": N, "from_agent": "{agent}"}}')
+# Or when inline long-form is contractually required:
+agent_bus(tool="send", arguments='{{"thread": "THREAD_ID", "to": "cursor", "subject": "...", "body": "...", "after_turn": N, "from_agent": "{agent}", "allow_long_body": true}}')
+```"""
 
 AGENT_BUS_LARGE_PAYLOADS = """\
 ### Large Payload Protocol

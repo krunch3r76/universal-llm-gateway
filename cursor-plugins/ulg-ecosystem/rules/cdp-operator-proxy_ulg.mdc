@@ -12,6 +12,9 @@ trigger_match_terms:
   - cursor-auto
   - assumed_state
   - operator proxy
+  - propagate
+  - sync_restart
+  - service restart
 ---
 # CDP Operator Proxy — Stub
 
@@ -26,6 +29,12 @@ Mechanism (turn shapes, boot checklist, anti-patterns): Use the `cdp-operator-pr
 **Protocol SOT:** `cortex://notes/system/specs/cdp-operator-proxy-v0.md` (field tables, transport).  
 **Doctrine:** `decision:operator-proxy-seat-posture`.  
 **Transport sibling:** `claude-ai-cdp-navigation` for CDP/Jupiter mechanics (incl. warm same-CSE follow-up).
+
+**Session abort (BINDING):** IDE/cursor lead **¬** `project_ask(op="abort")`, cancel cursor-sdk dispatches, or kill in-flight executions without **explicit operator authorization** for that session — poll, read closeout, paste status into live CDP converse; operator supersedes on private lane. Rule: `session-abort-authorization_ulg.mdc`.
+
+**Operator restart (BINDING):** `agent_bus.request` with `contract: propagate` — cursor-auto mints propagation rows and coordinates drain-gated `sync_restart` (not tier-M `execute` + `manage.*`). Skill § Tier-M / propagate templates.
+
+**Transport vs bus (BINDING):** `project_ask` = IDE↔Cowork converse transport; operator commission = **`agent_bus.request` on private request thread**. `abort(project_ask)` does **not** cancel bus work — poll the request lane, not `active_work` alone. Reconnect: warm submit same `holder` + `converse=true` (Cowork CSE) **or** continue on bus thread (`mark_read` → next `request`).
 
 ## When
 

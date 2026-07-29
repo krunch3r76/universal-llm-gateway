@@ -26,8 +26,24 @@ from services.git_integration_worker.cursor_auto.episode_briefing import (
     fetch_thread_status,
     fetch_thread_turns,
 )
+from services.git_integration_worker.cursor_auto.execute_admission import (
+    EXECUTE_CONTRACT,
+    admit_execute_body,
+)
+from services.git_integration_worker.cursor_auto.execute_events import (
+    emit_execute_admission_blocked,
+)
+from services.git_integration_worker.cursor_auto.fix_hints import (
+    EMPTY_SCOPE_FIX_HINT,
+    PROPAGATE_MISSING_FIX_HINT,
+    VISION_MISSING_FIX_HINT,
+)
 from services.git_integration_worker.cursor_auto.handler_terminal import (
     post_terminal_status,
+)
+from services.git_integration_worker.cursor_auto.propagate_admission import (
+    PROPAGATE_CONTRACT,
+    admit_propagate_body,
 )
 from services.git_integration_worker.cursor_auto.queue import AutoJob
 from services.git_integration_worker.cursor_auto.relay_trust import (
@@ -53,6 +69,42 @@ async def blocking_admit_gate(
     ``None`` means all gates passed and the caller may continue to nest.
     """
     contract = (job.contract or "answer").strip().lower()
+    if contract == EXECUTE_CONTRACT:
+        admission = admit_execute_body(job.body)
+        if admission.approved:
+            return None
+        error = admission.error or {"reason": "execute_admission_refused"}
+        summary = str(error.get("summary", "execute admission refused"))
+        emit_execute_admission_blocked(
+            thread_id=job.thread_id,
+            reason=str(error.get("reason", "execute_admission_refused")),
+            tool_op=error.get("tool_op"),
+        )
+        return await _blocked(
+            job,
+            client=client,
+            queue=queue,
+            summary=summary,
+            payload={**error, "summary": summary, "contract": contract},
+        )
+    if contract == PROPAGATE_CONTRACT:
+        admission = admit_propagate_body(job.body)
+        if admission.approved:
+            return None
+        error = admission.error or {"reason": "propagate_admission_refused"}
+        summary = str(error.get("summary", "propagate admission refused"))
+        return await _blocked(
+            job,
+            client=client,
+            queue=queue,
+            summary=summary,
+            payload={
+                **error,
+                "summary": summary,
+                "contract": contract,
+                "fix_hint": error.get("fix_hint", PROPAGATE_MISSING_FIX_HINT),
+            },
+        )
     if contract in NESTED_SCOPE_CONTRACTS and not has_actionable_scope(job.body):
         directive = parse_request_body(job.body)
         density = directive.density if directive is not None else None
@@ -84,6 +136,7 @@ async def blocking_admit_gate(
                     "contract": contract,
                     "density": density,
                     "missed_tokens": list(missed),
+                    "fix_hint": EMPTY_SCOPE_FIX_HINT,
                 },
             )
     directive = parse_request_body(job.body)
@@ -104,6 +157,7 @@ async def blocking_admit_gate(
                     "reason": "vision_field_missing",
                     "contract": contract,
                     "density": density,
+                    "fix_hint": VISION_MISSING_FIX_HINT,
                 },
             )
     status = await fetch_thread_status(job.thread_id)

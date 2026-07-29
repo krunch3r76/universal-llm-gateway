@@ -489,6 +489,7 @@ async def emit_manage_charter_tick_propagation_started(
     window_index: int,
     services: list[str],
     charter_reload: bool,
+    rows: list[dict] | None = None,
 ) -> None:
     await _emit(
         "manage.charter.tick.propagation_started",
@@ -497,6 +498,7 @@ async def emit_manage_charter_tick_propagation_started(
             "window_index": window_index,
             "services": services,
             "charter_reload": charter_reload,
+            "rows": rows or [],
         },
     )
 
@@ -516,5 +518,25 @@ async def emit_manage_charter_tick_propagation_completed(
             "services": results.get("services"),
             "charter_reload": results.get("charter_reload"),
             "skipped_lines": results.get("skipped_lines"),
+            "closed": results.get("closed"),
+            "remaining": results.get("remaining"),
+            "escalated": results.get("escalated"),
+            "scoreboard": results.get("scoreboard"),
+        },
+    )
+
+
+async def emit_manage_charter_tick_propagation_escalated(
+    *,
+    root: str,
+    window_index: int,
+    escalated: list[dict],
+) -> None:
+    await _emit(
+        "manage.charter.tick.propagation_escalated",
+        {
+            "root": root,
+            "window_index": window_index,
+            "escalated": escalated,
         },
     )

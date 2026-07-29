@@ -7,7 +7,7 @@ import json
 import os
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import httpx
@@ -117,6 +117,7 @@ async def poll_dispatch_terminal(
     dispatch_id: str,
     timeout_s: float | None = None,
     superseded: Callable[[], bool] | None = None,
+    on_tick: Callable[[dict[str, Any] | None], Awaitable[None]] | None = None,
 ) -> dict[str, Any]:
     """Poll ledger until nested dispatch reaches a terminal status.
 
@@ -141,6 +142,8 @@ async def poll_dispatch_terminal(
         )
         if row is not None:
             last = row
+            if on_tick is not None:
+                await on_tick(row)
             if row.get("dispatch_id") == dispatch_id and row.get("status") in _TERMINAL:
                 return {
                     "ok": True,

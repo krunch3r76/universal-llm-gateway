@@ -8,7 +8,11 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from ..auth import require_token
-from ..body_auto_spill import prepare_body_for_insert, spill_error_http
+from ..body_auto_spill import (
+    build_turn_created,
+    prepare_body_for_insert,
+    spill_error_http,
+)
 from ..db import (
     TurnAlreadyAcknowledged,
     UnreadTurnsExist,
@@ -144,13 +148,15 @@ async def create_turn(turn: TurnCreate) -> TurnCreated:
             turn_number,
             exc_info=True,
         )
-    return TurnCreated(
-        id=turn_id,
+    return build_turn_created(
+        prepared,
+        turn_id=turn_id,
         thread=turn.thread,
         turn_number=turn_number,
         created_at=datetime.fromisoformat(ts),
-        sidecar_uri=prepared.sidecar_uri,
-        sidecar_sha256=prepared.sidecar_sha256,
+        from_agent=turn.from_agent,
+        to_agent=turn.to,
+        subject=turn.subject,
     )
 
 

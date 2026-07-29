@@ -20,6 +20,12 @@ from universal_logging import get_logger
 
 from services.git_integration_worker.admission import WorkAdmissionController
 from services.git_integration_worker.config import WorkerConfig, load_config
+from services.git_integration_worker.cursor_auto.execute_runner import (
+    clear_tool_op_invoker,
+)
+from services.git_integration_worker.cursor_auto.execute_tool_op_invoker import (
+    register_production_invoker,
+)
 from services.git_integration_worker.cursor_dispatch_ledger import (
     CursorDispatchLedger,
 )
@@ -109,6 +115,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.worker_version = _resolve_version()
     app.state.worker_started_at = time.monotonic()
     await startup_ledger_reconcile(app)
+    register_production_invoker()
     sweeper = asyncio.create_task(stale_lease_sweeper(app))
     app.state.stale_lease_sweeper = sweeper
     auto_worker = asyncio.create_task(auto_worker_loop(app))
@@ -144,6 +151,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        clear_tool_op_invoker()
         shutdown_active_bridges()
         for attr in (
             "stale_lease_sweeper",

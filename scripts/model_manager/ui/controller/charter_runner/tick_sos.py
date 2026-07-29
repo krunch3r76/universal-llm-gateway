@@ -402,7 +402,7 @@ async def _post_cursor_auto_note(
     )
     await bus_client.post_root_turn(
         root_id,
-        to="cursor-auto",
+        to="cursor",
         subject=f"SOS — tick silent-starve · {reason}",
         body=body,
     )

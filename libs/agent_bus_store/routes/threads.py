@@ -8,7 +8,12 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from ..auth import require_token
-from ..body_auto_spill import PreparedBody, prepare_body_for_insert, spill_error_http
+from ..body_auto_spill import (
+    PreparedBody,
+    build_turn_created,
+    prepare_body_for_insert,
+    spill_error_http,
+)
 from ..db import (
     PendingShellContention,
     SlugExists,
@@ -409,13 +414,15 @@ async def create_thread_with_turn_route(
     prepared = spill_holder.get("prepared")
     return ThreadWithTurnCreated(
         thread=_thread_detail(thread_row),
-        turn=TurnCreated(
-            id=turn_id,
+        turn=build_turn_created(
+            prepared or PreparedBody(body=body.body),
+            turn_id=turn_id,
             thread=thread_row["id"],
             turn_number=turn_number,
             created_at=datetime.fromisoformat(ts),
-            sidecar_uri=prepared.sidecar_uri if prepared else None,
-            sidecar_sha256=prepared.sidecar_sha256 if prepared else None,
+            from_agent=body.from_agent,
+            to_agent=body.to,
+            subject=body.subject,
         ),
     )
 
@@ -746,13 +753,15 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
         return TurnSendCreated(
             send_path="new_thread",
             thread=_thread_detail(thread_row),
-            turn=TurnCreated(
-                id=turn_id,
+            turn=build_turn_created(
+                prepared or PreparedBody(body=body.body),
+                turn_id=turn_id,
                 thread=thread_row["id"],
                 turn_number=turn_number,
                 created_at=datetime.fromisoformat(ts),
-                sidecar_uri=prepared.sidecar_uri if prepared else None,
-                sidecar_sha256=prepared.sidecar_sha256 if prepared else None,
+                from_agent=body.from_agent,
+                to_agent=body.to,
+                subject=body.subject,
             ),
             sidecar_uri=prepared.sidecar_uri if prepared else None,
             sidecar_sha256=prepared.sidecar_sha256 if prepared else None,
@@ -808,13 +817,15 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
     return TurnSendCreated(
         send_path="continue",
         thread=_thread_detail(thread_row),
-        turn=TurnCreated(
-            id=turn_id,
+        turn=build_turn_created(
+            prepared,
+            turn_id=turn_id,
             thread=thread_id,
             turn_number=turn_number,
             created_at=datetime.fromisoformat(ts),
-            sidecar_uri=prepared.sidecar_uri,
-            sidecar_sha256=prepared.sidecar_sha256,
+            from_agent=body.from_agent,
+            to_agent=body.to,
+            subject=body.subject,
         ),
         marked_read=marked_read,
         sidecar_uri=prepared.sidecar_uri,

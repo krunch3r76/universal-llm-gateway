@@ -1,18 +1,39 @@
 """Charter harvest propagation — drain-aware service restart after window close.
 
-When a worker closeout carries ``propagation_residue`` (landed≠live), the charter
-tick executes ``sync_restart`` for each mapped service and ``charter_reload`` when
-charter-runner sources changed. Runs at harvest time (worker already exited) so
-git-integration-worker restarts use the blocking drain supervisor.
+When a worker closeout carries structured ``propagation`` rows or legacy
+``propagation_residue`` (landed≠live), the charter tick persists open rows,
+applies the safe-window matrix plus GIW I2, fires ``sync_restart`` only when
+permitted, and closes rows only on observed proof-of-live.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
+
+import httpx
+from charter_runner_store.propagation_ledger import (
+    OpenPropagationProjection,
+    bump_age_for_open_rows,
+    close_row,
+    list_open_rows,
+    scoreboard_projection,
+    set_defer_reason,
+    upsert_open_rows,
+)
+from implement_admission.propagation_row import (
+    PropagationRow,
+    resolve_code_ref,
+    rows_from_closeout_payload,
+)
+from scripts.model_manager.ui.charter_scoreboard_objective import scoreboard_path_for_root
+from scripts.model_manager.ui.charter_scoreboard_propagation import (
+    write_scoreboard_open_rows,
+)
 
 from .bus_client import closeout_turn_from_turns
 
@@ -42,8 +63,19 @@ _SERVICE_PREFIXES: tuple[tuple[str, str], ...] = (
     ("services/universal-stargate/", "stargate"),
 )
 
+_GIW_LIVENESS_URL = os.environ.get(
+    "GIT_INTEGRATION_WORKER_LIVENESS_URL",
+    "http://127.0.0.1:8091/api/v1/git/cursor-auto/liveness",
+)
+_GIW_QUEUE_URL = os.environ.get(
+    "GIT_INTEGRATION_WORKER_QUEUE_URL",
+    "http://127.0.0.1:8091/api/v1/git/cursor-auto/queue",
+)
+_MCP_HEALTH_URL = os.environ.get("MCP_HEALTH_URL", "http://127.0.0.1:8080/health")
+
 _context: tuple[ServiceController, EventBus | None] | None = None
 _pending_charter_reload: bool = False
+_probe_client: httpx.Client | None = None
 
 
 def schedule_charter_reload() -> None:
@@ -75,9 +107,11 @@ def install_propagation_context(
 class PropagationPlan:
     """Resolved propagation actions for one harvested window."""
 
+    rows: list[PropagationRow] = field(default_factory=list)
     sync_restart_services: list[str] = field(default_factory=list)
     charter_reload: bool = False
     skipped_lines: list[str] = field(default_factory=list)
+    prose_only_advisory: bool = False
 
 
 def _closeout_payload(worker_turns: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -139,25 +173,104 @@ def plan_propagation(worker_turns: list[dict[str, Any]]) -> PropagationPlan | No
     paths = _paths_from_closeout(payload)
     charter_reload = any(path.startswith(_CHARTER_RUNNER_PREFIX) for path in paths)
 
-    raw_residue = payload.get("propagation_residue")
-    lines: list[str] = []
-    if isinstance(raw_residue, list):
-        lines = [str(item) for item in raw_residue if isinstance(item, str) and item]
-
-    services, skipped = _slugs_from_residue_lines(lines)
+    rows, skipped, prose_only = rows_from_closeout_payload(payload)
+    services = [row.service for row in rows]
     if not services:
-        for path in paths:
-            slug = _slug_for_path(path)
-            if slug and slug not in services:
-                services.append(slug)
+        raw_residue = payload.get("propagation_residue")
+        lines: list[str] = []
+        if isinstance(raw_residue, list):
+            lines = [str(item) for item in raw_residue if isinstance(item, str) and item]
+        services, skipped = _slugs_from_residue_lines(lines)
+        if not services:
+            for path in paths:
+                slug = _slug_for_path(path)
+                if slug and slug not in services:
+                    services.append(slug)
 
-    if not services and not charter_reload and not skipped:
+    if not rows and not services and not charter_reload and not skipped:
         return None
+
+    if not rows and services:
+        code_ref_str = resolve_code_ref(payload)
+        rows = [
+            PropagationRow(
+                service=slug,
+                code_ref=code_ref_str,
+            )
+            for slug in services
+        ]
+
     return PropagationPlan(
-        sync_restart_services=services,
+        rows=rows,
+        sync_restart_services=services or [row.service for row in rows],
         charter_reload=charter_reload,
         skipped_lines=skipped,
+        prose_only_advisory=prose_only,
     )
+
+
+def giw_i2_clear(*, queue_snapshot: dict[str, Any] | None = None) -> tuple[bool, str]:
+    """Return whether GIW restart is permitted under I2 (no in-flight closeout relay)."""
+    snapshot = queue_snapshot if queue_snapshot is not None else _fetch_json(_GIW_QUEUE_URL)
+    if snapshot is None:
+        return False, "i2_queue_unreachable"
+    claimed = int(snapshot.get("claimed") or 0)
+    pending = int(snapshot.get("pending") or 0)
+    if claimed > 0:
+        return False, "i2_inflight_closeout"
+    if pending > 0:
+        return False, "i2_pending_closeout"
+    return True, "ok"
+
+
+def row_may_fire_at_harvest(row: OpenPropagationProjection) -> tuple[bool, str]:
+    """Apply safe-window matrix for charter harvest firing."""
+    if row.safe_window == "standalone_ok":
+        return True, "standalone_ok_allowed_at_harvest"
+    if row.safe_window in ("harvest", "drain_required"):
+        return True, f"{row.safe_window}_harvest_window"
+    return False, f"safe_window_{row.safe_window}_defer"
+
+
+def giw_restart_precondition(
+    row: OpenPropagationProjection,
+    *,
+    queue_snapshot: dict[str, Any] | None = None,
+) -> tuple[bool, str]:
+    """GIW rows require I2 regardless of safe_window class."""
+    if row.service != "git_integration_worker":
+        return True, "ok"
+    return giw_i2_clear(queue_snapshot=queue_snapshot)
+
+
+def _fetch_json(url: str, *, timeout_s: float = 3.0) -> dict[str, Any] | None:
+    global _probe_client
+    try:
+        client = _probe_client or httpx.Client(timeout=timeout_s)
+        resp = client.get(url)
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        return data if isinstance(data, dict) else None
+    except (httpx.HTTPError, ValueError, OSError):
+        return None
+
+
+def probe_process_live(service: str) -> dict[str, Any] | None:
+    """Fetch health/liveness JSON for proof-of-live closure."""
+    if service == "git_integration_worker":
+        return _fetch_json(_GIW_LIVENESS_URL)
+    if service == "mcp":
+        return _fetch_json(_MCP_HEALTH_URL)
+    return None
+
+
+def proof_matches(row: OpenPropagationProjection, payload: dict[str, Any] | None) -> bool:
+    """Close predicate: observed code_version equals row code_ref."""
+    if payload is None:
+        return False
+    observed = payload.get("code_version")
+    return isinstance(observed, str) and observed == row.code_ref
 
 
 async def execute_propagation_plan(
@@ -166,7 +279,7 @@ async def execute_propagation_plan(
     root_id: str,
     window_index: int,
 ) -> dict[str, Any]:
-    """Run propagation actions; return per-action results."""
+    """Persist rows and run harvest closure — proof closes, not restart status."""
     if _context is None:
         logger.warning(
             "charter propagation skipped root=%s window=%s — no ServiceController",
@@ -178,46 +291,106 @@ async def execute_propagation_plan(
     from scripts.model_manager.ui.api_dispatch import sync_restart_charter_harvest
 
     ctl, event_bus = _context
+    if plan.rows:
+        upsert_open_rows(plan.rows)
+
+    bump_age_for_open_rows()
+    open_rows = list_open_rows()
+    queue_snapshot = _fetch_json(_GIW_QUEUE_URL)
+
+    closed: list[dict[str, Any]] = []
+    remaining: list[dict[str, Any]] = []
+    escalated: list[dict[str, Any]] = []
+    service_results: dict[str, Any] = {}
+
+    for row in open_rows:
+        projection = {
+            "row_id": row.row_id,
+            "service": row.service,
+            "code_ref": row.code_ref,
+            "safe_window": row.safe_window,
+            "age_in_harvests": row.age_in_harvests,
+        }
+        live_payload = probe_process_live(row.service)
+        if proof_matches(row, live_payload):
+            close_row(row.row_id, proof_payload=live_payload or {})
+            closed.append({**projection, "proof": live_payload})
+            continue
+
+        may_fire, window_reason = row_may_fire_at_harvest(row)
+        i2_ok, i2_reason = giw_restart_precondition(row, queue_snapshot=queue_snapshot)
+        if not may_fire or not i2_ok:
+            defer = i2_reason if not i2_ok else window_reason
+            set_defer_reason(row.row_id, defer)
+            remaining.append({**projection, "defer_reason": defer})
+            if row.age_in_harvests >= 2:
+                escalated.append({**projection, "defer_reason": defer})
+            continue
+
+        try:
+            outcome = await sync_restart_charter_harvest(
+                ctl, row.service, event_bus=event_bus
+            )
+            service_results[row.service] = outcome
+        except Exception as exc:  # noqa: BLE001
+            logger.exception(
+                "charter propagation sync_restart failed service=%s root=%s window=%s",
+                row.service,
+                root_id,
+                window_index,
+            )
+            defer = f"sync_restart_error:{type(exc).__name__}"
+            set_defer_reason(row.row_id, defer)
+            remaining.append({**projection, "defer_reason": defer})
+            continue
+
+        live_after = probe_process_live(row.service)
+        if proof_matches(row, live_after):
+            close_row(row.row_id, proof_payload=live_after or {})
+            closed.append({**projection, "proof": live_after})
+        else:
+            defer = "proof_not_observed_after_restart"
+            set_defer_reason(row.row_id, defer)
+            remaining.append({**projection, "defer_reason": defer})
+            if row.age_in_harvests >= 2:
+                escalated.append({**projection, "defer_reason": defer})
+
     results: dict[str, Any] = {
         "status": "ok",
         "root": root_id,
         "window_index": window_index,
-        "services": {},
+        "services": service_results,
         "skipped_lines": list(plan.skipped_lines),
+        "closed": closed,
+        "remaining": remaining,
+        "escalated": escalated,
+        "scoreboard": scoreboard_projection(),
+        "prose_only_advisory": plan.prose_only_advisory,
     }
 
+    try:
+        board_path = scoreboard_path_for_root(root_id)
+        if board_path.is_file():
+            write_scoreboard_open_rows(board_path, results["scoreboard"])
+    except OSError:
+        logger.exception(
+            "charter scoreboard open-row render failed root=%s window=%s",
+            root_id,
+            window_index,
+        )
+
     if plan.charter_reload:
-        reload_pending = True
-    else:
-        reload_pending = False
-
-    for service in plan.sync_restart_services:
-        try:
-            outcome = await sync_restart_charter_harvest(
-                ctl, service, event_bus=event_bus
-            )
-            results["services"][service] = outcome
-            if outcome.get("status") not in ("ok", "deferred"):
-                results["status"] = "partial"
-        except Exception as exc:  # noqa: BLE001
-            logger.exception(
-                "charter propagation sync_restart failed service=%s root=%s window=%s",
-                service,
-                root_id,
-                window_index,
-            )
-            results["services"][service] = {
-                "status": "error",
-                "error": f"{type(exc).__name__}: {exc}",
-            }
-            results["status"] = "partial"
-
-    if reload_pending:
         schedule_charter_reload()
         results["charter_reload"] = {
             "status": "scheduled",
             "reason": "deferred_until_tick_slice_end",
         }
+
+    if service_results and any(
+        outcome.get("status") not in ("ok", "deferred")
+        for outcome in service_results.values()
+    ):
+        results["status"] = "partial"
 
     return results
 
@@ -240,6 +413,7 @@ async def maybe_execute_window_propagation(
         window_index=window_index,
         services=list(plan.sync_restart_services),
         charter_reload=plan.charter_reload,
+        rows=[row.model_dump(mode="json") for row in plan.rows],
     )
     results = await execute_propagation_plan(
         plan, root_id=root_id, window_index=window_index
@@ -249,15 +423,33 @@ async def maybe_execute_window_propagation(
         window_index=window_index,
         results=results,
     )
+    if results.get("escalated"):
+        await events.emit_manage_charter_tick_propagation_escalated(
+            root=root_id,
+            window_index=window_index,
+            escalated=list(results["escalated"]),
+        )
     return results
+
+
+def set_probe_client_for_tests(client: httpx.Client | None) -> None:
+    """Inject httpx client for unit tests."""
+    global _probe_client
+    _probe_client = client
 
 
 __all__ = [
     "PropagationPlan",
     "consume_pending_charter_reload",
     "execute_propagation_plan",
+    "giw_i2_clear",
+    "giw_restart_precondition",
     "install_propagation_context",
     "maybe_execute_window_propagation",
     "plan_propagation",
+    "probe_process_live",
+    "proof_matches",
+    "row_may_fire_at_harvest",
     "schedule_charter_reload",
+    "set_probe_client_for_tests",
 ]

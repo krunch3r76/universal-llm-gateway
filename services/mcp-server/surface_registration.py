@@ -15,26 +15,25 @@ from tools.close import register_close_tools
 from tools.context import register_context_tools
 from tools.cortex import register_cortex_tools
 from tools.cortex_named_tools import register_cortex_named_tools
+from tools.cursor_request import register_cursor_request_tool
 from tools.delegate import register_delegate_schema_transform, register_delegate_tools
 from tools.events import register_event_tools
 from tools.extract_directory import register_extract_directory_tools
-from tools.vision_digest import register_vision_digest_tools
 from tools.extract_document import register_extract_document_tools
 from tools.filesystem import register_filesystem_tools
 from tools.frontier import register_frontier_tools
 from tools.frontier_imagine import register_imagine_tools
 from tools.git_integrate import register_git_integrate_tools
 from tools.imprint import register_imprint_tools
-from tools.notify import register_notify_tools
 from tools.manage import register_manage_tools
 from tools.markdown_tool import register_markdown_tools
 from tools.model_status import register_model_status_tools
+from tools.notify import register_notify_tools
 from tools.panel_dispatch import register_panel_dispatch_tools
 from tools.pipeline import register_pipeline_tools
 from tools.pipeline_consult import register_pipeline_consult_tools
 from tools.project import register_project_tools
 from tools.project_ask import register_project_ask_tool
-from tools.trigger import register_trigger_tool
 from tools.promote_document_to_evidence import (
     register_promote_document_to_evidence_tools,
 )
@@ -46,6 +45,8 @@ from tools.security_js import register_security_js_tools
 from tools.skill_suggest import register_skill_suggest_tools
 from tools.sqlite import register_sqlite_tools
 from tools.topology import register_topology_tools
+from tools.trigger import register_trigger_tool
+from tools.vision_digest import register_vision_digest_tools
 from tools.web import register_web_tools
 from tools.x_dm import register_x_dm_tools
 from universal_logging import get_logger
@@ -89,6 +90,7 @@ def register_tools_for_surface(mcp: FastMCP, surface: Surface) -> None:
     register_vision_digest_tools(mcp)
     register_agent_bus_tools(mcp)
     register_agent_bus_read_tool(mcp)
+    register_cursor_request_tool(mcp)
     register_cortex_tools(mcp, surface=surface)
     register_cortex_named_tools(mcp, surface=surface)
     register_advisor_tools(mcp)

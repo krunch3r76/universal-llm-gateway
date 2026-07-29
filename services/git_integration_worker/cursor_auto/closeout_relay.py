@@ -9,12 +9,17 @@ authored §2 body (usually the repo sidecar) when present; otherwise synthesize
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from implement_admission.closeout_helpers import cortex_files_root
 
 from services.git_integration_worker.config import load_config
+from services.git_integration_worker.cursor_auto.closeout_relay_briefing import (
+    finalize_relay_payload,
+)
 from services.git_integration_worker.cursor_auto.closeout_relay_common import (
+    RELAY_EFFECTS_MAX_ITEMS,
     CloseoutRelayPayload,
     _as_str_list,
     _order_preserving_dedup,
@@ -23,46 +28,44 @@ from services.git_integration_worker.cursor_auto.closeout_relay_common import (
     fill_judgment_cell,
     is_wrapper_manifest,
     looks_section2,
-    status_from_section2,
     strip_machine_tail,
     wrapper_status,
 )
+from services.git_integration_worker.cursor_auto.closeout_relay_cortex_fields import (
+    status_from_section2,
+)
 from services.git_integration_worker.cursor_auto.closeout_relay_cortex import (
-    apply_write_fence,
     run_cortex_scan,
 )
 from services.git_integration_worker.cursor_auto.closeout_relay_effects import (
-    amend_effects_underclaim,
     machine_write_uris,
 )
 from services.git_integration_worker.cursor_auto.relay_trust import (
     enforce_synthesized_partial,
 )
+from services.git_integration_worker.cursor_auto.closeout_relay_project import (
+    project_section2_table,
+)
+from services.git_integration_worker.cursor_sdk_deliverables import (
+    sidecar_workspaces_ref,
+)
 
 _SIDECAR_REL_DIR = "tmp/reviews/closeouts"
-_MAX_EXECUTOR_EXCERPT_CHARS = 1500
 
 
-def _finalize(
-    payload: CloseoutRelayPayload,
-    *,
-    wrapper_text: str | None,
-    guard_uris: frozenset[str] | None = None,
-) -> CloseoutRelayPayload:
-    """Run honesty amend and optional confer write-fence on every selector exit."""
-    amended = amend_effects_underclaim(
-        payload.body,
-        wrapper_text=wrapper_text,
-        status=payload.status,
-        source=payload.source,
-    )
-    if not guard_uris:
-        return amended
-    return apply_write_fence(
-        amended,
-        wrapper_text=wrapper_text,
-        guard_uris=guard_uris,
-    )
+def _evidence_cell_from_parts(
+    artifact_paths: list[str],
+    deviations: list[str],
+    capture_status: object,
+) -> str:
+    evidence_parts: list[str] = []
+    if artifact_paths:
+        evidence_parts.append("artifact_paths: " + ", ".join(artifact_paths))
+    if deviations:
+        evidence_parts.append("deviations: " + "; ".join(deviations))
+    if capture_status is not None:
+        evidence_parts.append(f"capture_status={capture_status}")
+    return "; ".join(evidence_parts) if evidence_parts else "none"
 
 
 def synthesize_section2(
@@ -105,54 +108,73 @@ def synthesize_section2(
         )
 
     provenance = (
-        f"repo sidecar for {dispatch_id}"
-        if sidecar_text and sidecar_text.strip()
-        else "machine wrapper manifest"
+        sidecar_workspaces_ref(dispatch_id)
+        if sidecar_text and sidecar_text.strip() and dispatch_id
+        else (
+            f"repo sidecar for {dispatch_id}"
+            if sidecar_text and sidecar_text.strip()
+            else "machine wrapper manifest"
+        )
     )
     sidecar_prose = strip_machine_tail(sidecar_text).strip() if sidecar_text else ""
 
     if sidecar_prose:
-        ac_verdict = build_ac_verdict_cell(
+        projected, projected_status = project_section2_table(
             sidecar_prose,
             provenance=provenance,
-            max_excerpt_chars=_MAX_EXECUTOR_EXCERPT_CHARS,
+            fallback_status=str(status),
         )
-        deltas_to_spec = fill_judgment_cell(
-            sidecar_prose, "deltas_to_spec", provenance=provenance
-        )
-        decisions_taken = fill_judgment_cell(
-            sidecar_prose, "decisions_taken", provenance=provenance
-        )
-        next_cell = fill_judgment_cell(sidecar_prose, "next", provenance=provenance)
-        open_forks = fill_judgment_cell(
-            sidecar_prose, "open forks", provenance=provenance
-        )
-    else:
-        ac_verdict = (
-            "unauthored — executor emitted no §2 body; machine-derived envelope below. "
-            "Not a pass."
-        )
-        deltas_to_spec = "unauthored — not reported by executor"
-        decisions_taken = "unauthored — not reported by executor"
-        next_cell = "unauthored — operator must derive from effects above"
-        open_forks = "unknown — executor emitted no §2"
+        if effects_union:
+            pointer = sidecar_workspaces_ref(dispatch_id) if dispatch_id else provenance
+            if len(effects_union) > RELAY_EFFECTS_MAX_ITEMS:
+                shown = effects_union[:RELAY_EFFECTS_MAX_ITEMS]
+                extra = len(effects_union) - RELAY_EFFECTS_MAX_ITEMS
+                effects_cell = "<br>".join(f"- {item}" for item in shown)
+                effects_cell += f"<br>+{extra} more (see {pointer})"
+            else:
+                effects_cell = "<br>".join(f"- {item}" for item in effects_union)
+            projected = re.sub(
+                r"(?im)^\|\s+effects\s+\|\s+.*?\s+\|",
+                f"| effects | {_table_cell(effects_cell)} |",
+                projected,
+                count=1,
+            )
+        if evidence_cell := _evidence_cell_from_parts(
+            artifact_paths, deviations, capture_status
+        ):
+            projected = re.sub(
+                r"(?im)^\|\s+evidence\s+\|\s+.*?\s+\|",
+                f"| evidence | {_table_cell(evidence_cell)} |",
+                projected,
+                count=1,
+            )
+        return projected
+
+    ac_verdict = (
+        "unauthored — executor emitted no §2 body; machine-derived envelope below. "
+        "Not a pass."
+    )
+    deltas_to_spec = "unauthored — not reported by executor"
+    decisions_taken = "unauthored — not reported by executor"
+    next_cell = "unauthored — operator must derive from effects above"
+    open_forks = "unknown — executor emitted no §2"
 
     if effects_union:
-        effects_cell = "<br>".join(f"- {item}" for item in effects_union)
+        pointer = sidecar_workspaces_ref(dispatch_id) if dispatch_id else provenance
+        if len(effects_union) > RELAY_EFFECTS_MAX_ITEMS:
+            shown = effects_union[:RELAY_EFFECTS_MAX_ITEMS]
+            extra = len(effects_union) - RELAY_EFFECTS_MAX_ITEMS
+            effects_cell = "<br>".join(f"- {item}" for item in shown)
+            effects_cell += f"<br>+{extra} more (see {pointer})"
+        else:
+            effects_cell = "<br>".join(f"- {item}" for item in effects_union)
     else:
         effects_cell = (
             f"none captured — capture_status={capture_status}; "
             'per §4.7 a schema-only read of "none" is not authority'
         )
 
-    evidence_parts: list[str] = []
-    if artifact_paths:
-        evidence_parts.append("artifact_paths: " + ", ".join(artifact_paths))
-    if deviations:
-        evidence_parts.append("deviations: " + "; ".join(deviations))
-    if capture_status is not None:
-        evidence_parts.append(f"capture_status={capture_status}")
-    evidence_cell = "; ".join(evidence_parts) if evidence_parts else "none"
+    evidence_cell = _evidence_cell_from_parts(artifact_paths, deviations, capture_status)
 
     rows = (
         ("status", str(status)),
@@ -235,26 +257,40 @@ def select_closeout_relay_payload(
     if sidecar_text:
         prose = strip_machine_tail(sidecar_text)
         if looks_section2(prose):
-            return _finalize(
+            provenance = sidecar_workspaces_ref(dispatch_id) if dispatch_id else "repo sidecar"
+            projected, status = project_section2_table(
+                prose,
+                provenance=provenance,
+                fallback_status=fallback_status,
+            )
+            return finalize_relay_payload(
                 CloseoutRelayPayload(
-                    body=prose,
-                    status=status_from_section2(prose) or fallback_status,
+                    body=projected,
+                    status=status,
                     source="section2_sidecar",
                 ),
                 wrapper_text=wrapper_text,
                 guard_uris=guard_uris,
+                dispatch_id=dispatch_id,
             )
 
     if sdk_body and looks_section2(sdk_body) and not is_wrapper_manifest(sdk_body):
         prose = strip_machine_tail(sdk_body)
-        return _finalize(
+        provenance = sidecar_workspaces_ref(dispatch_id) if dispatch_id else "bus §2 body"
+        projected, status = project_section2_table(
+            prose,
+            provenance=provenance,
+            fallback_status=fallback_status,
+        )
+        return finalize_relay_payload(
             CloseoutRelayPayload(
-                body=prose,
-                status=status_from_section2(prose) or fallback_status,
+                body=projected,
+                status=status,
                 source="section2_bus",
             ),
             wrapper_text=wrapper_text,
             guard_uris=guard_uris,
+            dispatch_id=dispatch_id,
         )
 
     root = cortex_root if cortex_root is not None else cortex_files_root()
@@ -265,10 +301,11 @@ def select_closeout_relay_payload(
         fallback_status=fallback_status,
     )
     if cortex_payload is not None:
-        return _finalize(
+        return finalize_relay_payload(
             cortex_payload,
             wrapper_text=wrapper_text,
             guard_uris=guard_uris,
+            dispatch_id=dispatch_id,
         )
 
     synthesized = synthesize_section2(
@@ -279,7 +316,7 @@ def select_closeout_relay_payload(
     if synthesized is not None:
         source = "section2_synthesized"
         raw_status = wrapper_status(sdk_body or "") or fallback_status
-        return _finalize(
+        return finalize_relay_payload(
             CloseoutRelayPayload(
                 body=synthesized,
                 status=enforce_synthesized_partial(
@@ -290,10 +327,11 @@ def select_closeout_relay_payload(
             ),
             wrapper_text=wrapper_text,
             guard_uris=guard_uris,
+            dispatch_id=dispatch_id,
         )
 
     if sdk_body and sdk_body.strip():
-        return _finalize(
+        return finalize_relay_payload(
             CloseoutRelayPayload(
                 body=sdk_body.strip(),
                 status=fallback_status,
@@ -301,9 +339,10 @@ def select_closeout_relay_payload(
             ),
             wrapper_text=wrapper_text,
             guard_uris=guard_uris,
+            dispatch_id=dispatch_id,
         )
 
-    return _finalize(
+    return finalize_relay_payload(
         CloseoutRelayPayload(
             body="(no cursor-sdk closeout body captured)",
             status=fallback_status,
@@ -311,6 +350,7 @@ def select_closeout_relay_payload(
         ),
         wrapper_text=wrapper_text,
         guard_uris=guard_uris,
+        dispatch_id=dispatch_id,
     )
 
 

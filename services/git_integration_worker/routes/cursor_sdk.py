@@ -1330,7 +1330,9 @@ async def _run_sdk_dispatch_gated(
     # write lease.
     try:
         await acquire_sdk_dispatch_slot(
-            dispatch_id=req.dispatch_id, timeout=_SDK_SLOT_ACQUIRE_TIMEOUT_S
+            dispatch_id=req.dispatch_id,
+            caller_agent=req.caller_agent,
+            timeout=_SDK_SLOT_ACQUIRE_TIMEOUT_S,
         )
     except TimeoutError:
         logger.error(

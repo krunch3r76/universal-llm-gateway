@@ -16,14 +16,29 @@ from services.git_integration_worker.cursor_auto.directive import (
     effective_require_attended,
     parse_request_body,
 )
+from services.git_integration_worker.cursor_auto.dispatch_progress import (
+    ProgressEmitter,
+)
 from services.git_integration_worker.cursor_auto.episode_briefing import (
     compose_admit_body,
     maybe_briefing_for_admit,
+)
+from services.git_integration_worker.cursor_auto.execute_admission import (
+    EXECUTE_CONTRACT,
 )
 from services.git_integration_worker.cursor_auto.gate_serialize import (
     NESTED_IN_SEAT_REASON,
     plan_nested_dispatch,
     prefer_dispatch_over_park,
+)
+from services.git_integration_worker.cursor_auto.handler_deadline import (
+    deadline_terminal,
+)
+from services.git_integration_worker.cursor_auto.handler_execute import (
+    run_execute_in_seat,
+)
+from services.git_integration_worker.cursor_auto.handler_propagation import (
+    run_propagation_in_seat,
 )
 from services.git_integration_worker.cursor_auto.handler_terminal import (
     terminal_failed,
@@ -38,6 +53,9 @@ from services.git_integration_worker.cursor_auto.nested_sdk import (
     fetch_sdk_closeout_body,
     poll_dispatch_terminal,
     submit_nested_dispatch,
+)
+from services.git_integration_worker.cursor_auto.propagate_admission import (
+    PROPAGATE_CONTRACT,
 )
 from services.git_integration_worker.cursor_auto.queue import AutoJob, get_queue
 from services.git_integration_worker.cursor_auto.supersede import (
@@ -86,11 +104,17 @@ async def process_job(
     contract = effective_contract(job.contract, job.body)
     # Downstream closeout/journal/meta read job.contract — stamp effective.
     job.contract = contract
+    expired = await deadline_terminal(job, client=client, queue=queue)
+    if expired is not None:
+        return expired
     model = resolve_desired_model(job.desired_model, contract=contract)
     effort = resolve_desired_effort(job.desired_effort)
     contract_info = resolve_contract_disposition(contract)
     handoff_contract = resolve_handoff_contract(contract)
-    if directive is not None or contract in _NESTED_CONTRACTS:
+    if directive is not None or contract in _NESTED_CONTRACTS or contract in {
+        EXECUTE_CONTRACT,
+        PROPAGATE_CONTRACT,
+    }:
         blocked = await blocking_admit_gate(job, client=client, queue=queue)
         if blocked is not None:
             return blocked
@@ -152,6 +176,26 @@ async def process_job(
             gate_plan=gate_plan,
         )
 
+    if contract == EXECUTE_CONTRACT:
+        return await run_execute_in_seat(
+            job,
+            client=client,
+            queue=queue,
+            model=model,
+            effort=effort,
+            gate_plan=gate_plan,
+        )
+
+    if contract == PROPAGATE_CONTRACT:
+        return await run_propagation_in_seat(
+            job,
+            client=client,
+            queue=queue,
+            model=model,
+            effort=effort,
+            gate_plan=gate_plan,
+        )
+
     if contract not in _NESTED_CONTRACTS:
         return await terminal_in_seat(
             job,
@@ -209,10 +253,12 @@ async def process_job(
         )
 
     dispatch_id = str(submit["dispatch_id"])
+    progress = ProgressEmitter(job, client=client)
     polled = await poll_dispatch_terminal(
         thread_id=job.thread_id,
         dispatch_id=dispatch_id,
         superseded=lambda: queue.is_superseded(job.job_id),
+        on_tick=progress.maybe_emit,
     )
     if polled.get("superseded"):
         return await post_superseded_terminal(

@@ -27,6 +27,14 @@ from typing import Any
 # would otherwise silently fork a new thread (the 1140->1142 footgun).
 POST_CONTINUATION_KEYS: tuple[str, ...] = ("thread", "after_turn")
 
+# `cursor-auto` is the Auto executor ROLE and a legitimate turn AUTHOR, but not a
+# bus address: it normalizes to a mailbox no seat's inbox fetch expands to, so a
+# send addressed there is a silent black hole — written, delivered to nobody,
+# arming nothing (threads 6310/6314). Reject the spellings rather than allowlist
+# `to`: live traffic legitimately addresses charter-runner, dispatch, all, and
+# opaque cursor-sdk:dispatch:<uuid> mailboxes.
+SEND_NON_ADDRESSABLE_TO: frozenset[str] = frozenset({"cursor-auto", "cursor_auto"})
+
 
 def reconcile_post_arguments(
     parsed: dict[str, Any],
@@ -103,6 +111,21 @@ def reconcile_send_arguments(
     if "from" in args:
         alias_value = args.pop("from")
         args.setdefault("from_agent", alias_value)
+    raw_to = str(args.get("to", "")).strip()
+    if raw_to.lower() in SEND_NON_ADDRESSABLE_TO:
+        return args, {
+            "error": (
+                "send: to='cursor-auto' is not a bus address — cursor-auto is the Auto "
+                "executor role (and a valid turn author), not a mailbox. A turn sent "
+                "there reaches no inbox and arms nothing. To arm cursor-auto use "
+                "agent_bus(tool='request', to='cursor', ...) which probes handler "
+                "liveness and returns handler_status + poll_hint. To reach an attended "
+                "cursor seat use send with to='cursor'."
+            ),
+            "reason": "send_to_cursor_auto_not_addressable",
+            "provided": raw_to,
+            "suggestion": "use_request_to_arm_auto_or_send_to_cursor",
+        }
     return args, None
 
 

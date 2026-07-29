@@ -904,6 +904,17 @@ class CursorDispatchLedger:
             return None
         return parsed if isinstance(parsed, dict) else None
 
+    def read_caller_agent(self, *, dispatch_id: str) -> str | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT caller_agent FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+                (dispatch_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        value = row["caller_agent"]
+        return str(value) if value else None
+
     def set_wt_baseline(self, *, dispatch_id: str, wt_baseline: str) -> None:
         with self._connect() as conn:
             conn.execute(

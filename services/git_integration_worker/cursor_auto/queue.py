@@ -24,6 +24,8 @@ class AutoJob:
     desired_effort: str
     contract: str
     require_attended: bool = False
+    # Caller-supplied idempotency key, echoed enqueue→closeout (Fable §5).
+    request_id: str | None = None
     enqueued_at: float = field(default_factory=time.monotonic)
     status: str = "queued"  # queued | claimed | done | failed | superseded
     superseded_by: str | None = None

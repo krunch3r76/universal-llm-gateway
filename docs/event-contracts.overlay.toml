@@ -125,6 +125,7 @@
 "mcp.agentbus.turn.deleted" = "Single turn deleted"
 "mcp.agentbus.turn.detail.fetched" = "Single turn fetched by number"
 "mcp.agentbus.turn.posted" = "Reply turn posted to existing thread"
+"mcp.agentbus.turn.body_over_briefing" = "Turn body exceeded the briefing target (2k) without allow_long_body, a sidecar, or an inline-contract envelope. Advisory only — the turn was inserted unchanged."
 "mcp.agentbus.turn.updated" = "Turn body/subject updated"
 "mcp.agentbus.turns.fetched" = "Turns fetched (inbox or thread)"
 "mcp.agentbus.wait.called" = "MCP wait relay invoked (server-side block)"

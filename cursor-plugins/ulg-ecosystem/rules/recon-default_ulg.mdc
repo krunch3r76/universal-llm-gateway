@@ -31,4 +31,4 @@ Full ladder + skeptic mechanism: Use the `cheap-recon-before-escalation` skill (
 
 Use the `cheap-recon-before-escalation` skill
 
-Cross-refs: `friction-review_ws.mdc` (investigate→execute lane), `advisor-timing.mdc` (pause before first write), `reasoning-posture` (pin Question/OOS before merits on material judgment).
+Cross-refs: `friction-review_ws.mdc` (investigate→execute lane), `advisor-timing.mdc` (pause before first write), `reasoning-posture` + `frontier-reasoning-discipline` (paired — pin Question/OOS before merits, then steelman / calibrate on material judgment).

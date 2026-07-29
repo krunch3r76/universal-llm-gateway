@@ -20,11 +20,18 @@ from implement_admission.closeout_models import (
 from implement_admission.deliverable_verification import (
     evaluate_deliverable_verification,
 )
+from implement_admission.propagation_row import resolve_code_ref
 from implement_admission.normalize import _files_from_packet
 from implement_admission.spec import CloseoutStatus, ImplementSpec
 from universal_logging import get_logger
 
-from services.git_integration_worker.cursor_auto.episode_residue import residue_actions
+from services.git_integration_worker.cursor_auto.closeout_relay_cortex_uri import (
+    read_cortex_text,
+)
+from services.git_integration_worker.cursor_auto.episode_residue import (
+    residue_actions,
+    resolve_propagation_for_finalize,
+)
 from services.git_integration_worker.cursor_sdk_capture_status import (
     ChangeSet,
     attribution_effects_paths,
@@ -682,6 +689,18 @@ def finalize_closeout_body(
     return result[:MAX_TURN_BODY_CHARS] if len(result) > MAX_TURN_BODY_CHARS else result
 
 
+def _markdown_from_cortex_uris(uris: list[str]) -> list[str]:
+    root = cortex_files_root()
+    bodies: list[str] = []
+    for uri in uris:
+        if not uri.startswith("cortex://"):
+            continue
+        text = read_cortex_text(uri, cortex_root=root)
+        if text:
+            bodies.append(text)
+    return bodies
+
+
 def build_implement_closeout_body(
     *,
     dispatch_id: str,
@@ -704,6 +723,8 @@ def build_implement_closeout_body(
     files_outside_repo: list[str] | None = None,
     offgit_deliverable_uris: list[str] | None = None,
     dropped_non_file_entries: list[dict[str, str]] | None = None,
+    sidecar_markdown: str | None = None,
+    extra_markdown_sources: list[str] | None = None,
 ) -> str:
     """Build a compact, valid ImplementCloseout JSON turn body.
 
@@ -754,6 +775,19 @@ def build_implement_closeout_body(
         *(files_untracked_or_ignored or ()),
     ]
     propagation_residue = list(residue_actions(residue_paths))
+    markdown_sources = [*(extra_markdown_sources or [])]
+    if sidecar_markdown and sidecar_markdown.strip():
+        markdown_sources.append(sidecar_markdown)
+    code_probe: dict[str, Any] = {}
+    if outcome.sdk_git and isinstance(outcome.sdk_git, dict):
+        head = outcome.sdk_git.get("HEAD") or outcome.sdk_git.get("head")
+        if isinstance(head, str) and head.strip():
+            code_probe = {"evidence_uris": {"git_refs": [head.strip()]}}
+    propagation_rows = resolve_propagation_for_finalize(
+        residue_paths=residue_paths,
+        markdown_sources=markdown_sources,
+        code_ref=resolve_code_ref(code_probe),
+    )
 
     def _render_body(
         manifest_value: EffectsManifest | dict[str, Any] | None,
@@ -783,6 +817,7 @@ def build_implement_closeout_body(
                 cortex_assertions=cortex_assertions,
             ),
             propagation_residue=propagation_residue,
+            propagation=list(propagation_rows),
         )
         payload = closeout.model_dump(mode="json")
         if files_untracked_or_ignored:
@@ -1130,6 +1165,10 @@ def _assemble_closeout_delivery(
         files_outside_repo=list(all_outside_repo),
         offgit_deliverable_uris=offgit_uris,
         dropped_non_file_entries=dropped_non_file_entries,
+        sidecar_markdown=text,
+        extra_markdown_sources=_markdown_from_cortex_uris(
+            list({*(cortex_artifact_paths or []), *offgit_uris})
+        ),
     )
     if sidecar_appendix:
         appendix = "\n\n## effects_manifest\n\n" + "\n".join(sidecar_appendix)

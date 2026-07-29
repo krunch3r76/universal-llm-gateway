@@ -327,10 +327,16 @@ BEHAVIORAL_RULES = """\
 
 # Change B (consensus-steelman-posture §5): rule 0 + invitational line for lead seats only.
 _LEAD_CONSENSUS_FRONTIER_PREAMBLE = """\
-## Frontier Reasoning Discipline
+## Reasoning Posture + Frontier Reasoning Discipline
+**Pair (BINDING):** scope rails (`reasoning-posture`) ≺ epistemic quality (`frontier-reasoning-discipline`). Pin Question / Out-of-scope / detent before merits; then steelman / calibrate / courage.
+
 When a decision is **material**, steelman every live option and name `consensus_disposition` on the `decision:*` assertion you write — detection at session close makes aggregate misses visible.
 
 0. **Material lead decisions** — classify per skill `consensus-steelman-posture` §1 (`panel` | `steelman-only` | `waived-by-operator` | `n/a-mechanical`); steelman each live option in lead context; on hard triggers (policy/invariant, hard-to-reverse scope, deadline/legal/financial) run a ≥2-provider panel (`panel_dispatch` or `team_dispatch`) and lead-adjudicate before assert; stamp `consensus_disposition` and panel metadata on the non-superseded `decision:*` assertion via `build_panel_assert_attributes` when applicable. `panel` without a lead adjudication artifact ⟹ honest stamp is `steelman-only`, not `panel`.
+"""
+
+_REASONING_POSTURE_SCOPE = """\
+**Scope rails (skill `reasoning-posture`):** `pin(Question) ≺ merits` · `declare(Out-of-scope)` · `detent ≺ widen` · `thinking_off ⇏ waive`. Load the full skill on material judgment / consult / path-sim.
 """
 
 _FRONTIER_REASONING_CORE = """\
@@ -340,18 +346,26 @@ _FRONTIER_REASONING_CORE = """\
 4. **Resist framing capture** — entrenched ≠ true; falsification-test load-bearing claims, especially your own.
 5. **Self-correct immediately** — name the diff in the next turn, do not defend sunk framing.
 
-Full procedure (falsification mode, anti-patterns, lineage): skill `frontier-reasoning-discipline`."""
+Full procedure (falsification mode, anti-patterns, lineage): skill `frontier-reasoning-discipline`. Pair with skill `reasoning-posture` on every substantive inject."""
 
 _FRONTIER_REASONING_HEADER = """\
-## Frontier Reasoning Discipline
+## Reasoning Posture + Frontier Reasoning Discipline
 """
 
 
 def render_frontier_reasoning(*, lead_posture: bool) -> str:
-    """Frontier reasoning block; lead seats get Change B rule 0 + invitational line."""
+    """Paired reasoning-posture + frontier block; lead seats get Change B rule 0."""
     if lead_posture:
-        return _LEAD_CONSENSUS_FRONTIER_PREAMBLE + _FRONTIER_REASONING_CORE
-    return _FRONTIER_REASONING_HEADER + _FRONTIER_REASONING_CORE
+        return (
+            _LEAD_CONSENSUS_FRONTIER_PREAMBLE
+            + _REASONING_POSTURE_SCOPE
+            + _FRONTIER_REASONING_CORE
+        )
+    return (
+        _FRONTIER_REASONING_HEADER
+        + _REASONING_POSTURE_SCOPE
+        + _FRONTIER_REASONING_CORE
+    )
 
 
 # Default export: non-lead shape (gemini-*, grok-*, subagent, etc.).

@@ -7,7 +7,9 @@ Store-HTTP shared helper for POST /turns, /threads/with-turn, and
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from datetime import datetime
+from typing import TYPE_CHECKING
 
 from cortex_store.dispatch_ops._thread_sidecar import (
     SidecarContentTooLargeError,
@@ -16,6 +18,7 @@ from cortex_store.dispatch_ops._thread_sidecar import (
     write_thread_sidecar_for_send,
 )
 
+from .body_briefing_advisory import BriefingAdvisory, briefing_advisory
 from .turns_models import (
     MAX_LONG_TURN_BODY_CHARS,
     MAX_SIDECAR_CONTENT_CHARS,
@@ -24,6 +27,9 @@ from .turns_models import (
     sidecar_content_too_large_envelope,
     sidecar_write_failed_envelope,
 )
+
+if TYPE_CHECKING:
+    from .turns_models import TurnCreated
 
 AUTO_OVERFLOW_SLUG = "auto-overflow"
 AUTO_OVERFLOW_BRIEFING = (
@@ -44,6 +50,7 @@ class PreparedBody:
     body: str
     sidecar_uri: str | None = None
     sidecar_sha256: str | None = None
+    advisory: BriefingAdvisory | None = None
 
 
 class BodyTooLargeError(Exception):
@@ -72,7 +79,14 @@ def prepare_body_for_insert(
     """
     limit = MAX_LONG_TURN_BODY_CHARS if allow_long_body else MAX_TURN_BODY_CHARS
     if len(body) <= limit:
-        return PreparedBody(body=body)
+        return PreparedBody(
+            body=body,
+            advisory=briefing_advisory(
+                body=body,
+                allow_long_body=allow_long_body,
+                has_sidecar=False,
+            ),
+        )
 
     if allow_long_body:
         raise BodyTooLargeError(
@@ -121,11 +135,50 @@ def spill_error_http(
     return None
 
 
+def build_turn_created(
+    prepared: PreparedBody,
+    *,
+    turn_id: int,
+    thread: str,
+    turn_number: int,
+    created_at: datetime,
+    from_agent: str,
+    to_agent: str,
+    subject: str,
+) -> TurnCreated:
+    """Build TurnCreated and emit briefing advisory observation when applicable."""
+    from .events.turn_body_advisory import emit_turn_body_over_briefing
+    from .turns_models import TurnCreated
+
+    advisory_dict: dict[str, object] | None = None
+    if prepared.advisory is not None:
+        emit_turn_body_over_briefing(
+            thread=thread,
+            from_agent=from_agent,
+            to_agent=to_agent,
+            subject=subject,
+            body_chars=prepared.advisory.body_chars,
+            target_chars=prepared.advisory.target_chars,
+        )
+        advisory_dict = asdict(prepared.advisory)
+    return TurnCreated(
+        id=turn_id,
+        thread=thread,
+        turn_number=turn_number,
+        created_at=created_at,
+        sidecar_uri=prepared.sidecar_uri,
+        sidecar_sha256=prepared.sidecar_sha256,
+        briefing_advisory=advisory_dict,
+    )
+
+
 __all__ = [
     "AUTO_OVERFLOW_BRIEFING",
     "AUTO_OVERFLOW_SLUG",
+    "BriefingAdvisory",
     "BodyTooLargeError",
     "PreparedBody",
+    "build_turn_created",
     "SidecarContentTooLargeError",
     "SidecarWriteError",
     "prepare_body_for_insert",

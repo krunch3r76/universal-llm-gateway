@@ -10,6 +10,7 @@ synthesized envelope so judgment cells carry substance instead of bare
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from services.git_integration_worker.cursor_auto.closeout_relay_common import (
@@ -41,6 +42,9 @@ from services.git_integration_worker.cursor_auto.closeout_relay_cortex_uri impor
     extract_cortex_uris_from_wrapper,
     normalize_cortex_uri,
     read_cortex_text,
+)
+from services.git_integration_worker.cursor_auto.closeout_relay_project import (
+    project_section2_table,
 )
 from services.git_integration_worker.cursor_auto.relay_trust import (
     enforce_synthesized_partial,
@@ -100,43 +104,26 @@ def field_fill_from_cortex(
     del dispatch_id  # dispatch binding is enforced before field-fill is selected
     effect_rows, wrapper_status_value = _build_wrapper_effect_rows(wrapper_text)
     status = str(wrapper_status_value or "partial")
-
-    ac_verdict = build_ac_verdict_cell(
+    body, _ = project_section2_table(
         cortex_body,
         provenance=cortex_uri,
-        cap=cap_relayed_cortex_text,
-        max_excerpt_chars=_MAX_EXECUTOR_EXCERPT_CHARS,
+        fallback_status=status,
     )
-
-    judgment_fields = ("deltas_to_spec", "decisions_taken", "next", "open forks")
-    cells: dict[str, str] = {}
-    for field in judgment_fields:
-        cells[field] = fill_judgment_cell(
-            cortex_body,
-            field,
-            provenance=cortex_uri,
-            cap=cap_relayed_cortex_text,
+    if effect_rows.get("effects"):
+        body = re.sub(
+            r"(?im)^\|\s+effects\s+\|\s+.*?\s+\|",
+            f"| effects | {_table_cell(effect_rows['effects'])} |",
+            body,
+            count=1,
         )
-
-    rows = (
-        ("status", status),
-        ("ac_verdict", ac_verdict),
-        ("deltas_to_spec", cells["deltas_to_spec"]),
-        ("decisions_taken", cells["decisions_taken"]),
-        ("effects", effect_rows.get("effects", "none")),
-        ("evidence", effect_rows.get("evidence", "none")),
-        ("next", cells["next"]),
-        ("open forks", cells["open forks"]),
-    )
-    lines = [
-        "TYPE: CLOSEOUT",
-        "",
-        "| Field | Value |",
-        "|---|---|",
-    ]
-    for field, value in rows:
-        lines.append(f"| {field} | {_table_cell(value)} |")
-    return "\n".join(lines)
+    if effect_rows.get("evidence"):
+        body = re.sub(
+            r"(?im)^\|\s+evidence\s+\|\s+.*?\s+\|",
+            f"| evidence | {_table_cell(effect_rows['evidence'])} |",
+            body,
+            count=1,
+        )
+    return body
 
 
 def run_cortex_scan(

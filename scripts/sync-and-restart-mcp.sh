@@ -233,10 +233,11 @@ wait_for_mcp_healthy() {
 
 write_source_sync_stamp() {
   local c=mcp-server
-  local stamp
+  local stamp code_sha
   stamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  docker exec -u 0 "$c" sh -c "printf '%s\n' '${stamp}' > /app/.source_sync_stamp && chown mcp:mcp /app/.source_sync_stamp"
-  echo "Wrote source sync stamp: ${stamp}"
+  code_sha="$(git -C "$WORKSPACE_ROOT" rev-parse HEAD)"
+  docker exec -u 0 "$c" sh -c "printf '%s\n%s\n' '${stamp}' '${code_sha}' > /app/.source_sync_stamp && chown mcp:mcp /app/.source_sync_stamp"
+  echo "Wrote source sync stamp: ${stamp} (code_version=${code_sha})"
 }
 
 sync_source_into_container() {

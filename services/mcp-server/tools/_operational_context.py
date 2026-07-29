@@ -178,13 +178,14 @@ def render_operational_context(
         sections.append(_CONFIRM_AND_PROCEED)
     sections.append(templates.CORTEX_RETRIEVAL_WORKFLOWS)
     sections.append(templates.BEHAVIORAL_RULES)
-    # Frontier reasoning posture (steelman / calibration / courage / framing /
-    # self-correction). Distilled from retired persona seeds after Phase 6
-    # birth-prompt retirement. Universal across frontier-class seats; skipped
-    # for inline-only subagent execution where the discipline belongs to the
-    # dispatcher, not the executor.
+    # Paired reasoning-posture + frontier discipline (steelman / calibration /
+    # courage / framing / self-correction). Distilled from retired persona seeds
+    # after Phase 6 birth-prompt retirement. Universal across frontier-class
+    # seats; skipped for inline-only subagent execution where the discipline
+    # belongs to the dispatcher, not the executor.
     if not (family == "subagent" and platform == "subagent"):
         # inject-channel section key: frontier-reasoning
+        # (accounts both frontier-reasoning-discipline + reasoning-posture)
         sections.append(
             templates.render_frontier_reasoning(lead_posture=is_lead_agent(agent))
         )

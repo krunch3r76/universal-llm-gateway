@@ -6,6 +6,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from implement_admission.propagation_row import PropagationRow
 from implement_admission.spec import CloseoutStatus
 
 CoverageStatus = Literal["complete", "partial", "unavailable"]
@@ -73,3 +74,5 @@ class ImplementCloseout(BaseModel):
     adapter_results: list[AdapterResult] = Field(default_factory=list)
     # Landed≠live: manage sync_restart / plugin-install action lines (decision:closeout-propagation-residue).
     propagation_residue: list[str] = Field(default_factory=list)
+    # Structured harvest rows — authoritative when non-empty over propagation_residue.
+    propagation: list[PropagationRow] = Field(default_factory=list)

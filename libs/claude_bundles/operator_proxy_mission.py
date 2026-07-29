@@ -16,14 +16,21 @@ from claude_bundles.cowork_skill_delivery import (
     format_cdp_slash_prefix,
     split_leading_slash_skills,
 )
+from claude_bundles.operator_proxy_tier_m import tier_m_authoring_block
+
+# Superset of tier-M consumers for mission lands touching shared bundles.
+CONSUMERS: tuple[str, ...] = ("mcp",)
 
 OPERATOR_PROXY_MISSION_PURPOSES: frozenset[str] = frozenset(
     {"operator-proxy", "mission", "operator_proxy"}
 )
 
+# Substantive operator seat: scope rails + epistemic quality stay paired
+# (decision:reasoning-frontier-skill-pair).
 MISSION_SKILL_SLUGS: tuple[str, ...] = (
     "cdp-operator-proxy",
     "reasoning-posture",
+    "frontier-reasoning-discipline",
 )
 
 # Derived from config/mcp/canonical.yaml surface_primary_domains.life (A9).
@@ -81,6 +88,7 @@ def _receipt_example() -> str:
 
 def _build_briefing_block() -> str:
     receipt_example = _receipt_example()
+    tier_m_block = tier_m_authoring_block()
     return f"""\
 ## Mission seat map (BINDING — operator-proxy mission)
 
@@ -88,7 +96,7 @@ def _build_briefing_block() -> str:
 |---|---|
 | **CDP Opus (this seat)** | **Operator** — DIRECTIVE / DISPOSITION on a private `agent_bus.request` lane; cite endeavor root in `arc:` only |
 | **CDP Fable** | **Advisor** — escalate via **`agent_bus.request`** to a code-seat consult thread (life-reachable); code-surface tools are **not** callable from this life seat |
-| **cursor-auto → nested cursor-sdk** | **Executor** — B1 direct nest under Auto lease, or B2 mint+release for tick admit (`nest_under` when gate shared — silence ⇒ stall) |
+| **cursor-auto → nested cursor-sdk** | **Executor** — B1 direct nest under Auto lease, or B2 mint+release for tick admit (`nest_under` when gate shared — silence ⇒ stall). Address it as `to="cursor"` via `agent_bus.request`. |
 | **charter-runner** | **Sole launcher** for enrollments — mint+`enroll_rows` belt path; Auto does not improvise tip enqueue |
 
 ## Life surface act path (BINDING)
@@ -96,13 +104,15 @@ def _build_briefing_block() -> str:
 Legal verbs on `/mcp/life` (mechanized from `surface_primary_domains.life`): {_legal_tools_line()}.
 
 Act on code-surface capabilities only by **commissioning** through life-reachable paths:
-`agent_bus.request` (B1/B2 to cursor-auto) or charter enroll (`enroll_charter_runner=true`).
+`agent_bus.request` with `to="cursor"` — arms cursor-auto (B1/B2); `cursor-auto` is the executor role, ¬ a bus address — or charter enroll (`enroll_charter_runner=true`).
 
 {_FORBIDDEN_HEADING}
 
 Never invoke these as life-seat MCP tools (they live on `/mcp/code` only): {_forbidden_tools_line()}.
 
 Within the seat-map / escalate section above, the Fable escalate verb is **`agent_bus`**, never life-tool `team_dispatch`.
+
+{tier_m_block}
 
 {_ACT_RECEIPT_HEADING}
 

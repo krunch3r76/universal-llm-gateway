@@ -62,6 +62,7 @@ def active_since_window_label(value: str | datetime | None) -> str:
 MAX_TURN_BODY_CHARS = 8_000
 MAX_LONG_TURN_BODY_CHARS = 64_000
 MAX_SIDECAR_CONTENT_CHARS = 256 * 1024
+BRIEFING_TARGET_CHARS = 2_000
 
 
 def sidecar_content_too_large_envelope(*, body_chars: int) -> dict[str, object]:
@@ -254,6 +255,13 @@ class TurnCreated(BaseModel):
         description=(
             "SHA-256 of sidecar content bytes (same domain as "
             "write_thread_sidecar_for_send); None when no sidecar was written."
+        ),
+    )
+    briefing_advisory: dict[str, object] | None = Field(
+        default=None,
+        description=(
+            "Non-blocking advisory when body exceeded BRIEFING_TARGET_CHARS without "
+            "allow_long_body, a sidecar, or an inline-contract envelope."
         ),
     )
 

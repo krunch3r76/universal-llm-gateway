@@ -23,7 +23,10 @@ from .harvest_footer_gate import (
 )
 from .harvest_side_effects import flag_gate_bypass, persist_residue_after_harvest
 from .window_sequence import release_window_on_harvest
-from .window_terminal_contract import after_window_terminal_harvested, is_window_terminal
+from .window_terminal_contract import (
+    after_window_terminal_harvested,
+    is_window_terminal,
+)
 
 # Test/compat alias — body lives in harvest_side_effects.
 _persist_residue_after_harvest = persist_residue_after_harvest

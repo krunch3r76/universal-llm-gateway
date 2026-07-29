@@ -8,6 +8,7 @@ from services.git_integration_worker.cursor_auto.episode_residue import (
     compose_closeout_body,
     residue_for_closeout,
     resolve_relay_residue,
+    structured_propagation_rows,
 )
 
 
@@ -168,3 +169,76 @@ def test_relay_residue_falls_back_to_relay_body_when_no_wrapper():
     block = resolve_relay_residue(wrapper_body=None, relay_body=wrapperless)
     assert block is not None
     assert "sync_restart: git_integration_worker" in block
+
+
+def test_structured_rows_mint_one_row_per_consumer_for_tier_m_lib():
+    payload = _closeout_payload(
+        files_modified=["libs/claude_bundles/operator_proxy_tier_m.py"],
+        evidence_uris={"git_refs": ["consumer-land-sha"]},
+    )
+    rows = structured_propagation_rows(payload)
+    assert len(rows) == 1
+    assert rows[0].service == "mcp"
+    assert rows[0].code_ref == "consumer-land-sha"
+    assert rows[0].safe_window == "standalone_ok"
+
+
+def test_structured_rows_mint_deploy_identity_consumers():
+    payload = _closeout_payload(
+        files_modified=["libs/deploy_identity/code_version.py"],
+        evidence_uris={"git_refs": ["deploy-identity-sha"]},
+    )
+    rows = structured_propagation_rows(payload)
+    services = {row.service for row in rows}
+    assert services == {"git_integration_worker", "mcp"}
+    assert all(row.code_ref == "deploy-identity-sha" for row in rows)
+
+
+def test_structured_rows_from_section4_markdown_block():
+    payload = _closeout_payload(
+        files_modified=["docs/readme.md"],
+        evidence_uris={"git_refs": ["yaml-sha"]},
+    )
+    markdown = """\
+## propagation (§4 YAML)
+
+```yaml
+propagation:
+  - service: git_integration_worker
+    code_ref: yaml-sha
+    safe_window: drain_required
+    proof: liveness probe
+    proof_class: process_live
+```
+"""
+    rows = structured_propagation_rows(payload, markdown_sources=[markdown])
+    assert len(rows) == 1
+    assert rows[0].service == "git_integration_worker"
+    assert rows[0].proof_class == "process_live"
+
+
+def test_residue_deploy_identity_consumers_not_libs_touched():
+    payload = _closeout_payload(
+        files_modified=["libs/deploy_identity/code_version.py"],
+    )
+    block = residue_for_closeout(payload)
+    assert block is not None
+    assert "sync_restart: git_integration_worker" in block
+    assert "sync_restart: mcp" in block
+    assert "libs_touched" not in block
+    assert "lead must decide" not in block
+
+
+def test_residue_none_for_lib_test_module():
+    payload = _closeout_payload(
+        files_modified=["libs/implement_admission/test_propagation_block_parser.py"],
+    )
+    assert residue_for_closeout(payload) is None
+
+
+def test_structured_rows_none_for_lib_test_module():
+    payload = _closeout_payload(
+        files_modified=["libs/implement_admission/test_propagation_block_parser.py"],
+        evidence_uris={"git_refs": ["test-only-sha"]},
+    )
+    assert structured_propagation_rows(payload) == ()

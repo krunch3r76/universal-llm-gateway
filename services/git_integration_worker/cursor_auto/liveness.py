@@ -11,6 +11,12 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from deploy_identity.code_version import resolve_code_version
+
+from services.git_integration_worker.cursor_auto.wire_skew_events import (
+    get_wire_skew_aggregate,
+)
+
 
 @dataclass
 class AutoLivenessRegistry:
@@ -74,6 +80,8 @@ class AutoLivenessRegistry:
             "handlers": handlers,
             "heartbeat_ttl_s": self.heartbeat_ttl_s,
             "uptime_s": round(now - self._started_at, 3),
+            "code_version": resolve_code_version(),
+            "wire_skew_aggregate": get_wire_skew_aggregate(),
         }
 
 

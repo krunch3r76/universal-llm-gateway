@@ -3,47 +3,29 @@
 Writes a send-equivalent turn (injecting ``lane:cursor-auto``), probes a live
 Auto handler, enqueues when armed, and returns ``{thread, turn, handler_status,
 poll_hint}``. Distinct from ``send`` and from ``lane:life-to-code``.
+
+Sender wire discipline (harvest-restart-propagation I3): enqueue JSON fields added
+by MCP must remain optional-with-default — never rename or remove existing keys.
 """
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
-import httpx
 from mcp_events import record
 
 from .._agent_bus_author import resolve_dispatch_from_agent
+from .request_intake import (
+    resolve_contract_intake,
+    resolve_request_id_intake,
+    stamp_contract_deprecation,
+)
+from .request_worker_client import enqueue_auto_job, probe_auto_liveness
 from .send import _send_dispatch
 
 _LANE_TAG = "lane:cursor-auto"
-_DEFAULT_WORKER_URL = "http://127.0.0.1:8091"
 _SUGGESTED_INTERVAL_S = 2
 _MAX_EXPECTED_LATENCY_S = 120
-_AUTO_API_PREFIX = "/api/v1/git/cursor-auto"
-
-
-def _worker_base_url() -> str:
-    """Resolve Auto worker base URL for mcp→host reachability.
-
-    Prefer ``GIT_INTEGRATION_WORKER_URL`` when set. Otherwise, from the mcp
-    container, use ``STARGATE_URL`` so enqueue/liveness ride the existing
-    ``/api/v1/git/*`` host-side proxy (worker binds 127.0.0.1 — unreachable
-    via host.docker.internal). Host-local callers fall back to loopback.
-    """
-    explicit = os.environ.get("GIT_INTEGRATION_WORKER_URL", "").strip()
-    if explicit:
-        return explicit.rstrip("/")
-    stargate = os.environ.get("STARGATE_URL", "").strip()
-    if stargate:
-        return stargate.rstrip("/")
-    return _DEFAULT_WORKER_URL
-
-
-def _auto_url(path: str, *, base_url: str | None = None) -> str:
-    base = (base_url or _worker_base_url()).rstrip("/")
-    suffix = path if path.startswith("/") else f"/{path}"
-    return f"{base}{_AUTO_API_PREFIX}{suffix}"
 
 
 def _merge_lane_tags(tags: list[str] | None) -> list[str]:
@@ -54,90 +36,6 @@ def _merge_lane_tags(tags: list[str] | None) -> list[str]:
             merged.append(t)
             seen.add(t)
     return merged
-
-
-def probe_auto_liveness(
-    *,
-    base_url: str | None = None,
-    timeout_s: float = 3.0,
-) -> dict[str, Any]:
-    """Probe git_integration_worker Auto liveness (arm predicate).
-
-    Returns ``{live: bool, ...}``. Transport failure ⇒ ``live=False`` (F1:
-    never claim armed without a live handler).
-    """
-    url = _auto_url("/liveness", base_url=base_url)
-    try:
-        with httpx.Client(timeout=timeout_s) as client:
-            resp = client.get(url)
-        if resp.status_code != 200:
-            return {
-                "live": False,
-                "reason": "liveness_http_error",
-                "status_code": resp.status_code,
-            }
-        data = resp.json()
-        return {
-            "live": bool(data.get("live")),
-            "liveness": data,
-            "reason": "ok" if data.get("live") else "no_live_handler",
-        }
-    except (httpx.HTTPError, ValueError, OSError) as exc:
-        return {"live": False, "reason": "liveness_unreachable", "error": str(exc)}
-
-
-def enqueue_auto_job(
-    *,
-    thread_id: str,
-    turn_number: int,
-    subject: str,
-    body: str,
-    from_agent: str,
-    to_agent: str,
-    desired_model: str,
-    desired_effort: str,
-    contract: str,
-    require_attended: bool = False,
-    base_url: str | None = None,
-    timeout_s: float = 10.0,
-) -> dict[str, Any]:
-    """POST admit-on-request enqueue to the Auto worker."""
-    url = _auto_url("/enqueue", base_url=base_url)
-    payload = {
-        "thread_id": str(thread_id),
-        "turn_number": int(turn_number),
-        "subject": subject,
-        "body": body,
-        "from_agent": from_agent,
-        "to_agent": to_agent,
-        "desired_model": desired_model,
-        "desired_effort": desired_effort,
-        "contract": contract,
-        "require_attended": bool(require_attended),
-    }
-    try:
-        with httpx.Client(timeout=timeout_s) as client:
-            resp = client.post(url, json=payload)
-        data = resp.json() if resp.content else {}
-        if resp.status_code == 200 and data.get("ok"):
-            return {
-                "ok": True,
-                "handler_status": "auto-admit-armed",
-                "enqueue": data,
-            }
-        return {
-            "ok": False,
-            "handler_status": data.get("handler_status", "no-auto-handler"),
-            "enqueue": data,
-            "status_code": resp.status_code,
-        }
-    except (httpx.HTTPError, ValueError, OSError) as exc:
-        return {
-            "ok": False,
-            "handler_status": "no-auto-handler",
-            "reason": "enqueue_unreachable",
-            "error": str(exc),
-        }
 
 
 def _build_poll_hint(*, thread_id: str, after_turn: int) -> dict[str, Any]:
@@ -174,6 +72,7 @@ def _request_impl(
     desired_effort: str,
     contract: str,
     require_attended: bool,
+    request_id: str | None,
     after_turn: int,
     summary: str | None = None,
 ) -> dict[str, Any]:
@@ -238,7 +137,7 @@ def _request_impl(
             turn_number=turn_number,
             reason=str(liveness.get("reason", "no_live_handler")),
         )
-        return {
+        degraded = {
             "thread": thread_obj,
             "turn": turn_obj,
             "handler_status": "no-auto-handler",
@@ -250,6 +149,9 @@ def _request_impl(
             "sidecar_uri": sidecar_uri,
             "sidecar_sha256": sidecar_sha256,
         }
+        if request_id:
+            degraded["request_id"] = request_id
+        return degraded
 
     enq = enqueue_auto_job(
         thread_id=thread_id,
@@ -262,6 +164,7 @@ def _request_impl(
         desired_effort=desired_effort,
         contract=contract,
         require_attended=require_attended,
+        request_id=request_id,
     )
     handler_status = (
         "auto-admit-armed" if enq.get("ok") else "no-auto-handler"
@@ -274,7 +177,7 @@ def _request_impl(
         desired_model=desired_model,
         contract=contract,
     )
-    return {
+    result = {
         "thread": thread_obj,
         "turn": turn_obj,
         "handler_status": handler_status,
@@ -284,6 +187,9 @@ def _request_impl(
         "sidecar_uri": sidecar_uri,
         "sidecar_sha256": sidecar_sha256,
     }
+    if request_id:
+        result["request_id"] = request_id
+    return result
 
 
 def _request_dispatch(
@@ -301,6 +207,7 @@ def _request_dispatch(
     desired_effort: str = "medium",
     contract: str = "answer",
     require_attended: bool = False,
+    request_id: str | None = None,
     after_turn: int = 0,
     summary: str | None = None,
 ) -> dict[str, Any]:
@@ -313,6 +220,16 @@ def _request_dispatch(
 
     ``summary``: standing human so-what title (ULG outcome line). Also accepted
     fail-soft via body ``so_what:`` / ``ulg_gain:`` when wire summary omitted.
+
+    ``request_id``: optional caller idempotency key; echoed on success; duplicate
+    values are refused (``duplicate_request_id``) before the turn is written.
+
+    ``contract``: one of ``answer|confer|investigate|implement|verify|execute|propagate``.
+    Unknown values are rejected (422 ``request_contract_unknown``) before the
+    turn is written; legacy ``consult`` is aliased to ``confer`` with a
+    deprecation note on the response. ``execute`` = one tier-M allowlisted op;
+    ``propagate`` = operator restart request (propagation ledger + drain-gated
+    sync_restart — not tier-M ``manage.*``).
     """
     if isinstance(thread, int):
         thread = str(thread)
@@ -345,7 +262,21 @@ def _request_dispatch(
             "provided": to,
         }
 
-    return _request_impl(
+    intake = resolve_contract_intake(contract, from_agent=from_agent)
+    if intake.error is not None:
+        return intake.error
+
+    thread_hint = str(thread) if thread is not None else None
+    rid_intake = resolve_request_id_intake(
+        request_id,
+        thread_id=thread_hint,
+        contract=intake.contract,
+        from_agent=from_agent,
+    )
+    if rid_intake.error is not None:
+        return rid_intake.error
+
+    result = _request_impl(
         new_slug=new_slug,
         thread=thread,
         to=to or "cursor",
@@ -357,8 +288,10 @@ def _request_dispatch(
         sidecar_slug=sidecar_slug,
         desired_model=desired_model or "auto",
         desired_effort=desired_effort or "medium",
-        contract=contract or "answer",
+        contract=intake.contract,
         require_attended=bool(require_attended),
+        request_id=rid_intake.request_id,
         after_turn=after_turn,
         summary=summary,
     )
+    return stamp_contract_deprecation(result, intake)

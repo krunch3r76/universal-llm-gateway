@@ -7,13 +7,17 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-Contract = Literal["answer", "confer", "investigate", "implement", "verify"]
+Contract = Literal[
+    "answer", "confer", "investigate", "implement", "verify", "execute", "propagate"
+]
 Disposition = Literal[
     "answered",
     "conferred",
     "dispatched-and-relayed",
     "needs-attended",
     "declined",
+    "executed",
+    "propagated",
 ]
 
 _MODEL_TABLE: dict[str, str] = {
@@ -30,7 +34,9 @@ _EFFORT_ALIASES: dict[str, str] = {
     "extra_high": "xhigh",
     "extrahigh": "xhigh",
 }
-_CONTRACTS = frozenset({"answer", "confer", "investigate", "implement", "verify"})
+_CONTRACTS = frozenset(
+    {"answer", "confer", "investigate", "implement", "verify", "execute", "propagate"}
+)
 
 
 def resolve_desired_model(
@@ -124,6 +130,8 @@ def resolve_contract_disposition(contract: str | None) -> dict[str, Any]:
         "investigate": "dispatched-and-relayed",
         "implement": "dispatched-and-relayed",
         "verify": "dispatched-and-relayed",
+        "execute": "executed",
+        "propagate": "propagated",
     }
     return {
         "requested": raw,
@@ -138,6 +146,10 @@ def resolve_handoff_contract(contract: str | None) -> str:
     raw = (contract or "answer").strip().lower() or "answer"
     if raw == "implement":
         return "pure-mechanical"
+    if raw == "execute":
+        return "light-bounded"
+    if raw == "propagate":
+        return "light-bounded"
     if raw in {"investigate", "confer"}:
         return "light-bounded"
     if raw == "verify":

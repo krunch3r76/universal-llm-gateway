@@ -1,7 +1,8 @@
-"""Serialize nested cursor-sdk dispatches under ``cursor_sdk_gate`` limit=1.
+"""Serialize nested cursor-sdk dispatches under the operator capacity lane.
 
-When Auto holds the sole gate slot, a naive nested ``team_dispatch(cursor-sdk)``
-self-deadlocks (friction 25956). Prefer nest+wait+park (``nest_under``) so the
+Operator-proxy nested SDK uses ``cursor_sdk_gate`` operator lane (default limit
+3). When Auto holds every operator slot, a naive nested dispatch without
+``nest_under`` can self-deadlock (friction 25956). Prefer nest+wait+park so the
 parent parks, the child runs, then capacity restores. The cursor-auto handler
 refuses nested ``in_seat`` plans with ``nested_in_seat_unsupported`` and does
 not call ``prefer_in_seat``; ``run_serialized`` remains a helper for other
@@ -19,13 +20,13 @@ NESTED_IN_SEAT_REASON = "nested_in_seat_unsupported"
 
 
 def should_run_in_seat(*, gate_limit: int | None = None) -> bool:
-    """True when nested SDK admit would risk self-deadlock under limit=1.
+    """True when nested SDK admit would risk self-deadlock on the operator lane.
 
     Prefer park (``nest_under``) when available. The cursor-auto handler maps
     nested ``in_seat`` to ``needs-attended`` (``nested_in_seat_unsupported``)
     rather than executing in-process.
     """
-    stats = sdk_dispatch_gate_stats()
+    stats = sdk_dispatch_gate_stats(lane="operator")
     limit = gate_limit if gate_limit is not None else int(stats["limit"])
     return int(stats["active"]) >= limit
 
@@ -37,7 +38,7 @@ def plan_nested_dispatch(
 
     Returns a disposition plan (pure decision; does not acquire the gate).
     """
-    stats = sdk_dispatch_gate_stats()
+    stats = sdk_dispatch_gate_stats(lane="operator")
     active = int(stats["active"])
     limit = int(stats["limit"])
     queued = int(stats["queued"])

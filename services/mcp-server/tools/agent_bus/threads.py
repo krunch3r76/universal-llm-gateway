@@ -12,6 +12,8 @@ from ._shared import relay
 
 logger = logging.getLogger(__name__)
 
+_DEFAULT_THREAD_LIMIT = 50
+
 
 def _threads_impl(
     *,
@@ -31,9 +33,8 @@ def _threads_impl(
         params.append(("tags", tag))
     if lifecycle_state:
         params.append(("lifecycle_state", lifecycle_state))
-    effective_limit = limit if limit is not None else last
-    if effective_limit is not None:
-        params.append(("limit", str(effective_limit)))
+    limit_applied = limit if limit is not None else (last if last is not None else _DEFAULT_THREAD_LIMIT)
+    params.append(("limit", str(limit_applied)))
     if has_unread is not None:
         params.append(("has_unread", "true" if has_unread else "false"))
     if query:
@@ -49,6 +50,7 @@ def _threads_impl(
         result if isinstance(result, list) else result.get("threads", [])
     )
     count = len(threads)
+    truncated = count >= limit_applied
     logger.info(
         "agent_bus threads: status=%s lifecycle=%s tags=%s -> %d threads",
         status,
@@ -61,8 +63,19 @@ def _threads_impl(
         status=status,
         tag_count=len(tag_list),
         count=count,
+        limit_applied=limit_applied,
+        truncated=truncated,
     )
-    return result
+    if isinstance(result, dict):
+        enriched = dict(result)
+        enriched["limit_applied"] = limit_applied
+        enriched["truncated"] = truncated
+        return enriched
+    return {
+        "threads": threads,
+        "limit_applied": limit_applied,
+        "truncated": truncated,
+    }
 
 
 def _create_thread_impl(

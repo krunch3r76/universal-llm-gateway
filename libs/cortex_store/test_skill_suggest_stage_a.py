@@ -403,6 +403,7 @@ def test_web_loaded_set_unions_orientation_and_opcontext_channels() -> None:
     assert "consult-routing" in omitted
     assert "model-tier-awareness-web" in omitted
     assert "frontier-reasoning-discipline" in omitted
+    assert "reasoning-posture" in omitted
     assert "operator-posture" not in suggested
     assert "consult-routing" not in suggested
 

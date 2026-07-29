@@ -8,6 +8,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from systems.frontier_consult.story_wire import (
+    build_association_envelope,
+    safe_emit_observation,
+)
+
 from services.git_integration_worker.cursor_auto.closeout_relay import (
     read_repo_closeout_sidecar,
     select_closeout_relay_payload,
@@ -33,10 +38,6 @@ from services.git_integration_worker.cursor_sdk_deliverables import (
     sidecar_workspaces_ref,
 )
 from services.git_integration_worker.cursor_sdk_events import emit_sdk_closeout_relayed
-from systems.frontier_consult.story_wire import (
-    build_association_envelope,
-    safe_emit_observation,
-)
 
 
 async def relay_confer_outcome(
@@ -88,6 +89,7 @@ async def relay_confer_outcome(
             "closeout_source": payload.source,
             "closeout_status": payload.status,
             "fence_violation": fence_violation,
+            "request_id": job.request_id,
         },
     )
     wake = (
@@ -177,6 +179,7 @@ async def relay_closeout_outcome(
             "gate_plan": gate_plan,
             "terminal_status": terminal_status,
             "nest_under": nest_under,
+            "request_id": job.request_id,
         },
         bus=client,
     )
@@ -198,7 +201,7 @@ async def relay_closeout_outcome(
         await maybe_post_substrate_feedback(
             job,
             sdk_body=sdk_body,
-            closeout_body=payload.body,
+            closeout_body=payload.body_full or payload.body,
             bus=client,
         )
         try:
@@ -225,6 +228,7 @@ async def relay_closeout_outcome(
         extra={
             "closeout_source": payload.source,
             "closeout_status": payload.status,
+            "request_id": job.request_id,
         },
     )
     queue.mark_done(job.job_id, failed=failed)

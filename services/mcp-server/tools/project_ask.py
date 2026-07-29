@@ -2,6 +2,16 @@
 
 Split submit / poll / abort only (F-2). No server-side poll loop; no Playwright
 or claude_bundles imports in this module.
+
+Transport vs bus (operator-proxy):
+  ``project_ask`` is IDE↔Cowork **converse transport** (submit/poll/abort per
+  ``execution_id``). ``abort`` cancels **only** that satellite execution — it does
+  **not** stop ``agent_bus.request`` episodes on the operator's private request
+  thread (cursor-auto admits, nested cursor-sdk, CLOSEOUT relay). After mission
+  ``submit``, continuity for commissions is the **bus thread**, not this handle.
+  Reconnect: warm ``submit`` with the same ``holder`` and ``converse=true`` may
+  reattach a retained Cowork CSE; a dead ``execution_id`` cannot be re-polled.
+  Doctrine: ``session-abort-authorization_ulg.mdc`` · ``cdp-operator-proxy``.
 """
 
 from __future__ import annotations
@@ -110,8 +120,9 @@ def register_project_ask_tool(mcp: FastMCP) -> None:
 
         ``purpose``: default ``ask``. For operator-proxy missions set
         ``purpose=operator-proxy`` (or ``mission``) — the cdp-ask runner
-        auto-ensures ``/cdp-operator-proxy`` + ``/reasoning-posture`` chips and
-        the Opus-operator / Fable-advisor seat-map briefing
+        auto-ensures ``/cdp-operator-proxy`` + ``/reasoning-posture`` +
+        ``/frontier-reasoning-discipline`` chips and the Opus-operator /
+        Fable-advisor seat-map briefing
         (``libs/claude_bundles/operator_proxy_mission.py``).
 
         POLL GUARDRAIL — project-ask executions:

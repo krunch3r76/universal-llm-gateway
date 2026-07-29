@@ -8,7 +8,7 @@ from typing import Any
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from universal_logging import get_logger
 
 from services.git_integration_worker.cursor_auto.handler import process_job
@@ -16,6 +16,9 @@ from services.git_integration_worker.cursor_auto.liveness import get_registry
 from services.git_integration_worker.cursor_auto.queue import get_queue
 from services.git_integration_worker.cursor_auto.supersede import (
     supersede_same_thread_inflight,
+)
+from services.git_integration_worker.cursor_auto.wire_skew_events import (
+    note_dropped_fields,
 )
 
 logger = get_logger(__name__)
@@ -30,7 +33,7 @@ _ORPHAN_INTERVAL_S = 15.0
 class EnqueueBody(BaseModel):
     """Payload from MCP ``agent_bus.request`` after turn write."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
     thread_id: str
     turn_number: int = Field(ge=1)
@@ -42,6 +45,24 @@ class EnqueueBody(BaseModel):
     desired_effort: str = "medium"
     contract: str = "answer"
     require_attended: bool = False
+    # Idempotency key minted or validated at MCP intake; echoed on the closeout.
+    request_id: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _log_dropped_wire_fields(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        known = set(cls.model_fields)
+        dropped = sorted(key for key in data if key not in known)
+        if dropped:
+            sender = str(data.get("from_agent") or "unknown")
+            note_dropped_fields(
+                boundary="mcp→giw/enqueue",
+                dropped_fields=dropped,
+                sender=sender,
+            )
+        return data
 
 
 @router.get("/liveness")
@@ -81,12 +102,14 @@ async def enqueue(body: EnqueueBody):
         desired_effort=body.desired_effort,
         contract=body.contract,
         require_attended=body.require_attended,
+        request_id=body.request_id,
     )
     logger.info(
-        "cursor-auto enqueued job=%s thread=%s turn=%s",
+        "cursor-auto enqueued job=%s thread=%s turn=%s request_id=%s",
         job.job_id,
         body.thread_id,
         body.turn_number,
+        body.request_id,
     )
     # A second request on a private thread is a backtrack, not a queue append:
     # interrupt the live episode so the new DIRECTIVE does not wait it out.
@@ -97,6 +120,7 @@ async def enqueue(body: EnqueueBody):
             "ok": True,
             "handler_status": "auto-admit-armed",
             "job_id": job.job_id,
+            "request_id": job.request_id,
             "superseded": interrupt,
             "queue": queue.snapshot(),
         },
