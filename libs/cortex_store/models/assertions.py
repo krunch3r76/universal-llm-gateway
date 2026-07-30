@@ -177,6 +177,8 @@ class AssertionItem(BaseModel):
 
 class AssertionUpdate(BaseModel):
     superseded_by: int | None = None
+    # Fill-only: patchable when the row has no anchor, guarded against moving one.
+    valid_from: str | None = None
     valid_until: str | None = None
     confidence: AssertionConfidence | None = None
     confidence_score: float | None = None

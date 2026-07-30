@@ -25,6 +25,27 @@ from ._shared import (
     logger,
     router,
 )
+from ._update_guards import (
+    guard_predicate_class_change,
+    guard_valid_from_fill_only,
+    preserve_seeded_ledger,
+)
+
+_PATCHABLE_COLS = (
+    "superseded_by",
+    "valid_from",
+    "valid_until",
+    "confidence",
+    "confidence_score",
+    "review_status",
+    "reviewer",
+    "reviewed_at",
+    "review_notes",
+    "resolution_status",
+    "fulfillment_assertion_id",
+    "prospective_summary",
+    "events_json",
+)
 
 
 @router.patch("/{assertion_id}", response_model=AssertionUpdateResponse)
@@ -43,7 +64,8 @@ def update_assertion(
     with cortex_conn() as conn:
         existing = query(
             conn,
-            "SELECT id, entity_id, claim, predicate_form FROM assertions WHERE id = ?",
+            "SELECT id, entity_id, claim, predicate_form, raw_predicate_form, "
+            "valid_from FROM assertions WHERE id = ?",
             (assertion_id,),
         )
         if not existing:
@@ -97,20 +119,7 @@ def update_assertion(
         predicate_form_explicitly_set = False
         enrichment_fields_updated = False
         if isinstance(body, dict):
-            for k in (
-                "superseded_by",
-                "valid_until",
-                "confidence",
-                "confidence_score",
-                "review_status",
-                "reviewer",
-                "reviewed_at",
-                "review_notes",
-                "resolution_status",
-                "fulfillment_assertion_id",
-                "prospective_summary",
-                "events_json",
-            ):
+            for k in _PATCHABLE_COLS:
                 if k in body and body[k] is not None:
                     update_map[k] = body[k]
                     if k in ("prospective_summary", "events_json"):
@@ -120,20 +129,7 @@ def update_assertion(
                 update_map["predicate_form"] = body["predicate_form"]
                 predicate_form_explicitly_set = True
         else:
-            for k in (
-                "superseded_by",
-                "valid_until",
-                "confidence",
-                "confidence_score",
-                "review_status",
-                "reviewer",
-                "reviewed_at",
-                "review_notes",
-                "resolution_status",
-                "fulfillment_assertion_id",
-                "prospective_summary",
-                "events_json",
-            ):
+            for k in _PATCHABLE_COLS:
                 val = getattr(body, k)
                 if val is not None:
                     update_map[k] = val
@@ -143,6 +139,24 @@ def update_assertion(
             if "predicate_form" in body.model_fields_set:
                 update_map["predicate_form"] = body.predicate_form
                 predicate_form_explicitly_set = True
+        incoming_predicate_form = update_map.get("predicate_form")
+        guard_valid_from_fill_only(
+            assertion_id=assertion_id,
+            stored_valid_from=existing[0].get("valid_from"),
+            incoming_valid_from=(
+                str(update_map["valid_from"]) if update_map.get("valid_from") else None
+            ),
+            force=force,
+        )
+        guard_predicate_class_change(
+            assertion_id=assertion_id,
+            stored_predicate_form=old_predicate_form,
+            incoming_predicate_form=(
+                str(incoming_predicate_form) if incoming_predicate_form else None
+            ),
+            force=force,
+        )
+
         # v1.3 Q5: normalize predicate_form before UPDATE.
         # Q5.4 always-re-normalize — runs even when value looks canonical.
         # Outside WRITE_LOCK (DBEntityResolver reads entities.id, no writes).
@@ -173,6 +187,10 @@ def update_assertion(
             )
             update_map["normalizer_version"] = normalize_result.get(
                 "normalizer_version"
+            )
+            preserve_seeded_ledger(
+                update_map,
+                stored_raw_predicate_form=existing[0].get("raw_predicate_form"),
             )
 
         sets: list[str] = []
