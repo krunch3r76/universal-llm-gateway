@@ -38,6 +38,8 @@ class BurstClaimItem(BaseModel):
     functor: str
     action: str
     party: str
+    derivation: str | None = None
+    claim_excerpt: str | None = None
 
 
 class ContradictionPairItem(BaseModel):

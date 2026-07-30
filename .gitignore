@@ -120,6 +120,7 @@ tests/*
 !libs/predicate_form/test_action_enrichment.py
 # Slice 5a terminal-facts-forward at activation (arc 6386)
 !libs/cortex_store/test_terminal_facts.py
+!libs/predicate_form/test_terminal_facts_precision.py
 # Fixtures the arc-6386 tests above depend on (head-schema migrated DB)
 !libs/cortex_store/conftest.py
 # Propagation declared-ownership manifest + closure audit (Lane A offline)

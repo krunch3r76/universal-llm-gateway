@@ -90,7 +90,7 @@ def _enrich_row(row: dict) -> tuple[BurstClaimItem, ActionPredicate] | None:
         row.get("claim") or "",
         row.get("entity_id") or "",
         assertion_id=int(row["id"]),
-        observed_at=row.get("observed_at"),
+        valid_from=row.get("valid_from"),
         epistemic_state=_epistemic_state(row),
     )
     if preview is None:
@@ -112,6 +112,8 @@ def _enrich_row(row: dict) -> tuple[BurstClaimItem, ActionPredicate] | None:
         functor=preview.functor,
         action=preview.action,
         party=preview.party,
+        derivation=preview.source,
+        claim_excerpt=preview.claim_excerpt,
     )
     return item, pred
 

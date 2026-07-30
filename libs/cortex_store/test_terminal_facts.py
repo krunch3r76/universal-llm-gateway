@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from cortex_store.claim_hash import compute_claim_hash
 from cortex_store.dispatch_ops.ops_entities import _op_entity_get
+from cortex_store.terminal_facts import resolve_terminal_facts_scope
 
 _A20701_CLAIM = (
     "WO 956908029 / lower-payment request — DENIED, confirmed 2026-06-26. "
@@ -33,6 +34,7 @@ _PENDING_WO_CLAIM = (
 
 _CASE_ENTITY = "case:chase-escrow-fixture-6386-5a"
 _ACCOUNT_ENTITY = "account:fixture-mortgage-6386-5a"
+_FINANCE_ENTITY = "finance:fixture-mortgage-6386-5a"
 _TODO_ENTITY = "todo:fixture-no-terminal-6386-5a"
 
 
@@ -82,6 +84,54 @@ def _insert_assertion(
         (assertion_id, entity_id, claim),
     )
     conn.commit()
+
+
+def _insert_relationship(
+    conn: sqlite3.Connection,
+    *,
+    source_id: str,
+    target_id: str,
+    rel_type: str,
+) -> None:
+    conn.execute(
+        "INSERT OR IGNORE INTO relationship_types (type, description) VALUES (?, ?)",
+        (rel_type, "fixture"),
+    )
+    conn.execute(
+        "INSERT INTO relationships "
+        "(from_entity, to_entity, type, active, strength, created_at, updated_at) "
+        "VALUES (?, ?, ?, 1, 1.0, '2026-07-30T00:00:00Z', '2026-07-30T00:00:00Z')",
+        (source_id, target_id, rel_type),
+    )
+    conn.commit()
+
+
+@pytest.fixture()
+def hub_scope_fixture(migrated_conn: sqlite3.Connection) -> None:
+    _seed_entity(migrated_conn, _CASE_ENTITY, entity_type="case")
+    _seed_entity(migrated_conn, _ACCOUNT_ENTITY, entity_type="account")
+    _seed_entity(migrated_conn, _FINANCE_ENTITY, entity_type="finance")
+    _insert_relationship(
+        migrated_conn,
+        source_id=_FINANCE_ENTITY,
+        target_id=_CASE_ENTITY,
+        rel_type="involves",
+    )
+    _insert_relationship(
+        migrated_conn,
+        source_id=_ACCOUNT_ENTITY,
+        target_id=_FINANCE_ENTITY,
+        rel_type="related_to",
+    )
+    _insert_assertion(
+        migrated_conn,
+        entity_id=_ACCOUNT_ENTITY,
+        assertion_id=20701,
+        claim=_A20701_CLAIM,
+        observed_at="2026-06-26T19:54:57Z",
+        valid_from="2026-06-26",
+        review_status="committed",
+    )
 
 
 @pytest.fixture()
@@ -226,3 +276,33 @@ def test_terminal_facts_is_read_only(
         "SELECT predicate_form FROM assertions WHERE id = 20701"
     ).fetchone()[0]
     assert after == before
+
+
+def test_case_hub_reaches_account_scoped_denial_via_finance_bridge(
+    cortex_client: TestClient,
+    hub_scope_fixture: None,
+) -> None:
+    resp = cortex_client.get(f"/entities/{_CASE_ENTITY}")
+    assert resp.status_code == 200
+    facts = resp.json()["terminal_facts"]["facts"]
+    assert any(item["assertion_id"] == 20701 for item in facts)
+
+
+def test_resolve_terminal_facts_scope_includes_account_via_finance_bridge(
+    migrated_conn: sqlite3.Connection,
+    hub_scope_fixture: None,
+) -> None:
+    scope = resolve_terminal_facts_scope(migrated_conn, _CASE_ENTITY)
+    assert _CASE_ENTITY in scope
+    assert _ACCOUNT_ENTITY in scope
+
+
+def test_terminal_facts_use_compact_claim_and_derivation(
+    cortex_client: TestClient,
+    escrow_case_fixture: None,
+) -> None:
+    resp = cortex_client.get(f"/entities/{_CASE_ENTITY}")
+    fact = resp.json()["terminal_facts"]["facts"][0]
+    assert fact["derivation"] == "action_enrichment_template_v0"
+    assert len(fact["claim"]) <= 200
+    assert fact["claim_excerpt"] == fact["claim"]
