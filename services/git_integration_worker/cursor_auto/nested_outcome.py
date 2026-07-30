@@ -17,6 +17,9 @@ from services.git_integration_worker.cursor_auto.closeout_relay import (
     read_repo_closeout_sidecar,
     select_closeout_relay_payload,
 )
+from services.git_integration_worker.cursor_auto.closeout_relay_cortex_spill import (
+    promote_clamped_closeout_to_cortex,
+)
 from services.git_integration_worker.cursor_auto.directive import (
     corpus_guard_uris,
     parse_request_body,
@@ -61,6 +64,11 @@ async def relay_confer_outcome(
         ledger_status=terminal_status,
         dispatch_id=dispatch_id,
         guard_uris=guard,
+    )
+    payload = await promote_clamped_closeout_to_cortex(
+        payload,
+        dispatch_id=dispatch_id,
+        thread_id=job.thread_id,
     )
     fence_violation = "fence_violation:" in payload.body.lower()
     relay = await post_operator_confer(
@@ -166,6 +174,11 @@ async def relay_closeout_outcome(
         sidecar_text=read_repo_closeout_sidecar(dispatch_id),
         ledger_status=terminal_status,
         dispatch_id=dispatch_id,
+    )
+    payload = await promote_clamped_closeout_to_cortex(
+        payload,
+        dispatch_id=dispatch_id,
+        thread_id=job.thread_id,
     )
     relay = await post_operator_closeout(
         job,
