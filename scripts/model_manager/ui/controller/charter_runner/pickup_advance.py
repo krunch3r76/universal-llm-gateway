@@ -1,16 +1,8 @@
-"""Advance the durable ledger pickup to the live gated CHECKPOINT row.
+"""Advance the durable ledger pickup — typed record primary, tip optional journal.
 
-``pickup_gid`` was effectively write-once: ``seed_from_confirm`` set it and
-``kernel_tick._ledger_row_from_state`` copied it forward on every transition, so
-no path ever read the tip ``## Next-pickup`` to move it. A seeded root therefore
-re-admitted its seed gid forever (a:26628). This module makes the tip the
-authority and the seed a bootstrap floor.
-
-Scope bind: advance writes ``pickup_gid`` only. ``pickup_lane`` selects
-consult-vs-worker inside ``admission.decide``, so deriving it from a row's
-declared ``executor_lane`` would silently re-route lanes and bypass the R-admit
-consult boundary; the declared lane is carried on ``LivePickup`` for telemetry
-and is honoured at admit time by ``executor_routing`` instead.
+``pickup_gid`` on the typed ledger row is admit/advance SoT (R2). The
+CHECKPOINT tip may still advance pickup when present, but malformed or absent
+tips do not block dispatch when the typed record is valid.
 """
 
 from __future__ import annotations
@@ -25,6 +17,8 @@ from .checkpoint_schema import ParsedCheckpoint, first_actionable_step, item_is_
 from .root_ledger import (
     RootLedgerRow,
     Transition,
+    record_advance_at,
+    typed_record_valid,
     upsert_root,
     write_cortex_mirror,
 )
@@ -211,16 +205,18 @@ def advance_pickup_gid(
     row: RootLedgerRow,
     parsed: ParsedCheckpoint | None,
 ) -> LivePickup | None:
-    """Move ``pickup_gid`` onto the tip's live gated row; return it when it moved.
+    """Move ``pickup_gid`` onto the live gated row; return it when it moved.
 
     Idempotent: returns None (no write) when the ledger already names the live gid
-    or when the tip has no gated row to advance to. Advancing starts a fresh
-    consult cycle for the new gid — the durable consult queue is keyed
+    or when neither tip nor typed record supplies a new target. Advancing starts a
+    fresh consult cycle for the new gid — the durable consult queue is keyed
     ``(root, gid, role)``, so carrying the previous row's attempt count and
     backoff would charge a new pickup for the old one's retries.
     """
     live = gated_pickup_from_parsed(parsed)
-    if live is None or live.gid == row.pickup_gid:
+    if live is None:
+        return None
+    if live.gid == row.pickup_gid:
         return None
     advanced = replace(
         row,
@@ -233,6 +229,7 @@ def advance_pickup_gid(
     )
     upsert_root(conn, advanced)
     write_cortex_mirror(advanced)
+    record_advance_at(conn, row.root_id)
     logger.info(
         "charter-runner pickup advance root=%s %s -> %s lane=%s row=%r",
         row.root_id,
@@ -242,6 +239,21 @@ def advance_pickup_gid(
         live.row[:120],
     )
     return live
+
+
+def typed_pickup_authority(row: RootLedgerRow) -> LivePickup | None:
+    """Ledger pickup fields when typed admit is authoritative (tip optional)."""
+    if not typed_record_valid(row):
+        return None
+    gid = str(row.pickup_gid or "").strip()
+    if not gid:
+        return None
+    return LivePickup(
+        gid=gid,
+        row=f"{gid} — typed",
+        lane=str(row.pickup_lane or "").lower() or None,
+        executor=row.pickup_executor,
+    )
 
 
 __all__ = [
@@ -254,5 +266,6 @@ __all__ = [
     "tip_executor_is_cdp_family",
     "tip_executor_is_explicitly_unbound",
     "tip_is_empty_hopper",
+    "typed_pickup_authority",
     "worker_substrate_compatible",
 ]

@@ -24,6 +24,7 @@ from .cursor_sdk_prepared_handle import (
     handle_with_thread,
     mint_cursor_sdk_ids,
 )
+from .cursor_sdk_reasoning_effort_reject import reject_nonempty_reasoning_effort
 from .cursor_sdk_worker_dispatch import derive_cursor_sdk_prompt_preamble
 from .handoff import (
     PendingShellContention,
@@ -123,6 +124,12 @@ async def prepare_cursor_sdk_generate(
         execution_id = execution_id or minted_execution
         dispatch_id = dispatch_id or minted_dispatch
 
+    reject_nonempty_reasoning_effort(
+        request_id=request_id,
+        resolved_model=resolved_model,
+        reasoning_effort=reasoning_effort,
+    )
+
     alignment = align_cursor_knobs(
         resolved_model=resolved_model,
         contract=contract,
@@ -130,7 +137,6 @@ async def prepare_cursor_sdk_generate(
         cost_intent=cost_intent,
         suppress_cost_warning=suppress_cost_warning,
         cost_intent_reason=cost_intent_reason,
-        reasoning_effort=reasoning_effort,
         max_tool_turns=max_tool_turns,
         request_id=request_id,
         execution_id=execution_id,

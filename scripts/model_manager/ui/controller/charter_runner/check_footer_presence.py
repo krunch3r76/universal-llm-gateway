@@ -13,6 +13,7 @@ _EMITTER_SOURCES = (
     "window_exec/materializer_autonomous_arc.py",
     "window_exec/materializer_consult.py",
     "window_exec/materializer_closed_detent.py",
+    "window_exec/materializer_layer.py",
 )
 
 _EMITTER_PATTERN = re.compile(
@@ -25,6 +26,7 @@ _PACKET_TEMPLATE_NAMES = (
     "autonomous.md",
     "consult.md",
     "closed_detent.md",
+    "layer.md",
 )
 
 _PACKET_RETURN_PATTERN = re.compile(

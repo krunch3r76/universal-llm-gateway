@@ -4,7 +4,15 @@
 the satellite side, faster first response. The model-endpoint adapter stages
 checkout-relative and workspaces:// refs under
 ``cortex://notes/system/ephemeral/cdp-endpoint/<execution_id>/`` before submit.
-Pre-staged ``cortex://`` URIs pass through. Unstageable inputs fail closed.
+Unstageable inputs fail closed.
+
+Judgment-pair skills (``reasoning-posture``, ``frontier-reasoning-discipline``)
+are always merged into ``skills=`` before staging — including light-bounded
+dispatches that omit ``skills`` (``decision:reasoning-frontier-skill-pair``).
+Because that merge always rewrites the prompt body, the generate path materializes
+an ephemeral ``prompt.md`` rather than passing a pre-staged ``cortex://`` URI
+through unchanged. ``stage_prompt_uri`` still pass-throughs ``cortex://`` when
+called without a skills rewrite (tests / non-generate callers).
 """
 
 from __future__ import annotations
@@ -16,6 +24,12 @@ from pathlib import Path
 from implement_admission.closeout_helpers import cortex_files_root, workspaces_root
 
 _EPHEMERAL_PREFIX = "notes/system/ephemeral/cdp-endpoint"
+
+# Scope rails ≺ epistemic quality — always on CDP skills= (light-bounded too).
+CDP_JUDGMENT_SKILL_SLUGS: tuple[str, ...] = (
+    "reasoning-posture",
+    "frontier-reasoning-discipline",
+)
 
 
 class CdpStagingError(ValueError):
@@ -123,6 +137,19 @@ def read_prompt_text(
     )
 
 
+def ensure_cdp_judgment_skills(skills: list[str] | None) -> list[str]:
+    """Merge judgment-pair defaults into CDP ``skills=`` (idempotent).
+
+    Always — including light-bounded / omitted ``skills``. Caller order is
+    preserved; missing pair members are prepended in doctrine order
+    (posture ≺ frontier). ``decision:reasoning-frontier-skill-pair``.
+    """
+    caller = [str(s).strip() for s in (skills or []) if str(s).strip()]
+    have = {s.lstrip("/").lower() for s in caller}
+    missing = [slug for slug in CDP_JUDGMENT_SKILL_SLUGS if slug not in have]
+    return missing + caller
+
+
 def stage_cdp_prompt_with_skills(
     *,
     execution_id: str,
@@ -132,25 +159,21 @@ def stage_cdp_prompt_with_skills(
     sidecar_ref: str | None = None,
     skills: list[str] | None = None,
 ) -> StagedPrompt:
-    """Stage CDP input; optional ``skills`` prepends slash/inline manifest.
+    """Stage CDP input; ``skills`` prepends slash/inline manifest.
+
+    Judgment-pair skills are always ensured before prepend — callers may omit
+    ``skills`` on light-bounded CDP generate and still get the pair attached.
 
     Leading ``/<slug>\\n`` lines are **manifest only** — the Jupiter satellite
     attaches each ``shared_sync`` slug via composer **+ → Skills → pick**
     (``composer_session_skills.attach_session_skills``), never slash-type.
     """
-    if not skills:
-        return stage_prompt_uri(
-            execution_id=execution_id,
-            prompt_text=prompt_text,
-            prompt_uri=prompt_uri,
-            packet_path=packet_path,
-            sidecar_ref=sidecar_ref,
-        )
     from claude_bundles.cowork_skill_delivery import (
         SkillDeliveryError,
         prepend_cdp_dispatch_skills,
     )
 
+    effective = ensure_cdp_judgment_skills(skills)
     body = read_prompt_text(
         prompt_text=prompt_text,
         prompt_uri=prompt_uri,
@@ -158,7 +181,7 @@ def stage_cdp_prompt_with_skills(
         sidecar_ref=sidecar_ref,
     )
     try:
-        merged, _, _ = prepend_cdp_dispatch_skills(body, skills)
+        merged, _, _ = prepend_cdp_dispatch_skills(body, effective)
     except KeyError as exc:
         raise CdpStagingError(
             f"unknown skill in skills=: {exc.args[0] if exc.args else exc}",
@@ -183,7 +206,10 @@ def stage_prompt_uri(
     """Return a cortex:// prompt_uri for satellite submit.
 
     Priority: inline ``prompt_text`` > ``prompt_uri`` > ``sidecar_ref`` >
-    ``packet_path``. ``cortex://`` inputs pass through without copy.
+    ``packet_path``. ``cortex://`` inputs pass through without copy when this
+    helper is called directly. The generate path goes through
+    ``stage_cdp_prompt_with_skills``, which always rewrites to ephemeral
+    ``prompt.md`` after the judgment-pair merge.
     """
     if prompt_text is not None and prompt_text.strip():
         dest_dir = ephemeral_dir(execution_id)

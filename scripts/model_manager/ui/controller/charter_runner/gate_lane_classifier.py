@@ -159,6 +159,13 @@ def resolve_admit_lane(
     return "worker", default_admission_mode, None, parsed, None
 
 
-# TODO(self-heal): on refuse missing_lane_annotation or lane contradiction,
-# stamp default annotations onto Steps from G-ordinal heuristic
-# (G3→consult:r_admit, G4→implement, G5→consult:judgment_gap, else judgment).
+__all__ = [
+    "GateRow",
+    "LANE_ANNOTATION_RE",
+    "RequiredLane",
+    "any_lane_annotations",
+    "classify",
+    "open_lane_annotation_mismatch",
+    "parse_gate_rows",
+    "resolve_admit_lane",
+]

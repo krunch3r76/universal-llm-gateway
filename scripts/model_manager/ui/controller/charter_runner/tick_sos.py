@@ -2,8 +2,9 @@
 
 Doctrine: ``decision:tick-heal-cdp-operator-default``. When the tick
 silent-starves, do not wait for IDE babysitting — claim once, page an SOS
-(minimum), leave details on the bus for cursor-auto, and auto-submit a CDP
-operator-proxy mission when ``PROJECT_ASK_URL`` is configured.
+(minimum), leave details on the bus for cursor-auto, and auto-admit a CDP
+operator-proxy heal via ``team_dispatch(model=cdp/opus-5, purpose=operator-proxy)``
+when ``CHARTER_TICK_SOS_CDP`` is enabled.
 """
 
 from __future__ import annotations
@@ -13,6 +14,8 @@ from typing import Any
 
 from pager_notify.sos import claim_tick_sos, notify_tick_sos
 from universal_logging import get_logger
+
+from .tick_sos_cdp_heal import submit_cdp_heal as _submit_cdp_heal
 
 logger = get_logger(__name__)
 
@@ -396,7 +399,7 @@ async def _post_cursor_auto_note(
             f"- detail: {detail or '(none)'}",
             "",
             "Kaywan can dig here / via cursor-auto. CDP operator-proxy may also",
-            "be running a heal mission (purpose=operator-proxy).",
+            "be running a heal mission (purpose=operator-proxy via team_dispatch).",
             "Doctrine: decision:tick-heal-cdp-operator-default",
         ]
     )
@@ -407,84 +410,6 @@ async def _post_cursor_auto_note(
         body=body,
     )
     return True
-
-
-async def _submit_cdp_heal(
-    root_id: str,
-    *,
-    reason: str,
-    consecutive: int,
-    detail: str,
-    fire_attempt_outcome=None,
-    worker_thread: str | None = None,
-) -> str | None:
-    from cdp_ask.client import project_ask_base_url, relay_async
-    from cdp_ask.models import SubmitProjectAskRequest
-
-    from .root_health import FireAttemptOutcome
-
-    if not project_ask_base_url():
-        return None
-    outcome_val = (
-        fire_attempt_outcome.value
-        if isinstance(fire_attempt_outcome, FireAttemptOutcome)
-        else str(fire_attempt_outcome or "")
-    )
-    heal_note = ""
-    if fire_attempt_outcome == FireAttemptOutcome.FIRED_BOOKKEEPING_FAILED:
-        heal_note = (
-            "\n\n**CRITICAL:** `fired_bookkeeping_failed` — window already fired. "
-            "Recover admission pointer / harvest only. Do NOT re-dispatch the window.\n"
-            f"Bound worker: {worker_thread or '(unknown)'}\n"
-        )
-    elif fire_attempt_outcome in {
-        FireAttemptOutcome.REFUSED_PRE_FIRE,
-        FireAttemptOutcome.ERRORED_PRE_FIRE,
-    }:
-        heal_note = (
-            "\n\nPre-fire refuse/error — re-fire may be safe after substrate fix.\n"
-        )
-    prompt = (
-        f"# DIRECTIVE — Charter tick SOS heal root {root_id}\n\n"
-        "TYPE: DIRECTIVE\n"
-        "so_what: ULG: heal charter-tick silent-starve — no Kaywan babysitting\n\n"
-        f"root: agent-bus:{root_id}\n"
-        f"fire_attempt_outcome: {outcome_val}\n"
-        f"reason: {reason}\n"
-        f"consecutive: {consecutive}\n"
-        f"detail: {detail or '(none)'}\n"
-        f"{heal_note}\n"
-        "You hold the operator seat. Pull live tip + ledger + recent "
-        "`manage.charter.tick.root_skipped` / harvest events. Heal so the belt "
-        "progresses (admit/queue, tip amend, or honest blocked+friction). "
-        "Prevention via friction/amend at your discretion. Commission cursor-auto "
-        "for implement. Page COME TO IDE only for debrief / options exhausted.\n"
-        "Doctrine: decision:tick-heal-cdp-operator-default\n"
-    )
-    body = SubmitProjectAskRequest(
-        prompt_text=prompt,
-        purpose="operator-proxy",
-        model="opus-5",
-        converse=True,
-        no_project_uuid=True,
-        timeout_s=600,
-        expected_size="large",
-        holder=f"charter-tick-sos-{root_id}",
-    )
-    status, payload, _media = await relay_async(
-        "POST",
-        "/v1/project-ask/executions",
-        json_body=body.model_dump(exclude_none=True),
-    )
-    if status >= 400 or not isinstance(payload, dict):
-        logger.warning(
-            "tick SOS CDP submit HTTP %s root=%s payload=%r",
-            status,
-            root_id,
-            payload if not isinstance(payload, bytes) else payload[:120],
-        )
-        return None
-    return str(payload.get("execution_id") or "") or None
 
 
 __all__ = [

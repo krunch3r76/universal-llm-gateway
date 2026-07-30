@@ -753,6 +753,22 @@ def FrontierSdkKnobDropped(  # noqa: N802
 
 
 @event_factory
+def FrontierSdkReasoningEffortRejected(  # noqa: N802
+    model_id: str,
+    requested: str,
+) -> Event:
+    """Wrong-surface ``reasoning_effort`` rejected at cursor-sdk prepare (BIND_B)."""
+    return Event(
+        signal="frontier.sdk.reasoning_effort.rejected",
+        payload={
+            "model_id": model_id,
+            "requested": requested,
+        },
+        scope="node",
+    )
+
+
+@event_factory
 def DispatchCapabilityCardMissing(  # noqa: N802
     request_id: str,
     model: str,

@@ -12,6 +12,7 @@ from .dispatch_client import AdmissionMode
 logger = get_logger(__name__)
 
 Attendance = Literal["attended", "autonomous", "operator_proxy"]
+ArcLane = Literal["layer", "path_sim"]
 
 
 def attendance_from_todo_attrs(attrs: dict | None) -> Attendance:
@@ -24,6 +25,18 @@ def attendance_from_todo_attrs(attrs: dict | None) -> Attendance:
     if raw == "operator_proxy":
         return "operator_proxy"
     return "attended"
+
+
+def arc_lane_from_todo_attrs(attrs: dict | None) -> ArcLane:
+    """Map todo ``arc_lane`` attr; default path_sim (fail-safe to current behaviour)."""
+    if not isinstance(attrs, dict):
+        return "path_sim"
+    raw = str(attrs.get("arc_lane") or "").strip().lower()
+    if raw == "layer":
+        return "layer"
+    if raw == "path_sim":
+        return "path_sim"
+    return "path_sim"
 
 
 def admission_mode_for_attendance(attendance: Attendance) -> AdmissionMode:
@@ -77,38 +90,64 @@ async def _attendance_from_bus_tags(root_id: str) -> Attendance | None:
     return None
 
 
-async def resolve_attendance(root_id: str) -> Attendance:
-    """Resolve attendance once per tick: todo attrs → bus thread tag → attended."""
+async def _todo_attrs_for_root(root_id: str) -> tuple[dict | None, str | None]:
+    """Fetch charter todo attrs via the existing single ``_op_entity_get`` call."""
     todo_ref = await _charter_todo_for_root(root_id)
-    if todo_ref:
-        try:
-            from cortex_store.dispatch_ops.ops_entities import _op_entity_get
+    if not todo_ref:
+        return None, None
+    try:
+        from cortex_store.dispatch_ops.ops_entities import _op_entity_get
 
-            ent = _op_entity_get(entity_id=todo_ref, intent="full")
-        except Exception as exc:
-            logger.warning(
-                "cortex todo attrs lookup failed root_id=%s todo=%s: %s",
-                root_id,
-                todo_ref,
-                exc,
-            )
-            ent = {}
-        if "error" not in ent:
-            attrs = ent.get("attributes")
-            mode = attendance_from_todo_attrs(
-                attrs if isinstance(attrs, dict) else None
-            )
-            if mode != "attended":
-                return mode
+        ent = _op_entity_get(entity_id=todo_ref, intent="full")
+    except Exception as exc:
+        logger.warning(
+            "cortex todo attrs lookup failed root_id=%s todo=%s: %s",
+            root_id,
+            todo_ref,
+            exc,
+        )
+        return None, todo_ref
+    if "error" in ent:
+        return None, todo_ref
+    attrs = ent.get("attributes")
+    return (attrs if isinstance(attrs, dict) else None), todo_ref
+
+
+async def resolve_todo_axes(root_id: str) -> tuple[Attendance, ArcLane, str | None]:
+    """Resolve attendance + arc_lane once per tick: todo attrs → bus tag → defaults."""
+    attrs, todo_ref = await _todo_attrs_for_root(root_id)
+    arc_lane: ArcLane = arc_lane_from_todo_attrs(attrs)
+    if attrs is not None and not str(attrs.get("arc_lane") or "").strip():
+        logger.warning(
+            "charter.tick.arc_lane.unset root_id=%s todo_ref=%s — defaulting path_sim",
+            root_id,
+            todo_ref,
+        )
+        from .telemetry import emit_arc_lane_unset
+
+        await emit_arc_lane_unset(root_id=root_id, todo_ref=todo_ref)
+    if attrs is not None:
+        attendance = attendance_from_todo_attrs(attrs)
+        if attendance != "attended":
+            return attendance, arc_lane, todo_ref
     tagged = await _attendance_from_bus_tags(root_id)
     if tagged is not None:
-        return tagged
-    return "attended"
+        return tagged, arc_lane, todo_ref
+    return "attended", arc_lane, todo_ref
+
+
+async def resolve_attendance(root_id: str) -> Attendance:
+    """Resolve attendance once per tick: todo attrs → bus thread tag → attended."""
+    attendance, _, _ = await resolve_todo_axes(root_id)
+    return attendance
 
 
 __all__ = [
+    "ArcLane",
     "Attendance",
     "admission_mode_for_attendance",
+    "arc_lane_from_todo_attrs",
     "attendance_from_todo_attrs",
     "resolve_attendance",
+    "resolve_todo_axes",
 ]

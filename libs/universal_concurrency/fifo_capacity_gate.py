@@ -157,6 +157,7 @@ class FifoCapacityGate:
         request_id: str,
         timeout: float | None = None,
         cancellation_event: asyncio.Event | None = None,
+        on_wait: Callable[[], None] | None = None,
     ) -> None:
         """
         Acquire slot, waiting FIFO if at capacity.
@@ -205,6 +206,9 @@ class FifoCapacityGate:
             )
             self._waiters.append(waiter)
             queue_position = len(self._waiters)
+
+            if on_wait is not None:
+                on_wait()
 
             if self._gate_id is not None:
                 logger.info(

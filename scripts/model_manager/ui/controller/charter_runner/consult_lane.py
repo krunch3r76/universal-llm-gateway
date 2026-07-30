@@ -15,7 +15,14 @@ from libs.charter_runner_store.db import charter_runner_data_dir, execute_with_r
 from . import bus_client
 from .checkpoint_schema import ParsedCheckpoint
 from .harvest_attribution import consult_role_from_pickup
-from .root_ledger import RootLedgerRow, RootStatus, Transition, load_root, upsert_root, write_cortex_mirror
+from .root_ledger import (
+    RootLedgerRow,
+    RootStatus,
+    Transition,
+    load_root,
+    upsert_root,
+    write_cortex_mirror,
+)
 
 logger = get_logger(__name__)
 
@@ -64,13 +71,30 @@ def resolve_consult_role(
     row: RootLedgerRow,
     parsed: ParsedCheckpoint | None,
 ) -> str:
-    """Tip-declared consult role wins over ledger lane inference (a:26872)."""
+    """Tip-declared consult role wins over ledger lane inference (a:26872).
+
+    Order: tip ``consult_role`` → Next-pickup sniff → Steps ``[consult:…]`` for
+    the open/matching gate → lane default (consult→r_admit). Layer arcs stamp
+    ``[consult:judgment_gap]`` on G1/G2 Steps; without the Steps sniff those
+    births false-default to ``r_admit`` (dogfood 6489).
+    """
     if parsed is not None and parsed.consult_role in {"r_admit", "judgment_gap"}:
         return parsed.consult_role
     if parsed is not None:
         sniffed = consult_role_from_pickup(parsed.next_pickup)
         if sniffed in {"r_admit", "judgment_gap"}:
             return sniffed
+        from .gate_lane_classifier import classify, parse_gate_rows
+
+        req = classify(parse_gate_rows(parsed.steps))
+        if (
+            req is not None
+            and req.kind == "consult"
+            and req.role in {"r_admit", "judgment_gap"}
+        ):
+            gid = (row.pickup_gid or "").upper()
+            if not gid or req.gate_id is None or req.gate_id.upper() == gid:
+                return req.role
     return consult_role_for_row(row)
 
 
@@ -115,9 +139,14 @@ def _ledger_row_consult_queued(
     consult_role: str,
     now: float,
 ) -> RootLedgerRow:
+    next_status = (
+        existing.status
+        if existing.status in (RootStatus.BLOCKED, RootStatus.CLOSED)
+        else RootStatus.CONSULT_QUEUED
+    )
     return RootLedgerRow(
         root_id=existing.root_id,
-        status=RootStatus.CONSULT_QUEUED,
+        status=next_status,
         pickup_gid=existing.pickup_gid,
         pickup_lane=existing.pickup_lane,
         pickup_executor=existing.pickup_executor,
@@ -246,7 +275,10 @@ def parse_cdp_consult_harvest(
         or (payload.get("transport") == "project_ask")
     )
     if escape or not model_id.startswith("cdp/"):
-        if payload.get("project_ask_execution_id") or payload.get("transport") == "project_ask":
+        if (
+            payload.get("project_ask_execution_id")
+            or payload.get("transport") == "project_ask"
+        ):
             return CdpHarvestResult(
                 model_id=model_id or "project_ask",
                 consult_thread=worker_thread,
@@ -309,7 +341,9 @@ def _harvest_text_from_turns(
     return ""
 
 
-def provenance_from_cdp_harvest(result: CdpHarvestResult) -> ConsultProvenanceRecord | None:
+def provenance_from_cdp_harvest(
+    result: CdpHarvestResult,
+) -> ConsultProvenanceRecord | None:
     from scripts.model_manager.charter_control.r_verdict_gate import (
         consult_provenance_from_r_admit,
     )
@@ -328,7 +362,9 @@ def provenance_from_cdp_harvest(result: CdpHarvestResult) -> ConsultProvenanceRe
         consultant_family=prov.consultant_family,
         consultant_substrate=prov.consultant_substrate,
         consultant_model=result.model_id,
-        evidence_uri=result.harvest_text if result.harvest_text.startswith("cortex://") else None,
+        evidence_uri=result.harvest_text
+        if result.harvest_text.startswith("cortex://")
+        else None,
     )
 
 

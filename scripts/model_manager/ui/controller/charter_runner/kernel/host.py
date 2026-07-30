@@ -91,6 +91,18 @@ def _attendance_for_root(env: EnvSnapshot, root_id: str) -> Attendance:
     return "attended"
 
 
+def _arc_lane_from_env(env: EnvSnapshot, root_id: str) -> str:
+    """Per-root arc lane from tick-scoped env snapshot; default path_sim."""
+    arc_lane = env.arc_lane_by_root.get(root_id)
+    if arc_lane is None:
+        logger.warning(
+            "arc_lane missing from env snapshot root_id=%s — defaulting path_sim",
+            root_id,
+        )
+        return "path_sim"
+    return arc_lane
+
+
 def _admission_mode_from_env(env: EnvSnapshot, root_id: str) -> AdmissionMode:
     """Per-root admission mode from tick-scoped env snapshot."""
     return admission_mode_for_attendance(_attendance_for_root(env, root_id))

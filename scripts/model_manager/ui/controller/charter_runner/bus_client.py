@@ -163,6 +163,34 @@ async def close_root_thread(root_id: str, *, summary: str) -> dict[str, Any]:
         return dict(resp.json())
 
 
+async def enroll_root(root_id: str) -> dict[str, Any]:
+    """Add the charter-runner enrollment tag via dual-key PATCH.
+
+    Uses additive ``add_tags`` with ``enroll_charter_runner`` so the server
+    enrollment guard accepts the reserved tag. Idempotent when the tag is
+    already present (flagless re-add allowed). Returns ``{tags, enrolled}``
+    where ``enrolled`` is True iff ``ENROLLMENT_TAG`` is in tags after PATCH
+    (do not use ``bool(dict)``).
+    """
+    payload = {
+        "add_tags": [ENROLLMENT_TAG],
+        "enroll_charter_runner": True,
+    }
+    async with make_async_client(DEFAULT_AGENT_BUS_URL, timeout=_TIMEOUT_S) as client:
+        resp = await client.patch(
+            f"/threads/{root_id}",
+            json=payload,
+            headers=_auth_headers(),
+        )
+        resp.raise_for_status()
+        detail = dict(resp.json())
+        if "tags" not in detail and isinstance(detail.get("thread"), dict):
+            detail = dict(detail["thread"])
+        tags = list(detail.get("tags") or [])
+    enrolled = ENROLLMENT_TAG in tags
+    return {"tags": tags, "enrolled": enrolled}
+
+
 async def unenroll_root(root_id: str) -> dict[str, Any]:
     """Strip ``charter-runner`` from root tags via read-modify-write PATCH.
 

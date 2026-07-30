@@ -1,8 +1,9 @@
-"""WakeConsumer — single-task drain of dirty roots into per-root charter passes."""
+"""WakeConsumer — wake-pull drive: dirty-set drain + ledger-query floor."""
 
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
@@ -19,6 +20,7 @@ from .harvest import harvest_completed_windows
 from .kernel import hold as tick_hold
 from .kernel.host import _admission_mode_from_env
 from .kernel_tick import apply_kernel_tick_for_root
+from .root_ledger import open_default_ledger, record_wake_at
 from .wake_hub import WakeDirtySet, WakeRootMapper
 
 if TYPE_CHECKING:
@@ -57,16 +59,22 @@ async def run_root_pass(
     kernel_env: Any,
     pass_source: WakeSource | None = None,
 ) -> RootPassOutcome:
-    """One root: harvest → kernel tick → skip side-effects."""
+    """One root: wake stamp → harvest → dispatch → skip side-effects."""
     from .kernel.skip_side_effects import apply_skip_side_effects
 
+    if pass_source == "wake":
+        conn = open_default_ledger()
+        try:
+            record_wake_at(conn, root_id)
+        finally:
+            conn.close()
     turns = await bus_client.fetch_turns(root_id)
     admission_mode = _admission_mode_from_env(kernel_env, root_id)
     await harvest_completed_windows(root_id, turns, admission_mode=admission_mode)
     # Failed worker with no root CHECKPOINT never harvests — release WIP or the
     # root sticks in CONSULT_ADMITTED/ADMITTED (live 6409 / Transition.WORKER_FAILED).
     try:
-        from .root_ledger import load_root, open_default_ledger
+        from .root_ledger import load_root
         from .worker_failed_release import maybe_release_failed_window_wip
 
         conn = open_default_ledger()
@@ -246,7 +254,7 @@ ServicesHealthy = Callable[[], bool]
 
 @dataclass
 class WakeConsumer:
-    """Single consumer: dirty-set drain + reconcile-interval floor full-roster pass."""
+    """Single consumer: wake dirty-set → harvest → dispatch; ledger floor residual."""
 
     tick_loop: CharterRunnerTickLoop
     dirty: WakeDirtySet
@@ -255,6 +263,23 @@ class WakeConsumer:
     services_healthy: ServicesHealthy
     _task: asyncio.Task[None] | None = None
     _shutdown_gate_activity: Callable[[bool], None] | None = None
+
+    async def _floor_root_ids(self) -> list[str]:
+        """Ledger-query floor over open typed work-items (¬ roster tip poll)."""
+        from .root_ledger import list_open_work_item_root_ids
+
+        stale_before = time.time() - self.floor_interval_s
+        conn = open_default_ledger()
+        try:
+            stale_ids = list_open_work_item_root_ids(
+                conn, stale_before=stale_before
+            )
+            all_open = list_open_work_item_root_ids(conn)
+        finally:
+            conn.close()
+        await self.mapper.refresh_enrolled()
+        merged = sorted(set(stale_ids) | self.mapper.enrolled | all_open)
+        return merged
 
     async def start(self) -> None:
         if self._task is not None:
@@ -317,8 +342,7 @@ class WakeConsumer:
                 if activity is not None:
                     activity(True)
                 try:
-                    enrolled = await self.mapper.refresh_enrolled()
-                    root_ids = sorted(enrolled)
+                    root_ids = await self._floor_root_ids()
                     if root_ids:
                         await run_roots_batch(
                             root_ids,

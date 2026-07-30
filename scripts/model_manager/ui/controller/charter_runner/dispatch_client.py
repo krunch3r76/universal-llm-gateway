@@ -64,6 +64,7 @@ async def fire_window(
     admission_mode: AdmissionMode = "generate",
     consult_role: str | None = None,
     implement_source_ref: str | None = None,
+    work_key: str | None = None,
 ) -> dict[str, Any]:
     """Admit one charter window (generate default or attended handoff).
 
@@ -134,10 +135,14 @@ async def fire_window(
             caller_agent=_CALLER,
         )
         path = _DISPATCH_PATH
+    if work_key:
+        body["work_key"] = work_key
     async with make_async_client(DEFAULT_STARGATE_URL, timeout=_TIMEOUT_S) as client:
         resp = await client.post(path, json=body)
         resp.raise_for_status()
         result = dict(resp.json())
+    if work_key:
+        result["work_key"] = work_key
     if "thread_id" not in result and result.get("thread"):
         result["thread_id"] = result["thread"]
     result.setdefault(

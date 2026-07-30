@@ -8,7 +8,8 @@ from pathlib import Path
 
 from universal_logging import get_logger
 
-from .admission import CapStore, CapsView, EnvFacts, decide
+from .admission import CapStore, CapsView, EnvFacts, decide, layer_independence_unproven
+from .checkpoint_schema import resolve_checkpoint_body
 from .consult_lane import (
     _backoff_s,
     _consult_role_for_row,
@@ -16,6 +17,12 @@ from .consult_lane import (
     enqueue_consult,
     resolve_consult_role,
     sync_ledger_consult_queued,
+)
+from .identical_work_refire import (
+    RefireGateContext,
+    evaluate_identical_work_refire,
+    refused_kernel_outcome,
+    resolve_admission_mode,
 )
 from .conveyor_phase import (
     record_admit_cursor,
@@ -36,6 +43,7 @@ from .root_ledger import (
     Transition,
     load_root,
     open_default_ledger,
+    typed_record_valid,
     upsert_root,
     write_cortex_mirror,
 )
@@ -45,17 +53,59 @@ from .window_sequence import (
     clear_uncorrelatable_wip,
     next_window_index,
     window_id_for,
+    window_index_from_id,
 )
+from .work_key import compute_work_key
+from .work_key_store import record_admit
 
 logger = get_logger(__name__)
+
+_EXECUTION_ID_RE = __import__("re").compile(r"execution_id=(\S+)", __import__("re").IGNORECASE)
+
+
+def _source_ref_for_admit(parsed, *, transition: Transition, admission_mode: str):
+    if parsed is None:
+        return None
+    if transition == Transition.ADMIT_WORKER:
+        from .executor_routing import resolve_charter_executor
+
+        bind = resolve_charter_executor(
+            parsed=parsed,
+            admission_mode=admission_mode,
+            consult_role=parsed.consult_role,
+        )
+        return bind.source_ref or parsed.source_ref
+    return parsed.source_ref
+
+
+def _incoming_dispatch_id(parsed) -> str | None:
+    if parsed is None:
+        return None
+    for row in parsed.next_pickup:
+        match = _EXECUTION_ID_RE.search(row)
+        if match:
+            return match.group(1)
+    return None
+
+
+def _refire_context_for_row(row, parsed) -> RefireGateContext:
+    wip_index = window_index_from_id(row.wip_window_id)
+    return RefireGateContext(
+        incoming_window_index=wip_index if wip_index > 0 else None,
+        incoming_dispatch_id=_incoming_dispatch_id(parsed),
+    )
 
 # Gated tip required for admit/queue (a:26596; enqueue-then-stall never closed).
 # DEFER stays listed so IDLE→DEFER still fails closed on idle tips; already-queued
 # CONSULT_QUEUED/DEFERRED deferrals are exempted at the call site (P4-AC1 / G4a).
-_NEEDS_GATED_PICKUP = frozenset({
-    Transition.ADMIT_CONSULT, Transition.ADMIT_WORKER,
-    Transition.QUEUE_CONSULT, Transition.DEFER_CONSULT,
-})
+_NEEDS_GATED_PICKUP = frozenset(
+    {
+        Transition.ADMIT_CONSULT,
+        Transition.ADMIT_WORKER,
+        Transition.QUEUE_CONSULT,
+        Transition.DEFER_CONSULT,
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -82,9 +132,16 @@ def _ledger_row_from_state(
     existing = load_root(conn, root_id)
     if existing is None:
         raise KeyError(f"ledger row missing for {root_id}")
+    # A hold armed mid-pass must survive the terminal write (6489). Window fields
+    # still record so harvest / worker-failed release stay correlated.
+    next_status = (
+        existing.status
+        if existing.status in (RootStatus.BLOCKED, RootStatus.CLOSED)
+        else status
+    )
     row = RootLedgerRow(
         root_id=existing.root_id,
-        status=status,
+        status=next_status,
         pickup_gid=existing.pickup_gid,
         pickup_lane=existing.pickup_lane,
         pickup_executor=existing.pickup_executor,
@@ -147,27 +204,34 @@ async def apply_kernel_tick_for_root(
     admission_mode: str = "autonomous",
     pass_source: str | None = None,
 ) -> KernelTickOutcome:
-    """Live kernel path — sole launcher for ledger-seeded enrollments."""
-    from .seed_phase1 import ensure_root_ledger_seed
-
+    """Execute one harvest→dispatch transition for a typed work-item root."""
     conn = open_default_ledger()
     try:
         row = load_root(conn, root_id)
         if row is None:
-            # Known PHASE1 / conveyor seeds self-heal once (a:26619).
-            if ensure_root_ledger_seed(root_id):
-                row = load_root(conn, root_id)
-        if row is None:
-            return KernelTickOutcome("kernel_unseeded")
+            return KernelTickOutcome(
+                "kernel_unseeded",
+                skipped_reason="migrate_typed_admit",
+                fire_attempt_outcome=FireAttemptOutcome.REFUSED_PRE_FIRE,
+                fire_attempt_reason="migrate_typed_admit",
+            )
+        typed_authority = typed_record_valid(row)
         has_wip = _tip_has_wip(turns)
         tip = parse_tip_checkpoint(turns)
         parsed = tip[1] if tip is not None else None
+        if not typed_authority:
+            from .seed_phase1 import ensure_root_ledger_seed
+
+            if ensure_root_ledger_seed(root_id):
+                row = load_root(conn, root_id) or row
+                typed_authority = typed_record_valid(row)
         row = wake_conveyor_if_fresh_append(conn, row, parsed)
         row = load_root(conn, root_id) or row
         if (
             row.conveyor_phase == "dormant"
             and not has_wip
             and not row.wip_window_id
+            and not typed_authority
         ):
             return KernelTickOutcome(
                 "kernel_dormant",
@@ -178,13 +242,44 @@ async def apply_kernel_tick_for_root(
         row = clear_uncorrelatable_wip(conn, row)
         if not has_wip and not row.wip_window_id:
             row = await _maybe_advance_pickup(
-                conn, row, parsed, pass_source=pass_source
+                conn,
+                row,
+                parsed,
+                pass_source=pass_source,
+                typed_authority=typed_authority,
             )
         facts = env.facts_for_root(root_id, has_wip=has_wip)
-        empty_hopper = tip_is_empty_hopper(
-            parsed,
-            has_wip=has_wip,
-            wip_window_id=row.wip_window_id,
+        arc_lane = env.arc_lane_by_root.get(root_id, "path_sim")
+        empty_hopper = False
+        checkpoint_body = ""
+        if tip is not None:
+            checkpoint_body = resolve_checkpoint_body(
+                str(tip[0].get("body") or ""),
+                sidecar_uri=(
+                    tip[0].get("sidecar_uri")
+                    if isinstance(tip[0].get("sidecar_uri"), str)
+                    else None
+                ),
+            )
+        if not typed_authority:
+            empty_hopper = tip_is_empty_hopper(
+                parsed,
+                has_wip=has_wip,
+                wip_window_id=row.wip_window_id,
+            )
+        tip_executor = None
+        consult_pending = False
+        if parsed is not None:
+            consult_pending = bool(parsed.consult_pending)
+            live_pickup = gated_pickup_from_parsed(parsed)
+            if live_pickup is not None:
+                tip_executor = live_pickup.executor
+        independence_block = layer_independence_unproven(
+            arc_lane=arc_lane,
+            attendance=row.attendance or facts.attendance,
+            parsed=parsed,
+            checkpoint_body=checkpoint_body,
+            pickup_lane=(row.pickup_lane or "judgment"),
         )
         facts = EnvFacts(
             substrate_up=facts.substrate_up,
@@ -194,6 +289,10 @@ async def apply_kernel_tick_for_root(
             giw_holder_lease=env.giw_holder_lease,
             restart_shaped=env.restart_shaped_for_root(root_id),
             empty_hopper=empty_hopper,
+            consult_pending=consult_pending,
+            tip_executor=tip_executor,
+            arc_lane=arc_lane,
+            layer_independence_block=independence_block,
         )
         caps_view = CapsView.from_cap_store(caps, root_id)
         transition = decide(row, facts, caps_view)
@@ -207,15 +306,15 @@ async def apply_kernel_tick_for_root(
         # Already-queued/deferred consults may DEFER on substrate_down even when
         # the tip gated lane is idle — blocking that (a:26596 admit/re-queue
         # fence) left P4-AC1 unobservable for unenrolled-idle tips (G4a).
-        _defer_existing = (
-            transition == Transition.DEFER_CONSULT
-            and row.status
-            in (RootStatus.CONSULT_QUEUED, RootStatus.CONSULT_DEFERRED)
+        _defer_existing = transition == Transition.DEFER_CONSULT and row.status in (
+            RootStatus.CONSULT_QUEUED,
+            RootStatus.CONSULT_DEFERRED,
         )
         if (
             transition in _NEEDS_GATED_PICKUP
             and gated_pickup_from_parsed(parsed) is None
             and not _defer_existing
+            and not typed_authority
         ):
             # decide() is ledger-only; idle tip must not admit or re-queue (a:26596).
             return KernelTickOutcome(
@@ -224,12 +323,50 @@ async def apply_kernel_tick_for_root(
                 fire_attempt_outcome=FireAttemptOutcome.NO_ATTEMPT_QUIET,
                 fire_attempt_reason="no_gated_pickup",
             )
+        if transition in _NEEDS_GATED_PICKUP and typed_authority and parsed is None:
+            logger.info(
+                "charter-runner typed_admit_dispatch root=%s gid=%s lane=%s",
+                root_id,
+                row.pickup_gid,
+                row.pickup_lane,
+            )
         if transition == Transition.QUEUE_CONSULT:
             return await _queue_consult(
                 conn, row, root_id, transition, parsed, pass_source=pass_source
             )
         if transition == Transition.DEFER_CONSULT:
             return await _defer_consult(conn, row, root_id)
+        pending_work_key: str | None = None
+        if transition in (Transition.ADMIT_CONSULT, Transition.ADMIT_WORKER):
+            consult_role = (
+                resolve_consult_role(row, parsed)
+                if transition == Transition.ADMIT_CONSULT
+                else None
+            )
+            source_ref = _source_ref_for_admit(
+                parsed, transition=transition, admission_mode=admission_mode
+            )
+            refire = await evaluate_identical_work_refire(
+                conn,
+                row=row,
+                root_id=root_id,
+                transition=transition,
+                source_ref=source_ref,
+                consult_role=consult_role,
+                admission_mode=admission_mode,
+                ctx=_refire_context_for_row(row, parsed),
+            )
+            if refire.refused:
+                return refused_kernel_outcome(refire)
+            pending_work_key = refire.work_key or compute_work_key(
+                root_id=root_id,
+                source_ref=source_ref,
+                pickup_gid=row.pickup_gid,
+                consult_role=consult_role,
+                admission_mode=resolve_admission_mode(
+                    transition, admission_mode=admission_mode
+                ),
+            )
         window_index = next_window_index(root_id, turns, row=row)
         if transition == Transition.ADMIT_CONSULT:
             return await _admit_consult(
@@ -242,6 +379,8 @@ async def apply_kernel_tick_for_root(
                 workspace_root=workspace_root,
                 on_admit=on_admit,
                 parsed=parsed,
+                arc_lane=arc_lane,
+                work_key=pending_work_key,
             )
         if transition == Transition.ADMIT_WORKER:
             # Tip next_pickup.executor is admit-substrate authority (a:26659).
@@ -302,13 +441,18 @@ async def apply_kernel_tick_for_root(
                 workspace_root=workspace_root,
                 admission_mode=admission_mode,
                 on_admit=on_admit,
+                arc_lane=arc_lane,
+                work_key=pending_work_key,
+                parsed=parsed,
             )
         if transition == Transition.BLOCK:
             # Prefer durable stop/revise reason over opaque "blocked" so pager
             # standing-dedupe and SMS bodies name the CapStore stop (e.g.
             # stopped:admission_transport_error).
             block_reason = "blocked"
-            if caps_view.stopped_reason:
+            if independence_block:
+                block_reason = "layer_independence_unproven"
+            elif caps_view.stopped_reason:
                 block_reason = f"stopped:{caps_view.stopped_reason}"
             elif caps_view.revise_reason:
                 block_reason = caps_view.revise_reason
@@ -324,14 +468,21 @@ async def apply_kernel_tick_for_root(
 
 
 async def _maybe_advance_pickup(
-    conn, row: RootLedgerRow, parsed, *, pass_source: str | None = None
+    conn,
+    row: RootLedgerRow,
+    parsed,
+    *,
+    pass_source: str | None = None,
+    typed_authority: bool = False,
 ) -> RootLedgerRow:
     """Realign ``pickup_gid`` with the tip before ``decide`` reads it.
 
     Only runs at a clean tip (no in-flight window): mutating the pickup while a
     window is out would decorrelate the consult queue key from the packet the
-    worker is holding.
+    worker is holding. Typed authority skips advance when tip is absent.
     """
+    if typed_authority and parsed is None:
+        return row
     live = advance_pickup_gid(conn, row, parsed)
     if live is None:
         return row
@@ -419,6 +570,8 @@ async def _admit_consult(
     workspace_root: Path | None,
     on_admit,
     parsed=None,
+    arc_lane: str = "path_sim",
+    work_key: str | None = None,
 ) -> KernelTickOutcome:
     if workspace_root is None:
         return KernelTickOutcome(
@@ -441,8 +594,21 @@ async def _admit_consult(
         consult_role=role,
         window_index=window_index,
         on_admit=on_admit,
+        arc_lane=arc_lane,
+        work_key=work_key,
+        consult_role_at_admit=role,
     )
     if result.admitted:
+        wid = window_id_for(root_id, window_index)
+        if work_key:
+            record_admit(
+                conn,
+                work_key=work_key,
+                root_id=root_id,
+                window_id=wid,
+                dispatch_id=str(result.dispatch_id or "") or None,
+                thread_id=str(result.thread_id or "") or None,
+            )
         _ledger_row_from_state(
             conn,
             root_id,
@@ -474,6 +640,9 @@ async def _admit_worker(
     workspace_root: Path | None,
     admission_mode: str,
     on_admit,
+    arc_lane: str = "path_sim",
+    work_key: str | None = None,
+    parsed=None,
 ) -> KernelTickOutcome:
     if workspace_root is None:
         return KernelTickOutcome(
@@ -489,8 +658,21 @@ async def _admit_worker(
         admission_mode=admission_mode,
         window_index=window_index,
         on_admit=on_admit,
+        arc_lane=arc_lane,
+        work_key=work_key,
+        parsed=parsed,
     )
     if result.admitted:
+        wid = window_id_for(root_id, window_index)
+        if work_key:
+            record_admit(
+                conn,
+                work_key=work_key,
+                root_id=root_id,
+                window_id=wid,
+                dispatch_id=result.dispatch_id,
+                thread_id=result.thread_id,
+            )
         _ledger_row_from_state(
             conn,
             root_id,

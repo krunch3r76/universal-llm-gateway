@@ -462,7 +462,9 @@ async def emit_manage_charter_tick_resumed(
     await _emit("manage.charter.tick.resumed", payload)
 
 
-async def emit_manage_charter_caps_cleared(*, root: str, reason: str | None = None) -> None:
+async def emit_manage_charter_caps_cleared(
+    *, root: str, reason: str | None = None
+) -> None:
     """CapStore stop cleared — wakes root for immediate re-admit check (§B3)."""
     payload: dict = {"root": root}
     if reason is not None:
@@ -538,5 +540,49 @@ async def emit_manage_charter_tick_propagation_escalated(
             "root": root,
             "window_index": window_index,
             "escalated": escalated,
+        },
+    )
+
+
+async def emit_manage_charter_root_blocked(
+    *,
+    root: str,
+    reason: str,
+    set_by: str,
+    prior_status: str,
+    unenrolled: bool,
+    tip_class: str,
+    wip_window_id: str | None,
+) -> None:
+    """Operator armed a durable per-root hold on the typed ledger."""
+    await _emit(
+        "manage.charter.root.blocked",
+        {
+            "root": root,
+            "reason": reason,
+            "set_by": set_by,
+            "prior_status": prior_status,
+            "unenrolled": unenrolled,
+            "tip_class": tip_class,
+            "wip_window_id": wip_window_id,
+        },
+    )
+
+
+async def emit_manage_charter_root_unblocked(
+    *,
+    root: str,
+    set_by: str,
+    prior_status: str,
+    reenrolled: bool,
+) -> None:
+    """Operator cleared a durable per-root hold; root returns to IDLE admits."""
+    await _emit(
+        "manage.charter.root.unblocked",
+        {
+            "root": root,
+            "set_by": set_by,
+            "prior_status": prior_status,
+            "reenrolled": reenrolled,
         },
     )

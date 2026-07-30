@@ -2,7 +2,10 @@
 
 Thin admit front over the native CDP API (``cdp_ask.client`` /
 ``POST /api/v1/providers/cdp/ask`` via ``claude_bundles.cdp_model_endpoint``).
-Posts on-behalf turns as ``from=cdp`` only after harvest proof (or failed+stall).
+Forwards optional ``purpose`` (default ``ask``) onto the satellite submit so
+operator-proxy missions can set ``purpose=operator-proxy|mission`` without
+bare ``project_ask``. Posts on-behalf turns as ``from=cdp`` only after harvest
+proof (or failed+stall).
 """
 
 from __future__ import annotations
@@ -130,7 +133,11 @@ def _stage_inputs(
     packet_path: str | None,
     skills: list[str] | None = None,
 ) -> Any:
-    """Stage prompt; ``skills`` → slash manifest for + → Skills attach at runtime."""
+    """Stage prompt; ``skills`` → slash manifest for + → Skills attach at runtime.
+
+    Judgment-pair skills are always ensured at staging (even when ``skills`` is
+    omitted on light-bounded CDP generate).
+    """
     cortex_uri = None
     if isinstance(sidecar_ref, str) and sidecar_ref.startswith("cortex://"):
         cortex_uri = sidecar_ref
@@ -293,6 +300,12 @@ async def dispatch_cdp_generate(
         max_wall_s=max_wall,
     )
 
+    purpose_raw = getattr(body, "purpose", None)
+    purpose = (
+        str(purpose_raw).strip()
+        if isinstance(purpose_raw, str) and purpose_raw.strip()
+        else "ask"
+    )
     worker_task = asyncio.create_task(
         run_cdp_worker(
             execution_id=execution_id,
@@ -303,6 +316,7 @@ async def dispatch_cdp_generate(
             request_id=request_id,
             pointer_turn=after_turn,
             max_wall_s=float(timeout_seconds) if timeout_seconds else None,
+            purpose=purpose,
         ),
         name=f"cdp-worker-{execution_id[:8]}",
     )

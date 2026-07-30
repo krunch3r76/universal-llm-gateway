@@ -144,6 +144,9 @@ class SdkDispatchRow:
     last_progress_ms: int | None = None
     terminal_ms: int | None = None
     duration_ms: int | None = None
+    #: Live wall age since ``started_ms`` (None when terminal — use ``duration_ms``).
+    elapsed_ms: int | None = None
+    #: Live age since last progress heartbeat (stall signal; ≠ wall elapsed).
     idle_age_ms: int | None = None
     prompt_tokens: int | None = None
     completion_tokens: int | None = None

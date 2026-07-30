@@ -50,6 +50,18 @@ def lane_b_lease_key(dispatch_workspace: Path) -> str:
     return str(dispatch_workspace.resolve())
 
 
+def default_write_path_is_lane_a() -> bool:
+    """True while admit defaults to shared-master lease keys (pre-S1b default)."""
+    return True
+
+
+def write_lease_slots() -> int:
+    """Concurrently grantable write leases under current default admit binding."""
+    if default_write_path_is_lane_a():
+        return 1
+    raise NotImplementedError("Lane-B default write headroom is an M1 concern")
+
+
 def resolve_promoted_workspace(
     *,
     lease_key: str | None,

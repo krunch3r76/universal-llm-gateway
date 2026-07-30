@@ -118,7 +118,9 @@ def register_project_ask_tool(mcp: FastMCP) -> None:
             correlation is the ``cdp.generate.submitted`` event, which carries
             both ids and now publishes at submit time.
 
-        ``purpose``: default ``ask``. For operator-proxy missions set
+        ``purpose``: default ``ask``. For operator-proxy missions prefer
+        ``team_dispatch(model=cdp/…, purpose=operator-proxy|mission)`` —
+        purpose is wired on CDP generate. On this escape tool, set
         ``purpose=operator-proxy`` (or ``mission``) — the cdp-ask runner
         auto-ensures ``/cdp-operator-proxy`` + ``/reasoning-posture`` +
         ``/frontier-reasoning-discipline`` chips and the Opus-operator /

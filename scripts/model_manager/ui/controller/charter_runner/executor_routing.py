@@ -96,6 +96,7 @@ def resolve_charter_executor(
     parsed: ParsedCheckpoint,
     admission_mode: str,
     consult_role: str | None = None,
+    arc_lane: str = "path_sim",
 ) -> ExecutorBind:
     """Return the executor bind for one window; judgment unless implement is proven.
 
@@ -127,6 +128,8 @@ def resolve_charter_executor(
 
     if parsed.executor_lane == IMPLEMENT_LANE:
         lane, reason = IMPLEMENT_LANE, "declared_implement"
+    elif arc_lane == "layer":
+        lane, reason = JUDGMENT_LANE, "layer_heuristic_refused"
     else:
         lane, reason = _heuristic_lane(_pickup_rows(parsed))
     if lane != IMPLEMENT_LANE:

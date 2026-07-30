@@ -36,6 +36,7 @@ from services.git_integration_worker.cursor_auto.episode_residue import (
     residue_actions,
     resolve_propagation_for_finalize,
 )
+from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
 from services.git_integration_worker.cursor_sdk_ambient import ambient_deviation_token
 from services.git_integration_worker.cursor_sdk_capture_status import (
     ChangeSet,
@@ -1173,6 +1174,11 @@ def _assemble_closeout_delivery(
             mount_root=mount,
             light_bounded_expected_paths=light_bounded_expected_paths,
             worktree_isolated=worktree_isolated,
+            read_only=CursorDispatchLedger.instance().read_read_only(
+                dispatch_id=dispatch_id
+            ),
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
         )
     )
     # Caller-supplied tokens lead: oversize bodies keep only the first few

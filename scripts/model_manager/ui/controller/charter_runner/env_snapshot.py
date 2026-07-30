@@ -12,7 +12,7 @@ import httpx
 from universal_logging import get_logger
 
 from .admission import EnvFacts
-from .attendance import resolve_attendance
+from .attendance import resolve_todo_axes
 from .env_predicates import EnvironmentSnapshot
 
 logger = get_logger(__name__)
@@ -33,6 +33,7 @@ class EnvSnapshot:
     attendance_by_root: dict[str, str]
     scoreboard_pointer: dict[str, str]
     bus_tip_meta: dict[str, dict[str, Any]]
+    arc_lane_by_root: dict[str, str] = field(default_factory=dict)
     observed_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     def substrate_up(self) -> bool:
@@ -82,6 +83,7 @@ class EnvSnapshot:
                 "in_flight_windows": self.in_flight_windows,
                 "satellite_health": self.satellite_health,
                 "attendance_by_root": self.attendance_by_root,
+                "arc_lane_by_root": self.arc_lane_by_root,
                 "scoreboard_pointer": self.scoreboard_pointer,
                 "bus_tip_meta": self.bus_tip_meta,
                 "observed_at": self.observed_at.isoformat(),
@@ -182,10 +184,11 @@ async def build_env_snapshot(
                 propagation["intent"] = str(getattr(intent, "intent_id", intent))
 
     resolved, satellite_health = await asyncio.gather(
-        asyncio.gather(*(resolve_attendance(rid) for rid in root_ids)),
+        asyncio.gather(*(resolve_todo_axes(rid) for rid in root_ids)),
         probe_satellite_health(),
     )
-    attendance = dict(zip(root_ids, resolved, strict=True))
+    attendance = {rid: axes[0] for rid, axes in zip(root_ids, resolved, strict=True)}
+    arc_lanes = {rid: axes[1] for rid, axes in zip(root_ids, resolved, strict=True)}
     scoreboards = {
         rid: f"cortex://notes/system/threads/{rid}-charter-scoreboard.md"
         for rid in root_ids
@@ -196,6 +199,7 @@ async def build_env_snapshot(
         in_flight_windows=in_flight or [],
         satellite_health=dict(satellite_health),
         attendance_by_root=attendance,
+        arc_lane_by_root=arc_lanes,
         scoreboard_pointer=scoreboards,
         bus_tip_meta={rid: {"has_checkpoint": True, "turn_id": ""} for rid in root_ids},
     )

@@ -249,9 +249,7 @@ class ServiceController:
         held = hold.read_hold()
         tick_in_flight = "charter_tick" in self._shutdown_gate.snapshot().activities
         live = await hold.list_live_charter_dispatches()
-        safe_to_quit = (
-            held is not None and not tick_in_flight and not live
-        )
+        safe_to_quit = held is not None and not tick_in_flight and not live
         result: dict = {
             "held": held is not None,
             "tick_in_flight": tick_in_flight,
@@ -262,6 +260,46 @@ class ServiceController:
         if held is not None:
             result.update(hold.hold_as_dict(held) or {})
         return result
+
+    async def charter_block_root(
+        self,
+        *,
+        root_id: str,
+        reason: str = "",
+        set_by: str = "manage",
+        unenroll: bool = True,
+        clear_wip: bool = False,
+    ) -> dict:
+        """Arm a durable per-root hold — stops NEW admits; live dispatches keep running."""
+        from scripts.model_manager.ui.controller.charter_runner import root_control
+
+        return await root_control.block_root(
+            root_id,
+            reason=reason,
+            set_by=set_by,
+            unenroll=unenroll,
+            clear_wip=clear_wip,
+        )
+
+    async def charter_unblock_root(
+        self,
+        *,
+        root_id: str,
+        set_by: str = "manage",
+        reenroll: bool = False,
+    ) -> dict:
+        """Clear a durable per-root hold — BLOCKED becomes IDLE."""
+        from scripts.model_manager.ui.controller.charter_runner import root_control
+
+        return await root_control.unblock_root(
+            root_id, set_by=set_by, reenroll=reenroll
+        )
+
+    async def charter_root_status(self, *, root_id: str) -> dict:
+        """Read-only per-root hold snapshot without ledger writes."""
+        from scripts.model_manager.ui.controller.charter_runner import root_control
+
+        return await root_control.root_status(root_id)
 
     @property
     def root(self) -> Path:
@@ -613,9 +651,7 @@ class ServiceController:
         def _stargate_ready() -> bool:
             return self._service_state._port_open(port)
 
-        outcome, exit_code = await await_popen_started(
-            process, ready=_stargate_ready
-        )
+        outcome, exit_code = await await_popen_started(process, ready=_stargate_ready)
         if outcome is StartupOutcome.CRASHED:
             tail = log_path.read_text(errors="replace")[-1500:]
             pid_path = GATEWAY_DIR / "stargate.pid"

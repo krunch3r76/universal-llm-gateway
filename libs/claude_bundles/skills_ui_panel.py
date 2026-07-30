@@ -20,7 +20,12 @@ DEFAULT_CDP_URL = os.environ.get("BROWSER_CDP_URL", "http://127.0.0.1:9222")
 
 _SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _BROWSE_LABEL = re.compile(r"browse", re.I)
-_ADD_LABEL = re.compile(r"add skill|^add\b", re.I)
+# Customize → Skills "Add" only — ¬ Cowork composer "Add files, connectors, and more"
+# (friction a:27143 upload residue 2026-07-30: ^add\b matched composer Add).
+_ADD_LABEL = re.compile(r"add skill|^add$", re.I)
+_COMPOSER_ADD_NOISE = re.compile(
+    r"files|connectors|photos|screenshot|plugins|more$", re.I
+)
 _SKILLS_NAV = re.compile(r"skills", re.I)
 _UPLOAD_TITLE = re.compile(r"upload\s+skill", re.I)
 _CF_MARKERS = (
@@ -91,11 +96,28 @@ async def _skills_table_has_slugs(page: Page) -> bool:
     return False
 
 
+async def _is_composer_add(btn: Locator) -> bool:
+    """True when the button is the chat/Cowork composer + menu, not Skills Add."""
+    try:
+        aria = (await btn.get_attribute("aria-label")) or ""
+        text = (await btn.inner_text()) or ""
+    except Exception:
+        return False
+    blob = f"{aria} {text}".strip()
+    return bool(_COMPOSER_ADD_NOISE.search(blob))
+
+
 async def _skills_panel_visible(page: Page) -> bool:
     browse = await _first_visible(await _visible_buttons(page, _BROWSE_LABEL))
     add = await _first_visible(await _visible_buttons(page, _ADD_LABEL))
+    if add and await _is_composer_add(add):
+        add = None
     if browse and add:
         return True
+    # Cowork CSE tabs often carry #settings/customize-skills + unrelated tables /
+    # session-skill chips — do not treat that as the Customize Skills library.
+    if "/cowork/" in page.url.lower() and not browse:
+        return False
     return _is_skills_url(page.url) and await _skills_table_has_slugs(page)
 
 
@@ -107,8 +129,12 @@ async def _find_add_button(page: Page) -> Locator | None:
         page.locator('button[aria-label="Add skill"]'),
         await _visible_buttons(page, _ADD_LABEL),
     ):
-        btn = await _first_visible(loc)
-        if btn:
+        for i in range(await loc.count()):
+            btn = loc.nth(i)
+            if not await btn.is_visible():
+                continue
+            if await _is_composer_add(btn):
+                continue
             return btn
     return None
 
@@ -120,6 +146,12 @@ async def _find_browse_button(page: Page) -> Locator | None:
 async def _pick_best_page(context: BrowserContext) -> Page:
     for page in context.pages:
         if await _skills_panel_visible(page):
+            await page.bring_to_front()
+            return page
+    # Prefer /new#settings over /cowork/…#settings (hash alone is not the panel).
+    for page in context.pages:
+        u = page.url.lower()
+        if _is_skills_url(u) and "/cowork/" not in u:
             await page.bring_to_front()
             return page
     for page in context.pages:

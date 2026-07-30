@@ -257,6 +257,10 @@ def execute_op(
     hint = _WORKFLOW_HINTS.get(tool)
     if hint and "_next" not in result:
         result["_next"] = hint
+    if tool == "entity_get" and not is_batch_entity_get:
+        from ..terminal_facts import append_terminal_facts_next_hint
+
+        append_terminal_facts_next_hint(result)
     if tool == "entity_get" and not is_batch_entity_get and result.get("intent") != "card":
         # Card v0 (§6.3) has its own bounded shape (top_k_assertions /
         # section_manifest); the EntityDetail-shaped completeness hint

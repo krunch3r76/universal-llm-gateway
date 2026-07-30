@@ -27,4 +27,5 @@ orchestrator-workflow
 pager-notify
 path-sim
 reasoning-posture
+residual-imprint
 satellite-workspace

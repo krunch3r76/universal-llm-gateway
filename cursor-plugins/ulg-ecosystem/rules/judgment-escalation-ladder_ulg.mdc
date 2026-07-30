@@ -110,7 +110,7 @@ flag with `minimal_question` per `cdp-operator-proxy`).
 | Ask operator to approve `cursor/gpt-5.6-terra`/`sol` as a consult binder | Standing authorization (2026-07-28) — fire and announce; ¬ re-gate |
 | `team_dispatch(model=gpt-5.6-terra)` bare slug on code-lane bind | `seat=cursor-sdk` + `model=cursor/gpt-5.6-terra` — bare/`openai/*` hits API |
 | Spend `cursor/gpt-5.6-sol` on broad open-ended review | `sol` is **targeted, low-token** only; `terra` is the OpenAI-family default on cursor-sdk |
-| Default Opus/Fable binder consult to bare `project_ask` | `team_dispatch(model=cdp/…)` — `project_ask` = escape / mission `purpose=` only |
+| Default Opus/Fable binder consult to bare `project_ask` | `team_dispatch(model=cdp/…)` — `project_ask` = escape / IF6 only; missions pass `purpose=` on `team_dispatch` |
 
 ## Composes with
 

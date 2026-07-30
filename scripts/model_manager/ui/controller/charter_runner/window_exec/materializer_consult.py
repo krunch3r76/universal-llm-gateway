@@ -29,6 +29,100 @@ def _is_r_admit(parsed: ParsedCheckpoint) -> bool:
     return parsed.consult_role == "r_admit"
 
 
+def _scope_layer_judgment(window_index: int, root_id: str, *, gate_id: str) -> str:
+    if gate_id == "G1":
+        seat = "cdp/fable"
+        role = "Architecture — verdict sidecar (R1 envelope)"
+    else:
+        seat = "cdp/opus-5"
+        role = "Frame — densifier instructions ≤120 lines"
+    return f"""\
+<scope>
+Goal: Charter-runner LAYER CONSULT window {window_index} — {role} on
+agent-bus:{root_id}. The holder posted CONSULT_PENDING with
+consult_role: judgment_gap; this window owns primary consult via
+team_dispatch(model={seat}) submit→poll_hint→provenance (depth-1 only).
+MCP project_ask = escape.
+</scope>"""
+
+
+def _invariants_layer_judgment(root_id: str, *, gate_id: str) -> str:
+    envelope = (
+        "cortex://notes/system/specs/lane-architecture-consult-brief-template-v2.md"
+        if gate_id == "G1"
+        else "densifier instructions ≤120 lines (not a dense spec)"
+    )
+    seat = "cdp/fable" if gate_id == "G1" else "cdp/opus-5"
+    return f"""\
+<invariants>
+[consult-boundary] CONSULT_PENDING + consult_role: judgment_gap on
+agent-bus:{root_id} — scope-lock fields are pinned on the root CHECKPOINT.
+[layer-ask] the consult ask is layering-shaped: pin the architecture exit
+contract ({envelope}) — not question-table layer-search prose.
+[consult-independence] fire via team_dispatch(model={seat},
+contract=light-bounded) to web-anthropic — a DIFFERENT substrate/family than
+this cursor-sdk seat. Never self-answer the judgment gap.
+[sealed-unattended] CDP prompt MUST include the sealed unattended clause (a:26156).
+[depth-1] harvest one consult reply; write shared provenance fields.
+[window] end with exactly one CHECKPOINT on the root, then stop.
+- Use the `consult-routing` skill (canonical slug — seat self-fetches)
+- Use the `checkpoint-discipline` skill (canonical slug — seat self-fetches)
+- Use the `abstraction-layering` skill (canonical slug — seat self-fetches)
+</invariants>"""
+
+
+def _task_guidance_layer_judgment(
+    *,
+    root_id: str,
+    scoreboard_line: str,
+    identity_block: str,
+    gate_id: str,
+) -> str:
+    seat = "cdp/fable" if gate_id == "G1" else "cdp/opus-5"
+    ask = (
+        "architecture verdict sidecar per lane-architecture-consult-brief-template-v2 "
+        "(contract-envelope-v0 §8 Falsifiers)"
+        if gate_id == "G1"
+        else "densifier instructions ≤120 lines — not a dense spec"
+    )
+    return f"""\
+<task_guidance>
+## Resume step 0 (do first)
+1. Load consult-routing + checkpoint-discipline + abstraction-layering.
+2. {scoreboard_line}read the latest CHECKPOINT on agent-bus:{root_id} — confirm
+   CONSULT_PENDING + consult_role: judgment_gap.
+
+{identity_block}
+## Layer {gate_id} consult work (this seat owns submit→poll→provenance)
+- Ask shape: {ask}
+- Primary: team_dispatch(op=generate, model={seat}, contract=light-bounded, …)
+- Record shared provenance (consult_thread, verdict, consultant_family,
+  consultant_substrate) on the root CHECKPOINT.
+- G1 exit duty: stamp architecture ``document:`` + ``derived_from`` edge when
+  architecture verdict closes (abstraction-layering § Stage 0 attach).
+
+## Stop conditions
+CHECKPOINT boundary · unresolvable cdp/ transport · IF6 tripwire ⇒ BLOCKED.
+</task_guidance>"""
+
+
+def _open_layer_consult_gate(parsed: ParsedCheckpoint) -> str:
+    """Return G1 or G2 for the first open layer consult stop."""
+    from ..gate_lane_classifier import classify, parse_gate_rows
+
+    rows = parse_gate_rows(parsed.steps)
+    req = classify(rows)
+    if req is not None and req.gate_id in {"G1", "G2"}:
+        return req.gate_id
+    for row in parsed.next_pickup:
+        upper = row.upper()
+        if "G1" in upper:
+            return "G1"
+        if "G2" in upper:
+            return "G2"
+    return "G1"
+
+
 def _scope_judgment(window_index: int, root_id: str) -> str:
     return f"""\
 <scope>
@@ -298,6 +392,7 @@ def materialize_consult_packet(
     *,
     scoreboard_uri: str | None = None,
     window_index: int = 1,
+    arc_lane: str = "path_sim",
 ) -> str:
     """Return a depth-1 consult six-block packet for ``CONSULT_PENDING`` pickup."""
     scoreboard_line = (
@@ -320,6 +415,22 @@ def materialize_consult_packet(
 {_corpus(root_id, scoreboard_uri, r_admit=True)}
 {_MCP_CAPABILITIES_CONSULT_HOST}
 {_output_format_r_admit(root_id, window_index)}
+"""
+        return append_footer_to_packet(body, **footer)
+    if arc_lane == "layer":
+        gate_id = _open_layer_consult_gate(parsed)
+        body = f"""\
+{_scope_layer_judgment(window_index, root_id, gate_id=gate_id)}
+{_invariants_layer_judgment(root_id, gate_id=gate_id)}
+{_task_guidance_layer_judgment(
+    root_id=root_id,
+    scoreboard_line=scoreboard_line,
+    identity_block=identity_block,
+    gate_id=gate_id,
+)}
+{_corpus(root_id, scoreboard_uri, r_admit=False)}
+{_MCP_CAPABILITIES_CONSULT_HOST}
+{_output_format_judgment(root_id, window_index)}
 """
         return append_footer_to_packet(body, **footer)
     body = f"""\
@@ -352,4 +463,23 @@ def consult_subject(
     )
 
 
-__all__ = ["consult_subject", "materialize_consult_packet"]
+def consult_subject_for_arc(
+    root_id: str,
+    window_index: int,
+    *,
+    consult_role: str | None = None,
+    arc_lane: str = "path_sim",
+    gate_id: str | None = None,
+) -> str:
+    """Layer-aware consult subject when ``arc_lane=layer`` names Fable on G1."""
+    if consult_role == "r_admit":
+        return consult_subject(root_id, window_index, consult_role=consult_role)
+    if arc_lane == "layer" and gate_id == "G1":
+        return (
+            f"Charter-runner layer consult window {window_index} — "
+            f"agent-bus:{root_id} (CONSULT_PENDING — G1 architecture via cdp/fable)"
+        )
+    return consult_subject(root_id, window_index, consult_role=consult_role)
+
+
+__all__ = ["consult_subject", "consult_subject_for_arc", "materialize_consult_packet"]

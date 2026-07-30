@@ -47,6 +47,31 @@ def test_stage_prompt_text_writes_ephemeral(
     assert not on_disk.exists()
 
 
+def test_ensure_cdp_judgment_skills_prepends_missing() -> None:
+    from claude_bundles.cdp_model_endpoint_staging import ensure_cdp_judgment_skills
+
+    assert ensure_cdp_judgment_skills(None) == [
+        "reasoning-posture",
+        "frontier-reasoning-discipline",
+    ]
+    assert ensure_cdp_judgment_skills([]) == [
+        "reasoning-posture",
+        "frontier-reasoning-discipline",
+    ]
+    assert ensure_cdp_judgment_skills(["consult-posture"]) == [
+        "reasoning-posture",
+        "frontier-reasoning-discipline",
+        "consult-posture",
+    ]
+    assert ensure_cdp_judgment_skills(
+        ["reasoning-posture", "frontier-reasoning-discipline", "path-sim"]
+    ) == ["reasoning-posture", "frontier-reasoning-discipline", "path-sim"]
+    assert ensure_cdp_judgment_skills(["frontier-reasoning-discipline"]) == [
+        "reasoning-posture",
+        "frontier-reasoning-discipline",
+    ]
+
+
 def test_stage_cdp_prompt_with_skills_prepends_manifest(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -58,9 +83,33 @@ def test_stage_cdp_prompt_with_skills_prepends_manifest(
     )
     on_disk = tmp_path / "notes/system/ephemeral/cdp-endpoint/exec-skills/prompt.md"
     text = on_disk.read_text(encoding="utf-8")
-    assert text.startswith("/reasoning-posture\n/consult-posture\n")
+    # Missing frontier pair member is prepended (judgment pair always on).
+    assert text.startswith(
+        "/frontier-reasoning-discipline\n/reasoning-posture\n/consult-posture\n"
+    )
     assert "## Task" in text
     assert staged.prompt_uri.endswith("exec-skills/prompt.md")
+
+
+def test_stage_cdp_prompt_omitted_skills_still_gets_judgment_pair(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Light-bounded / skills=None still attaches the judgment pair."""
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    staged = stage_cdp_prompt_with_skills(
+        execution_id="exec-skills-default",
+        prompt_text="## light ask\n",
+        skills=None,
+    )
+    on_disk = (
+        tmp_path / "notes/system/ephemeral/cdp-endpoint/exec-skills-default/prompt.md"
+    )
+    text = on_disk.read_text(encoding="utf-8")
+    assert text.startswith(
+        "/reasoning-posture\n/frontier-reasoning-discipline\n"
+    )
+    assert "## light ask" in text
+    assert staged.staged is True
 
 
 def test_stage_cdp_prompt_with_skills_inlines_code_mcp(
@@ -74,7 +123,9 @@ def test_stage_cdp_prompt_with_skills_inlines_code_mcp(
     )
     on_disk = tmp_path / "notes/system/ephemeral/cdp-endpoint/exec-skills-mixed/prompt.md"
     text = on_disk.read_text(encoding="utf-8")
-    assert text.startswith("/reasoning-posture\n")
+    assert text.startswith(
+        "/frontier-reasoning-discipline\n/reasoning-posture\n"
+    )
     assert '<skill slug="path-sim"' in text
     assert "## Task" in text
     assert staged.prompt_uri.endswith("exec-skills-mixed/prompt.md")

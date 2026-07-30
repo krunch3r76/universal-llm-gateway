@@ -10,6 +10,7 @@ from .events import (
     FrontierSdkGenerateRequested,
     FrontierSdkKnobDropped,
     FrontierSdkMaterializationIncomplete,
+    FrontierSdkReasoningEffortRejected,
     FrontierSdkWorkerDispatched,
     FrontierSdkWorkerDispatchFailed,
     FrontierSdkWorkerQueued,
@@ -201,5 +202,18 @@ def emit_sdk_knob_dropped(
             knob=knob,
             requested=requested,
             reason=reason,
+        )
+    )
+
+
+def emit_sdk_reasoning_effort_rejected(
+    *,
+    model_id: str,
+    requested: str,
+) -> None:
+    publish_frontier_event(
+        FrontierSdkReasoningEffortRejected(
+            model_id=model_id,
+            requested=requested,
         )
     )

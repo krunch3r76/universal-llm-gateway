@@ -52,6 +52,7 @@ from services.git_integration_worker.cursor_home import (
     CursorHomeConfigError,
     CursorVenvConfigError,
     build_dispatch_path_prepend,
+    operator_real_home,
     prune_stale_dispatch_homes,
     resolve_repo_venv,
     setup_cursor_dispatch_home,
@@ -109,9 +110,11 @@ from services.git_integration_worker.cursor_sdk_events import (
     emit_sdk_worker_progress,
     emit_sdk_worker_queued,
     emit_sdk_worker_timeout,
+    emit_sdk_worker_unclassified_terminal,
     emit_write_lease_promoted,
     emit_write_lease_queue_stalled,
     emit_write_lease_released,
+    terminal_emitted,
 )
 from services.git_integration_worker.cursor_sdk_feature_probe import (
     LOCAL_BRIDGE_PATH_LABEL,
@@ -121,6 +124,7 @@ from services.git_integration_worker.cursor_sdk_feature_probe import (
 from services.git_integration_worker.cursor_sdk_gate import (
     acquire_sdk_dispatch_slot,
     sdk_dispatch_gate_stats,
+    sdk_dispatch_lane,
 )
 from services.git_integration_worker.cursor_sdk_implement_gate import (
     implement_gate_bypass_deviations,
@@ -163,6 +167,7 @@ from services.git_integration_worker.cursor_sdk_park import (
 )
 from services.git_integration_worker.cursor_sdk_restart_orphan import (
     emit_restart_survivor_terminal,
+    load_ledger_row,
 )
 from services.git_integration_worker.cursor_sdk_stream_capture import (
     finalize_request_id_capture,
@@ -337,12 +342,31 @@ def _draining_response(exc: Draining503) -> JSONResponse:
     )
 
 
+def _caller_explicitly_set_read_only(req: CursorDispatchRequest) -> bool:
+    """True when the caller supplied ``read_only`` (omission is not explicit)."""
+    return "read_only" in req.model_fields_set
+
+
+def _effective_read_only(req: CursorDispatchRequest, contract: str) -> bool:
+    """Resolve lease-exempt read-only intent once after contract classification."""
+    if _caller_explicitly_set_read_only(req):
+        return req.read_only
+    if contract == "implement":
+        return False
+    if contract == "consult":
+        return True
+    if contract == "light-bounded":
+        return False
+    return False
+
+
 def _emit_enriched_queued(
     *,
     req: CursorDispatchRequest,
     cached: CursorDispatchResponse,
     source_repo_str: str,
     packet_text: str,
+    lease_key: str,
 ) -> None:
     """Emit association + ``admitted_via`` on ``worker.queued`` for all admits."""
     association = build_dispatch_association_fields(req=req, packet_text=packet_text)
@@ -361,6 +385,7 @@ def _emit_enriched_queued(
         asked_by=association["asked_by"],
         purpose=association["purpose"],
         story_id=association["story_id"],
+        queued_on=f"write_lease:{lease_key}",
     )
 
 
@@ -635,8 +660,10 @@ def _run_sdk_sync(
     execution_id: str | None = None,
     gate_loop: asyncio.AbstractEventLoop,
 ) -> SdkRunOutcome:
-    dispatch_home = setup_cursor_dispatch_home(dispatch_id)
-    real_home = Path(os.environ.get("HOME") or "~").expanduser()
+    # Pin operator home via passwd — never trust process HOME (may be a leaked
+    # dispatch overlay; CURSOR_VENV_CONFIG / agent-bus:6468).
+    real_home = operator_real_home()
+    dispatch_home = setup_cursor_dispatch_home(dispatch_id, real_home=real_home)
     repo_venv = resolve_repo_venv(real_home=real_home)
     validate_repo_venv(repo_venv)
     bridge_state = dispatch_home / "bridge-state"
@@ -886,6 +913,7 @@ async def _mark_terminal_and_promote(
     terminal_status: str,
     controller: WorkAdmissionController,
     request: Request | None = None,
+    emit_tag: str,
 ) -> None:
     """Mark terminal, release/restore lease, prune Lane-B worktree, promote FIFO head."""
     disposition = await release_or_restore_for_child(dispatch_id=dispatch_id)
@@ -895,6 +923,23 @@ async def _mark_terminal_and_promote(
         dispatch_id=dispatch_id,
         terminal_status=terminal_status,
     )
+    if not terminal_emitted(dispatch_id):
+        orphan_row = await asyncio.to_thread(
+            load_ledger_row, ledger, dispatch_id=dispatch_id
+        )
+        thread_id = orphan_row.thread_id if orphan_row is not None else dispatch_id
+        execution_id = (
+            (orphan_row.execution_id or dispatch_id)
+            if orphan_row is not None
+            else dispatch_id
+        )
+        emit_sdk_worker_unclassified_terminal(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            execution_id=execution_id,
+            worker_error_code=emit_tag,
+            detail_summary=terminal_status,
+        )
     cfg = _config(request) if request is not None else _CONFIG
     await asyncio.to_thread(
         maybe_prune_worktree_on_terminal,
@@ -964,10 +1009,12 @@ async def _start_promoted_dispatch(
         )
     except Draining503:
         await release_or_restore_for_child(dispatch_id=promoted.dispatch_id)
-        await asyncio.to_thread(
-            ledger.mark_terminal,
+        await _mark_terminal_and_promote(
             dispatch_id=promoted.dispatch_id,
             terminal_status="failed",
+            controller=controller,
+            request=request,
+            emit_tag="CURSOR_DRAINING503_PROMOTE",
         )
         return
     bus = CursorBusClient()
@@ -1032,9 +1079,14 @@ async def reconcile_stale_leases(
     )
     repos: set[str] = set()
     for dispatch_id in orphan_ids:
+        orphan_row = await asyncio.to_thread(
+            load_ledger_row, ledger, dispatch_id=dispatch_id
+        )
         lease_key = await reclaim_orphan_holder(ledger, dispatch_id=dispatch_id)
         if lease_key:
             repos.add(lease_key)
+            if orphan_row is not None and not terminal_emitted(dispatch_id):
+                emit_restart_survivor_terminal(orphan_row, bridge_aborted=False)
             emit_write_lease_released(
                 dispatch_id=dispatch_id,
                 source_repo=lease_key,
@@ -1284,6 +1336,7 @@ async def _deliver_sdk_closeout(
             dispatch_id=req.dispatch_id,
             terminal_status="completed",
             controller=controller,
+            emit_tag="CURSOR_CLOSEOUT_COMPLETED",
         )
         return
 
@@ -1337,6 +1390,7 @@ async def _deliver_sdk_closeout(
         dispatch_id=req.dispatch_id,
         terminal_status="failed",
         controller=controller,
+        emit_tag="CURSOR_CLOSEOUT_DELIVERY_FAILED",
     )
 
 
@@ -1378,6 +1432,36 @@ async def _run_sdk_dispatch_gated(
     reply_to = req.caller_agent or "dispatch"
     outer_timeout_s = _SDK_TIMEOUT_S + _SDK_TIMEOUT_BUFFER_S
     gate_loop = asyncio.get_running_loop()
+    capacity_lane = sdk_dispatch_lane(
+        caller_agent=req.caller_agent,
+        dispatch_id=req.dispatch_id,
+    )
+    capacity_wait_emitted = False
+
+    def _emit_capacity_wait() -> None:
+        nonlocal capacity_wait_emitted
+        if capacity_wait_emitted:
+            return
+        capacity_wait_emitted = True
+        association = build_dispatch_association_fields(
+            req=req,
+            packet_text=_read_packet_text(req, source_repo)
+            if req.packet_path
+            else (req.message or ""),
+        )
+        emit_sdk_worker_queued(
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            source_repo=str(source_repo.resolve()),
+            queue_position=None,
+            execution_id=req.execution_id,
+            resolved_model=req.model,
+            admitted_via=req.admitted_via,
+            asked_by=association["asked_by"],
+            purpose=association["purpose"],
+            story_id=association["story_id"],
+            queued_on=f"capacity:{capacity_lane}",
+        )
 
     # Acquire slot before spawning — released inside _run_sdk_sync finally block.
     # Bounded: everything below (including the outer watchdog) is downstream of
@@ -1389,6 +1473,7 @@ async def _run_sdk_dispatch_gated(
             dispatch_id=req.dispatch_id,
             caller_agent=req.caller_agent,
             timeout=_SDK_SLOT_ACQUIRE_TIMEOUT_S,
+            on_wait=_emit_capacity_wait,
         )
     except TimeoutError:
         logger.error(
@@ -1504,6 +1589,7 @@ async def _run_sdk_dispatch_gated(
             dispatch_id=req.dispatch_id,
             terminal_status="failed",
             controller=controller,
+            emit_tag="CURSOR_SDK_TIMEOUT",
         )
         return
 
@@ -1531,6 +1617,7 @@ async def _run_sdk_dispatch_gated(
             dispatch_id=req.dispatch_id,
             terminal_status="failed",
             controller=controller,
+            emit_tag="CURSOR_HOME_CONFIG",
         )
         return
     except CursorVenvConfigError as exc:
@@ -1552,6 +1639,7 @@ async def _run_sdk_dispatch_gated(
             dispatch_id=req.dispatch_id,
             terminal_status="failed",
             controller=controller,
+            emit_tag="CURSOR_VENV_CONFIG",
         )
         return
     except BaseException as exc:  # noqa: BLE001
@@ -1624,13 +1712,14 @@ async def _finalize_failed(
     """Single failure-finalize path: emit, deliver an error envelope, terminate,
     and mark terminal ``failed`` + promote. Guarantees no silent orphan.
     """
-    if error is not None:
-        emit_sdk_worker_failed(
-            dispatch_id=req.dispatch_id,
-            thread_id=req.thread_id,
-            execution_id=req.execution_id,
-            error=error,
-        )
+    effective_error = error if error is not None else f"{code}: {message}"
+    emit_sdk_worker_failed(
+        dispatch_id=req.dispatch_id,
+        thread_id=req.thread_id,
+        execution_id=req.execution_id,
+        error=effective_error,
+        worker_error_code=code,
+    )
     env = error_envelope(
         code=code, message=message, source="gateway", retryable=retryable, data=data
     )
@@ -1646,6 +1735,7 @@ async def _finalize_failed(
         dispatch_id=req.dispatch_id,
         terminal_status="failed",
         controller=controller,
+        emit_tag=code,
     )
 
 
@@ -1847,7 +1937,8 @@ async def cursor_dispatch(
         else None
     )
     contract = (req.handoff_contract or inferred_contract or "consult").lower()
-    if req.read_only and contract == "implement":
+    effective_read_only = _effective_read_only(req, contract)
+    if effective_read_only and contract == "implement":
         return _reject_pre_admission(
             req,
             worker_error_code="CURSOR_READONLY_IMPLEMENT_CONFLICT",
@@ -1894,7 +1985,7 @@ async def cursor_dispatch(
             contract=contract,
             source_repo=source_repo_str,
             lease_key=lease_key,
-            read_only=req.read_only,
+            read_only=effective_read_only,
             worker_instance=controller.worker_id,
             source_ref=candidate_source_ref,
             force=req.force,
@@ -1970,12 +2061,13 @@ async def cursor_dispatch(
                 cached=cached,
                 source_repo_str=source_repo_str,
                 packet_text=packet_text,
+                lease_key=lease_key or source_repo_str,
             )
         return JSONResponse(status_code=status_code, content=cached.model_dump())
 
     # Nest park: ledger already moved parent → parked_waiting; transfer capacity
     # to the child before the gated run (child acquire is idempotent if holding).
-    if req.nest_under and not req.read_only:
+    if req.nest_under and not effective_read_only:
         parked = await asyncio.to_thread(
             ledger.find_parked_parent_for_child, child_id=req.dispatch_id
         )
@@ -2000,10 +2092,12 @@ async def cursor_dispatch(
                     exc,
                 )
                 await release_or_restore_for_child(dispatch_id=req.dispatch_id)
-                await asyncio.to_thread(
-                    ledger.mark_terminal,
+                await _mark_terminal_and_promote(
                     dispatch_id=req.dispatch_id,
                     terminal_status="failed",
+                    controller=controller,
+                    request=request,
+                    emit_tag="CURSOR_NEST_PARK_TRANSFER_FAILED",
                 )
                 return _reject_pre_admission(
                     req,
@@ -2032,10 +2126,12 @@ async def cursor_dispatch(
         )
     except Draining503 as exc:
         await release_or_restore_for_child(dispatch_id=req.dispatch_id)
-        await asyncio.to_thread(
-            ledger.mark_terminal,
+        await _mark_terminal_and_promote(
             dispatch_id=req.dispatch_id,
             terminal_status="failed",
+            controller=controller,
+            request=request,
+            emit_tag="CURSOR_DRAINING503_ADMIT",
         )
         return _draining_response(exc)
 

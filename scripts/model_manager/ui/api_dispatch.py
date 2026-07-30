@@ -239,6 +239,34 @@ async def execute(
         case "charter_hold_status":
             return await ctl.charter_hold_status()
 
+        case "charter_block_root":
+            root_id = str(params.get("root_id") or "").strip()
+            if not root_id:
+                raise ValueError("charter_block_root requires 'root_id'")
+            return await ctl.charter_block_root(
+                root_id=root_id,
+                reason=str(params.get("reason") or ""),
+                set_by=str(params.get("set_by") or "manage"),
+                unenroll=bool(params.get("unenroll", True)),
+                clear_wip=bool(params.get("clear_wip", False)),
+            )
+
+        case "charter_unblock_root":
+            root_id = str(params.get("root_id") or "").strip()
+            if not root_id:
+                raise ValueError("charter_unblock_root requires 'root_id'")
+            return await ctl.charter_unblock_root(
+                root_id=root_id,
+                set_by=str(params.get("set_by") or "manage"),
+                reenroll=bool(params.get("reenroll", False)),
+            )
+
+        case "charter_root_status":
+            root_id = str(params.get("root_id") or "").strip()
+            if not root_id:
+                raise ValueError("charter_root_status requires 'root_id'")
+            return await ctl.charter_root_status(root_id=root_id)
+
         case "fleet_sync_restart":
             return await _fleet(ctl, build=False, scope=str(params.get("scope", "all")))
 
@@ -251,6 +279,7 @@ async def execute(
                 "Valid: status, health, wait_healthy, start, stop, restart, "
                 "sync_restart, rebuild, busy_status, charter_reload, "
                 "charter_pause, charter_resume, charter_hold_status, "
+                "charter_block_root, charter_unblock_root, charter_root_status, "
                 "fleet_sync_restart, fleet_rebuild_deploy"
             )
 
@@ -401,9 +430,7 @@ async def _busy_status(ctl: ServiceController) -> dict[str, Any]:
     now = datetime.now(UTC)
     store = ctl.restart_intent_store
     store.sweep_expired_windows(now=now)
-    live_intents = {
-        intent.service: intent for intent in store.pending_intents()
-    }
+    live_intents = {intent.service: intent for intent in store.pending_intents()}
     for service, entry in report.items():
         intent = live_intents.get(service)
         entry["restart_intent"] = (
@@ -645,7 +672,9 @@ async def _mcp_deferred_lifecycle(ctl: ServiceController, *, no_cache: bool) -> 
     )
 
 
-async def _mcp_deferred_lifecycle_inner(ctl: ServiceController, *, no_cache: bool) -> str:
+async def _mcp_deferred_lifecycle_inner(
+    ctl: ServiceController, *, no_cache: bool
+) -> str:
     """Inner MCP lifecycle without the restart-window wrapper."""
     msg = await ctl.sync_restart_mcp(no_cache=no_cache)
     diff_msg = await _run_boot_render_diff()

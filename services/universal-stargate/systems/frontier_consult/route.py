@@ -184,6 +184,9 @@ class TeamDispatchGenerateBody(_DispatchCommon):
     nest_under: str | None = None
     read_only: bool = False
     refuse_if_lease_held: bool = False
+    # CDP registry / mission tag (model=cdp/… only). Default ask when omitted;
+    # operator-proxy|mission triggers skill-chip inject on the satellite.
+    purpose: str | None = None
     # thread / subject MUST NOT appear — extra="forbid" rejects any caller that
     # supplies them (schema-level enforcement per Phase 0 contract).
 

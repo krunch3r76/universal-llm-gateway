@@ -123,16 +123,32 @@ def release_window_on_harvest(root_id: str, window_index: int) -> bool:
         holds_wip = row.wip_window_id == window_id
         if not holds_wip and window_index_from_id(row.last_window_id) >= window_index:
             return False
+        # Preserve operator/system BLOCKED — harvest must not re-arm IDLE admits
+        # (6489 identical_work_refire hold: ledger BLOCKED + unenrolled).
+        next_status = row.status
+        if holds_wip and row.status not in (RootStatus.BLOCKED, RootStatus.CLOSED):
+            next_status = RootStatus.IDLE
         released = replace(
             row,
-            status=RootStatus.IDLE if holds_wip else row.status,
+            status=next_status,
             wip_window_id=None if holds_wip else row.wip_window_id,
+            # a:27165 — sticky consult_role after consult harvest re-armed
+            # QUEUE_CONSULT forever; clear when this window's WIP releases.
+            consult_role=None if holds_wip else row.consult_role,
             last_window_id=window_id,
             last_transition=Transition.HARVEST_OK.value,
             updated_at=time.time(),
         )
         upsert_root(conn, released)
         write_cortex_mirror(released)
+        record = find_record_by_window_id(conn, window_id)
+        if record is not None and holds_wip:
+            stamp_disposition(
+                conn,
+                work_key=record.work_key,
+                window_id=window_id,
+                disposition="harvested",
+            )
         logger.info(
             "charter-runner ledger release root=%s window=%s wip_held=%s",
             root_id,

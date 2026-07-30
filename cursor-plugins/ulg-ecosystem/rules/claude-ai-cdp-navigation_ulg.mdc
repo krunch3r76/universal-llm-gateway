@@ -42,7 +42,7 @@ Until operator override or substrate change (friction 24906):
 | Bad | Good |
 |---|---|
 | "Push to web" / manual open claude.ai as first default | CDP via `team_dispatch(model=cdp/…)` (project_ask = escape) per skill |
-| Default binder/consult to bare `project_ask` when `team_dispatch(model=cdp/…)` is available | Prefer `team_dispatch`; `project_ask` only for mission `purpose=` inject or satellite-direct escape |
+| Default binder/consult to bare `project_ask` when `team_dispatch(model=cdp/…)` is available | Prefer `team_dispatch`; `project_ask` only for IF6 / satellite-direct escape (missions: `purpose=` on `team_dispatch`) |
 | Transport advice without loading CDP skill | `Use the claude-ai-cdp-navigation skill` first |
 | Claim `workspaces://` unreachable on web; or cite `.cursor/skills/…` as the skill-delivery path | Prefer `cortex://` packaging for speed; Claude-slug engage or **inline** non-slugs for skills |
 | Lead stages RAG then “merges” into deliverable when MCP `rag` is available (life or code) | Executing agent owns MCP `rag`; mapped URI is priming only |

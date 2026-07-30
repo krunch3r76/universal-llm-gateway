@@ -14,6 +14,7 @@ claude-ai-cdp-navigation_ulg
 commit-and-git-scope_ulg
 cdp-operator-proxy_ulg
 consultation-workflow_ulg
+dispatch-in-flight-supremacy_ulg
 expand-growth-loop_ulg
 judgment-escalation-ladder_ulg
 jupiter-converse-batching_ulg

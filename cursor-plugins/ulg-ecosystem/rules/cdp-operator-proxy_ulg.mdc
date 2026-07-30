@@ -20,7 +20,7 @@ trigger_match_terms:
 
 **Invariant:** `operator-proxy episode ∧ agent_bus.request from Cowork ⇒ Use the cdp-operator-proxy skill before authoring DIRECTIVE bodies or dispositing CLOSEOUTs.`
 
-**Mission default (BINDING):** CDP Opus mission launch (`purpose=operator-proxy|mission` — usually `project_ask` until purpose flows on `team_dispatch`) ⇒ **Opus = operator · Fable = advisor · cursor-auto = executor · tick = admitter**. Auto-inject on mission submit. Fable escalate: prefer `team_dispatch(model=cdp/fable)`. Tick posting + B1/B2 nest stall: `cortex://notes/system/specs/cursor-auto-tick-work-posting.md`.
+**Mission default (BINDING):** CDP Opus mission launch (`purpose=operator-proxy|mission` via `team_dispatch(model=cdp/…, purpose=…)` primary; `project_ask(purpose=…)` escape) ⇒ **Opus = operator · Fable = advisor · cursor-auto = executor · tick = admitter**. Auto-inject on mission submit. Fable escalate: prefer `team_dispatch(model=cdp/fable)`. Tick posting + B1/B2 nest stall: `cortex://notes/system/specs/cursor-auto-tick-work-posting.md`.
 
 **Thread privacy:** operator-proxy DIRECTIVE/CLOSEOUT/DISPOSITION live on a **private `request` thread** — ¬ the IDE orchestrator’s endeavor root (cite root in `arc:` only). Skill invariant 11.
 

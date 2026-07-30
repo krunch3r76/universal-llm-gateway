@@ -26,6 +26,7 @@ from .root_ledger import (
     write_cortex_mirror,
 )
 from .window_sequence import window_id_for, window_index_from_id
+from .work_key_store import find_record_by_window_id, stamp_disposition
 
 logger = get_logger(__name__)
 
@@ -84,7 +85,10 @@ async def maybe_release_failed_window_wip(
     window_index = window_index_from_id(row.wip_window_id)
     was_consult = row.status == RootStatus.CONSULT_ADMITTED
     attempts = row.consult_attempts + (1 if was_consult else 0)
-    if was_consult:
+    if row.status in (RootStatus.BLOCKED, RootStatus.CLOSED):
+        next_status = row.status
+        next_retry = None
+    elif was_consult:
         next_status = RootStatus.CONSULT_DEFERRED
         next_retry = time.time() + backoff_s(max(attempts, 1))
     else:
@@ -106,6 +110,16 @@ async def maybe_release_failed_window_wip(
     )
     upsert_root(conn, released)
     write_cortex_mirror(released)
+    window_id = window_id_for(row.root_id, window_index) if window_index > 0 else None
+    if window_id:
+        record = find_record_by_window_id(conn, window_id)
+        if record is not None:
+            stamp_disposition(
+                conn,
+                work_key=record.work_key,
+                window_id=window_id,
+                disposition="failed",
+            )
     if was_consult:
         _mark_consult_queue_retry(conn, released)
     logger.warning(

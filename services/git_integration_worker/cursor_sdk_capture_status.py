@@ -650,11 +650,15 @@ def resolve_closeout_capture_fields(
     files_untracked_or_ignored: tuple[str, ...] = (),
     light_bounded_expected_paths: tuple[str, ...] = (),
     worktree_isolated: bool = False,
+    read_only: bool = False,
+    dispatch_id: str | None = None,
+    thread_id: str | None = None,
 ) -> tuple[CaptureStatus | None, str | None, list[str], EffectsManifest | None]:
     from services.git_integration_worker.cursor_sdk_capture_divergence import (
         apply_surface_cross_checks,
         closeout_divergence_reason,
         expected_deliverables_present,
+        observe_read_only_repo_diff_violation,
     )
 
     if baseline is None and light_bounded_expected_paths:
@@ -713,7 +717,16 @@ def resolve_closeout_capture_fields(
         outside_repo_paths=outside_repo_paths,
         files_untracked_or_ignored=files_untracked_or_ignored,
         worktree_isolated=worktree_isolated,
+        read_only=read_only,
     )
+    if read_only and divergence_reason and dispatch_id and thread_id:
+        observe_read_only_repo_diff_violation(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            deviation=divergence_reason,
+        )
+        if capture_status in (None, "complete"):
+            capture_status = "partial"
     if (
         divergence_reason
         and capture_status == "complete"

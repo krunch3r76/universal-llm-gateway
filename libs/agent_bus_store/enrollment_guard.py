@@ -1,13 +1,10 @@
 """Reserved enrollment-tag gate for agent-bus.
 
-``charter-runner`` is not a free-form descriptive tag — it enrolls a thread into
-the manage-hosted charter runner. Accidental inclusion (e.g. a review
-thread tagged ``charter-runner`` alongside ``type:review``) causes the charter runner to
-scan a non-charter enrollment (``no_checkpoint`` noise / wasted capacity).
-
-Structural rule: **adding** the enrollment tag requires an explicit
-``enroll_charter_runner=true`` on the write. Keeping an already-enrolled tag or
-removing it never requires the flag.
+``charter-runner`` is not a free-form descriptive tag — it historically enrolled
+a thread into the manage-hosted charter runner. **Control-plane retirement (R2):**
+typed work-item admit on the ledger is the successor control path; dual-key enroll
+is **not** required for admit→dispatch on the new path. This gate remains to block
+accidental tag adds on review/consult threads.
 """
 
 from __future__ import annotations
@@ -16,6 +13,10 @@ from typing import Any
 
 # Must match charter_runner.eligibility.ENROLLMENT_TAG (lowercase after normalize).
 ENROLLMENT_TAG = "charter-runner"
+
+
+# Retired as control-plane requirement — typed ledger admit replaces (charter-runner-alt-arch).
+ENROLL_CONTROL_RETIRED = True
 
 
 class EnrollmentTagError(ValueError):
@@ -40,6 +41,11 @@ def normalize_tag_list(tags: list[str] | None) -> list[str]:
         seen.add(tag)
         cleaned.append(tag)
     return cleaned
+
+
+def enroll_tag_required_for_control() -> bool:
+    """Dual-key enroll is not load-bearing for typed admit → dispatch (R2 bind)."""
+    return not ENROLL_CONTROL_RETIRED
 
 
 def gate_enrollment_tags(
@@ -86,7 +92,9 @@ def enrollment_denied_http(exc: BaseException) -> tuple[int, dict[str, Any]] | N
 
 __all__ = [
     "ENROLLMENT_TAG",
+    "ENROLL_CONTROL_RETIRED",
     "EnrollmentTagError",
+    "enroll_tag_required_for_control",
     "enrollment_denied_http",
     "gate_enrollment_tags",
     "normalize_tag_list",

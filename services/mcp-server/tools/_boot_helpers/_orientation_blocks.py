@@ -248,6 +248,11 @@ _TIER_SELECTION_POINTER = """\
 ## Model tier — full protocol auto-injects
 `agent_skill:model-tier-awareness-web` auto-injects on web boot (INJECT_REGISTRY / seat_preloaded). When the operator declares model identity or a task-class trigger fires, follow the **auto-injected** full protocol — do NOT re-derive tier rules from this pointer. Canonical slug: `model-tier-awareness-web`."""
 
+# inject-channel block key: terminal-facts-pointer-block
+_TERMINAL_FACTS_POINTER = """\
+## terminal_facts
+Use the `cortex-orientation` skill — read `terminal_facts` on `case:` / `account:` hubs before material recommendations (`entity_get` enrich-on-read only; no auto-guard shipped)."""
+
 
 def _render_gates_strip(selected: frozenset[str]) -> str:
     """GATES strip — always inline on every seat (invariant: fire-before-tool-call).
@@ -300,6 +305,7 @@ _CORE_BLOCK_ORDER: dict[str, tuple[str, ...]] = {
     ),
     "life": (
         "operator-posture-block",
+        "terminal-facts-pointer-block",
         "consult-routing-gate-block",
         "mcp-binding-block",
         "mcp-server-primary-block",
@@ -350,6 +356,7 @@ def _orientation_block_bodies(surface: Literal["life", "code"]) -> dict[str, str
         "capability-verify-block": _SEAT_CAPABILITY_VERIFY_BLOCK,
         "session-close-web-block": _session_close_web_body(),
         "tier-selection-block": _TIER_SELECTION_POINTER,
+        "terminal-facts-pointer-block": _TERMINAL_FACTS_POINTER,
     }
 
 

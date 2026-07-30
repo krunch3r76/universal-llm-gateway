@@ -14,9 +14,12 @@ from __future__ import annotations
 import asyncio
 import os
 import uuid
+from collections.abc import Callable
 from typing import Literal
 
 from universal_concurrency import FifoCapacityGate
+
+from services.git_integration_worker.cursor_sdk_workspace import write_lease_slots
 
 GateLane = Literal["standard", "operator"]
 
@@ -98,6 +101,7 @@ async def acquire_sdk_dispatch_slot(
     dispatch_id: str | None = None,
     caller_agent: str | None = None,
     timeout: float | None = None,
+    on_wait: Callable[[], None] | None = None,
 ) -> str:
     """Acquire the cursor-sdk FIFO capacity slot for ``dispatch_id``.
 
@@ -114,7 +118,7 @@ async def acquire_sdk_dispatch_slot(
     req_id = dispatch_id or str(uuid.uuid4())
     gate = _gate_for_dispatch(req_id, caller_agent=caller_agent)
     try:
-        await gate.acquire(req_id, timeout=timeout)
+        await gate.acquire(req_id, timeout=timeout, on_wait=on_wait)
     except TimeoutError:
         # Close the grant/cancel race: release() may have handed us the slot
         # and registered us as holder between the deadline and the raise.
@@ -197,6 +201,10 @@ def sdk_dispatch_gate_stats(*, lane: GateLane | None = None) -> dict[str, int | 
         "active": int(standard["active"]) + int(operator["active"]),
         "queued": int(standard["queued"]) + int(operator["queued"]),
         "limit": int(standard["limit"]) + int(operator["limit"]),
+        "write_capacity": min(
+            int(standard["limit"]) + int(operator["limit"]),
+            write_lease_slots(),
+        ),
         "standard": standard,
         "operator": operator,
     }

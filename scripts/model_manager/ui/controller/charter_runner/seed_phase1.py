@@ -1,17 +1,21 @@
-"""Seed enrolled roots for Phase 1 shadow kernel (human-confirmed §F.1)."""
+"""Bootstrap legacy Phase-1 roots via typed admit (SeedConfirm migration only)."""
 
 from __future__ import annotations
 
 from dataclasses import replace
 
 from scripts.model_manager.ui.controller.charter_runner import window_log
+from scripts.model_manager.ui.controller.charter_runner.admission.typed_work_item import (
+    typed_record_valid,
+)
 from scripts.model_manager.ui.controller.charter_runner.root_ledger import (
     RootLedgerRow,
     SeedConfirm,
+    TypedWorkItemAdmit,
+    admit_work_item,
     load_all_roots,
     load_root,
     open_default_ledger,
-    seed_from_confirm,
     upsert_root,
 )
 from scripts.model_manager.ui.controller.charter_runner.window_sequence import (
@@ -72,6 +76,18 @@ PHASE1_SEEDS: tuple[SeedConfirm, ...] = (
 _PHASE1_BY_ID = {seed.root_id: seed for seed in PHASE1_SEEDS}
 
 
+def _seed_to_typed(confirm: SeedConfirm) -> TypedWorkItemAdmit:
+    """Map legacy SeedConfirm into typed admit (one-time migration surface)."""
+    return TypedWorkItemAdmit(
+        root_id=confirm.root_id,
+        pickup_gid=confirm.pickup_gid,
+        pickup_lane=confirm.pickup_lane,
+        attendance=confirm.attendance,
+        pickup_executor=confirm.pickup_executor,
+        scoreboard_uri=confirm.scoreboard_uri,
+    )
+
+
 def _reconcile_window_history(conn, row: RootLedgerRow) -> RootLedgerRow:
     """Carry a root's existing window history onto a fresh seed row.
 
@@ -94,41 +110,46 @@ def ensure_root_ledger_seed(
     *,
     default: SeedConfirm | None = None,
 ) -> bool:
-    """Idempotently seed a ledger row; never overwrite an existing row.
+    """Legacy migration hook — new standing work must use ``admit_work_item``.
 
-    Returns True when a row exists after the call (pre-existing or newly seeded).
+    Returns True when a typed row exists after the call. Fails closed when no
+    migration source is known (no silent skip-forever).
     """
     if not root_id:
         return False
     confirm = _PHASE1_BY_ID.get(root_id) or default
-    if confirm is None:
-        return False
-    if confirm.root_id != root_id:
-        confirm = SeedConfirm(
-            root_id=root_id,
-            pickup_gid=confirm.pickup_gid,
-            pickup_lane=confirm.pickup_lane,
-            attendance=confirm.attendance,
-            pickup_executor=confirm.pickup_executor,
-            scoreboard_uri=confirm.scoreboard_uri,
-        )
     conn = open_default_ledger()
     try:
-        if load_root(conn, root_id) is not None:
-            return True
-        _reconcile_window_history(conn, seed_from_confirm(conn, confirm))
-        return True
+        existing = load_root(conn, root_id)
+        if existing is not None:
+            return typed_record_valid(existing)
+        if confirm is None:
+            return False
+        if confirm.root_id != root_id:
+            confirm = SeedConfirm(
+                root_id=root_id,
+                pickup_gid=confirm.pickup_gid,
+                pickup_lane=confirm.pickup_lane,
+                attendance=confirm.attendance,
+                pickup_executor=confirm.pickup_executor,
+                scoreboard_uri=confirm.scoreboard_uri,
+            )
+        row = admit_work_item(conn, _seed_to_typed(confirm))
+        _reconcile_window_history(conn, row)
+        return typed_record_valid(row)
     finally:
         conn.close()
 
 
 def seed_phase1_roots() -> list[dict]:
-    """Apply human-confirmed seeds; return row summaries."""
+    """Migrate human-confirmed Phase-1 seeds via typed admit; return summaries."""
     conn = open_default_ledger()
     try:
         results = []
         for confirm in PHASE1_SEEDS:
-            row = _reconcile_window_history(conn, seed_from_confirm(conn, confirm))
+            row = _reconcile_window_history(
+                conn, admit_work_item(conn, _seed_to_typed(confirm))
+            )
             results.append(
                 {
                     "root": row.root_id,
@@ -145,6 +166,7 @@ def seed_phase1_roots() -> list[dict]:
 
 
 def dump_seeded_rows() -> list[dict]:
+    """Summarize every row currently stored in the default ledger (CLI helper)."""
     conn = open_default_ledger()
     try:
         return [

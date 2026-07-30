@@ -375,6 +375,7 @@ async def run_cdp_worker(
     harvest_source: str = "auto",
     expected_size: str = "auto",
     download_output: bool = False,
+    purpose: str = "ask",
 ) -> None:
     """Stage already done at admit; run adapter and post proof/failure turn."""
     from .cdp_generate_reconcile import attach_satellite_execution_id, finalize_cdp_generate
@@ -416,6 +417,7 @@ async def run_cdp_worker(
             harvest_source=harvest_source,  # type: ignore[arg-type]
             expected_size=expected_size,  # type: ignore[arg-type]
             download_output=download_output,
+            purpose=purpose,
             on_submitted=_on_submitted,
         )
     except asyncio.CancelledError:

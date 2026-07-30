@@ -194,22 +194,44 @@ def test_duplicate_redelivery_does_not_move_the_fingerprint() -> None:
 
 
 def test_sdk_live_line_provenance_within_width_budget() -> None:
-    """Paint appends provenance token only when the full line fits in 120 cols."""
+    """Paint appends provenance token only when the full line fits."""
     row = SdkDispatchRow(
-        dispatch_id="auto-" + ("x" * 20),
+        dispatch_id="auto-short",
         state="running",
         root_id="6186",
         thread_id="5867",
-        model="cursor/composer-2.5",
+        model="composer-2.5",
+        elapsed_ms=300_000,
         idle_age_ms=30_000,
         emitters_seen=("worker",),
         admitted_via="cursor-auto",
         asked_by="web-anthropic",
         provenance="signal",
     )
-    line = sdk_live_line(row, width=120)
-    assert len(line) <= 120
+    line = sdk_live_line(row, width=140)
+    assert len(line) <= 140
+    assert "el=5m00s" in line
+    assert "idle=30s" in line
     assert "cursor-auto" in line
+
+    crowded = SdkDispatchRow(
+        dispatch_id="auto-" + ("x" * 20),
+        state="running",
+        root_id="6186",
+        thread_id="5867",
+        model="cursor/composer-2.5",
+        elapsed_ms=300_000,
+        idle_age_ms=30_000,
+        emitters_seen=("worker",),
+        admitted_via="cursor-auto",
+        asked_by="web-anthropic",
+        provenance="signal",
+    )
+    crowded_line = sdk_live_line(crowded, width=120)
+    assert len(crowded_line) <= 120
+    assert "el=5m00s" in crowded_line
+    # provenance drops when elapsed+idle push past width
+    assert "cursor-auto" not in crowded_line
 
     reconciled = SdkDispatchRow(
         dispatch_id="auto-reconciled",
@@ -219,3 +241,20 @@ def test_sdk_live_line_provenance_within_width_budget() -> None:
         provenance="reconciled",
     )
     assert "cursor-auto" not in sdk_live_line(reconciled, width=120)
+
+
+def test_sdk_live_line_shows_elapsed_before_idle() -> None:
+    row = SdkDispatchRow(
+        dispatch_id="ce2b1f0c72b4",
+        state="running",
+        root_id="6469",
+        thread_id="6479",
+        model="cursor/grok-4.5",
+        elapsed_ms=372_000,
+        idle_age_ms=0,
+        emitters_seen=("worker",),
+    )
+    line = sdk_live_line(row, width=120)
+    assert "el=6m12s" in line
+    assert "idle=0s" in line
+    assert line.index("el=") < line.index("idle=")

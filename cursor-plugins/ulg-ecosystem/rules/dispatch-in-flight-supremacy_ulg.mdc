@@ -1,0 +1,98 @@
+---
+description: Active cursor-sdk dispatch in flight — never implement the same slice in-seat without explicit operator authorization. Always-on guardrail for sole shared checkout.
+alwaysApply: true
+rule_category: workflow
+apply_tier: required_gate
+trigger_match_terms:
+  - dispatch in flight
+  - override dispatch
+  - in-seat implement
+  - cursor-sdk running
+  - parallel writer
+  - same work
+  - team_dispatch
+  - poll_hint
+  - execution_id
+  - implement while dispatch
+---
+# Dispatch in-flight supremacy
+
+**Invariant:** `dispatch_active(slice) ∧ overlap(in_seat_work, slice) ⇒ halt(in_seat) ∨ operator_authorizes_override`.
+
+When a `team_dispatch(op=generate, seat=cursor-sdk, …)` (or nested cursor-sdk leg) is
+**in flight** for a bounded slice, the IDE lead seat **must not** implement that same
+slice in the shared checkout — poll, harvest, adjudicate, and orchestrate only —
+unless the operator **explicitly authorizes** override.
+
+Sole shared `master` + parallel writers on the same paths is the failure class this
+blocks (friction from agent-bus:6486 / 6488, 2026-07-30).
+
+## Dispatch active (detect before any edit)
+
+Treat dispatch as **active** when **ANY**:
+
+| Signal | Meaning |
+|---|---|
+| `team_dispatch` returned `execution_id` / `dispatch_id` and `terminal` is not true | Worker admitted, not closed |
+| `poll_hint` exists for `from_agent=cursor-sdk` on a dispatch thread | Await harvest, do not duplicate |
+| `agent_bus` thread shows SDK generate admitted without terminal closeout JSON | Still running |
+| Scoreboard / thread state marks slice **IN FLIGHT** for cursor-sdk | Standing commission |
+
+**Overlap** = same `source_ref`, `packet_path`, `files_expected` loci, or charter G-row /
+todo slug the dispatch was commissioned for.
+
+## Forbidden without operator authorization
+
+| Action | Why |
+|---|---|
+| Edit files the in-flight dispatch owns (`files_expected`, packet scope, same todo) | Parallel writer on shared checkout |
+| “User said Go / Composer” as license to re-implement an already-commissioned slice | Seat identity ≠ executor swap mid-flight |
+| Start in-seat implement because SDK poll is slow | Latency ≠ authorization |
+| Partial in-seat head start “while SDK runs” | Same overlap class |
+
+## Permitted in-seat (no override needed)
+
+| Action | When |
+|---|---|
+| Poll `agent_bus.wait` / read dispatch thread / harvest closeout | Default while active |
+| Author spec or packet **before** firing dispatch | Pre-commission only |
+| Edits **outside** dispatch overlap (different todo, different paths, no shared files) | No parallel writer on same loci |
+| Lead verify **after** terminal closeout (read-back, tests on reported paths) | Post-harvest only |
+| Abort/cancel dispatch | **Operator authorization required** — `session-abort-authorization_ulg` |
+
+## Operator authorization (explicit only)
+
+Override is allowed only when the operator **names** the override, e.g.:
+
+- “abort the dispatch” / “cancel 6488” / “kill execution …”
+- “implement in IDE, don’t wait for SDK”
+- “override dispatch — in-seat only”
+
+`¬` infer authorization from tier change (“you are Composer”), urgency, or impatience.
+
+If authorized to override: **still** do not silently leave the SDK worker writing —
+abort or accept explicit parallel-WIP reconciliation per `git-posture` / shared-checkout.
+
+## Procedure (binding)
+
+1. Before mechanical edits on a commissioned slice: check dispatch-active signals.
+2. If active ∧ overlap → **poll/harvest**; do not edit overlapping paths.
+3. If operator authorizes override → announce which dispatch/thread is superseded; then in-seat or abort per their words.
+4. After closeout → verify worker artifacts; reconcile dirty tree; do not assume in-seat edits “won.”
+
+## Anti-patterns
+
+| Bad | Good |
+|---|---|
+| Fire SDK dispatch, then implement same S1 in IDE because seat is Composer | Poll 6488; harvest; verify |
+| “I’ll get a head start while SDK runs” | Wait for terminal closeout or get override |
+| Edit `ledger_age.py` while SDK packet lists `ledger_age.py` | Orchestrate until harvest |
+| Assume slow poll = dead dispatch | Read thread + execution status |
+
+## Composes with
+
+- `lean-context-dispatch-first` — dispatch is default; this rule guards **after** dispatch fires
+- `bind-then-compose-dispatch` — compose leg stays cursor-sdk; lead does not steal compose
+- `session-abort-authorization` — abort is operator-gated; override ≠ silent abort
+- `shared-checkout-housekeeping` — parallel dirty paths are WIP, not disposable
+- `git-posture` — sole checkout, no intersecting writers

@@ -6,13 +6,19 @@ connector. Customize → Skills only carries ``shared_sync`` ∪ ``life_local``.
 
 Roleless ``team_dispatch(model=cdp/…)`` skills= delivery (fleet rule;
 operator bind 2026-07-26 — multi-skill via composer **+ → Skills → pick**):
+- Staging always merges ``reasoning-posture`` + ``frontier-reasoning-discipline``
+  (``decision:reasoning-frontier-skill-pair``), including light-bounded /
+  omitted ``skills=``
 - ``shared_sync`` slugs → leading ``/<slug>\\n`` **manifest** lines (not typed);
   ``project_ask`` / ``send_prompt`` attaches each via + → Skills → list select
-- Non-Claude / ``cursor_only`` → ``<skills_inline>`` XML bodies
+- Non-Claude / ``cursor_only`` → ``<skills_inline>`` XML **excerpts**
+  (size-gated — full SKILL.md never sealed; friction a:27142)
 - Hybrid (``/<first>\\n`` + ``Use the … skill``) is **escape only** when live
   chip-glue is observed (friction 5588/5590) — not the default
 - Slash-type multi-chip is **retired** (a25806 — only first `/slug` binds)
 - Manual Cowork composer paste does **not** chip-bind; automation path only
+- Light-bounded architect / admit binds: judgment pair (+ consult-posture);
+  ¬ pass ``path-sim`` unless a path-sim Q/A/R cascade leg (annex packet-class)
 
 Entry points that must hit attach (not type):
 ``team_dispatch(model=cdp/…)`` staging → satellite ``run_project_ask`` /
@@ -256,7 +262,9 @@ def prepend_cdp_dispatch_skills(
     bodies: list[InjectedSkillBody] = []
     inline_block = ""
     if inline_slugs:
-        bodies = load_skill_bodies(inline_slugs, repo_root=repo_root)
+        bodies = load_skill_bodies(
+            inline_slugs, repo_root=repo_root, excerpt=True
+        )
         inline_block = render_cdp_inline_skills_xml(bodies)
     if slash_block and inline_block:
         prefix = f"{slash_block}\n{inline_block}"
@@ -280,8 +288,15 @@ def load_skill_bodies(
     slugs: list[str],
     *,
     repo_root: Path | None = None,
+    excerpt: bool = False,
 ) -> list[InjectedSkillBody]:
-    """Read local SOT bodies for inject. Raises if any slug has no SOT file."""
+    """Read local SOT bodies for inject. Raises if any slug has no SOT file.
+
+    Pass ``excerpt=True`` for CDP ``<skills_inline>`` (size-gated; a:27142).
+    Non-CDP markdown inject keeps full bodies (``excerpt=False`` default).
+    """
+    from claude_bundles.cdp_inline_excerpt import excerpt_skill_body
+
     root = repo_root or _REPO_ROOT
     catalog = get_skill_catalog()
     out: list[InjectedSkillBody] = []
@@ -293,12 +308,18 @@ def load_skill_bodies(
         except FileNotFoundError:
             missing.append(entry.slug)
             continue
+        raw_body = path.read_text(encoding="utf-8")
+        body = (
+            excerpt_skill_body(raw_body, slug=entry.slug)
+            if excerpt
+            else raw_body
+        )
         out.append(
             InjectedSkillBody(
                 slug=entry.slug,
                 surface_class=entry.surface_class,
                 path=path,
-                body=path.read_text(encoding="utf-8"),
+                body=body,
             )
         )
     if missing:
@@ -397,18 +418,23 @@ def parse_cdp_sealed_skill_channels(
     return attach_slugs, inline_slugs, rest
 
 
+def _attach_only_surface(surface_class: str) -> bool:
+    """True when CDP delivery must be Customize attach (not ``<skills_inline>``)."""
+    return surface_class in {"shared_sync", "life_local"}
+
+
 def attest_delivery_channels(
     required: list[str],
     *,
     attached: list[str],
     inlined: list[str],
 ) -> list[str]:
-    """Fail closed when a required slug lacks attach or inline delivery.
+    """Fail closed when a required slug lacks the correct delivery channel.
 
-    Abort predicate: ``abort iff ∃ required slug with no delivery channel after
-    attach + seal scan`` — a slug is delivered when it appears in ``attached``
-    (Customize + → Skills chip) or ``inlined`` (``<skills_inline>`` sealed at
-    staging).
+    Channel by ``surface_class`` (friction a:27142 / 26986 / 24594):
+    - ``shared_sync`` / ``life_local`` → **must** be in ``attached``
+      (``+`` → Skills). Inline alone / slash-manifest-only does not count.
+    - All other surfaces → **must** be in ``inlined`` (``<skills_inline>``).
 
     Axes (do not conflate):
     - ``surface_class`` — CDP delivery channel via ``partition_cdp_skills``
@@ -417,18 +443,38 @@ def attest_delivery_channels(
     """
     if not required:
         return []
+    catalog = get_skill_catalog()
     attached_set = {str(s).strip() for s in attached if str(s).strip()}
     inlined_set = {str(s).strip() for s in inlined if str(s).strip()}
-    missing = [
-        slug
-        for slug in required
-        if slug not in attached_set and slug not in inlined_set
-    ]
-    if missing:
+    missing: list[str] = []
+    wrong_channel: list[str] = []
+    for raw in required:
+        entry = catalog.get(raw)
+        slug = entry.slug
+        if _attach_only_surface(entry.surface_class):
+            if slug in attached_set:
+                continue
+            if slug in inlined_set:
+                wrong_channel.append(slug)
+            else:
+                missing.append(slug)
+        else:
+            if slug in inlined_set:
+                continue
+            if slug in attached_set:
+                wrong_channel.append(slug)
+            else:
+                missing.append(slug)
+    if missing or wrong_channel:
+        parts: list[str] = []
+        if missing:
+            parts.append(f"undelivered={missing}")
+        if wrong_channel:
+            parts.append(f"wrong_channel={wrong_channel}")
         raise SkillDeliveryError(
-            "required skills undelivered after attach + inline seal: "
-            f"{missing} (attached={sorted(attached_set)}, "
-            f"inlined={sorted(inlined_set)}) — fail closed (friction 24594)"
+            "required skills fail channel attest after attach + inline seal: "
+            f"{'; '.join(parts)} (attached={sorted(attached_set)}, "
+            f"inlined={sorted(inlined_set)}) — fail closed (friction a:27142)"
         )
     return list(required)
 
@@ -441,20 +487,24 @@ def ledger_skills_channels(
 ) -> list[dict[str, str]]:
     """Build one ledger row per requested slug with ``delivered_via`` channel.
 
-    Each row records ``attach``, ``inline``, or ``undelivered``. Callers assert
+    ``attach`` / ``inline`` only when the channel matches ``surface_class``;
+    otherwise ``undelivered`` (incl. wrong-channel). Callers assert
     ``len(rows) == len(required)`` before treating a dispatch as skill-backed.
     """
+    catalog = get_skill_catalog()
     attached_set = {str(s).strip() for s in attached if str(s).strip()}
     inlined_set = {str(s).strip() for s in inlined if str(s).strip()}
     rows: list[dict[str, str]] = []
-    for slug in required:
-        if slug in attached_set:
-            rows.append({"slug": slug, "delivered_via": "attach"})
-        elif slug in inlined_set:
-            rows.append({"slug": slug, "delivered_via": "inline"})
+    for raw in required:
+        entry = catalog.get(raw)
+        slug = entry.slug
+        if _attach_only_surface(entry.surface_class):
+            via = "attach" if slug in attached_set else "undelivered"
         else:
-            rows.append({"slug": slug, "delivered_via": "undelivered"})
+            via = "inline" if slug in inlined_set else "undelivered"
+        rows.append({"slug": slug, "delivered_via": via})
     return rows
+
 
 
 def attest_skills_chip_enabled(

@@ -3,7 +3,8 @@
 Connects to /tmp/universal-protocol/manage.sock (JSON-RPC 2.0 over UDS).
 Exposes status, health, start, stop, restart, sync_restart, rebuild,
 wait_healthy, busy_status, charter_reload, charter_pause, charter_resume,
-and charter_hold_status for gateway-managed services.
+charter_hold_status, charter_block_root, charter_unblock_root, and
+charter_root_status for gateway-managed services.
 Single entry point reduces agent context overhead.
 """
 
@@ -41,6 +42,9 @@ _VALID_ACTIONS = frozenset(
         "charter_pause",
         "charter_resume",
         "charter_hold_status",
+        "charter_block_root",
+        "charter_unblock_root",
+        "charter_root_status",
     }
 )
 
@@ -215,6 +219,9 @@ def register_manage_tools(mcp: FastMCP) -> None:
         timeout: float = 120.0,
         force: bool = False,
         reason: str = "",
+        root_id: str = "",
+        clear_wip: bool = False,
+        reenroll: bool = False,
     ) -> dict[str, Any]:
         """Service lifecycle — start, stop, restart, sync_restart, rebuild, health, wait_healthy.
 
@@ -289,6 +296,16 @@ def register_manage_tools(mcp: FastMCP) -> None:
                                              Survives manage quit/start.
           charter_resume                     — clear durable hold; next interval ticks.
           charter_hold_status                — {held, safe_to_quit, tick_in_flight, …}.
+          charter_block_root (root_id, reason?, clear_wip?) — durable per-root hold:
+                                             ledger BLOCKED + BLOCKED/NOTE receipt tip +
+                                             enrollment strip. Stops NEW admits only;
+                                             in-flight cursor-sdk dispatches keep running
+                                             (returns live_dispatches). Orthogonal to
+                                             charter_pause (fleet stop).
+          charter_unblock_root (root_id, reenroll?) — clear the hold; BLOCKED -> IDLE.
+                                             Does not re-enroll unless reenroll=true.
+          charter_root_status (root_id)      — read-only {status, enrolled, wip_window_id,
+                                             last_error, operator_hold}.
 
         Services: gateway, stargate, rag, cloud_proxy, mcp, event_service,
                   cortex_api, agent_bus, email_bridge, git_integration_worker
@@ -354,6 +371,20 @@ def register_manage_tools(mcp: FastMCP) -> None:
             if reason:
                 params["reason"] = reason
             params["timeout"] = timeout
+        if action in {
+            "charter_block_root",
+            "charter_unblock_root",
+            "charter_root_status",
+        }:
+            params["root_id"] = root_id
+        if action == "charter_block_root":
+            params["set_by"] = "mcp"
+            if reason:
+                params["reason"] = reason
+            if clear_wip:
+                params["clear_wip"] = True
+        if action == "charter_unblock_root" and reenroll:
+            params["reenroll"] = True
 
         # Long-running actions hold the connection open until done; extend socket timeout.
         sock_timeout = (

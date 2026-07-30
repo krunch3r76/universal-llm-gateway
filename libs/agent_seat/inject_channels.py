@@ -17,6 +17,7 @@ ORIENTATION_BLOCK_SKILL_MAP: dict[str, tuple[str, ...]] = {
         "web-transcript-preprocessing",
     ),
     "tier-selection-block": ("model-tier-awareness-web",),
+    "terminal-facts-pointer-block": ("cortex-orientation",),
     # No backing agent_skill (rendered inline only; never web skill-injected):
     #   mcp-server-primary-block — live tools/list manifest line
     #   rag-scope-awareness-block — no skill covers rag scope semantics
@@ -43,6 +44,7 @@ _ORIENTATION_BLOCKS_WEB_ONLY: frozenset[str] = frozenset(
         "capability-verify-block",
         "session-close-web-block",
         "tier-selection-block",
+        "terminal-facts-pointer-block",
     }
 )
 

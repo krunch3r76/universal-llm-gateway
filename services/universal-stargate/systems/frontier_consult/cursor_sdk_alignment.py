@@ -37,7 +37,6 @@ class Warning:
     code: Literal[
         "sdk_cost_risk",
         "knob_dropped",
-        "reasoning_effort_ignored",
         "max_tool_turns_ignored",
     ]
     message: str
@@ -169,7 +168,6 @@ def align_cursor_knobs(
     cost_intent: CostIntent = None,
     suppress_cost_warning: bool = False,
     cost_intent_reason: str | None = None,
-    reasoning_effort: str | None = None,
     max_tool_turns: int | None = None,
     request_id: str | None = None,
     execution_id: str | None = None,
@@ -188,19 +186,6 @@ def align_cursor_knobs(
             warnings=warnings,
             knob_resolution=knob_resolution,
             aligned_knobs=aligned_knobs,
-        )
-
-    if reasoning_effort is not None:
-        warnings.append(
-            Warning(
-                code="reasoning_effort_ignored",
-                message=(
-                    "reasoning_effort is not forwarded on cursor-sdk dispatches; "
-                    "use model_knobs instead"
-                ),
-                model=model_id,
-                contract=contract,
-            )
         )
 
     if max_tool_turns is not None:

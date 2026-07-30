@@ -21,7 +21,7 @@ from .board_lines import (
     la_clock,
     live_cdp,
     live_sdk,
-    oldest_idle_ms,
+    oldest_elapsed_ms,
     primary_sdk_dispatch_for_root,
     primary_tick_objective,
     resolve_hold,
@@ -146,8 +146,8 @@ class CursesBoard:
         warn = sum(1 for item in projection.attention if item.severity == "warn")
         cap = health.wip_capacity if health.wip_capacity is not None else "?"
         flight = (
-            f"flight: sdk {len(sdk_live)} (oldest idle {_ms(oldest_idle_ms(sdk_live))}) · "
-            f"cdp {len(cdp_live)} (oldest {_ms(oldest_idle_ms(cdp_live))}) · "
+            f"flight: sdk {len(sdk_live)} (oldest el {_ms(oldest_elapsed_ms(sdk_live))}) · "
+            f"cdp {len(cdp_live)} (oldest el {_ms(oldest_elapsed_ms(cdp_live))}) · "
             f"queue {health.queue_depth} wip {health.wip_in_use}/{cap} · "
             f"attn {crit}crit {warn}warn"
         )

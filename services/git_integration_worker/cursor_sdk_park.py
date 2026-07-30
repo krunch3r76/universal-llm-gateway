@@ -18,6 +18,7 @@ from universal_logging import get_logger
 
 from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
 from services.git_integration_worker.cursor_sdk_events import (
+    emit_sdk_worker_orphaned,
     emit_write_lease_park_enter,
     emit_write_lease_park_restore,
 )
@@ -27,6 +28,7 @@ from services.git_integration_worker.cursor_sdk_gate import (
     transfer_sdk_dispatch_slot,
     transfer_sdk_dispatch_slot_sync,
 )
+from services.git_integration_worker.cursor_sdk_restart_orphan import load_ledger_row
 
 logger = get_logger(__name__)
 
@@ -306,6 +308,17 @@ async def reclaim_orphan_holder(
                     (child_id,),
                 ).fetchone()
             if child is not None and child["status"] not in _TERMINAL:
+                child_row = load_ledger_row(ledger, dispatch_id=child_id)
+                if child_row is not None:
+                    execution_id = child_row.execution_id or child_id
+                    emit_sdk_worker_orphaned(
+                        dispatch_id=child_id,
+                        thread_id=child_row.thread_id,
+                        execution_id=execution_id,
+                        resolved_model=child_row.resolved_model,
+                        timeout_s=0.0,
+                        bridge_aborted=False,
+                    )
                 await asyncio.to_thread(
                     ledger.mark_terminal,
                     dispatch_id=child_id,
@@ -313,6 +326,17 @@ async def reclaim_orphan_holder(
                 )
             await release_or_restore_for_child(dispatch_id=child_id)
         elif ledger.restore_from_park(parent_id=dispatch_id) is None:
+            parent_row = load_ledger_row(ledger, dispatch_id=dispatch_id)
+            if parent_row is not None:
+                execution_id = parent_row.execution_id or dispatch_id
+                emit_sdk_worker_orphaned(
+                    dispatch_id=dispatch_id,
+                    thread_id=parent_row.thread_id,
+                    execution_id=execution_id,
+                    resolved_model=parent_row.resolved_model,
+                    timeout_s=0.0,
+                    bridge_aborted=False,
+                )
             await asyncio.to_thread(
                 ledger.mark_terminal,
                 dispatch_id=dispatch_id,

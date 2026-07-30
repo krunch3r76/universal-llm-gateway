@@ -1,8 +1,8 @@
 """Fail-closed CHECKPOINT admit gate for charter-runner tick roots.
 
 Pure validation over a CHECKPOINT body. Used by eligibility (tick skip reasons)
-and by seats/CLIs before claiming tick-ready. Opus must not author this schema —
-cursor densifies; this gate refuses bad shapes with one-line fix hints.
+and by seats/CLIs before claiming tick-ready. **Typed admit (R2):** when the
+ledger row is valid, CHECKPOINT tip is optional resume/audit — not admit SOT.
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from .checkpoint_schema import ParsedCheckpoint, parse_checkpoint, split_sections
+from .root_ledger import RootLedgerRow, typed_record_valid
 from .window_terminal_contract import (
     admitted_arc,
     arc_is_weaker_than,
@@ -166,6 +167,29 @@ def validate_checkpoint_for_admit(
     return CheckpointAdmitVerdict(True, "eligible", "", parsed=parsed)
 
 
+def validate_admit_eligibility(
+    body: str,
+    *,
+    ledger_row: RootLedgerRow | None = None,
+    require_schema: bool = True,
+    conveyor_phase: str | None = None,
+) -> CheckpointAdmitVerdict:
+    """Typed-first admit check — tip optional when ledger row is valid."""
+    if typed_record_valid(ledger_row):
+        parsed = None
+        if body:
+            try:
+                parsed = parse_checkpoint(body)
+            except Exception:  # noqa: BLE001 — malformed tip does not block typed admit
+                parsed = None
+        return CheckpointAdmitVerdict(True, "typed_admit", "", parsed=parsed)
+    return validate_checkpoint_for_admit(
+        body,
+        require_schema=require_schema,
+        conveyor_phase=conveyor_phase,
+    )
+
+
 def validate_arc_for_admit(
     parsed: ParsedCheckpoint,
     *,
@@ -213,6 +237,7 @@ def validate_arc_for_admit(
 __all__ = [
     "CheckpointAdmitVerdict",
     "SCHEMA_REASONS",
+    "validate_admit_eligibility",
     "validate_arc_for_admit",
     "validate_checkpoint_for_admit",
 ]

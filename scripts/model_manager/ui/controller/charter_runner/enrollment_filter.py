@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from universal_logging import get_logger
 
+from .admission.typed_work_item import typed_record_valid
 from .root_ledger import load_all_roots, open_default_ledger
 from .seed_phase1 import PHASE1_SEEDS
 from .telemetry import emit_enrollment_filtered
@@ -24,7 +25,10 @@ def refresh_migrated_roots_cache() -> frozenset[str]:
     try:
         conn = open_default_ledger()
         try:
-            ids = frozenset(row.root_id for row in load_all_roots(conn))
+            rows = load_all_roots(conn)
+            ids = frozenset(
+                row.root_id for row in rows if typed_record_valid(row)
+            )
             if ids:
                 _migrated_cache = ids
         finally:

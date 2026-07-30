@@ -39,7 +39,12 @@ from .materializer_closed_detent import (
     closed_detent_subject,
     materialize_closed_detent_packet,
 )
-from .materializer_consult import consult_subject, materialize_consult_packet
+from .materializer_consult import (
+    _open_layer_consult_gate,
+    consult_subject_for_arc,
+    materialize_consult_packet,
+)
+from .materializer_layer import layer_subject, materialize_layer_packet
 from .materializer_operator_proxy import (
     materialize_operator_proxy_packet,
     operator_proxy_subject,
@@ -337,28 +342,52 @@ def select_packet(
     admission_mode: str,
     consult_role: str | None = None,
     source_ref: str | None = None,
+    arc_lane: str = "path_sim",
 ) -> tuple[str, str]:
     """Return ``(packet_body, bus_subject)`` for the given admission mode.
 
     ``autonomous`` yields the background-lead packet; when Next-pickup declares
     ``detent=closed`` (friction conveyor triage), yields the thin closed-detent
-    packet instead of the full Q→R arc. ``consult`` yields the depth-1 consult
-    seat packet; ``generate``/``handoff`` defer to ``materialize_resume_packet``.
+    packet instead of the full Q→R arc (path_sim) or the layer mechanical leg
+    (layer). ``consult`` yields the depth-1 consult seat packet; ``generate``/
+    ``handoff`` defer to ``materialize_resume_packet``.
     """
     from ..checkpoint_schema import pickup_detent
 
     if admission_mode == "consult":
         packet = materialize_consult_packet(
-            root_id, parsed, scoreboard_uri=scoreboard_uri, window_index=window_index
+            root_id,
+            parsed,
+            scoreboard_uri=scoreboard_uri,
+            window_index=window_index,
+            arc_lane=arc_lane,
         )
         role = consult_role or parsed.consult_role
-        return packet, consult_subject(root_id, window_index, consult_role=role)
+        gate_id = _open_layer_consult_gate(parsed) if arc_lane == "layer" else None
+        return packet, consult_subject_for_arc(
+            root_id,
+            window_index,
+            consult_role=role,
+            arc_lane=arc_lane,
+            gate_id=gate_id,
+        )
     if admission_mode == "operator_proxy":
         packet = materialize_operator_proxy_packet(
             root_id, parsed, scoreboard_uri=scoreboard_uri, window_index=window_index
         )
         return packet, operator_proxy_subject(root_id, window_index)
     if admission_mode == "autonomous":
+        if arc_lane == "layer":
+            thin = pickup_detent(parsed) == "closed"
+            packet = materialize_layer_packet(
+                root_id,
+                parsed,
+                scoreboard_uri=scoreboard_uri,
+                window_index=window_index,
+                source_ref=source_ref,
+                thin=thin,
+            )
+            return packet, layer_subject(root_id, window_index, thin=thin)
         if pickup_detent(parsed) == "closed":
             packet = materialize_closed_detent_packet(
                 root_id,

@@ -375,7 +375,17 @@ def closeout_divergence_reason(
     outside_repo_paths: tuple[str, ...] = (),
     files_untracked_or_ignored: tuple[str, ...] = (),
     worktree_isolated: bool = False,
+    read_only: bool = False,
 ) -> str | None:
+    read_only_violation = read_only_repo_diff_violation(
+        read_only=read_only,
+        change_set=change_set,
+        manifest=manifest,
+        source_repo=source_repo,
+        files_expected=files_expected,
+    )
+    if read_only_violation is not None:
+        return read_only_violation
     if not deliverables_expected or degraded_reason is not None:
         return None
     if _expected_gitignored_missing_on_disk(
@@ -430,3 +440,61 @@ def closeout_divergence_reason(
         if section and section.cross_check:
             return section.cross_check
     return None
+
+
+def read_only_repo_diff_violation(
+    *,
+    read_only: bool,
+    change_set: ChangeSet,
+    manifest: EffectsManifest | None = None,
+    source_repo: Path | None = None,
+    files_expected: list[str] | None = None,
+    baseline: dict[str, object] | None = None,
+) -> str | None:
+    """Return a deterministic repo-diff token when a read-only dispatch wrote."""
+    if not read_only:
+        return None
+    if not any((change_set.created, change_set.modified, change_set.deleted)):
+        return None
+    from services.git_integration_worker.cursor_sdk_capture_status import (
+        repo_diff_unattributed_deviation,
+    )
+
+    _ambient, scoped = repo_diff_unattributed_deviation(
+        change_set=change_set,
+        manifest=manifest,
+        source_repo=source_repo,
+        files_expected=files_expected or [],
+        baseline=baseline,
+    )
+    if scoped:
+        return scoped
+    paths = sorted(
+        {
+            *change_set.created,
+            *change_set.modified,
+            *change_set.deleted,
+        }
+    )
+    shown = ",".join(paths[:3])
+    if len(paths) > 3:
+        shown = f"{shown},+{len(paths) - 3}"
+    return f"divergence:repo_diff_paths_unattributed:{shown}"
+
+
+def observe_read_only_repo_diff_violation(
+    *,
+    dispatch_id: str,
+    thread_id: str,
+    deviation: str,
+) -> None:
+    """Emit one observation for a read-only dispatch that mutated the repo."""
+    from services.git_integration_worker.cursor_sdk_events import (
+        emit_sdk_capture_divergence_observed,
+    )
+
+    emit_sdk_capture_divergence_observed(
+        dispatch_id=dispatch_id,
+        thread_id=thread_id,
+        deviation=deviation,
+    )

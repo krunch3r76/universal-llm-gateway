@@ -9,7 +9,9 @@ from .cursor_capabilities import (
     canonical_cursor_bare_id,
     catalog_divergences,
     default_variant,
+    effort_knob_name,
     is_cursor_model_denied,
+    suggest_effort_knobs,
     supported_knobs,
     to_model_card_dict,
 )
@@ -23,7 +25,9 @@ __all__ = [
     "canonical_cursor_bare_id",
     "catalog_divergences",
     "default_variant",
+    "effort_knob_name",
     "is_cursor_model_denied",
+    "suggest_effort_knobs",
     "supported_knobs",
     "to_model_card_dict",
 ]

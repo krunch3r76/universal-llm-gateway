@@ -167,6 +167,54 @@ async def emit_enrollment_filtered(*, root: str, reason: str) -> None:
     )
 
 
+async def emit_identical_work_refire_refused(
+    *,
+    root: str,
+    work_key: str,
+    work_key_version: str,
+    source_ref: str | None,
+    pickup_gid: str | None,
+    consult_role: str | None,
+    admission_mode: str,
+    refuse_locus: str,
+    holder_window_id: str | None,
+    holder_dispatch_id: str | None,
+    holder_thread_id: str | None,
+    holder_age_s: float | None,
+    carve_out: str | None,
+    friction_id: int | None,
+    probe_status: str,
+) -> None:
+    """Identical-work refire evaluation — refuse or audited carve-out bypass."""
+    payload: dict[str, Any] = {
+        "root": root,
+        "work_key": work_key,
+        "work_key_version": work_key_version,
+        "admission_mode": admission_mode,
+        "refuse_locus": refuse_locus,
+        "probe_status": probe_status,
+    }
+    if source_ref:
+        payload["source_ref"] = source_ref
+    if pickup_gid:
+        payload["pickup_gid"] = pickup_gid
+    if consult_role:
+        payload["consult_role"] = consult_role
+    if holder_window_id:
+        payload["holder_window_id"] = holder_window_id
+    if holder_dispatch_id:
+        payload["holder_dispatch_id"] = holder_dispatch_id
+    if holder_thread_id:
+        payload["holder_thread_id"] = holder_thread_id
+    if holder_age_s is not None:
+        payload["holder_age_s"] = holder_age_s
+    if carve_out:
+        payload["carve_out"] = carve_out
+    if friction_id is not None:
+        payload["friction_id"] = friction_id
+    await _emit("manage.charter.conveyor.identical_work_refire_refused", payload)
+
+
 async def emit_storm_fuse_tripped(
     *,
     root: str,
@@ -193,12 +241,71 @@ async def emit_storm_fuse_tripped(
     )
 
 
+async def emit_arc_lane_unset(*, root_id: str, todo_ref: str | None) -> None:
+    """Warn when a codework todo lacks explicit ``arc_lane`` (fail-safe path_sim)."""
+    await _emit(
+        "manage.charter.tick.arc_lane.unset",
+        {"root": root_id, "todo_ref": todo_ref or "", "arc_lane": "path_sim"},
+    )
+
+
+async def emit_birth_step(
+    *,
+    slug: str,
+    root_id: str,
+    step: str,
+    outcome: str,
+    detail: str = "",
+) -> None:
+    """Per-step birth ceremony observability (cold once-per-root signal)."""
+    payload: dict[str, Any] = {
+        "slug": slug,
+        "root_id": root_id,
+        "step": step,
+        "outcome": outcome,
+    }
+    if detail:
+        payload["detail"] = detail
+    await _emit("manage.charter.birth.step", payload)
+
+
+async def emit_birth_completed(
+    *,
+    slug: str,
+    root_id: str,
+    minted: bool,
+    reclaimed: bool,
+    seeded: bool,
+    enrolled: bool,
+    tip_posted: bool,
+    duration_s: float,
+) -> None:
+    """Birth ceremony finished successfully for one charter root."""
+    await _emit(
+        "manage.charter.birth.completed",
+        {
+            "slug": slug,
+            "root_id": root_id,
+            "minted": minted,
+            "reclaimed": reclaimed,
+            "seeded": seeded,
+            "enrolled": enrolled,
+            "tip_posted": tip_posted,
+            "duration_s": duration_s,
+        },
+    )
+
+
 __all__ = [
     "emit_admission_defer_escalated",
     "emit_admission_deferred_gate_held",
+    "emit_arc_lane_unset",
+    "emit_birth_completed",
+    "emit_birth_step",
     "emit_consult_deferred",
     "emit_consult_queued",
     "emit_enrollment_filtered",
+    "emit_identical_work_refire_refused",
     "emit_root_skip_observed",
     "emit_shadow_diff",
     "emit_shadow_ledger_starved",

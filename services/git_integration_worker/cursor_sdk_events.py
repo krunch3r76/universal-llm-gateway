@@ -11,6 +11,21 @@ from universal_logging import get_logger
 logger = get_logger(__name__)
 
 _uds_publisher: Callable[[str, dict[str, Any]], None] | None = None
+_terminal_emitted: set[str] = set()
+
+
+def terminal_emitted(dispatch_id: str) -> bool:
+    """Return whether a foldable worker terminal was already emitted for ``dispatch_id``."""
+    return dispatch_id in _terminal_emitted
+
+
+def reset_terminal_emitted_registry() -> None:
+    """Clear process-local terminal registry (tests only)."""
+    _terminal_emitted.clear()
+
+
+def _register_terminal_emitted(dispatch_id: str) -> None:
+    _terminal_emitted.add(dispatch_id)
 
 
 def register_cursor_sdk_event_publisher(
@@ -440,6 +455,7 @@ def emit_sdk_worker_completed(
             admitted_via=admitted_via,
         )
     )
+    _register_terminal_emitted(dispatch_id)
     logger.info(
         "cursor sdk worker completed: dispatch_id=%s thread_id=%s duration_s=%.3f "
         "tool_call_count=%s result_bytes=%s outcome=%s resolved_model=%s "
@@ -552,6 +568,7 @@ def FrontierSdkWorkerQueued(  # noqa: N802
     asked_by: str | None = None,
     purpose: str | None = None,
     story_id: str | None = None,
+    queued_on: str | None = None,
 ) -> Event:
     payload: dict[str, object] = {
         "dispatch_id": dispatch_id,
@@ -579,6 +596,8 @@ def FrontierSdkWorkerQueued(  # noqa: N802
         payload["purpose"] = purpose
     if story_id is not None:
         payload["story_id"] = story_id
+    if queued_on is not None:
+        payload["queued_on"] = queued_on
     return Event(
         signal="frontier.sdk.worker.queued",
         payload=payload,
@@ -737,6 +756,7 @@ def emit_sdk_worker_queued(
     asked_by: str | None = None,
     purpose: str | None = None,
     story_id: str | None = None,
+    queued_on: str | None = None,
 ) -> None:
     """Publish FIFO queue placement while another dispatch holds the write lease."""
     _emit(
@@ -755,6 +775,7 @@ def emit_sdk_worker_queued(
             asked_by=asked_by,
             purpose=purpose,
             story_id=story_id,
+            queued_on=queued_on,
         )
     )
 
@@ -855,6 +876,7 @@ def emit_sdk_worker_timeout(
             timeout_s=timeout_s,
         )
     )
+    _register_terminal_emitted(dispatch_id)
     logger.error(
         "cursor sdk worker timeout: dispatch_id=%s thread_id=%s model=%s timeout_s=%s",
         dispatch_id,
@@ -908,6 +930,7 @@ def emit_sdk_worker_orphaned(
             bridge_aborted=bridge_aborted,
         )
     )
+    _register_terminal_emitted(dispatch_id)
     logger.error(
         "cursor sdk worker orphaned: dispatch_id=%s thread_id=%s model=%s "
         "timeout_s=%s bridge_aborted=%s",
@@ -975,6 +998,27 @@ def emit_sdk_worker_failed(
             detail_summary=detail_summary or error,
         )
     )
+    _register_terminal_emitted(dispatch_id)
+
+
+def emit_sdk_worker_unclassified_terminal(
+    *,
+    dispatch_id: str,
+    thread_id: str,
+    execution_id: str,
+    worker_error_code: str,
+    detail_summary: str,
+) -> None:
+    """Safety-net terminal when ``mark_terminal`` runs without a prior worker emit."""
+    emit_sdk_worker_failed(
+        dispatch_id=dispatch_id,
+        thread_id=thread_id,
+        execution_id=execution_id,
+        error=detail_summary,
+        failure_layer="unclassified_terminal",
+        worker_error_code=worker_error_code,
+        detail_summary=detail_summary,
+    )
 
 
 def emit_sdk_worker_delivery_failed(
@@ -997,6 +1041,7 @@ def emit_sdk_worker_delivery_failed(
             sidecar_ref=sidecar_ref,
         )
     )
+    _register_terminal_emitted(dispatch_id)
     logger.error(
         "cursor sdk worker delivery failed: dispatch_id=%s thread_id=%s "
         "status_code=%s result_bytes=%s sidecar=%s",
@@ -1005,6 +1050,40 @@ def emit_sdk_worker_delivery_failed(
         status_code,
         result_bytes,
         sidecar_ref,
+    )
+
+
+@event_factory
+def FrontierSdkCaptureDivergenceObserved(  # noqa: N802
+    dispatch_id: str,
+    thread_id: str,
+    deviation: str,
+) -> Event:
+    return Event(
+        signal="frontier.sdk.capture.divergence_observed",
+        payload={
+            "dispatch_id": dispatch_id,
+            "thread_id": thread_id,
+            "deviation": deviation,
+        },
+        scope="node",
+        role="observation",
+    )
+
+
+def emit_sdk_capture_divergence_observed(
+    *,
+    dispatch_id: str,
+    thread_id: str,
+    deviation: str,
+) -> None:
+    """Emit one observation when closeout capture sees a divergence token."""
+    _emit(
+        FrontierSdkCaptureDivergenceObserved(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            deviation=deviation,
+        )
     )
 
 

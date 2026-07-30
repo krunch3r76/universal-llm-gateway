@@ -916,6 +916,18 @@ class CursorDispatchLedger:
         value = row["caller_agent"]
         return str(value) if value else None
 
+    def read_read_only(self, *, dispatch_id: str) -> bool:
+        """Return the durable ``read_only`` flag recorded at admit time."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT COALESCE(read_only,0) AS read_only "
+                "FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+                (dispatch_id,),
+            ).fetchone()
+        if row is None:
+            return False
+        return bool(row["read_only"])
+
     def set_wt_baseline(self, *, dispatch_id: str, wt_baseline: str) -> None:
         with self._connect() as conn:
             conn.execute(
@@ -957,7 +969,12 @@ class CursorDispatchLedger:
             )
 
     def mark_terminal(self, *, dispatch_id: str, terminal_status: str) -> str | None:
-        """Mark terminal; return ``lease_key`` when present for FIFO promotion."""
+        """Mark terminal; return ``lease_key`` when present for FIFO promotion.
+
+        Callers must emit a foldable ``frontier.sdk.worker.*`` terminal (or route
+        through ``_mark_terminal_and_promote`` which synthesizes unclassified) before
+        ``lease.released`` — this method does not emit worker lifecycle events.
+        """
         assert terminal_status in _STATUS_TERMINAL
         lease_key: str | None = None
         with self._connect() as conn:
@@ -1122,7 +1139,7 @@ class CursorDispatchLedger:
         lease_key: str | None = None,
         source_repo: str | None = None,
     ) -> dict[str, Any]:
-        """Active write-lease holder + queued depth (F-3)."""
+        """Active write-lease holder, queued depth, and attributed queued writers."""
         key = _resolve_lease_key(lease_key=lease_key, source_repo=source_repo)
         with self._connect() as conn:
             if key:
@@ -1132,13 +1149,41 @@ class CursorDispatchLedger:
                     "WHERE lease_key=? AND COALESCE(read_only,0)=0 AND status='queued'",
                     (key,),
                 ).fetchone()
+                queued_rows = conn.execute(
+                    "SELECT dispatch_id, thread_id, lease_key "
+                    "FROM cursor_sdk_dispatches "
+                    "WHERE lease_key=? AND COALESCE(read_only,0)=0 AND status='queued' "
+                    "ORDER BY rowid ASC",
+                    (key,),
+                ).fetchall()
             else:
                 holder = _fetch_active_holder_conn(conn)
                 queued = conn.execute(
                     "SELECT COUNT(*) AS n FROM cursor_sdk_dispatches "
                     "WHERE COALESCE(read_only,0)=0 AND status='queued'"
                 ).fetchone()
+                queued_rows = conn.execute(
+                    "SELECT dispatch_id, thread_id, lease_key "
+                    "FROM cursor_sdk_dispatches "
+                    "WHERE COALESCE(read_only,0)=0 AND status='queued' "
+                    "ORDER BY rowid ASC"
+                ).fetchall()
         projection = _holder_projection(holder)
+        queued_list: list[dict[str, Any]] = []
+        for position, row in enumerate(queued_rows, start=1):
+            row_key = _resolve_lease_key(
+                lease_key=row["lease_key"], source_repo=source_repo
+            )
+            resolved_key = row_key or key or ""
+            queued_list.append(
+                {
+                    "dispatch_id": row["dispatch_id"],
+                    "thread_id": row["thread_id"],
+                    "queue_position": position,
+                    "lease_key": resolved_key,
+                    "queued_on": f"write_lease:{resolved_key}",
+                }
+            )
         return {
             **projection,
             "holder_source_repo": (
@@ -1147,6 +1192,7 @@ class CursorDispatchLedger:
                 else source_repo
             ),
             "queue_depth": int(queued["n"]) if queued else 0,
+            "queued": queued_list,
         }
 
     def dispatch_status_by_thread(self, *, thread_id: str) -> dict[str, Any] | None:

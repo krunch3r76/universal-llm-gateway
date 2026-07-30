@@ -26,6 +26,10 @@ from .migrations.migration_004_propagation_ledger import (
     MIGRATION_ID as MIGRATION_004_ID,
     migrate as migrate_004,
 )
+from .migrations.migration_005_work_key_registry import (
+    MIGRATION_ID as MIGRATION_005_ID,
+    migrate as migrate_005,
+)
 
 logger = get_logger(__name__)
 
@@ -86,6 +90,7 @@ def apply_migrations(conn: sqlite3.Connection) -> None:
         (MIGRATION_002_ID, migrate_002),
         (MIGRATION_003_ID, migrate_003),
         (MIGRATION_004_ID, migrate_004),
+        (MIGRATION_005_ID, migrate_005),
     ]
     for mig_id, migrate_fn in pending:
         if mig_id in applied:

@@ -225,7 +225,10 @@ def build_team_dispatch_body(
         "system": system,
     }
     model = spec.model
-    if model is not None and ModelId.parse(model).backend_type == "cursor_sdk":
+    is_cursor_sdk = (
+        model is not None and ModelId.parse(model).backend_type == "cursor_sdk"
+    )
+    if is_cursor_sdk:
         # cursor/* cannot combine with role= (substrate_model_role_conflict).
         body["seat"] = "cursor-sdk"
         body["model"] = model
@@ -233,9 +236,11 @@ def build_team_dispatch_body(
         body["role"] = spec.role
         if model is not None:
             body["model"] = model
+    # BIND_B: never forward reasoning_effort onto cursor-sdk members (hard-422).
+    member_effort = None if is_cursor_sdk else reasoning_effort
     for key, val in (
         ("caller_agent", caller_agent),
-        ("reasoning_effort", reasoning_effort),
+        ("reasoning_effort", member_effort),
         ("generation_options", generation_options),
         ("max_tool_turns", max_tool_turns),
         ("transcript_id", transcript_id),

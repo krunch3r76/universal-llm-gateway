@@ -127,6 +127,33 @@ def test_attest_delivery_channels_mixed_and_all_inline() -> None:
         )
 
 
+def test_attest_shared_sync_rejects_inline_only_channel() -> None:
+    """a:27142 — shared_sync must be attached; inline alone is wrong_channel."""
+    with pytest.raises(SkillDeliveryError, match="wrong_channel"):
+        attest_delivery_channels(
+            ["reasoning-posture"],
+            attached=[],
+            inlined=["reasoning-posture"],
+        )
+
+
+def test_cdp_inline_path_sim_is_size_gated_excerpt() -> None:
+    """a:27142 — cursor_only CDP seal is excerpted, not full SKILL.md."""
+    from claude_bundles.cdp_inline_excerpt import CDP_INLINE_SKILL_MAX_CHARS
+
+    prompt, used_slash, bodies = prepend_cdp_dispatch_skills(
+        "## Task\n",
+        ["path-sim", "reasoning-posture"],
+    )
+    assert used_slash == ["reasoning-posture"]
+    assert bodies[0].slug == "path-sim"
+    assert len(bodies[0].body) <= CDP_INLINE_SKILL_MAX_CHARS
+    assert "truncated CDP inline excerpt for path-sim" in bodies[0].body
+    assert '<skill slug="path-sim"' in prompt
+    full = bodies[0].path.read_text(encoding="utf-8")
+    assert len(full) > CDP_INLINE_SKILL_MAX_CHARS
+
+
 def test_ledger_skills_channels_row_count() -> None:
     required = ["reasoning-posture", "path-sim"]
     rows = ledger_skills_channels(

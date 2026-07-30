@@ -135,22 +135,39 @@ class WakeDirtySet:
 
 
 class WakeRootMapper:
-    """Map subscribed signals to enrolled root ids (roster filter at mapper)."""
+    """Map subscribed signals to open typed work-item root ids (ledger-primary)."""
 
     def __init__(self, list_enrolled_roots: ListEnrolledRoots) -> None:
         self._list_enrolled_roots = list_enrolled_roots
-        self._enrolled: set[str] = set()
+        self._open_roots: set[str] = set()
 
     @property
     def enrolled(self) -> set[str]:
-        return set(self._enrolled)
+        return set(self._open_roots)
 
     async def refresh_enrolled(self) -> set[str]:
-        roots = await self._list_enrolled_roots()
-        self._enrolled = {
-            str(thread.get("id") or "") for thread in roots if thread.get("id")
-        }
-        return set(self._enrolled)
+        """Reload open work-item ids — ledger query floor, bus enroll union."""
+        from .root_ledger import list_open_work_item_root_ids, open_default_ledger
+
+        ledger_ids: set[str] = set()
+        try:
+            conn = open_default_ledger()
+            try:
+                ledger_ids = list_open_work_item_root_ids(conn)
+            finally:
+                conn.close()
+        except Exception:
+            logger.exception("wake mapper: ledger open-work-items read failed")
+        bus_ids: set[str] = set()
+        try:
+            roots = await self._list_enrolled_roots()
+            bus_ids = {
+                str(thread.get("id") or "") for thread in roots if thread.get("id")
+            }
+        except Exception:
+            logger.warning("wake mapper: bus enrolled list unavailable", exc_info=True)
+        self._open_roots = ledger_ids | bus_ids
+        return set(self._open_roots)
 
     def map_event(self, ev: dict[str, Any], *, caps: CapStore | None = None) -> str | None:
         signal = str(_field(ev, "signal") or ev.get("signal") or "")
@@ -158,13 +175,13 @@ class WakeRootMapper:
             return None
         if signal == "manage.charter.caps.cleared":
             root = str(_field(ev, "root") or "").strip()
-            return root if root in self._enrolled else None
+            return root if root in self._open_roots else None
         if signal in (
             "mcp.agentbus.turn.created",
             "mcp.agentbus.thread.lifecycle.transitioned",
         ):
             thread = str(_field(ev, "thread") or "").strip()
-            return thread if thread in self._enrolled else None
+            return thread if thread in self._open_roots else None
         if signal.startswith("frontier.sdk.worker."):
             thread_id = str(_field(ev, "thread_id") or "").strip()
             if not thread_id or caps is None:
@@ -288,6 +305,7 @@ class WakeHub:
 
 
 def default_events_query_socket() -> str:
+    """Return the Event Service unix socket path used for wake subscriptions."""
     return os.environ.get(
         "EVENTS_QUERY_SOCK", "/tmp/universal-protocol/events-query.sock"
     )

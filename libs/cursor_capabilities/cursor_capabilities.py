@@ -15,7 +15,9 @@ __all__ = [
     "canonical_cursor_bare_id",
     "catalog_divergences",
     "default_variant",
+    "effort_knob_name",
     "is_cursor_model_denied",
+    "suggest_effort_knobs",
     "supported_knobs",
     "to_model_card_dict",
 ]
@@ -307,3 +309,28 @@ def default_variant(model_id: str) -> Mapping[str, str]:
     if cap is None:
         return {}
     return cap.default_variant
+
+
+def effort_knob_name(model_id: str) -> str | None:
+    """Prefer ``effort`` then ``reasoning`` when the descriptor exposes either."""
+    knobs = supported_knobs(model_id)
+    if "effort" in knobs:
+        return "effort"
+    if "reasoning" in knobs:
+        return "reasoning"
+    return None
+
+
+def suggest_effort_knobs(model_id: str, requested: str) -> dict[str, str]:
+    """Remedy dict for callers: map *requested* onto the model's effort-like knob.
+
+    Returns empty when the model has no effort-like knob or *requested* is not
+    in that knob's accepted set. Never mutates aligned admission knobs.
+    """
+    name = effort_knob_name(model_id)
+    if name is None:
+        return {}
+    spec = supported_knobs(model_id).get(name)
+    if spec is None or requested not in spec.accepted:
+        return {}
+    return {name: requested}

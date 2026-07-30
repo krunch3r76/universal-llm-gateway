@@ -40,6 +40,8 @@ class AdmitResult:
     admitted: bool
     fire_attempt_outcome: FireAttemptOutcome
     fire_attempt_reason: str = ""
+    dispatch_id: str | None = None
+    thread_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

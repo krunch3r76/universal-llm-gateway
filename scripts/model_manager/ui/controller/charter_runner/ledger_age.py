@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Literal
 
 from libs.charter_runner_store.db import (
-    charter_runner_data_dir,
     default_ledger_path,
     execute_with_retry,
     open_ledger_db,
@@ -40,25 +39,6 @@ def _open(*, data_dir: Path | None = None):
     return open_ledger_db(_ledger_path(data_dir=data_dir))
 
 
-def _refuse_root(key: str) -> tuple[str, bool]:
-    if key.endswith(":refuse"):
-        return key[: -len(":refuse")], True
-    return key, False
-
-
-def _ensure_root_row(conn, root_id: str) -> None:
-    now = time.time()
-    execute_with_retry(
-        conn,
-        """
-        INSERT OR IGNORE INTO root_ledger (
-          root_id, schema_version, status, attendance, scoreboard_uri, updated_at
-        ) VALUES (?, 1, 'IDLE', 'autonomous', '', ?)
-        """,
-        (root_id, now),
-    )
-
-
 def observation_count(
     cls: AgeClass,
     key: str,
@@ -66,31 +46,16 @@ def observation_count(
     data_dir: Path | None = None,
 ) -> int:
     """Return durable observation count for a class/key (0 when absent)."""
-    if cls == "belt_orphan":
-        conn = _open(data_dir=data_dir)
-        try:
-            row = conn.execute(
-                """
-                SELECT observation_count FROM age_clock
-                WHERE clock_class = ? AND clock_key = ?
-                """,
-                (cls, key),
-            ).fetchone()
-            return int(row[0]) if row is not None else 0
-        finally:
-            conn.close()
-
-    root_id, is_refuse = _refuse_root(key)
     conn = _open(data_dir=data_dir)
     try:
-        col = "refuse_streak" if is_refuse else "demand_observation_count"
         row = conn.execute(
-            f"SELECT {col} FROM root_ledger WHERE root_id = ?",
-            (root_id,),
+            """
+            SELECT observation_count FROM age_clock
+            WHERE clock_class = ? AND clock_key = ?
+            """,
+            (cls, key),
         ).fetchone()
-        if row is None:
-            return 0
-        return int(row[0] or 0)
+        return int(row[0]) if row is not None else 0
     finally:
         conn.close()
 
@@ -101,30 +66,15 @@ def first_seen_at(
     *,
     data_dir: Path | None = None,
 ) -> float | None:
-    """Durable first-seen timestamp for tick_stall keys."""
-    if cls == "belt_orphan":
-        conn = _open(data_dir=data_dir)
-        try:
-            row = conn.execute(
-                """
-                SELECT first_seen_at FROM age_clock
-                WHERE clock_class = ? AND clock_key = ?
-                """,
-                (cls, key),
-            ).fetchone()
-            if row is None or row[0] is None:
-                return None
-            return float(row[0])
-        finally:
-            conn.close()
-
-    root_id, is_refuse = _refuse_root(key)
+    """Durable first-seen timestamp for one age-clock key."""
     conn = _open(data_dir=data_dir)
     try:
-        col = "first_refuse_at" if is_refuse else "demand_since"
         row = conn.execute(
-            f"SELECT {col} FROM root_ledger WHERE root_id = ?",
-            (root_id,),
+            """
+            SELECT first_seen_at FROM age_clock
+            WHERE clock_class = ? AND clock_key = ?
+            """,
+            (cls, key),
         ).fetchone()
         if row is None or row[0] is None:
             return None
@@ -158,41 +108,13 @@ def clear(
     data_dir: Path | None = None,
 ) -> None:
     """Drop durable observation state for one key."""
-    if cls == "belt_orphan":
-        conn = _open(data_dir=data_dir)
-        try:
-            execute_with_retry(
-                conn,
-                "DELETE FROM age_clock WHERE clock_class = ? AND clock_key = ?",
-                (cls, key),
-            )
-        finally:
-            conn.close()
-        return
-
-    root_id, is_refuse = _refuse_root(key)
     conn = _open(data_dir=data_dir)
     try:
-        if is_refuse:
-            execute_with_retry(
-                conn,
-                """
-                UPDATE root_ledger
-                SET first_refuse_at = NULL, refuse_streak = 0
-                WHERE root_id = ?
-                """,
-                (root_id,),
-            )
-        else:
-            execute_with_retry(
-                conn,
-                """
-                UPDATE root_ledger
-                SET demand_since = NULL, demand_observation_count = 0
-                WHERE root_id = ?
-                """,
-                (root_id,),
-            )
+        execute_with_retry(
+            conn,
+            "DELETE FROM age_clock WHERE clock_class = ? AND clock_key = ?",
+            (cls, key),
+        )
     finally:
         conn.close()
 
@@ -219,57 +141,41 @@ def observe(
 
     if cls == "belt_orphan":
         return _observe_belt_orphan(key, birth=birth, now=now, data_dir=data_dir)
+    return _observe_tick_stall(key, now=now, data_dir=data_dir)
 
-    root_id, is_refuse = _refuse_root(key)
+
+def _observe_tick_stall(
+    key: str,
+    *,
+    now: float,
+    data_dir: Path | None,
+) -> AgeWatchResult:
     conn = _open(data_dir=data_dir)
     try:
-        _ensure_root_row(conn, root_id)
-        if is_refuse:
-            row = conn.execute(
-                """
-                SELECT first_refuse_at, refuse_streak FROM root_ledger
-                WHERE root_id = ?
-                """,
-                (root_id,),
-            ).fetchone()
-            first_raw = row[0] if row is not None else None
-            count = int(row[1] or 0) if row is not None else 0
-            first = float(first_raw) if first_raw is not None else now
-            count += 1
-            execute_with_retry(
-                conn,
-                """
-                UPDATE root_ledger
-                SET first_refuse_at = ?, refuse_streak = ?
-                WHERE root_id = ?
-                """,
-                (first, count, root_id),
-            )
-        else:
-            row = conn.execute(
-                """
-                SELECT demand_since, demand_observation_count FROM root_ledger
-                WHERE root_id = ?
-                """,
-                (root_id,),
-            ).fetchone()
-            first_raw = row[0] if row is not None else None
-            count = int(row[1] or 0) if row is not None else 0
-            first = float(first_raw) if first_raw is not None else now
-            count += 1
-            execute_with_retry(
-                conn,
-                """
-                UPDATE root_ledger
-                SET demand_since = ?, demand_observation_count = ?
-                WHERE root_id = ?
-                """,
-                (first, count, root_id),
-            )
-
+        row = conn.execute(
+            """
+            SELECT first_seen_at, observation_count FROM age_clock
+            WHERE clock_class = 'tick_stall' AND clock_key = ?
+            """,
+            (key,),
+        ).fetchone()
+        first_raw = row[0] if row is not None else None
+        count = int(row[1] or 0) if row is not None else 0
+        first = float(first_raw) if first_raw is not None else now
+        count += 1
+        execute_with_retry(
+            conn,
+            """
+            INSERT INTO age_clock (
+              clock_class, clock_key, first_seen_at, observation_count
+            ) VALUES ('tick_stall', ?, ?, ?)
+            ON CONFLICT(clock_class, clock_key) DO UPDATE SET
+              observation_count = excluded.observation_count
+            """,
+            (key, first, count),
+        )
         current_age = max(0.0, now - first)
-        max_age = TICK_STALL_MAX_AGE_S
-        if current_age >= max_age:
+        if current_age >= TICK_STALL_MAX_AGE_S:
             return AgeWatchResult(
                 outcome="escalate",
                 age_s=current_age,
@@ -356,9 +262,9 @@ def seed_first_seen(
     data_dir: Path | None = None,
 ) -> None:
     """Seed durable clock state (tests + gate-defer record with explicit ``now``)."""
-    if cls == "belt_orphan":
-        conn = _open(data_dir=data_dir)
-        try:
+    conn = _open(data_dir=data_dir)
+    try:
+        if cls == "belt_orphan":
             execute_with_retry(
                 conn,
                 """
@@ -371,33 +277,18 @@ def seed_first_seen(
                 """,
                 (key, float(first_seen_at_ts), int(observation_count)),
             )
-        finally:
-            conn.close()
-        return
-
-    root_id, is_refuse = _refuse_root(key)
-    conn = _open(data_dir=data_dir)
-    try:
-        _ensure_root_row(conn, root_id)
-        if is_refuse:
-            execute_with_retry(
-                conn,
-                """
-                UPDATE root_ledger
-                SET first_refuse_at = ?, refuse_streak = ?
-                WHERE root_id = ?
-                """,
-                (float(first_seen_at_ts), int(observation_count), root_id),
-            )
         else:
             execute_with_retry(
                 conn,
                 """
-                UPDATE root_ledger
-                SET demand_since = ?, demand_observation_count = ?
-                WHERE root_id = ?
+                INSERT INTO age_clock (
+                  clock_class, clock_key, first_seen_at, observation_count
+                ) VALUES ('tick_stall', ?, ?, ?)
+                ON CONFLICT(clock_class, clock_key) DO UPDATE SET
+                  first_seen_at = excluded.first_seen_at,
+                  observation_count = excluded.observation_count
                 """,
-                (float(first_seen_at_ts), int(observation_count), root_id),
+                (key, float(first_seen_at_ts), int(observation_count)),
             )
     finally:
         conn.close()

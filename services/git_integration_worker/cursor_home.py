@@ -1,7 +1,7 @@
 """Per-dispatch HOME isolation for cursor-sdk bridge dispatches.
 
 Each dispatch gets a private HOME with copied ``cli-config.json`` (identity),
-XDG ``auth.json`` (credential), and user-layer Cursor settings (``rules/``,
+XDG ``auth.json`` (credential), and user-layer Cursor settings (``rules/``, ``plugins/`` (ulg-ecosystem census skills),
 ``mcp.json``) so ``setting_sources=all`` matches the IDE Composer substrate.
 The bridge subprocess inherits HOME via ``os.environ`` (see ``routes/cursor_sdk``
 Branch B — ``launch_bridge`` snapshots ``os.environ`` at ``Popen``).
@@ -10,6 +10,7 @@ Branch B — ``launch_bridge`` snapshots ``os.environ`` at ``Popen``).
 from __future__ import annotations
 
 import os
+import pwd
 import shutil
 import time
 from datetime import UTC, datetime
@@ -23,6 +24,7 @@ CURSOR_CONFIG_DIRNAME = ".cursor"
 CURSOR_IDENTITY_FILENAME = "cli-config.json"
 CURSOR_MCP_FILENAME = "mcp.json"
 CURSOR_USER_RULES_DIRNAME = "rules"
+CURSOR_PLUGINS_DIRNAME = "plugins"
 CURSOR_XDG_CONFIG_RELPATH = Path(".config") / "cursor"
 CURSOR_CREDENTIAL_FILENAME = "auth.json"
 
@@ -48,6 +50,61 @@ class CursorHomeConfigError(RuntimeError):
 
 class CursorVenvConfigError(RuntimeError):
     """Configured repo venv missing or incomplete — fail closed pre-launch."""
+
+
+def _passwd_home() -> Path:
+    """Login-directory home from the passwd DB — immune to process ``HOME`` leaks."""
+    return Path(pwd.getpwuid(os.getuid()).pw_dir).expanduser()
+
+
+def is_dispatch_home_path(path: Path | str, *, root: Path | None = None) -> bool:
+    """True when *path* is under the per-dispatch HOME root (contamination fingerprint)."""
+    candidate = Path(path).expanduser().resolve()
+    base = (root if root is not None else _DISPATCH_HOME_ROOT).expanduser().resolve()
+    try:
+        candidate.relative_to(base)
+    except ValueError:
+        return False
+    return True
+
+
+def operator_real_home(*, explicit: Path | str | None = None) -> Path:
+    """Operator home for credential/venv resolution — never a dispatch HOME.
+
+    Prefer an explicit path when provided and not a dispatch home. Otherwise use
+    the passwd login directory. ``os.environ['HOME']`` is consulted only as a
+    last resort and rejected when it points under the dispatch-home root
+    (GIW process contamination from a leaked overlay — CURSOR_VENV_CONFIG /
+    agent-bus:6468).
+    """
+    if explicit is not None:
+        path = Path(explicit).expanduser()
+        if not is_dispatch_home_path(path):
+            return path.resolve() if path.exists() else path
+        logger.warning(
+            "operator_real_home: ignoring explicit dispatch-home path %s", path
+        )
+    passwd = _passwd_home()
+    env_home = os.environ.get("HOME", "").strip()
+    if env_home:
+        env_path = Path(env_home).expanduser()
+        if is_dispatch_home_path(env_path):
+            logger.warning(
+                "operator_real_home: process HOME=%s is a dispatch home; "
+                "using passwd home %s",
+                env_path,
+                passwd,
+            )
+            return passwd
+        # Prefer passwd when both exist and diverge — env may still be stale.
+        if env_path.resolve() != passwd.resolve():
+            logger.info(
+                "operator_real_home: HOME=%s differs from passwd=%s; using passwd",
+                env_path,
+                passwd,
+            )
+        return passwd
+    return passwd
 
 
 def dispatch_home_path(dispatch_id: str, *, root: Path | None = None) -> Path:
@@ -123,8 +180,7 @@ def setup_cursor_dispatch_home(
 ) -> Path:
     """Create dispatch HOME and seed cursor credentials by copy (never symlink)."""
     home = dispatch_home_path(dispatch_id, root=root)
-    real = Path(real_home) if real_home else Path(os.environ.get("HOME") or "~")
-    real = real.expanduser()
+    real = operator_real_home(explicit=real_home)
 
     cursor_dir = home / CURSOR_CONFIG_DIRNAME
     cursor_dir.mkdir(parents=True, exist_ok=True)
@@ -160,6 +216,10 @@ def setup_cursor_dispatch_home(
         real_cursor / CURSOR_MCP_FILENAME,
         cursor_dir / CURSOR_MCP_FILENAME,
     )
+    _copy_path_if_present(
+        real_cursor / CURSOR_PLUGINS_DIRNAME,
+        cursor_dir / CURSOR_PLUGINS_DIRNAME,
+    )
     return home
 
 
@@ -168,14 +228,14 @@ def resolve_repo_venv(
 ) -> Path:
     """Repo venv root: CURSOR_SDK_VENV_PATH override, else <real_home>/.venvs/universal.
 
-    Read the real operator home BEFORE the per-dispatch HOME swap.
+    Uses :func:`operator_real_home` so a contaminated process ``HOME`` (dispatch
+    overlay leak) cannot redirect the venv under a per-dispatch home.
     """
     if override is None:
         override = os.environ.get("CURSOR_SDK_VENV_PATH", "").strip() or None
     if override:
         return Path(override).expanduser()
-    real = Path(real_home) if real_home else Path(os.environ.get("HOME") or "~")
-    return real.expanduser() / DEFAULT_REPO_VENV_RELPATH
+    return operator_real_home(explicit=real_home) / DEFAULT_REPO_VENV_RELPATH
 
 
 def validate_repo_venv(venv: Path) -> None:
@@ -193,9 +253,7 @@ def validate_repo_venv(venv: Path) -> None:
 
 
 def _expand_real_home(real_home: Path | str | None) -> Path:
-    if real_home is not None:
-        return Path(real_home).expanduser()
-    return Path(os.environ.get("HOME") or "~").expanduser()
+    return operator_real_home(explicit=real_home)
 
 
 def is_cursor_agent_shim(path: Path) -> bool:

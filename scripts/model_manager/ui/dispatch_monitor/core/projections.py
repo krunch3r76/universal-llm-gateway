@@ -51,6 +51,7 @@ def sdk_rows(
             if not live and state.started_ms is not None
             else None
         )
+        elapsed = age(now_ms, state.started_ms) if live else None
         rows.append(
             SdkDispatchRow(
                 dispatch_id=state.dispatch_id,
@@ -65,6 +66,7 @@ def sdk_rows(
                 last_progress_ms=state.last_progress_ms,
                 terminal_ms=state.terminal_ms,
                 duration_ms=duration,
+                elapsed_ms=elapsed,
                 idle_age_ms=age(now_ms, state.last_progress_ms) if live else None,
                 prompt_tokens=state.prompt_tokens,
                 completion_tokens=state.completion_tokens,

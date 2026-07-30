@@ -40,7 +40,11 @@ from ..telemetry import (
 )
 from ..window_terminal_contract import implement_ready_declared, is_pickup_append
 from .materializer_autonomous import select_packet
-from .materializer_consult import consult_subject, materialize_consult_packet
+from .materializer_consult import (
+    _open_layer_consult_gate,
+    consult_subject_for_arc,
+    materialize_consult_packet,
+)
 
 logger = get_logger(__name__)
 
@@ -49,8 +53,14 @@ def _fail(outcome: FireAttemptOutcome, reason: str) -> AdmitResult:
     return AdmitResult(False, outcome, reason)
 
 
-def _ok() -> AdmitResult:
-    return AdmitResult(True, FireAttemptOutcome.FIRED, "")
+def _ok(*, dispatch_id: str | None = None, thread_id: str | None = None) -> AdmitResult:
+    return AdmitResult(
+        True,
+        FireAttemptOutcome.FIRED,
+        "",
+        dispatch_id=dispatch_id,
+        thread_id=thread_id,
+    )
 
 
 def _charter_objective_for_emit(root_id: str) -> str | None:
@@ -107,6 +117,9 @@ async def admit_worker_window(
     admission_mode: str,
     window_index: int | None = None,
     on_admit: Callable[[str], None] | None = None,
+    arc_lane: str = "path_sim",
+    work_key: str | None = None,
+    parsed=None,
 ) -> AdmitResult:
     """Fire one mechanical/attended worker window from the tip CHECKPOINT.
 
@@ -152,6 +165,7 @@ async def admit_worker_window(
         parsed=parsed,
         admission_mode=admission_mode,
         consult_role=consult_role,
+        arc_lane=arc_lane,
     )
     packet, subject = select_packet(
         root_id,
@@ -161,6 +175,7 @@ async def admit_worker_window(
         admission_mode=admission_mode,
         consult_role=consult_role,
         source_ref=bind.source_ref,
+        arc_lane=arc_lane,
     )
     return await _fire_and_pointer(
         root_id=root_id,
@@ -174,6 +189,7 @@ async def admit_worker_window(
         implement_source_ref=bind.source_ref,
         on_admit=on_admit,
         is_implement=bind.is_implement,
+        work_key=work_key,
     )
 
 
@@ -186,6 +202,9 @@ async def admit_consult_window(
     consult_role: str,
     window_index: int | None = None,
     on_admit: Callable[[str], None] | None = None,
+    arc_lane: str = "path_sim",
+    work_key: str | None = None,
+    consult_role_at_admit: str | None = None,
 ) -> AdmitResult:
     """Fire a depth-1 consult seat window for a ledger root."""
     tip = parse_tip_checkpoint(turns)
@@ -199,8 +218,16 @@ async def admit_consult_window(
         parsed,
         scoreboard_uri=row.scoreboard_uri,
         window_index=window_index,
+        arc_lane=arc_lane,
     )
-    subject = consult_subject(row.root_id, window_index, consult_role=consult_role)
+    gate_id = _open_layer_consult_gate(parsed) if arc_lane == "layer" else None
+    subject = consult_subject_for_arc(
+        row.root_id,
+        window_index,
+        consult_role=consult_role,
+        arc_lane=arc_lane,
+        gate_id=gate_id,
+    )
     return await _fire_and_pointer(
         root_id=row.root_id,
         window_index=window_index,
@@ -209,10 +236,11 @@ async def admit_consult_window(
         caps=caps,
         workspace_root=workspace_root,
         admission_mode="consult",
-        consult_role=consult_role,
+        consult_role=consult_role_at_admit or consult_role,
         implement_source_ref=None,
         on_admit=on_admit,
         is_implement=False,
+        work_key=work_key,
     )
 
 
@@ -229,6 +257,7 @@ async def _fire_and_pointer(
     implement_source_ref: str | None,
     on_admit: Callable[[str], None] | None,
     is_implement: bool,
+    work_key: str | None = None,
 ) -> AdmitResult:
     if admission_mode_requires_write_fence(admission_mode):
         preflight = await preflight_write_lease(root_id=root_id)
@@ -282,6 +311,7 @@ async def _fire_and_pointer(
             admission_mode=admission_mode,
             consult_role=consult_role,
             implement_source_ref=implement_source_ref,
+            work_key=work_key,
         )
     except httpx.HTTPStatusError as exc:
         status = exc.response.status_code
@@ -427,7 +457,10 @@ async def _fire_and_pointer(
             on_admit(msg)
         except Exception:  # noqa: BLE001
             logger.exception("charter-runner on_admit notify failed")
-    return _ok()
+    return _ok(
+        dispatch_id=str(result.get("dispatch_id") or worker_thread or "") or None,
+        thread_id=worker_thread or None,
+    )
 
 
 __all__ = [

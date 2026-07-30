@@ -2,10 +2,30 @@
 
 from __future__ import annotations
 
-from services.git_integration_worker.cursor_dispatch_ledger import LedgerRow
+from services.git_integration_worker.cursor_dispatch_ledger import (
+    CursorDispatchLedger,
+    LedgerRow,
+)
 from services.git_integration_worker.cursor_sdk_events import emit_sdk_worker_orphaned
 
 _RESTART_SURVIVOR_TIMEOUT_S = 0.0
+
+
+def load_ledger_row(
+    ledger: CursorDispatchLedger, *, dispatch_id: str
+) -> LedgerRow | None:
+    """Load a minimal ``LedgerRow`` for stale-reclaim / survivor terminal emit."""
+    with ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT dispatch_id, thread_id, execution_id, caller_agent, "
+            "resolved_model, state_root, sdk_agent_id, sdk_run_id, status, "
+            "started_at, last_heartbeat_at "
+            "FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (dispatch_id,),
+        ).fetchone()
+    if row is None:
+        return None
+    return LedgerRow(**{k: row[k] for k in row.keys()})
 
 
 def emit_restart_survivor_terminal(

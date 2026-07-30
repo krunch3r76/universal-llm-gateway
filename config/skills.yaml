@@ -46,6 +46,9 @@ skills:
     surface_class: cursor_only
     mcp_surface_required: none
     delivery_priority: 0
+  audience-register:
+    surface_class: cursor_only
+    mcp_surface_required: none
   auditor-validatable-confidence:
     surface_class: cursor_only
     mcp_surface_required: life
@@ -373,6 +376,9 @@ skills:
     mcp_surface_required: life
   required-skills-pickup:
     surface_class: shared_sync
+    mcp_surface_required: life
+  residual-imprint:
+    surface_class: cursor_only
     mcp_surface_required: life
   research-article-ingest:
     surface_class: cursor_only

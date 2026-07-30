@@ -35,6 +35,7 @@ logger = get_logger(__name__)
 
 
 def turn_number(turn: dict) -> int:
+    """Parse a bus turn's numeric ``turn_number`` field, defaulting to zero."""
     try:
         return int(turn.get("turn_number") or 0)
     except (TypeError, ValueError):
@@ -194,6 +195,13 @@ async def harvest_completed_windows(
         # re-enter harvest and re-emit closed / re-release ledger WIP (a:26596).
         # append_closeout re-marks idempotently.
         window_log.mark_harvested(root_id, window_index)
+        from .root_ledger import open_default_ledger, record_harvest_at
+
+        conn = open_default_ledger()
+        try:
+            record_harvest_at(conn, root_id)
+        finally:
+            conn.close()
         worker_thread = str(meta.get("worker_thread") or "")
         worker_turns: list[dict] = []
         if worker_thread:

@@ -316,6 +316,16 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                 ),
             ),
         ] = None,
+        purpose: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "CDP registry/mission purpose tag on model=cdp/… generate "
+                    "(default ask). Set purpose=operator-proxy or mission for "
+                    "operator-proxy skill-chip inject; ignored on non-CDP models."
+                ),
+            ),
+        ] = None,
     ) -> dict[str, Any]:
         """Team-seat dispatch with explicit op discrimination.
 
@@ -497,7 +507,10 @@ def register_frontier_tools(mcp: FastMCP) -> None:
           (``shared_sync``) are prepended as leading ``/<slug>\\n`` manifest
           lines (not typed); the satellite attaches each via composer
           **+ → Skills → pick**. Non-Claude skills are inlined at the top of
-          the sealed prompt.
+          the sealed prompt. Staging always merges ``reasoning-posture`` +
+          ``frontier-reasoning-discipline`` into effective skills (including
+          when ``skills`` is omitted on light-bounded —
+          ``decision:reasoning-frontier-skill-pair``).
           MCP-predicated skills on a non-MCP dispatch reject 422
           ``skills_mcp_predicated`` naming the offenders; scope-default
           predicated skills are skipped with an event, never rejected.
@@ -508,6 +521,10 @@ def register_frontier_tools(mcp: FastMCP) -> None:
           Attach is best-effort: a slug not in the Customize list or a missing
           + control is skipped silently; inline bodies in the prompt carry
           delivery (friction a:26986).
+        - ``purpose``: CDP registry/mission tag on ``model=cdp/…`` generate
+          (default ``ask`` when omitted). Set ``operator-proxy`` or ``mission``
+          for operator-proxy skill-chip + seat-map inject; ignored on non-CDP
+          models.
 
         ``dispatch_thread_id`` — required compaction key and caller-owned
         thread persistence on the ``team-dispatch`` pipeline (generate/to_thread
@@ -531,9 +548,9 @@ def register_frontier_tools(mcp: FastMCP) -> None:
 
         ``reasoning_effort`` — requested reasoning knob; actual resolution is
         reported in ``knob_resolution``. No parity claim by default. NOTE:
-        ``reasoning_effort`` is NOT forwarded on ``seat="cursor-sdk"`` dispatches
-        (it is dropped with a ``reasoning_effort_ignored`` warning) — use
-        ``model_knobs`` instead.
+        non-empty ``reasoning_effort`` on ``seat="cursor-sdk"`` is rejected with
+        HTTP/tool 422 ``reasoning_effort_not_supported`` (use ``model_knobs``);
+        empty string is normalized to omit before relay.
 
         ``model_knobs`` — cursor-sdk model-variant knobs (``op="generate"``,
         ``seat="cursor-sdk"``) aligned against the resolved Cursor model's
@@ -814,6 +831,8 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                 body["reuse_thread"] = reuse_thread
             if nest_under is not None:
                 body["nest_under"] = nest_under
+            if purpose is not None:
+                body["purpose"] = purpose
         else:
             if contract in ("implement", "wrap"):
                 return {
@@ -846,12 +865,14 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             if spawn_review_provenance is not None:
                 body["spawn_review_provenance"] = spawn_review_provenance
 
+        # Empty string ≡ absent (BIND_B); do not relay "" to Stargate.
+        effort_for_relay = (reasoning_effort or "").strip() or None
         for key, val in (
             ("model", model),
             ("mcp", mcp),
             ("skills", skills),
             ("server_tools", server_tools),
-            ("reasoning_effort", reasoning_effort),
+            ("reasoning_effort", effort_for_relay),
             ("generation_options", generation_options),
             ("model_knobs", model_knobs),
             ("max_tool_turns", max_tool_turns),
@@ -871,7 +892,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             role=role,
             op=op,
             model=model or "",
-            reasoning_effort=reasoning_effort or "",
+            reasoning_effort=effort_for_relay or "",
         )
         result = await _relay(
             endpoint="/api/v1/team/dispatch",

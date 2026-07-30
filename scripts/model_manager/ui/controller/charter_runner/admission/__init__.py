@@ -23,6 +23,9 @@ from .decide import (
     EnvFacts,
     classify_shadow_diff,
     decide,
+    layer_implement_pickup,
+    layer_independence_ok,
+    layer_independence_unproven,
     map_old_skip_to_kernel,
 )
 
@@ -42,6 +45,9 @@ __all__ = [
     "decide",
     "evaluate_root",
     "find_enrolled_roots",
+    "layer_implement_pickup",
+    "layer_independence_ok",
+    "layer_independence_unproven",
     "live_wip_for_window",
     "load_turns",
     "map_old_skip_to_kernel",

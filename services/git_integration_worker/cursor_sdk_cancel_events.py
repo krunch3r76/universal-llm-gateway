@@ -12,7 +12,10 @@ from typing import Any
 from universal_event_bus import Event, event_factory
 from universal_logging import get_logger
 
-from services.git_integration_worker.cursor_sdk_events import emit_frontier_event
+from services.git_integration_worker.cursor_sdk_events import (
+    _register_terminal_emitted,
+    emit_frontier_event,
+)
 
 logger = get_logger(__name__)
 
@@ -86,6 +89,7 @@ def emit_sdk_worker_cancelled(
         error=error,
     )
     emit_frontier_event(event)
+    _register_terminal_emitted(dispatch_id)
     logger.warning(
         "cursor sdk worker cancelled: dispatch_id=%s thread_id=%s method=%s "
         "superseded_by=%s reason=%s error=%s",

@@ -121,8 +121,34 @@ def test_stage_inputs_prepends_claude_slash_skills(tmp_path, monkeypatch) -> Non
         tmp_path / "notes/system/ephemeral/cdp-endpoint/exec-skills-1/prompt.md"
     )
     text = prompt_path.read_text(encoding="utf-8")
-    assert text.startswith("/reasoning-posture\n/consult-posture\n")
+    assert text.startswith(
+        "/frontier-reasoning-discipline\n/reasoning-posture\n/consult-posture\n"
+    )
     assert "## ask" in text
+    assert staged.staged is True
+
+
+def test_stage_inputs_omitted_skills_gets_judgment_pair(tmp_path, monkeypatch) -> None:
+    from claude_bundles import cdp_model_endpoint_staging as staging
+
+    from systems.frontier_consult.cdp_generate import _stage_inputs
+
+    monkeypatch.setattr(staging, "cortex_files_root", lambda: tmp_path)
+    staged = _stage_inputs(
+        execution_id="exec-skills-light",
+        prompt="## light\n",
+        sidecar_ref=None,
+        packet_path=None,
+        skills=None,
+    )
+    prompt_path = (
+        tmp_path / "notes/system/ephemeral/cdp-endpoint/exec-skills-light/prompt.md"
+    )
+    text = prompt_path.read_text(encoding="utf-8")
+    assert text.startswith(
+        "/reasoning-posture\n/frontier-reasoning-discipline\n"
+    )
+    assert "## light" in text
     assert staged.staged is True
 
 
@@ -143,10 +169,13 @@ def test_stage_inputs_inlines_non_claude_skills(tmp_path, monkeypatch) -> None:
         tmp_path / "notes/system/ephemeral/cdp-endpoint/exec-skills-2/prompt.md"
     )
     text = prompt_path.read_text(encoding="utf-8")
-    assert not text.startswith("/")
+    # Judgment pair always prepended as slash; caller non-Claude stays inline.
+    assert text.startswith(
+        "/reasoning-posture\n/frontier-reasoning-discipline\n"
+    )
     assert "<skills_inline>" in text
     assert '<skill slug="investigation-economy"' in text
-    assert text.endswith("BODY\n") or "BODY" in text
+    assert "BODY" in text
 
 
 def test_stage_inputs_inlines_code_mcp_skills_with_claude_slash(
@@ -168,9 +197,15 @@ def test_stage_inputs_inlines_code_mcp_skills_with_claude_slash(
         tmp_path / "notes/system/ephemeral/cdp-endpoint/exec-skills-mixed/prompt.md"
     )
     text = prompt_path.read_text(encoding="utf-8")
-    assert text.startswith("/reasoning-posture\n")
+    assert text.startswith(
+        "/frontier-reasoning-discipline\n/reasoning-posture\n"
+    )
     assert "/path-sim" not in text.split("<skills_inline>", 1)[0]
     assert '<skill slug="path-sim"' in text
+    assert "truncated CDP inline excerpt for path-sim" in text
+    # Sealed excerpt, not full SKILL.md (~18k).
+    inline_block = text.split("<skills_inline>", 1)[1].split("</skills_inline>", 1)[0]
+    assert len(inline_block) < 12000
     assert "BODY" in text
     assert staged.staged is True
 
@@ -449,6 +484,33 @@ async def test_post_cdp_turn_retries_after_unread_409(
     assert ok is True
     assert marks == [15, 16]
     assert len(posts) == 2
+
+
+def test_team_dispatch_generate_body_accepts_purpose() -> None:
+    from systems.frontier_consult.route import TeamDispatchGenerateBody
+
+    body = TeamDispatchGenerateBody(
+        op="generate",
+        contract="light-bounded",
+        dispatch_thread_id="6451",
+        model="cdp/opus-5",
+        prompt="heal",
+        purpose="operator-proxy",
+    )
+    assert body.purpose == "operator-proxy"
+
+
+def test_team_dispatch_generate_body_purpose_optional() -> None:
+    from systems.frontier_consult.route import TeamDispatchGenerateBody
+
+    body = TeamDispatchGenerateBody(
+        op="generate",
+        contract="light-bounded",
+        dispatch_thread_id="6451",
+        model="cdp/opus-5",
+        prompt="consult",
+    )
+    assert body.purpose is None
 
 
 @pytest.mark.asyncio

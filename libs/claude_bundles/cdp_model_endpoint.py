@@ -412,9 +412,16 @@ def run_cdp_generate(
     ``download_output``) are forwarded on the native submit body — same fields
     as Stargate ``POST /api/v1/providers/cdp/ask``.
 
+    ``purpose`` (default ``ask``): CDP registry/mission tag. ``operator-proxy`` /
+    ``mission`` trigger skill-chip + seat-map inject on the satellite
+    (``operator_proxy_mission.purpose_implies_mission``). Also matched when the
+    prompt body declares ``purpose: operator-proxy``.
+
     ``skills`` (optional): catalog slugs prepended via
     ``stage_cdp_prompt_with_skills`` — ``shared_sync`` as leading ``/<slug>\\n``
     manifest lines; satellite attaches via **+ → Skills → pick** (never typed).
+    Staging always merges ``reasoning-posture`` + ``frontier-reasoning-discipline``
+    even when ``skills`` is omitted (light-bounded included).
 
     ``on_submitted`` receives the satellite-minted execution id the moment the
     submit is accepted. The satellite id space is disjoint from the caller's

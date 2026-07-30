@@ -98,12 +98,13 @@ entity, assembles birth + briefing + continuation, and rejects violations before
 | `caller_agent` | `str\|None` | Dispatch provenance |
 | `timeout_seconds` | `int\|None` | Pipeline wall-clock cap |
 | `mcp` | `bool\|None` | MCP-class tools only (client loop + remote connector). `None` = per-model default; `False` = inline-only (no MCP-class tools). Does not govern provider server-side built-ins — see `server_tools`. |
-| `skills` | `list[str]\|None` | Unified skills input path; capability-selected delivery. Supported on `op=generate` and `op=to_thread` only — not `handoff`. Roleless CDP (`model=cdp/…`): Claude slugs (`shared_sync`) prepended as leading `/<slug>\\n` manifest lines (not typed); satellite attaches each via composer **+ → Skills → pick**. Non-Claude skills inlined at top. Hybrid `Use the …` is escape-only. |
+| `skills` | `list[str]\|None` | Unified skills input path; capability-selected delivery. Supported on `op=generate` and `op=to_thread` only — not `handoff`. Roleless CDP (`model=cdp/…`): Claude slugs (`shared_sync`) prepended as leading `/<slug>\\n` manifest lines (not typed); satellite attaches each via composer **+ → Skills → pick**. Non-Claude skills inlined at top. Hybrid `Use the …` is escape-only. **CDP always merges** `reasoning-posture` + `frontier-reasoning-discipline` into effective `skills=` (including light-bounded / omitted `skills` — `decision:reasoning-frontier-skill-pair`). |
 | `server_tools` | `bool\|None` | Provider server-side built-ins. Omit = ALL card-derived built-ins; `False` suppresses card-derived provider built-ins. Independent of `mcp`. |
 | `source_ref` | `str\|None` | Admission ref (`todo:{slug}`, `plan:{slug}`, `plan_phase:{slug}[/phase-N]`, `agent-bus:N#turn-N`, `packet:{path}`). On `op="generate"` with `seat=cursor-sdk`: drives `contract=implement` and `contract=wrap` — Stargate resolves `normalize → materialize → validate_packet` server-side from the source entity's **attributes** (`files_expected`, `acceptance_criteria`, `required_skills`, gate keys); the `source_uri` spec body is fingerprinted via `content_hash`, never content-read. On `op="handoff"`: same normalize/materialize path; **preferred for the implement lane** (`cursor-implement` / `web-implement`). `agent-bus:N` is gated unless an explicit `#turn-N` resolves it; `task:`/`project:` are grammar-excluded (containers, not dispatchable). Relay pass-through — the MCP client does NOT resolve it. |
 | `packet_path` | `str\|None` | Explicit file-backed prompt/instruction source for `op="generate"`; mutually exclusive with `prompt` and `sidecar_ref`. Honored for `contract=light-bounded`, `pure-mechanical`, and `implement` (legacy hand-authored escape-hatch; implement also runs implement-ready gate). Default implement path is `source_ref`. On `op="handoff"`, it is the hand-authored alternative to `source_ref`; both-present triggers the existing drift guard. |
 | `prompt` | `str\|None` | Atomic inline brief for `op="generate"`/`op="to_thread"` consult contracts. Preferred for short self-contained briefs because it cannot desynchronize from the dispatch call. Mutually exclusive with `packet_path`, `sidecar_ref`, and `source_ref`; rejected on `implement`, `wrap`, and `handoff`. |
 | `sidecar_ref` | `str\|None` | Atomic file-backed brief reference (`cortex://` or `workspaces://`) for `op="generate"`/`op="to_thread"` consult contracts. Preferred for long briefs. Same exclusivity/contract rules as `prompt`. |
+| `purpose` | `str\|None` | **CDP generate only** (`model=cdp/…`). Registry/mission tag forwarded to the satellite (default `ask` when omitted). Set `operator-proxy` or `mission` for operator-proxy skill-chip + seat-map inject (`operator_proxy_mission.py`). Ignored on non-CDP models. |
 | `pointer_body` | `str\|None` | `op="handoff"` only — override the pointer turn body (≤25 lines) |
 | `tags` | `list[str]\|None` | `op="handoff"` only — bus thread tags (default: `["agent:{to_agent}", "type:handoff", "contract:{handoff_contract}"]`). Caller-supplied tags are preserved; `contract:{value}` is appended if absent |
 | `seat=cursor-sdk` (op=generate) | — | **Default transport for bound mechanical implement.** SDK auto substrate; default delivery=thread; general-execution via `contract=light-bounded|pure-mechanical` with context on `dispatch_thread_id` or `packet_path` (packet wins when both present); implement via `source_ref=todo:{slug}` + `contract=implement` (server materialization + implement-ready gate; legacy `packet_path` escape-hatch); materialize-only via `contract=wrap` + `source_ref`; poll via `poll_hint` (agent-bus), not `pipeline(op=result)`. **Dense attributes required** for implement (Composer executes mechanically). `cursor-implement` handoff = operator-attended fallback |
@@ -418,10 +419,16 @@ dispatch(tool="pipeline", arguments='{"op": "result", "execution_id": "...", "wa
 
 ## project_ask
 
+**Escape-only / deprecation candidate** for agent CDP consults — prefer
+`team_dispatch(model=cdp/opus-5|cdp/fable|…)` (`consult-routing` § Surface gate ·
+`claude-ai-cdp-navigation`). This tool remains on code `tools/list` for
+satellite-direct, IF6, and legacy callers. Operator-proxy missions: prefer
+`team_dispatch(…, purpose=operator-proxy|mission)` on CDP generate; `project_ask`
+with `purpose=` remains a valid escape.
+
 **Code-surface only** — Jupiter CDP sealed project-ask via the `cdp-ask` satellite
 (`libs/cdp_ask/`). Thin httpx relay from MCP; **split submit / poll / abort** (no
-server-side poll loop in the handler). Replaces hub-checkout SSH for path-sim
-R-admit and other vortex-code seats.
+server-side poll loop in the handler).
 
 **Prerequisites**
 
@@ -469,7 +476,25 @@ Dogfood fallback (hub checkout): `scripts/cortex/claude-ai-sync-jupiter project-
 
 ### Examples
 
-Path-sim R-admit (MCP product path):
+**Preferred CDP path** (consult / R-admit / binder):
+
+```
+team_dispatch(op="generate", model=cdp/opus-5, contract=light-bounded,
+              sidecar_ref="cortex://notes/system/threads/my-r-prompt.md",
+              dispatch_thread_id="<thread>")
+# → poll_hint; wait until archive_uri is set
+```
+
+Operator-proxy mission (primary — purpose wire on CDP generate):
+
+```
+team_dispatch(op="generate", model=cdp/opus-5, contract=light-bounded,
+              purpose="operator-proxy",
+              prompt="<DIRECTIVE body>",
+              dispatch_thread_id="<thread>")
+```
+
+Escape / satellite-direct (prefer `team_dispatch(model=cdp/opus-5)` for R-admit):
 
 ```
 project_ask(op="submit",

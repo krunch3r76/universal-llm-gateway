@@ -177,6 +177,7 @@ def aside_roots(roots: tuple[CharterRootRow, ...]) -> list[CharterRootRow]:
 
 
 def oldest_idle_ms(rows: list[SdkDispatchRow] | list[CdpLegRow]) -> int | None:
+    """Max stall-idle age (SDK) or wall elapsed (CDP) among live rows."""
     ages: list[int] = []
     for row in rows:
         if isinstance(row, SdkDispatchRow) and row.idle_age_ms is not None:
@@ -184,6 +185,25 @@ def oldest_idle_ms(rows: list[SdkDispatchRow] | list[CdpLegRow]) -> int | None:
         elif isinstance(row, CdpLegRow) and row.elapsed_ms is not None:
             ages.append(row.elapsed_ms)
     return max(ages) if ages else None
+
+
+def oldest_elapsed_ms(rows: list[SdkDispatchRow] | list[CdpLegRow]) -> int | None:
+    """Max wall elapsed among live rows (SDK ``elapsed_ms`` / CDP ``elapsed_ms``)."""
+    ages: list[int] = []
+    for row in rows:
+        if row.elapsed_ms is not None:
+            ages.append(row.elapsed_ms)
+    return max(ages) if ages else None
+
+
+def _sdk_live_timing(row: SdkDispatchRow) -> str:
+    """Queue position, else wall elapsed + progress-idle (stall cue)."""
+    if row.queue_position is not None:
+        return f"q{row.queue_position}"
+    parts: list[str] = [f"el={_ms(row.elapsed_ms)}"]
+    if row.idle_age_ms is not None:
+        parts.append(f"idle={_ms(row.idle_age_ms)}")
+    return " ".join(parts)
 
 
 def sdk_live_line(
@@ -198,10 +218,7 @@ def sdk_live_line(
     role = row_role(row, peers, multi)
     role_tag = f"{ROW_TAG[role]} " if role else ""
     flag = "DIVERGENT" if row.divergent_fields else ",".join(row.emitters_seen) or "-"
-    if row.queue_position is not None:
-        timing = f"q{row.queue_position}"
-    else:
-        timing = f"idle={_ms(row.idle_age_ms)}"
+    timing = _sdk_live_timing(row)
     stall = f" stall={row.stall_stage}" if row.stall_stage else ""
     tc = f" tc={row.tool_call_count}" if row.tool_call_count is not None else ""
     if row.last_tool_name:
@@ -216,7 +233,7 @@ def sdk_live_line(
         f"root={_truncate(row.root_id, 8)} "
         f"w={_truncate(row.thread_id, 8)} "
         f"{_truncate(row.model, 18)} "
-        f"{timing:<12}{tc}{tool_col} [{flag}]{stall}"
+        f"{timing}{tc}{tool_col} [{flag}]{stall}"
     )
     if row.provenance != "signal":
         return _truncate(base, width)

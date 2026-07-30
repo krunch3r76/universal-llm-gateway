@@ -219,6 +219,37 @@ def resolve_terminal_facts(
     )
 
 
+def terminal_facts_next_advisory(block: dict[str, object]) -> str | None:
+    """Advisory _next fragment when terminal_facts carries at least one fact."""
+    fact_count = block.get("fact_count")
+    if not isinstance(fact_count, int) or fact_count <= 0:
+        return None
+    noun = "disposition" if fact_count == 1 else "dispositions"
+    hint = (
+        f"terminal_facts: {fact_count} terminal {noun} on this hub — read before "
+        "material recommendations. Machine-derived leads: check epistemic_state and "
+        "read the backing assertion_id before citing."
+    )
+    if block.get("scope_truncated"):
+        hint += " scope_truncated — absence is not proof of no denial."
+    return hint
+
+
+def append_terminal_facts_next_hint(payload: dict[str, object]) -> None:
+    """Compose terminal_facts advisory onto entity_get ``_next`` (advisory only)."""
+    block = payload.get("terminal_facts")
+    if not isinstance(block, dict):
+        return
+    advisory = terminal_facts_next_advisory(block)
+    if not advisory:
+        return
+    existing = payload.get("_next")
+    if isinstance(existing, str) and existing:
+        payload["_next"] = f"{existing}; {advisory}"
+    else:
+        payload["_next"] = advisory
+
+
 def attach_terminal_facts(
     conn: sqlite3.Connection,
     payload: dict[str, object],
