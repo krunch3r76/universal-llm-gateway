@@ -99,6 +99,67 @@ _A7738_CLAIM = (
     "12 months.'"
 )
 
+_A12461_CLAIM = (
+    "On 2026-04-29, Nell Cruz stated Chase was unable to spread the escrow "
+    "shortage beyond the standard 12-month RESPA floor during a callback."
+)
+
+_A24187_CLAIM = (
+    "Escrow dept DENIED a longer spread unless there is a loan modification "
+    "or a bank error."
+)
+
+_A23082_CLAIM = (
+    "Left a callback request emphasizing the hardship and possible extension "
+    "of the escrow shortage spread beyond the previously-denied terms."
+)
+
+
+def test_a12461_date_is_in_claim_not_valid_from() -> None:
+    preview = enrich_action_predicate_from_claim(
+        _A12461_CLAIM,
+        _ENTITY,
+        assertion_id=12461,
+        observed_at="2026-05-08T13:28:56Z",
+        valid_from="2026-05-08",
+    )
+    assert preview is not None
+    assert preview.predicate_form == "denied(spread_extension, chase, 2026-04-29)"
+
+
+def test_a24187_denies_spread_not_loan_modification() -> None:
+    preview = enrich_action_predicate_from_claim(
+        _A24187_CLAIM,
+        _ENTITY,
+        assertion_id=24187,
+    )
+    if preview is None:
+        return
+    assert preview.action == "spread_extension"
+    assert preview.action != "loan_modification"
+
+
+def test_a23082_is_not_terminal_denial() -> None:
+    preview = enrich_action_predicate_from_claim(
+        _A23082_CLAIM,
+        _ENTITY,
+        assertion_id=23082,
+    )
+    if preview is None:
+        return
+    assert preview.functor != "denied"
+
+
+def test_no_literal_unknown_in_predicate_form() -> None:
+    preview = enrich_action_predicate_from_claim(
+        "Chase denied spread extension with no date in claim.",
+        _ENTITY,
+        assertion_id=99002,
+    )
+    if preview is None:
+        return
+    assert "unknown" not in preview.predicate_form
+
 
 def test_a8909_does_not_emit_granted() -> None:
     preview = enrich_action_predicate_from_claim(
@@ -139,7 +200,7 @@ def test_a26054_date_is_june_26_not_observed_at() -> None:
     assert preview is not None
     assert preview.functor == "denied"
     assert "2026-07-24" not in preview.predicate_form
-    assert preview.predicate_form.endswith("2026-06-26)") or ", unknown)" in preview.predicate_form
+    assert preview.predicate_form.endswith("2026-06-26)")
 
 
 def test_a20701_still_emits_denied_spread_extension() -> None:

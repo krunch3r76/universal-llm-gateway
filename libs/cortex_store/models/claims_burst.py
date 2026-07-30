@@ -40,6 +40,12 @@ class BurstClaimItem(BaseModel):
     party: str
     derivation: str | None = None
     claim_excerpt: str | None = None
+    hop_distance: int | None = None
+    arrival_path: list[str] | None = None
+    machine_derived: bool = False
+    detector_version: str | None = None
+    disposition_date: str | None = None
+    undated: bool = False
 
 
 class ContradictionPairItem(BaseModel):

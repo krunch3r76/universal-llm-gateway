@@ -101,6 +101,90 @@ def _has_date_pattern(text: str) -> bool:
     return bool(_DATE_PATTERN.search(text))
 
 
+# Matter scopes (Fable dd1858ae Q5): assert create must carry valid_from XOR
+# attributes.valid_from_unknown_reason — no silent defaulting from claim text.
+_VALID_FROM_UNKNOWN_REASON_ATTR = "valid_from_unknown_reason"
+
+_MATTER_VALID_FROM_SCOPES = (
+    "account:chase-mortgage-8787",
+    "case:chase-escrow-flintridge-2026",
+    "case:boe19p-flintridge-appeal-2026",
+)
+
+
+def entity_in_matter_valid_from_scope(entity_id: str) -> bool:
+    """True when entity_id is a matter hub or a direct child under one."""
+    for scope in _MATTER_VALID_FROM_SCOPES:
+        if entity_id == scope or entity_id.startswith(f"{scope}/"):
+            return True
+    return False
+
+
+def _has_valid_from(valid_from: str | None) -> bool:
+    return bool(valid_from and valid_from.strip())
+
+
+def _valid_from_unknown_reason(attributes: dict[str, object] | None) -> str | None:
+    if not attributes:
+        return None
+    raw = attributes.get(_VALID_FROM_UNKNOWN_REASON_ATTR)
+    if raw is None:
+        return None
+    if not isinstance(raw, str):
+        raw = str(raw)
+    stripped = raw.strip()
+    return stripped or None
+
+
+def _check_matter_valid_from_gate(
+    entity_id: str,
+    valid_from: str | None,
+    attributes: dict[str, object] | None,
+) -> ValidationDiagnostic | None:
+    if not entity_in_matter_valid_from_scope(entity_id):
+        return None
+
+    has_vf = _has_valid_from(valid_from)
+    attrs = attributes or {}
+    unknown_reason = _valid_from_unknown_reason(attributes)
+    has_unknown_key = _VALID_FROM_UNKNOWN_REASON_ATTR in attrs
+
+    if has_vf and unknown_reason is not None:
+        return ValidationDiagnostic(
+            field="valid_from",
+            message=(
+                "Matter-scoped assertions require valid_from XOR "
+                "attributes.valid_from_unknown_reason — do not set both."
+            ),
+        )
+    if has_vf and has_unknown_key and unknown_reason is None:
+        return ValidationDiagnostic(
+            field="valid_from_unknown_reason",
+            message=(
+                "valid_from_unknown_reason must be a non-empty string when "
+                "present alongside valid_from on matter-scoped assertions."
+            ),
+        )
+    if has_vf or unknown_reason is not None:
+        return None
+    if has_unknown_key:
+        return ValidationDiagnostic(
+            field="valid_from_unknown_reason",
+            message=(
+                "valid_from_unknown_reason must be a non-empty string when "
+                "valid_from is absent on matter-scoped assertions."
+            ),
+        )
+    return ValidationDiagnostic(
+        field="valid_from",
+        message=(
+            "Matter-scoped assertions require valid_from or "
+            "attributes.valid_from_unknown_reason explaining why valid_from "
+            "is unknown."
+        ),
+    )
+
+
 def compute_quality_score(body: AssertionCreate) -> float:
     """Compute assertion quality score (0.0–1.0).
 
@@ -140,10 +224,18 @@ def validate_assertion(body: AssertionCreate) -> ValidationResult:
     they skip chunk/evidence_uris requirements and auto-default observed_at.
     """
     is_observation = body.derivation_type in _OBSERVATION_TYPES
+    in_matter_scope = entity_in_matter_valid_from_scope(body.entity_id)
+    unknown_reason = _valid_from_unknown_reason(body.attributes)
     score = compute_quality_score(body)
     if is_observation and score < 0.7:
         score = max(score, 0.7)
     result = ValidationResult(quality_score=score)
+
+    matter_vf_diag = _check_matter_valid_from_gate(
+        body.entity_id, body.valid_from, body.attributes
+    )
+    if matter_vf_diag is not None:
+        result.hard_reject.append(matter_vf_diag)
 
     if not body.derivation_type:
         result.hard_reject.append(
@@ -196,7 +288,13 @@ def validate_assertion(body: AssertionCreate) -> ValidationResult:
                 )
             )
 
-    if _has_date_pattern(body.claim) and not body.valid_from and not is_observation:
+    temporal_unknown_documented = in_matter_scope and unknown_reason is not None
+    if (
+        _has_date_pattern(body.claim)
+        and not _has_valid_from(body.valid_from)
+        and not is_observation
+        and not temporal_unknown_documented
+    ):
         result.hard_reject.append(
             ValidationDiagnostic(
                 field="valid_from",

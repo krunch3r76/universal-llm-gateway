@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -10,7 +11,10 @@ from fastapi.testclient import TestClient
 
 from cortex_store.claim_hash import compute_claim_hash
 from cortex_store.dispatch_ops.ops_entities import _op_entity_get
-from cortex_store.terminal_facts import resolve_terminal_facts_scope
+from cortex_store.terminal_facts import (
+    radiate_terminal_facts_scope,
+    resolve_terminal_facts_scope,
+)
 
 _A20701_CLAIM = (
     "WO 956908029 / lower-payment request — DENIED, confirmed 2026-06-26. "
@@ -297,6 +301,97 @@ def test_resolve_terminal_facts_scope_includes_account_via_finance_bridge(
     assert _ACCOUNT_ENTITY in scope
 
 
+_SERVICER_ENTITY = "party:chase-fixture-6386"
+_HUB_STAR = "case:hub-star-fixture-6386"
+
+
+@pytest.fixture()
+def radiation_two_hop_fixture(migrated_conn: sqlite3.Connection) -> None:
+    """Case → finance → servicer with terminal denial on non-hub servicer entity."""
+    _seed_entity(migrated_conn, _HUB_STAR, entity_type="case")
+    _seed_entity(migrated_conn, _FINANCE_ENTITY, entity_type="finance")
+    _seed_entity(migrated_conn, _SERVICER_ENTITY, entity_type="party")
+    _insert_relationship(
+        migrated_conn,
+        source_id=_HUB_STAR,
+        target_id=_FINANCE_ENTITY,
+        rel_type="involves",
+    )
+    _insert_relationship(
+        migrated_conn,
+        source_id=_FINANCE_ENTITY,
+        target_id=_SERVICER_ENTITY,
+        rel_type="related_to",
+    )
+    _insert_assertion(
+        migrated_conn,
+        entity_id=_SERVICER_ENTITY,
+        assertion_id=55001,
+        claim=_A20701_CLAIM,
+        observed_at="2026-06-26T19:54:57Z",
+        valid_from="2026-06-26",
+    )
+
+
+def test_radiation_reaches_non_hub_terminal_fact(
+    cortex_client: TestClient,
+    radiation_two_hop_fixture: None,
+) -> None:
+    resp = cortex_client.get(f"/entities/{_HUB_STAR}")
+    assert resp.status_code == 200
+    facts = resp.json()["terminal_facts"]["facts"]
+    assert any(item["assertion_id"] == 55001 for item in facts)
+    remote = next(item for item in facts if item["assertion_id"] == 55001)
+    assert not remote["entity_id"].startswith(("case:", "account:"))
+    assert remote["hop_distance"] == 2
+    assert remote["arrival_path"] == [_HUB_STAR, _FINANCE_ENTITY, _SERVICER_ENTITY]
+
+
+def test_radiated_scope_includes_two_hop_neighbours(
+    migrated_conn: sqlite3.Connection,
+    radiation_two_hop_fixture: None,
+) -> None:
+    scope = resolve_terminal_facts_scope(migrated_conn, _HUB_STAR)
+    assert _SERVICER_ENTITY in scope
+    radiation = radiate_terminal_facts_scope(migrated_conn, _HUB_STAR)
+    assert radiation.hop_distances[_SERVICER_ENTITY] == 2
+
+
+def test_entity_cap_exhaustion_degrades_not_vanishes(
+    cortex_client: TestClient,
+    migrated_conn: sqlite3.Connection,
+) -> None:
+    hub = "case:cap-degrade-fixture-6386"
+    _seed_entity(migrated_conn, hub, entity_type="case")
+    _insert_assertion(
+        migrated_conn,
+        entity_id=hub,
+        assertion_id=56001,
+        claim=_A20701_CLAIM,
+        observed_at="2026-06-26T19:54:57Z",
+        valid_from="2026-06-26",
+    )
+    leaf_ids = [f"todo:cap-leaf-{idx}-6386" for idx in range(60)]
+    for leaf_id in leaf_ids:
+        _seed_entity(migrated_conn, leaf_id, entity_type="todo")
+        _insert_relationship(
+            migrated_conn,
+            source_id=hub,
+            target_id=leaf_id,
+            rel_type="references",
+        )
+    with patch("cortex_store.scope_radiation.HUB_SCOPE_ENTITY_CAP", 5), patch(
+        "cortex_store.scope_radiation.HUB_REL_THRESHOLD",
+        100,
+    ):
+        resp = cortex_client.get(f"/entities/{hub}")
+    assert resp.status_code == 200
+    block = resp.json()["terminal_facts"]
+    assert block["scope_truncated"] is True
+    assert block["scope_size"] <= 5
+    assert any(item["assertion_id"] == 56001 for item in block["facts"])
+
+
 def test_terminal_facts_use_compact_claim_and_derivation(
     cortex_client: TestClient,
     escrow_case_fixture: None,
@@ -304,5 +399,128 @@ def test_terminal_facts_use_compact_claim_and_derivation(
     resp = cortex_client.get(f"/entities/{_CASE_ENTITY}")
     fact = resp.json()["terminal_facts"]["facts"][0]
     assert fact["derivation"] == "action_enrichment_template_v0"
+    assert fact["machine_derived"] is True
+    assert fact["detector_version"] == "action_enrichment_template_v0"
     assert len(fact["claim"]) <= 200
-    assert fact["claim_excerpt"] == fact["claim"]
+    assert fact.get("claim_excerpt") is None
+    assert fact["hop_distance"] == 0
+    assert fact["arrival_path"] == [_CASE_ENTITY]
+
+
+_LIVE_DB = (
+    Path("/home/io/.local/share/git-integration-worker/cursor-dispatch-homes")
+    / "a41f1f3fb695-78ec3ff3-home"
+    / ".cortex"
+    / "cortex.db"
+)
+
+_FABRICATED_ASSERTION_IDS = frozenset(
+    {7910, 8284, 21637, 24734, 23262, 8909, 27045, 23082, 24187}
+)
+
+_SCOPE_REGRESSION_FIXTURES = (
+    {
+        "hub": "case:chase-escrow-flintridge-2026",
+        "scope_size": 30,
+        "required_assertions": frozenset({20701, 7738, 26054, 12461}),
+        "required_predicates": {
+            20701: "denied(spread_extension, chase, 2026-06-26)",
+            7738: "denied(spread_extension, chase, 2026-04-29)",
+            26054: "denied(spread_extension, chase, 2026-06-26)",
+            12461: "denied(spread_extension, chase, 2026-04-29)",
+        },
+        "min_fact_count": 5,
+        "fact_count": 5,
+    },
+    {
+        "hub": "account:chase-mortgage-8787",
+        "scope_size": 28,
+        "required_assertions": frozenset({20701, 7738, 26054, 12461}),
+        "required_predicates": {
+            20701: "denied(spread_extension, chase, 2026-06-26)",
+            7738: "denied(spread_extension, chase, 2026-04-29)",
+            26054: "denied(spread_extension, chase, 2026-06-26)",
+            12461: "denied(spread_extension, chase, 2026-04-29)",
+        },
+        "min_fact_count": 4,
+        "fact_count": 4,
+    },
+    {
+        "hub": "case:boe19p-flintridge-appeal-2026",
+        "scope_size": 50,
+        "required_assertions": frozenset(),
+        "required_predicates": {},
+        "min_fact_count": 0,
+        "max_fact_count": 0,
+    },
+)
+
+
+def _live_cortex_conn() -> sqlite3.Connection | None:
+    if not _LIVE_DB.exists():
+        return None
+    from cortex_store.db import _connect
+
+    return _connect(_LIVE_DB)
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("fixture", _SCOPE_REGRESSION_FIXTURES, ids=lambda f: f["hub"])
+def test_live_hub_scope_and_fact_count_regression(fixture: dict) -> None:
+    from cortex_store.scope_radiation import radiate_scope
+    from cortex_store.terminal_facts import resolve_terminal_facts
+
+    conn = _live_cortex_conn()
+    if conn is None:
+        pytest.skip("live cortex.db unavailable")
+    hub = fixture["hub"]
+    try:
+        row = conn.execute("SELECT 1 FROM entities WHERE id = ?", (hub,)).fetchone()
+        if row is None:
+            pytest.skip(f"{hub} not in live db")
+
+        scope = radiate_scope(conn, hub)
+        block, _ = resolve_terminal_facts(conn, hub)
+
+        assert len(scope.hop_distances) == fixture["scope_size"]
+        assert scope.hop_distances[hub] == 0
+
+        if block is None:
+            assert fixture["min_fact_count"] == 0
+            return
+
+        assert block.scope_size == fixture["scope_size"]
+        assert block.fact_count >= fixture["min_fact_count"]
+        if "fact_count" in fixture:
+            assert block.fact_count == fixture["fact_count"]
+        if "max_fact_count" in fixture:
+            assert block.fact_count <= fixture["max_fact_count"]
+
+        by_id = {item.assertion_id: item for item in block.facts}
+        for assertion_id in fixture["required_assertions"]:
+            assert assertion_id in by_id
+            expected = fixture["required_predicates"][assertion_id]
+            assert by_id[assertion_id].predicate_form == expected
+
+        all_ids = {item.assertion_id for item in block.facts}
+        assert _FABRICATED_ASSERTION_IDS.isdisjoint(all_ids)
+
+        if block.capped:
+            assert block.facts_dropped == block.fact_count - block.cap
+            assert len(block.facts) == block.cap
+        else:
+            assert block.facts_dropped == 0
+            assert len(block.facts) == block.fact_count
+
+        undated = [item for item in block.facts if item.undated]
+        dated = [item for item in block.facts if not item.undated]
+        if undated and dated:
+            first_undated_idx = next(
+                idx for idx, item in enumerate(block.facts) if item.undated
+            )
+            last_dated_idx = max(
+                idx for idx, item in enumerate(block.facts) if not item.undated
+            )
+            assert first_undated_idx > last_dated_idx
+    finally:
+        conn.close()

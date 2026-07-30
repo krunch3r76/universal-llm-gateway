@@ -8,19 +8,23 @@ from __future__ import annotations
 
 import sqlite3
 
-from predicate_form.action_vocabulary import ACTION_VOCAB_V0
+from predicate_form.action_vocabulary import (
+    ACTION_VOCAB_BY_DOMAIN,
+    ACTION_VOCAB_V0,
+    parse_action_predicate,
+)
 
+from . import scope_radiation
 from .claims_burst import burst_claims
 from .models.claims_burst import BurstClaimItem, ClaimsBurstRequest
 from .models.terminal_facts import TerminalFactsBlock
-from .subgraph_traversal import archived_set, bfs_traverse
+from .scope_radiation import RadiatedScope, radiate_scope
 
 TERMINAL_FACTS_CAP = 17
+TERMINAL_FACTS_HOPS = 2
 CLAIM_EXCERPT_MAX = 200
 HUB_ID_PREFIXES = ("case:", "account:")
-HUB_SCOPE_EDGE_TYPES = ["involves", "references", "related_to"]
-FINANCE_PREFIX = "finance:"
-HUB_SCOPE_ENTITY_CAP = 50
+DETECTOR_VERSION = "action_enrichment_template_v0"
 
 
 def is_terminal_facts_hub(entity_id: str) -> bool:
@@ -28,100 +32,148 @@ def is_terminal_facts_hub(entity_id: str) -> bool:
     return entity_id.startswith(HUB_ID_PREFIXES)
 
 
-def _hub_neighbors(
-    conn: sqlite3.Connection,
-    root: str,
-    *,
-    archived: set[str],
-) -> dict[str, int]:
-    return bfs_traverse(
-        conn=conn,
-        root=root,
-        hops=1,
-        edge_types=HUB_SCOPE_EDGE_TYPES,
-        archived=archived,
-        entity_cap=HUB_SCOPE_ENTITY_CAP,
-    )
-
-
 def resolve_terminal_facts_scope(
     conn: sqlite3.Connection,
     entity_id: str,
 ) -> list[str]:
-    """Depth-1 hub scope: root plus linked case/account hubs via structural edges."""
+    """Radiated hub scope: root plus n-hop neighbours (no prefix or edge filter)."""
     if not is_terminal_facts_hub(entity_id):
         return [entity_id]
+    scope = radiate_scope(conn, entity_id, hops=TERMINAL_FACTS_HOPS)
+    return sorted(scope.hop_distances)
 
-    scope: set[str] = {entity_id}
-    archived = archived_set(conn)
-    visited = _hub_neighbors(conn, entity_id, archived=archived)
 
-    for neighbor_id in visited:
-        if neighbor_id == entity_id:
-            continue
-        if is_terminal_facts_hub(neighbor_id):
-            scope.add(neighbor_id)
-            continue
-        if not neighbor_id.startswith(FINANCE_PREFIX):
-            continue
-        bridged = _hub_neighbors(conn, neighbor_id, archived=archived)
-        for hub_id in bridged:
-            if is_terminal_facts_hub(hub_id):
-                scope.add(hub_id)
+def radiate_terminal_facts_scope(
+    conn: sqlite3.Connection,
+    entity_id: str,
+) -> RadiatedScope:
+    """Full radiation envelope with hop distances, paths, and truncation flag."""
+    if not is_terminal_facts_hub(entity_id):
+        return RadiatedScope({entity_id: 0}, {entity_id: [entity_id]}, False)
+    return radiate_scope(conn, entity_id, hops=TERMINAL_FACTS_HOPS)
 
-    return sorted(scope)
+
+def _disposition_date(item: BurstClaimItem) -> str | None:
+    pred = parse_action_predicate(item.predicate_form, assertion_id=item.assertion_id)
+    return pred.date if pred else None
 
 
 def _compact_terminal_fact(item: BurstClaimItem) -> BurstClaimItem:
     excerpt = item.claim_excerpt or item.claim
     if len(excerpt) > CLAIM_EXCERPT_MAX:
         excerpt = excerpt[: CLAIM_EXCERPT_MAX - 1].rstrip() + "…"
+    detector = item.derivation or DETECTOR_VERSION
+    disposition_date = _disposition_date(item)
     return item.model_copy(
         update={
             "claim": excerpt,
-            "claim_excerpt": excerpt,
-            "derivation": item.derivation or "action_enrichment_template_v0",
+            "claim_excerpt": None,
+            "derivation": detector,
+            "machine_derived": True,
+            "detector_version": detector,
+            "disposition_date": disposition_date,
+            "undated": disposition_date is None,
         }
     )
+
+
+def _action_domain(action: str) -> str | None:
+    for domain, actions in ACTION_VOCAB_BY_DOMAIN.items():
+        if action in actions:
+            return domain
+    return None
+
+
+def _hub_primary_domain(entity_id: str) -> str:
+    lower = entity_id.lower()
+    if "boe19p" in lower or ("appeal" in lower and "escrow" not in lower):
+        return "tax_appeal"
+    return "mortgage_escrow"
+
+
+def _proximity_rank(item: BurstClaimItem, *, hub_entity_id: str) -> tuple[int, int, int]:
+    primary = _hub_primary_domain(hub_entity_id)
+    action_domain = _action_domain(item.action)
+    domain_rank = 0 if action_domain == primary else 1
+    return (domain_rank, item.hop_distance or 0, item.assertion_id)
+
+
+def _partition_terminal_rows(
+    rows: list[BurstClaimItem],
+    *,
+    hub_entity_id: str,
+) -> list[BurstClaimItem]:
+    dated: list[tuple[BurstClaimItem, str]] = []
+    undated: list[BurstClaimItem] = []
+    for item in rows:
+        disposition_date = _disposition_date(item)
+        if disposition_date:
+            dated.append((item, disposition_date))
+        else:
+            undated.append(item)
+    dated.sort(
+        key=lambda pair: (pair[1], *_proximity_rank(pair[0], hub_entity_id=hub_entity_id)),
+        reverse=True,
+    )
+    undated.sort(key=lambda item: _proximity_rank(item, hub_entity_id=hub_entity_id))
+    return [item for item, _ in dated] + undated
 
 
 def resolve_terminal_facts(
     conn: sqlite3.Connection,
     entity_id: str,
 ) -> tuple[TerminalFactsBlock | None, str | None]:
-    """Return terminal facts block and optional omission reason.
-
-    When no terminal rows exist, returns (None, None) — omit the block.
-    On resolution failure, returns (None, reason) for the caller to surface.
-    """
+    """Return terminal facts block and optional omission reason."""
     if not is_terminal_facts_hub(entity_id):
         return None, None
 
-    scope_entity_ids = resolve_terminal_facts_scope(conn, entity_id)
+    radiation = radiate_terminal_facts_scope(conn, entity_id)
+    scope_entity_ids = sorted(radiation.hop_distances)
     request = ClaimsBurstRequest(
         vocabulary=sorted(ACTION_VOCAB_V0),
         scope_entity_ids=scope_entity_ids,
         include_contradictions=False,
     )
     response = burst_claims(conn, request)
-    seen: set[int] = set()
-    terminal_rows: list[BurstClaimItem] = []
-    for item in response.claims:
-        if not item.terminal or item.assertion_id in seen:
-            continue
-        seen.add(item.assertion_id)
-        terminal_rows.append(_compact_terminal_fact(item))
 
-    if not terminal_rows:
+    primary_domain = _hub_primary_domain(entity_id)
+    primary_vocab = ACTION_VOCAB_BY_DOMAIN.get(primary_domain, frozenset())
+
+    by_assertion: dict[int, BurstClaimItem] = {}
+    for item in response.claims:
+        if not item.terminal:
+            continue
+        if item.action not in primary_vocab:
+            continue
+        hop = radiation.hop_distances.get(item.entity_id, 0)
+        path = radiation.arrival_paths.get(item.entity_id, [entity_id])
+        enriched = item.model_copy(
+            update={"hop_distance": hop, "arrival_path": path},
+        )
+        existing = by_assertion.get(item.assertion_id)
+        if existing is None or (enriched.hop_distance or 0) < (existing.hop_distance or 0):
+            by_assertion[item.assertion_id] = enriched
+
+    if not by_assertion:
         return None, None
 
-    capped = len(terminal_rows) > TERMINAL_FACTS_CAP
-    facts = terminal_rows[:TERMINAL_FACTS_CAP]
+    ordered = _partition_terminal_rows(list(by_assertion.values()), hub_entity_id=entity_id)
+    facts = [_compact_terminal_fact(item) for item in ordered]
+    fact_count = len(facts)
+    capped = fact_count > TERMINAL_FACTS_CAP
+    facts_dropped = max(0, fact_count - TERMINAL_FACTS_CAP)
+
     return (
         TerminalFactsBlock(
-            facts=facts,
+            facts=facts[:TERMINAL_FACTS_CAP],
             cap=TERMINAL_FACTS_CAP,
             capped=capped,
+            fact_count=fact_count,
+            facts_dropped=facts_dropped,
+            scope_truncated=radiation.truncated,
+            scope_size=len(scope_entity_ids),
+            scope_cap=scope_radiation.HUB_SCOPE_ENTITY_CAP,
+            detector_version=DETECTOR_VERSION,
         ),
         None,
     )

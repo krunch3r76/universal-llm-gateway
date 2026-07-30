@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 from .action_vocabulary import TERMINAL_FUNCTORS
 
-_ACTION_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+_MORTGAGE_ACTION_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (
         re.compile(
             r"spread(?:\s+the)?\s+escrow\s+shortage|"
@@ -34,8 +34,15 @@ _ACTION_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"hardship\s+program", re.I), "hardship_program"),
 )
 
+_ACTION_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = _MORTGAGE_ACTION_PATTERNS
 _DENIED_RE = re.compile(
-    r"\b(?:was\s+)?denied\b|\bunable\s+to\b|\bcan(?:no)?t\b.*\bspread\b",
+    r"\b(?:was\s+)?denied\b|\bdenial\b|\bunable\s+to\b|\bcan(?:no)?t\b.*\bspread\b|"
+    r"invalid\s*[–-]\s*closed",
+    re.I,
+)
+_PRIOR_DENIAL_REF_RE = re.compile(r"\bpreviously[\s-]denied\b", re.I)
+_CARVEOUT_SPLIT_RE = re.compile(
+    r"\b(?:unless|except(?:\s+that)?|if\s+(?:there\s+is|a))\b",
     re.I,
 )
 _GRANTED_RE = re.compile(r"\b(?:was\s+)?granted\b|\bapproved\b", re.I)
@@ -135,11 +142,28 @@ def _match_in_negation_scope(segment: str, match: re.Match[str]) -> bool:
     return not _HYPOTHETICAL_RE.search(between)
 
 
-def _detect_action(segment: str) -> str | None:
+def _denial_subject_span(segment: str) -> str:
+    carveout = _CARVEOUT_SPLIT_RE.search(segment)
+    if carveout is not None:
+        return segment[: carveout.start()]
+    return segment
+
+
+def _detect_action(segment: str, *, denial_subject: bool = False) -> str | None:
+    text = _denial_subject_span(segment) if denial_subject else segment
     for pattern, action in _ACTION_PATTERNS:
-        if pattern.search(segment):
+        if pattern.search(text):
             return action
     return None
+
+
+def _is_prior_denial_reference(segment: str, match: re.Match[str]) -> bool:
+    if not _PRIOR_DENIAL_REF_RE.search(segment):
+        return False
+    prior = _PRIOR_DENIAL_REF_RE.search(segment)
+    if prior is None:
+        return False
+    return match.start() >= prior.start()
 
 
 def _detect_functor(segment: str) -> str | None:
@@ -148,6 +172,8 @@ def _detect_functor(segment: str) -> str | None:
         if match is None:
             continue
         if _match_in_negation_scope(segment, match):
+            continue
+        if functor == "denied" and _is_prior_denial_reference(segment, match):
             continue
         return functor
     return None
@@ -177,13 +203,7 @@ def _parse_month_date(segment: str) -> str | None:
 
 
 def detect_date_in_segment(segment: str, valid_from: str | None = None) -> str | None:
-    if valid_from:
-        text = valid_from.strip()
-        if text:
-            if text.endswith("Z"):
-                text = text[:-1] + "+00:00"
-            if len(text) >= 10 and text[4] == "-" and text[7] == "-":
-                return text[:10]
+    del valid_from  # never borrow assertion valid_from for disposition dates
     for match in _DATE_RE.finditer(segment):
         for group in match.groups():
             if not group:
@@ -194,12 +214,22 @@ def detect_date_in_segment(segment: str, valid_from: str | None = None) -> str |
     return _parse_month_date(segment)
 
 
-def _segment_match(segment: str, valid_from: str | None) -> SegmentMatch | None:
-    action = _detect_action(segment)
+def _segment_match(
+    segment: str,
+    valid_from: str | None,
+    *,
+    claim: str | None = None,
+) -> SegmentMatch | None:
     functor = _detect_functor(segment)
-    if not action or not functor:
+    if not functor:
+        return None
+    denial_subject = functor in TERMINAL_FUNCTORS
+    action = _detect_action(segment, denial_subject=denial_subject)
+    if not action:
         return None
     date = detect_date_in_segment(segment, valid_from)
+    if date is None and functor in TERMINAL_FUNCTORS and claim:
+        date = detect_date_in_segment(claim)
     wo_match = _WO_RE.search(segment)
     wo_id = wo_match.group(1) if wo_match else None
     return SegmentMatch(
@@ -222,7 +252,7 @@ def match_claim_segments(claim: str, *, valid_from: str | None = None) -> Segmen
     candidates = [
         matched
         for segment in split_segments(claim)
-        for matched in [_segment_match(segment, valid_from)]
+        for matched in [_segment_match(segment, valid_from, claim=claim)]
         if matched is not None
     ]
     if not candidates:

@@ -13,15 +13,20 @@ from .parser import Predicate, PredicateParseError, parse, unparse
 
 Functor = Literal["request", "denied", "granted", "pending"]
 
-ACTION_VOCAB_V0: frozenset[str] = frozenset(
-    {
-        "spread_extension",
-        "payment_reduction",
-        "escrow_analysis",
-        "loan_modification",
-        "hardship_program",
-    }
-)
+ACTION_VOCAB_BY_DOMAIN: dict[str, frozenset[str]] = {
+    "mortgage_escrow": frozenset(
+        {
+            "spread_extension",
+            "payment_reduction",
+            "escrow_analysis",
+            "loan_modification",
+            "hardship_program",
+        }
+    ),
+    "tax_appeal": frozenset(),
+}
+
+ACTION_VOCAB_V0: frozenset[str] = frozenset().union(*ACTION_VOCAB_BY_DOMAIN.values())
 
 TERMINAL_FUNCTORS: frozenset[str] = frozenset({"denied", "granted"})
 PROCESS_FUNCTORS: frozenset[str] = frozenset({"request", "pending"})
@@ -53,8 +58,9 @@ class ActionPredicate:
         if self.functor == "pending":
             wo = self.wo_id or "unknown"
             return unparse(Predicate("pending", (self.action, self.party, wo)))
-        date = self.date or "unknown"
-        return unparse(Predicate(self.functor, (self.action, self.party, date)))
+        if self.date:
+            return unparse(Predicate(self.functor, (self.action, self.party, self.date)))
+        return unparse(Predicate(self.functor, (self.action, self.party)))
 
 
 def parse_action_predicate(
@@ -82,8 +88,11 @@ def parse_action_predicate(
             assertion_id=assertion_id,
             epistemic_state=epistemic_state,
         )
-    elif p.name in TERMINAL_FUNCTORS and len(p.args) == 3:
-        action, party, date = p.args
+    elif p.name in TERMINAL_FUNCTORS and len(p.args) in (2, 3):
+        action, party = p.args[0], p.args[1]
+        date = p.args[2] if len(p.args) == 3 else None
+        if date == "unknown":
+            date = None
         return ActionPredicate(
             functor=p.name,  # type: ignore[arg-type]
             action=action,

@@ -13,3 +13,9 @@ class TerminalFactsBlock(BaseModel):
     facts: list[BurstClaimItem] = Field(default_factory=list)
     cap: int
     capped: bool = False
+    fact_count: int = 0
+    facts_dropped: int = 0
+    scope_truncated: bool = False
+    scope_size: int = 0
+    scope_cap: int = 0
+    detector_version: str = "action_enrichment_template_v0"
