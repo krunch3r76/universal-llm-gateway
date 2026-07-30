@@ -53,6 +53,7 @@ def _op_assertion_get(assertion_id: int | None = None, **_: object) -> dict[str,
 def _op_assertion_update(
     assertion_id: int | None = None,
     superseded_by: int | None = None,
+    valid_from: str | None = None,
     valid_until: str | None = None,
     confidence: str | None = None,
     confidence_score: float | None = None,
@@ -72,6 +73,7 @@ def _op_assertion_update(
         key: val
         for key, val in [
             ("superseded_by", superseded_by),
+            ("valid_from", valid_from),
             ("valid_until", valid_until),
             ("confidence", confidence),
             ("confidence_score", confidence_score),
