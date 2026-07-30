@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import UTC, datetime
 from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
 
 from cortex_store.claim_hash import compute_claim_hash
+from cortex_store.claims_burst import _burst_rank_key
+from cortex_store.models.claims_burst import BurstClaimItem
 
 _A20701_CLAIM = (
     "WO 956908029 / lower-payment request — DENIED, confirmed 2026-06-26. "
@@ -143,6 +146,36 @@ def test_ac2_contradiction_pairs_block_request(
         pair["proposed_predicate_form"] == "request(spread_extension, chase)"
         for pair in pairs
     )
+
+
+def test_burst_rank_key_terminal_first_despite_large_recency_gap() -> None:
+    """Regression: additive +900d bonus let non-terminal rows ~3y newer outrank terminal."""
+    old_terminal = datetime(2020, 1, 1, tzinfo=UTC)
+    new_pending = datetime(2023, 1, 1, tzinfo=UTC)
+
+    def _item(*, terminal: bool, assertion_id: int) -> BurstClaimItem:
+        functor = "denied" if terminal else "pending"
+        return BurstClaimItem(
+            assertion_id=assertion_id,
+            claim="fixture",
+            predicate_form=f"{functor}(spread_extension, chase)",
+            epistemic_state=None,
+            terminal=terminal,
+            entity_id=_ENTITY,
+            functor=functor,
+            action="spread_extension",
+            party="chase",
+            derivation="fixture",
+            claim_excerpt="fixture",
+        )
+
+    pairs = [
+        (_item(terminal=False, assertion_id=2), new_pending),
+        (_item(terminal=True, assertion_id=1), old_terminal),
+    ]
+    pairs.sort(key=lambda pair: _burst_rank_key(pair[0], pair[1]), reverse=True)
+    assert pairs[0][0].assertion_id == 1
+    assert pairs[0][0].terminal is True
 
 
 def test_ac3_terminal_denial_ranks_above_recent_pending(

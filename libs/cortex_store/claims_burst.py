@@ -1,14 +1,19 @@
 """Claims burst v0 — vocabulary-scoped assertion retrieval with enrich-on-read.
 
 Read-only: derives action-typed predicates from claim text at query time;
-never writes predicate_form back to assertion rows.
+never writes predicate_form back to assertion rows. Every response carries a
+``disclosure`` object accounting for scanned, returned, and dropped rows.
 """
 
 from __future__ import annotations
 
+from collections import defaultdict
 from datetime import UTC, datetime
 
-from predicate_form.action_enrichment import enrich_action_predicate_from_claim
+from predicate_form.action_enrichment import (
+    DERIVATION_SOURCE,
+    enrich_action_predicate_from_claim_with_reason,
+)
 from predicate_form.action_vocabulary import (
     ACTION_VOCAB_V0,
     TERMINAL_FUNCTORS,
@@ -20,7 +25,11 @@ from predicate_form.collision import Contradiction, detect_contradictions
 
 from .db import query
 from .models.claims_burst import (
+    BURST_DROP_ID_CAP,
     BurstClaimItem,
+    BurstDisclosure,
+    BurstDropGroup,
+    BurstDropReason,
     ClaimsBurstRequest,
     ClaimsBurstResponse,
     ContradictionPairItem,
@@ -57,10 +66,9 @@ def _parse_observed_at(raw: str | None, valid_from: str | None) -> datetime:
     return datetime.min.replace(tzinfo=UTC)
 
 
-def _burst_rank_key(item: BurstClaimItem, observed_at: datetime) -> tuple[float, float]:
-    terminal_weight = 1.0 if item.terminal else 0.1
-    recency_epoch = observed_at.timestamp()
-    return (terminal_weight * 1000.0 + recency_epoch / 86400.0, recency_epoch)
+def _burst_rank_key(item: BurstClaimItem, observed_at: datetime) -> tuple[int, float]:
+    """Lexicographic terminal-first rank: terminal rows precede all non-terminal, then recency."""
+    return (1 if item.terminal else 0, observed_at.timestamp())
 
 
 def _epistemic_state(row: dict) -> str | None:
@@ -85,23 +93,34 @@ def _fetch_scope_rows(conn, entity_ids: list[str]) -> list[dict]:
     return query(conn, sql, tuple(entity_ids))
 
 
-def _enrich_row(row: dict) -> tuple[BurstClaimItem, ActionPredicate] | None:
-    preview = enrich_action_predicate_from_claim(
+def _drop_reason_from_token(token: str | None) -> BurstDropReason:
+    if token is None:
+        return BurstDropReason.detector_no_match
+    return BurstDropReason(token)
+
+
+def _enrich_row(
+    row: dict,
+    *,
+    enrichment_domain: str | None = None,
+) -> tuple[BurstClaimItem, ActionPredicate] | tuple[None, BurstDropReason]:
+    preview, reason = enrich_action_predicate_from_claim_with_reason(
         row.get("claim") or "",
         row.get("entity_id") or "",
         assertion_id=int(row["id"]),
         valid_from=row.get("valid_from"),
         epistemic_state=_epistemic_state(row),
+        domain=enrichment_domain,
     )
     if preview is None:
-        return None
+        return None, _drop_reason_from_token(reason)
     pred = parse_action_predicate(
         preview.predicate_form,
         assertion_id=int(row["id"]),
         epistemic_state=preview.epistemic_state,
     )
     if pred is None:
-        return None
+        return None, BurstDropReason.predicate_unparseable
     item = BurstClaimItem(
         assertion_id=int(row["id"]),
         claim=row.get("claim") or "",
@@ -164,20 +183,64 @@ def _build_contradiction_pairs(
     return pairs
 
 
-def burst_claims(conn, request: ClaimsBurstRequest) -> ClaimsBurstResponse:
-    """Run vocabulary-scoped burst with enrich-on-read and terminal-first ranking."""
+def _build_disclosure(
+    *,
+    rows_scanned: int,
+    claims: list[BurstClaimItem],
+    drops_by_reason: dict[BurstDropReason, list[int]],
+    request: ClaimsBurstRequest,
+    vocab: set[str],
+) -> BurstDisclosure:
+    drop_groups: list[BurstDropGroup] = []
+    for reason in sorted(drops_by_reason, key=lambda item: item.value):
+        ids = drops_by_reason[reason]
+        count = len(ids)
+        sorted_ids = sorted(ids)
+        capped_ids = sorted_ids[:BURST_DROP_ID_CAP]
+        drop_groups.append(
+            BurstDropGroup(
+                reason=reason,
+                count=count,
+                assertion_ids=capped_ids,
+                assertion_ids_truncated=count > len(capped_ids),
+            )
+        )
+    rows_dropped_total = sum(group.count for group in drop_groups)
+    return BurstDisclosure(
+        rows_scanned=rows_scanned,
+        rows_returned=len(claims),
+        rows_dropped_total=rows_dropped_total,
+        drops=drop_groups,
+        vocabulary_requested=list(request.vocabulary),
+        vocabulary_accepted=sorted(vocab),
+        vocabulary_rejected=sorted(set(request.vocabulary) - vocab),
+        detector_version=DERIVATION_SOURCE,
+        disclosure_version=1,
+    )
+
+
+def burst_claims(
+    conn,
+    request: ClaimsBurstRequest,
+    *,
+    enrichment_domain: str | None = None,
+) -> ClaimsBurstResponse:
+    """Run vocabulary-scoped burst with enrich-on-read disclosure accounting."""
     vocab = {term for term in request.vocabulary if term in ACTION_VOCAB_V0}
     rows = _fetch_scope_rows(conn, request.scope_entity_ids)
 
     enriched: list[tuple[BurstClaimItem, datetime]] = []
     stored_preds: list[ActionPredicate] = []
+    drops_by_reason: dict[BurstDropReason, list[int]] = defaultdict(list)
 
     for row in rows:
-        enriched_row = _enrich_row(row)
-        if enriched_row is None:
+        enriched_row = _enrich_row(row, enrichment_domain=enrichment_domain)
+        if enriched_row[0] is None:
+            drops_by_reason[enriched_row[1]].append(int(row["id"]))
             continue
         item, pred = enriched_row
         if item.action not in vocab:
+            drops_by_reason[BurstDropReason.action_out_of_vocabulary].append(int(row["id"]))
             continue
         observed = _parse_observed_at(row.get("observed_at"), row.get("valid_from"))
         enriched.append((item, observed))
@@ -194,10 +257,19 @@ def burst_claims(conn, request: ClaimsBurstRequest) -> ClaimsBurstResponse:
             stored_preds,
         )
 
+    disclosure = _build_disclosure(
+        rows_scanned=len(rows),
+        claims=claims,
+        drops_by_reason=drops_by_reason,
+        request=request,
+        vocab=vocab,
+    )
+
     return ClaimsBurstResponse(
         vocabulary=list(request.vocabulary),
         scope_entity_ids=list(request.scope_entity_ids),
         mode=request.mode,
         claims=claims,
         contradiction_pairs=contradiction_pairs,
+        disclosure=disclosure,
     )

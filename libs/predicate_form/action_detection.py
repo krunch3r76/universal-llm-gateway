@@ -9,45 +9,14 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from .action_patterns import action_patterns_for_domain, functor_patterns_for_domain
 from .action_vocabulary import TERMINAL_FUNCTORS
 
-_MORTGAGE_ACTION_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
-    (
-        re.compile(
-            r"spread(?:\s+the)?\s+escrow\s+shortage|"
-            r"escrow\s+shortage\s+spread|"
-            r"spread\s+extension|"
-            r"extend\s+escrow\s+shortage\s+spread",
-            re.I,
-        ),
-        "spread_extension",
-    ),
-    (
-        re.compile(
-            r"lower[\s-]?payment|payment\s+reduction|reduce\s+payment",
-            re.I,
-        ),
-        "payment_reduction",
-    ),
-    (re.compile(r"escrow\s+analysis", re.I), "escrow_analysis"),
-    (re.compile(r"loan\s+modification", re.I), "loan_modification"),
-    (re.compile(r"hardship\s+program", re.I), "hardship_program"),
-)
-
-_ACTION_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = _MORTGAGE_ACTION_PATTERNS
-_DENIED_RE = re.compile(
-    r"\b(?:was\s+)?denied\b|\bdenial\b|\bunable\s+to\b|\bcan(?:no)?t\b.*\bspread\b|"
-    r"invalid\s*[–-]\s*closed",
-    re.I,
-)
 _PRIOR_DENIAL_REF_RE = re.compile(r"\bpreviously[\s-]denied\b", re.I)
 _CARVEOUT_SPLIT_RE = re.compile(
     r"\b(?:unless|except(?:\s+that)?|if\s+(?:there\s+is|a))\b",
     re.I,
 )
-_GRANTED_RE = re.compile(r"\b(?:was\s+)?granted\b|\bapproved\b", re.I)
-_PENDING_RE = re.compile(r"\b(?:pending|opened|requested)\b", re.I)
-_REQUEST_RE = re.compile(r"\b(?:request(?:ed|ing)?|ask(?:ed|ing)?)\b", re.I)
 
 _DATE_RE = re.compile(
     r"\b(20\d{2}-\d{2}-\d{2})\b|"
@@ -61,13 +30,6 @@ _MONTH_DATE_RE = re.compile(
     re.I,
 )
 _WO_RE = re.compile(r"\bWO\s*#?\s*(\d+)\b", re.I)
-
-_FUNCTOR_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
-    (_DENIED_RE, "denied"),
-    (_GRANTED_RE, "granted"),
-    (_PENDING_RE, "pending"),
-    (_REQUEST_RE, "request"),
-)
 
 _NEGATION_RE = re.compile(
     r"\b(?:no|not|never|without|nor)\b|"
@@ -149,9 +111,14 @@ def _denial_subject_span(segment: str) -> str:
     return segment
 
 
-def _detect_action(segment: str, *, denial_subject: bool = False) -> str | None:
+def _detect_action(
+    segment: str,
+    *,
+    domain: str | None = None,
+    denial_subject: bool = False,
+) -> str | None:
     text = _denial_subject_span(segment) if denial_subject else segment
-    for pattern, action in _ACTION_PATTERNS:
+    for pattern, action in action_patterns_for_domain(domain):
         if pattern.search(text):
             return action
     return None
@@ -166,8 +133,8 @@ def _is_prior_denial_reference(segment: str, match: re.Match[str]) -> bool:
     return match.start() >= prior.start()
 
 
-def _detect_functor(segment: str) -> str | None:
-    for pattern, functor in _FUNCTOR_PATTERNS:
+def _detect_functor(segment: str, *, domain: str | None = None) -> str | None:
+    for pattern, functor in functor_patterns_for_domain(domain):
         match = pattern.search(segment)
         if match is None:
             continue
@@ -240,12 +207,13 @@ def _segment_match(
     valid_from: str | None,
     *,
     claim: str | None = None,
+    domain: str | None = None,
 ) -> SegmentMatch | None:
-    functor = _detect_functor(segment)
+    functor = _detect_functor(segment, domain=domain)
     if not functor:
         return None
     denial_subject = functor in TERMINAL_FUNCTORS
-    action = _detect_action(segment, denial_subject=denial_subject)
+    action = _detect_action(segment, domain=domain, denial_subject=denial_subject)
     if not action:
         return None
     date = detect_date_in_segment(segment, valid_from)
@@ -268,16 +236,32 @@ def _rank_key(match: SegmentMatch) -> tuple[int, int, int]:
     return (terminal_rank, date_rank, len(match.segment))
 
 
-def match_claim_segments(claim: str, *, valid_from: str | None = None) -> SegmentMatch | None:
-    """Return the best local segment match, or None when ambiguous."""
+def match_claim_segments_with_reason(
+    claim: str,
+    *,
+    valid_from: str | None = None,
+    domain: str | None = None,
+) -> tuple[SegmentMatch | None, str | None]:
+    """Return the best local segment match and an optional drop-reason token.
+
+    When ``domain`` is set, only that domain's action and denied-functor patterns
+    apply; ``None`` scans all domains (legacy burst behaviour).
+
+    When no segment carries both a functor and an action, returns
+    ``(None, "detector_no_match")``. When terminal functors conflict across
+    segments, returns ``(None, "detector_declined_ambiguous")`` rather than
+    guess. On success the reason is ``None``.
+    """
     candidates = [
         matched
         for segment in split_segments(claim)
-        for matched in [_segment_match(segment, valid_from, claim=claim)]
+        for matched in [
+            _segment_match(segment, valid_from, claim=claim, domain=domain)
+        ]
         if matched is not None
     ]
     if not candidates:
-        return None
+        return None, "detector_no_match"
 
     terminal = [c for c in candidates if c.functor in TERMINAL_FUNCTORS]
     pool = terminal or candidates
@@ -285,7 +269,22 @@ def match_claim_segments(claim: str, *, valid_from: str | None = None) -> Segmen
         keys = {(c.functor, c.action) for c in pool}
         if len(keys) > 1:
             if terminal and len({c.functor for c in terminal}) > 1:
-                return None
+                return None, "detector_declined_ambiguous"
             pool = terminal or pool
 
-    return max(pool, key=_rank_key)
+    return max(pool, key=_rank_key), None
+
+
+def match_claim_segments(
+    claim: str,
+    *,
+    valid_from: str | None = None,
+    domain: str | None = None,
+) -> SegmentMatch | None:
+    """Return the best local segment match, or None when ambiguous."""
+    match, _reason = match_claim_segments_with_reason(
+        claim,
+        valid_from=valid_from,
+        domain=domain,
+    )
+    return match

@@ -17,7 +17,7 @@ from predicate_form.action_vocabulary import (
 from . import scope_radiation
 from .claims_burst import burst_claims
 from .models.claims_burst import BurstClaimItem, ClaimsBurstRequest
-from .models.terminal_facts import TerminalFactsBlock
+from .models.terminal_facts import TerminalFactsBlock, TerminalFactsOmissionReason
 from .scope_radiation import RadiatedScope, radiate_scope
 
 TERMINAL_FACTS_CAP = 17
@@ -84,14 +84,19 @@ def _action_domain(action: str) -> str | None:
     return None
 
 
-def _hub_primary_domain(entity_id: str) -> str:
+def _hub_primary_domain(entity_id: str) -> str | None:
+    """Map a hub entity id to its primary action domain, or None when unrecognised."""
     lower = entity_id.lower()
     if "boe19p" in lower or ("appeal" in lower and "escrow" not in lower):
         return "tax_appeal"
-    return "mortgage_escrow"
+    if any(token in lower for token in ("escrow", "mortgage", "chase", "fixture")):
+        return "mortgage_escrow"
+    return None
 
 
-def _proximity_rank(item: BurstClaimItem, *, hub_entity_id: str) -> tuple[int, int, int]:
+def _proximity_rank(
+    item: BurstClaimItem, *, hub_entity_id: str
+) -> tuple[int, int, int]:
     primary = _hub_primary_domain(hub_entity_id)
     action_domain = _action_domain(item.action)
     domain_rank = 0 if action_domain == primary else 1
@@ -111,10 +116,8 @@ def _partition_terminal_rows(
             dated.append((item, disposition_date))
         else:
             undated.append(item)
-    dated.sort(
-        key=lambda pair: (pair[1], *_proximity_rank(pair[0], hub_entity_id=hub_entity_id)),
-        reverse=True,
-    )
+    dated.sort(key=lambda pair: _proximity_rank(pair[0], hub_entity_id=hub_entity_id))
+    dated.sort(key=lambda pair: pair[1], reverse=True)
     undated.sort(key=lambda item: _proximity_rank(item, hub_entity_id=hub_entity_id))
     return [item for item, _ in dated] + undated
 
@@ -123,8 +126,28 @@ def resolve_terminal_facts(
     conn: sqlite3.Connection,
     entity_id: str,
 ) -> tuple[TerminalFactsBlock | None, str | None]:
-    """Return terminal facts block and optional omission reason."""
+    """Return terminal facts block and optional omission reason.
+
+    For a hub entity, ``block is None`` implies ``reason is not None``, except when
+    ``primary_vocab`` is empty (operator bind a:27140): then ``(None, None)`` — a
+    configuration hole, not a disclosable state.
+
+    Selection is newest-first; when capped, ``facts_dropped`` counts older facts
+    omitted. Retained dated facts are presented oldest-first; undated stay trailing.
+    """
     if not is_terminal_facts_hub(entity_id):
+        return None, None
+
+    primary_domain = _hub_primary_domain(entity_id)
+    if primary_domain is None:
+        return None, TerminalFactsOmissionReason.hub_domain_unrecognized.value
+
+    primary_vocab = ACTION_VOCAB_BY_DOMAIN.get(primary_domain, frozenset())
+
+    # Operator bind a:27140 — empty ACTION_VOCAB_BY_DOMAIN entry is a configuration
+    # hole to fill, not a disclosable state. Must precede the item loop so it cannot
+    # fall through into terminal_claims_outside_primary_vocabulary.
+    if not primary_vocab:
         return None, None
 
     radiation = radiate_terminal_facts_scope(conn, entity_id)
@@ -134,15 +157,14 @@ def resolve_terminal_facts(
         scope_entity_ids=scope_entity_ids,
         include_contradictions=False,
     )
-    response = burst_claims(conn, request)
-
-    primary_domain = _hub_primary_domain(entity_id)
-    primary_vocab = ACTION_VOCAB_BY_DOMAIN.get(primary_domain, frozenset())
+    response = burst_claims(conn, request, enrichment_domain=primary_domain)
 
     by_assertion: dict[int, BurstClaimItem] = {}
+    saw_terminal = False
     for item in response.claims:
         if not item.terminal:
             continue
+        saw_terminal = True
         if item.action not in primary_vocab:
             continue
         hop = radiation.hop_distances.get(item.entity_id, 0)
@@ -151,21 +173,39 @@ def resolve_terminal_facts(
             update={"hop_distance": hop, "arrival_path": path},
         )
         existing = by_assertion.get(item.assertion_id)
-        if existing is None or (enriched.hop_distance or 0) < (existing.hop_distance or 0):
+        if existing is None or (enriched.hop_distance or 0) < (
+            existing.hop_distance or 0
+        ):
             by_assertion[item.assertion_id] = enriched
 
     if not by_assertion:
-        return None, None
+        if not response.claims:
+            return None, TerminalFactsOmissionReason.burst_returned_no_claims.value
+        if not saw_terminal:
+            return None, TerminalFactsOmissionReason.no_terminal_claims.value
+        return (
+            None,
+            TerminalFactsOmissionReason.terminal_claims_outside_primary_vocabulary.value,
+        )
 
-    ordered = _partition_terminal_rows(list(by_assertion.values()), hub_entity_id=entity_id)
+    ordered = _partition_terminal_rows(
+        list(by_assertion.values()), hub_entity_id=entity_id
+    )
     facts = [_compact_terminal_fact(item) for item in ordered]
     fact_count = len(facts)
     capped = fact_count > TERMINAL_FACTS_CAP
     facts_dropped = max(0, fact_count - TERMINAL_FACTS_CAP)
+    retained = facts[:TERMINAL_FACTS_CAP]
+    dated_end = len(retained)
+    for idx, fact in enumerate(retained):
+        if fact.undated:
+            dated_end = idx
+            break
+    presented = list(reversed(retained[:dated_end])) + retained[dated_end:]
 
     return (
         TerminalFactsBlock(
-            facts=facts[:TERMINAL_FACTS_CAP],
+            facts=presented,
             cap=TERMINAL_FACTS_CAP,
             capped=capped,
             fact_count=fact_count,

@@ -9,24 +9,27 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
+from .action_patterns import (
+    ACTION_VOCAB_BY_DOMAIN,
+    ACTION_VOCAB_V0,
+    PARTY_BY_DOMAIN,
+)
 from .parser import Predicate, PredicateParseError, parse, unparse
 
+__all__ = [
+    "ACTION_VOCAB_BY_DOMAIN",
+    "ACTION_VOCAB_V0",
+    "ActionPredicate",
+    "Functor",
+    "PARTY_BY_DOMAIN",
+    "PROCESS_FUNCTORS",
+    "TERMINAL_FUNCTORS",
+    "parse_action_predicate",
+    "party_for_entity",
+    "party_from_entity_id",
+]
+
 Functor = Literal["request", "denied", "granted", "pending"]
-
-ACTION_VOCAB_BY_DOMAIN: dict[str, frozenset[str]] = {
-    "mortgage_escrow": frozenset(
-        {
-            "spread_extension",
-            "payment_reduction",
-            "escrow_analysis",
-            "loan_modification",
-            "hardship_program",
-        }
-    ),
-    "tax_appeal": frozenset(),
-}
-
-ACTION_VOCAB_V0: frozenset[str] = frozenset().union(*ACTION_VOCAB_BY_DOMAIN.values())
 
 TERMINAL_FUNCTORS: frozenset[str] = frozenset({"denied", "granted"})
 PROCESS_FUNCTORS: frozenset[str] = frozenset({"request", "pending"})
@@ -76,39 +79,37 @@ def parse_action_predicate(
         return None
     if p.name not in TERMINAL_FUNCTORS | PROCESS_FUNCTORS:
         return None
+
+    action: str | None = None
+    party: str | None = None
+    date: str | None = None
+    wo_id: str | None = None
+    functor: Functor | None = None
+
     if p.name == "request" and len(p.args) == 2:
         action, party = p.args
+        functor = "request"
     elif p.name == "pending" and len(p.args) == 3:
         action, party, wo_id = p.args
-        return ActionPredicate(
-            functor="pending",
-            action=action,
-            party=party,
-            wo_id=wo_id,
-            assertion_id=assertion_id,
-            epistemic_state=epistemic_state,
-        )
+        functor = "pending"
     elif p.name in TERMINAL_FUNCTORS and len(p.args) in (2, 3):
         action, party = p.args[0], p.args[1]
         date = p.args[2] if len(p.args) == 3 else None
         if date == "unknown":
             date = None
-        return ActionPredicate(
-            functor=p.name,  # type: ignore[arg-type]
-            action=action,
-            party=party,
-            date=date,
-            assertion_id=assertion_id,
-            epistemic_state=epistemic_state,
-        )
+        functor = p.name  # type: ignore[assignment]
     else:
         return None
+
     if action not in ACTION_VOCAB_V0:
         return None
+
     return ActionPredicate(
-        functor=p.name,  # type: ignore[arg-type]
+        functor=functor,  # type: ignore[arg-type]
         action=action,
         party=party,
+        date=date,
+        wo_id=wo_id,
         assertion_id=assertion_id,
         epistemic_state=epistemic_state,
     )
@@ -121,3 +122,10 @@ def party_from_entity_id(entity_id: str) -> str | None:
     slug = entity_id.split(":", 1)[1]
     token = slug.split("-", 1)[0].strip().lower()
     return token or None
+
+
+def party_for_entity(entity_id: str, *, domain: str | None = None) -> str | None:
+    """Resolve party slug, preferring per-domain constants over slug-token derivation."""
+    if domain is not None and domain in PARTY_BY_DOMAIN:
+        return PARTY_BY_DOMAIN[domain]
+    return party_from_entity_id(entity_id)

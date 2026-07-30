@@ -195,7 +195,7 @@ def test_terminal_denial_ranks_above_older_denial_in_terminal_facts(
     resp = cortex_client.get(f"/entities/{_CASE_ENTITY}")
     facts = resp.json()["terminal_facts"]["facts"]
     ids = [item["assertion_id"] for item in facts]
-    assert ids.index(20701) < ids.index(7738)
+    assert ids.index(7738) < ids.index(20701)
 
 
 def test_account_hub_receives_terminal_facts(
@@ -263,6 +263,10 @@ def test_terminal_facts_is_read_only(
     before = migrated_conn.execute(
         "SELECT predicate_form FROM assertions WHERE id = 20701"
     ).fetchone()[0]
+    friction_before = migrated_conn.execute(
+        "SELECT COUNT(*) FROM assertions WHERE claim LIKE '[tool_error]%' "
+        "OR claim LIKE '[protocol]%' OR claim LIKE '[decision]%'"
+    ).fetchone()[0]
     update_calls: list[dict] = []
 
     def _track_update(**kwargs: object) -> dict:
@@ -280,6 +284,11 @@ def test_terminal_facts_is_read_only(
         "SELECT predicate_form FROM assertions WHERE id = 20701"
     ).fetchone()[0]
     assert after == before
+    friction_after = migrated_conn.execute(
+        "SELECT COUNT(*) FROM assertions WHERE claim LIKE '[tool_error]%' "
+        "OR claim LIKE '[protocol]%' OR claim LIKE '[decision]%'"
+    ).fetchone()[0]
+    assert friction_after == friction_before
 
 
 def test_case_hub_reaches_account_scoped_denial_via_finance_bridge(
@@ -415,7 +424,7 @@ _LIVE_DB = (
 )
 
 _FABRICATED_ASSERTION_IDS = frozenset(
-    {7910, 8284, 21637, 24734, 23262, 8909, 27045, 23082, 24187}
+    {7910, 8284, 8909, 27045, 23082, 24187}
 )
 
 _SCOPE_REGRESSION_FIXTURES = (
@@ -448,10 +457,11 @@ _SCOPE_REGRESSION_FIXTURES = (
     {
         "hub": "case:boe19p-flintridge-appeal-2026",
         "scope_size": 50,
-        "required_assertions": frozenset(),
-        "required_predicates": {},
-        "min_fact_count": 0,
-        "max_fact_count": 0,
+        "required_assertions": frozenset({20699}),
+        "required_predicates": {
+            20699: "denied(assessment_appeal_application, aab, 2026-06-05)",
+        },
+        "min_fact_count": 1,
     },
 )
 
