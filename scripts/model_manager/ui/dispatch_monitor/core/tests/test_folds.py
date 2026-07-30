@@ -654,6 +654,30 @@ def test_charter_telemetry_facade_signals_are_handled() -> None:
     assert "unhandled_signals" not in health.degraded
 
 
+def test_implement_source_ref_unresolved_opens_row_and_attention() -> None:
+    """GIW admission-time gate-bypass signal must not flood signal.unhandled."""
+    model = Model()
+    model.apply(
+        Event(
+            "frontier.sdk.implement.source_ref_unresolved",
+            1_000,
+            {
+                "dispatch_id": "exec-gate-bypass",
+                "thread_id": "6164",
+                "execution_id": "exec-gate-bypass",
+            },
+        )
+    )
+    frame = model.derive(2_000)
+    assert frame.health.unhandled_signals == {}
+    row = next(r for r in frame.sdk if r.dispatch_id == "exec-gate-bypass")
+    assert row.implement_gate_bypass is True
+    assert row.contract == "implement"
+    assert any(
+        i.kind == "sdk.dispatch.implement_gate_bypass" for i in frame.attention
+    )
+
+
 def test_shadow_diff_does_not_mint_unknown_root_rows() -> None:
     """shadow.diff is high-volume Phase-1 noise — swallow without creating ACTIVE unknowns."""
     model = Model()
@@ -673,6 +697,27 @@ def test_shadow_diff_does_not_mint_unknown_root_rows() -> None:
     frame = model.derive(10_000)
     assert frame.roots == ()
     assert frame.health.unhandled_signals == {}
+
+
+def test_transition_and_objective_do_not_mint_unknown_root_rows() -> None:
+    """Post-close telemetry must not resurrect roots aged out of the seed window."""
+    model = Model()
+    for i, (signal, payload) in enumerate(
+        (
+            (
+                "manage.charter.tick.transition",
+                {"root": "5975", "from_status": "closed", "to_status": "closed"},
+            ),
+            (
+                "monitor.meta.charter_objective",
+                {"root": "6171", "objective": "Standing fleet conveyor"},
+            ),
+        ),
+        start=1,
+    ):
+        model.apply(Event(signal, i * 1_000, payload))
+    frame = model.derive(5_000)
+    assert frame.roots == ()
 
 
 def test_charter_error_reads_live_reason_field() -> None:

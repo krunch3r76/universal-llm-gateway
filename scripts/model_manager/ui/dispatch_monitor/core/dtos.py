@@ -157,6 +157,7 @@ class SdkDispatchRow:
     queue_position: int | None = None
     closeout_uri: str | None = None
     delivery_failed: bool = False
+    implement_gate_bypass: bool = False
     last_tool_name: str | None = None
     last_tool_status: str | None = None
     tool_call_count: int | None = None

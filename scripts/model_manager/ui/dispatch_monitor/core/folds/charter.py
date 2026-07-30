@@ -234,7 +234,12 @@ class CharterFold:
         root_id = _root_id(payload, record)
         if not root_id:
             return
-        row = self._root(root_id, record)
+        row = self.roots.get(root_id)
+        if row is None:
+            return
+        if row.last_signal_ms is None or record.ts_unix_ms >= row.last_signal_ms:
+            row.last_signal_ms = record.ts_unix_ms
+            row.last_signal = record.signal
         self._absorb_objective(row, payload)
         pickup = payload.get("pickup_gid")
         if pickup:
@@ -389,7 +394,12 @@ class CharterFold:
         root_id = _root_id(record.payload, record)
         if not root_id:
             return
-        self._root(root_id, record)
+        row = self.roots.get(root_id)
+        if row is None:
+            return
+        if row.last_signal_ms is None or record.ts_unix_ms >= row.last_signal_ms:
+            row.last_signal_ms = record.ts_unix_ms
+            row.last_signal = record.signal
 
     def _on_telemetry_ack(self, _record: EventRecord) -> None:
         """Global telemetry with no root row (e.g. shadow.starved) — swallow only."""

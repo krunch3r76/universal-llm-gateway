@@ -80,6 +80,7 @@ SDK_CLOSEOUT_RELOCATED = "frontier.sdk.closeout.relocated"
 SDK_CLOSEOUT_RECONCILED = "frontier.sdk.closeout.reconciled"
 SDK_WORKER_DISPATCHED = "frontier.sdk.worker.dispatched"
 SDK_REVIEW_CHILD_SPAWNED = "frontier.sdk.review_child.spawned"
+SDK_IMPLEMENT_SOURCE_REF_UNRESOLVED = "frontier.sdk.implement.source_ref_unresolved"
 
 # --- sdk family: pipeline lane (GS2 emitter B) -----------------------------
 SDK_PIPELINE_STARTED = "pipeline.frontier.dispatch.started"
@@ -137,6 +138,7 @@ SDK_LIFECYCLE_SIGNALS = (
     SDK_CLOSEOUT_RECONCILED,
     SDK_WORKER_DISPATCHED,
     SDK_REVIEW_CHILD_SPAWNED,
+    SDK_IMPLEMENT_SOURCE_REF_UNRESOLVED,
 )
 
 # --- cdp family (VERIFIED live — v3 §6) ------------------------------------

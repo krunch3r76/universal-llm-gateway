@@ -225,6 +225,11 @@ async def lifespan(app: FastAPI):
         )
 
         await start_review_child_spawn_listener()
+        from systems.frontier_consult.cdp_generate_reconcile import (
+            start_cdp_generate_reconcile,
+        )
+
+        await start_cdp_generate_reconcile()
         logger.info(
             "🔍 Lifespan: Startup completed successfully, yielding to application..."
         )

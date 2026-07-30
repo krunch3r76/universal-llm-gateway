@@ -92,6 +92,26 @@ def CdpGenerateStalled(  # noqa: N802
 
 
 @event_factory
+def CdpGenerateReconciled(  # noqa: N802
+    request_id: str,
+    execution_id: str,
+    satellite_execution_id: str | None,
+    via: str = "reconcile",
+) -> Event:
+    """Non-terminal observation when reconcile finalizes a zombie leg."""
+    return Event(
+        signal="cdp.generate.reconciled",
+        payload={
+            "request_id": request_id,
+            "execution_id": execution_id,
+            "satellite_execution_id": satellite_execution_id,
+            "via": via,
+        },
+        scope="node",
+    )
+
+
+@event_factory
 def CdpGenerateDeliveryFailed(  # noqa: N802
     request_id: str,
     execution_id: str,

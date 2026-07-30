@@ -78,6 +78,7 @@ def sdk_rows(
                 queue_position=state.queue_position,
                 closeout_uri=state.closeout_uri,
                 delivery_failed=state.delivery_failed,
+                implement_gate_bypass=state.implement_gate_bypass,
                 last_tool_name=state.last_tool_name,
                 last_tool_status=state.last_tool_status,
                 tool_call_count=state.tool_call_count,

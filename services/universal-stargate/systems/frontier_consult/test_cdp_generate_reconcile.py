@@ -14,6 +14,7 @@ from claude_bundles.cdp_model_endpoint import (
 )
 
 from systems.frontier_consult import cdp_generate_reconcile as reconcile
+from systems.frontier_consult.cdp_generate_inflight_ledger import _connect
 from systems.frontier_consult.cdp_generate_reconcile import (
     finalize_cdp_generate,
     max_open_leg_s,
@@ -336,8 +337,10 @@ async def test_abandonment_emits_reconcile_abandoned(
         model_id="cdp/opus-5",
         max_wall_s=1800.0,
     )
-    old = (datetime.now(UTC) - timedelta(seconds=max_open_leg_s(1800.0) + 10)).isoformat()
-    conn = reconcile._connect()
+    old = (
+        datetime.now(UTC) - timedelta(seconds=max_open_leg_s(1800.0) + 10)
+    ).isoformat()
+    conn = _connect()
     try:
         conn.execute(
             "UPDATE cdp_inflight_leg SET admitted_at=? WHERE execution_id=?",

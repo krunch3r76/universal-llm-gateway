@@ -458,6 +458,43 @@ _OVERLOAD_ONLY_BODY = (
 def test_is_overload_only_harvest_matches_archive_fixture() -> None:
     assert _is_overload_only_harvest(_OVERLOAD_ONLY_BODY) is True
     assert _is_overload_only_harvest("legitimate short answer") is False
+    assert (
+        _is_overload_only_harvest(
+            "Done. API Error: 529 was transient during the run."
+        )
+        is False
+    )
+
+
+def test_run_cdp_generate_proof_short_answer_with_529_quote_succeeds(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """AC4 negative: harvest quoting 529 in prose must not trip overload gate."""
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    monkeypatch.setenv("PROJECT_ASK_URL", "http://satellite.test")
+    short_answer = "Summary complete. API Error: 529 was mentioned once."
+    client = _FakeClient(
+        [
+            {"execution_id": "sat-quote", "status": "running"},
+            {
+                "execution_id": "sat-quote",
+                "status": "running",
+                "archive_uri": "cortex://notes/system/threads/archive.md",
+                "body": short_answer,
+            },
+        ]
+    )
+
+    result = run_cdp_generate(
+        execution_id="dispatch-quote",
+        model_id="cdp/opus-4.8",
+        prompt_text="ping",
+        poll_interval_s=0,
+        client=client,  # type: ignore[arg-type]
+        sleep=lambda _s: None,
+    )
+    assert result.ok is True
+    assert result.body == short_answer
 
 
 def test_run_cdp_generate_submit_529_then_success(

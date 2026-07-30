@@ -62,7 +62,7 @@ already covers.
 | Step | Seat | When | Transport |
 |---|---|---|---|
 | 1 | **Cursor** (IDE lead, cursor-sdk, subagents, **`cursor/*` including Opus**) | Default — execute, orchestrate, dispatch | In-seat + `team_dispatch` / `Task` per `lean-context-dispatch-first` |
-| 2 | **Independent binder** — pick a family ≠ producer (table below) | **Any** cursor step-1 seat is **unsure** — including when that seat is already `cursor/claude-opus-5` | Anthropic: **`team_dispatch(model=cdp/opus-5)`** · **encourage Fable** via **`team_dispatch(model=cdp/fable)`** (`project_ask` = escape only) · lane `agent_bus:6006`. OpenAI: `team_dispatch(model=gpt-5.6-terra)`; `gpt-5.6-sol` for **targeted low-token** consults — per `consult-routing` + `claude-ai-cdp-navigation` |
+| 2 | **Independent binder** — pick a family ≠ producer (table below) | **Any** cursor step-1 seat is **unsure** — including when that seat is already `cursor/claude-opus-5` | Anthropic: **`team_dispatch(model=cdp/opus-5)`** · **encourage Fable** via **`team_dispatch(model=cdp/fable)`** (`project_ask` = escape only) · lane `agent_bus:6006`. OpenAI (code lane): **`team_dispatch(op=generate, seat=cursor-sdk, model=cursor/gpt-5.6-terra, contract=light-bounded)`**; **`cursor/gpt-5.6-sol`** for **targeted low-token** consults — per `consult-routing` + `claude-ai-cdp-navigation`. **`openai/gpt-5.6-*` API** only for **life / checkout-free** non-code (¬ code-lane default; `decision:code-review-panel-cursor-substrate`) |
 | 3 | **Human operator** | The step-2 binder is **unsure** OR true operator-only gate (credentials, irreversible non-revertible act, spend pause, genuine *what we want* ambiguity the binder cannot resolve) | Cowork Ask / direct — **rare**; one question + recommended answer |
 
 ### Step-2 binder order (operator bind 2026-07-28)
@@ -73,7 +73,7 @@ Try in order; stop at the first that clears independence for the artifact in han
 |---|---|---|---|
 | **2a** | `cdp/opus-5` | family (vs Composer / Grok / GPT producers) | Default step 2 — producer is **not** Anthropic |
 | **2b** | **`cdp/fable`** | **weight class** (vs Opus) | Producer is `cdp/opus-5` (incl. its own output), **or** Opus is unsure. **Preferred before crossing families** — Fable is the in-lane escalation, not a formality |
-| **2c** | `gpt-5.6-terra` (default) · `gpt-5.6-sol` (**targeted, low-token only**) | family + lineage | **Fable** is unsure, **or** the risk is Anthropic-lineage **correlated error** the family may share |
+| **2c** | **`cursor/gpt-5.6-terra`** (code-lane default) · **`cursor/gpt-5.6-sol`** (**targeted, low-token only**) · `openai/gpt-5.6-*` API only life/checkout-free | family + lineage | **Fable** is unsure, **or** the risk is Anthropic-lineage **correlated error** the family may share |
 | **2d** | `cursor/grok-4.5` (≤ `high`) | family | Cheap breadth / third opinion; ¬ a substitute for 2b–2c on material binds |
 
 `anthropic/*` API stays **PROHIBITED** — CDP/Fable is the Anthropic web product lane,
@@ -81,8 +81,10 @@ per `anthropic-dispatch-authorization`.
 
 **Non-primary gate carve-out:** `lean-context-dispatch-first` §"Non-primary cursor
 model gate" normally makes an explicit `gpt-5.6-*` bind operator-gated. Naming
-`gpt-5.6-terra` / `gpt-5.6-sol` here as the 2c binder **is** the standing
-authorization — fire without re-asking; still announce the slug + why.
+`cursor/gpt-5.6-terra` / `cursor/gpt-5.6-sol` here as the 2c binder **is** the
+standing authorization — fire without re-asking; still announce the slug + why.
+**Substrate:** `cursor/*` = cursor-sdk (code checkout); bare `gpt-5.6-terra` or
+`openai/gpt-5.6-terra` = metered API — ¬ the code-lane default.
 
 `seat_unsure` (was `cursor_unsure`) ≠ permission-seeking on clear work. It means a
 **genuine fork** remains after recon and the seat lacks authority or evidence to bind —
@@ -104,9 +106,10 @@ flag with `minimal_question` per `cdp-operator-proxy`).
 | Treat `cursor/claude-opus-5` as ladder-top — ask human when Opus is unsure | Opus-in-cursor is step 1; consult an independent binder (step 2) before human |
 | `cdp/opus-5` ratifies its own output at the same tier | Escalate that artifact to **Fable** (2b) — weight-class independence |
 | Treat any two Anthropic seats as self-review and skip straight to GPT | Opus→**Fable** is a genuine check; 2b **precedes** 2c |
-| Reach for `gpt-5.6-terra` before Fable has been tried | 2c is for **Fable unsure** or lineage-correlated risk |
-| Ask operator to approve `gpt-5.6-terra`/`sol` as a consult binder | Standing authorization (2026-07-28) — fire and announce; ¬ re-gate |
-| Spend `gpt-5.6-sol` on broad open-ended review | `sol` is **targeted, low-token** only; `terra` is the OpenAI default |
+| Reach for `cursor/gpt-5.6-terra` before Fable has been tried | 2c is for **Fable unsure** or lineage-correlated risk |
+| Ask operator to approve `cursor/gpt-5.6-terra`/`sol` as a consult binder | Standing authorization (2026-07-28) — fire and announce; ¬ re-gate |
+| `team_dispatch(model=gpt-5.6-terra)` bare slug on code-lane bind | `seat=cursor-sdk` + `model=cursor/gpt-5.6-terra` — bare/`openai/*` hits API |
+| Spend `cursor/gpt-5.6-sol` on broad open-ended review | `sol` is **targeted, low-token** only; `terra` is the OpenAI-family default on cursor-sdk |
 | Default Opus/Fable binder consult to bare `project_ask` | `team_dispatch(model=cdp/…)` — `project_ask` = escape / mission `purpose=` only |
 
 ## Composes with

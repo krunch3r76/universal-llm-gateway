@@ -107,6 +107,9 @@ class SdkFold:
         table[signals.SDK_REVIEW_CHILD_SPAWNED] = (
             lambda record: on_review_child_spawned(self, record)
         )
+        table[signals.SDK_IMPLEMENT_SOURCE_REF_UNRESOLVED] = (
+            self._on_implement_source_ref_unresolved
+        )
         table[signals.SYSTEM_STARTED] = lambda record: on_system_started(self, record)
         return table
 
@@ -396,6 +399,20 @@ class SdkFold:
         if sidecar:
             detail = f"{detail}; sidecar={sidecar}"
         row.failure_reason = detail
+        self._advance_progress(row, record.ts_unix_ms)
+
+    def _on_implement_source_ref_unresolved(self, record: EventRecord) -> None:
+        """Flag implement admit without resolvable source_ref (readiness gate bypass)."""
+        payload = record.payload
+        dispatch_id = payload.get("dispatch_id")
+        if not dispatch_id:
+            return
+        row = self._row_for_id(str(dispatch_id), record)
+        row.implement_gate_bypass = True
+        if payload.get("thread_id") and row.thread_id is None:
+            row.thread_id = str(payload["thread_id"])
+        if row.contract is None:
+            row.contract = "implement"
         self._advance_progress(row, record.ts_unix_ms)
 
     def _on_lease_promoted(self, record: EventRecord) -> None:

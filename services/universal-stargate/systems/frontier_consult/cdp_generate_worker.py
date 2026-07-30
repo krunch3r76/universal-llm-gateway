@@ -20,8 +20,6 @@ from universal_logging import get_logger
 from .cdp_events import (
     CdpGenerateAdmitted,
     CdpGenerateDeliveryFailed,
-    CdpGenerateProof,
-    CdpGenerateStalled,
     CdpGenerateSubmitted,
     publish_cdp_kwargs,
 )
@@ -379,6 +377,8 @@ async def run_cdp_worker(
     download_output: bool = False,
 ) -> None:
     """Stage already done at admit; run adapter and post proof/failure turn."""
+    from .cdp_generate_reconcile import attach_satellite_execution_id, finalize_cdp_generate
+
     to_agent = caller_agent or "dispatch"
     publish_cdp_kwargs(
         CdpGenerateAdmitted,
@@ -388,13 +388,14 @@ async def run_cdp_worker(
         thread_id=thread_id,
     )
     wall = float(max_wall_s) if max_wall_s is not None else DEFAULT_MAX_WALL_S
-    # ``on_submitted`` fires inside ``asyncio.to_thread`` (no running loop).
-    # ``publish_from_sync`` requires one — hop back via call_soon_threadsafe
-    # or the event is swallowed (smoke b1fb4501: admitted+proof, no submitted).
     loop = asyncio.get_running_loop()
 
     def _on_submitted(satellite_execution_id: str) -> None:
         def _publish() -> None:
+            attach_satellite_execution_id(
+                execution_id=execution_id,
+                satellite_execution_id=satellite_execution_id,
+            )
             publish_cdp_kwargs(
                 CdpGenerateSubmitted,
                 request_id=request_id,
@@ -417,6 +418,32 @@ async def run_cdp_worker(
             download_output=download_output,
             on_submitted=_on_submitted,
         )
+    except asyncio.CancelledError:
+        leg_satellite: str | None = None
+        from .cdp_generate_reconcile import read_inflight_leg
+
+        leg = read_inflight_leg(execution_id)
+        if leg is not None:
+            leg_satellite = leg.satellite_execution_id
+        cancelled = CdpGenerateResult(
+            ok=False,
+            body="",
+            execution_id=execution_id,
+            satellite_execution_id=leg_satellite,
+            prompt_uri=prompt_uri,
+            picker_model=model_id.split("/", 1)[-1],
+            stall_stage="worker_cancelled",
+            error="CDP worker task cancelled",
+        )
+        await finalize_cdp_generate(
+            result=cancelled,
+            request_id=request_id,
+            thread_id=thread_id,
+            to_agent=to_agent,
+            pointer_turn=pointer_turn,
+            via="worker",
+        )
+        raise
     except Exception as exc:  # noqa: BLE001
         logger.exception("cdp worker crashed: execution_id=%s", execution_id)
         result = CdpGenerateResult(
@@ -429,36 +456,11 @@ async def run_cdp_worker(
             error=f"worker_crash: {exc}",
         )
 
-    sat_id = result.satellite_execution_id
-    if result.ok:
-        publish_cdp_kwargs(
-            CdpGenerateProof,
-            request_id=request_id,
-            execution_id=execution_id,
-            satellite_execution_id=sat_id,
-            archive_uri=result.archive_uri,
-            content_proof_uri=result.content_proof_uri,
-        )
-    else:
-        publish_cdp_kwargs(
-            CdpGenerateStalled,
-            request_id=request_id,
-            execution_id=execution_id,
-            satellite_execution_id=sat_id,
-            stall_stage=result.stall_stage,
-            error=result.error,
-        )
-        if _upstream_overloaded(result):
-            await _emit_upstream_overload_friction(
-                execution_id=execution_id,
-                thread_id=thread_id,
-                result=result,
-            )
-
-    await deliver_cdp_result_turn(
+    await finalize_cdp_generate(
         result=result,
+        request_id=request_id,
         thread_id=thread_id,
         to_agent=to_agent,
-        request_id=request_id,
         pointer_turn=pointer_turn,
+        via="worker",
     )

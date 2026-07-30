@@ -35,6 +35,7 @@ class SdkState:
         "queue_position",
         "source_repo",
         "delivery_failed",
+        "implement_gate_bypass",
         "closeout_uri",
         "pre_park_state",
         "last_tool_name",
@@ -73,6 +74,7 @@ class SdkState:
         self.queue_position: int | None = None
         self.source_repo: str | None = None
         self.delivery_failed = False
+        self.implement_gate_bypass = False
         self.closeout_uri: str | None = None
         self.pre_park_state: str | None = None
         self.last_tool_name: str | None = None
@@ -297,6 +299,9 @@ def merge_sdk_state(canonical: SdkState, alt: SdkState) -> None:
 
     if alt.delivery_failed:
         canonical.delivery_failed = True
+
+    if alt.implement_gate_bypass:
+        canonical.implement_gate_bypass = True
 
     if canonical.parent_execution_id is None and alt.parent_execution_id is not None:
         canonical.parent_execution_id = alt.parent_execution_id

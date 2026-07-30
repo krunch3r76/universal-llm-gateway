@@ -11,7 +11,11 @@ import asyncio
 import uuid
 from typing import TYPE_CHECKING, Any
 
-from claude_bundles.cdp_model_endpoint import CDP_REPLY_FROM, CDP_SUBSTRATE
+from claude_bundles.cdp_model_endpoint import (
+    CDP_REPLY_FROM,
+    CDP_SUBSTRATE,
+    DEFAULT_MAX_WALL_S,
+)
 from claude_bundles.cdp_model_endpoint_staging import (
     CdpStagingError,
     stage_cdp_prompt_with_skills,
@@ -19,6 +23,7 @@ from claude_bundles.cdp_model_endpoint_staging import (
 from model_id import ModelId
 
 from .admission import FrontierEndpointError
+from .cdp_generate_reconcile import upsert_inflight_leg
 from .cdp_generate_worker import run_cdp_worker
 from .handoff import create_handoff_thread, post_pointer_turn
 from .handoff_response import build_handoff_result, resolve_poll_wait_seconds
@@ -276,6 +281,18 @@ async def dispatch_cdp_generate(
         after_turn = 1
 
     timeout_seconds = getattr(body, "timeout_seconds", None)
+    max_wall = float(timeout_seconds) if timeout_seconds else DEFAULT_MAX_WALL_S
+    upsert_inflight_leg(
+        execution_id=execution_id,
+        request_id=request_id,
+        thread_id=str(thread_id),
+        pointer_turn=after_turn,
+        caller_agent=body.caller_agent,
+        prompt_uri=staged.prompt_uri,
+        model_id=str(model),
+        max_wall_s=max_wall,
+    )
+
     worker_task = asyncio.create_task(
         run_cdp_worker(
             execution_id=execution_id,
@@ -294,6 +311,12 @@ async def dispatch_cdp_generate(
     def _log_worker_done(task: asyncio.Task[None]) -> None:
         _CDP_WORKER_TASKS.discard(task)
         if task.cancelled():
+            from universal_logging import get_logger
+
+            get_logger(__name__).warning(
+                "cdp worker task cancelled: execution_id=%s",
+                execution_id,
+            )
             return
         exc = task.exception()
         if exc is not None:

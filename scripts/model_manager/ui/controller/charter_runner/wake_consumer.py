@@ -63,6 +63,23 @@ async def run_root_pass(
     turns = await bus_client.fetch_turns(root_id)
     admission_mode = _admission_mode_from_env(kernel_env, root_id)
     await harvest_completed_windows(root_id, turns, admission_mode=admission_mode)
+    # Failed worker with no root CHECKPOINT never harvests — release WIP or the
+    # root sticks in CONSULT_ADMITTED/ADMITTED (live 6409 / Transition.WORKER_FAILED).
+    try:
+        from .root_ledger import load_root, open_default_ledger
+        from .worker_failed_release import maybe_release_failed_window_wip
+
+        conn = open_default_ledger()
+        try:
+            row = load_root(conn, root_id)
+            if row is not None:
+                await maybe_release_failed_window_wip(conn, row, turns)
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001 — release must not abort the pass
+        logger.exception(
+            "charter-runner worker-failed WIP release failed root=%s", root_id
+        )
     kernel_outcome = await apply_kernel_tick_for_root(
         root_id,
         turns,

@@ -251,6 +251,21 @@ def _sdk_items(
                     since_ms=row.last_progress_ms,
                 )
             )
+        if row.implement_gate_bypass:
+            items.append(
+                AttentionItem(
+                    key=f"sdk.dispatch.implement_gate_bypass:{row.dispatch_id}",
+                    kind="sdk.dispatch.implement_gate_bypass",
+                    severity="warn",
+                    subject=row.dispatch_id,
+                    title="Implement dispatch admitted without source_ref",
+                    detail=(
+                        "Readiness gate no-opped; deviation "
+                        "gate:implement_source_ref_unresolved"
+                    ),
+                    since_ms=row.last_progress_ms,
+                )
+            )
         if row.terminal_ms is None:
             severity = _escalate(
                 row.idle_age_ms,

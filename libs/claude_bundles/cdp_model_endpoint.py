@@ -40,6 +40,10 @@ SUBMIT_RETRY_BACKOFF_S = 5.0
 MAX_OVERLOAD_SUBMIT_ATTEMPTS = 2
 UPSTREAM_OVERLOADED = "upstream_overloaded"
 _OVERLOAD_ONLY_BODY_RE = re.compile(r"API Error:\s*52[93]", re.IGNORECASE)
+_OVERLOAD_ONLY_LINE_RE = re.compile(
+    r"^(?:Claude responded: )?API Error:\s*52[93].*$",
+    re.IGNORECASE,
+)
 _OVERLOAD_ONLY_MAX_LEN = 500
 
 HarvestSource = Literal["chat", "output-file", "auto"]
@@ -101,7 +105,11 @@ def picker_from_model_id(model_id: str) -> str:
     return normalize_picker_request(f"cdp/{picker}")
 
 
-def _has_proof(snapshot: dict[str, Any]) -> bool:
+def has_proof(snapshot: dict[str, Any]) -> bool:
+    """True when snapshot carries harvest proof (archive_uri or content_proof).
+
+    ``completion_phase=terminal`` alone is insufficient without archive/content_proof.
+    """
     if snapshot.get("archive_uri"):
         return True
     phase = str(snapshot.get("completion_phase") or "")
@@ -110,6 +118,9 @@ def _has_proof(snapshot: dict[str, Any]) -> bool:
     if snapshot.get("content_proof_uri") and phase in {"content_proof", "archiving"}:
         return True
     return False
+
+
+_has_proof = has_proof
 
 
 @dataclass
@@ -167,8 +178,12 @@ def _post_idle(snapshot: dict[str, Any]) -> bool:
     return str(snapshot.get("completion_phase") or "") in POST_IDLE_PHASES
 
 
-def _completed_without_proof(snapshot: dict[str, Any]) -> bool:
-    return str(snapshot.get("status") or "") == "completed" and not _has_proof(snapshot)
+def completed_without_proof(snapshot: dict[str, Any]) -> bool:
+    """True when satellite status is completed but proof fields are absent."""
+    return str(snapshot.get("status") or "") == "completed" and not has_proof(snapshot)
+
+
+_completed_without_proof = completed_without_proof
 
 
 def _abort_then_sweep(
@@ -204,11 +219,23 @@ def _is_retryable_overload_status(exc: CdpAskClientError) -> bool:
 
 
 def _is_overload_only_harvest(body: str) -> bool:
-    """Detect Anthropic overload-only harvest bodies (529/503 API Error text)."""
+    """Detect Anthropic overload-only harvest bodies (529/503 API Error text).
+
+    Requires every non-empty line to be overload-error shaped so a legitimate
+    short harvest that merely quotes ``API Error: 529`` is not terminalized.
+    """
     text = body.strip()
     if not text or len(text) > _OVERLOAD_ONLY_MAX_LEN:
         return False
-    return bool(_OVERLOAD_ONLY_BODY_RE.search(text))
+    if not _OVERLOAD_ONLY_BODY_RE.search(text):
+        return False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if not _OVERLOAD_ONLY_LINE_RE.match(stripped):
+            return False
+    return True
 
 
 def _proof_rejects_overload(snapshot: dict[str, Any]) -> bool:
@@ -258,6 +285,88 @@ def _submit_with_overload_retry(
             raise
     assert last_exc is not None
     raise last_exc
+
+
+def result_from_snapshot(
+    *,
+    snapshot: dict[str, Any],
+    execution_id: str,
+    satellite_execution_id: str,
+    prompt_uri: str,
+    picker_model: str,
+) -> CdpGenerateResult | None:
+    """Project one poll snapshot to a terminal result, or None if still running.
+
+    Reconcile uses this — must not call ``run_cdp_generate``. Fail-closed: running
+    legs and transient poll errors (no ``status`` field) return None.
+    """
+    if snapshot.get("error") and "status" not in snapshot:
+        return None
+
+    proof_carry = _ProofCarry()
+    proof_carry.absorb_status_snapshot(snapshot)
+    carry = proof_carry.as_result_fields()
+
+    if has_proof(snapshot):
+        body = str(snapshot.get("body") or "")
+        if _proof_rejects_overload(snapshot):
+            return CdpGenerateResult(
+                ok=False,
+                body=body,
+                execution_id=execution_id,
+                satellite_execution_id=satellite_execution_id,
+                prompt_uri=prompt_uri,
+                picker_model=picker_model,
+                stall_stage=UPSTREAM_OVERLOADED,
+                error="upstream overload-only harvest body",
+                extras=_upstream_overloaded_extras(),
+                archive_uri=carry["archive_uri"],
+                content_proof_uri=carry["content_proof_uri"],
+                content_proof_sha256=carry["content_proof_sha256"],
+            )
+        return CdpGenerateResult(
+            ok=True,
+            body=body,
+            execution_id=execution_id,
+            satellite_execution_id=satellite_execution_id,
+            prompt_uri=prompt_uri,
+            picker_model=picker_model,
+            archive_uri=carry["archive_uri"],
+            content_proof_uri=carry["content_proof_uri"],
+            content_proof_sha256=carry["content_proof_sha256"],
+        )
+
+    if completed_without_proof(snapshot):
+        return CdpGenerateResult(
+            ok=False,
+            body=str(snapshot.get("body") or ""),
+            execution_id=execution_id,
+            satellite_execution_id=satellite_execution_id,
+            prompt_uri=prompt_uri,
+            picker_model=picker_model,
+            stall_stage="completed_without_proof",
+            error="satellite completed without archive_uri or content_proof",
+            archive_uri=carry["archive_uri"],
+            content_proof_uri=carry["content_proof_uri"],
+            content_proof_sha256=carry["content_proof_sha256"],
+        )
+
+    if _terminal_failure(snapshot):
+        return CdpGenerateResult(
+            ok=False,
+            body=str(snapshot.get("body") or ""),
+            execution_id=execution_id,
+            satellite_execution_id=satellite_execution_id,
+            prompt_uri=prompt_uri,
+            picker_model=picker_model,
+            stall_stage=snapshot.get("stall_stage"),
+            error=str(snapshot.get("error") or snapshot.get("status")),
+            archive_uri=carry["archive_uri"],
+            content_proof_uri=carry["content_proof_uri"],
+            content_proof_sha256=carry["content_proof_sha256"],
+        )
+
+    return None
 
 
 def abort_cdp_generate(

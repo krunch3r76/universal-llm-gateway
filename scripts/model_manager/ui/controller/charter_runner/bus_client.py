@@ -344,10 +344,65 @@ def closeout_posted_at_from_turns(turns: list[dict[str, Any]]) -> datetime | Non
         return None
 
 
+def failure_reason_from_worker_turns(turns: list[dict[str, Any]]) -> str | None:
+    """Detect terminal worker failure from turns (no I/O).
+
+    Shapes:
+    - Closeout JSON ``status ∈ {failed, timeout}``
+    - Gateway error JSON with ``code`` (e.g. ``CURSOR_SDK_SLOT_ACQUIRE_TIMEOUT``)
+      and no success ``status`` — live 6409/6421 slot-timeout
+    - Subject containing `` FAILED`` (cursor-sdk failure turn)
+    """
+    status = closeout_status_from_turns(turns)
+    if status in {"failed", "timeout"}:
+        return status
+    ordered = sorted(
+        turns,
+        key=lambda t: int(t.get("turn_number") or 0),
+        reverse=True,
+    )
+    for turn in ordered:
+        subject = str(turn.get("subject") or "")
+        body = str(turn.get("body") or "").strip()
+        if " FAILED" in subject.upper() or subject.upper().endswith("FAILED"):
+            code = None
+            if body.startswith("{"):
+                try:
+                    data = json.loads(body)
+                except (ValueError, TypeError):
+                    data = None
+                if isinstance(data, dict):
+                    code = str(data.get("code") or "").strip() or None
+                    st = str(data.get("status") or "").strip().lower()
+                    if st in {"complete", "partial"}:
+                        continue
+            return code or "failed"
+        if not body.startswith("{"):
+            continue
+        try:
+            data = json.loads(body)
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        st = str(data.get("status") or "").strip().lower()
+        if st in {"complete", "partial"}:
+            return None
+        code = str(data.get("code") or "").strip()
+        if code and (
+            "FAIL" in code.upper()
+            or "TIMEOUT" in code.upper()
+            or "ERROR" in code.upper()
+        ):
+            return code
+    return None
+
+
 async def worker_failure_reason(worker_thread: str) -> str | None:
     """Return a failure reason if the worker closeout/thread is terminal-failed.
 
     - Closeout body ``status ∈ {failed, timeout}`` → that status.
+    - Gateway error JSON / ``FAILED`` subject (see ``failure_reason_from_worker_turns``).
     - Thread ``status == closed`` with no successful closeout → ``worker_closed``.
     - Otherwise ``None`` (still running, or success-shaped — see self_heal for
       ``checkpoint_missing`` when complete/partial lacks a root CHECKPOINT).
@@ -355,9 +410,10 @@ async def worker_failure_reason(worker_thread: str) -> str | None:
     if not worker_thread:
         return None
     turns = await fetch_turns(worker_thread)
+    shaped = failure_reason_from_worker_turns(turns)
+    if shaped:
+        return shaped
     status = closeout_status_from_turns(turns)
-    if status in {"failed", "timeout"}:
-        return status
     detail = await fetch_thread(worker_thread)
     thread_status = str(detail.get("status") or "").lower()
     if thread_status == "closed" and status not in {"complete", "partial"}:

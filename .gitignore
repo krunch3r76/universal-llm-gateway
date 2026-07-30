@@ -103,6 +103,7 @@ tests/*
 !services/universal-stargate/systems/frontier_consult/test_handoff_enrich.py
 !services/universal-stargate/systems/frontier_consult/test_life_intent_routes.py
 !services/universal-stargate/systems/frontier_consult/test_anthropic_override_gate.py
+!services/universal-stargate/systems/frontier_consult/test_cdp_generate_reconcile.py
 !libs/life_intent/test_*.py
 !libs/session_store/test_*.py
 # Bound-invariant falsifier tier (arc 5911 G10) — path fence only; legacy test_*.py stay ignored
