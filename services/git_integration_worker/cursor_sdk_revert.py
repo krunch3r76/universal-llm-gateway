@@ -116,7 +116,7 @@ def revert_dispatch_writes(*, dispatch_id: str, source_repo: Path) -> RevertRepo
             unrevertable=(),
             reason="baseline_unavailable",
         )
-    change_set = changed_paths(source_repo, baseline)
+    change_set, _polarity_deviations = changed_paths(source_repo, baseline)
     candidates = tuple(dict.fromkeys((*change_set.modified, *change_set.deleted)))
     in_head = _paths_in_head(source_repo, candidates)
     restored: list[str] = []

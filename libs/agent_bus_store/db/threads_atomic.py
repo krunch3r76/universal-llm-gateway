@@ -154,8 +154,17 @@ def close_thread(
 
     All mutations happen in a single SQLite transaction. Returns updated
     thread detail, or None if the thread is not found.
+
+    When the reserved ``charter-runner`` enrollment tag is present, it is
+    stripped in the same transaction and ``manage.charter.tick.root_closed``
+    is emitted so the dispatch-board fold can leave ``parked``.
     """
+    from agent_bus_store.enrollment_guard import ENROLLMENT_TAG
+
+    from .threads import _load_thread_tags
+
     ts = now()
+    stripped_enrollment = False
     with connect() as conn:
         row = conn.execute(
             "SELECT id, bus_lifecycle_state FROM threads WHERE id = ?", (thread_id,)
@@ -177,6 +186,15 @@ def close_thread(
         params.append(thread_id)
         conn.execute(f"UPDATE threads SET {', '.join(sets)} WHERE id = ?", params)
 
+        prior_tags = _load_thread_tags(conn, [thread_id]).get(thread_id, [])
+        if ENROLLMENT_TAG in prior_tags:
+            set_thread_tags(
+                conn,
+                thread_id,
+                [t for t in prior_tags if t != ENROLLMENT_TAG],
+            )
+            stripped_enrollment = True
+
         # Advance lifecycle only when thread is actively managed (active → completed).
         # Other non-terminal states (pending, admitted) are not transitioned here;
         # the caller is responsible for ensuring the thread reached active first.
@@ -191,10 +209,18 @@ def close_thread(
     # bus_lifecycle_state was NULL (standing roots). MCP close also records;
     # dual emit is acceptable for this low-frequency lifecycle edge.
     if detail is not None:
-        from ..events.thread_closed import emit_thread_closed
+        from ..events.thread_closed import (
+            emit_charter_root_closed_on_unenroll,
+            emit_thread_closed,
+        )
 
         via = None if lifecycle_trigger == "close" else lifecycle_trigger
         emit_thread_closed(thread_id, via=via)
+        if stripped_enrollment:
+            emit_charter_root_closed_on_unenroll(
+                root=thread_id,
+                reason="close_while_enrolled",
+            )
     return detail
 
 

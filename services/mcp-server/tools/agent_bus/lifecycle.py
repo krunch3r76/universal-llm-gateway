@@ -15,6 +15,51 @@ from .read_state import _resolve_turn_id
 logger = logging.getLogger(__name__)
 
 
+def _add_tags_impl(
+    *,
+    thread: str,
+    tags: list[str],
+    from_agent: str,
+    enroll_charter_runner: bool = False,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {"add_tags": tags}
+    if enroll_charter_runner:
+        payload["enroll_charter_runner"] = True
+    result = relay("agent-bus", "PATCH", f"/threads/{thread}", body=payload)
+    if "error" in result:
+        return {"error": f"agent-bus error: {result['error']}"}
+    logger.info("agent_bus add_tags: thread=%s tags=%s", thread, tags)
+    record(
+        "mcp.agentbus.thread.tags.updated",
+        thread=thread,
+        tag_count=len(tags),
+        agent=from_agent,
+        op="add_tags",
+    )
+    return result
+
+
+def _remove_tags_impl(
+    *,
+    thread: str,
+    tags: list[str],
+    from_agent: str,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {"remove_tags": tags}
+    result = relay("agent-bus", "PATCH", f"/threads/{thread}", body=payload)
+    if "error" in result:
+        return {"error": f"agent-bus error: {result['error']}"}
+    logger.info("agent_bus remove_tags: thread=%s tags=%s", thread, tags)
+    record(
+        "mcp.agentbus.thread.tags.updated",
+        thread=thread,
+        tag_count=len(tags),
+        agent=from_agent,
+        op="remove_tags",
+    )
+    return result
+
+
 def _close_impl(
     *,
     thread: str,
@@ -30,6 +75,8 @@ def _close_impl(
         return {"error": f"agent-bus error: {result['error']}"}
     logger.info("agent_bus close: thread=%s", thread)
     # Store close_thread emits mcp.agentbus.thread.closed (SoT for CLI + HTTP).
+    # Enrolled roots: close also strips charter-runner and emits
+    # manage.charter.tick.root_closed (dispatch-board fold authority).
     return result
 
 
@@ -60,8 +107,9 @@ def _update_thread_impl(
         return {"error": f"agent-bus error: {result['error']}"}
     logger.info("agent_bus update_thread: thread=%s status=%s", thread, status)
     record("mcp.agentbus.thread.updated", thread=thread, status=status or "")
-    # status=closed → store update_thread also emits mcp.agentbus.thread.closed
-    # and charter unenroll-on-closed emits manage.charter.tick.root_closed.
+    # status=closed → store update_thread also emits mcp.agentbus.thread.closed.
+    # Closing an enrolled root (or stripping charter-runner from a closed root)
+    # emits manage.charter.tick.root_closed for the dispatch-board fold.
     if tags is not None:
         record(
             "mcp.agentbus.thread.tags.updated",
@@ -119,6 +167,52 @@ def _delete_turn_impl(*, thread: str, turn_number: int, force: bool) -> dict[str
         "mcp.agentbus.turn.deleted", thread=thread, turn_number=turn_number, force=force
     )
     return delete_result
+
+
+def _add_tags_dispatch(
+    *,
+    thread: str | int = "",
+    tags: list[str] | None = None,
+    from_agent: str = "",
+    enroll_charter_runner: bool = False,
+) -> dict[str, Any]:
+    if isinstance(thread, int):
+        thread = str(thread)
+    if not thread:
+        return {"error": "add_tags requires: thread (str)"}
+    if not tags:
+        return {"error": "add_tags requires: tags (list[str])"}
+    from_agent, author_err = resolve_dispatch_from_agent(from_agent)
+    if author_err is not None:
+        return author_err
+    return _add_tags_impl(
+        thread=thread,
+        tags=tags,
+        from_agent=from_agent,
+        enroll_charter_runner=enroll_charter_runner,
+    )
+
+
+def _remove_tags_dispatch(
+    *,
+    thread: str | int = "",
+    tags: list[str] | None = None,
+    from_agent: str = "",
+) -> dict[str, Any]:
+    if isinstance(thread, int):
+        thread = str(thread)
+    if not thread:
+        return {"error": "remove_tags requires: thread (str)"}
+    if not tags:
+        return {"error": "remove_tags requires: tags (list[str])"}
+    from_agent, author_err = resolve_dispatch_from_agent(from_agent)
+    if author_err is not None:
+        return author_err
+    return _remove_tags_impl(
+        thread=thread,
+        tags=tags,
+        from_agent=from_agent,
+    )
 
 
 def _close_dispatch(

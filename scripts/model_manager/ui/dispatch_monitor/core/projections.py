@@ -83,6 +83,10 @@ def sdk_rows(
                 tool_call_count=state.tool_call_count,
                 parent_execution_id=state.parent_execution_id,
                 review_child=state.review_child,
+                admitted_via=state.admitted_via,
+                asked_by=state.asked_by,
+                purpose=state.purpose,
+                story_id=state.story_id,
             )
         )
     rows.sort(key=lambda r: r.dispatch_id)

@@ -41,8 +41,10 @@ DetailCap = 500
 ResultCap = 2000
 MAX_MANIFEST_BODY_PROBE = 4_000
 
-_REPO_FILE_OPS = frozenset({"write", "edit", "delete", "observed"})
-_REPO_LABEL_OPS = frozenset({"write", "edit", "delete"})
+_REPO_READ_OPS = frozenset({"observed"})
+_REPO_WRITE_OPS = frozenset({"write", "edit", "delete"})
+_REPO_FILE_OPS = _REPO_WRITE_OPS | _REPO_READ_OPS
+_REPO_LABEL_OPS = _REPO_WRITE_OPS
 _REPO_SHELL_OP = "shell"
 _MCP_OP = "mcp"
 _VORTEX_SERVER = "user-vortex"
@@ -92,11 +94,13 @@ def _git_change_set_empty(change_set: ChangeSet) -> bool:
 def _manifest_declares_runtime_surface(base: EffectsManifest | None) -> bool:
     if base is None:
         return False
-    repo_paths = manifest_repo_paths(base)
-    if repo_paths:
+    if manifest_repo_write_paths(base):
+        return True
+    repo_section = base.surfaces.get("repo")
+    if repo_section and any(entry.op == _REPO_SHELL_OP for entry in repo_section.entries):
         return True
     for name, section in base.surfaces.items():
-        if name in _PLUMBING_SURFACES:
+        if name in _PLUMBING_SURFACES or name == "repo":
             continue
         if section.entries:
             return True
@@ -201,11 +205,33 @@ def build_effects_manifest(
     )
 
 
+def manifest_repo_write_paths(
+    manifest: EffectsManifest | None,
+    *,
+    source_repo: Path | None = None,
+) -> set[str]:
+    """Repo paths from write-family manifest ops — runtime surface and write evidence."""
+    if manifest is None:
+        return set()
+    section = manifest.surfaces.get("repo")
+    if section is None:
+        return set()
+    paths: set[str] = set()
+    for entry in section.entries:
+        if entry.op not in _REPO_WRITE_OPS:
+            continue
+        path = _normalize_repo_path(entry.target, repo_root=source_repo)
+        if path:
+            paths.add(path)
+    return paths
+
+
 def manifest_repo_paths(
     manifest: EffectsManifest | None,
     *,
     source_repo: Path | None = None,
 ) -> set[str]:
+    """All repo file-op paths including read-family ``observed`` (dedup, branch-adjacent)."""
     if manifest is None:
         return set()
     section = manifest.surfaces.get("repo")
@@ -574,52 +600,29 @@ def resolve_repo_change_set(
     git_change_set: ChangeSet,
     source_repo: Path | None = None,
     mount_root: Path | None = None,
+    baseline: dict[str, Any] | None = None,
+    files_expected: list[str] | None = None,
+    current_porcelain: dict[str, str] | None = None,
+    admit_head: str | None = None,
+    closeout_head: str | None = None,
 ) -> tuple[ChangeSet, tuple[str, ...], bool]:
-    """Git-authoritative change set with manifest completeness net.
+    """Manifest-first change set — thin delegate to ``cursor_sdk_repo_precedence``."""
+    from services.git_integration_worker.cursor_sdk_repo_precedence import (
+        resolve_repo_change_set as _resolve_precedence,
+    )
 
-    Returns ``(change_set, extra_untracked_or_ignored, manifest_git_divergence)``.
-    """
-    manifest_cs, _, _ = repo_change_set_from_manifest(
-        manifest,
+    change_set, extra_untracked, divergence, _ambient = _resolve_precedence(
+        manifest=manifest,
+        git_change_set=git_change_set,
         source_repo=source_repo,
         mount_root=mount_root,
+        baseline=baseline,
+        files_expected=files_expected,
+        current_porcelain=current_porcelain,
+        admit_head=admit_head,
+        closeout_head=closeout_head,
     )
-    if manifest_cs is None:
-        manifest_cs = ChangeSet(created=(), modified=(), deleted=())
-    divergence = git_manifest_label_divergence(git_change_set, manifest_cs)
-    git_paths = (
-        set(git_change_set.created)
-        | set(git_change_set.modified)
-        | set(git_change_set.deleted)
-    )
-    manifest_paths = (
-        set(manifest_cs.created) | set(manifest_cs.modified) | set(manifest_cs.deleted)
-    )
-    extra_modified: list[str] = []
-    extra_untracked: list[str] = []
-    for path in sorted(manifest_paths - git_paths):
-        if source_repo is None:
-            continue
-        candidate = source_repo / path
-        try:
-            if not candidate.is_file():
-                continue
-        except OSError:
-            continue
-        if _path_is_tracked(source_repo, path):
-            extra_modified.append(path)
-        else:
-            extra_untracked.append(path)
-        divergence = True
-    return (
-        ChangeSet(
-            created=git_change_set.created,
-            modified=tuple(dict.fromkeys([*git_change_set.modified, *extra_modified])),
-            deleted=git_change_set.deleted,
-        ),
-        tuple(extra_untracked),
-        divergence,
-    )
+    return change_set, extra_untracked, divergence
 
 
 def git_manifest_label_divergence(

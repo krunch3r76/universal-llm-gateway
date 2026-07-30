@@ -12,6 +12,7 @@ from implement_admission.propagation_row import (
     PropagationRow,
     consumers_for_lib_path,
     is_lib_test_module,
+    land_paths_for_propagation,
     resolve_code_ref,
     rows_from_lib_consumers,
     rows_from_parsed_block,
@@ -39,6 +40,12 @@ _FILE_FIELDS = (
     ("files_modified", "files_modified_total"),
     ("files_deleted", "files_deleted_total"),
 )
+
+
+def _str_paths(raw: object) -> tuple[str, ...]:
+    if not isinstance(raw, list):
+        return ()
+    return tuple(entry for entry in raw if isinstance(entry, str))
 
 
 def structured_propagation_rows(
@@ -77,18 +84,17 @@ def structured_propagation_rows(
         if block_rows:
             return tuple(block_rows)
 
-    paths: list[str] = []
-    for field, _total_field in _FILE_FIELDS:
-        raw = decoded.get(field)
-        if isinstance(raw, list):
-            paths.extend(entry for entry in raw if isinstance(entry, str))
+    land_paths = land_paths_for_propagation(
+        created=_str_paths(decoded.get("files_created")),
+        modified=_str_paths(decoded.get("files_modified")),
+    )
 
     code_ref = resolve_code_ref(decoded)
-    consumer_rows = rows_from_lib_consumers(paths, code_ref=code_ref)
+    consumer_rows = rows_from_lib_consumers(land_paths, code_ref=code_ref)
     if consumer_rows:
         return tuple(consumer_rows)
 
-    service_rows = rows_from_service_paths(paths, code_ref=code_ref)
+    service_rows = rows_from_service_paths(land_paths, code_ref=code_ref)
     return tuple(service_rows)
 
 
@@ -272,9 +278,13 @@ def residue_for_closeout(payload: str) -> str | None:
     parsed = changed_paths_from_closeout(payload)
     if parsed is None:
         return None
-    paths, path_truncated = parsed
+    _paths, path_truncated = parsed
+    land_paths = land_paths_for_propagation(
+        created=_str_paths(decoded.get("files_created")),
+        modified=_str_paths(decoded.get("files_modified")),
+    )
     return build_residue_block(
-        residue_actions(paths),
+        residue_actions(land_paths),
         truncated=truncated or path_truncated,
     )
 

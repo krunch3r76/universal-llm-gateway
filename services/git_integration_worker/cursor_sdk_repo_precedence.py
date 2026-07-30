@@ -1,0 +1,439 @@
+"""L3 manifest-first precedence + L4 scoped-lift for closeout files_* (6341 arc)."""
+
+from __future__ import annotations
+
+import hashlib
+from pathlib import Path
+from typing import Any
+
+from implement_admission.closeout_models import AmbientRepoMovement, EffectsManifest
+
+from services.git_integration_worker.cursor_sdk_ambient import ambient_movement
+from services.git_integration_worker.cursor_sdk_capture_status import (
+    ChangeSet,
+    normalize_wt_baseline,
+)
+from services.git_integration_worker.cursor_sdk_git_head import git_diff_paths_between
+from services.git_integration_worker.cursor_sdk_manifest import (
+    _path_is_tracked,
+    git_manifest_label_divergence,
+    manifest_repo_paths,
+    repo_change_set_from_manifest,
+)
+from services.git_integration_worker.cursor_sdk_polarity import (
+    ClaimedOp,
+    list_git_deleted_paths,
+    prove_polarity,
+)
+
+_REPO_LABEL_OPS = frozenset({"write", "edit", "delete"})
+
+
+def _hash_worktree_file(source_repo: Path, rel_path: str) -> str | None:
+    try:
+        data = (source_repo / rel_path.lstrip("/")).read_bytes()
+    except OSError:
+        return None
+    return hashlib.sha256(data).hexdigest()
+
+
+def _label_for_path(path: str, change_set: ChangeSet) -> ClaimedOp | None:
+    if path in change_set.created:
+        return "created"
+    if path in change_set.modified:
+        return "modified"
+    if path in change_set.deleted:
+        return "deleted"
+    return None
+
+
+def _append_bucket(
+    buckets: dict[ClaimedOp, list[str]], op: ClaimedOp, path: str
+) -> None:
+    bucket = buckets[op]
+    if path not in bucket:
+        bucket.append(path)
+
+
+def _manifest_declares_repo_label_ops(manifest: EffectsManifest | None) -> bool:
+    section = manifest.surfaces.get("repo") if manifest else None
+    if section is None:
+        return False
+    return any(entry.op in _REPO_LABEL_OPS for entry in section.entries)
+
+
+def _repo_has_shell_op(manifest: EffectsManifest | None) -> bool:
+    section = manifest.surfaces.get("repo") if manifest else None
+    if section is None:
+        return False
+    return any(entry.op == "shell" for entry in section.entries)
+
+
+def _job_surface_paths(
+    files_expected: list[str] | None,
+    manifest: EffectsManifest | None,
+    *,
+    source_repo: Path | None,
+) -> set[str]:
+    surface = {raw.strip().lstrip("/") for raw in (files_expected or []) if raw.strip()}
+    surface.update(manifest_repo_paths(manifest, source_repo=source_repo))
+    return surface
+
+
+def _hash_delta_proven(
+    path: str,
+    *,
+    source_repo: Path,
+    baseline_hashes: dict[str, str],
+    claimed: ClaimedOp,
+) -> bool:
+    if claimed == "deleted":
+        return not (source_repo / path).exists()
+    current_hash = _hash_worktree_file(source_repo, path)
+    admit_hash = baseline_hashes.get(path)
+    if admit_hash is None:
+        return claimed == "created"
+    return current_hash is not None and current_hash != admit_hash
+
+
+def _scoped_lift_eligible(
+    path: str,
+    *,
+    claimed: ClaimedOp,
+    source_repo: Path,
+    baseline: dict[str, Any] | None,
+    job_surface: set[str],
+    has_shell: bool,
+    baseline_codes: dict[str, str],
+    baseline_hashes: dict[str, str],
+    current_porcelain: dict[str, str],
+    git_deleted_paths: frozenset[str],
+    admit_head: str | None,
+) -> bool:
+    if path not in job_surface and not any(path.endswith(f"/{job}") for job in job_surface):
+        return False
+    if not _hash_delta_proven(
+        path,
+        source_repo=source_repo,
+        baseline_hashes=baseline_hashes,
+        claimed=claimed,
+    ):
+        return False
+    if not has_shell:
+        return False
+    current_hash = _hash_worktree_file(source_repo, path)
+    return prove_polarity(
+        claimed=claimed,
+        path=path,
+        source_repo=source_repo,
+        baseline_codes=baseline_codes,
+        baseline_hashes=baseline_hashes,
+        current_porcelain=current_porcelain,
+        current_hash=current_hash,
+        git_deleted_paths=git_deleted_paths,
+        admit_head=admit_head,
+    )
+
+
+def _reclassify_within(
+    manifest_op: ClaimedOp,
+    git_op: ClaimedOp | None,
+) -> tuple[ClaimedOp, bool]:
+    if git_op is None or git_op == manifest_op:
+        return manifest_op, False
+    return git_op, True
+
+
+def _resolve_legacy_git_authoritative(
+    *,
+    manifest: EffectsManifest | None,
+    git_change_set: ChangeSet,
+    manifest_cs: ChangeSet,
+    source_repo: Path | None,
+    baseline: dict[str, Any] | None,
+    baseline_codes: dict[str, str],
+    porcelain: dict[str, str],
+    admit_head: str | None,
+    closeout_head: str | None,
+) -> tuple[ChangeSet, tuple[str, ...], bool, list[AmbientRepoMovement]]:
+    """Undeclared repo label ops: keep polarity-filtered git buckets + ambient census."""
+    divergence = git_manifest_label_divergence(git_change_set, manifest_cs)
+    declared_paths = frozenset(
+        set(manifest_cs.created)
+        | set(manifest_cs.modified)
+        | set(manifest_cs.deleted)
+    )
+    git_diff_paths = (
+        git_diff_paths_between(
+            source_repo,
+            admit_head=admit_head,
+            closeout_head=closeout_head,
+        )
+        if source_repo is not None
+        else frozenset()
+    )
+    attributed = set(
+        [*git_change_set.created, *git_change_set.modified, *git_change_set.deleted]
+    )
+    ambient: list[AmbientRepoMovement] = []
+    if source_repo is not None:
+        for path, code in baseline_codes.items():
+            if path in attributed:
+                continue
+            if not code.startswith("?"):
+                continue
+            if not _path_is_tracked(source_repo, path):
+                continue
+            if porcelain.get(path) is not None:
+                continue
+            ambient.append(
+                ambient_movement(
+                    path,
+                    source_repo=source_repo,
+                    baseline=baseline,
+                    git_diff_paths=git_diff_paths,
+                    declared_paths=declared_paths,
+                    current_porcelain=porcelain,
+                )
+            )
+        for path in sorted(set(git_diff_paths) - attributed):
+            if any(entry.path == path for entry in ambient):
+                continue
+            ambient.append(
+                ambient_movement(
+                    path,
+                    source_repo=source_repo,
+                    baseline=baseline,
+                    git_diff_paths=git_diff_paths,
+                    declared_paths=declared_paths,
+                    current_porcelain=porcelain,
+                )
+            )
+    manifest_paths = (
+        set(manifest_cs.created) | set(manifest_cs.modified) | set(manifest_cs.deleted)
+    )
+    git_paths = (
+        set(git_change_set.created)
+        | set(git_change_set.modified)
+        | set(git_change_set.deleted)
+    )
+    extra_untracked: list[str] = []
+    for path in sorted(manifest_paths - git_paths):
+        if source_repo is None:
+            continue
+        candidate = source_repo / path
+        try:
+            if not candidate.is_file():
+                continue
+        except OSError:
+            continue
+        if not _path_is_tracked(source_repo, path):
+            extra_untracked.append(path)
+            divergence = True
+    return git_change_set, tuple(extra_untracked), divergence, ambient
+
+
+def resolve_repo_change_set(
+    *,
+    manifest: EffectsManifest | None,
+    git_change_set: ChangeSet,
+    source_repo: Path | None = None,
+    mount_root: Path | None = None,
+    baseline: dict[str, Any] | None = None,
+    files_expected: list[str] | None = None,
+    current_porcelain: dict[str, str] | None = None,
+    admit_head: str | None = None,
+    closeout_head: str | None = None,
+) -> tuple[ChangeSet, tuple[str, ...], bool, list[AmbientRepoMovement]]:
+    """Manifest-first change set with L4 scoped lift and L5 ambient routing."""
+    manifest_cs, _, _ = repo_change_set_from_manifest(
+        manifest,
+        source_repo=source_repo,
+        mount_root=mount_root,
+    )
+    if manifest_cs is None:
+        manifest_cs = ChangeSet(created=(), modified=(), deleted=())
+    baseline_codes, baseline_hashes = normalize_wt_baseline(baseline)
+    porcelain = current_porcelain or {}
+    if admit_head is None and isinstance(baseline, dict):
+        raw_head = baseline.get("admit_head")
+        if isinstance(raw_head, str) and raw_head.strip():
+            admit_head = raw_head.strip()
+
+    if not _manifest_declares_repo_label_ops(manifest):
+        return _resolve_legacy_git_authoritative(
+            manifest=manifest,
+            git_change_set=git_change_set,
+            manifest_cs=manifest_cs,
+            source_repo=source_repo,
+            baseline=baseline,
+            baseline_codes=baseline_codes,
+            porcelain=porcelain,
+            admit_head=admit_head,
+            closeout_head=closeout_head,
+        )
+
+    divergence = git_manifest_label_divergence(git_change_set, manifest_cs)
+    git_deleted = (
+        list_git_deleted_paths(source_repo) if source_repo is not None else frozenset()
+    )
+    git_diff_paths = (
+        git_diff_paths_between(
+            source_repo,
+            admit_head=admit_head,
+            closeout_head=closeout_head,
+        )
+        if source_repo is not None
+        else frozenset()
+    )
+    declared_paths = frozenset(
+        set(manifest_cs.created)
+        | set(manifest_cs.modified)
+        | set(manifest_cs.deleted)
+    )
+    job_surface = _job_surface_paths(
+        files_expected,
+        manifest,
+        source_repo=source_repo,
+    )
+    has_shell = _repo_has_shell_op(manifest)
+    buckets: dict[ClaimedOp, list[str]] = {
+        "created": [],
+        "modified": [],
+        "deleted": [],
+    }
+    ambient: list[AmbientRepoMovement] = []
+    attributed: set[str] = set()
+
+    manifest_paths_ordered: list[tuple[str, ClaimedOp]] = [
+        *((path, "created") for path in manifest_cs.created),
+        *((path, "modified") for path in manifest_cs.modified),
+        *((path, "deleted") for path in manifest_cs.deleted),
+    ]
+
+    for path, manifest_op in manifest_paths_ordered:
+        git_op = _label_for_path(path, git_change_set)
+        final_op, relabeled = _reclassify_within(manifest_op, git_op)
+        if relabeled:
+            divergence = True
+        current_hash = _hash_worktree_file(source_repo, path) if source_repo else None
+        proved = (
+            source_repo is not None
+            and prove_polarity(
+                claimed=final_op,
+                path=path,
+                source_repo=source_repo,
+                baseline_codes=baseline_codes,
+                baseline_hashes=baseline_hashes,
+                current_porcelain=porcelain,
+                current_hash=current_hash,
+                git_deleted_paths=git_deleted,
+                admit_head=admit_head,
+            )
+        )
+        if proved:
+            _append_bucket(buckets, final_op, path)
+            attributed.add(path)
+        else:
+            ambient.append(
+                ambient_movement(
+                    path,
+                    source_repo=source_repo,
+                    baseline=baseline,
+                    git_diff_paths=git_diff_paths,
+                    declared_paths=declared_paths,
+                    declared_unproved=True,
+                    current_porcelain=porcelain,
+                )
+            )
+
+    git_paths = (
+        set(git_change_set.created)
+        | set(git_change_set.modified)
+        | set(git_change_set.deleted)
+    )
+    manifest_paths = (
+        set(manifest_cs.created) | set(manifest_cs.modified) | set(manifest_cs.deleted)
+    )
+    extra_untracked: list[str] = []
+    for path in sorted(git_paths - manifest_paths):
+        if path in attributed:
+            continue
+        git_op = _label_for_path(path, git_change_set)
+        if git_op is None or source_repo is None:
+            continue
+        if _scoped_lift_eligible(
+            path,
+            claimed=git_op,
+            source_repo=source_repo,
+            baseline=baseline,
+            job_surface=job_surface,
+            has_shell=has_shell,
+            baseline_codes=baseline_codes,
+            baseline_hashes=baseline_hashes,
+            current_porcelain=porcelain,
+            git_deleted_paths=git_deleted,
+            admit_head=admit_head,
+        ):
+            _append_bucket(buckets, git_op, path)
+            attributed.add(path)
+        else:
+            ambient.append(
+                ambient_movement(
+                    path,
+                    source_repo=source_repo,
+                    baseline=baseline,
+                    git_diff_paths=git_diff_paths,
+                    declared_paths=declared_paths,
+                    current_porcelain=porcelain,
+                )
+            )
+
+    observed_paths = git_paths | set(git_diff_paths) | set(manifest_paths)
+    for path in sorted(observed_paths - attributed):
+        if any(entry.path == path for entry in ambient):
+            continue
+        if source_repo is None:
+            continue
+        candidate = source_repo / path
+        try:
+            on_disk = candidate.is_file()
+        except OSError:
+            on_disk = False
+        if path in manifest_paths and not on_disk:
+            continue
+        ambient.append(
+            ambient_movement(
+                path,
+                source_repo=source_repo,
+                baseline=baseline,
+                git_diff_paths=git_diff_paths,
+                declared_paths=declared_paths,
+                current_porcelain=porcelain,
+            )
+        )
+
+    for path in sorted(manifest_paths - git_paths):
+        if path in attributed or any(entry.path == path for entry in ambient):
+            continue
+        if source_repo is None:
+            continue
+        candidate = source_repo / path
+        try:
+            if not candidate.is_file():
+                continue
+        except OSError:
+            continue
+        if not _path_is_tracked(source_repo, path):
+            extra_untracked.append(path)
+
+    return (
+        ChangeSet(
+            created=tuple(buckets["created"]),
+            modified=tuple(buckets["modified"]),
+            deleted=tuple(buckets["deleted"]),
+        ),
+        tuple(extra_untracked),
+        divergence,
+        ambient,
+    )

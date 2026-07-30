@@ -62,6 +62,9 @@ def active_since_window_label(value: str | datetime | None) -> str:
 MAX_TURN_BODY_CHARS = 8_000
 MAX_LONG_TURN_BODY_CHARS = 64_000
 MAX_SIDECAR_CONTENT_CHARS = 256 * 1024
+# Soft advisory target for inline turn bodies. For CHECKPOINT subjects the
+# advisory is exempt; when residue is metered elsewhere it counts authored
+# residue chars only (derived projection + RESUME footer are exempt).
 BRIEFING_TARGET_CHARS = 2_000
 
 
@@ -233,6 +236,10 @@ class TurnCreate(BaseModel):
     status: TurnStatus = TurnStatus.OPEN
     after_turn: int | None = None
     supersedes_turn: int | None = None
+    supersedes_turn_id: int | None = Field(
+        default=None,
+        description="Deprecated alias for row id — prefer supersedes_turn (turn_number).",
+    )
     attachments: list[AttachmentCreate] | None = None
 
 
@@ -263,6 +270,14 @@ class TurnCreated(BaseModel):
             "Non-blocking advisory when body exceeded BRIEFING_TARGET_CHARS without "
             "allow_long_body, a sidecar, or an inline-contract envelope."
         ),
+    )
+    superseded_turn_number: int | None = Field(
+        default=None,
+        description="When this turn structurally supersedes another, its turn_number.",
+    )
+    superseded_turn_id: int | None = Field(
+        default=None,
+        description="When this turn structurally supersedes another, its row id.",
     )
 
 
@@ -421,6 +436,9 @@ class ThreadUpdate(BaseModel):
     summary: str | None = None
     # None = leave tags unchanged. [] = clear all. [...] = replace with the new set.
     tags: list[str] | None = None
+    # Additive ops — do not clobber unspecified tags (mutually exclusive with tags=).
+    add_tags: list[str] | None = None
+    remove_tags: list[str] | None = None
     # Required when ``tags`` newly adds reserved ``charter-runner``.
     enroll_charter_runner: bool = False
 
@@ -472,6 +490,9 @@ class TurnSendCreate(BaseModel):
 
     When ``sidecar_content`` is set the server writes the durable cortex sidecar
     after the thread id is known and before the turn row is inserted.
+
+    ``supersedes_turn`` is the same-thread **turn_number** to supersede structurally.
+    Deprecated alias ``supersedes_turn_id`` (row id) accepted for one release cycle.
     """
 
     model_config = {"populate_by_name": True}
@@ -493,6 +514,10 @@ class TurnSendCreate(BaseModel):
     after_turn: int | None = None
     status: TurnStatus = TurnStatus.OPEN
     supersedes_turn: int | None = None
+    supersedes_turn_id: int | None = Field(
+        default=None,
+        description="Deprecated alias for row id — prefer supersedes_turn (turn_number).",
+    )
     mark_read: bool = False
     close: bool = False
     attachments: list[AttachmentCreate] | None = None

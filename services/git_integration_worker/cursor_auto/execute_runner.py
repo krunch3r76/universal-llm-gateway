@@ -16,6 +16,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from services.git_integration_worker.cursor_auto.email_bridge_relay import (
+    ExecuteRelayRefusalError,
+)
 from services.git_integration_worker.cursor_auto.tier_m_manifest import ManifestRow
 
 INVOKER_UNCONFIGURED_REASON = "execute_invoker_unconfigured"
@@ -94,6 +97,13 @@ async def run_tool_op(
             error=str(exc),
         )
     except Exception as exc:
+        if isinstance(exc, ExecuteRelayRefusalError):
+            return ExecuteOutcome(
+                ok=False,
+                tool_op=row.tool_op,
+                reason=exc.reason,
+                error=exc.error,
+            )
         return ExecuteOutcome(
             ok=False,
             tool_op=row.tool_op,

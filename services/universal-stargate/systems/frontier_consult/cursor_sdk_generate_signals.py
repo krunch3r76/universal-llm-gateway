@@ -101,6 +101,9 @@ def emit_sdk_worker_outcome(
                     execution_id=execution_id,
                     dispatch_id=queued_dispatch_id or None,
                     queue_position=ticket.get("queue_position"),
+                    admitted_via="stargate",
+                    seat="cursor-sdk",
+                    **association,
                 )
             )
             return
@@ -110,6 +113,8 @@ def emit_sdk_worker_outcome(
                 thread_id=thread_id,
                 execution_id=execution_id,
                 dispatch_id=worker_detail.get("dispatch_id"),
+                admitted_via="stargate",
+                seat="cursor-sdk",
                 **association,
             )
         )

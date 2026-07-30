@@ -21,7 +21,8 @@ carry section headers.
 from __future__ import annotations
 
 import json
-from typing import Any, Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
+from typing import Any
 
 from .protocols import Event, EventRecord
 
@@ -64,7 +65,7 @@ def parse_lines(lines: Iterable[str]) -> Iterator[Event]:
 
 def load_fixture(path: str) -> tuple[Event, ...]:
     """Read a JSONL fixture from ``path`` and return its records in file order."""
-    with open(path, "r", encoding="utf-8") as handle:
+    with open(path, encoding="utf-8") as handle:
         return tuple(parse_lines(handle))
 
 
@@ -81,7 +82,7 @@ class JsonlEventSource:
         self._records = tuple(records)
 
     @classmethod
-    def from_path(cls, path: str) -> "JsonlEventSource":
+    def from_path(cls, path: str) -> JsonlEventSource:
         """Build a source from a JSONL fixture file."""
         return cls(load_fixture(path))
 

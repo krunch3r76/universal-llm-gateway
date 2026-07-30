@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -18,6 +19,7 @@ from systems.frontier_consult.cdp_generate_worker import (
     ONBEHALF_POST_FAILED_STALL,
     _unread_latest_from_409,
     deliver_cdp_result_turn,
+    format_cdp_result_body,
     format_onbehalf_delivery_failed_body,
 )
 
@@ -273,6 +275,91 @@ def test_format_onbehalf_delivery_failed_includes_stall_stage() -> None:
     text = format_onbehalf_delivery_failed_body(_ok_result())
     assert ONBEHALF_POST_FAILED_STALL in text
     assert "prior_archive_uri" in text
+
+
+def test_format_cdp_result_body_upstream_overloaded() -> None:
+    result = CdpGenerateResult(
+        ok=False,
+        body="",
+        execution_id="abcdef0123456789",
+        satellite_execution_id=None,
+        prompt_uri="cortex://notes/system/threads/r-prompt.md",
+        picker_model="opus-4.8",
+        stall_stage="upstream_overloaded",
+        error="project-ask HTTP 529",
+        extras={"reason": "upstream_overloaded", "status_code": 529},
+    )
+    text = format_cdp_result_body(result)
+    assert "status:failed reason=upstream_overloaded" in text
+    assert "cdp FAILED" not in text
+
+
+def test_format_onbehalf_delivery_failed_preserves_upstream_reason() -> None:
+    overloaded = CdpGenerateResult(
+        ok=False,
+        body="",
+        execution_id="abcdef0123456789",
+        satellite_execution_id="sat-1",
+        prompt_uri="cortex://notes/system/threads/r-prompt.md",
+        picker_model="opus-4.8",
+        stall_stage="upstream_overloaded",
+        error="upstream overload-only harvest body",
+        extras={"reason": "upstream_overloaded", "status_code": 529},
+        archive_uri="cortex://notes/system/threads/archive.md",
+    )
+    text = format_onbehalf_delivery_failed_body(overloaded)
+    assert "status:failed reason=upstream_overloaded" in text
+    assert "prior_stall_stage: `upstream_overloaded`" in text
+    assert "prior_reason: `upstream_overloaded`" in text
+
+
+@pytest.mark.asyncio
+async def test_emit_upstream_overload_friction_dedupes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from systems.frontier_consult import cdp_generate_worker as worker
+
+    posts: list[dict[str, Any]] = []
+
+    class _Client:
+        async def post(self, path: str, json: dict) -> Any:
+            del path
+            posts.append(json)
+            return type("Resp", (), {"status_code": 200, "text": "ok"})()
+
+        async def __aenter__(self) -> _Client:
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+    monkeypatch.setattr(worker, "make_async_client", lambda *a, **k: _Client())
+    worker._UPSTREAM_OVERLOAD_FRICTION_EMITTED.clear()
+    result = CdpGenerateResult(
+        ok=False,
+        body="",
+        execution_id="exec-friction-dedup",
+        satellite_execution_id=None,
+        prompt_uri="cortex://notes/system/threads/r-prompt.md",
+        picker_model="opus-4.8",
+        stall_stage="upstream_overloaded",
+        error="project-ask HTTP 529",
+        extras={"reason": "upstream_overloaded", "status_code": 529},
+    )
+    await worker._emit_upstream_overload_friction(
+        execution_id="exec-friction-dedup",
+        thread_id="6386",
+        result=result,
+    )
+    await worker._emit_upstream_overload_friction(
+        execution_id="exec-friction-dedup",
+        thread_id="6386",
+        result=result,
+    )
+    assert len(posts) == 1
+    note = posts[0]["arguments"]
+    assert "execution_id=exec-friction-dedup" in note
+    assert "service:universal-stargate" in note
 
 
 def test_unread_latest_from_409_extracts_latest() -> None:

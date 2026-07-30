@@ -1,4 +1,8 @@
-"""Friction assertion ops — write (log) and read (list with charter filters)."""
+"""Friction assertion ops — write (log) and read (list with anchor filters).
+
+Protocol category accepts either charter ``{charter_root, window_index}`` or
+continuity ``{root_thread, cp_ordinal}`` anchor variants when sweep-eligible.
+"""
 
 from __future__ import annotations
 
@@ -13,9 +17,15 @@ from ..db import cortex_conn
 from ..entity_aliases import resolve_entity_reference
 from ..routes.assertions import _create_assertion_impl, _list_assertions_impl
 from ._friction_charter_attrs import (
+    _PROTOCOL_ANCHOR_REQUIRED_ERROR,
     _build_friction_provenance_attrs,
+    _charter_variant_complete,
+    _continuity_variant_complete,
+    _friction_anchor_view,
     _friction_charter_filters,
+    _project_friction_full_items,
     _project_friction_summary_items,
+    _validate_anchor_completeness,
 )
 from ._shared import (
     _FRICTION_CATEGORIES,
@@ -55,6 +65,22 @@ def _resolve_friction_confidence(
 logger = get_logger("cortex-api.dispatch_ops.assertions")
 
 
+def _protocol_anchor_satisfied(
+    *,
+    charter_root: str | None,
+    window_index: int | None,
+    root_thread: str | None,
+    cp_ordinal: int | None,
+) -> bool:
+    return _charter_variant_complete(
+        charter_root=charter_root,
+        window_index=window_index,
+    ) or _continuity_variant_complete(
+        root_thread=root_thread,
+        cp_ordinal=cp_ordinal,
+    )
+
+
 def _op_friction(
     owner: str | None = None,
     service: str | None = None,
@@ -65,6 +91,8 @@ def _op_friction(
     session_id: str | None = None,
     charter_root: str | None = None,
     window_index: int | None = None,
+    root_thread: str | None = None,
+    cp_ordinal: int | None = None,
     scoreboard_uri: str | None = None,
     actionable: bool | None = None,
     actionable_false_reason: str | None = None,
@@ -75,11 +103,12 @@ def _op_friction(
     confidence_score: float | None = None,
     **_: object,
 ) -> dict[str, Any]:
-    """Log a friction assertion; protocol category requires charter context.
+    """Log a friction assertion; protocol category requires a complete anchor.
 
-    ``confidence`` is honoured when supplied (ladder:
-    confirmed/believed/suspected/hypothesized). Omitted → hypothesized/0.5.
-    Invalid values are rejected — never silently downgraded.
+    Anchor variants: charter ``{charter_root, window_index}`` or continuity
+    ``{root_thread, cp_ordinal}``. ``confidence`` is honoured when supplied;
+    omitted → hypothesized/0.5. Invalid values are rejected — never silently
+    downgraded.
     """
     if (
         owner is not None
@@ -105,14 +134,23 @@ def _op_friction(
         return conf_resolved
     resolved_confidence, resolved_score = conf_resolved
     if category == "protocol" and actionable is not False:
-        root_present = charter_root is not None and str(charter_root).strip()
-        if not (root_present and window_index is not None):
-            return {
-                "error": (
-                    "protocol friction requires charter_root and window_index "
-                    "(see file_charter_protocol_friction)"
-                )
-            }
+        completeness_err = _validate_anchor_completeness(
+            charter_root=charter_root,
+            window_index=window_index,
+            root_thread=root_thread,
+            cp_ordinal=cp_ordinal,
+            scoreboard_uri=scoreboard_uri,
+            checkpoint_turn=checkpoint_turn,
+        )
+        if completeness_err:
+            return {"error": completeness_err}
+        if not _protocol_anchor_satisfied(
+            charter_root=charter_root,
+            window_index=window_index,
+            root_thread=root_thread,
+            cp_ordinal=cp_ordinal,
+        ):
+            return {"error": _PROTOCOL_ANCHOR_REQUIRED_ERROR}
     if ":" in owner_arg and owner_type_of(owner_arg) is None:
         return {
             "error": f"Unsupported owner namespace in {owner_arg!r}. Allowed prefixes: service:, agent_skill:, ai_agent: (or a bare slug -> service:)."
@@ -131,6 +169,8 @@ def _op_friction(
     provenance_attrs, prov_err = _build_friction_provenance_attrs(
         charter_root=charter_root,
         window_index=window_index,
+        root_thread=root_thread,
+        cp_ordinal=cp_ordinal,
         scoreboard_uri=scoreboard_uri,
         session_id=session_id,
         actionable=actionable,
@@ -166,6 +206,9 @@ def _op_friction(
         body["evidence_uris"] = [str(u) for u in evidence_uris]
     result = _create_assertion_impl(body)
     if "error" not in result:
+        anchor_kind = "unanchored"
+        if provenance_attrs:
+            anchor_kind = _friction_anchor_view(provenance_attrs).get("anchor_kind", "unanchored")
         logger.info("cortex friction: %s/%s — %s", entity_id, category, note[:60])
         record(
             "mcp.cortex.friction.logged",
@@ -173,8 +216,33 @@ def _op_friction(
             owner_type=owner_type_of(entity_id),
             category=category or "unclassified",
             agent=agent,
+            anchor_kind=anchor_kind,
         )
     return result
+
+
+def _anchor_filters_active(
+    *,
+    charter_root: str | None,
+    window_index: int | None,
+    actionable: bool | None,
+    since: str | None,
+    anchor_kind: str | None,
+    anchor_root: str | None,
+    anchor_seq: int | None,
+) -> bool:
+    return any(
+        v is not None
+        for v in (
+            charter_root,
+            window_index,
+            actionable,
+            since,
+            anchor_kind,
+            anchor_root,
+            anchor_seq,
+        )
+    )
 
 
 def _op_frictions(
@@ -185,6 +253,9 @@ def _op_frictions(
     seeded_by: str | None = None,
     charter_root: str | None = None,
     window_index: int | None = None,
+    anchor_kind: str | None = None,
+    anchor_root: str | None = None,
+    anchor_seq: int | None = None,
     actionable: bool | None = None,
     since: str | None = None,
     superseded: bool | None = None,
@@ -207,9 +278,16 @@ def _op_frictions(
         list(_FRICTION_OWNER_TYPES) if (entity_id is None and owner_type is None) else None
     )
     claim_filter = f"[{category}]" if category else None
-    fetch_intent = "full" if any(
-        v is not None for v in (charter_root, window_index, actionable, since)
-    ) else resolved_intent
+    filters_active = _anchor_filters_active(
+        charter_root=charter_root,
+        window_index=window_index,
+        actionable=actionable,
+        since=since,
+        anchor_kind=anchor_kind,
+        anchor_root=anchor_root,
+        anchor_seq=anchor_seq,
+    )
+    fetch_intent = "full" if filters_active else resolved_intent
     fetch_limit = limit or (50 if fetch_intent == "full" else 7)
     result = _list_assertions_impl(
         entity_id=entity_id,
@@ -226,27 +304,33 @@ def _op_frictions(
     if result.get("error"):
         return result
 
-    if any(v is not None for v in (charter_root, window_index, actionable, since)):
-        raw_items: list[dict[str, Any]] = []
-        for item in result.get("items") or []:
-            if isinstance(item, dict):
-                raw_items.append(item)
-            elif hasattr(item, "model_dump"):
-                raw_items.append(item.model_dump(mode="json"))
+    raw_items: list[dict[str, Any]] = []
+    for item in result.get("items") or []:
+        if isinstance(item, dict):
+            raw_items.append(item)
+        elif hasattr(item, "model_dump"):
+            raw_items.append(item.model_dump(mode="json"))
+
+    if filters_active:
         filtered = _friction_charter_filters(
             raw_items,
             charter_root=charter_root,
             window_index=window_index,
             actionable=actionable,
             since=since,
+            anchor_kind=anchor_kind,
+            anchor_root=anchor_root,
+            anchor_seq=anchor_seq,
         )
         if resolved_intent == "summary":
             result["items"] = _project_friction_summary_items(filtered[: (limit or 7)])
         else:
-            result["items"] = filtered[: (limit or 50)]
+            result["items"] = _project_friction_full_items(filtered[: (limit or 50)])
         result["intent"] = resolved_intent
     elif resolved_intent == "summary":
         pass
+    elif resolved_intent == "full":
+        result["items"] = _project_friction_full_items(raw_items[: (limit or 50)])
     if not result.get("error"):
         fix_cycle = (
             "Actionable row → codified bug ticket, investigate→execute fix cycle: investigate "

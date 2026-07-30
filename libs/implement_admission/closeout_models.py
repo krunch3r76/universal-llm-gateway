@@ -11,6 +11,18 @@ from implement_admission.spec import CloseoutStatus
 
 CoverageStatus = Literal["complete", "partial", "unavailable"]
 
+AmbientRepoCause = Literal[
+    "ambient:concurrent_commit",
+    "ambient:concurrent_edit",
+    "ambient:vanished",
+    "declared_unproved",
+]
+
+
+class AmbientRepoMovement(BaseModel):
+    path: str
+    cause: AmbientRepoCause
+
 
 class EffectEntry(BaseModel):
     op: str
@@ -64,6 +76,7 @@ class ImplementCloseout(BaseModel):
     files_created: list[str] = Field(default_factory=list)
     files_modified: list[str] = Field(default_factory=list)
     files_deleted: list[str] = Field(default_factory=list)
+    files_ambient_repo_movement: list[AmbientRepoMovement] = Field(default_factory=list)
     capture_status: Literal["complete", "partial", "unavailable"] | None = None
     effects_manifest: EffectsManifest | None = None
     public_api_changed: bool = False

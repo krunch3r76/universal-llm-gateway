@@ -1,10 +1,9 @@
-"""N-turn CDP consult on one claude.ai chat (Fable protocol reviews)."""
+"""N-turn CDP consult on one claude.ai chat (default picker: Opus 5)."""
 
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 
-from claude_bundles.chat_model_select import select_model
 from claude_bundles.chat_reply_wait import harvest_assistant, wait_assistant_reply
 from claude_bundles.chat_session_hygiene import (
     delete_chat_if_active,
@@ -20,6 +19,7 @@ from claude_bundles.cowork_output_download import (
 )
 from claude_bundles.project_ask import (
     ProjectAskResult,
+    _compose_model_selected,
     project_ask_on_page,
     send_prompt,
     strip_thinking_prefix,
@@ -109,7 +109,7 @@ async def run_project_conversation(
     *,
     project_uuid: str = "",
     compose_url: str | None = None,
-    model: str = "fable-5",
+    model: str = "opus-5",
     delete_after: bool = True,
     cdp_url: str = DEFAULT_CDP_URL,
     timeout_s: int = 600,
@@ -127,7 +127,7 @@ async def run_project_conversation(
     pw, _browser, ctx, _page0 = await connect_cdp(cdp_url)
     results: list[ProjectAskResult] = []
     try:
-        page = await pick_chat_page(ctx)
+        page = await pick_chat_page(ctx, prefer_url_substr="/new")
         if project_uuid:
             first = await project_ask_on_page(
                 page,
@@ -145,12 +145,12 @@ async def run_project_conversation(
             )
         else:
             url = compose_url or "https://claude.ai/new"
-            await goto_fresh_compose(
+            model_info = await _compose_model_selected(
                 page,
+                model,
                 compose_url=url,
                 ensure_cowork_auto=ensure_cowork_auto,
             )
-            model_info = await select_model(page, model)
             if not model_info.get("ok"):
                 return [
                     ProjectAskResult(
@@ -165,13 +165,6 @@ async def run_project_conversation(
                         error=f"model select failed: {model_info}",
                     )
                 ]
-            # Model/chrome clicks can leave scheduled-task or settings — re-land.
-            if "/new" not in (page.url or "") and "/cowork/" not in (page.url or ""):
-                await goto_fresh_compose(
-                    page,
-                    compose_url=url,
-                    ensure_cowork_auto=ensure_cowork_auto,
-                )
             before = await harvest_assistant(page)
             await send_prompt(page, prompts[0])
             state = await wait_assistant_reply(

@@ -19,7 +19,8 @@ Negative space, stated because getting it wrong is the likeliest silent defect:
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 from .. import signals
 from ..correlation import CorrelationIndex

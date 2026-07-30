@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 from ..protocols import EventRecord, envelope_subject
 
@@ -42,6 +43,10 @@ class SdkState:
         "seen_tool_call_ids",
         "parent_execution_id",
         "review_child",
+        "admitted_via",
+        "asked_by",
+        "purpose",
+        "story_id",
     )
 
     def __init__(self, dispatch_id: str) -> None:
@@ -77,6 +82,10 @@ class SdkState:
         self.seen_tool_call_ids: set[str] = set()
         self.parent_execution_id: str | None = None
         self.review_child = False
+        self.admitted_via: str | None = None
+        self.asked_by: str | None = None
+        self.purpose: str | None = None
+        self.story_id: str | None = None
 
 
 def as_int(value: Any) -> int | None:
@@ -246,6 +255,10 @@ def merge_sdk_state(canonical: SdkState, alt: SdkState) -> None:
         "terminal_emitter",
         "parent_execution_id",
         "review_child",
+        "admitted_via",
+        "asked_by",
+        "purpose",
+        "story_id",
     ):
         if getattr(canonical, field) is None and getattr(alt, field) is not None:
             setattr(canonical, field, getattr(alt, field))

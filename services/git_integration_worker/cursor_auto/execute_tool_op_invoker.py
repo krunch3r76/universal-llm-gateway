@@ -1,11 +1,13 @@
 """Production tier-M tool-op invoker for cursor-auto ``execute`` jobs.
 
-Wires the code-surface-reachable ratified read-only ops:
-``observability.query``, ``cortex.search``, ``cortex.entity_get``.
+Wires code-authority read-only ops (``observability.query``, ``cortex.search``,
+``cortex.entity_get``) and, when :data:`EMAIL_BRIDGE_EXECUTE_RELAY_ENABLED` is
+set, life-authority ``email.pull`` / ``email.search`` via
+:mod:`email_bridge_relay` (email-bridge UDS — not life MCP).
 
-``email.*`` allow rows bind at the life-MCP surface, not this worker's code
-surface — those ops are intentionally unwired here; admission may pass but
-execution refuses ``execute_invoker_unconfigured`` (spec §7 reachability caveat).
+Email relay registration defaults **off**; enabling requires operator DISPOSITION
+(``cortex://notes/system/specs/life-code-execute-bridge.md``). ``email.send``,
+``email.move``, and ``email.delete`` stay manifest-denied and unwired.
 
 Registration happens once at worker lifespan start via :func:`register_production_invoker`.
 """
@@ -15,12 +17,19 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from collections.abc import Callable
 from typing import Any
 
 import httpx
 from transport_utils import DEFAULT_CORTEX_URL, make_sync_client
 from universal_logging import get_logger
 
+from services.git_integration_worker.cursor_auto.email_bridge_relay import (
+    EMAIL_BRIDGE_EXECUTE_RELAY_FLAG,
+    email_bridge_execute_relay_enabled,
+    relay_email_pull,
+    relay_email_search,
+)
 from services.git_integration_worker.cursor_auto.execute_runner import (
     INVOKER_UNCONFIGURED_REASON,
     InvokerUnconfiguredError,
@@ -35,18 +44,30 @@ _EVENTS_QUERY_SOCK = os.environ.get(
 _QUERY_TIMEOUT = 10.0
 _CORTEX_TIMEOUT = 30.0
 
-_WIRED_OPS: frozenset[tuple[str, str]] = frozenset(
-    {
-        ("observability", "query"),
-        ("cortex", "search"),
-        ("cortex", "entity_get"),
+RelayFn = Callable[[dict[str, Any]], dict[str, Any]]
+
+
+def _base_relay_registry() -> dict[tuple[str, str], RelayFn]:
+    """Code-surface relays always registered; email entries added when flag on."""
+    registry: dict[tuple[str, str], RelayFn] = {
+        ("observability", "query"): _relay_observability_query,
+        ("cortex", "search"): lambda args: _relay_cortex_dispatch("search", args),
+        ("cortex", "entity_get"): lambda args: _relay_cortex_dispatch("entity_get", args),
     }
-)
+    if email_bridge_execute_relay_enabled():
+        registry[("email", "pull")] = relay_email_pull
+        registry[("email", "search")] = relay_email_search
+    return registry
+
+
+def relay_registry() -> dict[tuple[str, str], RelayFn]:
+    """Return the active ``(tool, op) → relay_fn`` map for this process."""
+    return _base_relay_registry()
 
 
 def is_wired_tool_op(tool: str, op: str) -> bool:
     """Return whether this seat's production invoker fires *tool*.*op*."""
-    return (tool, op) in _WIRED_OPS
+    return (tool, op) in relay_registry()
 
 
 def _relay_cortex_dispatch(op: str, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -112,16 +133,14 @@ def _relay_observability_query(arguments: dict[str, Any]) -> dict[str, Any]:
 
 
 def _fire_tool_op_sync(*, tool: str, op: str, arguments: dict[str, Any]) -> dict[str, Any]:
-    if not is_wired_tool_op(tool, op):
+    registry = relay_registry()
+    relay_fn = registry.get((tool, op))
+    if relay_fn is None:
         raise InvokerUnconfiguredError(
             f"{tool}.{op} is allowlisted but not wired on this worker seat "
             f"({INVOKER_UNCONFIGURED_REASON})"
         )
-    if tool == "cortex" and op in {"search", "entity_get"}:
-        return _relay_cortex_dispatch(op, arguments)
-    if tool == "observability" and op == "query":
-        return _relay_observability_query(arguments)
-    raise InvokerUnconfiguredError(f"no relay for {tool}.{op}")
+    return relay_fn(arguments)
 
 
 async def production_tool_op_invoker(
@@ -142,9 +161,12 @@ async def production_tool_op_invoker(
 def register_production_invoker() -> None:
     """Install the worker's tier-M op invoker at process start."""
     set_tool_op_invoker(production_tool_op_invoker)
+    wired = sorted(".".join(pair) for pair in relay_registry())
     logger.info(
-        "cursor-auto tier-M invoker registered wired_ops=%s",
-        sorted(".".join(pair) for pair in _WIRED_OPS),
+        "cursor-auto tier-M invoker registered wired_ops=%s flag=%s=%s",
+        wired,
+        EMAIL_BRIDGE_EXECUTE_RELAY_FLAG,
+        email_bridge_execute_relay_enabled(),
     )
 
 
@@ -152,4 +174,5 @@ __all__ = [
     "is_wired_tool_op",
     "production_tool_op_invoker",
     "register_production_invoker",
+    "relay_registry",
 ]

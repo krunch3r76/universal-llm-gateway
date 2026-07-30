@@ -8,11 +8,11 @@ gap read as a dispatch.
 
 from __future__ import annotations
 
-from .conftest import replay
-
 from scripts.model_manager.ui.dispatch_monitor.core import signals
 from scripts.model_manager.ui.dispatch_monitor.core.model import Model
 from scripts.model_manager.ui.dispatch_monitor.core.protocols import Event
+
+from .conftest import replay
 
 
 def _row(rows, key: str, value: str):
@@ -712,3 +712,144 @@ def test_ingest_drops_degrade_but_subscribe_drops_do_not() -> None:
     health = subscribe.derive(sub_now).health
     assert health.events_dropped_subscribe == 3
     assert "fold_inputs_dropped" not in health.degraded
+
+
+def test_admitted_via_first_writer_wins() -> None:
+    """Later sparse events must not blank first ``admitted_via`` / ``asked_by``."""
+    model = Model()
+    model.apply(
+        Event(
+            signals.SDK_WORKER_QUEUED,
+            1_000,
+            {
+                "dispatch_id": "auto-nest1",
+                "thread_id": "5867",
+                "execution_id": "exec-auto-nest1",
+                "admitted_via": "cursor-auto",
+                "asked_by": "web-anthropic",
+            },
+        )
+    )
+    model.apply(
+        Event(
+            signals.SDK_WORKER_DISPATCHED,
+            2_000,
+            {
+                "dispatch_id": "auto-nest1",
+                "thread_id": "5867",
+                "execution_id": "exec-auto-nest1",
+                "seat": "cursor-sdk",
+            },
+        )
+    )
+    row = _row(model.derive(3_000).sdk, "dispatch_id", "auto-nest1")
+    assert row.admitted_via == "cursor-auto"
+    assert row.asked_by == "web-anthropic"
+    assert row.seat == "cursor-sdk"
+
+
+def test_queued_replay_after_start_does_not_revert_running() -> None:
+    """F2: replayed ``worker.queued`` after start must not clear ``started_ms``."""
+    model = Model()
+    model.apply(
+        Event(
+            signals.SDK_WORKER_DISPATCHED,
+            1_000,
+            {
+                "dispatch_id": "auto-nest2",
+                "thread_id": "5867",
+                "execution_id": "exec-auto-nest2",
+                "seat": "cursor-sdk",
+                "admitted_via": "cursor-auto",
+                "asked_by": "cursor",
+            },
+        )
+    )
+    model.apply(
+        Event(
+            signals.SDK_WORKER_QUEUED,
+            2_000,
+            {
+                "dispatch_id": "auto-nest2",
+                "thread_id": "5867",
+                "execution_id": "exec-auto-nest2",
+                "admitted_via": "cursor-auto",
+                "asked_by": "web-anthropic",
+            },
+        )
+    )
+    row = _row(model.derive(3_000).sdk, "dispatch_id", "auto-nest2")
+    assert row.state == "running"
+    assert row.started_ms == 1_000
+    assert row.admitted_via == "cursor-auto"
+    assert row.asked_by == "cursor"
+
+
+def test_worker_dispatched_maps_emitter_worker_only() -> None:
+    """AC6: ``SDK_WORKER_DISPATCHED`` → worker lane; pin worker-only fixture."""
+    model = Model()
+    model.apply(
+        Event(
+            signals.SDK_WORKER_DISPATCHED,
+            1_000,
+            {
+                "dispatch_id": "auto-emit1",
+                "thread_id": "5867",
+                "execution_id": "exec-auto-emit1",
+                "seat": "cursor-sdk",
+                "admitted_via": "cursor-auto",
+                "asked_by": "web-anthropic",
+            },
+        )
+    )
+    model.apply(
+        Event(
+            signals.SDK_WORKER_COMPLETED,
+            2_000,
+            {
+                "dispatch_id": "auto-emit1",
+                "thread_id": "5867",
+                "execution_id": "exec-auto-emit1",
+                "outcome": "ok",
+            },
+        )
+    )
+    row = _row(model.derive(3_000).sdk, "dispatch_id", "auto-emit1")
+    assert row.emitters_seen == ("worker",)
+
+
+def test_signature_pairs_distinct_by_admitted_via_and_asked_by() -> None:
+    """Three fixture pairs yield pairwise-distinct (admitted_via, asked_by)."""
+    model = Model()
+    fixtures = (
+        ("auto-a1", "cursor-auto", "web-anthropic"),
+        ("auto-a2", "cursor-auto", "cursor"),
+        ("stg-a1", "stargate", "cursor"),
+    )
+    for i, (disp, via, asked) in enumerate(fixtures):
+        model.apply(
+            Event(
+                signals.SDK_WORKER_DISPATCHED,
+                (i + 1) * 1_000,
+                {
+                    "dispatch_id": disp,
+                    "thread_id": "5867",
+                    "execution_id": f"exec-{disp}",
+                    "seat": "cursor-sdk",
+                    "admitted_via": via,
+                    "asked_by": asked,
+                },
+            )
+        )
+    frame = model.derive(10_000)
+    pairs = {
+        (row.admitted_via, row.asked_by)
+        for row in frame.sdk
+        if row.dispatch_id.startswith(("auto-a", "stg-a"))
+    }
+    assert pairs == {
+        ("cursor-auto", "web-anthropic"),
+        ("cursor-auto", "cursor"),
+        ("stargate", "cursor"),
+    }
+    assert all(row.seat == "cursor-sdk" for row in frame.sdk if row.seat)

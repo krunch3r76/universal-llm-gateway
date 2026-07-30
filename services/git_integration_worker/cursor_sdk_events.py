@@ -228,6 +228,7 @@ def FrontierSdkWorkerCompleted(  # noqa: N802
     asked_by: str | None = None,
     purpose: str | None = None,
     story_id: str | None = None,
+    admitted_via: str | None = None,
 ) -> Event:
     payload: dict[str, Any] = {
         "dispatch_id": dispatch_id,
@@ -261,6 +262,8 @@ def FrontierSdkWorkerCompleted(  # noqa: N802
         payload["purpose"] = purpose
     if story_id is not None:
         payload["story_id"] = story_id
+    if admitted_via is not None:
+        payload["admitted_via"] = admitted_via
     return Event(
         signal="frontier.sdk.worker.completed",
         payload=payload,
@@ -402,8 +405,16 @@ def emit_sdk_worker_completed(
     asked_by: str | None = None,
     purpose: str | None = None,
     story_id: str | None = None,
+    admitted_via: str | None = None,
 ) -> None:
-    """Publish terminal success/outcome telemetry for a finished cursor-sdk worker."""
+    """Publish terminal success/outcome telemetry for a finished cursor-sdk worker.
+
+    Carries optional association fields (``asked_by``, ``purpose``, ``story_id``,
+    ``admitted_via``) when the dispatch was stamped at admit time so board fold
+    and story projector can reconcile nested cursor-auto rows without re-parsing
+    the packet. Registered ``admitted_via`` vocabulary: ``cursor-auto``,
+    ``stargate``, or unset.
+    """
     _emit(
         FrontierSdkWorkerCompleted(
             dispatch_id=dispatch_id,
@@ -426,6 +437,7 @@ def emit_sdk_worker_completed(
             asked_by=asked_by,
             purpose=purpose,
             story_id=story_id,
+            admitted_via=admitted_via,
         )
     )
     logger.info(
@@ -452,16 +464,94 @@ def emit_sdk_worker_completed(
 
 
 @event_factory
+def FrontierSdkWorkerDispatched(  # noqa: N802
+    dispatch_id: str,
+    thread_id: str,
+    execution_id: str,
+    seat: str = "cursor-sdk",
+    admitted_via: str | None = None,
+    asked_by: str | None = None,
+    purpose: str | None = None,
+    story_id: str | None = None,
+) -> Event:
+    """GIW worker lane start signal after ``mark_running``.
+
+    Emitted on the immediate admit path and on FIFO promote, but only when
+    ``admitted_via == \"cursor-auto\"`` (nested cursor-auto MCP). Registered
+    vocabulary: ``cursor-auto``, ``stargate``, or unset. Stargate-admitted /
+    unset admits rely on Stargate's own ``FrontierSdkWorkerDispatched``; GIW must
+    not emit while ledger status is ``queued``.
+    """
+    payload: dict[str, object] = {
+        "dispatch_id": dispatch_id,
+        "thread_id": thread_id,
+        "execution_id": execution_id,
+        "seat": seat,
+    }
+    if admitted_via is not None:
+        payload["admitted_via"] = admitted_via
+    if asked_by is not None:
+        payload["asked_by"] = asked_by
+    if purpose is not None:
+        payload["purpose"] = purpose
+    if story_id is not None:
+        payload["story_id"] = story_id
+    return Event(
+        signal="frontier.sdk.worker.dispatched",
+        payload=payload,
+        scope="node",
+    )
+
+
+def emit_sdk_worker_dispatched(
+    *,
+    dispatch_id: str,
+    thread_id: str,
+    execution_id: str,
+    admitted_via: str | None = None,
+    asked_by: str | None = None,
+    purpose: str | None = None,
+    story_id: str | None = None,
+    seat: str = "cursor-sdk",
+) -> None:
+    """Publish GIW worker-lane start after ``mark_running``.
+
+    Emitted on the immediate admit path and on FIFO promote, but only when
+    ``admitted_via == \"cursor-auto\"`` (nested cursor-auto MCP). Registered
+    vocabulary: ``cursor-auto``, ``stargate``, or unset. Stargate-admitted /
+    unset admits rely on Stargate's own ``FrontierSdkWorkerDispatched``; GIW must
+    not emit while ledger status is ``queued``.
+    """
+    _emit(
+        FrontierSdkWorkerDispatched(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            execution_id=execution_id,
+            seat=seat,
+            admitted_via=admitted_via,
+            asked_by=asked_by,
+            purpose=purpose,
+            story_id=story_id,
+        )
+    )
+
+
+@event_factory
 def FrontierSdkWorkerQueued(  # noqa: N802
     dispatch_id: str,
     thread_id: str,
     source_repo: str | None,
     queue_position: int | None,
+    execution_id: str | None = None,
     holder_dispatch_id: str | None = None,
     holder_thread_id: str | None = None,
     holder_resolved_model: str | None = None,
     holder_subject_preview: str | None = None,
     resolved_model: str | None = None,
+    admitted_via: str | None = None,
+    asked_by: str | None = None,
+    purpose: str | None = None,
+    story_id: str | None = None,
 ) -> Event:
     payload: dict[str, object] = {
         "dispatch_id": dispatch_id,
@@ -479,6 +569,16 @@ def FrontierSdkWorkerQueued(  # noqa: N802
         payload["holder_subject_preview"] = holder_subject_preview
     if resolved_model is not None:
         payload["resolved_model"] = resolved_model
+    if execution_id is not None:
+        payload["execution_id"] = execution_id
+    if admitted_via is not None:
+        payload["admitted_via"] = admitted_via
+    if asked_by is not None:
+        payload["asked_by"] = asked_by
+    if purpose is not None:
+        payload["purpose"] = purpose
+    if story_id is not None:
+        payload["story_id"] = story_id
     return Event(
         signal="frontier.sdk.worker.queued",
         payload=payload,
@@ -632,6 +732,11 @@ def emit_sdk_worker_queued(
     holder_resolved_model: str | None = None,
     holder_subject_preview: str | None = None,
     resolved_model: str | None = None,
+    execution_id: str | None = None,
+    admitted_via: str | None = None,
+    asked_by: str | None = None,
+    purpose: str | None = None,
+    story_id: str | None = None,
 ) -> None:
     """Publish FIFO queue placement while another dispatch holds the write lease."""
     _emit(
@@ -640,11 +745,16 @@ def emit_sdk_worker_queued(
             thread_id=thread_id,
             source_repo=source_repo,
             queue_position=queue_position,
+            execution_id=execution_id,
             holder_dispatch_id=holder_dispatch_id,
             holder_thread_id=holder_thread_id,
             holder_resolved_model=holder_resolved_model,
             holder_subject_preview=holder_subject_preview,
             resolved_model=resolved_model,
+            admitted_via=admitted_via,
+            asked_by=asked_by,
+            purpose=purpose,
+            story_id=story_id,
         )
     )
 

@@ -19,10 +19,12 @@ import re
 
 from claude_bundles.chat_model_match import (
     PREDICTED_MODEL_LABELS,
+    family_nested_in_more_models,
     family_pattern,
     is_leave_request,
     label_satisfies_request,
     match_model_request,
+    normalize_picker_request,
     parse_model_request,
     sealed_ask_default_effort,
 )
@@ -35,7 +37,9 @@ __all__ = [
     "label_satisfies_request",
     "list_picker_radios",
     "match_model_request",
+    "normalize_picker_request",
     "parse_model_request",
+    "picker_attests_request",
     "sealed_ask_default_effort",
     "select_fable_5",
     "select_from_ui",
@@ -249,6 +253,8 @@ async def select_from_ui(
     await page.keyboard.press("Escape")
     await page.wait_for_timeout(400)
     await _open_picker(page)
+    if family_nested_in_more_models(family):
+        await _expand_more_models(page)
 
     predicted = match_model_request(family, list(PREDICTED_MODEL_LABELS))
     path = "discover"
@@ -348,6 +354,16 @@ async def select_fable_5(page) -> dict:
     return await select_model(page, "fable-5")
 
 
+async def picker_attests_request(page, model: str) -> bool:
+    """True when the live picker label satisfies ``model`` (post-select verify)."""
+    wire = normalize_picker_request(model)
+    family, effort = parse_model_request(wire)
+    if effort is None:
+        effort = sealed_ask_default_effort(family)
+    label = await current_model_label(page)
+    return label_satisfies_request(wire, label, effort=effort)
+
+
 async def select_haiku_45(page) -> dict:
     """Ensure Haiku 4.5 for fast spoken-voice / fluidity passes."""
     return await select_from_ui(page, "haiku-4.5", effort=None)
@@ -359,11 +375,12 @@ async def select_model(page, model: str) -> dict:
     Examples: ``opus-5``, ``fable-5``, ``sonnet-5``, ``haiku-4.5``, ``leave``.
     ``PREDICTED_MODEL_LABELS`` is try-first only — availability SOT remains the picker.
     """
-    key = (model or "opus-5").strip().lower()
+    wire = normalize_picker_request(model)
+    key = wire.strip().lower()
     if is_leave_request(key):
         label = await current_model_label(page)
         return {"ok": True, "step": "leave", "current_model": label}
-    family, effort = parse_model_request(model or "opus-5")
+    family, effort = parse_model_request(wire)
     if effort is None:
         effort = sealed_ask_default_effort(family)
-    return await select_from_ui(page, model or "opus-5", effort=effort)
+    return await select_from_ui(page, wire, effort=effort)

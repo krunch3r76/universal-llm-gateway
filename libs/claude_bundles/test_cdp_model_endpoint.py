@@ -5,11 +5,15 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 
 from claude_bundles.cdp_model_endpoint import (
     CDP_SUBSTRATE,
+    SUBMIT_RETRY_BACKOFF_S,
+    UPSTREAM_OVERLOADED,
     _has_proof,
+    _is_overload_only_harvest,
     picker_from_model_id,
     run_cdp_generate,
 )
@@ -24,6 +28,7 @@ from claude_bundles.cdp_model_endpoint_staging import (
 def test_picker_from_model_id_passthrough() -> None:
     assert picker_from_model_id("cdp/opus-4.8") == "opus-4.8"
     assert picker_from_model_id("cdp/fable-5") == "fable-5"
+    assert picker_from_model_id("cdp/fable") == "fable-5"
 
 
 def test_stage_prompt_text_writes_ephemeral(
@@ -441,3 +446,175 @@ def test_run_cdp_generate_reports_satellite_id_at_submit(
     )
     assert seen == ["sat-5@1"]
     assert result.satellite_execution_id == "sat-5"
+
+
+_OVERLOAD_ONLY_BODY = (
+    "Claude responded: API Error: 529 Overloaded.\n\n"
+    "API Error: 529 Overloaded. This is a server-side issue, usually temporary "
+    "— try again in a moment. If it persists, check https://status.claude.com."
+)
+
+
+def test_is_overload_only_harvest_matches_archive_fixture() -> None:
+    assert _is_overload_only_harvest(_OVERLOAD_ONLY_BODY) is True
+    assert _is_overload_only_harvest("legitimate short answer") is False
+
+
+def test_run_cdp_generate_submit_529_then_success(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """AC1: one retry after backoff; on_submitted fires once; proof completes."""
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    monkeypatch.setenv("PROJECT_ASK_URL", "http://satellite.test")
+    client = _FakeClient(
+        [
+            {"_status_code": 529},
+            {"execution_id": "sat-retry", "status": "running"},
+            {
+                "execution_id": "sat-retry",
+                "status": "running",
+                "archive_uri": "cortex://notes/system/threads/archive.md",
+                "body": "harvested after retry",
+            },
+        ]
+    )
+    sleeps: list[float] = []
+    seen: list[str] = []
+
+    result = run_cdp_generate(
+        execution_id="dispatch-retry",
+        model_id="cdp/opus-4.8",
+        prompt_text="ping",
+        poll_interval_s=0,
+        client=client,  # type: ignore[arg-type]
+        sleep=sleeps.append,
+        on_submitted=seen.append,
+    )
+    assert result.ok is True
+    assert result.body == "harvested after retry"
+    assert seen == ["sat-retry"]
+    assert sleeps[0] == SUBMIT_RETRY_BACKOFF_S
+    assert sleeps.count(SUBMIT_RETRY_BACKOFF_S) == 1
+
+
+def test_run_cdp_generate_submit_529_twice_upstream_overloaded(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """AC2: double 529 exhausts retry; no satellite id; overload carrier."""
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    monkeypatch.setenv("PROJECT_ASK_URL", "http://satellite.test")
+    client = _FakeClient([{"_status_code": 529}, {"_status_code": 529}])
+    sleeps: list[float] = []
+    seen: list[str] = []
+
+    result = run_cdp_generate(
+        execution_id="dispatch-exhaust",
+        model_id="cdp/opus-4.8",
+        prompt_text="ping",
+        poll_interval_s=0,
+        client=client,  # type: ignore[arg-type]
+        sleep=sleeps.append,
+        on_submitted=seen.append,
+    )
+    assert result.ok is False
+    assert result.satellite_execution_id is None
+    assert result.stall_stage == UPSTREAM_OVERLOADED
+    assert result.extras.get("reason") == UPSTREAM_OVERLOADED
+    assert seen == []
+    assert sleeps == [SUBMIT_RETRY_BACKOFF_S]
+
+
+def test_run_cdp_generate_submit_transport_ambiguous_no_retry(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """AC3: status_code None does not retry or stamp upstream_overloaded."""
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    monkeypatch.setenv("PROJECT_ASK_URL", "http://satellite.test")
+
+    class _UnreachableClient(_FakeClient):
+        def request(
+            self, method: str, url: str, json: dict[str, Any] | None = None
+        ) -> _FakeResp:
+            if method == "POST" and "/abort" not in url:
+                self.calls.append((method, url))
+                raise httpx.ConnectError("connection refused")
+            return super().request(method, url, json=json)
+
+    client = _UnreachableClient([])
+    sleeps: list[float] = []
+
+    result = run_cdp_generate(
+        execution_id="dispatch-transport",
+        model_id="cdp/opus-4.8",
+        prompt_text="ping",
+        poll_interval_s=0,
+        client=client,  # type: ignore[arg-type]
+        sleep=sleeps.append,
+    )
+    assert result.ok is False
+    assert result.stall_stage is None
+    assert result.extras.get("reason") != UPSTREAM_OVERLOADED
+    assert sleeps == []
+    assert len(client.calls) == 1
+
+
+def test_run_cdp_generate_proof_overload_only_body(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """AC4: overload-only harvest body is not ok=True."""
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    monkeypatch.setenv("PROJECT_ASK_URL", "http://satellite.test")
+    client = _FakeClient(
+        [
+            {"execution_id": "sat-ol", "status": "running"},
+            {
+                "execution_id": "sat-ol",
+                "status": "running",
+                "archive_uri": "cortex://notes/system/threads/cdp-ask-archive-new.md",
+                "body": _OVERLOAD_ONLY_BODY,
+            },
+        ]
+    )
+
+    result = run_cdp_generate(
+        execution_id="dispatch-ol-body",
+        model_id="cdp/opus-4.8",
+        prompt_text="ping",
+        poll_interval_s=0,
+        client=client,  # type: ignore[arg-type]
+        sleep=lambda _s: None,
+    )
+    assert result.ok is False
+    assert result.stall_stage == UPSTREAM_OVERLOADED
+    assert result.extras.get("reason") == UPSTREAM_OVERLOADED
+
+
+def test_run_cdp_generate_proof_empty_body_with_archive_fail_closed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """AC4/F7: empty snapshot body with archive_uri must not bypass overload gate."""
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    monkeypatch.setenv("PROJECT_ASK_URL", "http://satellite.test")
+    client = _FakeClient(
+        [
+            {"execution_id": "sat-empty", "status": "running"},
+            {
+                "execution_id": "sat-empty",
+                "status": "running",
+                "archive_uri": "cortex://notes/system/threads/cdp-ask-archive-new.md",
+                "body": "",
+            },
+        ]
+    )
+
+    result = run_cdp_generate(
+        execution_id="dispatch-ol-empty",
+        model_id="cdp/opus-4.8",
+        prompt_text="ping",
+        poll_interval_s=0,
+        client=client,  # type: ignore[arg-type]
+        sleep=lambda _s: None,
+    )
+    assert result.ok is False
+    assert result.stall_stage == UPSTREAM_OVERLOADED
+    assert result.extras.get("reason") == UPSTREAM_OVERLOADED

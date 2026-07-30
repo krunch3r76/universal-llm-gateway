@@ -29,6 +29,28 @@ def sealed_ask_default_effort(family: str) -> str | None:
     return None
 
 
+# Bare dispatch aliases → canonical picker wire (team_dispatch ``cdp/fable``).
+_PICKER_FAMILY_ALIASES: dict[str, str] = {
+    "fable": "fable-5",
+}
+
+
+def normalize_picker_request(model: str) -> str:
+    """Strip ``cdp/<picker>`` and canonicalize bare aliases for UI selection.
+
+    Examples: ``cdp/fable`` → ``fable-5``, ``cdp/opus-5`` → ``opus-5``.
+    """
+    key = (model or "opus-5").strip()
+    if "/" in key:
+        provider, picker = key.split("/", 1)
+        if provider == "cdp" and picker:
+            key = picker
+    alias = _PICKER_FAMILY_ALIASES.get(key.strip().lower())
+    if alias:
+        return alias
+    return key
+
+
 def parse_model_request(requested: str) -> tuple[str, str | None]:
     """Split ``requested`` into (family_key, effort|None).
 
@@ -120,3 +142,8 @@ def label_satisfies_request(
 
 def is_leave_request(requested: str) -> bool:
     return (requested or "").strip().lower() in _LEAVE
+
+
+def family_nested_in_more_models(family: str) -> bool:
+    """True when the live Cowork picker nests the family under More models."""
+    return (family or "").strip().lower().startswith("fable")

@@ -14,6 +14,7 @@ from .thread_closed import (
     AgentBusThreadClosed,
     emit_charter_root_closed_on_unenroll,
     emit_thread_closed,
+    maybe_emit_charter_root_closed_on_unenroll,
 )
 from .turn_created import AgentBusTurnCreated, emit_turn_created
 
@@ -31,4 +32,5 @@ __all__ = [
     "emit_thread_closed",
     "emit_thread_reopened",
     "emit_turn_created",
+    "maybe_emit_charter_root_closed_on_unenroll",
 ]

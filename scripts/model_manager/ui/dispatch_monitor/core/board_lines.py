@@ -191,6 +191,7 @@ def sdk_live_line(
     *,
     live: list[SdkDispatchRow] | None = None,
     posture: SdkMultiPosture | None = None,
+    width: int = 120,
 ) -> str:
     peers = live if live is not None else [row]
     multi = posture if posture is not None else classify_sdk_live(peers)
@@ -210,13 +211,24 @@ def sdk_live_line(
         tool_col = f" tool={_truncate(tool, 14)}"
     else:
         tool_col = ""
-    return (
+    base = (
         f"  {role_tag}{_truncate(row.dispatch_id, 14)} {_truncate(row.state, 10)} "
         f"root={_truncate(row.root_id, 8)} "
         f"w={_truncate(row.thread_id, 8)} "
         f"{_truncate(row.model, 18)} "
         f"{timing:<12}{tc}{tool_col} [{flag}]{stall}"
     )
+    if row.provenance != "signal":
+        return _truncate(base, width)
+    via = row.admitted_via or "?"
+    asked = row.asked_by
+    if via == "?" and not asked:
+        return _truncate(base, width)
+    asked_label = asked or "?"
+    prov_token = f" {_truncate(f'{via}←{asked_label}', 22)}"
+    if len(base) + len(prov_token) <= width:
+        return base + prov_token
+    return _truncate(base, width)
 
 
 def primary_sdk_dispatch_for_root(

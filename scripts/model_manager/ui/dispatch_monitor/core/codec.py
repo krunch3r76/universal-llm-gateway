@@ -25,8 +25,9 @@ fingerprint depends on that property.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import fields, is_dataclass
-from typing import Any, Mapping
+from typing import Any
 
 from .dtos import (
     SCHEMA_VERSION,

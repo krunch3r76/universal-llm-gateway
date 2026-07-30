@@ -18,16 +18,21 @@ from typing import Any
 
 from playwright.async_api import Page
 
-from claude_bundles.chat_model_match import sealed_ask_default_effort
+from claude_bundles.chat_model_match import (
+    normalize_picker_request,
+    sealed_ask_default_effort,
+)
 from claude_bundles.chat_model_select import (
     label_satisfies_request,
     parse_model_request,
+    picker_attests_request,
     select_model,
 )
 from claude_bundles.chat_reply_wait import harvest_assistant, wait_assistant_reply
 from claude_bundles.chat_session_hygiene import (
     delete_chat_if_active,
     goto_fresh_compose,
+    in_active_chat,
     pick_chat_page,
 )
 from claude_bundles.compose_attest import (
@@ -102,7 +107,7 @@ def _attest_model(requested: str, state: dict[str, Any], selected: dict[str, Any
     label = (state.get("model_label") or selected.get("current_model") or "").strip()
     if not label:
         return None
-    req = requested or ""
+    req = normalize_picker_request(requested or "")
     family, effort = parse_model_request(req)
     if effort is None:
         effort = sealed_ask_default_effort(family)
@@ -368,6 +373,58 @@ async def send_prompt(page: Page, text: str) -> None:
     )
 
 
+async def _compose_model_selected(
+    page: Page,
+    model: str,
+    *,
+    compose_url: str | None = None,
+    project_uuid: str | None = None,
+    ensure_cowork_auto: bool = True,
+) -> dict:
+    """Land compose, select picker model, recover from chrome detours / warm CSE."""
+    if project_uuid:
+        await goto_fresh_compose(page, project_uuid=project_uuid)
+    else:
+        url = compose_url or "https://claude.ai/new"
+        await goto_fresh_compose(
+            page,
+            compose_url=url,
+            ensure_cowork_auto=ensure_cowork_auto,
+        )
+    composer = await find_composer(page)
+    if composer is not None:
+        await composer.click(force=True)
+        await page.wait_for_timeout(800)
+    model_info = await select_model(page, model)
+    if not model_info.get("ok"):
+        return model_info
+    # Model picker clicks can land on settings / scheduled-task — re-land + re-pick.
+    if "/new" not in (page.url or "") and "/cowork/" not in (page.url or ""):
+        if project_uuid:
+            await goto_fresh_compose(page, project_uuid=project_uuid)
+        else:
+            await goto_fresh_compose(
+                page,
+                compose_url=compose_url or "https://claude.ai/new",
+                ensure_cowork_auto=ensure_cowork_auto,
+            )
+        model_info = await select_model(page, model)
+        if not model_info.get("ok"):
+            return model_info
+    # Warm CSE/chat retains the prior family — fresh dispatch must use /new.
+    if in_active_chat(page.url or "") and not await picker_attests_request(page, model):
+        if project_uuid:
+            await goto_fresh_compose(page, project_uuid=project_uuid)
+        else:
+            await goto_fresh_compose(
+                page,
+                compose_url=compose_url or "https://claude.ai/new",
+                ensure_cowork_auto=ensure_cowork_auto,
+            )
+        model_info = await select_model(page, model)
+    return model_info
+
+
 async def project_ask_on_page(
     page: Page,
     prompt: str,
@@ -388,13 +445,11 @@ async def project_ask_on_page(
     """Run one sealed ask on an existing Playwright page."""
     dest = project_url(project_uuid)
     try:
-        await goto_fresh_compose(page, project_uuid=project_uuid)
-        # Cowork Project: model picker mounts after composer chrome is live.
-        composer = await find_composer(page)
-        if composer is not None:
-            await composer.click(force=True)
-            await page.wait_for_timeout(800)
-        model_info = await select_model(page, model)
+        model_info = await _compose_model_selected(
+            page,
+            model,
+            project_uuid=project_uuid,
+        )
         if not model_info.get("ok"):
             return ProjectAskResult(
                 ok=False,
@@ -537,7 +592,7 @@ async def run_project_ask(
     """Connect CDP, run one sealed ask, disconnect."""
     pw, _browser, ctx, _page0 = await connect_cdp(cdp_url)
     try:
-        page = await pick_chat_page(ctx)
+        page = await pick_chat_page(ctx, prefer_url_substr="/new")
         return await project_ask_on_page(
             page,
             prompt,

@@ -80,7 +80,16 @@ def _caller_agent_for_dispatch(dispatch_id: str) -> str | None:
 def _gate_for_dispatch(
     dispatch_id: str, *, caller_agent: str | None = None
 ) -> FifoCapacityGate:
-    lane = sdk_dispatch_lane(caller_agent=caller_agent, dispatch_id=dispatch_id)
+    """Resolve the owning lane gate, consulting the ledger when the caller is implicit.
+
+    Release/transfer callers know only ``dispatch_id``. Resolving the lane from the
+    id alone recognizes just the ``auto-`` prefix, so an operator-lane dispatch
+    admitted via ``caller_agent`` would release against the standard gate and leak
+    its operator slot permanently (limit 3 ⇒ the lane wedges after three IDE
+    dispatches). The ledger's ``caller_agent`` is the same value acquire resolved on.
+    """
+    resolved_agent = caller_agent or _caller_agent_for_dispatch(dispatch_id)
+    lane = sdk_dispatch_lane(caller_agent=resolved_agent, dispatch_id=dispatch_id)
     return _gate_for_lane(lane)
 
 

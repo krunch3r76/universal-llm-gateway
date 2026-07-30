@@ -28,6 +28,7 @@ from .agent_bus import (
     _fetch_dispatch,
     _fetch_unread_dispatch,
     _get_dispatch,
+    _thread_get_dispatch,
     _threads_dispatch,
     _wait_dispatch,
 )
@@ -44,6 +45,7 @@ AGENT_BUS_READ_OPS: dict[str, Callable[..., Any]] = {
     "fetch": _fetch_dispatch,
     "fetch_unread": _fetch_unread_dispatch,
     "get": _get_dispatch,
+    "thread_get": _thread_get_dispatch,
     "threads": _threads_dispatch,
     "wait": _wait_dispatch,
 }
@@ -64,6 +66,7 @@ def register_agent_bus_read_tool(mcp: FastMCP) -> None:
         auto-approve reads. For post/reply/update/close/delete_* use agent_bus.
 
         Operations (identical semantics to the matching agent_bus ops):
+          thread_get   (thread)  — single ThreadDetail (tags/status/summary/turn_count/…)
           threads      (status?, tags?, lifecycle_state?, last?, limit?, has_unread?, query?)
           fetch        (to?, thread?, last?, unread?, compact?, mark_read?, all?)
           fetch_unread (to?, thread?, mark_read?, compact?, active_since?, limit?, all?)  — recipient scope: enriched per-thread unread digest; thread scope: that thread's full unread turn list

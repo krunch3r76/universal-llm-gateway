@@ -1372,6 +1372,11 @@ tools:
   fol_descriptor: 'owner ∈ {service:,agent_skill:,ai_agent:} (bare slug -> service:); service= is the
     back-compat alias; exactly one of owner/service required.
 
+    Protocol category (actionable): exactly one anchor variant —
+    charter{charter_root, window_index} or continuity{root_thread, cp_ordinal}
+    (see file_charter_protocol_friction). Down-casting to schema_gap is a filing
+    error once continuity is available.
+
     Used for agent self-diagnosis. See agent_skill:cortex and operational-context-*.md.
 
     '

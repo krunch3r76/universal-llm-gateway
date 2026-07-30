@@ -1,7 +1,10 @@
 """G3 auto-enqueue + F1 repair mint + idempotent reconciliation sweep.
 
 Harvest and independent callers mint follow-on todos from actionable charter
-frictions. Deterministic slugs make re-runs safe.
+frictions. ``reconcile_charter_frictions`` sweeps ``charter_root=…`` only —
+continuity-anchored protocol rows are absent from that sweep and are actioned
+via friction-review + CHECKPOINT ``## Frictions`` (follow-on:
+``todo:continuity-friction-sweep``). Deterministic slugs make re-runs safe.
 """
 
 from __future__ import annotations

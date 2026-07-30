@@ -7,6 +7,7 @@ harvest proof (``content_proof`` or ``archive_uri``) or failed+stall_stage.
 
 from __future__ import annotations
 
+import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -21,6 +22,7 @@ from claude_bundles.cdp_model_endpoint_staging import (
     stage_cdp_prompt_with_skills,
     sweep_ephemeral,
 )
+from claude_bundles.chat_model_match import normalize_picker_request
 
 DEFAULT_MAX_WALL_S = 1800
 DEFAULT_NO_PROGRESS_S = 600
@@ -32,6 +34,13 @@ CDP_REPLY_FROM = "cdp"
 # Output download, archive write) and emits no per-sample progress, so the
 # no-progress fingerprint necessarily freezes. Only ``max_wall_s`` bounds these.
 POST_IDLE_PHASES = frozenset({"turn_idle", "content_proof", "archiving"})
+
+RETRYABLE_OVERLOAD_STATUS = frozenset({529, 503})
+SUBMIT_RETRY_BACKOFF_S = 5.0
+MAX_OVERLOAD_SUBMIT_ATTEMPTS = 2
+UPSTREAM_OVERLOADED = "upstream_overloaded"
+_OVERLOAD_ONLY_BODY_RE = re.compile(r"API Error:\s*52[93]", re.IGNORECASE)
+_OVERLOAD_ONLY_MAX_LEN = 500
 
 HarvestSource = Literal["chat", "output-file", "auto"]
 ExpectedSize = Literal["small", "large", "auto"]
@@ -83,13 +92,13 @@ def project_ask_url() -> str:
 
 
 def picker_from_model_id(model_id: str) -> str:
-    """Forward picker segment after ``cdp/`` unmodified (model-picker-is-SOT)."""
+    """Map ``cdp/<picker>`` dispatch ids to canonical picker wire for the UI."""
     if "/" not in model_id:
-        return model_id
+        return normalize_picker_request(model_id)
     provider, picker = model_id.split("/", 1)
     if provider != "cdp" or not picker:
         raise ValueError(f"expected cdp/<picker>, got {model_id!r}")
-    return picker
+    return normalize_picker_request(f"cdp/{picker}")
 
 
 def _has_proof(snapshot: dict[str, Any]) -> bool:
@@ -189,6 +198,68 @@ def _client_error_dict(exc: CdpAskClientError) -> dict[str, Any]:
     return out
 
 
+def _is_retryable_overload_status(exc: CdpAskClientError) -> bool:
+    """True when submit HTTP status is in the bounded overload retry set."""
+    return exc.status_code in RETRYABLE_OVERLOAD_STATUS
+
+
+def _is_overload_only_harvest(body: str) -> bool:
+    """Detect Anthropic overload-only harvest bodies (529/503 API Error text)."""
+    text = body.strip()
+    if not text or len(text) > _OVERLOAD_ONLY_MAX_LEN:
+        return False
+    return bool(_OVERLOAD_ONLY_BODY_RE.search(text))
+
+
+def _proof_rejects_overload(snapshot: dict[str, Any]) -> bool:
+    """Fail closed when proof looks like upstream overload (incl. empty body + archive)."""
+    body = str(snapshot.get("body") or "")
+    if body:
+        return _is_overload_only_harvest(body)
+    return bool(snapshot.get("archive_uri"))
+
+
+def _upstream_overloaded_extras(
+    exc: CdpAskClientError | None = None,
+    *,
+    status_code: int | None = None,
+    **extra: Any,
+) -> dict[str, Any]:
+    """Build ``extras`` carrier for upstream overload terminal results."""
+    out: dict[str, Any] = {"reason": UPSTREAM_OVERLOADED}
+    if exc is not None:
+        out.update(_client_error_dict(exc))
+    elif status_code is not None:
+        out["status_code"] = status_code
+    out.update(extra)
+    return out
+
+
+def _submit_with_overload_retry(
+    relay: CdpAskClient,
+    submit_req: SubmitProjectAskRequest,
+    *,
+    client: httpx.Client | None,
+    sleep: Callable[[float], None],
+) -> dict[str, Any]:
+    """Submit once with a single bounded retry on HTTP 529/503 overload."""
+    last_exc: CdpAskClientError | None = None
+    for attempt in range(MAX_OVERLOAD_SUBMIT_ATTEMPTS):
+        try:
+            return relay.submit(submit_req, client=client)
+        except CdpAskClientError as exc:
+            last_exc = exc
+            if (
+                attempt + 1 < MAX_OVERLOAD_SUBMIT_ATTEMPTS
+                and _is_retryable_overload_status(exc)
+            ):
+                sleep(SUBMIT_RETRY_BACKOFF_S)
+                continue
+            raise
+    assert last_exc is not None
+    raise last_exc
+
+
 def abort_cdp_generate(
     satellite_execution_id: str,
     *,
@@ -279,9 +350,26 @@ def run_cdp_generate(
         download_output=download_output,
     )
     try:
-        submitted = relay.submit(submit_req, client=client)
+        submitted = _submit_with_overload_retry(
+            relay,
+            submit_req,
+            client=client,
+            sleep=sleep,
+        )
     except CdpAskClientError as exc:
         sweep_ephemeral(execution_id)
+        if _is_retryable_overload_status(exc):
+            return CdpGenerateResult(
+                ok=False,
+                body="",
+                execution_id=execution_id,
+                satellite_execution_id=None,
+                prompt_uri=staged.prompt_uri,
+                picker_model=picker,
+                stall_stage=UPSTREAM_OVERLOADED,
+                error=str(exc),
+                extras=_upstream_overloaded_extras(exc),
+            )
         return CdpGenerateResult(
             ok=False,
             body="",
@@ -371,6 +459,25 @@ def run_cdp_generate(
 
         if _has_proof(snapshot):
             body = str(snapshot.get("body") or "")
+            if _proof_rejects_overload(snapshot):
+                abort_info = _abort_then_sweep(
+                    sat_id, execution_id, ask_client=relay, client=client
+                )
+                return CdpGenerateResult(
+                    ok=False,
+                    body=body,
+                    execution_id=execution_id,
+                    satellite_execution_id=sat_id,
+                    prompt_uri=staged.prompt_uri,
+                    picker_model=picker,
+                    archive_uri=snapshot.get("archive_uri"),
+                    content_proof_uri=snapshot.get("content_proof_uri"),
+                    content_proof_sha256=snapshot.get("content_proof_sha256"),
+                    stall_stage=UPSTREAM_OVERLOADED,
+                    error="upstream overload-only harvest body",
+                    poll_snapshots=polls,
+                    extras=_upstream_overloaded_extras(abort=abort_info),
+                )
             sweep_ephemeral(execution_id)
             return CdpGenerateResult(
                 ok=True,

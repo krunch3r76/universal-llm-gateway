@@ -30,6 +30,7 @@ class CursorDispatchRequest(BaseModel):
     refuse_if_lease_held: bool = False
     worktree_isolated: bool = False
     worktree_path: str | None = None
+    admitted_via: Literal["cursor-auto", "stargate"] | None = None
 
     @model_validator(mode="after")
     def _packet_xor_message(self) -> CursorDispatchRequest:

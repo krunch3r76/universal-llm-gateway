@@ -3,16 +3,18 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from typing import Any
 
 from claude_bundles.cdp_model_endpoint import (
     CDP_REPLY_FROM,
     DEFAULT_MAX_WALL_S,
+    UPSTREAM_OVERLOADED,
     CdpGenerateResult,
     run_cdp_generate,
 )
-from transport_utils import DEFAULT_AGENT_BUS_URL, make_async_client
+from transport_utils import DEFAULT_AGENT_BUS_URL, DEFAULT_CORTEX_URL, make_async_client
 from universal_logging import get_logger
 
 from .cdp_events import (
@@ -25,6 +27,16 @@ from .cdp_events import (
 )
 
 logger = get_logger(__name__)
+
+_UPSTREAM_OVERLOAD_FRICTION_EMITTED: set[str] = set()
+_CORTEX_FRICTION_TIMEOUT_S = 10.0
+
+
+def _upstream_overloaded(result: CdpGenerateResult) -> bool:
+    """True when adapter stamped upstream overload on the result carrier."""
+    if result.stall_stage == UPSTREAM_OVERLOADED:
+        return True
+    return (result.extras or {}).get("reason") == UPSTREAM_OVERLOADED
 
 
 def _agent_bus_token() -> str:
@@ -48,18 +60,25 @@ def format_cdp_result_body(result: CdpGenerateResult) -> str:
             lines.append(f"- content_proof_uri: `{result.content_proof_uri}`")
         lines.extend(["", result.body or "_empty harvest_"])
         return "\n".join(lines)
-    return "\n".join(
-        [
-            f"# CDP generate FAILED ({result.picker_model})",
-            "",
-            f"- execution_id: `{result.execution_id}`",
-            f"- satellite_execution_id: `{result.satellite_execution_id}`",
-            f"- stall_stage: `{result.stall_stage}`",
-            f"- error: {result.error}",
-            f"- substrate: `{result.substrate}`",
-            f"- cost_source: `{result.cost_source}`",
-        ]
-    )
+    lines = [
+        f"# CDP generate FAILED ({result.picker_model})",
+        "",
+        f"- execution_id: `{result.execution_id}`",
+        f"- satellite_execution_id: `{result.satellite_execution_id}`",
+        f"- stall_stage: `{result.stall_stage}`",
+        f"- error: {result.error}",
+        f"- substrate: `{result.substrate}`",
+        f"- cost_source: `{result.cost_source}`",
+    ]
+    if _upstream_overloaded(result):
+        lines.extend(
+            [
+                "",
+                "status:failed reason=upstream_overloaded",
+                f"- reason: `{UPSTREAM_OVERLOADED}`",
+            ]
+        )
+    return "\n".join(lines)
 
 
 async def _mark_cdp_unread_through(
@@ -199,6 +218,9 @@ ONBEHALF_POST_FAILED_STALL = "onbehalf_post_failed"
 
 def format_onbehalf_delivery_failed_body(result: CdpGenerateResult) -> str:
     """Terminal body when harvest exists but on-behalf bus post failed."""
+    prior_stall = result.stall_stage
+    prior_reason = (result.extras or {}).get("reason")
+    merged_extras = dict(result.extras or {})
     fail = CdpGenerateResult(
         ok=False,
         body=result.body or "",
@@ -213,8 +235,13 @@ def format_onbehalf_delivery_failed_body(result: CdpGenerateResult) -> str:
         error=result.error or "on-behalf bus post failed after retry",
         substrate=result.substrate,
         cost_source=result.cost_source,
+        extras=merged_extras,
     )
     lines = [format_cdp_result_body(fail)]
+    if prior_stall and prior_stall != ONBEHALF_POST_FAILED_STALL:
+        lines.append(f"- prior_stall_stage: `{prior_stall}`")
+    if prior_reason:
+        lines.append(f"- prior_reason: `{prior_reason}`")
     if result.archive_uri:
         lines.append(f"- prior_archive_uri: `{result.archive_uri}`")
     if result.content_proof_uri:
@@ -286,6 +313,55 @@ async def deliver_cdp_result_turn(
             stall_stage=ONBEHALF_POST_FAILED_STALL,
         )
     return final
+
+
+async def _emit_upstream_overload_friction(
+    *,
+    execution_id: str,
+    thread_id: str,
+    result: CdpGenerateResult,
+) -> None:
+    """Best-effort cortex friction row when upstream overload exhausts (deduped)."""
+    if execution_id in _UPSTREAM_OVERLOAD_FRICTION_EMITTED:
+        return
+    _UPSTREAM_OVERLOAD_FRICTION_EMITTED.add(execution_id)
+    status_code = (result.extras or {}).get("status_code")
+    note = (
+        f"CDP generate upstream overload exhaust "
+        f"execution_id={execution_id} thread_id={thread_id} "
+        f"status_code={status_code} attempt=exhaust"
+    )
+    payload = {
+        "tool": "friction",
+        "arguments": json.dumps(
+            {
+                "owner": "service:universal-stargate",
+                "category": "tool_error",
+                "agent": "cdp-generate-worker",
+                "actionable": True,
+                "note": note,
+            }
+        ),
+    }
+    try:
+        async with make_async_client(
+            DEFAULT_CORTEX_URL, timeout=_CORTEX_FRICTION_TIMEOUT_S
+        ) as client:
+            resp = await client.post("/dispatch", json=payload)
+        if resp.status_code >= 300:
+            logger.warning(
+                "cdp upstream overload friction failed: "
+                "execution_id=%s status=%s body=%s",
+                execution_id,
+                resp.status_code,
+                resp.text[:200],
+            )
+    except Exception as exc:  # noqa: BLE001 — friction is best-effort
+        logger.warning(
+            "cdp upstream overload friction transport error: execution_id=%s err=%s",
+            execution_id,
+            exc,
+        )
 
 
 async def run_cdp_worker(
@@ -372,6 +448,12 @@ async def run_cdp_worker(
             stall_stage=result.stall_stage,
             error=result.error,
         )
+        if _upstream_overloaded(result):
+            await _emit_upstream_overload_friction(
+                execution_id=execution_id,
+                thread_id=thread_id,
+                result=result,
+            )
 
     await deliver_cdp_result_turn(
         result=result,

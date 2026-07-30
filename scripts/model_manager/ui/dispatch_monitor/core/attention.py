@@ -22,7 +22,7 @@ trips one of these, however long it runs.
 
 from __future__ import annotations
 
-from typing import Mapping
+from collections.abc import Mapping
 
 from .dtos import (
     AttentionItem,

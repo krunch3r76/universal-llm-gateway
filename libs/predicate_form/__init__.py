@@ -31,6 +31,17 @@ from __future__ import annotations
 
 import hashlib
 
+from .action_enrichment import (
+    EnrichmentPreview,
+    dry_run_enrich_assertions,
+    enrich_action_predicate_from_claim,
+)
+from .action_vocabulary import (
+    ACTION_VOCAB_V0,
+    ActionPredicate,
+    parse_action_predicate,
+    party_from_entity_id,
+)
 from .classes import (
     apply_class_1,
     apply_class_2,
@@ -40,6 +51,12 @@ from .classes import (
     correct_decision_self_status,
     decision_status_token,
     is_decision_self_status,
+)
+from .collision import (
+    CollisionResult,
+    Contradiction,
+    SupersededByCandidate,
+    detect_contradictions,
 )
 from .entity_resolve import (
     CortexEntityResolver,
@@ -219,14 +236,25 @@ def normalize_predicate_domain(
 
 
 __all__ = [
+    "ACTION_VOCAB_V0",
+    "ActionPredicate",
+    "CollisionResult",
+    "Contradiction",
     "CortexEntityResolver",
     "DBEntityResolver",
+    "EnrichmentPreview",
     "EntityResolver",
     "Predicate",
     "PredicateParseError",
     "ResolutionResult",
     "StaticEntityResolver",
+    "SupersededByCandidate",
+    "detect_contradictions",
+    "dry_run_enrich_assertions",
+    "enrich_action_predicate_from_claim",
     "normalize_predicate_domain",
     "parse",
+    "parse_action_predicate",
+    "party_from_entity_id",
     "unparse",
 ]

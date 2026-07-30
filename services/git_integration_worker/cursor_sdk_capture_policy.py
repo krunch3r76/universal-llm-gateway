@@ -12,7 +12,7 @@ class DeviationDisposition(StrEnum):
 
 
 _DEVIATION_REGISTRY: dict[str, DeviationDisposition] = {
-    "divergence:repo_diff_paths_unattributed:ambient:": DeviationDisposition.ANNOTATE,
+    "divergence:repo_diff_paths_unattributed:ambient:": DeviationDisposition.CENSUS_ONLY,
     "capture:outside_repo_paths_present": DeviationDisposition.ANNOTATE,
     "capture:gitignored_present_unattributed": DeviationDisposition.ANNOTATE,
     "capture:shell_repo_writes_unverified": DeviationDisposition.ANNOTATE,
@@ -20,6 +20,7 @@ _DEVIATION_REGISTRY: dict[str, DeviationDisposition] = {
     "capture:non_file_manifest_entry_dropped": DeviationDisposition.ANNOTATE,
     "capture:cortex_writes_unattributed": DeviationDisposition.ANNOTATE,
     "capture:outside_repo_baseline_missing": DeviationDisposition.ANNOTATE,
+    "capture:polarity_unproved:": DeviationDisposition.ANNOTATE,
     "divergence:repo_diff_paths_unattributed:": DeviationDisposition.HARD_FAIL,
 }
 

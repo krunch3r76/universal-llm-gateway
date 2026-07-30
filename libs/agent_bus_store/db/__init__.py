@@ -4,6 +4,7 @@ from .connection import init_db
 from .messages import get_messages, insert_message, list_threads, mark_read
 from .threads import (
     ThreadHasReadTurns,
+    add_tags,
     consume_triage_confirm_token,
     create_thread,
     delete_thread,
@@ -18,6 +19,7 @@ from .threads import (
     list_threads_v2,
     list_triage_candidates,
     normalize_thread_id,
+    remove_tags,
     rename_thread,
     set_thread_tags,
     update_thread,
@@ -56,6 +58,7 @@ __all__ = [
     "UnreadTurnsExist",
     "PendingShellContention",
     "admit_dispatch",
+    "add_tags",
     "claim_and_post_turn",
     "close_thread",
     "consume_triage_confirm_token",
@@ -90,6 +93,7 @@ __all__ = [
     "mark_read",
     "mark_turn_read",
     "normalize_thread_id",
+    "remove_tags",
     "rename_thread",
     "set_thread_tags",
     "update_thread",

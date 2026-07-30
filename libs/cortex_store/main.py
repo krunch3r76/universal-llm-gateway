@@ -26,6 +26,7 @@ from .db import check_cortex_db, cortex_conn, run_migrations
 from .routes import (
     assertions,
     boot,
+    claims_burst,
     close_draft,
     deadlines,
     dispatch,
@@ -216,6 +217,7 @@ def create_app(*, db_path: str | None = None) -> FastAPI:
         allow_headers=["*"],
     )
 
+    app.include_router(claims_burst.router)
     app.include_router(entities.router)
     app.include_router(entity_status.router)
     app.include_router(assertions.router)

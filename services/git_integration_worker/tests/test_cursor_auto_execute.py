@@ -119,6 +119,21 @@ async def test_execute_without_vision_not_blocked_by_vision_gate() -> None:
 
 
 @pytest.mark.asyncio
+async def test_execute_denied_email_mutations_unwired_even_with_relay_flag(
+    monkeypatch,
+) -> None:
+    """send/move/delete stay manifest-denied; flag must not wire them."""
+    monkeypatch.setenv("EMAIL_BRIDGE_EXECUTE_RELAY_ENABLED", "1")
+    from services.git_integration_worker.cursor_auto.execute_tool_op_invoker import (
+        is_wired_tool_op,
+    )
+
+    assert is_wired_tool_op("email", "send") is False
+    assert is_wired_tool_op("email", "move") is False
+    assert is_wired_tool_op("email", "delete") is False
+
+
+@pytest.mark.asyncio
 async def test_execute_never_reaches_nested_submit() -> None:
     client = AsyncMock()
     client.reply = AsyncMock(return_value=MagicMock(status_code=200, body={}))

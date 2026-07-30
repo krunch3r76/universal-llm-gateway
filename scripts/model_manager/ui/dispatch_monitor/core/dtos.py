@@ -13,8 +13,8 @@ attested in Cortex. G5 reconciles field-by-field against v3 at ratification.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Mapping
 
 #: Bumped only on a breaking change. Additive optional fields stay at 1.
 #: A View whose compiled major exceeds this refuses to render rather than
@@ -162,6 +162,10 @@ class SdkDispatchRow:
     tool_call_count: int | None = None
     parent_execution_id: str | None = None
     review_child: bool = False
+    admitted_via: str | None = None
+    asked_by: str | None = None
+    purpose: str | None = None
+    story_id: str | None = None
 
 
 @dataclass(frozen=True)

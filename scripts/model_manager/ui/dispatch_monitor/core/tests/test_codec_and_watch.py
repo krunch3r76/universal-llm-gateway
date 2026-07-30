@@ -10,8 +10,8 @@ from __future__ import annotations
 import json
 
 import pytest
-from .conftest import fixture_path, replay
 
+from scripts.model_manager.ui.dispatch_monitor.core.board_lines import sdk_live_line
 from scripts.model_manager.ui.dispatch_monitor.core.codec import (
     FRAME_HANDSHAKE,
     FRAME_SNAPSHOT,
@@ -19,10 +19,15 @@ from scripts.model_manager.ui.dispatch_monitor.core.codec import (
     from_wire,
     to_wire,
 )
-from scripts.model_manager.ui.dispatch_monitor.core.dtos import SCHEMA_VERSION
+from scripts.model_manager.ui.dispatch_monitor.core.dtos import (
+    SCHEMA_VERSION,
+    SdkDispatchRow,
+)
 from scripts.model_manager.ui.dispatch_monitor.core.model import Model, hints_after_drop
 from scripts.model_manager.ui.dispatch_monitor.core.protocols import Event
 from scripts.model_manager.ui.dispatch_monitor.core.watch import render
+
+from .conftest import fixture_path, replay
 
 
 def test_snapshot_round_trip_preserves_everything(any_fixture: str) -> None:
@@ -186,3 +191,31 @@ def test_duplicate_redelivery_does_not_move_the_fingerprint() -> None:
     after = model.derive(2_000)
     assert after.fingerprint == before.fingerprint
     assert after.health.records_folded == before.health.records_folded + 1
+
+
+def test_sdk_live_line_provenance_within_width_budget() -> None:
+    """Paint appends provenance token only when the full line fits in 120 cols."""
+    row = SdkDispatchRow(
+        dispatch_id="auto-" + ("x" * 20),
+        state="running",
+        root_id="6186",
+        thread_id="5867",
+        model="cursor/composer-2.5",
+        idle_age_ms=30_000,
+        emitters_seen=("worker",),
+        admitted_via="cursor-auto",
+        asked_by="web-anthropic",
+        provenance="signal",
+    )
+    line = sdk_live_line(row, width=120)
+    assert len(line) <= 120
+    assert "cursor-auto" in line
+
+    reconciled = SdkDispatchRow(
+        dispatch_id="auto-reconciled",
+        state="running",
+        admitted_via="cursor-auto",
+        asked_by="web-anthropic",
+        provenance="reconciled",
+    )
+    assert "cursor-auto" not in sdk_live_line(reconciled, width=120)

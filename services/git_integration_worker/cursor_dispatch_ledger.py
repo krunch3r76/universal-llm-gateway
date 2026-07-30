@@ -213,6 +213,7 @@ def _dispatch_record_json(req: CursorDispatchRequest) -> str:
         "read_only": req.read_only,
         "worktree_isolated": req.worktree_isolated,
         "worktree_path": req.worktree_path,
+        "admitted_via": req.admitted_via,
     }
     return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
@@ -1234,6 +1235,7 @@ class CursorDispatchLedger:
             read_only=bool(data.get("read_only", promoted.read_only)),
             worktree_isolated=bool(data.get("worktree_isolated", False)),
             worktree_path=data.get("worktree_path"),
+            admitted_via=data.get("admitted_via"),
         )
 
     def running_orphans(self) -> list[LedgerRow]:

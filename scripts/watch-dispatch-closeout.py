@@ -1,0 +1,338 @@
+#!/usr/bin/env python3
+"""Poll a cursor-sdk dispatch until closeout; page operator once.
+
+Watches agent-bus thread for the cursor-sdk closeout turn
+(completion=first_reply_from, from_agent=cursor-sdk). Optionally cross-checks
+frontier.sdk.worker.completed via Event Service.
+
+Usage:
+  scripts/watch-dispatch-closeout-tmux.sh --latest --label 'my arc'
+  scripts/watch-dispatch-closeout.py --thread 6361 --dispatch-id 74874a907d5d-9beddd66
+  scripts/watch-dispatch-closeout.py --latest
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+from typing import Any
+from urllib.parse import urlencode
+
+import httpx
+import yaml
+
+_REPO = Path(__file__).resolve().parents[1]
+_QUERY_EVENTS = _REPO / "scripts" / "query-events"
+_AGENT_BUS_SOCK = os.environ.get("AGENT_BUS_SOCK", "/tmp/universal-protocol/agent-bus.sock")
+_EMAIL_BRIDGE_SOCK = os.environ.get(
+    "EMAIL_BRIDGE_SOCK", "/tmp/universal-protocol/email-bridge.sock"
+)
+_MCP_YAML = Path.home() / ".gateway" / "mcp.yaml"
+_WAIT_SECONDS = 55.0
+_POLL_SLEEP_S = 2.0
+
+
+def _token() -> str:
+    with open(_MCP_YAML) as f:
+        cfg = yaml.safe_load(f)
+    token = str(cfg.get("AGENT_BUS_TOKEN") or "").strip()
+    if not token:
+        raise SystemExit(f"AGENT_BUS_TOKEN missing in {_MCP_YAML}")
+    return token
+
+
+def _bus_client(token: str) -> httpx.Client:
+    return httpx.Client(
+        transport=httpx.HTTPTransport(uds=_AGENT_BUS_SOCK),
+        timeout=_WAIT_SECONDS + 10.0,
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+
+def _query_events(sql: str, *params: str) -> list[dict[str, Any]]:
+    if not _QUERY_EVENTS.is_file():
+        return []
+    cmd = [str(_QUERY_EVENTS), "--sql", sql, "--limit", "5", "--compact"]
+    for param in params:
+        cmd.extend(["--sql-param", param])
+    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if proc.returncode != 0:
+        return []
+    payload = json.loads(proc.stdout or "{}")
+    rows = payload.get("rows")
+    return rows if isinstance(rows, list) else []
+
+
+def _resolve_latest_dispatch() -> tuple[str, str]:
+    rows = _query_events(
+        "SELECT payload FROM events "
+        "WHERE signal = 'frontier.sdk.worker.dispatched' "
+        "ORDER BY seq DESC LIMIT 1"
+    )
+    if not rows:
+        raise SystemExit("no frontier.sdk.worker.dispatched event found (--latest)")
+    data = json.loads(str(rows[0].get("payload") or "{}"))
+    thread_id = str(data.get("thread_id") or "").strip()
+    dispatch_id = str(data.get("dispatch_id") or "").strip()
+    if not thread_id or not dispatch_id:
+        raise SystemExit(f"malformed dispatched event: {data!r}")
+    return thread_id, dispatch_id
+
+
+def _wait_closeout(
+    client: httpx.Client,
+    *,
+    thread_id: str,
+    after_turn: int,
+    from_agent: str,
+) -> dict[str, Any]:
+    params = {
+        "after_turn": after_turn,
+        "wait": int(_WAIT_SECONDS),
+        "completion": "first_reply_from",
+        "from_agent": from_agent,
+    }
+    resp = client.get(f"http://localhost/threads/{thread_id}/wait?{urlencode(params)}")
+    resp.raise_for_status()
+    return resp.json()
+
+
+def _fetch_closeout_subject(client: httpx.Client, thread_id: str, turn: int) -> str:
+    resp = client.get(
+        f"http://localhost/turns?{urlencode({'thread': thread_id, 'last': 3, 'compact': 'true'})}"
+    )
+    resp.raise_for_status()
+    for row in resp.json().get("turns") or []:
+        if row.get("turn_number") == turn:
+            return str(row.get("subject") or "")
+    return ""
+
+
+def _dispatch_id_prefix(dispatch_id: str) -> str:
+    return dispatch_id.split("-", 1)[0]
+
+
+def _latest_event_payload(dispatch_id: str, signal: str) -> dict[str, Any] | None:
+    prefix = _dispatch_id_prefix(dispatch_id)
+    rows = _query_events(
+        "SELECT payload FROM events "
+        "WHERE signal = ? "
+        "AND (json_extract(payload, '$.dispatch_id') LIKE ? "
+        "OR json_extract(payload, '$.request_id') LIKE ?) "
+        "ORDER BY seq DESC LIMIT 1",
+        signal,
+        f"{prefix}%",
+        f"{prefix}%",
+    )
+    if not rows:
+        return None
+    return json.loads(str(rows[0].get("payload") or "{}"))
+
+
+def _worker_completed(dispatch_id: str) -> dict[str, Any] | None:
+    return _latest_event_payload(dispatch_id, "frontier.sdk.worker.completed")
+
+
+def _queue_status_line(dispatch_id: str, thread_id: str) -> str:
+    """Human-readable queue / run phase from Event Service (non-terminal)."""
+    completed = _worker_completed(dispatch_id)
+    if completed:
+        outcome = str(completed.get("outcome") or "unknown")
+        duration = completed.get("duration_s")
+        dur = f" · {duration:.0f}s" if isinstance(duration, (int, float)) else ""
+        return f"phase=completed outcome={outcome}{dur}"
+
+    promoted = _latest_event_payload(dispatch_id, "frontier.sdk.worker.lease.promoted")
+    if promoted:
+        progress = _latest_event_payload(dispatch_id, "frontier.sdk.worker.progress")
+        if progress:
+            elapsed = progress.get("elapsed_s")
+            tools = progress.get("tool_call_count")
+            el = f" · {elapsed:.0f}s" if isinstance(elapsed, (int, float)) else ""
+            tc = f" · {tools} tools" if isinstance(tools, int) else ""
+            return f"phase=running{el}{tc}"
+        return "phase=running (lease promoted)"
+
+    queued = _latest_event_payload(dispatch_id, "frontier.sdk.worker.queued")
+    if queued:
+        pos = queued.get("queue_position")
+        holder = queued.get("holder_dispatch_id") or queued.get("holder_thread_id")
+        model = queued.get("holder_resolved_model") or queued.get("resolved_model")
+        preview = str(queued.get("holder_subject_preview") or "")[:48]
+        parts = [f"phase=queued q={pos}" if pos is not None else "phase=queued"]
+        if holder:
+            parts.append(f"holder={holder}")
+        if model:
+            parts.append(f"holder_model={model}")
+        if preview:
+            parts.append(f"blocked_by={preview!r}")
+        return " · ".join(parts)
+
+    return f"phase=unknown (thread {thread_id} — no queue events yet)"
+
+
+def _page_operator(*, subject: str, body: str, tag: str) -> bool:
+    if os.environ.get("PAGER_NOTIFY_ENABLED", "1").strip().lower() in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }:
+        print("pager disabled (PAGER_NOTIFY_ENABLED=0)", flush=True)
+        return False
+    payload = {
+        "subject": subject[:120],
+        "body": body[:300],
+        "tag": tag[:40],
+    }
+    proc = subprocess.run(
+        [
+            "curl",
+            "-sS",
+            "--unix-socket",
+            _EMAIL_BRIDGE_SOCK,
+            "-H",
+            "Content-Type: application/json",
+            "-d",
+            json.dumps(payload),
+            "http://localhost/pager/notify",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        print(f"pager curl failed: {proc.stderr.strip()}", flush=True)
+        return False
+    try:
+        data = json.loads(proc.stdout or "{}")
+    except json.JSONDecodeError:
+        print(f"pager bad response: {proc.stdout!r}", flush=True)
+        return False
+    ok = str(data.get("status")) == "sent"
+    print(f"pager: {data}", flush=True)
+    return ok
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--thread", help="agent-bus worker thread id")
+    parser.add_argument("--dispatch-id", help="cursor-sdk dispatch_id")
+    parser.add_argument(
+        "--after-turn",
+        type=int,
+        default=1,
+        help="pointer turn (default: admission turn 1)",
+    )
+    parser.add_argument(
+        "--from-agent",
+        default="cursor-sdk",
+        help="wait for first reply from this agent (default: cursor-sdk; use cdp for CDP)",
+    )
+    parser.add_argument(
+        "--label",
+        default="cursor-sdk dispatch",
+        help="short arc label for pager subject",
+    )
+    parser.add_argument(
+        "--latest",
+        action="store_true",
+        help="resolve thread+dispatch from newest worker.dispatched event",
+    )
+    parser.add_argument(
+        "--no-page",
+        action="store_true",
+        help="print closeout only; do not SMS",
+    )
+    parser.add_argument(
+        "--come-to-ide",
+        action="store_true",
+        help="pager subject COME TO IDE — {label}; body reminds operator to return",
+    )
+    args = parser.parse_args()
+
+    thread_id = str(args.thread or "").strip()
+    dispatch_id = str(args.dispatch_id or "").strip()
+    if args.latest or not thread_id or not dispatch_id:
+        latest_thread, latest_dispatch = _resolve_latest_dispatch()
+        thread_id = thread_id or latest_thread
+        dispatch_id = dispatch_id or latest_dispatch
+
+    token = _token()
+    from_agent = str(args.from_agent or "cursor-sdk").strip()
+    started_at = time.monotonic()
+    print(
+        f"watching thread={thread_id} dispatch={dispatch_id} "
+        f"after_turn={args.after_turn} from_agent={from_agent} label={args.label!r} "
+        f"started_at={time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}",
+        flush=True,
+    )
+
+    with _bus_client(token) as client:
+        while True:
+            if from_agent == "cursor-sdk" and not _worker_completed(dispatch_id):
+                print(_queue_status_line(dispatch_id, thread_id), flush=True)
+            elif from_agent != "cursor-sdk":
+                print(f"phase=waiting for {from_agent} reply on thread {thread_id}", flush=True)
+            snap = _wait_closeout(
+                client,
+                thread_id=thread_id,
+                after_turn=args.after_turn,
+                from_agent=from_agent,
+            )
+            if snap.get("complete"):
+                reply_turn = int(snap.get("qualifying_reply_turn") or 0)
+                subject = _fetch_closeout_subject(client, thread_id, reply_turn)
+                completed = _worker_completed(dispatch_id) or {}
+                outcome = str(completed.get("outcome") or "unknown")
+                if from_agent != "cursor-sdk":
+                    outcome = f"{from_agent}-reply"
+                duration = completed.get("duration_s")
+                elapsed_s = time.monotonic() - started_at
+                model = str(completed.get("resolved_model") or "")
+                print(
+                    f"closeout turn={reply_turn} subject={subject!r} "
+                    f"outcome={outcome} duration_s={duration} elapsed_s={elapsed_s:.0f} model={model}",
+                    flush=True,
+                )
+                if not args.no_page:
+                    if args.come_to_ide:
+                        page_subject = f"COME TO IDE — {args.label}"
+                        page_body = (
+                            f"thread {thread_id} closeout · {outcome}"
+                            f" · friction 529 bind — return to Cursor IDE"
+                            f" · elapsed {elapsed_s:.0f}s"
+                            f"{f' · {subject}' if subject else ''}"
+                        )
+                    else:
+                        page_subject = f"ULG dispatch done — {args.label}"
+                        page_body = (
+                            f"thread {thread_id} · {outcome}"
+                            f" · elapsed {elapsed_s:.0f}s"
+                            f"{f' · worker {duration:.0f}s' if isinstance(duration, (int, float)) else ''}"
+                            f"{f' · {model}' if model else ''}"
+                            f"{f' · {subject}' if subject else ''}"
+                        )
+                    _page_operator(
+                        subject=page_subject,
+                        body=page_body,
+                        tag="dispatch-done",
+                    )
+                return 0
+
+            turn_count = snap.get("turn_count")
+            thread_status = snap.get("thread_status")
+            print(
+                f"… waiting ({thread_status}, turns={turn_count})",
+                flush=True,
+            )
+            time.sleep(_POLL_SLEEP_S)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

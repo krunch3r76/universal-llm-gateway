@@ -187,10 +187,13 @@ def insert_turn(
 
         if supersedes_turn is not None:
             target = conn.execute(
-                "SELECT id FROM turns WHERE id = ?", (supersedes_turn,)
+                "SELECT id FROM turns WHERE id = ? AND thread = ?",
+                (supersedes_turn, thread),
             ).fetchone()
             if target is None:
-                raise ValueError(f"supersedes_turn {supersedes_turn} does not exist")
+                raise ValueError(
+                    f"supersedes_turn {supersedes_turn} does not exist in thread {thread}"
+                )
 
         max_row = conn.execute(
             "SELECT MAX(turn_number) AS max_tn FROM turns WHERE thread = ?",

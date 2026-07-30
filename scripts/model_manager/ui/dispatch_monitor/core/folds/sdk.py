@@ -33,7 +33,8 @@ events only; the core does not synthesise a row from a charter admission, becaus
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 from .. import signals
 from ..correlation import CorrelationIndex
@@ -47,11 +48,19 @@ from .sdk_state import (
     SdkIdAliases,
     SdkState,
     absorb_tool_call_count,
-    as_int as _as_int,
     ensure_canonical_row,
-    first_str as _first_str,
-    lease_row_id as _lease_row_id,
     note_tool_call_id,
+)
+from .sdk_state import (
+    as_int as _as_int,
+)
+from .sdk_state import (
+    first_str as _first_str,
+)
+from .sdk_state import (
+    lease_row_id as _lease_row_id,
+)
+from .sdk_state import (
     payload_alt_ids as _payload_alt_ids,
 )
 
@@ -196,6 +205,10 @@ class SdkFold:
             ("root", "root_id"),
             ("root_id", "root_id"),
             ("source_ref", "root_id"),
+            ("admitted_via", "admitted_via"),
+            ("asked_by", "asked_by"),
+            ("purpose", "purpose"),
+            ("story_id", "story_id"),
         ):
             if getattr(row, dst) is None and payload.get(src):
                 setattr(row, dst, str(payload[src]))
@@ -328,6 +341,8 @@ class SdkFold:
             record, preferred, payload_ids=payload_ids, queued=True
         )
         if row is None:
+            return
+        if row.started_ms is not None:
             return
         if row.terminal_ms is not None:
             return

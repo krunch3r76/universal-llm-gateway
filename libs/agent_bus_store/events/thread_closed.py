@@ -5,8 +5,10 @@
 observable without relying on the MCP tool layer.
 
 ``manage.charter.tick.root_closed`` — when the reserved ``charter-runner``
-enrollment tag is stripped from an already-closed root (unenroll-after-close).
-Dispatch-monitor folds this as the sole authority that closes a charter root.
+enrollment tag leaves a closed root (unenroll-after-close, or close of an
+still-enrolled root). Dispatch-monitor folds this as the sole authority that
+closes a charter root — without it the board parks forever after the worker
+leg goes terminal.
 """
 
 from __future__ import annotations
@@ -69,3 +71,36 @@ def emit_charter_root_closed_on_unenroll(
         payload,
         role="observation",
     )
+
+
+def enrollment_stripped(
+    *,
+    prior_tags: list[str],
+    new_tags: list[str],
+) -> bool:
+    """True when ``charter-runner`` was present and is absent after the write."""
+    from agent_bus_store.enrollment_guard import ENROLLMENT_TAG
+
+    return ENROLLMENT_TAG in prior_tags and ENROLLMENT_TAG not in new_tags
+
+
+def maybe_emit_charter_root_closed_on_unenroll(
+    *,
+    root: str,
+    prior_tags: list[str],
+    new_tags: list[str],
+    status: str,
+    reason: str = "unenroll_after_close",
+    checkpoint_turn: int | None = None,
+) -> bool:
+    """Emit ``root_closed`` iff enrollment left a closed root. Returns emitted."""
+    if str(status or "") != "closed":
+        return False
+    if not enrollment_stripped(prior_tags=prior_tags, new_tags=new_tags):
+        return False
+    emit_charter_root_closed_on_unenroll(
+        root=root,
+        reason=reason,
+        checkpoint_turn=checkpoint_turn,
+    )
+    return True

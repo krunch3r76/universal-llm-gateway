@@ -242,3 +242,18 @@ def test_structured_rows_none_for_lib_test_module():
         evidence_uris={"git_refs": ["test-only-sha"]},
     )
     assert structured_propagation_rows(payload) == ()
+
+
+def test_residue_none_for_deleted_lib_with_consumers():
+    payload = _closeout_payload(
+        files_deleted=["libs/deploy_identity/__init__.py"],
+    )
+    assert residue_for_closeout(payload) is None
+
+
+def test_structured_rows_none_for_deleted_lib_with_consumers():
+    payload = _closeout_payload(
+        files_deleted=["libs/deploy_identity/__init__.py"],
+        evidence_uris={"git_refs": ["delete-only-sha"]},
+    )
+    assert structured_propagation_rows(payload) == ()

@@ -172,6 +172,94 @@ def set_thread_tags(conn: sqlite3.Connection, thread_id: str, tags: list[str]) -
         )
 
 
+def add_thread_tags(conn: sqlite3.Connection, thread_id: str, tags: list[str]) -> None:
+    """Add tags without removing unspecified existing tags (single transaction)."""
+    if not tags:
+        return
+    existing = _load_thread_tags(conn, [thread_id]).get(thread_id, [])
+    merged = _normalize_tags([*existing, *tags])
+    set_thread_tags(conn, thread_id, merged)
+
+
+def remove_thread_tags(
+    conn: sqlite3.Connection, thread_id: str, tags: list[str]
+) -> None:
+    """Remove listed tags only; unspecified tags are preserved."""
+    if not tags:
+        return
+    remove_set = set(_normalize_tags(tags))
+    if not remove_set:
+        return
+    existing = _load_thread_tags(conn, [thread_id]).get(thread_id, [])
+    remaining = [t for t in existing if t not in remove_set]
+    set_thread_tags(conn, thread_id, remaining)
+
+
+def add_tags(
+    thread_id: str,
+    tags: list[str],
+    *,
+    enroll_charter_runner: bool = False,
+) -> dict[str, Any] | None:
+    """Add tags to a thread without clobbering unspecified tags."""
+    from agent_bus_store.thread_classification import gate_thread_tags
+
+    if not tags:
+        return get_thread(thread_id)
+    ts = now()
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT id FROM threads WHERE id = ?", (thread_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        prior_tags = _load_thread_tags(conn, [thread_id]).get(thread_id, [])
+        gated = gate_thread_tags(
+            tags,
+            prior_tags=prior_tags,
+            enroll_charter_runner=enroll_charter_runner,
+        )
+        add_thread_tags(conn, thread_id, gated)
+        conn.execute("UPDATE threads SET updated_at = ? WHERE id = ?", (ts, thread_id))
+    return get_thread(thread_id)
+
+
+def remove_tags(thread_id: str, tags: list[str]) -> dict[str, Any] | None:
+    """Remove listed tags from a thread; other tags remain.
+
+    Stripping ``charter-runner`` from an already-closed root emits
+    ``manage.charter.tick.root_closed`` (same authority as ``update_thread``).
+    """
+    if not tags:
+        return get_thread(thread_id)
+    from ..events.thread_closed import maybe_emit_charter_root_closed_on_unenroll
+
+    ts = now()
+    prior_tags: list[str] = []
+    prior_status = ""
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT id, status FROM threads WHERE id = ?", (thread_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        prior_status = str(row["status"] or "")
+        prior_tags = _load_thread_tags(conn, [thread_id]).get(thread_id, [])
+        remove_thread_tags(conn, thread_id, tags)
+        conn.execute("UPDATE threads SET updated_at = ? WHERE id = ?", (ts, thread_id))
+    detail = get_thread(thread_id)
+    if detail is None:
+        return None
+    maybe_emit_charter_root_closed_on_unenroll(
+        root=thread_id,
+        prior_tags=prior_tags,
+        new_tags=list(detail.get("tags") or []),
+        status=str(detail.get("status") or prior_status),
+        reason="unenroll_after_close",
+    )
+    return detail
+
+
 def list_threads_v2(
     *,
     status: str | None = None,
@@ -280,6 +368,7 @@ def get_thread_with_links(thread_id: str) -> dict[str, Any] | None:
 
 
 def get_thread_summary(thread_id: str, *, recent: int = 3) -> dict[str, Any] | None:
+    """Return thread metadata plus the ``recent`` most recent turn subjects, or None."""
     thread = get_thread(thread_id)
     if thread is None:
         return None
@@ -456,8 +545,8 @@ def update_thread(
     from agent_bus_store.thread_classification import gate_thread_tags
 
     from ..events.thread_closed import (
-        emit_charter_root_closed_on_unenroll,
         emit_thread_closed,
+        maybe_emit_charter_root_closed_on_unenroll,
     )
 
     ts = now()
@@ -477,6 +566,16 @@ def update_thread(
                 prior_tags=prior_tags,
                 enroll_charter_runner=enroll_charter_runner,
             )
+        # Closing an enrolled root without an explicit tags replace: strip
+        # enrollment so seat/update_thread(status=closed) cannot leave a parked
+        # board row with charter-runner still attached.
+        if (
+            status == "closed"
+            and prior_status != "closed"
+            and tags is None
+            and ENROLLMENT_TAG in prior_tags
+        ):
+            tags = [t for t in prior_tags if t != ENROLLMENT_TAG]
         sets: list[str] = ["updated_at = ?"]
         params: list[Any] = [ts]
         if status is not None:
@@ -499,13 +598,12 @@ def update_thread(
         return None
     if status == "closed" and prior_status != "closed":
         emit_thread_closed(thread_id, via="update_thread")
-    if (
-        tags is not None
-        and ENROLLMENT_TAG in prior_tags
-        and ENROLLMENT_TAG not in tags
-        and str(detail.get("status") or "") == "closed"
-    ):
-        emit_charter_root_closed_on_unenroll(root=thread_id)
+    maybe_emit_charter_root_closed_on_unenroll(
+        root=thread_id,
+        prior_tags=prior_tags,
+        new_tags=list(detail.get("tags") or prior_tags),
+        status=str(detail.get("status") or ""),
+    )
     return detail
 
 

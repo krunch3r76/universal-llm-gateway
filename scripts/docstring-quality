@@ -54,13 +54,10 @@ def _decode(node: _ts.Node, source: bytes) -> str:
     return source[node.start_byte : node.end_byte].decode("utf-8", errors="replace")
 
 
-def _extract_docstring(block_node: _ts.Node | None, source: bytes) -> str:
-    if block_node is None or not block_node.children:
+def _docstring_from_expression(node: _ts.Node, source: bytes) -> str:
+    if node.type != "expression_statement" or not node.children:
         return ""
-    first = block_node.children[0]
-    if first.type != "expression_statement" or not first.children:
-        return ""
-    maybe_str = first.children[0]
+    maybe_str = node.children[0]
     if maybe_str.type not in _STRING_NODE_TYPES:
         return ""
     literal = _decode(maybe_str, source)
@@ -71,6 +68,22 @@ def _extract_docstring(block_node: _ts.Node | None, source: bytes) -> str:
     if isinstance(value, bytes):
         return value.decode("utf-8", errors="replace").strip()
     return str(value).strip()
+
+
+def _extract_docstring(block_node: _ts.Node | None, source: bytes) -> str:
+    if block_node is None or not block_node.children:
+        return ""
+    first = block_node.children[0]
+    return _docstring_from_expression(first, source)
+
+
+def _extract_module_docstring(module_node: _ts.Node, source: bytes) -> str:
+    for child in module_node.children:
+        if child.type == "expression_statement":
+            doc = _docstring_from_expression(child, source)
+            if doc:
+                return doc
+    return ""
 
 
 def _is_name_echo(docstring: str, name: str) -> bool:
@@ -104,8 +117,8 @@ def _check_file(path: Path) -> list[Issue]:
     is_init = path.name == "__init__.py"
     rel = str(path)
 
-    # Module docstring
-    mod_doc = _extract_docstring(root, source)
+    # Module docstring (skip shebang/encoding comments before the first string literal)
+    mod_doc = _extract_module_docstring(root, source)
     if not mod_doc:
         issues.append(
             Issue(

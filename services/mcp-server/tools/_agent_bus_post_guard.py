@@ -111,6 +111,18 @@ def reconcile_send_arguments(
     if "from" in args:
         alias_value = args.pop("from")
         args.setdefault("from_agent", alias_value)
+    if "supersedes_turn_id" in args:
+        legacy_id = args.pop("supersedes_turn_id")
+        if args.get("supersedes_turn") is None:
+            args["supersedes_turn"] = legacy_id
+        elif args["supersedes_turn"] != legacy_id:
+            return args, {
+                "error": (
+                    "send: supersedes_turn and supersedes_turn_id disagree — "
+                    "pass only supersedes_turn (turn_number)"
+                ),
+                "reason": "supersedes_turn_alias_conflict",
+            }
     raw_to = str(args.get("to", "")).strip()
     if raw_to.lower() in SEND_NON_ADDRESSABLE_TO:
         return args, {

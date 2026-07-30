@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from typing import Sequence
+from collections.abc import Sequence
 
 from .codec import ProjectionCodec
 from .dtos import Thresholds

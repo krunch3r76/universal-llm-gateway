@@ -7,7 +7,8 @@ present on every ``cdp.generate.*`` payload. The G3 leg is a black box between
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 from .. import signals
 from ..correlation import CorrelationIndex

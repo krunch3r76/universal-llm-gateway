@@ -1,7 +1,18 @@
-"""Charter-window friction provenance attribute helpers (G0).
+"""Protocol friction anchor helpers — charter and continuity variants (G0).
 
-Builds and filters charter_root/window_index stamps so reconcile and harvest
-G3 list-by-charter_root queries stay aligned with filed protocol frictions.
+``protocol_anchor`` is a sum type stored as assertion attributes:
+
+- charter: ``charter_root`` + ``window_index`` (enrolled lane; unchanged)
+- continuity: ``root_thread`` + ``cp_ordinal`` (enrollment=none roots)
+
+Normalized ``(anchor_kind, anchor_root, anchor_seq)`` is derived at read time
+via ``_friction_anchor_view`` — never written to the store.
+
+``checkpoint_turn`` is a bus turn pointer; ``cp_ordinal`` is the monotone
+checkpoint ordinal — do not merge or alias them.
+
+``reconcile_charter_frictions`` sweeps charter_root only; continuity-anchored
+rows are actioned via friction-review + CHECKPOINT ``## Frictions``.
 """
 
 from __future__ import annotations
@@ -9,6 +20,18 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from typing import Any
+
+_ANCHOR_COMPLETENESS_ERROR = (
+    "anchor provenance requires exactly one complete variant — "
+    "charter requires charter_root and window_index, or "
+    "continuity requires root_thread and cp_ordinal when any anchor field is set"
+)
+
+_PROTOCOL_ANCHOR_REQUIRED_ERROR = (
+    "protocol friction requires exactly one anchor variant: "
+    "charter{charter_root, window_index} or continuity{root_thread, cp_ordinal} "
+    "(see file_charter_protocol_friction)"
+)
 
 
 def _normalize_charter_root(root: str | None) -> str | None:
@@ -34,14 +57,145 @@ def _parse_assertion_attributes(raw: Any) -> dict[str, Any]:
     return {}
 
 
+def _charter_root_present(root: str | None) -> bool:
+    """Return True when a thread id field carries a non-empty value."""
+    if root is None:
+        return False
+    return bool(str(root).strip())
+
+
+def _valid_cp_ordinal(value: int | None) -> bool:
+    if value is None:
+        return False
+    try:
+        return int(value) >= 1
+    except (TypeError, ValueError):
+        return False
+
+
+def _charter_variant_complete(
+    *,
+    charter_root: str | None,
+    window_index: int | None,
+) -> bool:
+    return _charter_root_present(charter_root) and window_index is not None
+
+
+def _continuity_variant_complete(
+    *,
+    root_thread: str | None,
+    cp_ordinal: int | None,
+) -> bool:
+    return _charter_root_present(root_thread) and _valid_cp_ordinal(cp_ordinal)
+
+
+def _anchor_stamp_partial(
+    *,
+    charter_root: str | None,
+    window_index: int | None,
+    root_thread: str | None,
+    cp_ordinal: int | None,
+    scoreboard_uri: str | None,
+    checkpoint_turn: int | None,
+) -> bool:
+    """True when any anchor-ish stamp field is set (completeness gate input)."""
+    return any(
+        v is not None
+        for v in (
+            charter_root,
+            window_index,
+            root_thread,
+            cp_ordinal,
+            scoreboard_uri,
+            checkpoint_turn,
+        )
+    )
+
+
+def _anchor_variant_conflict(
+    *,
+    charter_root: str | None,
+    window_index: int | None,
+    root_thread: str | None,
+    cp_ordinal: int | None,
+) -> bool:
+    """True when both variant field-sets are partially or fully present."""
+    charter_touched = charter_root is not None or window_index is not None
+    continuity_touched = root_thread is not None or cp_ordinal is not None
+    return charter_touched and continuity_touched
+
+
+def _validate_anchor_completeness(
+    *,
+    charter_root: str | None,
+    window_index: int | None,
+    root_thread: str | None,
+    cp_ordinal: int | None,
+    scoreboard_uri: str | None,
+    checkpoint_turn: int | None,
+) -> str | None:
+    """Return an error when anchor-ish fields do not form one complete variant."""
+    if not _anchor_stamp_partial(
+        charter_root=charter_root,
+        window_index=window_index,
+        root_thread=root_thread,
+        cp_ordinal=cp_ordinal,
+        scoreboard_uri=scoreboard_uri,
+        checkpoint_turn=checkpoint_turn,
+    ):
+        return None
+    if _anchor_variant_conflict(
+        charter_root=charter_root,
+        window_index=window_index,
+        root_thread=root_thread,
+        cp_ordinal=cp_ordinal,
+    ):
+        return _ANCHOR_COMPLETENESS_ERROR
+    if cp_ordinal is not None and not _valid_cp_ordinal(cp_ordinal):
+        return _ANCHOR_COMPLETENESS_ERROR
+    if _charter_variant_complete(charter_root=charter_root, window_index=window_index):
+        return None
+    if _continuity_variant_complete(root_thread=root_thread, cp_ordinal=cp_ordinal):
+        return None
+    return _ANCHOR_COMPLETENESS_ERROR
+
+
+def _friction_anchor_view(attrs: dict[str, Any]) -> dict[str, Any]:
+    """Derive normalized anchor view from stored attributes (read-side only)."""
+    if _charter_variant_complete(
+        charter_root=attrs.get("charter_root"),
+        window_index=attrs.get("window_index"),
+    ):
+        return {
+            "anchor_kind": "charter",
+            "anchor_root": str(attrs["charter_root"]),
+            "anchor_seq": int(attrs["window_index"]),
+        }
+    if _continuity_variant_complete(
+        root_thread=attrs.get("root_thread"),
+        cp_ordinal=attrs.get("cp_ordinal"),
+    ):
+        return {
+            "anchor_kind": "continuity",
+            "anchor_root": str(attrs["root_thread"]),
+            "anchor_seq": int(attrs["cp_ordinal"]),
+        }
+    return {"anchor_kind": "unanchored"}
+
+
 def _friction_provenance_summary(attrs: dict[str, Any]) -> dict[str, Any]:
     out: dict[str, Any] = {}
     if "charter_root" in attrs:
         out["charter_root"] = attrs["charter_root"]
     if "window_index" in attrs:
         out["window_index"] = attrs["window_index"]
+    if "root_thread" in attrs:
+        out["root_thread"] = attrs["root_thread"]
+    if "cp_ordinal" in attrs:
+        out["cp_ordinal"] = attrs["cp_ordinal"]
     if "actionable" in attrs:
         out["actionable"] = attrs["actionable"]
+    out.update(_friction_anchor_view(attrs))
     return out
 
 
@@ -52,8 +206,12 @@ def _friction_charter_filters(
     window_index: int | None,
     actionable: bool | None,
     since: str | None,
+    anchor_kind: str | None = None,
+    anchor_root: str | None = None,
+    anchor_seq: int | None = None,
 ) -> list[dict[str, Any]]:
     root = _normalize_charter_root(charter_root)
+    anchor_root_norm = _normalize_charter_root(anchor_root)
     since_dt: datetime | None = None
     if since:
         try:
@@ -69,6 +227,17 @@ def _friction_charter_filters(
         if window_index is not None:
             try:
                 if int(attrs.get("window_index")) != int(window_index):
+                    continue
+            except (TypeError, ValueError):
+                continue
+        view = _friction_anchor_view(attrs)
+        if anchor_kind is not None and view.get("anchor_kind") != anchor_kind:
+            continue
+        if anchor_root_norm is not None and str(view.get("anchor_root") or "") != anchor_root_norm:
+            continue
+        if anchor_seq is not None:
+            try:
+                if int(view.get("anchor_seq")) != int(anchor_seq):
                     continue
             except (TypeError, ValueError):
                 continue
@@ -107,31 +276,25 @@ def _project_friction_summary_items(items: list[dict[str, Any]]) -> list[dict[st
     return projected
 
 
-def _charter_root_present(charter_root: str | None) -> bool:
-    """Return True when charter_root carries a non-empty thread id."""
-    if charter_root is None:
-        return False
-    return bool(str(charter_root).strip())
-
-
-def _charter_stamp_partial(
-    *,
-    charter_root: str | None,
-    window_index: int | None,
-    scoreboard_uri: str | None,
-    checkpoint_turn: int | None,
-) -> bool:
-    """True when any charter-window stamp field is set (completeness gate input)."""
-    return any(
-        v is not None
-        for v in (charter_root, window_index, scoreboard_uri, checkpoint_turn)
-    )
+def _project_friction_full_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Attach derived anchor view to full-intent rows without mutating stored keys."""
+    projected: list[dict[str, Any]] = []
+    for item in items:
+        row = dict(item)
+        attrs = _parse_assertion_attributes(item.get("attributes"))
+        merged = dict(attrs)
+        merged.update(_friction_anchor_view(attrs))
+        row["attributes"] = merged
+        projected.append(row)
+    return projected
 
 
 def _build_friction_provenance_attrs(
     *,
     charter_root: str | None,
     window_index: int | None,
+    root_thread: str | None,
+    cp_ordinal: int | None,
     scoreboard_uri: str | None,
     session_id: str | None,
     actionable: bool | None,
@@ -139,29 +302,26 @@ def _build_friction_provenance_attrs(
     checkpoint_turn: int | None,
     defer_enqueue: bool | None,
 ) -> tuple[dict[str, Any] | None, str | None]:
-    """Merge charter-window provenance into assertion attributes.
-
-    When any charter stamp field is present, both ``charter_root`` and
-    ``window_index`` are required so reconcile/harvest filters stay aligned.
-    """
+    """Merge protocol-anchor provenance into assertion attributes."""
     if actionable is False and not (actionable_false_reason or "").strip():
         return None, "actionable=false requires non-empty actionable_false_reason"
-    if _charter_stamp_partial(
+    completeness_err = _validate_anchor_completeness(
         charter_root=charter_root,
         window_index=window_index,
+        root_thread=root_thread,
+        cp_ordinal=cp_ordinal,
         scoreboard_uri=scoreboard_uri,
         checkpoint_turn=checkpoint_turn,
-    ) and not (_charter_root_present(charter_root) and window_index is not None):
-        return (
-            None,
-            "charter provenance requires both charter_root and window_index when "
-            "any of charter_root, window_index, scoreboard_uri, or checkpoint_turn is set",
-        )
+    )
+    if completeness_err:
+        return None, completeness_err
     if not any(
         v is not None
         for v in (
             charter_root,
             window_index,
+            root_thread,
+            cp_ordinal,
             scoreboard_uri,
             session_id,
             actionable,
@@ -174,19 +334,24 @@ def _build_friction_provenance_attrs(
 
     attrs: dict[str, Any] = {}
     if charter_root is not None:
-        root = str(charter_root).strip()
-        if root.lower().startswith("agent-bus:"):
-            root = root.split(":", 1)[1].strip()
-        attrs["charter_root"] = root
+        normalized = _normalize_charter_root(charter_root)
+        if normalized is not None:
+            attrs["charter_root"] = normalized
     if window_index is not None:
         attrs["window_index"] = int(window_index)
+    if root_thread is not None:
+        normalized = _normalize_charter_root(root_thread)
+        if normalized is not None:
+            attrs["root_thread"] = normalized
+    if cp_ordinal is not None:
+        attrs["cp_ordinal"] = int(cp_ordinal)
     if scoreboard_uri is not None:
         attrs["scoreboard_uri"] = scoreboard_uri
     if session_id is not None:
         attrs["session_id"] = session_id
     if actionable is not None:
         attrs["actionable"] = bool(actionable)
-    elif charter_root is not None:
+    elif charter_root is not None or root_thread is not None:
         attrs["actionable"] = True
     if actionable_false_reason is not None:
         attrs["actionable_false_reason"] = actionable_false_reason.strip()
@@ -198,10 +363,15 @@ def _build_friction_provenance_attrs(
 
 
 __all__ = [
+    "_ANCHOR_COMPLETENESS_ERROR",
+    "_PROTOCOL_ANCHOR_REQUIRED_ERROR",
     "_build_friction_provenance_attrs",
+    "_friction_anchor_view",
     "_friction_charter_filters",
     "_friction_provenance_summary",
     "_normalize_charter_root",
     "_parse_assertion_attributes",
+    "_project_friction_full_items",
     "_project_friction_summary_items",
+    "_validate_anchor_completeness",
 ]

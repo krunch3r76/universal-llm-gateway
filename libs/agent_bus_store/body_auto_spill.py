@@ -19,6 +19,7 @@ from cortex_store.dispatch_ops._thread_sidecar import (
 )
 
 from .body_briefing_advisory import BriefingAdvisory, briefing_advisory
+from .checkpoint_charter_lint import orchestration_charter_advisory
 from .turns_models import (
     MAX_LONG_TURN_BODY_CHARS,
     MAX_SIDECAR_CONTENT_CHARS,
@@ -68,6 +69,8 @@ def prepare_body_for_insert(
     body: str,
     from_agent: str,
     allow_long_body: bool = False,
+    thread_tags: list[str] | None = None,
+    supersedes_turn: int | None = None,
 ) -> PreparedBody:
     """Prepare a turn body for insert — soft-spill when over the 8k soft limit.
 
@@ -79,14 +82,22 @@ def prepare_body_for_insert(
     """
     limit = MAX_LONG_TURN_BODY_CHARS if allow_long_body else MAX_TURN_BODY_CHARS
     if len(body) <= limit:
-        return PreparedBody(
+        advisory = orchestration_charter_advisory(
             body=body,
-            advisory=briefing_advisory(
+            subject=subject,
+            thread_tags=thread_tags,
+            supersedes_turn=supersedes_turn,
+        )
+        if advisory is None:
+            advisory = briefing_advisory(
                 body=body,
+                subject=subject,
                 allow_long_body=allow_long_body,
                 has_sidecar=False,
-            ),
-        )
+                thread_tags=thread_tags,
+                supersedes_turn=supersedes_turn,
+            )
+        return PreparedBody(body=body, advisory=advisory)
 
     if allow_long_body:
         raise BodyTooLargeError(
@@ -145,8 +156,11 @@ def build_turn_created(
     from_agent: str,
     to_agent: str,
     subject: str,
+    superseded_turn_number: int | None = None,
+    superseded_turn_id: int | None = None,
 ) -> TurnCreated:
     """Build TurnCreated and emit briefing advisory observation when applicable."""
+    from .events.advisory_fired import emit_advisory_fired
     from .events.turn_body_advisory import emit_turn_body_over_briefing
     from .turns_models import TurnCreated
 
@@ -160,6 +174,14 @@ def build_turn_created(
             body_chars=prepared.advisory.body_chars,
             target_chars=prepared.advisory.target_chars,
         )
+        emit_advisory_fired(
+            advisory=prepared.advisory.reason,
+            turn_kind=prepared.advisory.turn_kind,
+            chars=prepared.advisory.body_chars,
+            suppressed_by_profile=prepared.advisory.suppressed_by_profile,
+            thread=thread,
+            subject=subject,
+        )
         advisory_dict = asdict(prepared.advisory)
     return TurnCreated(
         id=turn_id,
@@ -169,6 +191,8 @@ def build_turn_created(
         sidecar_uri=prepared.sidecar_uri,
         sidecar_sha256=prepared.sidecar_sha256,
         briefing_advisory=advisory_dict,
+        superseded_turn_number=superseded_turn_number,
+        superseded_turn_id=superseded_turn_id,
     )
 
 

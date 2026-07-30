@@ -27,6 +27,7 @@ MANIFEST_BIND_NOTE = (
 )
 
 Idempotence = Literal["idempotent", "at-most-once"]
+Authority = Literal["code", "life"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,6 +38,7 @@ class ManifestRow:
     op: str
     allowed: bool
     idempotence: Idempotence
+    authority: Authority
     note: str
 
     @property
@@ -57,20 +59,26 @@ DEFAULT_MANIFEST: tuple[ManifestRow, ...] = (
         op="pull",
         allowed=True,
         idempotence="idempotent",
-        note="read-only folder pull under a bounded limit; the lane's origin case",
+        authority="life",
+        note=(
+            "tier-M mutating IMAP pull scoped by mode + mailbox/folder "
+            "(no limit); relay via email-bridge UDS when flag enabled"
+        ),
     ),
     ManifestRow(
         tool="email",
         op="search",
         allowed=True,
         idempotence="idempotent",
-        note="read-only folder-scoped search",
+        authority="life",
+        note="read-only metadata search; relay via email-bridge UDS when flag enabled",
     ),
     ManifestRow(
         tool="email",
         op="send",
         allowed=False,
         idempotence="at-most-once",
+        authority="life",
         note="outbound speech as the operator — human gate, never unattended",
     ),
     ManifestRow(
@@ -78,6 +86,7 @@ DEFAULT_MANIFEST: tuple[ManifestRow, ...] = (
         op="move",
         allowed=False,
         idempotence="at-most-once",
+        authority="life",
         note="mutates mailbox state with no observation path to undo it",
     ),
     ManifestRow(
@@ -85,6 +94,7 @@ DEFAULT_MANIFEST: tuple[ManifestRow, ...] = (
         op="delete",
         allowed=False,
         idempotence="at-most-once",
+        authority="life",
         note="destructive mailbox mutation",
     ),
     ManifestRow(
@@ -92,6 +102,7 @@ DEFAULT_MANIFEST: tuple[ManifestRow, ...] = (
         op="query",
         allowed=True,
         idempotence="idempotent",
+        authority="code",
         note="read-only signal/event query",
     ),
     ManifestRow(
@@ -99,6 +110,7 @@ DEFAULT_MANIFEST: tuple[ManifestRow, ...] = (
         op="search",
         allowed=True,
         idempotence="idempotent",
+        authority="code",
         note="read-only knowledge retrieval",
     ),
     ManifestRow(
@@ -106,6 +118,7 @@ DEFAULT_MANIFEST: tuple[ManifestRow, ...] = (
         op="entity_get",
         allowed=True,
         idempotence="idempotent",
+        authority="code",
         note="read-only entity fetch",
     ),
     ManifestRow(
@@ -113,6 +126,7 @@ DEFAULT_MANIFEST: tuple[ManifestRow, ...] = (
         op="assert",
         allowed=False,
         idempotence="at-most-once",
+        authority="code",
         note="durable knowledge write — belongs to a contract with a closeout",
     ),
     ManifestRow(
@@ -120,6 +134,7 @@ DEFAULT_MANIFEST: tuple[ManifestRow, ...] = (
         op="*",
         allowed=False,
         idempotence="at-most-once",
+        authority="code",
         note="repo and share writes belong to implement, not to a tool relay",
     ),
     ManifestRow(
@@ -127,6 +142,7 @@ DEFAULT_MANIFEST: tuple[ManifestRow, ...] = (
         op="*",
         allowed=False,
         idempotence="at-most-once",
+        authority="code",
         note="substrate lifecycle (restart/sync) — operator surface only",
     ),
     ManifestRow(
@@ -134,6 +150,7 @@ DEFAULT_MANIFEST: tuple[ManifestRow, ...] = (
         op="*",
         allowed=False,
         idempotence="at-most-once",
+        authority="code",
         note="spends dispatch capacity; route as a nested contract instead",
     ),
 )
@@ -199,6 +216,7 @@ __all__ = [
     "MANIFEST_BIND_NOTE",
     "MANIFEST_BIND_URI",
     "PENDING_OPERATOR_BIND",
+    "Authority",
     "Idempotence",
     "ManifestRow",
     "allowed_tool_ops",

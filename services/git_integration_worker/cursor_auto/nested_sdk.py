@@ -74,9 +74,12 @@ async def submit_nested_dispatch(
         "execution_id": execution_id,
         "message": message,
         "handoff_contract": handoff_contract,
-        "caller_agent": job.from_agent,
+        "admitted_via": "cursor-auto",
         "close_contract": "auto",
     }
+    if job.from_agent != "cursor-auto":
+        payload["caller_agent"] = job.from_agent
+    # AC2 corner: omit caller_agent when from_agent is cursor-auto (no self-stamp).
     if nest_under:
         payload["nest_under"] = nest_under
     if model_knobs:

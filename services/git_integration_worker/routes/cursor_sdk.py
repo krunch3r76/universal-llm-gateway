@@ -61,6 +61,9 @@ from services.git_integration_worker.cursor_models import (
     build_model_selection,
     resolve_cursor,
 )
+from services.git_integration_worker.cursor_sdk_association import (
+    build_dispatch_association_fields,
+)
 from services.git_integration_worker.cursor_sdk_closeout import (
     SdkRunOutcome,
     capture_wt_baseline_with_hashes,
@@ -100,6 +103,7 @@ from services.git_integration_worker.cursor_sdk_events import (
     emit_sdk_restart_bridge_reap_failed,
     emit_sdk_worker_completed,
     emit_sdk_worker_delivery_failed,
+    emit_sdk_worker_dispatched,
     emit_sdk_worker_failed,
     emit_sdk_worker_orphaned,
     emit_sdk_worker_progress,
@@ -330,6 +334,53 @@ def _draining_response(exc: Draining503) -> JSONResponse:
             data={"retry_after_s": _DRAIN_RETRY_AFTER_S},
         ),
         headers={"Retry-After": str(_DRAIN_RETRY_AFTER_S)},
+    )
+
+
+def _emit_enriched_queued(
+    *,
+    req: CursorDispatchRequest,
+    cached: CursorDispatchResponse,
+    source_repo_str: str,
+    packet_text: str,
+) -> None:
+    """Emit association + ``admitted_via`` on ``worker.queued`` for all admits."""
+    association = build_dispatch_association_fields(req=req, packet_text=packet_text)
+    emit_sdk_worker_queued(
+        dispatch_id=cached.dispatch_id,
+        thread_id=cached.thread_id,
+        source_repo=source_repo_str,
+        queue_position=cached.queue_position,
+        holder_dispatch_id=cached.holder_dispatch_id,
+        holder_thread_id=cached.holder_thread_id,
+        holder_resolved_model=cached.holder_resolved_model,
+        holder_subject_preview=cached.holder_subject_preview,
+        resolved_model=cached.model_id,
+        execution_id=req.execution_id,
+        admitted_via=req.admitted_via,
+        asked_by=association["asked_by"],
+        purpose=association["purpose"],
+        story_id=association["story_id"],
+    )
+
+
+def _maybe_emit_giw_dispatched(
+    *,
+    req: CursorDispatchRequest,
+    packet_text: str,
+) -> None:
+    """Emit GIW ``worker.dispatched`` only for nested ``admitted_via=cursor-auto``."""
+    if req.admitted_via != "cursor-auto":
+        return
+    association = build_dispatch_association_fields(req=req, packet_text=packet_text)
+    emit_sdk_worker_dispatched(
+        dispatch_id=req.dispatch_id,
+        thread_id=req.thread_id,
+        execution_id=req.execution_id,
+        admitted_via=req.admitted_via,
+        asked_by=association["asked_by"],
+        purpose=association["purpose"],
+        story_id=association["story_id"],
     )
 
 
@@ -939,6 +990,10 @@ async def _start_promoted_dispatch(
     ledger.register_task(promoted.dispatch_id, task)
     ticket.mark_running()
     await asyncio.to_thread(ledger.mark_running, dispatch_id=promoted.dispatch_id)
+    packet_text = req.message or ""
+    if req.packet_path:
+        packet_text = _read_packet_text(req, cfg.source_repo) or packet_text
+    _maybe_emit_giw_dispatched(req=req, packet_text=packet_text)
 
 
 async def reconcile_stale_leases(
@@ -1136,6 +1191,7 @@ async def _deliver_sdk_closeout(
         "asked_by": association.asked_by,
         "purpose": association.purpose,
         "story_id": association.story_id,
+        "admitted_via": req.admitted_via,
     }
 
     bus_result = await bus.reply(
@@ -1909,16 +1965,11 @@ async def cursor_dispatch(
     if cached is not None:
         status_code = 202 if cached.status == "queued" else 200
         if cached.status == "queued":
-            emit_sdk_worker_queued(
-                dispatch_id=cached.dispatch_id,
-                thread_id=cached.thread_id,
-                source_repo=source_repo_str,
-                queue_position=cached.queue_position,
-                holder_dispatch_id=cached.holder_dispatch_id,
-                holder_thread_id=cached.holder_thread_id,
-                holder_resolved_model=cached.holder_resolved_model,
-                holder_subject_preview=cached.holder_subject_preview,
-                resolved_model=cached.model_id,
+            _emit_enriched_queued(
+                req=req,
+                cached=cached,
+                source_repo_str=source_repo_str,
+                packet_text=packet_text,
             )
         return JSONResponse(status_code=status_code, content=cached.model_dump())
 
@@ -2008,4 +2059,5 @@ async def cursor_dispatch(
     ledger.register_task(req.dispatch_id, task)
     ticket.mark_running()
     await asyncio.to_thread(ledger.mark_running, dispatch_id=req.dispatch_id)
+    _maybe_emit_giw_dispatched(req=req, packet_text=packet_text)
     return JSONResponse(status_code=200, content=admission.model_dump())

@@ -31,12 +31,14 @@ from .fetch import (
     _get_impl,
 )
 from .lifecycle import (
+    _add_tags_dispatch,
     _close_dispatch,
     _close_impl,
     _delete_thread_dispatch,
     _delete_thread_impl,
     _delete_turn_dispatch,
     _delete_turn_impl,
+    _remove_tags_dispatch,
     _triage_dispatch,
     _update_thread_dispatch,
     _update_thread_impl,
@@ -65,6 +67,7 @@ from .send import (
 from .threads import (
     _create_thread_dispatch,
     _create_thread_impl,
+    _thread_get_dispatch,
     _threads_dispatch,
     _threads_impl,
 )
@@ -85,9 +88,12 @@ AGENT_BUS_OPS: dict[str, Callable[..., Any]] = {
     "fetch_unread": _fetch_unread_dispatch,
     "get": _get_dispatch,
     "threads": _threads_dispatch,
+    "thread_get": _thread_get_dispatch,
     "create_thread": _create_thread_dispatch,
     "close": _close_dispatch,
     "update_thread": _update_thread_dispatch,
+    "add_tags": _add_tags_dispatch,
+    "remove_tags": _remove_tags_dispatch,
     "update": _update_dispatch,
     "delete_thread": _delete_thread_dispatch,
     "delete_turn": _delete_turn_dispatch,
@@ -185,7 +191,10 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
         Write path — use ``send`` (``post``/``reply`` are legacy aliases until 2026-09-01):
 
         Operations:
-          send          (new_slug XOR thread, to, subject, body, from?, from_agent?, summary?, tags?, enroll_charter_runner?, lifecycle_state?, after_turn?, status?, mark_read?, close?, attachments?, allow_long_body?, sidecar_content?, sidecar_slug?, supersedes_turn?) — **primary write op**. Exactly one of new_slug (new thread) or thread (continue) required; supersedes_turn (continue path only) is the database turn id to supersede structurally. slug uniqueness enforced on new_slug path (409 slug_exists on collision). Tag ``charter-runner`` is **reserved enrollment** — newly adding it requires ``enroll_charter_runner=true`` (422 reserved_enrollment_tag otherwise); keeping/removing never needs the flag. Enrollment auto-stamps spine tag ``role:root``. When sidecar_content is set the server writes cortex://notes/system/threads/<thread_id>-<slug>.md before inserting the turn, appends a trailing Sidecar: pointer to the body, and returns sidecar_uri + sidecar_sha256. sidecar_content cap 256KB. Prefer ``from=``; ``from_agent`` is a permanent alias. When omitted on ``/mcp/life`` or ``/mcp/code``, the server autofills ``web-anthropic`` or ``cursor`` respectively.
+          send          (new_slug XOR thread, to, subject, body, from?, from_agent?, summary?, tags?, enroll_charter_runner?, lifecycle_state?, after_turn?, status?, mark_read?, close?, attachments?, allow_long_body?, sidecar_content?, sidecar_slug?, supersedes_turn?, supersedes_turn_id?) — **primary write op**. Exactly one of new_slug (new thread) or thread (continue) required; supersedes_turn (continue path only) is the same-thread **turn_number** to supersede structurally (deprecated alias supersedes_turn_id = row id, one release cycle). slug uniqueness enforced on new_slug path (409 slug_exists on collision). Tag ``charter-runner`` is **reserved enrollment** — newly adding it requires ``enroll_charter_runner=true`` (422 reserved_enrollment_tag otherwise); keeping/removing never needs the flag. Enrollment auto-stamps spine tag ``role:root``. When sidecar_content is set the server writes cortex://notes/system/threads/<thread_id>-<slug>.md before inserting the turn, appends a trailing Sidecar: pointer to the body, and returns sidecar_uri + sidecar_sha256. sidecar_content cap 256KB. Prefer ``from=``; ``from_agent`` is a permanent alias. When omitted on ``/mcp/life`` or ``/mcp/code``, the server autofills ``web-anthropic`` or ``cursor`` respectively.
+          thread_get      (thread) — single ThreadDetail (tags/status/summary/turn_count/…); missing thread → structured error
+          add_tags        (thread, tags[], from?, enroll_charter_runner?) — additive tag merge; unspecified tags preserved
+          remove_tags     (thread, tags[], from?) — remove listed tags only; other tags preserved
           request       (new_slug XOR thread, to='cursor', subject, body, from?, from_agent?, summary?, tags?, sidecar_content?, sidecar_slug?, desired_model?, desired_effort?, contract?, require_attended?) — life-callable Cursor Auto channel. Injects lane:cursor-auto; arms Auto when a live handler heartbeats (else handler_status=no-auto-handler); returns {thread, turn, handler_status, poll_hint}. ``summary`` = standing ULG so-what title (also fail-soft from body ``so_what:`` / ``ulg_gain:``). require_attended=true (wire or DIRECTIVE body OR) ⇒ terminal status:needs-attended reason=operator_require_attended. ¬ dual-tag lane:life-to-code on degrade. ``contract`` ∈ answer|confer|investigate|implement|verify|execute|propagate — unknown value ⇒ 422 request_contract_unknown before the turn is written; legacy ``consult`` aliases to ``confer`` with a deprecation note. ``execute`` fires ONE tier-M tool op in seat against the allowlist manifest (body: ``tool_op: <tool>.<op>`` + ``effects_expected:`` + optional single-line JSON ``tool_args:``); closeout carries the raw payload under ``tool_payload``. ``propagate`` mints structured propagation ledger rows and coordinates drain-gated ``sync_restart`` via manage.sock (body: ``effects_expected:`` + ``## propagation`` YAML or ``scope: propagation sync_restart <service>``); ``manage.*`` via ``execute`` remains denied. Optional ``request_id`` is an idempotency key echoed enqueue→closeout (minted when omitted; a replayed key is refused 422 ``duplicate_request_id``). DIRECTIVE ``deadline: +15m`` (or ISO-8601) terminates a still-queued job ``status:failed reason=expired``. Narrower alternative for approval-gated harnesses: the dedicated ``cursor_request`` tool.
           threads       (status?, tags?, lifecycle_state?, limit?, last?, has_unread?, query?) — list threads; status: active|blocked|waiting|closed|all (default active); tags: AND-filter; lifecycle_state: pending|admitted|delivered|failed (exact match). Default limit=50 when neither limit nor last is set; response includes limit_applied and truncated.
           create_thread (slug, summary?, tags?, enroll_charter_runner?, lifecycle_state?, thread_id?) — create a thread without a turn; use lifecycle_state="pending" for lifecycle-managed threads that will be dispatched later; ``enroll_charter_runner=true`` required to include tag ``charter-runner``
@@ -195,7 +204,7 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
           update        (thread, turn_number, body?, append?, subject?) — edit or append to an existing turn while read_at is null; 409 turn_already_acknowledged once marked read (use send(thread=...) for follow-up)
           mark_read     (thread, turn_numbers[] XOR through_turn, agent?) — bulk mark read; through_turn requires agent
           wait          (thread, after_turn?, wait_seconds?, completion?, from_agent?) — server-side short-block until consult posts a bus turn after the pointer (completion=first_reply_from + canonical from_agent; alias-aware), thread closes (completion=thread_closed), or Auto posts a terminal status token (completion=status:done|status:failed|status:needs-attended); wait_seconds clamped <=60 (0=snapshot). Returns {thread_id, complete, status, push_required, suggested_next (object: consult_turn_posted + steps fetch/apply/close when complete and thread still active), qualifying_reply_turn, thread_status, ...}. first_reply_from complete means a consult bus turn exists, not findings applied. Re-call to keep polling — one HTTP call, not a client loop.
-          update_thread (thread, status?, summary?, tags?, enroll_charter_runner?, from_agent?) — patch thread metadata (tags: omit=keep, []=clear, [...]=replace); newly adding ``charter-runner`` requires ``enroll_charter_runner=true``
+          update_thread (thread, status?, summary?, tags?, add_tags?, remove_tags?, enroll_charter_runner?, from_agent?) — patch thread metadata (tags: omit=keep, []=clear, [...]=replace; add_tags/remove_tags are additive and mutually exclusive with tags replace)
           close         (thread, summary?, mark_all_read?)              — close a thread (atomic: marks all turns read by default)
           delete_turn   (thread, turn_number, force?)                   — delete a single turn
           delete_thread (thread, force?)                                — delete an entire thread

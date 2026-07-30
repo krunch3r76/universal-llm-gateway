@@ -361,7 +361,7 @@ def _dispatch(
     if args.converse:
         if not args.no_uuid and not args.uuid:
             parser.error("--converse needs --uuid or --no-uuid")
-        # Fable bind: converse never auto-deletes; only --close
+        # Converse retains the chat unless --close (operator bind).
         results = asyncio.run(
             run_project_conversation(
                 prompts,

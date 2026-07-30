@@ -12,6 +12,7 @@ from typing import Any
 
 from implement_admission.closeout_helpers import cortex_files_root
 from implement_admission.closeout_models import (
+    AmbientRepoMovement,
     EffectsManifest,
     EvidenceUris,
     ImplementCloseout,
@@ -20,8 +21,11 @@ from implement_admission.closeout_models import (
 from implement_admission.deliverable_verification import (
     evaluate_deliverable_verification,
 )
-from implement_admission.propagation_row import resolve_code_ref
 from implement_admission.normalize import _files_from_packet
+from implement_admission.propagation_row import (
+    land_paths_for_propagation,
+    resolve_code_ref,
+)
 from implement_admission.spec import CloseoutStatus, ImplementSpec
 from universal_logging import get_logger
 
@@ -32,6 +36,7 @@ from services.git_integration_worker.cursor_auto.episode_residue import (
     residue_actions,
     resolve_propagation_for_finalize,
 )
+from services.git_integration_worker.cursor_sdk_ambient import ambient_deviation_token
 from services.git_integration_worker.cursor_sdk_capture_status import (
     ChangeSet,
     attribution_effects_paths,
@@ -56,6 +61,7 @@ from services.git_integration_worker.cursor_sdk_deliverables import (
 from services.git_integration_worker.cursor_sdk_events import (
     emit_sdk_closeout_relocated,
 )
+from services.git_integration_worker.cursor_sdk_git_head import resolve_git_head
 from services.git_integration_worker.cursor_sdk_manifest import (
     CaptureBranch,
     collect_expected_cortex_deliverable_uris,
@@ -69,12 +75,21 @@ from services.git_integration_worker.cursor_sdk_manifest import (
     registered_repo_roots,
     repo_change_set_from_manifest,
     resolve_mount_root,
-    resolve_repo_change_set,
     serialize_effects_manifest_for_body,
     snapshot_outside_repo_paths,
 )
 from services.git_integration_worker.cursor_sdk_manifest import (
     verification_change_set as build_verification_change_set,
+)
+from services.git_integration_worker.cursor_sdk_polarity import (
+    ClaimedOp,
+    git_concurs_deleted,
+    list_git_deleted_paths,
+    polarity_deviation_token,
+    prove_polarity,
+)
+from services.git_integration_worker.cursor_sdk_repo_precedence import (
+    resolve_repo_change_set,
 )
 from services.git_integration_worker.cursor_sdk_stream_capture import (
     ToolCallObservation,
@@ -197,7 +212,12 @@ def capture_wt_baseline_with_hashes(source_repo: Path) -> dict[str, Any] | None:
             hashes[path] = digest
     mount = resolve_mount_root(source_repo)
     outside = sorted(snapshot_outside_repo_paths(mount, registered_repo_roots(mount)))
-    return {"codes": codes, "hashes": hashes, "outside_repo": outside}
+    return {
+        "codes": codes,
+        "hashes": hashes,
+        "outside_repo": outside,
+        "admit_head": resolve_git_head(source_repo),
+    }
 
 
 def run_touched_files_lint(
@@ -240,39 +260,75 @@ def _split_baseline(
     return normalize_wt_baseline(baseline)
 
 
-def changed_paths(source_repo: Path, baseline: dict[str, Any] | None) -> ChangeSet:
+def changed_paths(
+    source_repo: Path, baseline: dict[str, Any] | None
+) -> tuple[ChangeSet, tuple[str, ...]]:
     """Derive created/modified/deleted paths vs an admit-time baseline."""
     current = capture_wt_baseline(source_repo)
     if current is None:
-        return ChangeSet(created=(), modified=(), deleted=())
+        return ChangeSet(created=(), modified=(), deleted=()), ()
     codes, hashes = _split_baseline(baseline)
+    admit_head: str | None = None
+    if isinstance(baseline, dict):
+        raw_head = baseline.get("admit_head")
+        if isinstance(raw_head, str) and raw_head.strip():
+            admit_head = raw_head.strip()
+    git_deleted = list_git_deleted_paths(source_repo)
     created: list[str] = []
     modified: list[str] = []
     deleted: list[str] = []
-    all_paths = set(current) | set(codes)
+    deviations: list[str] = []
+    all_paths = set(current) | set(codes) | git_deleted
     for path in sorted(all_paths):
         cur = current.get(path)
         prev = codes.get(path)
-        if cur is None and prev is not None:
-            deleted.append(path)
+        claimed: ClaimedOp | None = None
+        current_hash: str | None = None
+        repo_path = source_repo / path
+        is_gone = cur is None or not repo_path.exists()
+        git_concurs_del = git_concurs_deleted(path, current, git_deleted)
+        if is_gone and (
+            prev is not None or (admit_head is not None and git_concurs_del)
+        ):
+            claimed = "deleted"
         elif cur is not None and prev is None:
-            if cur.startswith("?"):
-                created.append(path)
-            else:
-                modified.append(path)
+            claimed = "created" if cur.startswith("?") else "modified"
+            current_hash = _hash_worktree_file(source_repo, path)
         elif cur is not None and prev is not None and cur != prev:
-            modified.append(path)
+            claimed = "modified"
+            current_hash = _hash_worktree_file(source_repo, path)
         elif cur is not None and prev is not None and cur == prev and path in hashes:
             current_hash = _hash_worktree_file(source_repo, path)
             if current_hash is not None and current_hash != hashes[path]:
-                if prev.startswith("?"):
-                    created.append(path)
-                else:
-                    modified.append(path)
-    return ChangeSet(
-        created=tuple(created),
-        modified=tuple(modified),
-        deleted=tuple(deleted),
+                claimed = "created" if prev.startswith("?") else "modified"
+        if claimed is None:
+            continue
+        if prove_polarity(
+            claimed=claimed,
+            path=path,
+            source_repo=source_repo,
+            baseline_codes=codes,
+            baseline_hashes=hashes,
+            current_porcelain=current,
+            current_hash=current_hash,
+            git_deleted_paths=git_deleted,
+            admit_head=admit_head,
+        ):
+            if claimed == "deleted":
+                deleted.append(path)
+            elif claimed == "created":
+                created.append(path)
+            else:
+                modified.append(path)
+        else:
+            deviations.append(polarity_deviation_token(claimed, path))
+    return (
+        ChangeSet(
+            created=tuple(created),
+            modified=tuple(modified),
+            deleted=tuple(deleted),
+        ),
+        tuple(deviations),
     )
 
 
@@ -291,17 +347,17 @@ def reconcile_workspace_changes(
     baseline: dict[str, Any] | None,
     manifest: EffectsManifest | None = None,
     mount_root: Path | None = None,
-) -> tuple[ChangeSet, tuple[str, ...], tuple[str, ...]]:
+) -> tuple[ChangeSet, tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
     """Multi-root disk reconciliation: git diff + outside-repo paths + gitignored."""
     from services.git_integration_worker.cursor_sdk_manifest import resolve_mount_root
 
     mount = (mount_root or resolve_mount_root(source_repo)).resolve()
     repos = registered_repo_roots(mount)
-    git_change = (
-        ChangeSet(created=(), modified=(), deleted=())
-        if baseline is None
-        else changed_paths(source_repo, baseline)
-    )
+    if baseline is None:
+        git_change = ChangeSet(created=(), modified=(), deleted=())
+        polarity_deviations: tuple[str, ...] = ()
+    else:
+        git_change, polarity_deviations = changed_paths(source_repo, baseline)
     git_changed = (
         set(git_change.created) | set(git_change.modified) | set(git_change.deleted)
     )
@@ -313,7 +369,7 @@ def reconcile_workspace_changes(
     baseline_outside = _baseline_outside_repo_paths(baseline)
     current_outside = snapshot_outside_repo_paths(mount, repos)
     new_outside = tuple(sorted(current_outside - baseline_outside))
-    return git_change, gitignored, new_outside
+    return git_change, gitignored, new_outside, polarity_deviations
 
 
 def _baseline_dirty_in_expected(
@@ -725,6 +781,8 @@ def build_implement_closeout_body(
     dropped_non_file_entries: list[dict[str, str]] | None = None,
     sidecar_markdown: str | None = None,
     extra_markdown_sources: list[str] | None = None,
+    closeout_head: str | None = None,
+    files_ambient_repo_movement: list[AmbientRepoMovement] | None = None,
 ) -> str:
     """Build a compact, valid ImplementCloseout JSON turn body.
 
@@ -768,13 +826,12 @@ def build_implement_closeout_body(
         deviations = [*(deviations or []), "capture:cortex_writes_unattributed"]
     repo_files = change_set or ChangeSet(created=(), modified=(), deleted=())
 
-    residue_paths = [
-        *repo_files.created,
-        *repo_files.modified,
-        *repo_files.deleted,
-        *(files_untracked_or_ignored or ()),
-    ]
-    propagation_residue = list(residue_actions(residue_paths))
+    land_paths = land_paths_for_propagation(
+        created=repo_files.created,
+        modified=repo_files.modified,
+        untracked=files_untracked_or_ignored or (),
+    )
+    propagation_residue = list(residue_actions(land_paths))
     markdown_sources = [*(extra_markdown_sources or [])]
     if sidecar_markdown and sidecar_markdown.strip():
         markdown_sources.append(sidecar_markdown)
@@ -783,8 +840,10 @@ def build_implement_closeout_body(
         head = outcome.sdk_git.get("HEAD") or outcome.sdk_git.get("head")
         if isinstance(head, str) and head.strip():
             code_probe = {"evidence_uris": {"git_refs": [head.strip()]}}
+    if closeout_head:
+        code_probe = {**code_probe, "closeout_head": closeout_head}
     propagation_rows = resolve_propagation_for_finalize(
-        residue_paths=residue_paths,
+        residue_paths=land_paths,
         markdown_sources=markdown_sources,
         code_ref=resolve_code_ref(code_probe),
     )
@@ -799,6 +858,7 @@ def build_implement_closeout_body(
             files_created=list(repo_files.created),
             files_modified=list(repo_files.modified),
             files_deleted=list(repo_files.deleted),
+            files_ambient_repo_movement=list(files_ambient_repo_movement or []),
             capture_status=capture_status,
             effects_manifest=manifest_value
             if isinstance(manifest_value, EffectsManifest)
@@ -1016,14 +1076,17 @@ def _assemble_closeout_delivery(
         outside_repo_paths: tuple[str, ...] = ()
         baseline_deviations: list[str] = []
     else:
-        git_change_set, files_untracked_or_ignored, outside_repo_paths = (
-            reconcile_workspace_changes(
-                source_repo=source_repo,
-                baseline=baseline,
-                manifest=outcome.effects_manifest,
-            )
+        (
+            git_change_set,
+            files_untracked_or_ignored,
+            outside_repo_paths,
+            polarity_deviations,
+        ) = reconcile_workspace_changes(
+            source_repo=source_repo,
+            baseline=baseline,
+            manifest=outcome.effects_manifest,
         )
-        baseline_deviations = []
+        baseline_deviations = list(polarity_deviations)
         if "outside_repo" not in baseline:
             baseline_deviations.append("capture:outside_repo_baseline_missing")
     manifest = merge_wrapper_manifest(
@@ -1044,12 +1107,22 @@ def _assemble_closeout_delivery(
     )
     if manifest_cs is None:
         manifest_cs = ChangeSet(created=(), modified=(), deleted=())
-    repo_change_set, manifest_extra_untracked, manifest_git_divergence = (
+    repo_change_set, manifest_extra_untracked, manifest_git_divergence, ambient_movements = (
         resolve_repo_change_set(
             manifest=manifest,
             git_change_set=git_change_set,
             source_repo=source_repo,
             mount_root=mount,
+            baseline=baseline,
+            files_expected=files_expected,
+            current_porcelain=capture_wt_baseline(source_repo),
+            admit_head=(
+                baseline.get("admit_head")
+                if isinstance(baseline, dict)
+                and isinstance(baseline.get("admit_head"), str)
+                else None
+            ),
+            closeout_head=resolve_git_head(source_repo),
         )
     )
     repo_change_set, files_untracked_or_ignored = partition_gitignored_from_change_set(
@@ -1107,7 +1180,14 @@ def _assemble_closeout_delivery(
     deviations = [
         *extra_deviations,
         *baseline_deviations,
-        *(d for d in (deviations or []) if d not in extra_deviations),
+        *(
+            d
+            for d in (deviations or [])
+            if d not in extra_deviations
+            and not str(d).startswith(
+                "divergence:repo_diff_paths_unattributed:ambient:"
+            )
+        ),
     ]
     if outcome.stream_only_deviations:
         deviations = [
@@ -1136,14 +1216,15 @@ def _assemble_closeout_delivery(
             capture_status = "partial"
         if divergence_reason is None:
             divergence_reason = oob_divergence
-    if (
-        manifest_git_divergence
-        and "divergence:manifest_vs_git_labels" not in deviations
-    ):
+    if manifest_git_divergence and "divergence:manifest_vs_git_labels" not in deviations:
         deviations = [*(deviations or []), "divergence:manifest_vs_git_labels"]
         if divergence_reason is None:
             divergence_reason = "divergence:manifest_vs_git_labels"
+    ambient_token = ambient_deviation_token(ambient_movements)
+    if ambient_token and ambient_token not in deviations:
+        deviations = [*(deviations or []), ambient_token]
     cortex_authoritative = bool(gate_d_created_rels)
+    closeout_head = resolve_git_head(source_repo)
     body = build_implement_closeout_body(
         dispatch_id=dispatch_id,
         outcome=outcome,
@@ -1169,6 +1250,8 @@ def _assemble_closeout_delivery(
         extra_markdown_sources=_markdown_from_cortex_uris(
             list({*(cortex_artifact_paths or []), *offgit_uris})
         ),
+        closeout_head=closeout_head,
+        files_ambient_repo_movement=ambient_movements,
     )
     if sidecar_appendix:
         appendix = "\n\n## effects_manifest\n\n" + "\n".join(sidecar_appendix)

@@ -279,7 +279,6 @@ def _cmd_post(args: argparse.Namespace, token: str) -> None:
 
 
 def _cmd_reply(args: argparse.Namespace, token: str) -> None:
-    import httpx
 
     if args.body_file:
         body_text = Path(args.body_file).read_text(encoding="utf-8")
@@ -298,23 +297,7 @@ def _cmd_reply(args: argparse.Namespace, token: str) -> None:
         "after_turn": args.after_turn,
     }
     if args.supersedes_turn is not None:
-        try:
-            payload["supersedes_turn"] = _resolve_supersedes_turn_id(
-                args.thread, args.supersedes_turn, token
-            )
-        except httpx.HTTPStatusError as e:
-            detail = ""
-            try:
-                detail = e.response.json().get("detail", "")
-            except Exception:
-                pass
-            msg = detail or f"HTTP {e.response.status_code}"
-            print(
-                f"reply: --supersedes-turn {args.supersedes_turn} not found "
-                f"in thread {args.thread}: {msg}",
-                file=sys.stderr,
-            )
-            sys.exit(1)
+        payload["supersedes_turn"] = args.supersedes_turn
     if args.allow_long_body:
         payload["allow_long_body"] = True
     atts = _resolve_attachments(args.attach)
@@ -386,8 +369,16 @@ def _cmd_mark_closed_read(args: argparse.Namespace, token: str) -> None:
 
 
 def _cmd_update_thread(args: argparse.Namespace, token: str) -> None:
-    if not args.status and not args.summary:
-        print("update-thread requires --status and/or --summary", file=sys.stderr)
+    if (
+        not args.status
+        and not args.summary
+        and not args.add_tags
+        and not args.remove_tags
+    ):
+        print(
+            "update-thread requires --status, --summary, --add-tag, and/or --remove-tag",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     if args.status == "closed":
@@ -403,6 +394,10 @@ def _cmd_update_thread(args: argparse.Namespace, token: str) -> None:
             payload["status"] = args.status
         if args.summary:
             payload["summary"] = args.summary
+        if args.add_tags:
+            payload["add_tags"] = args.add_tags
+        if args.remove_tags:
+            payload["remove_tags"] = args.remove_tags
         result = _request("PATCH", f"/threads/{args.thread}", token, body=payload)
 
     print(json.dumps(result, indent=2, default=str))
@@ -448,6 +443,25 @@ def _cmd_delete_turn(args: argparse.Namespace, token: str) -> None:
         print(f"delete-turn failed: {msg}", file=sys.stderr)
         sys.exit(1)
     print(json.dumps(result, indent=2, default=str))
+
+
+def _cmd_checkpoint(args: argparse.Namespace, token: str) -> None:
+    del token
+    from agent_bus_store.checkpoint_projection import project_checkpoint_body
+    from agent_bus_store.checkpoint_projection_wiring import (
+        build_post_resolvers,
+    )
+
+    residue = Path(args.residue_file).read_text(encoding="utf-8")
+    resolvers = build_post_resolvers(root_thread=args.thread)
+    body = project_checkpoint_body(
+        root_thread=args.thread,
+        residue=residue,
+        resolvers=resolvers,
+    )
+    sys.stdout.write(body)
+    if not body.endswith("\n"):
+        sys.stdout.write("\n")
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -586,6 +600,22 @@ def _build_parser() -> argparse.ArgumentParser:
     u.add_argument("--thread", required=True)
     u.add_argument("--status", help="New status")
     u.add_argument("--summary", help="Thread summary")
+    u.add_argument(
+        "--add-tag",
+        action="append",
+        dest="add_tags",
+        default=[],
+        metavar="TAG",
+        help="Add tag without replacing others (repeatable)",
+    )
+    u.add_argument(
+        "--remove-tag",
+        action="append",
+        dest="remove_tags",
+        default=[],
+        metavar="TAG",
+        help="Remove tag without affecting others (repeatable)",
+    )
     mark_grp = u.add_mutually_exclusive_group()
     mark_grp.add_argument(
         "--mark-read",
@@ -620,10 +650,22 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Delete even if the turn has been read",
     )
 
+    cp = sub.add_parser(
+        "checkpoint",
+        help="Assemble a projected CHECKPOINT body from authored residue",
+    )
+    cp.add_argument("--thread", required=True, help="Root thread id")
+    cp.add_argument(
+        "--residue-file",
+        required=True,
+        help="Path to authored residue markdown",
+    )
+
     return p
 
 
 def main() -> None:
+    """Parse CLI arguments, resolve the agent-bus socket token, and dispatch the subcommand."""
     args = _build_parser().parse_args()
     token = _resolve_token()
     try:
@@ -638,6 +680,7 @@ def main() -> None:
             "update-thread": _cmd_update_thread,
             "delete-thread": _cmd_delete_thread,
             "delete-turn": _cmd_delete_turn,
+            "checkpoint": _cmd_checkpoint,
         }[args.command](args, token)
     except FileNotFoundError:
         print(

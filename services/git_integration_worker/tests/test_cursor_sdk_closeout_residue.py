@@ -109,3 +109,23 @@ def test_finalize_preserves_propagation_residue() -> None:
     assert payload["propagation_residue"]
     finalized = finalize_closeout_body(body)
     assert json.loads(finalized)["propagation_residue"] == payload["propagation_residue"]
+
+
+def test_build_closeout_no_propagation_from_deleted_lib() -> None:
+    body = build_implement_closeout_body(
+        dispatch_id="residue-deleted-lib",
+        outcome=_outcome(),
+        degraded_reason=None,
+        sidecar_ref=sidecar_workspaces_ref("residue-deleted-lib"),
+        result_bytes=4,
+        thread_id="t-residue-deleted-lib",
+        work_item_ref="todo:residue-deleted-lib",
+        change_set=ChangeSet(
+            created=(),
+            modified=(),
+            deleted=("libs/deploy_identity/__init__.py",),
+        ),
+    )
+    payload = json.loads(body)
+    assert payload["propagation_residue"] == []
+    assert payload["propagation"] == []

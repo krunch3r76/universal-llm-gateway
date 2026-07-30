@@ -14,10 +14,15 @@ from ..body_auto_spill import (
     prepare_body_for_insert,
     spill_error_http,
 )
+from ..checkpoint_auto_stamp_wiring import (
+    load_thread_tags,
+    maybe_auto_stamp_root_on_checkpoint,
+)
 from ..db import (
     PendingShellContention,
     SlugExists,
     ThreadHasReadTurns,
+    add_tags,
     admit_dispatch,
     claim_and_post_turn,
     close_thread,
@@ -36,12 +41,17 @@ from ..db import (
     list_threads_v2,
     list_triage_candidates,
     normalize_thread_id,
+    remove_tags,
     rename_thread,
     terminate_dispatch,
     update_thread,
 )
 from ..db.turns import UnreadTurnsExist
 from ..enrollment_guard import EnrollmentTagError, enrollment_denied_http
+from ..supersedes_turn_boundary import (
+    SupersedesTurnNotFoundError,
+    resolve_supersedes_turn,
+)
 from ..thread_classification import ThreadClassificationError
 from ..turns_models import (
     TRIAGE_THREAD_CAP,
@@ -108,6 +118,29 @@ def _raise_spill_http(exc: BaseException, *, thread_id: str | None = None) -> No
         raise exc
     status_code, detail = mapped
     raise HTTPException(status_code=status_code, detail=detail) from exc
+
+
+def _resolve_send_supersedes(
+    *,
+    thread_id: str,
+    turn_number: int | None,
+    turn_id_alias: int | None,
+) -> tuple[int | None, int | None, int | None]:
+    """Return (storage_row_id, echo_turn_number, echo_turn_id) for send/supersede."""
+    try:
+        resolved = resolve_supersedes_turn(
+            thread=thread_id,
+            turn_number=turn_number,
+            turn_id_alias=turn_id_alias,
+        )
+    except SupersedesTurnNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=exc.to_http_detail(),
+        ) from exc
+    if resolved is None:
+        return None, None, None
+    return resolved.turn_id, resolved.turn_number, resolved.turn_id
 
 
 def _thread_detail(row: dict[str, Any]) -> ThreadDetail:
@@ -573,6 +606,12 @@ def _send_with_sidecar(body: TurnSendCreate) -> TurnSendCreated:
         )
 
     effective_after = body.after_turn if body.after_turn and body.after_turn > 0 else None
+    thread_tags = load_thread_tags(thread_id)
+    storage_supersedes, echo_turn_number, echo_turn_id = _resolve_send_supersedes(
+        thread_id=thread_id,
+        turn_number=body.supersedes_turn,
+        turn_id_alias=body.supersedes_turn_id,
+    )
     try:
         turn_id, ts, turn_number = insert_turn(
             thread=thread_id,
@@ -582,13 +621,18 @@ def _send_with_sidecar(body: TurnSendCreate) -> TurnSendCreated:
             body=final_body,
             status=body.status,
             after_turn=effective_after,
-            supersedes_turn=body.supersedes_turn,
+            supersedes_turn=storage_supersedes,
             attachments=att_dicts,
         )
     except UnreadTurnsExist as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=exc.to_detail(),
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"error": str(exc), "reason": "supersedes_turn_invalid"},
         ) from exc
     except Exception as exc:
         emit_sidecar_orphaned(
@@ -627,6 +671,14 @@ def _send_with_sidecar(body: TurnSendCreate) -> TurnSendCreated:
         bytes_written=sidecar.body_chars,
     )
 
+    maybe_auto_stamp_root_on_checkpoint(
+        thread=thread_id,
+        subject=body.subject,
+        thread_tags=thread_tags,
+        supersedes_turn=body.supersedes_turn or body.supersedes_turn_id,
+        turn_number=turn_number,
+    )
+
     thread_row = get_thread(thread_id)
     if thread_row is None:
         raise HTTPException(
@@ -643,6 +695,8 @@ def _send_with_sidecar(body: TurnSendCreate) -> TurnSendCreated:
             created_at=datetime.fromisoformat(ts),
             sidecar_uri=sidecar.uri,
             sidecar_sha256=sidecar.sha256,
+            superseded_turn_number=echo_turn_number,
+            superseded_turn_id=echo_turn_id,
         ),
         marked_read=marked_read,
         sidecar_uri=sidecar.uri,
@@ -779,6 +833,12 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
         )
 
     thread_id = normalize_thread_id(body.thread)
+    thread_tags = load_thread_tags(thread_id)
+    storage_supersedes, echo_turn_number, echo_turn_id = _resolve_send_supersedes(
+        thread_id=thread_id,
+        turn_number=body.supersedes_turn,
+        turn_id_alias=body.supersedes_turn_id,
+    )
     try:
         prepared = prepare_body_for_insert(
             thread=thread_id,
@@ -786,6 +846,8 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
             body=body.body,
             from_agent=body.from_agent,
             allow_long_body=body.allow_long_body,
+            thread_tags=thread_tags,
+            supersedes_turn=body.supersedes_turn or body.supersedes_turn_id,
         )
     except Exception as exc:
         _raise_spill_http(exc, thread_id=thread_id)
@@ -799,7 +861,7 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
             body=prepared.body,
             status=body.status,
             after_turn=body.after_turn,
-            supersedes_turn=body.supersedes_turn,
+            supersedes_turn=storage_supersedes,
             attachments=att_dicts,
             close=body.close,
             mark_read=body.mark_read,
@@ -809,11 +871,24 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
             status_code=status.HTTP_409_CONFLICT,
             detail=e.to_detail(),
         )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"error": str(exc), "reason": "supersedes_turn_invalid"},
+        ) from exc
     except KeyError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Thread {thread_id} not found",
         )
+    maybe_auto_stamp_root_on_checkpoint(
+        thread=thread_id,
+        subject=body.subject,
+        thread_tags=thread_tags,
+        supersedes_turn=body.supersedes_turn or body.supersedes_turn_id,
+        turn_number=turn_number,
+    )
+    thread_row = get_thread(thread_id) or thread_row
     return TurnSendCreated(
         send_path="continue",
         thread=_thread_detail(thread_row),
@@ -826,6 +901,8 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
             from_agent=body.from_agent,
             to_agent=body.to,
             subject=body.subject,
+            superseded_turn_number=echo_turn_number,
+            superseded_turn_id=echo_turn_id,
         ),
         marked_read=marked_read,
         sidecar_uri=prepared.sidecar_uri,
@@ -857,14 +934,39 @@ async def close_thread_route(thread_id: str, body: ThreadClose) -> ThreadDetail:
 )
 async def update_thread_route(thread_id: str, body: ThreadUpdate) -> ThreadDetail:
     thread_id = normalize_thread_id(thread_id)
-    try:
-        row = update_thread(
-            thread_id,
-            status=body.status,
-            summary=body.summary,
-            tags=body.tags,
-            enroll_charter_runner=body.enroll_charter_runner,
+    if body.add_tags is not None and body.tags is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": "add_tags and tags (replace) are mutually exclusive",
+                "reason": "tag_op_conflict",
+            },
         )
+    if body.remove_tags is not None and body.tags is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": "remove_tags and tags (replace) are mutually exclusive",
+                "reason": "tag_op_conflict",
+            },
+        )
+    try:
+        if body.add_tags is not None:
+            row = add_tags(
+                thread_id,
+                body.add_tags,
+                enroll_charter_runner=body.enroll_charter_runner,
+            )
+        elif body.remove_tags is not None:
+            row = remove_tags(thread_id, body.remove_tags)
+        else:
+            row = update_thread(
+                thread_id,
+                status=body.status,
+                summary=body.summary,
+                tags=body.tags,
+                enroll_charter_runner=body.enroll_charter_runner,
+            )
     except (EnrollmentTagError, ThreadClassificationError) as exc:
         _raise_enrollment_denied(exc)
         raise
@@ -873,6 +975,20 @@ async def update_thread_route(thread_id: str, body: ThreadUpdate) -> ThreadDetai
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Thread {thread_id} not found",
         )
+    if body.add_tags is not None or body.remove_tags is not None:
+        if body.status is not None or body.summary is not None:
+            row = update_thread(
+                thread_id,
+                status=body.status,
+                summary=body.summary,
+                tags=None,
+                enroll_charter_runner=body.enroll_charter_runner,
+            )
+            if row is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Thread {thread_id} not found",
+                )
     return _thread_detail(row)
 
 

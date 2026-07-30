@@ -432,17 +432,40 @@ def _path_gitignored(source_repo: Path, rel_path: str) -> bool:
     return proc.returncode == 0
 
 
-def _repo_manifest_paths(
+def _repo_manifest_write_paths(
     manifest: EffectsManifest | None,
     *,
     source_repo: Path | None = None,
 ) -> set[str]:
+    from services.git_integration_worker.cursor_sdk_manifest import _REPO_WRITE_OPS
+
     section = manifest.surfaces.get("repo") if manifest else None
     if section is None:
         return set()
     paths: set[str] = set()
     for entry in section.entries:
-        if entry.op not in {"write", "edit", "delete", "observed"}:
+        if entry.op not in _REPO_WRITE_OPS:
+            continue
+        if entry.target:
+            paths.add(
+                _normalize_repo_path_for_compare(entry.target, source_repo=source_repo)
+            )
+    return paths
+
+
+def _repo_manifest_paths(
+    manifest: EffectsManifest | None,
+    *,
+    source_repo: Path | None = None,
+) -> set[str]:
+    from services.git_integration_worker.cursor_sdk_manifest import _REPO_FILE_OPS
+
+    section = manifest.surfaces.get("repo") if manifest else None
+    if section is None:
+        return set()
+    paths: set[str] = set()
+    for entry in section.entries:
+        if entry.op not in _REPO_FILE_OPS:
             continue
         if entry.target:
             paths.add(
@@ -466,7 +489,7 @@ def _repo_manifest_evidence_paths(
     baseline: dict[str, Any] | None = None,
 ) -> set[str]:
     """Hash-bound manifest write-evidence — not mere path membership (A1)."""
-    manifest_paths = _repo_manifest_paths(manifest, source_repo=source_repo)
+    manifest_paths = _repo_manifest_write_paths(manifest, source_repo=source_repo)
     if not manifest_paths or source_repo is None:
         return set()
     _, admit_hashes = normalize_wt_baseline(baseline)
@@ -501,6 +524,18 @@ def _format_unattributed_token(prefix: str, paths: list[str]) -> str | None:
     if len(paths) > 3:
         shown = f"{shown},+{len(paths) - 3}"
     return f"{prefix}{shown}"
+
+
+def ambient_deviation_from_movements(movements: list[Any]) -> str | None:
+    """Structured ``files_ambient_repo_movement`` rows → census digest token (6341 L5)."""
+    from implement_admission.closeout_models import AmbientRepoMovement
+
+    from services.git_integration_worker.cursor_sdk_ambient import (
+        ambient_deviation_token,
+    )
+
+    typed = [entry for entry in movements if isinstance(entry, AmbientRepoMovement)]
+    return ambient_deviation_token(typed)
 
 
 def repo_diff_unattributed_deviation(
