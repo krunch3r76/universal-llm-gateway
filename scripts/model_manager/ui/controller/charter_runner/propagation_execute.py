@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import httpx
+from deploy_identity.mcp_health_probe_url import resolve_mcp_health_probe_url
 from charter_runner_store.propagation_ledger import (
     OpenPropagationProjection,
     bump_age_for_open_rows,
@@ -71,7 +72,6 @@ _GIW_QUEUE_URL = os.environ.get(
     "GIT_INTEGRATION_WORKER_QUEUE_URL",
     "http://127.0.0.1:8091/api/v1/git/cursor-auto/queue",
 )
-_MCP_HEALTH_URL = os.environ.get("MCP_HEALTH_URL", "http://127.0.0.1:8080/health")
 
 _context: tuple[ServiceController, EventBus | None] | None = None
 _pending_charter_reload: bool = False
@@ -261,7 +261,7 @@ def probe_process_live(service: str) -> dict[str, Any] | None:
     if service == "git_integration_worker":
         return _fetch_json(_GIW_LIVENESS_URL)
     if service == "mcp":
-        return _fetch_json(_MCP_HEALTH_URL)
+        return _fetch_json(resolve_mcp_health_probe_url())
     return None
 
 

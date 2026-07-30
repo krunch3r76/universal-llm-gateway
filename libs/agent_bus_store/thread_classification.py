@@ -1,5 +1,7 @@
 """Thin agent-bus thread classification — spine + enrollment only.
 
+Human name for ``spine=root``: **orchestration thread** (``decision:orchestration-thread``).
+
 Spine is ``root`` | ``work`` (tag ``role:root``; default work). Enrollment is
 the existing ``charter-runner`` dual-key. Constraint: enrolled ⇒ spine root
 (auto-stamp ``role:root``). Only reserved spine tag is ``role:root``; other

@@ -6,6 +6,7 @@ import os
 from typing import Any
 
 import httpx
+from deploy_identity.mcp_health_probe_url import resolve_mcp_health_probe_url
 from implement_admission.propagation_row import PropagationRow
 
 _GIW_QUEUE_URL = os.environ.get(
@@ -16,7 +17,6 @@ _GIW_LIVENESS_URL = os.environ.get(
     "GIT_INTEGRATION_WORKER_LIVENESS_URL",
     "http://127.0.0.1:8091/api/v1/git/cursor-auto/liveness",
 )
-_MCP_HEALTH_URL = os.environ.get("MCP_HEALTH_URL", "http://127.0.0.1:8080/health")
 
 
 def row_key(row: PropagationRow) -> str:
@@ -54,7 +54,7 @@ def probe_process_live(service: str) -> dict[str, Any] | None:
     if service == "git_integration_worker":
         return _fetch_json(_GIW_LIVENESS_URL)
     if service == "mcp":
-        return _fetch_json(_MCP_HEALTH_URL)
+        return _fetch_json(resolve_mcp_health_probe_url())
     return None
 
 
