@@ -112,6 +112,11 @@ _MATTER_VALID_FROM_SCOPES = (
 )
 
 
+def matter_valid_from_scopes() -> tuple[str, ...]:
+    """Matter hubs whose assertions carry the valid_from XOR unknown-reason gate."""
+    return _MATTER_VALID_FROM_SCOPES
+
+
 def entity_in_matter_valid_from_scope(entity_id: str) -> bool:
     """True when entity_id is a matter hub or a direct child under one."""
     for scope in _MATTER_VALID_FROM_SCOPES:

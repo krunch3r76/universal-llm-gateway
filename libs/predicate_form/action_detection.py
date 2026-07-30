@@ -214,6 +214,27 @@ def detect_date_in_segment(segment: str, valid_from: str | None = None) -> str |
     return _parse_month_date(segment)
 
 
+def distinct_dates_in_text(text: str) -> list[str]:
+    """Every distinct normalized literal date in text, in first-seen order."""
+    found: list[str] = []
+    for match in _DATE_RE.finditer(text):
+        for group in match.groups():
+            if not group:
+                continue
+            normalized = _normalize_date_group(group)
+            if normalized and normalized not in found:
+                found.append(normalized)
+    for match in _MONTH_DATE_RE.finditer(text):
+        month_token, day, year = match.groups()
+        month = _MONTHS.get(month_token.lower())
+        if month is None:
+            continue
+        normalized = f"{year}-{month:02d}-{int(day):02d}"
+        if normalized not in found:
+            found.append(normalized)
+    return found
+
+
 def _segment_match(
     segment: str,
     valid_from: str | None,
