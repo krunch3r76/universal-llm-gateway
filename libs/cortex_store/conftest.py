@@ -1,0 +1,134 @@
+"""Shared pytest fixtures — head-schema DB via run_migrations template."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
+
+from cortex_store import db
+from cortex_store._test_db_bootstrap import (
+    _session_template_path,
+    fresh_migrated_connection,
+)
+from cortex_store.dispatch_ops import _shared as dispatch_shared
+
+
+def bind_cortex_db(monkeypatch: pytest.MonkeyPatch, db_path: Path) -> None:
+    """Point runtime ``cortex_conn()`` at an isolated migrated DB file."""
+    monkeypatch.setattr(db, "_CORTEX_DB", db_path)
+
+
+@pytest.fixture(scope="session")
+def migrated_db_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    return _session_template_path(tmp_path_factory)
+
+
+@pytest.fixture()
+def migrated_db_path(migrated_db_template: Path, tmp_path: Path) -> Path:
+    db_path = tmp_path / "cortex_test.db"
+    from cortex_store._test_db_bootstrap import copy_template_db
+
+    copy_template_db(migrated_db_template, db_path)
+    return db_path
+
+
+@pytest.fixture()
+def migrated_conn(migrated_db_template: Path, tmp_path: Path):
+    conn = fresh_migrated_connection(tmp_path, migrated_db_template)
+    yield conn
+    conn.close()
+
+
+@pytest.fixture()
+def migrated_db_conn(migrated_conn):
+    """Alias for tests that name the fixture ``migrated_db_conn``."""
+    return migrated_conn
+
+
+@pytest.fixture()
+def cortex_client(
+    migrated_db_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> TestClient:
+    """FastAPI TestClient bound to a head-schema migrated DB."""
+    bind_cortex_db(monkeypatch, migrated_db_path)
+    from cortex_store.main import create_app
+
+    return TestClient(create_app(db_path=str(migrated_db_path)))
+
+
+@pytest.fixture()
+def session_env(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    migrated_db_template: Path,
+) -> dict[str, Path]:
+    """Isolated head-schema DB + files root for session-close integration tests."""
+    from cortex_store import db
+    from cortex_store._test_db_bootstrap import copy_template_db
+    from cortex_store.dispatch_ops import ops_journals
+    from cortex_store.routes import (
+        session_close,
+        session_close_persist,
+        session_journals,
+    )
+
+    db_path = tmp_path / "cortex.db"
+    files_root = tmp_path / "files"
+    files_root.mkdir(parents=True)
+    transcripts_root = tmp_path / "agent-transcripts"
+    transcripts_root.mkdir()
+    copy_template_db(migrated_db_template, db_path)
+    bind_cortex_db(monkeypatch, db_path)
+    monkeypatch.setattr(dispatch_shared, "_FILES_ROOT", files_root)
+    monkeypatch.setattr(ops_journals, "_FILES_ROOT", files_root)
+    monkeypatch.setattr(session_journals, "_FILES_ROOT", files_root)
+    monkeypatch.setattr(session_close, "_FILES_ROOT", files_root)
+    monkeypatch.setattr(session_close_persist, "_FILES_ROOT", files_root)
+    monkeypatch.setenv("CURSOR_AGENT_TRANSCRIPTS_ROOT", str(transcripts_root))
+    return {
+        "db_path": db_path,
+        "files_root": files_root,
+        "transcripts_root": transcripts_root,
+    }
+
+
+@pytest.fixture(autouse=True)
+def _inject_session_close_validate_attestation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tests call session_close directly — inject PASS tokens unless explicitly absent."""
+    from cortex_store.dispatch_ops import ops_journals, ops_session_close
+    from cortex_store.dispatch_ops._session_close_doc_type import (
+        session_close_attestation_tokens,
+    )
+
+    def _wrap(original):
+        def _wrapped(**kwargs: object) -> dict:
+            if (
+                not kwargs.get("dry_run")
+                and kwargs.get("validate_attestation") is None
+                and isinstance(kwargs.get("session_id"), str)
+            ):
+                kwargs = {
+                    **kwargs,
+                    "validate_attestation": session_close_attestation_tokens(
+                        session_id=kwargs["session_id"]
+                    ),
+                }
+            return original(**kwargs)
+
+        return _wrapped
+
+    monkeypatch.setattr(
+        ops_session_close,
+        "_op_session_close",
+        _wrap(ops_session_close._op_session_close),
+    )
+    monkeypatch.setattr(
+        ops_journals,
+        "_op_session_close",
+        _wrap(ops_journals._op_session_close),
+    )

@@ -16,7 +16,6 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import httpx
-from deploy_identity.mcp_health_probe_url import resolve_mcp_health_probe_url
 from charter_runner_store.propagation_ledger import (
     OpenPropagationProjection,
     bump_age_for_open_rows,
@@ -26,17 +25,22 @@ from charter_runner_store.propagation_ledger import (
     set_defer_reason,
     upsert_open_rows,
 )
+from deploy_identity.mcp_health_probe_url import resolve_mcp_health_probe_url
 from implement_admission.propagation_row import (
     PropagationRow,
     resolve_code_ref,
     rows_from_closeout_payload,
 )
-from scripts.model_manager.ui.charter_scoreboard_objective import scoreboard_path_for_root
+
+from scripts.model_manager.ui.charter_scoreboard_objective import (
+    scoreboard_path_for_root,
+)
 from scripts.model_manager.ui.charter_scoreboard_propagation import (
     write_scoreboard_open_rows,
 )
 
 from .bus_client import closeout_turn_from_turns
+from .propagation_libs_closure import lib_name_for_path, services_for_lib_path
 
 if TYPE_CHECKING:
     from universal_event_bus import EventBus
@@ -144,6 +148,25 @@ def _slug_for_path(path: str) -> str | None:
     return None
 
 
+def _resolve_libs_path(path: str) -> tuple[str | None, str | None]:
+    """Resolve a ``libs/`` edit to ``(service_to_restart, residue_line)``.
+
+    A lib edit resolving to exactly one service is unambiguous and restarts it. Anything
+    else is reported rather than acted on: import-graph closure at package granularity is
+    too coarse to license restarting several services, and silently dropping the path is
+    the arc-6386 failure. Naming the candidates puts the choice at the operator seat.
+    """
+    if lib_name_for_path(path) is None:
+        return None, None
+    candidates = services_for_lib_path(path, prefixes=_SERVICE_PREFIXES)
+    if not candidates:
+        return None, f"libs_touched: {path} (no importing service resolved)"
+    if len(candidates) == 1:
+        return candidates[0], None
+    joined = ", ".join(candidates)
+    return None, f"unresolved: {path} fans out to {joined} — pick before restart"
+
+
 def _slugs_from_residue_lines(lines: list[str]) -> tuple[list[str], list[str]]:
     services: list[str] = []
     skipped: list[str] = []
@@ -184,8 +207,15 @@ def plan_propagation(worker_turns: list[dict[str, Any]]) -> PropagationPlan | No
         if not services:
             for path in paths:
                 slug = _slug_for_path(path)
-                if slug and slug not in services:
-                    services.append(slug)
+                if slug is not None:
+                    if slug not in services:
+                        services.append(slug)
+                    continue
+                lib_slug, line = _resolve_libs_path(path)
+                if lib_slug is not None and lib_slug not in services:
+                    services.append(lib_slug)
+                if line is not None and line not in skipped:
+                    skipped.append(line)
 
     if not rows and not services and not charter_reload and not skipped:
         return None

@@ -39,6 +39,7 @@ from .models import (
     EntityCard,
 )
 from .predicate_summary import aggregate_predicate_summary
+from .terminal_facts import attach_terminal_facts
 
 try:
     from .routes.assertions import _truncate_claim
@@ -349,6 +350,7 @@ def get_entity_card(
             payload["_next"] = (
                 f"{existing}; {hint}" if isinstance(existing, str) and existing else hint
             )
+    attach_terminal_facts(conn, payload, entity_id=entity_id)
     return payload
 
 

@@ -110,9 +110,18 @@ tests/*
 # Closeout propagation residue (decision:closeout-propagation-residue / friction 26340)
 !services/git_integration_worker/tests/test_cursor_auto_episode_residue.py
 !services/git_integration_worker/tests/test_cursor_sdk_closeout_residue.py
+!services/git_integration_worker/tests/test_cursor_admitted_via.py
 # MCP boot-card / dual-endpoint surface contracts (thread 6310)
 !services/mcp-server/test_endpoint_surface_split.py
 !services/mcp-server/tools/test_boot_orientation_gates.py
+# Salience collision engine + /claims/burst (arc 6386, slices 3+4 ratified)
+!libs/cortex_store/test_claims_burst.py
+!libs/predicate_form/test_collision.py
+!libs/predicate_form/test_action_enrichment.py
+# Slice 5a terminal-facts-forward at activation (arc 6386)
+!libs/cortex_store/test_terminal_facts.py
+# Fixtures the arc-6386 tests above depend on (head-schema migrated DB)
+!libs/cortex_store/conftest.py
 # Root-anchored: rsync --filter=:- .gitignore ignores git ! negations.
 # Use /foo/ not foo/ when foo/ also appears as a source directory elsewhere in the tree.
 /templates/

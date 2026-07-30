@@ -137,6 +137,7 @@ from .surface_forms import (
     SurfaceFormItem,
     SurfaceFormList,
 )
+from .terminal_facts import TerminalFactsBlock
 
 # Legacy module-level helpers exposed for callers that previously imported
 # the private ``_reject_cortex_dropbox_*`` functions directly. The public
@@ -249,4 +250,6 @@ __all__ = [
     "SurfaceFormCreate",
     "SurfaceFormItem",
     "SurfaceFormList",
+    # terminal_facts
+    "TerminalFactsBlock",
 ]

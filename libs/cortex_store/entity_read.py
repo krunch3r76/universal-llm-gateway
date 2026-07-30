@@ -38,6 +38,7 @@ from .session_close_enrichment_telemetry import (
 )
 from .status_trait_read import apply_option_c_read_projection
 from .superseded_projection import build_superseded_projection
+from .terminal_facts import attach_terminal_facts
 
 logger = get_logger("cortex-api.entity_read")
 
@@ -180,4 +181,5 @@ def get_entity_impl(
         payload["discoverable"] = agent_skill_is_discoverable(
             detail_row.get("lifecycle")  # type: ignore[arg-type]
         )
+    attach_terminal_facts(conn, payload, entity_id=entity_id)
     return payload
