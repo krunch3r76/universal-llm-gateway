@@ -31,6 +31,12 @@ from implement_admission.propagation_row import (
     resolve_code_ref,
     rows_from_closeout_payload,
 )
+from implement_admission.service_lib_ownership import (
+    audit_sync_restart_slug,
+    declared_services_for_lib_path,
+    path_prefixes,
+    slug_for_service_path,
+)
 
 from scripts.model_manager.ui.charter_scoreboard_objective import (
     scoreboard_path_for_root,
@@ -55,18 +61,6 @@ _SYNC_RESTART_SLUG_RE = re.compile(
     re.IGNORECASE,
 )
 _FILE_FIELDS = ("files_created", "files_modified", "files_deleted")
-
-_SERVICE_PREFIXES: tuple[tuple[str, str], ...] = (
-    ("services/agent-bus/", "agent_bus"),
-    ("services/cortex-api/", "cortex_api"),
-    ("services/event-service/", "event_service"),
-    ("services/git_integration_worker/", "git_integration_worker"),
-    ("services/mcp-server/", "mcp"),
-    ("services/rag/", "rag"),
-    ("services/universal_cloud_proxy/", "cloud_proxy"),
-    ("services/_universal-llm-gateway/", "gateway"),
-    ("services/universal-stargate/", "stargate"),
-)
 
 _GIW_LIVENESS_URL = os.environ.get(
     "GIT_INTEGRATION_WORKER_LIVENESS_URL",
@@ -142,29 +136,27 @@ def _paths_from_closeout(payload: dict[str, Any]) -> tuple[str, ...]:
 
 
 def _slug_for_path(path: str) -> str | None:
-    for prefix, slug in _SERVICE_PREFIXES:
-        if path.startswith(prefix) and path.endswith(".py"):
-            return slug
-    return None
+    return slug_for_service_path(path)
 
 
-def _resolve_libs_path(path: str) -> tuple[str | None, str | None]:
-    """Resolve a ``libs/`` edit to ``(service_to_restart, residue_line)``.
+def _resolve_libs_path(path: str) -> tuple[tuple[str, ...], list[str]]:
+    """Resolve a ``libs/`` edit to ``(services_to_restart, deferral_lines)``.
 
-    A lib edit resolving to exactly one service is unambiguous and restarts it. Anything
-    else is reported rather than acted on: import-graph closure at package granularity is
-    too coarse to license restarting several services, and silently dropping the path is
-    the arc-6386 failure. Naming the candidates puts the choice at the operator seat.
+    Declared manifest ownership is the actor. Import-graph inference applies only when
+    declaration is absent, and auto-restarts only at cardinality 1 (invariant 4).
     """
     if lib_name_for_path(path) is None:
-        return None, None
-    candidates = services_for_lib_path(path, prefixes=_SERVICE_PREFIXES)
-    if not candidates:
-        return None, f"libs_touched: {path} (no importing service resolved)"
-    if len(candidates) == 1:
-        return candidates[0], None
-    joined = ", ".join(candidates)
-    return None, f"unresolved: {path} fans out to {joined} — pick before restart"
+        return (), []
+    declared = declared_services_for_lib_path(path)
+    if declared:
+        return declared, []
+    inferred = services_for_lib_path(path, prefixes=path_prefixes())
+    if not inferred:
+        return (), [f"libs_touched: {path} (no importing service resolved)"]
+    if len(inferred) == 1:
+        return inferred, []
+    joined = ", ".join(inferred)
+    return (), [f"unresolved: {path} fans out to {joined} — pick before restart"]
 
 
 def _slugs_from_residue_lines(lines: list[str]) -> tuple[list[str], list[str]]:
@@ -205,17 +197,29 @@ def plan_propagation(worker_turns: list[dict[str, Any]]) -> PropagationPlan | No
             lines = [str(item) for item in raw_residue if isinstance(item, str) and item]
         services, skipped = _slugs_from_residue_lines(lines)
         if not services:
+            lib_paths = [
+                path for path in paths if path.startswith("libs/") and path.endswith(".py")
+            ]
+            for line in lines:
+                match = _SYNC_RESTART_SLUG_RE.match(str(line or "").strip())
+                if not match:
+                    continue
+                for audit_line in audit_sync_restart_slug(match.group(1).lower(), lib_paths):
+                    if audit_line not in skipped:
+                        skipped.append(audit_line)
             for path in paths:
                 slug = _slug_for_path(path)
                 if slug is not None:
                     if slug not in services:
                         services.append(slug)
                     continue
-                lib_slug, line = _resolve_libs_path(path)
-                if lib_slug is not None and lib_slug not in services:
-                    services.append(lib_slug)
-                if line is not None and line not in skipped:
-                    skipped.append(line)
+                lib_slugs, deferrals = _resolve_libs_path(path)
+                for lib_slug in lib_slugs:
+                    if lib_slug not in services:
+                        services.append(lib_slug)
+                for deferral in deferrals:
+                    if deferral not in skipped:
+                        skipped.append(deferral)
 
     if not rows and not services and not charter_reload and not skipped:
         return None

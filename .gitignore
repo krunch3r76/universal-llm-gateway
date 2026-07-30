@@ -122,6 +122,8 @@ tests/*
 !libs/cortex_store/test_terminal_facts.py
 # Fixtures the arc-6386 tests above depend on (head-schema migrated DB)
 !libs/cortex_store/conftest.py
+# Propagation declared-ownership manifest + closure audit (Lane A offline)
+!libs/implement_admission/test_service_lib_ownership.py
 # Root-anchored: rsync --filter=:- .gitignore ignores git ! negations.
 # Use /foo/ not foo/ when foo/ also appears as a source directory elsewhere in the tree.
 /templates/

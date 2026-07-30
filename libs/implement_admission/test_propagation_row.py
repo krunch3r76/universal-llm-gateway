@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from implement_admission.propagation_row import (
     PropagationRow,
+    resolve_code_ref,
     rows_from_closeout_payload,
     rows_from_lib_consumers,
     rows_from_residue_lines,
@@ -69,3 +70,46 @@ def test_rows_from_lib_consumers_skips_test_module():
         code_ref="sha-test-skip",
     )
     assert rows == []
+
+
+def test_resolve_code_ref_prefers_explicit_git_refs_over_closeout_head():
+    payload = {
+        "evidence_uris": {"git_refs": ["explicit-sha"]},
+        "closeout_head": "closeout-sha",
+    }
+    assert resolve_code_ref(payload) == "explicit-sha"
+
+
+def test_resolve_code_ref_uses_closeout_head_when_git_refs_empty():
+    payload = {"closeout_head": "closeout-sha"}
+    assert resolve_code_ref(payload) == "closeout-sha"
+
+
+def test_resolve_code_ref_unknown_without_sources():
+    assert resolve_code_ref({}) == "unknown"
+    assert resolve_code_ref({"closeout_head": ""}) == "unknown"
+
+
+def test_rows_from_closeout_payload_ignores_deleted_lib_for_consumers():
+    payload = {
+        "files_deleted": ["libs/deploy_identity/__init__.py"],
+        "evidence_uris": {"git_refs": ["delete-only-sha"]},
+    }
+    rows, skipped, prose = rows_from_closeout_payload(payload)
+    assert rows == []
+    assert skipped == []
+    assert prose is False
+
+
+def test_rows_from_closeout_payload_modified_lib_still_mints_consumers():
+    payload = {
+        "files_modified": ["libs/deploy_identity/__init__.py"],
+        "evidence_uris": {"git_refs": ["land-sha"]},
+    }
+    rows, skipped, prose = rows_from_closeout_payload(payload)
+    services = {row.service for row in rows}
+    assert services == {"git_integration_worker", "mcp"}
+    assert all(row.reason == "shared lib land: libs/deploy_identity/__init__.py" for row in rows)
+    assert all(row.code_ref == "land-sha" for row in rows)
+    assert skipped == []
+    assert prose is False

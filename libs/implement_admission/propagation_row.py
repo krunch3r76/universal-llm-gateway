@@ -10,9 +10,12 @@ from __future__ import annotations
 import importlib
 import logging
 import re
+from collections.abc import Sequence
 from typing import Any, Literal
 
 from pydantic import BaseModel, model_validator
+
+from implement_admission.service_lib_ownership import slug_for_service_path
 
 logger = logging.getLogger(__name__)
 
@@ -23,18 +26,6 @@ PropagationAction = Literal["sync_restart"]
 _SYNC_RESTART_SLUG_RE = re.compile(
     r"^sync_restart:\s*([a-z][a-z0-9_]*)",
     re.IGNORECASE,
-)
-
-_SERVICE_PREFIXES: tuple[tuple[str, str], ...] = (
-    ("services/agent-bus/", "agent_bus"),
-    ("services/cortex-api/", "cortex_api"),
-    ("services/event-service/", "event_service"),
-    ("services/git_integration_worker/", "git_integration_worker"),
-    ("services/mcp-server/", "mcp"),
-    ("services/rag/", "rag"),
-    ("services/universal_cloud_proxy/", "cloud_proxy"),
-    ("services/_universal-llm-gateway/", "gateway"),
-    ("services/universal-stargate/", "stargate"),
 )
 
 _DEFAULT_SAFE_WINDOW: dict[str, SafeWindow] = {
@@ -104,10 +95,7 @@ class PropagationRow(BaseModel):
 
 def slug_for_path(path: str) -> str | None:
     """Map a repo-relative service path to a manage service slug."""
-    for prefix, slug in _SERVICE_PREFIXES:
-        if path.startswith(prefix) and path.endswith(".py"):
-            return slug
-    return None
+    return slug_for_service_path(path)
 
 
 def default_safe_window(service: str) -> SafeWindow:
@@ -252,6 +240,20 @@ def consumers_for_lib_path(path: str) -> tuple[str, ...] | None:
     return None
 
 
+def land_paths_for_propagation(
+    *,
+    created: Sequence[str] = (),
+    modified: Sequence[str] = (),
+    untracked: Sequence[str] = (),
+) -> list[str]:
+    """Land-shaped paths that may feed lib-consumer and sync_restart propagation."""
+    return [
+        *created,
+        *modified,
+        *untracked,
+    ]
+
+
 def rows_from_lib_consumers(
     paths: list[str],
     *,
@@ -322,6 +324,9 @@ def resolve_code_ref(payload: dict[str, Any]) -> str:
         value = payload.get(key)
         if isinstance(value, str) and value.strip():
             return value.strip()
+    closeout_head = payload.get("closeout_head")
+    if isinstance(closeout_head, str) and closeout_head.strip():
+        return closeout_head.strip()
     return "unknown"
 
 
@@ -341,11 +346,11 @@ def rows_from_closeout_payload(payload: dict[str, Any]) -> tuple[list[Propagatio
         return rows, [], False
 
     code_ref = resolve_code_ref(payload)
-    paths: list[str] = []
-    for field in ("files_created", "files_modified", "files_deleted"):
+    land_paths: list[str] = []
+    for field in ("files_created", "files_modified"):
         raw = payload.get(field)
         if isinstance(raw, list):
-            paths.extend(entry for entry in raw if isinstance(entry, str))
+            land_paths.extend(entry for entry in raw if isinstance(entry, str))
 
     raw_residue = payload.get("propagation_residue")
     lines: list[str] = []
@@ -356,15 +361,15 @@ def rows_from_closeout_payload(payload: dict[str, Any]) -> tuple[list[Propagatio
     if rows:
         return rows, skipped, False
 
-    consumer_rows = rows_from_lib_consumers(paths, code_ref=code_ref)
+    consumer_rows = rows_from_lib_consumers(land_paths, code_ref=code_ref)
     if consumer_rows:
         return consumer_rows, skipped, False
 
-    service_rows = rows_from_service_paths(paths, code_ref=code_ref)
+    service_rows = rows_from_service_paths(land_paths, code_ref=code_ref)
     prose_only = bool(lines) and not service_rows
     runtime_only = any(
         path.startswith(("services/", "libs/")) and path.endswith(".py")
-        for path in paths
+        for path in land_paths
     )
     if prose_only or (runtime_only and lines and not service_rows):
         logger.warning(
@@ -381,6 +386,7 @@ __all__ = [
     "default_proof_class",
     "default_safe_window",
     "is_lib_test_module",
+    "land_paths_for_propagation",
     "resolve_code_ref",
     "row_from_mapping",
     "row_from_mapping_strict",
