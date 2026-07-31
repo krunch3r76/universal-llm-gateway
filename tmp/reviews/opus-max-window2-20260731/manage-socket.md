@@ -54,7 +54,7 @@ agent inside a cursor-sdk dispatch** (`auto-9066617448d4`), by the shell whose r
 command is `nohup setsid … -m scripts.model_manager.ui > /tmp/manage-restart.log`. It
 inherited that dispatch's whole environment, including `CURSOR_API_KEY`.
 
-### pid 1630785 — the tmux TUI
+### pid 1630785 — the tmux TUI (at diagnosis time; live controller is now `2048906`)
 
 | Field | Value |
 |---|---|
@@ -66,7 +66,9 @@ inherited that dispatch's whole environment, including `CURSOR_API_KEY`.
 | started | 14:20:33 |
 | child | `1661288` — `stargate_service_manager.py --environment=debug` (started 14:24:25) |
 
-This is the canonical `./manage` TUI in tmux `0:0`.
+At diagnosis time this was the canonical `./manage` TUI in tmux `0:0`. A later
+clean handoff (15:05:44) replaced it with pid **2048906** — re-read `whoami` or
+`ss` before acting on a pid.
 
 ---
 

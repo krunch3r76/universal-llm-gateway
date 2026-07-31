@@ -15,8 +15,10 @@ finished one. What follows separates the finished thing from the surveys.
 | Service | Restart at | Why | Verified live? |
 |---|---|---|---|
 | `cortex_api` | `a84f1977` | All write-op repairs are in `libs/cortex_store`; the running process still serves the old behaviour | **No** — landed, not live |
+| `manage` | `71b0b08a`, `93964e3a` | Socket guard fail-closed (`71b0b08a`); read-only `whoami` op (`93964e3a`). **Restart order matters** — see `tmp/reviews/opus-max-window2-20260731/manage-socket.md` § PROPAGATION REQUIRED (do not duplicate that sequence here). Circularity: `whoami` is how you verify which controller answered, and it does not exist until after the restart it would verify. | **No** — landed, not live |
+| `mcp-server` | `a1943f3f` | Expose `whoami` through the `manage` MCP tool. **Ordered after `manage`** — exposing the op through MCP before the server implements it would surface a call that fails. | **No** — landed, not live |
 
-Nothing else needs a restart. The two `stargate` commits (`d5e7b609`, `733ab0a7`)
+The two `stargate` commits (`d5e7b609`, `733ab0a7`)
 track test files that were invisible to git; they change no runtime code.
 
 **Landed ≠ live, and nothing in this window was verified live.** No agent here
@@ -45,6 +47,21 @@ when the behaviour it names is removed.
 The general defect behind two of the three was the more interesting finding: a
 batched missing-field mechanism existed and had simply not been applied across
 every write op. The repair was to reuse it, not to invent a second one.
+
+**The `manage.sock` attribution hazard — refuted hypothesis, real guard defect.**
+The brief feared nondeterministic attribution across two LISTEN sockets; measured,
+68/68 connections reached the live tmux controller (stable, not random). The real
+defect was `_is_socket_alive()` reporting a live-but-busy controller as dead and
+unlinking the socket out from under it — reproduced against the real function, now
+fixed to fail closed. A read-only `whoami` op gives caller-native identity; MCP
+exposure landed at `a1943f3f` (ordered after `manage` restart — see §1).
+
+| Aspect | Verdict | Commit |
+|---|---|---|
+| Attribution unstable / nondeterministic | **Refuted** — 68/68 → live controller | — |
+| Guard unlinks live listener when probe ambiguous | **Fixed** — fail closed on ambiguous probe | `71b0b08a` |
+| No caller-native controller identity on `manage.sock` | **Fixed** — `whoami` returns `{pid, code_version, process_start_time}` | `93964e3a` |
+| MCP `manage` tool rejected `whoami` | **Fixed** — `_VALID_ACTIONS` + docstring parity | `a1943f3f` |
 
 ---
 
@@ -144,6 +161,22 @@ restart either, it just failed the row without diagnosing why. The genuine open
 question is whether ancestry is cheap in the settle path, which is one function's
 worth of reading rather than a research question.
 
+**Orphan controller pid `669567` is still LISTENing and still receiving nothing**
+— verified after the fixes landed, now for roughly 4.5 hours. It survived a clean
+controller handoff at 15:05:44 (pid `1630785` shut down; pid `2048906` bound two
+seconds later) — not another orphaning, which means the guard hole did not fire
+again. Clearing the orphan is an operator action (`kill 669567` per
+`manage-socket.md` § PROPAGATION REQUIRED).
+
+**Live controller pid rotated** — diagnosis recorded `1630785`; the live listener
+is now pid `2048906`. Anything acting on a pid should re-read `whoami` (once live)
+or `ss`/`ps` rather than trusting either document.
+
+**Two pre-existing failures in `test_charter_scoreboard_objective.py`**
+(`IndexError: tuple index out of range` on `test_meta_signal_grafts_pickup_gid_without_objective`
+and `test_meta_signal_grafts_bus_identity`) — unrelated to this workstream, left
+alone.
+
 ---
 
 ## 6. Commits
@@ -158,3 +191,7 @@ worth of reading rather than a research question.
 | `0ab7359f` | Return assertion-create `HTTPException` as a dispatch error dict *(message says "claim alias"; see §4.2)* |
 | `8a00b2d3` | Report all missing supersede requirements in one response |
 | `a84f1977` | Make the claim-alias assertion run instead of skipping |
+| `71b0b08a` | `_is_socket_alive()` fail-closed on ambiguous probe |
+| `93964e3a` | Read-only `whoami` op on `manage.sock` |
+| `11e677a9` | Close out `manage-socket.md` diagnosis + propagation steps |
+| `a1943f3f` | Expose `whoami` through the `manage` MCP tool |
