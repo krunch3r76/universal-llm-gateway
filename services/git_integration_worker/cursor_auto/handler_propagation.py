@@ -145,6 +145,32 @@ async def _execute_row(row: PropagationRow, *, row_id: str) -> dict[str, Any]:
     }
 
 
+# Weakest per-row status floors the envelope disposition (a:27414 derive-from-executions).
+_ROW_RANK: dict[str, int] = {
+    "failed": 0,
+    "queued": 1,
+    "submitted": 2,
+    "executed": 3,
+}
+_ENVELOPE_FROM_ROW: dict[str, str] = {
+    "failed": "failed",
+    "queued": "queued",
+    "submitted": "propagated",
+    "executed": "executed",
+}
+
+
+def _row_status(item: dict[str, Any]) -> str:
+    """Effective per-row status for envelope floor derivation."""
+    manage = item.get("manage")
+    if isinstance(manage, dict) and str(manage.get("status") or "") == "error":
+        return "failed"
+    status = str(item.get("status") or "")
+    if status in _ROW_RANK:
+        return status
+    return "failed"
+
+
 def _failure_reason(item: dict[str, Any]) -> str:
     manage = item.get("manage")
     if isinstance(manage, dict):
@@ -166,18 +192,16 @@ def _format_failed_services(executions: list[dict[str, Any]]) -> str:
 
 
 def _disposition_for(executions: list[dict[str, Any]]) -> str:
+    """Derive envelope disposition purely from executions[] — weakest row floors."""
     if not executions:
         return "failed"
-    statuses = {str(item.get("status") or "") for item in executions}
-    if statuses <= {"executed"}:
-        return "executed"
-    if statuses <= {"queued"}:
-        return "queued"
-    if statuses <= {"failed"}:
+    row_statuses = [_row_status(item) for item in executions]
+    weakest = min(row_statuses, key=lambda status: _ROW_RANK[status])
+    if len(set(row_statuses)) == 1:
+        return _ENVELOPE_FROM_ROW[weakest]
+    if weakest == "failed":
         return "failed"
-    if "executed" in statuses or "queued" in statuses or "submitted" in statuses:
-        return "propagated"
-    return "failed"
+    return _ENVELOPE_FROM_ROW[weakest]
 
 
 def _summary_for(disposition: str, executions: list[dict[str, Any]]) -> str:
@@ -194,21 +218,18 @@ def _summary_for(disposition: str, executions: list[dict[str, Any]]) -> str:
     if disposition == "failed":
         if not executions:
             return "Auto propagation restart failed: no services were executed."
-        return f"Auto propagation restart failed for {_format_failed_services(executions)}."
-    failed = [
-        item for item in executions if str(item.get("status") or "") == "failed"
-    ]
-    if failed:
-        ok_services = ", ".join(
-            str(item.get("service") or "?")
-            for item in executions
-            if str(item.get("status") or "") != "failed"
-        )
-        return (
-            f"Auto propagated restart for {services} — partial progress for "
-            f"{ok_services}; failed: {_format_failed_services(failed)}. "
-            "Ledger row open until proof closes."
-        )
+        failed = [item for item in executions if _row_status(item) == "failed"]
+        if failed and len(failed) < len(executions):
+            ok_services = ", ".join(
+                str(item.get("service") or "?")
+                for item in executions
+                if _row_status(item) != "failed"
+            )
+            return (
+                f"Auto propagation restart failed — partial progress for "
+                f"{ok_services}; failed: {_format_failed_services(failed)}."
+            )
+        return f"Auto propagation restart failed for {_format_failed_services(failed or executions)}."
     return (
         f"Auto propagated restart for {services} — drain/restart submitted or queued; "
         "ledger row open until proof closes."

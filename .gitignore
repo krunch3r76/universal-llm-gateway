@@ -114,6 +114,7 @@ tests/*
 !services/git_integration_worker/tests/test_cursor_admitted_via.py
 # fleet_idle predicate (agent-bus:6590 idle-wake-schedule)
 !services/git_integration_worker/tests/test_trigger_fleet_idle.py
+!services/git_integration_worker/tests/test_handler_propagation_disposition.py
 # MCP boot-card / dual-endpoint surface contracts (thread 6310)
 !services/mcp-server/test_endpoint_surface_split.py
 !services/mcp-server/tools/test_boot_orientation_gates.py
