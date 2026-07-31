@@ -18,20 +18,7 @@ from services.git_integration_worker.cursor_auto.closeout_relay_cortex_fields im
     extract_table_field,
     field_heading_present,
 )
-
-_SECTION2_FIELDS: tuple[tuple[str, str], ...] = (
-    ("status", "status"),
-    ("ac_verdict", "ac_verdict"),
-    ("deltas_to_spec", "deltas_to_spec"),
-    ("decisions_taken", "decisions_taken"),
-    ("effects", "effects"),
-    ("evidence", "evidence"),
-    ("next", "next"),
-    ("open forks", "open forks"),
-    ("access", "access"),
-    ("coverage", "coverage"),
-    ("model_actual", "model_actual"),
-)
+from services.git_integration_worker.cursor_auto.section2_fields import SECTION2_FIELDS
 
 _UNCLASSIFIED_RE = re.compile(
     r"(?:unclassified\s*[—-]\s*relay could not parse|parse_failed\s*[—-])",
@@ -82,7 +69,7 @@ def project_section2_table(
     status = extract_status(text) or status_from_section2(text) or fallback_status
 
     rows: list[tuple[str, str]] = []
-    for field, label in _SECTION2_FIELDS:
+    for field, label in SECTION2_FIELDS:
         if field == "status":
             rows.append((label, status))
             continue
@@ -101,4 +88,8 @@ def project_section2_table(
     return "\n".join(lines), status
 
 
-__all__ = ["count_relay_parse_miss_fields", "count_unclassified_fields", "project_section2_table"]
+__all__ = [
+    "count_relay_parse_miss_fields",
+    "count_unclassified_fields",
+    "project_section2_table",
+]

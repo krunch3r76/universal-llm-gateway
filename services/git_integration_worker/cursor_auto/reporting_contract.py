@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+from services.git_integration_worker.cursor_auto.section2_fields import (
+    section2_emit_line,
+)
+
 DISPATCH_REPORT_DISCIPLINE_SKILL = "dispatch-report-discipline"
 
-REPORTING_CONTRACT_BLOCK = """\
+_REPORTING_CONTRACT_TEMPLATE = """\
 ## REPORTING CONTRACT (mandatory)
 
 Your closeout MUST include §2 fields inline. Fill every checklist item below.
@@ -33,12 +37,11 @@ Prompt-side rules (5–8) — fill in §2:
 
 Judgment rules 9–10 live in the **dispatch-report-discipline** skill only — not gated here.
 
-Emit §2 fields inline in your closeout (ac_verdict, deltas_to_spec, effects, etc.).\
+{section2_emit_line}\
 """
 
-_SECTION2_EMIT_LINE = (
-    "Emit §2 fields inline in your closeout (ac_verdict, deltas_to_spec, "
-    "effects, etc.)."
+REPORTING_CONTRACT_BLOCK = _REPORTING_CONTRACT_TEMPLATE.format(
+    section2_emit_line=section2_emit_line()
 )
 
 
