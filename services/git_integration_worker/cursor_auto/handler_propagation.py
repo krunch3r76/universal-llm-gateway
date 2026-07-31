@@ -145,15 +145,39 @@ async def _execute_row(row: PropagationRow, *, row_id: str) -> dict[str, Any]:
     }
 
 
+def _failure_reason(item: dict[str, Any]) -> str:
+    manage = item.get("manage")
+    if isinstance(manage, dict):
+        for key in ("reason", "error", "message"):
+            value = manage.get(key)
+            if value:
+                return str(value)
+    reason = item.get("reason")
+    if reason:
+        return str(reason)
+    return "unknown"
+
+
+def _format_failed_services(executions: list[dict[str, Any]]) -> str:
+    return "; ".join(
+        f"{str(item.get('service') or '?')} (reason={_failure_reason(item)})"
+        for item in executions
+    )
+
+
 def _disposition_for(executions: list[dict[str, Any]]) -> str:
+    if not executions:
+        return "failed"
     statuses = {str(item.get("status") or "") for item in executions}
     if statuses <= {"executed"}:
         return "executed"
     if statuses <= {"queued"}:
         return "queued"
+    if statuses <= {"failed"}:
+        return "failed"
     if "executed" in statuses or "queued" in statuses or "submitted" in statuses:
         return "propagated"
-    return "propagated"
+    return "failed"
 
 
 def _summary_for(disposition: str, executions: list[dict[str, Any]]) -> str:
@@ -166,6 +190,24 @@ def _summary_for(disposition: str, executions: list[dict[str, Any]]) -> str:
             f"Auto queued propagation restart for {services} on manage drain "
             f"(reason={reasons}). Restart will fire after drain — not ledger-only. "
             "Live only when code_version matches code_ref."
+        )
+    if disposition == "failed":
+        if not executions:
+            return "Auto propagation restart failed: no services were executed."
+        return f"Auto propagation restart failed for {_format_failed_services(executions)}."
+    failed = [
+        item for item in executions if str(item.get("status") or "") == "failed"
+    ]
+    if failed:
+        ok_services = ", ".join(
+            str(item.get("service") or "?")
+            for item in executions
+            if str(item.get("status") or "") != "failed"
+        )
+        return (
+            f"Auto propagated restart for {services} — partial progress for "
+            f"{ok_services}; failed: {_format_failed_services(failed)}. "
+            "Ledger row open until proof closes."
         )
     return (
         f"Auto propagated restart for {services} — drain/restart submitted or queued; "
