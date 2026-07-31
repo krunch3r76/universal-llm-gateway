@@ -56,7 +56,8 @@ team_dispatch(
 ```
 
 Chained hops (CDP → auto → specialist) **must** `nest_under` the live lease holder
-(`cdp-operator-proxy` invariant 19). ¬ fresh top-level contend under an active gate.
+(`cdp-operator-proxy` inv 19 · `operator-proxy-substrate` § Nesting + lease).
+¬ fresh top-level contend under an active gate.
 
 ## Exempt (single leg OK)
 
