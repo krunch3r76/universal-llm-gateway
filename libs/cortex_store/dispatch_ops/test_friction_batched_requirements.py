@@ -50,13 +50,36 @@ def test_single_omission_keeps_the_flat_shape() -> None:
 
 
 def test_claim_is_accepted_as_an_alias_for_note() -> None:
-    """`claim` is the slot name on assert/observe/supersede; accept it here."""
+    """`claim` is the slot name on assert/observe/supersede; accept it here.
+
+    Probe owner does not exist, so the call still errors — but after field
+    validation. Both structured (batched/flat) and plain-string 404 shapes are
+    accepted; demanding ``note`` after ``claim`` was supplied is the failure.
+    """
     assert "claim" in inspect.signature(_op_friction).parameters
     result = _op_friction(owner="service:probe", claim="something went wrong")
     err = result.get("error")
+    assert err is not None, "expected an error for nonexistent probe owner"
+
     if isinstance(err, dict):
-        fields = {e["field"] for e in err.get("errors", [])} | {err.get("field")}
-        assert "note" not in fields, "claim was supplied; note must not be demanded"
+        fields = {e["field"] for e in err.get("errors", []) if isinstance(e, dict)}
+        if err.get("field"):
+            fields.add(err["field"])
+        assert "note" not in fields, (
+            "claim was supplied; note must not be demanded "
+            f"(fields={fields})"
+        )
+        return
+
+    assert isinstance(err, str), f"unexpected error shape: {type(err).__name__}: {err!r}"
+    lowered = err.lower()
+    assert "note is required" not in lowered, (
+        "claim was supplied; note must not be demanded"
+    )
+    assert "not found" in lowered, (
+        "expected entity-not-found after claim→note resolved; "
+        f"got {err!r}"
+    )
 
 
 def test_owner_alias_named_in_the_message() -> None:
