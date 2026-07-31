@@ -9,7 +9,7 @@ from typing import Any
 from fastapi import HTTPException, status
 from pydantic import ValidationError
 
-from ...db import WRITE_LOCK, cortex_conn, decode_row, query
+from ...db import WRITE_LOCK, cortex_conn, decode_row, json_encode, query
 from ...enrichment import reindex_assertion_fts
 from ...models import AssertionItem, AssertionUpdate, AssertionUpdateResponse
 from ...status_trait_write import materialize_graduated_lifecycle
@@ -41,11 +41,17 @@ _PATCHABLE_COLS = (
     "reviewer",
     "reviewed_at",
     "review_notes",
+    "evidence_uris",
+    "reasoning_summary",
     "resolution_status",
     "fulfillment_assertion_id",
     "prospective_summary",
     "events_json",
 )
+
+# Columns in _PATCHABLE_COLS stored as JSON TEXT; the SET value must be encoded
+# on the way in so decode_row's _JSON_FIELDS round-trip stays symmetric.
+_PATCHABLE_JSON_COLS = frozenset({"evidence_uris"})
 
 
 @router.patch("/{assertion_id}", response_model=AssertionUpdateResponse)
@@ -201,7 +207,7 @@ def update_assertion(
             # - predicate_form is added iff predicate_form_explicitly_set
             # so every entry in update_map should land in SET.
             sets.append(f"{col} = ?")
-            params.append(val)
+            params.append(json_encode(val) if col in _PATCHABLE_JSON_COLS else val)
 
         if not sets:
             raise HTTPException(

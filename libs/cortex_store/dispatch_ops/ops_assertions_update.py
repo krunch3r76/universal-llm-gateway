@@ -17,6 +17,7 @@ from ..routes.assertions import (
 )
 from ._assertions_shared import (
     _UNSET,
+    _coerce_evidence_uris,
     _emit_predicate_form_normalize_events,
     _project_seeded_by,
 )
@@ -61,6 +62,8 @@ def _op_assertion_update(
     reviewer: str | None = None,
     reviewed_at: str | None = None,
     review_notes: str | None = None,
+    evidence_uris: list[str] | str | None = None,
+    reasoning_summary: str | None = None,
     predicate_form: Any = _UNSET,
     prospective_summary: str | None = None,
     events_json: str | None = None,
@@ -69,6 +72,8 @@ def _op_assertion_update(
 ) -> dict[str, Any]:
     if assertion_id is None:
         return {"error": "assertion_id is required"}
+    if isinstance(evidence_uris, str):
+        evidence_uris = _coerce_evidence_uris(evidence_uris)
     body: dict[str, Any] = {
         key: val
         for key, val in [
@@ -81,6 +86,8 @@ def _op_assertion_update(
             ("reviewer", reviewer),
             ("reviewed_at", reviewed_at),
             ("review_notes", review_notes),
+            ("evidence_uris", evidence_uris),
+            ("reasoning_summary", reasoning_summary),
             ("prospective_summary", prospective_summary),
             ("events_json", events_json),
         ]

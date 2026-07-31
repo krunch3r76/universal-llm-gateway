@@ -186,6 +186,13 @@ class AssertionUpdate(BaseModel):
     reviewer: str | None = None
     reviewed_at: str | None = None
     review_notes: str | None = None
+    # Structured provenance, patchable post-hoc. The auditor gate in
+    # assertion_quality reads `evidence_uris` directly; without a patch path an
+    # assertion promoted to confidence:confirmed after creation can never
+    # satisfy that gate, and callers are forced to put citations in
+    # `review_notes` prose where the gate cannot see them.
+    evidence_uris: list[str] | None = None
+    reasoning_summary: str | None = None
     resolution_status: ResolutionStatus | None = None
     fulfillment_assertion_id: int | None = None
     # v2.4 Slice 3: peer projection writeback path. Populated by

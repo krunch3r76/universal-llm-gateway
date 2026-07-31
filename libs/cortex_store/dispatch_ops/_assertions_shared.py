@@ -65,9 +65,28 @@ def _emit_predicate_form_normalize_events(
         record("mcp.cortex.predicate.review.required", **common)
 
 
+def _coerce_evidence_uris(value: list[str] | str | None) -> list[str] | None:
+    """Normalise an evidence_uris argument to a list of strings.
+
+    Codeblind seats routinely send a lone URI as a bare string; both the write
+    and the update op accept that shape so a single citation does not require
+    the caller to know it must be wrapped.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return [value] if value.strip() else None
+    return [str(item) for item in value]
+
+
 _UNSET: Any = object()
 """Sentinel for nullable fields where None is a meaningful clearing value
 distinct from "argument absent". See _op_assertion_update.predicate_form."""
 
 
-__all__ = ["_UNSET", "_emit_predicate_form_normalize_events", "_project_seeded_by"]
+__all__ = [
+    "_UNSET",
+    "_coerce_evidence_uris",
+    "_emit_predicate_form_normalize_events",
+    "_project_seeded_by",
+]
