@@ -21,6 +21,21 @@ logger = get_logger(__name__)
 
 REVISE_CAP_DEFAULT = 3
 
+# Layer G3/G4 seat bind — single locus for family-diversity enforcement (6524 R4).
+LAYER_G3_SEAT = "cursor/grok-4.5"
+LAYER_G4_SEAT = "cursor/gpt-5.6-terra"
+
+
+def layer_g4_check_family_diverse(
+    *,
+    g3_seat: str = LAYER_G3_SEAT,
+    g4_seat: str = LAYER_G4_SEAT,
+) -> bool:
+    """True when declared G4 Check seat family differs from G3 Densify seat family."""
+    from implement_admission.check_review_substrate import independence_family
+
+    return independence_family(g3_seat) != independence_family(g4_seat)
+
 _LAYER_ARC_FLOOR = (
     "- Use the `checkpoint-discipline` skill "
     "(canonical slug — seat self-fetches; ¬ fs-read skill body)\n"
@@ -106,8 +121,8 @@ Steps template (machine lane annotations):
 G1  Architecture     consult seat · cdp/fable — architecture verdict sidecar
                      (lane-architecture-consult-brief-template-v2 envelope).
 G2  Frame            consult seat · cdp/opus-5 — densifier instructions ≤120L.
-G3  Densify          cursor/grok-4.5 — dense spec + Gate-2 + implement_ready.
-G4  Check            cursor/gpt-5.6-terra — merged check; refresh spec_sha256.
+G3  Densify          {LAYER_G3_SEAT} — dense spec + Gate-2 + implement_ready.
+G4  Check            {LAYER_G4_SEAT} — merged check; refresh spec_sha256.
 G5  Implement        cursor/composer-2.5 — contract=implement + source_ref.
 G6  Verify + close   inline — quality_gate · files_expected · ACs · docstrings.
                      Escalate to `[consult:judgment_gap]` on highest re-opened
@@ -246,6 +261,9 @@ def layer_subject(root_id: str, window_index: int, *, thin: bool = False) -> str
 
 __all__ = [
     "_LAYER_ARC_FLOOR",
+    "LAYER_G3_SEAT",
+    "LAYER_G4_SEAT",
+    "layer_g4_check_family_diverse",
     "layer_subject",
     "materialize_layer_packet",
 ]

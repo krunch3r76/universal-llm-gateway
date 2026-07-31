@@ -104,9 +104,7 @@ def resolve_charter_executor(
     a CONSULT_PENDING pickup that happens to name G4 has to stay on the consult
     seat or the R-independence invariant breaks (review §5).
     """
-    if admission_mode == "operator_proxy":
-        return ExecutorBind(JUDGMENT_LANE, "operator_proxy_host")
-    if consult_role is not None or admission_mode != "autonomous":
+    if consult_role is not None or admission_mode not in ("autonomous", "operator_proxy"):
         if (
             parsed.executor_lane == IMPLEMENT_LANE
             and parsed.source_ref

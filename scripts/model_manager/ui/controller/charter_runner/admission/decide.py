@@ -151,11 +151,23 @@ def layer_independence_ok(
     *,
     parsed: ParsedCheckpoint | None,
     checkpoint_body: str,
+    attendance: str = "autonomous",
 ) -> bool:
-    """True when structural independence holds before layer G5 implement."""
+    """True when structural independence holds before layer G5 implement.
+
+    Branches (6524 G1 bind R3/R4):
+    (A) upstream cross-substrate consult provenance on closed G1/G2;
+    (A′) resolving ``derived_from`` architecture edge in checkpoint body;
+    (C) ``attendance == \"operator_proxy\"`` — live operator seat attends
+        (R3a: today implies web-anthropic CDP operator vs cursor executor;
+        if operator_proxy ever runs on a cursor-substrate operator seat,
+        (C) must become a substrate comparison);
+    (B) G4 Check family ≠ G3 densifier family (checkpoint body or seat bind).
+    """
     if parsed is None:
         return False
     body = checkpoint_body or ""
+    attendance_norm = (attendance or "autonomous").lower()
     branch_a = False
     if _step_done(parsed, "G1") or _step_done(parsed, "G2"):
         substrate = _provenance_fields(body).get("consultant_substrate", "").lower()
@@ -163,9 +175,16 @@ def layer_independence_ok(
             branch_a = True
     if not branch_a and _ARCHITECTURE_DERIVED_RE.search(body):
         branch_a = True
+    if not branch_a and attendance_norm == "operator_proxy":
+        branch_a = True
     g3_family = _gate_family(body, "G3") or "grok"
     g4_family = _gate_family(body, "G4")
-    branch_b = g4_family is not None and g4_family != g3_family
+    if g4_family is not None:
+        branch_b = g4_family != g3_family
+    else:
+        from ..window_exec.materializer_layer import layer_g4_check_family_diverse
+
+        branch_b = layer_g4_check_family_diverse()
     return branch_a and branch_b
 
 
@@ -195,11 +214,16 @@ def layer_independence_unproven(
     pickup_lane: str,
 ) -> bool:
     """Fail-closed guard before layer G5 implement admission."""
-    if arc_lane != "layer" or attendance != "autonomous":
+    attendance_norm = (attendance or "autonomous").lower()
+    if arc_lane != "layer" or attendance_norm not in ("autonomous", "operator_proxy"):
         return False
     if not layer_implement_pickup(parsed=parsed, pickup_lane=pickup_lane):
         return False
-    return not layer_independence_ok(parsed=parsed, checkpoint_body=checkpoint_body)
+    return not layer_independence_ok(
+        parsed=parsed,
+        checkpoint_body=checkpoint_body,
+        attendance=attendance_norm,
+    )
 
 
 def decide(

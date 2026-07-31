@@ -25,7 +25,11 @@ _DELIVERABLE_ROUTING_PREAMBLE = (
     f"Instead split it into chunks of at most {_LARGE_CONTENT_CHUNK_CHARS:,} characters "
     'each: write the first chunk with op="write", then write each remaining chunk in '
     'order with op="append" to the same path. Verify the final file size afterward '
-    "(fs read or list) before reporting the deliverable done."
+    "(fs read or list) before reporting the deliverable done.\n\n"
+    "CORTEX READ-MODIFY-WRITE (mandatory): when patching an existing cortex:// "
+    "artifact, fs(op=\"read\") first and pass expected_sha256=<read_sha256 from the "
+    "read response> on overwrite/replace/append — stale or partial reads fail closed "
+    "instead of silently truncating durable binds."
 )
 
 _IMPLEMENT_PREAMBLE = (
