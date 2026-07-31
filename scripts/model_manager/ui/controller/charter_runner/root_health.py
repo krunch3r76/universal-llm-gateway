@@ -107,7 +107,7 @@ def is_declared_wait(
     if outcome == FireAttemptOutcome.NO_ATTEMPT_QUIET:
         return True
     reason = (skipped_reason or "").strip()
-    if reason in {"dormant", "no_gated_pickup"}:
+    if reason in {"dormant", "no_gated_pickup", "exhausted_hopper"}:
         return True
     if reason == "empty_hopper" and not consult_pending:
         return True

@@ -52,6 +52,7 @@ class Transition(StrEnum):
     HARVEST_REVISE = "HARVEST_REVISE"
     WORKER_FAILED = "WORKER_FAILED"
     BLOCK = "BLOCK"
+    STATE_CLOSE = "STATE_CLOSE"
     NOOP = "NOOP"
 
 

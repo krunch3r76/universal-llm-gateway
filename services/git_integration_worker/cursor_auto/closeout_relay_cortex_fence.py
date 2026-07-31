@@ -23,6 +23,11 @@ _FENCE_EXCEPTION_RE = re.compile(
 )
 
 
+def extract_fence_exception_lines(prose: str) -> list[str]:
+    """Return ``fence_exception:`` lines authored in executor §2 prose."""
+    return [match.group(0).strip() for match in _FENCE_EXCEPTION_RE.finditer(prose or "")]
+
+
 def guard_matches_write(guard_uri: str, write_uri: str) -> bool:
     """True when normalized guard relpath equals or prefixes the write relpath."""
     guard_norm = normalize_cortex_uri(guard_uri)
@@ -47,18 +52,33 @@ def _announced_fence_exceptions(body: str) -> set[str]:
     return announced
 
 
+def _deltas_announces_write(body: str, write_uri: str) -> bool:
+    """True when *deltas_to_spec* substantively announces *write_uri*."""
+    normalized = normalize_cortex_uri(write_uri)
+    if normalized is None:
+        return False
+    rel = cortex_relpath(normalized) or ""
+    deltas = extract_field_section(body, "deltas_to_spec") or ""
+    stripped = deltas.strip()
+    if not stripped:
+        return False
+    if stripped.startswith("unresolved — not read:"):
+        return False
+    if stripped.startswith("unauthored —"):
+        return False
+    if stripped.startswith("none — field not authored"):
+        return False
+    return normalized in deltas or rel in deltas
+
+
 def _write_announced_in_body(body: str, write_uri: str) -> bool:
     """True when *write_uri* is named in deltas_to_spec or fence_exception."""
     normalized = normalize_cortex_uri(write_uri)
     if normalized is None:
         return False
-    rel = cortex_relpath(normalized) or ""
     if normalized in _announced_fence_exceptions(body):
         return True
-    deltas = extract_field_section(body, "deltas_to_spec") or ""
-    if normalized in deltas or rel in deltas:
-        return True
-    return False
+    return _deltas_announces_write(body, write_uri)
 
 
 def guarded_write_violations(
@@ -118,6 +138,7 @@ def apply_write_fence(
 
 __all__ = [
     "apply_write_fence",
+    "extract_fence_exception_lines",
     "guard_matches_write",
     "guarded_write_violations",
 ]

@@ -83,7 +83,7 @@ class EnvFacts:
     empty_hopper: bool = False
     consult_pending: bool = False
     tip_executor: str | None = None
-    arc_lane: str = "path_sim"
+    arc_lane: str = "layer"
     layer_independence_block: bool = False
 
 

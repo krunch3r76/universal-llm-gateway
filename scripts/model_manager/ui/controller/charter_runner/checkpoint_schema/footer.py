@@ -28,6 +28,14 @@ _FENCE_TAIL_RE = re.compile(
     re.DOTALL | re.IGNORECASE,
 )
 
+# Worker CHECKPOINTs with empty gated Next-pickup prose must still emit non-null
+# strings — null fails ``_validate_next_pickup`` (live 6518 w1 / 6489 hold).
+EMPTY_GATED_PICKUP_SENTINEL: dict[str, str] = {
+    "gid": "none",
+    "lane": "none",
+    "executor": "none",
+}
+
 
 class NextPickupFields(TypedDict):
     """Gated pickup row identity for the charter-state footer."""
@@ -90,7 +98,10 @@ def output_format_footer_requirement(*, window_id: str = "") -> str:
         f"wip, consult, and evidence from the CHECKPOINT you post; {wid_clause} "
         "Phase-0 rule: set wip to null (never a bare string or cross-root window "
         "id); cross-root dependencies belong in next_pickup / Next pickup — invalid "
-        "wip fail-closes harvest; remedy is author reseed, not runner heal."
+        "wip fail-closes harvest; remedy is author reseed, not runner heal. "
+        "When gated Next-pickup prose is empty, set next_pickup to "
+        '{\"gid\":\"none\",\"lane\":\"none\",\"executor\":\"none\"} — '
+        "never JSON null for gid/lane/executor."
     )
 
 
@@ -216,6 +227,34 @@ def _validate_evidence(value: Any, errors: list[str]) -> None:
                 errors.append(f"evidence[{idx}].{sub}")
 
 
+def _next_pickup_is_empty_sentinel(next_pickup: Any) -> bool:
+    if not isinstance(next_pickup, dict):
+        return False
+    return all(
+        str(next_pickup.get(key) or "").strip().lower() == "none"
+        for key in ("gid", "lane", "executor")
+    )
+
+
+def is_exhausted_hopper_footer(body: str) -> bool:
+    """True when a valid footer marks arc exhaustion (none/none/none sentinel).
+
+    Caller must still require ungated Next-pickup prose, no live WIP, and no
+    ledger ``wip_window_id`` before treating the root as close-eligible.
+    """
+    if not validate_checkpoint_footer(body).ok:
+        return False
+    data, _ = _extract_footer_json(body)
+    if data is None:
+        return False
+    status = data.get("status")
+    if status not in {"CHECKPOINT", "CLOSED"}:
+        return False
+    if not _next_pickup_is_empty_sentinel(data.get("next_pickup")):
+        return False
+    return data.get("wip") is None
+
+
 def validate_checkpoint_footer(body: str) -> ValidationResult:
     """Extract and validate the fenced ``charter-state`` JSON; name field paths."""
     data, err = _extract_footer_json(body)
@@ -250,12 +289,14 @@ def validate_checkpoint_footer(body: str) -> ValidationResult:
 
 
 __all__ = [
+    "EMPTY_GATED_PICKUP_SENTINEL",
     "FOOTER_FENCE",
     "FooterFields",
     "ValidationResult",
     "append_footer_to_packet",
     "emit_footer",
     "footer_kwargs_for_window",
+    "is_exhausted_hopper_footer",
     "output_format_footer_requirement",
     "validate_checkpoint_footer",
 ]

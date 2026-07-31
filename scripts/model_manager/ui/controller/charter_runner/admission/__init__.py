@@ -5,6 +5,7 @@ from __future__ import annotations
 from .body_gate import (
     ADMISSION_SUBJECT_PREFIX,
     ENROLLMENT_TAG,
+    TYPED_GRACE_REASON,
     Decision,
     GateHalf,
     WindowKind,
@@ -32,6 +33,7 @@ from .decide import (
 __all__ = [
     "ADMISSION_SUBJECT_PREFIX",
     "ENROLLMENT_TAG",
+    "TYPED_GRACE_REASON",
     "CapStore",
     "CapsView",
     "Decision",

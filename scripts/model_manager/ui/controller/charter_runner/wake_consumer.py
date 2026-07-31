@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
@@ -265,21 +264,9 @@ class WakeConsumer:
     _shutdown_gate_activity: Callable[[bool], None] | None = None
 
     async def _floor_root_ids(self) -> list[str]:
-        """Ledger-query floor over open typed work-items (¬ roster tip poll)."""
-        from .root_ledger import list_open_work_item_root_ids
-
-        stale_before = time.time() - self.floor_interval_s
-        conn = open_default_ledger()
-        try:
-            stale_ids = list_open_work_item_root_ids(
-                conn, stale_before=stale_before
-            )
-            all_open = list_open_work_item_root_ids(conn)
-        finally:
-            conn.close()
-        await self.mapper.refresh_enrolled()
-        merged = sorted(set(stale_ids) | self.mapper.enrolled | all_open)
-        return merged
+        """Bus-enrolled floor — ledger never adds unenrolled open-work-item ghosts."""
+        enrolled = await self.mapper.refresh_enrolled()
+        return sorted(enrolled)
 
     async def start(self) -> None:
         if self._task is not None:

@@ -96,7 +96,7 @@ def resolve_charter_executor(
     parsed: ParsedCheckpoint,
     admission_mode: str,
     consult_role: str | None = None,
-    arc_lane: str = "path_sim",
+    arc_lane: str = "layer",
 ) -> ExecutorBind:
     """Return the executor bind for one window; judgment unless implement is proven.
 

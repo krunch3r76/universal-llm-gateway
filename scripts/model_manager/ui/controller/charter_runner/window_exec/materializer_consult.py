@@ -392,7 +392,7 @@ def materialize_consult_packet(
     *,
     scoreboard_uri: str | None = None,
     window_index: int = 1,
-    arc_lane: str = "path_sim",
+    arc_lane: str = "layer",
 ) -> str:
     """Return a depth-1 consult six-block packet for ``CONSULT_PENDING`` pickup."""
     scoreboard_line = (
@@ -468,7 +468,7 @@ def consult_subject_for_arc(
     window_index: int,
     *,
     consult_role: str | None = None,
-    arc_lane: str = "path_sim",
+    arc_lane: str = "layer",
     gate_id: str | None = None,
 ) -> str:
     """Layer-aware consult subject when ``arc_lane=layer`` names Fable on G1."""

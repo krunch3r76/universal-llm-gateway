@@ -42,6 +42,7 @@ _ACTIVE_WRITER_STATUSES = (_STATUS_ADMITTED, _STATUS_RUNNING)
 _STATUS_CHECK = (
     "'queued','admitted','running','parked_waiting','completed','failed'"
 )
+_WORK_IDENTITY_CONTRACTS = frozenset({"implement", "consult", "light-bounded"})
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS cursor_sdk_dispatches (
@@ -103,10 +104,11 @@ class WriteLeaseHeld(Exception):  # noqa: N818 — release-before-admit fence (2
 
 
 class SourceRefConflict(Exception):  # noqa: N818 — peer implement gate
-    """Raised when a non-terminal implement already holds the same ``source_ref``.
+    """Raised when a non-terminal dispatch already holds the same work identity.
 
     Attributes:
-        source_ref: Work-item identity that collided.
+        source_ref: Work-item identity that collided (legacy / fallback).
+        work_key: Stable work identity when supplied by caller.
         holder_dispatch_id: In-flight peer dispatch id.
         holder_thread_id: In-flight peer bus thread id, when persisted.
     """
@@ -114,15 +116,18 @@ class SourceRefConflict(Exception):  # noqa: N818 — peer implement gate
     def __init__(
         self,
         *,
-        source_ref: str,
+        source_ref: str | None,
         holder_dispatch_id: str,
         holder_thread_id: str | None,
+        work_key: str | None = None,
     ) -> None:
         self.source_ref = source_ref
+        self.work_key = work_key
         self.holder_dispatch_id = holder_dispatch_id
         self.holder_thread_id = holder_thread_id
+        identity = work_key or source_ref or "?"
         super().__init__(
-            f"source_ref {source_ref!r} already has non-terminal implement "
+            f"work identity {identity!r} already has non-terminal dispatch "
             f"(holder_dispatch_id={holder_dispatch_id!r}, "
             f"holder_thread_id={holder_thread_id!r})"
         )
@@ -537,6 +542,10 @@ class CursorDispatchLedger:
                 conn.execute(
                     "ALTER TABLE cursor_sdk_dispatches ADD COLUMN source_ref TEXT"
                 )
+            if "work_key" not in cols:
+                conn.execute(
+                    "ALTER TABLE cursor_sdk_dispatches ADD COLUMN work_key TEXT"
+                )
             _migrate_queued_status(conn)
             _migrate_parked_waiting_status(conn)
             _migrate_lease_key_column(conn)
@@ -553,6 +562,11 @@ class CursorDispatchLedger:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_sdk_dispatch_source_ref_active "
                 "ON cursor_sdk_dispatches(source_ref, status) "
+                "WHERE status IN ('queued','admitted','running')"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_sdk_dispatch_work_key_active "
+                "ON cursor_sdk_dispatches(work_key, status) "
                 "WHERE status IN ('queued','admitted','running')"
             )
             conn.execute(
@@ -600,6 +614,7 @@ class CursorDispatchLedger:
         read_only: bool = False,
         worker_instance: str | None = None,
         source_ref: str | None = None,
+        work_key: str | None = None,
         force: bool = False,
         nest_under: str | None = None,
         refuse_if_lease_held: bool = False,
@@ -656,19 +671,29 @@ class CursorDispatchLedger:
                     )
                 return _response_from_row(existing, admission=admission)
             if (
-                contract == "implement"
-                and source_ref
+                contract in _WORK_IDENTITY_CONTRACTS
+                and (work_key or source_ref)
                 and not force
             ):
-                peer = conn.execute(
-                    "SELECT dispatch_id, thread_id FROM cursor_sdk_dispatches "
-                    "WHERE source_ref=? AND dispatch_id<>? "
-                    "AND status IN ('queued','admitted','running') LIMIT 1",
-                    (source_ref, req.dispatch_id),
-                ).fetchone()
+                peer = None
+                if work_key:
+                    peer = conn.execute(
+                        "SELECT dispatch_id, thread_id FROM cursor_sdk_dispatches "
+                        "WHERE work_key=? AND dispatch_id<>? "
+                        "AND status IN ('queued','admitted','running') LIMIT 1",
+                        (work_key, req.dispatch_id),
+                    ).fetchone()
+                if peer is None and source_ref:
+                    peer = conn.execute(
+                        "SELECT dispatch_id, thread_id FROM cursor_sdk_dispatches "
+                        "WHERE source_ref=? AND dispatch_id<>? "
+                        "AND status IN ('queued','admitted','running') LIMIT 1",
+                        (source_ref, req.dispatch_id),
+                    ).fetchone()
                 if peer is not None:
                     raise SourceRefConflict(
                         source_ref=source_ref,
+                        work_key=work_key,
                         holder_dispatch_id=peer["dispatch_id"],
                         holder_thread_id=peer["thread_id"],
                     )
@@ -753,8 +778,8 @@ class CursorDispatchLedger:
                 "(dispatch_id, fingerprint, thread_id, execution_id, caller_agent, "
                 " resolved_model, packet_path, message_present, status, record_json, "
                 " wt_baseline, contract, source_repo, lease_key, read_only, worker_instance, "
-                " queued_at, source_ref) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " queued_at, source_ref, work_key) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     req.dispatch_id,
                     fingerprint,
@@ -774,6 +799,7 @@ class CursorDispatchLedger:
                     worker_instance,
                     queued_at,
                     source_ref,
+                    work_key,
                 ),
             )
             if nested_park_parent is not None:

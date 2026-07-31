@@ -92,14 +92,14 @@ def _attendance_for_root(env: EnvSnapshot, root_id: str) -> Attendance:
 
 
 def _arc_lane_from_env(env: EnvSnapshot, root_id: str) -> str:
-    """Per-root arc lane from tick-scoped env snapshot; default path_sim."""
+    """Per-root arc lane from tick-scoped env snapshot; default layer."""
     arc_lane = env.arc_lane_by_root.get(root_id)
     if arc_lane is None:
         logger.warning(
-            "arc_lane missing from env snapshot root_id=%s — defaulting path_sim",
+            "arc_lane missing from env snapshot root_id=%s — defaulting layer",
             root_id,
         )
-        return "path_sim"
+        return "layer"
     return arc_lane
 
 

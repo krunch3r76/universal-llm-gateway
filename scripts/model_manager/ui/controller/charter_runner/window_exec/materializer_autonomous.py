@@ -342,7 +342,7 @@ def select_packet(
     admission_mode: str,
     consult_role: str | None = None,
     source_ref: str | None = None,
-    arc_lane: str = "path_sim",
+    arc_lane: str = "layer",
 ) -> tuple[str, str]:
     """Return ``(packet_body, bus_subject)`` for the given admission mode.
 

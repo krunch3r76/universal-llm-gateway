@@ -16,6 +16,9 @@ from services.git_integration_worker.cursor_auto.closeout_relay_common import (
 from services.git_integration_worker.cursor_auto.closeout_relay_cortex_fields import (
     extract_field_section,
 )
+from services.git_integration_worker.cursor_auto.closeout_relay_project import (
+    count_unclassified_fields,
+)
 
 _FS_WRITE_OPS = frozenset(
     {
@@ -207,6 +210,166 @@ def _clamp_non_complete_status(current: str) -> str:
     return "partial"
 
 
+_OVERCLAIM_UNCLASSIFIED = "overclaim:unclassified_field"
+_OVERCLAIM_FALSE_ABSENCE = "overclaim:false_absence_unread_provenance"
+_DEVIATIONS_LINE_RE = re.compile(r"(?im)^deviations:\s*(.*)$")
+_TABLE_CELL_ROW_RE = re.compile(r"(?im)^\|\s*(?P<field>[^|]+?)\s*\|\s*(?P<value>.*?)\s*\|\s*$")
+_JUDGMENT_FIELDS: tuple[str, ...] = (
+    "ac_verdict",
+    "deltas_to_spec",
+    "decisions_taken",
+    "next",
+    "open forks",
+)
+_FALSE_ABSENCE_MARKERS: tuple[str, ...] = (
+    "unauthored — not reported by executor",
+    "none — field not authored in §2 sidecar",
+    "unknown — executor emitted no §2",
+    "unauthored — operator must derive from effects above",
+)
+
+
+def _extract_table_cell(body: str, field: str) -> str | None:
+    for match in _TABLE_CELL_ROW_RE.finditer(body):
+        if match.group("field").strip().casefold() == field.casefold():
+            return match.group("value").strip()
+    return None
+
+
+def _replace_table_cell(body: str, field: str, new_value: str) -> str:
+    def _rewrite(match: re.Match[str]) -> str:
+        if match.group("field").strip().casefold() != field.casefold():
+            return match.group(0)
+        return f"| {field} | {_table_cell(new_value)} |"
+
+    return _TABLE_CELL_ROW_RE.sub(_rewrite, body, count=0)
+
+
+def _rewrite_relay_status(body: str, new_status: str) -> str:
+    updated = re.sub(
+        r"(?im)^status:\s*\S+",
+        f"status: {new_status}",
+        body,
+        count=1,
+    )
+    if _extract_table_cell(updated, "status") is not None:
+        updated = _replace_table_cell(updated, "status", new_status)
+    return updated
+
+
+def _append_deviation_tokens(body: str, tokens: list[str]) -> str:
+    if not tokens:
+        return body
+    existing: list[str] = []
+    match = _DEVIATIONS_LINE_RE.search(body)
+    if match is not None:
+        existing = [part.strip() for part in match.group(1).split(";") if part.strip()]
+    merged: list[str] = []
+    seen: set[str] = set()
+    for token in [*existing, *tokens]:
+        if token not in seen:
+            seen.add(token)
+            merged.append(token)
+    line = "deviations: " + "; ".join(merged)
+    if match is not None:
+        return _DEVIATIONS_LINE_RE.sub(line, body, count=1)
+    status_match = re.search(r"(?im)^status:\s*\S+\s*$", body)
+    if status_match is not None:
+        insert_at = status_match.end()
+        return f"{body[:insert_at]}\n{line}{body[insert_at:]}"
+    return f"{body.rstrip()}\n{line}\n"
+
+
+def _durable_sidecar_uris(
+    wrapper_text: str | None,
+    *,
+    dispatch_id: str,
+) -> list[str]:
+    """Return cortex-first durable sidecar URIs from the wrapper evidence pool."""
+    del dispatch_id
+    if not wrapper_text:
+        return []
+    from services.git_integration_worker.cursor_auto.closeout_relay_cortex_uri import (
+        extract_durable_sidecar_uris,
+    )
+
+    return extract_durable_sidecar_uris(wrapper_text)
+
+
+def _cell_claims_false_absence(cell: str) -> bool:
+    if "unclassified" in cell.casefold():
+        return False
+    return any(marker in cell for marker in _FALSE_ABSENCE_MARKERS)
+
+
+def _cell_claims_unclassified_or_hard_unauthored(cell: str) -> bool:
+    if "unclassified" in cell.casefold() and "relay could not parse" in cell.casefold():
+        return True
+    return (
+        "unauthored — not reported by executor" in cell
+        or "unknown — executor emitted no §2" in cell
+    )
+
+
+def _judgment_cells_overclaim(body: str) -> bool:
+    if count_unclassified_fields(body) > 0:
+        return True
+    for field in _JUDGMENT_FIELDS:
+        cell = _extract_table_cell(body, field)
+        if cell and _cell_claims_unclassified_or_hard_unauthored(cell):
+            return True
+    return False
+
+
+def amend_completion_overclaim(
+    body: str,
+    *,
+    wrapper_text: str | None,
+    status: str,
+    source: str,
+    dispatch_id: str = "",
+) -> CloseoutRelayPayload:
+    """Clamp status when relay cells overclaim executor certainty or hide unread sidecars."""
+    amended_body = body
+    amended_status = status
+    deviations: list[str] = []
+
+    unread_sidecars = _durable_sidecar_uris(wrapper_text, dispatch_id=dispatch_id)
+    if unread_sidecars:
+        preferred_uri = unread_sidecars[0]
+        false_absence_hits = False
+        for field in _JUDGMENT_FIELDS:
+            cell = _extract_table_cell(amended_body, field)
+            if not cell or not _cell_claims_false_absence(cell):
+                continue
+            amended_body = _replace_table_cell(
+                amended_body,
+                field,
+                f"unresolved — not read: {preferred_uri}",
+            )
+            false_absence_hits = True
+        if false_absence_hits:
+            deviations.append(_OVERCLAIM_FALSE_ABSENCE)
+            if amended_status == "complete":
+                amended_status = "partial"
+
+    if _judgment_cells_overclaim(amended_body):
+        if amended_status == "complete":
+            amended_status = "partial"
+        if _OVERCLAIM_UNCLASSIFIED not in deviations:
+            deviations.append(_OVERCLAIM_UNCLASSIFIED)
+
+    if deviations:
+        amended_body = _append_deviation_tokens(amended_body, deviations)
+        amended_body = _rewrite_relay_status(amended_body, amended_status)
+
+    return CloseoutRelayPayload(
+        body=amended_body,
+        status=amended_status,
+        source=source,
+    )
+
+
 def amend_effects_underclaim(
     body: str,
     *,
@@ -234,6 +397,7 @@ def amend_effects_underclaim(
 
 
 __all__ = [
+    "amend_completion_overclaim",
     "amend_effects_underclaim",
     "machine_write_uris",
 ]

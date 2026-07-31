@@ -117,7 +117,7 @@ async def admit_worker_window(
     admission_mode: str,
     window_index: int | None = None,
     on_admit: Callable[[str], None] | None = None,
-    arc_lane: str = "path_sim",
+    arc_lane: str = "layer",
     work_key: str | None = None,
     parsed=None,
 ) -> AdmitResult:
@@ -202,7 +202,7 @@ async def admit_consult_window(
     consult_role: str,
     window_index: int | None = None,
     on_admit: Callable[[str], None] | None = None,
-    arc_lane: str = "path_sim",
+    arc_lane: str = "layer",
     work_key: str | None = None,
     consult_role_at_admit: str | None = None,
 ) -> AdmitResult:

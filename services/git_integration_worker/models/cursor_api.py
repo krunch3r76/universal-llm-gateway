@@ -31,6 +31,7 @@ class CursorDispatchRequest(BaseModel):
     worktree_isolated: bool = False
     worktree_path: str | None = None
     admitted_via: Literal["cursor-auto", "stargate"] | None = None
+    work_key: str | None = None
 
     @model_validator(mode="after")
     def _packet_xor_message(self) -> CursorDispatchRequest:

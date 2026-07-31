@@ -1,12 +1,19 @@
 """Silent-starve exits: per-root skip telemetry + parameterized state-close.
 
-Owns close→unenroll under A4 for ``no_gated_pickup`` and ``stale_window``
-(exact ``stopped:stale_window`` only). Extracted from tick_loop so the
-ineligible-path control flow stays testable without bloating CharterRunnerTickLoop.
+Owns close→unenroll under A4 for ``no_gated_pickup``, ``exhausted_hopper``, and
+``stale_window`` (exact ``stopped:stale_window`` only). Refusal-class
+``no_gated_pickup`` closes are ledger-gated: ``typed_record_valid`` roots skip
+close and do not consume A4 budget (S3 birth-grace). ``exhausted_hopper`` always
+closes even when ``typed_record_valid``.
+Extracted from tick_loop so the ineligible-path control flow stays testable without
+bloating CharterRunnerTickLoop.
 """
 
 from __future__ import annotations
 
+import contextlib
+import time
+from dataclasses import replace
 from typing import Any, Protocol
 
 from universal_logging import get_logger
@@ -15,12 +22,47 @@ from scripts.model_manager import observation_event as events
 
 from . import bus_client
 from .admission import ENROLLMENT_TAG, Decision
+from .root_ledger import (
+    RootStatus,
+    Transition,
+    load_root,
+    open_default_ledger,
+    upsert_root,
+    write_cortex_mirror,
+)
 from .state_close_compose import prepare_state_close_summary
 
 logger = get_logger(__name__)
 
 # A4 — bound first-tick blast radius (historic arc-complete tagged roots).
 MAX_STATE_CLOSES_PER_TICK = 1
+
+# Refusal-class close reasons guarded by birth-grace (I-FAIL-CLOSED-NOT-DESTRUCTIVE).
+_BIRTH_GRACE_REASONS = frozenset({"no_gated_pickup"})
+
+
+def _birth_grace_verdict(root_id: str) -> str | None:
+    """Return a guard label when this root must not be state-closed, else None.
+
+    Read-only ledger consult. Fail-safe direction: ledger read failure resolves
+    toward *not* closing (returns ``ledger_read_failed``) so standing enrollment
+    is never destroyed on a transient sqlite fault.
+    """
+    from .root_ledger import load_root, open_default_ledger, typed_record_valid
+
+    try:
+        conn = open_default_ledger()
+    except Exception:  # noqa: BLE001 — fail-safe: do not close on unreadable ledger
+        return "ledger_read_failed"
+    try:
+        if typed_record_valid(load_root(conn, root_id)):
+            return "typed_record_valid"
+        return None
+    except Exception:  # noqa: BLE001
+        return "ledger_read_failed"
+    finally:
+        with contextlib.suppress(Exception):
+            conn.close()
 
 
 class _CapsCheck(Protocol):
@@ -71,6 +113,32 @@ async def _thread_already_closed(root_id: str) -> bool:
     return status == "closed"
 
 
+def _apply_state_close_ledger(root_id: str, *, reason: str) -> None:
+    """Mark ledger row CLOSED after successful bus state-close (idempotent)."""
+    conn = open_default_ledger()
+    try:
+        row = load_root(conn, root_id)
+        if row is None or row.status == RootStatus.CLOSED:
+            return
+        closed_row = replace(
+            row,
+            status=RootStatus.CLOSED,
+            last_transition=Transition.STATE_CLOSE.value,
+            last_error=f"state_close:{reason}",
+            wip_window_id=None,
+            consult_role=None,
+            consult_next_retry=None,
+            consult_poll_from=None,
+            consult_attempts=0,
+            updated_at=time.time(),
+        )
+        upsert_root(conn, closed_row)
+        write_cortex_mirror(closed_row)
+    finally:
+        with contextlib.suppress(Exception):
+            conn.close()
+
+
 async def maybe_state_close_root(
     decision: Decision,
     *,
@@ -80,12 +148,26 @@ async def maybe_state_close_root(
 ) -> int:
     """Close→unenroll one root under A4; emit ``root_closed`` with ``reason``.
 
-    Close runs first; unenroll only after close success (A3). Already-closed /
-    no-op close counts as success so a later tick can retry unenroll (A5).
-    Failing closes emit ``closed=False`` without consuming A4 budget — distinct
-    from A4 deferral (which emits no ``root_closed``).
-    Returns the updated ``state_closes_this_tick`` count.
+    Refusal-class reasons (``no_gated_pickup``) are ledger-gated: a
+    ``typed_record_valid`` row declines close, emits ``root_close_guarded``,
+    and does **not** consume the A4 budget. Close runs first; unenroll only
+    after close success (A3). Already-closed / no-op close counts as success
+    so a later tick can retry unenroll (A5). Failing closes emit
+    ``closed=False`` without consuming A4 budget — distinct from A4 deferral
+    (which emits no ``root_closed``). Returns the updated
+    ``state_closes_this_tick`` count.
     """
+    if reason in _BIRTH_GRACE_REASONS:
+        guard = _birth_grace_verdict(decision.root_id)
+        if guard is not None:
+            await events.emit_manage_charter_tick_root_close_guarded(
+                root=decision.root_id,
+                reason=reason,
+                guard=guard,
+                checkpoint_turn=checkpoint_turn_number(decision.checkpoint),
+            )
+            return state_closes_this_tick
+
     if state_closes_this_tick >= max_state_closes:
         return state_closes_this_tick
 
@@ -134,6 +216,13 @@ async def maybe_state_close_root(
             logger.exception(
                 "charter-runner unenroll failed for root %s", decision.root_id
             )
+        try:
+            _apply_state_close_ledger(decision.root_id, reason=reason)
+        except Exception:  # noqa: BLE001 — bus close succeeded; ledger best-effort
+            logger.exception(
+                "charter-runner ledger state-close failed for root %s",
+                decision.root_id,
+            )
         state_closes_this_tick += 1
 
     await events.emit_manage_charter_tick_root_closed(
@@ -154,10 +243,11 @@ async def emit_skip_and_maybe_state_close(
     max_state_closes: int = MAX_STATE_CLOSES_PER_TICK,
     caps: _CapsCheck | None = None,
 ) -> int:
-    """Emit root_skipped; state-close on no_gated_pickup or exact stale stop.
+    """Emit root_skipped; state-close on terminal skip reasons or exact stale stop.
 
     Invokes ``maybe_state_close_root`` when:
     - ``decision.reason == \"no_gated_pickup\"``, or
+    - ``decision.reason == \"exhausted_hopper\"``, or
     - ``decision.reason == \"window_in_flight\"`` and
       ``caps.check(root) == (False, \"stopped:stale_window\")`` (A1 exact match).
 
@@ -183,6 +273,8 @@ async def emit_skip_and_maybe_state_close(
     close_reason: str | None = None
     if reason == "no_gated_pickup":
         close_reason = "no_gated_pickup"
+    elif reason == "exhausted_hopper":
+        close_reason = "exhausted_hopper"
     elif reason == "window_in_flight" and caps is not None:
         # A1: exact equality only — forbid startswith on stopped:*.
         if caps.check(decision.root_id) == (False, "stopped:stale_window"):

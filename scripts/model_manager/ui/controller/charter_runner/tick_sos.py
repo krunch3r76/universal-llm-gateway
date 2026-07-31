@@ -79,7 +79,7 @@ def classify_skip_for_sos(
         return "consult_pending_empty_hopper"
     if reason in _PATHALOGICAL_SKIPS:
         return reason
-    if reason in {"dormant", "empty_hopper", "no_gated_pickup"}:
+    if reason in {"dormant", "empty_hopper", "no_gated_pickup", "exhausted_hopper"}:
         return None
     status = (ledger_status or "").upper()
     label = (old_decision_label or "").upper()

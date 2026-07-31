@@ -75,6 +75,36 @@ def extract_cortex_uris_from_wrapper(wrapper_text: str) -> list[str]:
     return uris
 
 
+def extract_durable_sidecar_uris(wrapper_text: str) -> list[str]:
+    """Collect order-preserving durable sidecar URIs with cortex precedence."""
+    if not is_wrapper_manifest(wrapper_text):
+        return []
+    try:
+        data = json.loads(wrapper_text.strip())
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return []
+    if not isinstance(data, dict):
+        return []
+
+    effects = _as_str_list(data.get("effects"))
+    files_offgit = _as_str_list(data.get("files_offgit_produced"))
+    artifact_paths: list[str] = []
+    evidence_uris = data.get("evidence_uris")
+    if isinstance(evidence_uris, dict):
+        artifact_paths = _as_str_list(evidence_uris.get("artifact_paths"))
+
+    pool = _order_preserving_dedup(effects, files_offgit, artifact_paths)
+    cortex: list[str] = []
+    workspaces: list[str] = []
+    for entry in pool:
+        if entry.startswith("cortex://"):
+            cortex.append(entry)
+        elif entry.startswith("workspaces://"):
+            workspaces.append(entry)
+    cortex.sort(key=lambda uri: (0 if "closeout" in uri.lower() else 1, uri))
+    return _order_preserving_dedup(cortex, workspaces)
+
+
 def read_cortex_text(uri: str, *, cortex_root: Path) -> str | None:
     """Read a cortex file under *cortex_root*; skip unsafe paths without raising."""
     rel = cortex_relpath(uri)
@@ -115,6 +145,7 @@ __all__ = [
     "cortex_body_binds_dispatch",
     "cortex_relpath",
     "extract_cortex_uris_from_wrapper",
+    "extract_durable_sidecar_uris",
     "normalize_cortex_uri",
     "read_cortex_text",
 ]

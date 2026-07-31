@@ -11,7 +11,6 @@ from .giw_live_hold import (
     fetch_giw_active_work_payload,
     read_giw_active_work,
 )
-from .root_health import FireAttemptOutcome
 from .root_ledger import RootLedgerRow, Transition
 from .storm_fuse import FuseIdentity, record_park_friction
 from .telemetry import emit_identical_work_refire_refused
@@ -262,24 +261,11 @@ async def evaluate_identical_work_refire(
     return RefireGateOutcome(refused=False, work_key=work_key, probe_status=probe_status)
 
 
-def refused_kernel_outcome(outcome: RefireGateOutcome):
-    """Map a refuse outcome to ``KernelTickOutcome`` fields."""
-    from .kernel_tick import KernelTickOutcome
-
-    return KernelTickOutcome(
-        "kernel_identical_work_refire",
-        skipped_reason=outcome.skipped_reason or SKIP_REASON,
-        fire_attempt_outcome=FireAttemptOutcome.REFUSED_PRE_FIRE,
-        fire_attempt_reason="identical_work_refire",
-    )
-
-
 __all__ = [
     "FRICTION_ID",
     "RefireGateContext",
     "RefireGateOutcome",
     "SKIP_REASON",
     "evaluate_identical_work_refire",
-    "refused_kernel_outcome",
     "resolve_admission_mode",
 ]

@@ -28,14 +28,16 @@ def attendance_from_todo_attrs(attrs: dict | None) -> Attendance:
 
 
 def arc_lane_from_todo_attrs(attrs: dict | None) -> ArcLane:
-    """Map todo ``arc_lane`` attr; default path_sim (fail-safe to current behaviour)."""
+    """Map todo ``arc_lane`` attr; default layer when unset; garbage → path_sim."""
     if not isinstance(attrs, dict):
-        return "path_sim"
+        return "layer"
     raw = str(attrs.get("arc_lane") or "").strip().lower()
     if raw == "layer":
         return "layer"
     if raw == "path_sim":
         return "path_sim"
+    if not raw:
+        return "layer"
     return "path_sim"
 
 
@@ -119,7 +121,7 @@ async def resolve_todo_axes(root_id: str) -> tuple[Attendance, ArcLane, str | No
     arc_lane: ArcLane = arc_lane_from_todo_attrs(attrs)
     if attrs is not None and not str(attrs.get("arc_lane") or "").strip():
         logger.warning(
-            "charter.tick.arc_lane.unset root_id=%s todo_ref=%s — defaulting path_sim",
+            "charter.tick.arc_lane.unset root_id=%s todo_ref=%s — defaulting layer",
             root_id,
             todo_ref,
         )

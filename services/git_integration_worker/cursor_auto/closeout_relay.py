@@ -34,6 +34,9 @@ from services.git_integration_worker.cursor_auto.closeout_relay_common import (
 from services.git_integration_worker.cursor_auto.closeout_relay_cortex_fields import (
     status_from_section2,
 )
+from services.git_integration_worker.cursor_auto.closeout_relay_cortex_fence import (
+    extract_fence_exception_lines,
+)
 from services.git_integration_worker.cursor_auto.closeout_relay_cortex import (
     run_cortex_scan,
 )
@@ -51,6 +54,13 @@ from services.git_integration_worker.cursor_sdk_deliverables import (
 )
 
 _SIDECAR_REL_DIR = "tmp/reviews/closeouts"
+
+
+def _append_fence_exception_lines(projected: str, prose: str) -> str:
+    extras = extract_fence_exception_lines(prose)
+    if not extras:
+        return projected
+    return projected.rstrip() + "\n\n" + "\n".join(extras) + "\n"
 
 
 def _evidence_cell_from_parts(
@@ -263,6 +273,7 @@ def select_closeout_relay_payload(
                 provenance=provenance,
                 fallback_status=fallback_status,
             )
+            projected = _append_fence_exception_lines(projected, prose)
             return finalize_relay_payload(
                 CloseoutRelayPayload(
                     body=projected,
@@ -282,6 +293,7 @@ def select_closeout_relay_payload(
             provenance=provenance,
             fallback_status=fallback_status,
         )
+        projected = _append_fence_exception_lines(projected, prose)
         return finalize_relay_payload(
             CloseoutRelayPayload(
                 body=projected,

@@ -13,6 +13,9 @@ from services.git_integration_worker.cursor_auto.closeout_relay import (
     strip_machine_tail,
     synthesize_section2,
 )
+from services.git_integration_worker.cursor_auto.closeout_relay_common import (
+    CloseoutRelayPayload,
+)
 from services.git_integration_worker.cursor_auto.closeout_relay_cortex import (
     _MAX_RELAYED_CORTEX_CHARS,
     cap_relayed_cortex_text,
@@ -864,3 +867,96 @@ status: complete
         or len(payload.body) <= 2500
     )
     assert not payload.body.rstrip().endswith("observed-pa")
+
+
+# --- L1 over-claim clamp (6530 turn 8 / AC5–AC6) ---
+
+_TURN8_DISPATCH = "auto-09e744ed67d9"
+_TURN8_CORTEX_CLOSEOUT = "cortex://notes/system/threads/6530-fable-confer-closeout.md"
+_TURN8_CORTEX_PROMPT = "cortex://notes/system/threads/6530-fable-caller-auditable-fork.md"
+_TURN8_WS_MIRROR = (
+    "workspaces://universal-llm-gateway/tmp/reviews/closeouts/auto-09e744ed67d9.md"
+)
+
+_TURN8_RELAYED_BODY = """\
+TYPE: CONFER
+status: partial
+dispatch_id: auto-09e744ed67d9
+model: cursor/grok-4.5
+request_turn: 2
+
+TYPE: CLOSEOUT
+status: complete
+
+| Field | Value |
+|---|---|
+| status | complete |
+| ac_verdict | unclassified — relay could not parse §2 from 1498 bytes at workspaces://universal-llm-gateway/tmp/reviews/closeouts/auto-09e744ed67d9.md |
+| deltas_to_spec | none — field not authored in §2 sidecar |
+| decisions_taken | none — field not authored in §2 sidecar |
+| effects | - cortex://notes/system/threads/6530-fable-caller-auditable-fork.md<br>- cortex://notes/system/threads/6530-fable-confer-closeout.md<br>- workspaces://universal-llm-gateway/tmp/reviews/closeouts/auto-09e744ed67d9.md<br>- agent-bus:6530 |
+| evidence | none — see machine envelope below |
+| next | unauthored — operator must derive from effects above |
+| open forks | none — field not authored in §2 sidecar |
+"""
+
+_TURN8_WRAPPER = json.dumps(
+    {
+        "schema_version": 1,
+        "status": "complete",
+        "summary": f"dispatch {_TURN8_DISPATCH}",
+        "files_created": [],
+        "files_modified": [],
+        "files_deleted": [],
+        "effects": [_TURN8_CORTEX_PROMPT, _TURN8_CORTEX_CLOSEOUT],
+        "files_offgit_produced": [_TURN8_CORTEX_PROMPT, _TURN8_CORTEX_CLOSEOUT],
+        "capture_status": "partial",
+        "effects_manifest": {"schema_version": 1},
+        "evidence_uris": {
+            "artifact_paths": [_TURN8_WS_MIRROR, _TURN8_CORTEX_CLOSEOUT],
+            "bus_threads": ["6530"],
+        },
+    }
+)
+
+
+def test_turn8_relay_body_overclaim_clamp_ac5() -> None:
+    """AC5 — turn 8 relay body: partial status, preserved unclassified, no false absence."""
+    from services.git_integration_worker.cursor_auto.closeout_relay_briefing import (
+        finalize_relay_payload,
+    )
+
+    payload = finalize_relay_payload(
+        CloseoutRelayPayload(
+            body=_TURN8_RELAYED_BODY,
+            status="complete",
+            source="section2_synthesized",
+        ),
+        wrapper_text=_TURN8_WRAPPER,
+        dispatch_id=_TURN8_DISPATCH,
+    )
+    assert payload.status == "partial"
+    assert "unclassified — relay could not parse §2 from 1498 bytes" in payload.body
+    assert "none — field not authored in §2 sidecar" not in payload.body
+    assert f"unresolved — not read: {_TURN8_CORTEX_CLOSEOUT}" in payload.body
+    assert "overclaim:unclassified_field" in payload.body
+    assert "overclaim:false_absence_unread_provenance" in payload.body
+
+
+def test_internally_consistent_closeout_not_clamped_ac6() -> None:
+    """AC6 — healthy complete closeout must not be clamped to partial."""
+    from services.git_integration_worker.cursor_auto.closeout_relay_briefing import (
+        finalize_relay_payload,
+    )
+
+    payload = finalize_relay_payload(
+        CloseoutRelayPayload(
+            body=_FIXTURE_T44_SECTION2,
+            status="complete",
+            source="section2_sidecar",
+        ),
+        wrapper_text=_WRAPPER,
+        dispatch_id="auto-t44-regression",
+    )
+    assert payload.status == "complete"
+    assert "overclaim:" not in payload.body

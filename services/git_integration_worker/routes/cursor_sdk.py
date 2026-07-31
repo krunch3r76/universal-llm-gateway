@@ -1948,6 +1948,13 @@ async def cursor_dispatch(
             invalid_fields=["read_only"],
         )
     candidate_source_ref = req.source_ref or extract_source_ref_from_packet(packet_text)
+    candidate_work_key = req.work_key
+    if not candidate_work_key and packet_text:
+        import re
+
+        match = re.search(r"(?im)^work_key:\s*(\S+)\s*$", packet_text)
+        if match:
+            candidate_work_key = match.group(1)
     if contract == "implement" and not candidate_source_ref:
         emit_sdk_implement_unresolved_source_ref(
             dispatch_id=req.dispatch_id,
@@ -1988,6 +1995,7 @@ async def cursor_dispatch(
             read_only=effective_read_only,
             worker_instance=controller.worker_id,
             source_ref=candidate_source_ref,
+            work_key=candidate_work_key,
             force=req.force,
             nest_under=req.nest_under,
             refuse_if_lease_held=req.refuse_if_lease_held,
@@ -2019,6 +2027,7 @@ async def cursor_dispatch(
             validation_stage="ledger_source_ref",
             extra_data={
                 "source_ref": exc.source_ref,
+                "work_key": exc.work_key,
                 "holder_dispatch_id": exc.holder_dispatch_id,
                 "holder_thread_id": exc.holder_thread_id,
             },

@@ -242,10 +242,10 @@ async def emit_storm_fuse_tripped(
 
 
 async def emit_arc_lane_unset(*, root_id: str, todo_ref: str | None) -> None:
-    """Warn when a codework todo lacks explicit ``arc_lane`` (fail-safe path_sim)."""
+    """Warn when a codework todo lacks explicit ``arc_lane`` (defaults layer)."""
     await _emit(
         "manage.charter.tick.arc_lane.unset",
-        {"root": root_id, "todo_ref": todo_ref or "", "arc_lane": "path_sim"},
+        {"root": root_id, "todo_ref": todo_ref or "", "arc_lane": "layer"},
     )
 
 

@@ -10,6 +10,7 @@ from scripts.model_manager.ui.controller.charter_runner.checkpoint_schema import
 from scripts.model_manager.ui.controller.charter_runner.checkpoint_schema import (
     append_footer_to_packet,
     emit_footer,
+    EMPTY_GATED_PICKUP_SENTINEL,
     output_format_footer_requirement,
     validate_checkpoint_footer,
 )
@@ -170,3 +171,45 @@ def test_output_format_states_phase0_wip_null_rule() -> None:
     text = output_format_footer_requirement(window_id="charter-6110-w3")
     assert "wip to null" in text
     assert "cross-root" in text
+
+
+def test_output_format_requires_none_sentinel_when_gated_pickup_empty() -> None:
+    text = output_format_footer_requirement()
+    assert "none" in text
+    assert "never JSON null" in text
+
+
+def test_validate_accepts_empty_gated_pickup_sentinel() -> None:
+    footer = emit_footer(
+        schema_version=1,
+        status="CHECKPOINT",
+        next_pickup=dict(EMPTY_GATED_PICKUP_SENTINEL),
+        wip=None,
+        consult={"role": None, "poll_hint": None, "from": None},
+        revise_count=0,
+        evidence=[],
+        window_id="charter-6518-w1",
+        transition_id=None,
+    )
+    result = validate_checkpoint_footer(footer)
+    assert result.ok is True
+
+
+def test_validate_rejects_null_next_pickup_gid() -> None:
+    body = """```charter-state
+{
+  "consult": {"from": null, "poll_hint": null, "role": null},
+  "evidence": [],
+  "next_pickup": {"executor": "x", "gid": null, "lane": "judgment"},
+  "revise_count": 0,
+  "schema_version": 1,
+  "status": "CHECKPOINT",
+  "transition_id": null,
+  "window_id": "charter-6518-w1",
+  "wip": null
+}
+```
+"""
+    result = validate_checkpoint_footer(body)
+    assert result.ok is False
+    assert "next_pickup.gid" in result.errors

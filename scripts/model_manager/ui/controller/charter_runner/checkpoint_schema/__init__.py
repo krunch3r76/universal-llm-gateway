@@ -10,12 +10,14 @@ from .body import (
     strip_sidecar_frontmatter,
 )
 from .footer import (
+    EMPTY_GATED_PICKUP_SENTINEL,
     FOOTER_FENCE,
     FooterFields,
     ValidationResult,
     append_footer_to_packet,
     emit_footer,
     footer_kwargs_for_window,
+    is_exhausted_hopper_footer,
     output_format_footer_requirement,
     validate_checkpoint_footer,
 )
@@ -38,6 +40,7 @@ from .sections import (
 )
 
 __all__ = [
+    "EMPTY_GATED_PICKUP_SENTINEL",
     "FOOTER_FENCE",
     "FooterFields",
     "ParsedCheckpoint",
@@ -54,6 +57,7 @@ __all__ = [
     "find_section",
     "first_actionable_step",
     "footer_kwargs_for_window",
+    "is_exhausted_hopper_footer",
     "item_is_gated",
     "materialize_checkpoint_turn",
     "normalize_checkpoint_machine_fields",

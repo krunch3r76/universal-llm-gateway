@@ -7,10 +7,10 @@ from typing import Any
 from scripts.model_manager import observation_event as events
 
 from ..admission import CapStore, CapsView, Decision
-from ..root_health import FireAttemptOutcome, observe_root_health
-from ..state_close import checkpoint_turn_number, emit_skip_and_maybe_state_close
 from ..checkpoint_schema import item_is_gated
 from ..pickup_advance import empty_hopper_row_rejections
+from ..root_health import FireAttemptOutcome, observe_root_health
+from ..state_close import checkpoint_turn_number, emit_skip_and_maybe_state_close
 from ..window_exec import parse_tip_checkpoint
 
 
@@ -37,6 +37,22 @@ async def apply_skip_side_effects(
             root_id=root_id,
             checkpoint=tip[0] if tip is not None else None,
             parsed=tip[1] if tip is not None else None,
+        )
+        state_closes_this_tick = await emit_skip_and_maybe_state_close(
+            decision,
+            state_closes_this_tick=state_closes_this_tick,
+            skipped_by_reason=skipped_by_reason,
+            caps=caps,
+        )
+    elif skipped_reason == "exhausted_hopper":
+        tip = parse_tip_checkpoint(turns)
+        decision = Decision(
+            eligible=False,
+            reason="exhausted_hopper",
+            root_id=root_id,
+            checkpoint=tip[0] if tip is not None else None,
+            parsed=tip[1] if tip is not None else None,
+            predicate_id="is_exhausted_hopper_footer",
         )
         state_closes_this_tick = await emit_skip_and_maybe_state_close(
             decision,

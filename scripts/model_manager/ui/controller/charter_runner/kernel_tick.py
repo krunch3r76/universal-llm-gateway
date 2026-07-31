@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -10,6 +11,7 @@ from universal_logging import get_logger
 
 from .admission import CapStore, CapsView, EnvFacts, decide, layer_independence_unproven
 from .checkpoint_schema import resolve_checkpoint_body
+from .checkpoint_schema.footer import is_exhausted_hopper_footer
 from .consult_lane import (
     _backoff_s,
     _consult_role_for_row,
@@ -18,17 +20,17 @@ from .consult_lane import (
     resolve_consult_role,
     sync_ledger_consult_queued,
 )
-from .identical_work_refire import (
-    RefireGateContext,
-    evaluate_identical_work_refire,
-    refused_kernel_outcome,
-    resolve_admission_mode,
-)
 from .conveyor_phase import (
     record_admit_cursor,
     wake_conveyor_if_fresh_append,
 )
 from .env_snapshot import EnvSnapshot
+from .identical_work_refire import (
+    SKIP_REASON,
+    RefireGateContext,
+    evaluate_identical_work_refire,
+    resolve_admission_mode,
+)
 from .pickup_advance import (
     advance_pickup_gid,
     gated_pickup_from_parsed,
@@ -60,7 +62,7 @@ from .work_key_store import record_admit
 
 logger = get_logger(__name__)
 
-_EXECUTION_ID_RE = __import__("re").compile(r"execution_id=(\S+)", __import__("re").IGNORECASE)
+_EXECUTION_ID_RE = re.compile(r"execution_id=(\S+)", re.IGNORECASE)
 
 
 def _source_ref_for_admit(parsed, *, transition: Transition, admission_mode: str):
@@ -93,6 +95,15 @@ def _refire_context_for_row(row, parsed) -> RefireGateContext:
     return RefireGateContext(
         incoming_window_index=wip_index if wip_index > 0 else None,
         incoming_dispatch_id=_incoming_dispatch_id(parsed),
+    )
+
+
+def _refused_refire_outcome(outcome) -> KernelTickOutcome:
+    return KernelTickOutcome(
+        "kernel_identical_work_refire",
+        skipped_reason=outcome.skipped_reason or SKIP_REASON,
+        fire_attempt_outcome=FireAttemptOutcome.REFUSED_PRE_FIRE,
+        fire_attempt_reason="identical_work_refire",
     )
 
 # Gated tip required for admit/queue (a:26596; enqueue-then-stall never closed).
@@ -249,7 +260,7 @@ async def apply_kernel_tick_for_root(
                 typed_authority=typed_authority,
             )
         facts = env.facts_for_root(root_id, has_wip=has_wip)
-        arc_lane = env.arc_lane_by_root.get(root_id, "path_sim")
+        arc_lane = env.arc_lane_by_root.get(root_id, "layer")
         empty_hopper = False
         checkpoint_body = ""
         if tip is not None:
@@ -260,6 +271,19 @@ async def apply_kernel_tick_for_root(
                     if isinstance(tip[0].get("sidecar_uri"), str)
                     else None
                 ),
+            )
+        if (
+            checkpoint_body
+            and is_exhausted_hopper_footer(checkpoint_body)
+            and gated_pickup_from_parsed(parsed) is None
+            and not has_wip
+            and not row.wip_window_id
+        ):
+            return KernelTickOutcome(
+                "kernel_exhausted_hopper",
+                skipped_reason="exhausted_hopper",
+                fire_attempt_outcome=FireAttemptOutcome.NO_ATTEMPT_QUIET,
+                fire_attempt_reason="exhausted_hopper",
             )
         if not typed_authority:
             empty_hopper = tip_is_empty_hopper(
@@ -357,7 +381,7 @@ async def apply_kernel_tick_for_root(
                 ctx=_refire_context_for_row(row, parsed),
             )
             if refire.refused:
-                return refused_kernel_outcome(refire)
+                return _refused_refire_outcome(refire)
             pending_work_key = refire.work_key or compute_work_key(
                 root_id=root_id,
                 source_ref=source_ref,
@@ -570,7 +594,7 @@ async def _admit_consult(
     workspace_root: Path | None,
     on_admit,
     parsed=None,
-    arc_lane: str = "path_sim",
+    arc_lane: str = "layer",
     work_key: str | None = None,
 ) -> KernelTickOutcome:
     if workspace_root is None:
@@ -640,7 +664,7 @@ async def _admit_worker(
     workspace_root: Path | None,
     admission_mode: str,
     on_admit,
-    arc_lane: str = "path_sim",
+    arc_lane: str = "layer",
     work_key: str | None = None,
     parsed=None,
 ) -> KernelTickOutcome:

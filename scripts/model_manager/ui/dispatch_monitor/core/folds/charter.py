@@ -149,6 +149,8 @@ class CharterFold:
             signals.CHARTER_CONSULT_QUEUED: self._on_informational_root,
             signals.CHARTER_CONSULT_DEFERRED: self._on_informational_root,
             signals.CHARTER_ENROLLMENT_FILTERED: self._on_informational_root,
+            signals.CHARTER_ROOT_BLOCKED: self._on_root_blocked,
+            signals.CHARTER_ROOT_UNBLOCKED: self._on_root_unblocked,
             # Shadow path floods every tick for many roots — ack only; never mint rows.
             signals.CHARTER_SHADOW_DIFF: self._on_telemetry_ack,
             signals.CHARTER_SHADOW_STARVED: self._on_telemetry_ack,
@@ -388,6 +390,33 @@ class CharterFold:
         """Durable tick hold cleared — next interval runs a normal tick."""
         self.hold_active = False
         self.hold_reason = None
+
+    def _on_root_blocked(self, record: EventRecord) -> None:
+        """Operator per-root hold — ledger BLOCKED; stops new admits only."""
+        payload = record.payload
+        root_id = _root_id(payload, record)
+        if not root_id:
+            return
+        row = self._root(root_id, record)
+        row.state = "blocked"
+        if payload.get("unenrolled"):
+            row.unenrolled = True
+        reason = payload.get("reason")
+        if reason:
+            row.skip_reason = str(reason)
+
+    def _on_root_unblocked(self, record: EventRecord) -> None:
+        """Operator cleared per-root hold — BLOCKED returns to IDLE admits."""
+        payload = record.payload
+        root_id = _root_id(payload, record)
+        if not root_id:
+            return
+        row = self._root(root_id, record)
+        if row.closed:
+            return
+        row.state = "idle"
+        if payload.get("reenrolled"):
+            row.unenrolled = False
 
     def _on_informational_root(self, record: EventRecord) -> None:
         """Root-keyed telemetry (audit/transition/shadow/consult) — no state flip."""

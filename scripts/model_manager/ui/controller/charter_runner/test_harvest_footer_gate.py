@@ -90,6 +90,54 @@ def test_invalid_next_pickup_gid_rejected() -> None:
     )
 
 
+def test_null_next_pickup_gid_rejected_without_heal() -> None:
+    body = """prose
+
+```charter-state
+{
+  "consult": {"from": null, "poll_hint": null, "role": null},
+  "evidence": [],
+  "next_pickup": {"executor": "none", "gid": null, "lane": "none"},
+  "revise_count": 0,
+  "schema_version": 1,
+  "status": "CHECKPOINT",
+  "transition_id": null,
+  "window_id": "charter-6518-w1",
+  "wip": null
+}
+```
+"""
+    ok, field_path = footer_field_path(body)
+    assert ok is False
+    assert field_path == "next_pickup.gid"
+    assert reject_harvest_without_footer(
+        root_id="6518",
+        window_index=1,
+        checkpoint_subject="CHECKPOINT — window 1",
+        checkpoint_body=body,
+    )
+
+
+def test_none_sentinel_next_pickup_passes_gate() -> None:
+    footer = emit_footer(
+        schema_version=1,
+        status="CHECKPOINT",
+        next_pickup={"gid": "none", "lane": "none", "executor": "none"},
+        wip=None,
+        consult={"role": None, "poll_hint": None, "from": None},
+        revise_count=0,
+        evidence=[],
+        window_id="charter-6518-w1",
+        transition_id=None,
+    )
+    assert not reject_harvest_without_footer(
+        root_id="6518",
+        window_index=1,
+        checkpoint_subject="CHECKPOINT — window 1",
+        checkpoint_body=f"prose\n\n{footer}",
+    )
+
+
 @pytest.mark.asyncio
 async def test_harvest_skips_footerless_checkpoint(tmp_path, monkeypatch) -> None:
     from scripts.model_manager.ui.controller.charter_runner import window_log

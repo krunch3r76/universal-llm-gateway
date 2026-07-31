@@ -72,7 +72,13 @@ async def fire_window(
     Composer implement bind instead of the Grok judgment bind; the caller is
     ``executor_routing``, which supplies a ref only when the implement lane is
     proven.
+
+    ``work_key`` is embedded in the packet body (``work_key: …`` line) — GIW
+    parses it from packet text. It must **not** be sent as a team_dispatch
+    generate field (Stargate rejects unknown keys with 400 validation_failed).
     """
+    if work_key:
+        packet_text = f"work_key: {work_key}\n\n{packet_text}"
     packet_path = write_handoff_packet(
         workspace_root, root_id, window_index, packet_text
     )
@@ -135,8 +141,6 @@ async def fire_window(
             caller_agent=_CALLER,
         )
         path = _DISPATCH_PATH
-    if work_key:
-        body["work_key"] = work_key
     async with make_async_client(DEFAULT_STARGATE_URL, timeout=_TIMEOUT_S) as client:
         resp = await client.post(path, json=body)
         resp.raise_for_status()

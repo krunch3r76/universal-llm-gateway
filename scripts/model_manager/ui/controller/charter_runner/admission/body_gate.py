@@ -27,7 +27,11 @@ from ..env_predicates import (
     GIW_HOLD_BLOCKS_RESTART_REASON,
     EnvironmentSnapshot,
 )
-from ..window_terminal_contract import CHECKPOINT_PREFIX, is_tip_class, is_window_terminal
+from ..window_terminal_contract import (
+    CHECKPOINT_PREFIX,
+    is_tip_class,
+    is_window_terminal,
+)
 from .caps import CapStore
 from .restart_pickup import next_pickup_is_restart_from_holder
 
@@ -35,6 +39,7 @@ logger = get_logger(__name__)
 
 ENROLLMENT_TAG = "charter-runner"
 ADMISSION_SUBJECT_PREFIX = "WIP charter-runner"
+TYPED_GRACE_REASON = "typed_admit_grace"
 WindowKind = Literal["worker", "consult"]
 GateHalf = Literal["body", "env"]
 
@@ -162,8 +167,16 @@ def evaluate_root(
     env_snapshot: EnvironmentSnapshot | None = None,
     admission_mode: str = "generate",
     now: datetime | None = None,
+    ledger_row: object | None = None,
 ) -> Decision:
-    """Evaluate BODY then ENV admission gates over a root's turns."""
+    """Evaluate BODY then ENV admission gates over a root's turns.
+
+    When ``ledger_row`` is supplied and ``typed_record_valid``, returns a
+    non-destructive ``TYPED_GRACE_REASON`` skip before the ledger-blind tip
+    gate — deferring admit to the kernel without manufacturing ``no_gated_pickup``.
+    Default ``ledger_row=None`` preserves byte-identical behavior for callers
+    that omit the parameter.
+    """
     from .env_half import check_env_or_eligible
 
     # In-flight fence keys off window terminals only (not conveyor pickup appends).
@@ -193,6 +206,15 @@ def evaluate_root(
     from ..checkpoint_schema import materialize_checkpoint_turn
 
     checkpoint = materialize_checkpoint_turn(checkpoint)
+
+    from .typed_work_item import typed_record_valid
+
+    if ledger_row is not None and typed_record_valid(ledger_row):
+        return _body_skip(
+            TYPED_GRACE_REASON,
+            root_id,
+            checkpoint=checkpoint,
+        )
 
     from ..checkpoint_admit_gate import (
         validate_arc_for_admit,
@@ -302,6 +324,7 @@ __all__ = [
     "CHECKPOINT_PREFIX",
     "Decision",
     "ENROLLMENT_TAG",
+    "TYPED_GRACE_REASON",
     "GIW_DRAIN_BLOCKS_RESTART_REASON",
     "GIW_HOLD_BLOCKS_RESTART_REASON",
     "ADMIT_INTENT_ORPHAN_REASON",

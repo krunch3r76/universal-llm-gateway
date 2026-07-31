@@ -103,6 +103,29 @@ async def emit_manage_charter_tick_root_closed(
     )
 
 
+async def emit_manage_charter_tick_root_close_guarded(
+    *,
+    root: str,
+    reason: str,
+    guard: str,
+    checkpoint_turn: int | None = None,
+) -> None:
+    """Emit when birth-grace declines a destructive state-close on a typed-valid root.
+
+    Distinct from ``root_closed`` so dispatch-board folds do not treat a live
+    root as closed. ``guard`` is ``typed_record_valid`` or ``ledger_read_failed``.
+    """
+    await _emit(
+        "manage.charter.tick.root_close_guarded",
+        {
+            "root": root,
+            "reason": reason,
+            "guard": guard,
+            "checkpoint_turn": checkpoint_turn,
+        },
+    )
+
+
 async def emit_manage_charter_tick_admitted(
     *,
     root: str,

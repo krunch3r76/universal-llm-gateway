@@ -57,6 +57,8 @@ CHARTER_SHADOW_STARVED = "manage.charter.tick.shadow.starved"
 CHARTER_CONSULT_QUEUED = "manage.charter.tick.consult.queued"
 CHARTER_CONSULT_DEFERRED = "manage.charter.tick.consult.deferred"
 CHARTER_ENROLLMENT_FILTERED = "manage.charter.tick.enrollment.filtered"
+CHARTER_ROOT_BLOCKED = "manage.charter.root.blocked"
+CHARTER_ROOT_UNBLOCKED = "manage.charter.root.unblocked"
 
 #: Signals accepted only as cold-start seed material, never as live transitions.
 CHARTER_COLD_START = (CHARTER_AUDIT,)
@@ -207,6 +209,8 @@ CHARTER_FAMILY = (
     CHARTER_CONSULT_QUEUED,
     CHARTER_CONSULT_DEFERRED,
     CHARTER_ENROLLMENT_FILTERED,
+    CHARTER_ROOT_BLOCKED,
+    CHARTER_ROOT_UNBLOCKED,
 )
 
 SDK_FAMILY = tuple(SDK_EMITTER_BY_SIGNAL) + SDK_LIFECYCLE_SIGNALS

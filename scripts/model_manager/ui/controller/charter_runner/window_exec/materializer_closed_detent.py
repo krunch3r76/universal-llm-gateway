@@ -101,6 +101,8 @@ Post exactly one R12 CHECKPOINT on agent-bus:{root_id} (from=cursor-sdk) with
 ## What happened (plain). WIP idle = ``_None this window._``.
 If done under closed: Next-pickup empty; friction_close cited in Frictions or
 Precedents. If escalated: Next-pickup carries detent=standard|wide + gated step.
+Footer: when gated Next-pickup is empty, set next_pickup gid/lane/executor to
+``none`` (never JSON null).
 Then stop — no auto-chain.
 {footer_req}
 </output_format>"""
