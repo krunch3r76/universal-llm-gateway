@@ -7,7 +7,7 @@ Regenerate:
 
 from __future__ import annotations
 
-OPENAPI_SHA256 = "26252fb9af191c568ea43c5650fe49db1172bc4dd63020b382ec59d014f9c7b0"
+OPENAPI_SHA256 = "b14d1b9a841e5f91f4f8e1ec00914dd328a89ba2c138ebad84f6d2b5763edac9"
 FACADE_TOOL = "cortex"
 SERVED_OPS: dict[str, dict[str, str]] = {
     "activate": {

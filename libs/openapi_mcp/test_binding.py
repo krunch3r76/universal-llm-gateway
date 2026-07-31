@@ -8,6 +8,7 @@ from openapi_mcp.binding import (
     TypedRoute,
     extract_typed_routes,
     inject_x_mcp,
+    x_mcp,
 )
 
 
@@ -89,6 +90,24 @@ def test_extract_rejects_duplicate_ops() -> None:
 
 
 @pytest.mark.offline
+def test_x_mcp_helper_shapes_openapi_extra() -> None:
+    assert x_mcp("assert") == {"x-mcp": {"tool": "cortex", "op": "assert"}}
+    assert x_mcp("search", readonly=True)["x-mcp"]["readonly"] is True
+    with pytest.raises(ValueError, match="non-empty op"):
+        x_mcp("")
+
+
+@pytest.mark.offline
+def test_native_stamp_extracts_without_any_seed() -> None:
+    """A decorator stamp alone binds the op — no (method, path) table involved."""
+    schema = _sample_openapi()
+    schema["paths"]["/assertions"]["post"].update(x_mcp("assert"))
+    routes = extract_typed_routes(schema)
+    assert set(routes) == {"assert"}
+    assert routes["assert"].operation_id == "create_assertion_post"
+
+
+@pytest.mark.offline
 def test_operation_id_comes_from_openapi_not_seed() -> None:
     """Seed carries only (method, path); operationId is live OpenAPI truth."""
     enriched = inject_x_mcp(
@@ -97,6 +116,5 @@ def test_operation_id_comes_from_openapi_not_seed() -> None:
         tool="cortex",
     )
     assert (
-        extract_typed_routes(enriched)["assert"].operation_id
-        == "create_assertion_post"
+        extract_typed_routes(enriched)["assert"].operation_id == "create_assertion_post"
     )

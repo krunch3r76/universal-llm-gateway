@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 
 from fastapi import APIRouter, Query
+from openapi_mcp.binding import x_mcp
 from universal_logging import get_logger
 
 from ..action_hints import detect_deadline_resolution
@@ -105,7 +106,7 @@ def _is_resolved(item: DeadlineItem) -> bool:
     return False
 
 
-@router.get("", response_model=DeadlineList)
+@router.get("", response_model=DeadlineList, openapi_extra=x_mcp("deadlines"))
 def list_deadlines(
     include_resolved: bool = Query(False, description="Include resolved deadlines"),
 ) -> DeadlineList:

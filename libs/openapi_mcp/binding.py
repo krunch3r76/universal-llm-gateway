@@ -1,14 +1,18 @@
 """Derive MCP op→route bindings from OpenAPI ``x-mcp`` extensions.
 
-Routes declare identity via::
+Routes declare identity natively at the decorator::
 
-    openapi_extra={"x-mcp": {"tool": "cortex", "op": "assert", "readonly": False}}
+    @router.post("/assertions", openapi_extra=x_mcp("assert"))
 
-Until every served route carries a native stamp, ``inject_x_mcp`` is the
-migration bridge: it writes the same extension onto a live OpenAPI document
-from a seed of ``(method, path)`` pairs. ``operationId`` is always taken from
-the served document — never from the seed — so id renames cannot desync the
-adapter manifest.
+The served document is therefore the source of truth: there is no table of
+``(method, path)`` pairs to keep in step with the routes. Both ``path`` and
+``operationId`` are read out of the document, so a route rename cannot desync
+the adapter manifest, and an op whose route carries no stamp is *absent* from
+the derived manifest — which the committed manifest + ``--check`` turns into a
+non-zero exit rather than a silent omission.
+
+``inject_x_mcp`` remains for services that have not yet stamped natively
+(dry-run seeding in :mod:`openapi_mcp.registry`); cortex no longer uses it.
 """
 
 from __future__ import annotations
@@ -31,6 +35,25 @@ class TypedRoute:
     operation_id: str
     tool: str = "cortex"
     readonly: bool | None = None
+
+
+def x_mcp(
+    op: str,
+    *,
+    tool: str = "cortex",
+    readonly: bool | None = None,
+) -> dict[str, Any]:
+    """Return the ``openapi_extra`` payload binding a route to an MCP op.
+
+    Use at the route decorator so the served OpenAPI document carries the
+    binding: ``@router.post("/assertions", openapi_extra=x_mcp("assert"))``.
+    """
+    if not op:
+        raise ValueError("x_mcp() requires a non-empty op")
+    payload: dict[str, Any] = {"tool": tool, "op": op}
+    if readonly is not None:
+        payload["readonly"] = readonly
+    return {"x-mcp": payload}
 
 
 def extract_typed_routes(openapi_schema: Mapping[str, Any]) -> dict[str, TypedRoute]:
@@ -101,45 +124,9 @@ def inject_x_mcp(
             raise RuntimeError(f"OpenAPI missing path {path!r} for op {op!r}")
         spec = path_item.get(method.lower())
         if not isinstance(spec, dict):
-            raise RuntimeError(
-                f"OpenAPI missing {method} {path} for op {op!r}"
-            )
+            raise RuntimeError(f"OpenAPI missing {method} {path} for op {op!r}")
         payload: dict[str, Any] = {"tool": tool, "op": op}
         if op in ro_map:
             payload["readonly"] = ro_map[op]
         spec["x-mcp"] = payload
     return schema
-
-
-def stamp_fastapi_routes(
-    app: Any,
-    seed: Mapping[str, tuple[Method, str]],
-    *,
-    tool: str,
-    readonly_by_op: Mapping[str, bool] | None = None,
-) -> int:
-    """Write ``openapi_extra['x-mcp']`` onto matching FastAPI routes.
-
-    Returns the number of routes stamped. Used so ``app.openapi()`` carries
-    bindings without editing every route decorator source file.
-    """
-    ro_map = readonly_by_op or {}
-    by_key = {(method, path): op for op, (method, path) in seed.items()}
-    stamped = 0
-    for route in getattr(app, "routes", []):
-        path = getattr(route, "path", None)
-        methods = getattr(route, "methods", None) or set()
-        if not isinstance(path, str) or not methods:
-            continue
-        for method in methods:
-            op = by_key.get((method.upper(), path))
-            if op is None:
-                continue
-            extra = dict(getattr(route, "openapi_extra", None) or {})
-            payload: dict[str, Any] = {"tool": tool, "op": op}
-            if op in ro_map:
-                payload["readonly"] = ro_map[op]
-            extra["x-mcp"] = payload
-            route.openapi_extra = extra
-            stamped += 1
-    return stamped

@@ -9,6 +9,7 @@ import datetime as dt
 import threading
 
 from fastapi import HTTPException, status
+from openapi_mcp.binding import x_mcp
 from pydantic import ValidationError
 
 from ... import vector_store
@@ -80,7 +81,10 @@ def _staging_rule_ids(
 
 
 @router.post(
-    "/supersede", response_model=SupersedeResponse, status_code=status.HTTP_201_CREATED
+    "/supersede",
+    response_model=SupersedeResponse,
+    status_code=status.HTTP_201_CREATED,
+    openapi_extra=x_mcp("supersede"),
 )
 def supersede_assertion(body: SupersedeRequest) -> SupersedeResponse:
     """Atomic supersession — close old assertion and create replacement in one transaction.

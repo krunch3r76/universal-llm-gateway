@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -10,7 +10,7 @@ import yaml
 
 from cortex_store.dispatch_ops import _OP_SPECS
 
-from ._route_map import UNTYPEABLE_OPS, mcp_route_seed
+from ._route_map import UNTYPEABLE_OPS, _live_openapi, typed_routes_from_openapi
 
 Bucket = str  # served | rb_only | neither | untypeable
 _REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -23,6 +23,8 @@ class FourBucketCensus:
     rb_only: frozenset[str]
     neither: frozenset[str]
     untypeable: frozenset[str]
+    served_routes: dict[str, tuple[str, str]] = field(default_factory=dict)
+    """op → (METHOD, path), read out of the served document's ``x-mcp`` stamps."""
 
     @property
     def total(self) -> int:
@@ -35,7 +37,9 @@ class FourBucketCensus:
 
 
 def _rb_schema_ops(canonical_yaml_path: Path) -> frozenset[str]:
-    data: dict[str, Any] = yaml.safe_load(canonical_yaml_path.read_text(encoding="utf-8"))
+    data: dict[str, Any] = yaml.safe_load(
+        canonical_yaml_path.read_text(encoding="utf-8")
+    )
     out: set[str] = set()
     for row in data.get("tools", []):
         if row.get("domain") != "cortex":
@@ -50,10 +54,18 @@ def build_four_bucket_census(
     *,
     op_specs: dict[str, str] | None = None,
     canonical_yaml_path: Path | None = None,
+    openapi_schema: dict[str, Any] | None = None,
 ) -> FourBucketCensus:
-    """Partition every dispatch op into the L0 T1-1 four-bucket join."""
+    """Partition every dispatch op into the L0 T1-1 four-bucket join.
+
+    ``served`` is derived from ``x-mcp`` stamps in the served document, so an
+    op whose route carries no stamp falls into ``neither`` — visible, not lost.
+    """
     ops = frozenset(op_specs or _OP_SPECS)
-    served = frozenset(mcp_route_seed()) & ops
+    routes = typed_routes_from_openapi(
+        openapi_schema if openapi_schema is not None else _live_openapi()
+    )
+    served = frozenset(routes) & ops
     untypeable = UNTYPEABLE_OPS & ops
     rb_all = _rb_schema_ops(canonical_yaml_path or _DEFAULT_CANONICAL) & ops
     rb_only = rb_all - served - untypeable
@@ -63,12 +75,12 @@ def build_four_bucket_census(
         rb_only=rb_only,
         neither=neither,
         untypeable=untypeable,
+        served_routes={op: (routes[op].method, routes[op].path) for op in served},
     )
 
 
 def render_census_markdown(census: FourBucketCensus) -> str:
     """Render durable census artifact body."""
-    seed = mcp_route_seed()
     lines = [
         "# Four-bucket census — todo:openapi-mcp-dispatch-retire (A2)",
         "",
@@ -86,7 +98,7 @@ def render_census_markdown(census: FourBucketCensus) -> str:
         "",
     ]
     for op in sorted(census.served):
-        method, path = seed[op]
+        method, path = census.served_routes[op]
         lines.append(f"- `{op}` → `{method} {path}`")
     lines.extend(["", "## R-b-only", ""])
     for op in sorted(census.rb_only):

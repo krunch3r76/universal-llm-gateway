@@ -20,17 +20,10 @@ from cortex_store.openapi_mcp.codegen import (  # noqa: E402
     dry_run_generate,
     write_generated_module,
 )
-from openapi_mcp.binding import inject_x_mcp  # noqa: E402
+from openapi_mcp.binding import extract_typed_routes, inject_x_mcp  # noqa: E402
 from openapi_mcp.registry import default_registry  # noqa: E402
 
 _GENERATED_OPENAPI = _REPO / "config" / "mcp" / "generated" / "cortex.openapi.json"
-
-
-def _cortex_schema_with_x_mcp() -> dict:
-    from cortex_store.main import create_app
-    from cortex_store.openapi_mcp._route_map import mcp_route_seed
-
-    return inject_x_mcp(create_app().openapi(), dict(mcp_route_seed()), tool="cortex")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -52,7 +45,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--write-openapi",
         action="store_true",
-        help=f"Write x-mcp-enriched OpenAPI to {_GENERATED_OPENAPI}",
+        help=f"Write the served OpenAPI (with native x-mcp) to {_GENERATED_OPENAPI}",
+    )
+    parser.add_argument(
+        "--unbound",
+        action="store_true",
+        help="List dispatch ops with no x-mcp route stamp and no exemption",
     )
     parser.add_argument(
         "--services",
@@ -66,19 +64,22 @@ def main(argv: list[str] | None = None) -> int:
         print(render_census_markdown(census))
         return 0
 
+    if args.unbound:
+        from cortex_store.openapi_mcp._route_map import unbound_dispatch_ops
+
+        unbound = unbound_dispatch_ops()
+        print(f"unbound ops: {len(unbound)}")
+        for op in unbound:
+            print(f"  {op}")
+        return 0
+
     if args.services:
         for desc in default_registry():
             schema = desc.load_openapi()
             seed = desc.seed_bindings() if desc.seed_bindings else {}
             if seed:
-                from openapi_mcp.binding import extract_typed_routes
-
-                enriched = inject_x_mcp(schema, dict(seed), tool=desc.facade_tool)
-                n = len(extract_typed_routes(enriched))
-            else:
-                from openapi_mcp.binding import extract_typed_routes
-
-                n = len(extract_typed_routes(schema))
+                schema = inject_x_mcp(schema, dict(seed), tool=desc.facade_tool)
+            n = len(extract_typed_routes(schema))
             print(
                 f"{desc.name}: paths={len(schema.get('paths') or {})} "
                 f"x-mcp-ops={n} facade={desc.facade_tool}"
@@ -86,7 +87,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.write_openapi:
-        schema = _cortex_schema_with_x_mcp()
+        from cortex_store.main import create_app
+
+        schema = create_app().openapi()
         _GENERATED_OPENAPI.parent.mkdir(parents=True, exist_ok=True)
         _GENERATED_OPENAPI.write_text(
             json.dumps(schema, indent=2, sort_keys=True) + "\n",

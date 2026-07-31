@@ -26,12 +26,6 @@ def _load_cortex_openapi() -> dict[str, Any]:
     return create_app().openapi()
 
 
-def _cortex_seed() -> dict[str, tuple[str, str]]:
-    from cortex_store.openapi_mcp._route_map import mcp_route_seed
-
-    return dict(mcp_route_seed())
-
-
 def _load_agent_bus_openapi() -> dict[str, Any]:
     from agent_bus_store.server import create_app
 
@@ -39,13 +33,13 @@ def _load_agent_bus_openapi() -> dict[str, Any]:
 
 
 def default_registry() -> tuple[ServiceDescriptor, ...]:
-    """Built-in descriptors — cortex has a seed; agent-bus is dry-run-ready."""
+    """Built-in descriptors — cortex is natively stamped; agent-bus is dry-run-ready."""
     return (
         ServiceDescriptor(
             name="cortex",
             facade_tool="cortex",
             load_openapi=_load_cortex_openapi,
-            seed_bindings=_cortex_seed,
+            seed_bindings=None,
         ),
         ServiceDescriptor(
             name="agent-bus",

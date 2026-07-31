@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Query
+from openapi_mcp.binding import x_mcp
 
 from ..db import cortex_conn
 from ..db import query as db_query
@@ -13,7 +14,7 @@ from .todo_retrieval import _todo_edge_join, _todo_filter_sql, _todo_row
 router = APIRouter(tags=["todos"])
 
 
-@router.get("/todo-audit")
+@router.get("/todo-audit", openapi_extra=x_mcp("todo_audit"))
 def get_todo_audit(
     stale_days: int = Query(60, ge=1, le=3650),
     limit: int = Query(50, ge=1, le=500),

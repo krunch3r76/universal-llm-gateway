@@ -6,10 +6,12 @@ from typing import Any
 
 from cortex_store.dispatch_ops import _OP_SPECS
 
-from ._route_map import UNTYPEABLE_OPS, mcp_route_seed, typed_routes_from_openapi
+from ._route_map import UNTYPEABLE_OPS, served_ops, typed_routes_from_openapi
 
 
-def served_operation_ids(openapi_schema: dict[str, Any] | None = None) -> dict[str, str]:
+def served_operation_ids(
+    openapi_schema: dict[str, Any] | None = None,
+) -> dict[str, str]:
     """Return dispatch-op → OpenAPI operationId for the served bucket."""
     if openapi_schema is None:
         from cortex_store.main import create_app
@@ -42,12 +44,12 @@ def find_reachable_unserved_violations(
     reachable_ops: frozenset[str],
     *,
     op_specs: dict[str, str] | None = None,
+    openapi_schema: dict[str, Any] | None = None,
 ) -> list[str]:
     """Return reachable ops lacking a served route and not untypeable (A1).
 
     During strangler, violations are expected until cutover partition is applied.
     """
-    ops = op_specs or _OP_SPECS
-    served = frozenset(mcp_route_seed()) & frozenset(ops)
-    allowed = served | (UNTYPEABLE_OPS & frozenset(ops))
+    ops = frozenset(op_specs or _OP_SPECS)
+    allowed = (served_ops(openapi_schema) & ops) | (UNTYPEABLE_OPS & ops)
     return sorted(reachable_ops - allowed)

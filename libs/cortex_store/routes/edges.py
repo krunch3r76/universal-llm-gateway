@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Body, HTTPException, Query, status
+from openapi_mcp.binding import x_mcp
 
 from ..db import cortex_conn, query
 from ..models import EdgeCreate, EdgeItem, EdgeList, EdgeRetire, EdgeUpdate
@@ -57,7 +58,12 @@ def _endpoint_resolves(conn: sqlite3.Connection, node: str) -> bool:
     return bool(query(conn, "SELECT 1 FROM entities WHERE id = ?", (node,)))
 
 
-@router.post("", response_model=EdgeItem, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=EdgeItem,
+    status_code=status.HTTP_201_CREATED,
+    openapi_extra=x_mcp("edges"),
+)
 def create_edge(body: EdgeCreate) -> EdgeItem:
     """Create a new active session edge after validating edge_type and endpoints.
 
@@ -294,7 +300,7 @@ def update_edge(edge_id: int, body: EdgeUpdate = Body(...)) -> EdgeItem:
     return EdgeItem(**rows[0])
 
 
-@router.get("/types")
+@router.get("/types", openapi_extra=x_mcp("edge_types"))
 def list_edge_types() -> list[dict[str, Any]]:
     """Return the registered session edge taxonomy and directionality flags."""
     return query(

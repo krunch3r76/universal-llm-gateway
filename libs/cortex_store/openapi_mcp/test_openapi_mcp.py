@@ -64,18 +64,71 @@ def test_served_operation_ids_include_assert() -> None:
 
 
 @pytest.mark.offline
-def test_served_bindings_derived_from_x_mcp() -> None:
-    """Manifest op set equals extract(inject(seed)) — not a parallel hand table."""
-    from openapi_mcp.binding import extract_typed_routes, inject_x_mcp
-
-    from cortex_store.openapi_mcp._route_map import mcp_route_seed
+def test_served_bindings_derived_from_native_route_stamps() -> None:
+    """Manifest op set equals the document's own ``x-mcp`` stamps — no seed."""
+    from openapi_mcp.binding import extract_typed_routes
 
     schema = create_app().openapi()
-    enriched = inject_x_mcp(schema, dict(mcp_route_seed()), tool="cortex")
-    derived = extract_typed_routes(enriched)
+    derived = extract_typed_routes(schema)
     manifest = dry_run_generate(schema)
     assert set(manifest.served_ops) == set(derived)
-    assert manifest.served_ops["assert"]["operation_id"] == derived["assert"].operation_id
+    assert (
+        manifest.served_ops["assert"]["operation_id"] == derived["assert"].operation_id
+    )
+
+
+@pytest.mark.offline
+def test_no_hand_maintained_route_seed_remains() -> None:
+    """The (method, path) seed is deleted, not relocated."""
+    import cortex_store.openapi_mcp._route_map as route_map
+
+    for gone in ("mcp_route_seed", "_MCP_ROUTE_SEED", "TYPED_ROUTE_BY_OP"):
+        assert not hasattr(route_map, gone), f"{gone} still present"
+
+
+@pytest.mark.offline
+def test_missing_stamp_is_detectable_not_silent() -> None:
+    """An op whose route loses its stamp becomes enumerably unbound + fails --check.
+
+    This is the property the deleted seed could not provide: a seed with no row
+    for an op produced silence. Here the same omission (a) drops the op from the
+    derived manifest, (b) lists it in ``unbound_dispatch_ops``, and (c) makes the
+    committed-manifest check — i.e. ``openapi_mcp_codegen.py --check`` — fail.
+    """
+    from cortex_store.openapi_mcp._route_map import unbound_dispatch_ops
+
+    schema = create_app().openapi()
+    assert "assert" not in unbound_dispatch_ops(schema)
+    assert check_generated_module(schema) is True
+
+    del schema["paths"]["/assertions"]["post"]["x-mcp"]
+
+    assert "assert" in unbound_dispatch_ops(schema)
+    assert "assert" not in dry_run_generate(schema).served_ops
+    assert check_generated_module(schema) is False
+
+
+@pytest.mark.offline
+def test_unbound_ops_enumerate_the_strangler_gap() -> None:
+    """Every dispatch op is served, exempt, or listed as unbound — none invisible."""
+    from cortex_store.openapi_mcp._route_map import UNTYPEABLE_OPS, unbound_dispatch_ops
+
+    schema = create_app().openapi()
+    unbound = frozenset(unbound_dispatch_ops(schema))
+    census = build_four_bucket_census(openapi_schema=schema)
+    assert unbound == census.rb_only | census.neither
+    assert unbound & census.served == frozenset()
+    assert unbound & UNTYPEABLE_OPS == frozenset()
+
+
+@pytest.mark.offline
+def test_new_op_without_a_stamp_shows_up_unbound() -> None:
+    """Adding a dispatch op without stamping a route is caught, not absorbed."""
+    from cortex_store.openapi_mcp._route_map import unbound_dispatch_ops
+
+    schema = create_app().openapi()
+    specs = {"assert": "…", "brand_new_op": "…"}
+    assert unbound_dispatch_ops(schema, op_specs=specs) == ["brand_new_op"]
 
 
 @pytest.mark.offline

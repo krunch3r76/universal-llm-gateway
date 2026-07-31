@@ -7,6 +7,7 @@ import sqlite3
 from typing import Any
 
 from fastapi import APIRouter, Query
+from openapi_mcp.binding import x_mcp
 
 from ..db import cortex_conn
 from ..db import query as db_query
@@ -269,7 +270,7 @@ def _query_todo_candidates(
     }
 
 
-@router.get("/todo-candidates")
+@router.get("/todo-candidates", openapi_extra=x_mcp("todo_candidates"))
 def get_todo_candidates(
     q: str | None = Query(
         None,

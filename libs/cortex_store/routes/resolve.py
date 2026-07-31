@@ -11,6 +11,7 @@ from __future__ import annotations
 from urllib.parse import parse_qs, urlparse
 
 from fastapi import APIRouter, HTTPException, Query, status
+from openapi_mcp.binding import x_mcp
 from universal_logging import get_logger
 
 from ..db import cortex_conn, decode_row, query
@@ -86,7 +87,7 @@ def _resolve_pinpoint_chunk(entity_id: str, pinpoint: str) -> dict | None:
     return None
 
 
-@router.get("")
+@router.get("", openapi_extra=x_mcp("resolve"))
 def resolve_cortex_uri(
     uri: str = Query(..., description="cortex:// URI to resolve"),
     tag: str | None = Query(

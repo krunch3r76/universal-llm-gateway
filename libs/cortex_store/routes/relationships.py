@@ -7,6 +7,7 @@ import difflib
 import sqlite3
 
 from fastapi import APIRouter, HTTPException, Query, Response, status
+from openapi_mcp.binding import x_mcp
 from universal_logging import get_logger
 
 from ..db import cortex_conn, query
@@ -47,7 +48,7 @@ def _relationship_type_not_found_message(conn: sqlite3.Connection, type_id: str)
     return f"Relationship type not found: {type_id!r}."
 
 
-@router.get("", response_model=RelationshipList)
+@router.get("", response_model=RelationshipList, openapi_extra=x_mcp("relationships"))
 def list_relationships(
     entity_id: str | None = None,
     type_id: str | None = None,

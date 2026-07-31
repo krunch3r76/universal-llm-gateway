@@ -10,6 +10,7 @@ from __future__ import annotations
 import sqlite3
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
+from openapi_mcp.binding import x_mcp
 from pydantic import BaseModel
 from universal_logging import get_logger
 
@@ -90,7 +91,7 @@ class SourcePathsResponse(BaseModel):
     unresolved: int = 0
 
 
-@router.get("")
+@router.get("", openapi_extra=x_mcp("entities"))
 def list_entities(
     type: str | None = None,
     workflow_state: str | None = Query(

@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter
+from openapi_mcp.binding import x_mcp
 
 from ...dispatch_ops._shared import record
 from ...dispatch_ops.ops_audit import _op_audit
@@ -16,6 +17,7 @@ router = APIRouter(tags=["boot"])
     "/boot-audit-counters",
     status_code=200,
     summary="Audit severity counts for boot briefing",
+    openapi_extra=x_mcp("audit"),
 )
 def boot_audit_counters() -> dict[str, Any]:
     """Return audit severity counts without the findings payload.

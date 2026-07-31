@@ -7,6 +7,7 @@ basic session-edge management.
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query
+from openapi_mcp.binding import x_mcp
 from universal_logging import get_logger
 
 from ..activation import spreading_activation
@@ -28,7 +29,9 @@ router = APIRouter(tags=["graph"])
 logger = get_logger("cortex-api.graph")
 
 
-@router.get("/edges/impact", response_model=ImpactResponse)
+@router.get(
+    "/edges/impact", response_model=ImpactResponse, openapi_extra=x_mcp("impact")
+)
 def impact_analysis(
     entity_id: str = Query(..., description="Seed entity for impact analysis"),
     depth: int = Query(2, ge=1, le=5, description="Max BFS depth"),
@@ -77,7 +80,11 @@ def impact_analysis(
     )
 
 
-@router.post("/assertions/analyze-impact", response_model=ImpactAnalysisResponse)
+@router.post(
+    "/assertions/analyze-impact",
+    response_model=ImpactAnalysisResponse,
+    openapi_extra=x_mcp("analyze_impact"),
+)
 def analyze_impact_semantic(
     body: ImpactAnalysisRequest,
 ) -> ImpactAnalysisResponse:
@@ -121,7 +128,11 @@ def analyze_impact_semantic(
     )
 
 
-@router.get("/assertions/activate", response_model=ActivateResponse)
+@router.get(
+    "/assertions/activate",
+    response_model=ActivateResponse,
+    openapi_extra=x_mcp("activate"),
+)
 def activate(
     entity_ids: str = Query(..., description="Comma-separated seed entity IDs"),
     depth: int = Query(1, ge=1, le=3, description="Max walk depth"),

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query, status
+from openapi_mcp.binding import x_mcp
 from universal_logging import get_logger
 
 from ..db import cortex_conn, query
@@ -21,7 +22,7 @@ _COLS = (
 )
 
 
-@router.get("", response_model=SurfaceFormList)
+@router.get("", response_model=SurfaceFormList, openapi_extra=x_mcp("surface_forms"))
 def list_surface_forms(
     mention: str | None = None,
     entity_id: str | None = None,

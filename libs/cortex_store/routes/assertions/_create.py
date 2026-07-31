@@ -9,6 +9,7 @@ import datetime as dt
 import threading
 
 from fastapi import HTTPException, Response, status
+from openapi_mcp.binding import x_mcp
 from pydantic import ValidationError
 
 from ...assertion_quality import (
@@ -56,7 +57,9 @@ from ._shared import (
 )
 
 
-@router.post("", response_model=AssertionCreateResponse)
+@router.post(
+    "", response_model=AssertionCreateResponse, openapi_extra=x_mcp("assert")
+)
 def create_assertion(
     body: AssertionCreate, response: Response
 ) -> AssertionCreateResponse:

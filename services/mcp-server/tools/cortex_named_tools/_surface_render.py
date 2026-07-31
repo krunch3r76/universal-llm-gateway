@@ -2,8 +2,9 @@
 
 Tier-1 FOL cores are reconciled from canonical.yaml; full JSON Schema per op
 defaults to out-of-band ``cortex_schema(op)`` (see
-``cortex_store.openapi_mcp.schema_channel``). OpenAPI-served ops are listed in
-``cortex_store.openapi_mcp._route_map.TYPED_ROUTE_BY_OP``.
+``cortex_store.openapi_mcp.schema_channel``). OpenAPI-served ops are derived
+from native route ``x-mcp`` stamps via
+``cortex_store.openapi_mcp._route_map.served_ops``.
 """
 
 from __future__ import annotations

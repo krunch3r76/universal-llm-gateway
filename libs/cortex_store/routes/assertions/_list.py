@@ -11,6 +11,7 @@ from typing import Annotated, Literal
 
 from fastapi import Query
 from fastapi.responses import JSONResponse
+from openapi_mcp.binding import x_mcp
 
 from ...action_hints import detect_expired_unresolved
 from ...compaction import (
@@ -204,7 +205,7 @@ def _list_assertions_summary(
     )
 
 
-@router.get("", response_model=AssertionList)
+@router.get("", response_model=AssertionList, openapi_extra=x_mcp("assertions"))
 def list_assertions(
     entity_id: str | None = None,
     entity_id_prefix: Annotated[

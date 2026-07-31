@@ -14,6 +14,7 @@ from typing import Any, Literal
 
 from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
+from openapi_mcp.binding import x_mcp
 
 from ..db import cortex_conn
 from ..dispatch_ops.ops_subgraph import (
@@ -29,7 +30,9 @@ NeighborFidelityParam = Literal["full", "depth_aware", "edges_only"]
 WalkDirectionParam = Literal["outbound", "inbound", "both"]
 
 
-@router.get("/subgraph/render", response_model=None)
+@router.get(
+    "/subgraph/render", response_model=None, openapi_extra=x_mcp("render_subgraph")
+)
 def render_subgraph_route(
     root: str = Query("", description="Root entity_id (type:slug)"),
     hops: int = Query(1, description="BFS hops, 1-3 inclusive"),
@@ -80,7 +83,9 @@ def render_subgraph_route(
         conn.close()
 
 
-@router.get("/subgraph/walk", response_model=None)
+@router.get(
+    "/subgraph/walk", response_model=None, openapi_extra=x_mcp("walk_subgraph")
+)
 def walk_subgraph_route(
     root: str = Query("", description="Root entity_id (type:slug)"),
     hops: int = Query(1, description="BFS hops, 1-3 inclusive"),

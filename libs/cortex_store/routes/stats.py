@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter
+from openapi_mcp.binding import x_mcp
 from universal_logging import get_logger
 
 from ..compaction import POINTER_SQL_LIKE
@@ -20,7 +21,7 @@ def _count_by(conn: object, table: str, column: str) -> dict[str, int]:
     return {str(r[column] or "null"): r["cnt"] for r in rows}
 
 
-@router.get("")
+@router.get("", openapi_extra=x_mcp("stats"))
 def get_stats() -> dict:
     """Dashboard counts across all Cortex tables."""
     with cortex_conn() as conn:

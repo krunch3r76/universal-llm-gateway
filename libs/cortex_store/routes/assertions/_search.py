@@ -12,6 +12,7 @@ from typing import Annotated, Literal
 
 import httpx
 from fastapi import Query
+from openapi_mcp.binding import x_mcp
 
 from ... import embeddings as cortex_embeddings
 from ... import vector_store
@@ -260,7 +261,9 @@ def _full_items(fused: list[dict]) -> list[AssertionSearchItem]:
     return items
 
 
-@router.get("/search", response_model=AssertionSearchResult)
+@router.get(
+    "/search", response_model=AssertionSearchResult, openapi_extra=x_mcp("search")
+)
 def search_assertions(
     q: Annotated[str, Query(min_length=1, description="Search query")],
     superseded: Annotated[

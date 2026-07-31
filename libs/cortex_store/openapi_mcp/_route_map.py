@@ -1,44 +1,28 @@
-"""Dispatch-op → typed OpenAPI route seed (migration bridge).
+"""Served-op derivation for cortex — no hand-maintained route table.
 
-``mcp_route_seed`` is the *only* hand-maintained served-op table that remains
-while FastAPI routes lack native ``openapi_extra={"x-mcp": …}`` stamps. It
-carries ``(METHOD, path)`` only — ``operationId`` is always read from the live
-OpenAPI document via ``openapi_mcp.binding.inject_x_mcp`` +
-``extract_typed_routes``.
+Every MCP-reachable cortex route declares its binding natively at the
+decorator::
 
-Consumers must call ``typed_routes_from_openapi`` (or the codegen path) rather
-than treating this seed as the served set of record.
+    @router.post("/assertions", openapi_extra=x_mcp("assert"))
+
+so the served OpenAPI document *is* the op→route source of truth. The former
+``_MCP_ROUTE_SEED`` / ``TYPED_ROUTE_BY_OP`` hand table is deleted: its failure
+mode was that an op with no entry was invisible rather than unbound.
+
+Detectability replaces it in two places:
+
+* :func:`unbound_dispatch_ops` — dispatch ops with no stamped route, so an op
+  added without a stamp is *enumerable*, not silent.
+* the committed adapter manifest + ``openapi_mcp_codegen.py --check`` — a stamp
+  that is added, removed or renamed changes the derived manifest and ``--check``
+  exits non-zero.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 
-from openapi_mcp.binding import Method, TypedRoute, extract_typed_routes, inject_x_mcp
-
-# Mechanical census from path-sim A §2.1 (2026-07-18 checkout); method/path only.
-_MCP_ROUTE_SEED: dict[str, tuple[Method, str]] = {
-    "activate": ("GET", "/assertions/activate"),
-    "analyze_impact": ("POST", "/assertions/analyze-impact"),
-    "assert": ("POST", "/assertions"),
-    "assertions": ("GET", "/assertions"),
-    "audit": ("GET", "/boot-audit-counters"),
-    "deadlines": ("GET", "/deadlines"),
-    "edge_types": ("GET", "/edges/types"),
-    "edges": ("POST", "/edges"),
-    "entities": ("GET", "/entities"),
-    "impact": ("GET", "/edges/impact"),
-    "relationships": ("GET", "/relationships"),
-    "render_subgraph": ("GET", "/subgraph/render"),
-    "resolve": ("GET", "/resolve"),
-    "search": ("GET", "/assertions/search"),
-    "stats": ("GET", "/stats"),
-    "supersede": ("POST", "/assertions/supersede"),
-    "surface_forms": ("GET", "/surface-forms"),
-    "todo_audit": ("GET", "/todo-audit"),
-    "todo_candidates": ("GET", "/todo-candidates"),
-    "walk_subgraph": ("GET", "/subgraph/walk"),
-}
+from openapi_mcp.binding import TypedRoute, extract_typed_routes
 
 # Adapter-orchestration ops — structurally untypeable on HTTP SOT (bucket d).
 UNTYPEABLE_OPS: frozenset[str] = frozenset(
@@ -51,25 +35,36 @@ UNTYPEABLE_OPS: frozenset[str] = frozenset(
 )
 
 
-def mcp_route_seed() -> Mapping[str, tuple[Method, str]]:
-    """Return the migration seed: op → (METHOD, path)."""
-    return _MCP_ROUTE_SEED
-
-
 def typed_routes_from_openapi(openapi_schema: Mapping) -> dict[str, TypedRoute]:
-    """Derive served bindings by injecting seed ``x-mcp`` then extracting."""
-    enriched = inject_x_mcp(openapi_schema, _MCP_ROUTE_SEED, tool="cortex")
-    return extract_typed_routes(enriched)
+    """Derive served bindings from native ``x-mcp`` stamps in the document."""
+    return extract_typed_routes(openapi_schema)
 
 
-def _legacy_typed_route_by_op() -> dict[str, TypedRoute]:
-    """Compat view with placeholder operationIds — prefer typed_routes_from_openapi."""
-    return {
-        op: TypedRoute(method=method, path=path, operation_id="", tool="cortex")
-        for op, (method, path) in _MCP_ROUTE_SEED.items()
-    }
+def served_ops(openapi_schema: Mapping | None = None) -> frozenset[str]:
+    """Return the set of dispatch ops bound to a stamped served route."""
+    if openapi_schema is None:
+        openapi_schema = _live_openapi()
+    return frozenset(typed_routes_from_openapi(openapi_schema))
 
 
-# Backward-compat name used by census/bijection before derivation landed.
-# operation_id is empty here; live ids come from typed_routes_from_openapi.
-TYPED_ROUTE_BY_OP: dict[str, TypedRoute] = _legacy_typed_route_by_op()
+def unbound_dispatch_ops(
+    openapi_schema: Mapping | None = None,
+    *,
+    op_specs: Mapping[str, str] | None = None,
+) -> list[str]:
+    """Return dispatch ops with neither an ``x-mcp`` stamp nor an exemption.
+
+    This is the fail-closed counterpart to the deleted seed: a new op, or an op
+    whose route lost its stamp, appears here instead of silently dropping out
+    of the served surface.
+    """
+    from cortex_store.dispatch_ops import _OP_SPECS
+
+    ops = frozenset(op_specs if op_specs is not None else _OP_SPECS)
+    return sorted(ops - served_ops(openapi_schema) - UNTYPEABLE_OPS)
+
+
+def _live_openapi() -> Mapping:
+    from cortex_store.main import create_app
+
+    return create_app().openapi()
