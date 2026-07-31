@@ -70,7 +70,9 @@ trash/
 __pycache__/
 **/__pycache__/
 tmp/
-tests/
+# Tests are tracked (operator bind 2026-07-31, a:27411). This nested rule
+# outlived the repo-wide test ignore removed at 71e6f0e9 and kept 25 durable
+# stargate tests invisible to review. Compiled output stays ignored above.
 **/.pytest_cache/
 
 proposals/
