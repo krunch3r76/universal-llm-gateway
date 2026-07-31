@@ -72,9 +72,21 @@ def resolve_code_version() -> str:
     return sha or _UNKNOWN
 
 
+def normalize_code_ref(code_ref: str) -> str:
+    """Resolve symbolic refs (HEAD) to a concrete SHA at mint time."""
+    ref = str(code_ref or "").strip()
+    if ref.upper() == "HEAD":
+        return resolve_code_version()
+    return ref
+
+
 def reset_code_version_cache_for_tests() -> None:
     """Clear the module-level LRU cache so tests can re-resolve version."""
     resolve_code_version.cache_clear()
 
 
-__all__ = ["reset_code_version_cache_for_tests", "resolve_code_version"]
+__all__ = [
+    "normalize_code_ref",
+    "reset_code_version_cache_for_tests",
+    "resolve_code_version",
+]

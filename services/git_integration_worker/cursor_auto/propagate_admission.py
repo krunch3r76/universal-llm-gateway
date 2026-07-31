@@ -10,7 +10,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from deploy_identity.code_version import resolve_code_version
+from deploy_identity.code_version import normalize_code_ref, resolve_code_version
 from implement_admission.propagation_block_parser import (
     propagation_rows_from_markdown_sources,
 )
@@ -74,7 +74,8 @@ def _rows_from_shorthand(body: str) -> tuple[PropagationRow, ...]:
     else:
         return ()
     code_ref_match = _CODE_REF_FIELD_RE.search(body)
-    code_ref = code_ref_match.group(1).strip() if code_ref_match else resolve_code_version()
+    raw_ref = code_ref_match.group(1).strip() if code_ref_match else resolve_code_version()
+    code_ref = normalize_code_ref(raw_ref)
     return (
         PropagationRow(
             service=service,

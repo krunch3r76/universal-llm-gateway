@@ -15,6 +15,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, model_validator
 
+from deploy_identity.code_version import normalize_code_ref
 from implement_admission.service_lib_ownership import slug_for_service_path
 
 logger = logging.getLogger(__name__)
@@ -125,7 +126,7 @@ def row_from_mapping(raw: dict[str, Any]) -> PropagationRow:
     return PropagationRow(
         service=service,
         action=raw.get("action") or "sync_restart",
-        code_ref=str(raw["code_ref"]),
+        code_ref=normalize_code_ref(str(raw["code_ref"])),
         safe_window=safe_window,
         hazard=raw.get("hazard"),
         reason=raw.get("reason"),
@@ -150,7 +151,7 @@ def row_from_mapping_strict(raw: dict[str, Any]) -> tuple[PropagationRow | None,
         PropagationRow(
             service=service,
             action=raw.get("action") or "sync_restart",
-            code_ref=str(raw["code_ref"]),
+            code_ref=normalize_code_ref(str(raw["code_ref"])),
             safe_window=safe_window,
             hazard=raw.get("hazard"),
             reason=raw.get("reason"),
@@ -319,14 +320,14 @@ def resolve_code_ref(payload: dict[str, Any]) -> str:
         if isinstance(git_refs, list):
             for ref in git_refs:
                 if isinstance(ref, str) and ref.strip():
-                    return ref.strip()
+                    return normalize_code_ref(ref.strip())
     for key in ("code_ref", "land_sha", "merge_sha"):
         value = payload.get(key)
         if isinstance(value, str) and value.strip():
-            return value.strip()
+            return normalize_code_ref(value.strip())
     closeout_head = payload.get("closeout_head")
     if isinstance(closeout_head, str) and closeout_head.strip():
-        return closeout_head.strip()
+        return normalize_code_ref(closeout_head.strip())
     return "unknown"
 
 

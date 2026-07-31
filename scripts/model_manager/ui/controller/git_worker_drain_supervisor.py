@@ -265,6 +265,9 @@ class GitWorkerDrainSupervisor:
         await events.emit_manage_restart_completed(
             intent_id=intent.intent_id, duration_s=time.monotonic() - t0
         )
+        await self._settle_propagation_ledger(
+            intent.service, settle_not_before_monotonic=time.monotonic()
+        )
 
     # --------------------------------------------------------------- step 5
     async def _on_timeout(self, intent: Intent) -> None:
@@ -298,6 +301,9 @@ class GitWorkerDrainSupervisor:
                 "drain target worker generation already gone; intent completed "
                 "without kill: intent_id=%s",
                 intent.intent_id,
+            )
+            await self._settle_propagation_ledger(
+                intent.service, settle_not_before_monotonic=time.monotonic()
             )
             return
         self.store.advance(intent.intent_id, status=STATUS_FAILED)
@@ -369,6 +375,40 @@ class GitWorkerDrainSupervisor:
             active_count=int(snapshot.get("active_count", 0) or 0),
             active_ops=snapshot.get("active_ops", []) or [],
         )
+
+    async def _settle_propagation_ledger(
+        self,
+        service: str,
+        *,
+        settle_not_before_monotonic: float | None = None,
+    ) -> None:
+        """Close or fail open propagation rows from observed liveness after restart."""
+        try:
+            from charter_runner_store.propagation_terminal import (
+                default_probe,
+                settle_open_rows_for_service,
+            )
+
+            results = await asyncio.to_thread(
+                settle_open_rows_for_service,
+                service,
+                default_probe,
+                defer_if_unreachable=True,
+                settle_not_before_monotonic=settle_not_before_monotonic,
+            )
+            for item in results:
+                logger.info(
+                    "propagation ledger settle service=%s row=%s outcome=%s detail=%s",
+                    service,
+                    item.row_id,
+                    item.outcome,
+                    item.detail,
+                )
+        except Exception:  # noqa: BLE001 — ledger settle must not fail the drain
+            logger.exception(
+                "propagation ledger settle failed after drain complete service=%s",
+                service,
+            )
 
 
 # ---------------------------------------------------------------------------

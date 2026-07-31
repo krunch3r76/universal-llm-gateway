@@ -9,6 +9,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
+from deploy_identity.code_version import normalize_code_ref
 from implement_admission.propagation_row import PropagationRow
 
 from .db import execute_with_retry, open_ledger_db
@@ -32,7 +33,15 @@ class OpenPropagationProjection:
 
 
 def _row_key(row: PropagationRow) -> str:
-    return f"{row.service}:{row.code_ref}:{row.action}"
+    return f"{row.service}:{normalize_code_ref(row.code_ref)}:{row.action}"
+
+
+def _mint_row(row: PropagationRow) -> PropagationRow:
+    """Resolve symbolic code_ref (HEAD) before persistence."""
+    resolved = normalize_code_ref(row.code_ref)
+    if resolved == row.code_ref:
+        return row
+    return row.model_copy(update={"code_ref": resolved})
 
 
 def upsert_open_rows(
@@ -48,7 +57,8 @@ def upsert_open_rows(
     now = time.time()
     row_ids: list[str] = []
     try:
-        for row in rows:
+        for raw in rows:
+            row = _mint_row(raw)
             row_id = _row_key(row)
             row_ids.append(row_id)
             execute_with_retry(
@@ -172,6 +182,37 @@ def set_defer_reason(
             db.close()
 
 
+def fail_row(
+    row_id: str,
+    *,
+    proof_payload: dict[str, Any],
+    reason: str,
+    conn: sqlite3.Connection | None = None,
+) -> None:
+    """Mark a row failed after observed proof mismatch — not on restart status alone."""
+    own_conn = conn is None
+    db = conn or open_ledger_db()
+    now = time.time()
+    payload = {**proof_payload, "failure_reason": reason}
+    try:
+        execute_with_retry(
+            db,
+            """
+            UPDATE propagation_ledger
+            SET status='failed',
+                proof_payload=?,
+                closed_at=?,
+                defer_reason=?,
+                updated_at=?
+            WHERE row_id=? AND status='open'
+            """,
+            (json.dumps(payload), now, reason, now, row_id),
+        )
+    finally:
+        if own_conn:
+            db.close()
+
+
 def close_row(
     row_id: str,
     *,
@@ -228,6 +269,7 @@ __all__ = [
     "OpenPropagationProjection",
     "bump_age_for_open_rows",
     "close_row",
+    "fail_row",
     "list_open_rows",
     "mint_row_id",
     "scoreboard_projection",
