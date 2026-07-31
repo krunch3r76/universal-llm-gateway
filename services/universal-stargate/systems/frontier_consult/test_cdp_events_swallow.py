@@ -1,0 +1,61 @@
+"""A dropped cdp.generate.* event leaves a trace instead of vanishing."""
+
+from __future__ import annotations
+
+import pytest
+
+from systems.frontier_consult import cdp_events
+
+
+@pytest.fixture(autouse=True)
+def _clear_seen():
+    cdp_events._SWALLOWED_SEEN.clear()
+    yield
+    cdp_events._SWALLOWED_SEEN.clear()
+
+
+def test_publish_failure_is_logged_once_per_cause(monkeypatch, caplog) -> None:
+    def _boom(_event):
+        raise RuntimeError("Proxy not initialized")
+
+    monkeypatch.setattr(cdp_events, "publish_cdp_event", _boom)
+    with caplog.at_level("WARNING"):
+        for _ in range(3):
+            cdp_events.publish_cdp_kwargs(
+                cdp_events.CdpGenerateAdmitted,
+                request_id="r",
+                execution_id="e",
+                model="cdp/opus-5",
+                thread_id="1",
+            )
+    dropped = [r for r in caplog.records if "cdp event dropped" in r.getMessage()]
+    assert len(dropped) == 1
+    assert "Proxy not initialized" in dropped[0].getMessage()
+
+
+def test_publish_never_raises_into_the_lane(monkeypatch) -> None:
+    def _boom(_event):
+        raise RuntimeError("bus gone")
+
+    monkeypatch.setattr(cdp_events, "publish_cdp_event", _boom)
+    cdp_events.publish_cdp_kwargs(
+        cdp_events.CdpGenerateStalled,
+        request_id="r",
+        execution_id="e",
+        satellite_execution_id=None,
+        stall_stage="wall_clock_exceeded",
+        error="boom",
+        progress_trace={"verdict": "frozen"},
+    )
+
+
+def test_stalled_payload_carries_progress_trace() -> None:
+    event = cdp_events.CdpGenerateStalled(
+        request_id="r",
+        execution_id="e",
+        satellite_execution_id="s",
+        stall_stage="wall_clock_exceeded",
+        error="CDP generate exceeded max_wall_s=1800",
+        progress_trace={"verdict": "frozen", "frozen_for_s": 1760.0},
+    )
+    assert event.payload["progress_trace"]["verdict"] == "frozen"
