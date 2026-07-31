@@ -9,10 +9,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
+
+from deploy_identity.code_version import process_age_s, resolve_code_version
 
 from .controller.restart_drain import (
     BackgroundCompleteHook,
@@ -227,6 +230,9 @@ async def execute(
         case "busy_status":
             return await _busy_status(ctl)
 
+        case "whoami":
+            return _whoami()
+
         case "charter_reload":
             # In-process charter-runner module reload + tick restart (no TUI quit).
             return await ctl.reload_charter_tick()
@@ -287,7 +293,7 @@ async def execute(
             raise ValueError(
                 f"Unknown method: '{method}'. "
                 "Valid: status, health, wait_healthy, start, stop, restart, "
-                "sync_restart, rebuild, busy_status, charter_reload, "
+                "sync_restart, rebuild, busy_status, whoami, charter_reload, "
                 "charter_pause, charter_resume, charter_hold_status, "
                 "charter_block_root, charter_unblock_root, charter_root_status, "
                 "fleet_sync_restart, fleet_rebuild_deploy"
@@ -423,6 +429,20 @@ async def _git_worker_drain_supervised(
         supervisor=supervisor,
         reason=f"manage {action} (deferred drain)",
     )
+
+
+def _whoami() -> dict[str, Any]:
+    """Read-only identity for the manage API process (no mutation)."""
+    age_s = process_age_s()
+    if age_s is not None:
+        start_time = (datetime.now(UTC) - timedelta(seconds=age_s)).isoformat()
+    else:
+        start_time = "unknown"
+    return {
+        "pid": os.getpid(),
+        "code_version": resolve_code_version(),
+        "process_start_time": start_time,
+    }
 
 
 async def _busy_status(ctl: ServiceController) -> dict[str, Any]:
