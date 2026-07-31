@@ -10,6 +10,7 @@ from pathlib import Path
 from universal_logging import get_logger
 
 from .admission import CapStore, CapsView, EnvFacts, decide, layer_independence_unproven
+from .admission.consult_heal import HEAL_REASON, consult_work_key_is_harvested
 from .cap_stop_recovery import (
     RECOVERABLE_STOP_REASONS,
     substrate_healthy_for_cap_clear,
@@ -361,6 +362,10 @@ async def apply_kernel_tick_for_root(
             checkpoint_body=checkpoint_body,
             pickup_lane=(row.pickup_lane or "judgment"),
         )
+        consult_role = resolve_consult_role(row, parsed)
+        consult_work_key_harvested = consult_work_key_is_harvested(
+            conn, row, consult_role
+        )
         facts = EnvFacts(
             substrate_up=facts.substrate_up,
             has_wip=facts.has_wip,
@@ -376,6 +381,7 @@ async def apply_kernel_tick_for_root(
             ),
             arc_lane=arc_lane,
             layer_independence_block=independence_block,
+            consult_work_key_harvested=consult_work_key_harvested,
         )
         caps_view = CapsView.from_cap_store(caps, root_id)
         if caps_view.stopped_reason in RECOVERABLE_STOP_REASONS:
@@ -388,6 +394,25 @@ async def apply_kernel_tick_for_root(
                     )
                     caps_view = CapsView.from_cap_store(caps, root_id)
         transition = decide(row, facts, caps_view)
+        if transition == Transition.HEAL_CONSULT_QUEUED:
+            from_status = row.status.value
+            _ledger_row_from_state(
+                conn,
+                root_id,
+                status=RootStatus.IDLE,
+                transition=Transition.HEAL_CONSULT_QUEUED,
+            )
+            await emit_tick_transition(
+                root=root_id,
+                from_status=from_status,
+                to_status=RootStatus.IDLE.value,
+                transition=Transition.HEAL_CONSULT_QUEUED.value,
+                gid=row.pickup_gid,
+                pass_source=pass_source,
+                reason=HEAL_REASON,
+            )
+            row = load_root(conn, root_id) or row
+            transition = decide(row, facts, caps_view)
         if transition == Transition.NOOP and empty_hopper:
             return KernelTickOutcome(
                 "kernel_empty_hopper",
@@ -612,12 +637,15 @@ async def _queue_consult(
 ) -> KernelTickOutcome:
     role = resolve_consult_role(row, parsed)
     gid = row.pickup_gid or "G?"
+    source_ref = parsed.source_ref if parsed is not None else None
     if row.status in (RootStatus.CONSULT_QUEUED, RootStatus.CONSULT_ADMITTED):
         return KernelTickOutcome("kernel_consult_already_queued")
     existing = _load_queue_row(conn, root_id, gid, role)
     if existing is not None and existing.status in ("queued", "admitted"):
         if row.status not in (RootStatus.CONSULT_QUEUED, RootStatus.CONSULT_ADMITTED):
-            updated = sync_ledger_consult_queued(conn, row=row, consult_role=role)
+            updated = sync_ledger_consult_queued(
+                conn, row=row, consult_role=role, source_ref=source_ref
+            )
             await emit_consult_queued(
                 root=root_id, gid=updated.pickup_gid or "?", role=role
             )
@@ -631,7 +659,7 @@ async def _queue_consult(
             )
             return KernelTickOutcome("kernel_queue_consult")
         return KernelTickOutcome("kernel_consult_already_queued")
-    enqueue_consult(conn, row=row, consult_role=role)
+    enqueue_consult(conn, row=row, consult_role=role, source_ref=source_ref)
     updated = load_root(conn, root_id)
     if updated is None:
         return KernelTickOutcome("kernel_queue_consult")

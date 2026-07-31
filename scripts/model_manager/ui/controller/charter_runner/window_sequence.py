@@ -18,6 +18,7 @@ Two holes this closes, both observed on root 5975 (a:26628):
 
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import replace
 
@@ -150,6 +151,16 @@ def release_window_on_harvest(root_id: str, window_index: int) -> bool:
                 window_id=window_id,
                 disposition="harvested",
             )
+            facts: dict[str, object] = {}
+            if released.env_facts_json:
+                try:
+                    parsed_facts = json.loads(released.env_facts_json)
+                    if isinstance(parsed_facts, dict):
+                        facts = parsed_facts
+                except (TypeError, json.JSONDecodeError):
+                    facts = {}
+            facts["last_harvested_work_key"] = record.work_key
+            released = replace(released, env_facts_json=json.dumps(facts, sort_keys=True))
         logger.info(
             "charter-runner ledger release root=%s window=%s wip_held=%s",
             root_id,

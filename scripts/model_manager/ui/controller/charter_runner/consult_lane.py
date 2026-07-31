@@ -13,6 +13,7 @@ from universal_logging import get_logger
 from libs.charter_runner_store.db import charter_runner_data_dir, execute_with_retry
 
 from . import bus_client
+from .work_key import compute_work_key
 from .checkpoint_schema import ParsedCheckpoint
 from .harvest_attribution import consult_role_from_pickup
 from .root_ledger import (
@@ -133,11 +134,44 @@ def load_queue_row(conn, root_id: str, gid: str, role: str) -> ConsultQueueRow |
 _load_queue_row = load_queue_row
 
 
+def _parse_env_facts(row: RootLedgerRow) -> dict[str, Any]:
+    raw = row.env_facts_json
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _stamp_consult_work_key_env(
+    row: RootLedgerRow,
+    *,
+    consult_role: str,
+    source_ref: str | None = None,
+) -> str:
+    """Persist consult work_key on the ledger for heal lookup (no tip parse at heal)."""
+    facts = _parse_env_facts(row)
+    work_key = compute_work_key(
+        root_id=row.root_id,
+        source_ref=source_ref,
+        pickup_gid=row.pickup_gid,
+        consult_role=consult_role,
+        admission_mode="consult",
+    )
+    facts["consult_work_key"] = work_key
+    if source_ref:
+        facts["consult_source_ref"] = source_ref
+    return json.dumps(facts, sort_keys=True)
+
+
 def _ledger_row_consult_queued(
     existing: RootLedgerRow,
     *,
     consult_role: str,
     now: float,
+    source_ref: str | None = None,
 ) -> RootLedgerRow:
     next_status = (
         existing.status
@@ -162,7 +196,9 @@ def _ledger_row_consult_queued(
         last_window_id=existing.last_window_id,
         last_transition=Transition.QUEUE_CONSULT.value,
         last_error=existing.last_error,
-        env_facts_json=existing.env_facts_json,
+        env_facts_json=_stamp_consult_work_key_env(
+            existing, consult_role=consult_role, source_ref=source_ref
+        ),
         conveyor_phase=existing.conveyor_phase,
         pickup_append_cursor=existing.pickup_append_cursor,
         updated_at=now,
@@ -174,11 +210,14 @@ def sync_ledger_consult_queued(
     *,
     row: RootLedgerRow,
     consult_role: str,
+    source_ref: str | None = None,
 ) -> RootLedgerRow:
     """Align ledger to ``CONSULT_QUEUED`` when the durable queue already holds a row."""
     now = time.time()
     existing = load_root(conn, row.root_id) or row
-    updated = _ledger_row_consult_queued(existing, consult_role=consult_role, now=now)
+    updated = _ledger_row_consult_queued(
+        existing, consult_role=consult_role, now=now, source_ref=source_ref
+    )
     upsert_root(conn, updated)
     write_cortex_mirror(updated)
     return updated
@@ -190,6 +229,7 @@ def enqueue_consult(
     row: RootLedgerRow,
     consult_role: str,
     corpus_sha: str | None = None,
+    source_ref: str | None = None,
 ) -> ConsultQueueRow:
     """Insert/update consult_queue and atomically set ledger ``CONSULT_QUEUED`` (a:26936)."""
     gid = row.pickup_gid or "G?"
@@ -206,7 +246,9 @@ def enqueue_consult(
         """,
         (row.root_id, gid, consult_role, corpus_sha, now, now),
     )
-    sync_ledger_consult_queued(conn, row=row, consult_role=consult_role)
+    sync_ledger_consult_queued(
+        conn, row=row, consult_role=consult_role, source_ref=source_ref
+    )
     return load_queue_row(conn, row.root_id, gid, consult_role)  # type: ignore[return-value]
 
 

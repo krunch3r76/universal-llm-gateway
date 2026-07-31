@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from deploy_identity.code_version import resolve_code_version
+
 from scripts.model_manager.observation_event import _emit
 
 
@@ -15,6 +17,8 @@ async def emit_tick_transition(
     transition: str,
     gid: str | None = None,
     pass_source: str | None = None,
+    reason: str | None = None,
+    code_version: str | None = None,
 ) -> None:
     """Per-root transition applied (spec § Event Vocabulary)."""
     payload: dict[str, Any] = {
@@ -22,11 +26,14 @@ async def emit_tick_transition(
         "from_status": from_status,
         "to_status": to_status,
         "transition": transition,
+        "code_version": code_version if code_version is not None else resolve_code_version(),
     }
     if gid:
         payload["gid"] = gid
     if pass_source:
         payload["pass_source"] = pass_source
+    if reason:
+        payload["reason"] = reason
     await _emit("manage.charter.tick.transition", payload)
 
 

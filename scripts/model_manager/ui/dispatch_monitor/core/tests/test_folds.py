@@ -898,3 +898,47 @@ def test_signature_pairs_distinct_by_admitted_via_and_asked_by() -> None:
         ("stargate", "cursor"),
     }
     assert all(row.seat == "cursor-sdk" for row in frame.sdk if row.seat)
+
+
+def test_identical_work_refire_refused_surfaces_stuck_root() -> None:
+    model = Model()
+    model.apply(
+        Event(
+            signals.CHARTER_CONSULT_QUEUED,
+            1_000,
+            {"root": "6563", "gid": "G3", "role": "judgment_gap"},
+        )
+    )
+    model.apply(
+        Event(
+            signals.CHARTER_IDENTICAL_WORK_REFIRE_REFUSED,
+            2_000,
+            {
+                "root": "6563",
+                "work_key": "abc123",
+                "friction_id": 27259,
+            },
+        )
+    )
+    root = _row(model.derive(3_000).roots, "root_id", "6563")
+    assert root.state == "stuck"
+    assert "identical_work_refire" in (root.skip_reason or "")
+
+
+def test_consult_queued_streak_surfaces_stuck_after_n_scans() -> None:
+    model = Model()
+    model.apply(
+        Event(
+            signals.CHARTER_CONSULT_QUEUED,
+            1_000,
+            {"root": "6563", "gid": "G3"},
+        )
+    )
+    for offset, ts in enumerate((2_000, 3_000, 4_000), start=1):
+        model.apply(Event(signals.CHARTER_SCANNED, ts, {"roots": 1, "admitted": 0}))
+        root = _row(model.derive(ts).roots, "root_id", "6563")
+        if offset < 3:
+            assert root.state == "consult_queued"
+        else:
+            assert root.state == "stuck"
+            assert root.skip_reason == "consult_queued_streak"

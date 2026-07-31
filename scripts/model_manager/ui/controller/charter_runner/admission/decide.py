@@ -86,6 +86,7 @@ class EnvFacts:
     worker_shaped_tip: bool = False
     arc_lane: str = "layer"
     layer_independence_block: bool = False
+    consult_work_key_harvested: bool = False
 
 
 def _propagation_defers(state: RootLedgerRow, env: EnvFacts) -> bool:
@@ -267,6 +268,11 @@ def decide(
     # Live consult queue must not be stranded by empty_hopper NOOP (6237 sibling
     # hole: CONSULT_QUEUED + executor=pending tip read as standing wait).
     if state.status in (RootStatus.CONSULT_QUEUED, RootStatus.CONSULT_DEFERRED):
+        if (
+            state.status == RootStatus.CONSULT_QUEUED
+            and env.consult_work_key_harvested
+        ):
+            return Transition.HEAL_CONSULT_QUEUED
         if not env.substrate_up:
             return Transition.DEFER_CONSULT
         now = env.now if env.now is not None else __import__("time").time()

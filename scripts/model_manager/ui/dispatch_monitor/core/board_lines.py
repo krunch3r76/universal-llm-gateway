@@ -137,7 +137,7 @@ def live_cdp(rows: tuple[CdpLegRow, ...]) -> list[CdpLegRow]:
 
 #: Still owed work — enqueued / in flight / waiting operator or skip decision.
 _ROOT_ACTIVE_STATES = frozenset(
-    {"in_flight", "waiting_open", "skipped", "parked", "unknown"}
+    {"in_flight", "waiting_open", "skipped", "parked", "unknown", "consult_queued", "stuck"}
 )
 
 #: Parked residue — not enqueued. Shown under SET ASIDE, never mixed with active.

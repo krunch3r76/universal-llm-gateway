@@ -164,6 +164,18 @@ def _root_items(root: CharterRootRow, thresholds: Thresholds) -> list[AttentionI
                 since_ms=root.last_signal_ms,
             )
         )
+    if root.state == "stuck":
+        items.append(
+            AttentionItem(
+                key=f"charter.root.stuck:{root.root_id}",
+                kind="charter.root.stuck",
+                severity="crit",
+                subject=root.root_id,
+                title="Charter root wedged — consult queue or refire refusal",
+                detail=root.skip_reason or "consult_queued_streak or identical_work_refire",
+                since_ms=root.last_signal_ms,
+            )
+        )
     return items
 
 

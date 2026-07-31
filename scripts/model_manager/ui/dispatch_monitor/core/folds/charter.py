@@ -27,6 +27,10 @@ from ..correlation import CorrelationIndex
 from ..protocols import EventRecord, envelope_subject
 
 
+#: Roots wedged on consult queue or identical-work refire — must not read as finished.
+CONSULT_QUEUED_STUCK_SCAN_THRESHOLD = 3
+
+
 class RootState:
     """Mutable per-root accumulator. Projected to a frozen row by ``derive``."""
 
@@ -53,6 +57,8 @@ class RootState:
         "waiting_open_since_ms",
         "closed",
         "unenrolled",
+        "consult_queued_streak",
+        "refire_refused_streak",
     )
 
     def __init__(self, root_id: str) -> None:
@@ -78,6 +84,8 @@ class RootState:
         self.waiting_open_since_ms: int | None = None
         self.closed = False
         self.unenrolled = False
+        self.consult_queued_streak = 0
+        self.refire_refused_streak = 0
 
 
 def _root_id(payload: Mapping[str, Any], record: EventRecord) -> str | None:
@@ -146,8 +154,11 @@ class CharterFold:
             signals.MONITOR_META_CHARTER_OBJECTIVE: self._on_objective,
             signals.CHARTER_FRICTIONS_AUDIT_PASSED: self._on_informational_root,
             signals.CHARTER_TRANSITION: self._on_informational_root,
-            signals.CHARTER_CONSULT_QUEUED: self._on_informational_root,
+            signals.CHARTER_CONSULT_QUEUED: self._on_consult_queued,
             signals.CHARTER_CONSULT_DEFERRED: self._on_informational_root,
+            signals.CHARTER_IDENTICAL_WORK_REFIRE_REFUSED: (
+                self._on_identical_work_refire_refused
+            ),
             signals.CHARTER_ENROLLMENT_FILTERED: self._on_informational_root,
             signals.CHARTER_ROOT_BLOCKED: self._on_root_blocked,
             signals.CHARTER_ROOT_UNBLOCKED: self._on_root_unblocked,
@@ -188,6 +199,13 @@ class CharterFold:
             self.skipped_by_reason = {
                 str(k): _as_int(v) or 0 for k, v in histogram.items()
             }
+        for row in self.roots.values():
+            if row.state != "consult_queued":
+                continue
+            row.consult_queued_streak += 1
+            if row.consult_queued_streak >= CONSULT_QUEUED_STUCK_SCAN_THRESHOLD:
+                row.state = "stuck"
+                row.skip_reason = row.skip_reason or "consult_queued_streak"
         for key in ("lease_holder", "holder"):
             if payload.get(key):
                 self.lease_holder = str(payload[key])
@@ -210,6 +228,8 @@ class CharterFold:
         row.admitted_at_ms = record.ts_unix_ms
         row.skip_reason = None
         row.skip_streak = 0
+        row.consult_queued_streak = 0
+        row.refire_refused_streak = 0
         row.waiting_open_since_ms = None
         row.closed = False
         worker = payload.get("worker_thread")
@@ -418,9 +438,39 @@ class CharterFold:
         if payload.get("reenrolled"):
             row.unenrolled = False
 
+    def _on_consult_queued(self, record: EventRecord) -> None:
+        """Mark consult queue posture; streak advances on subsequent scans."""
+        payload = record.payload
+        root_id = _root_id(payload, record)
+        if not root_id:
+            return
+        row = self._root(root_id, record)
+        row.state = "consult_queued"
+        row.closed = False
+        gid = payload.get("gid")
+        if gid:
+            row.pickup_gid = str(gid).strip() or row.pickup_gid
+
+    def _on_identical_work_refire_refused(self, record: EventRecord) -> None:
+        """Refire refusal on a repeated work_key — wedge visible on the board."""
+        payload = record.payload
+        root_id = _root_id(payload, record)
+        if not root_id:
+            return
+        row = self._root(root_id, record)
+        row.refire_refused_streak += 1
+        row.state = "stuck"
+        friction = payload.get("friction_id")
+        work_key = payload.get("work_key")
+        detail = f"identical_work_refire work_key={work_key or '?'}"
+        if friction is not None:
+            detail = f"{detail} friction={friction}"
+        row.skip_reason = detail
+
     def _on_informational_root(self, record: EventRecord) -> None:
-        """Root-keyed telemetry (audit/transition/shadow/consult) — no state flip."""
-        root_id = _root_id(record.payload, record)
+        """Root-keyed telemetry (audit/transition/shadow) — no state flip."""
+        payload = record.payload
+        root_id = _root_id(payload, record)
         if not root_id:
             return
         row = self.roots.get(root_id)
@@ -429,6 +479,15 @@ class CharterFold:
         if row.last_signal_ms is None or record.ts_unix_ms >= row.last_signal_ms:
             row.last_signal_ms = record.ts_unix_ms
             row.last_signal = record.signal
+        transition = payload.get("transition")
+        if (
+            record.signal == signals.CHARTER_TRANSITION
+            and transition == "HEAL_CONSULT_QUEUED"
+        ):
+            row.state = "idle"
+            row.consult_queued_streak = 0
+            row.refire_refused_streak = 0
+            row.skip_reason = None
 
     def _on_telemetry_ack(self, _record: EventRecord) -> None:
         """Global telemetry with no root row (e.g. shadow.starved) — swallow only."""

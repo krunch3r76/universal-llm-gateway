@@ -52,6 +52,9 @@ CHARTER_RESUMED = "manage.charter.tick.resumed"
 CHARTER_FRICTIONS_AUDIT_PASSED = "manage.charter.tick.frictions_audit_passed"
 #: Kernel telemetry facade (``charter_runner/telemetry.py``) — informational.
 CHARTER_TRANSITION = "manage.charter.tick.transition"
+CHARTER_IDENTICAL_WORK_REFIRE_REFUSED = (
+    "manage.charter.conveyor.identical_work_refire_refused"
+)
 CHARTER_SHADOW_DIFF = "manage.charter.tick.shadow.diff"
 CHARTER_SHADOW_STARVED = "manage.charter.tick.shadow.starved"
 CHARTER_CONSULT_QUEUED = "manage.charter.tick.consult.queued"
@@ -204,6 +207,7 @@ CHARTER_FAMILY = (
     CHARTER_RESUMED,
     CHARTER_FRICTIONS_AUDIT_PASSED,
     CHARTER_TRANSITION,
+    CHARTER_IDENTICAL_WORK_REFIRE_REFUSED,
     CHARTER_SHADOW_DIFF,
     CHARTER_SHADOW_STARVED,
     CHARTER_CONSULT_QUEUED,
