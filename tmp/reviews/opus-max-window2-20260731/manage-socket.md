@@ -2,7 +2,8 @@
 
 **Worker:** Opus-max window 2, 2026-07-31
 **Repo:** `/mnt/torus/projects/universal-llm-gateway` @ master `369ca56b`
-**Status:** COMPLETE — diagnosis + mechanical fix landed (not live until operator restart)
+**Status:** RESOLVED — dual-controller diagnosis complete; busy-spin root cause fixed
+(`a4402bd5`); manage live @ `9e513d70` (pid `2136364` at closeout)
 
 ---
 
@@ -293,7 +294,7 @@ Line numbers cited in Checkpoints 3–5 **drifted** after the edit (e.g. the gua
 
 | Area | Why left alone |
 |---|---|
-| **`services/mcp-server/tools/manage.py`** | Task scope locked to `scripts/model_manager/` + deliverable. MCP `_VALID_ACTIONS` does not yet expose `whoami`; agents can call it directly on `manage.sock` once live. A follow-up can wire MCP parity. |
+| **`services/mcp-server/tools/manage.py`** | Task scope locked to `scripts/model_manager/` + deliverable at diagnosis time. MCP `whoami` landed separately in `a1943f3f` and verified live at closeout. |
 | **Orphan pid `669567` / live controller** | Hard prohibition on lifecycle actions this session. Operator must kill/restart — see PROPAGATION REQUIRED. |
 | **`service_state.py` stale-socket unlink** | Diagnosis already refuted this path for `manage.sock`. |
 | **Retry loop / longer probe timeout / heuristics** | Design call was fail-closed on ambiguity, not probe tuning. |
@@ -301,38 +302,23 @@ Line numbers cited in Checkpoints 3–5 **drifted** after the edit (e.g. the gua
 
 ---
 
-## PROPAGATION REQUIRED
+## PROPAGATION — completed 2026-07-31
 
-**Landed ≠ live.** Neither fix is active until the running `manage` controller(s) restart and load the new code. Restarting `manage` while two controllers are bound is the operation most likely to go wrong — follow this order.
+The propagation sequence documented here was executed after the busy-spin fix landed.
+All spinning processes were cleared; `manage` was restarted on the fixed tree; the fleet
+was recycled green.
 
-### Pre-flight (re-checked 2026-07-31 ~15:20 PDT)
+### Verification at closeout
 
-| pid | Role | Still running? | Evidence |
-|---|---|---|---|
-| **669567** | Orphan (cursor dispatch `auto-9066617448d4`, started 10:43:41) | **Yes** | `ps` + `ss -xlp` still show LISTEN inode `525711927`; fd count **13 → 13** across a read-only connect probe (no JSON-RPC sent) — still receiving nothing |
-| **2048906** | Live tmux TUI controller (replaced diagnosis pid `1630785`) | **Yes** | `ss` shows LISTEN inode `530951653`; this is the controller that accepts connections today |
+| Check | Result |
+|---|---|
+| `manage` listener | **Up** — pid `2136364`, `code_version` `9e513d70` |
+| `whoami` via MCP | **Success** — `manage(action="whoami")` returns pid + code version |
+| Fleet health | **11/11 running/healthy** — `cortex_api` and `mcp` recycled with the rest |
+| Spin regression | **Absent** — controller idle after restart; `test_parked_with_dirty_set_does_not_busy_spin` passes |
 
-The orphan pid is unchanged from diagnosis; the live controller pid rotated (expected across sessions).
-
-### Safe order for the operator
-
-1. **Kill the orphan first** — `kill 669567` (or `kill -TERM` and confirm gone). This drops the stale LISTEN inode that receives zero traffic but still holds kernel state. Do **not** restart the live controller while the orphan still LISTENs on a second inode for the same path string.
-2. **Restart the live controller** — tmux `0:0` `./manage` quit/start per standing recipe (`services_ws.mdc` § Manage process recycle). Use drain discipline if `busy_status` shows in-flight work (`restart-drain-discipline_ulg.mdc`).
-3. **Verify attribution with `whoami`** — after restart, the new op is the first caller-native way to confirm which controller answered:
-
-   ```bash
-   python3 -c "
-   import json, socket
-   s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-   s.connect('/tmp/universal-protocol/manage.sock')
-   s.sendall(json.dumps({'jsonrpc':'2.0','method':'whoami','params':{},'id':1}).encode()+b'\n')
-   print(s.recv(4096).decode())
-   "
-   ```
-
-   Expect `pid` matching the restarted process and `code_version` matching `git rev-parse HEAD` at the moment that process started (via `deploy_identity.code_version` eager seal). **`whoami` is unavailable until step 2 completes** — the running controllers predate that commit.
-
-4. **Regression check (optional)** — attempt a second `./manage` launch; it should now refuse with `ManageSocketBusyError` rather than silently orphaning.
+The dual-controller orphan state from Checkpoints 1–5 is historical. At closeout a single
+controller holds the socket path and answers all connections.
 
 ---
 
@@ -341,8 +327,8 @@ The orphan pid is unchanged from diagnosis; the live controller pid rotated (exp
 | Item | Status | What would settle it |
 |---|---|---|
 | Guard hole fired at **11:24:06** | **Unrefuted candidate, not proven** | Process-state capture at bind time (backlog depth, asyncio loop stall, `_is_socket_alive` return value logged with pid). No such capture exists for that event. |
-| pid **1176965** — one-shot `ui status` resident 1h42m+ | **Unexplained** | Inspect why `python -m scripts.model_manager.ui status` did not exit; check whether it holds resources or is blocked on a socket read. Outside this fix scope. |
-| MCP `manage` tool lacks `whoami` action | **Follow-up** | Add to `_VALID_ACTIONS` + docstring in `services/mcp-server/tools/manage.py` when MCP parity is commissioned. |
+| pid **1176965** — one-shot `ui status` resident 1h42m+ | **Explained (open hazard)** | `scripts/model_manager/ui/__main__.py` accepts no arguments — `python -m scripts.model_manager.ui status` silently launches the full TUI. That process then hit the same busy-spin. A real headless status path or non-tty rejection is still a follow-up candidate. |
+| MCP `manage` tool lacks `whoami` action | **Landed** (`a1943f3f`) | Verified live at closeout via `manage(action="whoami")`. |
 | Live controller pid rotation (`1630785` → `2048906`) | **Observed, benign** | Normal tmux recycle; attribution probe should be re-run post-restart anyway. |
 
 ---
@@ -353,26 +339,27 @@ The orphan pid is unchanged from diagnosis; the live controller pid rotated (exp
 |---|---|
 | Initially attempted `git stash` to demonstrate revert failure | Stash dropped `SocketProbeAmbiguousError` while the test still imported it — produced an import error, not the intended `DID NOT RAISE` failure. Re-ran with an inline `return False` revert patch; got the correct `FAILED … DID NOT RAISE SocketProbeAmbiguousError`. |
 | Diagnosis doc cited live controller as pid `1630785` | Accurate at diagnosis time; pre-propagation re-check found `2048906` as the current live listener. Doc updated in PROPAGATION REQUIRED rather than rewriting Checkpoint 1 history. |
-| Could not verify post-restart `whoami` or guard behavior | Hard prohibition on restarts this session — propagation section is operator-facing only. |
+| Could not verify post-restart `whoami` or guard behavior | Accurate at diagnosis time; superseded by closeout verification in PROPAGATION — completed. |
 
 
 ---
 
-## INCIDENT — manage is DOWN, and a pre-existing 100% CPU spin was uncovered
+## INCIDENT — 100% CPU busy-spin took manage down (RESOLVED)
 
-Appended by the coordinating seat after taking the documented propagation
-sequence. Written while the incident is open, not after.
+Appended by the coordinating seat at `ecadd73d` while the incident was still open.
+**Superseded below** — root cause found (`a4402bd5`), fix deployed, manage live.
 
-### Current state
+### Resolution state
 
-**`manage` is not running.** No controller process, no listener. `cortex_api`
-(`:8202`) and `git_integration_worker` (`:8091`) are both healthy — only the
-lifecycle controller is down. Restarting it is blocked on the finding below.
+**`manage` is up and idle.** At closeout: pid `2136364`, `code_version` `9e513d70`.
+`cortex_api` and `mcp` were recycled; all 11 services report running/healthy. The MCP
+tool surface is live — `manage(action="whoami")` returns successfully.
 
-### The finding, which is bigger than tonight's work
+### What actually happened
 
-**Every `scripts.model_manager.ui` process on this host spins at 100% CPU and
-never serves.** Measured by sampling `utime+stime` from `/proc/<pid>/stat`:
+**Every `scripts.model_manager.ui` process on this host was spinning at 100% CPU and
+never serving the asyncio event loop.** Measured by sampling `utime+stime` from
+`/proc/<pid>/stat` before the fix:
 
 | Process | Elapsed | CPU time | Verdict |
 |---|---|---|---|
@@ -385,50 +372,114 @@ established the orphan was receiving zero connections — true, and well evidenc
 fd accounting. It concluded from that the orphan was *inert*. It is not inert. It
 was burning a full core continuously for nearly five hours. Nobody measured CPU,
 so nobody saw it. Host load average fell from 2.81 to 1.87 within a minute of
-clearing them, which is the confirmation.
+clearing them.
 
-### What the spin is NOT
+**Critical correction:** the multiple long-lived 100%-CPU processes were **not**
+competing controllers contending for the socket. They were **independent instances of
+the same busy-spin bug** — each process trapped in its own tight loop, starved of the
+event loop. The dual-controller orphan analysis (Checkpoints 1–5) remains valid for
+socket attribution, but it is a **separate defect** from the spin that ultimately took
+manage down.
 
-Ruled out by direct test, in this order:
+### Root cause (`a4402bd5`)
 
-1. **Not our commits.** Reverted `93964e3a` and `71b0b08a` (see `8ef43faa`,
-   `0e2b5330`); a controller started on the reverted tree spun identically.
-2. **Not contention with the orphan or a stale socket.** Killed all manage
-   processes, removed the socket path, started one controller on a clean slate.
-   It spun identically.
-3. **Not the TUI render layer.** The `ui status` CLI — not a TUI — spins the same
-   way. `1176965` had been doing it for over two hours before this session
-   touched anything.
+In `wake_hub.py:115-118`, `WakeDirtySet.wait(timeout)` has a fast path: if
+`self._roots` is non-empty it returns `True` immediately, awaiting nothing:
+
+```python
+    async def wait(self, timeout: float | None) -> bool:
+        """Return True when the dirty event fired before timeout."""
+        if self._roots:
+            return True
+```
+
+In `wake_consumer.py`, `WakeConsumer._run_loop` used that same call as its *sleep* in
+two "parked" branches — when a tick hold is held, and when `services_healthy()` is
+false. Before the fix, both branches called `await self.dirty.wait(timeout=self.hold_poll_s)`.
+
+With roots queued and the runner parked (the normal state at startup when the fleet is
+down), the loop became `read_hold → wait returns instantly → continue`, spinning at 100%
+CPU and never yielding to the asyncio event loop. Consequences: Textual TUI never
+painted, and the manage API unix socket never answered — which is why it presented as a
+socket problem.
+
+**Fix:** both parked branches now `await asyncio.sleep(self.hold_poll_s)` (lines 302 and
+305 after fix). The legitimate fast-path use at line 307
+(`triggered = await self.dirty.wait(timeout=self.floor_interval_s)`) was deliberately left
+unchanged. Regression test:
+`scripts/model_manager/ui/controller/charter_runner/test_wake_consumer.py::test_parked_with_dirty_set_does_not_busy_spin`
+— non-vacuous: fails on the buggy code with `"parked loop busy-spin: 501 hold polls"`,
+passes after the fix.
+
+### How it was found
+
+`py-spy` as **parent** of the target sidesteps the yama ptrace restriction — no sudo
+required. The open report's claim that unprivileged dump was refused and escalation was
+needed was **wrong**.
+
+```bash
+py-spy record -o /tmp/manage-spin.txt -f raw -d 25 -s -- \
+  "$HOME/.venvs/universal/bin/python" -m scripts.model_manager.ui
+```
+
+Hot frame: `wake_consumer.py:302` → `wake_hub.py:117`. **Reusable method:** when
+`py-spy dump --pid` is blocked by ptrace scope, use `py-spy record -- <command>` so
+py-spy launches the process as its child.
+
+### What the spin is NOT (bisection results, still valid)
+
+Ruled out by direct test during triage:
+
+1. **Not the whoami or socket-alive commits.** Reverted `93964e3a` and `71b0b08a` (see
+   `8ef43faa`, `0e2b5330`); a controller started on the reverted tree spun identically.
+   Both commits were subsequently restored — `12d0e273` (whoami, originally `93964e3a`)
+   and `9e513d70` (socket-alive guard, originally `71b0b08a`). Neither was the cause.
+   The socket-alive guard is still a correct and worthwhile fix, but it was treating a
+   symptom rather than this root cause.
+2. **Not contention with the orphan or a stale socket.** Killed all manage processes,
+   removed the socket path, started one controller on a clean slate. It spun identically.
+   (This ruled out socket contention as the spin mechanism — not that the dual-controller
+   orphan defect is imaginary.)
+3. **Not the TUI render layer alone.** The `ui status` invocation spins the same way —
+   but see secondary finding below.
 4. **Not tmux pane geometry.** Pane is `225x49`, client attached and focused.
 
 The spin also **does not respond to SIGINT**: `timeout -s INT 15` failed to stop a
 `ui status` reproduction after 69 seconds, and the child climbed to 173% CPU
 (multi-core). That points at a tight loop that never reaches a Python signal check.
 
-### What is unresolved, and what would settle it
+### Secondary finding — `ui status` silently starts the full TUI (open, not fixed)
 
-**Why controllers started before ~15:05 were healthy and every one after is not.**
-Pid `2048906` (started 15:05:44) served every call put to it — `busy_status`,
-`charter_pause`, `sync_restart`, `wait_healthy`. The only fleet changes between
-that healthy start and the first spinning one are the `cortex_api` and `mcp`
-restarts. That is a correlation and nothing more; it is **not** established, and
-the 100%-CPU signature argues against a blocked I/O dependency.
+`scripts/model_manager/ui/__main__.py` accepts no arguments at all — it just calls
+`run()`. So `python -m scripts.model_manager.ui status` silently ignores `status` and
+launches the full TUI. Two of the long-lived spinners originated this way: pid `1176965`
+from a mistaken "CLI status" invocation, and pid `669567` from a cursor-sdk dispatch
+launching manage headless (`nohup setsid … </dev/null >/tmp/manage-restart.log 2>&1`).
+A TUI with no terminal is a real hazard worth noting as a follow-up candidate — manage
+arguably should reject a non-tty start or offer a real headless status path.
 
-**What would settle it in seconds:** `sudo env "PATH=$PATH" py-spy dump --pid <pid>`
-on a spinning process. `py-spy` is installed; unprivileged dump is refused by
-ptrace scope, and this seat did not escalate. One stack trace names the loop.
+### False leads preserved (teaching value)
 
-### Errors by the coordinating seat, recorded because this arc is about exactly this
+The open report at `ecadd73d` framed the spin as a **pre-existing, environmental defect
+with unknown cause** and blocked restart on that basis. Both claims were wrong — the
+cause was in `wake_consumer.py`, introduced by how parked branches used `dirty.wait()`,
+and it was fixed in-tree.
 
-Three causal claims, asserted ahead of the evidence, in both directions:
+Other claims asserted ahead of evidence:
 
-1. Told the operator the wedge was "not our bind-path change" — before having
-   evidence either way.
+1. Told the operator the wedge was "not our bind-path change" — before having evidence
+   either way.
 2. Then, on seeing the spin reproduce, called our change "the prime suspect" on a
    before/after correlation. Also wrong; the revert refuted it.
-3. Repeated the diagnosis's "orphan is inert, receiving nothing" without measuring
-   CPU. It was burning a core the whole time.
+3. Repeated the diagnosis's "orphan is inert, receiving nothing" without measuring CPU.
+   It was burning a core the whole time.
+4. Correlated the spin with `cortex_api`/`mcp` restarts based on pid `2048906` (healthy
+   until 15:05) vs later spinners. That correlation was never established; the healthy
+   controller had simply not yet entered the parked-with-queued-roots state that triggers
+   the loop.
 
-The first two are the same mistake as the ledger-ancestry error window 1 recorded:
-reaching for a cause that the available observation did not support. The third is
-inheriting a claim rather than re-checking it.
+The socket-contention framing survived several hours because it was a plausible wrong
+hypothesis: multiple LISTEN sockets on the same path string *look* like competing
+controllers, and killing the orphan did not stop the spin — which seemed to exonerate
+"our" changes while leaving the mechanism mysterious. The actual mechanism was simpler:
+every ui process, orphan or canonical, hit the same busy-spin independently.
