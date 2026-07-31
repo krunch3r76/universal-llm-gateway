@@ -114,9 +114,9 @@ def looks_section2(text: str) -> bool:
 
 
 def unclassified_relay_prefix(*, provenance: str, body: str) -> str:
-    """Relay-local uncertainty when substance was obtained but §2 is unparsed."""
-    nbytes = len(body.encode("utf-8"))
-    return f"unclassified — relay could not parse §2 from {nbytes} bytes at {provenance}"
+    """Relay-local parse failure when substance was read but §2 fields did not extract."""
+    del body  # nbytes retained for backward-compatible call sites; URI is authoritative
+    return f"parse_failed — authoritative sidecar: {provenance}"
 
 
 def default_relay_cell_cap(value: str, provenance: str) -> str:
@@ -141,8 +141,8 @@ def fill_judgment_cell(
         return cap(extracted, provenance) if cap is not None else extracted
     if has_closeout_substance(body) and field_heading_present(body, field):
         return (
-            f"unclassified — relay could not parse §2 field `{field}` "
-            f"from substance at {provenance}"
+            f"parse_failed — could not extract §2 field `{field}` "
+            f"(authoritative sidecar: {provenance})"
         )
     if has_closeout_substance(body):
         return "unauthored — not reported by executor"

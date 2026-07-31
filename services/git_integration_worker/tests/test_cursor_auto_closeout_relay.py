@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from services.git_integration_worker.cursor_auto.closeout_relay import (
     is_wrapper_manifest,
     looks_section2,
@@ -23,6 +25,9 @@ from services.git_integration_worker.cursor_auto.closeout_relay_cortex import (
 )
 from services.git_integration_worker.cursor_auto.relay_trust import (
     enforce_synthesized_partial,
+)
+from services.git_integration_worker.cursor_sdk_deliverables import (
+    sidecar_workspaces_ref,
 )
 
 _WRAPPER = json.dumps(
@@ -950,10 +955,10 @@ def test_turn8_relay_body_overclaim_clamp_ac5() -> None:
         dispatch_id=_TURN8_DISPATCH,
     )
     assert payload.status == "partial"
-    assert "unclassified — relay could not parse §2 from 1498 bytes" in payload.body
+    assert "parse_failed — authoritative sidecar:" in payload.body
     assert "none — field not authored in §2 sidecar" not in payload.body
     assert f"unresolved — not read: {_TURN8_CORTEX_CLOSEOUT}" in payload.body
-    assert "overclaim:unclassified_field" in payload.body
+    assert "overclaim:parse_failed_field" in payload.body
     assert "overclaim:false_absence_unread_provenance" in payload.body
 
 
@@ -1017,3 +1022,73 @@ def test_web_anthropic_missing_access_coverage_clamps_turn38_class() -> None:
     assert payload.status != "complete"
     assert "reporting:missing_access" in payload.body
     assert "reporting:missing_coverage" in payload.body
+
+
+_6524_HEADING_ONLY_SECTION2 = """\
+## §2 CLOSEOUT
+
+**status:** complete
+
+**ac_verdict**
+
+| AC | Verdict | Evidence |
+|---|---|---|
+| AC1 | **PASS** | pytest green |
+
+**deltas_to_spec:** none
+
+**decisions_taken**
+1. Used heading-only bold for ac_verdict (6524 arc class).
+
+**effects (committed)**
+- `admission/decide.py`
+"""
+
+
+def test_6524_heading_only_ac_verdict_table_extracts() -> None:
+    """6524 sidecars use ``**ac_verdict**`` without colon — must not emit parse_failed."""
+    from services.git_integration_worker.cursor_auto.closeout_relay_project import (
+        count_unclassified_fields,
+    )
+
+    dispatch_id = "auto-a438536de12d"
+    provenance = sidecar_workspaces_ref(dispatch_id)
+    payload = select_closeout_relay_payload(
+        sdk_body=_WRAPPER,
+        sidecar_text=_6524_HEADING_ONLY_SECTION2,
+        ledger_status="completed",
+        dispatch_id=dispatch_id,
+    )
+    assert payload.source == "section2_sidecar"
+    assert count_unclassified_fields(payload.body) == 0
+    assert "parse_failed" not in payload.body.lower()
+    assert "AC1" in payload.body
+    assert "overclaim:unclassified_field" not in payload.body
+
+
+@pytest.mark.parametrize(
+    "dispatch_id",
+    ["auto-5362a24e62c6", "auto-659d61c03158", "auto-a438536de12d"],
+)
+def test_6524_arc_sidecar_fixtures_no_parse_failed(dispatch_id: str) -> None:
+    """Regression — three 6524 arc sidecars must relay authored ac_verdict tables."""
+    from pathlib import Path
+
+    from services.git_integration_worker.cursor_auto.closeout_relay_project import (
+        count_unclassified_fields,
+    )
+
+    path = Path("tmp/reviews/closeouts") / f"{dispatch_id}.md"
+    if not path.is_file():
+        pytest.skip(f"fixture sidecar missing: {path}")
+    payload = select_closeout_relay_payload(
+        sdk_body=_WRAPPER,
+        sidecar_text=path.read_text(encoding="utf-8"),
+        ledger_status="completed",
+        dispatch_id=dispatch_id,
+    )
+    assert payload.source == "section2_sidecar"
+    assert count_unclassified_fields(payload.body) == 0
+    assert "relay could not parse" not in payload.body.lower()
+    assert "AC1" in payload.body
+    assert "overclaim:unclassified_field" not in payload.body

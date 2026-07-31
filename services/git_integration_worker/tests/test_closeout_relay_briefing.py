@@ -62,7 +62,7 @@ def test_build_ac_verdict_pointer_over_excerpt_for_addressable_provenance() -> N
     sidecar = _6294_sidecar()
     provenance = f"cortex://notes/system/specs/example-{_DISPATCH}.md"
     cell = build_ac_verdict_cell(sidecar, provenance=provenance)
-    assert "unclassified" in cell
+    assert "parse_failed" in cell
     assert provenance in cell
     assert "M1 compensating parity gate" not in cell
     assert "<br><br>" not in cell

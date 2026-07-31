@@ -34,9 +34,13 @@ _ATX_HEADING_RE = re.compile(r"^(#{1,6})\s+(.+)$", re.MULTILINE)
 _BOLD_FIELD_LINE_RE = re.compile(
     r"(?im)^\*\*(?P<heading>[^*\n]+?):\*\*\s*(?P<rest>.*)$",
 )
+_BOLD_HEADING_ONLY_RE = re.compile(
+    r"(?im)^\*\*(?P<heading>[^*\n]+?)\*\*\s*$",
+)
 
 
 def _normalize_heading_key(text: str) -> str:
+    text = re.sub(r"\s*\([^)]*\)", "", text)
     return re.sub(r"[_\-\s]+", "", text.casefold())
 
 
@@ -86,8 +90,7 @@ def _normalize_field_heading(raw: str) -> str:
 
 def field_heading_present(body: str, field: str) -> bool:
     """True when a §2 field heading exists in authored prose."""
-    for match in _BOLD_FIELD_LINE_RE.finditer(body):
-        heading = _normalize_field_heading(match.group("heading"))
+    for _start, _end, heading, _rest in _field_line_spans(body):
         if _heading_matches_field(heading, field):
             return True
     for match in _ATX_HEADING_RE.finditer(body):
@@ -97,11 +100,19 @@ def field_heading_present(body: str, field: str) -> bool:
 
 
 def _field_line_spans(body: str) -> list[tuple[int, int, str, str]]:
+    """Collect bold §2 field lines — ``**field:** rest`` and ``**field**`` heading-only."""
     spans: list[tuple[int, int, str, str]] = []
     for match in _BOLD_FIELD_LINE_RE.finditer(body):
         heading = _normalize_field_heading(match.group("heading"))
         rest = match.group("rest").strip()
         spans.append((match.start(), match.end(), heading, rest))
+    colon_starts = {start for start, _, _, _ in spans}
+    for match in _BOLD_HEADING_ONLY_RE.finditer(body):
+        if match.start() in colon_starts:
+            continue
+        heading = _normalize_field_heading(match.group("heading"))
+        spans.append((match.start(), match.end(), heading, ""))
+    spans.sort(key=lambda item: item[0])
     return spans
 
 
@@ -109,6 +120,9 @@ def _next_field_boundary(body: str, start: int) -> int:
     for line_start, _, _, _ in _field_line_spans(body):
         if line_start >= start:
             return line_start
+    for match in _ATX_HEADING_RE.finditer(body):
+        if match.start() >= start:
+            return match.start()
     return len(body)
 
 
@@ -122,20 +136,21 @@ def _extract_bold_same_line(body: str, field: str) -> str | None:
 def _extract_bold_section(body: str, field: str) -> str | None:
     lines = body.splitlines(keepends=True)
     for index, line in enumerate(lines):
-        match = _BOLD_FIELD_LINE_RE.match(line)
+        colon_match = _BOLD_FIELD_LINE_RE.match(line)
+        heading_only_match = (
+            None if colon_match else _BOLD_HEADING_ONLY_RE.match(line)
+        )
+        match = colon_match or heading_only_match
         if match is None:
             continue
         heading = _normalize_field_heading(match.group("heading"))
         if not _heading_matches_field(heading, field):
             continue
-        rest = match.group("rest").strip()
+        rest = match.group("rest").strip() if colon_match else ""
         if rest:
             return rest
         start = sum(len(lines[i]) for i in range(index + 1))
         end = _next_field_boundary(body, start)
-        atx = _ATX_HEADING_RE.search(body, start)
-        if atx:
-            end = min(end, atx.start())
         section = body[start:end].strip()
         return section or None
     return None

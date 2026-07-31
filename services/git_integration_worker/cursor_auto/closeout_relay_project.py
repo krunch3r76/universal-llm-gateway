@@ -30,7 +30,7 @@ _SECTION2_FIELDS: tuple[tuple[str, str], ...] = (
 )
 
 _UNCLASSIFIED_RE = re.compile(
-    r"unclassified\s*[—-]\s*relay could not parse",
+    r"(?:unclassified\s*[—-]\s*relay could not parse|parse_failed\s*[—-])",
     re.IGNORECASE,
 )
 

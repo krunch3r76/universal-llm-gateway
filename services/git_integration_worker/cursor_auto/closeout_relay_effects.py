@@ -19,6 +19,9 @@ from services.git_integration_worker.cursor_auto.closeout_relay_cortex_fields im
 from services.git_integration_worker.cursor_auto.closeout_relay_project import (
     count_unclassified_fields,
 )
+from services.git_integration_worker.cursor_sdk_deliverables import (
+    sidecar_workspaces_ref,
+)
 
 _FS_WRITE_OPS = frozenset(
     {
@@ -210,6 +213,7 @@ def _clamp_non_complete_status(current: str) -> str:
     return "partial"
 
 
+_OVERCLAIM_PARSE_FAILED = "overclaim:parse_failed_field"
 _OVERCLAIM_UNCLASSIFIED = "overclaim:unclassified_field"
 _OVERCLAIM_FALSE_ABSENCE = "overclaim:false_absence_unread_provenance"
 _DEVIATIONS_LINE_RE = re.compile(r"(?im)^deviations:\s*(.*)$")
@@ -303,12 +307,34 @@ def _cell_claims_false_absence(cell: str) -> bool:
 
 
 def _cell_claims_unclassified_or_hard_unauthored(cell: str) -> bool:
-    if "unclassified" in cell.casefold() and "relay could not parse" in cell.casefold():
+    lowered = cell.casefold()
+    if "parse_failed" in lowered:
+        return True
+    if "unclassified" in lowered and "relay could not parse" in lowered:
         return True
     return (
         "unauthored — not reported by executor" in cell
         or "unknown — executor emitted no §2" in cell
     )
+
+
+def _rewrite_parse_failed_cells(body: str, *, sidecar_uri: str) -> str:
+    """Replace stale unclassified cells with parse_failed + authoritative sidecar URI."""
+    amended = body
+    for field in _JUDGMENT_FIELDS:
+        cell = _extract_table_cell(amended, field)
+        if not cell:
+            continue
+        lowered = cell.casefold()
+        if "parse_failed" in lowered:
+            continue
+        if "unclassified" in lowered and "relay could not parse" in lowered:
+            amended = _replace_table_cell(
+                amended,
+                field,
+                f"parse_failed — authoritative sidecar: {sidecar_uri}",
+            )
+    return amended
 
 
 def _judgment_cells_overclaim(body: str) -> bool:
@@ -335,6 +361,16 @@ def amend_completion_overclaim(
     deviations: list[str] = []
 
     unread_sidecars = _durable_sidecar_uris(wrapper_text, dispatch_id=dispatch_id)
+    sidecar_uri = (
+        sidecar_workspaces_ref(dispatch_id)
+        if dispatch_id
+        else (unread_sidecars[0] if unread_sidecars else "")
+    )
+    if sidecar_uri and "unclassified" in amended_body.casefold():
+        amended_body = _rewrite_parse_failed_cells(
+            amended_body, sidecar_uri=sidecar_uri
+        )
+
     if unread_sidecars:
         preferred_uri = unread_sidecars[0]
         false_absence_hits = False
@@ -356,6 +392,11 @@ def amend_completion_overclaim(
     if _judgment_cells_overclaim(amended_body):
         if amended_status == "complete":
             amended_status = "partial"
+        if _OVERCLAIM_PARSE_FAILED not in deviations and any(
+            "parse_failed" in (_extract_table_cell(amended_body, f) or "").casefold()
+            for f in _JUDGMENT_FIELDS
+        ):
+            deviations.append(_OVERCLAIM_PARSE_FAILED)
         if _OVERCLAIM_UNCLASSIFIED not in deviations:
             deviations.append(_OVERCLAIM_UNCLASSIFIED)
 
