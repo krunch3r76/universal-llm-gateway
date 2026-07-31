@@ -71,8 +71,8 @@ method the rest of this document uses.
 
 ## What I changed
 
-Two files plus one new test file. No commit SHA is quoted for the change itself
-until the commit lands — see the commit line at the bottom of this section.
+Two files plus one new test file, committed as **`3895af89`** (four paths, staged
+explicitly; `tmp/` deliverable and the test file via `git add -f`).
 
 ### 1. `libs/deploy_identity/code_version.py` — shared layer
 
@@ -252,9 +252,9 @@ Every entry is landed-not-live. I could not restart anything.
 
 | Service | Currently reports | Needs restart at | Why |
 |---|---|---|---|
-| **cortex-api** (TCP pid 1173844 **and** UDS pid 1173134 — both, they are separate processes) | `dba38ed7` / `82f07260` respectively; both serve 0 x-mcp | HEAD at restart time (≥ this commit) | Carries `dba38ed7`'s x-mcp route stamps (already landed, never live) **plus** this commit's health fix. Verify with the three-part check above. |
-| **git_integration_worker** | was `82f07260`; **not listening on :8091 at 21:17Z** | HEAD at restart (≥ this commit) | Picks up the shared-layer seal, making its liveness `code_version` structurally rather than accidentally correct. Also needs whatever a sibling landed in its own tree. |
-| **mcp-server** (container) | `82f07260`, honestly | HEAD at sync (≥ this commit) | Reporting is sound; the *code* is stale. It resolves from the stamp so its behaviour does not change — but it is running four-plus commits behind. |
+| **cortex-api** (TCP pid 1173844 **and** UDS pid 1173134 — both, they are separate processes) | `dba38ed7` / `82f07260` respectively; both serve 0 x-mcp | HEAD at restart time (≥ `3895af89`) | Carries `dba38ed7`'s x-mcp route stamps (already landed, never live) **plus** this commit's health fix. Verify with the three-part check above. |
+| **git_integration_worker** | was `82f07260`; **not listening on :8091 at 21:17Z** | HEAD at restart (≥ `3895af89`) | Picks up the shared-layer seal, making its liveness `code_version` structurally rather than accidentally correct. Also needs whatever a sibling landed in its own tree. |
+| **mcp-server** (container) | `82f07260`, honestly | HEAD at sync (≥ `3895af89`) | Reporting is sound; the *code* is stale. It resolves from the stamp so its behaviour does not change — but it is running four-plus commits behind. |
 | **charter-runner / model_manager telemetry** | n/a (in-process) | next process start | Consumes `resolve_code_version` via `telemetry.py:7`; inherits the fix on restart. |
 
 Any process that imported `deploy_identity` before this commit is unaffected until
