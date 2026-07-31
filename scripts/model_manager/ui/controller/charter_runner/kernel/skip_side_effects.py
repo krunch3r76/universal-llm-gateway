@@ -126,7 +126,8 @@ async def apply_skip_side_effects(
                 from ..tick_sos_liveness import classify_sticky_backing
 
                 try:
-                    giw_payload = await fetch_giw_active_work_payload()
+                    read = await fetch_giw_active_work_payload()
+                    giw_payload = read.as_dict
                 except Exception:  # noqa: BLE001
                     giw_payload = None
                 backing, _holder = classify_sticky_backing(giw_payload)

@@ -232,24 +232,27 @@ def test_held_heartbeat_rate_limited(
 
 
 @pytest.mark.offline
-def test_hold_status_safe_to_quit(data_dir: Path) -> None:
+def test_hold_status_pause_drain_clear(data_dir: Path) -> None:
     from scripts.model_manager.ui.controller.service_ctl.core import ServiceController
 
-    # Construct minimal gate path without full ServiceController boot.
     gate = ManageShutdownGate()
     hold.set_hold("quiet", "pytest", data_dir=data_dir)
     held = hold.read_hold(data_dir=data_dir)
     assert held is not None
     tick_in_flight = "charter_tick" in gate.snapshot().activities
     assert tick_in_flight is False
-    assert held is not None and not tick_in_flight  # safe_to_quit
+    probe = hold.LiveCharterDispatchProbe(probe_status="ok", dispatches=[])
+    assert hold.pause_drain_clear(
+        held=held, tick_in_flight=tick_in_flight, live_probe=probe
+    )
 
     gate.set_activity("charter_tick", True)
     tick_in_flight = "charter_tick" in gate.snapshot().activities
     assert tick_in_flight is True
-    assert not (held is not None and not tick_in_flight)
+    assert not hold.pause_drain_clear(
+        held=held, tick_in_flight=tick_in_flight, live_probe=probe
+    )
 
-    # Exercise ServiceController methods when possible via direct hold helpers.
     _ = ServiceController  # import-smoke; methods use hold module directly
     payload = hold.hold_as_dict(held)
     assert payload is not None
@@ -267,8 +270,8 @@ def test_service_controller_pause_resume_status(
 
     ctl = ServiceController(workspace_root=tmp_path)
 
-    async def no_live() -> list[dict[str, str]]:
-        return []
+    async def no_live() -> hold.LiveCharterDispatchProbe:
+        return hold.LiveCharterDispatchProbe(probe_status="ok", dispatches=[])
 
     monkeypatch.setattr(hold, "list_live_charter_dispatches", no_live)
 
@@ -281,13 +284,14 @@ def test_service_controller_pause_resume_status(
         assert paused["reason"] == "ops"
         status = await ctl.charter_hold_status()
         assert status["held"] is True
-        assert status["safe_to_quit"] is True
+        assert status["pause_drain_clear"] is True
+        assert status["giw_charter_probe_status"] == "ok"
         resumed = await ctl.charter_resume()
         assert resumed["held"] is False
         assert resumed["was_held"] is True
         status2 = await ctl.charter_hold_status()
         assert status2["held"] is False
-        assert status2["safe_to_quit"] is False
+        assert status2["pause_drain_clear"] is False
 
     asyncio.run(_run())
     assert any(s == "manage.charter.tick.paused" for s, _ in events_log)
@@ -341,15 +345,25 @@ def test_charter_pause_blocks_until_dispatches_clear(
     ctl = ServiceController(workspace_root=tmp_path)
     calls = {"n": 0}
     live_then_clear = [
-        [{"dispatch_id": "x", "subject": "6091-w16.md", "thread_id": "1"}],
-        [{"dispatch_id": "x", "subject": "6091-w16.md", "thread_id": "1"}],
-        [],
+        hold.LiveCharterDispatchProbe(
+            probe_status="ok",
+            dispatches=[
+                {"dispatch_id": "x", "subject": "6091-w16.md", "thread_id": "1"}
+            ],
+        ),
+        hold.LiveCharterDispatchProbe(
+            probe_status="ok",
+            dispatches=[
+                {"dispatch_id": "x", "subject": "6091-w16.md", "thread_id": "1"}
+            ],
+        ),
+        hold.LiveCharterDispatchProbe(probe_status="ok", dispatches=[]),
     ]
 
-    async def fake_live() -> list[dict[str, str]]:
+    async def fake_live() -> hold.LiveCharterDispatchProbe:
         idx = min(calls["n"], len(live_then_clear) - 1)
         calls["n"] += 1
-        return list(live_then_clear[idx])
+        return live_then_clear[idx]
 
     monkeypatch.setattr(hold, "list_live_charter_dispatches", fake_live)
 
@@ -359,8 +373,8 @@ def test_charter_pause_blocks_until_dispatches_clear(
         )
         assert result["status"] == "ok"
         assert result["drained"] is True
-        assert result["safe_to_quit"] is True
-        assert result["live_charter_dispatches"] == []
+        assert result["pause_drain_clear"] is True
+        assert result["live_charter_shaped_dispatches"] == []
         assert calls["n"] >= 3
 
     asyncio.run(_run())
@@ -376,8 +390,13 @@ def test_charter_pause_timeout_keeps_hold(
 
     ctl = ServiceController(workspace_root=tmp_path)
 
-    async def always_live() -> list[dict[str, str]]:
-        return [{"dispatch_id": "x", "subject": "6091-w16.md", "thread_id": "1"}]
+    async def always_live() -> hold.LiveCharterDispatchProbe:
+        return hold.LiveCharterDispatchProbe(
+            probe_status="ok",
+            dispatches=[
+                {"dispatch_id": "x", "subject": "6091-w16.md", "thread_id": "1"}
+            ],
+        )
 
     monkeypatch.setattr(hold, "list_live_charter_dispatches", always_live)
 
@@ -388,7 +407,7 @@ def test_charter_pause_timeout_keeps_hold(
         assert result["status"] == "timeout"
         assert result["drained"] is False
         assert result["held"] is True
-        assert result["safe_to_quit"] is False
+        assert result["pause_drain_clear"] is False
         assert hold.read_hold(data_dir=data_dir) is not None
         hold.clear_hold(data_dir=data_dir)
 
@@ -401,3 +420,88 @@ def test_hold_file_schema(data_dir: Path) -> None:
     raw = json.loads(hold.hold_path(data_dir=data_dir).read_text(encoding="utf-8"))
     assert set(raw.keys()) == {"schema_version", "reason", "set_by", "set_at"}
     assert raw["schema_version"] == 1
+
+
+@pytest.mark.offline
+def test_probe_failure_is_not_clear_drain() -> None:
+    """AC2: unobservable GIW probe must not satisfy pause_drain_clear."""
+    from scripts.model_manager.ui.controller.charter_runner.giw_live_hold import (
+        GiwActiveWorkPayloadRead,
+    )
+
+    held = hold.Hold(reason="x", set_by="t", set_at=0.0)
+    probe_ok_empty = hold.LiveCharterDispatchProbe(probe_status="ok", dispatches=[])
+    probe_err = hold.LiveCharterDispatchProbe(
+        probe_status="error",
+        dispatches=[],
+        error_class="TimeoutError",
+    )
+
+    assert hold.pause_drain_clear(
+        held=held, tick_in_flight=False, live_probe=probe_ok_empty
+    )
+    assert not hold.pause_drain_clear(
+        held=held, tick_in_flight=False, live_probe=probe_err
+    )
+
+    err_read = GiwActiveWorkPayloadRead(status="error", error_class="TimeoutError")
+    assert not err_read
+    assert err_read.as_dict is None
+
+
+@pytest.mark.offline
+def test_list_live_charter_dispatches_probe_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.model_manager.ui.controller.charter_runner import giw_live_hold
+
+    async def fail_fetch() -> giw_live_hold.GiwActiveWorkPayloadRead:
+        return giw_live_hold.GiwActiveWorkPayloadRead(
+            status="error",
+            error_class="ConnectError",
+        )
+
+    monkeypatch.setattr(giw_live_hold, "fetch_giw_active_work_payload", fail_fetch)
+
+    async def _run() -> None:
+        probe = await hold.list_live_charter_dispatches()
+        assert probe.probe_status == "error"
+        assert probe.dispatches == []
+        assert not hold.pause_drain_clear(
+            held=hold.Hold(reason="r", set_by="t", set_at=0.0),
+            tick_in_flight=False,
+            live_probe=probe,
+        )
+
+    asyncio.run(_run())
+
+
+@pytest.mark.offline
+def test_charter_hold_status_surfaces_probe_error(
+    data_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from scripts.model_manager.ui.controller.service_ctl.core import ServiceController
+
+    hold.set_hold("probe-err", "pytest", data_dir=data_dir)
+    ctl = ServiceController(workspace_root=tmp_path)
+
+    async def err_live() -> hold.LiveCharterDispatchProbe:
+        return hold.LiveCharterDispatchProbe(
+            probe_status="error",
+            dispatches=[],
+            error_class="HTTPError",
+        )
+
+    monkeypatch.setattr(hold, "list_live_charter_dispatches", err_live)
+
+    async def _run() -> None:
+        status = await ctl.charter_hold_status()
+        assert status["held"] is True
+        assert status["giw_charter_probe_status"] == "error"
+        assert status["giw_charter_probe_error_class"] == "HTTPError"
+        assert status["evaluated_scope"] == hold.LIVE_CHARTER_DISPATCH_SCOPE
+        assert status["pause_drain_clear"] is False
+
+    asyncio.run(_run())

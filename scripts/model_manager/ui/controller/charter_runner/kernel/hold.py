@@ -13,7 +13,7 @@ import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from libs.charter_runner_store.db import charter_runner_data_dir
 
@@ -26,8 +26,29 @@ _CHARTER_SUBJECT_RE = re.compile(
     r"(?:charter[-_/]|charter-runner|\b\d{3,5}-w\d+\b)",
     re.IGNORECASE,
 )
+LIVE_CHARTER_DISPATCH_SCOPE = (
+    "charter_shaped_giw_active_work: subjects matching _CHARTER_SUBJECT_RE only"
+)
 DEFAULT_PAUSE_DRAIN_TIMEOUT_S = 1800.0
 DEFAULT_PAUSE_POLL_S = 2.0
+
+
+@dataclass(frozen=True, slots=True)
+class LiveCharterDispatchProbe:
+    """GIW charter-shaped dispatch probe for pause-drain gating."""
+
+    probe_status: Literal["ok", "error"]
+    dispatches: list[dict[str, str]]
+    evaluated_scope: str = LIVE_CHARTER_DISPATCH_SCOPE
+    error_class: str | None = None
+
+    @property
+    def observable(self) -> bool:
+        return self.probe_status == "ok"
+
+    def __iter__(self):
+        """Backward compat for callers that iterate dispatch rows directly."""
+        return iter(self.dispatches)
 
 
 @dataclass(frozen=True)
@@ -181,14 +202,39 @@ def live_charter_dispatches_from_payload(
     return found
 
 
-async def list_live_charter_dispatches() -> list[dict[str, str]]:
+async def list_live_charter_dispatches() -> LiveCharterDispatchProbe:
     """Probe GIW for in-flight cursor-sdk dispatches that look charter-admitted."""
     from ..giw_live_hold import fetch_giw_active_work_payload
 
-    payload = await fetch_giw_active_work_payload()
-    if not payload:
-        return []
-    return live_charter_dispatches_from_payload(payload)
+    read = await fetch_giw_active_work_payload()
+    if read.status != "ok" or read.payload is None:
+        return LiveCharterDispatchProbe(
+            probe_status="error",
+            dispatches=[],
+            error_class=read.error_class,
+        )
+    return LiveCharterDispatchProbe(
+        probe_status="ok",
+        dispatches=live_charter_dispatches_from_payload(read.payload),
+    )
+
+
+def pause_drain_clear(
+    *,
+    held: Hold | None,
+    tick_in_flight: bool,
+    live_probe: LiveCharterDispatchProbe,
+) -> bool:
+    """True only when pause is armed, tick idle, probe succeeded, no charter WIP.
+
+    Host quit safety is out of scope here — this names tick-level pause drain
+    only and requires an observable GIW probe (unknown ≠ clear drain).
+    """
+    if held is None or tick_in_flight:
+        return False
+    if not live_probe.observable:
+        return False
+    return not live_probe.dispatches
 
 
 async def emit_held_if_due(

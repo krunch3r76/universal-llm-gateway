@@ -114,10 +114,17 @@ def gate_defer_count(root_id: str) -> int:
 async def preflight_write_lease(*, root_id: str) -> GatePreflightResult:
     """Cheap lease preflight before charter fire_window (does not burn window_index)."""
     payload = await fetch_giw_active_work_payload()
-    if payload is None:
+    if not payload:
         return GatePreflightResult(outcome="proceed")
 
-    lease = payload.get("write_lease")
+    if isinstance(payload, dict):
+        body = payload
+    else:
+        body = payload.as_dict
+    if body is None:
+        return GatePreflightResult(outcome="proceed")
+
+    lease = body.get("write_lease")
     if not isinstance(lease, dict):
         return GatePreflightResult(outcome="proceed")
 
@@ -133,7 +140,7 @@ async def preflight_write_lease(*, root_id: str) -> GatePreflightResult:
     queue_depth = int(lease.get("queue_depth") or 0)
     defer_count = gate_defer_count(root_id)
 
-    if _orphan_holder_no_live_backing(holder_id, payload):
+    if _orphan_holder_no_live_backing(holder_id, body):
         logger.error(
             "charter gate preflight orphan holder root=%s holder=%s queue_depth=%s",
             root_id,

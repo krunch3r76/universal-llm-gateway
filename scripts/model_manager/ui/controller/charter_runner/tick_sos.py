@@ -277,7 +277,8 @@ async def maybe_fire_tick_sos(
     payload = giw_payload
     if payload is None and not admitted:
         try:
-            payload = await fetch_giw_active_work_payload()
+            read = await fetch_giw_active_work_payload()
+            payload = read.as_dict
         except Exception:  # noqa: BLE001 — SOS must not abort tick
             logger.exception("tick SOS GIW probe failed root=%s", root_id)
             payload = None

@@ -17,7 +17,8 @@ Reachability posture (D-rule, §5.3 E2): ``ConnectError`` reports *not held*
 from __future__ import annotations
 
 import time
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Literal
 
 import httpx
 from universal_logging import get_logger
@@ -27,6 +28,34 @@ from .env_predicates import SOURCE_GIW_LIVE, EnvironmentSnapshot, SourceRead
 logger = get_logger(__name__)
 
 _PROBE_TIMEOUT_S = 5.0
+
+
+@dataclass(frozen=True, slots=True)
+class GiwActiveWorkPayloadRead:
+    """Raw GIW ``/api/v1/git/active-work`` probe — unknown ≠ none.
+
+    ``status="error"`` means the probe could not observe; callers must not treat
+    that as an empty drain. Truthy only when ``status=="ok"`` (including an
+    empty-but-valid payload dict).
+    """
+
+    status: Literal["ok", "error"]
+    payload: dict[str, Any] | None = None
+    error_class: str | None = None
+
+    def __bool__(self) -> bool:
+        return self.status == "ok"
+
+    def get(self, key: str, default: Any = None) -> Any:
+        """Dict-like access for legacy callers (empty when unobservable)."""
+        if self.payload is None:
+            return default
+        return self.payload.get(key, default)
+
+    @property
+    def as_dict(self) -> dict[str, Any] | None:
+        """Payload dict when observable, else None (legacy interop)."""
+        return self.payload if self.status == "ok" else None
 
 
 def _lease_is_held(payload: dict[str, Any]) -> bool:
@@ -120,8 +149,11 @@ async def probe_giw_live_hold() -> bool:
     return True
 
 
-async def fetch_giw_active_work_payload() -> dict[str, Any] | None:
-    """Return the raw GIW ``/api/v1/git/active-work`` JSON object when reachable."""
+async def fetch_giw_active_work_payload() -> GiwActiveWorkPayloadRead:
+    """Return the raw GIW ``/api/v1/git/active-work`` JSON object when reachable.
+
+    Probe failures return ``status="error"`` — never ``None`` coerced to "clear".
+    """
     from transport_utils import make_async_client
 
     from ..restart_drain import GIT_INTEGRATION_WORKER_URL
@@ -133,9 +165,19 @@ async def fetch_giw_active_work_payload() -> dict[str, Any] | None:
             resp = await client.get("/api/v1/git/active-work")
             resp.raise_for_status()
             payload = resp.json()
-    except Exception:  # noqa: BLE001
-        return None
-    return payload if isinstance(payload, dict) else None
+    except Exception as exc:  # noqa: BLE001 — unobservable must not read as clear
+        logger.warning("GIW active-work payload probe failed (%s)", exc)
+        return GiwActiveWorkPayloadRead(
+            status="error",
+            error_class=type(exc).__name__,
+        )
+    if not isinstance(payload, dict):
+        logger.warning("GIW active-work returned non-object payload")
+        return GiwActiveWorkPayloadRead(
+            status="error",
+            error_class="MalformedPayload",
+        )
+    return GiwActiveWorkPayloadRead(status="ok", payload=payload)
 
 
 def dispatch_ids_from_active_work(payload: dict[str, Any]) -> set[str]:

@@ -96,12 +96,10 @@ async def _giw_probe() -> tuple[str, dict[str, Any] | None]:
         return "degraded", None
     if read.status != "ok":
         return "error", None
-    payload = await fetch_giw_active_work_payload()
-    if payload is None:
+    read = await fetch_giw_active_work_payload()
+    if read.status != "ok" or read.payload is None:
         return "error", None
-    if not isinstance(payload, dict):
-        return "error", None
-    return "ok", payload
+    return "ok", read.payload
 
 
 async def evaluate_identical_work_refire(

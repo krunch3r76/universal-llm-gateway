@@ -27,11 +27,15 @@ async def substrate_healthy_for_cap_clear() -> bool:
     if intent is not None:
         return False
 
-    payload = await fetch_giw_active_work_payload()
-    if payload is None:
+    read = await fetch_giw_active_work_payload()
+    if isinstance(read, dict):
+        body = read
+    elif read.status != "ok" or read.payload is None:
         return False
+    else:
+        body = read.payload
 
-    if _lease_is_held(payload):
+    if _lease_is_held(body):
         return False
 
     return True

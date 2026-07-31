@@ -187,12 +187,19 @@ class ServiceController:
         )
         started = time.monotonic()
         deadline = started + max(0.0, float(timeout_s))
-        live: list[dict] = []
+        live_probe = hold.LiveCharterDispatchProbe(
+            probe_status="ok",
+            dispatches=[],
+        )
         tick_in_flight = True
         while True:
             tick_in_flight = "charter_tick" in self._shutdown_gate.snapshot().activities
-            live = await hold.list_live_charter_dispatches()
-            if not tick_in_flight and not live:
+            live_probe = await hold.list_live_charter_dispatches()
+            if hold.pause_drain_clear(
+                held=payload,
+                tick_in_flight=tick_in_flight,
+                live_probe=live_probe,
+            ):
                 waited_s = time.monotonic() - started
                 return {
                     "status": "ok",
@@ -202,9 +209,11 @@ class ServiceController:
                     "set_by": payload.set_by,
                     "set_at": payload.set_at,
                     "tick_in_flight": False,
-                    "live_charter_dispatches": [],
+                    "live_charter_shaped_dispatches": live_probe.dispatches,
+                    "giw_charter_probe_status": live_probe.probe_status,
+                    "evaluated_scope": live_probe.evaluated_scope,
                     "waited_s": round(waited_s, 3),
-                    "safe_to_quit": True,
+                    "pause_drain_clear": True,
                     "path": str(hold.hold_path()),
                 }
             if time.monotonic() >= deadline:
@@ -217,9 +226,11 @@ class ServiceController:
                     "set_by": payload.set_by,
                     "set_at": payload.set_at,
                     "tick_in_flight": tick_in_flight,
-                    "live_charter_dispatches": live,
+                    "live_charter_shaped_dispatches": live_probe.dispatches,
+                    "giw_charter_probe_status": live_probe.probe_status,
+                    "evaluated_scope": live_probe.evaluated_scope,
                     "waited_s": round(waited_s, 3),
-                    "safe_to_quit": False,
+                    "pause_drain_clear": False,
                     "path": str(hold.hold_path()),
                 }
             await asyncio.sleep(max(0.1, float(poll_s)))
@@ -243,20 +254,28 @@ class ServiceController:
         }
 
     async def charter_hold_status(self) -> dict:
-        """Report durable hold + whether quit is safe (no tick, no charter WIP)."""
+        """Report durable hold + pause-drain facts (charter-shaped GIW probe only)."""
         from scripts.model_manager.ui.controller.charter_runner.kernel import hold
 
         held = hold.read_hold()
         tick_in_flight = "charter_tick" in self._shutdown_gate.snapshot().activities
-        live = await hold.list_live_charter_dispatches()
-        safe_to_quit = held is not None and not tick_in_flight and not live
+        live_probe = await hold.list_live_charter_dispatches()
+        pause_drain_clear = hold.pause_drain_clear(
+            held=held,
+            tick_in_flight=tick_in_flight,
+            live_probe=live_probe,
+        )
         result: dict = {
             "held": held is not None,
             "tick_in_flight": tick_in_flight,
-            "live_charter_dispatches": live,
-            "safe_to_quit": safe_to_quit,
+            "live_charter_shaped_dispatches": live_probe.dispatches,
+            "giw_charter_probe_status": live_probe.probe_status,
+            "evaluated_scope": live_probe.evaluated_scope,
+            "pause_drain_clear": pause_drain_clear,
             "path": str(hold.hold_path()),
         }
+        if live_probe.error_class is not None:
+            result["giw_charter_probe_error_class"] = live_probe.error_class
         if held is not None:
             result.update(hold.hold_as_dict(held) or {})
         return result
