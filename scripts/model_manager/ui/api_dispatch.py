@@ -140,7 +140,7 @@ async def execute(
             if service == "mcp":
                 # Plain stop→start reuses the baked /app image; alias to sync_restart
                 # so services/mcp-server/ edits actually load (todo:mcp-restart-silent-noop-load).
-                return await _mcp_deferred_sync_restart(
+                result = await _mcp_deferred_sync_restart(
                     ctl,
                     event_bus,
                     method="restart",
@@ -148,21 +148,26 @@ async def execute(
                     no_cache=False,
                     scheduled_message=_MCP_RESTART_ALIASED_MSG,
                 )
+                return await _finalize_restart_rebuild(
+                    ctl, service, result, restart_scheduled=True
+                )
             force = bool(params.get("force", False))
             if service == "git_integration_worker" and not force:
-                return await _git_worker_drain_supervised(ctl, "restart")
-            return await run_gated(
-                ctl.restart_gate,
-                "restart",
-                service,
-                force=force,
-                lifecycle=lambda: _lifecycle_with_restart_window(
-                    ctl,
-                    service,
+                result = await _git_worker_drain_supervised(ctl, "restart")
+            else:
+                result = await run_gated(
+                    ctl.restart_gate,
                     "restart",
-                    lambda: _restart_cycle(ctl, service),
-                ),
-            )
+                    service,
+                    force=force,
+                    lifecycle=lambda: _lifecycle_with_restart_window(
+                        ctl,
+                        service,
+                        "restart",
+                        lambda: _restart_cycle(ctl, service),
+                    ),
+                )
+            return await _finalize_restart_rebuild(ctl, service, result)
 
         case "rebuild":
             require_service(service)
@@ -172,7 +177,7 @@ async def execute(
                     f"supported: {', '.join(sorted(REBUILD_SERVICES))}"
                 )
             if service == "mcp":
-                return await _mcp_deferred_sync_restart(
+                result = await _mcp_deferred_sync_restart(
                     ctl,
                     event_bus,
                     method="rebuild",
@@ -180,8 +185,13 @@ async def execute(
                     force=bool(params.get("force", False)),
                     no_cache=True,
                 )
+                return await _finalize_restart_rebuild(
+                    ctl, service, result, restart_scheduled=True
+                )
             msg = await _rebuild(ctl, service)
-            return {"status": "ok", "message": msg}
+            return await _finalize_restart_rebuild(
+                ctl, service, {"status": "ok", "message": msg}
+            )
 
         case "sync_restart":
             require_service(service)
@@ -487,6 +497,32 @@ def _check_one(svc: ServiceState, service: str) -> ServiceInfo:
         return getattr(svc, f"check_{service}")()
     except AttributeError:
         raise ValueError(f"Unknown service: '{service}'")
+
+
+async def _finalize_restart_rebuild(
+    ctl: ServiceController,
+    service: str,
+    result: dict[str, Any],
+    *,
+    restart_scheduled: bool = False,
+) -> dict[str, Any]:
+    """Attach observed post-state; top-level ok implies observed liveness only."""
+    from dataclasses import replace
+
+    from .controller.service_ctl.post_state import (
+        finalize_restart_rebuild_result,
+        probe_service_post_state,
+    )
+
+    probe = await asyncio.to_thread(
+        probe_service_post_state,
+        ctl.service_state,
+        service,
+        check_one=_check_one,
+    )
+    if restart_scheduled:
+        probe = replace(probe, restart_scheduled=True)
+    return finalize_restart_rebuild_result(result, probe)
 
 
 def _gateway_build_status(ctl: ServiceController) -> dict[str, Any]:
