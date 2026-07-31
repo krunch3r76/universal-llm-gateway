@@ -21,7 +21,12 @@ from ._assertions_shared import (
     _emit_predicate_form_normalize_events,
     _project_seeded_by,
 )
-from ._friction_close_impl import close_friction_assertion, validate_resolution_kind
+from ._friction_close_impl import (
+    _RESOLUTION_KIND_CATALOG,
+    close_friction_assertion,
+    validate_resolution_kind,
+)
+from ._write_validation import collect_missing_required, validation_error_response
 from ._shared import (
     _DEFAULT_USER_ENTITY,
     _VALID_CONFIDENCE,
@@ -42,10 +47,18 @@ def _op_friction_close(
     **_: object,
 ) -> dict[str, Any]:
     """Close an open friction by superseding it with a confirmed resolution row."""
-    if not assertion_id:
-        return {"error": "assertion_id required for friction_close"}
-    if not resolution_kind:
-        return {"error": "resolution_kind required for friction_close"}
+    resolution_accepted = [form for form, _ in _RESOLUTION_KIND_CATALOG]
+    missing = collect_missing_required(
+        {"assertion_id": assertion_id, "resolution_kind": resolution_kind},
+        message_for={
+            "assertion_id": "assertion_id required for friction_close",
+            "resolution_kind": "resolution_kind required for friction_close",
+        },
+        enum_accepted={"resolution_kind": resolution_accepted},
+    )
+    if missing:
+        return validation_error_response(missing)
+    assert resolution_kind is not None
     kind_err = validate_resolution_kind(resolution_kind)
     if kind_err:
         return {"error": kind_err}
@@ -87,15 +100,16 @@ def _op_assert(
     raw_id: bool = False,
     **_: object,
 ) -> dict[str, Any]:
-    required_fields = {
-        "entity_id": entity_id,
-        "claim": claim,
-        "confidence": confidence,
-        "evidence": evidence,
-    }
-    for field, val in required_fields.items():
-        if not val:
-            return {"error": f"{field} is required"}
+    missing = collect_missing_required(
+        {
+            "entity_id": entity_id,
+            "claim": claim,
+            "confidence": confidence,
+            "evidence": evidence,
+        }
+    )
+    if missing:
+        return validation_error_response(missing)
     assert entity_id is not None
     write_nudge = None
     with cortex_conn() as conn:

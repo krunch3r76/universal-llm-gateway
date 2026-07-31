@@ -31,6 +31,11 @@ from ._shared import (
     record,
     reject_trait_writes_at_create,
 )
+from ._write_validation import (
+    apply_entity_create_param_aliases,
+    entity_create_preflight_errors,
+    validation_error_response,
+)
 
 _TRAIT_VOCAB: dict[str, frozenset[str]] = {
     "confidence_band": CONFIDENCE_BAND_VALUES,
@@ -511,10 +516,14 @@ def _op_entity_create(
     trait_error = reject_trait_writes_at_create(extra)
     if trait_error is not None:
         return trait_error
-    required_fields = {"id": id, "type": type, "name": name}
-    for field, val in required_fields.items():
-        if not val:
-            return {"error": f"{field} is required"}
+    id, type, name = apply_entity_create_param_aliases(
+        id=id, type=type, name=name, extra=extra
+    )
+    preflight = entity_create_preflight_errors(
+        id=id, type=type, name=name, attributes=attributes
+    )
+    if preflight:
+        return validation_error_response(preflight)
     if status is not None and status not in _VALID_STATUS:
         return {
             "error": f"Invalid status {status!r}. "
