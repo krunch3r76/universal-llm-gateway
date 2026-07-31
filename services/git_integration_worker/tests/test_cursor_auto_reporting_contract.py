@@ -94,6 +94,12 @@ def test_caller_auditable_allowlist() -> None:
     assert caller_auditable(from_agent="cursor") is True
 
 
+def test_caller_auditable_keys_on_re_observability_not_lane() -> None:
+    """The blind life seat is denied by its own address — not by denying the endpoint."""
+    assert caller_auditable(from_agent="mcp-claude-life") is False
+    assert caller_auditable(from_agent="web") is False
+
+
 def test_tier_separation_same_defective_closeout_two_lanes() -> None:
     """AC7 — blind lane clamps; auditable lane deviation-only."""
     blind = amend_reporting_field_gaps(

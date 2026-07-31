@@ -17,10 +17,16 @@ from __future__ import annotations
 
 # Requesters who can read cortex/workspaces/agent-bus and re-verify claims.
 # ¬ keyed on ``life`` or ``lane:*`` tags — only on re-observability.
+#
+# ``web-anthropic`` is the code-lane endpoint address: it reaches
+# ``fs(sandbox="workspaces")`` and agent-bus, so it can re-observe a deliverable.
+# The blind life seat is a *different* address (``mcp-claude-life``) and is already
+# denied by default — denying ``web-anthropic`` to catch it blinded the code lane
+# for a caller that was never the concern (restored 2026-07-31).
 _AUDITABLE_REQUESTERS: frozenset[str] = frozenset(
     {
         "cursor",
-        "web",
+        "web-anthropic",
     }
 )
 
