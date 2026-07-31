@@ -515,9 +515,12 @@ def register_frontier_tools(mcp: FastMCP) -> None:
           ``skills_mcp_predicated`` naming the offenders; scope-default
           predicated skills are skipped with an event, never rejected.
           On roleless CDP generate (``model=cdp/<picker>``): code-MCP /
-          ``cursor_only`` skills (e.g. ``path-sim``) are inlined in
-          ``<skills_inline>`` XML — only ``shared_sync`` Claude slugs become
+          ``cursor_only`` skills (e.g. ``operator-proxy-substrate``) are inlined
+          in ``<skills_inline>`` XML — only ``shared_sync`` Claude slugs become
           leading ``/<slug>\\n`` manifest lines for + → Skills attach.
+          ``path-sim`` is the one denied slug: it rejects 422
+          ``cdp_skills_path_sim_rejected`` (a:27430). Cascade Q/R legs seal
+          path-sim into the prompt URI rather than listing it in ``skills=``.
           Attach is best-effort: a slug not in the Customize list or a missing
           + control is skipped silently; inline bodies in the prompt carry
           delivery (friction a:26986).
