@@ -1006,8 +1006,13 @@ status: complete
 """
 
 
-def test_web_anthropic_missing_access_coverage_clamps_turn38_class() -> None:
-    """AC1 — blind web-anthropic caller: missing ACCESS/COVERAGE clamps complete."""
+def test_blind_caller_missing_access_coverage_clamps_turn38_class() -> None:
+    """AC1 — blind caller: missing ACCESS/COVERAGE clamps complete.
+
+    The blind seat is ``mcp-claude-life``; ``web-anthropic`` is the code-lane
+    address and was restored to the auditable allowlist at 4b056a34, which is
+    what this test's original premise asserted against.
+    """
     from services.git_integration_worker.cursor_auto.caller_auditable import (
         caller_auditable,
     )
@@ -1015,7 +1020,7 @@ def test_web_anthropic_missing_access_coverage_clamps_turn38_class() -> None:
         finalize_relay_payload,
     )
 
-    assert caller_auditable(from_agent="web-anthropic") is False
+    assert caller_auditable(from_agent="mcp-claude-life") is False
     payload = finalize_relay_payload(
         CloseoutRelayPayload(
             body=_TURN38_INTERNALLY_CONSISTENT,
@@ -1024,7 +1029,7 @@ def test_web_anthropic_missing_access_coverage_clamps_turn38_class() -> None:
         ),
         wrapper_text=_WRAPPER,
         dispatch_id="auto-turn38-class",
-        caller_auditable=caller_auditable(from_agent="web-anthropic"),
+        caller_auditable=caller_auditable(from_agent="mcp-claude-life"),
     )
     assert payload.status != "complete"
     assert "reporting:missing_access" in payload.body
@@ -1391,6 +1396,73 @@ status: partial
     assert relay_parse_miss_cell("evidence", provenance) in body
     for marker in _ACCUSATORY_PLACEHOLDER_MARKERS:
         assert marker not in body
+
+
+_AC1_SUBSECTION_BEFORE_CANONICAL_HEADING = """\
+## §2 CLOSEOUT
+
+**status:** complete
+
+### AC verdicts
+
+**AC1 — intent `18e42d50`**
+
+Found in the dispatch-home intent store, not the operator home.
+
+**AC2 — ledger row**
+
+Row still `open`.
+
+### ac_verdict
+
+| AC | Verdict |
+|---|---|
+| AC1 | **PASS** — intent `completed` |
+| AC2 | **PASS (negative)** — row still `open` |
+
+**deltas_to_spec:** none
+"""
+
+
+def test_canonical_ac_verdict_heading_beats_earlier_ac1_subsection() -> None:
+    """A1 — an exact `ac_verdict` heading outranks a prefix-matched `AC1 …` section.
+
+    Heading matching is prefix-based so `AC1 — …` also matches the `ac_verdict`
+    field. First-match-wins used to hand the cell to whichever appeared first in
+    the document, so a compliant author who wrote the canonical heading still had
+    an unrelated subsection relayed as their verdict — with no parse-miss signal.
+    """
+    from services.git_integration_worker.cursor_auto.closeout_relay_cortex_fields import (
+        extract_field_section,
+    )
+
+    cell = extract_field_section(
+        _AC1_SUBSECTION_BEFORE_CANONICAL_HEADING, "ac_verdict"
+    )
+    assert cell is not None
+    assert "AC2" in cell, "canonical heading carries every AC row"
+    assert "dispatch-home intent store" not in cell, "AC1 subsection must not win"
+
+
+def test_ac1_subsection_still_resolves_when_no_canonical_heading() -> None:
+    """A2 — the loose pass is unchanged, so detection cannot regress.
+
+    ``looks_section2`` keys off ``ac_verdict`` resolving, so a sidecar that only
+    has ``AC1 …`` headings must keep resolving — otherwise it relays as
+    ``source=empty`` and the closeout is dropped from the bus entirely.
+    """
+    from services.git_integration_worker.cursor_auto.closeout_relay_common import (
+        looks_section2,
+    )
+    from services.git_integration_worker.cursor_auto.closeout_relay_cortex_fields import (
+        extract_field_section,
+    )
+
+    prose = _AC1_SUBSECTION_BEFORE_CANONICAL_HEADING.replace(
+        "### ac_verdict", "### unrelated tail"
+    )
+    assert extract_field_section(prose, "ac_verdict") is not None
+    assert looks_section2(prose) is True
 
 
 def test_ac2_source_ref_visible_in_relayed_body() -> None:

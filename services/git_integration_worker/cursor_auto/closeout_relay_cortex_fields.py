@@ -45,13 +45,20 @@ def _normalize_heading_key(text: str) -> str:
     return re.sub(r"[_\-\s]+", "", text.casefold())
 
 
-def _heading_matches_field(heading: str, field: str) -> bool:
+def _heading_matches_field(heading: str, field: str, *, exact_only: bool = False) -> bool:
+    """Match an authored heading to a §2 field.
+
+    Prefix matching is what lets ``Next steps`` bind to ``next``, but it also lets
+    ``AC1 — …`` bind to ``ac_verdict``. When both an exact and a prefix match exist
+    in one document the exact one is the author's intent, so callers run an
+    ``exact_only`` pass first.
+    """
     normalized_heading = _normalize_heading_key(heading)
     for alias in _FIELD_HEADING_ALIASES[field]:
         normalized_alias = _normalize_heading_key(alias)
-        if normalized_heading == normalized_alias or normalized_heading.startswith(
-            normalized_alias
-        ):
+        if normalized_heading == normalized_alias:
+            return True
+        if not exact_only and normalized_heading.startswith(normalized_alias):
             return True
     return False
 
@@ -72,11 +79,11 @@ def _table_heading_matches_field(heading: str, field: str) -> bool:
     return False
 
 
-def _extract_atx_section(body: str, field: str) -> str | None:
+def _extract_atx_section(body: str, field: str, *, exact_only: bool = False) -> str | None:
     matches = list(_ATX_HEADING_RE.finditer(body))
     for index, match in enumerate(matches):
         heading = match.group(2).strip()
-        if not _heading_matches_field(heading, field):
+        if not _heading_matches_field(heading, field, exact_only=exact_only):
             continue
         start = match.end()
         end = matches[index + 1].start() if index + 1 < len(matches) else len(body)
@@ -127,14 +134,14 @@ def _next_field_boundary(body: str, start: int) -> int:
     return len(body)
 
 
-def _extract_bold_same_line(body: str, field: str) -> str | None:
+def _extract_bold_same_line(body: str, field: str, *, exact_only: bool = False) -> str | None:
     for _start, _end, heading, rest in _field_line_spans(body):
-        if _heading_matches_field(heading, field) and rest:
+        if _heading_matches_field(heading, field, exact_only=exact_only) and rest:
             return rest
     return None
 
 
-def _extract_bold_section(body: str, field: str) -> str | None:
+def _extract_bold_section(body: str, field: str, *, exact_only: bool = False) -> str | None:
     lines = body.splitlines(keepends=True)
     for index, line in enumerate(lines):
         colon_match = _BOLD_FIELD_LINE_RE.match(line)
@@ -145,7 +152,7 @@ def _extract_bold_section(body: str, field: str) -> str | None:
         if match is None:
             continue
         heading = _normalize_field_heading(match.group("heading"))
-        if not _heading_matches_field(heading, field):
+        if not _heading_matches_field(heading, field, exact_only=exact_only):
             continue
         rest = match.group("rest").strip() if colon_match else ""
         if rest:
@@ -202,17 +209,24 @@ def status_from_section2(text: str) -> str | None:
 
 
 def extract_field_section(body: str, field: str) -> str | None:
-    """Extract judgment-cell text for *field* from cortex prose headings."""
+    """Extract judgment-cell text for *field* from cortex prose headings.
+
+    Runs the heading extractors twice: once accepting only an exact field
+    heading, then once allowing prefix aliases. The loose pass is unchanged, so
+    a field that resolved before still resolves — only *which* section wins can
+    differ, and it differs toward the heading the author actually named.
+    """
     table = extract_table_field(body, field)
     if table:
         return table
-    same_line = _extract_bold_same_line(body, field)
-    if same_line:
-        return same_line
-    for extractor in (_extract_bold_section, _extract_atx_section):
-        section = extractor(body, field)
-        if section:
-            return section
+    for exact_only in (True, False):
+        same_line = _extract_bold_same_line(body, field, exact_only=exact_only)
+        if same_line:
+            return same_line
+        for extractor in (_extract_bold_section, _extract_atx_section):
+            section = extractor(body, field, exact_only=exact_only)
+            if section:
+                return section
     return None
 
 
