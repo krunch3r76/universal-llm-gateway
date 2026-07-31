@@ -387,6 +387,32 @@ for importers of `closeout_relay_cortex_fields` / `extract_field_section` /
 `field_heading_present`, which returns only the eight `closeout_relay*` modules
 and their test file.
 
+### Later in the session: GIW went down, and the restart became a start
+
+Re-probing before closing out, the service is **no longer running**:
+
+```
+$ curl -s -w "http_code=%{http_code}" .../cursor-auto/liveness   ->  http_code=000
+$ ss -ltn | grep 8091                                            ->  nothing listening
+$ ps -p 1173131                                                  ->  gone
+```
+
+Confirmed twice, 45 s apart. It was live at `82f07260` with 4,871 s uptime
+earlier in this same session, so it stopped in between. I did not stop it and
+cannot start it (no `manage`); a sibling workstream owns the drain supervisor and
+this may be a drain in progress.
+
+**What this changes for the seat that can run `manage`:** the action is now a
+**start**, not a restart, and `55e69868` is already an ancestor of `HEAD`
+(`5a259cee` at time of writing) — so a start from `HEAD` should bring it live
+without any separate step for this workstream.
+
+**Do not treat that as done.** It is exactly the inference this brief exists to
+forbid. Start the service, then read `code_version` back from the liveness
+endpoint and run `git merge-base --is-ancestor 55e69868 <observed_sha>`. An
+unobserved propagation claim is the failure class, and "it should pick it up from
+HEAD" is an unobserved propagation claim.
+
 **On `4f7367ff`:** the prior pass reported it landed-not-live and then withdrew
 that on lead verification. The withdrawal was correct and I confirm it
 independently above. I have removed the struck-through text rather than carry it,
