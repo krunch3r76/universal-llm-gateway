@@ -83,6 +83,7 @@ class EnvFacts:
     empty_hopper: bool = False
     consult_pending: bool = False
     tip_executor: str | None = None
+    worker_shaped_tip: bool = False
     arc_lane: str = "layer"
     layer_independence_block: bool = False
 
@@ -249,6 +250,9 @@ def decide(
         # Policy B (a:27165): explicit cursor/* tip/typed executor on judgment
         # ⇒ ADMIT_WORKER — else force-consult loops after harvest forever.
         if lane == "judgment" and _explicit_cursor_worker(executor):
+            return Transition.ADMIT_WORKER
+        # Worker-shaped densify/implement tips must not QUEUE_CONSULT (6489).
+        if lane == "judgment" and env.worker_shaped_tip:
             return Transition.ADMIT_WORKER
         if not env.substrate_up:
             return Transition.DEFER_CONSULT

@@ -191,8 +191,8 @@ def tip_is_empty_hopper(
 def tip_executor_is_cdp_family(executor: str | None) -> bool:
     """True when tip ``executor=`` is a CDP / web-anthropic substrate family.
 
-    Stage-B (a:26659 elaboration): incompatible ``cdp/*`` tips positively rebind
-    to ``QUEUE_CONSULT`` instead of bare refuse — never ``ADMIT_WORKER``.
+    Stage-B (a:26659): consult-shaped ``cdp/*`` tips rebind to ``QUEUE_CONSULT``.
+    Worker-shaped tips refuse ``executor_mismatch`` instead (6489).
     """
     if executor is None:
         return False

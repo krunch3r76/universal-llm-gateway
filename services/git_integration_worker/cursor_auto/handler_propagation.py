@@ -21,7 +21,6 @@ from services.git_integration_worker.cursor_auto.propagate_admission import (
     admit_propagate_body,
 )
 from services.git_integration_worker.cursor_auto.propagation_probe import (
-    giw_i2_clear,
     probe_process_live,
     proof_observed,
 )
@@ -38,7 +37,7 @@ async def run_propagation_in_seat(
     effort: dict[str, Any],
     gate_plan: dict[str, Any],
 ) -> dict[str, Any]:
-    """Mint propagation ledger rows and fire drain-gated sync_restart when safe."""
+    """Mint propagation ledger rows and hand restarts to manage (drain-queued)."""
     admission = admit_propagate_body(job.body)
     if not admission.approved:
         error = admission.error or {"reason": "propagate_admission_missing"}
@@ -96,24 +95,8 @@ async def run_propagation_in_seat(
 
 
 async def _execute_row(row: PropagationRow, *, row_id: str) -> dict[str, Any]:
-    if row.safe_window == "harvest":
-        set_defer_reason(row_id, "harvest_window_only")
-        return {
-            "service": row.service,
-            "row_id": row_id,
-            "status": "scheduled",
-            "reason": "harvest_window_only",
-        }
-    if row.service == "git_integration_worker":
-        clear, i2_reason = giw_i2_clear()
-        if not clear:
-            set_defer_reason(row_id, i2_reason)
-            return {
-                "service": row.service,
-                "row_id": row_id,
-                "status": "scheduled",
-                "reason": i2_reason,
-            }
+    # Always hand to manage — it drain-queues when busy. Do not I2-short-circuit
+    # as "scheduled/parked" without a manage call (operator bind 2026-07-30).
     manage_result = await asyncio.to_thread(
         sync_restart_service,
         row.service,
@@ -121,12 +104,18 @@ async def _execute_row(row: PropagationRow, *, row_id: str) -> dict[str, Any]:
     )
     status = str(manage_result.get("status") or "unknown")
     if status == "deferred":
-        set_defer_reason(row_id, "manage_deferred_drain")
+        set_defer_reason(row_id, "manage_queued_drain")
         return {
             "service": row.service,
             "row_id": row_id,
-            "status": "deferred",
+            "status": "queued",
+            "reason": str(
+                manage_result.get("reason")
+                or manage_result.get("state")
+                or "manage_deferred_drain"
+            ),
             "manage": manage_result,
+            "next": "manage drain queue will fire sync_restart — poll liveness for code_version",
         }
     if status == "error":
         set_defer_reason(row_id, str(manage_result.get("reason") or "manage_error"))
@@ -160,10 +149,10 @@ def _disposition_for(executions: list[dict[str, Any]]) -> str:
     statuses = {str(item.get("status") or "") for item in executions}
     if statuses <= {"executed"}:
         return "executed"
-    if "executed" in statuses or "deferred" in statuses or "submitted" in statuses:
+    if statuses <= {"queued"}:
+        return "queued"
+    if "executed" in statuses or "queued" in statuses or "submitted" in statuses:
         return "propagated"
-    if statuses <= {"scheduled"}:
-        return "scheduled"
     return "propagated"
 
 
@@ -171,13 +160,15 @@ def _summary_for(disposition: str, executions: list[dict[str, Any]]) -> str:
     services = ", ".join(str(item.get("service") or "?") for item in executions)
     if disposition == "executed":
         return f"Auto executed propagation restart for {services}; proof-of-live observed."
-    if disposition == "scheduled":
+    if disposition == "queued":
+        reasons = ", ".join(str(item.get("reason") or "?") for item in executions)
         return (
-            f"Auto scheduled propagation restart for {services}; "
-            "safe window or I2 not yet clear."
+            f"Auto queued propagation restart for {services} on manage drain "
+            f"(reason={reasons}). Restart will fire after drain — not ledger-only. "
+            "Live only when code_version matches code_ref."
         )
     return (
-        f"Auto propagated restart for {services} — drain/restart submitted or deferred; "
+        f"Auto propagated restart for {services} — drain/restart submitted or queued; "
         "ledger row open until proof closes."
     )
 

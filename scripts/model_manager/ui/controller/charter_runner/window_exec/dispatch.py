@@ -41,6 +41,7 @@ from ..telemetry import (
 from ..window_terminal_contract import implement_ready_declared, is_pickup_append
 from .materializer_autonomous import select_packet
 from .materializer_consult import (
+    LayerConsultGateUnresolvedError,
     _open_layer_consult_gate,
     consult_subject_for_arc,
     materialize_consult_packet,
@@ -213,13 +214,24 @@ async def admit_consult_window(
     _checkpoint, parsed = tip
     if window_index is None:
         window_index = count_admissions(turns) + 1
-    packet = materialize_consult_packet(
-        row.root_id,
-        parsed,
-        scoreboard_uri=row.scoreboard_uri,
-        window_index=window_index,
-        arc_lane=arc_lane,
-    )
+    if arc_lane == "layer" and _open_layer_consult_gate(parsed) is None:
+        return _fail(
+            FireAttemptOutcome.REFUSED_PRE_FIRE,
+            "layer_consult_gate_unresolved",
+        )
+    try:
+        packet = materialize_consult_packet(
+            row.root_id,
+            parsed,
+            scoreboard_uri=row.scoreboard_uri,
+            window_index=window_index,
+            arc_lane=arc_lane,
+        )
+    except LayerConsultGateUnresolvedError:
+        return _fail(
+            FireAttemptOutcome.REFUSED_PRE_FIRE,
+            "layer_consult_gate_unresolved",
+        )
     gate_id = _open_layer_consult_gate(parsed) if arc_lane == "layer" else None
     subject = consult_subject_for_arc(
         row.root_id,

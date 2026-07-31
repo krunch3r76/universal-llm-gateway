@@ -150,6 +150,9 @@ skills:
   dispatch-shape:
     surface_class: shared_sync
     mcp_surface_required: life
+  dispatch-report-discipline:
+    surface_class: shared_sync
+    mcp_surface_required: none
   discovery-engram-opportunity-scan:
     surface_class: cursor_only
     mcp_surface_required: code

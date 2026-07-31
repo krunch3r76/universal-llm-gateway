@@ -15,6 +15,7 @@ consult-routing
 cortex
 dispatch-shape
 discovery-engram-opportunity-scan
+dispatch-report-discipline
 docstring-quality
 event-instrumentation-discipline
 friction-review

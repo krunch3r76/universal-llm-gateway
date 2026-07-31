@@ -145,14 +145,17 @@ Product may prompt Kaywan to authorize triggers (⊃ schedule-alone). **Kaywan
 always Approves** — expect the click, ¬ uncertain, ¬ work around. After fire:
 autonomous or ping Kaywan. SOT: `cortex://notes/system/specs/claude-ai-cowork-trigger-auth-gate.md`
 
-**Inform Kaywan (BINDING):** two pager classes — (1) **Awareness** welcome: NL pings for
-progress, insights, or anything interesting (subject must **not** say `COME TO IDE`;
-he need not open Cursor). (2) **Interrupt:** subject **`COME TO IDE`** only for
-**mission debrief** or when **all other options are exhausted**. Write facts to the
-turn/sidecar first, then deliver. Never page while he is in chat with you. Do not wait
-on the story-wire projector for attention. v1 delivery = life MCP `notify` (ref required;
-`(unreferenced)` degrade OK). SOT: `cortex://notes/system/specs/life-mcp-story-wire-update.md`
-· a:26834 · a:26841 · `cdp-operator-proxy` inv 22(d).
+**Inform Kaywan (BINDING — operator bind 2026-07-30: default ON):** two pager classes —
+(1) **Awareness** — **required cadence**, not optional judgment: NL progress ping via life
+MCP ``notify`` after every material CLOSEOUT, every DISPOSITION, every blocked→ask, and
+every bind fork (subject must **not** say `COME TO IDE`; he need not open Cursor).
+Write facts to the turn/sidecar first, then deliver. (2) **Interrupt:** subject
+**`COME TO IDE`** only for **mission debrief** or when **all other options are exhausted**.
+**In-session carve-out:** suppress ``notify`` only while Kaywan is in *this* Cowork CSE
+chat — IDE-only presence does **not** suppress (he still wants Fi play-by-play). Do not
+wait on the story-wire projector for attention. v1 delivery = life MCP `notify` (ref
+required; `(unreferenced)` degrade OK). SOT: `cortex://notes/system/specs/life-mcp-story-wire-update.md`
+· a:26834 · a:26841 · `cdp-operator-proxy` inv 22.
 
 Complete without `COME TO IDE` unless mission debrief or options exhausted (Fable
 `ESCALATE` + `minimal_question`, or a true operator-only gate). Authorize-triggers:

@@ -25,6 +25,7 @@ from .conveyor_phase import (
     wake_conveyor_if_fresh_append,
 )
 from .env_snapshot import EnvSnapshot
+from .gate_lane_classifier import tip_is_consult_shaped, tip_is_worker_shaped
 from .identical_work_refire import (
     SKIP_REASON,
     RefireGateContext,
@@ -315,6 +316,9 @@ async def apply_kernel_tick_for_root(
             empty_hopper=empty_hopper,
             consult_pending=consult_pending,
             tip_executor=tip_executor,
+            worker_shaped_tip=(
+                tip_is_worker_shaped(parsed) if parsed is not None else False
+            ),
             arc_lane=arc_lane,
             layer_independence_block=independence_block,
         )
@@ -410,8 +414,9 @@ async def apply_kernel_tick_for_root(
             # Tip next_pickup.executor is admit-substrate authority (a:26659).
             # Ledger pickup_executor / attendance→generate must not override a
             # non-worker family (e.g. cdp/opus) into admit_worker_window.
-            # Stage-B: cdp/* tips positively rebind to QUEUE_CONSULT (never
+            # Stage-B: consult-shaped cdp/* tips rebind to QUEUE_CONSULT (never
             # ADMIT_WORKER; bare refuse parks forever — 6163 completion monitor).
+            # Worker-shaped tips keep executor_mismatch refuse (6489).
             # CONSULT_PENDING tips likewise rebind — ``executor=pending`` is
             # worker_substrate_compatible but must not ADMIT_WORKER (6237 G3).
             if parsed is not None and parsed.consult_pending:
@@ -430,7 +435,11 @@ async def apply_kernel_tick_for_root(
             live = gated_pickup_from_parsed(parsed)
             tip_executor = live.executor if live is not None else None
             if not worker_substrate_compatible(tip_executor):
-                if tip_executor_is_cdp_family(tip_executor):
+                if (
+                    tip_executor_is_cdp_family(tip_executor)
+                    and parsed is not None
+                    and tip_is_consult_shaped(parsed)
+                ):
                     logger.info(
                         "charter-runner executor_mismatch_rebind_consult "
                         "root=%s tip_executor=%s",

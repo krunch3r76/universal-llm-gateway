@@ -14,6 +14,8 @@ Consult seats must not dispatch nested consults (depth-1 only).
 
 from __future__ import annotations
 
+import re
+
 from ..checkpoint_schema import (
     ParsedCheckpoint,
     append_footer_to_packet,
@@ -23,6 +25,12 @@ from ..checkpoint_schema import (
 from ..residue_fingerprint import normalize_next_pickup
 
 ConsultRole = str  # r_admit | judgment_gap
+
+_CONSULT_PENDING_RE = re.compile(r"\bCONSULT_PENDING\b", re.I)
+
+
+class LayerConsultGateUnresolvedError(Exception):
+    """Layer consult materialization refused — no classifiable G1/G2 stop."""
 
 
 def _is_r_admit(parsed: ParsedCheckpoint) -> bool:
@@ -106,21 +114,22 @@ CHECKPOINT boundary · unresolvable cdp/ transport · IF6 tripwire ⇒ BLOCKED.
 </task_guidance>"""
 
 
-def _open_layer_consult_gate(parsed: ParsedCheckpoint) -> str:
-    """Return G1 or G2 for the first open layer consult stop."""
+def _open_layer_consult_gate(parsed: ParsedCheckpoint) -> str | None:
+    """Return G1 or G2 for the first open layer consult stop, else None."""
     from ..gate_lane_classifier import classify, parse_gate_rows
 
     rows = parse_gate_rows(parsed.steps)
     req = classify(rows)
-    if req is not None and req.gate_id in {"G1", "G2"}:
+    if req is not None and req.kind == "consult" and req.gate_id in {"G1", "G2"}:
         return req.gate_id
     for row in parsed.next_pickup:
         upper = row.upper()
-        if "G1" in upper:
-            return "G1"
-        if "G2" in upper:
-            return "G2"
-    return "G1"
+        if _CONSULT_PENDING_RE.search(row):
+            if "G1" in upper:
+                return "G1"
+            if "G2" in upper:
+                return "G2"
+    return None
 
 
 def _scope_judgment(window_index: int, root_id: str) -> str:
@@ -419,6 +428,8 @@ def materialize_consult_packet(
         return append_footer_to_packet(body, **footer)
     if arc_lane == "layer":
         gate_id = _open_layer_consult_gate(parsed)
+        if gate_id is None:
+            raise LayerConsultGateUnresolvedError("layer_consult_gate_unresolved")
         body = f"""\
 {_scope_layer_judgment(window_index, root_id, gate_id=gate_id)}
 {_invariants_layer_judgment(root_id, gate_id=gate_id)}

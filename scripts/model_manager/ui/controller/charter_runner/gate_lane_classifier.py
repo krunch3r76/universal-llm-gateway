@@ -23,6 +23,8 @@ LANE_ANNOTATION_RE = re.compile(
 _GATE_ID_RE = re.compile(r"\b(G\d+)\b", re.I)
 
 _CONSULT_LANE_PREFIX = "consult:"
+_CONSULT_PENDING_RE = re.compile(r"\bCONSULT_PENDING\b", re.I)
+_DENSIFY_IMPLEMENT_RE = re.compile(r"\b(densify|implement)\b", re.I)
 
 
 @dataclass(frozen=True)
@@ -103,6 +105,33 @@ def any_lane_annotations(rows: list[GateRow]) -> bool:
     return any(row.lane is not None for row in rows)
 
 
+def tip_is_consult_shaped(parsed) -> bool:
+    """CONSULT_PENDING or open Steps [consult:*] or Next-pickup names CONSULT_PENDING."""
+    if parsed.consult_pending:
+        return True
+    for item in parsed.next_pickup:
+        if _CONSULT_PENDING_RE.search(item):
+            return True
+    # Authoritative Next-pickup worker prose without CONSULT_PENDING overrides
+    # stale open consult Steps (6489 G3 densify after G1/G2 done).
+    if any(_DENSIFY_IMPLEMENT_RE.search(item) for item in parsed.next_pickup):
+        return False
+    rows = parse_gate_rows(parsed.steps)
+    req = classify(rows)
+    return req is not None and req.kind == "consult"
+
+
+def tip_is_worker_shaped(parsed) -> bool:
+    """True when tip targets densify/implement worker work without consult shape."""
+    if tip_is_consult_shaped(parsed):
+        return False
+    rows = parse_gate_rows(parsed.steps)
+    req = classify(rows)
+    if req is not None and req.kind == "worker":
+        return True
+    return any(_DENSIFY_IMPLEMENT_RE.search(item) for item in parsed.next_pickup)
+
+
 def open_lane_annotation_mismatch(
     rows: list[GateRow], req: RequiredLane | None
 ) -> bool:
@@ -130,6 +159,14 @@ def resolve_admit_lane(
         return "worker", default_admission_mode, None, parsed, "missing_lane_annotation"
     if req is not None and req.kind == "consult":
         if not parsed.consult_pending:
+            if tip_is_worker_shaped(parsed):
+                return (
+                    "worker",
+                    default_admission_mode,
+                    None,
+                    parsed,
+                    "false_consult_lane",
+                )
             log.warning(
                 "classifier_consult_without_consult_pending root=%s role=%s",
                 root_id,
@@ -168,4 +205,6 @@ __all__ = [
     "open_lane_annotation_mismatch",
     "parse_gate_rows",
     "resolve_admit_lane",
+    "tip_is_consult_shaped",
+    "tip_is_worker_shaped",
 ]
