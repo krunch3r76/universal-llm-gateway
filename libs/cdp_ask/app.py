@@ -225,6 +225,9 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
             execution_id=record.execution_id,
             status="running",
             registration_id=None,
+            terminal=False,
+            phase="admitted",
+            handoff_status="awaiting_first_reply",
         )
 
     @app.get(

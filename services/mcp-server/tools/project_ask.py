@@ -111,6 +111,10 @@ def register_project_ask_tool(mcp: FastMCP) -> None:
 
         Ops (client must poll — no server-side wait loop):
           submit — POST execution; returns ``execution_id`` + ``status: running``
+            + ``terminal: false`` + ``phase: admitted`` +
+            ``handoff_status: awaiting_first_reply``. **Admission ≠ arrival** —
+            do not relay submit as a completed handoff or "window is live."
+            Poll (or bus-wait for ``from_agent=cdp``) until terminal/FAILED.
           poll — GET execution status; dual-completion ladder on every response:
             ``completion_phase`` (running → turn_idle → content_proof → archiving →
             terminal | failed), optional ``content_proof_uri`` / ``content_proof_sha256`` /
@@ -209,7 +213,9 @@ def register_project_ask_tool(mcp: FastMCP) -> None:
             download_output: Attempt Cowork Output download when true or large mode
 
         Returns:
-            submit: {execution_id, status, registration_id?}
+            submit: {execution_id, status, registration_id?, terminal=false,
+                phase="admitted", handoff_status="awaiting_first_reply"} —
+                admission acknowledgement only (≠ completed handoff)
             poll: {execution_id, status, completion_phase, archive_uri?, content_proof_uri?,
                 content_proof_sha256?, turn_idle_at?, stall_stage?, harvest_provenance?,
                 streaming?, stop?, tool_pause?, liveness_observed_at?, ok?, body?, error?, …}

@@ -110,11 +110,39 @@ class ExecutionSummary(BaseModel):
 
 
 class SubmitProjectAskResponse(BaseModel):
-    """202 submit acknowledgement with execution_id for client-side polling."""
+    """202 submit acknowledgement — admission only, not a completed handoff.
+
+    ``status=running`` with ``terminal=false`` means the satellite accepted the
+    work and minted ``execution_id``. It does **not** mean a Cowork window is
+    live or that the CDP seat has spoken. Consumers must poll (or wait on the
+    bus) until a terminal outcome; relaying this envelope as a completed
+    handoff is the 2026-07-31 b7ea437d failure class.
+    """
 
     execution_id: str
     status: ExecutionStatus
     registration_id: str | None = None
+    terminal: bool = Field(
+        default=False,
+        description=(
+            "Always false on submit. Admission ≢ arrival — do not relay "
+            "status=running as a completed handoff."
+        ),
+    )
+    phase: Literal["admitted"] = Field(
+        default="admitted",
+        description=(
+            "Submit is phase=admitted only. Window liveness and first CDP reply "
+            "are later poll/bus observations."
+        ),
+    )
+    handoff_status: Literal["awaiting_first_reply"] = Field(
+        default="awaiting_first_reply",
+        description=(
+            "Mirrors Stargate CDP generate honesty: the handoff is open until "
+            "the CDP seat posts a reply or FAILED turn."
+        ),
+    )
 
 
 class ExecutionPollResponse(BaseModel):
