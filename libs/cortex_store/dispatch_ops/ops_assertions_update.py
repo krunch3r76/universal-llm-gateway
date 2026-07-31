@@ -21,6 +21,7 @@ from ._assertions_shared import (
     _emit_predicate_form_normalize_events,
     _project_seeded_by,
 )
+from ._write_validation import collect_missing_required, validation_error_response
 from ._shared import record
 
 logger = get_logger("cortex-api.dispatch_ops.assertions")
@@ -135,15 +136,17 @@ def _op_supersede(
     force: bool = False,
     **_: object,
 ) -> dict[str, Any]:
-    for field, val in [
-        ("old_assertion_id", old_assertion_id),
-        ("entity_id", entity_id),
-        ("claim", claim),
-        ("confidence", confidence),
-        ("evidence", evidence),
-    ]:
-        if not val:
-            return {"error": f"{field} is required"}
+    missing = collect_missing_required(
+        {
+            "old_assertion_id": old_assertion_id,
+            "entity_id": entity_id,
+            "claim": claim,
+            "confidence": confidence,
+            "evidence": evidence,
+        }
+    )
+    if missing:
+        return validation_error_response(missing)
     body: dict[str, Any] = {
         "old_assertion_id": old_assertion_id,
         "entity_id": entity_id,
