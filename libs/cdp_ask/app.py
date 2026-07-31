@@ -6,6 +6,7 @@ import asyncio
 import logging
 import time
 
+from deploy_identity.code_version import resolve_code_version
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
@@ -31,10 +32,20 @@ logger = logging.getLogger(__name__)
 
 
 class HealthResponse(BaseModel):
+    """Liveness plus the running code version.
+
+    ``code_version`` exists so the fleet propagation rule
+    (``git merge-base --is-ancestor <sha> <running_sha>``) is applicable to
+    this satellite. Same field name and same resolution mechanism as
+    ``mcp-server`` /health and ``git_integration_worker`` liveness; ``unknown``
+    when the process cannot attribute a SHA to its own loaded code.
+    """
+
     status: str
     harvest_root: str
     harvest_root_ok: bool
     registry_hygiene: str
+    code_version: str
 
 
 def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
@@ -99,6 +110,7 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
                 harvest_root="",
                 harvest_root_ok=False,
                 registry_hygiene="stopped",
+                code_version=resolve_code_version(),
             )
         hygiene_status = "running" if registry_hygiene.running else "stopped"
         return HealthResponse(
@@ -106,6 +118,7 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
             harvest_root=str(root),
             harvest_root_ok=True,
             registry_hygiene=hygiene_status,
+            code_version=resolve_code_version(),
         )
 
     @app.post(
