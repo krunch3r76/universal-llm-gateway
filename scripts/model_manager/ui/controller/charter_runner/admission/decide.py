@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, NamedTuple
 
 from ..checkpoint_schema import ParsedCheckpoint
 from ..root_ledger import RootLedgerRow, RootStatus, Transition
@@ -147,13 +147,21 @@ def _gate_family(body: str, gate_id: str) -> str | None:
     return None
 
 
+class LayerIndependenceVerdict(NamedTuple):
+    """Observability for layer G5 independence (6524 R3 bind)."""
+
+    ok: bool
+    structural_reason: str | None
+    branch_b_source: str | None
+
+
 def layer_independence_ok(
     *,
     parsed: ParsedCheckpoint | None,
     checkpoint_body: str,
     attendance: str = "autonomous",
-) -> bool:
-    """True when structural independence holds before layer G5 implement.
+) -> LayerIndependenceVerdict:
+    """Return independence verdict before layer G5 implement.
 
     Branches (6524 G1 bind R3/R4):
     (A) upstream cross-substrate consult provenance on closed G1/G2;
@@ -165,27 +173,35 @@ def layer_independence_ok(
     (B) G4 Check family ≠ G3 densifier family (checkpoint body or seat bind).
     """
     if parsed is None:
-        return False
+        return LayerIndependenceVerdict(False, None, None)
     body = checkpoint_body or ""
     attendance_norm = (attendance or "autonomous").lower()
-    branch_a = False
+    structural_reason: str | None = None
     if _step_done(parsed, "G1") or _step_done(parsed, "G2"):
         substrate = _provenance_fields(body).get("consultant_substrate", "").lower()
         if substrate == "web-anthropic":
-            branch_a = True
-    if not branch_a and _ARCHITECTURE_DERIVED_RE.search(body):
-        branch_a = True
-    if not branch_a and attendance_norm == "operator_proxy":
-        branch_a = True
+            structural_reason = "consult_provenance"
+    if structural_reason is None and _ARCHITECTURE_DERIVED_RE.search(body):
+        structural_reason = "derived_from_architecture"
+    if structural_reason is None and attendance_norm == "operator_proxy":
+        structural_reason = "operator_proxy_attends"
     g3_family = _gate_family(body, "G3") or "grok"
     g4_family = _gate_family(body, "G4")
     if g4_family is not None:
         branch_b = g4_family != g3_family
+        branch_b_source = "checkpoint_provenance"
     else:
         from ..window_exec.materializer_layer import layer_g4_check_family_diverse
 
         branch_b = layer_g4_check_family_diverse()
-    return branch_a and branch_b
+        branch_b_source = "seat_bind"
+    structural_ok = structural_reason is not None
+    ok = structural_ok and branch_b
+    return LayerIndependenceVerdict(
+        ok=ok,
+        structural_reason=structural_reason if structural_ok else None,
+        branch_b_source=branch_b_source if branch_b else None,
+    )
 
 
 def layer_implement_pickup(*, parsed: ParsedCheckpoint | None, pickup_lane: str) -> bool:
@@ -223,7 +239,7 @@ def layer_independence_unproven(
         parsed=parsed,
         checkpoint_body=checkpoint_body,
         attendance=attendance_norm,
-    )
+    ).ok
 
 
 def decide(
@@ -352,6 +368,7 @@ def _normalize_old(decision: str) -> str:
 __all__ = [
     "CapsView",
     "EnvFacts",
+    "LayerIndependenceVerdict",
     "classify_shadow_diff",
     "decide",
     "layer_implement_pickup",

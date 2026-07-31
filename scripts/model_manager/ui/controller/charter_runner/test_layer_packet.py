@@ -406,7 +406,7 @@ def test_layer_g5_blocked_without_independence_evidence() -> None:
         "\nG3 densifier consultant_family: grok\n"
         "G4 check consultant_family: openai\n"
     )
-    assert layer_independence_ok(parsed=parsed, checkpoint_body=provenance_body)
+    assert layer_independence_ok(parsed=parsed, checkpoint_body=provenance_body).ok
     assert not layer_independence_unproven(
         arc_lane="layer",
         attendance="autonomous",
@@ -439,11 +439,64 @@ def test_layer_g5_operator_proxy_admitted_without_provenance() -> None:
         checkpoint_body=_G5_BLOCK_BODY,
         pickup_lane="mechanical",
     )
-    assert layer_independence_ok(
+    verdict = layer_independence_ok(
         parsed=parsed,
         checkpoint_body=_G5_BLOCK_BODY,
         attendance="operator_proxy",
     )
+    assert verdict.ok
+    assert verdict.structural_reason == "operator_proxy_attends"
+    assert verdict.branch_b_source == "seat_bind"
+    assert layer_independence_unproven(
+        arc_lane="layer",
+        attendance="autonomous",
+        parsed=parsed,
+        checkpoint_body=_G5_BLOCK_BODY,
+        pickup_lane="mechanical",
+    )
+
+
+def test_layer_independence_reason_consult_provenance() -> None:
+    parsed = parse_checkpoint(_G5_BLOCK_BODY)
+    body = _G5_BLOCK_BODY + _PROVENANCE_BODY + (
+        "\nG3 densifier consultant_family: grok\n"
+        "G4 check consultant_family: openai\n"
+    )
+    verdict = layer_independence_ok(
+        parsed=parsed,
+        checkpoint_body=body,
+        attendance="autonomous",
+    )
+    assert verdict.ok
+    assert verdict.structural_reason == "consult_provenance"
+    assert verdict.branch_b_source == "checkpoint_provenance"
+
+
+def test_layer_independence_reason_derived_from_architecture() -> None:
+    parsed = parse_checkpoint(_G5_BLOCK_BODY)
+    body = _G5_BLOCK_BODY + (
+        "\nderived_from: architecture-consult-doc\n"
+        "G4 check consultant_family: openai\n"
+    )
+    verdict = layer_independence_ok(
+        parsed=parsed,
+        checkpoint_body=body,
+        attendance="autonomous",
+    )
+    assert verdict.ok
+    assert verdict.structural_reason == "derived_from_architecture"
+    assert verdict.branch_b_source == "checkpoint_provenance"
+
+
+def test_layer_independence_autonomous_blocks_without_structural_reason() -> None:
+    parsed = parse_checkpoint(_G5_BLOCK_BODY)
+    verdict = layer_independence_ok(
+        parsed=parsed,
+        checkpoint_body=_G5_BLOCK_BODY,
+        attendance="autonomous",
+    )
+    assert not verdict.ok
+    assert verdict.structural_reason is None
     assert layer_independence_unproven(
         arc_lane="layer",
         attendance="autonomous",

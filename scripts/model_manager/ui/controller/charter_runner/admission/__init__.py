@@ -22,6 +22,7 @@ from .caps import CapStore, WindowCaps
 from .decide import (
     CapsView,
     EnvFacts,
+    LayerIndependenceVerdict,
     classify_shadow_diff,
     decide,
     layer_implement_pickup,
@@ -39,6 +40,7 @@ __all__ = [
     "Decision",
     "EnvFacts",
     "GateHalf",
+    "LayerIndependenceVerdict",
     "WindowCaps",
     "WindowKind",
     "_latest_matching",
