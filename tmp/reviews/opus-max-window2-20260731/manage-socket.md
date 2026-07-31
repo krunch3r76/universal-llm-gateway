@@ -355,3 +355,80 @@ The orphan pid is unchanged from diagnosis; the live controller pid rotated (exp
 | Diagnosis doc cited live controller as pid `1630785` | Accurate at diagnosis time; pre-propagation re-check found `2048906` as the current live listener. Doc updated in PROPAGATION REQUIRED rather than rewriting Checkpoint 1 history. |
 | Could not verify post-restart `whoami` or guard behavior | Hard prohibition on restarts this session — propagation section is operator-facing only. |
 
+
+---
+
+## INCIDENT — manage is DOWN, and a pre-existing 100% CPU spin was uncovered
+
+Appended by the coordinating seat after taking the documented propagation
+sequence. Written while the incident is open, not after.
+
+### Current state
+
+**`manage` is not running.** No controller process, no listener. `cortex_api`
+(`:8202`) and `git_integration_worker` (`:8091`) are both healthy — only the
+lifecycle controller is down. Restarting it is blocked on the finding below.
+
+### The finding, which is bigger than tonight's work
+
+**Every `scripts.model_manager.ui` process on this host spins at 100% CPU and
+never serves.** Measured by sampling `utime+stime` from `/proc/<pid>/stat`:
+
+| Process | Elapsed | CPU time | Verdict |
+|---|---|---|---|
+| `669567` — the "orphan" | 4h48m | 4h48m | pegged one core since 10:43 |
+| `1176965` — a stray `ui status` | 2h39m | 2h39m | pegged one core since 12:52 |
+| every controller started after 15:24 | — | — | pegged, never accepts |
+
+**This corrects a claim in the diagnosis above, and one I repeated.** Checkpoint 3
+established the orphan was receiving zero connections — true, and well evidenced by
+fd accounting. It concluded from that the orphan was *inert*. It is not inert. It
+was burning a full core continuously for nearly five hours. Nobody measured CPU,
+so nobody saw it. Host load average fell from 2.81 to 1.87 within a minute of
+clearing them, which is the confirmation.
+
+### What the spin is NOT
+
+Ruled out by direct test, in this order:
+
+1. **Not our commits.** Reverted `93964e3a` and `71b0b08a` (see `8ef43faa`,
+   `0e2b5330`); a controller started on the reverted tree spun identically.
+2. **Not contention with the orphan or a stale socket.** Killed all manage
+   processes, removed the socket path, started one controller on a clean slate.
+   It spun identically.
+3. **Not the TUI render layer.** The `ui status` CLI — not a TUI — spins the same
+   way. `1176965` had been doing it for over two hours before this session
+   touched anything.
+4. **Not tmux pane geometry.** Pane is `225x49`, client attached and focused.
+
+The spin also **does not respond to SIGINT**: `timeout -s INT 15` failed to stop a
+`ui status` reproduction after 69 seconds, and the child climbed to 173% CPU
+(multi-core). That points at a tight loop that never reaches a Python signal check.
+
+### What is unresolved, and what would settle it
+
+**Why controllers started before ~15:05 were healthy and every one after is not.**
+Pid `2048906` (started 15:05:44) served every call put to it — `busy_status`,
+`charter_pause`, `sync_restart`, `wait_healthy`. The only fleet changes between
+that healthy start and the first spinning one are the `cortex_api` and `mcp`
+restarts. That is a correlation and nothing more; it is **not** established, and
+the 100%-CPU signature argues against a blocked I/O dependency.
+
+**What would settle it in seconds:** `sudo env "PATH=$PATH" py-spy dump --pid <pid>`
+on a spinning process. `py-spy` is installed; unprivileged dump is refused by
+ptrace scope, and this seat did not escalate. One stack trace names the loop.
+
+### Errors by the coordinating seat, recorded because this arc is about exactly this
+
+Three causal claims, asserted ahead of the evidence, in both directions:
+
+1. Told the operator the wedge was "not our bind-path change" — before having
+   evidence either way.
+2. Then, on seeing the spin reproduce, called our change "the prime suspect" on a
+   before/after correlation. Also wrong; the revert refuted it.
+3. Repeated the diagnosis's "orphan is inert, receiving nothing" without measuring
+   CPU. It was burning a core the whole time.
+
+The first two are the same mistake as the ledger-ancestry error window 1 recorded:
+reaching for a cause that the available observation did not support. The third is
+inheriting a claim rather than re-checking it.
