@@ -2,7 +2,7 @@
 
 Connects to /tmp/universal-protocol/manage.sock (JSON-RPC 2.0 over UDS).
 Exposes status, health, start, stop, restart, sync_restart, rebuild,
-wait_healthy, busy_status, charter_reload, charter_pause, charter_resume,
+wait_healthy, busy_status, whoami, charter_reload, charter_pause, charter_resume,
 charter_hold_status, charter_block_root, charter_unblock_root, and
 charter_root_status for gateway-managed services.
 Single entry point reduces agent context overhead.
@@ -38,6 +38,7 @@ _VALID_ACTIONS = frozenset(
         "rebuild",
         "wait_healthy",
         "busy_status",
+        "whoami",
         "charter_reload",
         "charter_pause",
         "charter_resume",
@@ -279,6 +280,14 @@ def register_manage_tools(mcp: FastMCP) -> None:
                                              drain probes WITHOUT acquiring any
                                              restart slot — safe to poll live.
                                              Also returns charter_hold {held, …}.
+          whoami        (no service needed) — read-only identity for the manage API
+                                             process that answered: {pid,
+                                             code_version, process_start_time}.
+                                             code_version is what this process booted
+                                             with (deploy_identity.code_version eager
+                                             seal). process_start_time is ISO UTC.
+                                             Lets a caller attribute which controller
+                                             answered without ss/procfs on the same host.
           charter_reload (no service needed) — restart the charter runner loop in place
                                              (no TUI quit). Phase 3 retired
                                              importlib.reload: this does NOT re-import
