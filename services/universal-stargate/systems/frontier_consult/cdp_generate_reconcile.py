@@ -152,6 +152,7 @@ async def finalize_cdp_generate(
             satellite_execution_id=sat_id,
             stall_stage=result.stall_stage,
             error=result.error,
+            progress_trace=(result.extras or {}).get("progress_trace"),
         )
         if _upstream_overloaded(result):
             await _emit_upstream_overload_friction(

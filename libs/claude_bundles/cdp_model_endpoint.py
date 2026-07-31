@@ -22,6 +22,8 @@ from claude_bundles.cdp_model_endpoint_staging import (
     stage_cdp_prompt_with_skills,
     sweep_ephemeral,
 )
+from claude_bundles.cdp_progress_trace import ProgressTrace
+from claude_bundles.cdp_progress_trace import fingerprint as progress_fingerprint
 from claude_bundles.chat_model_match import normalize_picker_request
 
 DEFAULT_MAX_WALL_S = 1800
@@ -152,15 +154,7 @@ class _ProofCarry:
         }
 
 
-def _progress_fingerprint(snapshot: dict[str, Any]) -> tuple[Any, ...]:
-    return (
-        snapshot.get("completion_phase"),
-        snapshot.get("body_len"),
-        snapshot.get("status"),
-        snapshot.get("streaming"),
-        snapshot.get("tool_pause"),
-        snapshot.get("liveness_observed_at"),
-    )
+_progress_fingerprint = progress_fingerprint
 
 
 def _terminal_failure(snapshot: dict[str, Any]) -> bool:
@@ -516,6 +510,8 @@ def run_cdp_generate(
     started = clock()
     last_fp = _progress_fingerprint(submitted)
     last_progress_at = started
+    trace = ProgressTrace()
+    trace.record(last_fp, at_s=0.0)
     polls = 0
     proof_carry = _ProofCarry()
     proof_carry.absorb_status_snapshot(submitted)
@@ -536,7 +532,12 @@ def run_cdp_generate(
                 stall_stage="wall_clock_exceeded",
                 error=f"CDP generate exceeded max_wall_s={max_wall_s}",
                 poll_snapshots=polls,
-                extras={"abort": abort_info},
+                extras={
+                    "abort": abort_info,
+                    "progress_trace": trace.as_dict(
+                        now_s=elapsed, no_progress_s=no_progress_s
+                    ),
+                },
                 **proof_carry.as_result_fields(),
             )
 
@@ -561,7 +562,12 @@ def run_cdp_generate(
                     stall_stage="no_progress",
                     error=str(snapshot.get("error")),
                     poll_snapshots=polls,
-                    extras={"abort": abort_info},
+                    extras={
+                        "abort": abort_info,
+                        "progress_trace": trace.as_dict(
+                            now_s=clock() - started, no_progress_s=no_progress_s
+                        ),
+                    },
                     **proof_carry.as_result_fields(),
                 )
             continue
@@ -569,7 +575,7 @@ def run_cdp_generate(
         proof_carry.absorb_status_snapshot(snapshot)
 
         fp = _progress_fingerprint(snapshot)
-        if fp != last_fp:
+        if trace.record(fp, at_s=clock() - started):
             last_fp = fp
             last_progress_at = clock()
 
@@ -661,6 +667,11 @@ def run_cdp_generate(
                     f"(completion_phase={snapshot.get('completion_phase')!r})"
                 ),
                 poll_snapshots=polls,
-                extras={"abort": abort_info},
+                extras={
+                    "abort": abort_info,
+                    "progress_trace": trace.as_dict(
+                        now_s=clock() - started, no_progress_s=no_progress_s
+                    ),
+                },
                 **proof_carry.as_result_fields(),
             )
