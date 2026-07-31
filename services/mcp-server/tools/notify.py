@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from mcp_events import record
 from pager_notify.client import notify_pager, pager_enabled
+from pager_notify.so_what import SMS_BODY_MAX, SMS_SUBJECT_MAX
 
 from ._agent_bus_author import resolve_dispatch_from_agent
 
@@ -15,8 +16,8 @@ if TYPE_CHECKING:
     from fastmcp import FastMCP
 
 _UNREFERENCED = "(unreferenced)"
-_MAX_SUBJECT = 120
-_MAX_BODY = 300
+_MAX_SUBJECT = SMS_SUBJECT_MAX
+_MAX_BODY = SMS_BODY_MAX
 _MAX_TAG = 40
 _MAX_REF = 200
 
@@ -30,11 +31,17 @@ def normalize_ref(ref: str) -> tuple[str, bool]:
 
 
 def append_ref_to_body(body: str, ref: str) -> str:
-    """Stamp ref into the pager body within the 300-char cap."""
+    """Stamp ref into the pager body; prefer full body over ref when at cap."""
     suffix = f"\nref: {ref}"
     base = (body or "").strip()
-    combined = f"{base}{suffix}" if base else suffix.strip()
-    return combined[:_MAX_BODY]
+    if not base:
+        return suffix.strip()[:_MAX_BODY]
+    combined = f"{base}{suffix}"
+    if len(combined) <= _MAX_BODY:
+        return combined
+    if len(base) >= _MAX_BODY:
+        return base[:_MAX_BODY]
+    return f"{base}{suffix[: _MAX_BODY - len(base)]}"
 
 
 def register_notify_tools(mcp: FastMCP) -> None:
@@ -47,7 +54,7 @@ def register_notify_tools(mcp: FastMCP) -> None:
     ) -> dict[str, Any]:
         """Attention pager — proxy to email-bridge ``/pager/notify`` (life surface).
 
-        Fields: ``subject`` (≤120), ``body`` (≤300), ``tag`` (≤40), ``ref`` (turn or
+        Fields: ``subject`` (≤120), ``body`` (≤2000), ``tag`` (≤40), ``ref`` (turn or
         ``cortex://`` URI — mandatory from caller; missing ref degrades to
         ``(unreferenced)``). Server stamps ``from_agent`` + timestamp. Honors
         ``PAGER_NOTIFY_ENABLED=0``. Delivery identity stays in email-bridge config —
@@ -77,11 +84,11 @@ def register_notify_tools(mcp: FastMCP) -> None:
                 "reason": "PAGER_NOTIFY_ENABLED=0",
             }
 
-        sent = asyncio.run(
+        result = asyncio.run(
             notify_pager(subject_out, body_out, tag=tag_out)
         )
 
-        if sent:
+        if result:
             record(
                 "ops.notify.sent",
                 from_agent=from_agent,
@@ -93,4 +100,11 @@ def register_notify_tools(mcp: FastMCP) -> None:
             )
             return {**base, "status": "sent"}
 
-        return {**base, "status": "failed"}
+        out: dict[str, Any] = {
+            **base,
+            "status": "failed",
+            "reason": result.reason or "notify_pager returned failed",
+        }
+        if result.error:
+            out["error"] = result.error
+        return out

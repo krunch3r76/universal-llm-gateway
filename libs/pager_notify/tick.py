@@ -16,7 +16,7 @@ from pager_notify.so_what import (
 )
 from pager_notify.state import claim_tick_standing_page
 
-# Fi SMS body budget (email-bridge /pager/notify also truncates at 300).
+# Fi SMS body budget (email-bridge /pager/notify also caps at SMS_BODY_MAX).
 
 
 def _tick_pager_enabled() -> bool:

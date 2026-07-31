@@ -4,14 +4,40 @@ from __future__ import annotations
 
 import logging
 import os
+from dataclasses import dataclass
+from typing import Literal
 
 from transport_utils import DEFAULT_EMAIL_BRIDGE_URL, make_async_client
+
+from pager_notify.so_what import SMS_BODY_MAX, SMS_SUBJECT_MAX
 
 logger = logging.getLogger(__name__)
 
 # SMTP relay in email-bridge blocks until send completes (~15s observed); 15s
 # client timeout caused intermittent httpx.ReadTimeout → life notify status:failed.
 _TIMEOUT_S = 45.0
+
+NotifyStatus = Literal["sent", "failed"]
+
+
+@dataclass(frozen=True, slots=True)
+class NotifyResult:
+    """Pager delivery outcome — truthy only when ``status == \"sent\"``."""
+
+    status: NotifyStatus
+    reason: str = ""
+    error: str = ""
+
+    def __bool__(self) -> bool:
+        return self.status == "sent"
+
+    @classmethod
+    def sent(cls) -> NotifyResult:
+        return cls(status="sent")
+
+    @classmethod
+    def failed(cls, reason: str, *, error: str = "") -> NotifyResult:
+        return cls(status="failed", reason=reason, error=error)
 
 
 def pager_enabled() -> bool:
@@ -24,13 +50,13 @@ async def notify_pager(
     body: str,
     *,
     tag: str = "",
-) -> bool:
-    """Fire Fi SMS pager. Returns True when email-bridge reports sent."""
+) -> NotifyResult:
+    """Fire Fi SMS pager. Returns sent/failed with machine-readable reason."""
     if not pager_enabled():
-        return False
+        return NotifyResult.failed("PAGER_NOTIFY_ENABLED=0")
     payload = {
-        "subject": (subject or "ULG")[:120],
-        "body": (body or "")[:300],
+        "subject": (subject or "ULG")[:SMS_SUBJECT_MAX],
+        "body": (body or "")[:SMS_BODY_MAX],
         "tag": (tag or "")[:40],
     }
     try:
@@ -39,15 +65,34 @@ async def notify_pager(
         ) as client:
             resp = await client.post("/pager/notify", json=payload)
             if resp.status_code >= 400:
+                snippet = (resp.text or "")[:200]
                 logger.warning(
                     "pager notify HTTP %s tag=%s body=%s",
                     resp.status_code,
                     tag,
-                    resp.text[:200],
+                    snippet,
                 )
-                return False
+                return NotifyResult.failed(
+                    f"HTTP {resp.status_code}",
+                    error=snippet,
+                )
             data = resp.json()
-            return str(data.get("status")) == "sent"
-    except Exception:
+            bridge_status = str(data.get("status") or "")
+            if bridge_status != "sent":
+                detail = str(
+                    data.get("error") or data.get("message") or data.get("reason") or ""
+                )[:200]
+                logger.warning(
+                    "pager notify bridge status=%s tag=%s detail=%s",
+                    bridge_status or "unknown",
+                    tag,
+                    detail,
+                )
+                return NotifyResult.failed(
+                    f"bridge status: {bridge_status or 'unknown'}",
+                    error=detail,
+                )
+            return NotifyResult.sent()
+    except Exception as exc:
         logger.exception("pager notify failed tag=%s", tag)
-        return False
+        return NotifyResult.failed(type(exc).__name__, error=str(exc)[:200])

@@ -99,6 +99,10 @@ def output_format_footer_requirement(*, window_id: str = "") -> str:
         "Phase-0 rule: set wip to null (never a bare string or cross-root window "
         "id); cross-root dependencies belong in next_pickup / Next pickup — invalid "
         "wip fail-closes harvest; remedy is author reseed, not runner heal. "
+        "Evidence rule: every evidence row MUST carry a non-empty sha256 "
+        "(prefer lowercase 64-hex of file/turn bytes, e.g. fs read_sha256); "
+        "if the hash is unknown, OMIT the row — never \"sha256\": \"\" "
+        "(empty strings fail harvest and stick CONSULT_ADMITTED / ADMITTED). "
         "When gated Next-pickup prose is empty, set next_pickup to "
         '{\"gid\":\"none\",\"lane\":\"none\",\"executor\":\"none\"} — '
         "never JSON null for gid/lane/executor."

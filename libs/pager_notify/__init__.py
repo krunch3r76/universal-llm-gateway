@@ -1,7 +1,7 @@
 """Fleet pager client — Fi SMS via email-bridge ``POST /pager/notify``."""
 
 from pager_notify.bus_scan import scan_operator_bus_turns
-from pager_notify.client import notify_pager
+from pager_notify.client import NotifyResult, notify_pager
 from pager_notify.closeout import notify_closeout_complete
 from pager_notify.so_what import (
     compose_done_summary,
@@ -26,6 +26,7 @@ __all__ = [
     "format_closeout_pager",
     "format_tick_sms_body",
     "format_tick_subject",
+    "NotifyResult",
     "notify_closeout_complete",
     "notify_pager",
     "notify_tick_complete",

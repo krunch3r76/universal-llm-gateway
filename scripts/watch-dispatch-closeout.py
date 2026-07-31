@@ -187,7 +187,7 @@ def _page_operator(*, subject: str, body: str, tag: str) -> bool:
         return False
     payload = {
         "subject": subject[:120],
-        "body": body[:300],
+        "body": body[:2000],
         "tag": tag[:40],
     }
     proc = subprocess.run(

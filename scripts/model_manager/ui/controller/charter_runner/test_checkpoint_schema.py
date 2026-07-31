@@ -179,6 +179,14 @@ def test_output_format_requires_none_sentinel_when_gated_pickup_empty() -> None:
     assert "never JSON null" in text
 
 
+def test_output_format_forbids_empty_evidence_sha256() -> None:
+    """6563 w1: placeholder \"\" hashes fail harvest and stick CONSULT_ADMITTED."""
+    text = output_format_footer_requirement(window_id="charter-6563-w1")
+    assert "OMIT the row" in text
+    assert 'never "sha256": ""' in text or 'never \\"sha256\\": \\"\\"' in text
+    assert "fail harvest" in text
+
+
 def test_validate_accepts_empty_gated_pickup_sentinel() -> None:
     footer = emit_footer(
         schema_version=1,

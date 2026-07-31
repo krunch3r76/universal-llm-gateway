@@ -68,7 +68,7 @@ def page_operator(*, subject: str, body: str, tag: str) -> bool:
     }:
         log("pager disabled (PAGER_NOTIFY_ENABLED=0)")
         return False
-    payload = {"subject": subject[:120], "body": body[:300], "tag": tag[:40]}
+    payload = {"subject": subject[:120], "body": body[:2000], "tag": tag[:40]}
     proc = subprocess.run(
         [
             "curl",

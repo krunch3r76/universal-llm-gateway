@@ -8,7 +8,7 @@ import os
 from transport_utils import DEFAULT_AGENT_BUS_URL, make_async_client
 
 from pager_notify.client import notify_pager
-from pager_notify.so_what import clip
+from pager_notify.so_what import SMS_BODY_MAX, SMS_SUBJECT_MAX, clip
 from pager_notify.state import load_last_turns, save_last_turn
 
 logger = logging.getLogger(__name__)
@@ -57,8 +57,8 @@ def _summarize_turn(turn: dict, *, thread_summary: str = "") -> tuple[str, str]:
     sender = str(turn.get("from") or "")
     so_what = (thread_summary or "").strip()
     if so_what:
-        subj = clip(f"{so_what} · bus {thread} t{turn_no}", 120)
-        body = clip(f"{sender}: {subject}", 300)
+        subj = clip(f"{so_what} · bus {thread} t{turn_no}", SMS_SUBJECT_MAX)
+        body = clip(f"{sender}: {subject}", SMS_BODY_MAX)
     else:
         subj = f"bus {thread} t{turn_no}"
         body = f"{sender}: {subject}"
