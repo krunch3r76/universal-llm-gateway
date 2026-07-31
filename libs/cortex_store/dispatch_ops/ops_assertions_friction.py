@@ -35,6 +35,11 @@ from ._shared import (
     owner_type_of,
     record,
 )
+from ._write_validation import (
+    collect_missing_required,
+    field_error,
+    validation_error_response,
+)
 
 # Historical friction default when confidence is omitted or hypothesized.
 # Distinct from CONFIDENCE_WEIGHT["hypothesized"] (0.20) — keep 0.5 so
@@ -86,6 +91,7 @@ def _op_friction(
     service: str | None = None,
     category: str | None = None,
     note: str | None = None,
+    claim: str | None = None,
     suggestion: str | None = None,
     agent: str | None = None,
     session_id: str | None = None,
@@ -119,16 +125,34 @@ def _op_friction(
             "error": "Supply either owner= or service= (back-compat alias), not both with different values."
         }
     owner_arg = owner if owner is not None else service
-    if not owner_arg:
-        return {
-            "error": "owner is required (service:/agent_skill:/ai_agent: entity ID, or bare slug -> service:)"
-        }
-    if not note:
-        return {"error": "note is required — describe what went wrong"}
+    # `claim` is the slot name on assert/observe/supersede, so seats reach for it
+    # here too. Accept it rather than answer "note is required" to a caller who
+    # supplied the note under its sibling-op name.
+    note = note if note is not None else claim
+    errors = collect_missing_required(
+        {"owner": owner_arg, "note": note},
+        message_for={
+            "owner": (
+                "owner is required (service:/agent_skill:/ai_agent: entity ID, "
+                "or bare slug -> service:); `service` is accepted as an alias"
+            ),
+            "note": (
+                "note is required — describe what went wrong; "
+                "`claim` is accepted as an alias"
+            ),
+        },
+    )
     if category and category not in _FRICTION_CATEGORIES:
-        return {
-            "error": f"Invalid category {category!r}. Must be one of: {sorted(_FRICTION_CATEGORIES)}"
-        }
+        errors.append(
+            field_error(
+                "category",
+                f"Invalid category {category!r}.",
+                accepted=sorted(_FRICTION_CATEGORIES),
+                code="invalid_category",
+            )
+        )
+    if errors:
+        return validation_error_response(errors)
     conf_resolved = _resolve_friction_confidence(confidence, confidence_score)
     if isinstance(conf_resolved, dict):
         return conf_resolved

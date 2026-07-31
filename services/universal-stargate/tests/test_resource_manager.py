@@ -6,7 +6,7 @@ from systems.proxy.core.common.resource_manager import (
     GatewayResourceManager,
     ResourceReservation,
 )
-from fixtures import get_default_resource_management_config, mock_config_manager
+from tests.fixtures import get_default_resource_management_config, mock_config_manager
 
 
 class TestResourceReservation:

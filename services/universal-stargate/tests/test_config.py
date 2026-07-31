@@ -8,7 +8,7 @@ from systems.proxy.resource_management import (
     GatewayConfig,
     GatewayConfigManager,
 )
-from fixtures import get_default_resource_management_config, get_test_gateway_config
+from tests.fixtures import get_default_resource_management_config, get_test_gateway_config
 from pathlib import Path
 
 
