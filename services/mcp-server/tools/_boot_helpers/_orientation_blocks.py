@@ -285,7 +285,7 @@ Orchestration duty: drive the endeavor; orient the operator; conviction at the w
 3. **Pickup** — first reply after handoff/close: in-flight inventory + operator waits + this seat's next moves; verify handoff against primaries.
 4. **Ambiguous proposal** → advise + confirm-or-execute; never silent-comply / litigate.
 5. **Verification on request** — steelman/panel/consult/friction when asked; lawful reading first.
-Full register + anti-patterns: skill `operator-posture` (`agent_skill:operator-posture`)."""
+Full register + anti-patterns: skill `operator-posture` (`cursor_only` — Cursor IDE; ¬ Claude.ai Customize)."""
 
 
 # Per-domain render order over the CORE doctrine keys (soft reorder — friction

@@ -57,6 +57,67 @@ def _build_poll_hint(*, thread_id: str, after_turn: int) -> dict[str, Any]:
     }
 
 
+def _annotate_poll_hint_no_producer(poll_hint: dict[str, Any]) -> dict[str, Any]:
+    return {**poll_hint, "producer": "none"}
+
+
+def _build_enqueue_failure(
+    *,
+    reason: str,
+    attempts: int,
+    error_class: str,
+    elapsed_s: float,
+) -> dict[str, Any]:
+    return {
+        "reason": reason,
+        "attempts": max(0, int(attempts)),
+        "error_class": error_class,
+        "elapsed_s": max(0.0, float(elapsed_s)),
+        "terminal_park": True,
+    }
+
+
+def _error_class_from_liveness(liveness: dict[str, Any]) -> str:
+    if liveness.get("error_class"):
+        return str(liveness["error_class"])
+    reason = str(liveness.get("reason", ""))
+    if reason == "no_live_handler":
+        return "handler_dead"
+    if reason == "liveness_http_error":
+        status = liveness.get("status_code")
+        if isinstance(status, int) and 500 <= status < 600:
+            return "http_5xx"
+        return "http_other"
+    return "unknown"
+
+
+def _enqueue_failure_reason(enq: dict[str, Any]) -> str:
+    if enq.get("reason"):
+        return str(enq["reason"])
+    enqueue_data = enq.get("enqueue") or {}
+    if enqueue_data.get("handler_status"):
+        return str(enqueue_data["handler_status"])
+    return str(enq.get("handler_status", "no-auto-handler"))
+
+
+def _error_class_from_enqueue(enq: dict[str, Any]) -> str:
+    reason = str(enq.get("reason") or "")
+    if reason == "enqueue_unreachable":
+        return "enqueue_unreachable"
+    enqueue_data = enq.get("enqueue") or {}
+    worker_status = str(
+        enqueue_data.get("handler_status") or enq.get("handler_status") or ""
+    )
+    if worker_status in {"no_live_auto_handler", "no-auto-handler"}:
+        return "handler_dead"
+    status = enq.get("status_code")
+    if isinstance(status, int) and 500 <= status < 600:
+        return "http_5xx"
+    if isinstance(status, int):
+        return "http_other"
+    return "unknown"
+
+
 def _request_impl(
     *,
     new_slug: str | None,
@@ -131,20 +192,33 @@ def _request_impl(
 
     liveness = probe_auto_liveness()
     if not liveness.get("live"):
+        reason = str(liveness.get("reason", "no_live_handler"))
+        attempts = int(liveness.get("attempts", 1))
+        elapsed_s = float(liveness.get("elapsed_s", 0.0))
+        error_class = _error_class_from_liveness(liveness)
         record(
             "mcp.agentbus.request.degraded",
             thread=thread_id,
             turn_number=turn_number,
-            reason=str(liveness.get("reason", "no_live_handler")),
+            reason=reason,
+            error_class=error_class,
+            elapsed_s=elapsed_s,
+            attempts=attempts,
         )
         degraded = {
             "thread": thread_obj,
             "turn": turn_obj,
             "handler_status": "no-auto-handler",
-            "poll_hint": _build_poll_hint(
-                thread_id=thread_id, after_turn=turn_number
+            "poll_hint": _annotate_poll_hint_no_producer(
+                _build_poll_hint(thread_id=thread_id, after_turn=turn_number)
             ),
             "liveness": liveness,
+            "enqueue_failure": _build_enqueue_failure(
+                reason=reason,
+                attempts=attempts,
+                error_class=error_class,
+                elapsed_s=elapsed_s,
+            ),
             "tags": merged_tags,
             "sidecar_uri": sidecar_uri,
             "sidecar_sha256": sidecar_sha256,
@@ -166,9 +240,44 @@ def _request_impl(
         require_attended=require_attended,
         request_id=request_id,
     )
-    handler_status = (
-        "auto-admit-armed" if enq.get("ok") else "no-auto-handler"
-    )
+    if not enq.get("ok"):
+        reason = _enqueue_failure_reason(enq)
+        attempts = int(liveness.get("attempts", 1))
+        elapsed_s = float(liveness.get("elapsed_s", 0.0))
+        error_class = _error_class_from_enqueue(enq)
+        record(
+            "mcp.agentbus.request.degraded",
+            thread=thread_id,
+            turn_number=turn_number,
+            reason=reason,
+            error_class=error_class,
+            elapsed_s=elapsed_s,
+            attempts=attempts,
+        )
+        result = {
+            "thread": thread_obj,
+            "turn": turn_obj,
+            "handler_status": "no-auto-handler",
+            "poll_hint": _annotate_poll_hint_no_producer(
+                _build_poll_hint(thread_id=thread_id, after_turn=turn_number)
+            ),
+            "enqueue": enq,
+            "enqueue_failure": _build_enqueue_failure(
+                reason=reason,
+                attempts=attempts,
+                error_class=error_class,
+                elapsed_s=elapsed_s,
+            ),
+            "liveness": liveness,
+            "tags": merged_tags,
+            "sidecar_uri": sidecar_uri,
+            "sidecar_sha256": sidecar_sha256,
+        }
+        if request_id:
+            result["request_id"] = request_id
+        return result
+
+    handler_status = "auto-admit-armed"
     record(
         "mcp.agentbus.request.posted",
         thread=thread_id,

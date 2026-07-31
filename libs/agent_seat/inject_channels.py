@@ -4,7 +4,8 @@ from __future__ import annotations
 
 # Channel 2 — orientation blocks (``render_orientation_blocks``).
 ORIENTATION_BLOCK_SKILL_MAP: dict[str, tuple[str, ...]] = {
-    "operator-posture-block": ("operator-posture",),
+    # Inline doctrine only — operator-posture is cursor_only (¬ Customize chip).
+    "operator-posture-block": (),
     "mcp-binding-block": ("lead-seat-boot",),
     "capability-verify-block": ("lead-seat-boot",),
     "dispatch-consult-block": ("consult-routing", "dispatch-shape"),

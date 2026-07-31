@@ -346,7 +346,7 @@ def test_web_seat_preloaded_uses_boot_card_channels_not_registry() -> None:
     assert "cortex-orientation" not in preloaded
     assert "cortex-provenance-discipline" not in preloaded
     assert "orchestrator-core" not in preloaded
-    assert "operator-posture" in preloaded
+    assert "operator-posture" not in preloaded
     suggested = {s["slug"] for s in result["suggestions"]}
     assert "cortex-orientation" in suggested or "cortex-provenance-discipline" in suggested
 
@@ -399,7 +399,7 @@ def test_web_loaded_set_unions_orientation_and_opcontext_channels() -> None:
     suggested = {s["slug"] for s in result["suggestions"]}
     omitted = {item["slug"] for item in result["omitted"]}
     assert "boot-execution-discipline" in suggested
-    assert "operator-posture" in omitted
+    assert "operator-posture" not in omitted
     assert "consult-routing" in omitted
     assert "model-tier-awareness-web" in omitted
     assert "frontier-reasoning-discipline" in omitted
@@ -546,7 +546,7 @@ def test_coding_session_start_returns_bundle_not_session_close() -> None:
     preloaded = set(result["seat_preloaded"])
     assert "cortex-orientation" not in preloaded
     assert "orchestrator-core" not in preloaded
-    assert "operator-posture" in preloaded
+    assert "operator-posture" not in preloaded
 
 
 @pytest.mark.offline

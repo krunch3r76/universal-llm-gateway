@@ -29,7 +29,7 @@ def test_cursor_only_classifies_as_inject() -> None:
 
 
 def test_shared_sync_classifies_as_customize() -> None:
-    plan = classify_skill_delivery("operator-posture")
+    plan = classify_skill_delivery("reasoning-posture")
     assert plan.surface_class == "shared_sync"
     assert plan.channel == "customize_skills"
 
@@ -274,15 +274,15 @@ def test_single_shared_sync_slash_chip_unchanged() -> None:
         prepend_cdp_dispatch_skills,
     )
 
-    assert format_cdp_slash_prefix(["operator-posture"]) == "/operator-posture\n"
+    assert format_cdp_slash_prefix(["reasoning-posture"]) == "/reasoning-posture\n"
     prompt, used_slash, bodies = prepend_cdp_dispatch_skills(
         "## Task\n",
-        ["operator-posture"],
+        ["reasoning-posture"],
     )
-    assert used_slash == ["operator-posture"]
+    assert used_slash == ["reasoning-posture"]
     assert bodies == []
     assert prompt.startswith(
-        "/operator-posture\n\n<!--cdp-required-skills:operator-posture-->\n## Task\n"
+        "/reasoning-posture\n\n<!--cdp-required-skills:reasoning-posture-->\n## Task\n"
     )
     assert "Use the `" not in prompt
 
