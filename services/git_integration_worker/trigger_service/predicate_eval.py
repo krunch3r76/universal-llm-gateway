@@ -46,7 +46,7 @@ def _parse_predicate_args(raw: str | dict[str, Any] | None) -> dict[str, Any]:
 
 
 def _validate_fleet_idle_args(args: dict[str, Any]) -> None:
-    for key in ("require_tick_empty", "require_dispatch_idle"):
+    for key in ("require_tick_empty", "require_dispatch_idle", "block_on_queued_consults"):
         if key in args and not isinstance(args[key], bool):
             raise TriggerStoreError(
                 f"predicate_args.{key} must be a boolean",

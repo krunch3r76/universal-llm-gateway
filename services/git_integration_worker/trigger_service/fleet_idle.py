@@ -11,14 +11,23 @@ from universal_logging import get_logger
 
 logger = get_logger(__name__)
 
-# Statuses that mean charter-tick work is in flight (not merely enrolled IDLE).
-_CHARTER_BUSY_STATUSES = (
+# Root statuses that block tick_empty in narrow (default) mode.
+_CHARTER_BUSY_ROOT_NARROW = (
     "ADMITTED",
     "HARVEST_WAIT",
-    "CONSULT_QUEUED",
     "CONSULT_ADMITTED",
+)
+
+# Strict mode adds queued/deferred root consult states (legacy behaviour).
+_CHARTER_BUSY_ROOT_STRICT_EXTRA = (
+    "CONSULT_QUEUED",
     "CONSULT_DEFERRED",
 )
+
+_CHARTER_BUSY_ROOT_STRICT = _CHARTER_BUSY_ROOT_NARROW + _CHARTER_BUSY_ROOT_STRICT_EXTRA
+
+_CONSULT_BUSY_NARROW = ("admitted", "running")
+_CONSULT_BUSY_STRICT = ("queued", "admitted", "running")
 
 _last_busy_monotonic: float = 0.0
 _idle_since_monotonic: float | None = None
@@ -43,6 +52,7 @@ class FleetIdleSnapshot:
     cursor_auto_idle: bool
     dispatch_undetermined: bool = False
     tick_undetermined: bool = False
+    tick_empty_strict: bool = True
 
 
 class FleetIdleReader(Protocol):
@@ -84,7 +94,18 @@ def eval_fleet_idle(
 ) -> bool:
     """True when verdict is idle and grace (if any) has elapsed."""
     global _last_busy_monotonic, _idle_since_monotonic
-    if snapshot.verdict is not FleetVerdict.IDLE:
+    block_on_queued = bool(args.get("block_on_queued_consults", False))
+    effective_tick_empty = (
+        snapshot.tick_empty_strict if block_on_queued else snapshot.tick_empty
+    )
+    verdict = _compose_verdict(
+        dispatch_idle=snapshot.dispatch_idle,
+        dispatch_undetermined=snapshot.dispatch_undetermined,
+        tick_empty=effective_tick_empty,
+        tick_undetermined=snapshot.tick_undetermined,
+        cursor_auto_idle=snapshot.cursor_auto_idle,
+    )
+    if verdict is not FleetVerdict.IDLE:
         now = now_monotonic if now_monotonic is not None else time.monotonic()
         _last_busy_monotonic = now
         _idle_since_monotonic = None
@@ -105,7 +126,7 @@ class DefaultFleetIdleReader:
 
     def read(self) -> FleetIdleSnapshot:
         dispatch_idle, dispatch_undetermined = _dispatch_idle()
-        tick_empty, tick_undetermined = _charter_tick_empty()
+        tick_empty, tick_empty_strict, tick_undetermined = _charter_tick_empty()
         auto_idle = _cursor_auto_idle()
         verdict = _compose_verdict(
             dispatch_idle=dispatch_idle,
@@ -121,6 +142,7 @@ class DefaultFleetIdleReader:
             cursor_auto_idle=auto_idle,
             dispatch_undetermined=dispatch_undetermined,
             tick_undetermined=tick_undetermined,
+            tick_empty_strict=tick_empty_strict,
         )
 
 
@@ -165,27 +187,24 @@ def _cursor_auto_idle() -> bool:
     return claimed == 0
 
 
-def _charter_tick_empty() -> tuple[bool, bool]:
+def _charter_tick_empty() -> tuple[bool, bool, bool]:
+    """Return (narrow_empty, strict_empty, undetermined)."""
     try:
         from libs.charter_runner_store.db import open_ledger_db
 
         conn = open_ledger_db()
         try:
-            placeholders = ",".join("?" for _ in _CHARTER_BUSY_STATUSES)
-            row = conn.execute(
-                f"SELECT COUNT(*) AS n FROM root_ledger WHERE status IN ({placeholders})",
-                _CHARTER_BUSY_STATUSES,
-            ).fetchone()
-            if row and int(row["n"]) > 0:
-                return False, False
-            consult = conn.execute(
-                """
-                SELECT COUNT(*) AS n FROM consult_queue
-                WHERE status IN ('queued', 'admitted', 'running')
-                """
-            ).fetchone()
-            empty = not consult or int(consult["n"]) == 0
-            return empty, False
+            narrow_empty = _root_ledger_empty(conn, _CHARTER_BUSY_ROOT_NARROW)
+            strict_empty = narrow_empty
+            if narrow_empty:
+                strict_empty = _root_ledger_empty(conn, _CHARTER_BUSY_ROOT_STRICT)
+            if not narrow_empty:
+                return False, False, False
+            if not strict_empty:
+                return True, False, False
+            narrow_consult = _consult_queue_empty(conn, _CONSULT_BUSY_NARROW)
+            strict_consult = _consult_queue_empty(conn, _CONSULT_BUSY_STRICT)
+            return narrow_consult, strict_consult, False
         finally:
             conn.close()
     except Exception:
@@ -193,4 +212,22 @@ def _charter_tick_empty() -> tuple[bool, bool]:
             "charter tick probe failed — undetermined (fail-closed)",
             exc_info=True,
         )
-        return False, True
+        return False, False, True
+
+
+def _root_ledger_empty(conn, statuses: tuple[str, ...]) -> bool:
+    placeholders = ",".join("?" for _ in statuses)
+    row = conn.execute(
+        f"SELECT COUNT(*) AS n FROM root_ledger WHERE status IN ({placeholders})",
+        statuses,
+    ).fetchone()
+    return not row or int(row["n"]) == 0
+
+
+def _consult_queue_empty(conn, statuses: tuple[str, ...]) -> bool:
+    placeholders = ",".join("?" for _ in statuses)
+    row = conn.execute(
+        f"SELECT COUNT(*) AS n FROM consult_queue WHERE status IN ({placeholders})",
+        statuses,
+    ).fetchone()
+    return not row or int(row["n"]) == 0
