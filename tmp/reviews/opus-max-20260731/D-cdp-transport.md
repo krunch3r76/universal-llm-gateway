@@ -438,3 +438,178 @@ version or commit SHA**, so its running code cannot be compared against the fix 
 recommendation #3. No CDP leg has fired since `20:08:14Z`, so no post-fix evidence exists either
 way. Recording this as unverified rather than assumed, per the standing rule that an unobserved
 propagation claim is the defect this session exists to fix.
+
+---
+
+# Instrumentation pass
+
+Third pass, separate seat. Scope: build the three things the diagnosis and the
+adversarial pass identified and could not do. Neither prior pass was re-litigated;
+both are taken as given. Three commits, verified per job, not batched.
+
+| Job | Commit | Verification |
+|---|---|---|
+| 1 — progress fingerprint on wall-clock aborts | `34940f11` | `6 passed` (new suite) · `71 passed, 201 deselected` (claude_bundles cdp/endpoint) · `12 passed` (reconcile) |
+| 2 — cdp-ask self-reports a version | `a2701902` | `2 passed` |
+| 3 — `cdp.generate.*` emission blackout | `55379fd6` | `15 passed` |
+
+## Job 1 — `wall_clock_exceeded` is now attributable
+
+**What was built.** A new module, `libs/claude_bundles/cdp_progress_trace.py`, holding a
+bounded history of the points at which the progress fingerprint *changed*, plus a verdict
+derived from it. The fingerprint itself moved there unchanged (`fingerprint()`, same six
+fields); `cdp_model_endpoint.py:155` now aliases it, so no behaviour moved with it.
+
+`file:line`:
+
+| Locus | Change |
+|---|---|
+| `libs/claude_bundles/cdp_progress_trace.py:1–119` | new — `ProgressTrace`, `fingerprint`, `MAX_TRACE_ENTRIES = 12` |
+| `libs/claude_bundles/cdp_model_endpoint.py:519–521` | `trace = ProgressTrace()` seeded from the submit snapshot |
+| `libs/claude_bundles/cdp_model_endpoint.py:573–576` | loop records every poll; `trace.record()` returns the same boolean the old `fp != last_fp` did, so `last_progress_at` semantics are untouched |
+| `libs/claude_bundles/cdp_model_endpoint.py:538–546` | `wall_clock_exceeded` carries `extras["progress_trace"]` |
+| `libs/claude_bundles/cdp_model_endpoint.py:557–572`, `:660–678` | both `no_progress` aborts carry it too — same discriminator, free |
+| `services/universal-stargate/systems/frontier_consult/cdp_events.py:72–99` | `CdpGenerateStalled` payload gains `progress_trace` |
+| `services/universal-stargate/systems/frontier_consult/cdp_generate_reconcile.py:154` | the stalled publish forwards `result.extras["progress_trace"]` |
+
+**How it will be read.** `CdpGenerateResult.as_dict()` spreads `extras`, so the trace
+reaches the failure record and the on-behalf `cdp FAILED` bus body; the same dict is on the
+`cdp.generate.stalled` event payload. Query it directly:
+
+```
+scripts/query-events --sql "SELECT timestamp, json_extract(payload,'$.progress_trace.verdict') v,
+  json_extract(payload,'$.progress_trace.frozen_for_s') frozen
+  FROM events WHERE signal='cdp.generate.stalled'"
+```
+
+The verdict is the falsifier from §5 above, made mechanical:
+
+| `verdict` | Meaning | Consequence for the transport verdict |
+|---|---|---|
+| `advancing` | fingerprint moved within the last quarter of `no_progress_s` | budget too small; Playwright fine; fix is a per-model wall |
+| `slowing` | moved, but stale | inconclusive; read `history` |
+| `frozen` | unchanged for ≥ `no_progress_s` at abort | session decay — 41% of failures are transport, and the verdict flips toward moving sealed consults off the browser |
+| `oscillating` | fingerprint revisited earlier values ≥2× | page flipping between states; a bare `fp != last_fp` reads this as progress, which is why it is counted separately |
+| `never_advanced` | nothing moved after submit | dead on arrival |
+
+The payload also carries `changes`, `revisits`, `frozen_for_s`, `last_change_at_s`,
+`elapsed_s`, `phase_at_abort`, and the last 12 changes with timestamps (`history`,
+plus `history_dropped`). `phase_at_abort` matters: `POST_IDLE_PHASES`
+(`cdp_model_endpoint.py:36`) legitimately freeze the fingerprint during harvest, and the
+`no_progress` check at `:647` exempts them — so a `frozen` verdict on a post-idle phase is a
+harvest hang, not session death. Reading `verdict` without `phase_at_abort` will
+mis-attribute that case.
+
+**`max_wall_s` was deliberately not widened.** Raising it before the trace is read converts a
+visible failure into a silent 60-minute hang and destroys the measurement. `DEFAULT_MAX_WALL_S`
+is still `1800` at `cdp_model_endpoint.py:27`. Recommendation #2 of the prior pass stays
+sequenced behind this.
+
+## Job 2 — cdp-ask self-reports `code_version`
+
+`libs/cdp_ask/app.py:33–52` (`HealthResponse`) and `:101–121` (both branches of `/health`)
+now carry `code_version`, resolved by `deploy_identity.code_version.resolve_code_version()` —
+the same function `services/mcp-server/_deploy_stamp.py:25` and
+`services/git_integration_worker/cursor_auto/liveness.py:83` already use, so the field name
+and the resolution order (`ULG_CODE_VERSION` → deploy-stamp line 2 → young-process git HEAD
+→ `unknown`) match the existing convention rather than inventing one. The `fail_closed`
+branch carries it too: a fail-closed satellite still has to be attributable.
+
+`propagation_probe.py:87` and `propagation_terminal.py:94` read a flat `code_version` key, so
+`git merge-base --is-ancestor <sha> <running_sha>` becomes applicable to cdp-ask once this is
+deployed.
+
+**Observed before the change** (read-only, this session):
+
+```
+$ curl -sS http://jupiter:8770/health
+{"status":"ok","harvest_root":"/mnt/torus/mcp-data/files","harvest_root_ok":true,"registry_hygiene":"running"}
+$ curl -sS -o /dev/null -w "%{http_code}" http://jupiter:8770/version
+404
+```
+
+**cdp-ask runs on Jupiter, a different host.** The code landed in this checkout; it deploys
+there. No claim is made here about cdp-ask's running version — there is none to read until
+this commit is deployed and the satellite restarted. That is the whole point of the change.
+
+## Job 3 — the `cdp.generate.*` blackout
+
+**Root cause is NOT established. Three named hypotheses are falsified, and the reason it
+cannot be narrowed further is itself the defect — now fixed.**
+
+What the event store shows (`/tmp/universal-protocol/events-query.sock`):
+
+| Observation | Value |
+|---|---|
+| `universal_stargate` events, 07-30T09:42Z → 07-31T19:51Z | **134,331** — the bus never stopped |
+| of those, `scope=node` | **921** — node scope was not the discriminator |
+| `frontier.review_child.context_missing`, source `universal_stargate` | **2026-07-31T19:25:43.677Z** — 26 min *before* the restart |
+| `cdp.generate.*` in the same window | **0**, across 67 admitted legs |
+| Stargate process | pid `1173088`, started `2026-07-31T19:51:44Z`, still running at 21:18Z |
+| Functional Stargate code between last blackout leg and restart | none — `82f07260` touched only `test_cdp_generate.py` |
+| `ulg://stargate` as an event source | exactly **2** rows in 1,013,665 — the two 07-30 `cdp.generate.proof` events, and nothing else ever |
+
+`frontier.review_child.context_missing` is published by `publish_frontier_event`
+(`cursor_sdk_generate_signals.py:21–30`), which is **byte-identical in mechanism** to
+`publish_cdp_event` (`cdp_events.py:157–170`): same `from systems.proxy.dependencies import
+get_proxy`, same `getattr(proxy, "event_bus")`, same `publish_from_sync`. It succeeded inside
+the allegedly-blacked-out process, 26 minutes before the restart. Therefore:
+
+- **dead publisher connection** — falsified (134k events through the same bus)
+- **unrecovered socket** — falsified (same)
+- **process-lifetime-scoped client** — falsified (the same helper worked pre-restart)
+
+And `CdpGenerateAdmitted` is unconditional at the top of `run_cdp_worker`
+(`cdp_generate_worker.py:384`), fired before any ledger, claim or harvest logic, while all 67
+legs *did* write ledger rows (`cdp_generate.py:292`) and 44 delivered bus turns. So the
+worker ran and the publish was attempted and lost.
+
+**Why it stops there, and the fix.** `publish_cdp_event` and `publish_cdp_kwargs` caught
+`Exception` bare and `return`ed — no log, no counter, no event. A factory `TypeError`, an
+uninitialised proxy, a bus error and a clean publish were indistinguishable at every
+observable surface, for 35 hours. `55379fd6` adds `_warn_swallowed`
+(`cdp_events.py:172–190`), logging once per `(signal, cause)` per process and preserving the
+never-raise invariant, so a persistently dead publisher costs one legible line rather than a
+flood or a silence. This does not fix the blackout; it makes the next one attributable in one
+log line instead of a day of ledger archaeology.
+
+**Ledger trap re-confirmed, per the prior pass.** The running Stargate's in-flight ledger is
+`/tmp/stargate-cdp-generate-inflight.db` (68 rows, `admitted_at` spanning
+`2026-07-30T09:42:50Z` → `2026-07-31T20:08:14Z`). The `~/.gateway` path is empty. Note also
+that the ledger column is `admitted_at`, not `created_at`.
+
+**Specified, not landed** — the remaining narrowing, in order:
+
+1. With `55379fd6` live, reproduce by firing one CDP leg and reading the Stargate log for
+   `cdp event dropped`. One line names the cause.
+2. If nothing is logged, the publish *succeeded* and the loss is downstream of
+   `publish_from_sync` — next suspect is `loop.create_task` on a task nobody holds a
+   reference to (`event_bus.py:361`), which asyncio may garbage-collect before it runs.
+   `publish_cdp_event` discards the returned Task. Fix would be a module-level task set.
+3. The `ulg://stargate` source on exactly two events, both CDP, both 07-30, is unexplained
+   and is the only evidence that the CDP lane ever published by a different route. Worth one
+   `git log -S 'ulg://stargate'`.
+
+## PROPAGATION REQUIRED
+
+Observed, not assumed. Nothing below is live.
+
+| Service | Host | Needs SHA | Observed running state |
+|---|---|---|---|
+| **universal-stargate** | hub (local) | `55379fd6` (also carries `34940f11`) | pid `1173088`, **started `2026-07-31T19:51:44Z`**, still running at `21:18:20Z`. All three commits were authored after `21:16Z`, so the running process cannot contain them. Landed-not-live. |
+| **cdp-ask** | **Jupiter — remote host** | `a2701902` (also `34940f11` for `libs/claude_bundles`) | `http://jupiter:8770/health` → `{"status":"ok",…}` with **no version field** (observed above). Its running version is **unobservable by construction** until `a2701902` deploys there. Recorded as unverified, not assumed stale. |
+| **mcp-server** | hub, containerised | `0acc3e30` from the first pass — unchanged by this pass | prior pass observed `code_version 82f07260`, synced `20:34:10Z` — genuinely stale |
+
+Restart order does not matter; cdp-ask and Stargate are independent. Do not `force=true` a
+drain — CDP traffic was live during this session and was not touched.
+
+## Residuals
+
+| Residual | What would settle it |
+|---|---|
+| The trace has never fired on a real leg | One `wall_clock_exceeded` after propagation. Read `verdict` **with** `phase_at_abort`. |
+| Blackout root cause | Step 1 above: one leg, one log line, post-propagation |
+| `progress_trace` is on `cdp.generate.stalled` but not on the ledger row | The ledger has no column for it; adding one is a migration, deliberately not done here |
+| `mark_delivered` missing for 7/68 legs (prior pass #5) | Untouched |
+| Per-model `max_wall_s` (prior pass #2) | **Blocked on reading the trace** — do not raise the budget first |
+| CDP in-flight ledger on `/tmp` (prior pass #4) | Untouched; still does not survive a tmp-clean |
