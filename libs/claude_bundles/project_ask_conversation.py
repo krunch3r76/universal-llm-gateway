@@ -7,7 +7,6 @@ from collections.abc import Awaitable, Callable
 from claude_bundles.chat_reply_wait import harvest_assistant, wait_assistant_reply
 from claude_bundles.chat_session_hygiene import (
     delete_chat_if_active,
-    goto_fresh_compose,
     pick_chat_page,
 )
 from claude_bundles.cowork_output_download import (
@@ -26,6 +25,65 @@ from claude_bundles.project_ask import (
 )
 from claude_bundles.project_chrome import project_url
 from claude_bundles.skills_ui_panel import DEFAULT_CDP_URL, connect_cdp
+
+_TRANSCRIPT_MARKER_JS = """
+() => {
+  const selectors = [
+    '[data-testid="user-message"]',
+    '[data-testid="human-turn"]',
+    '[data-testid*="user"]',
+    'div[class*="font-user"]',
+  ];
+  let count = 0;
+  let last = '';
+  const seen = new Set();
+  for (const sel of selectors) {
+    for (const el of document.querySelectorAll(sel)) {
+      if (seen.has(el)) continue;
+      seen.add(el);
+      const t = (el.innerText || '').trim();
+      if (t) {
+        count += 1;
+        last = t;
+      }
+    }
+  }
+  return { count, last_len: last.length, last_snippet: last.slice(0, 120) };
+}
+"""
+
+
+async def send_followup_paste_half(page, prompt: str) -> dict:
+    """Paste *prompt* into a live CSE and verify the user turn — no reply wait.
+
+    Send-only contract: calls ``send_prompt`` and checks transcript delta for
+    the user turn. Does **not** call ``wait_assistant_reply`` or
+    ``resolve_harvest_body``. Mid-turn ``streaming_at_paste`` is reported
+    (allow + report); callers decide whether to retry later.
+    """
+    import time
+
+    from claude_bundles.chat_reply_wait import harvest_assistant
+
+    url = page.url or ""
+    before = await page.evaluate(_TRANSCRIPT_MARKER_JS)
+    await send_prompt(page, prompt)
+    after = await page.evaluate(_TRANSCRIPT_MARKER_JS)
+    snippet = (prompt or "").strip()[:80]
+    send_verified = after.get("count", 0) > before.get("count", 0) or (
+        after.get("last_len", 0) > before.get("last_len", 0)
+        and snippet
+        and snippet in (after.get("last_snippet") or "")
+    )
+    state = await harvest_assistant(page)
+    pasted_at = time.time()
+    return {
+        "send_verified": bool(send_verified),
+        "streaming_at_paste": bool(state.get("streaming")),
+        "url": str(state.get("url") or page.url or url),
+        "pasted_at": pasted_at,
+        "error": None if send_verified else "send_unverified",
+    }
 
 
 async def project_followup_on_page(

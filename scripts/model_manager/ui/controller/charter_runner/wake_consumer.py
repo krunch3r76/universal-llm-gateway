@@ -251,6 +251,9 @@ async def _floor_postamble(
 ServicesHealthy = Callable[[], bool]
 
 
+_DEFAULT_HOLD_POLL_S = 5.0
+
+
 @dataclass
 class WakeConsumer:
     """Single consumer: wake dirty-set → harvest → dispatch; ledger floor residual."""
@@ -260,6 +263,7 @@ class WakeConsumer:
     mapper: WakeRootMapper
     floor_interval_s: float
     services_healthy: ServicesHealthy
+    hold_poll_s: float = _DEFAULT_HOLD_POLL_S
     _task: asyncio.Task[None] | None = None
     _shutdown_gate_activity: Callable[[bool], None] | None = None
 
@@ -272,6 +276,7 @@ class WakeConsumer:
         if self._task is not None:
             return
         self._task = asyncio.create_task(self._run_loop())
+        await self.enqueue_full_roster()
 
     async def stop(self) -> None:
         task = self._task
@@ -294,10 +299,10 @@ class WakeConsumer:
             while True:
                 held = tick_hold.read_hold()
                 if held is not None:
-                    await asyncio.sleep(self.floor_interval_s)
+                    await self.dirty.wait(timeout=self.hold_poll_s)
                     continue
                 if not self.services_healthy():
-                    await asyncio.sleep(self.floor_interval_s)
+                    await self.dirty.wait(timeout=self.hold_poll_s)
                     continue
                 triggered = await self.dirty.wait(timeout=self.floor_interval_s)
                 if tick_hold.read_hold() is not None:

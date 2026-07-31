@@ -44,7 +44,12 @@ def _default_revise_dir() -> Path:
 
 _REVISE_PICKUP_RE = re.compile(r"\brevise\b|\bG\d+[a-c]\b", re.IGNORECASE)
 _STOP_DIR = "cap-stops"
+_RECOVERY_DIR = "cap-stop-recovery"
 _MALFORMED_STOP = "malformed_stop_state"
+
+RECOVERABLE_STOP_REASONS = frozenset(
+    {"admission_rejected", "admission_transport_error"}
+)
 
 
 def _schedule_caps_cleared_emit(root_id: str) -> None:
@@ -107,22 +112,60 @@ class CapStore:
         # Consult-stall generations are independent and monotonic across root resets.
         self._consult_stall_heals: dict[str, int] = {}
         self._stop_dir = charter_runner_data_dir() / _STOP_DIR
+        self._recovery_dir = charter_runner_data_dir() / _RECOVERY_DIR
         self._load_stops()
 
     def _stop_path(self, root_id: str) -> Path:
         return self._stop_dir / f"{root_id}.json"
+
+    def _recovery_path(self, root_id: str) -> Path:
+        return self._recovery_dir / f"{root_id}.json"
+
+    @staticmethod
+    def _read_stop_file(path: Path) -> dict[str, object] | None:
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        return raw if isinstance(raw, dict) else None
+
+    def _load_recovery_meta(self, root_id: str) -> int:
+        path = self._recovery_path(root_id)
+        if not path.is_file():
+            return 0
+        raw = self._read_stop_file(path)
+        if raw is None:
+            return 0
+        count = raw.get("auto_clear_count")
+        if isinstance(count, int) and count >= 0:
+            return count
+        if isinstance(count, float):
+            return max(0, int(count))
+        return 0
+
+    def _persist_recovery_meta(self, root_id: str, auto_clear_count: int) -> None:
+        self._recovery_dir.mkdir(parents=True, exist_ok=True)
+        path = self._recovery_path(root_id)
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(
+            json.dumps({"auto_clear_count": auto_clear_count}, indent=2),
+            encoding="utf-8",
+        )
+        tmp.replace(path)
+
+    def _clear_recovery_meta(self, root_id: str) -> None:
+        self._recovery_path(root_id).unlink(missing_ok=True)
 
     def _load_stops(self) -> None:
         if not self._stop_dir.is_dir():
             return
         for path in self._stop_dir.glob("*.json"):
             root_id = path.stem
-            try:
-                raw = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
+            raw = self._read_stop_file(path)
+            if raw is None:
                 self._roots.setdefault(root_id, _RootState()).stopped_reason = _MALFORMED_STOP
                 continue
-            reason = raw.get("stopped_reason") if isinstance(raw, dict) else None
+            reason = raw.get("stopped_reason")
             if not isinstance(reason, str) or not reason.strip():
                 self._roots.setdefault(root_id, _RootState()).stopped_reason = _MALFORMED_STOP
             else:
@@ -133,13 +176,57 @@ class CapStore:
         path = self._stop_path(root_id)
         tmp = path.with_suffix(".json.tmp")
         tmp.write_text(
-            json.dumps({"stopped_reason": reason}, indent=2),
+            json.dumps(
+                {
+                    "stopped_reason": reason,
+                    "stopped_at": time.time(),
+                    "auto_clear_count": 0,
+                },
+                indent=2,
+            ),
             encoding="utf-8",
         )
         tmp.replace(path)
 
     def _clear_stop(self, root_id: str) -> None:
         self._stop_path(root_id).unlink(missing_ok=True)
+
+    def _clear_stop_emit(self, root_id: str) -> bool:
+        """Drop in-memory + durable stop; emit caps.cleared when a stop existed."""
+        had_stop = False
+        state = self._roots.get(root_id)
+        if state is not None and state.stopped_reason is not None:
+            had_stop = True
+        if self._stop_path(root_id).is_file():
+            had_stop = True
+        self._roots.pop(root_id, None)
+        self._clear_stop(root_id)
+        if had_stop:
+            _schedule_caps_cleared_emit(root_id)
+        return had_stop
+
+    def try_auto_clear_recoverable_stop(self, root_id: str, *, healthy: bool) -> bool:
+        """Clear a recoverable stop once when substrate is healthy (6486 Path B #2).
+
+        Storm guard: ``cap-stop-recovery/{root}.json`` records ``auto_clear_count``
+        across the clear so an immediate re-fail does not auto-clear every tick.
+        Human ``reset()`` clears recovery metadata and allows a fresh auto-clear.
+        """
+        if not healthy:
+            return False
+        state = self._roots.get(root_id)
+        reason = state.stopped_reason if state else None
+        if reason is None and self._stop_path(root_id).is_file():
+            raw = self._read_stop_file(self._stop_path(root_id))
+            if raw is not None:
+                loaded = raw.get("stopped_reason")
+                reason = loaded if isinstance(loaded, str) else None
+        if reason not in RECOVERABLE_STOP_REASONS:
+            return False
+        if self._load_recovery_meta(root_id) >= 1:
+            return False
+        self._persist_recovery_meta(root_id, 1)
+        return self._clear_stop_emit(root_id)
 
     def check(
         self, root_id: str, *, now: float | None = None
@@ -169,16 +256,8 @@ class CapStore:
 
     def reset(self, root_id: str) -> bool:
         """Clear in-memory + durable stop state. Returns True when a stop was cleared."""
-        had_stop = False
-        state = self._roots.get(root_id)
-        if state is not None and state.stopped_reason is not None:
-            had_stop = True
-        if self._stop_path(root_id).is_file():
-            had_stop = True
-        self._roots.pop(root_id, None)
-        self._clear_stop(root_id)
-        if had_stop:
-            _schedule_caps_cleared_emit(root_id)
+        had_stop = self._clear_stop_emit(root_id)
+        self._clear_recovery_meta(root_id)
         return had_stop
 
     def intent_path(self, root_id: str, window_index: int) -> Path:

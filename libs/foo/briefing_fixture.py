@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 BRIEFING_HEADER = "TYPE: BRIEFING"
-MAX_BRIEFING_LINES = 18
+MAX_BRIEFING_LINES = 26
 
 FROM_AUTO = "cursor-auto"
 ADMIT_SUBJECT_PREFIX = "status:admitted"
@@ -24,6 +24,9 @@ BRIEFING_REQUIRED_SUBSTRINGS = (
     "front-door bind",
     "needs-attended",
     "live_deltas",
+    "NEW CDP WINDOW",
+    "handoff_prompt",
+    "SAME private lane",
 )
 
 BRIEFING_FORBIDDEN_SUBSTRINGS = (

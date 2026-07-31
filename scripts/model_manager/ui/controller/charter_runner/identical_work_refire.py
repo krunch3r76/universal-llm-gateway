@@ -18,12 +18,14 @@ from .window_sequence import window_index_from_id
 from .work_key import WORK_KEY_VERSION, compute_work_key
 from .work_key_store import (
     find_record_by_window_id,
+    harvested_for_key,
     live_undispositioned_for_key,
     stamp_disposition,
 )
 
 FRICTION_ID = 27259
 SKIP_REASON = f"identical_work_refire:a{FRICTION_ID}"
+MALFORMED_NEST_SKIP_REASON = f"{SKIP_REASON}:malformed_nest:a27245"
 
 _ADMIT_TRANSITIONS = frozenset({Transition.ADMIT_CONSULT, Transition.ADMIT_WORKER})
 
@@ -34,6 +36,7 @@ class RefireGateContext:
 
     force: bool = False
     nest_under: str | None = None
+    holder_dispatch_id: str | None = None
     supersede_window_id: str | None = None
     incoming_window_index: int | None = None
     incoming_dispatch_id: str | None = None
@@ -113,7 +116,11 @@ async def evaluate_identical_work_refire(
     ctx: RefireGateContext | None = None,
     giw_payload: dict[str, Any] | None = None,
 ) -> RefireGateOutcome:
-    """Return ``refused=True`` when a live same-key holder blocks this admit."""
+    """Return ``refused=True`` when a live or harvested same-key holder blocks admit.
+
+    Path B (6486): a prior ``disposition='harvested'`` row fences re-admit of the
+    same work_key; advance ``pickup_gid`` (new key) to unblock.
+    """
     if transition not in _ADMIT_TRANSITIONS:
         return RefireGateOutcome(refused=False)
 
@@ -214,16 +221,61 @@ async def evaluate_identical_work_refire(
         )
 
     active_ids = dispatch_ids_from_active_work(payload or {})
-    if gate_ctx.nest_under and gate_ctx.nest_under in active_ids:
-        await _emit(carve_out="nest", probe_status="ok")
-        return RefireGateOutcome(
-            refused=False,
-            carve_out="nest",
-            work_key=work_key,
-            probe_status="ok",
-        )
-
     holders = live_undispositioned_for_key(conn, work_key)
+    live_holders = [
+        holder
+        for holder in holders
+        if _holder_is_non_terminal(holder, active_dispatch_ids=active_ids)
+    ]
+    live_holder_id = (gate_ctx.holder_dispatch_id or "").strip() or None
+    if not live_holder_id:
+        for holder in live_holders:
+            dispatch_id = str(holder.dispatch_id or "").strip()
+            if dispatch_id:
+                live_holder_id = dispatch_id
+                break
+
+    if gate_ctx.nest_under:
+        nest_token = gate_ctx.nest_under.strip()
+        if (
+            nest_token in active_ids
+            and live_holder_id
+            and nest_token == live_holder_id
+        ):
+            await _emit(carve_out="nest", probe_status="ok")
+            return RefireGateOutcome(
+                refused=False,
+                carve_out="nest",
+                work_key=work_key,
+                probe_status="ok",
+            )
+        if live_holders and (
+            nest_token not in active_ids
+            or (live_holder_id and nest_token != live_holder_id)
+        ):
+            holder = live_holders[0]
+            age_s = max(0.0, time.time() - float(holder.admitted_at))
+            await _emit(carve_out=None, probe_status="ok", holder=holder)
+            record_park_friction(
+                FuseIdentity(
+                    category="identical_work_refire",
+                    tip_gid=row.pickup_gid or "?",
+                    mismatch_class=work_key[:16],
+                ),
+                FRICTION_ID,
+            )
+            return RefireGateOutcome(
+                refused=True,
+                skipped_reason=MALFORMED_NEST_SKIP_REASON,
+                work_key=work_key,
+                probe_status="ok",
+                holder_window_id=holder.window_id,
+                holder_dispatch_id=holder.dispatch_id,
+                holder_thread_id=holder.thread_id,
+                holder_age_s=age_s,
+            )
+
+    holders = live_holders
     for holder in holders:
         if not _holder_is_non_terminal(holder, active_dispatch_ids=active_ids):
             continue
@@ -258,11 +310,36 @@ async def evaluate_identical_work_refire(
             holder_age_s=age_s,
         )
 
+    harvested = harvested_for_key(conn, work_key)
+    if harvested:
+        holder = harvested[0]
+        age_s = max(0.0, time.time() - float(holder.admitted_at))
+        await _emit(carve_out=None, probe_status="ok", holder=holder)
+        record_park_friction(
+            FuseIdentity(
+                category="identical_work_refire",
+                tip_gid=row.pickup_gid or "?",
+                mismatch_class=work_key[:16],
+            ),
+            FRICTION_ID,
+        )
+        return RefireGateOutcome(
+            refused=True,
+            skipped_reason=SKIP_REASON,
+            work_key=work_key,
+            probe_status="ok",
+            holder_window_id=holder.window_id,
+            holder_dispatch_id=holder.dispatch_id,
+            holder_thread_id=holder.thread_id,
+            holder_age_s=age_s,
+        )
+
     return RefireGateOutcome(refused=False, work_key=work_key, probe_status=probe_status)
 
 
 __all__ = [
     "FRICTION_ID",
+    "MALFORMED_NEST_SKIP_REASON",
     "RefireGateContext",
     "RefireGateOutcome",
     "SKIP_REASON",

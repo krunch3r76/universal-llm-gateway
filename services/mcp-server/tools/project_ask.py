@@ -1,16 +1,21 @@
 """MCP project_ask tool — thin httpx relay to the Jupiter CDP-ask satellite.
 
-Split submit / poll / abort only (F-2). No server-side poll loop; no Playwright
-or claude_bundles imports in this module.
+Split submit / poll / abort / followup (F-2). No server-side poll loop; no
+Playwright or Jupiter bundle imports in this module.
 
 Transport vs bus (operator-proxy):
   ``project_ask`` is IDE↔Cowork **converse transport** (submit/poll/abort per
-  ``execution_id``). ``abort`` cancels **only** that satellite execution — it does
-  **not** stop ``agent_bus.request`` episodes on the operator's private request
-  thread (cursor-auto admits, nested cursor-sdk, CLOSEOUT relay). After mission
-  ``submit``, continuity for commissions is the **bus thread**, not this handle.
-  Reconnect: warm ``submit`` with the same ``holder`` and ``converse=true`` may
-  reattach a retained Cowork CSE; a dead ``execution_id`` cannot be re-polled.
+  ``execution_id``; ``followup`` warm-pastes into a live retained CSE). In-chat
+  delivery ≻ bus NOTE — a NOTE may accompany as audit only, never as a
+  delivery fallback for ``op=followup``. ``abort`` cancels **only** that
+  satellite execution — it does **not** stop ``agent_bus.request`` episodes on
+  the operator's private request thread (cursor-auto admits, nested cursor-sdk,
+  CLOSEOUT relay). After mission ``submit``, continuity for commissions is the
+  **bus thread**, not this handle. Reconnect: warm ``submit`` with the same
+  ``holder`` and ``converse=true`` may reattach a retained Cowork CSE; a dead
+  ``execution_id`` cannot be re-polled. CLI escape when no attached lane holds
+  the CSE: ``scripts/cortex/cowork_chat_followup.py``. If synchronous paste
+  exceeds relay budget, v2 may mint a followup id + poll ladder (not v1).
   Doctrine: ``session-abort-authorization_ulg.mdc`` · ``cdp-operator-proxy``.
 """
 
@@ -77,8 +82,10 @@ def register_project_ask_tool(mcp: FastMCP) -> None:
 
     @mcp.tool(title="CDP Project Ask")
     def project_ask(
-        op: Literal["submit", "poll", "abort", "active_work"],
+        op: Literal["submit", "poll", "abort", "active_work", "followup"],
         execution_id: str | None = None,
+        chat_url: str | None = None,
+        registration_id: str | None = None,
         prompt_text: str | None = None,
         prompt_uri: str | None = None,
         prompt_path: str | None = None,
@@ -97,7 +104,7 @@ def register_project_ask_tool(mcp: FastMCP) -> None:
         harvest_source: Literal["chat", "output-file", "auto"] = "auto",
         download_output: bool = False,
     ) -> dict[str, Any]:
-        """Submit, poll, or abort a Jupiter CDP sealed project-ask execution.
+        """Submit, poll, abort, followup, or list active CDP project-ask work.
 
         Thin relay to the ``PROJECT_ASK_URL`` satellite (``libs/cdp_ask/``).
         Use from any vortex-code seat without hub checkout SSH.
@@ -117,6 +124,15 @@ def register_project_ask_tool(mcp: FastMCP) -> None:
             and only the satellite id polls (friction a:26175). Stargate-side
             correlation is the ``cdp.generate.submitted`` event, which carries
             both ids and now publishes at submit time.
+          followup — warm paste into a live retained Cowork CSE on an attached
+            lane (``chat_url`` ≻ ``registration_id`` ≻ ``execution_id``). In-chat
+            delivery ≻ bus NOTE; commission continuity stays on the private
+            ``agent_bus.request`` lane (transport ≠ bus). Returns paste proof
+            (``send_verified``, ``url``) — no reply harvest. Prefer ``prompt_uri``
+            for large advisories. ``timeout_s`` on followup is the relay paste
+            budget (recommend 60); v2 fallback is async followup id + poll if
+            pastes exceed synchronous relay (not implemented in v1). CLI escape:
+            ``scripts/cortex/cowork_chat_followup.py``.
 
         ``purpose``: default ``ask``. For operator-proxy missions prefer
         ``team_dispatch(model=cdp/…, purpose=operator-proxy|mission)`` —
@@ -166,13 +182,15 @@ def register_project_ask_tool(mcp: FastMCP) -> None:
             archive path before ``content_proof``.
 
         Args:
-            op: submit | poll | abort | active_work
-            execution_id: Required for poll/abort; satellite-minted id only
-            prompt_text: Inline prompt for submit
-            prompt_uri: cortex:// prompt for submit
-            prompt_path: Jupiter-readable file path for submit
+            op: submit | poll | abort | active_work | followup
+            execution_id: Required for poll/abort; optional identity for followup
+            chat_url: Optional CSE URL identity for followup (highest precedence)
+            registration_id: Optional attached-lane identity for followup
+            prompt_text: Inline prompt for submit or followup
+            prompt_uri: cortex:// prompt for submit or followup
+            prompt_path: Jupiter-readable file path for submit or followup
             holder: Registry holder id
-            purpose: Registry purpose tag (default ask)
+            purpose: Registry purpose tag (default ask); followup disambiguator
             model: Live CDP picker model pattern
             converse: Multi-turn /new consult
             no_project_uuid: Use https://claude.ai/new instead of Project UUID
@@ -184,7 +202,8 @@ def register_project_ask_tool(mcp: FastMCP) -> None:
             archive_path: Optional harvest archive path on Jupiter
             delete_after: Retain (false) or delete (true) chat after harvest; omit
                 for satellite defaults (converse/turn-2 retain, single-ask delete)
-            timeout_s: Idle completion budget forwarded to satellite
+            timeout_s: Idle completion budget for submit; paste relay budget for
+                followup (recommend 60 — overrides the 30s ``_relay`` default)
             expected_size: Deliverable size signal (small | large | auto)
             harvest_source: Submit-time harvest source (chat | output-file | auto); distinct from poll harvest_provenance
             download_output: Attempt Cowork Output download when true or large mode
@@ -196,9 +215,68 @@ def register_project_ask_tool(mcp: FastMCP) -> None:
                 streaming?, stop?, tool_pause?, liveness_observed_at?, ok?, body?, error?, …}
             abort: {execution_id, status, aborted, attested, still_attached,
                 abort_outcome, stop_clicked?}
-            active_work: {busy, running_count, execution_ids, soft_limit,
+            active_work: {busy, running_count, execution_ids, rows, soft_limit,
                 hard_limit, free_slots, at_soft_limit, at_hard_limit}
+            followup: {ok, url?, registration_id?, execution_id?, pasted_at?,
+                send_verified, streaming_at_paste?, error?, detail?, candidates?}
         """
+        if op == "followup":
+            identity = any(
+                [
+                    (chat_url or "").strip(),
+                    (registration_id or "").strip(),
+                    (execution_id or "").strip(),
+                ]
+            )
+            if not identity:
+                return {"ok": False, "error": "no_identity"}
+            if not any(
+                [
+                    (prompt_text or "").strip(),
+                    (prompt_uri or "").strip(),
+                    (prompt_path or "").strip(),
+                ]
+            ):
+                return {"ok": False, "error": "no_prompt"}
+            paste_budget = 60.0 if timeout_s == 360 else float(timeout_s)
+            body = {
+                k: v
+                for k, v in {
+                    "chat_url": chat_url,
+                    "registration_id": registration_id,
+                    "execution_id": execution_id,
+                    "purpose": purpose if purpose != "ask" else None,
+                    "prompt_text": prompt_text,
+                    "prompt_uri": prompt_uri,
+                    "prompt_path": prompt_path,
+                    "timeout_s": int(paste_budget),
+                }.items()
+                if v is not None and v != ""
+            }
+            result = _relay(
+                "POST",
+                "/v1/project-ask/followups",
+                json_body=body,
+                timeout_s=paste_budget,
+            )
+            resolution_path = (
+                "chat_url"
+                if body.get("chat_url")
+                else "registration_id"
+                if body.get("registration_id")
+                else "execution_id"
+            )
+            record(
+                "mcp.project_ask.followup",
+                ok=result.get("ok"),
+                error=result.get("error"),
+                registration_id=result.get("registration_id"),
+                send_verified=result.get("send_verified"),
+                streaming_at_paste=result.get("streaming_at_paste"),
+                resolution_path=resolution_path,
+            )
+            return result
+
         if op == "active_work":
             result = _relay("GET", "/v1/project-ask/active-work")
             record(

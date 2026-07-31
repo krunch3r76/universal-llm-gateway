@@ -121,6 +121,27 @@ def resolve_archive_path(raw: str) -> str:
     return str(abs_path)
 
 
+def resolve_followup_prompt(req: object) -> str:
+    """Load one prompt string for followup (inline, cortex URI, or path).
+
+    Prefer ``prompt_uri`` for large advisories. Raises ``ValueError`` when all
+    ingress fields are absent (caller maps to ``no_prompt``).
+    """
+    prompt_text = getattr(req, "prompt_text", None)
+    prompt_uri = getattr(req, "prompt_uri", None)
+    prompt_path = getattr(req, "prompt_path", None)
+    if prompt_text and str(prompt_text).strip():
+        return str(prompt_text).strip()
+    if prompt_uri and str(prompt_uri).strip():
+        return _load_prompt_uri(str(prompt_uri).strip())
+    if prompt_path and str(prompt_path).strip():
+        path = resolve_prompt_path(str(prompt_path).strip(), project_root_base())
+        if not path.is_file():
+            raise ValueError(f"prompt_path not found: {prompt_path!r}")
+        return path.read_text(encoding="utf-8")
+    raise ValueError("provide prompt_text, prompt_uri, or prompt_path")
+
+
 def resolve_prompt(req: SubmitProjectAskRequest) -> list[str]:
     """Load prompt text from inline body, cortex URI, or checkout-relative path.
 
@@ -363,22 +384,16 @@ async def run_execution(
             }
 
         if req.no_project_uuid and not req.converse:
-            raise ValueError(
-                "no_project_uuid requires converse=true for /new consult"
-            )
+            raise ValueError("no_project_uuid requires converse=true for /new consult")
         if not req.project_uuid and not req.no_project_uuid:
             raise ValueError("project_uuid required unless no_project_uuid=true")
 
         prompt = prompts[0]
-        delete_after = (
-            bool(req.delete_after) if req.delete_after is not None else True
-        )
+        delete_after = bool(req.delete_after) if req.delete_after is not None else True
         archive = (
             default_archive_path(req, execution_id=execution_id)
             if delete_after
-            else (
-                resolve_archive_path(req.archive_path) if req.archive_path else None
-            )
+            else (resolve_archive_path(req.archive_path) if req.archive_path else None)
         )
         result = await run_project_ask(
             prompt,

@@ -8,11 +8,17 @@ import ``cdp_ask.client`` / ``cdp_ask.models`` and must not require Playwright.
 from typing import Any
 
 from .client import CdpAskClient, CdpAskClientError, project_ask_base_url
-from .models import SubmitProjectAskRequest
+from .models import (
+    FollowupProjectAskRequest,
+    FollowupProjectAskResponse,
+    SubmitProjectAskRequest,
+)
 
 __all__ = [
     "CdpAskClient",
     "CdpAskClientError",
+    "FollowupProjectAskRequest",
+    "FollowupProjectAskResponse",
     "SubmitProjectAskRequest",
     "create_app",
     "project_ask_base_url",

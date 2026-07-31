@@ -1,8 +1,9 @@
 """MCP server lifecycle — canonical source sync + graceful restart.
 
 Single deploy path for routine code changes: ``scripts/sync-and-restart-mcp.sh``
-(docker cp into ``/app/`` + graceful restart, no image rebuild unless
-``no_cache=True``).
+(docker cp into ``/app/`` + ``docker stop``/``start`` — preserves writable layer;
+``compose up -d`` after sync is forbidden because recreate drops docker cp).
+``no_cache=True`` → full image rebuild.
 
 Shared callers:
   - TUI Services → Sync + Start MCP
@@ -38,7 +39,8 @@ def mcp_compose_args(root: Path) -> tuple[list[str], Path] | None:
 async def sync_and_restart_mcp(root: Path, *, no_cache: bool = False) -> str:
     """Deploy latest workspace source into MCP and restart (canonical path).
 
-    Runs ``scripts/sync-and-restart-mcp.sh``. Default: docker cp sync only.
+    Runs ``scripts/sync-and-restart-mcp.sh``. Default: docker cp + stop/start
+    (writable layer preserved; nonce verified post-restart).
     ``no_cache=True``: full image rebuild — pip/Dockerfile/base-image changes.
     """
     script = root / "scripts" / "sync-and-restart-mcp.sh"

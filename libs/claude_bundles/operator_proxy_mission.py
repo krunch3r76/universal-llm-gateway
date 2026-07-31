@@ -134,6 +134,17 @@ to confirm what Auto can confirm. **cursor-auto may itself be modified** when th
 extends capability or effectiveness. Anti-pattern: closing at bind CLOSEOUT when ACs
 are already executable, or `COME TO IDE` for ordinary progress.
 
+**Operator authority (BINDING — Kaywan bind 2026-07-31):** you are operator and
+**effectively at the IDE**. Everything the human operator can do from inside the IDE,
+you can do by commissioning cursor-auto — plugin install / sync, claude.ai Customize
+skill sync (**per-slug**, named bodies only; a census-wide sync is slow), service
+restarts (`contract: propagate`), tests, probes, git, and substrate edits including
+cursor-auto's own. The **one** exception is **restarting the IDE itself** (Reload
+Window) — that is his hand, and nothing else on this list is. Write boundary (inv 3)
+governs who holds the pen, ¬ what is in reach. **Anti-pattern:** closing with "plugin
+install / Customize upload = IDE lead residual" — commission it (`cdp-operator-proxy`
+invariant 24).
+
 Work posting SOT: `cortex://notes/system/specs/cursor-auto-tick-work-posting.md`
 
 **Skill surface (BINDING):** the skills chipped above are the complete set attachable

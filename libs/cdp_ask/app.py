@@ -10,9 +10,12 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 from cdp_ask.execution_store import ExecutionStore
+from cdp_ask.followup import execute_followup
 from cdp_ask.models import (
     AbortExecutionResponse,
     ExecutionPollResponse,
+    FollowupProjectAskRequest,
+    FollowupProjectAskResponse,
     SubmitProjectAskRequest,
     SubmitProjectAskResponse,
     classify_stall_stage,
@@ -69,9 +72,22 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
 
         ``busy`` ⇒ defer restart (any pending/running). Lane admission uses
         ``free_slots`` / ``at_hard_limit`` (soft=2, hard=3) — ¬ equate busy
-        with lane-full (friction a:25814).
+        with lane-full (friction a:25814). ``rows`` lists per-flight
+        ``registration_id`` / ``holder`` / ``purpose`` for warm followup discovery.
         """
         return await execution_store.active_work_snapshot()
+
+    @app.post(
+        "/v1/project-ask/followups",
+        response_model=FollowupProjectAskResponse,
+    )
+    async def followup(req: FollowupProjectAskRequest) -> FollowupProjectAskResponse:
+        """Warm paste into a live retained Cowork CSE (attached lane only).
+
+        Synchronous paste-proof — no ``execution_store.create``, no reply harvest.
+        """
+        verify_harvest_root()
+        return await execute_followup(req, execution_store)
 
     @app.get("/health", response_model=HealthResponse)
     async def health() -> HealthResponse:

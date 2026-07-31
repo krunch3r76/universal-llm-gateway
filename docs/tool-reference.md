@@ -427,8 +427,8 @@ satellite-direct, IF6, and legacy callers. Operator-proxy missions: prefer
 with `purpose=` remains a valid escape.
 
 **Code-surface only** — Jupiter CDP sealed project-ask via the `cdp-ask` satellite
-(`libs/cdp_ask/`). Thin httpx relay from MCP; **split submit / poll / abort** (no
-server-side poll loop in the handler).
+(`libs/cdp_ask/`). Thin httpx relay from MCP; **split submit / poll / abort /
+active_work / followup** (no server-side poll loop in the handler).
 
 **Prerequisites**
 
@@ -450,11 +450,13 @@ Dogfood fallback (hub checkout): `scripts/cortex/claude-ai-sync-jupiter project-
 
 | Arg | Type | Description |
 |---|---|---|
-| `op` | `"submit" \| "poll" \| "abort"` | **Required.** Client polls — MCP does not block until CDP completes |
-| `execution_id` | `str \| null` | Required for `poll` / `abort` |
-| `prompt_text` | `str \| null` | Inline prompt (submit) |
-| `prompt_uri` | `str \| null` | `cortex://…` resolved under `CORTEX_FILES_ROOT` on Jupiter (submit) |
-| `prompt_path` | `str \| null` | Path on Jupiter `PROJECT_ROOT` (submit) |
+| `op` | `"submit" \| "poll" \| "abort" \| "active_work" \| "followup"` | **Required.** Client polls — MCP does not block until CDP completes |
+| `execution_id` | `str \| null` | Required for `poll` / `abort`; optional identity for `followup` |
+| `chat_url` | `str \| null` | CSE URL identity for `followup` (highest precedence) |
+| `registration_id` | `str \| null` | Attached-lane identity for `followup` |
+| `prompt_text` | `str \| null` | Inline prompt (submit or followup) |
+| `prompt_uri` | `str \| null` | `cortex://…` resolved under `CORTEX_FILES_ROOT` on Jupiter (submit or followup) |
+| `prompt_path` | `str \| null` | Path on Jupiter `PROJECT_ROOT` (submit or followup) |
 | `holder` | `str` | Registry holder id (default `mcp-project-ask`) |
 | `purpose` | `str` | Registry purpose tag (default `ask`) |
 | `model` | `str` | Live CDP picker model (default `opus-5`) |
@@ -464,7 +466,7 @@ Dogfood fallback (hub checkout): `scripts/cortex/claude-ai-sync-jupiter project-
 | `ensure_cowork_auto` | `bool` | Cowork + auto-approve on `/new` (default `true`; friction 25051) |
 | `chat_compose` | `bool` | Operator opt-in Chat on `/new` (default `false`; sets `ensure_cowork_auto=false`) |
 | `archive_path` | `str \| null` | Optional harvest archive path on Jupiter — normalized on satellite; prefer relative or `cortex://` (doc shorthand `/mcp-data/files/…` is rewritten to live root) |
-| `timeout_s` | `int` | Idle completion budget forwarded to satellite |
+| `timeout_s` | `int` | Idle completion budget for submit; paste relay budget for followup (recommend 60) |
 
 ### Returns
 
@@ -473,6 +475,8 @@ Dogfood fallback (hub checkout): `scripts/cortex/claude-ai-sync-jupiter project-
 | `submit` | `{execution_id, status: "running", registration_id?}` |
 | `poll` | `{execution_id, status, archive_uri?, ok?, body?, error?, …}` — `archive_uri` present when completed |
 | `abort` | `{execution_id, status: "aborted", aborted: true}` |
+| `active_work` | `{busy, running_count, execution_ids, rows, soft_limit, hard_limit, free_slots, …}` |
+| `followup` | `{ok, send_verified, url?, registration_id?, execution_id?, pasted_at?, error?, …}` — paste proof; no reply harvest |
 
 ### Examples
 
@@ -505,6 +509,19 @@ project_ask(op="submit",
 project_ask(op="poll", execution_id="<id>")
 # repeat until status=completed and archive_uri is set
 ```
+
+Warm follow-up into a retained operator-proxy CSE (attached lane; primary IDE path):
+
+```
+project_ask(op="followup",
+            chat_url="https://claude.ai/cowork/cse_…",
+            prompt_uri="cortex://notes/system/threads/advisory.md",
+            purpose="operator-proxy",
+            timeout_s=60)
+# → {ok, send_verified, url, …} — paste proof only; no reply harvest
+```
+
+CLI escape when no attached lane holds the CSE: `scripts/cortex/cowork_chat_followup.py`.
 
 **Poll guardrail:** NEVER curl localhost `:8765` (web-fetcher) or any localhost URL for
 `/v1/project-ask/*` — that port is not project-ask. Poll only via MCP

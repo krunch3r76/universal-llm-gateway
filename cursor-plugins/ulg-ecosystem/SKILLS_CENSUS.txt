@@ -31,3 +31,4 @@ path-sim
 reasoning-posture
 residual-imprint
 satellite-workspace
+work-item-seed-path

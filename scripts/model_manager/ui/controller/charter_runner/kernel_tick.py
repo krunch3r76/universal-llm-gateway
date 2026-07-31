@@ -10,6 +10,10 @@ from pathlib import Path
 from universal_logging import get_logger
 
 from .admission import CapStore, CapsView, EnvFacts, decide, layer_independence_unproven
+from .cap_stop_recovery import (
+    RECOVERABLE_STOP_REASONS,
+    substrate_healthy_for_cap_clear,
+)
 from .checkpoint_schema import resolve_checkpoint_body
 from .checkpoint_schema.footer import is_exhausted_hopper_footer
 from .consult_lane import (
@@ -59,11 +63,17 @@ from .window_sequence import (
     window_index_from_id,
 )
 from .work_key import compute_work_key
-from .work_key_store import record_admit
+from .work_key_store import (
+    find_record_by_window_id,
+    live_undispositioned_for_key,
+    record_admit,
+)
 
 logger = get_logger(__name__)
 
 _EXECUTION_ID_RE = re.compile(r"execution_id=(\S+)", re.IGNORECASE)
+_NEST_UNDER_CHILD_RE = re.compile(r"nest_under\s+child\s+(\S+)", re.IGNORECASE)
+_NEST_UNDER_RE = re.compile(r"nest_under[=:\s]+(\S+)", re.IGNORECASE)
 
 
 def _source_ref_for_admit(parsed, *, transition: Transition, admission_mode: str):
@@ -91,11 +101,56 @@ def _incoming_dispatch_id(parsed) -> str | None:
     return None
 
 
-def _refire_context_for_row(row, parsed) -> RefireGateContext:
+def _parse_nest_under_token(text: str | None) -> str | None:
+    if not text:
+        return None
+    for pattern in (_NEST_UNDER_CHILD_RE, _NEST_UNDER_RE):
+        match = pattern.search(text)
+        if match:
+            token = match.group(1).strip().rstrip(".,;)")
+            if token and token.lower() != "child":
+                return token
+    return None
+
+
+def _parse_nest_under_from_parsed(parsed) -> str | None:
+    if parsed is None:
+        return None
+    token = _parse_nest_under_token(getattr(parsed, "wip_text", None))
+    if token:
+        return token
+    for row in getattr(parsed, "next_pickup", ()) or ():
+        token = _parse_nest_under_token(str(row))
+        if token:
+            return token
+    return None
+
+
+def _holder_dispatch_id_for_refire(conn, row, *, work_key: str) -> str | None:
+    if row.wip_window_id:
+        record = find_record_by_window_id(conn, row.wip_window_id)
+        if record is not None and record.dispatch_id:
+            return str(record.dispatch_id)
+    for holder in live_undispositioned_for_key(conn, work_key):
+        dispatch_id = str(holder.dispatch_id or "").strip()
+        if dispatch_id:
+            return dispatch_id
+    return None
+
+
+def _refire_context_for_row(
+    conn,
+    row,
+    parsed,
+    *,
+    work_key: str,
+) -> RefireGateContext:
     wip_index = window_index_from_id(row.wip_window_id)
     return RefireGateContext(
         incoming_window_index=wip_index if wip_index > 0 else None,
         incoming_dispatch_id=_incoming_dispatch_id(parsed),
+        nest_under=_parse_nest_under_from_parsed(parsed),
+        holder_dispatch_id=_holder_dispatch_id_for_refire(conn, row, work_key=work_key),
     )
 
 
@@ -323,6 +378,15 @@ async def apply_kernel_tick_for_root(
             layer_independence_block=independence_block,
         )
         caps_view = CapsView.from_cap_store(caps, root_id)
+        if caps_view.stopped_reason in RECOVERABLE_STOP_REASONS:
+            if await substrate_healthy_for_cap_clear():
+                if caps.try_auto_clear_recoverable_stop(root_id, healthy=True):
+                    logger.info(
+                        "charter-runner cap stop auto-cleared root=%s reason=%s",
+                        root_id,
+                        caps_view.stopped_reason,
+                    )
+                    caps_view = CapsView.from_cap_store(caps, root_id)
         transition = decide(row, facts, caps_view)
         if transition == Transition.NOOP and empty_hopper:
             return KernelTickOutcome(
@@ -374,6 +438,16 @@ async def apply_kernel_tick_for_root(
             source_ref = _source_ref_for_admit(
                 parsed, transition=transition, admission_mode=admission_mode
             )
+            admit_mode = resolve_admission_mode(
+                transition, admission_mode=admission_mode
+            )
+            pending_work_key = compute_work_key(
+                root_id=root_id,
+                source_ref=source_ref,
+                pickup_gid=row.pickup_gid,
+                consult_role=consult_role,
+                admission_mode=admit_mode,
+            )
             refire = await evaluate_identical_work_refire(
                 conn,
                 row=row,
@@ -382,19 +456,16 @@ async def apply_kernel_tick_for_root(
                 source_ref=source_ref,
                 consult_role=consult_role,
                 admission_mode=admission_mode,
-                ctx=_refire_context_for_row(row, parsed),
+                ctx=_refire_context_for_row(
+                    conn,
+                    row,
+                    parsed,
+                    work_key=pending_work_key,
+                ),
             )
             if refire.refused:
                 return _refused_refire_outcome(refire)
-            pending_work_key = refire.work_key or compute_work_key(
-                root_id=root_id,
-                source_ref=source_ref,
-                pickup_gid=row.pickup_gid,
-                consult_role=consult_role,
-                admission_mode=resolve_admission_mode(
-                    transition, admission_mode=admission_mode
-                ),
-            )
+            pending_work_key = refire.work_key or pending_work_key
         window_index = next_window_index(root_id, turns, row=row)
         if transition == Transition.ADMIT_CONSULT:
             return await _admit_consult(

@@ -144,6 +144,12 @@ skills:
     # packets, it does not run the lane. G3 stage token densify unchanged.
     surface_class: cursor_only
     mcp_surface_required: code
+  work-item-seed-path:
+    # Pre-/layer mint path (friction/idea → recon? → architecture? → mint → attach →
+    # /layer handoff). cursor_only: IDE/cursor-sdk/auto execute; web may be consulted
+    # on S3 but does not own the seed path. Sibling to abstraction-layering Stage 0.
+    surface_class: cursor_only
+    mcp_surface_required: code
   descriptor-authoring-discipline:
     surface_class: cursor_only
     mcp_surface_required: none

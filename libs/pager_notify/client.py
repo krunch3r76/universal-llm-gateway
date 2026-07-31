@@ -9,7 +9,9 @@ from transport_utils import DEFAULT_EMAIL_BRIDGE_URL, make_async_client
 
 logger = logging.getLogger(__name__)
 
-_TIMEOUT_S = 15.0
+# SMTP relay in email-bridge blocks until send completes (~15s observed); 15s
+# client timeout caused intermittent httpx.ReadTimeout → life notify status:failed.
+_TIMEOUT_S = 45.0
 
 
 def pager_enabled() -> bool:

@@ -63,6 +63,21 @@ def live_undispositioned_for_key(conn, work_key: str) -> list[WorkKeyRecord]:
     return [_row_to_record(row) for row in rows]
 
 
+def harvested_for_key(conn, work_key: str) -> list[WorkKeyRecord]:
+    """Rows for ``work_key`` with disposition='harvested'."""
+    rows = conn.execute(
+        """
+        SELECT work_key, root_id, window_id, dispatch_id, thread_id,
+               admitted_at, disposition
+          FROM charter_window_work_key
+         WHERE work_key = ? AND disposition = 'harvested'
+        ORDER BY admitted_at DESC
+        """,
+        (work_key,),
+    ).fetchall()
+    return [_row_to_record(row) for row in rows]
+
+
 def stamp_disposition(
     conn,
     *,
@@ -121,6 +136,7 @@ def find_record(
 __all__ = [
     "find_record",
     "find_record_by_window_id",
+    "harvested_for_key",
     "live_undispositioned_for_key",
     "record_admit",
     "stamp_disposition",

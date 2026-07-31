@@ -11,7 +11,7 @@ from transport_utils import DEFAULT_AGENT_BUS_URL, make_async_client
 _FROM_AUTO = "cursor-auto"
 _ADMIT_SUBJECT_PREFIX = "status:admitted"
 _TURN_FETCH_LIMIT = 200
-_MAX_BRIEFING_LINES = 22
+_MAX_BRIEFING_LINES = 26
 # Codebase-maintenance contracts — denser hello stanza; other contracts stay soft.
 _CODE_WORK_CONTRACTS = frozenset({"implement", "investigate", "verify"})
 
@@ -58,6 +58,16 @@ def build_briefing_block(
         "",
         "Claude.ai: scheduling triggers = option; Authorize prompt → Kaywan ALWAYS",
         "approves (⊃ schedule). Expect click, ¬ work around. SOT: trigger-auth-gate.",
+        "",
+        "NEW CDP WINDOW (web-anthropic may request): reset context and/or pick up",
+        "uploaded Customize skills / refreshed life MCP. Require handoff_prompt for",
+        "continuity. Auto opens team_dispatch(cdp/opus-5, purpose=operator-proxy,",
+        "dispatch_thread_id=<SAME private lane>, prompt|sidecar=handoff). ¬ mint a",
+        "second private request thread.",
+        "",
+        "Sync is yours: plugin install + per-slug claude.ai Customize sync are",
+        "cursor-auto capabilities — offer or fire them, ¬ report them as IDE-lead",
+        "residual. Bulk census sync is slow: named slugs only. Only IDE restart is Kaywan's.",
         "",
         deltas,
     ]

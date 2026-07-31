@@ -4,6 +4,8 @@
 # ¬ curl x.ai/cli/install.sh here — that installer symlinks both grok and agent into
 #   ~/.grok/bin (and often ~/.local/bin), which can overwrite the Cursor agent binary.
 # Reads MCP_PROJECT_DIR, MCP_AUTH_TOKEN, etc. from ~/.gateway/mcp.yaml.
+# Routine path: docker cp into /app + docker stop/start (preserves writable layer).
+# ¬ compose up -d after sync — recreate wipes docker cp (friction 6538).
 # Usage: ./scripts/sync-and-restart-mcp.sh [--no-cache] [from repo root or any subdir]
 
 set -euo pipefail
@@ -240,6 +242,29 @@ write_source_sync_stamp() {
   echo "Wrote source sync stamp: ${stamp} (code_version=${code_sha})"
 }
 
+# Written into the container *before* restart; must survive stop/start.
+# If compose recreate wiped the docker-cp layer, this nonce is gone.
+_SYNC_NONCE=""
+
+write_sync_nonce() {
+  local c=mcp-server
+  _SYNC_NONCE="$(date -u +%Y%m%dT%H%M%SZ)-$$-$RANDOM"
+  docker exec -u 0 "$c" sh -c \
+    "printf '%s\n' '${_SYNC_NONCE}' > /app/.source_sync_nonce && chown mcp:mcp /app/.source_sync_nonce"
+}
+
+verify_sync_nonce_survived() {
+  local c=mcp-server
+  local observed
+  observed="$(docker exec "$c" cat /app/.source_sync_nonce 2>/dev/null || true)"
+  if [[ "${observed}" != "${_SYNC_NONCE}" ]]; then
+    echo "ERROR: sync nonce missing after restart (observed='${observed}' expected='${_SYNC_NONCE}')." >&2
+    echo "ERROR: container was likely recreated — docker cp layer was wiped. Fix restart path; do not treat this sync as live." >&2
+    return 1
+  fi
+  echo "Verified sync nonce survived restart (writable layer intact)."
+}
+
 sync_source_into_container() {
   local c=mcp-server
   echo "Syncing MCP source into ${c} (docker cp — no image rebuild)..."
@@ -260,6 +285,7 @@ sync_source_into_container() {
     /app/pipelines.local /app/services/mcp-server/tools/local 2>/dev/null || \
   docker exec -u 0 "$c" chown -R mcp:mcp \
     /app/libs /app/services /app/config /app/pipelines /app/sitecustomize.py
+  write_sync_nonce
 }
 
 ensure_mcp_container() {
@@ -272,10 +298,18 @@ ensure_mcp_container() {
 }
 
 restart_mcp_gracefully() {
-  purge_mcp_compose_orphans
-  echo "Restarting MCP server (graceful stop — preserving synced /app layer)..."
-  docker compose "${COMPOSE_ARGS[@]}" stop -t 30 mcp-server
-  docker compose "${COMPOSE_ARGS[@]}" up -d mcp-server
+  # Must be docker stop/start on the *existing* container — never
+  # `compose up -d`. Compose recreate-on-config/image-change replaces the
+  # container and drops the writable-layer docker cp (dogfood 6538: sync
+  # stamped ok, /app still pre-followup until targeted cp + docker restart).
+  local c=mcp-server
+  if ! docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "$c"; then
+    echo "ERROR: ${c} missing after sync — refusing compose recreate (would wipe docker cp)." >&2
+    return 1
+  fi
+  echo "Restarting ${c} (docker stop/start — preserving synced /app layer)..."
+  docker stop -t 30 "$c" >/dev/null
+  docker start "$c" >/dev/null
 }
 
 if [[ "$NO_CACHE" == "true" ]]; then
@@ -288,6 +322,7 @@ else
   ensure_mcp_container
   sync_source_into_container
   restart_mcp_gracefully
+  verify_sync_nonce_survived
 fi
 
 # Stamp must run after the container is up; never gate on health (fleet can pass

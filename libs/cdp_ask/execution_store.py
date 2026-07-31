@@ -106,8 +106,7 @@ class ExecutionStore:
             return {
                 rec.registration_id
                 for rec in self._records.values()
-                if rec.registration_id
-                and rec.status in {"pending", "running"}
+                if rec.registration_id and rec.status in {"pending", "running"}
             }
 
     async def active_work_snapshot(self) -> dict[str, Any]:
@@ -118,10 +117,21 @@ class ExecutionStore:
         (soft=2 prefer, hard=3 ceiling; friction a:25814).
         """
         async with self._lock:
-            execution_ids = [
-                rec.execution_id
+            active = [
+                rec
                 for rec in self._records.values()
                 if rec.status in {"pending", "running"}
+            ]
+            execution_ids = [rec.execution_id for rec in active]
+            rows = [
+                {
+                    "execution_id": rec.execution_id,
+                    "registration_id": rec.registration_id,
+                    "holder": rec.holder,
+                    "purpose": rec.purpose,
+                    "status": rec.status,
+                }
+                for rec in active
             ]
         running_count = len(execution_ids)
         free_slots = max(0, LANE_HARD_LIMIT - running_count)
@@ -129,6 +139,7 @@ class ExecutionStore:
             "busy": running_count > 0,
             "running_count": running_count,
             "execution_ids": execution_ids,
+            "rows": rows,
             "soft_limit": LANE_SOFT_LIMIT,
             "hard_limit": LANE_HARD_LIMIT,
             "free_slots": free_slots,
@@ -145,7 +156,9 @@ class ExecutionStore:
             rec.status = "running"
             rec.updated_at = time.time()
 
-    async def set_registration_id(self, execution_id: str, registration_id: str) -> None:
+    async def set_registration_id(
+        self, execution_id: str, registration_id: str
+    ) -> None:
         async with self._lock:
             rec = self._records.get(execution_id)
             if rec is None:
@@ -272,7 +285,10 @@ class ExecutionStore:
                 if rec.status in {"pending", "running"} and age > self._execution_ttl_s:
                     expired.append(rec)
                     continue
-                if rec.status in {"completed", "failed", "aborted"} and idle > self._idle_ttl_s:
+                if (
+                    rec.status in {"completed", "failed", "aborted"}
+                    and idle > self._idle_ttl_s
+                ):
                     self._records.pop(rec.execution_id, None)
 
         for rec in expired:

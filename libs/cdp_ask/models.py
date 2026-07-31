@@ -51,6 +51,7 @@ def classify_stall_stage(error: str | None) -> StallStage:
 
 class SubmitProjectAskRequest(BaseModel):
     """Inbound submit body for a sealed CDP project-ask execution on the satellite."""
+
     prompt_text: str | None = None
     prompt_uri: str | None = None
     prompt_path: str | None = None
@@ -100,6 +101,7 @@ class SubmitProjectAskRequest(BaseModel):
 
 class ExecutionSummary(BaseModel):
     """Compact execution row for list endpoints and internal store snapshots."""
+
     execution_id: str
     status: ExecutionStatus
     registration_id: str | None = None
@@ -109,6 +111,7 @@ class ExecutionSummary(BaseModel):
 
 class SubmitProjectAskResponse(BaseModel):
     """202 submit acknowledgement with execution_id for client-side polling."""
+
     execution_id: str
     status: ExecutionStatus
     registration_id: str | None = None
@@ -122,6 +125,7 @@ class ExecutionPollResponse(BaseModel):
     ``content_proof`` is not terminal and must not trigger delete_after; ``failed`` is
     not ``running`` and carries ``stall_stage`` on failure terminals.
     """
+
     execution_id: str
     status: ExecutionStatus
     registration_id: str | None = None
@@ -240,6 +244,7 @@ class ExecutionPollResponse(BaseModel):
 
 class AbortExecutionResponse(BaseModel):
     """Abort attestation row describing whether the CDP lane was stopped and released."""
+
     execution_id: str
     status: ExecutionStatus
     aborted: bool
@@ -247,3 +252,40 @@ class AbortExecutionResponse(BaseModel):
     still_attached: bool | None = None
     abort_outcome: str = ""
     stop_clicked: bool | None = None
+
+
+class FollowupCandidateInfo(BaseModel):
+    """One attached-lane CSE match returned on ``ambiguous_identity``."""
+
+    registration_id: str
+    chat_url: str
+    holder: str
+    purpose: str | None = None
+
+
+class FollowupProjectAskRequest(BaseModel):
+    """Warm paste into a live retained Cowork CSE on an attached CDP lane."""
+
+    chat_url: str | None = None
+    registration_id: str | None = None
+    execution_id: str | None = None
+    purpose: str | None = None
+    prompt_text: str | None = None
+    prompt_uri: str | None = None
+    prompt_path: str | None = None
+    timeout_s: int = 60
+
+
+class FollowupProjectAskResponse(BaseModel):
+    """Synchronous paste-proof result — ``ok=true`` only when ``send_verified``."""
+
+    ok: bool
+    url: str | None = None
+    registration_id: str | None = None
+    execution_id: str | None = None
+    pasted_at: float | None = None
+    send_verified: bool = False
+    streaming_at_paste: bool | None = None
+    error: str | None = None
+    detail: str | None = None
+    candidates: list[FollowupCandidateInfo] | None = None
