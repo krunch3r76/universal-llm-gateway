@@ -228,7 +228,10 @@ def _op_friction(
         if isinstance(evidence_uris, str):
             evidence_uris = [evidence_uris]
         body["evidence_uris"] = [str(u) for u in evidence_uris]
-    result = _create_assertion_impl(body)
+    try:
+        result = _create_assertion_impl(body)
+    except HTTPException as exc:
+        return {"error": exc.detail, "status_code": exc.status_code}
     if "error" not in result:
         anchor_kind = "unanchored"
         if provenance_attrs:
