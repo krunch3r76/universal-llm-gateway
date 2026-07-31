@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ._route_map import TYPED_ROUTE_BY_OP
+from ._route_map import typed_routes_from_openapi
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _GENERATED = Path(__file__).resolve().parent / "generated_adapter_manifest.py"
@@ -29,22 +29,14 @@ def _openapi_sha256(openapi_schema: dict[str, Any]) -> str:
 def generate_adapter_manifest(
     openapi_schema: dict[str, Any],
 ) -> AdapterManifest:
-    """Build megatool-facade adapter manifest from served OpenAPI routes."""
-    paths = openapi_schema.get("paths", {})
+    """Build megatool-facade adapter manifest from ``x-mcp``-bound OpenAPI routes."""
+    routes = typed_routes_from_openapi(openapi_schema)
     served: dict[str, dict[str, str]] = {}
-    for op, route in sorted(TYPED_ROUTE_BY_OP.items()):
-        spec = paths.get(route.path, {}).get(route.method.lower())
-        if not spec:
-            raise RuntimeError(f"OpenAPI missing served route for {op!r}")
-        oid = spec.get("operationId")
-        if oid != route.operation_id:
-            raise RuntimeError(
-                f"operationId drift for {op!r}: expected {route.operation_id!r}, got {oid!r}"
-            )
+    for op, route in sorted(routes.items()):
         served[op] = {
             "method": route.method,
             "path": route.path,
-            "operation_id": oid,
+            "operation_id": route.operation_id,
         }
     return AdapterManifest(
         openapi_sha256=_openapi_sha256(openapi_schema),

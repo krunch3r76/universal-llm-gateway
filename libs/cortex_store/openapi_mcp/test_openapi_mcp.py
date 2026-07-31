@@ -31,7 +31,9 @@ def test_four_bucket_census_counts() -> None:
     assert len(census.served) == 20
     assert len(census.untypeable) == 4
     assert len(census.rb_only) == 36
-    assert len(census.neither) == 20
+    # 2026-07-31: _OP_SPECS grew 80→84; neither absorbed the +4.
+    assert len(census.neither) == 24
+    assert census.total == 84
 
 
 @pytest.mark.offline
@@ -57,8 +59,23 @@ def test_generated_manifest_matches_openapi() -> None:
 
 @pytest.mark.offline
 def test_served_operation_ids_include_assert() -> None:
-    ids = served_operation_ids()
+    ids = served_operation_ids(create_app().openapi())
     assert ids["assert"] == "create_assertion_assertions_post"
+
+
+@pytest.mark.offline
+def test_served_bindings_derived_from_x_mcp() -> None:
+    """Manifest op set equals extract(inject(seed)) — not a parallel hand table."""
+    from openapi_mcp.binding import extract_typed_routes, inject_x_mcp
+
+    from cortex_store.openapi_mcp._route_map import mcp_route_seed
+
+    schema = create_app().openapi()
+    enriched = inject_x_mcp(schema, dict(mcp_route_seed()), tool="cortex")
+    derived = extract_typed_routes(enriched)
+    manifest = dry_run_generate(schema)
+    assert set(manifest.served_ops) == set(derived)
+    assert manifest.served_ops["assert"]["operation_id"] == derived["assert"].operation_id
 
 
 @pytest.mark.offline

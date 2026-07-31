@@ -1,62 +1,43 @@
-"""Dispatch-op → typed OpenAPI route bindings (served bucket)."""
+"""Dispatch-op → typed OpenAPI route seed (migration bridge).
+
+``mcp_route_seed`` is the *only* hand-maintained served-op table that remains
+while FastAPI routes lack native ``openapi_extra={"x-mcp": …}`` stamps. It
+carries ``(METHOD, path)`` only — ``operationId`` is always read from the live
+OpenAPI document via ``openapi_mcp.binding.inject_x_mcp`` +
+``extract_typed_routes``.
+
+Consumers must call ``typed_routes_from_openapi`` (or the codegen path) rather
+than treating this seed as the served set of record.
+"""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Literal
+from collections.abc import Mapping
 
-Method = Literal["GET", "POST", "PUT", "PATCH", "DELETE"]
+from openapi_mcp.binding import Method, TypedRoute, extract_typed_routes, inject_x_mcp
 
-
-@dataclass(frozen=True, slots=True)
-class TypedRoute:
-    method: Method
-    path: str
-    operation_id: str
-
-
-# Mechanical census from path-sim A §2.1 (2026-07-18 checkout).
-TYPED_ROUTE_BY_OP: dict[str, TypedRoute] = {
-    "activate": TypedRoute("GET", "/assertions/activate", "activate_assertions_activate_get"),
-    "analyze_impact": TypedRoute(
-        "POST",
-        "/assertions/analyze-impact",
-        "analyze_impact_semantic_assertions_analyze_impact_post",
-    ),
-    "assert": TypedRoute("POST", "/assertions", "create_assertion_assertions_post"),
-    "assertions": TypedRoute("GET", "/assertions", "list_assertions_assertions_get"),
-    "audit": TypedRoute(
-        "GET", "/boot-audit-counters", "boot_audit_counters_boot_audit_counters_get"
-    ),
-    "deadlines": TypedRoute("GET", "/deadlines", "list_deadlines_deadlines_get"),
-    "edge_types": TypedRoute("GET", "/edges/types", "list_edge_types_edges_types_get"),
-    "edges": TypedRoute("POST", "/edges", "create_edge_edges_post"),
-    "entities": TypedRoute("GET", "/entities", "list_entities_entities_get"),
-    "impact": TypedRoute("GET", "/edges/impact", "impact_analysis_edges_impact_get"),
-    "relationships": TypedRoute(
-        "GET", "/relationships", "list_relationships_relationships_get"
-    ),
-    "render_subgraph": TypedRoute(
-        "GET", "/subgraph/render", "render_subgraph_route_subgraph_render_get"
-    ),
-    "resolve": TypedRoute("GET", "/resolve", "resolve_cortex_uri_resolve_get"),
-    "search": TypedRoute(
-        "GET", "/assertions/search", "search_assertions_assertions_search_get"
-    ),
-    "stats": TypedRoute("GET", "/stats", "get_stats_stats_get"),
-    "supersede": TypedRoute(
-        "POST", "/assertions/supersede", "supersede_assertion_assertions_supersede_post"
-    ),
-    "surface_forms": TypedRoute(
-        "GET", "/surface-forms", "list_surface_forms_surface_forms_get"
-    ),
-    "todo_audit": TypedRoute("GET", "/todo-audit", "get_todo_audit_todo_audit_get"),
-    "todo_candidates": TypedRoute(
-        "GET", "/todo-candidates", "get_todo_candidates_todo_candidates_get"
-    ),
-    "walk_subgraph": TypedRoute(
-        "GET", "/subgraph/walk", "walk_subgraph_route_subgraph_walk_get"
-    ),
+# Mechanical census from path-sim A §2.1 (2026-07-18 checkout); method/path only.
+_MCP_ROUTE_SEED: dict[str, tuple[Method, str]] = {
+    "activate": ("GET", "/assertions/activate"),
+    "analyze_impact": ("POST", "/assertions/analyze-impact"),
+    "assert": ("POST", "/assertions"),
+    "assertions": ("GET", "/assertions"),
+    "audit": ("GET", "/boot-audit-counters"),
+    "deadlines": ("GET", "/deadlines"),
+    "edge_types": ("GET", "/edges/types"),
+    "edges": ("POST", "/edges"),
+    "entities": ("GET", "/entities"),
+    "impact": ("GET", "/edges/impact"),
+    "relationships": ("GET", "/relationships"),
+    "render_subgraph": ("GET", "/subgraph/render"),
+    "resolve": ("GET", "/resolve"),
+    "search": ("GET", "/assertions/search"),
+    "stats": ("GET", "/stats"),
+    "supersede": ("POST", "/assertions/supersede"),
+    "surface_forms": ("GET", "/surface-forms"),
+    "todo_audit": ("GET", "/todo-audit"),
+    "todo_candidates": ("GET", "/todo-candidates"),
+    "walk_subgraph": ("GET", "/subgraph/walk"),
 }
 
 # Adapter-orchestration ops — structurally untypeable on HTTP SOT (bucket d).
@@ -68,3 +49,27 @@ UNTYPEABLE_OPS: frozenset[str] = frozenset(
         "resolve_assertion_chunk",
     }
 )
+
+
+def mcp_route_seed() -> Mapping[str, tuple[Method, str]]:
+    """Return the migration seed: op → (METHOD, path)."""
+    return _MCP_ROUTE_SEED
+
+
+def typed_routes_from_openapi(openapi_schema: Mapping) -> dict[str, TypedRoute]:
+    """Derive served bindings by injecting seed ``x-mcp`` then extracting."""
+    enriched = inject_x_mcp(openapi_schema, _MCP_ROUTE_SEED, tool="cortex")
+    return extract_typed_routes(enriched)
+
+
+def _legacy_typed_route_by_op() -> dict[str, TypedRoute]:
+    """Compat view with placeholder operationIds — prefer typed_routes_from_openapi."""
+    return {
+        op: TypedRoute(method=method, path=path, operation_id="", tool="cortex")
+        for op, (method, path) in _MCP_ROUTE_SEED.items()
+    }
+
+
+# Backward-compat name used by census/bijection before derivation landed.
+# operation_id is empty here; live ids come from typed_routes_from_openapi.
+TYPED_ROUTE_BY_OP: dict[str, TypedRoute] = _legacy_typed_route_by_op()

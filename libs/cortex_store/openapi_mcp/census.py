@@ -10,7 +10,7 @@ import yaml
 
 from cortex_store.dispatch_ops import _OP_SPECS
 
-from ._route_map import TYPED_ROUTE_BY_OP, UNTYPEABLE_OPS
+from ._route_map import UNTYPEABLE_OPS, mcp_route_seed
 
 Bucket = str  # served | rb_only | neither | untypeable
 _REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -53,7 +53,7 @@ def build_four_bucket_census(
 ) -> FourBucketCensus:
     """Partition every dispatch op into the L0 T1-1 four-bucket join."""
     ops = frozenset(op_specs or _OP_SPECS)
-    served = frozenset(TYPED_ROUTE_BY_OP) & ops
+    served = frozenset(mcp_route_seed()) & ops
     untypeable = UNTYPEABLE_OPS & ops
     rb_all = _rb_schema_ops(canonical_yaml_path or _DEFAULT_CANONICAL) & ops
     rb_only = rb_all - served - untypeable
@@ -68,6 +68,7 @@ def build_four_bucket_census(
 
 def render_census_markdown(census: FourBucketCensus) -> str:
     """Render durable census artifact body."""
+    seed = mcp_route_seed()
     lines = [
         "# Four-bucket census — todo:openapi-mcp-dispatch-retire (A2)",
         "",
@@ -85,8 +86,8 @@ def render_census_markdown(census: FourBucketCensus) -> str:
         "",
     ]
     for op in sorted(census.served):
-        route = TYPED_ROUTE_BY_OP[op]
-        lines.append(f"- `{op}` → `{route.method} {route.path}` (`{route.operation_id}`)")
+        method, path = seed[op]
+        lines.append(f"- `{op}` → `{method} {path}`")
     lines.extend(["", "## R-b-only", ""])
     for op in sorted(census.rb_only):
         lines.append(f"- `{op}`")
