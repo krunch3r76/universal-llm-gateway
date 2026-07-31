@@ -304,6 +304,95 @@ async def delete_chat_if_active(page, *, return_to: str | None = None) -> dict:
     return result
 
 
+def compose_auth_failure_hint(url: str) -> str | None:
+    """Return unauthenticated hint when *url* is a login/logout gate, else None."""
+    low = (url or "").lower()
+    if "/logout" in low or "/login" in low:
+        return "new_compose_unauthenticated"
+    return None
+
+
+def classify_compose_setup_failure(result: dict, *, url: str, on_new: bool) -> dict:
+    """Separate toggle-broken from approval-stuck and unauthenticated.
+
+    Fleet conflation (2026-07-31): ``ensure_cowork_auto`` can attest Cowork
+    successfully and still fail when approval stays on ``Manually approve``.
+    The old hint always said ``new_compose_toggle_failed`` on bare ``/new``,
+    so seats treated approval/auth failures as a broken Chat↔Cowork toggle.
+    """
+    auth_hint = compose_auth_failure_hint(url)
+    if auth_hint:
+        return {
+            "failure_class": "unauthenticated",
+            "hint": auth_hint,
+            "failing_block": "url",
+        }
+
+    mode = result.get("mode") if isinstance(result.get("mode"), dict) else None
+    approval = (
+        result.get("approval") if isinstance(result.get("approval"), dict) else None
+    )
+
+    if mode is not None and not mode.get("ok"):
+        hint = (
+            "new_compose_toggle_failed"
+            if on_new
+            else "project_shell_compose — mid-flight CSE lanes do not prove /new toggle"
+        )
+        return {
+            "failure_class": "toggle",
+            "hint": hint,
+            "failing_block": "mode",
+            "mode": mode,
+        }
+
+    if approval is not None and not approval.get("ok"):
+        after = approval.get("after") if isinstance(approval.get("after"), dict) else {}
+        aria = ""
+        approval_fp = after.get("approval")
+        if isinstance(approval_fp, dict):
+            aria = str(approval_fp.get("aria") or "")
+        stuck_manual = "manually approve" in aria.lower()
+        return {
+            "failure_class": "approval",
+            "hint": "new_compose_approval_failed",
+            "failing_block": "approval",
+            "stuck_manual": stuck_manual,
+            "mode_ok": bool(mode and mode.get("ok")),
+            "mode": mode,
+            "approval": approval,
+        }
+
+    # ensure_chat_compose / unknown shapes — prefer the first non-ok nested block.
+    for key in ("mode", "approval"):
+        block = result.get(key)
+        if isinstance(block, dict) and not block.get("ok", True):
+            return {
+                "failure_class": "toggle" if key == "mode" else "approval",
+                "hint": (
+                    "new_compose_toggle_failed"
+                    if on_new and key == "mode"
+                    else "new_compose_approval_failed"
+                    if key == "approval"
+                    else "project_shell_compose — mid-flight CSE lanes do not prove /new toggle"
+                ),
+                "failing_block": key,
+                key: block,
+            }
+
+    hint = (
+        "new_compose_toggle_failed"
+        if on_new
+        else "project_shell_compose — mid-flight CSE lanes do not prove /new toggle"
+    )
+    return {
+        "failure_class": "toggle" if on_new else "project_shell",
+        "hint": hint,
+        "failing_block": "result",
+        "result": result,
+    }
+
+
 def _compose_setup_error(
     *,
     step: str,
@@ -311,12 +400,29 @@ def _compose_setup_error(
     result: dict,
     on_new: bool,
 ) -> RuntimeError:
-    """Structured fail-closed error distinguishing /new toggle vs project shell."""
-    mode_block = result.get("mode") or result.get("approval") or result
+    """Structured fail-closed error with failure_class (toggle|approval|unauthenticated)."""
+    classified = classify_compose_setup_failure(result, url=url, on_new=on_new)
+    failing_key = classified.get("failing_block")
+    mode_block: dict
+    if failing_key in {"mode", "approval"} and isinstance(
+        classified.get(failing_key), dict
+    ):
+        mode_block = classified[failing_key]  # type: ignore[assignment]
+    elif isinstance(result.get("mode"), dict):
+        mode_block = result["mode"]
+    elif isinstance(result.get("approval"), dict):
+        mode_block = result["approval"]
+    else:
+        mode_block = result if isinstance(result, dict) else {}
+
     payload: dict = {
         "step": step,
         "url": url,
         "surface": "bare_new" if on_new else "project_or_cse",
+        "failure_class": classified["failure_class"],
+        "hint": classified["hint"],
+        "stuck_manual": classified.get("stuck_manual"),
+        "mode_ok": classified.get("mode_ok"),
     }
     if isinstance(mode_block, dict):
         payload.update(
@@ -328,12 +434,14 @@ def _compose_setup_error(
                 "attest": mode_block.get("attest"),
             }
         )
-    hint = (
-        "new_compose_toggle_failed"
-        if on_new
-        else "project_shell_compose — mid-flight CSE lanes do not prove /new toggle"
-    )
-    payload["hint"] = hint
+    # Keep nested mode/approval when both exist so readers see the successful
+    # Cowork attest beside the failed Auto flip (b7ea437d fingerprint).
+    if isinstance(result.get("mode"), dict):
+        payload["mode"] = result["mode"]
+    if isinstance(result.get("approval"), dict):
+        payload["approval"] = result["approval"]
+    # Drop null optional keys for compact bus bodies.
+    payload = {k: v for k, v in payload.items() if v is not None}
     return RuntimeError(f"{step} failed: {json.dumps(payload, default=str)}")
 
 
@@ -358,6 +466,15 @@ async def goto_fresh_compose(
         url = "https://claude.ai/new"
     await page.goto(url, wait_until="domcontentloaded", timeout=90000)
     await page.wait_for_timeout(2500)
+    landed = page.url or url
+    auth_hint = compose_auth_failure_hint(landed)
+    if auth_hint:
+        raise _compose_setup_error(
+            step="compose_auth_preflight",
+            url=landed,
+            result={"ok": False, "step": "unauthenticated", "url": landed},
+            on_new=True,
+        )
     # Chat/Cowork + Auto only exist on bare /new compose — not Project shell.
     on_new = url.rstrip("/").endswith("/new") or "/new?" in url
     if on_new and not project_uuid:

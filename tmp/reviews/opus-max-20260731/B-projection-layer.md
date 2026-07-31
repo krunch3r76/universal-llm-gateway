@@ -83,9 +83,20 @@ summary from a second representation of executor judgment.
 
 - `git_integration_worker` at this workstream's report commit: no runtime code
   changed, so no restart is needed for this investigation artifact.
-- For the already-landed relay fix
-  `4f7367ff0501fe7346cef5b06b2493d0e681902c`, restart
-  `git_integration_worker`; it is otherwise landed-not-live.
+- ~~For the already-landed relay fix `4f7367ff0501fe7346cef5b06b2493d0e681902c`,
+  restart `git_integration_worker`; it is otherwise landed-not-live.~~
+  **WITHDRAWN on lead verification, 2026-07-31 13:59 — no restart required; the fix
+  is already LIVE.** `4f7367ff` (10:32:58) is an ancestor of the running code
+  (`git merge-base --is-ancestor 4f7367ff 82f07260` → true). The serving process
+  (pid 1173131, `uvicorn services.git_integration_worker.app:app --port 8091`) started
+  12:51:44, and `GET http://127.0.0.1:8091/api/v1/git/cursor-auto/liveness` self-reports
+  `{"live":true,"code_version":"82f07260…","uptime_s":4101}`.
+
+  *Retained visibly rather than silently edited, because it is an instance of the very
+  thesis this workstream investigated: a landed-not-live status **asserted** where an
+  **observation** — the service's own `code_version` field, listed as verified-live in
+  brief §0 — was one request away. Generalises the finding: propagation entries should
+  cite an observed `code_version`, not an inferred one.*
 - Any future deletion/schema migration will also require the bus/API surface
   identified by Workstream A, in addition to `git_integration_worker`.
 

@@ -119,9 +119,22 @@ supervisor. This is not a claim that every internal variable needs provenance.
 
 - `git_integration_worker` at this workstream's report commit: no runtime code
   changed, so no restart is needed for this investigation artifact.
-- `git_integration_worker` at
-  `4f7367ff0501fe7346cef5b06b2493d0e681902c`: restart required for the
-  already-landed relay honesty fix; it remains landed-not-live until then.
+- ~~`git_integration_worker` at `4f7367ff0501fe7346cef5b06b2493d0e681902c`: restart
+  required for the already-landed relay honesty fix; it remains landed-not-live until
+  then.~~
+  **WITHDRAWN on lead verification, 2026-07-31 13:59 — no restart required; the fix
+  is already LIVE.** `4f7367ff` (10:32:58) is an ancestor of the running code
+  (`git merge-base --is-ancestor 4f7367ff 82f07260` → true). The serving process
+  (pid 1173131, `uvicorn services.git_integration_worker.app:app --port 8091`) started
+  12:51:44, and `GET http://127.0.0.1:8091/api/v1/git/cursor-auto/liveness` self-reports
+  `{"live":true,"code_version":"82f07260…","uptime_s":4101}`.
+
+  *Retained visibly rather than silently edited: this entry is itself a specimen for the
+  inventory above — a **landed-not-live** claim asserted where an **observation** was
+  available, produced by the very workstream auditing that failure mode. It argues for
+  the proposal concretely: `PROPAGATION REQUIRED` entries want a `ProvenancedValue` with
+  basis `observed(code_version)` rather than `derived(commit_is_recent)`, and the
+  liveness endpoint already serves exactly that field.*
 - `charter-runner` and the model-manager/control-plane process that loads
   `scripts/model_manager/ui/controller/git_worker_drain_supervisor.py` would
   require propagation when the proposed typed terminal/liveness split is

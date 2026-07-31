@@ -272,11 +272,18 @@ async def ensure_cowork_auto(page) -> dict[str, Any]:
     landing on ``https://claude.ai/new``, before model pick / send. No-op-ish
     on Project shells that lack the Chat/Cowork chips (returns
     ``chip_missing`` — callers may continue without failing hard).
+
+    One bounded retry on approval-only failure — Cowork attest can succeed
+    while the Manual→Auto menu click flakes (b7ea437d / 10:13 Manual fingerprint).
     """
     mode = await select_compose_mode(page, "cowork")
     if not mode.get("ok"):
         return {"ok": False, "step": "cowork", "mode": mode}
     approval = await set_approval_mode(page, "auto")
+    if not approval.get("ok"):
+        await page.wait_for_timeout(800)
+        approval = await set_approval_mode(page, "auto")
+        approval["retried"] = True
     return {
         "ok": bool(approval.get("ok")),
         "step": "cowork_auto",
