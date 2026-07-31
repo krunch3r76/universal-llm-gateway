@@ -53,10 +53,6 @@ class ManageSocketBusyError(RuntimeError):
     """
 
 
-class SocketProbeAmbiguousError(OSError):
-    """Socket liveness probe could not determine whether a listener is alive."""
-
-
 class ManageAPIServer:
     """JSON-RPC 2.0 UDS server exposing ServiceController lifecycle operations.
 
@@ -84,21 +80,13 @@ class ManageAPIServer:
         the launcher (./manage) sees the refusal and exits cleanly.
         """
         _SOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            if _is_socket_alive(_SOCK_PATH):
-                raise ManageSocketBusyError(
-                    f"manage.sock at {_SOCK_PATH} is already bound by a live "
-                    f"process. Another ./manage instance is running. Refusing to "
-                    f"rebind — would orphan the existing controller. Stop the "
-                    f"other instance (or kill its PID) before launching this one."
-                )
-        except SocketProbeAmbiguousError as exc:
+        if _is_socket_alive(_SOCK_PATH):
             raise ManageSocketBusyError(
-                f"manage.sock at {_SOCK_PATH} may already be bound by a live "
-                f"process (probe inconclusive: {exc}). Refusing to rebind — "
-                f"would orphan the existing controller if one exists. Stop the "
+                f"manage.sock at {_SOCK_PATH} is already bound by a live "
+                f"process. Another ./manage instance is running. Refusing to "
+                f"rebind — would orphan the existing controller. Stop the "
                 f"other instance (or kill its PID) before launching this one."
-            ) from exc
+            )
         _SOCK_PATH.unlink(missing_ok=True)
         self._server = await asyncio.start_unix_server(
             self._handle_connection, path=str(_SOCK_PATH)
@@ -277,10 +265,11 @@ def _is_socket_alive(path: Path) -> bool:
         sock.connect(str(path))
     except (FileNotFoundError, ConnectionRefusedError):
         return False
-    except OSError as exc:
-        raise SocketProbeAmbiguousError(
-            f"cannot determine liveness for {path}: {exc}"
-        ) from exc
+    except OSError:
+        # ENOTCONN, EAGAIN, ECONNRESET — treat as "not a live listener". The
+        # caller will unlink and rebind; if a real listener does appear in
+        # the race window, the bind itself will fail with EADDRINUSE.
+        return False
     finally:
         sock.close()
     return True
