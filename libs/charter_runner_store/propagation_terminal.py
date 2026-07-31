@@ -7,8 +7,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from implement_admission.propagation_row import PropagationRow, default_proof
 from universal_logging import get_logger
 
+from .propagation_determination import classify_probe, outgoing_generation_ruled_out
 from .propagation_ledger import (
     OpenPropagationProjection,
     close_row,
@@ -17,8 +19,6 @@ from .propagation_ledger import (
     set_defer_reason,
 )
 
-from implement_admission.propagation_row import PropagationRow, default_proof
-
 logger = get_logger(__name__)
 
 ProbeFn = Callable[[str], dict[str, Any] | None]
@@ -26,6 +26,8 @@ Outcome = Literal["closed", "failed", "deferred", "unsettled", "skipped"]
 
 _UNCHECKABLE_HEAD = "code_ref is literal HEAD — permanently uncheckable"
 _OUTGOING_DEFER = "proof_pending_outgoing_generation"
+_UNATTRIBUTED_CONTRADICTION = "proof_contradicted_generation_unverified"
+_INDETERMINATE_PROBE = "proof_indeterminate_probe_unreadable"
 
 
 def _probe_is_outgoing_generation(
@@ -161,7 +163,8 @@ def settle_open_row(
         if probe is default_probe
         else proof_matches_row(row, payload)
     )
-    if matches:
+    determination = classify_probe(payload, code_ref=row.code_ref, matched=matches)
+    if determination == "matched":
         close_row(row.row_id, proof_payload=payload)
         return SettleResult(
             row_id=row.row_id,
@@ -172,22 +175,51 @@ def settle_open_row(
         )
 
     observed = payload.get("code_version")
-    fail_payload = {
-        **payload,
-        "expected_code_ref": row.code_ref,
-        "observed_code_version": observed,
-    }
-    fail_row(
-        row.row_id,
-        proof_payload=fail_payload,
-        reason="code_version_mismatch",
+    ruled_out = outgoing_generation_ruled_out(
+        payload,
+        settle_not_before_monotonic=settle_not_before_monotonic,
+        now_monotonic=time.monotonic(),
     )
+    if determination == "contradicted" and ruled_out:
+        fail_payload = {
+            **payload,
+            "expected_code_ref": row.code_ref,
+            "observed_code_version": observed,
+        }
+        fail_row(
+            row.row_id,
+            proof_payload=fail_payload,
+            reason="code_version_mismatch",
+        )
+        return SettleResult(
+            row_id=row.row_id,
+            service=row.service,
+            code_ref=row.code_ref,
+            outcome="failed",
+            detail=f"mismatch: expected {row.code_ref} observed {observed!r}",
+        )
+
+    # Either the probe did not answer (unreadable or half-unreachable payload),
+    # or it contradicted the target but cannot be attributed to the incoming
+    # generation. Failing here is terminal and unrecoverable, so the row stays
+    # open and correctable instead.
+    if determination == "contradicted":
+        reason = _UNATTRIBUTED_CONTRADICTION
+        detail = (
+            f"contradiction not attributable to the incoming generation "
+            f"(expected {row.code_ref} observed {observed!r}) — row left open"
+        )
+    else:
+        reason = _INDETERMINATE_PROBE
+        detail = "probe carried no readable code_version — row left open"
+    if defer_if_unreachable:
+        set_defer_reason(row.row_id, reason)
     return SettleResult(
         row_id=row.row_id,
         service=row.service,
         code_ref=row.code_ref,
-        outcome="failed",
-        detail=f"mismatch: expected {row.code_ref} observed {observed!r}",
+        outcome="deferred" if defer_if_unreachable else "unsettled",
+        detail=detail,
     )
 
 
@@ -214,11 +246,26 @@ def settle_open_rows_for_service(
     return results
 
 
-def reconcile_all_open_rows(probe: ProbeFn) -> dict[str, Any]:
-    """One-pass reconcile: close matching rows; fail mismatches; report unsettled."""
+def reconcile_all_open_rows(
+    probe: ProbeFn,
+    *,
+    settle_not_before_monotonic: float | None = None,
+) -> dict[str, Any]:
+    """One-pass reconcile: close matching rows; fail mismatches; report unsettled.
+
+    A sweep with no known restart boundary cannot attribute a contradiction to
+    the incoming generation, so mismatches report ``unsettled`` and the rows
+    stay open. Pass ``settle_not_before_monotonic`` when reconciling after a
+    known restart to re-enable terminal failure.
+    """
     before = len(list_open_rows())
     results = [
-        settle_open_row(row, probe, defer_if_unreachable=False)
+        settle_open_row(
+            row,
+            probe,
+            defer_if_unreachable=False,
+            settle_not_before_monotonic=settle_not_before_monotonic,
+        )
         for row in list_open_rows()
     ]
     after = len(list_open_rows())

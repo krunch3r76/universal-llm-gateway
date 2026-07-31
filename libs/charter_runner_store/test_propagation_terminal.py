@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import time
 
-import pytest
+from deploy_identity.code_version import reset_code_version_cache_for_tests
+from implement_admission.propagation_row import PropagationRow
 
 from charter_runner_store.propagation_ledger import (
-    OpenPropagationProjection,
-    close_row,
     list_open_rows,
     upsert_open_rows,
 )
@@ -18,8 +17,6 @@ from charter_runner_store.propagation_terminal import (
     settle_open_row,
     settle_open_rows_for_service,
 )
-from deploy_identity.code_version import reset_code_version_cache_for_tests
-from implement_admission.propagation_row import PropagationRow
 
 
 def _row(**kwargs: object) -> PropagationRow:
@@ -46,7 +43,8 @@ def test_queued_row_closes_on_matching_probe(tmp_path, monkeypatch) -> None:
     assert list_open_rows() == []
 
 
-def test_queued_row_fails_on_mismatched_probe(tmp_path, monkeypatch) -> None:
+def test_unguarded_mismatch_leaves_row_open(tmp_path, monkeypatch) -> None:
+    """No restart boundary ⇒ a mismatch cannot be attributed to the new generation."""
     monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
     expected = "abc123sha00000000000000000000000000000000"
     upsert_open_rows([_row(code_ref=expected)])
@@ -56,15 +54,56 @@ def test_queued_row_fails_on_mismatched_probe(tmp_path, monkeypatch) -> None:
         return {"code_version": "other0000000000000000000000000000000000"}
 
     result = settle_open_row(row, probe)
-    assert result.outcome == "failed"
-    assert "mismatch" in result.detail
-    assert list_open_rows() == []
+    assert result.outcome == "unsettled"
+    assert "not attributable" in result.detail
+    assert len(list_open_rows()) == 1
+
+
+def test_guarded_mismatch_without_uptime_is_not_terminal(tmp_path, monkeypatch) -> None:
+    """A boundary alone is not enough — without ``uptime_s`` the reading is unattributable."""
+    monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
+    expected = "abc123sha00000000000000000000000000000000"
+    upsert_open_rows([_row(code_ref=expected)])
+    row = list_open_rows()[0]
+
+    def probe(_service: str) -> dict[str, str]:
+        return {"code_version": "other0000000000000000000000000000000000"}
+
+    result = settle_open_row(
+        row,
+        probe,
+        defer_if_unreachable=True,
+        settle_not_before_monotonic=time.monotonic() - 30.0,
+    )
+    assert result.outcome == "deferred"
+    assert len(list_open_rows()) == 1
+
+
+def test_half_unreachable_composite_probe_is_indeterminate(tmp_path, monkeypatch) -> None:
+    """One dead half of an mcp composite payload must not read as a mismatch."""
+    monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
+    expected = "abc123sha00000000000000000000000000000000"
+    upsert_open_rows([_row(service="mcp", code_ref=expected)])
+    row = list_open_rows()[0]
+
+    def probe(_service: str) -> dict[str, object]:
+        return {"mcp_health": {"code_version": expected}, "cortex_api": None}
+
+    result = settle_open_row(
+        row,
+        probe,
+        defer_if_unreachable=True,
+        settle_not_before_monotonic=time.monotonic() - 30.0,
+    )
+    assert result.outcome == "deferred"
+    assert "no readable code_version" in result.detail
+    assert len(list_open_rows()) == 1
 
 
 def test_settle_is_idempotent_on_second_pass(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
     sha = "deadbeef00000000000000000000000000000000"
-    row_id = upsert_open_rows([_row(code_ref=sha)])[0]
+    upsert_open_rows([_row(code_ref=sha)])
 
     def probe(_service: str) -> dict[str, str]:
         return {"code_version": sha}
@@ -139,9 +178,12 @@ def test_reconcile_before_after_counts(tmp_path, monkeypatch) -> None:
 
     report = reconcile_all_open_rows(probe)
     assert report["before_open"] == 2
-    assert report["after_open"] == 0
     assert report["closed"] == 1
-    assert report["failed"] == 1
+    # The unmatched row is NOT failed: an unguarded sweep cannot tell a genuine
+    # mismatch from a probe of the outgoing generation, and fail_row is terminal.
+    assert report["failed"] == 0
+    assert report["unsettled"] == 1
+    assert report["after_open"] == 1
 
 
 def test_outgoing_generation_probe_defers_on_mismatch(tmp_path, monkeypatch) -> None:
