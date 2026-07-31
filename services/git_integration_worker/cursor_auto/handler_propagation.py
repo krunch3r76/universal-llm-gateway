@@ -21,7 +21,7 @@ from services.git_integration_worker.cursor_auto.propagate_admission import (
     admit_propagate_body,
 )
 from services.git_integration_worker.cursor_auto.propagation_probe import (
-    probe_process_live,
+    probe_for_row,
     proof_observed,
 )
 from services.git_integration_worker.cursor_auto.queue import AutoJob
@@ -125,7 +125,7 @@ async def _execute_row(row: PropagationRow, *, row_id: str) -> dict[str, Any]:
             "status": "failed",
             "manage": manage_result,
         }
-    proof = await asyncio.to_thread(probe_process_live, row.service)
+    proof = await asyncio.to_thread(probe_for_row, row)
     if proof_observed(row, proof):
         close_row(row_id, proof_payload=proof or {})
         return {

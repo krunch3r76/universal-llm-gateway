@@ -17,6 +17,8 @@ from .propagation_ledger import (
     set_defer_reason,
 )
 
+from implement_admission.propagation_row import PropagationRow, default_proof
+
 logger = get_logger(__name__)
 
 ProbeFn = Callable[[str], dict[str, Any] | None]
@@ -54,8 +56,37 @@ def _is_literal_head(code_ref: str) -> bool:
     return str(code_ref or "").strip().upper() == "HEAD"
 
 
+def _projection_to_row(row: OpenPropagationProjection) -> PropagationRow:
+    return PropagationRow(
+        service=row.service,
+        code_ref=row.code_ref,
+        safe_window=row.safe_window,
+        proof=default_proof(row.service),
+        proof_class=row.proof_class,
+    )
+
+
+def _probe_for_projection(row: OpenPropagationProjection) -> dict[str, Any] | None:
+    from services.git_integration_worker.cursor_auto.propagation_probe import (
+        probe_for_row,
+    )
+
+    return probe_for_row(_projection_to_row(row))
+
+
+def _proof_matches_projection(
+    row: OpenPropagationProjection,
+    payload: dict[str, Any] | None,
+) -> bool:
+    from services.git_integration_worker.cursor_auto.propagation_probe import (
+        proof_observed,
+    )
+
+    return proof_observed(_projection_to_row(row), payload)
+
+
 def proof_matches_row(row: OpenPropagationProjection, payload: dict[str, Any] | None) -> bool:
-    """True when observed code_version equals the row's code_ref."""
+    """True when observed code_version equals the row's code_ref (flat probe payloads)."""
     if payload is None:
         return False
     observed = payload.get("code_version")
@@ -79,7 +110,11 @@ def settle_open_row(
             detail=_UNCHECKABLE_HEAD,
         )
 
-    payload = probe(row.service)
+    payload = (
+        _probe_for_projection(row)
+        if probe is default_probe
+        else probe(row.service)
+    )
     if payload is None:
         if defer_if_unreachable:
             set_defer_reason(row.row_id, "proof_pending_after_drain")
@@ -121,7 +156,12 @@ def settle_open_row(
             detail="probe from outgoing generation",
         )
 
-    if proof_matches_row(row, payload):
+    matches = (
+        _proof_matches_projection(row, payload)
+        if probe is default_probe
+        else proof_matches_row(row, payload)
+    )
+    if matches:
         close_row(row.row_id, proof_payload=payload)
         return SettleResult(
             row_id=row.row_id,
@@ -206,6 +246,8 @@ __all__ = [
     "_probe_is_outgoing_generation",
     "default_probe",
     "proof_matches_row",
+    "_probe_for_projection",
+    "_projection_to_row",
     "reconcile_all_open_rows",
     "settle_open_row",
     "settle_open_rows_for_service",

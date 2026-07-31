@@ -281,9 +281,12 @@ def create_app(*, db_path: str | None = None) -> FastAPI:
 
     @app.get("/health")
     def health() -> dict[str, str | None]:
+        from deploy_identity.code_version import resolve_code_version
+
         return {
             "status": "ok",
             "cortex_db": "found" if check_cortex_db() else "missing",
+            "code_version": resolve_code_version(),
             **_read_deploy_identity(),
         }
 

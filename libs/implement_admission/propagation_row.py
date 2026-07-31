@@ -57,7 +57,9 @@ _DEFAULT_PROOF: dict[str, str] = {
     "git_integration_worker": (
         "GET /api/v1/git/cursor-auto/liveness → code_version == code_ref"
     ),
-    "mcp": "GET /health → code_version == code_ref",
+    "mcp": (
+        "client_visible: GET /health AND cortex-api /health → both code_version == code_ref"
+    ),
 }
 
 

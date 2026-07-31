@@ -292,11 +292,11 @@ def _fetch_json(url: str, *, timeout_s: float = 3.0) -> dict[str, Any] | None:
 
 def probe_process_live(service: str) -> dict[str, Any] | None:
     """Fetch health/liveness JSON for proof-of-live closure."""
-    if service == "git_integration_worker":
-        return _fetch_json(_GIW_LIVENESS_URL)
-    if service == "mcp":
-        return _fetch_json(resolve_mcp_health_probe_url())
-    return None
+    from services.git_integration_worker.cursor_auto.propagation_probe import (
+        probe_process_live as _probe,
+    )
+
+    return _probe(service)
 
 
 def proof_matches(row: OpenPropagationProjection, payload: dict[str, Any] | None) -> bool:
