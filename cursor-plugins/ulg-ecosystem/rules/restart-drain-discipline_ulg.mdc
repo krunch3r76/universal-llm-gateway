@@ -1,0 +1,86 @@
+---
+description: Restarts drain, never kill — in-flight work is waited upon (in background or in-window), never preempted with force and never used as a reason to skip the restart. Binds IDE lead and cursor-auto.
+alwaysApply: true
+rule_category: engineering
+apply_tier: required_gate
+trigger_match_terms:
+ - restart
+ - sync_restart
+ - stop service
+ - force
+ - drain
+ - busy
+ - deferred
+ - in-flight
+ - active-work
+ - landed-not-live
+ - wait_healthy
+---
+# Restart drain discipline
+
+**Invariant:** `restart(service) ⇒ drain(in_flight) ∧ (wait_background ∨ wait_inwindow)` —
+never `kill(in_flight)`, and never `skip(restart)` because the service is busy.
+
+Operator bind 2026-07-31. Failure class seen on cursor-auto and cdp/opus: a seat
+facing a busy service either preempted live work with `force=true`, or abandoned
+the restart entirely and left a fix landed-not-live. Both are wrong. Busy is a
+**wait**, not a verdict.
+
+## The three wrong moves
+
+| Wrong | Why | Right |
+|---|---|---|
+| `manage(..., force=true)` to get past `status=deferred` | Preempts another seat's in-flight dispatch on a shared checkout | Accept the deferral; drain runs |
+| "A dispatch is running, so I won't restart" | Leaves the fix landed-not-live; the next seat inherits stale code and a false "fixed" claim | Arm the restart; it fires when the fleet drains |
+| Sit in-window polling `wait_healthy` while holding a lease | The lease you hold is what the drain is waiting on — never converges (friction 25989) | Arm, then **exit**; probe after |
+
+## Mechanism already exists — use it, do not reinvent
+
+`manage(action="sync_restart"|"restart"|"stop", service=…)` is drain-gated at the
+shared chokepoint (`scripts/model_manager/ui/controller/restart_drain.py`), so both
+MCP agents and the TUI get the same guard. Two shapes:
+
+| Service | Behavior on busy |
+|---|---|
+| `git_integration_worker` | Durable **drain supervision** — worker stops accepting new mutating work, existing dispatches run to completion, SIGTERM only after `active_count == 0`. Returns `status=deferred, state=draining` with a `restart_intent_id`. Deadline is days, not seconds: drain is assumed inevitable |
+| everything else | Busy-probe deferral — `status=deferred, state ∈ {busy, in_progress, probe_error}` with `retry_after_s` |
+
+Read state without touching the gate: `manage(action="busy_status")` — returns
+`busy`, `restart_would_defer`, `active_work_summary` (one-line holder identity —
+prefer it), and `restart_intent` per service. Safe to poll live.
+
+## Procedure (binding)
+
+1. **Probe before deciding** — `manage(action="busy_status")`. `busy=true` is
+   information, not a stop sign; read `active_work_summary` for who holds it.
+2. **Fire the restart anyway.** A deferral is a success: the intent is durable and
+   the restart happens when work clears.
+3. **Then wait, per seat:**
+   - **Holding a write lease** (cursor-sdk / `cursor_sdk_gate`, or the dispatch
+     whose work the drain is waiting on): the envelope's
+     `caller_must_exit_to_release_lease` is binding — **exit now**, do not
+     `wait_healthy` in-window. Your own exit is what lets the drain converge.
+   - **IDE lead:** wait in the **background** (`presence-discipline` P4) — do not
+     pin the turn. Poll `busy_status` / `wait_healthy` on a later turn, or let the
+     `git_worker.drain.*` events land.
+   - **cursor-auto:** report the armed `restart_intent_id` on the CLOSEOUT and
+     finish. Do not block the dispatch on someone else's drain.
+4. **Verify live before claiming live.** Landed ≠ live. Confirm the restart
+   completed (process start time after the commit, or a live probe of the changed
+   surface) before any claim that a fix is in effect.
+
+## `force=true` — narrow
+
+Permitted only when the operator explicitly authorizes preempting in-flight work,
+or the in-flight work is provably this seat's own and abandonable. Never as a
+reaction to latency, and never to make a deferral go away.
+
+Killing a bridge or worker process directly (`pkill`, `kill`, `docker stop`) is
+forbidden for lifecycle — `services_ws.mdc` § Scripts.
+
+## Composes with
+
+- `session-abort-authorization` — aborting in-flight work is operator-gated; this is its restart-side sibling
+- `dispatch-in-flight-supremacy` — do not compete with a live dispatch; a restart that kills one is the same violation
+- `presence-discipline` P4 — background the wait, do not pin the turn
+- `services_ws.mdc` — manage surface, source-edit → deploy table, manage quit/start recipe

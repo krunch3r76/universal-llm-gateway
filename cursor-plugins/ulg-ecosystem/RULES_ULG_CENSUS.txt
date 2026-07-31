@@ -26,11 +26,13 @@ mcp-tool-param-types_ulg
 pager-notify_ulg
 phase-vocabulary_ulg
 plan-slug-coherence_ulg
+operator-posture_ulg
 operator-request-front-door_ulg
 presence-discipline_ulg
 python-universal-venv_ulg
 reasoning-posture_ulg
 recon-default_ulg
+restart-drain-discipline_ulg
 session-abort-authorization_ulg
 shared-checkout-housekeeping_ulg
 skill-authoring_ulg
