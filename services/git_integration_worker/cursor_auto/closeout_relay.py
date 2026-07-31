@@ -26,6 +26,7 @@ from services.git_integration_worker.cursor_auto.closeout_relay_common import (
     _table_cell,
     is_wrapper_manifest,
     looks_section2,
+    relay_parse_miss_cell,
     strip_machine_tail,
     wrapper_status,
 )
@@ -65,12 +66,15 @@ def _evidence_cell_from_parts(
     artifact_paths: list[str],
     deviations: list[str],
     capture_status: object,
+    work_outcome: object = None,
 ) -> str:
     evidence_parts: list[str] = []
     if artifact_paths:
         evidence_parts.append("artifact_paths: " + ", ".join(artifact_paths))
     if deviations:
         evidence_parts.append("deviations: " + "; ".join(deviations))
+    if work_outcome is not None:
+        evidence_parts.append(f"work_outcome={work_outcome}")
     if capture_status is not None:
         evidence_parts.append(f"capture_status={capture_status}")
     return "; ".join(evidence_parts) if evidence_parts else "none"
@@ -100,6 +104,7 @@ def synthesize_section2(
     effects = _as_str_list(data.get("effects"))
     deviations = _as_str_list(data.get("deviations"))
     capture_status = data.get("capture_status")
+    work_outcome = data.get("work_outcome")
     evidence_uris = data.get("evidence_uris")
     artifact_paths: list[str] = []
     if isinstance(evidence_uris, dict):
@@ -148,7 +153,7 @@ def synthesize_section2(
                 count=1,
             )
         if evidence_cell := _evidence_cell_from_parts(
-            artifact_paths, deviations, capture_status
+            artifact_paths, deviations, capture_status, work_outcome
         ):
             projected = re.sub(
                 r"(?im)^\|\s+evidence\s+\|\s+.*?\s+\|",
@@ -158,14 +163,11 @@ def synthesize_section2(
             )
         return projected
 
-    ac_verdict = (
-        "unauthored — executor emitted no §2 body; machine-derived envelope below. "
-        "Not a pass."
-    )
-    deltas_to_spec = "unauthored — not reported by executor"
-    decisions_taken = "unauthored — not reported by executor"
-    next_cell = "unauthored — operator must derive from effects above"
-    open_forks = "unknown — executor emitted no §2"
+    ac_verdict = relay_parse_miss_cell("ac_verdict", provenance)
+    deltas_to_spec = relay_parse_miss_cell("deltas_to_spec", provenance)
+    decisions_taken = relay_parse_miss_cell("decisions_taken", provenance)
+    next_cell = relay_parse_miss_cell("next", provenance)
+    open_forks = relay_parse_miss_cell("open forks", provenance)
 
     if effects_union:
         pointer = sidecar_workspaces_ref(dispatch_id) if dispatch_id else provenance
@@ -182,7 +184,9 @@ def synthesize_section2(
             'per §4.7 a schema-only read of "none" is not authority'
         )
 
-    evidence_cell = _evidence_cell_from_parts(artifact_paths, deviations, capture_status)
+    evidence_cell = _evidence_cell_from_parts(
+        artifact_paths, deviations, capture_status, work_outcome
+    )
 
     rows = (
         ("status", str(status)),
@@ -196,6 +200,7 @@ def synthesize_section2(
     )
     lines = [
         "TYPE: CLOSEOUT",
+        f"source_ref: {provenance}",
         "",
         "| Field | Value |",
         "|---|---|",

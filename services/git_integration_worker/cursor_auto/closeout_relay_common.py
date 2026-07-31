@@ -121,6 +121,11 @@ def looks_section2(text: str) -> bool:
     return all(marker in low for marker in _SECTION2_MARKERS)
 
 
+def relay_parse_miss_cell(field: str, provenance: str) -> str:
+    """Relay-local voice when a §2 cell could not be populated — never blame the author."""
+    return f"relay could not locate `{field}` — see source_ref: {provenance}"
+
+
 def unclassified_relay_prefix(*, provenance: str, body: str) -> str:
     """Relay-local parse failure when substance was read but §2 fields did not extract."""
     del body  # nbytes retained for backward-compatible call sites; URI is authoritative
@@ -152,9 +157,7 @@ def fill_judgment_cell(
             f"parse_failed — could not extract §2 field `{field}` "
             f"(authoritative sidecar: {provenance})"
         )
-    if has_closeout_substance(body):
-        return "unauthored — not reported by executor"
-    return "unauthored — not reported by executor"
+    return relay_parse_miss_cell(field, provenance)
 
 
 def build_ac_verdict_cell(
@@ -171,10 +174,7 @@ def build_ac_verdict_cell(
         return value
     excerpt = strip_machine_tail(body).strip()
     if not excerpt:
-        return (
-            "unauthored — executor emitted no §2 body; machine-derived envelope below. "
-            "Not a pass."
-        )
+        return relay_parse_miss_cell("ac_verdict", provenance)
     prefix = unclassified_relay_prefix(provenance=provenance, body=body)
     if "://" in provenance:
         combined = prefix
@@ -265,6 +265,7 @@ __all__ = [
     "looks_section2",
     "order_preserving_dedup",
     "RELAY_JUDGMENT_CLAMP_FIELDS",
+    "relay_parse_miss_cell",
     "resolve_relay_status",
     "status_from_section2",
     "strip_projected_closeout_envelope",

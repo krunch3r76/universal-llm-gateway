@@ -226,10 +226,12 @@ _JUDGMENT_FIELDS: tuple[str, ...] = (
     "open forks",
 )
 _FALSE_ABSENCE_MARKERS: tuple[str, ...] = (
-    "unauthored — not reported by executor",
     "none — field not authored in §2 sidecar",
     "unknown — executor emitted no §2",
     "unauthored — operator must derive from effects above",
+    "unauthored — not reported by executor",
+    "none — see machine envelope below",
+    "none captured — see machine envelope below",
 )
 
 
@@ -286,6 +288,8 @@ def _append_deviation_tokens(body: str, tokens: list[str]) -> str:
 
 def _cell_claims_false_absence(cell: str) -> bool:
     if "unclassified" in cell.casefold():
+        return False
+    if cell.casefold().startswith("relay could not locate"):
         return False
     return any(marker in cell for marker in _FALSE_ABSENCE_MARKERS)
 

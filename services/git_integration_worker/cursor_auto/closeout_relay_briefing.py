@@ -23,6 +23,9 @@ from services.git_integration_worker.cursor_auto.closeout_relay_reporting import
     amend_reporting_field_gaps,
     stamp_model_actual,
 )
+from services.git_integration_worker.cursor_auto.relay_trust import (
+    enforce_synthesized_partial,
+)
 from services.git_integration_worker.cursor_sdk_deliverables import (
     sidecar_workspaces_ref,
 )
@@ -288,6 +291,17 @@ def finalize_relay_payload(
             clamped=was_clamped,
         )
     )
+    final_status = enforce_synthesized_partial(synced.status, closeout_source=synced.source)
+    if final_status != synced.status:
+        synced = _sync_payload_status(
+            CloseoutRelayPayload(
+                body=synced.body,
+                status=final_status,
+                source=synced.source,
+                body_full=synced.body_full,
+                clamped=synced.clamped,
+            )
+        )
     return synced
 
 

@@ -26,6 +26,7 @@ _FIELD_ABSENT_MARKERS: tuple[str, ...] = (
     "unknown — executor emitted no §2",
     "not reported",
     "unauthored",
+    "relay could not locate",
 )
 
 
