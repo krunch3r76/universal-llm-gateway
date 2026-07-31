@@ -12,13 +12,14 @@ import os
 import subprocess
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
 from pathlib import Path
 
+from deploy_identity.code_version import resolve_code_version
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from universal_logging import get_logger
+from universal_workspace import get_workspace_root
 
 from . import embeddings as cortex_embeddings
 from . import vector_store
@@ -73,12 +74,21 @@ def _resolve_workspace_root() -> Path | None:
             candidate = Path(raw).expanduser()
             if candidate.is_dir():
                 return candidate.resolve()
-    return None
+    try:
+        return get_workspace_root()
+    except RuntimeError:
+        return None
 
 
 def _read_deploy_identity() -> dict[str, str | None]:
-    """P1b source-identity fields exposed on GET /health for deploy-state gate."""
-    deploy_mode = "source_synced"
+    """P1b source-identity fields exposed on GET /health for deploy-state gate.
+
+    ``source_synced_at`` is only reported when a sync stamp records one. Absent a
+    stamp there was no observed sync, and ``deploy_mode`` says ``unstamped``
+    rather than claiming ``source_synced``. ``source_ref``/``source_tree_hash``
+    describe the checkout on disk at request time — deliberately distinct from
+    ``code_version``, which describes the loaded process.
+    """
     source_synced_at: str | None = None
     source_sync_generation: str | None = None
     if _SOURCE_SYNC_STAMP.is_file():
@@ -87,8 +97,7 @@ def _read_deploy_identity() -> dict[str, str | None]:
             source_synced_at = lines[0].strip() or None
         if len(lines) > 1:
             source_sync_generation = lines[1].strip() or None
-    if source_synced_at is None:
-        source_synced_at = datetime.now(UTC).isoformat()
+    deploy_mode = "source_synced" if source_synced_at else "unstamped"
 
     source_ref: str | None = None
     source_tree_hash: str | None = None
@@ -121,7 +130,7 @@ def _read_deploy_identity() -> dict[str, str | None]:
         "source_synced_at": source_synced_at,
         "source_ref": source_ref,
         "source_tree_hash": source_tree_hash,
-        "source_sync_generation": source_sync_generation or "0",
+        "source_sync_generation": source_sync_generation,
     }
 
 
@@ -281,8 +290,6 @@ def create_app(*, db_path: str | None = None) -> FastAPI:
 
     @app.get("/health")
     def health() -> dict[str, str | None]:
-        from deploy_identity.code_version import resolve_code_version
-
         return {
             "status": "ok",
             "cortex_db": "found" if check_cortex_db() else "missing",
