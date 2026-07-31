@@ -299,10 +299,10 @@ class WakeConsumer:
             while True:
                 held = tick_hold.read_hold()
                 if held is not None:
-                    await self.dirty.wait(timeout=self.hold_poll_s)
+                    await asyncio.sleep(self.hold_poll_s)
                     continue
                 if not self.services_healthy():
-                    await self.dirty.wait(timeout=self.hold_poll_s)
+                    await asyncio.sleep(self.hold_poll_s)
                     continue
                 triggered = await self.dirty.wait(timeout=self.floor_interval_s)
                 if tick_hold.read_hold() is not None:

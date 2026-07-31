@@ -349,3 +349,47 @@ async def test_start_enqueues_full_roster_once(
     await consumer.start()
     await consumer.stop()
     assert enqueue_calls == 1
+
+
+@pytest.mark.offline
+@pytest.mark.asyncio
+async def test_parked_with_dirty_set_does_not_busy_spin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Parked branches must sleep — dirty.wait fast-path busy-spins when roots queued."""
+    tick = _FakeTickLoop()
+    dirty = WakeDirtySet()
+    dirty.enqueue("6171")
+    hold_polls = 0
+
+    def read_hold():
+        nonlocal hold_polls
+        hold_polls += 1
+        if hold_polls > 500:
+            raise AssertionError(f"parked loop busy-spin: {hold_polls} hold polls")
+        return object()
+
+    monkeypatch.setattr(
+        "scripts.model_manager.ui.controller.charter_runner.wake_consumer.tick_hold.read_hold",
+        read_hold,
+    )
+    monkeypatch.setattr(
+        "scripts.model_manager.ui.controller.charter_runner.wake_consumer.run_roots_batch",
+        AsyncMock(),
+    )
+
+    async def enrolled() -> list[dict[str, Any]]:
+        return [{"id": "6171"}]
+
+    consumer = WakeConsumer(
+        tick_loop=tick,  # type: ignore[arg-type]
+        dirty=dirty,
+        mapper=WakeRootMapper(enrolled),
+        floor_interval_s=1.0,
+        hold_poll_s=0.02,
+        services_healthy=lambda: True,
+    )
+    consumer._task = asyncio.create_task(consumer._run_loop())
+    await asyncio.sleep(0.2)
+    await consumer.stop()
+    assert hold_polls < 20
