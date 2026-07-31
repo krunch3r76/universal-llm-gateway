@@ -324,6 +324,12 @@ skills:
   operator-posture:
     surface_class: shared_sync
     mcp_surface_required: none
+  operator-proxy-substrate:
+    # Cursor-side substrate for the operator-proxy protocol. cursor_only =
+    # ¬Customize upload; the shared contract lives on cdp-operator-proxy
+    # (shared_sync). Split rationale: decision:operator-proxy-skill-surface-split.
+    surface_class: cursor_only
+    mcp_surface_required: code
   pager-notify:
     surface_class: cursor_only
     mcp_surface_required: none

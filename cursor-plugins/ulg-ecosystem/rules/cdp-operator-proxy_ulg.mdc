@@ -15,16 +15,21 @@ trigger_match_terms:
   - propagate
   - sync_restart
   - service restart
+  - operator-proxy-substrate
 ---
 # CDP Operator Proxy — Stub
 
 **Invariant:** `operator-proxy episode ∧ agent_bus.request from Cowork ⇒ Use the cdp-operator-proxy skill before authoring DIRECTIVE bodies or dispositing CLOSEOUTs.`
+
+**Operator identity (BINDING):** `default(operator) = model_seat` — assume **non-human** unless Kaywan **explicitly declares** human operator (skill invariant 0). Cowork CSE presence alone ≠ human operator.
 
 **Mission default (BINDING):** CDP Opus mission launch (`purpose=operator-proxy|mission` via `team_dispatch(model=cdp/…, purpose=…)` primary; `project_ask(purpose=…)` escape) ⇒ **Opus = operator · Fable = advisor · cursor-auto = executor · tick = admitter**. Auto-inject on mission submit. Fable escalate: prefer `team_dispatch(model=cdp/fable)`. Tick posting + B1/B2 nest stall: `cortex://notes/system/specs/cursor-auto-tick-work-posting.md`.
 
 **Thread privacy:** operator-proxy DIRECTIVE/CLOSEOUT/DISPOSITION live on a **private `request` thread** — ¬ the IDE orchestrator’s endeavor root (cite root in `arc:` only). Skill invariant 11.
 
 Mechanism (turn shapes, boot checklist, anti-patterns): Use the `cdp-operator-proxy` skill — not this stub.
+
+**Two slugs (BINDING — `decision:operator-proxy-skill-surface-split`):** `cdp-operator-proxy` (`shared_sync`) is the **operator contract** — what the operator seat executes and must expect; it is the slug to cite in operator-facing hints. **Cursor seats** additionally Use the `operator-proxy-substrate` skill (`cursor_only`) for the **mechanism**: admit gates (scope / `vision:` / fix hints), `nest_under` + lease, auth-gate budget enforcement, supersede revert, GIW drain hazard, and CDP packet + chip delivery. Carve rule: `shared_body ⇒ observable behavior` · `code_body ⇒ mechanism`.
 
 **Protocol SOT:** `cortex://notes/system/specs/cdp-operator-proxy-v0.md` (field tables, transport).  
 **Doctrine:** `decision:operator-proxy-seat-posture`.  

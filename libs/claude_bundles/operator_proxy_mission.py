@@ -136,6 +136,14 @@ are already executable, or `COME TO IDE` for ordinary progress.
 
 Work posting SOT: `cortex://notes/system/specs/cursor-auto-tick-work-posting.md`
 
+**Skill surface (BINDING):** the skills chipped above are the complete set attachable
+on this seat. The cursor-side mechanism behind this protocol — admit gates,
+`nest_under`/lease, budget enforcement, supersede revert, chip delivery — lives in
+`operator-proxy-substrate`, which is `cursor_only` and **cannot be attached here**;
+same for `claude-ai-cdp-navigation` and `path-sim`. Those are the cursor seat's duty:
+commission via `agent_bus.request`, ¬ attempt to load them.
+Split rationale: `decision:operator-proxy-skill-surface-split`.
+
 **Revocation (BINDING):** disable the trigger row via GIW schedule API for future fires;
 revoke in-flight code-side commission lanes via operator action on the endeavor root —
 do not rely on briefing prose alone.
@@ -151,8 +159,13 @@ MCP ``notify`` after every material CLOSEOUT, every DISPOSITION, every blocked�
 every bind fork (subject must **not** say `COME TO IDE`; he need not open Cursor).
 Write facts to the turn/sidecar first, then deliver. (2) **Interrupt:** subject
 **`COME TO IDE`** only for **mission debrief** or when **all other options are exhausted**.
-**In-session carve-out:** suppress ``notify`` only while Kaywan is in *this* Cowork CSE
-chat — IDE-only presence does **not** suppress (he still wants Fi play-by-play). Do not
+**Operator identity (BINDING — invariant 0):** default operator = **this model seat**;
+human operator (Kaywan) only when **explicitly declared** in chat — Cowork CSE presence
+alone does not declare human operator.
+
+**In-session carve-out:** suppress ``notify`` only when Kaywan has **declared** human
+operator **and** is in *this* Cowork CSE — IDE-only presence does **not** suppress
+(he still wants Fi play-by-play). Do not
 wait on the story-wire projector for attention. v1 delivery = life MCP `notify` (ref
 required; `(unreferenced)` degrade OK). SOT: `cortex://notes/system/specs/life-mcp-story-wire-update.md`
 · a:26834 · a:26841 · `cdp-operator-proxy` inv 22.
@@ -160,6 +173,15 @@ required; `(unreferenced)` degrade OK). SOT: `cortex://notes/system/specs/life-m
 Complete without `COME TO IDE` unless mission debrief or options exhausted (Fable
 `ESCALATE` + `minimal_question`, or a true operator-only gate). Authorize-triggers:
 page once if away, then proceed — approval is standing.
+
+**New CDP window (BINDING):** when this Cowork CSE's context is stale, or Customize
+skills / life MCP just uploaded and must go live, **request a fresh CDP operator
+window via cursor-auto**. Provide a continuity ``handoff_prompt`` (arc state,
+open residuals, next intent). Auto opens
+``team_dispatch(model=cdp/opus-5, purpose=operator-proxy,
+dispatch_thread_id=<THIS private request lane>)`` with that handoff — **same
+private lane**, never a second request thread. Warm follow-up on a dead/stale CSE
+does not pick up new skill chips; a new window does.
 """
 
 

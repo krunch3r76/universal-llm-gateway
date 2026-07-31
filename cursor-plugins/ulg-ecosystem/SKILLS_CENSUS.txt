@@ -24,6 +24,7 @@ handoff-packet-authoring
 implement-todo
 multi-model-review
 operator-posture
+operator-proxy-substrate
 orchestrator-workflow
 pager-notify
 path-sim
