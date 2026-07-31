@@ -27,9 +27,10 @@ router = APIRouter(prefix="/api/v1/triggers", tags=["triggers"])
 class ScheduleTriggerRequest(BaseModel):
     """POST /api/v1/triggers body — absolute or delay fire plus optional predicate fields.
 
-    When ``predicate`` is set, ``expires_at`` is required and catalog validation
-    refuses unknown types / unresolvable upstream ``trigger_id`` with stable
-    ``reason_code`` values (see ``TriggerStore.schedule``).
+    When ``predicate`` is set, ``expires_at`` is required for ``trigger_terminal``;
+    optional for ``fleet_idle``. Catalog validation refuses unknown types /
+    unresolvable upstream ``trigger_id`` with stable ``reason_code`` values
+    (see ``TriggerStore.schedule``).
     """
 
     created_by: str = "life-seat"
@@ -45,6 +46,7 @@ class ScheduleTriggerRequest(BaseModel):
     predicate: str | None = None
     predicate_args: dict | None = None
     expires_at: datetime | None = None
+    recur_every_s: int | None = Field(default=None, ge=1)
     require_act_receipt: int | None = Field(
         default=None,
         description=(
@@ -109,6 +111,7 @@ async def schedule_trigger(req: ScheduleTriggerRequest) -> dict[str, Any]:
             predicate=req.predicate,
             predicate_args=req.predicate_args,
             expires_at=req.expires_at,
+            recur_every_s=req.recur_every_s,
             require_act_receipt=req.require_act_receipt,
             charter_root=req.charter_root,
             window_index=req.window_index,

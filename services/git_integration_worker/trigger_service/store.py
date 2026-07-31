@@ -28,6 +28,23 @@ from .store_claim import expire_due as _expire_due
 from .story_envelope import elect_trigger_story_envelope
 
 
+def _coalesce_skipped_periods(
+    *,
+    recur_s: int,
+    fired_at_iso: str | None,
+    terminal_at: datetime,
+) -> int | None:
+    """Recur periods elapsed between expected next slot and terminal reconcile."""
+    if not fired_at_iso:
+        return None
+    fired_at = as_utc(datetime.fromisoformat(fired_at_iso))
+    expected_next = fired_at + timedelta(seconds=recur_s)
+    if terminal_at <= expected_next:
+        return 0
+    skipped = int((terminal_at - expected_next).total_seconds() // recur_s)
+    return max(0, skipped)
+
+
 class TriggerStore:
     """SQLite-backed trigger schedule CRUD + claim transitions."""
 
@@ -54,6 +71,7 @@ class TriggerStore:
         predicate: str | None = None,
         predicate_args: str | dict | None = None,
         expires_at: datetime | None = None,
+        recur_every_s: int | None = None,
         require_act_receipt: int | None = None,
         charter_root: str | None = None,
         window_index: int | None = None,
@@ -99,6 +117,7 @@ class TriggerStore:
                 predicate=predicate,
                 predicate_args=predicate_args,
                 expires_at=expires_at,
+                recur_every_s=recur_every_s,
             )
             conn.execute(
                 """
@@ -106,8 +125,8 @@ class TriggerStore:
                     id, created_at, created_by, fire_at, prompt_uri,
                     purpose, model, arc, so_what, status, max_attempts,
                     predicate, predicate_args, expires_at, require_act_receipt,
-                    story_id, story_id_source
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    story_id, story_id_source, recur_every_s
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     trigger_id,
@@ -127,6 +146,7 @@ class TriggerStore:
                     stored_require,
                     envelope.story_id,
                     envelope.story_id_source,
+                    recur_every_s,
                 ),
             )
             conn.commit()
@@ -135,6 +155,56 @@ class TriggerStore:
             ).fetchone()
         assert row is not None
         return row_from_db(row)
+
+    def rearm_recurring(
+        self,
+        trigger_id: str,
+        *,
+        terminal_at: datetime,
+    ) -> TriggerRow | None:
+        """After terminal reconcile, reschedule a ``recur_every_s`` row."""
+        terminal_dt = as_utc(terminal_at)
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT recur_every_s, status, fired_at, fire_at
+                FROM triggers WHERE id = ?
+                """,
+                (trigger_id,),
+            ).fetchone()
+            if row is None or row["recur_every_s"] is None:
+                return None
+            recur_s = int(row["recur_every_s"])
+            next_fire = (terminal_dt + timedelta(seconds=recur_s)).isoformat()
+            coalesce_skipped = _coalesce_skipped_periods(
+                recur_s=recur_s,
+                fired_at_iso=row["fired_at"],
+                terminal_at=terminal_dt,
+            )
+            updated = conn.execute(
+                """
+                UPDATE triggers
+                SET status = ?, fire_at = ?, execution_id = NULL, fired_at = NULL,
+                    terminal_status = NULL, archive_uri = NULL, claimed_at = NULL,
+                    attempts = 0, last_error = NULL, last_predicate_error = NULL,
+                    last_coalesce_skipped = ?
+                WHERE id = ? AND status = ? AND terminal_status IS NOT NULL
+                """,
+                (
+                    require_status(STATUS_SCHEDULED),
+                    next_fire,
+                    coalesce_skipped,
+                    trigger_id,
+                    STATUS_FIRED,
+                ),
+            )
+            if updated.rowcount != 1:
+                return None
+            conn.commit()
+            full = conn.execute(
+                "SELECT * FROM triggers WHERE id = ?", (trigger_id,)
+            ).fetchone()
+        return row_from_db(full) if full is not None else None
 
     def set_act_fields(
         self,

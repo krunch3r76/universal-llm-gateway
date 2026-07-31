@@ -34,6 +34,18 @@ from .migrations.migration_004_story_envelope import (
 from .migrations.migration_004_story_envelope import (
     migrate as migrate_004,
 )
+from .migrations.migration_005_recur_idle import (
+    MIGRATION_ID as MIGRATION_005_ID,
+)
+from .migrations.migration_005_recur_idle import (
+    migrate as migrate_005,
+)
+from .migrations.migration_006_defer_observability import (
+    MIGRATION_ID as MIGRATION_006_ID,
+)
+from .migrations.migration_006_defer_observability import (
+    migrate as migrate_006,
+)
 
 logger = get_logger(__name__)
 
@@ -81,6 +93,8 @@ def apply_migrations(conn: sqlite3.Connection) -> None:
         (MIGRATION_002_ID, migrate_002),
         (MIGRATION_003_ID, migrate_003),
         (MIGRATION_004_ID, migrate_004),
+        (MIGRATION_005_ID, migrate_005),
+        (MIGRATION_006_ID, migrate_006),
     ]
     for mig_id, migrate_fn in pending:
         if mig_id in applied:

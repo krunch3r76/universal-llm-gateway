@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -193,4 +194,18 @@ def reconcile_row(
         event = act_result.get("event")
         if event:
             _emit_bare(event, **act_result["event_payload"])
+    if act_row.recur_every_s:
+        terminal_at = datetime.now(UTC)
+        rearmed = store.rearm_recurring(act_row.id, terminal_at=terminal_at)
+        if rearmed is not None:
+            coalesce = rearmed.last_coalesce_skipped
+            _emit(
+                "giw.trigger.rearmed",
+                rearmed,
+                terminal_status=status,
+                fire_at=rearmed.fire_at,
+                recur_every_s=rearmed.recur_every_s,
+                coalesce_skipped=coalesce,
+            )
+            return rearmed
     return act_row

@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
+from .config import defer_threshold, fire_interval_s
 from .db import as_utc, now_iso
+from .fleet_idle import FleetIdleSnapshot, FleetVerdict, read_fleet_idle_memoized
 from .models import (
+    PREDICATE_DEFERRING,
+    PREDICATE_FLEET_IDLE,
     PREDICATE_TRIGGER_TERMINAL,
     STATUS_EXPIRED,
     STATUS_FIRING,
@@ -15,7 +19,7 @@ from .models import (
     require_status,
     row_from_db,
 )
-from .predicate_eval import eval_trigger_terminal
+from .predicate_eval import eval_fleet_idle_predicate, eval_trigger_terminal
 
 
 def expire_due(
@@ -70,6 +74,85 @@ def expire_due(
     return expired
 
 
+def _defer_row(
+    conn,
+    *,
+    trigger_id: str,
+    now_dt: datetime,
+    predicate: str,
+    defer_events: list[tuple[str, dict]],
+    fleet_verdict: str | None = None,
+) -> None:
+    """Push ``fire_at`` one pass forward; row stays ``scheduled``."""
+    defer_until = (now_dt + timedelta(seconds=fire_interval_s())).isoformat()
+    deferred_at = now_dt.isoformat()
+    row = conn.execute(
+        "SELECT defer_count, degraded FROM triggers WHERE id = ?",
+        (trigger_id,),
+    ).fetchone()
+    prior_count = int(row["defer_count"]) if row else 0
+    new_count = prior_count + 1
+    was_degraded = bool(row and int(row["degraded"]))
+    set_degraded = 1 if new_count >= defer_threshold() else int(was_degraded)
+    conn.execute(
+        """
+        UPDATE triggers
+        SET fire_at = ?,
+            defer_count = ?,
+            last_deferred_at = ?,
+            last_fleet_verdict = COALESCE(?, last_fleet_verdict),
+            degraded = ?
+        WHERE id = ? AND status = ?
+        """,
+        (
+            defer_until,
+            new_count,
+            deferred_at,
+            fleet_verdict,
+            set_degraded,
+            trigger_id,
+            STATUS_SCHEDULED,
+        ),
+    )
+    payload: dict = {
+        "trigger_id": trigger_id,
+        "predicate": predicate,
+        "fire_at": defer_until,
+        "defer_count": new_count,
+        "last_deferred_at": deferred_at,
+    }
+    if fleet_verdict is not None:
+        payload["fleet_verdict"] = fleet_verdict
+    defer_events.append(("giw.trigger.predicate_deferred", payload))
+    if new_count >= defer_threshold() and not was_degraded:
+        defer_events.append(
+            (
+                "giw.trigger.defer_degraded",
+                {
+                    "trigger_id": trigger_id,
+                    "defer_count": new_count,
+                    "threshold": defer_threshold(),
+                    "fleet_verdict": fleet_verdict,
+                },
+            )
+        )
+
+
+def _reset_defer_on_claim(conn, trigger_id: str) -> None:
+    """Clear defer streak when predicate passes and row is claimed."""
+    conn.execute(
+        """
+        UPDATE triggers
+        SET defer_count = 0,
+            last_deferred_at = NULL,
+            last_fleet_verdict = NULL,
+            degraded = 0
+        WHERE id = ?
+        """,
+        (trigger_id,),
+    )
+
+
 def claim_due(
     connect_fn: Callable,
     *,
@@ -78,11 +161,9 @@ def claim_due(
 ) -> TriggerRow | None:
     """Atomically claim one due scheduled row (skip-not-block for false predicates).
 
-    Predicate-NULL rows claim as slice-1. ``trigger_terminal`` evaluates upstream
-    on the same connection; false/unknown predicates skip without blocking later
-    candidates. Predicate evaluation never mutates ``attempts`` or ``status``.
-    Candidate SELECT is capped at 50 rows ordered by ``fire_at`` — bounds
-    per-scan eval cost so a large predicate backlog cannot stall a tick.
+    ``trigger_terminal``: false predicate skips without blocking later candidates.
+    ``fleet_idle``: false predicate defers ``fire_at`` one pass (row stays scheduled).
+    Predicate evaluation never mutates ``attempts`` or ``status`` except defer bump.
     """
     from services.git_integration_worker.events import publish_lib_signal
 
@@ -91,14 +172,20 @@ def claim_due(
     cutoff_iso = now_dt.isoformat()
     claimed_at = now_iso()
     eval_failed_events: list[tuple[str, dict]] = []
+    defer_events: list[tuple[str, dict]] = []
     claim_event: tuple[str, dict] | None = None
+    fleet_snapshot: FleetIdleSnapshot | None = None
     with connect_fn() as conn:
         conn.execute("BEGIN IMMEDIATE")
         candidates = conn.execute(
             """
             SELECT * FROM triggers
             WHERE status = ? AND fire_at <= ?
-              AND (predicate IS NULL OR expires_at > ?)
+              AND (
+                predicate IS NULL
+                OR expires_at IS NULL
+                OR expires_at > ?
+              )
             ORDER BY fire_at ASC
             LIMIT 50
             """,
@@ -108,6 +195,7 @@ def claim_due(
         for candidate in candidates:
             trigger_id = candidate["id"]
             predicate = candidate["predicate"]
+            fleet_verdict: str | None = None
             if predicate is None:
                 due = True
             elif predicate == PREDICATE_TRIGGER_TERMINAL:
@@ -131,9 +219,46 @@ def claim_due(
                         )
                     )
                     due = False
+            elif predicate == PREDICATE_FLEET_IDLE:
+                try:
+                    if fleet_snapshot is None:
+                        fleet_snapshot = read_fleet_idle_memoized()
+                    fleet_verdict = fleet_snapshot.verdict.value
+                    due = eval_fleet_idle_predicate(
+                        candidate["predicate_args"],
+                        snapshot=fleet_snapshot,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    conn.execute(
+                        """
+                        UPDATE triggers SET last_predicate_error = ?
+                        WHERE id = ?
+                        """,
+                        (str(exc)[:500], trigger_id),
+                    )
+                    eval_failed_events.append(
+                        (
+                            "giw.trigger.predicate_eval_failed",
+                            {
+                                "trigger_id": trigger_id,
+                                "error": str(exc)[:200],
+                            },
+                        )
+                    )
+                    due = False
+                    fleet_verdict = FleetVerdict.UNDETERMINED.value
             else:
                 due = False
             if not due:
+                if predicate in PREDICATE_DEFERRING:
+                    _defer_row(
+                        conn,
+                        trigger_id=trigger_id,
+                        now_dt=now_dt,
+                        predicate=predicate,
+                        defer_events=defer_events,
+                        fleet_verdict=fleet_verdict,
+                    )
                 continue
             updated = conn.execute(
                 """
@@ -149,6 +274,7 @@ def claim_due(
                 ),
             )
             if updated.rowcount == 1:
+                _reset_defer_on_claim(conn, trigger_id)
                 if predicate is not None:
                     claim_event = (
                         "giw.trigger.predicate_true",
@@ -163,6 +289,8 @@ def claim_due(
                 break
         conn.commit()
     for signal, payload in eval_failed_events:
+        emit(signal, payload)
+    for signal, payload in defer_events:
         emit(signal, payload)
     if result_row is not None and claim_event is not None:
         emit(claim_event[0], claim_event[1])

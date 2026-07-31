@@ -11,6 +11,8 @@ from implement_admission.closeout_helpers import cortex_files_root
 
 PROMPT_PREFIX = "notes/system/ephemeral/trigger-schedule"
 PREDICATE_TRIGGER_TERMINAL = "trigger_terminal"
+PREDICATE_FLEET_IDLE = "fleet_idle"
+PREDICATE_DEFERRING = frozenset({PREDICATE_FLEET_IDLE})
 STATUS_SCHEDULED = "scheduled"
 STATUS_FIRING = "firing"
 STATUS_FIRED = "fired"
@@ -79,6 +81,12 @@ class TriggerRow:
     require_act_receipt: int | None = None
     story_id: str | None = None
     story_id_source: str | None = None
+    recur_every_s: int | None = None
+    defer_count: int = 0
+    last_deferred_at: str | None = None
+    last_fleet_verdict: str | None = None
+    degraded: int = 0
+    last_coalesce_skipped: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -113,6 +121,12 @@ class TriggerRow:
             "require_act_receipt": self.require_act_receipt,
             "story_id": self.story_id,
             "story_id_source": self.story_id_source,
+            "recur_every_s": self.recur_every_s,
+            "defer_count": self.defer_count,
+            "last_deferred_at": self.last_deferred_at,
+            "last_fleet_verdict": self.last_fleet_verdict,
+            "degraded": bool(self.degraded),
+            "last_coalesce_skipped": self.last_coalesce_skipped,
         }
 
 
@@ -152,6 +166,21 @@ def row_from_db(row: sqlite3.Row) -> TriggerRow:
         story_id=row["story_id"] if "story_id" in row.keys() else None,
         story_id_source=row["story_id_source"]
         if "story_id_source" in row.keys()
+        else None,
+        recur_every_s=int(row["recur_every_s"])
+        if "recur_every_s" in row.keys() and row["recur_every_s"] is not None
+        else None,
+        defer_count=int(row["defer_count"]) if "defer_count" in row.keys() else 0,
+        last_deferred_at=row["last_deferred_at"]
+        if "last_deferred_at" in row.keys()
+        else None,
+        last_fleet_verdict=row["last_fleet_verdict"]
+        if "last_fleet_verdict" in row.keys()
+        else None,
+        degraded=int(row["degraded"]) if "degraded" in row.keys() else 0,
+        last_coalesce_skipped=int(row["last_coalesce_skipped"])
+        if "last_coalesce_skipped" in row.keys()
+        and row["last_coalesce_skipped"] is not None
         else None,
     )
 

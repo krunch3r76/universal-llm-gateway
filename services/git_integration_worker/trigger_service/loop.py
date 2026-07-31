@@ -10,10 +10,14 @@ from typing import Any
 from universal_logging import get_logger
 
 from services.git_integration_worker.events import publish_lib_signal
+from services.git_integration_worker.trigger_service.config import (
+    fire_interval_s as _fire_interval_s,
+)
 from services.git_integration_worker.trigger_service.fire import (
     fire_once,
     reconcile_row,
 )
+from services.git_integration_worker.trigger_service.fleet_idle import begin_idle_pass
 from services.git_integration_worker.trigger_service.store import TriggerStore
 from services.git_integration_worker.trigger_service.story_envelope import (
     emit_trigger_signal,
@@ -26,13 +30,7 @@ _DEFAULT_RECLAIM_S = 300.0
 
 
 def fire_interval_s() -> float:
-    raw = os.environ.get("TRIGGER_FIRE_INTERVAL_S", "").strip()
-    if not raw:
-        return _DEFAULT_INTERVAL_S
-    try:
-        return max(5.0, float(raw))
-    except ValueError:
-        return _DEFAULT_INTERVAL_S
+    return _fire_interval_s()
 
 
 def reclaim_stale_s() -> float:
@@ -62,6 +60,7 @@ async def _pager_on_fire(row_dict: dict[str, Any]) -> None:
 
 async def run_trigger_pass(store: TriggerStore) -> dict[str, int]:
     """One fire pass: reclaim stale, expire due, claim due rows, submit."""
+    begin_idle_pass()
     now = datetime.now(UTC)
     stats = {
         "claimed": 0,
@@ -70,6 +69,7 @@ async def run_trigger_pass(store: TriggerStore) -> dict[str, int]:
         "failed": 0,
         "reclaimed": 0,
         "expired": 0,
+        "deferred": 0,
     }
     reclaimed = await asyncio.to_thread(
         store.reclaim_stale_firing,
