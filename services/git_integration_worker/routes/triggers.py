@@ -152,6 +152,27 @@ async def get_trigger(trigger_id: str) -> dict[str, Any]:
     return row.to_dict()
 
 
+@router.post("/{trigger_id}/revoke", dependencies=[Depends(require_token)])
+async def revoke_trigger(trigger_id: str) -> dict[str, Any]:
+    """Stop future fires for a recurring trigger (works when status is fired)."""
+    store = _store()
+    try:
+        row = store.revoke(trigger_id)
+    except TriggerStoreError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    revoked_payload: dict[str, Any] = {
+        "trigger_id": row.id,
+        "status": row.status,
+        "recur_every_s": row.recur_every_s,
+    }
+    stamp_trigger_envelope(revoked_payload, row)
+    publish_lib_signal("giw.trigger.revoked", revoked_payload)
+    return row.to_dict()
+
+
 @router.delete("/{trigger_id}", dependencies=[Depends(require_token)])
 async def cancel_trigger(trigger_id: str) -> dict[str, Any]:
     store = _store()

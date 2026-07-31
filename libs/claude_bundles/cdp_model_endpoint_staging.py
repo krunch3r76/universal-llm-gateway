@@ -13,6 +13,11 @@ Because that merge always rewrites the prompt body, the generate path materializ
 an ephemeral ``prompt.md`` rather than passing a pre-staged ``cortex://`` URI
 through unchanged. ``stage_prompt_uri`` still pass-throughs ``cortex://`` when
 called without a skills rewrite (tests / non-generate callers).
+
+Slug-appropriateness gate (a:27430): ``path-sim`` is rejected on CDP ``skills=``
+(loud 422). Cascade Q/R legs seal path-sim content into the prompt URI; they do
+not list ``path-sim`` in ``skills=``. ``partition_cdp_skills`` stays a pure
+channel router — this gate lives here, not there.
 """
 
 from __future__ import annotations
@@ -30,6 +35,10 @@ CDP_JUDGMENT_SKILL_SLUGS: tuple[str, ...] = (
     "reasoning-posture",
     "frontier-reasoning-discipline",
 )
+
+# a:27430 — one-slug denylist at CDP skills= staging (not a general policy DSL).
+_CDP_SKILLS_DENIED_SLUGS: frozenset[str] = frozenset({"path-sim"})
+_CDP_SKILLS_PATH_SIM_REJECTED = "cdp_skills_path_sim_rejected"
 
 
 class CdpStagingError(ValueError):
@@ -150,6 +159,32 @@ def ensure_cdp_judgment_skills(skills: list[str] | None) -> list[str]:
     return missing + caller
 
 
+def reject_cdp_skills_path_sim(skills: list[str] | None) -> None:
+    """Fail closed when ``path-sim`` appears in CDP ``skills=`` (a:27430).
+
+    ``path-sim`` is a cascade choke-point cue, not a CDP skills= leaf. Lawful
+    Q/A/R cascade legs seal path-sim content into the prompt URI; listing the
+    slug here inlines a body whose own carve-out excludes codework architect
+    binds. Surface class (cursor_only → inline) is a different axis — this gate
+    does not reclassify delivery channel.
+    """
+    if not skills:
+        return
+    offenders = [
+        raw
+        for raw in skills
+        if str(raw).strip().lstrip("/").lower() in _CDP_SKILLS_DENIED_SLUGS
+    ]
+    if not offenders:
+        return
+    raise CdpStagingError(
+        "path-sim must not appear in CDP skills= "
+        "(cascade legs seal path-sim into the prompt URI; "
+        "architect/admit binds use the judgment pair only; a:27430)",
+        code=_CDP_SKILLS_PATH_SIM_REJECTED,
+    )
+
+
 def stage_cdp_prompt_with_skills(
     *,
     execution_id: str,
@@ -167,12 +202,15 @@ def stage_cdp_prompt_with_skills(
     Leading ``/<slug>\\n`` lines are **manifest only** — the Jupiter satellite
     attaches each ``shared_sync`` slug via composer **+ → Skills → pick**
     (``composer_session_skills.attach_session_skills``), never slash-type.
+
+    Rejects ``path-sim`` in ``skills=`` (``cdp_skills_path_sim_rejected``).
     """
     from claude_bundles.cowork_skill_delivery import (
         SkillDeliveryError,
         prepend_cdp_dispatch_skills,
     )
 
+    reject_cdp_skills_path_sim(skills)
     effective = ensure_cdp_judgment_skills(skills)
     body = read_prompt_text(
         prompt_text=prompt_text,

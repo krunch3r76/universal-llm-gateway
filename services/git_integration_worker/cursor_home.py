@@ -18,6 +18,10 @@ from pathlib import Path
 
 from universal_logging import get_logger
 
+from services.git_integration_worker.cursor_seat_overlay import (
+    apply_cursor_sdk_seat_overlay,
+)
+
 logger = get_logger(__name__)
 
 CURSOR_CONFIG_DIRNAME = ".cursor"
@@ -220,6 +224,9 @@ def setup_cursor_dispatch_home(
         real_cursor / CURSOR_PLUGINS_DIRNAME,
         cursor_dir / CURSOR_PLUGINS_DIRNAME,
     )
+    # Plugin parity with the IDE is wrong for the human-facing operator register:
+    # a headless seat has no human reader. Swap it for the interagent counterpart.
+    apply_cursor_sdk_seat_overlay(cursor_dir)
     return home
 
 

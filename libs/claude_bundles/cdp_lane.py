@@ -32,12 +32,15 @@ import contextlib
 import fcntl
 import json
 import os
+import signal
 import socket
 import subprocess
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
+
+from claude_bundles.cdp_cookie_seed import CookieSeedError, seed_lane_cookies
 
 LANE_DIR = Path.home() / ".gateway" / "cdp-lanes"
 ALLOC_LOCK = LANE_DIR / "alloc.lock"
@@ -277,9 +280,7 @@ def _allocate_port_for_profile(
     if existing is not None:
         return existing, True
     if not launch:
-        raise LaneError(
-            f"no live Chrome for profile '{suffix}' and launch=False"
-        )
+        raise LaneError(f"no live Chrome for profile '{suffix}' and launch=False")
     # Cross-exclude registry-reserved ports (F3 / thread 5262) so the legacy
     # intent allocator and cdp_registry cannot TOCTOU-collide on the same port.
     exclude = set(held_ports())
@@ -324,6 +325,12 @@ def _seed_profile(profile: Path) -> None:
     )
 
 
+def _kill_lane_chrome(pid: int) -> None:
+    """Tear down a Chrome we launched but cannot hand back (whole process group)."""
+    with contextlib.suppress(OSError, ProcessLookupError):
+        os.killpg(os.getpgid(pid), signal.SIGTERM)
+
+
 def _launch_chrome(port: int, profile: Path) -> int:
     """Launch a detached Chrome (the warm resource) and wait until it listens."""
     _seed_profile(profile)
@@ -343,9 +350,27 @@ def _launch_chrome(port: int, profile: Path) -> int:
     deadline = time.monotonic() + _LAUNCH_WAIT_S
     while time.monotonic() < deadline:
         if is_listening(port):
+            _seed_lane_session(port, proc.pid)
             return proc.pid
         time.sleep(_POLL_MS / 1000)
+    _kill_lane_chrome(proc.pid)
     raise LaneError(f"Chrome on :{port} did not reach CDP in {_LAUNCH_WAIT_S}s")
+
+
+def _seed_lane_session(port: int, pid: int) -> None:
+    """Install the primary's live claude.ai cookies; tear the lane down on failure.
+
+    The rsync in ``_seed_profile`` cannot carry the session — a running Chrome
+    keeps cookies in memory, so the copied store is empty (see
+    ``cdp_cookie_seed``). Failing here is deliberate: a signed-out lane dies
+    later inside ``ensure_cowork_auto`` having already leaked a Chrome and a
+    profile directory.
+    """
+    try:
+        seed_lane_cookies(port)
+    except CookieSeedError:
+        _kill_lane_chrome(pid)
+        raise
 
 
 def _write_metadata(fd: int, info: dict) -> None:

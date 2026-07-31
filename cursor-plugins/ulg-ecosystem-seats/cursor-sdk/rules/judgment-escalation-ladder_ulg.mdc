@@ -1,0 +1,69 @@
+---
+description: Judgment escalation ladder — cursor-sdk seat. Independent binder consult when unsure; human step pruned — emit status:blocked for lead routing instead.
+alwaysApply: true
+rule_category: workflow
+apply_tier: required_gate
+trigger_match_terms:
+  - judgment-escalation-ladder
+  - unsure
+  - consult CDP
+  - escalate
+  - Fable
+  - cross-family
+  - independent binder
+  - gpt-5.6-terra
+  - gpt-5.6-sol
+  - self-review
+---
+# Judgment Escalation Ladder — cursor-sdk seat
+
+**Seat wall.** IDE rule pruned from this dispatch HOME. Step 3 (human operator) does
+**not** apply — you cannot reach the human. When the ladder exhausts in-seat +
+binder consult, **`status: blocked`** with `ESCALATE` and `minimal_question` for the
+dispatching lead.
+
+**Invariant:** `seat_unsure ⇒ consult(independent_binder)` ·
+`binder_unsure ⇒ status:blocked(ESCALATE)` — **not** human relay.
+
+Independence is weight-class ∨ family (`decision:gate-independence-not-human-ness`).
+Self-review = same model **and** same tier grading its own output.
+
+**Substrate:** you are step 1 on this seat. When unsure after recon, the ladder
+continues at step 2 — you do **not** implement past a genuine fork without binding
+or blocking.
+
+## Ladder (binding)
+
+| Step | Seat | When | Transport |
+|---|---|---|---|
+| 1 | **cursor-sdk** (you) | Default — execute packet | In-seat tools; bind forks per `interagent-posture_ulg` |
+| 2 | **Independent binder** | Genuine fork after recon | `team_dispatch` consult per `consult-routing` — **you do not fire these from a standard implement packet unless the packet explicitly commissions consult**; default is bind-or-block in closeout |
+| 3 | **Dispatching lead** (model) | Step 2 exhausted or human-only gate named in packet | `status: blocked` + `ESCALATE:` + `minimal_question:` — **¬** "ask the operator" / **¬** "What I need from you" |
+
+### Step-2 binder order (when packet commissions consult)
+
+| Order | Binder | Use when |
+|---|---|---|
+| **2a** | `cdp/opus-5` | Producer not Anthropic |
+| **2b** | `cdp/fable` | Opus producer or Opus unsure |
+| **2c** | `cursor/gpt-5.6-terra` / `cursor/gpt-5.6-sol` (targeted) | Fable unsure or lineage-correlated risk |
+| **2d** | `cursor/grok-4.5` (≤ high) | Cheap breadth — not substitute for 2b–2c on material binds |
+
+`anthropic/*` API **prohibited** — CDP/Fable web lane only.
+
+## Anti-patterns (this seat)
+
+| Bad | Good |
+|---|---|
+| Park on human for judgment fork | Bind, consult per packet, or `status: blocked` |
+| "Should I proceed?" / "Please confirm" to lead as human gate | Bind the fork; cite evidence |
+| Skip binder when packet names one | Follow packet consult commission |
+| Treat yourself as ladder-top | Step 2 exists; step 3 is blocked report, not human ask |
+| `team_dispatch` consult without packet authority on implement slice | Block with reason — lead re-commissions |
+
+## Composes with
+
+- `interagent-posture_ulg` — closeout + blocked shape
+- `lean-context-dispatch-first` — compose leg default
+- `consult-routing` — binder transport when commissioned
+- `anthropic-dispatch-authorization` — substrate wall

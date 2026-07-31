@@ -117,16 +117,41 @@ def register_cursor_request_tool(mcp: FastMCP) -> None:
         ``cursor`` — it is not a caller parameter. Exactly one of ``new_slug``
         (new thread) or ``thread`` (continue) is required.
 
-        ``contract`` must be one of: ``answer`` | ``confer`` | ``investigate`` |
-        ``implement`` | ``verify`` | ``execute`` | ``propagate``. Unknown values
-        are rejected before the turn is written. ``execute`` runs one
-        manifest-allowlisted tier-M tool op in seat (body needs ``tool_op:`` +
-        ``effects_expected:``). ``propagate`` requests drain-gated service
-        restart (``effects_expected:`` + propagation YAML or
-        ``scope: propagation sync_restart <service>``).
+        **Standing seat posture (FOL)**
 
-        Returns ``{thread, turn, handler_status, poll_hint}``. Poll completion
-        via ``agent_bus(tool="wait", arguments=poll_hint)`` — not a client loop.
+        ∀ clear DIRECTIVE: front-door Q1/Q2 bind silently ∧ execute — ¬ route/ack poll.
+        ∀ confer/explicit ask: advise with codebase judgment — ¬ invent front-door fork.
+        ∀ operator-only gate: terminal status:needs-attended + one recommended answer.
+        SOT: decision:operator-request-front-door.
+
+        Claude.ai: scheduling_trigger? = option; Authorize_prompt ⇒ operator_approves
+        (⊃ schedule). Expect click — ¬ bypass.
+
+        NEW_CDP_WINDOW(web-anthropic): context_reset ∨ Customize_skills_refresh ⇒
+        handoff_prompt required; continuity on SAME private request lane — ¬ second lane.
+
+        Sync: plugin_install ∧ per-slug Customize sync ∈ Auto capabilities — offer/fire,
+        ¬ defer to IDE lead. Bulk census = slow ⇒ named slugs only. IDE restart ⇒ operator.
+
+        **Contract vocabulary**
+
+        ``contract`` ∈ answer | confer | investigate | implement | verify | execute |
+        propagate | seed. Unknown ⇒ 422 before turn write. ``consult`` aliases confer.
+
+        **Expected return shape (per contract)**
+
+        | contract | CLOSEOUT carries |
+        | answer | disposition:answered + inline relay |
+        | confer | codebase-grounded recommendation |
+        | investigate | findings / nested dispatch summary |
+        | implement | file changes + AC evidence |
+        | verify | verification verdict + evidence |
+        | execute | one tier-M op raw payload (body: tool_op + effects_expected) |
+        | propagate | propagation ledger + drain-gated restart status |
+        | seed | todo slug + consult URI (if any) + /layer entry gate |
+
+        Returns ``{thread, turn, handler_status, poll_hint}``. Poll terminal status
+        via returned ``poll_hint`` — not a client loop.
 
         Author: prefer ``from_agent=``; surface autofill on ``/mcp/life`` or
         ``/mcp/code`` when omitted (``web-anthropic`` or ``cursor`` respectively).

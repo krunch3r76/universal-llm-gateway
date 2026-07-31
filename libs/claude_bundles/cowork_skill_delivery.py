@@ -18,7 +18,9 @@ operator bind 2026-07-26 — multi-skill via composer **+ → Skills → pick**)
 - Slash-type multi-chip is **retired** (a25806 — only first `/slug` binds)
 - Manual Cowork composer paste does **not** chip-bind; automation path only
 - Light-bounded architect / admit binds: judgment pair (+ consult-posture);
-  ¬ pass ``path-sim`` unless a path-sim Q/A/R cascade leg (annex packet-class)
+  ¬ ``path-sim`` in CDP ``skills=`` (enforced at ``stage_cdp_prompt_with_skills``,
+  a:27430). Cascade Q/R legs seal path-sim into the prompt URI — they do not
+  list the slug in ``skills=``. ``partition_cdp_skills`` remains channel-only.
 
 Entry points that must hit attach (not type):
 ``team_dispatch(model=cdp/…)`` staging → satellite ``run_project_ask`` /

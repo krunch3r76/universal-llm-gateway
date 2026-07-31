@@ -9,11 +9,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from implement_admission.closeout_models import EffectsManifest
-from implement_admission.spec import CloseoutStatus
+from implement_admission.closeout_models import EffectsManifest, Verification
+from implement_admission.spec import CloseoutStatus, WorkOutcome
 
 from services.git_integration_worker.cursor_sdk_capture_policy import (
     any_hard_fail_deviation,
+    deviation_caps_work_at_unverified,
     deviation_degrades_capture_status,
 )
 from services.git_integration_worker.cursor_sdk_light_bounded_capture import (
@@ -251,6 +252,63 @@ def _normalize_expected_path(raw: str) -> str:
     if " (" in path:
         path = path.split(" (", 1)[0].strip()
     return path.lstrip("/")
+
+
+_PROBEABLE_PREFIXES: tuple[str, ...] = (
+    "notes/",
+    "tasks/",
+    "docs/",
+    "libs/",
+    "services/",
+    "config/",
+    "scripts/",
+    "pipelines/",
+    "tmp/",
+)
+
+
+def is_probeable_expected_path(raw: str) -> bool:
+    """Reject malformed extraction tokens that cannot serve as I2 presence probes."""
+    path = raw.strip()
+    if not path:
+        return False
+    lower = path.lower().rstrip("/")
+    if lower in ("cortex://", "workspaces://", "cortex:", "workspaces:"):
+        return False
+    if lower.startswith("cortex://"):
+        rel = lower[len("cortex://") :].strip("/")
+        if not rel:
+            return False
+    elif lower.startswith("workspaces://"):
+        rest = lower[len("workspaces://") :].strip("/")
+        if not rest or "/" not in rest:
+            return False
+    norm = _normalize_expected_path(path)
+    if not norm:
+        return False
+    if "/" not in norm and not any(norm.startswith(prefix) for prefix in _PROBEABLE_PREFIXES):
+        return False
+    return True
+
+
+def filter_probeable_expected_paths(paths: Iterable[str]) -> tuple[str, ...]:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for raw in paths:
+        if not is_probeable_expected_path(raw):
+            continue
+        norm = _normalize_expected_path(raw)
+        if norm in seen:
+            continue
+        seen.add(norm)
+        ordered.append(raw.strip())
+    return tuple(ordered)
+
+
+def _expected_paths_all_malformed_token(rejected_paths: tuple[str, ...]) -> str:
+    """Census token when every declared expected path fails probeability filtering."""
+    preserved = ",".join(rejected_paths)
+    return f"capture:expected_paths_all_malformed:{preserved}"
 
 
 def normalize_wt_baseline(
@@ -620,18 +678,122 @@ def _repo_has_shell_entry(manifest: EffectsManifest | None) -> bool:
     return any(entry.op == "shell" for entry in section.entries)
 
 
-def degrade_status_for_capture(
-    status: CloseoutStatus,
-    capture_status: CaptureStatus | None,
+def verification_all_pass(verification: list[Verification] | None) -> bool:
+    """True when every verification row exited 0 — I2 positive probe."""
+    if not verification:
+        return False
+    return all(item.exit_code == 0 for item in verification)
+
+
+def positive_deliverable_evidence(
+    *,
+    files_offgit_produced: Iterable[str] = (),
+    artifact_paths: Iterable[str] = (),
+    light_bounded_expected_paths: Iterable[str] = (),
+    files_expected: list[str] | None = None,
+    manifest: EffectsManifest | None,
+    source_repo: Path,
+    cortex_root: Path,
+    baseline: dict[str, Any] | None = None,
+) -> bool:
+    """I2 — capture-independent positive probe for work_outcome=shipped."""
+    from services.git_integration_worker.cursor_sdk_capture_divergence import (
+        expected_deliverables_present,
+    )
+
+    probe_union: list[str] = []
+    for seq in (
+        files_offgit_produced,
+        artifact_paths,
+        light_bounded_expected_paths,
+        files_expected or [],
+    ):
+        probe_union.extend(filter_probeable_expected_paths(seq))
+    if probe_union and expected_deliverables_present(
+        probe_union,
+        manifest,
+        source_repo=source_repo,
+        cortex_root=cortex_root,
+    ):
+        return True
+    if _repo_manifest_evidence_paths(
+        manifest,
+        source_repo=source_repo,
+        baseline=baseline,
+    ):
+        return True
+    return False
+
+
+def _has_work_cap_deviation(
     divergence_reason: str | None,
+    deviations: Iterable[str] | None,
+) -> bool:
+    tokens = [divergence_reason, *(deviations or [])]
+    return any(token and deviation_caps_work_at_unverified(token) for token in tokens)
+
+
+def resolve_work_outcome(
+    *,
+    degraded_reason: str | None,
+    verification: list[Verification] | None,
+    files_offgit_produced: Iterable[str] = (),
+    artifact_paths: Iterable[str] = (),
+    light_bounded_expected_paths: Iterable[str] = (),
+    files_expected: list[str] | None = None,
+    manifest: EffectsManifest | None,
+    source_repo: Path,
+    cortex_root: Path,
+    baseline: dict[str, Any] | None = None,
+    divergence_reason: str | None = None,
+    deviations: Iterable[str] | None = None,
+    deliverables_expected: bool = False,
+) -> WorkOutcome:
+    """Grade work truth independently from capture_status (Fork A refined)."""
+    if degraded_reason and degraded_reason.startswith("run_status="):
+        return WorkOutcome.NOT_SHIPPED
+
+    if _has_work_cap_deviation(divergence_reason, deviations):
+        return WorkOutcome.UNVERIFIED
+
+    positive = positive_deliverable_evidence(
+        files_offgit_produced=files_offgit_produced,
+        artifact_paths=artifact_paths,
+        light_bounded_expected_paths=light_bounded_expected_paths,
+        files_expected=files_expected,
+        manifest=manifest,
+        source_repo=source_repo,
+        cortex_root=cortex_root,
+        baseline=baseline,
+    )
+    if verification_all_pass(verification) or positive:
+        return WorkOutcome.SHIPPED
+
+    if degraded_reason in {
+        "empty_assistant_turn",
+        "zero_tool_calls",
+        "empty_terminal_output",
+    }:
+        return WorkOutcome.NOT_SHIPPED
+    if degraded_reason and degraded_reason.startswith("pinned_deliverable_write_failed"):
+        return WorkOutcome.UNVERIFIED
+    if degraded_reason:
+        return WorkOutcome.UNVERIFIED
+    if not deliverables_expected:
+        return WorkOutcome.SHIPPED
+    return WorkOutcome.UNVERIFIED
+
+
+def project_status_from_work_outcome(
+    work_outcome: WorkOutcome,
+    degraded_reason: str | None,
 ) -> CloseoutStatus:
-    if status != CloseoutStatus.COMPLETE:
-        return status
-    if capture_status in {"partial", "unavailable"}:
-        return CloseoutStatus.PARTIAL
-    if divergence_reason and deviation_degrades_capture_status(divergence_reason):
-        return CloseoutStatus.PARTIAL
-    return status
+    """Pure status projection from work_outcome — no capture coupling."""
+    if degraded_reason and degraded_reason.startswith("run_status="):
+        return CloseoutStatus.FAILED
+    if work_outcome == WorkOutcome.SHIPPED:
+        return CloseoutStatus.COMPLETE
+    return CloseoutStatus.PARTIAL
 
 
 def resolve_closeout_capture_fields(
@@ -662,8 +824,17 @@ def resolve_closeout_capture_fields(
     )
 
     if baseline is None and light_bounded_expected_paths:
+        probeable_paths = filter_probeable_expected_paths(light_bounded_expected_paths)
+        if not probeable_paths:
+            all_malformed = _expected_paths_all_malformed_token(
+                light_bounded_expected_paths
+            )
+            deviations: list[str] = [all_malformed]
+            if deliverables_expected and manifest and _repo_has_shell_entry(manifest):
+                deviations.append("capture:shell_repo_writes_unverified")
+            return "unavailable", all_malformed, deviations, manifest
         capture_status, divergence_reason = light_bounded_capture_status(
-            light_bounded_expected_paths,
+            probeable_paths,
             source_repo=source_repo,
             cortex_root=cortex_root,
         )

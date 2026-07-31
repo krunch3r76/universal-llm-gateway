@@ -8,7 +8,7 @@ from typing import Any
 from ..consult_lane import _load_queue_row
 from ..root_ledger import RootLedgerRow, RootStatus
 from ..work_key import compute_work_key
-from ..work_key_store import harvested_for_key, list_harvested_for_root
+from ..work_key_store import harvested_for_key
 
 HEAL_REASON = "consult_work_key_harvested"
 
@@ -52,6 +52,7 @@ def _consult_work_key_candidates(
                 pickup_gid=row.pickup_gid,
                 consult_role=consult_role,
                 admission_mode="consult",
+                pickup_lane=row.pickup_lane,
             )
         )
     # Preserve order, drop dupes.
@@ -79,11 +80,9 @@ def consult_work_key_is_harvested(
     for key in _consult_work_key_candidates(row, consult_role=consult_role, facts=facts):
         if harvested_for_key(conn, key):
             return True
-
-    harvested_rows = list_harvested_for_root(conn, row.root_id)
-    if len(harvested_rows) == 1 and harvested_for_key(conn, harvested_rows[0].work_key):
-        # 6563 live falsifier: sole harvested row on root while consult queue waits.
-        return True
+    # ¬ sole-harvested-row fallback: a prior window's harvested key on this root
+    # (e.g. W1/G3) must not heal a later gid's fresh CONSULT_QUEUED (6563 G4
+    # live wedge — QUEUE→HEAL loop for ~1h).
     return False
 
 

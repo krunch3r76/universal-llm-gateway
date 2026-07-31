@@ -278,6 +278,21 @@ def _sdk_items(
                     since_ms=row.last_progress_ms,
                 )
             )
+        if row.lease_released_without_terminal:
+            items.append(
+                AttentionItem(
+                    key=f"sdk.dispatch.lease_released_without_terminal:{row.dispatch_id}",
+                    kind="sdk.dispatch.lease_released_without_terminal",
+                    severity="crit",
+                    subject=row.dispatch_id,
+                    title="Lease released without worker terminal",
+                    detail=(
+                        "Write lease released while row has no foldable worker "
+                        "terminal — GIW emit regression loud"
+                    ),
+                    since_ms=row.last_progress_ms,
+                )
+            )
         if row.terminal_ms is None:
             severity = _escalate(
                 row.idle_age_ms,

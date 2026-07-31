@@ -81,6 +81,7 @@ def sdk_rows(
                 closeout_uri=state.closeout_uri,
                 delivery_failed=state.delivery_failed,
                 implement_gate_bypass=state.implement_gate_bypass,
+                lease_released_without_terminal=state.lease_released_without_terminal,
                 last_tool_name=state.last_tool_name,
                 last_tool_status=state.last_tool_status,
                 tool_call_count=state.tool_call_count,

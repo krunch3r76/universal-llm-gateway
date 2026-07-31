@@ -19,6 +19,7 @@ from .models import (
     require_status,
     row_from_db,
 )
+from .pass_snapshot_publish import grace_s_from_predicate_args, publish_pass_snapshot
 from .predicate_eval import eval_fleet_idle_predicate, eval_trigger_terminal
 
 
@@ -221,8 +222,19 @@ def claim_due(
                     due = False
             elif predicate == PREDICATE_FLEET_IDLE:
                 try:
+                    first_read = fleet_snapshot is None
                     if fleet_snapshot is None:
                         fleet_snapshot = read_fleet_idle_memoized()
+                    if first_read:
+                        publish_pass_snapshot(
+                            fleet_snapshot,
+                            trigger_row_id=trigger_id,
+                            defer_count=int(candidate["defer_count"] or 0),
+                            grace_s=grace_s_from_predicate_args(
+                                candidate["predicate_args"]
+                            ),
+                            pass_at=now_dt,
+                        )
                     fleet_verdict = fleet_snapshot.verdict.value
                     due = eval_fleet_idle_predicate(
                         candidate["predicate_args"],

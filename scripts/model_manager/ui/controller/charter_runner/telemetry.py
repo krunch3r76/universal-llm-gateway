@@ -166,6 +166,29 @@ async def emit_consult_deferred(*, root: str, gid: str, next_retry: float) -> No
     )
 
 
+async def emit_consult_drained(
+    *,
+    root: str,
+    gid: str,
+    role: str,
+    queue_id: int,
+    prior_status: str,
+    reason: str,
+) -> None:
+    """Observation event when a consult_queue row is terminated on root close."""
+    await _emit(
+        "manage.charter.tick.consult.drained",
+        {
+            "root": root,
+            "gid": gid,
+            "role": role,
+            "queue_id": queue_id,
+            "prior_status": prior_status,
+            "reason": reason,
+        },
+    )
+
+
 async def emit_enrollment_filtered(*, root: str, reason: str) -> None:
     """Old-tick path blocked for a ledger-migrated root (P2C-AC5 observability)."""
     await _emit(
@@ -310,6 +333,7 @@ __all__ = [
     "emit_birth_completed",
     "emit_birth_step",
     "emit_consult_deferred",
+    "emit_consult_drained",
     "emit_consult_queued",
     "emit_enrollment_filtered",
     "emit_identical_work_refire_refused",

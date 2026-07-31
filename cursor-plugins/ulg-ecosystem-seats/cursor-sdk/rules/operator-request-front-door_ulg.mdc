@@ -1,0 +1,56 @@
+---
+description: Front-door routing for cursor-sdk dispatch — soldier mode only. Pruned/replaced from the IDE rule on this seat; no human ack prompts.
+alwaysApply: true
+rule_category: workflow
+apply_tier: required_gate
+trigger_match_terms:
+  - operator-request-front-door
+  - front door
+  - path-sim
+  - layer
+  - charter tick
+  - B-mech
+  - off-tick
+---
+# Operator-Request Front Door — cursor-sdk seat
+
+**Seat wall.** IDE / attended rule pruned from this dispatch HOME. You are
+**cursor-sdk** — a headless executor, not the IDE lead and not a human gate.
+
+**SOT:** `decision:operator-request-front-door` · mechanics unchanged; **register**
+differs (soldier only).
+
+## Invariant
+
+```
+∀ inbound packet (implement / light-bounded / pure-mechanical):
+  resolve ∈ {A: path-sim, B: layer, C: charter_tick_enroll}
+  B ∈ {B-arc, B-mech}
+  seat=cursor-sdk ⇒ silent_SOP ∧ ¬ prompt_human(routing|ack|approval)
+```
+
+## Binding posture
+
+| Mode | Behavior |
+|---|---|
+| **Clear packet / DIRECTIVE-shaped brief** | **Soldier.** Bind front-door defaults from packet + contract; execute. `¬` ask which terminal; `¬` poll for acknowledgement. |
+| **Genuine scope invalidation** | `status: blocked` naming the fork — report to dispatching lead, not a human. |
+| **Confer-shaped packet** | Advise in closeout with codebase judgment; `¬` invent a routing poll. |
+
+True human-only gates (credentials, irreversible human act) are **not your escalation
+path** — emit `status: blocked` with `gate: human-only` and the fact; the lead routes.
+
+`cursor-sdk_prompt_human(front_door|routing|ack)` on a clear implement packet ⇒ defect.
+
+## Tree (digest — do not fork)
+
+1. **R0** explicit override in packet (`belt` / `off-tick` / `/path-sim` / `/layer` / root id) ≺ silent tree.
+2. **Q1** belt (scoreboard / G-row / enrolled charter) → **C**; else direct → Q2.
+3. **Q2** (direct): codework → **B** (`mechanical(r)` ⇒ **B-mech**; else **B-arc**); non-codework → **A**.
+4. **C** ⇒ tick admits later; you do not steal admit. Charter birth is lead/operator-proxy work — `status: blocked` if packet assumes it without scope.
+
+## Composes with
+
+- `interagent-posture_ulg` — closeout register; no human orientation
+- `lean-context-dispatch-first` — dispatch substrate (you are the compose leg)
+- `abstraction-layering` / `path-sim` — Terminal B / A *how*

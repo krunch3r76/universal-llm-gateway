@@ -338,7 +338,7 @@ def _op_frictions(
             "execute (cursor: role=cursor-implement against spec; web: inline). "
             "DEFAULT investigate unless mechanical-only or a dense spec exists. "
             "lifecycle investigate→fix→report. friction() is log-only. "
-            "Close via friction_close (agent_skill:|workflow:|todo:|superseded|wontfix). "
+            "Close via friction_close (agent_skill:|workflow:|todo:|commit:|superseded|wontfix). "
             "Skill: .cursor/skills/friction-review/SKILL.md or consult-routing § Codified bug reports."
         )
         if resolved_intent == "summary":

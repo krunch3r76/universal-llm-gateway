@@ -96,7 +96,10 @@ def worker_substrate_compatible(executor: str | None) -> bool:
     cleaned = str(executor).strip()
     if not cleaned or cleaned.lower() == "pending":
         return True
-    return cleaned.startswith("cursor/")
+    lowered = cleaned.lower()
+    if lowered in {"cursor-sdk", "cursor"}:
+        return True
+    return lowered.startswith("cursor/")
 
 
 def tip_executor_is_explicitly_unbound(live: LivePickup | None) -> bool:
@@ -205,37 +208,57 @@ def advance_pickup_gid(
     row: RootLedgerRow,
     parsed: ParsedCheckpoint | None,
 ) -> LivePickup | None:
-    """Move ``pickup_gid`` onto the live gated row; return it when it moved.
+    """Align ledger pickup with the live gated tip; return tip when anything wrote.
 
-    Idempotent: returns None (no write) when the ledger already names the live gid
-    or when neither tip nor typed record supplies a new target. Advancing starts a
-    fresh consult cycle for the new gid — the durable consult queue is keyed
-    ``(root, gid, role)``, so carrying the previous row's attempt count and
-    backoff would charge a new pickup for the old one's retries.
+    Writes when **any** of:
+    - ``pickup_gid`` moves to the tip gid (fresh consult cycle — queue is keyed
+      ``(root, gid, role)``, so attempt/backoff reset on gid change only)
+    - tip ``executor_lane`` / ``executor=`` differ from ledger (same-gid densify →
+      implement must sync lane or Path B reuses the densify work_key — 6563 G4)
+
+    Idempotent: returns None when tip is absent or already fully aligned.
     """
     live = gated_pickup_from_parsed(parsed)
     if live is None:
         return None
-    if live.gid == row.pickup_gid:
+    gid_changed = live.gid != row.pickup_gid
+    ledger_lane = (row.pickup_lane or "").strip().lower() or None
+    tip_lane = live.lane
+    lane_changed = tip_lane is not None and tip_lane != ledger_lane
+    tip_executor = live.executor
+    ledger_executor = (row.pickup_executor or "").strip() or None
+    tip_executor_norm = (tip_executor or "").strip() or None
+    executor_changed = (
+        tip_executor_norm is not None and tip_executor_norm != ledger_executor
+    )
+    if not gid_changed and not lane_changed and not executor_changed:
         return None
     advanced = replace(
         row,
         pickup_gid=live.gid,
-        consult_role=None,
-        consult_attempts=0,
-        consult_next_retry=None,
+        pickup_lane=tip_lane if tip_lane is not None else row.pickup_lane,
+        pickup_executor=(
+            tip_executor_norm if tip_executor_norm is not None else row.pickup_executor
+        ),
+        consult_role=None if gid_changed else row.consult_role,
+        consult_attempts=0 if gid_changed else row.consult_attempts,
+        consult_next_retry=None if gid_changed else row.consult_next_retry,
         last_transition=Transition.ADVANCE_PICKUP.value,
         updated_at=time.time(),
     )
     upsert_root(conn, advanced)
     write_cortex_mirror(advanced)
-    record_advance_at(conn, row.root_id)
+    if gid_changed:
+        record_advance_at(conn, row.root_id)
     logger.info(
-        "charter-runner pickup advance root=%s %s -> %s lane=%s row=%r",
+        "charter-runner pickup advance root=%s %s -> %s lane=%s->%s executor=%s->%s row=%r",
         row.root_id,
         row.pickup_gid,
         live.gid,
-        live.lane,
+        ledger_lane,
+        advanced.pickup_lane,
+        ledger_executor,
+        advanced.pickup_executor,
         live.row[:120],
     )
     return live

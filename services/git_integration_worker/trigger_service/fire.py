@@ -15,6 +15,9 @@ from services.git_integration_worker.events import publish_lib_signal
 from services.git_integration_worker.trigger_service.act_verify import (
     verify_act_for_row,
 )
+from services.git_integration_worker.trigger_service.gate_attestation import (
+    compose_attested_prompt,
+)
 from services.git_integration_worker.trigger_service.models import TriggerRow
 from services.git_integration_worker.trigger_service.store import TriggerStore
 from services.git_integration_worker.trigger_service.story_envelope import (
@@ -46,8 +49,19 @@ def is_retryable_submit_error(exc: BaseException) -> bool:
     return False
 
 
-def lane_available(client: CdpAskClient) -> tuple[bool, str | None]:
-    """Probe cdp-ask active-work; treat hard-limit as lane-busy (retryable)."""
+def lane_available(
+    client: CdpAskClient,
+    *,
+    purpose: str | None = None,
+) -> tuple[bool, str | None]:
+    """Probe cdp-ask active-work; hard-limit or a live same-purpose session is busy.
+
+    ``active-work`` is the one surface every CDP launch path lands on — trigger
+    service, Stargate ``cdp_generate``, and the CDP model endpoint each carry a
+    different holder and their own (or no) ledger, so holder-scoped checks cannot
+    see a session started by a sibling path. Gating on ``purpose`` keeps a second
+    operator-proxy wake off an arc that already has one running.
+    """
     try:
         snap = client._request("GET", "/v1/project-ask/active-work")
     except CdpAskClientError as exc:
@@ -56,6 +70,18 @@ def lane_available(client: CdpAskClient) -> tuple[bool, str | None]:
         raise
     if snap.get("at_hard_limit"):
         return False, "cdp lane at hard limit"
+    if purpose:
+        live = [
+            row
+            for row in snap.get("rows") or []
+            if str(row.get("purpose") or "") == purpose
+            and str(row.get("status") or "") not in _TERMINAL_STATUSES
+        ]
+        if live:
+            holders = ",".join(sorted({str(r.get("holder") or "?") for r in live}))
+            return False, (
+                f"lane busy: {len(live)} live {purpose} session(s) held by {holders}"
+            )
     return True, None
 
 
@@ -71,10 +97,8 @@ def _emit_bare(signal: str, **payload: Any) -> None:
 def submit_fire(row: TriggerRow, *, client: CdpAskClient | None = None) -> str:
     """POST operator-proxy execution; returns execution_id. Raises on failure."""
     http = client or CdpAskClient()
-    ok, reason = lane_available(http)
-    if not ok:
-        raise CdpAskClientError(reason or "lane busy", status_code=503)
     body = SubmitProjectAskRequest(
+        prompt_text=compose_attested_prompt(row),
         prompt_uri=row.prompt_uri,
         holder=_HOLDER,
         purpose=row.purpose,
@@ -106,6 +130,25 @@ def fire_once(
         arc=row.arc,
         fire_at=row.fire_at,
     )
+    ok, reason = lane_available(client or CdpAskClient(), purpose=row.purpose)
+    if not ok:
+        # Backstop for rows without a fleet_idle predicate. A busy lane is a
+        # not-yet, not a failed submit — revert without consuming an attempt so
+        # a long-running session cannot exhaust max_attempts on a recurring row.
+        reverted = store.mark_submit_retry(
+            row.id,
+            error=reason or "lane busy",
+            attempts=row.attempts,
+            max_attempts=row.max_attempts,
+        )
+        _emit(
+            "giw.trigger.lane_busy",
+            reverted,
+            reason=reason,
+            attempt=row.attempts,
+        )
+        return reverted
+
     attempts = row.attempts + 1
     try:
         execution_id = submit_fire(row, client=client)

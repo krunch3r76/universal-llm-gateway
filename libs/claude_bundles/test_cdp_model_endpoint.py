@@ -112,21 +112,68 @@ def test_stage_cdp_prompt_omitted_skills_still_gets_judgment_pair(
     assert staged.staged is True
 
 
-def test_stage_cdp_prompt_with_skills_inlines_code_mcp(
+def test_stage_cdp_prompt_with_skills_rejects_path_sim(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """a:27430 — path-sim on CDP skills= fails closed; judgment pair still stages."""
+    from claude_bundles.cdp_model_endpoint_staging import (
+        ensure_cdp_judgment_skills,
+        reject_cdp_skills_path_sim,
+    )
+
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    with pytest.raises(CdpStagingError) as excinfo:
+        stage_cdp_prompt_with_skills(
+            execution_id="exec-skills-path-sim",
+            prompt_text="## architect bind\n",
+            skills=["path-sim", "reasoning-posture", "frontier-reasoning-discipline"],
+        )
+    assert excinfo.value.code == "cdp_skills_path_sim_rejected"
+    assert "path-sim" in excinfo.value.reason
+
+    # Same reject when path-sim is the only caller skill (pair would have been merged).
+    with pytest.raises(CdpStagingError) as excinfo2:
+        reject_cdp_skills_path_sim(["path-sim"])
+    assert excinfo2.value.code == "cdp_skills_path_sim_rejected"
+
+    # Judgment pair alone still stages (codework / architect default).
+    staged = stage_cdp_prompt_with_skills(
+        execution_id="exec-skills-pair-ok",
+        prompt_text="## architect bind\n",
+        skills=["reasoning-posture", "frontier-reasoning-discipline"],
+    )
+    on_disk = (
+        tmp_path / "notes/system/ephemeral/cdp-endpoint/exec-skills-pair-ok/prompt.md"
+    )
+    text = on_disk.read_text(encoding="utf-8")
+    assert text.startswith(
+        "/reasoning-posture\n/frontier-reasoning-discipline\n"
+    )
+    assert "path-sim" not in text
+    assert "## architect bind" in text
+    assert staged.staged is True
+    assert ensure_cdp_judgment_skills(["consult-posture"]) == [
+        "reasoning-posture",
+        "frontier-reasoning-discipline",
+        "consult-posture",
+    ]
+
+
+def test_stage_cdp_prompt_with_skills_inlines_cursor_only(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
     staged = stage_cdp_prompt_with_skills(
         execution_id="exec-skills-mixed",
         prompt_text="## Task\n",
-        skills=["path-sim", "reasoning-posture"],
+        skills=["investigation-economy", "reasoning-posture"],
     )
     on_disk = tmp_path / "notes/system/ephemeral/cdp-endpoint/exec-skills-mixed/prompt.md"
     text = on_disk.read_text(encoding="utf-8")
     assert text.startswith(
         "/frontier-reasoning-discipline\n/reasoning-posture\n"
     )
-    assert '<skill slug="path-sim"' in text
+    assert '<skill slug="investigation-economy"' in text
     assert "## Task" in text
     assert staged.prompt_uri.endswith("exec-skills-mixed/prompt.md")
 

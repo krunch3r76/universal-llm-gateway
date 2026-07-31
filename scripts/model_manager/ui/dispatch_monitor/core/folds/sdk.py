@@ -104,6 +104,7 @@ class SdkFold:
         table[signals.SDK_LEASE_PARK_RESTORE] = self._on_park_restore
         table[signals.SDK_CLOSEOUT_RELOCATED] = self._on_closeout_relocated
         table[signals.SDK_CLOSEOUT_RECONCILED] = self._on_closeout_reconciled
+        table[signals.SDK_CLOSEOUT_RELAYED] = self._on_closeout_relayed
         table[signals.SDK_REVIEW_CHILD_SPAWNED] = (
             lambda record: on_review_child_spawned(self, record)
         )
@@ -432,6 +433,11 @@ class SdkFold:
         if payload := record.payload:
             if payload.get("source_repo") and row.source_repo is None:
                 row.source_repo = str(payload["source_repo"])
+        if (
+            row.terminal_ms is None
+            and row.state != "parked_waiting"
+        ):
+            row.lease_released_without_terminal = True
 
     def _on_park_enter(self, record: EventRecord) -> None:
         """Parent yields lease to nested child — parent → ``parked_waiting`` (v3 §5)."""
@@ -481,6 +487,17 @@ class SdkFold:
         path = record.payload.get("verifying_path")
         if path and row.closeout_uri is None:
             row.closeout_uri = str(path)
+
+    def _on_closeout_relayed(self, record: EventRecord) -> None:
+        """Record relayed closeout receipt — identity + URI, never terminalize (v3 §5)."""
+        row = self._state(record)
+        if row is None:
+            return
+        payload = record.payload
+        if row.closeout_uri is None:
+            uri = payload.get("receipt_path") or payload.get("uri")
+            if uri:
+                row.closeout_uri = str(uri)
 
     def _bind_lifecycle_terminal(
         self,

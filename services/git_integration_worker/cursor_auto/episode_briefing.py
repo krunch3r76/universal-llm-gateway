@@ -11,9 +11,9 @@ from transport_utils import DEFAULT_AGENT_BUS_URL, make_async_client
 _FROM_AUTO = "cursor-auto"
 _ADMIT_SUBJECT_PREFIX = "status:admitted"
 _TURN_FETCH_LIMIT = 200
-_MAX_BRIEFING_LINES = 26
+_MAX_BRIEFING_LINES = 12
 # Codebase-maintenance contracts — denser hello stanza; other contracts stay soft.
-_CODE_WORK_CONTRACTS = frozenset({"implement", "investigate", "verify"})
+_CODE_WORK_CONTRACTS = frozenset({"implement", "investigate", "verify", "seed"})
 
 
 def is_first_episode_admit(turns: list[dict[str, Any]]) -> bool:
@@ -32,52 +32,38 @@ def build_briefing_block(
     live_deltas: str | None = None,
     contract: str | None = None,
 ) -> str:
-    """Build ``TYPE: BRIEFING`` — dual register: soldier on DIRECTIVE, confer when asked.
+    """Build ``TYPE: BRIEFING`` — per-episode admit content only.
 
-    Clear instruction (DIRECTIVE / implement-shaped): bind front-door Q1/Q2
-    silently and execute — ¬ prompt Kaywan for routing or ack.
-
-    When the operator (CDP Opus or human) seeks input before deciding
-    (``contract=confer`` / explicit ask): Auto MAY advise — life/Kaywan cannot
-    replace cursor's codebase knowledge. Confer ≠ invent a front-door fork ask.
+    Standing seat posture (front-door register, CDP window, sync authority)
+    lives in the ``cursor_request`` tool descriptor — read before authoring.
 
     When ``contract`` ∈ implement|investigate|verify, append the codebase-work
-    stanza naming ``abstraction-layering`` (highest open layer). Path-sim stays
-    the charter-tick lane. Skill slug only — headless nested seats cannot resolve
-    ``/layer`` commands.
+    stanza naming ``abstraction-layering`` (highest open layer). When
+    ``contract=seed``, append the seed-path stanza naming
+    ``work-item-seed-path``. Path-sim stays the charter-tick lane.
     """
     deltas = live_deltas if live_deltas else "live_deltas: (none this episode)"
     lines = [
         "TYPE: BRIEFING",
         "cursor-auto lane — first request this episode.",
         "",
-        "Clear DIRECTIVE/implement → soldier: silent front-door bind + execute;",
-        "¬ ask Kaywan which path. Confer/explicit ask → advise with codebase judgment",
-        "(life/Kaywan cannot replace it). ¬ invent front-door polls.",
-        "SOT: decision:operator-request-front-door. Operator-only → needs-attended.",
-        "",
-        "Claude.ai: scheduling triggers = option; Authorize prompt → Kaywan ALWAYS",
-        "approves (⊃ schedule). Expect click, ¬ work around. SOT: trigger-auth-gate.",
-        "",
-        "NEW CDP WINDOW (web-anthropic may request): reset context and/or pick up",
-        "uploaded Customize skills / refreshed life MCP. Require handoff_prompt for",
-        "continuity. Auto opens team_dispatch(cdp/opus-5, purpose=operator-proxy,",
-        "dispatch_thread_id=<SAME private lane>, prompt|sidecar=handoff). ¬ mint a",
-        "second private request thread.",
-        "",
-        "Sync is yours: plugin install + per-slug claude.ai Customize sync are",
-        "cursor-auto capabilities — offer or fire them, ¬ report them as IDE-lead",
-        "residual. Bulk census sync is slow: named slugs only. Only IDE restart is Kaywan's.",
-        "",
         deltas,
     ]
     raw = (contract or "").strip().lower()
-    if raw in _CODE_WORK_CONTRACTS:
+    if raw in _CODE_WORK_CONTRACTS and raw != "seed":
         lines.extend(
             [
                 "",
                 f"Codework ({raw}): abstraction-layering at highest open layer;",
                 "tick mint+enroll enrolled root — ¬ tip improvise. AC on CLOSEOUT.",
+            ]
+        )
+    elif raw == "seed":
+        lines.extend(
+            [
+                "",
+                "Seed: work-item-seed-path S1→S6; Mode B ⇒ same-turn consult admit",
+                "or named halt. CLOSEOUT: slug + consult URI + entry gate.",
             ]
         )
     elif raw == "confer":

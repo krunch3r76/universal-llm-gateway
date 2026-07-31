@@ -1948,7 +1948,7 @@ tools:
   flat_call_shape:
     tool: agent_bus_request
     substrate_qualified: user-vortex__agent_bus_request
-  fol_descriptor: "∀ args: (new_slug ∈ args XOR thread ∈ args) ∧ to='cursor' ∧ subject ∧ body\n  ⟹ TurnSendCreated-shaped + handler_status ∈ {auto-admit-armed, no-auto-handler} + poll_hint.\nInjects lane:cursor-auto (dedupe). Arm predicate = live Auto handler heartbeat — ¬ turn-write alone (F1).\nDegrade keeps lane:cursor-auto; ¬ dual-tag lane:life-to-code.\ndesired_model/desired_effort/contract/require_attended? are structured hints; Auto reports requested vs actual.\ncontract ∈ answer|confer|investigate|implement|verify|execute|propagate; execute=one tier-M op; propagate=operator restart (ledger+drain-gated sync_restart).\nrequire_attended=true (wire or DIRECTIVE body OR) ⇒ terminal status:needs-attended reason=operator_require_attended.\nLife-callable (mcp_claude). Mutating.\n"
+  fol_descriptor: "∀ args: (new_slug ∈ args XOR thread ∈ args) ∧ to='cursor' ∧ subject ∧ body\n  ⟹ TurnSendCreated-shaped + handler_status ∈ {auto-admit-armed, no-auto-handler} + poll_hint.\nInjects lane:cursor-auto (dedupe). Arm predicate = live Auto handler heartbeat — ¬ turn-write alone (F1).\nDegrade keeps lane:cursor-auto; ¬ dual-tag lane:life-to-code.\ndesired_model/desired_effort/contract/require_attended? are structured hints; Auto reports requested vs actual.\ncontract ∈ answer|confer|investigate|implement|verify|execute|propagate|seed; execute=one tier-M op; propagate=operator restart (ledger+drain-gated sync_restart); seed=closable work item (architecture may be open).\nrequire_attended=true (wire or DIRECTIVE body OR) ⇒ terminal status:needs-attended reason=operator_require_attended.\nLife-callable (mcp_claude). Mutating.\n"
   json_schema:
     type: object
     properties:
@@ -1988,7 +1988,7 @@ tools:
         description: low | medium | high | max (default medium).
       contract:
         type: string
-        description: answer | confer | investigate | implement | verify | execute | propagate (default answer).
+        description: answer | confer | investigate | implement | verify | execute | propagate | seed (default answer).
       require_attended:
         type: boolean
         description: When true, refuse unattended nested dispatch and in-seat Auto substitute; terminal status:needs-attended with reason=operator_require_attended. ORs with DIRECTIVE body require_attended or executor_bind attended.
@@ -2018,7 +2018,7 @@ tools:
   flat_call_shape:
     tool: cursor_request
     substrate_qualified: user-vortex__cursor_request
-  fol_descriptor: "∀ args: (new_slug ∈ args XOR thread ∈ args) ∧ subject ∧ body\n  ⟹ TurnSendCreated-shaped + handler_status ∈ {auto-admit-armed, no-auto-handler} + poll_hint.\nDedicated narrow registration of agent_bus request — recipient to=cursor fixed; ¬ exposed as caller param.\nInjects lane:cursor-auto (dedupe). Arm predicate = live Auto handler heartbeat.\ncontract ∈ answer|confer|investigate|implement|verify|execute|propagate. Mutating. Life+code callable.\n"
+  fol_descriptor: "∀ args: (new_slug ∈ args XOR thread ∈ args) ∧ subject ∧ body\n  ⟹ TurnSendCreated-shaped + handler_status ∈ {auto-admit-armed, no-auto-handler} + poll_hint.\nDedicated narrow registration of agent_bus request — recipient to=cursor fixed; ¬ exposed as caller param.\nInjects lane:cursor-auto (dedupe). Arm predicate = live Auto handler heartbeat.\ncontract ∈ answer|confer|investigate|implement|verify|execute|propagate|seed. Mutating. Life+code callable.\n"
   json_schema:
     type: object
     properties:
@@ -2054,7 +2054,7 @@ tools:
         description: low | medium | high | max (default medium).
       contract:
         type: string
-        description: answer | confer | investigate | implement | verify | execute | propagate (default answer).
+        description: answer | confer | investigate | implement | verify | execute | propagate | seed (default answer).
       require_attended:
         type: boolean
         description: When true, refuse unattended nested dispatch and in-seat Auto substitute; terminal status:needs-attended with reason=operator_require_attended.
@@ -4507,11 +4507,18 @@ tools:
     tool: notify
     substrate_qualified: user-vortex__notify
   fol_descriptor: "Attention pager — server-side proxy to email-bridge /pager/notify.\n\
-    Fields: subject (≤120), body (≤300), tag (≤40), ref (turn or cortex:// URI — mandatory\n\
-    from caller; missing ref degrades to (unreferenced)). Server stamps from_agent +\n\
-    timestamp. Honors PAGER_NOTIFY_ENABLED=0. Delivery identity stays in email-bridge\n\
-    config — never in agent prose. Cowork operator seat only; agent_skill:pager-notify\n\
-    is cursor_only and not executable here.\n"
+    ref (turn or cortex:// URI) is caller-mandatory; missing ref degrades to (unreferenced).\n\
+    Server stamps from_agent + timestamp. Honors PAGER_NOTIFY_ENABLED=0. Delivery identity\n\
+    stays in email-bridge config — never in agent prose. Cowork operator seat only;\n\
+    agent_skill:pager-notify is cursor_only and not executable here.\n\
+    AUDIENCE — human register binds on this path (and only paths like it): the reader is\n\
+    the human operator, so write human register here even when the session is\n\
+    agent-operated (web automation ⇏ agent audience — the path decides, not the session).\n\
+    Layman prose, so-what first; ¬ slugs / thread ids / code refs / interagent closeout\n\
+    shape (status:, paths, evidence). Subject COME TO IDE = interrupt (problem, options\n\
+    exhausted); any other subject is awareness and ¬ implies he must open Cursor.\n\
+    Inverse binds: ¬ human register on bus turns, packets, or bodies addressed to model\n\
+    seats. See agent_skill:pager-notify (when-to-page classes).\n"
   json_schema:
     type: object
     properties:

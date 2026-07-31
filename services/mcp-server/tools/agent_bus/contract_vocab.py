@@ -24,6 +24,7 @@ CANONICAL_CONTRACTS: tuple[str, ...] = (
     "verify",
     "execute",
     "propagate",
+    "seed",
 )
 DEPRECATED_CONTRACT_ALIASES: dict[str, str] = {"consult": "confer"}
 DEFAULT_CONTRACT = "answer"

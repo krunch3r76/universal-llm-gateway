@@ -7,7 +7,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from implement_admission.propagation_row import PropagationRow
-from implement_admission.spec import CloseoutStatus
+from implement_admission.spec import CloseoutStatus, WorkOutcome
 
 CoverageStatus = Literal["complete", "partial", "unavailable"]
 
@@ -71,6 +71,7 @@ class AdapterResult(BaseModel):
 class ImplementCloseout(BaseModel):
     schema_version: Literal[1] = 1
     status: CloseoutStatus
+    work_outcome: WorkOutcome | None = None
     summary: str
     deviations: list[str] = Field(default_factory=list)
     files_created: list[str] = Field(default_factory=list)

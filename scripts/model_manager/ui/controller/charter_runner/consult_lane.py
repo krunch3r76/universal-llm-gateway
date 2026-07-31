@@ -159,6 +159,7 @@ def _stamp_consult_work_key_env(
         pickup_gid=row.pickup_gid,
         consult_role=consult_role,
         admission_mode="consult",
+        pickup_lane=row.pickup_lane,
     )
     facts["consult_work_key"] = work_key
     if source_ref:

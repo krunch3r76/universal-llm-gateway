@@ -25,6 +25,7 @@ from .models import (
 from .predicate_eval import validate_predicate_schedule
 from .store_claim import claim_due as _claim_due
 from .store_claim import expire_due as _expire_due
+from .store_revoke import revoke_trigger as _revoke_trigger
 from .story_envelope import elect_trigger_story_envelope
 
 
@@ -250,6 +251,11 @@ class TriggerStore:
                 "SELECT * FROM triggers WHERE id = ?", (trigger_id,)
             ).fetchone()
         return row_from_db(row) if row else None
+
+    def revoke(self, trigger_id: str) -> TriggerRow:
+        """Stop future fires for a recurring row (including in-flight episodes)."""
+        with self._connect() as conn:
+            return _revoke_trigger(conn, trigger_id)
 
     def cancel(self, trigger_id: str) -> TriggerRow:
         row = self.get(trigger_id)

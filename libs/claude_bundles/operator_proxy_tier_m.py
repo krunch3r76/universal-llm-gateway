@@ -55,7 +55,7 @@ implement ask MAY ship wire `contract=answer` (or omit it) while the body carrie
 contract from the body and **every** ULG-side gate still runs — admit scope,
 `vision:`, relay-trust, `auth_gate_budget`, `require_attended`. Valid wire
 contracts: `answer`, `confer`, `investigate`, `implement`, `verify`, `execute`,
-`propagate`.
+`propagate`, `seed`.
 `consult` is not a wire contract (aliases to `confer` with a deprecation note
 today; unknown contracts are rejected 422 before the turn is written)."""
 

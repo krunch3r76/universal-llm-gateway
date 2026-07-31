@@ -43,6 +43,12 @@ def test_execute_contract_passes_through() -> None:
     assert intake.contract == "execute"
 
 
+def test_seed_contract_passes_through() -> None:
+    intake = normalize_wire_contract("seed")
+    assert intake.error is None
+    assert intake.contract == "seed"
+
+
 def test_unknown_contract_fails_loud() -> None:
     intake = normalize_wire_contract("tool-op")
     assert intake.error is not None

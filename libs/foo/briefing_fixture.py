@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 BRIEFING_HEADER = "TYPE: BRIEFING"
-MAX_BRIEFING_LINES = 26
+MAX_BRIEFING_LINES = 12
 
 FROM_AUTO = "cursor-auto"
 ADMIT_SUBJECT_PREFIX = "status:admitted"
@@ -17,16 +17,11 @@ ADMIT_SUBJECT_PRIOR = f"{ADMIT_SUBJECT_PREFIX} — prior"
 BASE_ADMIT_BODY = "Auto admitted lane:cursor-auto request."
 MINI_BRIEFING_SAMPLE = f"{BRIEFING_HEADER}\nops offer"
 
-CODE_WORK_CONTRACTS = frozenset({"implement", "investigate", "verify"})
+CODE_WORK_CONTRACTS = frozenset({"implement", "investigate", "verify", "seed"})
 
 BRIEFING_REQUIRED_SUBSTRINGS = (
     "cursor-auto lane",
-    "front-door bind",
-    "needs-attended",
     "live_deltas",
-    "NEW CDP WINDOW",
-    "handoff_prompt",
-    "SAME private lane",
 )
 
 BRIEFING_FORBIDDEN_SUBSTRINGS = (
@@ -35,6 +30,9 @@ BRIEFING_FORBIDDEN_SUBSTRINGS = (
     "Codebase work",
     "you lack",
     "don't have",
+    "front-door bind",
+    "NEW CDP WINDOW",
+    "SAME private lane",
 )
 
 TURNS_NO_PRIOR_ADMITS: list[dict[str, Any]] = [

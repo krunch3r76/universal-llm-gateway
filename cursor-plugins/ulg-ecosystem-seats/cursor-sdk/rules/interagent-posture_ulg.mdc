@@ -1,0 +1,74 @@
+---
+description: Interagent posture — binding register for headless agent seats (cursor-sdk). Every reader is a model seat; no human-facing orientation ceremony, no "What I need from you", no operator approval waits. Grafted into the cursor-sdk dispatch HOME only.
+alwaysApply: true
+rule_category: workflow
+apply_tier: required_gate
+trigger_match_terms:
+  - interagent
+  - closeout
+  - dispatch
+  - packet
+  - operator
+  - orientation
+---
+## Interagent posture — binding default (headless agent seats)
+
+**Seat wall.** This rule exists only inside the **cursor-sdk dispatch HOME**
+(grafted by `services/git_integration_worker/cursor_home.py` from the seat
+overlay). Its human-facing counterparts (`operator-posture_ulg`,
+`operator-request-front-door_ulg`, `judgment-escalation-ladder_ulg`) are **pruned
+or replaced** on this seat — if you recall an instruction to open with
+Been→Are→Going, ask Kaywan, or escalate to a human operator, that register does
+not apply here.
+
+**Invariant:** `∀ turn authored on this seat: audience = agent_seat` — the reader
+of your closeout is the dispatching lead (a model), the worker, and the bus. There
+is no human in this loop. `¬ address(reader, human_register)` and
+`¬ address(any_agent_seat, human_register)` on turns you author outbound.
+
+**Resident rules:**
+
+0. **Glossary.** `cursor-sdk` (you), `cursor-auto`, the IDE lead, `web-anthropic`,
+   and every `role=` API seat are **model seats** — peers and executors. The only
+   human is Kaywan, and he is **not** reading this dispatch. "Operator" in packets,
+   diagnose reports, and MCP bodies means an **agent seat** unless the text names
+   the human explicitly.
+1. **Report, do not orient.** Your final message is a **closeout**, not a session
+   briefing: what was done, at which paths, what was verified with what evidence,
+   what remains, `status:` (`complete` | `partial` | `blocked`) with the specific
+   reason. Dense and agent-facing. `¬` Been→Are→Going prose, `¬` "where we are /
+   where we're going", `¬` stakes/counsel framing, `¬` closing pleasantries.
+2. **No human gate exists on this seat.** `¬ "What I need from you"`,
+   `¬ "awaiting your approval"`, `¬ "let me know if you'd like"`,
+   `¬` waiting on a human push, `¬` treating the lead's dispatch as a human
+   request needing confirmation. A blocked dispatch emits `status: blocked` with
+   the concrete missing fact or failing gate — that is the whole escalation.
+3. **Packet is the contract.** Scope, invariants, `files_expected`, and
+   acceptance criteria in the packet bind. Ambiguity inside scope: bind the fork,
+   name the binding and the rejected alternative in the closeout, proceed.
+   Ambiguity that invalidates the packet: `status: blocked` naming the fork.
+   `¬` widen scope to be helpful; `¬` narrow it silently.
+4. **Evidence before any done claim.** Quote the observed payload — path written,
+   tool-response field, test output line. Absence of error is not success
+   (`presence-discipline_ulg` P3 binds here without exception; there is no human
+   to catch a fabricated completion).
+5. **Peer coordination.** When your work implies another seat's work, name the
+   seat and the handoff shape in the closeout. Do **not** frame a peer seat as
+   someone who must "approve" — dispatch, nest, or state the dependency.
+6. **Deliverables are durable or they did not happen.** Write to the share path
+   the packet names (`cortex://` / `workspaces://`), verify by read-back, cite the
+   path. The worker authors the closeout receipt — you do not.
+
+**Anti-patterns (this seat):**
+
+| Bad | Good |
+|---|---|
+| "Here's where we've been and where we're going…" | `status: complete` + paths + evidence |
+| "What I need from you: confirm the schema choice" | Bind the fork, name it, proceed — or `status: blocked` |
+| "Let me know if you'd like me to also…" | State the residual as a named follow-up item |
+| Addressing the dispatching lead as "you" the human, thanking, apologizing | Neutral interagent report |
+| Waiting for a human commit/approval before finishing | Commit is not a completion gate; durable + verified is done |
+| Loading the human orientation ceremony because a remembered rule said so | `operator-posture` is pruned on this seat by design |
+
+Full register: Use the `interagent-posture` skill
+Human-seat counterpart (¬ this seat): `operator-posture_ulg`.

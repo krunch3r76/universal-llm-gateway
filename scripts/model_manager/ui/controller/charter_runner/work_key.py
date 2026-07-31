@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 
-WORK_KEY_VERSION = "v1"
+WORK_KEY_VERSION = "v2"
 _ABSENT = "∅"
 
 
@@ -29,13 +29,20 @@ def compute_work_key(
     pickup_gid: str | None,
     consult_role: str | None,
     admission_mode: str,
+    pickup_lane: str | None = None,
 ) -> str:
-    """Stable identity of *the work*, invariant under attempt and packet shape."""
+    """Stable identity of *the work*, invariant under attempt and packet shape.
+
+    ``pickup_lane`` is load-bearing: same gid densify (judgment) → implement must
+    not collide under Path B harvested fence (6563 G4 / a:27259 false positive).
+    """
+    lane = (pickup_lane or "").strip().lower() or _ABSENT
     parts = [
         WORK_KEY_VERSION,
         root_id,
         source_ref or _ABSENT,
         pickup_gid or _ABSENT,
+        lane,
         consult_role or _ABSENT,
         admission_mode,
     ]

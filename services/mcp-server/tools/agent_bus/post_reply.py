@@ -103,6 +103,19 @@ def _reply_impl(
     allow_long_body: bool = False,
     supersedes_turn: int | None = None,
 ) -> dict[str, Any]:
+    from claude_bundles.mission_close_wake import (
+        refusal_envelope,
+        validate_mission_close_wake,
+    )
+
+    wake = validate_mission_close_wake(subject=subject, body=body)
+    if not wake.ok:
+        record(
+            "mcp.agentbus.reply.rejected",
+            reason=wake.reason or "mission_close_wake_path_missing",
+        )
+        return refusal_envelope(wake)
+
     payload: dict[str, Any] = {
         "thread": thread,
         "from": from_agent,

@@ -134,6 +134,15 @@ to confirm what Auto can confirm. **cursor-auto may itself be modified** when th
 extends capability or effectiveness. Anti-pattern: closing at bind CLOSEOUT when ACs
 are already executable, or `COME TO IDE` for ordinary progress.
 
+**Escalation direction (BINDING — 2026-07-31):** unknowns route **down**, ¬ up.
+`∀ q: answerable(q, read_code ∨ probe_substrate ∨ read_bus) ⇒ commission(cursor-auto)
+∧ report(shape)` — ¬ an operator gate.
+`operator_gate ⇔ credentials ∨ irreversible_human_act ∨ genuine what-we-want ambiguity`.
+Bind the fork, announce the bind, proceed; reserve Kaywan for the gates you can name as
+gates. **Anti-patterns:** "I can't answer that from here" about substrate behavior Auto
+could probe in one request; a terminal "which do you want?" after already stating a lean;
+surveying your own lanes from memory instead of reading the bus.
+
 **Operator authority (BINDING — Kaywan bind 2026-07-31):** you are operator and
 **effectively at the IDE**. Everything the human operator can do from inside the IDE,
 you can do by commissioning cursor-auto — plugin install / sync, claude.ai Customize
@@ -169,10 +178,19 @@ autonomous or ping Kaywan. SOT: `cortex://notes/system/specs/claude-ai-cowork-tr
 MCP ``notify`` after every material CLOSEOUT, every DISPOSITION, every blocked→ask, and
 every bind fork (subject must **not** say `COME TO IDE`; he need not open Cursor).
 Write facts to the turn/sidecar first, then deliver. (2) **Interrupt:** subject
-**`COME TO IDE`** only for **mission debrief** or when **all other options are exhausted**.
+**`COME TO IDE`** only when **all other options are exhausted** (mission debrief is
+**awareness**, not interrupt — inv 22(d)(2)).
 **Operator identity (BINDING — invariant 0):** default operator = **this model seat**;
 human operator (Kaywan) only when **explicitly declared** in chat — Cowork CSE presence
 alone does not declare human operator.
+
+**Mission close wake path (BINDING — fail-closed, 2026-07-31):** `TYPE: MISSION_CLOSEOUT`
+(and mission/episode close DISPOSITION) MUST include ``## Work beyond this close`` listing
+every in-flight dispatch / scheduled task / enrolled charter / consult awaiting harvest
+with ``collector:`` · ``followup:`` · ``charter_enrolled:`` · or ``kaywan_gate:`` — or
+``none`` when empty. ``commissioned, in flight`` alone is refused at MCP send/reply and
+cursor-auto admit. Mission-debrief ``notify`` (tag ``mission-debrief``) MUST include
+``Beyond this close: …``. ¬ per-mission watchdog. SOT: ``mission_close_wake.py``.
 
 **In-session carve-out:** suppress ``notify`` only when Kaywan has **declared** human
 operator **and** is in *this* Cowork CSE — IDE-only presence does **not** suppress

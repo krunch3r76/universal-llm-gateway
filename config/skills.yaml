@@ -331,6 +331,8 @@ skills:
     # cursor_only — human/IDE operator-facing register. Demoted from shared_sync
     # so CDP/Cowork seats cannot chip or Customize-load it (interagent MCP
     # bodies must not inherit Been→Are→Going / "What I need from you").
+    # Also pruned from the cursor-sdk dispatch HOME by cursor_seat_overlay.py;
+    # that seat gets the interagent-posture overlay skill instead.
     surface_class: cursor_only
     mcp_surface_required: none
   operator-proxy-substrate:

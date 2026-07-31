@@ -22,6 +22,7 @@ from scripts.model_manager import observation_event as events
 
 from . import bus_client
 from .admission import ENROLLMENT_TAG, Decision
+from .consult_drain import drain_consult_queue_for_root
 from .root_ledger import (
     RootStatus,
     Transition,
@@ -113,13 +114,13 @@ async def _thread_already_closed(root_id: str) -> bool:
     return status == "closed"
 
 
-def _apply_state_close_ledger(root_id: str, *, reason: str) -> None:
+def _apply_state_close_ledger(root_id: str, *, reason: str) -> list:
     """Mark ledger row CLOSED after successful bus state-close (idempotent)."""
     conn = open_default_ledger()
     try:
         row = load_root(conn, root_id)
         if row is None or row.status == RootStatus.CLOSED:
-            return
+            return []
         closed_row = replace(
             row,
             status=RootStatus.CLOSED,
@@ -134,9 +135,28 @@ def _apply_state_close_ledger(root_id: str, *, reason: str) -> None:
         )
         upsert_root(conn, closed_row)
         write_cortex_mirror(closed_row)
+        return drain_consult_queue_for_root(
+            conn,
+            root_id,
+            reason=f"root_close:{reason}",
+        )
     finally:
         with contextlib.suppress(Exception):
             conn.close()
+
+
+async def _emit_consult_drained_rows(drained_rows: list, *, reason: str) -> None:
+    from .telemetry import emit_consult_drained
+
+    for row in drained_rows:
+        await emit_consult_drained(
+            root=row.root_id,
+            gid=row.gid,
+            role=row.consult_role,
+            queue_id=row.queue_id,
+            prior_status=row.prior_status,
+            reason=reason,
+        )
 
 
 async def maybe_state_close_root(
@@ -217,7 +237,12 @@ async def maybe_state_close_root(
                 "charter-runner unenroll failed for root %s", decision.root_id
             )
         try:
-            _apply_state_close_ledger(decision.root_id, reason=reason)
+            drained_rows = _apply_state_close_ledger(decision.root_id, reason=reason)
+            if drained_rows:
+                await _emit_consult_drained_rows(
+                    drained_rows,
+                    reason=f"root_close:{reason}",
+                )
         except Exception:  # noqa: BLE001 — bus close succeeded; ledger best-effort
             logger.exception(
                 "charter-runner ledger state-close failed for root %s",

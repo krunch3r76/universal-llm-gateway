@@ -21,6 +21,7 @@ from services.git_integration_worker.trigger_service.fleet_idle import (
 )
 from services.git_integration_worker.trigger_service.models import (
     PREDICATE_FLEET_IDLE,
+    STATUS_FIRED,
     STATUS_FIRING,
     STATUS_SCHEDULED,
     TriggerStoreError,
@@ -231,6 +232,37 @@ def test_cancel_stops_recurrence(store: TriggerStore) -> None:
     cancelled = store.cancel(row.id)
     assert cancelled.status == "cancelled"
     assert store.claim_due(now=now + timedelta(hours=2)) is None
+
+
+def test_revoke_clears_recurrence_on_fired_row(store: TriggerStore) -> None:
+    """Revoke stops re-arm after terminal reconcile when status is already fired."""
+    now = datetime.now(UTC)
+    row = _schedule_idle(
+        store,
+        fire_at=now - timedelta(minutes=1),
+        recur_every_s=1800,
+    )
+    idle = FleetIdleSnapshot(
+        verdict=FleetVerdict.IDLE,
+        dispatch_idle=True,
+        tick_empty=True,
+        cursor_auto_idle=True,
+    )
+    reader = _StaticFleetReader(idle)
+    with patch(
+        "services.git_integration_worker.trigger_service.store_claim.read_fleet_idle_memoized",
+        side_effect=lambda _reader=None: read_fleet_idle_memoized(reader),
+    ):
+        begin_idle_pass()
+        claimed = store.claim_due(now=now)
+    assert claimed is not None
+    fired = store.mark_fired(row.id, execution_id="exec-revoke-test")
+    revoked = store.revoke(fired.id)
+    assert revoked.recur_every_s is None
+    assert revoked.status == STATUS_FIRED
+
+    store.mark_reconciled(row.id, terminal_status="completed")
+    assert store.rearm_recurring(row.id, terminal_at=datetime.now(UTC)) is None
 
 
 def test_fleet_idle_schedule_without_expires(store: TriggerStore) -> None:

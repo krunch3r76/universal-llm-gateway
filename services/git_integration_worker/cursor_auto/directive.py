@@ -154,8 +154,8 @@ _EFFECTS_EXPECTED_RE = re.compile(r"(?im)^effects_expected:\s*\S+")
 _PROPAGATION_SCOPE_RE = re.compile(r"(?im)^scope:\s*propagation\b")
 _PROPAGATION_HEADING_RE = re.compile(r"(?im)^##\s+propagation(?:\s*\([^)]*\))?\s*$")
 _VISION_FIELD_RE = re.compile(r"^vision\s*:", re.MULTILINE | re.IGNORECASE)
-NESTED_SCOPE_CONTRACTS = frozenset({"implement", "investigate", "verify"})
-VISION_REQUIRED_CONTRACTS = frozenset({"implement", "investigate"})
+NESTED_SCOPE_CONTRACTS = frozenset({"implement", "investigate", "verify", "seed"})
+VISION_REQUIRED_CONTRACTS = frozenset({"implement", "investigate", "seed"})
 
 
 def has_actionable_scope(body: str) -> bool:

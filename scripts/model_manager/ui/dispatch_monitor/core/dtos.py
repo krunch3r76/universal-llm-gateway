@@ -161,6 +161,7 @@ class SdkDispatchRow:
     closeout_uri: str | None = None
     delivery_failed: bool = False
     implement_gate_bypass: bool = False
+    lease_released_without_terminal: bool = False
     last_tool_name: str | None = None
     last_tool_status: str | None = None
     tool_call_count: int | None = None

@@ -178,6 +178,25 @@ def test_stage_inputs_inlines_non_claude_skills(tmp_path, monkeypatch) -> None:
     assert "BODY" in text
 
 
+def test_stage_inputs_rejects_path_sim_skills(tmp_path, monkeypatch) -> None:
+    """a:27430 — CDP staging rejects path-sim; maps to skills field 422 upstream."""
+    from claude_bundles import cdp_model_endpoint_staging as staging
+    from claude_bundles.cdp_model_endpoint_staging import CdpStagingError
+
+    from systems.frontier_consult.cdp_generate import _stage_inputs
+
+    monkeypatch.setattr(staging, "cortex_files_root", lambda: tmp_path)
+    with pytest.raises(CdpStagingError) as excinfo:
+        _stage_inputs(
+            execution_id="exec-skills-path-sim-reject",
+            prompt="BODY\n",
+            sidecar_ref=None,
+            packet_path=None,
+            skills=["path-sim", "reasoning-posture"],
+        )
+    assert excinfo.value.code == "cdp_skills_path_sim_rejected"
+
+
 def test_stage_inputs_inlines_code_mcp_skills_with_claude_slash(
     tmp_path, monkeypatch
 ) -> None:
@@ -191,7 +210,7 @@ def test_stage_inputs_inlines_code_mcp_skills_with_claude_slash(
         prompt="BODY\n",
         sidecar_ref=None,
         packet_path=None,
-        skills=["path-sim", "reasoning-posture"],
+        skills=["investigation-economy", "reasoning-posture"],
     )
     prompt_path = (
         tmp_path / "notes/system/ephemeral/cdp-endpoint/exec-skills-mixed/prompt.md"
@@ -200,12 +219,8 @@ def test_stage_inputs_inlines_code_mcp_skills_with_claude_slash(
     assert text.startswith(
         "/frontier-reasoning-discipline\n/reasoning-posture\n"
     )
-    assert "/path-sim" not in text.split("<skills_inline>", 1)[0]
-    assert '<skill slug="path-sim"' in text
-    assert "truncated CDP inline excerpt for path-sim" in text
-    # Sealed excerpt, not full SKILL.md (~18k).
-    inline_block = text.split("<skills_inline>", 1)[1].split("</skills_inline>", 1)[0]
-    assert len(inline_block) < 12000
+    assert "/investigation-economy" not in text.split("<skills_inline>", 1)[0]
+    assert '<skill slug="investigation-economy"' in text
     assert "BODY" in text
     assert staged.staged is True
 

@@ -35,6 +35,7 @@ from services.git_integration_worker.cursor_auto.execute_events import (
 )
 from services.git_integration_worker.cursor_auto.fix_hints import (
     EMPTY_SCOPE_FIX_HINT,
+    MISSION_CLOSE_WAKE_FIX_HINT,
     PROPAGATE_MISSING_FIX_HINT,
     VISION_MISSING_FIX_HINT,
 )
@@ -68,6 +69,27 @@ async def blocking_admit_gate(
 
     ``None`` means all gates passed and the caller may continue to nest.
     """
+    from claude_bundles.mission_close_wake import validate_mission_close_wake
+
+    wake = validate_mission_close_wake(subject=job.subject or "", body=job.body or "")
+    if not wake.ok:
+        summary = (
+            "Mission close refused — outstanding work has no named wake path "
+            f"({wake.reason or 'mission_close_wake_path_missing'})."
+        )
+        return await _blocked(
+            job,
+            client=client,
+            queue=queue,
+            summary=summary,
+            payload={
+                "summary": summary,
+                "reason": wake.reason or "mission_close_wake_path_missing",
+                "missed_tokens": list(wake.missed_tokens),
+                "fix_hint": MISSION_CLOSE_WAKE_FIX_HINT,
+            },
+        )
+
     contract = (job.contract or "answer").strip().lower()
     if contract == EXECUTE_CONTRACT:
         admission = admit_execute_body(job.body)

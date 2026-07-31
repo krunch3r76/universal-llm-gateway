@@ -472,6 +472,7 @@ async def apply_kernel_tick_for_root(
                 pickup_gid=row.pickup_gid,
                 consult_role=consult_role,
                 admission_mode=admit_mode,
+                pickup_lane=row.pickup_lane,
             )
             refire = await evaluate_identical_work_refire(
                 conn,

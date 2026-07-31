@@ -101,18 +101,25 @@ def _propagation_defers(state: RootLedgerRow, env: EnvFacts) -> bool:
 
 
 def _explicit_cursor_worker(executor: str | None) -> bool:
-    """True only for an explicit ``cursor/*`` executor (not None/pending/empty).
+    """True for an explicit cursor worker seat/model (not None/pending/empty).
 
     Distinct from ``worker_substrate_compatible``: that helper treats
     None/pending as open-for-worker. Policy B needs a positive cursor bind so
     autonomous judgment without an executor still QUEUE_CONSULT.
+
+    Accepts ``cursor/*`` model slugs and the seat token ``cursor-sdk`` (footer
+    authors often stamp the seat name; requiring only ``cursor/`` stranded
+    6563 G4 in QUEUE_CONSULT for an hour).
     """
     if executor is None:
         return False
     cleaned = str(executor).strip()
     if not cleaned or cleaned.lower() == "pending":
         return False
-    return cleaned.startswith("cursor/")
+    lowered = cleaned.lower()
+    if lowered in {"cursor-sdk", "cursor"}:
+        return True
+    return lowered.startswith("cursor/")
 
 
 def _step_done(parsed: ParsedCheckpoint, gate_id: str) -> bool:

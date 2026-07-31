@@ -678,6 +678,153 @@ def test_implement_source_ref_unresolved_opens_row_and_attention() -> None:
     )
 
 
+def test_closeout_relayed_is_handled_and_stamps_row() -> None:
+    """closeout.relayed must not flood unhandled_signals; stamps closeout_uri + identity."""
+    model = Model()
+    dispatch_id = "exec-relay-closeout"
+    model.apply(
+        Event(
+            signals.SDK_WORKER_DISPATCHED,
+            1_000,
+            {"dispatch_id": dispatch_id, "execution_id": dispatch_id},
+        )
+    )
+    model.apply(
+        Event(
+            signals.SDK_CLOSEOUT_RELAYED,
+            2_000,
+            {
+                "dispatch_id": dispatch_id,
+                "execution_id": dispatch_id,
+                "thread_id": "6592",
+                "closeout_status": "complete",
+                "receipt_path": "workspaces://universal-llm-gateway/tmp/reviews/closeouts/abc.md",
+                "asked_by": "cursor-auto",
+                "purpose": "operator-proxy",
+                "story_id": "6563-w3",
+            },
+        )
+    )
+    frame = model.derive(3_000)
+    assert frame.health.unhandled_signals == {}
+    row = _row(frame.sdk, "dispatch_id", dispatch_id)
+    assert row.closeout_uri == (
+        "workspaces://universal-llm-gateway/tmp/reviews/closeouts/abc.md"
+    )
+    assert row.asked_by == "cursor-auto"
+    assert row.purpose == "operator-proxy"
+    assert row.story_id == "6563-w3"
+    assert row.terminal_ms is None
+
+
+def test_lease_released_after_worker_terminal_does_not_raise_attention() -> None:
+    """Happy path: terminal then lease.released — no lease-without-terminal flag."""
+    model = Model()
+    dispatch_id = "exec-terminal-then-lease"
+    model.apply(
+        Event(
+            signals.SDK_WORKER_DISPATCHED,
+            1_000,
+            {"dispatch_id": dispatch_id, "execution_id": dispatch_id},
+        )
+    )
+    model.apply(
+        Event(
+            signals.SDK_WORKER_FAILED,
+            2_000,
+            {
+                "dispatch_id": dispatch_id,
+                "execution_id": dispatch_id,
+                "status": "failed",
+                "failure_reason": "worker error",
+            },
+        )
+    )
+    model.apply(
+        Event(
+            signals.SDK_LEASE_RELEASED,
+            3_000,
+            {"dispatch_id": dispatch_id, "source_repo": "universal-llm-gateway"},
+        )
+    )
+    frame = model.derive(4_000)
+    row = _row(frame.sdk, "dispatch_id", dispatch_id)
+    assert row.state != "running"
+    assert row.terminal_ms is not None
+    assert row.lease_released_without_terminal is False
+    assert not any(
+        i.kind == "sdk.dispatch.lease_released_without_terminal"
+        for i in frame.attention
+    )
+
+
+def test_lease_released_without_terminal_raises_crit_attention() -> None:
+    """Zombie path: lease.released with no worker terminal — flag + attention, no infer."""
+    model = Model()
+    dispatch_id = "exec-lease-no-terminal"
+    model.apply(
+        Event(
+            signals.SDK_WORKER_DISPATCHED,
+            1_000,
+            {"dispatch_id": dispatch_id, "execution_id": dispatch_id},
+        )
+    )
+    model.apply(
+        Event(
+            signals.SDK_LEASE_RELEASED,
+            2_000,
+            {"dispatch_id": dispatch_id, "source_repo": "universal-llm-gateway"},
+        )
+    )
+    frame = model.derive(3_000)
+    assert frame.health.unhandled_signals == {}
+    row = _row(frame.sdk, "dispatch_id", dispatch_id)
+    assert row.lease_released_without_terminal is True
+    assert row.terminal_ms is None
+    assert row.state != "completed"
+    assert row.state != "failed"
+    assert any(
+        i.kind == "sdk.dispatch.lease_released_without_terminal"
+        and i.severity == "crit"
+        for i in frame.attention
+    )
+
+
+def test_lease_released_during_park_does_not_raise_attention() -> None:
+    """Intentional nest park: parked_waiting parent must not get lease-without-terminal."""
+    model = Model()
+    parent_id = "exec-park-parent-lease"
+    model.apply(
+        Event(
+            signals.SDK_WORKER_DISPATCHED,
+            1_000,
+            {"dispatch_id": parent_id, "execution_id": parent_id},
+        )
+    )
+    model.apply(
+        Event(
+            signals.SDK_LEASE_PARK_ENTER,
+            2_000,
+            {"parent_id": parent_id, "child_id": "exec-park-child"},
+        )
+    )
+    model.apply(
+        Event(
+            signals.SDK_LEASE_RELEASED,
+            3_000,
+            {"dispatch_id": parent_id, "source_repo": "universal-llm-gateway"},
+        )
+    )
+    frame = model.derive(4_000)
+    row = _row(frame.sdk, "dispatch_id", parent_id)
+    assert row.state == "parked_waiting"
+    assert row.lease_released_without_terminal is False
+    assert not any(
+        i.kind == "sdk.dispatch.lease_released_without_terminal"
+        for i in frame.attention
+    )
+
+
 def test_shadow_diff_does_not_mint_unknown_root_rows() -> None:
     """shadow.diff is high-volume Phase-1 noise — swallow without creating ACTIVE unknowns."""
     model = Model()

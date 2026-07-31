@@ -152,6 +152,89 @@ def test_consult_work_key_is_harvested_ledger_evidenced(ledger) -> None:
 
 
 @pytest.mark.offline
+def test_prior_window_harvest_does_not_heal_later_gid(ledger) -> None:
+    """6563 G4 live wedge: W1 harvested key must not heal a fresh G4 queue."""
+    row = seed_from_confirm(
+        conn=ledger,
+        confirm=SeedConfirm(
+            root_id="6563",
+            pickup_gid="G3",
+            pickup_lane="judgment",
+            attendance="autonomous",
+            scoreboard_uri="cortex://notes/system/threads/6563-charter-scoreboard.md",
+        ),
+    )
+    role = "judgment_gap"
+    w1_key = compute_work_key(
+        root_id="6563",
+        source_ref="todo:6563-w1",
+        pickup_gid="G3",
+        consult_role=role,
+        admission_mode="consult",
+    )
+    window_id = window_id_for("6563", 1)
+    record_admit(
+        ledger,
+        work_key=w1_key,
+        root_id="6563",
+        window_id=window_id,
+        dispatch_id="dispatch-w1",
+        thread_id="6565",
+    )
+    stamp_disposition(
+        ledger,
+        work_key=w1_key,
+        window_id=window_id,
+        disposition="harvested",
+    )
+
+    g4 = replace(
+        load_root(ledger, "6563") or row,
+        status=RootStatus.CONSULT_QUEUED,
+        pickup_gid="G4",
+        consult_role=role,
+        env_facts_json=(
+            '{"consult_work_key":"g4-fresh-key","consult_source_ref":'
+            '"todo:sdk-zombie-missing-worker-terminal"}'
+        ),
+    )
+    upsert_root(ledger, g4)
+    enqueue_consult(
+        ledger,
+        row=g4,
+        consult_role=role,
+        source_ref="todo:sdk-zombie-missing-worker-terminal",
+    )
+    queued = load_root(ledger, "6563")
+    assert queued is not None
+    assert queued.status == RootStatus.CONSULT_QUEUED
+    assert consult_work_key_is_harvested(ledger, queued, role) is False
+
+
+@pytest.mark.offline
+def test_decide_policy_b_accepts_cursor_sdk_seat_token() -> None:
+    transition = decide(
+        RootLedgerRow(
+            root_id="6563",
+            status=RootStatus.IDLE,
+            pickup_gid="G4",
+            pickup_lane="judgment",
+            pickup_executor=None,
+            attendance="autonomous",
+            scoreboard_uri="cortex://notes/system/threads/6563-charter-scoreboard.md",
+        ),
+        EnvFacts(
+            substrate_up=True,
+            has_wip=False,
+            attendance="autonomous",
+            tip_executor="cursor-sdk",
+        ),
+        _open_caps(),
+    )
+    assert transition == Transition.ADMIT_WORKER
+
+
+@pytest.mark.offline
 @pytest.mark.asyncio
 async def test_emit_tick_transition_stamps_running_code_version(
     monkeypatch: pytest.MonkeyPatch,

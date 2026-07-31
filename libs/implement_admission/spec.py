@@ -51,6 +51,12 @@ class CloseoutStatus(StrEnum):
     GATED = "gated"
 
 
+class WorkOutcome(StrEnum):
+    SHIPPED = "shipped"
+    NOT_SHIPPED = "not_shipped"
+    UNVERIFIED = "unverified"
+
+
 class SourceVersion(BaseModel):
     content_hash: str | None = None
     packet_sha256: str | None = None

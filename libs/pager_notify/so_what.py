@@ -11,7 +11,7 @@ import re
 SMS_SUBJECT_MAX = 120
 # Transport ceiling for email-bridge /pager/notify (life notify + Fi SMS).
 # Machine composers (tick/closeout) still write short; CDP awareness may use the full budget.
-SMS_BODY_MAX = 2000
+SMS_BODY_MAX = 4000
 
 _SO_WHAT_FIELD_RE = re.compile(
     r"(?im)^(?:so_what|ulg_gain)\s*:\s*(.+)$",

@@ -83,6 +83,7 @@ SDK_LEASE_PARK_ENTER = "frontier.sdk.worker.lease.park_enter"
 SDK_LEASE_PARK_RESTORE = "frontier.sdk.worker.lease.park_restore"
 SDK_CLOSEOUT_RELOCATED = "frontier.sdk.closeout.relocated"
 SDK_CLOSEOUT_RECONCILED = "frontier.sdk.closeout.reconciled"
+SDK_CLOSEOUT_RELAYED = "frontier.sdk.closeout.relayed"
 SDK_WORKER_DISPATCHED = "frontier.sdk.worker.dispatched"
 SDK_REVIEW_CHILD_SPAWNED = "frontier.sdk.review_child.spawned"
 SDK_IMPLEMENT_SOURCE_REF_UNRESOLVED = "frontier.sdk.implement.source_ref_unresolved"
@@ -141,6 +142,7 @@ SDK_LIFECYCLE_SIGNALS = (
     SDK_LEASE_PARK_RESTORE,
     SDK_CLOSEOUT_RELOCATED,
     SDK_CLOSEOUT_RECONCILED,
+    SDK_CLOSEOUT_RELAYED,
     SDK_WORKER_DISPATCHED,
     SDK_REVIEW_CHILD_SPAWNED,
     SDK_IMPLEMENT_SOURCE_REF_UNRESOLVED,

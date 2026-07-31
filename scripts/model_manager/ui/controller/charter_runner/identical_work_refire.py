@@ -117,7 +117,8 @@ async def evaluate_identical_work_refire(
     """Return ``refused=True`` when a live or harvested same-key holder blocks admit.
 
     Path B (6486): a prior ``disposition='harvested'`` row fences re-admit of the
-    same work_key; advance ``pickup_gid`` (new key) to unblock.
+    same work_key; advance ``pickup_gid`` **or** ``pickup_lane`` (new key) to
+    unblock — densify→implement on the same G-row must not share a key (6563).
     """
     if transition not in _ADMIT_TRANSITIONS:
         return RefireGateOutcome(refused=False)
@@ -130,6 +131,7 @@ async def evaluate_identical_work_refire(
         pickup_gid=row.pickup_gid,
         consult_role=consult_role,
         admission_mode=mode,
+        pickup_lane=row.pickup_lane,
     )
 
     async def _emit(

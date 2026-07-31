@@ -26,7 +26,7 @@ from implement_admission.propagation_row import (
     land_paths_for_propagation,
     resolve_code_ref,
 )
-from implement_admission.spec import CloseoutStatus, ImplementSpec
+from implement_admission.spec import CloseoutStatus, ImplementSpec, WorkOutcome
 from universal_logging import get_logger
 
 from services.git_integration_worker.cursor_auto.closeout_relay_cortex_uri import (
@@ -42,12 +42,13 @@ from services.git_integration_worker.cursor_sdk_capture_status import (
     ChangeSet,
     attribution_effects_paths,
     baseline_dirty_in_expected,
-    degrade_status_for_capture,
     filter_manifest_swamp,
     gitignored_manifest_paths,
     normalize_wt_baseline,
     partition_gitignored_from_change_set,
+    project_status_from_work_outcome,
     resolve_closeout_capture_fields,
+    resolve_work_outcome,
 )
 from services.git_integration_worker.cursor_sdk_deliverables import (
     artifact_paths_for_closeout,
@@ -672,6 +673,8 @@ def finalize_closeout_body(
         "summary": payload["summary"],
         "source_ref": payload["source_ref"],
     }
+    if payload.get("work_outcome") is not None:
+        reduced["work_outcome"] = payload["work_outcome"]
     if payload.get("capture_status") is not None:
         reduced["capture_status"] = payload["capture_status"]
     if payload.get("evidence_uris"):
@@ -735,6 +738,8 @@ def finalize_closeout_body(
         "summary": str(payload["summary"])[:200],
         "evidence_uris": payload.get("evidence_uris"),
     }
+    if payload.get("work_outcome") is not None:
+        minimal["work_outcome"] = payload["work_outcome"]
     if residue:
         minimal["propagation_residue"] = list(residue[:_CLOSEOUT_FILE_HEAD])
     if body_relocated is not None:
@@ -784,6 +789,13 @@ def build_implement_closeout_body(
     extra_markdown_sources: list[str] | None = None,
     closeout_head: str | None = None,
     files_ambient_repo_movement: list[AmbientRepoMovement] | None = None,
+    work_outcome: WorkOutcome | None = None,
+    source_repo: Path | None = None,
+    cortex_root: Path | None = None,
+    light_bounded_expected_paths: tuple[str, ...] = (),
+    files_expected: list[str] | None = None,
+    baseline: dict[str, Any] | None = None,
+    deliverables_expected: bool = False,
 ) -> str:
     """Build a compact, valid ImplementCloseout JSON turn body.
 
@@ -810,9 +822,35 @@ def build_implement_closeout_body(
             f"({offgit_deliverable_uris[0]})"
         )
     status = _map_closeout_status(degraded_reason)
-    if verification and any(v.exit_code for v in verification):
+    artifact_paths = artifact_paths_for_closeout(
+        sidecar_ref,
+        cortex_artifact_paths or [],
+        cortex_first=cortex_first,
+        offgit_deliverable_uris=offgit_deliverable_uris or [],
+    )
+    resolved_work_outcome = work_outcome
+    if resolved_work_outcome is None and source_repo is not None and cortex_root is not None:
+        resolved_work_outcome = resolve_work_outcome(
+            degraded_reason=degraded_reason,
+            verification=verification,
+            files_offgit_produced=offgit_deliverable_uris or [],
+            artifact_paths=artifact_paths,
+            light_bounded_expected_paths=light_bounded_expected_paths,
+            files_expected=files_expected,
+            manifest=effects_manifest or outcome.effects_manifest,
+            source_repo=source_repo,
+            cortex_root=cortex_root,
+            baseline=baseline,
+            divergence_reason=divergence_reason,
+            deviations=deviations,
+            deliverables_expected=deliverables_expected,
+        )
+    elif resolved_work_outcome is None and verification and any(v.exit_code for v in verification):
         status = CloseoutStatus.PARTIAL
-    status = degrade_status_for_capture(status, capture_status, divergence_reason)
+    if resolved_work_outcome is not None:
+        status = project_status_from_work_outcome(resolved_work_outcome, degraded_reason)
+    elif verification and any(v.exit_code for v in verification):
+        status = CloseoutStatus.PARTIAL
     manifest_source = effects_manifest or outcome.effects_manifest
     manifest_payload = serialize_effects_manifest_for_body(
         manifest_source,
@@ -854,6 +892,7 @@ def build_implement_closeout_body(
     ) -> str:
         closeout = ImplementCloseout(
             status=status,
+            work_outcome=resolved_work_outcome,
             summary=summary,
             source_ref=work_item_ref or sidecar_ref,
             files_created=list(repo_files.created),
@@ -867,12 +906,7 @@ def build_implement_closeout_body(
             deviations=deviations or [],
             verification=verification or [],
             evidence_uris=EvidenceUris(
-                artifact_paths=artifact_paths_for_closeout(
-                    sidecar_ref,
-                    cortex_artifact_paths or [],
-                    cortex_first=cortex_first,
-                    offgit_deliverable_uris=offgit_deliverable_uris or [],
-                ),
+                artifact_paths=artifact_paths,
                 bus_threads=[thread_id],
                 dispatch_ids=[dispatch_id],
                 cortex_assertions=cortex_assertions,
@@ -1258,6 +1292,12 @@ def _assemble_closeout_delivery(
         ),
         closeout_head=closeout_head,
         files_ambient_repo_movement=ambient_movements,
+        source_repo=source_repo,
+        cortex_root=cortex_files_root(),
+        light_bounded_expected_paths=light_bounded_expected_paths,
+        files_expected=files_expected,
+        baseline=baseline,
+        deliverables_expected=deliverables_expected,
     )
     if sidecar_appendix:
         appendix = "\n\n## effects_manifest\n\n" + "\n".join(sidecar_appendix)

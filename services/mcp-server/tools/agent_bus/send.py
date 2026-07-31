@@ -206,6 +206,19 @@ def _send_dispatch(
             "reason": "supersedes_turn_not_valid_on_new_thread",
         }
 
+    from claude_bundles.mission_close_wake import (
+        refusal_envelope,
+        validate_mission_close_wake,
+    )
+
+    wake = validate_mission_close_wake(subject=subject, body=body)
+    if not wake.ok:
+        record(
+            "mcp.agentbus.send.rejected",
+            reason=wake.reason or "mission_close_wake_path_missing",
+        )
+        return refusal_envelope(wake)
+
     return _send_impl(
         new_slug=new_slug,
         thread=thread,

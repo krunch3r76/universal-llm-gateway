@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 from typing import Any
 
@@ -17,7 +18,32 @@ logger = get_logger("cortex-api.dispatch_ops.assertions")
 _RESOLUTION_KIND_EXACT = frozenset({"superseded", "wontfix"})
 # arc 3924: rule:/skill: join agent_skill: as valid resolution kinds after the
 # rules/skills corpus migration (workflow: retained for pre-migration back-compat).
-_RESOLUTION_KIND_PREFIXES = ("agent_skill:", "rule:", "skill:", "workflow:", "todo:")
+_RESOLUTION_KIND_PREFIXES = ("agent_skill:", "rule:", "skill:", "workflow:", "todo:", "commit:")
+_COMMIT_SHA_RE = re.compile(r"^[0-9a-fA-F]{7,40}$")
+
+_RESOLUTION_KIND_CATALOG: tuple[tuple[str, str], ...] = (
+    ("agent_skill:{slug}", "closed by adopting or updating an agent skill"),
+    ("rule:{slug}", "closed by adopting or updating a rule"),
+    ("skill:{slug}", "closed by adopting or updating a skill"),
+    ("workflow:{slug}", "closed by adopting or updating a workflow"),
+    ("todo:{slug}", "promote friction into a recon-pending todo"),
+    ("commit:{sha}", "closed by code fix landed at git commit"),
+    ("superseded", "superseded by a newer assertion or friction"),
+    ("wontfix", "acknowledged; will not fix"),
+)
+
+
+def format_resolution_kind_catalog() -> str:
+    """Semicolon-separated resolution_kind forms with brief effect labels."""
+    return "; ".join(f"{form} ({effect})" for form, effect in _RESOLUTION_KIND_CATALOG)
+
+
+def format_resolution_kind_unknown_reason(resolution_kind: str) -> str:
+    """Self-describing rejection for an invalid ``resolution_kind``."""
+    return (
+        f"resolution_kind is {resolution_kind!r} — accepted values: "
+        f"{format_resolution_kind_catalog()}."
+    )
 
 
 def validate_resolution_kind(resolution_kind: str) -> str | None:
@@ -25,13 +51,18 @@ def validate_resolution_kind(resolution_kind: str) -> str | None:
     if resolution_kind in _RESOLUTION_KIND_EXACT:
         return None
     for prefix in _RESOLUTION_KIND_PREFIXES:
-        if resolution_kind.startswith(prefix) and len(resolution_kind) > len(prefix):
-            return None
-    return (
-        f"Invalid resolution_kind={resolution_kind!r}. Must be one of: "
-        "agent_skill:{slug}, rule:{slug}, skill:{slug}, workflow:{slug}, "
-        "todo:{slug}, superseded, wontfix"
-    )
+        if not resolution_kind.startswith(prefix):
+            continue
+        slug = resolution_kind[len(prefix) :]
+        if not slug:
+            return format_resolution_kind_unknown_reason(resolution_kind)
+        if prefix == "commit:" and not _COMMIT_SHA_RE.match(slug):
+            return (
+                f"resolution_kind {resolution_kind!r}: commit slug must be a git SHA "
+                f"(7–40 hex chars) — accepted values: {format_resolution_kind_catalog()}."
+            )
+        return None
+    return format_resolution_kind_unknown_reason(resolution_kind)
 
 
 def _promote_friction_to_todo(
