@@ -1,0 +1,141 @@
+"""Falsifier: the cursor-sdk dispatch HOME must not carry the human operator register.
+
+`operator-posture` teaches a seat to address a human reader (Been→Are→Going
+orientation, "What I need from you"). No human reads a headless dispatch, so the
+per-dispatch HOME prunes it and grafts `interagent-posture` from the seat overlay.
+These tests assert the swap actually took effect — a silent no-op would leave the
+seat addressing its dispatching lead, a model, as a person.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from services.git_integration_worker.cursor_seat_overlay import (
+    ECOSYSTEM_PLUGIN_RELPATH,
+    PRUNE_ONLY_PLUGIN_PATHS,
+    PRUNED_PLUGIN_PATHS,
+    SeatOverlayConfigError,
+    apply_cursor_sdk_seat_overlay,
+    seat_overlay_root,
+)
+
+
+def _fake_dispatch_cursor_dir(tmp_path: Path) -> Path:
+    """A dispatch HOME `.cursor` seeded like a plugin copy of the operator's tree."""
+    plugin_root = tmp_path / ".cursor" / ECOSYSTEM_PLUGIN_RELPATH
+    (plugin_root / "rules").mkdir(parents=True)
+    (plugin_root / "skills" / "operator-posture").mkdir(parents=True)
+    (plugin_root / "rules" / "operator-posture_ulg.mdc").write_text(
+        "What I need from you\n", encoding="utf-8"
+    )
+    (plugin_root / "skills" / "operator-posture" / "SKILL.md").write_text(
+        "human register\n", encoding="utf-8"
+    )
+    for name, body in (
+        ("operator-request-front-door_ulg.mdc", "ask Kaywan\n"),
+        ("judgment-escalation-ladder_ulg.mdc", "consult human operator\n"),
+        ("cdp-operator-proxy_ulg.mdc", "Kaywan explicitly declares\n"),
+    ):
+        (plugin_root / "rules" / name).write_text(body, encoding="utf-8")
+    (plugin_root / "rules" / "presence-discipline_ulg.mdc").write_text(
+        "unrelated\n", encoding="utf-8"
+    )
+    return tmp_path / ".cursor"
+
+
+def _fake_overlay(tmp_path: Path) -> Path:
+    root = tmp_path / "overlay"
+    (root / "rules").mkdir(parents=True)
+    (root / "skills" / "interagent-posture").mkdir(parents=True)
+    (root / "rules" / "interagent-posture_ulg.mdc").write_text(
+        "audience = agent_seat\n", encoding="utf-8"
+    )
+    (root / "skills" / "interagent-posture" / "SKILL.md").write_text(
+        "closeout register\n", encoding="utf-8"
+    )
+    (root / "rules" / "operator-request-front-door_ulg.mdc").write_text(
+        "seat=cursor-sdk soldier\n", encoding="utf-8"
+    )
+    (root / "rules" / "judgment-escalation-ladder_ulg.mdc").write_text(
+        "status: blocked ESCALATE\n", encoding="utf-8"
+    )
+    return root
+
+
+def test_human_register_pruned_and_interagent_grafted(tmp_path: Path) -> None:
+    cursor_dir = _fake_dispatch_cursor_dir(tmp_path)
+    pruned, grafted = apply_cursor_sdk_seat_overlay(
+        cursor_dir, overlay_root=_fake_overlay(tmp_path)
+    )
+
+    plugin_root = cursor_dir / ECOSYSTEM_PLUGIN_RELPATH
+    for relpath in PRUNE_ONLY_PLUGIN_PATHS:
+        assert not (plugin_root / relpath).exists()
+    assert set(pruned) == set(PRUNED_PLUGIN_PATHS)
+
+    assert (plugin_root / "rules" / "interagent-posture_ulg.mdc").is_file()
+    assert (plugin_root / "skills" / "interagent-posture" / "SKILL.md").is_file()
+    assert Path("rules") / "interagent-posture_ulg.mdc" in grafted
+
+    # IDE human-framing rules replaced with SDK seat variants (or absent when prune-only).
+    assert "soldier" in (
+        plugin_root / "rules" / "operator-request-front-door_ulg.mdc"
+    ).read_text(encoding="utf-8")
+    assert "ESCALATE" in (
+        plugin_root / "rules" / "judgment-escalation-ladder_ulg.mdc"
+    ).read_text(encoding="utf-8")
+    assert not (plugin_root / "rules" / "cdp-operator-proxy_ulg.mdc").exists()
+
+    # Unrelated plugin rules keep IDE parity.
+    assert (plugin_root / "rules" / "presence-discipline_ulg.mdc").is_file()
+
+
+def test_idempotent_when_already_applied(tmp_path: Path) -> None:
+    cursor_dir = _fake_dispatch_cursor_dir(tmp_path)
+    overlay = _fake_overlay(tmp_path)
+    apply_cursor_sdk_seat_overlay(cursor_dir, overlay_root=overlay)
+    pruned, grafted = apply_cursor_sdk_seat_overlay(cursor_dir, overlay_root=overlay)
+
+    # Prune-only paths stay gone; replaced rules may be delete+regraft on re-apply.
+    plugin_root = cursor_dir / ECOSYSTEM_PLUGIN_RELPATH
+    for relpath in PRUNE_ONLY_PLUGIN_PATHS:
+        assert not (plugin_root / relpath).exists()
+    assert grafted
+    assert "soldier" in (
+        plugin_root / "rules" / "operator-request-front-door_ulg.mdc"
+    ).read_text(encoding="utf-8")
+
+
+def test_missing_overlay_fails_closed(tmp_path: Path) -> None:
+    cursor_dir = _fake_dispatch_cursor_dir(tmp_path)
+    with pytest.raises(SeatOverlayConfigError, match="overlay root absent"):
+        apply_cursor_sdk_seat_overlay(cursor_dir, overlay_root=tmp_path / "nope")
+
+
+def test_missing_plugin_copy_fails_closed(tmp_path: Path) -> None:
+    bare = tmp_path / ".cursor"
+    bare.mkdir()
+    with pytest.raises(SeatOverlayConfigError, match="ecosystem plugin absent"):
+        apply_cursor_sdk_seat_overlay(bare, overlay_root=_fake_overlay(tmp_path))
+
+
+def test_repo_overlay_sot_is_present_and_named() -> None:
+    """The real overlay SoT ships the interagent rule + skill this design depends on."""
+    root = seat_overlay_root()
+    assert (root / "rules" / "interagent-posture_ulg.mdc").is_file(), root
+    assert (root / "skills" / "interagent-posture" / "SKILL.md").is_file(), root
+    body = (root / "skills" / "interagent-posture" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    assert "agent_seat" in body
+    assert (root / "rules" / "operator-request-front-door_ulg.mdc").is_file()
+    assert (root / "rules" / "judgment-escalation-ladder_ulg.mdc").is_file()
+    ladder = (root / "rules" / "judgment-escalation-ladder_ulg.mdc").read_text(
+        encoding="utf-8"
+    )
+    assert "status: blocked" in ladder
+    assert "ESCALATE" in ladder
+    assert "Cowork Ask" not in ladder

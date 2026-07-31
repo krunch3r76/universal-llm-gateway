@@ -1,0 +1,63 @@
+# docker-compose.yml - Federation Testing
+# Runs two Gateway containers with Unix socket connections
+# Master Stargate (localhost) and Remote Stargate (jupiter) run on host
+
+services:
+  # Local Gateway - connects to Master Stargate via Unix socket
+  gateway-local:
+    build:
+      context: ..
+      dockerfile: federation-test/Dockerfile.gateway
+    container_name: federation-gateway-local
+    hostname: gateway-local
+    volumes:
+      # Unix socket directory (shared with host)
+      - ./sockets/local:/sockets
+      # Model directory (if using local models)
+      - ${HOME}/llm-models:/models:ro
+      # Logs
+      - ./logs/local:/tmp/logs/universal-llm-gateway
+    environment:
+      - GATEWAY_UNIX_SOCKET=/sockets/gateway.sock
+      - GATEWAY_ID=localhost/gateway
+      - LOG_LEVEL=debug
+    healthcheck:
+      test: ["CMD", "test", "-S", "/sockets/gateway.sock"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    networks:
+      - federation-test
+
+  # Jupiter Gateway - connects to Remote Stargate via Unix socket
+  gateway-jupiter:
+    build:
+      context: ..
+      dockerfile: federation-test/Dockerfile.gateway
+    container_name: federation-gateway-jupiter
+    hostname: gateway-jupiter
+    volumes:
+      # Unix socket directory (shared with host)
+      - ./sockets/jupiter:/sockets
+      # Model directory (if using local models)
+      - ${HOME}/llm-models:/models:ro
+      # Logs
+      - ./logs/jupiter:/tmp/logs/universal-llm-gateway
+    environment:
+      - GATEWAY_UNIX_SOCKET=/sockets/gateway.sock
+      - GATEWAY_ID=jupiter/gateway
+      - LOG_LEVEL=debug
+    healthcheck:
+      test: ["CMD", "test", "-S", "/sockets/gateway.sock"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    networks:
+      - federation-test
+
+networks:
+  federation-test:
+    driver: bridge
+    name: federation-test

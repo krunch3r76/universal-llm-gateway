@@ -1,0 +1,71 @@
+# Federation Test - Remote Stargate Configuration (jupiter)
+# This config is merged with services/universal-stargate/config/stargate_config.yaml
+
+# Local Gateway connection (via Unix socket in Docker container)
+gateway:
+  url: "unix:///tmp/federation-test/sockets/jupiter/gateway.sock"
+  timeout: 5.0
+  retry_attempts: 1
+  request_timeout: 1800
+  streaming_timeout: 1800
+
+# Proxy settings (different port to avoid conflict with Master)
+proxy:
+  port: 9990
+  host: "127.0.0.1"  # Localhost only for testing
+  cors_enabled: true
+
+# Federation configuration (REMOTE mode)
+federation:
+  # Mode: master | remote | standalone
+  mode: "remote"
+  
+  # Unique identifier for this Stargate instance
+  stargate_id: "jupiter"
+  
+  # Protocol version
+  protocol_version: "1.0"
+  
+  # Allowed Master Stargates (Remote mode only)
+  allowed_masters:
+    - stargate_id: "localhost"
+      api_key: "${FEDERATION_KEY_FROM_LOCALHOST}"
+  
+  # Local Gateway configuration (Remote mode only)
+  local_gateway:
+    # Gateway ID to report to Master
+    gateway_id: "jupiter/gateway"
+    
+    # Unix socket path (must match gateway.url above)
+    socket_path: "/tmp/federation-test/sockets/jupiter/gateway.sock"
+  
+  # Network settings
+  max_hops: 3
+  require_tls: false  # False for local testing (would be true in production)
+  ping_interval_ms: 15000  # 15 seconds
+  pong_timeout_ms: 30000   # 30 seconds (VPS-safe)
+  
+  # HTTP connection pool
+  http_pool:
+    max_connections_per_remote: 20
+    connect_timeout_ms: 10000
+    read_timeout_ms: 300000  # 5 minutes
+  
+  # Telemetry backpressure
+  telemetry_backpressure:
+    max_queue_per_remote: 100
+    max_events_per_second: 50
+  
+  # WebSocket server (Remote mode only)
+  ws_server:
+    path: "/ws/federation"
+    max_connections: 10
+    ping_interval_ms: 15000
+    pong_timeout_ms: 30000
+
+# Logging for testing
+logging:
+  level: "DEBUG"
+  enable_console: true
+  enable_file: true
+  log_dir: "/tmp/logs/stargate-jupiter"

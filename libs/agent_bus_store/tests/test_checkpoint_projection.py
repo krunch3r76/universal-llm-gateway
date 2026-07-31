@@ -1,0 +1,291 @@
+"""Unit tests for CHECKPOINT body projection."""
+
+from __future__ import annotations
+
+import pytest
+from agent_bus_store.checkpoint_citation_lint import CitationToken
+from agent_bus_store.checkpoint_projection import (
+    CANONICAL_RESUME_FOOTER,
+    ArtifactAnchor,
+    CheckpointBodyTooLargeError,
+    ChildThreadRow,
+    EntityAssertionRow,
+    ProjectionResolvers,
+    authored_residue_char_count,
+    extract_authored_residue,
+    project_checkpoint_body,
+)
+from agent_bus_store.checkpoint_projection_wiring import maybe_project_checkpoint_body
+from agent_bus_store.turns_models import MAX_TURN_BODY_CHARS
+
+
+def _resolvers(
+    *,
+    children: tuple[ChildThreadRow, ...] = (),
+    anchors: dict[str, ArtifactAnchor] | None = None,
+    rows: dict[tuple[str, str], EntityAssertionRow] | None = None,
+    child_raises: bool = False,
+    artifact_raises: bool = False,
+    row_raises: bool = False,
+) -> ProjectionResolvers:
+    anchor_map = anchors or {}
+    row_map = rows or {}
+
+    def _child_registry(
+        *, root_thread: str, cited_thread_ids: tuple[str, ...]
+    ) -> tuple[ChildThreadRow, ...]:
+        del root_thread
+        if child_raises:
+            raise RuntimeError("bus unreachable")
+        lookup = {row.thread_id: row for row in children}
+        return tuple(
+            lookup[tid] for tid in cited_thread_ids if tid in lookup
+        )
+
+    def _artifact_sha(uri: str) -> ArtifactAnchor | None:
+        if artifact_raises:
+            raise RuntimeError("fs unreachable")
+        return anchor_map.get(uri)
+
+    def _citation_row(token: CitationToken) -> EntityAssertionRow | None:
+        if row_raises:
+            raise RuntimeError("graph unreachable")
+        return row_map.get((token.kind, token.identifier))
+
+    return ProjectionResolvers(
+        child_registry=_child_registry,
+        artifact_sha=_artifact_sha,
+        citation_row=_citation_row,
+    )
+
+
+def test_registry_rendering() -> None:
+    residue = "Child work tracked on agent-bus:6357 and agent-bus:6341."
+    body = project_checkpoint_body(
+        root_thread="6341",
+        residue=residue,
+        resolvers=_resolvers(
+            children=(
+                ChildThreadRow("6357", "active", 12),
+                ChildThreadRow("6341", "closed", 19),
+            )
+        ),
+    )
+    assert "agent-bus:6357 · active · turn 12" in body
+    assert "agent-bus:6341 · closed · turn 19" in body
+    assert CANONICAL_RESUME_FOOTER in body
+
+
+def test_snippet_and_staleness_flags() -> None:
+    residue = "Anchor a:27033 on todo:spec-v0."
+    row = EntityAssertionRow(
+        row_id="a:27033",
+        entity="todo:spec-v0",
+        claim_head="Over-capture anchor for phantom files_deleted",
+        confidence=0.97,
+        superseded_by="a:28000",
+        valid_until="2026-08-01T00:00:00Z",
+        newer_on_entity=True,
+    )
+    body = project_checkpoint_body(
+        root_thread="6341",
+        residue=residue,
+        resolvers=_resolvers(rows={("assertion", "27033"): row}),
+    )
+    assert "a:27033 · todo:spec-v0" in body
+    assert "Over-capture anchor" in body
+    assert "conf=0.97" in body
+    assert "superseded_by=a:28000" in body
+    assert "valid_until=2026-08-01T00:00:00Z" in body
+    assert "newer_assertion_on_entity" in body
+
+
+def test_closed_child_compression_rule() -> None:
+    children = tuple(
+        ChildThreadRow(str(7000 + i), "closed", i + 1) for i in range(120)
+    )
+    cited = " ".join(f"agent-bus:{7000 + i}" for i in range(120))
+    residue = cited + "\n" + ("z" * 2200)
+    body = project_checkpoint_body(
+        root_thread="6341",
+        residue=residue,
+        resolvers=_resolvers(children=children),
+    )
+    assert len(body) <= MAX_TURN_BODY_CHARS
+    assert "agent-bus:7000 closed@1" in body
+    assert " · closed · turn " not in body
+
+
+def test_spill_guard_raises_when_compression_insufficient() -> None:
+    residue = "x" * (MAX_TURN_BODY_CHARS + 500)
+    with pytest.raises(CheckpointBodyTooLargeError) as exc:
+        project_checkpoint_body(
+            root_thread="6341",
+            residue=residue,
+            resolvers=_resolvers(),
+        )
+    assert exc.value.envelope["code"] == "checkpoint_body_too_large"
+
+
+def test_unprojected_fail_open_banner() -> None:
+    residue = "See a:1 and cortex://notes/system/specs/foo.md"
+    body = project_checkpoint_body(
+        root_thread="6341",
+        residue=residue,
+        resolvers=_resolvers(
+            child_raises=True,
+            artifact_raises=True,
+            row_raises=True,
+        ),
+    )
+    assert "**UNPROJECTED**" in body
+    assert CANONICAL_RESUME_FOOTER in body
+
+
+def test_missing_referents_do_not_stamp_unprojected() -> None:
+    """CCL-4: None/missing ≠ unreachable — omit row, keep tip verified."""
+    uri = "cortex://notes/system/specs/missing.md"
+    residue = f"See a:99999 and `{uri}`"
+    body = project_checkpoint_body(
+        root_thread="6341",
+        residue=residue,
+        resolvers=_resolvers(),  # all resolvers return None
+    )
+    assert "**UNPROJECTED**" not in body
+    assert f"{uri} · unresolved" in body
+
+
+def test_backtick_wrapped_uri_yields_artifact_sha() -> None:
+    uri = "cortex://notes/system/threads/6341-handoff-2026-07-29.md"
+    residue = f"Handoff: `{uri}`"
+    body = project_checkpoint_body(
+        root_thread="6341",
+        residue=residue,
+        resolvers=_resolvers(
+            anchors={uri: ArtifactAnchor(uri=uri, sha256="deadbeef")}
+        ),
+    )
+    assert f"{uri} · sha256:deadbeef" in body
+    assert "**UNPROJECTED**" not in body
+    assert "unresolved" not in body
+
+
+def test_extract_authored_residue_strips_derived_and_footer() -> None:
+    full = (
+        "## Derived (projected at post — do not hand-edit)\n"
+        "derived content\n\n"
+        "## Residue (authored — cap ~800 chars)\n"
+        "only this remains\n\n"
+        f"{CANONICAL_RESUME_FOOTER}"
+    )
+    assert extract_authored_residue(full) == "only this remains"
+    assert authored_residue_char_count(full) == len("only this remains")
+
+
+def test_maybe_project_checkpoint_subject_gate() -> None:
+    plain = "hello"
+    assert (
+        maybe_project_checkpoint_body(
+            thread="6341", subject="status update", body=plain
+        )
+        == plain
+    )
+    projected = maybe_project_checkpoint_body(
+        thread="6341",
+        subject="CHECKPOINT — wave 2",
+        body="Settled: nothing new.",
+    )
+    assert "## Derived (projected at post" in projected
+    assert CANONICAL_RESUME_FOOTER in projected
+
+
+def test_artifact_anchor_rendering() -> None:
+    uri = "cortex://notes/system/specs/checkpoint-schema-profiles.md"
+    residue = f"Spec lives at {uri}"
+    body = project_checkpoint_body(
+        root_thread="6341",
+        residue=residue,
+        resolvers=_resolvers(
+            anchors={uri: ArtifactAnchor(uri=uri, sha256="abc123")}
+        ),
+    )
+    assert f"{uri} · sha256:abc123" in body
+
+
+def test_post_turn_checkpoint_projection_route(tmp_path, monkeypatch) -> None:
+    from unittest.mock import patch
+
+    from agent_bus_store import create_app
+    from agent_bus_store.auth import require_token
+    from fastapi.testclient import TestClient
+
+    cortex_root = tmp_path / "cortex-files"
+    cortex_root.mkdir()
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(cortex_root))
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(tmp_path / "bus.db"))
+    app = create_app(db_path=str(tmp_path / "bus.db"))
+    app.dependency_overrides[require_token] = lambda: None
+
+    residue = "Settled: projector wired."
+    projected = (
+        "## Derived (projected at post — do not hand-edit)\n"
+        "derived\n\n"
+        f"## Residue (authored — cap ~800 chars)\n{residue}\n\n"
+        "— RESUME (any seat, no command): load checkpoint-discipline"
+    )
+
+    with patch(
+        "agent_bus_store.routes.turns.maybe_project_checkpoint_body",
+        side_effect=lambda *, thread, subject, body: (
+            projected if subject.upper().startswith("CHECKPOINT") else body
+        ),
+    ) as projector:
+        with TestClient(app) as client:
+            seed = client.post(
+                "/threads/with-turn",
+                json={
+                    "slug": "cp-route",
+                    "from": "cursor",
+                    "to": "web",
+                    "subject": "seed",
+                    "body": "hello",
+                },
+            )
+            assert seed.status_code == 201, seed.text
+            thread_id = seed.json()["thread"]["id"]
+            resp = client.post(
+                "/turns",
+                json={
+                    "thread": thread_id,
+                    "from": "cursor",
+                    "to": "web",
+                    "subject": "CHECKPOINT — route test",
+                    "body": residue,
+                    "after_turn": 1,
+                },
+            )
+            assert resp.status_code == 201, resp.text
+            projector.assert_called_once()
+            turn = client.get(
+                f"/turns/by-number?thread={thread_id}&turn_number=2"
+            ).json()
+            assert turn["body"] == projected
+
+            plain = client.post(
+                "/turns",
+                json={
+                    "thread": thread_id,
+                    "from": "cursor",
+                    "to": "web",
+                    "subject": "plain status",
+                    "body": "no projection",
+                    "after_turn": 2,
+                },
+            )
+            assert plain.status_code == 201, plain.text
+            plain_turn = client.get(
+                f"/turns/by-number?thread={thread_id}&turn_number=3"
+            ).json()
+            assert plain_turn["body"] == "no projection"
+            assert projector.call_count == 2
+

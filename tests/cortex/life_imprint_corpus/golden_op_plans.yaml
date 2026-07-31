@@ -1,0 +1,147 @@
+# Golden op plans for arm-A patch authoring (harness reference).
+# Patches are illustrative; scorer compares propose route output.
+
+version: "1"
+
+goldens:
+  p01_new_todo:
+    patch:
+      "@context": "cortex.life/v1"
+      "@graph":
+        - {"@id": "todo:renew-passport", "@type": "todo", "name": "Renew passport"}
+        - {"@id": "todo:renew-passport", "priority": "high"}
+    expected_ops: [entity_create, entity_update]
+
+  p02_link_siblings:
+    patch:
+      "@context": "cortex.life/v1"
+      "@graph":
+        - {"@id": "person:alice", "sibling_of": {"@id": "person:bob"}}
+    expected_ops: [relationship_create]
+
+  p03_belief:
+    patch:
+      "@context": "cortex.life/v1"
+      "@graph":
+        - {"@id": "todo:ship", "noted": "Waiting on legal review"}
+    expected_ops: [assert]
+
+  p04_deadline:
+    patch:
+      "@context": "cortex.life/v1"
+      "@graph":
+        - {"@id": "todo:ship", "due": "2026-09-01"}
+    expected_ops: [entity_update]
+
+  p05_priority:
+    patch:
+      "@context": "cortex.life/v1"
+      "@graph":
+        - {"@id": "todo:ship", "priority": "medium"}
+    expected_ops: [entity_update]
+
+  p06_child_of:
+    patch:
+      "@context": "cortex.life/v1"
+      "@graph":
+        - {"@id": "document:brief", "child_of": {"@id": "matter:estate-2024"}}
+    expected_ops: [relationship_create]
+
+  p07_references:
+    patch:
+      "@context": "cortex.life/v1"
+      "@graph":
+        - {"@id": "document:exhibit-a", "references": {"@id": "document:brief"}}
+    expected_ops: [relationship_create]
+
+  p08_evidence_for:
+    patch:
+      "@context": "cortex.life/v1"
+      "@graph":
+        - {"@id": "document:exhibit-a", "evidence_for": {"@id": "matter:estate-2024"}}
+    expected_ops: [relationship_create]
+
+  p09_correspondence:
+    patch:
+      "@context": "cortex.life/v1"
+      "@graph":
+        - {"@id": "person:alice", "correspondence_with": {"@id": "person:bob"}}
+    expected_ops: [relationship_create]
+
+  p10_issued_by:
+    patch:
+      "@context": "cortex.life/v1"
+      "@graph":
+        - {"@id": "account:chk", "issued_by": {"@id": "organization:acme"}}
+    expected_ops: [relationship_create]
+
+  p11_recipient_of:
+    patch:
+      "@context": "cortex.life/v1"
+      "@graph":
+        - {"@id": "person:alice", "recipient_of": {"@id": "document:brief"}}
+    expected_ops: [relationship_create]
+
+  p12_pertains_to:
+    patch:
+      "@context": "cortex.life/v1"
+      "@graph":
+        - {"@id": "document:brief", "pertains_to": {"@id": "account:chk"}}
+    expected_ops: [relationship_create]
+
+  p13_new_person:
+    patch:
+      "@context": "cortex.life/v1"
+      "@graph":
+        - {"@id": "person:carol", "@type": "person", "name": "Carol"}
+    expected_ops: [entity_create]
+
+  p14_new_matter:
+    patch:
+      "@context": "cortex.life/v1"
+      "@graph":
+        - {"@id": "matter:probate-2026", "@type": "matter", "name": "Probate 2026"}
+    expected_ops: [entity_create]
+
+  p15_out_of_vocab:
+    patch:
+      "@context": "cortex.life/v1"
+      "@graph":
+        - {"@id": "person:alice", "remember": "likes coffee"}
+    expected_reject: unknown_predicate
+
+  p16_refused_op:
+    patch:
+      "@context": "cortex.life/v1"
+      "@graph":
+        - {"@id": "todo:ship", "entity_merge": {"@id": "todo:other"}}
+    expected_reject: refused_op
+
+  p17_ambiguous_id:
+    patch:
+      "@context": "cortex.life/v1"
+      "@graph":
+        - {"@id": "Alice", "noted": "call back Tuesday"}
+    expect_candidates: true
+
+  p18_bad_date:
+    patch:
+      "@context": "cortex.life/v1"
+      "@graph":
+        - {"@id": "todo:ship", "due": "soon"}
+    expected_reject: literal_type
+
+  p19_bad_priority:
+    patch:
+      "@context": "cortex.life/v1"
+      "@graph":
+        - {"@id": "todo:ship", "priority": "critical"}
+    expected_reject: literal_type
+
+  p20_multi_statement:
+    patch:
+      "@context": "cortex.life/v1"
+      "@graph":
+        - {"@id": "todo:follow-up", "@type": "todo", "name": "Follow up"}
+        - {"@id": "todo:follow-up", "child_of": {"@id": "matter:estate-2024"}}
+    expected_ops: [entity_create, relationship_create]

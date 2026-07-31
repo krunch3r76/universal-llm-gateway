@@ -1,0 +1,68 @@
+# Federation Test - Master Stargate Configuration (localhost)
+# This config is merged with services/universal-stargate/config/stargate_config.yaml
+
+# Local Gateway connection (via Unix socket in Docker container)
+gateway:
+  url: "unix:///tmp/federation-test/sockets/local/gateway.sock"
+  timeout: 5.0
+  retry_attempts: 1
+  request_timeout: 1800
+  streaming_timeout: 1800
+
+# Proxy settings
+proxy:
+  port: 9999
+  host: "127.0.0.1"  # Localhost only for testing
+  cors_enabled: true
+
+# Federation configuration (MASTER mode)
+federation:
+  # Mode: master | remote | standalone
+  mode: "master"
+  
+  # Unique identifier for this Stargate instance
+  stargate_id: "localhost"
+  
+  # Protocol version
+  protocol_version: "1.0"
+  
+  # Remote Stargate connections (Master mode only)
+  remotes:
+    - stargate_id: "jupiter"
+      url: "http://localhost:9990"  # Jupiter Stargate on different port for testing
+      api_key: "${FEDERATION_KEY_JUPITER}"
+      websocket_path: "/ws/federation"
+  
+  # Network settings
+  max_hops: 3
+  require_tls: false  # False for local testing (would be true in production)
+  ping_interval_ms: 15000  # 15 seconds
+  pong_timeout_ms: 30000   # 30 seconds (VPS-safe)
+  
+  # HTTP connection pool
+  http_pool:
+    max_connections_per_remote: 20
+    connect_timeout_ms: 10000
+    read_timeout_ms: 300000  # 5 minutes
+  
+  # Telemetry backpressure
+  telemetry_backpressure:
+    max_queue_per_remote: 100
+    max_events_per_second: 50
+  
+  # Request forwarding
+  request_forwarding:
+    timeout_ms: 300000  # 5 minutes
+    max_retries: 0
+  
+  # Cancellation handling
+  cancellation:
+    pending_cancel_retention_ms: 60000  # 1 minute
+    max_pending_cancels: 1000
+
+# Logging for testing
+logging:
+  level: "DEBUG"
+  enable_console: true
+  enable_file: true
+  log_dir: "/tmp/logs/stargate-master"

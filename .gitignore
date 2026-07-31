@@ -72,16 +72,8 @@ docs/vision/
 
 prompts/
 
-# Tests — local-only until reorganized; not part of public surface
-**/test_*.py
-**/*_test.py
-**/_test_*.py
-**/conftest.py
-tests/*
-**/tests/
-!tests/
-!tests/life_intent_corpus/
-!tests/life_intent_corpus/**
+# Tests are tracked (operator bind 2026-07-31, a:27411) — untracked tests made
+# every cross-seat "tests pass" claim unverifiable from the repo.
 # Lane-A contract tests (todo:track-implement-admission-tests-ci)
 !libs/implement_admission/test_skill_fs_line.py
 !libs/implement_admission/test_materialize.py

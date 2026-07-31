@@ -1,0 +1,318 @@
+"""Resolver unit tests for warm CSE followup (no live Chrome)."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+from cdp_ask.execution_store import ExecutionStore
+from cdp_ask.followup import execute_followup
+from cdp_ask.followup_resolve import discover_candidates, resolve_followup_target
+from cdp_ask.models import FollowupProjectAskRequest
+
+pytestmark = pytest.mark.offline
+
+CSE_A = "https://claude.ai/cowork/cse_abc123"
+CSE_B = "https://claude.ai/cowork/cse_def456"
+
+
+@dataclass(frozen=True)
+class _FakeReg:
+    registration_id: str
+    port: int
+    profile_suffix: str
+    profile: Path
+    cdp_url: str
+    holder: str
+    purpose: str | None = None
+
+
+def _reg(
+    reg_id: str, *, purpose: str = "operator-proxy", cdp: str = "http://127.0.0.1:9223"
+) -> _FakeReg:
+    return _FakeReg(
+        registration_id=reg_id,
+        port=9223,
+        profile_suffix="s",
+        profile=Path("/tmp/p"),
+        cdp_url=cdp,
+        holder="holder-a",
+        purpose=purpose,
+    )
+
+
+@pytest.mark.asyncio
+async def test_no_identity() -> None:
+    store = ExecutionStore()
+    req = FollowupProjectAskRequest(prompt_text="hi")
+    _target, err, _path = await resolve_followup_target(req, store)
+    assert err is not None
+    assert err.error == "no_identity"
+
+
+@pytest.mark.asyncio
+async def test_chat_url_only_discovers_attached_lane(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = ExecutionStore()
+    reg = _reg("reg-1")
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.cdp_registry.list_active",
+        lambda: [reg],
+    )
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.scan_lane_cse_urls",
+        AsyncMock(return_value=[CSE_A]),
+    )
+    req = FollowupProjectAskRequest(chat_url=CSE_A, prompt_text="x")
+    target, err, path = await resolve_followup_target(req, store)
+    assert err is None
+    assert target is not None
+    assert target.chat_url == CSE_A
+    assert path == "chat_url"
+
+
+@pytest.mark.asyncio
+async def test_chat_url_only_cse_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
+    store = ExecutionStore()
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.cdp_registry.list_active",
+        lambda: [_reg("reg-1")],
+    )
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.scan_lane_cse_urls",
+        AsyncMock(return_value=[]),
+    )
+    req = FollowupProjectAskRequest(chat_url=CSE_A, prompt_text="x")
+    _target, err, _path = await resolve_followup_target(req, store)
+    assert err is not None
+    assert err.error == "cse_not_found_on_lane"
+
+
+@pytest.mark.asyncio
+async def test_ambiguous_identity_two_candidates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = ExecutionStore()
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.cdp_registry.list_active",
+        lambda: [_reg("reg-1"), _reg("reg-2", purpose="other")],
+    )
+
+    async def _scan(reg: _FakeReg) -> list[str]:
+        return [CSE_A if reg.registration_id == "reg-1" else CSE_B]
+
+    monkeypatch.setattr("cdp_ask.followup_resolve.scan_lane_cse_urls", _scan)
+    req = FollowupProjectAskRequest(chat_url=CSE_A, prompt_text="x")
+    # Two lanes both expose CSE when scanning all — force two matches via purpose omitted
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.cdp_registry.list_active",
+        lambda: [_reg("reg-1"), _reg("reg-2")],
+    )
+
+    async def _scan_both(reg: _FakeReg) -> list[str]:
+        return [CSE_A]
+
+    monkeypatch.setattr("cdp_ask.followup_resolve.scan_lane_cse_urls", _scan_both)
+    _target, err, _path = await resolve_followup_target(req, store)
+    assert err is not None
+    assert err.error == "ambiguous_identity"
+    assert err.candidates is not None
+    assert len(err.candidates) >= 2
+
+
+@pytest.mark.asyncio
+async def test_conflicting_keys_fail_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    store = ExecutionStore()
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.cdp_registry.list_active",
+        lambda: [_reg("reg-1")],
+    )
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.scan_lane_cse_urls",
+        AsyncMock(return_value=[CSE_A]),
+    )
+    req = FollowupProjectAskRequest(
+        chat_url=CSE_A,
+        registration_id="reg-2",
+        prompt_text="x",
+    )
+    _target, err, _path = await resolve_followup_target(req, store)
+    assert err is not None
+    assert err.error == "ambiguous_identity"
+
+
+@pytest.mark.asyncio
+async def test_lane_not_attached_detail_mentions_cli(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = ExecutionStore()
+    monkeypatch.setattr("cdp_ask.followup_resolve.cdp_registry.list_active", lambda: [])
+    req = FollowupProjectAskRequest(registration_id="missing", prompt_text="x")
+    _target, err, _path = await resolve_followup_target(req, store)
+    assert err is not None
+    assert err.error == "lane_not_attached"
+    assert "cowork_chat_followup.py" in (err.detail or "")
+
+
+@pytest.mark.asyncio
+async def test_execution_id_maps_to_lane(monkeypatch: pytest.MonkeyPatch) -> None:
+    store = ExecutionStore()
+    rec = await store.create(holder="h", purpose="ask")
+    await store.set_registration_id(rec.execution_id, "reg-1")
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.cdp_registry.list_active",
+        lambda: [_reg("reg-1")],
+    )
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.scan_lane_cse_urls",
+        AsyncMock(return_value=[CSE_A]),
+    )
+    req = FollowupProjectAskRequest(execution_id=rec.execution_id, prompt_text="x")
+    target, err, path = await resolve_followup_target(req, store)
+    assert err is None
+    assert target is not None
+    assert path == "execution_id"
+
+
+@pytest.mark.asyncio
+async def test_resolver_never_register_or_goto(monkeypatch: pytest.MonkeyPatch) -> None:
+    store = ExecutionStore()
+    register = MagicMock()
+    goto = AsyncMock()
+    monkeypatch.setattr("cdp_ask.followup_resolve.cdp_registry.register_lane", register)
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.cdp_registry.list_active",
+        lambda: [_reg("reg-1")],
+    )
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.scan_lane_cse_urls",
+        AsyncMock(return_value=[CSE_A]),
+    )
+    req = FollowupProjectAskRequest(registration_id="reg-1", prompt_text="x")
+    await resolve_followup_target(req, store)
+    register.assert_not_called()
+    goto.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_deregister_race_before_paste(monkeypatch: pytest.MonkeyPatch) -> None:
+    store = ExecutionStore()
+    reg = _reg("reg-1")
+    monkeypatch.setattr("cdp_ask.followup_resolve.cdp_registry.list_active", lambda: [reg])
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.scan_lane_cse_urls",
+        AsyncMock(return_value=[CSE_A]),
+    )
+    monkeypatch.setattr(
+        "cdp_ask.followup._find_page_on_lane",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr("cdp_ask.followup.emit_followup_event", lambda _e: None)
+    req = FollowupProjectAskRequest(registration_id="reg-1", prompt_text="wake")
+    resp = await execute_followup(req, store)
+    assert resp.ok is False
+    assert resp.error in {"cse_not_found_on_lane", "lane_not_attached"}
+
+
+@pytest.mark.asyncio
+async def test_send_unverified_when_verification_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = ExecutionStore()
+    reg = _reg("reg-1")
+    monkeypatch.setattr("cdp_ask.followup_resolve.cdp_registry.list_active", lambda: [reg])
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.scan_lane_cse_urls",
+        AsyncMock(return_value=[CSE_A]),
+    )
+    page = MagicMock()
+    page.url = CSE_A
+    monkeypatch.setattr(
+        "cdp_ask.followup._find_page_on_lane",
+        AsyncMock(return_value=(page, AsyncMock())),
+    )
+    monkeypatch.setattr(
+        "cdp_ask.followup.send_followup_paste_half",
+        AsyncMock(
+            return_value={
+                "send_verified": False,
+                "streaming_at_paste": False,
+                "url": CSE_A,
+                "pasted_at": 1.0,
+                "error": "send_unverified",
+            }
+        ),
+    )
+    monkeypatch.setattr("cdp_ask.followup.emit_followup_event", lambda _e: None)
+
+    resp = await execute_followup(
+        FollowupProjectAskRequest(registration_id="reg-1", prompt_text="x"),
+        store,
+    )
+    assert resp.ok is False
+    assert resp.error == "send_unverified"
+    assert resp.send_verified is False
+
+
+@pytest.mark.asyncio
+async def test_ok_requires_send_verified(monkeypatch: pytest.MonkeyPatch) -> None:
+    store = ExecutionStore()
+    reg = _reg("reg-1")
+    monkeypatch.setattr("cdp_ask.followup_resolve.cdp_registry.list_active", lambda: [reg])
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.scan_lane_cse_urls",
+        AsyncMock(return_value=[CSE_A]),
+    )
+    page = MagicMock()
+    page.url = CSE_A
+    pw = AsyncMock()
+    pw.stop = AsyncMock()
+    monkeypatch.setattr(
+        "cdp_ask.followup._find_page_on_lane",
+        AsyncMock(return_value=(page, pw)),
+    )
+    monkeypatch.setattr(
+        "cdp_ask.followup.send_followup_paste_half",
+        AsyncMock(
+            return_value={
+                "send_verified": True,
+                "streaming_at_paste": True,
+                "url": CSE_A,
+                "pasted_at": 2.0,
+                "error": None,
+            }
+        ),
+    )
+    monkeypatch.setattr("cdp_ask.followup.emit_followup_event", lambda _e: None)
+    resp = await execute_followup(
+        FollowupProjectAskRequest(registration_id="reg-1", prompt_text="x"),
+        store,
+    )
+    assert resp.ok is True
+    assert resp.send_verified is True
+    assert resp.url == CSE_A
+
+
+@pytest.mark.asyncio
+async def test_purpose_narrows_candidates(monkeypatch: pytest.MonkeyPatch) -> None:
+    store = ExecutionStore()
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.cdp_registry.list_active",
+        lambda: [
+            _reg("reg-1", purpose="operator-proxy"),
+            _reg("reg-2", purpose="ask"),
+        ],
+    )
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.scan_lane_cse_urls",
+        AsyncMock(return_value=[CSE_A]),
+    )
+    candidates, _path, _exe = await discover_candidates(
+        FollowupProjectAskRequest(chat_url=CSE_A, purpose="operator-proxy"),
+        store,
+    )
+    assert len(candidates) == 1
+    assert candidates[0].registration_id == "reg-1"

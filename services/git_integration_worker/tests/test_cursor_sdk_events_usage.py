@@ -1,0 +1,44 @@
+"""Unit tests for frontier.sdk.worker.completed usage fields."""
+
+from __future__ import annotations
+
+from services.git_integration_worker.cursor_sdk_events import FrontierSdkWorkerCompleted
+
+
+def test_completed_event_carries_usage_and_knobs() -> None:
+    event = FrontierSdkWorkerCompleted(
+        dispatch_id="d1",
+        thread_id="t1",
+        execution_id="e1",
+        duration_s=12.5,
+        tool_call_count=3,
+        result_bytes=4096,
+        outcome="ok",
+        resolved_model="cursor/composer-2.5",
+        model_knobs_requested={"fast": "true"},
+        usage={"input_tokens": 100, "output_tokens": 20, "total_tokens": 120},
+        usage_capture_status="captured",
+    )
+    assert event.signal == "frontier.sdk.worker.completed"
+    assert event.payload["resolved_model"] == "cursor/composer-2.5"
+    assert event.payload["model_knobs_requested"] == {"fast": "true"}
+    assert event.payload["usage"]["total_tokens"] == 120
+    assert event.payload["usage_capture_status"] == "captured"
+
+
+def test_completed_event_null_usage_is_explicit() -> None:
+    event = FrontierSdkWorkerCompleted(
+        dispatch_id="d1",
+        thread_id="t1",
+        execution_id="e1",
+        duration_s=1.0,
+        tool_call_count=0,
+        result_bytes=0,
+        outcome="ok",
+        resolved_model="cursor/composer-2.5",
+        usage=None,
+        usage_capture_status="missing",
+    )
+    assert event.payload["usage"] is None
+    assert event.payload["usage_capture_status"] == "missing"
+    assert "model_knobs_requested" not in event.payload

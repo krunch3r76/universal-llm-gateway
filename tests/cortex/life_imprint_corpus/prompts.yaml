@@ -1,0 +1,91 @@
+# Life imprint corpus — 20 blinded prompts for arm A/B evaluation.
+# Model-under-test authors cortex.life/v1 patches in harness (F-3).
+
+version: "1"
+context_id: "cortex.life/v1"
+
+prompts:
+  - id: p01_new_todo
+    text: "Create a new todo 'Renew passport' with high priority."
+    category: new_entity
+
+  - id: p02_link_siblings
+    text: "Link person:alice and person:bob as siblings."
+    category: link_existing
+
+  - id: p03_belief
+    text: "Note on todo:ship — 'Waiting on legal review'."
+    category: belief
+
+  - id: p04_deadline
+    text: "Set due date 2026-09-01 on todo:ship."
+    category: deadline
+
+  - id: p05_priority
+    text: "Set priority medium on todo:ship."
+    category: priority
+
+  - id: p06_child_of
+    text: "Wire document:brief as child_of matter:estate-2024."
+    category: relationship
+
+  - id: p07_references
+    text: "document:exhibit-a references document:brief."
+    category: relationship
+
+  - id: p08_evidence_for
+    text: "document:exhibit-a is evidence_for matter:estate-2024."
+    category: relationship
+
+  - id: p09_correspondence
+    text: "person:alice correspondence_with person:bob."
+    category: relationship
+
+  - id: p10_issued_by
+    text: "account:chk issued_by organization:acme."
+    category: relationship
+
+  - id: p11_recipient_of
+    text: "person:alice recipient_of document:brief."
+    category: relationship
+
+  - id: p12_pertains_to
+    text: "document:brief pertains_to account:chk."
+    category: relationship
+
+  - id: p13_new_person
+    text: "Create person:carol named Carol."
+    category: new_entity
+
+  - id: p14_new_matter
+    text: "Create matter:probate-2026 named Probate 2026."
+    category: new_entity
+
+  - id: p15_out_of_vocab
+    text: "Remember that Alice likes coffee."
+    category: out_of_vocab
+    expect_reject: unknown_predicate
+
+  - id: p16_refused_op
+    text: "Merge todo:ship into todo:other."
+    category: refused_op
+    expect_reject: refused_op
+
+  - id: p17_ambiguous_id
+    text: "Note on Alice — 'call back Tuesday'."
+    category: ambiguous_id
+    expect_candidates: true
+
+  - id: p18_bad_date
+    text: "Due soon on todo:ship."
+    category: invalid_literal
+    expect_reject: literal_type
+
+  - id: p19_bad_priority
+    text: "Set priority critical on todo:ship."
+    category: invalid_literal
+    expect_reject: literal_type
+
+  - id: p20_multi_statement
+    text: "Create todo:follow-up and link it child_of matter:estate-2024."
+    category: multi_statement
