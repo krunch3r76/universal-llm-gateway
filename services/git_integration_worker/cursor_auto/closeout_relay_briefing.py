@@ -14,6 +14,10 @@ from services.git_integration_worker.cursor_auto.closeout_relay_effects import (
     amend_completion_overclaim,
     amend_effects_underclaim,
 )
+from services.git_integration_worker.cursor_auto.closeout_relay_reporting import (
+    amend_reporting_field_gaps,
+    stamp_model_actual,
+)
 from services.git_integration_worker.cursor_sdk_deliverables import (
     sidecar_workspaces_ref,
 )
@@ -163,8 +167,11 @@ def finalize_relay_payload(
     wrapper_text: str | None,
     guard_uris: frozenset[str] | None = None,
     dispatch_id: str = "",
+    caller_auditable: bool = False,
+    requested_model: str | None = None,
+    resolved_model: str | None = None,
 ) -> CloseoutRelayPayload:
-    """Run honesty amend, overclaim clamp, optional confer write-fence, then clamp."""
+    """Run honesty amend, overclaim clamp, reporting tier, optional confer fence, then clamp."""
     amended = amend_effects_underclaim(
         payload.body,
         wrapper_text=wrapper_text,
@@ -178,14 +185,33 @@ def finalize_relay_payload(
         source=amended.source,
         dispatch_id=dispatch_id,
     )
+    model_substitution = bool(
+        requested_model
+        and resolved_model
+        and requested_model.strip().casefold() != resolved_model.strip().casefold()
+    )
+    stamped = overclaim.body
+    if model_substitution and requested_model and resolved_model:
+        stamped = stamp_model_actual(
+            stamped,
+            requested_model=requested_model,
+            resolved_model=resolved_model,
+        )
+    reporting = amend_reporting_field_gaps(
+        stamped,
+        status=overclaim.status,
+        source=overclaim.source,
+        caller_auditable=caller_auditable,
+        model_substitution=model_substitution,
+    )
     if guard_uris:
         processed = apply_write_fence(
-            overclaim,
+            reporting,
             wrapper_text=wrapper_text,
             guard_uris=guard_uris,
         )
     else:
-        processed = overclaim
+        processed = reporting
     pointer = sidecar_workspaces_ref(dispatch_id) if dispatch_id else None
     clamped_body, was_clamped = clamp_relay_body(processed.body, pointer=pointer)
     return CloseoutRelayPayload(

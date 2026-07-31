@@ -13,12 +13,15 @@ _FIELD_HEADING_ALIASES: dict[str, tuple[str, ...]] = {
         "ac1 per-site disposition",
         "ac1",
     ),
-    "deltas_to_spec": ("deltas_to_spec", "deltas to spec", "delta to spec"),
+    "deltas_to_spec": ("deltas_to_spec", "deltas to spec", "delta to spec", "scope delta", "scope_delta"),
     "decisions_taken": ("decisions_taken", "decisions taken"),
     "next": ("next", "next steps"),
     "open forks": ("open_forks", "open forks"),
     "effects": ("effects",),
     "evidence": ("evidence",),
+    "access": ("access",),
+    "coverage": ("coverage",),
+    "model_actual": ("model actual", "model_actual", "modelactual"),
 }
 
 _TABLE_ROW_RE = re.compile(

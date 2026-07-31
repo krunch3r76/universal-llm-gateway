@@ -241,6 +241,9 @@ def select_closeout_relay_payload(
     dispatch_id: str = "",
     cortex_root: Path | None = None,
     guard_uris: frozenset[str] | None = None,
+    caller_auditable: bool = False,
+    requested_model: str | None = None,
+    resolved_model: str | None = None,
 ) -> CloseoutRelayPayload:
     """Prefer authored §2; synthesize from wrapper manifest when absent.
 
@@ -264,6 +267,15 @@ def select_closeout_relay_payload(
     fallback_status = ledger_status_to_closeout(ledger_status)
     wrapper_text = sdk_body
 
+    bind = {
+        "wrapper_text": wrapper_text,
+        "guard_uris": guard_uris,
+        "dispatch_id": dispatch_id,
+        "caller_auditable": caller_auditable,
+        "requested_model": requested_model,
+        "resolved_model": resolved_model,
+    }
+
     if sidecar_text:
         prose = strip_machine_tail(sidecar_text)
         if looks_section2(prose):
@@ -280,9 +292,7 @@ def select_closeout_relay_payload(
                     status=status,
                     source="section2_sidecar",
                 ),
-                wrapper_text=wrapper_text,
-                guard_uris=guard_uris,
-                dispatch_id=dispatch_id,
+                **bind,
             )
 
     if sdk_body and looks_section2(sdk_body) and not is_wrapper_manifest(sdk_body):
@@ -300,9 +310,7 @@ def select_closeout_relay_payload(
                 status=status,
                 source="section2_bus",
             ),
-            wrapper_text=wrapper_text,
-            guard_uris=guard_uris,
-            dispatch_id=dispatch_id,
+            **bind,
         )
 
     root = cortex_root if cortex_root is not None else cortex_files_root()
@@ -315,9 +323,7 @@ def select_closeout_relay_payload(
     if cortex_payload is not None:
         return finalize_relay_payload(
             cortex_payload,
-            wrapper_text=wrapper_text,
-            guard_uris=guard_uris,
-            dispatch_id=dispatch_id,
+            **bind,
         )
 
     synthesized = synthesize_section2(
@@ -337,9 +343,7 @@ def select_closeout_relay_payload(
                 ),
                 source=source,
             ),
-            wrapper_text=wrapper_text,
-            guard_uris=guard_uris,
-            dispatch_id=dispatch_id,
+            **bind,
         )
 
     if sdk_body and sdk_body.strip():
@@ -349,9 +353,7 @@ def select_closeout_relay_payload(
                 status=fallback_status,
                 source="wrapper",
             ),
-            wrapper_text=wrapper_text,
-            guard_uris=guard_uris,
-            dispatch_id=dispatch_id,
+            **bind,
         )
 
     return finalize_relay_payload(
@@ -360,9 +362,7 @@ def select_closeout_relay_payload(
             status=fallback_status,
             source="empty",
         ),
-        wrapper_text=wrapper_text,
-        guard_uris=guard_uris,
-        dispatch_id=dispatch_id,
+        **bind,
     )
 
 

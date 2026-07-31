@@ -93,6 +93,7 @@ def test_select_prefers_section2_sidecar_over_wrapper():
         sdk_body=_WRAPPER,
         sidecar_text=blended,
         ledger_status="completed",
+        caller_auditable=True,
     )
     assert payload.source == "section2_sidecar"
     assert payload.status == "complete"
@@ -105,6 +106,7 @@ def test_select_synthesizes_section2_when_no_sidecar():
         sdk_body=_WRAPPER,
         sidecar_text=None,
         ledger_status="completed",
+        caller_auditable=True,
     )
     assert payload.source == "section2_synthesized"
     assert looks_section2(payload.body) is True
@@ -116,6 +118,7 @@ def test_synthesized_section2_names_offgit_cortex_writes():
         sdk_body=_T9_WRAPPER,
         sidecar_text=None,
         ledger_status="completed",
+        caller_auditable=True,
     )
     assert payload.source == "section2_synthesized"
     assert _T9_OFFGIT_A in payload.body
@@ -154,6 +157,7 @@ def test_synthesized_section2_does_not_fabricate_pass():
         sdk_body=_WRAPPER,
         sidecar_text=None,
         ledger_status="completed",
+        caller_auditable=True,
     )
     assert "unauthored" in payload.body.lower()
     assert "PASS" not in payload.body
@@ -173,6 +177,7 @@ def test_synthesized_status_forced_partial_even_when_wrapper_complete():
         sdk_body=wrapper,
         sidecar_text=None,
         ledger_status="completed",
+        caller_auditable=True,
     )
     assert payload.source == "section2_synthesized"
     assert payload.status == "partial"
@@ -183,6 +188,7 @@ def test_synthesized_status_matches_wrapper_payload_status():
         sdk_body=_WRAPPER,
         sidecar_text=None,
         ledger_status="completed",
+        caller_auditable=True,
     )
     assert payload.status == "partial"
 
@@ -192,6 +198,7 @@ def test_authored_sidecar_still_preferred_over_synthesis():
         sdk_body=_T9_WRAPPER,
         sidecar_text=_SECTION2,
         ledger_status="completed",
+        caller_auditable=True,
     )
     assert payload.source == "section2_sidecar"
     assert "machine-derived envelope" not in payload.body
@@ -204,6 +211,7 @@ def test_wrapper_source_retained_for_non_manifest_prose():
         sdk_body=prose,
         sidecar_text=None,
         ledger_status="completed",
+        caller_auditable=True,
     )
     assert payload.source == "wrapper"
     assert payload.body == prose
@@ -215,6 +223,7 @@ def test_status_from_section2_beats_ledger_contradiction():
         sdk_body=_WRAPPER,
         sidecar_text=_SECTION2,
         ledger_status="completed",
+        caller_auditable=True,
     )
     assert payload.status == "complete"
     assert status_from_section2(payload.body) == "complete"
@@ -387,6 +396,7 @@ def test_no_cortex_uri_synthesize_unchanged():
         sdk_body=_T9_WRAPPER,
         sidecar_text=None,
         ledger_status="completed",
+        caller_auditable=True,
     )
     assert payload.source == "section2_synthesized"
     assert _T9_OFFGIT_A in payload.body
@@ -442,6 +452,7 @@ dispatch_id: {dispatch_id}
         ledger_status="completed",
         dispatch_id=dispatch_id,
         cortex_root=tmp_path,
+        caller_auditable=True,
     )
     assert payload.source == "section2_sidecar"
     assert payload.status == "complete"
@@ -559,6 +570,7 @@ def test_authored_underclaim_amends_effects_preserves_judgment():
         sdk_body=wrapper,
         sidecar_text=_AUTHORED_UNDERCLAIM,
         ledger_status="completed",
+        caller_auditable=True,
     )
     assert payload.source == "section2_sidecar"
     assert _T9_OFFGIT_A in payload.body
@@ -782,6 +794,7 @@ def test_fixture_6222_t5_pass_path_section2_sidecar():
         sdk_body=_WRAPPER,
         sidecar_text=_FIXTURE_6222_T5_SECTION2,
         ledger_status="completed",
+        caller_auditable=True,
     )
     assert payload.source == "section2_sidecar"
     assert payload.status == "complete"
@@ -831,6 +844,7 @@ def test_fixture_t44_section2_projects_zero_unclassified():
         sidecar_text=_FIXTURE_T44_SECTION2,
         ledger_status="completed",
         dispatch_id="auto-t44-regression",
+        caller_auditable=True,
     )
     assert payload.source == "section2_sidecar"
     assert payload.status == "complete"
@@ -957,6 +971,49 @@ def test_internally_consistent_closeout_not_clamped_ac6() -> None:
         ),
         wrapper_text=_WRAPPER,
         dispatch_id="auto-t44-regression",
+        caller_auditable=True,
     )
     assert payload.status == "complete"
     assert "overclaim:" not in payload.body
+
+
+_TURN38_INTERNALLY_CONSISTENT = """\
+TYPE: CLOSEOUT
+status: complete
+
+**ac_verdict:**
+1. AC1 — PASS — relayed closeout meets directive scope
+
+**deltas_to_spec:** none
+
+**decisions_taken:** deny-by-default clamp for blind caller
+
+**effects:** none
+
+**open_forks:** none
+"""
+
+
+def test_web_anthropic_missing_access_coverage_clamps_turn38_class() -> None:
+    """AC1 — blind web-anthropic caller: missing ACCESS/COVERAGE clamps complete."""
+    from services.git_integration_worker.cursor_auto.caller_auditable import (
+        caller_auditable,
+    )
+    from services.git_integration_worker.cursor_auto.closeout_relay_briefing import (
+        finalize_relay_payload,
+    )
+
+    assert caller_auditable(from_agent="web-anthropic") is False
+    payload = finalize_relay_payload(
+        CloseoutRelayPayload(
+            body=_TURN38_INTERNALLY_CONSISTENT,
+            status="complete",
+            source="section2_sidecar",
+        ),
+        wrapper_text=_WRAPPER,
+        dispatch_id="auto-turn38-class",
+        caller_auditable=caller_auditable(from_agent="web-anthropic"),
+    )
+    assert payload.status != "complete"
+    assert "reporting:missing_access" in payload.body
+    assert "reporting:missing_coverage" in payload.body

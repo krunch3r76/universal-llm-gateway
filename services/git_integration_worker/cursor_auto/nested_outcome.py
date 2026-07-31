@@ -13,6 +13,9 @@ from systems.frontier_consult.story_wire import (
     safe_emit_observation,
 )
 
+from services.git_integration_worker.cursor_auto.caller_auditable import (
+    caller_auditable,
+)
 from services.git_integration_worker.cursor_auto.closeout_relay import (
     read_repo_closeout_sidecar,
     select_closeout_relay_payload,
@@ -24,6 +27,8 @@ from services.git_integration_worker.cursor_auto.directive import (
     corpus_guard_uris,
     parse_request_body,
 )
+
+
 from services.git_integration_worker.cursor_auto.nested_sdk import (
     post_operator_closeout,
     post_operator_confer,
@@ -41,6 +46,15 @@ from services.git_integration_worker.cursor_sdk_deliverables import (
     sidecar_workspaces_ref,
 )
 from services.git_integration_worker.cursor_sdk_events import emit_sdk_closeout_relayed
+
+
+def _relay_model_bind(model: dict[str, Any]) -> dict[str, str | None]:
+    requested = str(model.get("requested") or "")
+    resolved = str(model.get("resolved_model_id") or "")
+    return {
+        "requested_model": requested or None,
+        "resolved_model": resolved or None,
+    }
 
 
 async def relay_confer_outcome(
@@ -64,6 +78,8 @@ async def relay_confer_outcome(
         ledger_status=terminal_status,
         dispatch_id=dispatch_id,
         guard_uris=guard,
+        caller_auditable=caller_auditable(from_agent=job.from_agent),
+        **_relay_model_bind(model),
     )
     payload = await promote_clamped_closeout_to_cortex(
         payload,
@@ -174,6 +190,8 @@ async def relay_closeout_outcome(
         sidecar_text=read_repo_closeout_sidecar(dispatch_id),
         ledger_status=terminal_status,
         dispatch_id=dispatch_id,
+        caller_auditable=caller_auditable(from_agent=job.from_agent),
+        **_relay_model_bind(model),
     )
     payload = await promote_clamped_closeout_to_cortex(
         payload,

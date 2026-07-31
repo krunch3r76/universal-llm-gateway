@@ -255,12 +255,17 @@ def parse_request_body(body: str) -> ParsedDirective | None:
 
 def build_sdk_message(job_body: str, *, contract: str) -> str:
     """Prompt text handed to nested cursor-sdk dispatch."""
+    from services.git_integration_worker.cursor_auto.reporting_contract import (
+        reporting_contract_lines,
+    )
+
     body = job_body.strip()
     lines = [
         "Nested cursor-sdk dispatch from cursor-auto (operator proxy).",
         f"contract={contract}",
         "",
         body,
+        *reporting_contract_lines(),
     ]
     if contract == "confer":
         directive = parse_request_body(body)
@@ -277,9 +282,6 @@ def build_sdk_message(job_body: str, *, contract: str) -> str:
                     "- Write a distinct report sibling (e.g. …/confer-report.md) and "
                     "announce it in effects + deltas_to_spec, or",
                     "- Emit an explicit line: fence_exception: <uri> — <reason>",
-                    "",
-                    "Emit §2 fields inline in your closeout (ac_verdict, deltas_to_spec, "
-                    "effects, etc.).",
                 ]
             )
     return "\n".join(lines) + "\n"
