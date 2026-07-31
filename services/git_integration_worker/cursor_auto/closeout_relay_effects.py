@@ -284,22 +284,6 @@ def _append_deviation_tokens(body: str, tokens: list[str]) -> str:
     return f"{body.rstrip()}\n{line}\n"
 
 
-def _durable_sidecar_uris(
-    wrapper_text: str | None,
-    *,
-    dispatch_id: str,
-) -> list[str]:
-    """Return cortex-first durable sidecar URIs from the wrapper evidence pool."""
-    del dispatch_id
-    if not wrapper_text:
-        return []
-    from services.git_integration_worker.cursor_auto.closeout_relay_cortex_uri import (
-        extract_durable_sidecar_uris,
-    )
-
-    return extract_durable_sidecar_uris(wrapper_text)
-
-
 def _cell_claims_false_absence(cell: str) -> bool:
     if "unclassified" in cell.casefold():
         return False
@@ -347,6 +331,9 @@ def _judgment_cells_overclaim(body: str) -> bool:
     return False
 
 
+_READ_FAILED_CELL_PREFIX = "read_failed — sidecar unavailable:"
+
+
 def amend_completion_overclaim(
     body: str,
     *,
@@ -354,25 +341,26 @@ def amend_completion_overclaim(
     status: str,
     source: str,
     dispatch_id: str = "",
+    sidecar_read_succeeded: bool = False,
+    sidecar_read_failed_uri: str | None = None,
 ) -> CloseoutRelayPayload:
     """Clamp status when relay cells overclaim executor certainty or hide unread sidecars."""
+    del wrapper_text  # read state is plumbed explicitly; URIs alone are not read proof
     amended_body = body
     amended_status = status
     deviations: list[str] = []
 
-    unread_sidecars = _durable_sidecar_uris(wrapper_text, dispatch_id=dispatch_id)
     sidecar_uri = (
         sidecar_workspaces_ref(dispatch_id)
         if dispatch_id
-        else (unread_sidecars[0] if unread_sidecars else "")
+        else (sidecar_read_failed_uri or "")
     )
     if sidecar_uri and "unclassified" in amended_body.casefold():
         amended_body = _rewrite_parse_failed_cells(
             amended_body, sidecar_uri=sidecar_uri
         )
 
-    if unread_sidecars:
-        preferred_uri = unread_sidecars[0]
+    if sidecar_read_failed_uri and not sidecar_read_succeeded:
         false_absence_hits = False
         for field in _JUDGMENT_FIELDS:
             cell = _extract_table_cell(amended_body, field)
@@ -381,7 +369,7 @@ def amend_completion_overclaim(
             amended_body = _replace_table_cell(
                 amended_body,
                 field,
-                f"unresolved — not read: {preferred_uri}",
+                f"{_READ_FAILED_CELL_PREFIX} {sidecar_read_failed_uri}",
             )
             false_absence_hits = True
         if false_absence_hits:

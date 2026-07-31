@@ -27,6 +27,9 @@ _SECTION2_FIELDS: tuple[tuple[str, str], ...] = (
     ("evidence", "evidence"),
     ("next", "next"),
     ("open forks", "open forks"),
+    ("access", "access"),
+    ("coverage", "coverage"),
+    ("model_actual", "model_actual"),
 )
 
 _UNCLASSIFIED_RE = re.compile(
@@ -47,6 +50,9 @@ _RELAY_FIELD_DEFAULTS: dict[str, str] = {
     "evidence": "none — see machine envelope below",
     "deltas_to_spec": "none — field not authored in §2 sidecar",
     "decisions_taken": "none — field not authored in §2 sidecar",
+    "access": "none — field not authored in §2 sidecar",
+    "coverage": "none — field not authored in §2 sidecar",
+    "model_actual": "none — field not authored in §2 sidecar",
 }
 
 

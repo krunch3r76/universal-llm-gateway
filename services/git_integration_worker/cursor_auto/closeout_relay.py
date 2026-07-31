@@ -24,30 +24,31 @@ from services.git_integration_worker.cursor_auto.closeout_relay_common import (
     _as_str_list,
     _order_preserving_dedup,
     _table_cell,
-    build_ac_verdict_cell,
-    fill_judgment_cell,
     is_wrapper_manifest,
     looks_section2,
     strip_machine_tail,
     wrapper_status,
 )
-from services.git_integration_worker.cursor_auto.closeout_relay_cortex_fields import (
-    status_from_section2,
+from services.git_integration_worker.cursor_auto.closeout_relay_cortex import (
+    run_cortex_scan,
 )
 from services.git_integration_worker.cursor_auto.closeout_relay_cortex_fence import (
     extract_fence_exception_lines,
 )
-from services.git_integration_worker.cursor_auto.closeout_relay_cortex import (
-    run_cortex_scan,
+from services.git_integration_worker.cursor_auto.closeout_relay_cortex_fields import (
+    status_from_section2,
+)
+from services.git_integration_worker.cursor_auto.closeout_relay_cortex_uri import (
+    extract_cortex_uris_from_wrapper,
 )
 from services.git_integration_worker.cursor_auto.closeout_relay_effects import (
     machine_write_uris,
 )
-from services.git_integration_worker.cursor_auto.relay_trust import (
-    enforce_synthesized_partial,
-)
 from services.git_integration_worker.cursor_auto.closeout_relay_project import (
     project_section2_table,
+)
+from services.git_integration_worker.cursor_auto.relay_trust import (
+    enforce_synthesized_partial,
 )
 from services.git_integration_worker.cursor_sdk_deliverables import (
     sidecar_workspaces_ref,
@@ -266,6 +267,7 @@ def select_closeout_relay_payload(
     """
     fallback_status = ledger_status_to_closeout(ledger_status)
     wrapper_text = sdk_body
+    cortex_uris = extract_cortex_uris_from_wrapper(wrapper_text or "")
 
     bind = {
         "wrapper_text": wrapper_text,
@@ -274,6 +276,7 @@ def select_closeout_relay_payload(
         "caller_auditable": caller_auditable,
         "requested_model": requested_model,
         "resolved_model": resolved_model,
+        "sidecar_read_failed_uri": None,
     }
 
     if sidecar_text:
@@ -325,6 +328,9 @@ def select_closeout_relay_payload(
             cortex_payload,
             **bind,
         )
+
+    if cortex_uris:
+        bind["sidecar_read_failed_uri"] = cortex_uris[0]
 
     synthesized = synthesize_section2(
         wrapper_text=sdk_body,

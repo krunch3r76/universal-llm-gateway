@@ -41,6 +41,7 @@ _BOLD_HEADING_ONLY_RE = re.compile(
 
 def _normalize_heading_key(text: str) -> str:
     text = re.sub(r"\s*\([^)]*\)", "", text)
+    text = re.sub(r"[*`_]+", "", text)
     return re.sub(r"[_\-\s]+", "", text.casefold())
 
 

@@ -170,6 +170,7 @@ def finalize_relay_payload(
     caller_auditable: bool = False,
     requested_model: str | None = None,
     resolved_model: str | None = None,
+    sidecar_read_failed_uri: str | None = None,
 ) -> CloseoutRelayPayload:
     """Run honesty amend, overclaim clamp, reporting tier, optional confer fence, then clamp."""
     amended = amend_effects_underclaim(
@@ -178,12 +179,15 @@ def finalize_relay_payload(
         status=payload.status,
         source=payload.source,
     )
+    sidecar_read_succeeded = payload.source in ("section2_sidecar", "section2_bus")
     overclaim = amend_completion_overclaim(
         amended.body,
         wrapper_text=wrapper_text,
         status=amended.status,
         source=amended.source,
         dispatch_id=dispatch_id,
+        sidecar_read_succeeded=sidecar_read_succeeded,
+        sidecar_read_failed_uri=sidecar_read_failed_uri,
     )
     model_substitution = bool(
         requested_model

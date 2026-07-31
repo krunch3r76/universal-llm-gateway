@@ -26,9 +26,6 @@ from services.git_integration_worker.cursor_auto.closeout_relay_cortex import (
 from services.git_integration_worker.cursor_auto.relay_trust import (
     enforce_synthesized_partial,
 )
-from services.git_integration_worker.cursor_sdk_deliverables import (
-    sidecar_workspaces_ref,
-)
 
 _WRAPPER = json.dumps(
     {
@@ -940,7 +937,7 @@ _TURN8_WRAPPER = json.dumps(
 
 
 def test_turn8_relay_body_overclaim_clamp_ac5() -> None:
-    """AC5 — turn 8 relay body: partial status, preserved unclassified, no false absence."""
+    """AC5 — turn 8 relay body: partial status from parse_failed; no false unread relabel."""
     from services.git_integration_worker.cursor_auto.closeout_relay_briefing import (
         finalize_relay_payload,
     )
@@ -956,10 +953,9 @@ def test_turn8_relay_body_overclaim_clamp_ac5() -> None:
     )
     assert payload.status == "partial"
     assert "parse_failed — authoritative sidecar:" in payload.body
-    assert "none — field not authored in §2 sidecar" not in payload.body
-    assert f"unresolved — not read: {_TURN8_CORTEX_CLOSEOUT}" in payload.body
+    assert "unresolved — not read:" not in payload.body
     assert "overclaim:parse_failed_field" in payload.body
-    assert "overclaim:false_absence_unread_provenance" in payload.body
+    assert "overclaim:false_absence_unread_provenance" not in payload.body
 
 
 def test_internally_consistent_closeout_not_clamped_ac6() -> None:
@@ -1052,7 +1048,6 @@ def test_6524_heading_only_ac_verdict_table_extracts() -> None:
     )
 
     dispatch_id = "auto-a438536de12d"
-    provenance = sidecar_workspaces_ref(dispatch_id)
     payload = select_closeout_relay_payload(
         sdk_body=_WRAPPER,
         sidecar_text=_6524_HEADING_ONLY_SECTION2,
@@ -1092,3 +1087,208 @@ def test_6524_arc_sidecar_fixtures_no_parse_failed(dispatch_id: str) -> None:
     assert "relay could not parse" not in payload.body.lower()
     assert "AC1" in payload.body
     assert "overclaim:unclassified_field" not in payload.body
+
+
+# --- closeout-relay crack specimens (6566 bind / AC1–AC3) ---
+
+_FIXTURE_AE931A7364A4_SIDECAR = """\
+## §2 CLOSEOUT — agent-bus:6538 §13 D2 operator-authority correction
+
+**ac_verdict:** PASS (all six ACs met)
+
+**MODEL ACTUAL:** `cursor/composer-2.5` (matches `desired_model`)
+
+### SCOPE DELTA
+
+**Done:**
+- §A landed in `cursor-plugins/ulg-ecosystem/skills/cdp-operator-proxy/SKILL.md`
+
+**Not done (explicitly out of scope):**
+- IDE restart / Reload Window
+
+**deltas_to_spec:** none — attended IDE home reachable via explicit `HOME=/home/io`
+
+### ACCESS
+
+| Surface | Reachable? | Notes |
+|---|---|---|
+| Repo checkout | yes | All edits applied |
+| Attended IDE home | yes | Install via `HOME=/home/io` |
+
+### COVERAGE
+
+| Retrieval | Corpus | Count / range |
+|---|---|---|
+| Sidecar spec | `cortex://notes/system/threads/6561-operator-authority-ide-parity-and-sync.md` | full read |
+
+### effects
+
+**Files touched:**
+- `cursor-plugins/ulg-ecosystem/skills/cdp-operator-proxy/SKILL.md`
+
+**decisions_taken:**
+- §C surface: `episode_briefing.py` — fits at 25/26 lines
+"""
+
+_FIXTURE_AE931A7364A4_WRAPPER = json.dumps(
+    {
+        "schema_version": 1,
+        "status": "complete",
+        "summary": "dispatch auto-ae931a7364a4",
+        "files_created": [],
+        "files_modified": [],
+        "files_deleted": [],
+        "effects": [],
+        "capture_status": "partial",
+        "effects_manifest": {"schema_version": 1},
+        "evidence_uris": {
+            "artifact_paths": [
+                "workspaces://universal-llm-gateway/tmp/reviews/closeouts/auto-ae931a7364a4.md",
+            ],
+        },
+    }
+)
+
+_FIXTURE_DC17CCD8B5E4_SIDECAR = """\
+## TYPE: CLOSEOUT
+
+**status:** complete
+
+| Field | Value |
+|---|---|
+| **ac_verdict** | **PASS** — AC1 ticket minted; AC2 routed; AC3 surface named honestly |
+| **deltas_to_spec** | none — mint + seed + route only; no fix, no classifier edits |
+| **decisions_taken** | Created `todo:cursor-auto-closeout-relay-partial-status` |
+| **effects** | `cortex://notes/system/specs/cursor-auto-closeout-relay-partial-status.md` |
+| **evidence** | `entity_create` returned `id=todo:cursor-auto-closeout-relay-partial-status` |
+| **next** | Codeforce pickup: `todo_candidates` query or spine recon |
+| **open forks** | none |
+
+**SCOPE DELTA:** Done: todo entity, spec corpus. Not done: defect fix.
+
+**ACCESS:** `cortex` entity_create — reachable.
+
+**COVERAGE:** Sidecar corpus read; prior tickets linked.
+
+**MODEL ACTUAL:** n/a — DIRECTIVE did not specify model.
+"""
+
+_FIXTURE_DC17CCD8B5E4_WRAPPER = json.dumps(
+    {
+        "schema_version": 1,
+        "status": "complete",
+        "summary": "dispatch auto-dc17ccd8b5e4",
+        "files_created": [],
+        "files_modified": [],
+        "files_deleted": [],
+        "effects": [
+            "cortex://notes/system/specs/cursor-auto-closeout-relay-partial-status.md",
+        ],
+        "capture_status": "partial",
+        "effects_manifest": {"schema_version": 1},
+        "evidence_uris": {
+            "artifact_paths": [
+                "workspaces://universal-llm-gateway/tmp/reviews/closeouts/auto-dc17ccd8b5e4.md",
+            ],
+        },
+    }
+)
+
+
+def test_specimen_ae931a7364a4_honest_absence_relays_complete_ac2() -> None:
+    """AC2 — ATX sidecar with honest unauthored next/evidence: complete, no false overclaim."""
+    from services.git_integration_worker.cursor_auto.closeout_relay_project import (
+        count_unclassified_fields,
+    )
+
+    payload = select_closeout_relay_payload(
+        sdk_body=_FIXTURE_AE931A7364A4_WRAPPER,
+        sidecar_text=_FIXTURE_AE931A7364A4_SIDECAR,
+        ledger_status="completed",
+        dispatch_id="auto-ae931a7364a4",
+        caller_auditable=True,
+    )
+    assert payload.source == "section2_sidecar"
+    assert payload.status == "complete"
+    assert count_unclassified_fields(payload.body) == 0
+    assert "overclaim:false_absence_unread_provenance" not in payload.body
+    assert "unresolved — not read:" not in payload.body
+    assert "reporting:missing_access" not in payload.body
+    assert "reporting:missing_coverage" not in payload.body
+    assert "PASS (all six ACs met)" in payload.body
+    assert "unauthored — operator must derive from effects above" in payload.body
+    assert "none — field not authored in §2 sidecar" in payload.body
+
+
+def test_specimen_dc17ccd8b5e4_bold_table_fields_project_clean_ac1() -> None:
+    """AC1 — bold table field names extract; all core fields populated, zero parse_failed."""
+    from services.git_integration_worker.cursor_auto.closeout_relay_project import (
+        count_unclassified_fields,
+    )
+
+    payload = select_closeout_relay_payload(
+        sdk_body=_FIXTURE_DC17CCD8B5E4_WRAPPER,
+        sidecar_text=_FIXTURE_DC17CCD8B5E4_SIDECAR,
+        ledger_status="completed",
+        dispatch_id="auto-dc17ccd8b5e4",
+        caller_auditable=True,
+    )
+    assert payload.source == "section2_sidecar"
+    assert payload.status == "complete"
+    assert count_unclassified_fields(payload.body) == 0
+    assert "parse_failed" not in payload.body.lower()
+    assert "overclaim:false_absence_unread_provenance" not in payload.body
+    assert "reporting:missing_access" not in payload.body
+    assert "reporting:missing_coverage" not in payload.body
+    assert "**PASS** — AC1 ticket minted" in payload.body
+    assert "Codeforce pickup" in payload.body
+    assert "open forks" in payload.body.lower()
+
+
+def test_read_failed_sidecar_emits_distinct_string_ac2c() -> None:
+    """AC2(c) — when sidecar read fails, false-absence cells get read_failed prefix."""
+    from services.git_integration_worker.cursor_auto.closeout_relay_briefing import (
+        finalize_relay_payload,
+    )
+
+    failed_uri = "cortex://notes/reviews/missing-closeout.md"
+    synthesized_body = """\
+TYPE: CLOSEOUT
+status: partial
+
+| Field | Value |
+|---|---|
+| status | partial |
+| ac_verdict | unauthored — not reported by executor |
+| deltas_to_spec | none — field not authored in §2 sidecar |
+| decisions_taken | none — field not authored in §2 sidecar |
+| effects | none |
+| evidence | none |
+| next | unauthored — operator must derive from effects above |
+| open forks | none — field not authored in §2 sidecar |
+"""
+    payload = finalize_relay_payload(
+        CloseoutRelayPayload(
+            body=synthesized_body,
+            status="partial",
+            source="section2_synthesized",
+        ),
+        wrapper_text=_WRAPPER,
+        dispatch_id="auto-read-fail",
+        sidecar_read_failed_uri=failed_uri,
+    )
+    assert f"read_failed — sidecar unavailable: {failed_uri}" in payload.body
+    assert "unresolved — not read:" not in payload.body
+    assert "overclaim:false_absence_unread_provenance" in payload.body
+
+
+def test_emphasis_tolerant_table_field_matching_unit() -> None:
+    """AC1 — _normalize_heading_key strips markdown emphasis from table field names."""
+    from services.git_integration_worker.cursor_auto.closeout_relay_cortex_fields import (
+        extract_table_field,
+    )
+
+    body = "| **ac_verdict** | **PASS** — ticket minted |\n|---|---|\n"
+    assert extract_table_field(body, "ac_verdict") == "**PASS** — ticket minted"
+    body_backtick = "| `next` | follow-on work |\n"
+    assert extract_table_field(body_backtick, "next") == "follow-on work"
