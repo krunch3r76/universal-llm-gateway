@@ -47,9 +47,6 @@ from services.git_integration_worker.cursor_auto.closeout_relay_effects import (
 from services.git_integration_worker.cursor_auto.closeout_relay_project import (
     project_section2_table,
 )
-from services.git_integration_worker.cursor_auto.relay_trust import (
-    enforce_synthesized_partial,
-)
 from services.git_integration_worker.cursor_sdk_deliverables import (
     sidecar_workspaces_ref,
 )
@@ -261,9 +258,8 @@ def select_closeout_relay_payload(
 
     ``cortex_root`` defaults to ``cortex_files_root()`` when omitted. URIs with
     absolute paths, ``..`` segments, or targets outside ``cortex_root`` are
-    skipped without raising. Cortex promote requires §2 markers and a dispatch
-    bind; relayed status is clamped via ``enforce_synthesized_partial`` while
-    the synthesized trust gate remains disabled.
+    skipped without raising.     Cortex promote requires §2 markers and a dispatch
+    bind. Relayed status follows the amended §2 body after ``finalize_relay_payload``.
     """
     fallback_status = ledger_status_to_closeout(ledger_status)
     wrapper_text = sdk_body
@@ -343,10 +339,7 @@ def select_closeout_relay_payload(
         return finalize_relay_payload(
             CloseoutRelayPayload(
                 body=synthesized,
-                status=enforce_synthesized_partial(
-                    raw_status,
-                    closeout_source=source,
-                ),
+                status=raw_status,
                 source=source,
             ),
             **bind,

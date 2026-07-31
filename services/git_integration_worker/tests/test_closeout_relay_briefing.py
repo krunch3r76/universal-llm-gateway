@@ -232,6 +232,151 @@ def test_clamp_idempotent() -> None:
     assert first == second
 
 
+def test_clamp_skips_table_header_row_not_duplicated() -> None:
+    """AC3 — existing | Field | Value | row must not produce a second header."""
+    body = (
+        "TYPE: CLOSEOUT\nstatus: complete\n\n"
+        "| Field | Value |\n|---|---|\n"
+        "| status | complete |\n"
+        f"| ac_verdict | {'x' * 5000} |\n"
+        "| deltas_to_spec | none |\n"
+        "| decisions_taken | none |\n"
+        "| effects | none |\n"
+        "| evidence | none |\n"
+        "| next | none |\n"
+        "| open forks | none |\n"
+    )
+    clamped, was_clamped = clamp_relay_body(body, pointer=sidecar_workspaces_ref(_DISPATCH))
+    assert was_clamped
+    assert clamped.count("| Field | Value |") == 1
+    assert clamped.count("|---|---|") == 1
+
+
+def test_clamp_judgment_fields_get_larger_cell_budget() -> None:
+    long = "word " * 500
+    body = (
+        "TYPE: CLOSEOUT\nstatus: complete\n\n"
+        "| Field | Value |\n|---|---|\n"
+        "| status | complete |\n"
+        f"| ac_verdict | {long.strip()} |\n"
+        "| deltas_to_spec | none |\n"
+        "| decisions_taken | none |\n"
+        "| effects | short |\n"
+        "| evidence | none |\n"
+        "| next | none |\n"
+        "| open forks | none |\n"
+    )
+    clamped, was_clamped = clamp_relay_body(body, pointer=sidecar_workspaces_ref(_DISPATCH))
+    assert was_clamped
+    ac_cell = clamped.split("| ac_verdict | ", 1)[1].split(" |", 1)[0]
+    effects_cell = clamped.split("| effects | ", 1)[1].split(" |", 1)[0]
+    assert len(ac_cell) > len(effects_cell)
+
+
+def test_envelope_status_matches_body_complete_c4_regression() -> None:
+    """AC1/C4 — payload.status tracks §2 body when sidecar says complete."""
+    sidecar = """\
+TYPE: CLOSEOUT
+status: complete
+
+**ac_verdict:** PASS — all AC met
+
+**deltas_to_spec:** none
+
+**decisions_taken:** envelope sync bind
+
+**next:** none
+
+**open forks:** none
+"""
+    payload = select_closeout_relay_payload(
+        sdk_body=_WRAPPER,
+        sidecar_text=sidecar,
+        ledger_status="completed",
+        dispatch_id=_DISPATCH,
+        caller_auditable=True,
+    )
+    assert payload.status == "complete"
+    assert status_from_section2(payload.body) == "complete"
+    table_status = payload.body.split("| status | ", 1)[1].split(" |", 1)[0]
+    assert table_status == "complete"
+    header_match = payload.body.splitlines()
+    status_lines = [line for line in header_match if line.lower().startswith("status:")]
+    assert len(status_lines) == 1
+    assert status_lines[0].strip() == "status: complete"
+
+
+def test_synthesized_with_sidecar_complete_not_forced_partial() -> None:
+    """C4 class — synthesized path must not keep partial when sidecar projects complete."""
+    sidecar = """\
+TYPE: CLOSEOUT
+status: complete
+
+**ac_verdict:** PASS
+
+**deltas_to_spec:** none
+"""
+    payload = select_closeout_relay_payload(
+        sdk_body=_WRAPPER,
+        sidecar_text=sidecar,
+        ledger_status="completed",
+        dispatch_id=_DISPATCH,
+        caller_auditable=True,
+    )
+    assert payload.source == "section2_sidecar"
+    assert payload.status == "complete"
+
+
+@pytest.mark.asyncio
+async def test_post_operator_closeout_single_envelope_status() -> None:
+    """AC1 — operator-facing relay carries one TYPE: CLOSEOUT and matching status lines."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from services.git_integration_worker.cursor_auto.nested_sdk import post_operator_closeout
+    from services.git_integration_worker.cursor_auto.queue import AutoJob
+
+    closeout_body = (
+        "TYPE: CLOSEOUT\nstatus: complete\n\n"
+        "| Field | Value |\n|---|---|\n"
+        "| status | complete |\n"
+        "| ac_verdict | PASS |\n"
+    )
+    job = AutoJob(
+        job_id="j-c4",
+        thread_id="6561",
+        turn_number=22,
+        subject="DIRECTIVE",
+        body="TYPE: DIRECTIVE",
+        from_agent="web-anthropic",
+        to_agent="cursor",
+        desired_model="composer-2.5",
+        desired_effort="default",
+        contract="implement",
+    )
+    bus = MagicMock()
+    bus.reply = AsyncMock(return_value=MagicMock(status_code=200, body="ok"))
+    await post_operator_closeout(
+        job,
+        status="partial",
+        dispatch_id="auto-c4-fix",
+        model_id="cursor/composer-2.5",
+        sdk_body=None,
+        closeout_body=closeout_body,
+        closeout_source="section2_sidecar",
+        extra={"terminal_status": "completed"},
+        bus=bus,
+    )
+    sent = bus.reply.await_args.kwargs["body"]
+    assert sent.count("TYPE: CLOSEOUT") == 1
+    status_lines = [
+        line.strip()
+        for line in sent.splitlines()
+        if line.lower().startswith("status:")
+    ]
+    assert status_lines == ["status: complete"]
+    assert '| status | complete |' in sent
+
+
 _CORTEX_POINTER = (
     "cortex://notes/system/threads/6329-cursor-sdk-closeout-auto-4f974d43d0de.md"
 )

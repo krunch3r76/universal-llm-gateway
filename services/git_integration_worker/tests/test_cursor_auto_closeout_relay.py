@@ -165,7 +165,27 @@ def test_synthesized_section2_does_not_fabricate_pass():
     assert "PASS" not in payload.body
 
 
-def test_synthesized_status_forced_partial_even_when_wrapper_complete():
+def test_synthesized_status_matches_wrapper_when_no_sidecar():
+    from services.git_integration_worker.cursor_auto.closeout_relay_cortex_fields import (
+        extract_status,
+    )
+
+    payload = select_closeout_relay_payload(
+        sdk_body=_WRAPPER,
+        sidecar_text=None,
+        ledger_status="completed",
+        caller_auditable=True,
+    )
+    assert payload.status == "partial"
+    assert extract_status(payload.body) == payload.status
+
+
+def test_synthesized_wrapper_complete_stays_partial_when_unauthored_cells():
+    """Machine-synthesized §2 with unauthored judgment cells clamps to partial."""
+    from services.git_integration_worker.cursor_auto.closeout_relay_cortex_fields import (
+        extract_status,
+    )
+
     wrapper = json.dumps(
         {
             "schema_version": 1,
@@ -183,16 +203,7 @@ def test_synthesized_status_forced_partial_even_when_wrapper_complete():
     )
     assert payload.source == "section2_synthesized"
     assert payload.status == "partial"
-
-
-def test_synthesized_status_matches_wrapper_payload_status():
-    payload = select_closeout_relay_payload(
-        sdk_body=_WRAPPER,
-        sidecar_text=None,
-        ledger_status="completed",
-        caller_auditable=True,
-    )
-    assert payload.status == "partial"
+    assert extract_status(payload.body) == "partial"
 
 
 def test_authored_sidecar_still_preferred_over_synthesis():

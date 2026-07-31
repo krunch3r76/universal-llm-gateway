@@ -23,6 +23,14 @@ _STATUS_RE = re.compile(
     r"(?im)^(?:\*\*)?status(?:\*\*)?\s*[:=]\s*`?(complete|partial|blocked)`?"
 )
 _VALID_WRAPPER_STATUSES = frozenset({"complete", "partial", "blocked"})
+RELAY_JUDGMENT_CLAMP_FIELDS = frozenset(
+    {"ac_verdict", "decisions_taken", "next", "open forks"}
+)
+_ENVELOPE_TYPE_RE = re.compile(r"(?im)^TYPE:\s*CLOSEOUT\s*$")
+_ENVELOPE_STATUS_RE = re.compile(
+    r"(?im)^status:\s*(complete|partial|blocked)\s*$"
+)
+_ENVELOPE_DEVIATIONS_RE = re.compile(r"(?im)^deviations:\s*.+$")
 RELAY_CELL_CAP_CHARS = 400
 RELAY_EXCERPT_FALLBACK_CHARS = 240
 RELAY_EFFECTS_MAX_ITEMS = 10
@@ -187,6 +195,39 @@ def strip_machine_tail(text: str) -> str:
     return text[:cut].rstrip()
 
 
+def strip_projected_closeout_envelope(body: str) -> str:
+    """Drop inner ``TYPE: CLOSEOUT`` header lines — outer relay owns one envelope."""
+    lines = body.splitlines()
+    idx = 0
+    while idx < len(lines):
+        stripped = lines[idx].strip()
+        if not stripped:
+            idx += 1
+            continue
+        if (
+            _ENVELOPE_TYPE_RE.match(stripped)
+            or _ENVELOPE_STATUS_RE.match(stripped)
+            or _ENVELOPE_DEVIATIONS_RE.match(stripped)
+        ):
+            idx += 1
+            continue
+        break
+    while idx < len(lines) and not lines[idx].strip():
+        idx += 1
+    return "\n".join(lines[idx:])
+
+
+def resolve_relay_status(body: str, status: str) -> str:
+    """Prefer §2 body/header/table status over a stale payload status field."""
+    body_status = extract_status(body) or status_from_section2(body)
+    if body_status in _VALID_WRAPPER_STATUSES:
+        return body_status
+    normalized = status.strip().lower()
+    if normalized in _VALID_WRAPPER_STATUSES:
+        return normalized
+    return "partial"
+
+
 def wrapper_status(text: str) -> str | None:
     """Return wrapper manifest ``status`` when it is a known closeout value."""
     if not is_wrapper_manifest(text):
@@ -223,7 +264,10 @@ __all__ = [
     "is_wrapper_manifest",
     "looks_section2",
     "order_preserving_dedup",
+    "RELAY_JUDGMENT_CLAMP_FIELDS",
+    "resolve_relay_status",
     "status_from_section2",
+    "strip_projected_closeout_envelope",
     "strip_machine_tail",
     "table_cell",
     "unclassified_relay_prefix",

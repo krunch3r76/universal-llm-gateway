@@ -18,16 +18,11 @@ from services.git_integration_worker.cursor_auto.closeout_relay_common import (
     _as_str_list,
     _order_preserving_dedup,
     _table_cell,
-    build_ac_verdict_cell,
-    fill_judgment_cell,
     is_wrapper_manifest,
     looks_section2,
     status_from_section2,
     strip_machine_tail,
     wrapper_status,
-)
-from services.git_integration_worker.cursor_auto.closeout_relay_effects import (
-    machine_write_uris,
 )
 from services.git_integration_worker.cursor_auto.closeout_relay_cortex_fence import (
     apply_write_fence,
@@ -42,6 +37,9 @@ from services.git_integration_worker.cursor_auto.closeout_relay_cortex_uri impor
     extract_cortex_uris_from_wrapper,
     normalize_cortex_uri,
     read_cortex_text,
+)
+from services.git_integration_worker.cursor_auto.closeout_relay_effects import (
+    machine_write_uris,
 )
 from services.git_integration_worker.cursor_auto.closeout_relay_project import (
     project_section2_table,

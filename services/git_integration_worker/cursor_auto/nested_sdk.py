@@ -17,6 +17,10 @@ from universal_logging import get_logger
 from services.git_integration_worker.cursor_auto.closeout_relay import (
     ledger_status_to_closeout,
 )
+from services.git_integration_worker.cursor_auto.closeout_relay_common import (
+    resolve_relay_status,
+    strip_projected_closeout_envelope,
+)
 from services.git_integration_worker.cursor_auto.episode_residue import (
     compose_closeout_body,
     resolve_relay_residue,
@@ -265,6 +269,8 @@ async def post_operator_closeout(
     payload = (closeout_body if closeout_body is not None else sdk_body) or ""
     if not payload.strip():
         payload = "(no cursor-sdk closeout body captured)"
+    envelope_status = resolve_relay_status(payload, status)
+    relay_body = strip_projected_closeout_envelope(payload.strip())
     gate_class = tag_gate_class_for_payload(payload)
     if gate_class:
         meta["gate_class"] = gate_class
@@ -272,7 +278,7 @@ async def post_operator_closeout(
         meta.setdefault("contract", job.contract)
     lines = [
         "TYPE: CLOSEOUT",
-        f"status: {status}",
+        f"status: {envelope_status}",
         f"dispatch_id: {dispatch_id}",
         f"model: {model_id}",
         f"request_turn: {job.turn_number}",
@@ -280,7 +286,7 @@ async def post_operator_closeout(
     if meta:
         lines.append(f"meta: {json.dumps(meta, sort_keys=True)}")
     lines.append("")
-    lines.append(payload.strip())
+    lines.append(relay_body)
     body = compose_closeout_body(
         "\n".join(lines),
         resolve_relay_residue(wrapper_body=sdk_body, relay_body=payload),
