@@ -301,6 +301,19 @@ async def post_operator_closeout(
         "\n".join(lines),
         resolve_relay_residue(wrapper_body=sdk_body, relay_body=payload),
     )
+    from claude_bundles.lane_a_closeout_checkpoint import (
+        validate_lane_a_closeout_checkpoint,
+    )
+
+    envelope_verdict = validate_lane_a_closeout_checkpoint(body=body)
+    if not envelope_verdict.ok:
+        return {
+            "ok": False,
+            "status_code": 422,
+            "body": envelope_verdict.reason or "lane_a_checkpoint_missing",
+            "closeout_source": closeout_source,
+            "reason": envelope_verdict.reason,
+        }
     resp = await client.reply(
         thread_id=job.thread_id,
         to_agent=job.from_agent,

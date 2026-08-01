@@ -7,6 +7,7 @@ authoring seat can re-issue without a round trip.
 
 from __future__ import annotations
 
+from claude_bundles.lane_a_closeout_checkpoint import LANE_A_CHECKPOINT_FIX_HINT
 from claude_bundles.mission_close_wake import MISSION_CLOSE_WAKE_FIX_HINT
 
 TIER_M_TEMPLATE_REF = "cdp-operator-proxy §2 (tier-M DIRECTIVE template)"
@@ -64,6 +65,7 @@ DEADLINE_UNPARSEABLE_FIX_HINT = (
 __all__ = [
     "DEADLINE_UNPARSEABLE_FIX_HINT",
     "EMPTY_SCOPE_FIX_HINT",
+    "LANE_A_CHECKPOINT_FIX_HINT",
     "MISSION_CLOSE_WAKE_FIX_HINT",
     "PROPAGATE_MISSING_FIX_HINT",
     "PROPAGATE_SCOPE_FIX_HINT",

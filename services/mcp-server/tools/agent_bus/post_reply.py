@@ -107,6 +107,10 @@ def _reply_impl(
         refusal_envelope,
         validate_mission_close_wake,
     )
+    from claude_bundles.lane_a_closeout_checkpoint import (
+        refusal_envelope as checkpoint_refusal_envelope,
+        validate_lane_a_closeout_checkpoint,
+    )
 
     wake = validate_mission_close_wake(subject=subject, body=body)
     if not wake.ok:
@@ -115,6 +119,14 @@ def _reply_impl(
             reason=wake.reason or "mission_close_wake_path_missing",
         )
         return refusal_envelope(wake)
+
+    checkpoint = validate_lane_a_closeout_checkpoint(subject=subject, body=body)
+    if not checkpoint.ok:
+        record(
+            "mcp.agentbus.reply.rejected",
+            reason=checkpoint.reason or "lane_a_checkpoint_missing",
+        )
+        return checkpoint_refusal_envelope(checkpoint)
 
     payload: dict[str, Any] = {
         "thread": thread,

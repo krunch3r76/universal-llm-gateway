@@ -267,6 +267,16 @@ def build_sdk_message(job_body: str, *, contract: str) -> str:
         body,
         *reporting_contract_lines(),
     ]
+    if contract in {"implement", "investigate", "verify"}:
+        lines.extend(
+            [
+                "",
+                "## Lane-A checkpoint (mandatory on closeout)",
+                "Include `checkpoint: committed <sha> paths=N` after path-explicit commit,",
+                "`checkpoint: nothing_authored`, or `checkpoint: deferred: <reason>`.",
+                "Never `--all`. Commit clears lane authorship — not live/done gates.",
+            ]
+        )
     if contract == "confer":
         directive = parse_request_body(body)
         guard = sorted(corpus_guard_uris(directive))

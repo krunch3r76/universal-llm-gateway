@@ -8,11 +8,15 @@ from __future__ import annotations
 
 from typing import Any
 
+from claude_bundles.lane_a_closeout_checkpoint import (
+    validate_lane_a_closeout_checkpoint,
+)
 from systems.frontier_consult.story_wire import (
     build_association_envelope,
     safe_emit_observation,
 )
 
+from services.git_integration_worker.config import load_config
 from services.git_integration_worker.cursor_auto.caller_auditable import (
     caller_auditable,
 )
@@ -30,8 +34,10 @@ from services.git_integration_worker.cursor_auto.directive import (
     corpus_guard_uris,
     parse_request_body,
 )
-
-
+from services.git_integration_worker.cursor_auto.lane_a_checkpoint import (
+    derive_tree_residue,
+    inject_tree_residue_line,
+)
 from services.git_integration_worker.cursor_auto.nested_sdk import (
     post_operator_closeout,
     post_operator_confer,
@@ -207,13 +213,63 @@ async def relay_closeout_outcome(
         dispatch_id=dispatch_id,
         thread_id=job.thread_id,
     )
+    source_repo = load_config().source_repo
+    residue_before = derive_tree_residue(
+        source_repo=source_repo,
+        dispatch_id=dispatch_id,
+    )
+    relay_body = inject_tree_residue_line(payload.body, count=residue_before.count)
+    checkpoint_verdict = validate_lane_a_closeout_checkpoint(
+        body=relay_body,
+        require_closeout_type=False,
+    )
+    if not checkpoint_verdict.ok:
+        from services.git_integration_worker.cursor_auto.fix_hints import (
+            LANE_A_CHECKPOINT_FIX_HINT,
+        )
+        from services.git_integration_worker.cursor_auto.handler_terminal import (
+            post_terminal_status,
+        )
+
+        summary = (
+            "Lane-A CLOSEOUT refused — checkpoint disposition missing or invalid "
+            f"({checkpoint_verdict.reason})."
+        )
+        blocked = await post_terminal_status(
+            job,
+            client=client,
+            queue=queue,
+            summary=summary,
+            disposition="blocked",
+            contract=job.contract,
+            terminal_status="status:blocked",
+            payload={
+                "summary": summary,
+                "reason": checkpoint_verdict.reason or "lane_a_checkpoint_missing",
+                "missed_tokens": list(checkpoint_verdict.missed_tokens),
+                "fix_hint": LANE_A_CHECKPOINT_FIX_HINT,
+                "tree_residue_before": residue_before.count,
+            },
+            failed=True,
+            dispatch_id=dispatch_id,
+        )
+        queue.mark_done(job.job_id, failed=True)
+        return {
+            "ok": False,
+            "phase": "nested_dispatch",
+            "terminal_status": terminal_status,
+            "closeout_status": "blocked",
+            "dispatch_id": dispatch_id,
+            "blocked": blocked,
+            "tree_residue_before": residue_before.count,
+        }
     relay = await post_operator_closeout(
         job,
         status=payload.status,
         dispatch_id=dispatch_id,
         model_id=str(model["resolved_model_id"]),
         sdk_body=sdk_body,
-        closeout_body=payload.body,
+        closeout_body=relay_body,
         closeout_source=payload.source,
         relay_note=payload.relay_note,
         deployment_state=payload.deployment_state,
@@ -222,6 +278,11 @@ async def relay_closeout_outcome(
             "terminal_status": terminal_status,
             "nest_under": nest_under,
             "request_id": job.request_id,
+            "tree_residue_before": residue_before.count,
+            "tree_residue_after": derive_tree_residue(
+                source_repo=source_repo,
+                dispatch_id=dispatch_id,
+            ).count,
         },
         bus=client,
     )
