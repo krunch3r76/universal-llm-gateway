@@ -15,6 +15,7 @@ import asyncio
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from openapi_mcp.binding import x_mcp
 
 from ..auth import require_token
 from ..db import get_thread, get_thread_turns_asc, normalize_thread_id
@@ -96,7 +97,10 @@ def _snapshot(
     }
 
 
-@router.get("/threads/{thread_id}/wait")
+@router.get(
+    "/threads/{thread_id}/wait",
+    openapi_extra=x_mcp("wait", tool="agent_bus"),
+)
 async def wait_thread_route(
     thread_id: str,
     after_turn: int = Query(1, ge=0),

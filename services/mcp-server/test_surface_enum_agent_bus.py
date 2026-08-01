@@ -18,6 +18,12 @@ def test_advertised_agent_bus_ops_excludes_deprecated() -> None:
     assert advertised | AGENT_BUS_DEPRECATED_OPS == frozenset(AGENT_BUS_OPS)
 
 
+def test_dispatch_ops_match_openapi_mcp_denominator() -> None:
+    from agent_bus_store.openapi_mcp._ops import AGENT_BUS_DISPATCH_OPS
+
+    assert frozenset(AGENT_BUS_OPS) == AGENT_BUS_DISPATCH_OPS
+
+
 def test_surface_enum_proxy_injects_agent_bus_ops() -> None:
     from surface_enum import _SurfaceEnumToolProxy
 

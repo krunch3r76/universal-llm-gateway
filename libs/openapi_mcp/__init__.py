@@ -13,6 +13,7 @@ from openapi_mcp.binding import (
     inject_x_mcp,
     x_mcp,
 )
+from openapi_mcp.detector import served_ops, unbound_dispatch_ops
 from openapi_mcp.registry import ServiceDescriptor, default_registry
 
 __all__ = [
@@ -21,5 +22,7 @@ __all__ = [
     "default_registry",
     "extract_typed_routes",
     "inject_x_mcp",
+    "served_ops",
+    "unbound_dispatch_ops",
     "x_mcp",
 ]

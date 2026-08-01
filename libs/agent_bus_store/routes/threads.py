@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from openapi_mcp.binding import x_mcp
 
 from ..auth import require_token
 from ..body_auto_spill import (
@@ -181,6 +182,7 @@ def _thread_detail(row: dict[str, Any]) -> ThreadDetail:
 @router.get(
     "/threads",
     response_model=ThreadListResponse,
+    openapi_extra=x_mcp("threads", tool="agent_bus"),
 )
 async def list_threads_route(
     thread_status: ThreadStatus | None = Query(None, alias="status"),
@@ -241,6 +243,7 @@ async def list_threads_route(
 @router.get(
     "/threads/{thread_id}",
     response_model=ThreadDetail,
+    openapi_extra=x_mcp("thread_get", tool="agent_bus"),
 )
 async def get_thread_route(thread_id: str) -> ThreadDetail:
     """Fetch one thread by id after normalizing numeric aliases first."""
@@ -363,6 +366,7 @@ def _raise_enrollment_denied(exc: BaseException) -> None:
     "/threads",
     status_code=status.HTTP_201_CREATED,
     response_model=ThreadDetail,
+    openapi_extra=x_mcp("create_thread", tool="agent_bus"),
 )
 async def create_thread_route(body: ThreadCreate) -> ThreadDetail:
     """Create one thread using explicit or auto-generated thread identifiers."""
@@ -392,6 +396,7 @@ async def create_thread_route(body: ThreadCreate) -> ThreadDetail:
     "/threads/with-turn",
     status_code=status.HTTP_201_CREATED,
     response_model=ThreadWithTurnCreated,
+    openapi_extra=x_mcp("post", tool="agent_bus"),
 )
 async def create_thread_with_turn_route(
     body: ThreadWithTurnCreate,
@@ -708,6 +713,7 @@ def _send_with_sidecar(body: TurnSendCreate) -> TurnSendCreated:
     "/threads/send",
     status_code=status.HTTP_201_CREATED,
     response_model=TurnSendCreated,
+    openapi_extra=x_mcp("send", tool="agent_bus"),
 )
 async def send_route(body: TurnSendCreate) -> TurnSendCreated:
     """Unified send: create new thread (new_slug) OR continue existing (thread)."""
@@ -913,6 +919,7 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
 @router.patch(
     "/threads/{thread_id}/close",
     response_model=ThreadDetail,
+    openapi_extra=x_mcp("close", tool="agent_bus"),
 )
 async def close_thread_route(thread_id: str, body: ThreadClose) -> ThreadDetail:
     """Atomically close a thread: mark all turns read + set status + summary."""
@@ -931,6 +938,7 @@ async def close_thread_route(thread_id: str, body: ThreadClose) -> ThreadDetail:
 @router.patch(
     "/threads/{thread_id}",
     response_model=ThreadDetail,
+    openapi_extra=x_mcp("update_thread", tool="agent_bus"),
 )
 async def update_thread_route(thread_id: str, body: ThreadUpdate) -> ThreadDetail:
     thread_id = normalize_thread_id(thread_id)
@@ -1133,6 +1141,7 @@ def _emit_triage_event(signal: str, payload: dict[str, object]) -> None:
 @router.post(
     "/threads/triage",
     response_model=ThreadTriageDryRun | ThreadTriageExecuted,
+    openapi_extra=x_mcp("triage", tool="agent_bus"),
 )
 async def triage_threads_route(body: ThreadTriageRequest) -> ThreadTriageDryRun | ThreadTriageExecuted:
     """Bulk inbox hygiene — preview (dry_run) or execute with confirm_token."""
@@ -1265,7 +1274,10 @@ async def triage_threads_route(body: ThreadTriageRequest) -> ThreadTriageDryRun 
     )
 
 
-@router.delete("/threads/{thread_id}")
+@router.delete(
+    "/threads/{thread_id}",
+    openapi_extra=x_mcp("delete_thread", tool="agent_bus"),
+)
 async def delete_thread_route(
     thread_id: str,
     force: bool = Query(False),

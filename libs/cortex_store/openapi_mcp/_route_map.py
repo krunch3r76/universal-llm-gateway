@@ -23,6 +23,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from openapi_mcp.binding import TypedRoute, extract_typed_routes
+from openapi_mcp.detector import served_ops as _served_ops
+from openapi_mcp.detector import unbound_dispatch_ops as _unbound_dispatch_ops
 
 # Adapter-orchestration ops — structurally untypeable on HTTP SOT (bucket d).
 UNTYPEABLE_OPS: frozenset[str] = frozenset(
@@ -44,7 +46,7 @@ def served_ops(openapi_schema: Mapping | None = None) -> frozenset[str]:
     """Return the set of dispatch ops bound to a stamped served route."""
     if openapi_schema is None:
         openapi_schema = _live_openapi()
-    return frozenset(typed_routes_from_openapi(openapi_schema))
+    return _served_ops(openapi_schema)
 
 
 def unbound_dispatch_ops(
@@ -60,8 +62,13 @@ def unbound_dispatch_ops(
     """
     from cortex_store.dispatch_ops import _OP_SPECS
 
-    ops = frozenset(op_specs if op_specs is not None else _OP_SPECS)
-    return sorted(ops - served_ops(openapi_schema) - UNTYPEABLE_OPS)
+    ops = op_specs if op_specs is not None else _OP_SPECS
+    return _unbound_dispatch_ops(
+        openapi_schema,
+        all_ops=ops,
+        exempt_ops=UNTYPEABLE_OPS,
+        load_openapi=_live_openapi if openapi_schema is None else None,
+    )
 
 
 def _live_openapi() -> Mapping:

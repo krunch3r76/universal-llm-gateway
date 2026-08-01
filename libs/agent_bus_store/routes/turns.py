@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from openapi_mcp.binding import x_mcp
 
 from ..auth import require_token
 from ..body_auto_spill import (
@@ -88,6 +89,7 @@ def _turn_from_row(r: dict[str, Any]) -> Turn:
     "/turns",
     status_code=status.HTTP_201_CREATED,
     response_model=TurnCreated,
+    openapi_extra=x_mcp("reply", tool="agent_bus"),
 )
 async def create_turn(turn: TurnCreate) -> TurnCreated:
     """Create one turn, enforcing unread and status invariants from storage logic."""
@@ -217,6 +219,7 @@ def _maybe_trigger_implement_closeout(*, thread: str, body: str | None) -> None:
 @router.get(
     "/turns",
     response_model=TurnList,
+    openapi_extra=x_mcp("fetch", tool="agent_bus"),
 )
 async def list_turns(
     thread: str | None = Query(None),
@@ -247,6 +250,7 @@ async def list_turns(
 @router.get(
     "/turns/unread-toc",
     response_model=UnreadThreadToc,
+    openapi_extra=x_mcp("fetch_unread", tool="agent_bus"),
 )
 async def list_unread_thread_toc(
     to: AgentName = Query(...),
@@ -312,6 +316,7 @@ async def mark_turn_read_route(turn_id: int) -> dict[str, str]:
 @router.patch(
     "/turns/{turn_id}",
     response_model=Turn,
+    openapi_extra=x_mcp("update", tool="agent_bus"),
 )
 async def update_turn_route(turn_id: int, body: TurnUpdate) -> Turn:
     """Update mutable turn fields while rejecting already acknowledged turns."""
@@ -370,7 +375,10 @@ async def update_turn_status_route(
     return {"status": "ok"}
 
 
-@router.delete("/turns/{turn_id}")
+@router.delete(
+    "/turns/{turn_id}",
+    openapi_extra=x_mcp("delete_turn", tool="agent_bus"),
+)
 async def delete_turn_route(
     turn_id: int,
     force: bool = Query(False),
@@ -393,6 +401,7 @@ async def delete_turn_route(
 @router.get(
     "/turns/by-number",
     response_model=Turn,
+    openapi_extra=x_mcp("get", tool="agent_bus"),
 )
 async def get_turn_by_number_route(
     thread: str = Query(...),
@@ -435,6 +444,7 @@ async def get_turn_by_number_route(
 @router.patch(
     "/threads/{thread_id}/turns/read-state",
     response_model=TurnReadStateBulkResult,
+    openapi_extra=x_mcp("mark_read", tool="agent_bus"),
 )
 async def bulk_mark_read_state_route(
     thread_id: str, body: TurnReadStateBulk
