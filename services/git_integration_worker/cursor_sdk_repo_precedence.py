@@ -13,7 +13,11 @@ from services.git_integration_worker.cursor_sdk_capture_status import (
     ChangeSet,
     normalize_wt_baseline,
 )
-from services.git_integration_worker.cursor_sdk_git_head import git_diff_paths_between
+from services.git_integration_worker.cursor_sdk_git_head import (
+    git_diff_paths_between,
+    paths_exclusive_to_lane,
+)
+from services.git_integration_worker.cursor_sdk_polarity import _tracked_at_commit
 from services.git_integration_worker.cursor_sdk_manifest import (
     _path_is_tracked,
     git_manifest_label_divergence,
@@ -144,6 +148,43 @@ def _reclassify_within(
     return git_op, True
 
 
+def _infer_lane_path_op(
+    path: str,
+    *,
+    source_repo: Path,
+    baseline_codes: dict[str, str],
+    admit_head: str | None,
+) -> ClaimedOp:
+    """Polarity for a path whose only repo movement is a lane commit."""
+    if not (source_repo / path).exists():
+        return "deleted"
+    admit_code = baseline_codes.get(path)
+    if admit_code is not None and admit_code.startswith("?"):
+        return "created"
+    if admit_code is not None:
+        return "modified"
+    if admit_head is not None and not _tracked_at_commit(source_repo, admit_head, path):
+        return "created"
+    return "modified"
+
+
+def _lane_exclusive_paths(
+    source_repo: Path | None,
+    *,
+    dispatch_id: str | None,
+    admit_head: str | None,
+    closeout_head: str | None,
+) -> frozenset[str]:
+    if source_repo is None or not dispatch_id:
+        return frozenset()
+    return paths_exclusive_to_lane(
+        source_repo,
+        dispatch_id=dispatch_id,
+        admit_head=admit_head,
+        closeout_head=closeout_head,
+    )
+
+
 def _resolve_legacy_git_authoritative(
     *,
     manifest: EffectsManifest | None,
@@ -155,6 +196,7 @@ def _resolve_legacy_git_authoritative(
     porcelain: dict[str, str],
     admit_head: str | None,
     closeout_head: str | None,
+    dispatch_id: str | None = None,
 ) -> tuple[ChangeSet, tuple[str, ...], bool, list[AmbientRepoMovement]]:
     """Undeclared repo label ops: keep polarity-filtered git buckets + ambient census."""
     divergence = git_manifest_label_divergence(git_change_set, manifest_cs)
@@ -172,11 +214,48 @@ def _resolve_legacy_git_authoritative(
         if source_repo is not None
         else frozenset()
     )
+    lane_exclusive = _lane_exclusive_paths(
+        source_repo,
+        dispatch_id=dispatch_id,
+        admit_head=admit_head,
+        closeout_head=closeout_head,
+    )
     attributed = set(
         [*git_change_set.created, *git_change_set.modified, *git_change_set.deleted]
     )
+    lane_created: list[str] = []
+    lane_modified: list[str] = []
+    lane_deleted: list[str] = []
     ambient: list[AmbientRepoMovement] = []
     if source_repo is not None:
+
+        def _route_unattributed(path: str) -> None:
+            if path in lane_exclusive:
+                op = _infer_lane_path_op(
+                    path,
+                    source_repo=source_repo,
+                    baseline_codes=baseline_codes,
+                    admit_head=admit_head,
+                )
+                if op == "created":
+                    lane_created.append(path)
+                elif op == "modified":
+                    lane_modified.append(path)
+                else:
+                    lane_deleted.append(path)
+                attributed.add(path)
+                return
+            ambient.append(
+                ambient_movement(
+                    path,
+                    source_repo=source_repo,
+                    baseline=baseline,
+                    git_diff_paths=git_diff_paths,
+                    declared_paths=declared_paths,
+                    current_porcelain=porcelain,
+                )
+            )
+
         for path, code in baseline_codes.items():
             if path in attributed:
                 continue
@@ -186,29 +265,13 @@ def _resolve_legacy_git_authoritative(
                 continue
             if porcelain.get(path) is not None:
                 continue
-            ambient.append(
-                ambient_movement(
-                    path,
-                    source_repo=source_repo,
-                    baseline=baseline,
-                    git_diff_paths=git_diff_paths,
-                    declared_paths=declared_paths,
-                    current_porcelain=porcelain,
-                )
-            )
+            _route_unattributed(path)
         for path in sorted(set(git_diff_paths) - attributed):
             if any(entry.path == path for entry in ambient):
                 continue
-            ambient.append(
-                ambient_movement(
-                    path,
-                    source_repo=source_repo,
-                    baseline=baseline,
-                    git_diff_paths=git_diff_paths,
-                    declared_paths=declared_paths,
-                    current_porcelain=porcelain,
-                )
-            )
+            if path in attributed:
+                continue
+            _route_unattributed(path)
     manifest_paths = (
         set(manifest_cs.created) | set(manifest_cs.modified) | set(manifest_cs.deleted)
     )
@@ -216,6 +279,9 @@ def _resolve_legacy_git_authoritative(
         set(git_change_set.created)
         | set(git_change_set.modified)
         | set(git_change_set.deleted)
+        | set(lane_created)
+        | set(lane_modified)
+        | set(lane_deleted)
     )
     extra_untracked: list[str] = []
     for path in sorted(manifest_paths - git_paths):
@@ -230,7 +296,12 @@ def _resolve_legacy_git_authoritative(
         if not _path_is_tracked(source_repo, path):
             extra_untracked.append(path)
             divergence = True
-    return git_change_set, tuple(extra_untracked), divergence, ambient
+    merged = ChangeSet(
+        created=tuple(dict.fromkeys([*git_change_set.created, *lane_created])),
+        modified=tuple(dict.fromkeys([*git_change_set.modified, *lane_modified])),
+        deleted=tuple(dict.fromkeys([*git_change_set.deleted, *lane_deleted])),
+    )
+    return merged, tuple(extra_untracked), divergence, ambient
 
 
 def resolve_repo_change_set(
@@ -244,6 +315,7 @@ def resolve_repo_change_set(
     current_porcelain: dict[str, str] | None = None,
     admit_head: str | None = None,
     closeout_head: str | None = None,
+    dispatch_id: str | None = None,
 ) -> tuple[ChangeSet, tuple[str, ...], bool, list[AmbientRepoMovement]]:
     """Manifest-first change set with L4 scoped lift and L5 ambient routing."""
     manifest_cs, _, _ = repo_change_set_from_manifest(
@@ -271,6 +343,7 @@ def resolve_repo_change_set(
             porcelain=porcelain,
             admit_head=admit_head,
             closeout_head=closeout_head,
+            dispatch_id=dispatch_id,
         )
 
     divergence = git_manifest_label_divergence(git_change_set, manifest_cs)
@@ -285,6 +358,12 @@ def resolve_repo_change_set(
         )
         if source_repo is not None
         else frozenset()
+    )
+    lane_exclusive = _lane_exclusive_paths(
+        source_repo,
+        dispatch_id=dispatch_id,
+        admit_head=admit_head,
+        closeout_head=closeout_head,
     )
     declared_paths = frozenset(
         set(manifest_cs.created)
@@ -304,6 +383,33 @@ def resolve_repo_change_set(
     }
     ambient: list[AmbientRepoMovement] = []
     attributed: set[str] = set()
+
+    def _attribute_lane_or_ambient(
+        path: str,
+        *,
+        declared_unproved: bool = False,
+    ) -> None:
+        if path in lane_exclusive and source_repo is not None:
+            lane_op = _infer_lane_path_op(
+                path,
+                source_repo=source_repo,
+                baseline_codes=baseline_codes,
+                admit_head=admit_head,
+            )
+            _append_bucket(buckets, lane_op, path)
+            attributed.add(path)
+            return
+        ambient.append(
+            ambient_movement(
+                path,
+                source_repo=source_repo,
+                baseline=baseline,
+                git_diff_paths=git_diff_paths,
+                declared_paths=declared_paths,
+                declared_unproved=declared_unproved,
+                current_porcelain=porcelain,
+            )
+        )
 
     manifest_paths_ordered: list[tuple[str, ClaimedOp]] = [
         *((path, "created") for path in manifest_cs.created),
@@ -335,17 +441,7 @@ def resolve_repo_change_set(
             _append_bucket(buckets, final_op, path)
             attributed.add(path)
         else:
-            ambient.append(
-                ambient_movement(
-                    path,
-                    source_repo=source_repo,
-                    baseline=baseline,
-                    git_diff_paths=git_diff_paths,
-                    declared_paths=declared_paths,
-                    declared_unproved=True,
-                    current_porcelain=porcelain,
-                )
-            )
+            _attribute_lane_or_ambient(path, declared_unproved=True)
 
     git_paths = (
         set(git_change_set.created)
@@ -378,16 +474,7 @@ def resolve_repo_change_set(
             _append_bucket(buckets, git_op, path)
             attributed.add(path)
         else:
-            ambient.append(
-                ambient_movement(
-                    path,
-                    source_repo=source_repo,
-                    baseline=baseline,
-                    git_diff_paths=git_diff_paths,
-                    declared_paths=declared_paths,
-                    current_porcelain=porcelain,
-                )
-            )
+            _attribute_lane_or_ambient(path)
 
     observed_paths = git_paths | set(git_diff_paths) | set(manifest_paths)
     for path in sorted(observed_paths - attributed):
@@ -402,16 +489,7 @@ def resolve_repo_change_set(
             on_disk = False
         if path in manifest_paths and not on_disk:
             continue
-        ambient.append(
-            ambient_movement(
-                path,
-                source_repo=source_repo,
-                baseline=baseline,
-                git_diff_paths=git_diff_paths,
-                declared_paths=declared_paths,
-                current_porcelain=porcelain,
-            )
-        )
+        _attribute_lane_or_ambient(path)
 
     for path in sorted(manifest_paths - git_paths):
         if path in attributed or any(entry.path == path for entry in ambient):

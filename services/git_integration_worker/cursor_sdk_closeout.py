@@ -1182,6 +1182,7 @@ def _assemble_closeout_delivery(
                 else None
             ),
             closeout_head=resolve_git_head(source_repo),
+            dispatch_id=dispatch_id,
         )
     )
     repo_change_set, files_untracked_or_ignored = partition_gitignored_from_change_set(
