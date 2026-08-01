@@ -13,8 +13,9 @@ _RESOLVER = _REPO / "scripts" / "hooks" / "resolve_hook_python.sh"
 
 
 def _run_resolver(*, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    bash = os.environ.get("BASH", "/bin/bash")
     return subprocess.run(
-        ["bash", str(_RESOLVER)],
+        [bash, str(_RESOLVER)],
         cwd=_REPO,
         env=env,
         capture_output=True,
@@ -28,7 +29,7 @@ def test_missing_interpreter_fails_loud() -> None:
     """AC2: absent python must exit 1 with FATAL, never 0."""
     env = os.environ.copy()
     env.pop("VIRTUAL_ENV", None)
-    env["PATH"] = "/usr/bin:/bin"
+    env["PATH"] = "/nonexistent"
     env["HOME"] = "/tmp/nonexistent-hook-home-6627"
     result = _run_resolver(env=env)
     assert result.returncode == 1
@@ -48,7 +49,7 @@ def test_path_python_wins_over_missing_home_venv() -> None:
 
     env = os.environ.copy()
     env.pop("VIRTUAL_ENV", None)
-    env["PATH"] = str(Path(real_python).parent)
+    env["PATH"] = f"{Path(real_python).parent}:/usr/bin:/bin"
     env["HOME"] = "/tmp/nonexistent-hook-home-6627"
     result = _run_resolver(env=env)
     assert result.returncode == 0
