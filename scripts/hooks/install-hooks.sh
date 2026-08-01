@@ -16,25 +16,14 @@ echo "Installing pre-commit hook..."
 
 cat > "$HOOKS_DIR/pre-commit" << 'EOF'
 #!/bin/bash
-# Catalog validation pre-commit hook
-# Installed by scripts/hooks/install-hooks.sh
-
-PYTHON="${HOME}/.venvs/universal/bin/python3"
-
-"$PYTHON" scripts/hooks/validate_catalog.py --staged || exit 1
-"$PYTHON" scripts/hooks/validate_skill_catalog_staged.py || exit 1
-# Regenerate catalog when staged event sources drift, then re-stage the doc.
-"$PYTHON" -m scripts.gen_event_catalog sync --staged || exit 1
-git add docs/event-contracts.md 2>/dev/null || true
-"$PYTHON" -m scripts.gen_event_catalog check --staged || exit 1
-"$PYTHON" scripts/check-rag-events-imports.py --staged || exit 1
-"$PYTHON" scripts/lint-fastapi-annotations.py --staged
-"$PYTHON" scripts/openapi_mcp_codegen.py --check --staged || exit 1
-"$PYTHON" scripts/cortex/run_skill_git_guard.py || exit 1
-exit $?
+# Catalog validation pre-commit hook — installed by scripts/hooks/install-hooks.sh
+ROOT="$(git rev-parse --show-toplevel)"
+exec "$ROOT/scripts/hooks/pre_commit.sh"
 EOF
 
 chmod +x "$HOOKS_DIR/pre-commit"
+chmod +x "$PROJECT_ROOT/scripts/hooks/pre_commit.sh"
+chmod +x "$PROJECT_ROOT/scripts/hooks/resolve_hook_python.sh"
 
 echo "OK Pre-commit hook installed"
 echo "   Run 'git commit' to test catalog validation"
