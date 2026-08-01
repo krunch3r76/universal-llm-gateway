@@ -176,15 +176,15 @@ from services.git_integration_worker.cursor_sdk_stream_capture import (
     observe_run_stream,
     request_id_from_sdk_error,
 )
-from services.git_integration_worker.cursor_sdk_usage_extract import (
-    finalize_dispatch_usage,
-    persist_dispatch_usage,
-)
 from services.git_integration_worker.cursor_sdk_supersede import (
     register_live_run,
     unregister_live_run,
 )
 from services.git_integration_worker.cursor_sdk_transcript import resolve_run_body
+from services.git_integration_worker.cursor_sdk_usage_extract import (
+    finalize_dispatch_usage,
+    persist_dispatch_usage,
+)
 from services.git_integration_worker.cursor_sdk_workspace import (
     resolve_promoted_workspace,
 )

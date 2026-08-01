@@ -44,11 +44,21 @@ def is_lane_a_closeout(*, subject: str = "", body: str = "") -> bool:
     return bool(_CLOSEOUT_TYPE_RE.search(body or ""))
 
 
+def normalize_checkpoint_value(value: str) -> str:
+    """Strip markdown/backtick wrapping and doubled ``checkpoint:`` prefixes."""
+    text = value.strip().strip("`").strip()
+    lowered = text.casefold()
+    while lowered.startswith("checkpoint:"):
+        text = text.split(":", 1)[1].strip().strip("`").strip()
+        lowered = text.casefold()
+    return text
+
+
 def _extract_checkpoint_value(body: str) -> str | None:
     match = _CHECKPOINT_LINE_RE.search(body or "")
     if match is None:
         return None
-    return match.group(1).strip()
+    return normalize_checkpoint_value(match.group(1))
 
 
 def _checkpoint_value_legal(value: str) -> bool:
@@ -110,6 +120,7 @@ __all__ = [
     "LANE_A_CHECKPOINT_FIX_HINT",
     "LaneACheckpointVerdict",
     "is_lane_a_closeout",
+    "normalize_checkpoint_value",
     "refusal_envelope",
     "validate_lane_a_closeout_checkpoint",
 ]

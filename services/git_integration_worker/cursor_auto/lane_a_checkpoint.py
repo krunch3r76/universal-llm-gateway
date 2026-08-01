@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -10,11 +11,16 @@ from typing import Any
 from services.git_integration_worker.cursor_dispatch_ledger import (
     CursorDispatchLedger,
 )
-from services.git_integration_worker.seat_write_ledger import SeatWriteLedger
 from services.git_integration_worker.cursor_sdk_closeout import (
     capture_wt_baseline,
     changed_paths,
 )
+from services.git_integration_worker.cursor_sdk_git_head import (
+    observed_lane_git_refs,
+    paths_in_commit,
+    resolve_git_head,
+)
+from services.git_integration_worker.seat_write_ledger import SeatWriteLedger
 
 _TREE_RESIDUE_RE = re.compile(r"(?im)^tree_residue:\s*(\d+)\b")
 _CHECKPOINT_LINE_RE = re.compile(r"(?im)^checkpoint:\s*(.+)$")
@@ -127,20 +133,22 @@ def inject_tree_residue_line(body: str, *, count: int) -> str:
 
 def extract_authored_checkpoint(body: str) -> str | None:
     """Return the checkpoint disposition value from executor-authored closeout prose."""
+    from claude_bundles.lane_a_closeout_checkpoint import normalize_checkpoint_value
+
     text = body or ""
     match = _CHECKPOINT_LINE_RE.search(text)
     if match:
-        return match.group(1).strip()
+        return normalize_checkpoint_value(match.group(1))
     bold = _BOLD_CHECKPOINT_RE.search(text)
     if bold:
-        return bold.group(1).strip()
+        return normalize_checkpoint_value(bold.group(1))
     from services.git_integration_worker.cursor_auto.closeout_relay_cortex_fields import (
         extract_field_section,
     )
 
     section = extract_field_section(text, "checkpoint")
     if section and section.strip():
-        return section.strip()
+        return normalize_checkpoint_value(section.strip())
     table_match = re.search(
         r"(?im)^\|\s*checkpoint\s*\|\s*(?P<value>.*?)\s*\|",
         text,
@@ -148,8 +156,58 @@ def extract_authored_checkpoint(body: str) -> str | None:
     if table_match:
         value = table_match.group("value").strip()
         if value and not value.casefold().startswith("relay could not locate"):
-            return value
+            return normalize_checkpoint_value(value)
     return None
+
+
+def _parse_wt_baseline(raw: Any) -> dict[str, Any] | None:
+    if raw is None:
+        return None
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str) and raw.strip():
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            return None
+        return parsed if isinstance(parsed, dict) else None
+    return None
+
+
+def compute_lane_a_checkpoint_value(
+    *,
+    source_repo: Path,
+    dispatch_id: str,
+    baseline: dict[str, Any] | None = None,
+) -> str:
+    """Infrastructure-derived checkpoint disposition — not agent-typed."""
+    if baseline is None:
+        baseline = _parse_wt_baseline(
+            CursorDispatchLedger.instance().read_wt_baseline(dispatch_id=dispatch_id)
+        )
+    authored = authored_paths_for_dispatch(
+        source_repo=source_repo,
+        dispatch_id=dispatch_id,
+    )
+    if not authored:
+        return "nothing_authored"
+    admit_head = None
+    if isinstance(baseline, dict):
+        raw_admit = baseline.get("admit_head")
+        if isinstance(raw_admit, str) and raw_admit.strip():
+            admit_head = raw_admit.strip()
+    closeout_head = resolve_git_head(source_repo)
+    lane_refs = observed_lane_git_refs(
+        source_repo,
+        dispatch_id=dispatch_id,
+        admit_head=admit_head,
+        closeout_head=closeout_head,
+    )
+    if lane_refs:
+        sha = lane_refs[0]
+        path_count = len(paths_in_commit(source_repo, sha))
+        return f"committed {sha} paths={path_count}"
+    return "deferred: authored paths not yet path-explicit committed"
 
 
 def inject_checkpoint_line(body: str, *, value: str) -> str:
@@ -172,6 +230,7 @@ __all__ = [
     "AuthoredPathProbe",
     "TreeResidueSnapshot",
     "authored_paths_for_dispatch",
+    "compute_lane_a_checkpoint_value",
     "derive_tree_residue",
     "extract_authored_checkpoint",
     "inject_checkpoint_line",

@@ -61,3 +61,15 @@ def test_non_closeout_passes_without_checkpoint() -> None:
     assert validate_lane_a_closeout_checkpoint(
         body="TYPE: DIRECTIVE\ncontract: implement\n"
     ).ok is True
+
+
+def test_malformed_doubled_checkpoint_normalizes() -> None:
+    from claude_bundles.lane_a_closeout_checkpoint import normalize_checkpoint_value
+
+    raw = "checkpoint: committed f230fa040476144e73827520ee5a78d470a24107 paths=5"
+    body = f"TYPE: CLOSEOUT\ncheckpoint: `{raw}`\n"
+    verdict = validate_lane_a_closeout_checkpoint(body=body)
+    assert verdict.ok, verdict.reason
+    assert normalize_checkpoint_value(f"`{raw}`") == (
+        "committed f230fa040476144e73827520ee5a78d470a24107 paths=5"
+    )

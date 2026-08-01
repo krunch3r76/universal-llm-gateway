@@ -6,8 +6,8 @@ Post-wait ``run.usage`` / ``result.usage`` is authoritative on local runs
 (OBSERVED probe 6655; SDK docstring stale).
 
 Consumer-facing emit: ``frontier.sdk.worker.completed`` payload fields
-``usage`` + ``usage_capture_status``. Closeout assembly is §5-gated; this
-module owns extraction, ledger persistence, and the event payload shape.
+``usage`` + ``usage_capture_status``. Closeout assembly carries the same
+fields on ``ImplementCloseout`` when post-wait usage is captured.
 """
 
 from __future__ import annotations
@@ -20,11 +20,7 @@ from services.git_integration_worker.cursor_sdk_usage_normalize import (
     TOTAL_DERIVED_KEY,
     UsageCaptureStatus,
     finalize_usage_with_post_wait,
-    public_usage,
 )
-
-if False:  # pragma: no cover — break import cycle with stream_capture
-    from services.git_integration_worker.cursor_sdk_stream_capture import StreamCapture
 
 
 @dataclass(frozen=True)

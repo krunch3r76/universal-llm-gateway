@@ -18,10 +18,6 @@ from services.git_integration_worker.cursor_sdk_usage_extract import (
     read_persisted_usage,
     usage_event_fields,
 )
-from services.git_integration_worker.models.cursor_api import (
-    CursorDispatchRequest,
-    CursorDispatchResponse,
-)
 from services.git_integration_worker.tests.test_write_lease_refusal import (
     _admit,
     _req,

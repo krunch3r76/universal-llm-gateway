@@ -937,6 +937,8 @@ def build_implement_closeout_body(
             ),
             propagation_residue=propagation_residue,
             propagation=list(propagation_rows),
+            usage=outcome.usage,
+            usage_capture_status=outcome.usage_capture_status,  # type: ignore[arg-type]
         )
         payload = closeout.model_dump(mode="json")
         if files_untracked_or_ignored:

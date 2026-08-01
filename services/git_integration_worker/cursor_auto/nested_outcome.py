@@ -26,7 +26,6 @@ from services.git_integration_worker.cursor_auto.closeout_relay import (
 )
 from services.git_integration_worker.cursor_auto.closeout_relay_common import (
     RELAY_PARSE_FAILED_STATUS,
-    strip_machine_tail,
 )
 from services.git_integration_worker.cursor_auto.closeout_relay_cortex_spill import (
     promote_clamped_closeout_to_cortex,
@@ -36,8 +35,8 @@ from services.git_integration_worker.cursor_auto.directive import (
     parse_request_body,
 )
 from services.git_integration_worker.cursor_auto.lane_a_checkpoint import (
+    compute_lane_a_checkpoint_value,
     derive_tree_residue,
-    extract_authored_checkpoint,
     inject_checkpoint_line,
     inject_tree_residue_line,
 )
@@ -223,12 +222,11 @@ async def relay_closeout_outcome(
         dispatch_id=dispatch_id,
     )
     relay_body = inject_tree_residue_line(payload.body, count=residue_before.count)
-    checkpoint_source = strip_machine_tail(
-        sidecar_text or payload.body_full or payload.body or ""
+    checkpoint_value = compute_lane_a_checkpoint_value(
+        source_repo=source_repo,
+        dispatch_id=dispatch_id,
     )
-    checkpoint_value = extract_authored_checkpoint(checkpoint_source)
-    if checkpoint_value:
-        relay_body = inject_checkpoint_line(relay_body, value=checkpoint_value)
+    relay_body = inject_checkpoint_line(relay_body, value=checkpoint_value)
     checkpoint_verdict = validate_lane_a_closeout_checkpoint(
         body=relay_body,
         require_closeout_type=False,

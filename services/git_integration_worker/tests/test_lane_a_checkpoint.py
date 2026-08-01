@@ -97,7 +97,7 @@ def test_extract_authored_checkpoint_from_bold_and_plain() -> None:
 
 
 def test_relay_table_projection_preserves_checkpoint_for_gate() -> None:
-    """Positive path: authored checkpoint survives §2 table projection + gate."""
+    """Positive path: infrastructure checkpoint survives §2 table projection + gate."""
     from claude_bundles.lane_a_closeout_checkpoint import (
         validate_lane_a_closeout_checkpoint,
     )
@@ -106,13 +106,10 @@ def test_relay_table_projection_preserves_checkpoint_for_gate() -> None:
         select_closeout_relay_payload,
     )
     from services.git_integration_worker.cursor_auto.lane_a_checkpoint import (
+        compute_lane_a_checkpoint_value,
         derive_tree_residue,
-        extract_authored_checkpoint,
         inject_checkpoint_line,
         inject_tree_residue_line,
-    )
-    from services.git_integration_worker.cursor_auto.closeout_relay_common import (
-        strip_machine_tail,
     )
 
     dispatch_id = "auto-relay-checkpoint-pos"
@@ -124,8 +121,6 @@ def test_relay_table_projection_preserves_checkpoint_for_gate() -> None:
 **ac_verdict:** AC1 — PASS
 
 **deltas_to_spec:** none
-
-**checkpoint:** deferred: path-explicit commit owned by quiescent sweeper
 """
     payload = select_closeout_relay_payload(
         sdk_body='{"status":"complete","schema_version":1}',
@@ -138,8 +133,10 @@ def test_relay_table_projection_preserves_checkpoint_for_gate() -> None:
         dispatch_id=dispatch_id,
     )
     relay_body = inject_tree_residue_line(payload.body, count=residue.count)
-    checkpoint_value = extract_authored_checkpoint(strip_machine_tail(sidecar))
-    assert checkpoint_value is not None
+    checkpoint_value = compute_lane_a_checkpoint_value(
+        source_repo=Path("/mnt/torus/projects/universal-llm-gateway"),
+        dispatch_id=dispatch_id,
+    )
     relay_body = inject_checkpoint_line(relay_body, value=checkpoint_value)
     assert "| checkpoint |" in relay_body
     verdict = validate_lane_a_closeout_checkpoint(

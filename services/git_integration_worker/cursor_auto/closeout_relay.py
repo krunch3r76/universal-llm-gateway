@@ -67,6 +67,8 @@ def _evidence_cell_from_parts(
     deviations: list[str],
     capture_status: object,
     work_outcome: object = None,
+    usage: object = None,
+    usage_capture_status: object = None,
 ) -> str:
     evidence_parts: list[str] = []
     if artifact_paths:
@@ -77,6 +79,12 @@ def _evidence_cell_from_parts(
         evidence_parts.append(f"work_outcome={work_outcome}")
     if capture_status is not None:
         evidence_parts.append(f"capture_status={capture_status}")
+    if usage is not None and isinstance(usage, dict):
+        total = usage.get("total_tokens")
+        if total is not None:
+            evidence_parts.append(f"usage_total_tokens={total}")
+    if usage_capture_status is not None:
+        evidence_parts.append(f"usage_capture_status={usage_capture_status}")
     return "; ".join(evidence_parts) if evidence_parts else "none"
 
 
@@ -105,6 +113,8 @@ def synthesize_section2(
     deviations = _as_str_list(data.get("deviations"))
     capture_status = data.get("capture_status")
     work_outcome = data.get("work_outcome")
+    usage = data.get("usage") if isinstance(data.get("usage"), dict) else None
+    usage_capture_status = data.get("usage_capture_status")
     evidence_uris = data.get("evidence_uris")
     artifact_paths: list[str] = []
     if isinstance(evidence_uris, dict):
@@ -153,7 +163,12 @@ def synthesize_section2(
                 count=1,
             )
         if evidence_cell := _evidence_cell_from_parts(
-            artifact_paths, deviations, capture_status, work_outcome
+            artifact_paths,
+            deviations,
+            capture_status,
+            work_outcome,
+            usage,
+            usage_capture_status,
         ):
             projected = re.sub(
                 r"(?im)^\|\s+evidence\s+\|\s+.*?\s+\|",
@@ -185,7 +200,12 @@ def synthesize_section2(
         )
 
     evidence_cell = _evidence_cell_from_parts(
-        artifact_paths, deviations, capture_status, work_outcome
+        artifact_paths,
+        deviations,
+        capture_status,
+        work_outcome,
+        usage,
+        usage_capture_status,
     )
 
     rows = (

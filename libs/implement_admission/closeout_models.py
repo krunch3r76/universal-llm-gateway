@@ -90,3 +90,7 @@ class ImplementCloseout(BaseModel):
     propagation_residue: list[str] = Field(default_factory=list)
     # Structured harvest rows — authoritative when non-empty over propagation_residue.
     propagation: list[PropagationRow] = Field(default_factory=list)
+    usage: dict[str, Any] | None = None
+    usage_capture_status: Literal["captured", "partial", "missing", "reconciled_delta"] | None = (
+        None
+    )
