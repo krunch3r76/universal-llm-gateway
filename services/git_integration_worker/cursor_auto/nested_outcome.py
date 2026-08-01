@@ -26,6 +26,7 @@ from services.git_integration_worker.cursor_auto.closeout_relay import (
 )
 from services.git_integration_worker.cursor_auto.closeout_relay_common import (
     RELAY_PARSE_FAILED_STATUS,
+    strip_machine_tail,
 )
 from services.git_integration_worker.cursor_auto.closeout_relay_cortex_spill import (
     promote_clamped_closeout_to_cortex,
@@ -36,6 +37,8 @@ from services.git_integration_worker.cursor_auto.directive import (
 )
 from services.git_integration_worker.cursor_auto.lane_a_checkpoint import (
     derive_tree_residue,
+    extract_authored_checkpoint,
+    inject_checkpoint_line,
     inject_tree_residue_line,
 )
 from services.git_integration_worker.cursor_auto.nested_sdk import (
@@ -200,9 +203,10 @@ async def relay_closeout_outcome(
     execution_id: str | None = None,
 ) -> dict[str, Any]:
     """Select the closeout payload, relay it, then WAKE + substrate feedback."""
+    sidecar_text = read_repo_closeout_sidecar(dispatch_id)
     payload = select_closeout_relay_payload(
         sdk_body=sdk_body,
-        sidecar_text=read_repo_closeout_sidecar(dispatch_id),
+        sidecar_text=sidecar_text,
         ledger_status=terminal_status,
         dispatch_id=dispatch_id,
         caller_auditable=caller_auditable(from_agent=job.from_agent),
@@ -219,6 +223,12 @@ async def relay_closeout_outcome(
         dispatch_id=dispatch_id,
     )
     relay_body = inject_tree_residue_line(payload.body, count=residue_before.count)
+    checkpoint_source = strip_machine_tail(
+        sidecar_text or payload.body_full or payload.body or ""
+    )
+    checkpoint_value = extract_authored_checkpoint(checkpoint_source)
+    if checkpoint_value:
+        relay_body = inject_checkpoint_line(relay_body, value=checkpoint_value)
     checkpoint_verdict = validate_lane_a_closeout_checkpoint(
         body=relay_body,
         require_closeout_type=False,

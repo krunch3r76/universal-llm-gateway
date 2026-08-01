@@ -42,6 +42,7 @@ from services.git_integration_worker.git_worker_lifecycle_events import (
     register_git_worker_lifecycle_event_publisher,
 )
 from services.git_integration_worker.routes.admin import router as admin_router
+from services.git_integration_worker.lane_b_sweeper import lane_b_sweeper_loop
 from services.git_integration_worker.routes.cursor_auto import (
     auto_worker_loop,
     orphan_scanner_loop,
@@ -126,6 +127,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.ulg_story_projector = story_projector
     trigger_loop = asyncio.create_task(trigger_fire_loop(app))
     app.state.trigger_fire_loop = trigger_loop
+    lane_b_sweeper = asyncio.create_task(lane_b_sweeper_loop(app))
+    app.state.lane_b_sweeper = lane_b_sweeper
     logger.info(
         "git-integration-worker started: version=%s port=%d source_repo=%s "
         "worker_id=%s",
@@ -159,6 +162,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             "cursor_auto_orphan_scanner",
             "ulg_story_projector",
             "trigger_fire_loop",
+            "lane_b_sweeper",
         ):
             task = getattr(app.state, attr, None)
             if task is not None:
