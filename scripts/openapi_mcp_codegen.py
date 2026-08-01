@@ -25,15 +25,19 @@ from openapi_mcp.binding import extract_typed_routes, inject_x_mcp  # noqa: E402
 from openapi_mcp.codegen import ManifestCheckResult  # noqa: E402
 from openapi_mcp.registry import default_registry  # noqa: E402
 
+from services.git_integration_worker.openapi_mcp import (  # noqa: E402
+    codegen as giw_codegen,
+)
 from services.rag.openapi_mcp import codegen as rag_codegen  # noqa: E402
 
 _GENERATED_OPENAPI = _REPO / "config" / "mcp" / "generated" / "cortex.openapi.json"
-_SERVICE_CHOICES = ("cortex", "agent-bus", "rag", "all")
+_SERVICE_CHOICES = ("cortex", "agent-bus", "rag", "giw", "all")
 
 _SERVICE_PREFIXES: dict[str, tuple[str, ...]] = {
     "cortex": ("libs/cortex_store/",),
     "agent-bus": ("libs/agent_bus_store/",),
     "rag": ("services/rag/",),
+    "giw": ("services/git_integration_worker/",),
 }
 _OPENAPI_TOUCH_MARKERS = ("/routes/", "/openapi_mcp/", "/main.py", "/server.py")
 
@@ -51,6 +55,10 @@ def _load_service_schema(service: str) -> dict[str, Any]:
         from services.rag.rag_service.main import app
 
         return app.openapi()
+    if service == "giw":
+        from services.git_integration_worker.app import create_app
+
+        return create_app().openapi()
     raise ValueError(f"unknown service {service!r}")
 
 
@@ -62,6 +70,8 @@ def _check_service_detailed(service: str) -> ManifestCheckResult:
         return agent_bus_codegen.check_generated_module_detailed(schema)
     if service == "rag":
         return rag_codegen.check_generated_module_detailed(schema)
+    if service == "giw":
+        return giw_codegen.check_generated_module_detailed(schema)
     raise ValueError(f"unknown service {service!r}")
 
 
@@ -76,6 +86,9 @@ def _write_service(service: str) -> Path:
     if service == "rag":
         manifest = rag_codegen.dry_run_generate(schema)
         return rag_codegen.write_generated_module(manifest)
+    if service == "giw":
+        manifest = giw_codegen.dry_run_generate(schema)
+        return giw_codegen.write_generated_module(manifest)
     raise ValueError(f"unknown service {service!r}")
 
 
@@ -180,6 +193,12 @@ def main(argv: list[str] | None = None) -> int:
             from services.rag.openapi_mcp._route_map import unbound_dispatch_ops
 
             unbound = unbound_dispatch_ops()
+        elif service == "giw":
+            from services.git_integration_worker.openapi_mcp._route_map import (
+                unbound_dispatch_ops,
+            )
+
+            unbound = unbound_dispatch_ops()
         else:
             from cortex_store.openapi_mcp._route_map import unbound_dispatch_ops
 
@@ -194,11 +213,12 @@ def main(argv: list[str] | None = None) -> int:
             schema = desc.load_openapi()
             seed = desc.seed_bindings() if desc.seed_bindings else {}
             if seed:
-                schema = inject_x_mcp(schema, dict(seed), tool=desc.facade_tool)
+                primary_tool = sorted(desc.facade_tools)[0]
+                schema = inject_x_mcp(schema, dict(seed), tool=primary_tool)
             n = len(extract_typed_routes(schema))
             print(
                 f"{desc.name}: paths={len(schema.get('paths') or {})} "
-                f"x-mcp-ops={n} facade={desc.facade_tool}"
+                f"x-mcp-ops={n} facade_tools={','.join(sorted(desc.facade_tools))}"
             )
         return 0
 
@@ -231,8 +251,10 @@ def main(argv: list[str] | None = None) -> int:
             manifest = cortex_codegen.dry_run_generate(schema)
         elif service == "agent-bus":
             manifest = agent_bus_codegen.dry_run_generate(schema)
-        else:
+        elif service == "rag":
             manifest = rag_codegen.dry_run_generate(schema)
+        else:
+            manifest = giw_codegen.dry_run_generate(schema)
         print(
             f"served_ops={len(manifest.served_ops)} "
             f"sha256={manifest.openapi_sha256[:12]}…"
@@ -244,9 +266,11 @@ def main(argv: list[str] | None = None) -> int:
             cortex_path = _write_service("cortex")
             agent_bus_path = _write_service("agent-bus")
             rag_path = _write_service("rag")
+            giw_path = _write_service("giw")
             print(f"wrote {cortex_path}")
             print(f"wrote {agent_bus_path}")
             print(f"wrote {rag_path}")
+            print(f"wrote {giw_path}")
             return 0
         path = _write_service(service)
         print(f"wrote {path}")
@@ -259,7 +283,7 @@ def main(argv: list[str] | None = None) -> int:
                 return 0
             return _run_check(sorted(touched))
         if service == "all":
-            return _run_check(["cortex", "agent-bus", "rag"])
+            return _run_check(["cortex", "agent-bus", "rag", "giw"])
         return _run_check([service])
 
     parser.print_help()

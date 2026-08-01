@@ -25,6 +25,7 @@ from git_integrate.git_cas import (
 from git_integrate.integrate import integrate_op
 from git_integrate.land import land_op
 from git_integrate.schema import RC_NOT_A_GIT_REPO, RC_WORKTREE_MISSING
+from openapi_mcp.binding import x_mcp
 from universal_concurrency import FifoCapacityGate
 from universal_logging import get_logger
 from universal_protocol import error_envelope
@@ -39,7 +40,6 @@ from services.git_integration_worker.cursor_sdk_land_lease import (
     DirtyMasterRefused,
     dirty_master_envelope,
     master_land_guard,
-    reap_stale_land_leases,
 )
 from services.git_integration_worker.models.api import (
     CommitRequest,
@@ -337,6 +337,7 @@ def _diff_sync(
     response_model=IntegrateResponse,
     status_code=200,
     summary="Atomically merge a reviewed arc worktree into master (ref-level CAS).",
+    openapi_extra=x_mcp("integrate", tool="git_integrate"),
 )
 async def integrate(
     req: IntegrateRequest, request: Request
@@ -377,6 +378,7 @@ async def integrate(
     response_model=IntegrateResponse,
     status_code=200,
     summary="Atomically commit (if dirty), merge, gate, and land arc into master.",
+    openapi_extra=x_mcp("land", tool="git_land"),
 )
 async def land(req: LandRequest, request: Request) -> IntegrateResponse:
     """Serialize land via ``FifoCapacityGate(limit=1)`` — same slot as integrate.
@@ -416,6 +418,7 @@ async def land(req: LandRequest, request: Request) -> IntegrateResponse:
     response_model=IntegrateResponse,
     status_code=200,
     summary="Commit explicit named paths on the current branch (non-arc, gated).",
+    openapi_extra=x_mcp("commit", tool="git_commit"),
 )
 async def commit(
     req: CommitRequest, request: Request
@@ -489,7 +492,11 @@ async def get_active_work(request: Request):
     )
 
 
-@router.get("/status", response_model=StatusResponse)
+@router.get(
+    "/status",
+    response_model=StatusResponse,
+    openapi_extra=x_mcp("status", tool="git_status", readonly=True),
+)
 async def status(
     worktree_path: str = Query(..., description="Absolute path to the arc worktree."),
 ) -> StatusResponse:
@@ -498,7 +505,11 @@ async def status(
     return await loop.run_in_executor(None, lambda: _status_sync(worktree_path))
 
 
-@router.get("/diff", response_model=DiffResponse)
+@router.get(
+    "/diff",
+    response_model=DiffResponse,
+    openapi_extra=x_mcp("diff", tool="git_diff", readonly=True),
+)
 async def diff(
     worktree_path: str = Query(..., description="Absolute path to the arc worktree."),
     path_filter: str = Query(

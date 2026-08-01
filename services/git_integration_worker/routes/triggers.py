@@ -7,6 +7,7 @@ from typing import Any
 
 from agent_bus_store.auth import require_token
 from fastapi import APIRouter, Depends, HTTPException, status
+from openapi_mcp.binding import x_mcp
 from pydantic import BaseModel, Field
 from universal_logging import get_logger
 
@@ -86,7 +87,11 @@ def _refuse_misconfigured_schedule() -> None:
     )
 
 
-@router.post("", dependencies=[Depends(require_token)])
+@router.post(
+    "",
+    dependencies=[Depends(require_token)],
+    openapi_extra=x_mcp("schedule", tool="trigger"),
+)
 async def schedule_trigger(req: ScheduleTriggerRequest) -> dict[str, Any]:
     """Schedule a future operator-proxy fire (fail-closed when misconfigured)."""
     _refuse_misconfigured_schedule()
@@ -136,14 +141,22 @@ async def schedule_trigger(req: ScheduleTriggerRequest) -> dict[str, Any]:
     return row.to_dict()
 
 
-@router.get("", dependencies=[Depends(require_token)])
+@router.get(
+    "",
+    dependencies=[Depends(require_token)],
+    openapi_extra=x_mcp("list", tool="trigger", readonly=True),
+)
 async def list_triggers(limit: int = 100) -> dict[str, Any]:
     store = _store()
     rows = store.list_triggers(limit=min(limit, 500))
     return {"triggers": [r.to_dict() for r in rows], "count": len(rows)}
 
 
-@router.get("/{trigger_id}", dependencies=[Depends(require_token)])
+@router.get(
+    "/{trigger_id}",
+    dependencies=[Depends(require_token)],
+    openapi_extra=x_mcp("get", tool="trigger", readonly=True),
+)
 async def get_trigger(trigger_id: str) -> dict[str, Any]:
     store = _store()
     row = store.get(trigger_id)
@@ -173,7 +186,11 @@ async def revoke_trigger(trigger_id: str) -> dict[str, Any]:
     return row.to_dict()
 
 
-@router.delete("/{trigger_id}", dependencies=[Depends(require_token)])
+@router.delete(
+    "/{trigger_id}",
+    dependencies=[Depends(require_token)],
+    openapi_extra=x_mcp("cancel", tool="trigger"),
+)
 async def cancel_trigger(trigger_id: str) -> dict[str, Any]:
     store = _store()
     try:

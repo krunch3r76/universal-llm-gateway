@@ -12,7 +12,8 @@ class ServiceDescriptor:
     """One HTTP service that may publish MCP-bound OpenAPI operations."""
 
     name: str
-    facade_tool: str
+    facade_tools: frozenset[str]
+    """MCP catalog tool name(s) this service exposes — one for megatool facades, several for multi-tool services."""
     load_openapi: Callable[[], dict[str, Any]]
     """Return a live or app-derived OpenAPI 3 document."""
 
@@ -46,25 +47,46 @@ def _load_rag_openapi() -> dict[str, Any]:
     return app.openapi()
 
 
+def _load_giw_openapi() -> dict[str, Any]:
+    from services.git_integration_worker.app import create_app
+
+    return create_app().openapi()
+
+
 def default_registry() -> tuple[ServiceDescriptor, ...]:
     """Built-in descriptors — cortex is natively stamped; agent-bus is dry-run-ready."""
     return (
         ServiceDescriptor(
             name="cortex",
-            facade_tool="cortex",
+            facade_tools=frozenset({"cortex"}),
             load_openapi=_load_cortex_openapi,
             seed_bindings=None,
         ),
         ServiceDescriptor(
             name="agent-bus",
-            facade_tool="agent_bus",
+            facade_tools=frozenset({"agent_bus"}),
             load_openapi=_load_agent_bus_openapi,
             seed_bindings=None,
         ),
         ServiceDescriptor(
             name="rag",
-            facade_tool="rag",
+            facade_tools=frozenset({"rag"}),
             load_openapi=_load_rag_openapi,
+            seed_bindings=None,
+        ),
+        ServiceDescriptor(
+            name="giw",
+            facade_tools=frozenset(
+                {
+                    "git_integrate",
+                    "git_land",
+                    "git_commit",
+                    "git_status",
+                    "git_diff",
+                    "trigger",
+                }
+            ),
+            load_openapi=_load_giw_openapi,
             seed_bindings=None,
         ),
     )
