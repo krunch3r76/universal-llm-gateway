@@ -1,4 +1,4 @@
-"""Tests for served-vs-HEAD binding drift gate (arc 6627 AC1–AC3)."""
+"""Tests for served-vs-working-tree binding drift gate (arc 6627)."""
 
 from __future__ import annotations
 
@@ -8,6 +8,12 @@ from openapi_mcp.codegen import ManifestCheckResult
 from services.git_integration_worker.cursor_auto.propagation_served_binding_drift import (
     check_served_binding_drift,
 )
+
+_LIST_SCOPES_BINDING = {
+    "method": "GET",
+    "path": "/scopes",
+    "operation_id": "get_scopes_scopes_get",
+}
 
 
 def _head_ops_rag_without_list_scopes(_service: str) -> dict[str, dict[str, str]]:
@@ -45,36 +51,60 @@ def _head_ops_rag_without_list_scopes(_service: str) -> dict[str, dict[str, str]
     }
 
 
-def test_served_binding_drift_fatal_when_served_ahead():
+def _rag_served_with_list_scopes() -> dict[str, dict[str, str]]:
+    return {
+        **_head_ops_rag_without_list_scopes("rag"),
+        "list_scopes": _LIST_SCOPES_BINDING,
+    }
+
+
+def test_served_binding_drift_warning_when_served_ahead_of_head():
+    """Foreign-WIP courtesy: disk+served parity, HEAD not yet committed."""
+    served = _rag_served_with_list_scopes()
+
     def probe(service: str, *, code_ref: str) -> dict:
         assert service == "rag"
-        return {
-            "byte_identical": True,
-            "served_ops": {
-                **_head_ops_rag_without_list_scopes("rag"),
-                "list_scopes": {
-                    "method": "GET",
-                    "path": "/scopes",
-                    "operation_id": "get_scopes_scopes_get",
-                },
-            },
-        }
+        return {"byte_identical": True, "served_ops": served}
 
     result = check_served_binding_drift(
         ["rag"],
         probe_fn=probe,
+        worktree_ops_fn=lambda _s: served,
         head_ops_fn=_head_ops_rag_without_list_scopes,
     )
-    assert result.exit_code == 1
+    assert result.exit_code == 0
+    assert not result.fatal_messages
     assert any(
-        "FATAL: unexpected binding for op 'list_scopes'" in msg
-        for msg in result.fatal_messages
+        "WARNING: unexpected binding for op 'list_scopes'" in msg
+        for msg in result.warning_messages
+    )
+
+
+def test_served_binding_drift_warning_when_served_ahead_of_worktree():
+    served = _rag_served_with_list_scopes()
+    worktree = _head_ops_rag_without_list_scopes("rag")
+
+    def probe(service: str, *, code_ref: str) -> dict:
+        assert service == "rag"
+        return {"byte_identical": True, "served_ops": served}
+
+    result = check_served_binding_drift(
+        ["rag"],
+        probe_fn=probe,
+        worktree_ops_fn=lambda _s: worktree,
+        head_ops_fn=lambda _s: worktree,
+    )
+    assert result.exit_code == 0
+    assert not result.fatal_messages
+    assert any(
+        "WARNING: unexpected binding for op 'list_scopes'" in msg
+        for msg in result.warning_messages
     )
 
 
 def test_served_binding_drift_fatal_when_served_behind():
-    head = _head_ops_rag_without_list_scopes("rag")
-    served = dict(head)
+    worktree = _head_ops_rag_without_list_scopes("rag")
+    served = dict(worktree)
     del served["coverage"]
 
     def probe(service: str, *, code_ref: str) -> dict:
@@ -83,7 +113,8 @@ def test_served_binding_drift_fatal_when_served_behind():
     result = check_served_binding_drift(
         ["rag"],
         probe_fn=probe,
-        head_ops_fn=lambda _s: head,
+        worktree_ops_fn=lambda _s: worktree,
+        head_ops_fn=lambda _s: worktree,
     )
     assert result.exit_code == 1
     assert any(
@@ -100,10 +131,12 @@ def test_served_binding_drift_clean_when_parity():
     result = check_served_binding_drift(
         ["rag"],
         probe_fn=probe,
+        worktree_ops_fn=lambda _s: ops,
         head_ops_fn=lambda _s: ops,
     )
     assert result.exit_code == 0
     assert result.fatal_messages == ()
+    assert result.warning_messages == ()
 
 
 @pytest.mark.offline
