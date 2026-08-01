@@ -11,9 +11,16 @@ from pathlib import Path
 from typing import Any
 
 _REPO = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(_REPO))
-sys.path.insert(0, str(_REPO / "libs"))
-sys.path.insert(0, str(_REPO / "services" / "mcp-server"))
+_STARGATE = _REPO / "services" / "universal-stargate"
+for _path in (
+    _REPO,
+    _REPO / "libs",
+    _REPO / "services" / "mcp-server",
+    _STARGATE,
+):
+    _path_str = str(_path)
+    if _path.is_dir() and _path_str not in sys.path:
+        sys.path.insert(0, _path_str)
 
 from agent_bus_store.openapi_mcp import codegen as agent_bus_codegen  # noqa: E402
 from cortex_store.openapi_mcp import codegen as cortex_codegen  # noqa: E402
@@ -24,6 +31,7 @@ from cortex_store.openapi_mcp.census import (  # noqa: E402
 from openapi_mcp.binding import extract_typed_routes, inject_x_mcp  # noqa: E402
 from openapi_mcp.codegen import ManifestCheckResult  # noqa: E402
 from openapi_mcp.registry import default_registry  # noqa: E402
+from openapi_mcp.tier_m_coverage import check_tier_m_manifest_coverage  # noqa: E402
 
 from services.git_integration_worker.openapi_mcp import (  # noqa: E402
     codegen as giw_codegen,
@@ -129,6 +137,24 @@ def _run_check(services: list[str]) -> int:
         _emit_check_result(service, result)
         if result.exit_code != 0:
             exit_code = 1
+    tier_m = check_tier_m_manifest_coverage().check_result
+    for msg in tier_m.fatal_messages:
+        print(f"tier-m: {msg}", file=sys.stderr)
+    for msg in tier_m.warning_messages:
+        print(f"tier-m: {msg}", file=sys.stderr)
+    if tier_m.exit_code != 0:
+        exit_code = 1
+    from services.git_integration_worker.cursor_auto.propagation_descriptor_drift import (
+        check_descriptor_drift,
+    )
+
+    drift = check_descriptor_drift()
+    for msg in drift.fatal_messages:
+        print(f"descriptor-drift: {msg}", file=sys.stderr)
+    for msg in drift.warning_messages:
+        print(f"descriptor-drift: {msg}", file=sys.stderr)
+    if drift.exit_code != 0:
+        exit_code = 1
     return exit_code
 
 
