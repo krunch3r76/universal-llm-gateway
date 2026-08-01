@@ -171,10 +171,14 @@ from services.git_integration_worker.cursor_sdk_restart_orphan import (
     load_ledger_row,
 )
 from services.git_integration_worker.cursor_sdk_stream_capture import (
+    StreamCapture,
     finalize_request_id_capture,
-    finalize_stream_capture_usage,
     observe_run_stream,
     request_id_from_sdk_error,
+)
+from services.git_integration_worker.cursor_sdk_usage_extract import (
+    finalize_dispatch_usage,
+    persist_dispatch_usage,
 )
 from services.git_integration_worker.cursor_sdk_supersede import (
     register_live_run,
@@ -799,8 +803,21 @@ def _run_sdk_sync(
                     on_tool_call=live_counter.bump,
                 )
                 result = run.wait()
-                stream_capture = finalize_stream_capture_usage(
+                usage_record = finalize_dispatch_usage(
                     stream_capture, run=run, result=result
+                )
+                stream_capture = StreamCapture(
+                    tool_calls=stream_capture.tool_calls,
+                    usage=usage_record.usage,
+                    usage_capture_status=usage_record.usage_capture_status,
+                    usage_total_derived=False,
+                    sdk_request_id=stream_capture.sdk_request_id,
+                    request_id_source=stream_capture.request_id_source,
+                )
+                persist_dispatch_usage(
+                    CursorDispatchLedger.instance(),
+                    dispatch_id=dispatch_id,
+                    record=usage_record,
                 )
                 assert run is not None and result is not None
                 stream_capture = finalize_request_id_capture(

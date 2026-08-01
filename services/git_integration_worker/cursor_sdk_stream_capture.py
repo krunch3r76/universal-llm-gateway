@@ -24,12 +24,14 @@ from universal_event_bus import Event, event_factory
 from universal_logging import get_logger
 
 from services.git_integration_worker.cursor_sdk_events import emit_frontier_event
+from services.git_integration_worker.cursor_sdk_usage_extract import (
+    finalize_dispatch_usage,
+)
 from services.git_integration_worker.cursor_sdk_usage_normalize import (
     TOTAL_DERIVED_KEY,
     UsageCaptureStatus,
     aggregate_stream_usage,
     coerce_non_negative_int,
-    finalize_usage_with_post_wait,
     normalize_usage_map,
     public_usage,
     usage_payload_from_object,
@@ -366,19 +368,11 @@ def finalize_stream_capture_usage(
     result: Any = None,
 ) -> StreamCapture:
     """Apply post-wait ``run.usage`` / ``result.usage`` as authority over stream."""
-    stream_usage = dict(capture.usage) if capture.usage is not None else None
-    if stream_usage is not None and capture.usage_total_derived:
-        stream_usage[TOTAL_DERIVED_KEY] = True
-    usage, status = finalize_usage_with_post_wait(
-        stream_usage=stream_usage,
-        stream_status=capture.usage_capture_status,
-        run=run,
-        result=result,
-    )
+    record = finalize_dispatch_usage(capture, run=run, result=result)
     return StreamCapture(
         tool_calls=capture.tool_calls,
-        usage=usage,
-        usage_capture_status=status,
+        usage=record.usage,
+        usage_capture_status=record.usage_capture_status,
         usage_total_derived=False,
         sdk_request_id=capture.sdk_request_id,
         request_id_source=capture.request_id_source,

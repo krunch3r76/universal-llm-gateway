@@ -994,6 +994,27 @@ class CursorDispatchLedger:
                 (_now(), dispatch_id),
             )
 
+    def merge_record_json(self, *, dispatch_id: str, patch: dict[str, Any]) -> None:
+        """Shallow-merge ``patch`` into the durable ``record_json`` blob."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+                (dispatch_id,),
+            ).fetchone()
+            if row is None:
+                return
+            try:
+                data = json.loads(row["record_json"] or "{}")
+            except json.JSONDecodeError:
+                data = {}
+            if not isinstance(data, dict):
+                data = {}
+            data.update(patch)
+            conn.execute(
+                "UPDATE cursor_sdk_dispatches SET record_json=? WHERE dispatch_id=?",
+                (json.dumps(data, sort_keys=True, separators=(",", ":")), dispatch_id),
+            )
+
     def mark_terminal(self, *, dispatch_id: str, terminal_status: str) -> str | None:
         """Mark terminal; return ``lease_key`` when present for FIFO promotion.
 
