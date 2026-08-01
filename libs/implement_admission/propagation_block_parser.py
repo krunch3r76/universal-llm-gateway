@@ -14,17 +14,17 @@ _FENCED_YAML_RE = re.compile(
     r"```(?:ya?ml)?\s*\n(?P<body>.*?)\n```",
     re.DOTALL | re.IGNORECASE,
 )
-_PROOF_CLASS_VALUES = frozenset({"process_live", "client_visible"})
+_PROOF_CLASS_VALUES = frozenset({"process_live", "client_visible", "served_artifact"})
 
 
 def _normalize_row(raw: dict[str, Any]) -> dict[str, Any] | None:
     if not isinstance(raw, dict):
         return None
     service = raw.get("service")
-    code_ref = raw.get("code_ref")
     if not isinstance(service, str) or not service.strip():
         return None
-    if not isinstance(code_ref, str) or not code_ref.strip():
+    code_ref = raw.get("code_ref")
+    if code_ref is not None and (not isinstance(code_ref, str) or not code_ref.strip()):
         return None
     return raw
 
@@ -80,6 +80,11 @@ def extract_propagation_yaml_block(markdown: str) -> str | None:
     return body if "propagation:" in body else None
 
 
+def propagation_block_present(markdown: str) -> bool:
+    """True when markdown carries an authored ``## propagation`` YAML block."""
+    return extract_propagation_yaml_block(markdown) is not None
+
+
 def parse_propagation_block(markdown: str) -> tuple[list[dict[str, Any]], list[str]]:
     """Parse §4 propagation rows from closeout markdown."""
     yaml_text = extract_propagation_yaml_block(markdown)
@@ -105,5 +110,6 @@ __all__ = [
     "extract_propagation_yaml_block",
     "parse_propagation_block",
     "parse_propagation_yaml_document",
+    "propagation_block_present",
     "propagation_rows_from_markdown_sources",
 ]

@@ -7,6 +7,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from deploy_identity.code_ref_relation import (
+    code_ref_relation_from_observed,
+    code_ref_satisfied,
+)
 from implement_admission.propagation_row import PropagationRow, default_proof
 from universal_logging import get_logger
 
@@ -69,30 +73,46 @@ def _projection_to_row(row: OpenPropagationProjection) -> PropagationRow:
 
 
 def _probe_for_projection(row: OpenPropagationProjection) -> dict[str, Any] | None:
-    from services.git_integration_worker.cursor_auto.propagation_probe import (
-        probe_for_row,
+    from scripts.model_manager.ui.controller.charter_runner.propagation_execute import (
+        dispatch_for_projection,
     )
 
-    return probe_for_row(_projection_to_row(row))
+    result = dispatch_for_projection(row)
+    if result.error is not None:
+        return None
+    return result.payload
 
 
 def _proof_matches_projection(
     row: OpenPropagationProjection,
     payload: dict[str, Any] | None,
+    *,
+    settle_not_before_monotonic: float | None = None,
 ) -> bool:
     from services.git_integration_worker.cursor_auto.propagation_probe import (
         proof_observed,
     )
 
-    return proof_observed(_projection_to_row(row), payload)
+    return proof_observed(
+        _projection_to_row(row),
+        payload,
+        settle_not_before_monotonic=settle_not_before_monotonic,
+    )
 
 
 def proof_matches_row(row: OpenPropagationProjection, payload: dict[str, Any] | None) -> bool:
-    """True when observed code_version equals the row's code_ref (flat probe payloads)."""
+    """True when observed code_version satisfies the row's code_ref via ancestry."""
     if payload is None:
         return False
     observed = payload.get("code_version")
-    return isinstance(observed, str) and observed == row.code_ref
+    return isinstance(observed, str) and code_ref_satisfied(row.code_ref, observed)
+
+
+def _fresh_projection(row: OpenPropagationProjection) -> OpenPropagationProjection:
+    for item in list_open_rows():
+        if item.row_id == row.row_id:
+            return item
+    return row
 
 
 def settle_open_row(
@@ -103,6 +123,21 @@ def settle_open_row(
     settle_not_before_monotonic: float | None = None,
 ) -> SettleResult:
     """Close or fail one open row from a client-reachable liveness probe."""
+    from services.git_integration_worker.cursor_auto.propagation_proof_reconcile import (
+        reconcile_unsupported_proof_class,
+    )
+
+    row = _fresh_projection(row)
+    unsupported = reconcile_unsupported_proof_class(row)
+    if unsupported is not None:
+        return SettleResult(
+            row_id=row.row_id,
+            service=row.service,
+            code_ref=row.code_ref,
+            outcome="failed",
+            detail=unsupported,
+        )
+    row = _fresh_projection(row)
     if _is_literal_head(row.code_ref):
         return SettleResult(
             row_id=row.row_id,
@@ -159,7 +194,11 @@ def settle_open_row(
         )
 
     matches = (
-        _proof_matches_projection(row, payload)
+        _proof_matches_projection(
+            row,
+            payload,
+            settle_not_before_monotonic=settle_not_before_monotonic,
+        )
         if probe is default_probe
         else proof_matches_row(row, payload)
     )
@@ -175,6 +214,11 @@ def settle_open_row(
         )
 
     observed = payload.get("code_version")
+    relation = (
+        payload.get("code_ref_relation")
+        if isinstance(payload.get("code_ref_relation"), str)
+        else code_ref_relation_from_observed(row.code_ref, observed)
+    )
     ruled_out = outgoing_generation_ruled_out(
         payload,
         settle_not_before_monotonic=settle_not_before_monotonic,
@@ -185,6 +229,7 @@ def settle_open_row(
             **payload,
             "expected_code_ref": row.code_ref,
             "observed_code_version": observed,
+            "code_ref_relation": relation,
         }
         fail_row(
             row.row_id,

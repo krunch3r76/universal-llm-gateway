@@ -182,6 +182,31 @@ def set_defer_reason(
             db.close()
 
 
+def set_proof_class(
+    row_id: str,
+    proof_class: str,
+    *,
+    conn: sqlite3.Connection | None = None,
+) -> None:
+    """Upgrade an open row's proof class (e.g. process_live → served_artifact)."""
+    own_conn = conn is None
+    db = conn or open_ledger_db()
+    now = time.time()
+    try:
+        execute_with_retry(
+            db,
+            """
+            UPDATE propagation_ledger
+            SET proof_class = ?, updated_at = ?
+            WHERE row_id = ? AND status='open'
+            """,
+            (proof_class, now, row_id),
+        )
+    finally:
+        if own_conn:
+            db.close()
+
+
 def fail_row(
     row_id: str,
     *,
@@ -274,5 +299,6 @@ __all__ = [
     "mint_row_id",
     "scoreboard_projection",
     "set_defer_reason",
+    "set_proof_class",
     "upsert_open_rows",
 ]

@@ -22,7 +22,7 @@ from charter_runner_store.propagation_terminal import (
 def _row(**kwargs: object) -> PropagationRow:
     base = {
         "service": "git_integration_worker",
-        "code_ref": "abc123sha00000000000000000000000000000000",
+        "code_ref": "abc1230000000000000000000000000000000000",
     }
     base.update(kwargs)
     return PropagationRow(**base)
@@ -30,7 +30,7 @@ def _row(**kwargs: object) -> PropagationRow:
 
 def test_queued_row_closes_on_matching_probe(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
-    sha = "abc123sha00000000000000000000000000000000"
+    sha = "abc1230000000000000000000000000000000000"
     upsert_open_rows([_row(code_ref=sha)])
     open_before = list_open_rows()
     assert len(open_before) == 1
@@ -46,7 +46,7 @@ def test_queued_row_closes_on_matching_probe(tmp_path, monkeypatch) -> None:
 def test_unguarded_mismatch_leaves_row_open(tmp_path, monkeypatch) -> None:
     """No restart boundary ⇒ a mismatch cannot be attributed to the new generation."""
     monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
-    expected = "abc123sha00000000000000000000000000000000"
+    expected = "abc1230000000000000000000000000000000000"
     upsert_open_rows([_row(code_ref=expected)])
     row = list_open_rows()[0]
 
@@ -62,7 +62,7 @@ def test_unguarded_mismatch_leaves_row_open(tmp_path, monkeypatch) -> None:
 def test_guarded_mismatch_without_uptime_is_not_terminal(tmp_path, monkeypatch) -> None:
     """A boundary alone is not enough — without ``uptime_s`` the reading is unattributable."""
     monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
-    expected = "abc123sha00000000000000000000000000000000"
+    expected = "abc1230000000000000000000000000000000000"
     upsert_open_rows([_row(code_ref=expected)])
     row = list_open_rows()[0]
 
@@ -82,7 +82,7 @@ def test_guarded_mismatch_without_uptime_is_not_terminal(tmp_path, monkeypatch) 
 def test_half_unreachable_composite_probe_is_indeterminate(tmp_path, monkeypatch) -> None:
     """One dead half of an mcp composite payload must not read as a mismatch."""
     monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
-    expected = "abc123sha00000000000000000000000000000000"
+    expected = "abc1230000000000000000000000000000000000"
     upsert_open_rows([_row(service="mcp", code_ref=expected)])
     row = list_open_rows()[0]
 
@@ -188,7 +188,7 @@ def test_reconcile_before_after_counts(tmp_path, monkeypatch) -> None:
 
 def test_outgoing_generation_probe_defers_on_mismatch(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
-    expected = "abc123sha00000000000000000000000000000000"
+    expected = "abc1230000000000000000000000000000000000"
     upsert_open_rows([_row(code_ref=expected)])
     row = list_open_rows()[0]
     settle_not_before = time.monotonic()
@@ -212,7 +212,7 @@ def test_outgoing_generation_probe_defers_on_mismatch(tmp_path, monkeypatch) -> 
 
 def test_genuine_post_restart_mismatch_fails(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
-    expected = "abc123sha00000000000000000000000000000000"
+    expected = "abc1230000000000000000000000000000000000"
     upsert_open_rows([_row(code_ref=expected)])
     row = list_open_rows()[0]
     settle_not_before = time.monotonic() - 30.0
@@ -236,7 +236,7 @@ def test_genuine_post_restart_mismatch_fails(tmp_path, monkeypatch) -> None:
 
 def test_matching_post_restart_probe_closes(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
-    sha = "abc123sha00000000000000000000000000000000"
+    sha = "abc1230000000000000000000000000000000000"
     upsert_open_rows([_row(code_ref=sha)])
     row = list_open_rows()[0]
     settle_not_before = time.monotonic() - 30.0

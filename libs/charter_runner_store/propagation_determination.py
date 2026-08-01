@@ -25,6 +25,8 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
+from deploy_identity.code_ref_relation import code_ref_satisfied
+
 Determination = Literal["matched", "contradicted", "indeterminate"]
 
 # Composite payload emitted by ``probe_for_row`` for client-visible mcp rows:
@@ -80,7 +82,7 @@ def classify_probe(
     # Versions read as equal while the proof predicate declined: the predicate
     # knows something this reader does not, so do not upgrade that to a
     # contradiction.
-    if all(version == code_ref for version in versions):
+    if all(code_ref_satisfied(code_ref, version) for version in versions):
         return "indeterminate"
     return "contradicted"
 

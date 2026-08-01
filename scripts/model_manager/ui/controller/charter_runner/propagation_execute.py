@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -20,10 +21,17 @@ from charter_runner_store.propagation_ledger import (
     OpenPropagationProjection,
     bump_age_for_open_rows,
     close_row,
+    fail_row,
     list_open_rows,
     scoreboard_projection,
     set_defer_reason,
     upsert_open_rows,
+)
+from deploy_identity.code_ref_relation import code_ref_relation
+from implement_admission.propagation_admit_validation import (
+    CLIENT_VISIBLE_SERVICES,
+    MANAGE_SERVICE_SLUGS,
+    SERVED_ARTIFACT_SERVICES,
 )
 from implement_admission.propagation_row import (
     PropagationRow,
@@ -74,6 +82,134 @@ _GIW_QUEUE_URL = os.environ.get(
 _context: tuple[ServiceController, EventBus | None] | None = None
 _pending_charter_reload: bool = False
 _probe_client: httpx.Client | None = None
+
+ProbeCallable = Callable[[PropagationRow], dict[str, Any] | None]
+
+
+@dataclass(frozen=True)
+class ProbeDispatchResult:
+    """Outcome of dispatching one row's proof_class to a registered probe."""
+
+    payload: dict[str, Any] | None
+    proof_class_requested: str
+    proof_class_executed: str | None
+    error: str | None
+
+
+def _probe_process_live_row(row: PropagationRow) -> dict[str, Any] | None:
+    payload = probe_process_live(row.service)
+    if not isinstance(payload, dict):
+        return payload
+    version = payload.get("code_version")
+    if isinstance(version, str):
+        return {
+            **payload,
+            "proof_class_executed": "process_live",
+            "code_ref_relation": code_ref_relation(row.code_ref, version),
+        }
+    return {**payload, "proof_class_executed": "process_live"}
+
+
+def _probe_client_visible_row(row: PropagationRow) -> dict[str, Any] | None:
+    from deploy_identity.mcp_health_probe_url import resolve_mcp_health_probe_url
+
+    from services.git_integration_worker.cursor_auto.propagation_probe import (
+        _fetch_cortex_api_health,
+    )
+
+    mcp_health = _fetch_json(resolve_mcp_health_probe_url())
+    cortex_health = _fetch_cortex_api_health()
+    if mcp_health is None and cortex_health is None:
+        return None
+    payload: dict[str, Any] = {
+        "mcp_health": mcp_health,
+        "cortex_api": cortex_health,
+        "proof_class_executed": "client_visible",
+    }
+    for section in (mcp_health, cortex_health):
+        if isinstance(section, dict):
+            version = section.get("code_version")
+            if isinstance(version, str):
+                payload["code_ref_relation"] = code_ref_relation(row.code_ref, version)
+    return payload
+
+
+def _probe_served_artifact_row(row: PropagationRow) -> dict[str, Any] | None:
+    from services.git_integration_worker.cursor_auto.propagation_served_artifact import (
+        probe_served_artifact,
+        served_artifact_descriptor,
+    )
+
+    descriptor = served_artifact_descriptor(row.service)
+    if descriptor is None:
+        return None
+    expected = row.expected_x_mcp_count or descriptor.expected_x_mcp_count
+    payload = probe_served_artifact(
+        row.service,
+        code_ref=row.code_ref,
+        expected_x_mcp_count=expected,
+    )
+    if isinstance(payload, dict):
+        return {**payload, "proof_class_executed": "served_artifact"}
+    return payload
+
+
+def _build_proof_probe_registry() -> dict[tuple[str, str], ProbeCallable]:
+    registry: dict[tuple[str, str], ProbeCallable] = {}
+    for slug in MANAGE_SERVICE_SLUGS:
+        registry[(slug, "process_live")] = _probe_process_live_row
+    for slug in SERVED_ARTIFACT_SERVICES:
+        registry[(slug, "served_artifact")] = _probe_served_artifact_row
+    for slug in CLIENT_VISIBLE_SERVICES:
+        registry[(slug, "client_visible")] = _probe_client_visible_row
+    return registry
+
+
+PROOF_PROBE_REGISTRY: dict[tuple[str, str], ProbeCallable] = _build_proof_probe_registry()
+
+
+def registered_proof_classes(service: str) -> frozenset[str]:
+    """Return proof classes with a registered probe for *service*."""
+    slug = service.strip().lower()
+    return frozenset(
+        proof_class
+        for (svc, proof_class) in PROOF_PROBE_REGISTRY
+        if svc == slug
+    )
+
+
+def proof_class_unsupported_detail(service: str, proof_class: str) -> str:
+    """Build the fail-loud token when no probe is registered."""
+    slug = service.strip().lower()
+    registered = sorted(registered_proof_classes(slug))
+    return (
+        f"proof_class_unsupported: service={slug} "
+        f"requested={proof_class.strip()} "
+        f"registered={','.join(registered)}"
+    )
+
+
+def dispatch_proof_probe(row: PropagationRow) -> ProbeDispatchResult:
+    """Dispatch *row*'s requested proof_class — no silent default override."""
+    requested = row.proof_class_requested or row.proof_class
+    probe_fn = PROOF_PROBE_REGISTRY.get((row.service, requested))
+    if probe_fn is None:
+        return ProbeDispatchResult(
+            payload=None,
+            proof_class_requested=requested,
+            proof_class_executed=None,
+            error=proof_class_unsupported_detail(row.service, requested),
+        )
+    payload = probe_fn(row)
+    executed = requested
+    if isinstance(payload, dict):
+        executed = str(payload.get("proof_class_executed") or requested)
+    return ProbeDispatchResult(
+        payload=payload,
+        proof_class_requested=requested,
+        proof_class_executed=executed,
+        error=None,
+    )
 
 
 def schedule_charter_reload() -> None:
@@ -302,12 +438,16 @@ def probe_process_live(service: str) -> dict[str, Any] | None:
 
 
 def probe_for_projection(row: OpenPropagationProjection) -> dict[str, Any] | None:
-    """Probe closure surface for one open ledger row (proof_class-aware)."""
-    from services.git_integration_worker.cursor_auto.propagation_probe import (
-        probe_for_row,
-    )
+    """Probe closure surface for one open ledger row via proof_class registry."""
+    result = dispatch_proof_probe(_projection_to_row(row))
+    if result.error is not None:
+        return None
+    return result.payload
 
-    return probe_for_row(_projection_to_row(row))
+
+def dispatch_for_projection(row: OpenPropagationProjection) -> ProbeDispatchResult:
+    """Full dispatch result including unsupported-class errors."""
+    return dispatch_proof_probe(_projection_to_row(row))
 
 
 def _projection_to_row(row: OpenPropagationProjection) -> PropagationRow:
@@ -316,7 +456,8 @@ def _projection_to_row(row: OpenPropagationProjection) -> PropagationRow:
         code_ref=row.code_ref,
         safe_window=row.safe_window,
         proof=default_proof(row.service),
-        proof_class=row.proof_class,
+        proof_class=row.proof_class,  # type: ignore[arg-type]
+        proof_class_requested=row.proof_class,  # type: ignore[arg-type]
     )
 
 
@@ -371,21 +512,54 @@ async def execute_propagation_plan(
     service_results: dict[str, Any] = {}
 
     for row in open_rows:
+        requested_class = row.proof_class
         projection = {
             "row_id": row.row_id,
             "service": row.service,
             "code_ref": row.code_ref,
             "safe_window": row.safe_window,
             "age_in_harvests": row.age_in_harvests,
+            "proof_class_requested": requested_class,
         }
-        before = probe_for_projection(row)
+
+        dispatch_before = dispatch_for_projection(row)
+        if dispatch_before.error is not None:
+            fail_row(
+                row.row_id,
+                proof_payload={
+                    "proof_class_requested": dispatch_before.proof_class_requested,
+                    "proof_class_executed": dispatch_before.proof_class_executed,
+                },
+                reason=dispatch_before.error,
+            )
+            remaining.append(
+                {
+                    **projection,
+                    "defer_reason": dispatch_before.error,
+                    "proof_class_executed": None,
+                    "disposition": "failed_proof_class_unsupported",
+                }
+            )
+            if row.age_in_harvests >= 2:
+                escalated.append(
+                    {**projection, "defer_reason": dispatch_before.error}
+                )
+            continue
+
+        before = dispatch_before.payload
 
         may_fire, window_reason = row_may_fire_at_harvest(row)
         i2_ok, i2_reason = giw_restart_precondition(row, queue_snapshot=queue_snapshot)
         if not may_fire or not i2_ok:
             defer = i2_reason if not i2_ok else window_reason
             set_defer_reason(row.row_id, defer)
-            remaining.append({**projection, "defer_reason": defer})
+            remaining.append(
+                {
+                    **projection,
+                    "defer_reason": defer,
+                    "proof_class_executed": dispatch_before.proof_class_executed,
+                }
+            )
             if row.age_in_harvests >= 2:
                 escalated.append({**projection, "defer_reason": defer})
             continue
@@ -404,17 +578,87 @@ async def execute_propagation_plan(
             )
             defer = f"sync_restart_error:{type(exc).__name__}"
             set_defer_reason(row.row_id, defer)
-            remaining.append({**projection, "defer_reason": defer})
+            remaining.append(
+                {
+                    **projection,
+                    "defer_reason": defer,
+                    "proof_class_executed": dispatch_before.proof_class_executed,
+                }
+            )
             continue
 
-        live_after = probe_for_projection(row)
-        if proof_matches(row, live_after, before=before):
-            close_row(row.row_id, proof_payload=live_after or {})
-            closed.append({**projection, "proof": live_after, "proof_before": before})
+        dispatch_after = dispatch_for_projection(row)
+        if dispatch_after.error is not None:
+            fail_row(
+                row.row_id,
+                proof_payload={
+                    "proof_class_requested": dispatch_after.proof_class_requested,
+                    "proof_class_executed": dispatch_after.proof_class_executed,
+                },
+                reason=dispatch_after.error,
+            )
+            remaining.append(
+                {
+                    **projection,
+                    "defer_reason": dispatch_after.error,
+                    "proof_class_executed": None,
+                    "disposition": "failed_proof_class_unsupported",
+                }
+            )
+            continue
+
+        live_after = dispatch_after.payload
+        executed_class = dispatch_after.proof_class_executed
+        class_diverged = executed_class != requested_class
+        proof_ok = (
+            not class_diverged
+            and proof_matches(row, live_after, before=before)
+        )
+        close_payload = {
+            **(live_after or {}),
+            "proof_class_requested": requested_class,
+            "proof_class_executed": executed_class,
+        }
+        if class_diverged:
+            defer = (
+                f"proof_class_diverged:requested={requested_class}"
+                f":executed={executed_class}"
+            )
+            set_defer_reason(row.row_id, defer)
+            remaining.append(
+                {
+                    **projection,
+                    "defer_reason": defer,
+                    "proof_class_executed": executed_class,
+                    "disposition": "failed_proof_class_diverged",
+                    "proof": live_after,
+                }
+            )
+            if row.age_in_harvests >= 2:
+                escalated.append({**projection, "defer_reason": defer})
+        elif proof_ok:
+            close_row(row.row_id, proof_payload=close_payload)
+            closed.append(
+                {
+                    **projection,
+                    "proof": live_after,
+                    "proof_before": before,
+                    "proof_class_executed": executed_class,
+                    "disposition": "closed",
+                }
+            )
         else:
             defer = "proof_not_observed_after_restart"
             set_defer_reason(row.row_id, defer)
-            remaining.append({**projection, "defer_reason": defer})
+            remaining.append(
+                {
+                    **projection,
+                    "defer_reason": defer,
+                    "proof_class_executed": executed_class,
+                    "disposition": "deferred_proof_not_observed",
+                    "proof": live_after,
+                }
+            )
             if row.age_in_harvests >= 2:
                 escalated.append({**projection, "defer_reason": defer})
 
@@ -502,8 +746,12 @@ def set_probe_client_for_tests(client: httpx.Client | None) -> None:
 
 
 __all__ = [
+    "PROOF_PROBE_REGISTRY",
+    "ProbeDispatchResult",
     "PropagationPlan",
     "consume_pending_charter_reload",
+    "dispatch_for_projection",
+    "dispatch_proof_probe",
     "execute_propagation_plan",
     "giw_i2_clear",
     "giw_restart_precondition",
@@ -511,7 +759,9 @@ __all__ = [
     "maybe_execute_window_propagation",
     "plan_propagation",
     "probe_process_live",
+    "proof_class_unsupported_detail",
     "proof_matches",
+    "registered_proof_classes",
     "row_may_fire_at_harvest",
     "schedule_charter_reload",
     "set_probe_client_for_tests",

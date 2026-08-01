@@ -13,15 +13,20 @@ import re
 from collections.abc import Sequence
 from typing import Any, Literal
 
+from deploy_identity.code_version import normalize_code_ref
 from pydantic import BaseModel, model_validator
 
-from deploy_identity.code_version import normalize_code_ref
+from implement_admission.propagation_admit_validation import (
+    validate_proof_class,
+    validate_safe_window,
+    validate_service_slug,
+)
 from implement_admission.service_lib_ownership import slug_for_service_path
 
 logger = logging.getLogger(__name__)
 
 SafeWindow = Literal["harvest", "standalone_ok", "drain_required"]
-ProofClass = Literal["process_live", "client_visible"]
+ProofClass = Literal["process_live", "client_visible", "served_artifact"]
 PropagationAction = Literal["sync_restart"]
 
 _SYNC_RESTART_SLUG_RE = re.compile(
@@ -41,25 +46,38 @@ _DEFAULT_SAFE_WINDOW: dict[str, SafeWindow] = {
     "stargate": "harvest",
 }
 
+_SERVED_ARTIFACT_PROOF = (
+    "served OpenAPI from every client-reachable surface → x-mcp count >= expected, "
+    "all surfaces byte-identical, document parses; liveness code_ref ancestry satisfied"
+)
+
 _DEFAULT_PROOF_CLASS: dict[str, ProofClass] = {
-    "git_integration_worker": "process_live",
+    "git_integration_worker": "served_artifact",
     "mcp": "client_visible",
-    "agent_bus": "process_live",
-    "cortex_api": "process_live",
+    "agent_bus": "served_artifact",
+    "cortex_api": "served_artifact",
     "event_service": "process_live",
-    "rag": "process_live",
+    "rag": "served_artifact",
     "cloud_proxy": "process_live",
     "gateway": "process_live",
     "stargate": "process_live",
 }
 
+_PROCESS_LIVE_PROOF = (
+    "health/liveness → code_ref is ancestor-of-or-equal-to observed code_version "
+    "AND process identity changed "
+    "(pid/process_start_time/process_age_s/uptime_s) since pre-restart probe"
+)
+
 _DEFAULT_PROOF: dict[str, str] = {
-    "git_integration_worker": (
-        "GET /api/v1/git/cursor-auto/liveness → code_version == code_ref"
-    ),
+    "git_integration_worker": f"GET served OpenAPI (direct + stargate) → {_SERVED_ARTIFACT_PROOF}",
     "mcp": (
-        "client_visible: GET /health AND cortex-api /health → both code_version == code_ref"
+        "client_visible: GET /health AND cortex-api /health → "
+        "both code_ref ancestry satisfied"
     ),
+    "cortex_api": f"GET served OpenAPI (uds + http when bound) → {_SERVED_ARTIFACT_PROOF}",
+    "agent_bus": f"GET served OpenAPI (uds) → {_SERVED_ARTIFACT_PROOF}",
+    "rag": f"GET served OpenAPI (uds) → {_SERVED_ARTIFACT_PROOF}",
 }
 
 
@@ -74,6 +92,8 @@ class PropagationRow(BaseModel):
     reason: str | None = None
     proof: str
     proof_class: ProofClass
+    proof_class_requested: ProofClass | None = None
+    expected_x_mcp_count: int | None = None
     mint_thread: str | None = None
     mint_turn: int | None = None
 
@@ -87,6 +107,8 @@ class PropagationRow(BaseModel):
             return data
         if not data.get("proof_class"):
             data["proof_class"] = default_proof_class(service)
+        if not data.get("proof_class_requested"):
+            data["proof_class_requested"] = data.get("proof_class")
         if not data.get("safe_window"):
             data["safe_window"] = default_safe_window(service)
         if not data.get("proof"):
@@ -110,7 +132,7 @@ def default_proof(service: str) -> str:
     """Return the default probe description for a service slug."""
     return _DEFAULT_PROOF.get(
         service,
-        f"service health/liveness → code_version == code_ref ({service})",
+        f"service health/liveness → {_PROCESS_LIVE_PROOF} ({service})",
     )
 
 
@@ -134,6 +156,7 @@ def row_from_mapping(raw: dict[str, Any]) -> PropagationRow:
         reason=raw.get("reason"),
         proof=str(proof),
         proof_class=proof_class,
+        expected_x_mcp_count=raw.get("expected_x_mcp_count"),
         mint_thread=raw.get("mint_thread"),
         mint_turn=raw.get("mint_turn"),
     )
@@ -144,21 +167,31 @@ def row_from_mapping_strict(raw: dict[str, Any]) -> tuple[PropagationRow | None,
     proof_class = raw.get("proof_class")
     if not isinstance(proof_class, str) or not proof_class.strip():
         return None, "missing_proof_class"
-    if proof_class.strip() not in {"process_live", "client_visible"}:
+    if proof_class.strip() not in {"process_live", "client_visible", "served_artifact"}:
         return None, f"unknown_proof_class:{proof_class}"
-    service = str(raw["service"])
+    service = str(raw["service"]).strip().lower()
+    service_error = validate_service_slug(service)
+    if service_error:
+        return None, service_error
+    safe_window_error = validate_safe_window(raw.get("safe_window"))
+    if safe_window_error:
+        return None, safe_window_error
+    proof_class_error = validate_proof_class(service, proof_class.strip())
+    if proof_class_error:
+        return None, proof_class_error
     safe_window = raw.get("safe_window") or default_safe_window(service)
     proof = raw.get("proof") or default_proof(service)
     return (
         PropagationRow(
             service=service,
             action=raw.get("action") or "sync_restart",
-            code_ref=normalize_code_ref(str(raw["code_ref"])),
-            safe_window=safe_window,
+            code_ref=normalize_code_ref(str(raw.get("code_ref") or "HEAD")),
+            safe_window=safe_window,  # type: ignore[arg-type]
             hazard=raw.get("hazard"),
             reason=raw.get("reason"),
             proof=str(proof),
             proof_class=proof_class.strip(),  # type: ignore[arg-type]
+            expected_x_mcp_count=raw.get("expected_x_mcp_count"),
             mint_thread=raw.get("mint_thread"),
             mint_turn=raw.get("mint_turn"),
         ),

@@ -11,8 +11,13 @@ from dataclasses import dataclass
 from typing import Any
 
 from deploy_identity.code_version import normalize_code_ref, resolve_code_version
+from implement_admission.propagation_admit_validation import (
+    LEGAL_SAFE_WINDOW_LIST,
+    validate_service_slug,
+)
 from implement_admission.propagation_block_parser import (
-    propagation_rows_from_markdown_sources,
+    parse_propagation_block,
+    propagation_block_present,
 )
 from implement_admission.propagation_row import (
     PropagationRow,
@@ -32,7 +37,7 @@ PROPAGATE_CONTRACT = "propagate"
 
 _SCOPE_PROPAGATION_RE = re.compile(r"(?im)^scope:\s*propagation\b")
 _SCOPE_SYNC_RESTART_RE = re.compile(
-    r"(?im)^scope:\s*propagation\s+sync_restart\s+([a-z][a-z0-9_]*)"
+    r"(?im)^scope:\s*propagation\s+sync_restart\s+([a-z][a-z0-9_]*)\s*$"
 )
 _SERVICE_FIELD_RE = re.compile(r"(?im)^service:\s*([a-z][a-z0-9_]*)")
 _CODE_REF_FIELD_RE = re.compile(r"(?im)^code_ref:\s*(\S+)")
@@ -56,12 +61,37 @@ def _error(reason: str, summary: str, fix_hint: str, **extra: Any) -> dict[str, 
     return {"reason": reason, "summary": summary, "fix_hint": fix_hint, **extra}
 
 
-def _rows_from_yaml_body(body: str) -> tuple[tuple[PropagationRow, ...], tuple[str, ...]]:
-    raw_rows, flags = propagation_rows_from_markdown_sources(body)
+def _rows_from_structured_block(
+    body: str,
+) -> tuple[tuple[PropagationRow, ...], tuple[str, ...], dict[str, Any] | None]:
+    """Parse an authored ``## propagation`` block — never fall back to prose."""
+    raw_rows, flags = parse_propagation_block(body)
+    all_flags = tuple(flags)
+    if flags:
+        return (), all_flags, _error(
+            "propagation_block_invalid",
+            f"## propagation block rejected: {', '.join(flags)}",
+            PROPAGATE_MISSING_FIX_HINT,
+            invalid_flags=list(flags),
+            legal_safe_window=LEGAL_SAFE_WINDOW_LIST,
+        )
     if not raw_rows:
-        return (), tuple(flags)
+        return (), all_flags, _error(
+            "propagation_block_empty",
+            "## propagation block present but contained no valid rows.",
+            PROPAGATE_MISSING_FIX_HINT,
+        )
     rows, parse_flags = rows_from_parsed_block(raw_rows)
-    return tuple(rows), tuple(flags) + tuple(parse_flags)
+    all_flags = all_flags + tuple(parse_flags)
+    if parse_flags or not rows:
+        return (), all_flags, _error(
+            "propagation_block_invalid",
+            f"## propagation block rejected: {', '.join(parse_flags) or 'no valid rows'}",
+            PROPAGATE_MISSING_FIX_HINT,
+            invalid_flags=list(parse_flags),
+            legal_safe_window=LEGAL_SAFE_WINDOW_LIST,
+        )
+    return tuple(rows), all_flags, None
 
 
 def _rows_from_shorthand(body: str) -> tuple[PropagationRow, ...]:
@@ -72,6 +102,9 @@ def _rows_from_shorthand(body: str) -> tuple[PropagationRow, ...]:
     elif _SCOPE_PROPAGATION_RE.search(body) and service_field:
         service = service_field.group(1).lower()
     else:
+        return ()
+    service_error = validate_service_slug(service)
+    if service_error:
         return ()
     code_ref_match = _CODE_REF_FIELD_RE.search(body)
     raw_ref = code_ref_match.group(1).strip() if code_ref_match else resolve_code_version()
@@ -90,7 +123,8 @@ def _rows_from_shorthand(body: str) -> tuple[PropagationRow, ...]:
 
 def admit_propagate_body(body: str) -> PropagateAdmission:
     """Resolve a ``propagate`` DIRECTIVE body into propagation rows."""
-    if not _EFFECTS_EXPECTED_RE.search(body or ""):
+    text = body or ""
+    if not _EFFECTS_EXPECTED_RE.search(text):
         return PropagateAdmission(
             error=_error(
                 "propagate_effects_expected_missing",
@@ -98,14 +132,18 @@ def admit_propagate_body(body: str) -> PropagateAdmission:
                 PROPAGATE_SCOPE_FIX_HINT,
             ),
         )
-    yaml_rows, flags = _rows_from_yaml_body(body or "")
-    if yaml_rows:
-        return PropagateAdmission(rows=yaml_rows, flags=flags)
-    shorthand_rows = _rows_from_shorthand(body or "")
+
+    if propagation_block_present(text):
+        rows, flags, block_error = _rows_from_structured_block(text)
+        if block_error is not None:
+            return PropagateAdmission(flags=flags, error=block_error)
+        return PropagateAdmission(rows=rows, flags=flags)
+
+    shorthand_rows = _rows_from_shorthand(text)
     if shorthand_rows:
-        return PropagateAdmission(rows=shorthand_rows, flags=flags)
+        return PropagateAdmission(rows=shorthand_rows)
+
     return PropagateAdmission(
-        flags=flags,
         error=_error(
             "propagate_rows_missing",
             (

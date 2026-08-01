@@ -7,6 +7,7 @@ from typing import Any
 
 from charter_runner_store.propagation_ledger import (
     close_row,
+    fail_row,
     set_defer_reason,
     upsert_open_rows,
 )
@@ -21,7 +22,6 @@ from services.git_integration_worker.cursor_auto.propagate_admission import (
     admit_propagate_body,
 )
 from services.git_integration_worker.cursor_auto.propagation_probe import (
-    probe_for_row,
     proof_observed,
 )
 from services.git_integration_worker.cursor_auto.queue import AutoJob
@@ -95,8 +95,31 @@ async def run_propagation_in_seat(
 
 
 async def _execute_row(row: PropagationRow, *, row_id: str) -> dict[str, Any]:
+    from scripts.model_manager.ui.controller.charter_runner.propagation_execute import (
+        dispatch_proof_probe,
+    )
+
     # Always hand to manage — it drain-queues when busy. Do not I2-short-circuit
     # as "scheduled/parked" without a manage call (operator bind 2026-07-30).
+    dispatch_before = await asyncio.to_thread(dispatch_proof_probe, row)
+    if dispatch_before.error is not None:
+        fail_row(
+            row_id,
+            proof_payload={
+                "proof_class_requested": dispatch_before.proof_class_requested,
+                "proof_class_executed": dispatch_before.proof_class_executed,
+            },
+            reason=dispatch_before.error,
+        )
+        return {
+            "service": row.service,
+            "row_id": row_id,
+            "status": "failed",
+            "reason": dispatch_before.error,
+            "proof_class_requested": dispatch_before.proof_class_requested,
+            "proof_class_executed": dispatch_before.proof_class_executed,
+        }
+    before = dispatch_before.payload
     manage_result = await asyncio.to_thread(
         sync_restart_service,
         row.service,
@@ -115,7 +138,10 @@ async def _execute_row(row: PropagationRow, *, row_id: str) -> dict[str, Any]:
                 or "manage_deferred_drain"
             ),
             "manage": manage_result,
-            "next": "manage drain queue will fire sync_restart — poll liveness for code_version",
+            "next": (
+                "manage drain queue will fire sync_restart — poll liveness for "
+                "code_version and process identity change"
+            ),
         }
     if status == "error":
         set_defer_reason(row_id, str(manage_result.get("reason") or "manage_error"))
@@ -125,15 +151,42 @@ async def _execute_row(row: PropagationRow, *, row_id: str) -> dict[str, Any]:
             "status": "failed",
             "manage": manage_result,
         }
-    proof = await asyncio.to_thread(probe_for_row, row)
-    if proof_observed(row, proof):
-        close_row(row_id, proof_payload=proof or {})
+    after_dispatch = await asyncio.to_thread(dispatch_proof_probe, row)
+    if after_dispatch.error is not None:
+        fail_row(
+            row_id,
+            proof_payload={
+                "proof_class_requested": after_dispatch.proof_class_requested,
+                "proof_class_executed": after_dispatch.proof_class_executed,
+            },
+            reason=after_dispatch.error,
+        )
+        return {
+            "service": row.service,
+            "row_id": row_id,
+            "status": "failed",
+            "reason": after_dispatch.error,
+            "manage": manage_result,
+        }
+    after = after_dispatch.payload
+    if proof_observed(row, after, before=before):
+        close_row(
+            row_id,
+            proof_payload={
+                **(after or {}),
+                "proof_class_requested": after_dispatch.proof_class_requested,
+                "proof_class_executed": after_dispatch.proof_class_executed,
+            },
+        )
         return {
             "service": row.service,
             "row_id": row_id,
             "status": "executed",
             "manage": manage_result,
-            "proof": proof,
+            "proof": after,
+            "proof_before": before,
+            "proof_class_requested": after_dispatch.proof_class_requested,
+            "proof_class_executed": after_dispatch.proof_class_executed,
         }
     set_defer_reason(row_id, "proof_pending")
     return {
@@ -141,7 +194,8 @@ async def _execute_row(row: PropagationRow, *, row_id: str) -> dict[str, Any]:
         "row_id": row_id,
         "status": "submitted",
         "manage": manage_result,
-        "proof": proof,
+        "proof": after,
+        "proof_before": before,
     }
 
 
@@ -213,7 +267,7 @@ def _summary_for(disposition: str, executions: list[dict[str, Any]]) -> str:
         return (
             f"Auto queued propagation restart for {services} on manage drain "
             f"(reason={reasons}). Restart will fire after drain — not ledger-only. "
-            "Live only when code_version matches code_ref."
+            "Live only when code_ref ancestry is satisfied and process identity changed."
         )
     if disposition == "failed":
         if not executions:
