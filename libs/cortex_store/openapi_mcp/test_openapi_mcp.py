@@ -28,9 +28,9 @@ def test_four_bucket_census_partitions_all_ops() -> None:
 @pytest.mark.offline
 def test_four_bucket_census_counts() -> None:
     census = build_four_bucket_census()
-    assert len(census.served) == 45
+    assert len(census.served) == 46
     assert len(census.untypeable) == 4
-    assert len(census.rb_only) == 20
+    assert len(census.rb_only) == 19
     assert len(census.neither) == 15
     assert census.total == 84
 
@@ -45,7 +45,7 @@ def test_assert_op_openapi_bijection() -> None:
 def test_generator_dry_run_covers_served_ops() -> None:
     schema = create_app().openapi()
     manifest = dry_run_generate(schema)
-    assert len(manifest.served_ops) == 45
+    assert len(manifest.served_ops) == 46
     assert manifest.served_ops["assert"]["path"] == "/assertions"
     assert manifest.openapi_sha256
 
@@ -74,6 +74,19 @@ def test_served_bindings_derived_from_native_route_stamps() -> None:
     assert (
         manifest.served_ops["assert"]["operation_id"] == derived["assert"].operation_id
     )
+
+
+@pytest.mark.offline
+def test_edge_list_and_create_bindings_match_handler_direction() -> None:
+    """``edges`` lists via GET /edges; ``edge_create`` creates via POST /edges."""
+    from openapi_mcp.binding import extract_typed_routes
+
+    schema = create_app().openapi()
+    routes = extract_typed_routes(schema)
+    assert routes["edges"].method == "GET"
+    assert routes["edges"].path == "/edges"
+    assert routes["edge_create"].method == "POST"
+    assert routes["edge_create"].path == "/edges"
 
 
 @pytest.mark.offline

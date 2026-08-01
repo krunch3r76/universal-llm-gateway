@@ -7,7 +7,7 @@ Regenerate:
 
 from __future__ import annotations
 
-OPENAPI_SHA256 = "24183b17c7539331ef478be2fcfbae6f5a95c216ef51574eae88e825fd9c1f67"
+OPENAPI_SHA256 = "71078c6f2d79fb5e9679e836c8200f65dbf748fa173d1df236145084a88119ce"
 FACADE_TOOL = "cortex"
 SERVED_OPS: dict[str, dict[str, str]] = {
     "activate": {
@@ -45,6 +45,11 @@ SERVED_OPS: dict[str, dict[str, str]] = {
         "path": "/deadlines",
         "operation_id": "list_deadlines_deadlines_get",
     },
+    "edge_create": {
+        "method": "POST",
+        "path": "/edges",
+        "operation_id": "create_edge_edges_post",
+    },
     "edge_retire": {
         "method": "PATCH",
         "path": "/edges/{edge_id}/retire",
@@ -66,9 +71,9 @@ SERVED_OPS: dict[str, dict[str, str]] = {
         "operation_id": "update_edge_edges__edge_id__patch",
     },
     "edges": {
-        "method": "POST",
+        "method": "GET",
         "path": "/edges",
-        "operation_id": "create_edge_edges_post",
+        "operation_id": "list_edges_edges_get",
     },
     "entities": {
         "method": "GET",

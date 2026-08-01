@@ -62,7 +62,7 @@ def _endpoint_resolves(conn: sqlite3.Connection, node: str) -> bool:
     "",
     response_model=EdgeItem,
     status_code=status.HTTP_201_CREATED,
-    openapi_extra=x_mcp("edges"),
+    openapi_extra=x_mcp("edge_create"),
 )
 def create_edge(body: EdgeCreate) -> EdgeItem:
     """Create a new active session edge after validating edge_type and endpoints.
@@ -136,7 +136,7 @@ def create_edge(body: EdgeCreate) -> EdgeItem:
     return EdgeItem(**row[0])
 
 
-@router.get("", response_model=EdgeList)
+@router.get("", response_model=EdgeList, openapi_extra=x_mcp("edges"))
 def list_edges(
     from_node: str | None = None,
     to_node: str | None = None,
