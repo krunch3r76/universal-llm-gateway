@@ -6,6 +6,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from fastapi import APIRouter
+from openapi_mcp.binding import x_mcp
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -32,7 +33,11 @@ def register_directory_routes(
 ) -> None:
     """Register directory-level delete route onto router."""
 
-    @router.delete("/directory", response_model=DirectoryDeleteResponse)
+    @router.delete(
+        "/directory",
+        response_model=DirectoryDeleteResponse,
+        openapi_extra=x_mcp("delete_directory", tool="rag"),
+    )
     async def delete_directory(path: str) -> DirectoryDeleteResponse:
         """Remove all sources under a directory prefix from all storage surfaces."""
         prop_idx = get_property_index_fn()

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 _REPO = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(_REPO))
 sys.path.insert(0, str(_REPO / "libs"))
 sys.path.insert(0, str(_REPO / "services" / "mcp-server"))
 
@@ -26,8 +27,10 @@ from cortex_store.openapi_mcp.codegen import (  # noqa: E402
 from openapi_mcp.binding import extract_typed_routes, inject_x_mcp  # noqa: E402
 from openapi_mcp.registry import default_registry  # noqa: E402
 
+from services.rag.openapi_mcp import codegen as rag_codegen  # noqa: E402
+
 _GENERATED_OPENAPI = _REPO / "config" / "mcp" / "generated" / "cortex.openapi.json"
-_SERVICE_CHOICES = ("cortex", "agent-bus", "all")
+_SERVICE_CHOICES = ("cortex", "agent-bus", "rag", "all")
 
 
 def _load_service_schema(service: str) -> dict[str, Any]:
@@ -39,6 +42,10 @@ def _load_service_schema(service: str) -> dict[str, Any]:
         from agent_bus_store.server import create_app
 
         return create_app().openapi()
+    if service == "rag":
+        from services.rag.rag_service.main import app
+
+        return app.openapi()
     raise ValueError(f"unknown service {service!r}")
 
 
@@ -46,7 +53,11 @@ def _check_service(service: str) -> bool:
     schema = _load_service_schema(service)
     if service == "cortex":
         return check_generated_module(schema)
-    return agent_bus_codegen.check_generated_module(schema)
+    if service == "agent-bus":
+        return agent_bus_codegen.check_generated_module(schema)
+    if service == "rag":
+        return rag_codegen.check_generated_module(schema)
+    raise ValueError(f"unknown service {service!r}")
 
 
 def _write_service(service: str) -> Path:
@@ -54,8 +65,13 @@ def _write_service(service: str) -> Path:
     if service == "cortex":
         manifest = dry_run_generate(schema)
         return write_generated_module(manifest)
-    manifest = agent_bus_codegen.dry_run_generate(schema)
-    return agent_bus_codegen.write_generated_module(manifest)
+    if service == "agent-bus":
+        manifest = agent_bus_codegen.dry_run_generate(schema)
+        return agent_bus_codegen.write_generated_module(manifest)
+    if service == "rag":
+        manifest = rag_codegen.dry_run_generate(schema)
+        return rag_codegen.write_generated_module(manifest)
+    raise ValueError(f"unknown service {service!r}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -110,6 +126,10 @@ def main(argv: list[str] | None = None) -> int:
             from agent_bus_store.openapi_mcp._route_map import unbound_dispatch_ops
 
             unbound = unbound_dispatch_ops()
+        elif service == "rag":
+            from services.rag.openapi_mcp._route_map import unbound_dispatch_ops
+
+            unbound = unbound_dispatch_ops()
         else:
             from cortex_store.openapi_mcp._route_map import unbound_dispatch_ops
 
@@ -159,8 +179,10 @@ def main(argv: list[str] | None = None) -> int:
         schema = _load_service_schema(service)
         if service == "cortex":
             manifest = dry_run_generate(schema)
-        else:
+        elif service == "agent-bus":
             manifest = agent_bus_codegen.dry_run_generate(schema)
+        else:
+            manifest = rag_codegen.dry_run_generate(schema)
         print(
             f"served_ops={len(manifest.served_ops)} "
             f"sha256={manifest.openapi_sha256[:12]}…"
@@ -171,8 +193,10 @@ def main(argv: list[str] | None = None) -> int:
         if service == "all":
             cortex_path = _write_service("cortex")
             agent_bus_path = _write_service("agent-bus")
+            rag_path = _write_service("rag")
             print(f"wrote {cortex_path}")
             print(f"wrote {agent_bus_path}")
+            print(f"wrote {rag_path}")
             return 0
         path = _write_service(service)
         print(f"wrote {path}")
@@ -182,11 +206,14 @@ def main(argv: list[str] | None = None) -> int:
         if service == "all":
             cortex_ok = _check_service("cortex")
             agent_bus_ok = _check_service("agent-bus")
+            rag_ok = _check_service("rag")
             if not cortex_ok:
                 print("check failed: cortex", file=sys.stderr)
             if not agent_bus_ok:
                 print("check failed: agent-bus", file=sys.stderr)
-            return 0 if cortex_ok and agent_bus_ok else 1
+            if not rag_ok:
+                print("check failed: rag", file=sys.stderr)
+            return 0 if cortex_ok and agent_bus_ok and rag_ok else 1
         return 0 if _check_service(service) else 1
 
     parser.print_help()

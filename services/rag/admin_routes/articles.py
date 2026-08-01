@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, HTTPException, Query
+from openapi_mcp.binding import x_mcp
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -129,7 +130,11 @@ def register_article_routes(
             scopes_queried=scopes,
         )
 
-    @router.get("/orphaned_articles", response_model=OrphanedArticlesResponse)
+    @router.get(
+        "/orphaned_articles",
+        response_model=OrphanedArticlesResponse,
+        openapi_extra=x_mcp("orphaned_articles", tool="rag"),
+    )
     def get_orphaned_articles() -> OrphanedArticlesResponse:
         """Return articles that have no corresponding indexed chunks."""
         prop_idx = get_property_index_fn()
@@ -151,7 +156,11 @@ def register_article_routes(
             "count": len(rows),
         }
 
-    @router.post("/refresh_corpus_hints", response_model=RefreshCorpusHintsResponse)
+    @router.post(
+        "/refresh_corpus_hints",
+        response_model=RefreshCorpusHintsResponse,
+        openapi_extra=x_mcp("refresh_hints", tool="rag"),
+    )
     async def refresh_corpus_hints(
         request: RefreshCorpusHintsRequest,
     ) -> RefreshCorpusHintsResponse:
@@ -207,7 +216,11 @@ def register_article_routes(
             terms_by_scope=terms_by_scope,
         )
 
-    @router.post("/article", response_model=ArticleUpsertResponse)
+    @router.post(
+        "/article",
+        response_model=ArticleUpsertResponse,
+        openapi_extra=x_mcp("upsert_article", tool="rag"),
+    )
     async def upsert_article(request: ArticleUpsertRequest) -> ArticleUpsertResponse:
         """Insert or update an article metadata row (merge semantics for empty fields)."""
         prop_idx = get_property_index_fn()
@@ -263,7 +276,11 @@ def register_article_routes(
             frontier_status="unknown",
         )
 
-    @router.delete("/source", response_model=SourceDeleteResponse)
+    @router.delete(
+        "/source",
+        response_model=SourceDeleteResponse,
+        openapi_extra=x_mcp("delete_source", tool="rag"),
+    )
     async def delete_source(path: str) -> SourceDeleteResponse:
         """Remove a single source from all storage surfaces."""
         prop_idx = get_property_index_fn()

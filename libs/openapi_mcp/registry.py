@@ -32,6 +32,20 @@ def _load_agent_bus_openapi() -> dict[str, Any]:
     return create_app().openapi()
 
 
+def _load_rag_openapi() -> dict[str, Any]:
+    import sys
+    from pathlib import Path
+
+    repo = Path(__file__).resolve().parents[2]
+    repo_str = str(repo)
+    if repo_str not in sys.path:
+        sys.path.insert(0, repo_str)
+
+    from services.rag.rag_service.main import app
+
+    return app.openapi()
+
+
 def default_registry() -> tuple[ServiceDescriptor, ...]:
     """Built-in descriptors — cortex is natively stamped; agent-bus is dry-run-ready."""
     return (
@@ -45,6 +59,12 @@ def default_registry() -> tuple[ServiceDescriptor, ...]:
             name="agent-bus",
             facade_tool="agent_bus",
             load_openapi=_load_agent_bus_openapi,
+            seed_bindings=None,
+        ),
+        ServiceDescriptor(
+            name="rag",
+            facade_tool="rag",
+            load_openapi=_load_rag_openapi,
             seed_bindings=None,
         ),
     )

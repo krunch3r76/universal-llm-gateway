@@ -7,6 +7,7 @@ import sqlite3
 from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, HTTPException, Query
+from openapi_mcp.binding import x_mcp
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -175,7 +176,11 @@ def register_status_routes(
             stale_corpus_hints_count_degraded=stale_corpus_hints_count_degraded,
         )
 
-    @router.get("/coverage", response_model=CoverageResponse)
+    @router.get(
+        "/coverage",
+        response_model=CoverageResponse,
+        openapi_extra=x_mcp("coverage", tool="rag"),
+    )
     def get_coverage() -> CoverageResponse:
         """Per-scope, per-prefix view of indexed file counts and recency.
 
