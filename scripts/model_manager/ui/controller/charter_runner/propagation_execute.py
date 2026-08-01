@@ -25,9 +25,9 @@ from charter_runner_store.propagation_ledger import (
     set_defer_reason,
     upsert_open_rows,
 )
-from deploy_identity.mcp_health_probe_url import resolve_mcp_health_probe_url
 from implement_admission.propagation_row import (
     PropagationRow,
+    default_proof,
     resolve_code_ref,
     rows_from_closeout_payload,
 )
@@ -271,9 +271,11 @@ def giw_restart_precondition(
     *,
     queue_snapshot: dict[str, Any] | None = None,
 ) -> tuple[bool, str]:
-    """GIW rows require I2 regardless of safe_window class."""
+    """GIW rows require explicit relay-loss hazard plus I2 before harvest may fire."""
     if row.service != "git_integration_worker":
         return True, "ok"
+    if not (row.hazard or "").strip():
+        return False, "giw_requires_relay_loss_hazard"
     return giw_i2_clear(queue_snapshot=queue_snapshot)
 
 
@@ -299,12 +301,43 @@ def probe_process_live(service: str) -> dict[str, Any] | None:
     return _probe(service)
 
 
-def proof_matches(row: OpenPropagationProjection, payload: dict[str, Any] | None) -> bool:
-    """Close predicate: observed code_version equals row code_ref."""
-    if payload is None:
-        return False
-    observed = payload.get("code_version")
-    return isinstance(observed, str) and observed == row.code_ref
+def probe_for_projection(row: OpenPropagationProjection) -> dict[str, Any] | None:
+    """Probe closure surface for one open ledger row (proof_class-aware)."""
+    from services.git_integration_worker.cursor_auto.propagation_probe import (
+        probe_for_row,
+    )
+
+    return probe_for_row(_projection_to_row(row))
+
+
+def _projection_to_row(row: OpenPropagationProjection) -> PropagationRow:
+    return PropagationRow(
+        service=row.service,
+        code_ref=row.code_ref,
+        safe_window=row.safe_window,
+        proof=default_proof(row.service),
+        proof_class=row.proof_class,
+    )
+
+
+def proof_matches(
+    row: OpenPropagationProjection,
+    payload: dict[str, Any] | None,
+    *,
+    before: dict[str, Any] | None = None,
+    settle_not_before_monotonic: float | None = None,
+) -> bool:
+    """Close predicate: identity-aware proof via shared propagation_probe helper."""
+    from services.git_integration_worker.cursor_auto.propagation_probe import (
+        proof_observed,
+    )
+
+    return proof_observed(
+        _projection_to_row(row),
+        payload,
+        before=before,
+        settle_not_before_monotonic=settle_not_before_monotonic,
+    )
 
 
 async def execute_propagation_plan(
@@ -345,11 +378,7 @@ async def execute_propagation_plan(
             "safe_window": row.safe_window,
             "age_in_harvests": row.age_in_harvests,
         }
-        live_payload = probe_process_live(row.service)
-        if proof_matches(row, live_payload):
-            close_row(row.row_id, proof_payload=live_payload or {})
-            closed.append({**projection, "proof": live_payload})
-            continue
+        before = probe_for_projection(row)
 
         may_fire, window_reason = row_may_fire_at_harvest(row)
         i2_ok, i2_reason = giw_restart_precondition(row, queue_snapshot=queue_snapshot)
@@ -378,10 +407,10 @@ async def execute_propagation_plan(
             remaining.append({**projection, "defer_reason": defer})
             continue
 
-        live_after = probe_process_live(row.service)
-        if proof_matches(row, live_after):
+        live_after = probe_for_projection(row)
+        if proof_matches(row, live_after, before=before):
             close_row(row.row_id, proof_payload=live_after or {})
-            closed.append({**projection, "proof": live_after})
+            closed.append({**projection, "proof": live_after, "proof_before": before})
         else:
             defer = "proof_not_observed_after_restart"
             set_defer_reason(row.row_id, defer)

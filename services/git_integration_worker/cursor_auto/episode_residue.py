@@ -225,7 +225,11 @@ def build_residue_block(
         )
     if truncated:
         lines.append("(paths truncated in this closeout — residue may be incomplete)")
-    lines.append("Owner: charter tick executes sync_restart at harvest; install_plugin remains manual.")
+    lines.append(
+        "Owner: charter tick executes sync_restart at harvest for non-GIW services; "
+        "git_integration_worker requires contract:propagate with relay-loss hazard; "
+        "install_plugin remains manual."
+    )
     return "\n".join(lines)
 
 
