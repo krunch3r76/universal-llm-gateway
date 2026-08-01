@@ -2,34 +2,24 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from openapi_mcp.codegen import (
+    AdapterManifest,
+    ManifestCheckResult,
+    build_adapter_manifest,
+    check_manifest,
+    render_generated_module,
+)
+
 from ._route_map import typed_routes_from_openapi
 
-_REPO_ROOT = Path(__file__).resolve().parents[3]
 _GENERATED = Path(__file__).resolve().parent / "generated_adapter_manifest.py"
+_FACADE = "agent-bus"
 
 
-@dataclass(frozen=True, slots=True)
-class AdapterManifest:
-    openapi_sha256: str
-    served_ops: dict[str, dict[str, str]]
-    facade_tool: str = "agent_bus"
-
-
-def _openapi_sha256(openapi_schema: dict[str, Any]) -> str:
-    payload = json.dumps(openapi_schema, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
-
-
-def generate_adapter_manifest(
-    openapi_schema: dict[str, Any],
-) -> AdapterManifest:
-    """Build megatool-facade adapter manifest from ``x-mcp``-bound OpenAPI routes."""
+def _served_ops_from_schema(openapi_schema: dict[str, Any]) -> dict[str, dict[str, str]]:
     routes = typed_routes_from_openapi(openapi_schema)
     served: dict[str, dict[str, str]] = {}
     for op, route in sorted(routes.items()):
@@ -38,35 +28,16 @@ def generate_adapter_manifest(
             "path": route.path,
             "operation_id": route.operation_id,
         }
-    return AdapterManifest(
-        openapi_sha256=_openapi_sha256(openapi_schema),
-        served_ops=served,
+    return served
+
+
+def generate_adapter_manifest(openapi_schema: dict[str, Any]) -> AdapterManifest:
+    """Build megatool-facade adapter manifest from ``x-mcp``-bound OpenAPI routes."""
+    return build_adapter_manifest(
+        openapi_schema,
+        _served_ops_from_schema(openapi_schema),
+        facade_tool=_FACADE,
     )
-
-
-def render_generated_module(manifest: AdapterManifest) -> str:
-    """Render committed adapter manifest module source."""
-    lines = [
-        '"""Generated MCP adapter manifest — do not edit by hand.',
-        "",
-        "Regenerate:",
-        "  python scripts/openapi_mcp_codegen.py --write --service agent-bus",
-        "  python scripts/openapi_mcp_codegen.py --check --service agent-bus",
-        '"""',
-        "",
-        "from __future__ import annotations",
-        "",
-        f'OPENAPI_SHA256 = "{manifest.openapi_sha256}"',
-        f'FACADE_TOOL = "{manifest.facade_tool}"',
-        "SERVED_OPS: dict[str, dict[str, str]] = {",
-    ]
-    for op, meta in manifest.served_ops.items():
-        lines.append(f'    "{op}": {{')
-        for key, val in meta.items():
-            lines.append(f'        "{key}": "{val}",')
-        lines.append("    },")
-    lines.extend(["}", ""])
-    return "\n".join(lines)
 
 
 def write_generated_module(
@@ -85,9 +56,14 @@ def dry_run_generate(openapi_schema: dict[str, Any]) -> AdapterManifest:
     return generate_adapter_manifest(openapi_schema)
 
 
+def check_generated_module_detailed(
+    openapi_schema: dict[str, Any],
+) -> ManifestCheckResult:
+    """Two-tier drift check against the committed manifest."""
+    live = generate_adapter_manifest(openapi_schema)
+    return check_manifest(live, manifest_path=_GENERATED)
+
+
 def check_generated_module(openapi_schema: dict[str, Any]) -> bool:
-    """Return True when on-disk manifest matches live OpenAPI."""
-    if not _GENERATED.is_file():
-        return False
-    expected = render_generated_module(generate_adapter_manifest(openapi_schema))
-    return _GENERATED.read_text(encoding="utf-8") == expected
+    """Return True when no binding (FATAL) drift vs on-disk manifest."""
+    return check_generated_module_detailed(openapi_schema).ok

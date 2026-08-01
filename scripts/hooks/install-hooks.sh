@@ -29,6 +29,7 @@ git add docs/event-contracts.md 2>/dev/null || true
 "$PYTHON" -m scripts.gen_event_catalog check --staged || exit 1
 "$PYTHON" scripts/check-rag-events-imports.py --staged || exit 1
 "$PYTHON" scripts/lint-fastapi-annotations.py --staged
+"$PYTHON" scripts/openapi_mcp_codegen.py --check --staged || exit 1
 "$PYTHON" scripts/cortex/run_skill_git_guard.py || exit 1
 exit $?
 EOF

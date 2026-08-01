@@ -84,5 +84,6 @@ _run_registry_falsifier_tier
 "$PYTHON" scripts/check-rag-events-imports.py --staged || exit 1
 "$PYTHON" scripts/check-workflow-doc-drift.py
 "$PYTHON" scripts/check-team-dispatch-surface-drift.py
+"$PYTHON" scripts/openapi_mcp_codegen.py --check --service all || exit 1
 
 echo "OK agent-surface-check: all gates passed"

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -15,22 +16,26 @@ sys.path.insert(0, str(_REPO / "libs"))
 sys.path.insert(0, str(_REPO / "services" / "mcp-server"))
 
 from agent_bus_store.openapi_mcp import codegen as agent_bus_codegen  # noqa: E402
+from cortex_store.openapi_mcp import codegen as cortex_codegen  # noqa: E402
 from cortex_store.openapi_mcp.census import (  # noqa: E402
     build_four_bucket_census,
     render_census_markdown,
 )
-from cortex_store.openapi_mcp.codegen import (  # noqa: E402
-    check_generated_module,
-    dry_run_generate,
-    write_generated_module,
-)
 from openapi_mcp.binding import extract_typed_routes, inject_x_mcp  # noqa: E402
+from openapi_mcp.codegen import ManifestCheckResult  # noqa: E402
 from openapi_mcp.registry import default_registry  # noqa: E402
 
 from services.rag.openapi_mcp import codegen as rag_codegen  # noqa: E402
 
 _GENERATED_OPENAPI = _REPO / "config" / "mcp" / "generated" / "cortex.openapi.json"
 _SERVICE_CHOICES = ("cortex", "agent-bus", "rag", "all")
+
+_SERVICE_PREFIXES: dict[str, tuple[str, ...]] = {
+    "cortex": ("libs/cortex_store/",),
+    "agent-bus": ("libs/agent_bus_store/",),
+    "rag": ("services/rag/",),
+}
+_OPENAPI_TOUCH_MARKERS = ("/routes/", "/openapi_mcp/", "/main.py", "/server.py")
 
 
 def _load_service_schema(service: str) -> dict[str, Any]:
@@ -49,22 +54,22 @@ def _load_service_schema(service: str) -> dict[str, Any]:
     raise ValueError(f"unknown service {service!r}")
 
 
-def _check_service(service: str) -> bool:
+def _check_service_detailed(service: str) -> ManifestCheckResult:
     schema = _load_service_schema(service)
     if service == "cortex":
-        return check_generated_module(schema)
+        return cortex_codegen.check_generated_module_detailed(schema)
     if service == "agent-bus":
-        return agent_bus_codegen.check_generated_module(schema)
+        return agent_bus_codegen.check_generated_module_detailed(schema)
     if service == "rag":
-        return rag_codegen.check_generated_module(schema)
+        return rag_codegen.check_generated_module_detailed(schema)
     raise ValueError(f"unknown service {service!r}")
 
 
 def _write_service(service: str) -> Path:
     schema = _load_service_schema(service)
     if service == "cortex":
-        manifest = dry_run_generate(schema)
-        return write_generated_module(manifest)
+        manifest = cortex_codegen.dry_run_generate(schema)
+        return cortex_codegen.write_generated_module(manifest)
     if service == "agent-bus":
         manifest = agent_bus_codegen.dry_run_generate(schema)
         return agent_bus_codegen.write_generated_module(manifest)
@@ -72,6 +77,46 @@ def _write_service(service: str) -> Path:
         manifest = rag_codegen.dry_run_generate(schema)
         return rag_codegen.write_generated_module(manifest)
     raise ValueError(f"unknown service {service!r}")
+
+
+def _git_staged_paths() -> list[str]:
+    out = subprocess.run(
+        ["git", "diff", "--cached", "--name-only", "--diff-filter=ACMR"],
+        cwd=_REPO,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return [line for line in out.stdout.splitlines() if line]
+
+
+def services_touched_by_staged(staged: list[str]) -> set[str]:
+    """Map staged paths to openapi services; empty when nothing binding-related."""
+    touched: set[str] = set()
+    for rel in staged:
+        for service, prefixes in _SERVICE_PREFIXES.items():
+            if not any(rel.startswith(prefix) for prefix in prefixes):
+                continue
+            if any(marker in rel for marker in _OPENAPI_TOUCH_MARKERS):
+                touched.add(service)
+    return touched
+
+
+def _emit_check_result(service: str, result: ManifestCheckResult) -> None:
+    for msg in result.fatal_messages:
+        print(f"{service}: {msg}", file=sys.stderr)
+    for msg in result.warning_messages:
+        print(f"{service}: {msg}", file=sys.stderr)
+
+
+def _run_check(services: list[str]) -> int:
+    exit_code = 0
+    for service in services:
+        result = _check_service_detailed(service)
+        _emit_check_result(service, result)
+        if result.exit_code != 0:
+            exit_code = 1
+    return exit_code
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -85,6 +130,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--write", action="store_true", help="Write generated manifest")
     parser.add_argument(
         "--check", action="store_true", help="Verify manifest matches OpenAPI"
+    )
+    parser.add_argument(
+        "--staged",
+        action="store_true",
+        help="Pre-commit mode: check only services touched by staged openapi paths",
     )
     parser.add_argument(
         "--census",
@@ -178,7 +228,7 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         schema = _load_service_schema(service)
         if service == "cortex":
-            manifest = dry_run_generate(schema)
+            manifest = cortex_codegen.dry_run_generate(schema)
         elif service == "agent-bus":
             manifest = agent_bus_codegen.dry_run_generate(schema)
         else:
@@ -203,18 +253,14 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.check:
+        if args.staged:
+            touched = services_touched_by_staged(_git_staged_paths())
+            if not touched:
+                return 0
+            return _run_check(sorted(touched))
         if service == "all":
-            cortex_ok = _check_service("cortex")
-            agent_bus_ok = _check_service("agent-bus")
-            rag_ok = _check_service("rag")
-            if not cortex_ok:
-                print("check failed: cortex", file=sys.stderr)
-            if not agent_bus_ok:
-                print("check failed: agent-bus", file=sys.stderr)
-            if not rag_ok:
-                print("check failed: rag", file=sys.stderr)
-            return 0 if cortex_ok and agent_bus_ok and rag_ok else 1
-        return 0 if _check_service(service) else 1
+            return _run_check(["cortex", "agent-bus", "rag"])
+        return _run_check([service])
 
     parser.print_help()
     return 2
