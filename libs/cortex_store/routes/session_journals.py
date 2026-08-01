@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query, status
+from openapi_mcp.binding import x_mcp
 from universal_logging import get_logger
 
 from ..db import cortex_conn, decode_row, json_encode, query
@@ -27,7 +28,7 @@ router = APIRouter(prefix="/session-journals", tags=["session-journals"])
 _JSON_FIELDS = frozenset({"domains", "decisions", "open_items", "entity_ids"})
 
 
-@router.get("", response_model=SessionJournalList)
+@router.get("", response_model=SessionJournalList, openapi_extra=x_mcp("journal_read"))
 def list_session_journals(
     agent: str | None = None,
     limit: int = Query(3, ge=1, le=100),
@@ -126,6 +127,7 @@ def create_session_journal(body: SessionJournalCreate) -> SessionJournalItem:
     "/close",
     response_model=SessionCloseResponse,
     status_code=status.HTTP_201_CREATED,
+    openapi_extra=x_mcp("session_close"),
 )
 def close_session_route(body: SessionCloseRequest) -> SessionCloseResponse:
     """Atomic session close — handler in ``session_close``."""

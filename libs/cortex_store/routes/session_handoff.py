@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException, status
+from openapi_mcp.binding import x_mcp
 from universal_logging import get_logger
 
 from ..db import cortex_conn
@@ -32,6 +33,7 @@ router = APIRouter(prefix="/session-journals", tags=["session-journals"])
     "/{session_id}/handoff",
     response_model=SessionHandoffUpsertResponse,
     status_code=status.HTTP_200_OK,
+    openapi_extra=x_mcp("session_handoff_upsert"),
 )
 def upsert_session_handoff(
     session_id: str,

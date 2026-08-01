@@ -1655,6 +1655,20 @@
             ],
             "title": "Events Json"
           },
+          "evidence_uris": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Uris"
+          },
           "force": {
             "default": false,
             "title": "Force",
@@ -1692,6 +1706,17 @@
               }
             ],
             "title": "Prospective Summary"
+          },
+          "reasoning_summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reasoning Summary"
           },
           "resolution_status": {
             "anyOf": [
@@ -8441,7 +8466,11 @@
         "summary": "Update Assertion",
         "tags": [
           "assertions"
-        ]
+        ],
+        "x-mcp": {
+          "op": "assertion_update",
+          "tool": "cortex"
+        }
       }
     },
     "/assertions/{assertion_id}/enrich": {
@@ -10200,7 +10229,11 @@
         "summary": "Traverse",
         "tags": [
           "edges"
-        ]
+        ],
+        "x-mcp": {
+          "op": "edge_traverse",
+          "tool": "cortex"
+        }
       }
     },
     "/edges/types": {
@@ -10284,7 +10317,11 @@
         "summary": "Update Edge",
         "tags": [
           "edges"
-        ]
+        ],
+        "x-mcp": {
+          "op": "edge_update",
+          "tool": "cortex"
+        }
       }
     },
     "/edges/{edge_id}/retire": {
@@ -10344,7 +10381,11 @@
         "summary": "Retire Edge",
         "tags": [
           "edges"
-        ]
+        ],
+        "x-mcp": {
+          "op": "edge_retire",
+          "tool": "cortex"
+        }
       }
     },
     "/entities": {
@@ -10561,7 +10602,11 @@
         "summary": "Create Entity",
         "tags": [
           "entities"
-        ]
+        ],
+        "x-mcp": {
+          "op": "entity_create",
+          "tool": "cortex"
+        }
       }
     },
     "/entities/merge": {
@@ -10605,7 +10650,11 @@
         "summary": "Merge Entities",
         "tags": [
           "entities"
-        ]
+        ],
+        "x-mcp": {
+          "op": "entity_merge",
+          "tool": "cortex"
+        }
       }
     },
     "/entities/source-paths": {
@@ -10775,7 +10824,11 @@
         "summary": "Get Entity",
         "tags": [
           "entities"
-        ]
+        ],
+        "x-mcp": {
+          "op": "entity_get",
+          "tool": "cortex"
+        }
       },
       "patch": {
         "description": "Update mutable fields on an entity.\n\nUses ``model_fields_set`` so omitted keys are untouched while explicitly\nsending ``null`` clears the field (sets it to SQL NULL).",
@@ -10844,7 +10897,11 @@
         "summary": "Update Entity",
         "tags": [
           "entities"
-        ]
+        ],
+        "x-mcp": {
+          "op": "entity_update",
+          "tool": "cortex"
+        }
       }
     },
     "/entities/{old_id}/rekey": {
@@ -10899,7 +10956,11 @@
         "summary": "Rekey Entity",
         "tags": [
           "entities"
-        ]
+        ],
+        "x-mcp": {
+          "op": "entity_rekey",
+          "tool": "cortex"
+        }
       }
     },
     "/entity-status/{entity_id}": {
@@ -11501,7 +11562,11 @@
         "summary": "List Entries",
         "tags": [
           "reflective-journal"
-        ]
+        ],
+        "x-mcp": {
+          "op": "rj_list",
+          "tool": "cortex"
+        }
       },
       "post": {
         "description": "Write a reflective journal entry.\n\nReturns the created entry with links and Phase 1.5 suggested_links.",
@@ -11541,7 +11606,11 @@
         "summary": "Create Entry",
         "tags": [
           "reflective-journal"
-        ]
+        ],
+        "x-mcp": {
+          "op": "rj_write",
+          "tool": "cortex"
+        }
       }
     },
     "/reflective-journal/{entry_id}": {
@@ -11584,7 +11653,11 @@
         "summary": "Get Entry",
         "tags": [
           "reflective-journal"
-        ]
+        ],
+        "x-mcp": {
+          "op": "rj_read",
+          "tool": "cortex"
+        }
       }
     },
     "/reflective-journal/{entry_id}/links": {
@@ -11637,7 +11710,11 @@
         "summary": "Add Link",
         "tags": [
           "reflective-journal"
-        ]
+        ],
+        "x-mcp": {
+          "op": "rj_link",
+          "tool": "cortex"
+        }
       }
     },
     "/relationships": {
@@ -11759,7 +11836,11 @@
         "summary": "Create Relationship",
         "tags": [
           "relationships"
-        ]
+        ],
+        "x-mcp": {
+          "op": "relationship_create",
+          "tool": "cortex"
+        }
       }
     },
     "/relationships/{relationship_id}": {
@@ -11802,7 +11883,11 @@
         "summary": "Delete Relationship",
         "tags": [
           "relationships"
-        ]
+        ],
+        "x-mcp": {
+          "op": "relationship_delete",
+          "tool": "cortex"
+        }
       },
       "patch": {
         "description": "Patch mutable fields of an active relationship.\n\nOnly supplied non-null fields are updated. Source, target, and type define\nrelationship identity and cannot be changed \u2014 delete and recreate instead.",
@@ -11853,7 +11938,11 @@
         "summary": "Update Relationship",
         "tags": [
           "relationships"
-        ]
+        ],
+        "x-mcp": {
+          "op": "relationship_update",
+          "tool": "cortex"
+        }
       }
     },
     "/resolve": {
@@ -12111,7 +12200,11 @@
         "summary": "List Session Journals",
         "tags": [
           "session-journals"
-        ]
+        ],
+        "x-mcp": {
+          "op": "journal_read",
+          "tool": "cortex"
+        }
       },
       "post": {
         "description": "Create a session journal row, auto-create transcript entity, and return the item.",
@@ -12193,7 +12286,11 @@
         "summary": "Close Session Route",
         "tags": [
           "session-journals"
-        ]
+        ],
+        "x-mcp": {
+          "op": "session_close",
+          "tool": "cortex"
+        }
       }
     },
     "/session-journals/{session_id}/handoff": {
@@ -12246,7 +12343,11 @@
         "summary": "Upsert Session Handoff",
         "tags": [
           "session-journals"
-        ]
+        ],
+        "x-mcp": {
+          "op": "session_handoff_upsert",
+          "tool": "cortex"
+        }
       }
     },
     "/skills": {
@@ -12511,7 +12612,11 @@
         "summary": "List Staging",
         "tags": [
           "staging"
-        ]
+        ],
+        "x-mcp": {
+          "op": "staging_list",
+          "tool": "cortex"
+        }
       }
     },
     "/staging/batch": {
@@ -12595,7 +12700,11 @@
         "summary": "Approve Staging Batch",
         "tags": [
           "staging"
-        ]
+        ],
+        "x-mcp": {
+          "op": "staging_batch_approve",
+          "tool": "cortex"
+        }
       }
     },
     "/staging/{staging_id}": {
@@ -12698,7 +12807,11 @@
         "summary": "Approve Staging",
         "tags": [
           "staging"
-        ]
+        ],
+        "x-mcp": {
+          "op": "staging_approve",
+          "tool": "cortex"
+        }
       }
     },
     "/staging/{staging_id}/reject": {
@@ -12758,7 +12871,11 @@
         "summary": "Reject Staging",
         "tags": [
           "staging"
-        ]
+        ],
+        "x-mcp": {
+          "op": "staging_reject",
+          "tool": "cortex"
+        }
       }
     },
     "/stats": {
@@ -13329,7 +13446,11 @@
         "summary": "List Tags",
         "tags": [
           "tags"
-        ]
+        ],
+        "x-mcp": {
+          "op": "tag_list",
+          "tool": "cortex"
+        }
       },
       "put": {
         "description": "Assign or move a tag pointer.  Upsert: existing tag_name+entity_id \u2192 move.",
@@ -13371,7 +13492,11 @@
         "summary": "Assign Tag",
         "tags": [
           "tags"
-        ]
+        ],
+        "x-mcp": {
+          "op": "tag_assign",
+          "tool": "cortex"
+        }
       }
     },
     "/tags/{tag_name}": {

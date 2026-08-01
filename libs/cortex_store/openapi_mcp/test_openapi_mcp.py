@@ -28,11 +28,10 @@ def test_four_bucket_census_partitions_all_ops() -> None:
 @pytest.mark.offline
 def test_four_bucket_census_counts() -> None:
     census = build_four_bucket_census()
-    assert len(census.served) == 20
+    assert len(census.served) == 45
     assert len(census.untypeable) == 4
-    assert len(census.rb_only) == 36
-    # 2026-07-31: _OP_SPECS grew 80→84; neither absorbed the +4.
-    assert len(census.neither) == 24
+    assert len(census.rb_only) == 20
+    assert len(census.neither) == 15
     assert census.total == 84
 
 
@@ -46,7 +45,7 @@ def test_assert_op_openapi_bijection() -> None:
 def test_generator_dry_run_covers_served_ops() -> None:
     schema = create_app().openapi()
     manifest = dry_run_generate(schema)
-    assert len(manifest.served_ops) == 20
+    assert len(manifest.served_ops) == 45
     assert manifest.served_ops["assert"]["path"] == "/assertions"
     assert manifest.openapi_sha256
 
@@ -107,6 +106,14 @@ def test_missing_stamp_is_detectable_not_silent() -> None:
     assert "assert" not in dry_run_generate(schema).served_ops
     assert check_generated_module(schema) is False
 
+    # W2 S1–S4: newly stamped ops behave the same (entity_get / GET /entities/{id}).
+    schema2 = create_app().openapi()
+    assert "entity_get" not in unbound_dispatch_ops(schema2)
+    del schema2["paths"]["/entities/{entity_id}"]["get"]["x-mcp"]
+    assert "entity_get" in unbound_dispatch_ops(schema2)
+    assert "entity_get" not in dry_run_generate(schema2).served_ops
+    assert check_generated_module(schema2) is False
+
 
 @pytest.mark.offline
 def test_unbound_ops_enumerate_the_strangler_gap() -> None:
@@ -149,7 +156,6 @@ def test_reachable_unserved_violations_during_strangler() -> None:
     """Documents current strangler gap — live ops still lack typed routes."""
     live_ops = frozenset(
         {
-            "entity_get",
             "assertion_get",
             "assert",
             "assertion_update",
@@ -158,5 +164,5 @@ def test_reachable_unserved_violations_during_strangler() -> None:
         }
     )
     violations = find_reachable_unserved_violations(live_ops)
-    assert "entity_get" in violations
+    assert "entity_get" not in violations
     assert "assert" not in violations

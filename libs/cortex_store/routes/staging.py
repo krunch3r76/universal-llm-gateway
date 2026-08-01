@@ -4,6 +4,7 @@ import datetime
 import sqlite3
 
 from fastapi import APIRouter, HTTPException, Query, status
+from openapi_mcp.binding import x_mcp
 from universal_logging import get_logger
 
 from ..db import cortex_conn, json_decode, json_encode, query
@@ -93,7 +94,7 @@ def _now() -> str:
     return datetime.datetime.now(tz=datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-@router.get("", response_model=StagingList)
+@router.get("", response_model=StagingList, openapi_extra=x_mcp("staging_list"))
 def list_staging(
     status_filter: str | None = Query(None, alias="status"),
     source_uri: str | None = None,
@@ -208,7 +209,9 @@ def _fetch_pending(conn: sqlite3.Connection, staging_id: int) -> dict:
     return rows[0]
 
 
-@router.post("/batch-approve", response_model=StagingList)
+@router.post(
+    "/batch-approve", response_model=StagingList, openapi_extra=x_mcp("staging_batch_approve")
+)
 def approve_staging_batch(body: StagingBatchApproval) -> StagingList:
     """Approve multiple staging proposals in apply order (revises/removes before adds)."""
     now = _now()
@@ -259,7 +262,9 @@ def _order_batch_proposals(staging_ids: list[int]) -> list[int]:
     return [int(r["id"]) for r in sorted_rows]
 
 
-@router.post("/{staging_id}/approve", response_model=StagingItem)
+@router.post(
+    "/{staging_id}/approve", response_model=StagingItem, openapi_extra=x_mcp("staging_approve")
+)
 def approve_staging(
     staging_id: int, body: StagingApproval | None = None
 ) -> StagingItem:
@@ -283,7 +288,9 @@ def approve_staging(
     return _decode_staging_row(rows[0])
 
 
-@router.post("/{staging_id}/reject", response_model=StagingItem)
+@router.post(
+    "/{staging_id}/reject", response_model=StagingItem, openapi_extra=x_mcp("staging_reject")
+)
 def reject_staging(staging_id: int, body: StagingApproval | None = None) -> StagingItem:
     """Reject a staging proposal."""
     now = _now()

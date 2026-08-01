@@ -185,7 +185,7 @@ def list_edges(
     return EdgeList(items=[EdgeItem(**r) for r in rows], count=len(rows))
 
 
-@router.get("/traverse", response_model=EdgeList)
+@router.get("/traverse", response_model=EdgeList, openapi_extra=x_mcp("edge_traverse"))
 def traverse(
     node: str,
     hops: int = Query(1, ge=1, le=10),
@@ -243,7 +243,9 @@ def traverse(
     return EdgeList(items=[EdgeItem(**r) for r in rows], count=len(rows))
 
 
-@router.patch("/{edge_id}/retire", response_model=EdgeItem)
+@router.patch(
+    "/{edge_id}/retire", response_model=EdgeItem, openapi_extra=x_mcp("edge_retire")
+)
 def retire_edge(
     edge_id: int,
     body: EdgeRetire | None = Body(default=None),
@@ -266,7 +268,7 @@ def retire_edge(
     return EdgeItem(**rows[0])
 
 
-@router.patch("/{edge_id}", response_model=EdgeItem)
+@router.patch("/{edge_id}", response_model=EdgeItem, openapi_extra=x_mcp("edge_update"))
 def update_edge(edge_id: int, body: EdgeUpdate = Body(...)) -> EdgeItem:
     """Patch mutable scalar fields of an ACTIVE session-edge in place.
 

@@ -204,7 +204,7 @@ def list_entity_source_paths() -> SourcePathsResponse:
     )
 
 
-@router.get("/{entity_id}")
+@router.get("/{entity_id}", openapi_extra=x_mcp("entity_get"))
 def get_entity(
     entity_id: str,
     request: Request,
@@ -314,7 +314,7 @@ def get_entity(
         )
 
 
-@router.patch("/{entity_id}", response_model=None)
+@router.patch("/{entity_id}", response_model=None, openapi_extra=x_mcp("entity_update"))
 def update_entity(
     entity_id: str,
     body: EntityUpdate,
@@ -348,21 +348,26 @@ def update_entity(
     return result
 
 
-@router.post("/merge")
+@router.post("/merge", openapi_extra=x_mcp("entity_merge"))
 def merge_entities(body: EntityMergeRequest) -> dict[str, object]:
     """Fold source entity into target with dedup-before-repoint semantics."""
     with WRITE_LOCK, cortex_conn() as conn:
         return entity_merge_impl(conn, body.source_id, body.target_id)
 
 
-@router.post("/{old_id}/rekey")
+@router.post("/{old_id}/rekey", openapi_extra=x_mcp("entity_rekey"))
 def rekey_entity(old_id: str, body: EntityRekeyRequest) -> dict[str, object]:
     """Identity-preserving relabel: old_id becomes an alias of new_id."""
     with WRITE_LOCK, cortex_conn() as conn:
         return entity_rekey_impl(conn, old_id, body.new_id)
 
 
-@router.post("", response_model=EntityDetail, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=EntityDetail,
+    status_code=status.HTTP_201_CREATED,
+    openapi_extra=x_mcp("entity_create"),
+)
 def create_entity(body: EntityCreate) -> EntityDetail:
     """Create an entity and return the stored entity detail payload.
 

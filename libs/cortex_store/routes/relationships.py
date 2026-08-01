@@ -186,7 +186,9 @@ def create_relationship_on_conn(
     return RelationshipCreateResponse(was_new=was_new, item=item)
 
 
-@router.post("", response_model=RelationshipCreateResponse)
+@router.post(
+    "", response_model=RelationshipCreateResponse, openapi_extra=x_mcp("relationship_create")
+)
 def create_relationship(
     body: RelationshipCreate, response: Response
 ) -> RelationshipCreateResponse:
@@ -205,7 +207,11 @@ def create_relationship(
     return result
 
 
-@router.delete("/{relationship_id}", response_model=RelationshipDeleteResponse)
+@router.delete(
+    "/{relationship_id}",
+    response_model=RelationshipDeleteResponse,
+    openapi_extra=x_mcp("relationship_delete"),
+)
 def delete_relationship(relationship_id: int) -> RelationshipDeleteResponse:
     """Soft-delete a relationship by setting active=0.
 
@@ -238,7 +244,11 @@ def delete_relationship(relationship_id: int) -> RelationshipDeleteResponse:
     return RelationshipDeleteResponse(deleted=True, id=relationship_id)
 
 
-@router.patch("/{relationship_id}", response_model=RelationshipItem)
+@router.patch(
+    "/{relationship_id}",
+    response_model=RelationshipItem,
+    openapi_extra=x_mcp("relationship_update"),
+)
 def update_relationship(
     relationship_id: int,
     body: RelationshipUpdate,

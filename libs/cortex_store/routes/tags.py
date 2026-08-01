@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, status
+from openapi_mcp.binding import x_mcp
 from pydantic import BaseModel
 from universal_logging import get_logger
 
@@ -30,7 +31,7 @@ class TagAssignRequest(BaseModel):
     assigned_by: str
 
 
-@router.get("")
+@router.get("", openapi_extra=x_mcp("tag_list"))
 def list_tags(
     entity_id: str = Query(..., description="Entity to list tags for"),
 ) -> dict[str, Any]:
@@ -45,7 +46,7 @@ def list_tags(
     return {"items": rows}
 
 
-@router.put("")
+@router.put("", openapi_extra=x_mcp("tag_assign"))
 def assign_tag(req: TagAssignRequest) -> dict[str, Any]:
     """Assign or move a tag pointer.  Upsert: existing tag_name+entity_id → move."""
     with cortex_conn() as conn:

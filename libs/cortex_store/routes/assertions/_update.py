@@ -7,6 +7,7 @@ import datetime as dt
 from typing import Any
 
 from fastapi import HTTPException, status
+from openapi_mcp.binding import x_mcp
 from pydantic import ValidationError
 
 from ...db import WRITE_LOCK, cortex_conn, decode_row, json_encode, query
@@ -54,7 +55,11 @@ _PATCHABLE_COLS = (
 _PATCHABLE_JSON_COLS = frozenset({"evidence_uris"})
 
 
-@router.patch("/{assertion_id}", response_model=AssertionUpdateResponse)
+@router.patch(
+    "/{assertion_id}",
+    response_model=AssertionUpdateResponse,
+    openapi_extra=x_mcp("assertion_update"),
+)
 def update_assertion(
     assertion_id: int, body: AssertionUpdate | dict[str, Any]
 ) -> AssertionUpdateResponse:

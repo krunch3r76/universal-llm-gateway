@@ -12,6 +12,7 @@ import json
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, status
+from openapi_mcp.binding import x_mcp
 from universal_logging import get_logger
 
 from ..db import cortex_conn, json_decode, query
@@ -186,7 +187,7 @@ def _suggest_links(
     return suggestions[:5]
 
 
-@router.get("", response_model=ReflectiveEntryList)
+@router.get("", response_model=ReflectiveEntryList, openapi_extra=x_mcp("rj_list"))
 def list_entries(
     agent: str | None = None,
     kind: str | None = None,
@@ -236,7 +237,7 @@ def list_entries(
     return ReflectiveEntryList(items=items, total=total)
 
 
-@router.get("/{entry_id}", response_model=ReflectiveEntryItem)
+@router.get("/{entry_id}", response_model=ReflectiveEntryItem, openapi_extra=x_mcp("rj_read"))
 def get_entry(entry_id: int) -> ReflectiveEntryItem:
     """Get a single reflective journal entry with its links."""
     conn = cortex_conn()
@@ -252,7 +253,10 @@ def get_entry(entry_id: int) -> ReflectiveEntryItem:
 
 
 @router.post(
-    "", response_model=ReflectiveEntryItem, status_code=status.HTTP_201_CREATED
+    "",
+    response_model=ReflectiveEntryItem,
+    status_code=status.HTTP_201_CREATED,
+    openapi_extra=x_mcp("rj_write"),
 )
 def create_entry(body: ReflectiveEntryCreate) -> ReflectiveEntryItem:
     """Write a reflective journal entry.
@@ -339,7 +343,11 @@ def create_entry(body: ReflectiveEntryCreate) -> ReflectiveEntryItem:
     return item
 
 
-@router.post("/{entry_id}/links", status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/{entry_id}/links",
+    status_code=status.HTTP_201_CREATED,
+    openapi_extra=x_mcp("rj_link"),
+)
 def add_link(entry_id: int, body: JournalLinkCreate) -> JournalLinkItem:
     """Add a link from an existing entry to another entry or entity."""
     to_entry = body.to_entry
