@@ -97,9 +97,9 @@ websockets>=11.0
 # Pinned EXACT: the cursor-sdk-bridge CLI arg-contract is version-sensitive and
 # the gateway monkeypatches cursor_sdk internals (services/git_integration_worker/
 # routes/cursor_sdk.py) against this baseline. Installed-good in
-# /home/io/.venvs/universal as of 2026-06-30 (upgraded 0.1.7→0.1.8; _bridge_subprocess_env monkeypatch verified compatible).
+# /home/io/.venvs/universal as of 2026-08-01 (upgraded 0.1.9→1.0.26; _bridge_subprocess_env monkeypatch verified compatible).
 # Unpinned drift on `pip -U`/rebuild can silently break the bridge launch.
 # See cortex notes/system/threads/cursor-sdk-bridge-token-fix.md.
-cursor-sdk==0.1.9
+cursor-sdk==1.0.26
 # Track 3: stdio bridge for cursor-sdk dispatches (replaces custom mcp-stdio-proxy)
 fastmcp-remote==3.4.2
