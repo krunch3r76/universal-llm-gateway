@@ -31,6 +31,8 @@ CURSOR_USER_RULES_DIRNAME = "rules"
 CURSOR_PLUGINS_DIRNAME = "plugins"
 CURSOR_XDG_CONFIG_RELPATH = Path(".config") / "cursor"
 CURSOR_CREDENTIAL_FILENAME = "auth.json"
+GITCONFIG_FILENAME = ".gitconfig"
+DISPATCH_GIT_EMAIL_DOMAIN = "dispatch.git-integration-worker"
 
 _DISPATCH_HOME_ROOT = Path(
     os.environ.get(
@@ -115,6 +117,34 @@ def dispatch_home_path(dispatch_id: str, *, root: Path | None = None) -> Path:
     """``{root}/{dispatch_id}-home`` — root defaults to ``_DISPATCH_HOME_ROOT``."""
     base = root if root is not None else _DISPATCH_HOME_ROOT
     return base / f"{dispatch_id}-home"
+
+
+def dispatch_git_identity(dispatch_id: str) -> tuple[str, str]:
+    """Author/committer identity naming the dispatch for joinable lane commits."""
+    name = f"cursor-sdk/{dispatch_id}"
+    email = f"{dispatch_id}@{DISPATCH_GIT_EMAIL_DOMAIN}"
+    return name, email
+
+
+def dispatch_git_env_vars(dispatch_id: str) -> dict[str, str]:
+    """Env overrides so git commits succeed when HOME is a dispatch overlay."""
+    name, email = dispatch_git_identity(dispatch_id)
+    return {
+        "GIT_AUTHOR_NAME": name,
+        "GIT_AUTHOR_EMAIL": email,
+        "GIT_COMMITTER_NAME": name,
+        "GIT_COMMITTER_EMAIL": email,
+    }
+
+
+def seed_dispatch_git_identity(home: Path, dispatch_id: str) -> None:
+    """Write ``~/.gitconfig`` under the per-dispatch HOME (never symlink)."""
+    name, email = dispatch_git_identity(dispatch_id)
+    gitconfig = home / GITCONFIG_FILENAME
+    gitconfig.write_text(
+        f"[user]\n\tname = {name}\n\temail = {email}\n",
+        encoding="utf-8",
+    )
 
 
 def prune_stale_dispatch_homes(
@@ -227,6 +257,7 @@ def setup_cursor_dispatch_home(
     # Plugin parity with the IDE is wrong for the human-facing operator register:
     # a headless seat has no human reader. Swap it for the interagent counterpart.
     apply_cursor_sdk_seat_overlay(cursor_dir)
+    seed_dispatch_git_identity(home, dispatch_id)
     return home
 
 

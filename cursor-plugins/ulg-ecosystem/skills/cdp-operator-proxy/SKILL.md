@@ -42,6 +42,23 @@ IDE polls **request lane** (`agent_bus` fetch/wait), not “is `project_ask` run
 **authoritative** operator continuity = private request thread + `mark_read` before
 next `request`. Rule: `session-abort-authorization_ulg.mdc`.
 
+**CSE lifetime (BINDING — retain until clean handoff or rare human gate):**
+
+```
+operator-proxy Cowork CSE stays live until:
+  (a) rare human-operator escalation (true operator-only fork), OR
+  (b) continuity handoff — clean break of the old CSE only after a new CSE
+      launch is confirmed (same private request lane + handoff_prompt)
+¬ break / Stop-click / deregister-kill on: max_wall_s, no_progress_s,
+  poller timeout, or false "cdp FAILED" from the Stargate generate adapter.
+Streaming idle between DIRECTIVE legs is normal — not a stall warranting abort.
+```
+
+Fleet poller wall is a **ledger/open-leg** concern, not a license to kill the page.
+IDE must treat `wall_clock_exceeded` on `purpose=operator-proxy|mission` as
+poller-detach if it still appears (legacy), and **reattach** via followup / CSE URL
+— never as "mission dead."
+
 **New CDP window (BINDING — skill/MCP refresh):** warm follow-up does **not** reload
 Customize skills or life MCP that uploaded mid-mission. When context is stale or
 skills/tools must go live: web-anthropic **requests** a new CDP operator window via
@@ -49,6 +66,8 @@ cursor-auto, supplying a continuity `handoff_prompt`. Auto fires
 `team_dispatch(model=cdp/opus-5, purpose=operator-proxy,
 dispatch_thread_id=<SAME private request lane>, prompt|sidecar=handoff)`.
 **¬ mint a second private lane.** Continuity = handoff + same thread; freshness = new CSE.
+**Clean break:** old CSE may close only once the new window's launch is confirmed
+(registration / chat_url observed) — not when the handoff is merely requested.
 
 **Refresh ≠ follow-up (BINDING).** Two different moves against the same CSE address — pick by *what is stale*, not by what is convenient:
 
@@ -410,6 +429,8 @@ Full tier-M + propagate DIRECTIVE templates + degrade rows: mission briefing inj
 | Wake / correction posted as bus NOTE only, then waiting on a CSE that is not polling | In-chat `project_ask(op=followup)` on the attached lane; the bus turn is the audit copy (invariant 23) |
 | This seat trying `project_ask(op=followup)` itself, or parking the wake on Kaywan | `project_ask` is code-surface — `agent_bus.request` cursor to fire it (invariant 8) |
 | Minting a new CDP window to deliver a message a warm follow-up would carry — or warm-pasting when the CSE needs refreshed chips | Refresh ≠ follow-up: pick by what is stale (§ Transport vs bus lane) |
+| Treating `wall_clock_exceeded` / poller FAILED as mission-dead / killing the open CSE | CSE retain until clean continuity handoff (new CSE confirmed) or rare human gate — reattach |
+| Clean-breaking the old CSE before the new handoff window's launch is confirmed | Wait for registration/chat_url proof, then break |
 | "Plugin install / Customize upload = IDE lead" parked on Kaywan | Both are cursor-auto-reachable — commission them (invariant 24). Only IDE restart / Reload Window is genuinely his |
 | Bulk-syncing the whole skill census to claude.ai to be safe | Per-slug sync, named bodies only — a census sync is slow and unasked-for (invariant 24 cost limit) |
 | Mission close with `COME TO IDE` for the debrief | Mission debrief is **awareness** — full one-paragraph `notify`, subject must **not** say `COME TO IDE` (inv 22(d)(2)) |

@@ -197,6 +197,24 @@ def validate_mission_close_wake(
     return MissionCloseWakeVerdict(ok=True)
 
 
+def format_beyond_notify_line(body: str) -> str | None:
+    """Compact ``## Work beyond this close`` into a notify-line payload (no prefix)."""
+    section = _section_body(body, BEYOND_HEADING)
+    if section is None:
+        return None
+    if _section_is_none(section):
+        return "none"
+    items, _ = _parse_bullet_items(section)
+    if not items:
+        compact = " ".join(_lines_substantive(section))
+        return _truncate_offending(compact) if compact else "none"
+    parts = [_truncate_offending(item, limit=120) for item in items[:3]]
+    joined = " · ".join(parts)
+    if len(items) > 3:
+        joined = f"{joined} · +{len(items) - 3} more"
+    return joined
+
+
 def validate_mission_debrief_notify(
     *,
     subject: str = "",
@@ -263,6 +281,7 @@ __all__ = [
     "BEYOND_NOTIFY_PREFIX",
     "MISSION_CLOSE_WAKE_FIX_HINT",
     "MissionCloseWakeVerdict",
+    "format_beyond_notify_line",
     "is_mission_closeout",
     "is_mission_debrief_notify",
     "refusal_envelope",

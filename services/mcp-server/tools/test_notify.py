@@ -55,28 +55,28 @@ def test_normalize_ref_preserves_value() -> None:
 
 
 def test_append_ref_to_body_respects_cap() -> None:
-    from tools.notify import _MAX_BODY
+    from pager_notify.so_what import SMS_BODY_MAX
 
-    body = "x" * (_MAX_BODY - 20)
+    body = "x" * (SMS_BODY_MAX - 20)
     out = append_ref_to_body(body, "agent-bus:1")
-    assert len(out) <= _MAX_BODY
+    assert len(out) <= SMS_BODY_MAX
     assert out.startswith(body)
     assert "agent-bus:1" in out
 
 
 def test_append_ref_to_body_prefers_full_body() -> None:
-    from tools.notify import _MAX_BODY
+    from pager_notify.so_what import SMS_BODY_MAX
 
-    body = "y" * _MAX_BODY
+    body = "y" * SMS_BODY_MAX
     out = append_ref_to_body(body, "agent-bus:1")
     assert out == body
-    assert len(out) == _MAX_BODY
+    assert len(out) == SMS_BODY_MAX
 
 
 def test_notify_kill_switch() -> None:
     notify = _notify_fn()
     with bind_request("default", surface="life"):
-        with patch("tools.notify.pager_enabled", return_value=False):
+        with patch("pager_notify.life_notify.pager_enabled", return_value=False):
             result = notify(
                 subject="ULG test",
                 body="disabled path",
@@ -93,9 +93,9 @@ def test_notify_unreferenced_and_event_emit() -> None:
     mock_pager = AsyncMock(return_value=True)
     with bind_request("default", surface="life"):
         with (
-            patch("tools.notify.pager_enabled", return_value=True),
-            patch("tools.notify.notify_pager", mock_pager),
-            patch("tools.notify.record") as mock_record,
+            patch("pager_notify.life_notify.pager_enabled", return_value=True),
+            patch("pager_notify.life_notify.notify_pager", mock_pager),
+            patch("pager_notify.life_notify._default_record") as mock_record,
         ):
             result = notify(
                 subject="ULG arc closed",

@@ -19,6 +19,7 @@ SECTION2_FIELDS: tuple[tuple[str, str], ...] = (
     ("access", "access"),
     ("coverage", "coverage"),
     ("model_actual", "model_actual"),
+    ("checkpoint", "checkpoint"),
 )
 
 

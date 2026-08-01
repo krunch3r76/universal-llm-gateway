@@ -63,7 +63,10 @@ from services.git_integration_worker.cursor_sdk_deliverables import (
 from services.git_integration_worker.cursor_sdk_events import (
     emit_sdk_closeout_relocated,
 )
-from services.git_integration_worker.cursor_sdk_git_head import resolve_git_head
+from services.git_integration_worker.cursor_sdk_git_head import (
+    observed_lane_git_refs,
+    resolve_git_head,
+)
 from services.git_integration_worker.cursor_sdk_manifest import (
     CaptureBranch,
     collect_expected_cortex_deliverable_uris,
@@ -875,7 +878,22 @@ def build_implement_closeout_body(
     if sidecar_markdown and sidecar_markdown.strip():
         markdown_sources.append(sidecar_markdown)
     code_probe: dict[str, Any] = {}
-    if outcome.sdk_git and isinstance(outcome.sdk_git, dict):
+    lane_git_refs: list[str] = []
+    if source_repo is not None:
+        admit_head = None
+        if isinstance(baseline, dict):
+            raw_admit = baseline.get("admit_head")
+            if isinstance(raw_admit, str) and raw_admit.strip():
+                admit_head = raw_admit.strip()
+        lane_git_refs = observed_lane_git_refs(
+            source_repo,
+            dispatch_id=dispatch_id,
+            admit_head=admit_head,
+            closeout_head=closeout_head,
+        )
+    if lane_git_refs:
+        code_probe = {"evidence_uris": {"git_refs": lane_git_refs}}
+    elif outcome.sdk_git and isinstance(outcome.sdk_git, dict):
         head = outcome.sdk_git.get("HEAD") or outcome.sdk_git.get("head")
         if isinstance(head, str) and head.strip():
             code_probe = {"evidence_uris": {"git_refs": [head.strip()]}}
@@ -910,6 +928,12 @@ def build_implement_closeout_body(
                 bus_threads=[thread_id],
                 dispatch_ids=[dispatch_id],
                 cortex_assertions=cortex_assertions,
+                git_refs=lane_git_refs
+                or (
+                    code_probe.get("evidence_uris", {}).get("git_refs", [])
+                    if isinstance(code_probe.get("evidence_uris"), dict)
+                    else []
+                ),
             ),
             propagation_residue=propagation_residue,
             propagation=list(propagation_rows),

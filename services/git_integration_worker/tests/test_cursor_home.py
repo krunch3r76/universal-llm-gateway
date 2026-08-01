@@ -10,6 +10,7 @@ import pytest
 from services.git_integration_worker.cursor_home import (
     CursorHomeConfigError,
     CursorVenvConfigError,
+    dispatch_git_identity,
     dispatch_home_path,
     resolve_repo_venv,
     setup_cursor_dispatch_home,
@@ -44,6 +45,38 @@ def _fake_real_home(
 def test_dispatch_home_path_shape(tmp_path: Path) -> None:
     root = tmp_path / "homes"
     assert dispatch_home_path("abc", root=root) == root / "abc-home"
+
+
+def test_dispatch_git_identity_names_dispatch() -> None:
+    name, email = dispatch_git_identity("auto-deadbeef")
+    assert name == "cursor-sdk/auto-deadbeef"
+    assert email == "auto-deadbeef@dispatch.git-integration-worker"
+
+
+def test_setup_seeds_gitconfig_in_dispatch_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CURSOR_API_KEY", "test-key")
+    real = _fake_real_home(tmp_path)
+    plugin_skill = (
+        real
+        / ".cursor"
+        / "plugins"
+        / "local"
+        / "ulg-ecosystem"
+        / "skills"
+        / "residual-imprint"
+    )
+    plugin_skill.mkdir(parents=True)
+    (plugin_skill / "SKILL.md").write_text("# residual-imprint", encoding="utf-8")
+    root = tmp_path / "homes"
+    home = setup_cursor_dispatch_home("auto-smoke", real_home=real, root=root)
+    gitconfig = home / ".gitconfig"
+    assert gitconfig.exists()
+    assert not gitconfig.is_symlink()
+    text = gitconfig.read_text(encoding="utf-8")
+    assert "cursor-sdk/auto-smoke" in text
+    assert "auto-smoke@dispatch.git-integration-worker" in text
 
 
 def test_user_rules_copy_not_symlink(

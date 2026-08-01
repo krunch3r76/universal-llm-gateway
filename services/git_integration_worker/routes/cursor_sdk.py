@@ -52,6 +52,7 @@ from services.git_integration_worker.cursor_home import (
     CursorHomeConfigError,
     CursorVenvConfigError,
     build_dispatch_path_prepend,
+    dispatch_git_env_vars,
     operator_real_home,
     prune_stale_dispatch_homes,
     resolve_repo_venv,
@@ -525,6 +526,9 @@ def _install_bridge_env_patch() -> None:
             dispatch_id = overrides.get("CURSOR_SDK_DISPATCH_ID")
             if dispatch_id is not None:
                 env["CURSOR_SDK_DISPATCH_ID"] = dispatch_id
+            for key, value in overrides.items():
+                if key.startswith("GIT_"):
+                    env[key] = value
         return env
 
     _sdk_bridge._bridge_subprocess_env = _bridge_subprocess_env_with_overlay
@@ -561,6 +565,7 @@ def _dispatch_home_overlay(
     overrides: dict[str, str] = {"HOME": str(home)}
     if dispatch_id is not None:
         overrides["CURSOR_SDK_DISPATCH_ID"] = dispatch_id
+        overrides.update(dispatch_git_env_vars(dispatch_id))
     if repo_venv is not None:
         overrides["VIRTUAL_ENV"] = str(repo_venv)
         overrides[_PATH_PREPEND_KEY] = build_dispatch_path_prepend(

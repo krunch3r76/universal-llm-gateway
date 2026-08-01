@@ -25,12 +25,18 @@ from claude_bundles.cdp_model_endpoint_staging import (
 from claude_bundles.cdp_progress_trace import ProgressTrace
 from claude_bundles.cdp_progress_trace import fingerprint as progress_fingerprint
 from claude_bundles.chat_model_match import normalize_picker_request
+from claude_bundles.operator_proxy_mission import is_operator_proxy_mission_purpose
 
 DEFAULT_MAX_WALL_S = 1800
 DEFAULT_NO_PROGRESS_S = 600
 DEFAULT_POLL_INTERVAL_S = 2.0
 CDP_SUBSTRATE = "web-anthropic-cdp"
 CDP_REPLY_FROM = "cdp"
+
+# Operator-proxy / mission CSE must stay live across long Auto legs. Poller
+# wall / no-progress must NOT Stop-click the page. Clean CSE break is only for
+# continuity handoff (after a new CSE is confirmed) or rare human escalation —
+# never for max_wall_s / no_progress_s alone.
 
 # Phases after the page goes idle: the satellite is resolving harvest (Cowork
 # Output download, archive write) and emits no per-sample progress, so the
@@ -186,8 +192,18 @@ def _abort_then_sweep(
     *,
     ask_client: CdpAskClient | None = None,
     client: httpx.Client | None = None,
+    retain_cse: bool = False,
 ) -> dict[str, Any]:
+    """Abort satellite (Stop-click) then sweep staging — unless *retain_cse*.
+
+    When ``retain_cse`` is true (operator-proxy / mission), skip ``abort`` so the
+    Cowork page keeps streaming; only ephemeral prompt staging is swept.
+    """
     abort_info: dict[str, Any] = {}
+    if retain_cse:
+        abort_info = {"abort_skipped": True, "reason": "operator_proxy_cse_retain"}
+        sweep_ephemeral(execution_id)
+        return abort_info
     if satellite_id:
         try:
             relay = ask_client or CdpAskClient()
@@ -426,6 +442,7 @@ def run_cdp_generate(
     clock = now or time.monotonic
     picker = picker_from_model_id(model_id)
     relay = ask_client or CdpAskClient()
+    mission_retain = is_operator_proxy_mission_purpose(purpose)
     try:
         staged = stage_cdp_prompt_with_skills(
             execution_id=execution_id,
@@ -519,6 +536,13 @@ def run_cdp_generate(
     while True:
         elapsed = clock() - started
         if elapsed > max_wall_s:
+            if mission_retain:
+                # Operator-proxy CSE must outlive the Stargate poller wall.
+                # Do not Stop-click; keep polling until harvest proof, satellite
+                # terminal, or an explicit continuity-handoff / human abort.
+                started = clock()
+                last_progress_at = clock()
+                continue
             abort_info = _abort_then_sweep(
                 sat_id, execution_id, ask_client=relay, client=client
             )
@@ -549,6 +573,9 @@ def run_cdp_generate(
         polls += 1
         if snapshot.get("error") and "status" not in snapshot:
             if clock() - last_progress_at > no_progress_s:
+                if mission_retain:
+                    last_progress_at = clock()
+                    continue
                 abort_info = _abort_then_sweep(
                     sat_id, execution_id, ask_client=relay, client=client
                 )
@@ -651,6 +678,11 @@ def run_cdp_generate(
             )
 
         if not _post_idle(snapshot) and clock() - last_progress_at > no_progress_s:
+            if mission_retain:
+                # Idle between DIRECTIVE legs is normal on operator-proxy;
+                # no_progress must not Stop-click the retained CSE.
+                last_progress_at = clock()
+                continue
             abort_info = _abort_then_sweep(
                 sat_id, execution_id, ask_client=relay, client=client
             )

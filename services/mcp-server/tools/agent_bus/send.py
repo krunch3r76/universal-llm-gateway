@@ -106,7 +106,15 @@ def _send_impl(
         to=to,
         turn_number=turn_number,
     )
-    return result
+    from claude_bundles.mission_close_debrief_auto import attach_mission_debrief_notify
+
+    return attach_mission_debrief_notify(
+        result,
+        subject=subject,
+        body=body,
+        thread_id=thread_id,
+        from_agent=from_agent,
+    )
 
 
 def _send_dispatch(

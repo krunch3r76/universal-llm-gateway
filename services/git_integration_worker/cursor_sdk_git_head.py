@@ -51,3 +51,40 @@ def git_diff_paths_between(
         for chunk in proc.stdout.splitlines()
         if chunk
     )
+
+
+def observed_lane_git_refs(
+    source_repo: Path,
+    *,
+    dispatch_id: str,
+    admit_head: str | None,
+    closeout_head: str | None,
+) -> list[str]:
+    """SHAs of lane commits authored by *dispatch_id* between admit and closeout."""
+    if not admit_head or not closeout_head or admit_head == closeout_head:
+        return []
+    from services.git_integration_worker.cursor_home import dispatch_git_identity
+
+    _name, email = dispatch_git_identity(dispatch_id)
+    try:
+        proc = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(source_repo),
+                "log",
+                f"{admit_head}..{closeout_head}",
+                f"--author={email}",
+                "--format=%H",
+            ],
+            capture_output=True,
+            check=True,
+            timeout=10,
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+        return []
+    return [
+        line.decode("utf-8", errors="replace").strip()
+        for line in proc.stdout.splitlines()
+        if line.strip()
+    ]

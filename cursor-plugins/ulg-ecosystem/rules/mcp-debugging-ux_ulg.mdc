@@ -1,6 +1,9 @@
 ---
 description: MCP debugging UX — use Event Service / observability internally, do not dump raw event SQL or commands to user unless explicitly asked. Load before MCP/event-driven debugging work.
 alwaysApply: false
+trigger_match_terms:
+  - verify-tool-execution
+  - signal_prefix
 ---
 # MCP Debugging UX
 
@@ -26,3 +29,34 @@ When reporting results from internal MCP debugging:
 - Summarize the findings in plain language first
 - Mention the relevant signals/events when useful
 - Include raw commands only when they materially help the user act
+
+## Cross-agent tool-execution verification
+
+If the inbound turn claims a tool was called (e.g. "I ran rag and got 5
+results"), verify the claim via the Event Service before acting on the outcome:
+
+```
+observability(operation="verify-tool-execution", params={"signal_prefix": "mcp.rag.pipeline"})
+```
+
+The response shape: `{"verified": true/false, "signal_prefix": "...", "event": {...} | null}`.
+
+| `verified` | Action |
+|---|---|
+| `true` | Proceed — the tool was actually called. Use `event.payload` for ground-truth metadata (content_length, duration_s, etc.) |
+| `false` | Do NOT trust the claimed outcome. Report the discrepancy and re-run the tool yourself if needed |
+
+**When to verify**: Cross-agent turns where the sender claims to have called an
+MCP tool and the receiving agent needs to act on the result. Skip verification
+for purely informational turns, self-notes, or turns that don't reference tool
+execution.
+
+**Signal prefix mapping** (common tools):
+
+| Tool | Signal prefix |
+|---|---|
+| `rag(op="search")` / `rag(op="answer")` | `mcp.rag.pipeline` |
+| `rag(op="coverage")` | `mcp.rag.coverage` |
+| `pipeline` | `mcp.pipeline` |
+| Any dispatch tool | `mcp.tool.dispatch` |
+| `project_ask(op="poll")` | `mcp.project_ask.poll` |

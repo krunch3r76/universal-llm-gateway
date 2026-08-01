@@ -22,6 +22,7 @@ _FIELD_HEADING_ALIASES: dict[str, tuple[str, ...]] = {
     "access": ("access",),
     "coverage": ("coverage",),
     "model_actual": ("model actual", "model_actual", "modelactual"),
+    "checkpoint": ("checkpoint",),
 }
 
 _TABLE_ROW_RE = re.compile(

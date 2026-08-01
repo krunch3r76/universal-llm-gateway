@@ -186,7 +186,15 @@ def _reply_impl(
         record("mcp.agentbus.thread.closed", thread=thread, via="reply")
         result["closed"] = True
 
-    return result
+    from claude_bundles.mission_close_debrief_auto import attach_mission_debrief_notify
+
+    return attach_mission_debrief_notify(
+        result,
+        subject=subject,
+        body=body,
+        thread_id=thread,
+        from_agent=from_agent,
+    )
 
 
 def _post_dispatch(

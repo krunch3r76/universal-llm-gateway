@@ -354,6 +354,70 @@ def test_run_cdp_generate_stall_wall_clock(
     assert result.stall_stage == "wall_clock_exceeded"
 
 
+def test_run_cdp_generate_mission_wall_does_not_abort(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """purpose=operator-proxy must not Stop-click on max_wall — keep polling to proof."""
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    monkeypatch.setenv("PROJECT_ASK_URL", "http://satellite.test")
+    archive = "cortex://notes/system/threads/mission-wc.md"
+    client = _FakeClient(
+        [
+            {"execution_id": "sat-m", "status": "running"},
+            {
+                "execution_id": "sat-m",
+                "status": "running",
+                "completion_phase": "running",
+                "body_len": 1,
+                "liveness_observed_at": "t1",
+            },
+            {
+                "execution_id": "sat-m",
+                "status": "completed",
+                "archive_uri": archive,
+                "body": "mission ok",
+            },
+        ]
+    )
+    clock = {"t": 0.0}
+    aborts: list[str] = []
+
+    def _now() -> float:
+        return clock["t"]
+
+    def _sleep(_s: float) -> None:
+        # First sleep jumps past wall; mission path resets and continues to proof.
+        if clock["t"] < 1.0:
+            clock["t"] = 50.0
+        else:
+            clock["t"] += 1.0
+
+    from claude_bundles import cdp_model_endpoint as mod
+
+    orig = mod._abort_then_sweep
+
+    def _track(*args, **kwargs):
+        aborts.append("abort")
+        return orig(*args, **kwargs)
+
+    monkeypatch.setattr(mod, "_abort_then_sweep", _track)
+
+    result = run_cdp_generate(
+        execution_id="dispatch-mission-wc",
+        model_id="cdp/opus-4.8",
+        prompt_text="ping",
+        purpose="operator-proxy",
+        max_wall_s=10,
+        poll_interval_s=0,
+        client=client,  # type: ignore[arg-type]
+        sleep=_sleep,
+        now=_now,
+    )
+    assert result.ok is True
+    assert result.archive_uri == archive
+    assert aborts == []
+
+
 def test_run_cdp_generate_wall_clock_preserves_archive_uri(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
