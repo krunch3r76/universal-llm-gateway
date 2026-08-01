@@ -116,7 +116,11 @@ def test_tier_separation_same_defective_closeout_two_lanes() -> None:
         caller_auditable=True,
         model_substitution=False,
     )
-    assert blind.status == "partial"
+    assert blind.status == "complete"
+    assert auditable.status == "complete"
+    assert blind.relay_note is not None
+    assert "reporting:blind_caller_missing_fields" in blind.relay_note
+    assert "reporting:missing_access" in auditable.relay_note
     assert auditable.status == "complete"
     assert "reporting:missing_scope_delta" in blind.body
     assert "reporting:missing_access" in auditable.body

@@ -49,7 +49,7 @@ def test_prefer_dispatch_over_park_holderless_bounded():
 
 
 def test_enforce_synthesized_partial():
-    assert enforce_synthesized_partial("complete", closeout_source="section2_synthesized") == "partial"
+    assert enforce_synthesized_partial("complete", closeout_source="section2_synthesized") == "complete"
     assert enforce_synthesized_partial("complete", closeout_source="section2_sidecar") == "complete"
 
 

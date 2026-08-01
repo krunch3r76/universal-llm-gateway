@@ -54,6 +54,8 @@ _MANAGE_API_LOG_BACKUPS = 3
 # Poll cadence for the quit-drain loop. Cheap snapshot reads of an in-memory
 # counter — sub-second so exit feels responsive once the last call completes.
 _QUIT_DRAIN_POLL_S = 0.5
+# Exit status when startup aborts because another manage owns manage.sock.
+STARTUP_CONFLICT_EXIT_CODE = 3
 
 
 def _configure_manage_api_logging() -> None:
@@ -133,6 +135,10 @@ class ModelManagerApp(App):
         self._api_server: ManageAPIServer | None = None
         self._digest_tick_loop: DigestTickLoop | None = None
         self._charter_tick_loop: CharterRunnerTickLoop | None = None
+        # Set when on_mount aborts startup; ``run`` turns it into a stderr line
+        # plus a non-zero process exit (Textual has already torn the frame down
+        # by then, so a notify() would never be seen).
+        self._startup_error: str | None = None
 
     @property
     def catalog(self) -> CatalogState:
@@ -177,16 +183,15 @@ class ModelManagerApp(App):
         try:
             await self._api_server.start()
         except ManageSocketBusyError as e:
-            # Another live ./manage owns the socket. Retrying would only
-            # silently rebind and orphan that controller — refuse instead and
-            # let the user resolve the conflict.
+            # Another live ./manage owns the socket. A socket-less manage is
+            # not a degraded manage — it would still run the charter runner and
+            # digest loop against the same workspace as the socket owner, so
+            # two processes would tick the same work. Abort startup instead.
             logger.error("Manage API server refused to bind: %s", e)
             self._api_server = None
-            self.notify(
-                f"manage.sock conflict: {e}",
-                severity="error",
-                timeout=60,
-            )
+            self._startup_error = f"manage.sock conflict: {e}"
+            self.exit(return_code=STARTUP_CONFLICT_EXIT_CODE)
+            return
         except Exception as e:
             logger.exception("Failed to start Manage API server: %s", e)
             self._api_server = None
@@ -283,8 +288,9 @@ class ModelManagerApp(App):
         /tmp/universal-protocol was root-owned at launch and has since been
         fixed). Backs off to 30s intervals until it succeeds.
 
-        Stops retrying on ManageSocketBusyError — user must resolve the
-        dual-instance conflict explicitly; auto-rebinding would resurrect
+        Exits on ManageSocketBusyError — another live manage appeared while we
+        were retrying, and a socket-less manage must not keep running its
+        charter/digest loops alongside it. Auto-rebinding would resurrect
         Failure 1 (silent orphaning).
         """
         if self._api_server is not None:
@@ -299,6 +305,8 @@ class ModelManagerApp(App):
             logger.info("Manage API server recovered on retry")
         except ManageSocketBusyError as e:
             logger.error("Manage API server retry refused: %s", e)
+            self._startup_error = f"manage.sock conflict: {e}"
+            self.exit(return_code=STARTUP_CONFLICT_EXIT_CODE)
             return
         except Exception as e:
             logger.warning("Manage API server retry failed: %s", e)
@@ -478,6 +486,9 @@ def run() -> None:
     app = ModelManagerApp()
     try:
         app.run()
+        if app._startup_error:
+            print(app._startup_error, file=sys.stderr)
+            raise SystemExit(STARTUP_CONFLICT_EXIT_CODE)
     except Exception:
         tb = traceback.format_exc()
         ts = datetime.now(UTC).isoformat()

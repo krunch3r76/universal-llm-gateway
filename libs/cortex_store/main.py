@@ -14,7 +14,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from deploy_identity.code_version import resolve_code_version
+from deploy_identity.code_version import process_age_s, resolve_code_version
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -289,11 +289,13 @@ def create_app(*, db_path: str | None = None) -> FastAPI:
         )
 
     @app.get("/health")
-    def health() -> dict[str, str | None]:
+    def health() -> dict[str, str | float | int | None]:
         return {
             "status": "ok",
             "cortex_db": "found" if check_cortex_db() else "missing",
             "code_version": resolve_code_version(),
+            "pid": os.getpid(),
+            "process_age_s": process_age_s(),
             **_read_deploy_identity(),
         }
 

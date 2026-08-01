@@ -7,6 +7,7 @@ import re
 from services.git_integration_worker.cursor_auto.closeout_relay_common import (
     CloseoutRelayPayload,
     looks_section2,
+    merge_relay_notes,
 )
 
 _REPORTING_MISSING_SCOPE_DELTA = "reporting:missing_scope_delta"
@@ -152,14 +153,19 @@ def amend_reporting_field_gaps(
     )
 
     amended_body = _append_deviation_tokens(body, deviations)
-    amended_status = status
+    relay_note = None
     if not caller_auditable and status == "complete":
-        amended_status = "partial"
-        amended_body = _rewrite_relay_status(amended_body, amended_status)
+        relay_note = merge_relay_notes(
+            "; ".join(deviations),
+            "reporting:blind_caller_missing_fields",
+        )
+    else:
+        relay_note = merge_relay_notes("; ".join(deviations))
     return CloseoutRelayPayload(
         body=amended_body,
-        status=amended_status,
+        status=status,
         source=source,
+        relay_note=relay_note,
     )
 
 

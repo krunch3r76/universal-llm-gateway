@@ -53,9 +53,6 @@ _HTTP_BUFFER_S = 10.0
 _SCOPES_TIMEOUT = 15.0
 # Direct RAG REST API calls (no model inference — retrieval + ranking only).
 _RAG_API_TIMEOUT = 30.0
-_RAG_METADATA_DB = os.environ.get(
-    "RAG_METADATA_DB_PATH", "/data/rag-store/rag_metadata.db"
-)
 _CURSOR_PREVIEW_MAX_TOP_K = max(1, int(os.getenv("MCP_RAG_PREVIEW_MAX_TOP_K", "10")))
 _CURSOR_PREVIEW_SNIPPET_CHARS = max(
     100, int(os.getenv("MCP_RAG_PREVIEW_SNIPPET_CHARS", "300"))
@@ -227,51 +224,6 @@ def _normalize_prefix_override(
     return normalized, None
 
 
-def _scope_metadata_from_db() -> dict[str, dict[str, Any]]:
-    """Return optional per-scope metadata from rag_metadata.db.
-
-    Missing DB files, missing tables, and malformed/corrupt database states
-    degrade to an empty mapping so `rag_list_scopes` still returns registry data.
-    """
-    import contextlib
-    import sqlite3
-
-    if not os.path.exists(_RAG_METADATA_DB):
-        return {}
-
-    try:
-        with contextlib.closing(
-            sqlite3.connect(f"file:{_RAG_METADATA_DB}?mode=ro", uri=True)
-        ) as conn:
-            article_rows = conn.execute(
-                "SELECT scope, COUNT(*) AS article_count FROM articles GROUP BY scope"
-            ).fetchall()
-            topic_rows = conn.execute(
-                "SELECT scope, term FROM corpus_hints "
-                "WHERE prefix = 'prop.topic@@' "
-                "ORDER BY scope ASC, score DESC, term ASC"
-            ).fetchall()
-    except sqlite3.Error:
-        logger.exception(
-            "Failed to enrich scopes from metadata DB %s", _RAG_METADATA_DB
-        )
-        return {}
-
-    result: dict[str, dict[str, Any]] = {}
-    for scope, article_count in article_rows:
-        if isinstance(scope, str):
-            result.setdefault(scope, {})["article_count"] = int(article_count)
-    for scope, term in topic_rows:
-        if not (isinstance(scope, str) and isinstance(term, str)):
-            continue
-        topics = cast(
-            list[str], result.setdefault(scope, {}).setdefault("top_topics", [])
-        )
-        if len(topics) < 5 and term not in topics:
-            topics.append(term)
-    return result
-
-
 def register_rag_tools(mcp: FastMCP) -> None:
     """Register RAG pipeline tools on *mcp*."""
 
@@ -380,7 +332,6 @@ def register_rag_tools(mcp: FastMCP) -> None:
 
         scopes_typed = cast(dict[str, object], scopes_obj)
         scope_names = sorted(scopes_typed.keys())
-        db_metadata = _scope_metadata_from_db()
         details: dict[str, object] = {}
         for scope_name in scope_names:
             raw_detail = scopes_typed.get(scope_name)
@@ -388,7 +339,6 @@ def register_rag_tools(mcp: FastMCP) -> None:
                 detail = dict(raw_detail)
             else:
                 detail = {}
-            detail.update(db_metadata.get(scope_name, {}))
             indexed_files = coverage_by_scope.get(scope_name, 0)
             detail["indexed_files"] = indexed_files
             detail["status"] = "indexed" if indexed_files > 0 else "empty"

@@ -181,7 +181,7 @@ def test_synthesized_status_matches_wrapper_when_no_sidecar():
 
 
 def test_synthesized_wrapper_complete_stays_partial_when_unauthored_cells():
-    """Machine-synthesized §2 with unauthored judgment cells clamps to partial."""
+    """Machine-synthesized §2 preserves wrapper status; relay_note carries gaps."""
     from services.git_integration_worker.cursor_auto.closeout_relay_cortex_fields import (
         extract_status,
     )
@@ -202,8 +202,10 @@ def test_synthesized_wrapper_complete_stays_partial_when_unauthored_cells():
         caller_auditable=True,
     )
     assert payload.source == "section2_synthesized"
-    assert payload.status == "partial"
-    assert extract_status(payload.body) == "partial"
+    assert payload.status == "complete"
+    assert extract_status(payload.body) == "complete"
+    assert payload.relay_note is not None
+    assert "synthesized_§2" in payload.relay_note
 
 
 def test_authored_sidecar_still_preferred_over_synthesis():
@@ -589,7 +591,8 @@ def test_authored_underclaim_amends_effects_preserves_judgment():
     assert _T9_OFFGIT_A in payload.body
     assert "no repo writes" not in payload.body.lower()
     assert "AC1 — PASS" in payload.body
-    assert payload.status != "complete"
+    assert payload.status == "complete"
+    assert "deviation:effects_enriched_status_held" in payload.body
 
 
 def test_cortex_promote_underclaim_still_amended(tmp_path: Path):
@@ -618,10 +621,12 @@ dispatch_id: {dispatch_id}
         ledger_status="completed",
         dispatch_id=dispatch_id,
         cortex_root=tmp_path,
+        caller_auditable=True,
     )
     assert payload.source == "section2_sidecar"
     assert uri in payload.body
-    assert payload.status != "complete"
+    assert payload.status == "complete"
+    assert "deviation:effects_enriched_status_held" in payload.body
 
 
 # --- agent-bus:6222 exemplar fixtures (t5 / t12 / t19) ---
@@ -816,15 +821,17 @@ def test_fixture_6222_t5_pass_path_section2_sidecar():
 
 
 def test_enforce_synthesized_partial_branches():
-    """AC6 — synthesized §2 forced partial; authored source preserves status."""
-    assert (
-        enforce_synthesized_partial("complete", closeout_source="section2_synthesized")
-        == "partial"
+    """Synthesized relay note is separate; authored status is no longer mutated."""
+    from services.git_integration_worker.cursor_auto.relay_trust import (
+        synthesized_relay_note,
     )
-    assert (
-        enforce_synthesized_partial("complete", closeout_source="section2_sidecar")
-        == "complete"
-    )
+
+    assert enforce_synthesized_partial("complete", closeout_source="section2_synthesized") == "complete"
+    assert enforce_synthesized_partial("complete", closeout_source="section2_sidecar") == "complete"
+    assert synthesized_relay_note(
+        closeout_source="section2_synthesized",
+        status="complete",
+    ).startswith("synthesized_§2")
 
 
 _FIXTURE_T44_SECTION2 = """\
@@ -962,7 +969,7 @@ def test_turn8_relay_body_overclaim_clamp_ac5() -> None:
         wrapper_text=_TURN8_WRAPPER,
         dispatch_id=_TURN8_DISPATCH,
     )
-    assert payload.status == "partial"
+    assert payload.status == "relay_parse_failed"
     assert "parse_failed — authoritative sidecar:" in payload.body
     assert "unresolved — not read:" not in payload.body
     assert "overclaim:parse_failed_field" in payload.body
@@ -1031,7 +1038,10 @@ def test_blind_caller_missing_access_coverage_clamps_turn38_class() -> None:
         dispatch_id="auto-turn38-class",
         caller_auditable=caller_auditable(from_agent="mcp-claude-life"),
     )
-    assert payload.status != "complete"
+    assert payload.status == "complete"
+    assert payload.relay_note is not None
+    assert "reporting:missing_access" in payload.relay_note
+    assert "reporting:missing_coverage" in payload.relay_note
     assert "reporting:missing_access" in payload.body
     assert "reporting:missing_coverage" in payload.body
 
@@ -1519,11 +1529,11 @@ def test_ac3_replay_semantic_headings_populated(dispatch_id: str) -> None:
 
 def test_ac3_replay_before_after_field_counts() -> None:
     """AC3 — replay fixtures: 4 semantic fields populated; accusatory placeholders eliminated."""
-    from services.git_integration_worker.cursor_auto.closeout_relay_cortex_fields import (
-        extract_field_section,
-    )
     from services.git_integration_worker.cursor_auto.closeout_relay_common import (
         strip_machine_tail,
+    )
+    from services.git_integration_worker.cursor_auto.closeout_relay_cortex_fields import (
+        extract_field_section,
     )
     from services.git_integration_worker.cursor_auto.closeout_relay_project import (
         project_section2_table,
@@ -1563,3 +1573,231 @@ def test_ac4_relay_honesty_tests_named_and_pass() -> None:
     assert callable(test_ac2_source_ref_visible_in_relayed_body)
     assert callable(test_ac3_replay_semantic_headings_populated)
     assert callable(test_ac3_replay_before_after_field_counts)
+
+
+# --- agent-bus:6630 BUG 2 — status fidelity + fence-safe evidence (AC5) ---
+
+_FENCED_EVIDENCE_SECTION2 = """\
+TYPE: CLOSEOUT
+status: complete
+
+**ac_verdict:**
+1. AC1 — PASS — pytest green
+
+**deltas_to_spec:** none
+
+**evidence:**
+```python
+def observed_tool_output():
+    return {"exit_code": 0, "summary": "44 passed"}
+```
+
+**open_forks:** none
+"""
+
+
+def test_6630_authored_complete_pass_acs_relay_complete_ac5a() -> None:
+    """AC5(a) — authored complete + PASS ACs → relay complete (no silent partial)."""
+    payload = select_closeout_relay_payload(
+        sdk_body=_WRAPPER,
+        sidecar_text=_FIXTURE_6222_T5_SECTION2,
+        ledger_status="completed",
+        caller_auditable=True,
+    )
+    assert payload.source == "section2_sidecar"
+    assert payload.status == "complete"
+    assert "AC1 — PASS" in payload.body
+    assert "overclaim:" not in payload.body
+
+
+def test_6630_fenced_evidence_no_backtick_only_cell_ac5b() -> None:
+    """AC5(b) — fenced evidence projects pointer, never a ```-only table cell."""
+    from services.git_integration_worker.cursor_auto.closeout_relay_common import (
+        is_degenerate_fence_cell,
+    )
+    from services.git_integration_worker.cursor_auto.closeout_relay_effects import (
+        _extract_table_cell,
+    )
+
+    dispatch_id = "auto-6630-fence"
+    payload = select_closeout_relay_payload(
+        sdk_body=_WRAPPER,
+        sidecar_text=_FENCED_EVIDENCE_SECTION2,
+        ledger_status="completed",
+        dispatch_id=dispatch_id,
+        caller_auditable=True,
+    )
+    evidence_cell = _extract_table_cell(payload.body, "evidence") or ""
+    assert evidence_cell.strip() != "```"
+    assert "fenced — see source_ref:" in evidence_cell
+    assert is_degenerate_fence_cell(evidence_cell) is False
+
+
+def test_6630_overclaim_still_downgrades_with_deviation_ac5c() -> None:
+    """AC5(c) — real parse_failed overclaim clamps to relay_parse_failed with named deviation."""
+    from services.git_integration_worker.cursor_auto.closeout_relay_briefing import (
+        finalize_relay_payload,
+    )
+
+    payload = finalize_relay_payload(
+        CloseoutRelayPayload(
+            body=_TURN8_RELAYED_BODY,
+            status="complete",
+            source="section2_synthesized",
+        ),
+        wrapper_text=_TURN8_WRAPPER,
+        dispatch_id=_TURN8_DISPATCH,
+    )
+    assert payload.status == "relay_parse_failed"
+    assert "overclaim:parse_failed_field" in payload.body
+
+
+# --- arc 6637 — plain field: value format + relay_parse_failed status ---
+
+_ARC6637_FIXTURE_IDS = ("auto-9ca4df4d4a88", "auto-39cbe5d54b0f")
+
+
+@pytest.mark.parametrize("dispatch_id", _ARC6637_FIXTURE_IDS)
+def test_arc6637_real_closeout_fixtures_parse_without_relay_miss(dispatch_id: str) -> None:
+    """AC3 — both 6638-lane closeouts project with zero relay parse-miss cells."""
+    from services.git_integration_worker.cursor_auto.closeout_relay_common import (
+        strip_machine_tail,
+    )
+    from services.git_integration_worker.cursor_auto.closeout_relay_project import (
+        count_relay_parse_miss_fields,
+        project_section2_table,
+    )
+    from services.git_integration_worker.cursor_sdk_deliverables import (
+        sidecar_workspaces_ref,
+    )
+
+    path = Path("tmp/reviews/closeouts") / f"{dispatch_id}.md"
+    assert path.is_file(), f"fixture sidecar missing: {path}"
+    prose = strip_machine_tail(path.read_text(encoding="utf-8"))
+    provenance = sidecar_workspaces_ref(dispatch_id)
+    body, _status = project_section2_table(prose, provenance=provenance)
+    assert count_relay_parse_miss_fields(body) == 0
+    assert f"source_ref: {provenance}" in body
+
+
+def test_arc6637_plain_colon_format_root_cause_not_section2_heading() -> None:
+    """AC1 — failure was plain ``field: value`` lines, not missing ``## §2 closeout``."""
+    from services.git_integration_worker.cursor_auto.closeout_relay_common import (
+        strip_machine_tail,
+    )
+    from services.git_integration_worker.cursor_auto.closeout_relay_cortex_fields import (
+        _extract_bold_same_line,
+        _extract_plain_same_line,
+        extract_field_section,
+    )
+
+    path = Path("tmp/reviews/closeouts/auto-9ca4df4d4a88.md")
+    prose = strip_machine_tail(path.read_text(encoding="utf-8"))
+    assert "## §2 closeout" not in prose.splitlines()[0]
+    assert _extract_bold_same_line(prose, "ac_verdict") is None
+    assert _extract_plain_same_line(prose, "ac_verdict") is not None
+    assert extract_field_section(prose, "ac_verdict") is not None
+
+
+def test_arc6637_9ca4df4d4a88_select_relay_complete_not_partial() -> None:
+    """AC1+AC3 — authored complete plain-colon closeout relays complete after fix."""
+    path = Path("tmp/reviews/closeouts/auto-9ca4df4d4a88.md")
+    payload = select_closeout_relay_payload(
+        sdk_body=None,
+        sidecar_text=path.read_text(encoding="utf-8"),
+        ledger_status="completed",
+        dispatch_id="auto-9ca4df4d4a88",
+        caller_auditable=True,
+    )
+    assert payload.source == "section2_sidecar"
+    assert payload.status == "complete"
+    assert "PASS" in payload.body
+
+
+def test_arc6637_relay_parse_failed_when_extraction_fails() -> None:
+    """AC2 — extraction parse_failed cells relay relay_parse_failed, not partial."""
+    from services.git_integration_worker.cursor_auto.closeout_relay_briefing import (
+        finalize_relay_payload,
+    )
+    from services.git_integration_worker.cursor_auto.closeout_relay_common import (
+        RELAY_PARSE_FAILED_STATUS,
+    )
+
+    payload = finalize_relay_payload(
+        CloseoutRelayPayload(
+            body=_TURN8_RELAYED_BODY,
+            status="complete",
+            source="section2_synthesized",
+        ),
+        wrapper_text=_TURN8_WRAPPER,
+        dispatch_id=_TURN8_DISPATCH,
+    )
+    assert payload.status == RELAY_PARSE_FAILED_STATUS
+    assert payload.status not in {"complete", "partial", "blocked", "failed"}
+    assert "parse_failed — authoritative sidecar:" in payload.body
+
+
+# --- arc 6637 G7 — immutable authored status + relay_note (real fixtures) ---
+
+_ARC6637_G7_FIXTURE_IDS = ("auto-958206cbe1bc", "auto-39cbe5d54b0f")
+
+
+def _load_closeout_fixture(dispatch_id: str) -> tuple[str, str | None]:
+    path = Path("tmp/reviews/closeouts") / f"{dispatch_id}.md"
+    assert path.is_file(), f"fixture sidecar missing: {path}"
+    text = path.read_text(encoding="utf-8")
+    sdk_body = None
+    if "## effects_manifest" in text:
+        import re
+
+        match = re.search(
+            r"\{[\s\S]*\}\s*$",
+            text[text.index("## effects_manifest") :],
+        )
+        if match:
+            sdk_body = match.group(0).strip()
+    return text, sdk_body
+
+
+def test_arc6637_g7_958206cbe1bc_authored_complete_relayed_complete() -> None:
+    """AC4 — authored complete with relay_parse_failed prose in ac_verdict stays complete."""
+    sidecar, sdk_body = _load_closeout_fixture("auto-958206cbe1bc")
+    payload = select_closeout_relay_payload(
+        sdk_body=sdk_body,
+        sidecar_text=sidecar,
+        ledger_status="completed",
+        dispatch_id="auto-958206cbe1bc",
+        caller_auditable=True,
+    )
+    assert payload.source == "section2_sidecar"
+    assert payload.status == "complete"
+    assert "relay_note:" not in payload.body or payload.relay_note is None
+    assert "| status | complete |" in payload.body
+
+
+def test_arc6637_g7_39cbe5d54b0f_authored_partial_not_upgraded() -> None:
+    """AC4 — authored partial must not upgrade to complete via ledger fallback."""
+    sidecar, sdk_body = _load_closeout_fixture("auto-39cbe5d54b0f")
+    payload = select_closeout_relay_payload(
+        sdk_body=sdk_body,
+        sidecar_text=sidecar,
+        ledger_status="completed",
+        dispatch_id="auto-39cbe5d54b0f",
+        caller_auditable=True,
+    )
+    assert payload.source == "section2_sidecar"
+    assert payload.status == "partial"
+    assert "| status | partial |" in payload.body
+
+
+def test_arc6637_g7_overclaim_substring_relay_parse_failed_not_status_downgrade() -> None:
+    """AC1 — ``relay_parse_failed`` prose must not trigger parse_failed cell overclaim."""
+    from services.git_integration_worker.cursor_auto.closeout_relay_effects import (
+        _cell_claims_unclassified_or_hard_unauthored,
+    )
+
+    cell = (
+        "AC5 PASS — relay_parse_failed reachable in running worker import path; "
+        "arc6637 relay tests pass."
+    )
+    assert _cell_claims_unclassified_or_hard_unauthored(cell) is False

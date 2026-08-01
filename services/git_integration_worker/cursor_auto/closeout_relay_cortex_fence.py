@@ -133,7 +133,15 @@ def apply_write_fence(
     status = "blocked" if payload.status != "partial" else "partial"
     if payload.status == "complete":
         status = "blocked"
-    return CloseoutRelayPayload(body=body, status=status, source=payload.source)
+    return CloseoutRelayPayload(
+        body=body,
+        status=status,
+        source=payload.source,
+        body_full=payload.body_full,
+        clamped=payload.clamped,
+        relay_note=payload.relay_note,
+        deployment_state=payload.deployment_state,
+    )
 
 
 __all__ = [

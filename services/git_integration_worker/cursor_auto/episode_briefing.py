@@ -36,6 +36,9 @@ def build_briefing_block(
 
     Standing seat posture (front-door register, CDP window, sync authority)
     lives in the ``cursor_request`` tool descriptor — read before authoring.
+    Deploy/live law (``decision:checkout-disk-is-executable``) is also echoed
+    here so Auto sees it on every first-episode admit without opening the
+    descriptor.
 
     When ``contract`` ∈ implement|investigate|verify, append the codebase-work
     stanza naming ``abstraction-layering`` (highest open layer). When
@@ -48,6 +51,9 @@ def build_briefing_block(
         "cursor-auto lane — first request this episode.",
         "",
         deltas,
+        # decision:checkout-disk-is-executable — standing deploy law (operator 2026-08-01)
+        "Deploy: sync_restart loads checkout disk (committed∨not)."
+        " landed≠live=¬restarted, ¬uncommitted.",
     ]
     raw = (contract or "").strip().lower()
     if raw in _CODE_WORK_CONTRACTS and raw != "seed":

@@ -20,6 +20,9 @@ from services.git_integration_worker.cursor_auto.closeout_relay import (
     read_repo_closeout_sidecar,
     select_closeout_relay_payload,
 )
+from services.git_integration_worker.cursor_auto.closeout_relay_common import (
+    RELAY_PARSE_FAILED_STATUS,
+)
 from services.git_integration_worker.cursor_auto.closeout_relay_cortex_spill import (
     promote_clamped_closeout_to_cortex,
 )
@@ -55,6 +58,16 @@ def _relay_model_bind(model: dict[str, Any]) -> dict[str, str | None]:
         "requested_model": requested or None,
         "resolved_model": resolved or None,
     }
+
+
+def _journal_terminal_status(*, payload_status: str, failed: bool) -> str:
+    if failed:
+        return "status:failed"
+    if payload_status == RELAY_PARSE_FAILED_STATUS:
+        return "status:relay_parse_failed"
+    if payload_status != "complete":
+        return "status:partial"
+    return "status:done"
 
 
 async def relay_confer_outcome(
@@ -97,11 +110,7 @@ async def relay_confer_outcome(
     )
     failed = not relay.get("ok") or terminal_status == "failed"
     queue.mark_done(job.job_id, failed=failed)
-    journal_status = (
-        "status:failed"
-        if failed
-        else ("status:partial" if payload.status != "complete" else "status:done")
-    )
+    journal_status = _journal_terminal_status(payload_status=payload.status, failed=failed)
     disposition = "fence_violation" if fence_violation else "conferred"
     append_journal_entry(
         thread_id=job.thread_id,
@@ -206,6 +215,8 @@ async def relay_closeout_outcome(
         sdk_body=sdk_body,
         closeout_body=payload.body,
         closeout_source=payload.source,
+        relay_note=payload.relay_note,
+        deployment_state=payload.deployment_state,
         extra={
             "gate_plan": gate_plan,
             "terminal_status": terminal_status,
@@ -254,7 +265,7 @@ async def relay_closeout_outcome(
         thread_id=job.thread_id,
         dispatch_id=dispatch_id,
         contract=job.contract,
-        terminal_status="status:done" if not failed else "status:failed",
+        terminal_status=_journal_terminal_status(payload_status=payload.status, failed=failed),
         disposition=str(contract_info["disposition_hint"]),
         extra={
             "closeout_source": payload.source,

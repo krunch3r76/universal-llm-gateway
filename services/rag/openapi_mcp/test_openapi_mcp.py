@@ -10,11 +10,12 @@ from services.rag.rag_service.main import app
 
 
 @pytest.mark.offline
-def test_extract_typed_routes_returns_six_stamped_ops() -> None:
+def test_extract_typed_routes_returns_seven_stamped_ops() -> None:
     schema = app.openapi()
     routes = extract_typed_routes(schema)
-    assert len(routes) == 6
+    assert len(routes) == 7
     assert set(routes) == {
+        "list_scopes",
         "coverage",
         "upsert_article",
         "delete_source",
@@ -33,11 +34,11 @@ def test_served_bindings_derived_from_native_route_stamps() -> None:
 
 
 @pytest.mark.offline
-def test_unbound_dispatch_ops_returns_list_scopes_only() -> None:
+def test_unbound_dispatch_ops_returns_empty() -> None:
     from services.rag.openapi_mcp._route_map import unbound_dispatch_ops
 
     schema = app.openapi()
-    assert unbound_dispatch_ops(schema) == ["list_scopes"]
+    assert unbound_dispatch_ops(schema) == []
 
 
 @pytest.mark.offline

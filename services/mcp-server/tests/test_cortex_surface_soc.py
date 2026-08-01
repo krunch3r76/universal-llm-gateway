@@ -11,7 +11,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from _derive import derive_cortex_surface
+from _derive import _CORTEX_CENSUS_SIZE, derive_cortex_surface
 from tool_access import endpoint_op_allowed, reset_endpoint_op_cache
 from tools.cortex_named_tools import render_cortex_tool_description
 
@@ -113,12 +113,14 @@ def test_life_enum_matches_bind_memo() -> None:
 def test_code_enum_excludes_admin() -> None:
     code = derive_cortex_surface("code", _CANONICAL)
     assert not _ADMIN_OPS & set(code.ops_enum)
-    assert set(code.ops_enum) == _LIFE_ENUM
+    # ``digest`` is write+fol but fol is not yet reconciled for life (§ F-c);
+    # code admits it, life does not — intentional asymmetry after 2026-07-14.
+    assert set(code.ops_enum) == _LIFE_ENUM | {"digest"}
 
 
 def test_census_completeness() -> None:
     life = derive_cortex_surface("life", _CANONICAL)
-    assert len(life.families) == 72
+    assert len(life.families) == _CORTEX_CENSUS_SIZE
 
 
 def test_census_conflict_raises() -> None:

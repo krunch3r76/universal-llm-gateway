@@ -252,6 +252,8 @@ async def post_operator_closeout(
     bus: CursorBusClient | None = None,
     closeout_body: str | None = None,
     closeout_source: str | None = None,
+    relay_note: str | None = None,
+    deployment_state: str | None = None,
 ) -> dict[str, Any]:
     """Post ``TYPE: CLOSEOUT`` to the operator seat (``job.from_agent``).
 
@@ -279,10 +281,18 @@ async def post_operator_closeout(
     lines = [
         "TYPE: CLOSEOUT",
         f"status: {envelope_status}",
-        f"dispatch_id: {dispatch_id}",
-        f"model: {model_id}",
-        f"request_turn: {job.turn_number}",
     ]
+    if relay_note:
+        lines.append(f"relay_note: {relay_note}")
+    if deployment_state:
+        lines.append(f"deployment_state: {deployment_state}")
+    lines.extend(
+        [
+            f"dispatch_id: {dispatch_id}",
+            f"model: {model_id}",
+            f"request_turn: {job.turn_number}",
+        ]
+    )
     if meta:
         lines.append(f"meta: {json.dumps(meta, sort_keys=True)}")
     lines.append("")

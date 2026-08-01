@@ -22,6 +22,8 @@ CODE_WORK_CONTRACTS = frozenset({"implement", "investigate", "verify", "seed"})
 BRIEFING_REQUIRED_SUBSTRINGS = (
     "cursor-auto lane",
     "live_deltas",
+    "Deploy: sync_restart loads checkout disk",
+    "landed≠live",
 )
 
 BRIEFING_FORBIDDEN_SUBSTRINGS = (

@@ -5,10 +5,15 @@ from __future__ import annotations
 import re
 
 from services.git_integration_worker.cursor_auto.closeout_relay_common import (
+    RELAY_CELL_CAP_CHARS,
     _table_cell,
     build_ac_verdict_cell,
+    default_relay_cell_cap,
+    fenced_cell_pointer,
     fill_judgment_cell,
+    looks_fenced,
     relay_parse_miss_cell,
+    sanitize_relay_cell,
     status_from_section2,
     strip_machine_tail,
 )
@@ -49,10 +54,21 @@ def _extract_cell(prose: str, field: str, *, provenance: str) -> str:
         return build_ac_verdict_cell(prose, provenance=provenance, cap=None)
     direct = extract_field_section(prose, field) or extract_table_field(prose, field)
     if direct:
-        return direct
+        if len(direct) > RELAY_CELL_CAP_CHARS:
+            direct = default_relay_cell_cap(direct, provenance)
+        return sanitize_relay_cell(direct, provenance)
     if not field_heading_present(prose, field):
         return relay_parse_miss_cell(field, provenance)
     return fill_judgment_cell(prose, field, provenance=provenance, cap=None)
+
+
+def _append_fenced_sections(
+    lines: list[str],
+    fenced_fields: list[tuple[str, str]],
+) -> None:
+    """Append full fenced field bodies below the relay table."""
+    for label, content in fenced_fields:
+        lines.extend(["", f"### {label} (full)", content])
 
 
 def project_section2_table(
@@ -69,9 +85,15 @@ def project_section2_table(
     status = extract_status(text) or status_from_section2(text) or fallback_status
 
     rows: list[tuple[str, str]] = []
+    fenced_appendix: list[tuple[str, str]] = []
     for field, label in SECTION2_FIELDS:
         if field == "status":
             rows.append((label, status))
+            continue
+        raw = extract_field_section(text, field) or extract_table_field(text, field)
+        if raw and looks_fenced(raw):
+            rows.append((label, fenced_cell_pointer(provenance)))
+            fenced_appendix.append((label, raw))
             continue
         rows.append((label, _extract_cell(text, field, provenance=provenance)))
 
@@ -85,6 +107,7 @@ def project_section2_table(
     ]
     for field, value in rows:
         lines.append(f"| {field} | {_table_cell(value)} |")
+    _append_fenced_sections(lines, fenced_appendix)
     return "\n".join(lines), status
 
 

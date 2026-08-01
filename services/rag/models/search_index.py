@@ -172,6 +172,8 @@ class SourcesResponse(BaseModel):
 class ScopeInfo(BaseModel):
     prefixes: list[str]
     description: str
+    article_count: int = 0
+    top_topics: list[str] = Field(default_factory=list)
 
 
 class ScopesResponse(BaseModel):

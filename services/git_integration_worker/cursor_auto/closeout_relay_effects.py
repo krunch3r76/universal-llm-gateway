@@ -6,12 +6,15 @@ import json
 import re
 
 from services.git_integration_worker.cursor_auto.closeout_relay_common import (
+    _DEVIATION_EFFECTS_ENRICHED,
     _VALID_WRAPPER_STATUSES,
     CloseoutRelayPayload,
     _as_str_list,
     _order_preserving_dedup,
     _table_cell,
     is_wrapper_manifest,
+    merge_relay_notes,
+    relay_parse_failure_detected,
 )
 from services.git_integration_worker.cursor_auto.closeout_relay_cortex_fields import (
     extract_field_section,
@@ -207,12 +210,6 @@ def _rewrite_effects_cell(body: str, uris: list[str]) -> str:
     return body + f"\n\n**effects:**\n{new_cell}\n"
 
 
-def _clamp_non_complete_status(current: str) -> str:
-    if current == "blocked":
-        return "blocked"
-    return "partial"
-
-
 _OVERCLAIM_PARSE_FAILED = "overclaim:parse_failed_field"
 _OVERCLAIM_UNCLASSIFIED = "overclaim:unclassified_field"
 _OVERCLAIM_FALSE_ABSENCE = "overclaim:false_absence_unread_provenance"
@@ -295,8 +292,8 @@ def _cell_claims_false_absence(cell: str) -> bool:
 
 
 def _cell_claims_unclassified_or_hard_unauthored(cell: str) -> bool:
-    lowered = cell.casefold()
-    if "parse_failed" in lowered:
+    lowered = cell.casefold().lstrip()
+    if lowered.startswith("parse_failed —") or lowered.startswith("parse_failed—"):
         return True
     if "unclassified" in lowered and "relay could not parse" in lowered:
         return True
@@ -304,6 +301,11 @@ def _cell_claims_unclassified_or_hard_unauthored(cell: str) -> bool:
         "unauthored — not reported by executor" in cell
         or "unknown — executor emitted no §2" in cell
     )
+
+
+def _cell_reports_parse_failed(cell: str) -> bool:
+    lowered = cell.casefold().lstrip()
+    return lowered.startswith("parse_failed —") or lowered.startswith("parse_failed—")
 
 
 def _rewrite_parse_failed_cells(body: str, *, sidecar_uri: str) -> str:
@@ -348,11 +350,10 @@ def amend_completion_overclaim(
     sidecar_read_succeeded: bool = False,
     sidecar_read_failed_uri: str | None = None,
 ) -> CloseoutRelayPayload:
-    """Clamp status when relay cells overclaim executor certainty or hide unread sidecars."""
+    """Annotate relay overclaim signals without mutating executor-authored status."""
     del wrapper_text  # read state is plumbed explicitly; URIs alone are not read proof
     amended_body = body
-    amended_status = status
-    deviations: list[str] = []
+    relay_note_parts: list[str] = []
 
     sidecar_uri = (
         sidecar_workspaces_ref(dispatch_id)
@@ -377,29 +378,26 @@ def amend_completion_overclaim(
             )
             false_absence_hits = True
         if false_absence_hits:
-            deviations.append(_OVERCLAIM_FALSE_ABSENCE)
-            if amended_status == "complete":
-                amended_status = "partial"
+            relay_note_parts.append(_OVERCLAIM_FALSE_ABSENCE)
 
     if _judgment_cells_overclaim(amended_body):
-        if amended_status == "complete":
-            amended_status = "partial"
-        if _OVERCLAIM_PARSE_FAILED not in deviations and any(
-            "parse_failed" in (_extract_table_cell(amended_body, f) or "").casefold()
+        if relay_parse_failure_detected(amended_body):
+            relay_note_parts.append("relay:parse_failure_in_cells")
+        if _OVERCLAIM_PARSE_FAILED not in relay_note_parts and any(
+            _cell_reports_parse_failed(_extract_table_cell(amended_body, f) or "")
             for f in _JUDGMENT_FIELDS
         ):
-            deviations.append(_OVERCLAIM_PARSE_FAILED)
-        if _OVERCLAIM_UNCLASSIFIED not in deviations:
-            deviations.append(_OVERCLAIM_UNCLASSIFIED)
+            relay_note_parts.append(_OVERCLAIM_PARSE_FAILED)
+        if _OVERCLAIM_UNCLASSIFIED not in relay_note_parts:
+            relay_note_parts.append(_OVERCLAIM_UNCLASSIFIED)
 
-    if deviations:
-        amended_body = _append_deviation_tokens(amended_body, deviations)
-        amended_body = _rewrite_relay_status(amended_body, amended_status)
+    relay_note = merge_relay_notes("; ".join(relay_note_parts) if relay_note_parts else None)
 
     return CloseoutRelayPayload(
         body=amended_body,
-        status=amended_status,
+        status=status,
         source=source,
+        relay_note=relay_note,
     )
 
 
@@ -417,15 +415,19 @@ def amend_effects_underclaim(
     if not machine_uris or not _effects_cell_claims_empty(body):
         return CloseoutRelayPayload(body=body, status=status, source=source)
     amended_body = _rewrite_effects_cell(body, machine_uris)
-    amended_status = _clamp_non_complete_status(status)
-    if status == "complete":
-        amended_status = "partial"
+    relay_note = None
+    if source == "section2_sidecar" and status == "complete":
+        amended_body = _append_deviation_tokens(
+            amended_body, [_DEVIATION_EFFECTS_ENRICHED]
+        )
+        relay_note = _DEVIATION_EFFECTS_ENRICHED
     elif status not in _VALID_WRAPPER_STATUSES:
-        amended_status = _clamp_non_complete_status(status)
+        relay_note = f"relay:nonstandard_authored_status:{status}"
     return CloseoutRelayPayload(
         body=amended_body,
-        status=amended_status,
+        status=status,
         source=source,
+        relay_note=relay_note,
     )
 
 

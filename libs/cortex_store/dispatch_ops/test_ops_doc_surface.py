@@ -219,7 +219,7 @@ def test_ac2_doc_validate_text_aggregate_pass() -> None:
     assert result["status"] == "pass"
     assert result["admitted"] is True
     assert result["spec_sha256"] == dense_spec_hash_uri(SPEC_TEXT_VALID)
-    assert len(result["gates"]) == 14
+    assert len(result["gates"]) == 15
     assert {g["status"] for g in result["gates"]} <= {
         "passed",
         "failed",

@@ -7,7 +7,7 @@ Regenerate:
 
 from __future__ import annotations
 
-OPENAPI_SHA256 = "dff92c469e36c4d244bd0c22b01a6672f489491c4d7d583355a9b98ff91fef52"
+OPENAPI_SHA256 = "f6290b7228f61d64aeca8d7892a886f11535bd71e2ad781f97a63a23ba37d6e5"
 FACADE_TOOL = "rag"
 SERVED_OPS: dict[str, dict[str, str]] = {
     "coverage": {
@@ -24,6 +24,11 @@ SERVED_OPS: dict[str, dict[str, str]] = {
         "method": "DELETE",
         "path": "/source",
         "operation_id": "delete_source_source_delete",
+    },
+    "list_scopes": {
+        "method": "GET",
+        "path": "/scopes",
+        "operation_id": "get_scopes_scopes_get",
     },
     "orphaned_articles": {
         "method": "GET",
@@ -42,7 +47,7 @@ SERVED_OPS: dict[str, dict[str, str]] = {
     },
 }
 NON_BINDING_PATH_FINGERPRINTS: dict[str, str] = {
-    "@components": "43fb941deb902294d25a0fdf2c11abd17fb3fd062de792c3e60f9b1c68b61c49",
+    "@components": "9e076c2ff9d8b176f40a2761a819d8ba0cfaf165d5c6828a205c636f160b21a2",
     "@info": "77e496792f0915708096b3bac40c1ab86b45641b4ff6231aa452bf8f653d6852",
     "DELETE /indexing_failures/{source}": "e30c51d4c872392e7142ecc9a1286956eaefc0cabfa7302cea0078cc488c2be7",
     "GET /articles": "07c287482f97680d989f70f87c9a6bbfe69e29a845742091e1ec29d82a5e410d",
@@ -52,7 +57,6 @@ NON_BINDING_PATH_FINGERPRINTS: dict[str, str] = {
     "GET /health": "9bbeaf9dbe0c09e70c49b0c75a3ce2b8960df0ca3fbb2937b0b1ce0e049a1896",
     "GET /indexing/status": "4f05ee9b2084a44dbdf54736882f9957b351a0a701d3705fc6609511e1cf4507",
     "GET /indexing_failures": "41a8954eaaeb321cef1141011675a235d5fcfa9541de69f30ddfc7bc31378628",
-    "GET /scopes": "7dc907c53b25cc5ba101a22d812c4225571ef85d0ea6a65113fd410c9795f3c9",
     "GET /source": "db468b078c98c2f09372c6390b538d0862a482c4c19c947d14d56fd9ee3968ee",
     "GET /source-status": "f01de87cfb111ff68b8471c4b2a2f344387b473b64182fbce9365159cb66d41b",
     "GET /sources": "e74e526814957b2b9bd92c2b44651d1ffffe0658477430352830cefe63d943e4",

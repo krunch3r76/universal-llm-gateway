@@ -23,6 +23,8 @@ _STATUS_RE = re.compile(
     r"(?im)^(?:\*\*)?status(?:\*\*)?\s*[:=]\s*`?(complete|partial|blocked)`?"
 )
 _VALID_WRAPPER_STATUSES = frozenset({"complete", "partial", "blocked"})
+RELAY_PARSE_FAILED_STATUS = "relay_parse_failed"
+_RELAY_INFRA_STATUSES = frozenset({RELAY_PARSE_FAILED_STATUS})
 RELAY_JUDGMENT_CLAMP_FIELDS = frozenset(
     {"ac_verdict", "decisions_taken", "next", "open forks"}
 )
@@ -34,6 +36,8 @@ _ENVELOPE_DEVIATIONS_RE = re.compile(r"(?im)^deviations:\s*.+$")
 RELAY_CELL_CAP_CHARS = 400
 RELAY_EXCERPT_FALLBACK_CHARS = 240
 RELAY_EFFECTS_MAX_ITEMS = 10
+_FENCE_PAIR_RE = re.compile(r"```[\w-]*\n", re.MULTILINE)
+_DEVIATION_EFFECTS_ENRICHED = "deviation:effects_enriched_status_held"
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,6 +51,40 @@ class CloseoutRelayPayload:
     )
     body_full: str | None = None
     clamped: bool = False
+    relay_note: str | None = None
+    deployment_state: str | None = None
+
+
+_AUTHORED_STATUS_TOKEN_RE = re.compile(
+    r"^(complete|partial|blocked)\b",
+    re.IGNORECASE,
+)
+
+
+def normalize_authored_status_value(raw: str) -> str | None:
+    """Extract ``complete|partial|blocked`` from a status field value with trailing prose."""
+    text = raw.strip().strip("`").strip()
+    match = _AUTHORED_STATUS_TOKEN_RE.match(text)
+    if match is None:
+        normalized = text.casefold()
+        if normalized in _VALID_WRAPPER_STATUSES:
+            return normalized
+        return None
+    return match.group(1).lower()
+
+
+def merge_relay_notes(*parts: str | None) -> str | None:
+    """Join non-empty relay-note fragments with ``; ``."""
+    tokens: list[str] = []
+    seen: set[str] = set()
+    for part in parts:
+        if not part:
+            continue
+        for token in (segment.strip() for segment in part.split(";")):
+            if token and token not in seen:
+                seen.add(token)
+                tokens.append(token)
+    return "; ".join(tokens) if tokens else None
 
 
 def as_str_list(value: object) -> list[str]:
@@ -132,13 +170,53 @@ def unclassified_relay_prefix(*, provenance: str, body: str) -> str:
     return f"parse_failed — authoritative sidecar: {provenance}"
 
 
+def looks_fenced(value: str) -> bool:
+    """True when *value* carries markdown fence markers unsuitable for table cells."""
+    stripped = value.strip()
+    if stripped.startswith("```"):
+        return True
+    return _FENCE_PAIR_RE.search(value) is not None
+
+
+def is_degenerate_fence_cell(value: str) -> bool:
+    """True when a table cell is only an opening fence or truncated fence opener."""
+    stripped = value.strip()
+    if stripped == "```":
+        return True
+    lowered = stripped.casefold()
+    if "full text:" in lowered or "truncated:" in lowered or "fenced —" in lowered:
+        return False
+    if stripped.startswith("```") and _FENCE_PAIR_RE.search(stripped) is None:
+        return True
+    return False
+
+
+def fenced_cell_pointer(provenance: str) -> str:
+    """Honest table-cell substitute when fenced content cannot be inlined."""
+    return f"fenced — see source_ref: {provenance}"
+
+
+def sanitize_relay_cell(value: str, provenance: str) -> str:
+    """Ensure relay cell text is never a stray fence opener."""
+    if looks_fenced(value):
+        return fenced_cell_pointer(provenance)
+    if is_degenerate_fence_cell(value):
+        if "://" in provenance:
+            return f"truncated: … (full text: {provenance})"
+        return f"truncated: … (full: {provenance})"
+    return value
+
+
 def default_relay_cell_cap(value: str, provenance: str) -> str:
     """Cap extracted relay cell values — degrade to pointer, never mid-token cut."""
+    if looks_fenced(value):
+        return fenced_cell_pointer(provenance)
     if len(value) <= RELAY_CELL_CAP_CHARS:
-        return value
+        return sanitize_relay_cell(value, provenance)
     if "://" in provenance:
-        return f"(full text: {provenance})"
-    return f"{value[:RELAY_CELL_CAP_CHARS].rsplit(' ', 1)[0]}… (full: {provenance})"
+        return f"truncated: … (full text: {provenance})"
+    trimmed = f"{value[:RELAY_CELL_CAP_CHARS].rsplit(' ', 1)[0]}… (full: {provenance})"
+    return sanitize_relay_cell(trimmed, provenance)
 
 
 def fill_judgment_cell(
@@ -217,12 +295,26 @@ def strip_projected_closeout_envelope(body: str) -> str:
     return "\n".join(lines[idx:])
 
 
+def relay_parse_failure_detected(body: str) -> bool:
+    """True when relay cells report §2 extraction failure (not honest field absence)."""
+    from services.git_integration_worker.cursor_auto.closeout_relay_project import (
+        count_unclassified_fields,
+    )
+
+    if count_unclassified_fields(body) > 0:
+        return True
+    lowered = body.casefold()
+    return "parse_failed —" in lowered or "parse_failed—" in lowered
+
+
 def resolve_relay_status(body: str, status: str) -> str:
     """Prefer §2 body/header/table status over a stale payload status field."""
+    normalized = status.strip().lower()
+    if normalized == RELAY_PARSE_FAILED_STATUS:
+        return RELAY_PARSE_FAILED_STATUS
     body_status = extract_status(body) or status_from_section2(body)
     if body_status in _VALID_WRAPPER_STATUSES:
         return body_status
-    normalized = status.strip().lower()
     if normalized in _VALID_WRAPPER_STATUSES:
         return normalized
     return "partial"
@@ -258,14 +350,23 @@ __all__ = [
     "_table_cell",
     "as_str_list",
     "build_ac_verdict_cell",
+    "_DEVIATION_EFFECTS_ENRICHED",
     "default_relay_cell_cap",
+    "fenced_cell_pointer",
     "fill_judgment_cell",
+    "is_degenerate_fence_cell",
+    "looks_fenced",
+    "sanitize_relay_cell",
     "has_closeout_substance",
     "is_wrapper_manifest",
     "looks_section2",
     "order_preserving_dedup",
     "RELAY_JUDGMENT_CLAMP_FIELDS",
+    "merge_relay_notes",
+    "normalize_authored_status_value",
+    "relay_parse_failure_detected",
     "relay_parse_miss_cell",
+    "RELAY_PARSE_FAILED_STATUS",
     "resolve_relay_status",
     "status_from_section2",
     "strip_projected_closeout_envelope",

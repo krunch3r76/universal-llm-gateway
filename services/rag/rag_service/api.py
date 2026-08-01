@@ -11,6 +11,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, HTTPException
+from openapi_mcp.binding import x_mcp
 
 from services.rag.admin_routes import register_admin_routes
 from services.rag.embeddings import get_model_id as get_embed_model_id
@@ -180,7 +181,11 @@ async def chunks_by_index(request: ChunksByIndexRequest) -> ChunksByIndexRespons
     return ChunksByIndexResponse(chunks=results)
 
 
-@router.get("/scopes", response_model=ScopesResponse)
+@router.get(
+    "/scopes",
+    response_model=ScopesResponse,
+    openapi_extra=x_mcp("list_scopes", tool="rag"),
+)
 async def get_scopes() -> ScopesResponse:
     """Return configured search scopes and their source-prefix mappings."""
     loaded_config = require_loaded_config(state._config)
@@ -188,9 +193,19 @@ async def get_scopes() -> ScopesResponse:
         await state._event_bus.publish_nowait(
             rag_scopes_listed(count=len(loaded_config.scopes))
         )
+    enrichment: dict[str, dict[str, object]] = {}
+    if state._property_index is not None:
+        enrichment = state._property_index.scope_list_enrichment()
     return ScopesResponse(
         scopes={
-            name: ScopeInfo(prefixes=scope.prefixes, description=scope.description)
+            name: ScopeInfo(
+                prefixes=scope.prefixes,
+                description=scope.description,
+                article_count=int(
+                    enrichment.get(name, {}).get("article_count", 0) or 0
+                ),
+                top_topics=list(enrichment.get(name, {}).get("top_topics") or []),
+            )
             for name, scope in loaded_config.scopes.items()
         },
     )

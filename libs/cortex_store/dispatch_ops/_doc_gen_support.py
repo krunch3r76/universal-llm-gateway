@@ -19,7 +19,10 @@ START_MARKER = "# >>> AUTOGEN:cortex-ops (do not edit) >>>"
 END_MARKER = "# <<< AUTOGEN:cortex-ops <<<"
 
 _PKG_ROOT = Path(__file__).resolve().parents[3]
-CORTEX_PY = _PKG_ROOT / "services/mcp-server/tools/cortex.py"
+# Single sentinel doc surface. ``services/mcp-server/tools/cortex.py`` was a
+# second surface until d491b541 (todo:cortex-mcp-surface-soc AC6) replaced its
+# op table with the byte-budgeted runtime render in
+# ``tools/cortex_named_tools/_surface_render.py``.
 TOOLS_PY = _PKG_ROOT / "libs/agent_seat/tools.py"
 
 ALIAS_AMBIGUOUS = "alias_canonical_ambiguous"
@@ -225,34 +228,29 @@ def count_documented_ops(block: str) -> set[str]:
 
 
 def validate_generated_blocks(
-    cortex_block: str,
     tool_block: str,
     *,
     expected_ops: int | None = None,
 ) -> None:
     expected = expected_ops if expected_ops is not None else len(_OP_SPECS)
-    tool_text = (
+    block = (
         decode_tools_doc_block(tool_block)
         if "_CORTEX_OPS_DOC" in tool_block
         else tool_block
     )
-    for label, block in (("cortex.py", cortex_block), ("tools.py", tool_text)):
-        if START_MARKER in block or END_MARKER in block:
-            raise RuntimeError(f"{label}: generated body must not include sentinels")
-        if not block.strip():
-            raise RuntimeError(f"{label}: generated region is empty")
-        names = count_documented_ops(block)
-        if len(names) != expected:
-            missing = set(_OP_SPECS) - names
-            extra = names - set(_OP_SPECS)
-            raise RuntimeError(
-                f"{label}: op count {len(names)} != {expected}; "
-                f"missing={sorted(missing)[:5]} extra={sorted(extra)[:5]}"
-            )
-
-
-def parse_cortex_ops_from_source(text: str) -> dict[str, set[str]]:
-    return parse_ops_block(region_body(text))
+    label = "tools.py"
+    if START_MARKER in block or END_MARKER in block:
+        raise RuntimeError(f"{label}: generated body must not include sentinels")
+    if not block.strip():
+        raise RuntimeError(f"{label}: generated region is empty")
+    names = count_documented_ops(block)
+    if len(names) != expected:
+        missing = set(_OP_SPECS) - names
+        extra = names - set(_OP_SPECS)
+        raise RuntimeError(
+            f"{label}: op count {len(names)} != {expected}; "
+            f"missing={sorted(missing)[:5]} extra={sorted(extra)[:5]}"
+        )
 
 
 def parse_tool_definition_ops_from_source(text: str) -> dict[str, set[str]]:

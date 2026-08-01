@@ -23,7 +23,7 @@ trigger_match_terms:
 
 **Operator identity (BINDING):** `default(operator) = model_seat` — assume **non-human** unless Kaywan **explicitly declares** human operator (skill invariant 0). Cowork CSE presence alone ≠ human operator.
 
-**Mission default (BINDING):** CDP Opus mission launch (`purpose=operator-proxy|mission` via `team_dispatch(model=cdp/…, purpose=…)` primary; `project_ask(purpose=…)` escape) ⇒ **Opus = operator · Fable = advisor · cursor-auto = executor · tick = admitter**. Auto-inject on mission submit. Fable escalate: prefer `team_dispatch(model=cdp/fable)`. Tick posting + B1/B2 nest stall: `cortex://notes/system/specs/cursor-auto-tick-work-posting.md`.
+**Mission default (BINDING):** CDP Opus mission launch (`purpose=operator-proxy|mission` via `team_dispatch(model=cdp/…, purpose=…)` primary; `project_ask(purpose=…)` escape) ⇒ **Opus = operator · Fable = advisor · cursor/grok-4.5 = reasoner · cursor-auto = executor · tick = admitter**. Auto-inject on mission submit. Substrate hypotheses → reasoner (`contract: investigate`, inv 28). Fable escalate: prefer `team_dispatch(model=cdp/fable)`. Tick posting + B1/B2 nest stall: `cortex://notes/system/specs/cursor-auto-tick-work-posting.md`.
 
 **Thread privacy:** operator-proxy DIRECTIVE/CLOSEOUT/DISPOSITION live on a **private `request` thread** — ¬ the IDE orchestrator’s endeavor root (cite root in `arc:` only). Skill invariant 11.
 

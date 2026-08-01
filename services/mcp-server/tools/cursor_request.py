@@ -133,6 +133,12 @@ def register_cursor_request_tool(mcp: FastMCP) -> None:
         Sync: plugin_install ∧ per-slug Customize sync ∈ Auto capabilities — offer/fire,
         ¬ defer to IDE lead. Bulk census = slow ⇒ named slugs only. IDE restart ⇒ operator.
 
+        Deploy / live (BINDING — decision:checkout-disk-is-executable):
+        sync_restart / host / gateway / MCP load the live shared checkout on disk —
+        committed or not. landed≠live = process ¬restarted, never ¬committed.
+        Commit is git workflow only, not the edited→running gate. ¬ frame
+        served≠HEAD after dirty-checkout restart as illicit live-ahead-of-HEAD.
+
         **Contract vocabulary**
 
         ``contract`` ∈ answer | confer | investigate | implement | verify | execute |

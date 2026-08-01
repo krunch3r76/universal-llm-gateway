@@ -30,10 +30,16 @@ def _closeout_source_from_turn(body: str) -> str | None:
     return source if isinstance(source, str) else None
 
 
+def synthesized_relay_note(*, closeout_source: str, status: str) -> str | None:
+    """Relay vocabulary for synthesized §2 — never mutates executor/wrapper status."""
+    if closeout_source == "section2_synthesized" and status == "complete":
+        return "synthesized_§2 — table relay-generated; executor wrapper status preserved"
+    return None
+
+
 def enforce_synthesized_partial(status: str, *, closeout_source: str) -> str:
-    """Synthesized §2 is never disposition-complete — force partial."""
-    if closeout_source == _SYNTHESIZED_SOURCE:
-        return "partial"
+    """Deprecated status clamp — preserved for callers; no longer mutates status."""
+    del closeout_source
     return status
 
 
@@ -91,4 +97,5 @@ __all__ = [
     "enforce_synthesized_partial",
     "parse_synthesized_ack",
     "pending_synthesized_closeout",
+    "synthesized_relay_note",
 ]

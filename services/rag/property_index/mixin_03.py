@@ -320,3 +320,24 @@ class _PropertyIndexPart03:
             (scope,),
         ).fetchall()
         return {str(r[0]): float(r[1]) for r in rows}
+
+    def scope_list_enrichment(self) -> dict[str, dict[str, object]]:
+        """Return per-scope article_count and top_topics for GET /scopes."""
+        conn = self._ensure_conn()
+        result: dict[str, dict[str, object]] = {}
+        for scope, article_count in conn.execute(
+            "SELECT scope, COUNT(*) AS article_count FROM articles GROUP BY scope"
+        ).fetchall():
+            if isinstance(scope, str):
+                result.setdefault(scope, {})["article_count"] = int(article_count)
+        for scope, term in conn.execute(
+            "SELECT scope, term FROM corpus_hints "
+            "WHERE prefix = 'prop.topic@@' "
+            "ORDER BY scope ASC, score DESC, term ASC"
+        ).fetchall():
+            if not (isinstance(scope, str) and isinstance(term, str)):
+                continue
+            topics = result.setdefault(scope, {}).setdefault("top_topics", [])
+            if isinstance(topics, list) and len(topics) < 5 and term not in topics:
+                topics.append(term)
+        return result

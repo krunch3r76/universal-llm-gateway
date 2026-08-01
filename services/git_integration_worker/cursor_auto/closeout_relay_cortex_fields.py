@@ -37,6 +37,9 @@ _BOLD_FIELD_LINE_RE = re.compile(
 _BOLD_HEADING_ONLY_RE = re.compile(
     r"(?im)^\*\*(?P<heading>[^*\n]+?)\*\*\s*$",
 )
+_PLAIN_FIELD_LINE_RE = re.compile(
+    r"(?im)^(?P<field>[a-z][a-z0-9_ ]*?)\s*:\s*(?P<rest>.*)$",
+)
 
 
 def _normalize_heading_key(text: str) -> str:
@@ -96,8 +99,83 @@ def _normalize_field_heading(raw: str) -> str:
     return raw.strip().rstrip(":").strip()
 
 
+def _canonical_field_for_plain_heading(raw_field: str) -> str | None:
+    """Map a plain ``field:`` line prefix to the canonical §2 field key."""
+    normalized = _normalize_heading_key(raw_field)
+    for canonical, aliases in _FIELD_HEADING_ALIASES.items():
+        for alias in aliases:
+            if _normalize_heading_key(alias) == normalized:
+                return canonical
+    return None
+
+
+def _plain_field_line_spans(body: str) -> list[tuple[int, int, str, str]]:
+    """Collect plain ``field: rest`` §2 lines (reporting-contract inline format)."""
+    spans: list[tuple[int, int, str, str]] = []
+    offset = 0
+    for line in body.splitlines(keepends=True):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            offset += len(line)
+            continue
+        match = _PLAIN_FIELD_LINE_RE.match(stripped)
+        if match is None:
+            offset += len(line)
+            continue
+        canonical = _canonical_field_for_plain_heading(match.group("field"))
+        if canonical is None:
+            offset += len(line)
+            continue
+        rest = match.group("rest").strip()
+        spans.append((offset, offset + len(line), canonical, rest))
+        offset += len(line)
+    return spans
+
+
+def _next_field_boundary(body: str, start: int) -> int:
+    for line_start, _, _, _ in _plain_field_line_spans(body):
+        if line_start >= start:
+            return line_start
+    for line_start, _, _, _ in _field_line_spans(body):
+        if line_start >= start:
+            return line_start
+    for match in _ATX_HEADING_RE.finditer(body):
+        if match.start() >= start:
+            return match.start()
+    return len(body)
+
+
+def _extract_plain_same_line(body: str, field: str) -> str | None:
+    for _start, _end, heading, rest in _plain_field_line_spans(body):
+        if heading == field and rest:
+            return rest
+    return None
+
+
+def _extract_plain_section(body: str, field: str) -> str | None:
+    offset = 0
+    for line in body.splitlines(keepends=True):
+        stripped = line.strip()
+        match = _PLAIN_FIELD_LINE_RE.match(stripped) if stripped else None
+        if match is not None:
+            canonical = _canonical_field_for_plain_heading(match.group("field"))
+            if canonical == field:
+                rest = match.group("rest").strip()
+                if rest:
+                    return rest
+                start = offset + len(line)
+                end = _next_field_boundary(body, start)
+                section = body[start:end].strip()
+                return section or None
+        offset += len(line)
+    return None
+
+
 def field_heading_present(body: str, field: str) -> bool:
     """True when a §2 field heading exists in authored prose."""
+    for _start, _end, heading, _rest in _plain_field_line_spans(body):
+        if heading == field:
+            return True
     for _start, _end, heading, _rest in _field_line_spans(body):
         if _heading_matches_field(heading, field):
             return True
@@ -122,16 +200,6 @@ def _field_line_spans(body: str) -> list[tuple[int, int, str, str]]:
         spans.append((match.start(), match.end(), heading, ""))
     spans.sort(key=lambda item: item[0])
     return spans
-
-
-def _next_field_boundary(body: str, start: int) -> int:
-    for line_start, _, _, _ in _field_line_spans(body):
-        if line_start >= start:
-            return line_start
-    for match in _ATX_HEADING_RE.finditer(body):
-        if match.start() >= start:
-            return match.start()
-    return len(body)
 
 
 def _extract_bold_same_line(body: str, field: str, *, exact_only: bool = False) -> str | None:
@@ -178,6 +246,17 @@ def extract_table_field(body: str, field: str) -> str | None:
 
 def extract_status(body: str) -> str | None:
     """Extract closeout status from header line, table row, or bold field."""
+
+    def _normalize_status_token(raw: str) -> str | None:
+        text = raw.strip().strip("`").strip()
+        match = re.match(r"^(complete|partial|blocked)\b", text, re.IGNORECASE)
+        if match:
+            return match.group(1).lower()
+        normalized = text.casefold()
+        if normalized in {"complete", "partial", "blocked"}:
+            return normalized
+        return None
+
     header = re.search(
         r"(?im)^status\s*[:=]\s*`?(complete|partial|blocked)`?",
         body,
@@ -186,13 +265,13 @@ def extract_status(body: str) -> str | None:
         return header.group(1).lower()
     table = extract_table_field(body, "status")
     if table:
-        normalized = table.strip().lower().strip("`")
-        if normalized in {"complete", "partial", "blocked"}:
+        normalized = _normalize_status_token(table)
+        if normalized is not None:
             return normalized
     bold = _extract_bold_same_line(body, "status") or _extract_bold_section(body, "status")
     if bold:
-        normalized = bold.strip().lower().strip("`")
-        if normalized in {"complete", "partial", "blocked"}:
+        normalized = _normalize_status_token(bold)
+        if normalized is not None:
             return normalized
     return status_from_section2(body)
 
@@ -219,6 +298,12 @@ def extract_field_section(body: str, field: str) -> str | None:
     table = extract_table_field(body, field)
     if table:
         return table
+    plain_same = _extract_plain_same_line(body, field)
+    if plain_same:
+        return plain_same
+    plain_section = _extract_plain_section(body, field)
+    if plain_section:
+        return plain_section
     for exact_only in (True, False):
         same_line = _extract_bold_same_line(body, field, exact_only=exact_only)
         if same_line:
