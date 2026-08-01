@@ -228,6 +228,16 @@ with ``collector:`` · ``followup:`` · ``charter_enrolled:`` · or ``kaywan_gat
 cursor-auto admit. Mission-debrief ``notify`` (tag ``mission-debrief``) MUST include
 ``Beyond this close: …``. ¬ per-mission watchdog. SOT: ``mission_close_wake.py``.
 
+**Streaming stop (BINDING — 2026-08-01 · inv 30):** ending this Cowork stream / turn is
+authorized **only** for (1) continuity handoff to a new CSE (after launch confirmed) or
+(2) true mission/episode close with ``TYPE: MISSION_CLOSEOUT`` + wake path + mission-debrief
+notify. A **leg** DISPOSITION ("Mission leg complete", ratify one DIRECTIVE) does **not**
+authorize stopping — keep the stream live; residuals stay in-mission as the next DIRECTIVE
+or idle wait. Forbidden: "Nothing needs you" + stop while open residuals remain without
+mission-close TYPE. If the stream stops outside those two cases, page Kaywan (awareness
+``notify``, tag ``cse-stream-stop``, subject ¬ ``COME TO IDE``) with stop + why — or expect
+cursor to fire that ping when you already went quiet.
+
 **In-session carve-out:** suppress ``notify`` only when Kaywan has **declared** human
 operator **and** is in *this* Cowork CSE — IDE-only presence does **not** suppress
 (he still wants Fi play-by-play). Do not

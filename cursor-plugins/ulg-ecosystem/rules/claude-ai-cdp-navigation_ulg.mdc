@@ -1,5 +1,5 @@
 ---
-description: Load CDP navigation discipline when web-anthropic or Jupiter CDP (Cowork, project-ask) is in scope — before advising manual operator push.
+description: Load CDP navigation discipline when web-anthropic or Jupiter CDP (Cowork, project-ask) is in scope — before advising manual operator push. Also when CSE stream stops / poller retain vs operator self-stop.
 alwaysApply: true
 rule_category: cortex-bus
 apply_tier: catalog
@@ -11,12 +11,24 @@ trigger_match_terms:
   - bus-nudge
   - cdp
   - claude-ai-sync-jupiter
+  - streaming stopped
+  - CSE retain
+  - wall_clock_exceeded
 ---
 # Claude.ai CDP Navigation (trigger)
 
 **Invariant:** `web-anthropic ∨ jupiter-cdp ∨ Cowork ∨ project-ask ∨ bus-nudge in scope ⇒ Use the claude-ai-cdp-navigation skill before advising manual operator push or transport.`
 
 Mechanics (FOL, lane, harvest, converse batching, Cowork multitask, **web-anthropic-cdp dispatch constraints**): Use the `claude-ai-cdp-navigation` skill — not this stub.
+
+## Skill homes (BINDING)
+
+| Plane | Skill | Question it answers |
+|---|---|---|
+| **Transport / poller** | `claude-ai-cdp-navigation` | Did the harness/poller Stop-click or detach? Warm follow-up? CSE retain against `max_wall_s`? |
+| **Operator self-stop** | `cdp-operator-proxy` (inv 30) | Did Opus end the turn after a leg? Was `TYPE: MISSION_CLOSEOUT` present? Exception notify owed? |
+
+Mid-mission stream stop ⇒ load **both**. Do not treat poller-retain rules as answering whether the operator seat was allowed to end the turn.
 
 ## When (always-on)
 
@@ -25,6 +37,7 @@ Apply when task, operator message, or open agent-bus work involves:
 - Jupiter `project-ask` / `claude-ai-sync-jupiter`
 - Cowork continuity or multi-stop bus-nudge
 - Authoring any packet / prompt for web-anthropic via CDP
+- Unexpected CSE idle / streaming stopped (pair with `cdp-operator-proxy`)
 
 ## Standing dispatch constraints (BINDING summary — skill is SOT)
 
@@ -49,4 +62,5 @@ Until operator override or substrate change (friction 24906):
 | `project_ask(op="abort")` from IDE because arc path changed | Poll **private bus lane** + paste into live converse; abort only with explicit operator auth (`session-abort-authorization_ulg.mdc`) |
 | `active_work` empty ⇒ "CDP unreachable / arc dead" | Transport idle ≠ bus idle — operator-proxy commissions live on `agent_bus.request` thread |
 | Re-poll aborted `execution_id` expecting reconnect | Dead id — warm submit same `holder` + `converse=true` for Cowork CSE; bus continuity = request thread |
+| Blame poller retain when Opus self-stopped after a leg | Load `cdp-operator-proxy` inv 30; page `cse-stream-stop` if unauthorized |
 | Copy CDP mechanics into this rule | Defer to skill SOT |

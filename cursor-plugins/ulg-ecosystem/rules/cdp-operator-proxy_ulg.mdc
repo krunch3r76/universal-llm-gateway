@@ -1,5 +1,5 @@
 ---
-description: Load CDP operator-proxy protocol when Cowork web-anthropic holds the operator seat via agent_bus.request — co-developer posture, DIRECTIVE/CLOSEOUT/DISPOSITION discipline.
+description: Load CDP operator-proxy protocol when Cowork web-anthropic holds the operator seat via agent_bus.request — co-developer posture, DIRECTIVE/CLOSEOUT/DISPOSITION discipline. Also load when diagnosing CSE stream stop / mid-mission idle.
 alwaysApply: false
 rule_category: workflow
 apply_tier: catalog
@@ -16,12 +16,31 @@ trigger_match_terms:
   - sync_restart
   - service restart
   - operator-proxy-substrate
+  - streaming stopped
+  - stream stopped
+  - CSE idle
+  - mission leg
+  - MISSION_CLOSEOUT
+  - cse-stream-stop
+  - Work beyond this close
 ---
 # CDP Operator Proxy — Stub
 
 **Invariant:** `operator-proxy episode ∧ agent_bus.request from Cowork ⇒ Use the cdp-operator-proxy skill before authoring DIRECTIVE bodies or dispositing CLOSEOUTs.`
 
+**Skill homes (BINDING — do not mix planes):**
+
+| Concern | Skill home | Who |
+|---|---|---|
+| Operator contract (DIRECTIVE/DISPOSITION, inv 30 streaming-stop auth, mission debrief) | `cdp-operator-proxy` (`shared_sync`) | Operator seat + IDE reviewing operator behavior |
+| Cursor mechanism (admit gates, nest/lease, chip delivery) | `operator-proxy-substrate` (`cursor_only`) | Cursor seats only |
+| CDP/Jupiter transport (poll ladder, CSE retain against **poller** kill, warm follow-up) | `claude-ai-cdp-navigation` (`cursor_only`) | Cursor seats — **poller plane**, not Opus self-stop |
+
+`CSE retain` (navigation) ≠ `streaming-stop authorization` (operator-proxy inv 30). Diagnosing "stream stopped mid-mission" ⇒ load **both**: navigation for harness/poller, operator-proxy for leg-vs-mission and exception notify.
+
 **Operator identity (BINDING):** `default(operator) = model_seat` — assume **non-human** unless Kaywan **explicitly declares** human operator (skill invariant 0). Cowork CSE presence alone ≠ human operator.
+
+**Streaming stop (BINDING — inv 30):** `end(stream) ⇔ continuity_handoff ∨ TYPE:MISSION_CLOSEOUT`. A leg DISPOSITION does **not** authorize stopping. Unexpected stop ⇒ awareness `notify` tag `cse-stream-stop` (cursor fires if operator seat already quiet).
 
 **Mission default (BINDING):** CDP Opus mission launch (`purpose=operator-proxy|mission` via `team_dispatch(model=cdp/…, purpose=…)` primary; `project_ask(purpose=…)` escape) ⇒ **Opus = operator · Fable = advisor · cursor/grok-4.5 = reasoner · cursor-auto = executor · tick = admitter**. Auto-inject on mission submit. Substrate hypotheses → reasoner (`contract: investigate`, inv 28). Fable escalate: prefer `team_dispatch(model=cdp/fable)`. Tick posting + B1/B2 nest stall: `cortex://notes/system/specs/cursor-auto-tick-work-posting.md`.
 
@@ -48,6 +67,7 @@ Mechanism (turn shapes, boot checklist, anti-patterns): Use the `cdp-operator-pr
 - cursor-auto nested dispatch arcs (5867-class dogfood)
 - Blocked on a human/cursor fact — skill § Blocked → ask ladder (observe → cursor → Cowork Ask/push); ¬ silent stop
 - Life missing a code-seat tool (`manage`, reload, …) — request **cursor**, ¬ park on Kaywan
+- **CSE stream stopped / mid-mission idle** — load this skill (inv 30) **and** `claude-ai-cdp-navigation` (poller retain)
 
 ¬ load for IDE cursor lead orchestration (use `lean-context-dispatch-first` + `operator-posture` instead).
 IDE wakes/corrections to a live CSE: Use the `claude-ai-cdp-navigation` skill § Warm follow-up (CDP into chat; ¬ bus-only + push).

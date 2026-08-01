@@ -48,11 +48,27 @@ next `request`. Rule: `session-abort-authorization_ulg.mdc`.
 operator-proxy Cowork CSE stays live until:
   (a) rare human-operator escalation (true operator-only fork), OR
   (b) continuity handoff — clean break of the old CSE only after a new CSE
-      launch is confirmed (same private request lane + handoff_prompt)
+      launch is confirmed (same private request lane + handoff_prompt), OR
+  (c) true mission / episode close — TYPE: MISSION_CLOSEOUT (or subject
+      MISSION CLOSEOUT) + residual wake path + mission-debrief notify
 ¬ break / Stop-click / deregister-kill on: max_wall_s, no_progress_s,
   poller timeout, or false "cdp FAILED" from the Stargate generate adapter.
 Streaming idle between DIRECTIVE legs is normal — not a stall warranting abort.
 ```
+
+**Streaming-stop authorization (BINDING — operator 2026-08-01 · inv 30):**  
+`end(Cowork_stream) ⇔ continuity_handoff ∨ mission_episode_debrief`.  
+A **leg** DISPOSITION (ratify / refuse a single DIRECTIVE) is **not** authorization
+to stop streaming. "Mission leg complete," "Nothing needs you," debrief-shaped prose,
+or an ACT-RECEIPT **without** `TYPE: MISSION_CLOSEOUT` does **not** license ending
+the turn. Idle between legs = stream retained, Stop control may still be absent
+transiently — the seat stays correspondent. See invariant 30.
+
+**Exception notify (BINDING):** when the stream stops outside (b)/(c) — observed by
+this seat (about to end) or by cursor/IDE (CSE idle with open residuals, no
+MISSION_CLOSEOUT) — Kaywan gets an **awareness** `notify` (tag `cse-stream-stop`,
+subject ¬ `COME TO IDE`) naming *that it stopped* and *why* (same channel class as
+mission debrief). Cursor fires it when the operator seat already went quiet.
 
 Fleet poller wall is a **ledger/open-leg** concern, not a license to kill the page.
 IDE must treat `wall_clock_exceeded` on `purpose=operator-proxy|mission` as
@@ -121,6 +137,7 @@ Load when ANY:
 27. **Snapshot staleness vs failure (BINDING — todo:fleet-idle-pass-snapshot-slice-b).** Read `staleness_rule` in the snapshot JSON: stamp older than ~2× trigger fire interval while a `fleet_idle` row is known-due ⇒ UNDETERMINED-for-observation; an older stamp outside an active evaluation window is legitimate staleness ("no row currently under evaluation"), not a probe defect. Fleet-occupancy questions → snapshot; restart-safety → `manage busy_status`; neither aggregate imports the other.
 28. **Mentor, ¬ investigator — the reasoner seat holds the code (BINDING — Kaywan bind 2026-07-31).** Escalation is **bidirectional**: unknowns route down rather than up to Kaywan (invariant 13), and *down* means **commissioned**, ¬ answered here. `∀ q: answerable(q, read_code ∨ probe_substrate) ⇒ commission(reasoner, q) ∧ ¬originate_hypothesis(operator)`. The **reasoner** is `cursor/grok-4.5` on cursor-sdk — the seat closest to the code (live checkout, live probes) — commissioned via `agent_bus.request` `contract: investigate`. It is distinct from the **executor** (cursor-auto → Composer, mechanical implement) and from the **advisor** (Fable, outside check at your own weight class); before this bind the seat map named no reasoning-about-code seat, so substrate questions had nowhere to go but your own context. **Why it binds:** your context *is* the mission's planning capacity — accumulated substrate detail measurably degrades the planning you are in the seat to do. Read to **adjudicate a returned trace**; ¬ to **originate** one. Read sight stays ratified (a:26424): this governs what reads are *for*, ¬ whether you may read. **The loop (difficulty-gated — `judgment_required` only):** (a) **ask without anchoring** — send the question, withhold your hypothesis; a challenge carrying your guess gets your guess back, because verification conditioned on a baseline answer reproduces that answer's error; (b) **challenge the chain, ¬ the verdict** — on an `investigate` closeout name **which step first goes wrong** and what evidence settles it, since step-level critique outperforms accept/reject on the conclusion; (c) **withhold the answer you already hold** — emit the critique that lets the reasoner reach it, `M(s⁺|q,s⁻) = M(c|q,s⁻) · M(s⁺|q,s⁻,c)`, your leverage is `c` ¬ `s⁺`; (d) **bounded** — max **2** challenge rounds per question, round 3 ⇒ bind it yourself and say so in the DISPOSITION. **Gate:** `mechanical(q) ⇒ ¬mentor_loop(q)` — pinned or mechanical items go straight to executor implement; verification scaffolds cost double the tokens for no accuracy gain on easy problems, and an unbounded socratic loop burns the mission.
 29. **Mission roadmap is mutable — INSERT STEPS (BINDING — operator bind 2026-08-01 · agent-bus:6656).** A mission roadmap is a **living instrument of the mission objective**, ¬ a contract frozen at authoring. You may amend it to keep it aligned with the objective, and the preferred mutation is **INSERT STEPS** — append-visible, prior rows intact — ¬ opaque rewrite or erase. **Grammar:** (a) the ordinal a row is born with is its **permanent ID** — never renumber, never reuse a retired ordinal; an inserted row takes `max(existing) + 1` **regardless of its priority**; (b) execution order lives in a separate `## Rank order` line listing IDs, so re-ranking never touches a heading; (c) a re-rank is legal whenever the edit carries a `why:` clause and quotes the prior order; (d) a row is **never deleted** — killing it means moving it to the DROPPED section **with its falsifier**, so a later seat finds a reason rather than an absence; (e) refining a row's body (evidence, ACs) in place is legal, but changing **what a row is** requires DROP + fresh insert. **Material mission-impact fixes need not defer:** when lost work, a broken imprint, or a destroyed closeout threatens the mission, insert the recovery row and execute it — *absence from a prior row is not a reason to defer* (composes inv 17: ship the better path; inv 20: implement at will). **Actor:** a `cortex://` roadmap is yours to edit directly via life `fs` — inv 3's write boundary is **repository / diff** writes, and inv 1 already lands your decisions in cortex sidecars; only a `workspaces://` roadmap requires a cursor-auto commission. **¬ applicable to charter G-rows** — charter scoreboards are a remit-limited projection over graph-canonical state with their own T-row / Precedents grammar (`cortex://notes/system/templates/charter-scoreboard.md`); do not extend this invariant to them by analogy. SOT: `cdp-operator-proxy-v0.md` § ROADMAP_AMENDMENT · `decision:operator-proxy-seat-posture`.
+30. **Streaming stop is authorized only for continuity or true mission/episode debrief (BINDING — operator 2026-08-01 · agent-bus:6655).** `end(Cowork_stream ∨ CSE_turn) ⇔ continuity_handoff ∨ TYPE:MISSION_CLOSEOUT`. Discriminator: **leg** = one DIRECTIVE's DISPOSITION (ratify/refuse) — stream **continues**, residuals stay **in-mission** (next DIRECTIVE / idle wait), ¬ "Work beyond this close," ¬ mission-debrief pager, ¬ ACT-RECEIPT-as-close. **Episode/mission close** = residual-commission gate satisfied + `TYPE: MISSION_CLOSEOUT` (or subject `MISSION CLOSEOUT`) + wake tokens + inv 22(d)(2) mission-debrief `notify`. **Continuity** = request new CDP window; old stream breaks only after new CSE launch is confirmed (§ CSE lifetime). **Forbidden:** stopping because a leg finished, because Kaywan was told "Nothing needs you," because an ACT-RECEIPT was emitted, or because debrief-shaped prose was written without the mission-close TYPE. **Exception notify:** if the stream stops outside continuity / mission-debrief, Kaywan is informed via awareness `notify` (tag `cse-stream-stop`) with stop + why — same channel class as mission debrief, subject ¬ `COME TO IDE`. Cursor/IDE fires that ping when this seat already went quiet. Falsifier instance: 6655 increment-2 — "Mission leg complete" + open residuals under "Work beyond this close" + stream end without `TYPE: MISSION_CLOSEOUT`. Composes: § CSE lifetime · inv 22(d)(2) · residual-commission gate · `claude-ai-cdp-navigation` CSE retain (poller plane — this invariant is the **operator self-stop** plane).
 
 ## cursor-auto ↔ tick posting (BINDING)
 
@@ -432,6 +449,9 @@ Full tier-M + propagate DIRECTIVE templates + degrade rows: mission briefing inj
 | Minting a new CDP window to deliver a message a warm follow-up would carry — or warm-pasting when the CSE needs refreshed chips | Refresh ≠ follow-up: pick by what is stale (§ Transport vs bus lane) |
 | Treating `wall_clock_exceeded` / poller FAILED as mission-dead / killing the open CSE | CSE retain until clean continuity handoff (new CSE confirmed) or rare human gate — reattach |
 | Clean-breaking the old CSE before the new handoff window's launch is confirmed | Wait for registration/chat_url proof, then break |
+| Ending the Cowork stream after a **leg** DISPOSITION ("Mission leg complete" / "Nothing needs you") | Stream stays live; next DIRECTIVE or idle wait — inv 30 |
+| Writing "Work beyond this close" / ACT-RECEIPT / debrief prose **without** `TYPE: MISSION_CLOSEOUT` and stopping | Either continue the mission, or close properly with TYPE + wake path + mission-debrief notify |
+| Stream stops outside continuity / mission-debrief and Kaywan is not paged | Awareness `notify` tag `cse-stream-stop` with stop + why (cursor fires if operator seat already quiet) |
 | "Plugin install / Customize upload = IDE lead" parked on Kaywan | Both are cursor-auto-reachable — commission them (invariant 24). Only IDE restart / Reload Window is genuinely his |
 | Bulk-syncing the whole skill census to claude.ai to be safe | Per-slug sync, named bodies only — a census sync is slow and unasked-for (invariant 24 cost limit) |
 | Mission close with `COME TO IDE` for the debrief | Mission debrief is **awareness** — full one-paragraph `notify`, subject must **not** say `COME TO IDE` (inv 22(d)(2)) |
@@ -443,12 +463,15 @@ Full tier-M + propagate DIRECTIVE templates + degrade rows: mission briefing inj
 
 ## Episode boundaries
 
-| Shape | Seat | Thread |
-|---|---|---|
-| Operator-proxy bus arc | Cowork — **this skill** | **Private** `request` thread |
-| IDE orchestration | Cursor lead | Endeavor / standing root |
-| Path-sim R-admit / R-after | Opus consult at gates | Consult thread (≠ operator request lane) |
-| Charter tick digest | `todo:operator-proxy-tick-status-shape` (sibling) | Charter root (Opus tracks; manage owns poller) |
+| Shape | Seat | Thread | Stream |
+|---|---|---|---|
+| **Leg** (one DIRECTIVE DISPOSITION) | Cowork — **this skill** | **Private** `request` thread | **Continues** (inv 30) |
+| **Episode / mission close** | Cowork — `TYPE: MISSION_CLOSEOUT` | Same private lane | **May stop** after debrief notify |
+| **Continuity handoff** | New CSE after confirmed launch | **Same** private lane | Old may stop; new is correspondent |
+| Operator-proxy bus arc (open) | Cowork — **this skill** | **Private** `request` thread | Retained |
+| IDE orchestration | Cursor lead | Endeavor / standing root | n/a |
+| Path-sim R-admit / R-after | Opus consult at gates | Consult thread (≠ operator request lane) | n/a |
+| Charter tick digest | `todo:operator-proxy-tick-status-shape` (sibling) | Charter root (Opus tracks; manage owns poller) | n/a |
 
 ## Composition
 
