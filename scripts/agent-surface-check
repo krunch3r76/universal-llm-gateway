@@ -39,7 +39,7 @@ _run_registry_falsifier_tier() {
 }
 
 if [[ "${1:-}" == "--openapi-only" ]]; then
-  "$PYTHON" scripts/openapi_mcp_codegen.py --check --service all || exit 1
+  "$PYTHON" scripts/openapi_mcp_codegen.py --check --service all --repo-only || exit 1
   echo "OK agent-surface-check: openapi fleet gate passed"
   exit 0
 fi

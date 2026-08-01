@@ -76,5 +76,20 @@ def test_fleet_check_invokes_tier_m_coverage_gate(
         return check_tier_m_manifest_coverage()
 
     monkeypatch.setattr(codegen, "check_tier_m_manifest_coverage", _track)
+    from services.git_integration_worker.cursor_auto import (
+        propagation_descriptor_drift,
+        propagation_served_binding_drift,
+    )
+
+    monkeypatch.setattr(
+        propagation_descriptor_drift,
+        "check_descriptor_drift",
+        lambda **_: propagation_descriptor_drift.DescriptorDriftResult((), ()),
+    )
+    monkeypatch.setattr(
+        propagation_served_binding_drift,
+        "check_served_binding_drift",
+        lambda *_a, **_k: ManifestCheckResult((), ()),
+    )
     codegen._run_check(["cortex"])
     assert calls == ["tier_m"]

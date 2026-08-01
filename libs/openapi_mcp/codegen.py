@@ -163,8 +163,13 @@ def compare_schema_drift(
 
 def parse_manifest_module(path: Path) -> AdapterManifest:
     """Load committed manifest constants from a generated module path."""
+    return parse_manifest_source(path.read_text(encoding="utf-8"))
+
+
+def parse_manifest_source(source: str) -> AdapterManifest:
+    """Load manifest constants from generated module source text."""
     ns: dict[str, Any] = {}
-    exec(compile(path.read_text(encoding="utf-8"), str(path), "exec"), ns)
+    exec(compile(source, "<manifest>", "exec"), ns)
     return AdapterManifest(
         openapi_sha256=str(ns["OPENAPI_SHA256"]),
         served_ops=dict(ns["SERVED_OPS"]),

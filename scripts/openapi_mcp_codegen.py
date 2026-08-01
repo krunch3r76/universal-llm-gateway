@@ -130,7 +130,7 @@ def _emit_check_result(service: str, result: ManifestCheckResult) -> None:
         print(f"{service}: {msg}", file=sys.stderr)
 
 
-def _run_check(services: list[str]) -> int:
+def _run_check(services: list[str], *, include_served_binding_drift: bool = True) -> int:
     exit_code = 0
     for service in services:
         result = _check_service_detailed(service)
@@ -155,6 +155,18 @@ def _run_check(services: list[str]) -> int:
         print(f"descriptor-drift: {msg}", file=sys.stderr)
     if drift.exit_code != 0:
         exit_code = 1
+    if include_served_binding_drift:
+        from services.git_integration_worker.cursor_auto.propagation_served_binding_drift import (
+            check_served_binding_drift,
+        )
+
+        served = check_served_binding_drift(services)
+        for msg in served.fatal_messages:
+            print(f"served-binding-drift: {msg}", file=sys.stderr)
+        for msg in served.warning_messages:
+            print(f"served-binding-drift: {msg}", file=sys.stderr)
+        if served.exit_code != 0:
+            exit_code = 1
     return exit_code
 
 
@@ -174,6 +186,11 @@ def main(argv: list[str] | None = None) -> int:
         "--staged",
         action="store_true",
         help="Pre-commit mode: check only services touched by staged openapi paths",
+    )
+    parser.add_argument(
+        "--repo-only",
+        action="store_true",
+        help="Repo-only gates (pre-commit): skip served-binding-drift fleet probe",
     )
     parser.add_argument(
         "--census",
@@ -303,14 +320,18 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.check:
+        fleet_gates = not args.repo_only
         if args.staged:
             touched = services_touched_by_staged(_git_staged_paths())
             if not touched:
                 return 0
-            return _run_check(sorted(touched))
+            return _run_check(sorted(touched), include_served_binding_drift=fleet_gates)
         if service == "all":
-            return _run_check(["cortex", "agent-bus", "rag", "giw"])
-        return _run_check([service])
+            return _run_check(
+                ["cortex", "agent-bus", "rag", "giw"],
+                include_served_binding_drift=fleet_gates,
+            )
+        return _run_check([service], include_served_binding_drift=fleet_gates)
 
     parser.print_help()
     return 2

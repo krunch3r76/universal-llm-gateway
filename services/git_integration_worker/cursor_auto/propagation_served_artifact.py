@@ -114,6 +114,22 @@ def count_x_mcp_bindings(schema: dict[str, Any]) -> int:
     return len(extract_typed_routes(schema))
 
 
+def served_ops_from_schema(schema: dict[str, Any]) -> dict[str, dict[str, str]]:
+    """Return op→binding map from a served OpenAPI document."""
+    routes = extract_typed_routes(schema)
+    served: dict[str, dict[str, str]] = {}
+    for op, route in sorted(routes.items()):
+        meta: dict[str, str] = {
+            "method": route.method,
+            "path": route.path,
+            "operation_id": route.operation_id,
+        }
+        if route.tool:
+            meta["tool"] = route.tool
+        served[op] = meta
+    return served
+
+
 def _fetch_openapi_bytes(url: str, *, timeout_s: float = 5.0) -> bytes | None:
     try:
         if url.startswith("unix://"):
@@ -161,9 +177,11 @@ def probe_served_artifact(
         schema = _parse_openapi(raw)
         if schema is None:
             return None
+        ops = served_ops_from_schema(schema)
         surface_results[surface.name] = {
             "url": surface.url,
-            "x_mcp_count": count_x_mcp_bindings(schema),
+            "x_mcp_count": len(ops),
+            "served_ops": ops,
             "bytes_sha256": hashlib.sha256(raw).hexdigest(),
             "bytes_len": len(raw),
         }
@@ -171,6 +189,8 @@ def probe_served_artifact(
     byte_identical = len(digests) == 1
     counts = {item["x_mcp_count"] for item in surface_results.values()}
     x_mcp_count = counts.pop() if len(counts) == 1 else None
+    op_maps = [item["served_ops"] for item in surface_results.values()]
+    served_ops = op_maps[0] if byte_identical and op_maps else None
     from services.git_integration_worker.cursor_auto.propagation_probe import (
         probe_process_live,
     )
@@ -185,6 +205,7 @@ def probe_served_artifact(
         "surfaces": surface_results,
         "byte_identical": byte_identical,
         "x_mcp_count": x_mcp_count,
+        "served_ops": served_ops,
         "expected_x_mcp_count": expected,
         "code_version": observed_version,
         "code_ref": code_ref,
@@ -236,4 +257,5 @@ __all__ = [
     "probe_served_artifact",
     "served_artifact_descriptor",
     "served_artifact_observed",
+    "served_ops_from_schema",
 ]

@@ -58,6 +58,7 @@ def test_fleet_check_invokes_descriptor_drift_gate(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from openapi_mcp.codegen import ManifestCheckResult
+
     from scripts import openapi_mcp_codegen as codegen
 
     calls: list[str] = []
@@ -84,8 +85,16 @@ def test_fleet_check_invokes_descriptor_drift_gate(
             {"check_result": ManifestCheckResult((), ())},
         )(),
     )
-    from services.git_integration_worker.cursor_auto import propagation_descriptor_drift
+    from services.git_integration_worker.cursor_auto import (
+        propagation_descriptor_drift,
+        propagation_served_binding_drift,
+    )
 
     monkeypatch.setattr(propagation_descriptor_drift, "check_descriptor_drift", _track)
+    monkeypatch.setattr(
+        propagation_served_binding_drift,
+        "check_served_binding_drift",
+        lambda *_a, **_k: ManifestCheckResult((), ()),
+    )
     codegen._run_check(["cortex"])
     assert calls == ["descriptor_drift"]
