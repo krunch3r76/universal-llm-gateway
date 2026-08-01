@@ -1509,7 +1509,9 @@ async def _run_sdk_dispatch_gated(
     # slot is held (predecessor edits are included) and off the admission HTTP
     # request path (caller gets 200/202 immediately; no Stargate read-timeout
     # 599 on slow dirty-checkout baselines).
-    if contract == "implement":
+    # cursor-auto maps operator implement → handoff_contract pure-mechanical
+    # (wire_map.resolve_handoff_contract); both need admit_head for lane git_refs.
+    if contract in ("implement", "pure-mechanical"):
         baseline_map = await asyncio.to_thread(
             capture_wt_baseline_with_hashes, source_repo
         )

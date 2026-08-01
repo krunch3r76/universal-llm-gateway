@@ -1672,6 +1672,93 @@ def test_admit_implement_capture_failure_skips_wt_baseline(
     assert _wt_baseline_column("disp-1") is None
 
 
+@patch(
+    "services.git_integration_worker.admission.WorkAdmissionController.create_tracked_task",
+    return_value=MagicMock(done=lambda: False),
+)
+def test_admit_pure_mechanical_capture_scheduled_like_implement(
+    _mock_task: MagicMock,
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """pure-mechanical admit uses the same async drive path as implement (not sync baseline)."""
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    monkeypatch.setattr(route_mod, "capture_wt_baseline_with_hashes", lambda _repo: None)
+    resp = client.post(
+        "/api/v1/cursor/dispatch",
+        json=_dispatch_body(
+            handoff_contract="pure-mechanical",
+            message="---\ncontract: implement\n---\np",
+        ),
+    )
+    assert resp.status_code == 200
+    assert _wt_baseline_column("disp-1") is None
+
+
+@pytest.mark.asyncio
+async def test_gated_pure_mechanical_captures_wt_baseline(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """_run_sdk_dispatch_gated must persist wt_baseline for pure-mechanical handoff."""
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    ledger = CursorDispatchLedger.instance()
+    req = CursorDispatchRequest(
+        thread_id="gate-pm-1",
+        model="cursor/composer-2.5",
+        dispatch_id="gate-pm-disp",
+        execution_id="exec-gate-pm",
+        handoff_contract="pure-mechanical",
+        message="---\ncontract: implement\n---\np",
+    )
+    fake_baseline = {
+        "codes": {},
+        "hashes": {},
+        "outside_repo": [],
+        "admit_head": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+    }
+    set_calls: list[str] = []
+
+    def _track_set(*, dispatch_id: str, wt_baseline: str) -> None:
+        set_calls.append(wt_baseline)
+
+    minimal_outcome = _sdk_outcome(body="done", tool_call_count=0)
+
+    monkeypatch.setattr(
+        route_mod,
+        "acquire_sdk_dispatch_slot",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        route_mod,
+        "capture_wt_baseline_with_hashes",
+        lambda _repo: fake_baseline,
+    )
+    monkeypatch.setattr(ledger, "set_wt_baseline", _track_set)
+    monkeypatch.setattr(route_mod, "_run_sdk_sync", lambda **_kw: minimal_outcome)
+    monkeypatch.setattr(route_mod, "_deliver_sdk_closeout", AsyncMock())
+    monkeypatch.setattr(route_mod, "_terminate_link", AsyncMock())
+    monkeypatch.setattr(
+        route_mod,
+        "_mark_terminal_and_promote",
+        AsyncMock(),
+    )
+
+    await route_mod._run_sdk_dispatch_gated(
+        req=req,
+        source_repo=tmp_path,
+        dispatch_workspace=tmp_path,
+        bus=AsyncMock(),
+        controller=_make_controller(),
+        contract="pure-mechanical",
+    )
+
+    assert len(set_calls) == 1
+    assert json.loads(set_calls[0])["admit_head"] == fake_baseline["admit_head"]
+
+
 @pytest.mark.asyncio
 async def test_promoted_implement_capture_failure_skips_wt_baseline(
     monkeypatch: pytest.MonkeyPatch,
