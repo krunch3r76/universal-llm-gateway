@@ -41,9 +41,12 @@ def register_notify_tools(mcp: FastMCP) -> None:
         AUDIENCE — human register binds on this path (and only paths like it): the
         reader is the human operator, so write human register here even when the
         session is agent-operated (web automation ⇏ agent audience — the path
-        decides, not the session). Layman prose, so-what first; ¬ slugs / thread ids
-        / code refs / interagent closeout shape (``status:``, paths, evidence).
-        Subject ``COME TO IDE`` = interrupt (problem, options exhausted); any other
+        decides, not the session). Architecture-first: name ULG systems and where
+        they sit when that is the point; ground in vision (what this serves);
+        so-what first. The distinction is architecture vs implementation — ¬ lead
+        with file paths, SHAs, function names, test names, or interagent closeout
+        shape (``status:``, paths, evidence); those belong in ``ref``. Subject
+        ``COME TO IDE`` = interrupt (problem, options exhausted); any other
         subject is awareness and ¬ implies he must open Cursor. Inverse binds: ¬
         human register on bus turns, packets, or bodies addressed to model seats.
         See ``agent_skill:pager-notify`` (when-to-page classes).

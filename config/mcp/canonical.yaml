@@ -4516,11 +4516,14 @@ tools:
     AUDIENCE — human register binds on this path (and only paths like it): the reader is\n\
     the human operator, so write human register here even when the session is\n\
     agent-operated (web automation ⇏ agent audience — the path decides, not the session).\n\
-    Layman prose, so-what first; ¬ slugs / thread ids / code refs / interagent closeout\n\
-    shape (status:, paths, evidence). Subject COME TO IDE = interrupt (problem, options\n\
-    exhausted); any other subject is awareness and ¬ implies he must open Cursor.\n\
-    Inverse binds: ¬ human register on bus turns, packets, or bodies addressed to model\n\
-    seats. See agent_skill:pager-notify (when-to-page classes).\n"
+    Architecture-first: name ULG systems and where they sit when that is the point;\n\
+    ground in vision (what this serves); so-what first. The distinction is architecture\n\
+    vs implementation — ¬ lead with file paths, SHAs, function names, test names, or\n\
+    interagent closeout shape (status:, paths, evidence); those belong in ref. Subject\n\
+    COME TO IDE = interrupt (problem, options exhausted); any other subject is awareness\n\
+    and ¬ implies he must open Cursor. Inverse binds: ¬ human register on bus turns,\n\
+    packets, or bodies addressed to model seats. See agent_skill:pager-notify\n\
+    (when-to-page classes).\n"
   json_schema:
     type: object
     properties:

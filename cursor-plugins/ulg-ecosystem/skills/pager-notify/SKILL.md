@@ -49,8 +49,24 @@ Env kill-switch: `PAGER_NOTIFY_ENABLED=0` disables the lib client.
 | Field | Cap | Guidance |
 |---|---|---|
 | `subject` | 120 | Short so-what (`ULG GIW clear`, `ULG hold ready`) |
-| `body` | 4000 | Full awareness NL + next action; no secrets, no PII |
+| `body` | 4000 | Full awareness NL — **vision/architecture-shaped**, not a status dump; no secrets, no PII |
 | `tag` | 40 | Machine label for logs (`giw-clear`, `admit-gate-live`) |
+
+### Body shape (BINDING — operator 2026-08-02)
+
+Generality is welcome; **hollowness is not**. Every awareness page (progress *and* mission-debrief) must be readable as: what this means for how the fleet works, what just changed, what happens next — not a slug/status telegram.
+
+| Slot | Required? | What it is |
+|---|---|---|
+| **Vision** | **Always** (open the body) | What this is *for* in how the fleet knows / acts — the gap it closes; ¬ what was built |
+| **Looking back** | Mission-debrief **always**; progress **when a premise moved** or a false finish almost landed | What we thought vs what held; the correction |
+| **Architecture** | **Always** (one sentence) | The load-bearing distinction a non-engineer can hold |
+| **Looking ahead** | **Always** | The next concrete move that advances the *mission*, not “check the logs” |
+| **Beyond this close** | Mission-debrief **always** (wake tokens); progress when residuals exist | Who collects what next |
+
+Host composers: `libs/pager_notify/mission_page.py` (`format_mission_awareness_page` / `format_summons_stop_page`). Mission-debrief prose SOT: `cdp-operator-proxy` § Mission-debrief format (vision → accomplishments by importance → reframe → architecture → …).
+
+**Anti-patterns:** “loop stopped — reason=X · lane=N” · subject-only so-what with empty body · forward-looking that is only “read the sidecar” · debrief with no vision sentence.
 
 ## When to page (operator-facing)
 
@@ -59,7 +75,7 @@ Three classes — **do not conflate**:
 | Class | Subject shape | operator action |
 |---|---|---|
 | **Awareness — progress** | NL so-what **without** `COME TO IDE` | Optional read; **¬** open Cursor |
-| **Awareness — mission debrief** | One layman architecture+vision paragraph **without** `COME TO IDE` (full body on pager) **plus** required `Beyond this close: …` line (in-flight / scheduled / enrolled / awaiting harvest — who collects and how; or `none`) · tag `mission-debrief` | Optional read; **¬** open Cursor; durable sidecar for later fetch |
+| **Awareness — mission debrief** | One architecture-first paragraph (named ULG systems + vision) **without** `COME TO IDE` (full body on pager) **plus** required `Beyond this close: …` line (in-flight / scheduled / enrolled / awaiting harvest — who collects and how; or `none`) · tag `mission-debrief` | Optional read; **¬** open Cursor; durable sidecar for later fetch |
 | **Interrupt** | **`COME TO IDE`** / `NEED IDE` | Open Cursor — **problem only** (options exhausted / true operator-only IDE gate) |
 
 | Situation | Page? | Class |
@@ -94,6 +110,8 @@ Example already used this session: `/tmp/watch-giw-clear-and-page.sh` (predicate
 | Silent background Cursor shell for “ping me” | tmux-visible script + pager on done |
 | Page on every tick refuse / log line | Page on operator-requested milestones |
 | Conflate with Outlook/Graph or IMAP search | Separate surfaces; this skill = Fi notify |
+| Status/reason telegram with no vision or next | Vision → (look-back) → architecture → look-ahead → Beyond |
+| Mission-debrief that never says what changed about knowing | Open on the gap the system used to leave |
 
 ## Composes with
 
