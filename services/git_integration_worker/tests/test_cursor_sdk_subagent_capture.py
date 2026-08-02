@@ -12,7 +12,9 @@ from services.git_integration_worker.cursor_sdk_closeout import (
     build_implement_closeout_body,
 )
 from services.git_integration_worker.cursor_sdk_manifest import build_effects_manifest
-from services.git_integration_worker.cursor_sdk_stream_capture import ToolCallObservation
+from services.git_integration_worker.cursor_sdk_stream_capture import (
+    ToolCallObservation,
+)
 from services.git_integration_worker.cursor_sdk_subagent_capture import (
     SUBAGENTS_SURFACE,
     ensure_subagents_surface,

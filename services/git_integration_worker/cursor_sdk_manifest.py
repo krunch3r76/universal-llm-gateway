@@ -31,7 +31,6 @@ from services.git_integration_worker.cursor_sdk_subagent_capture import (
     ensure_subagents_surface,
     entry_from_subagent_message,
     is_subagent_tool_call,
-    merge_stream_subagent_calls,
 )
 
 CaptureBranch = Literal["A", "B", "NO_CAPTURE"]
