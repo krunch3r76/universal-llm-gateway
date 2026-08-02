@@ -138,10 +138,11 @@ propagation:
 
 Closeout carries ``propagation[]``, ``row_ids``, and ``executions[]`` per service.
 ``disposition: executed`` only when proof-of-live observed; ``queued`` when manage
-accepted the restart under drain (``status:deferred`` / draining) — **manage owns
-the queue and will fire after drain**; ``submitted`` when restart kicked but proof
-pending. Retired tokens: ``scheduled``, ``parked`` (lied as in-flight / dead-end).
-Live only when ``code_version`` matches ``code_ref``."""
+deferred **with a persisted restart intent** (``restart_intent_id`` present — manage
+owns the queue and will fire after drain); ``blocked`` when manage deferred busy
+with **no** persisted intent (nothing will fire automatically); ``submitted`` when
+restart kicked but proof pending. Retired tokens: ``scheduled``, ``parked`` (lied as
+in-flight / dead-end). Live only when ``code_version`` matches ``code_ref``."""
 
 _DEGRADE_LADDER = """\
 - `auto-admit-armed` — Auto is running it; poll the returned `poll_hint` in short
@@ -156,10 +157,11 @@ _DEGRADE_LADDER = """\
   no in-seat execution path); follow the `routing_hint`, do not read it as work.
 - `status:done` + `disposition: executed` — an `execute` op ran; the payload under
   `tool_payload` is the observed result. No payload ⇒ it did not run.
-- `status:done` + `disposition: propagated` / `executed` / `queued` — a `propagate`
+- `status:done` + `disposition: propagated` / `executed` / `queued` / `blocked` — a `propagate`
   restart request ran; read `executions[]` per service
-  (queued/submitted/executed). ``queued`` = manage drain queue accepted the restart
-  (will fire; poll liveness). Retired: ``scheduled`` / ``parked``.
+  (queued/submitted/executed/blocked). ``queued`` = manage persisted a restart intent
+  (will fire; poll liveness). ``blocked`` = manage busy deferral with no intent
+  (nothing will fire). Retired: ``scheduled`` / ``parked``.
 - `status:failed` / `status:superseded` — a negative status is a *claim*: observe
   independently before re-issuing anything effectful."""
 

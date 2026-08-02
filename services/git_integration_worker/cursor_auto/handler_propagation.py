@@ -27,6 +27,54 @@ from services.git_integration_worker.cursor_auto.propagation_probe import (
 from services.git_integration_worker.cursor_auto.queue import AutoJob
 from services.git_integration_worker.cursor_bus import CursorBusClient
 
+DEFER_MANAGE_QUEUED_DRAIN = "manage_queued_drain"
+DEFER_MANAGE_BUSY_DEFER = "manage_busy_defer"
+
+
+def restart_intent_persisted(manage_result: dict[str, Any]) -> bool:
+    """True when manage deferred with a durable restart intent that will be consumed."""
+    return bool(manage_result.get("restart_intent_id"))
+
+
+def execution_for_manage_deferred(
+    row: PropagationRow,
+    *,
+    row_id: str,
+    manage_result: dict[str, Any],
+) -> dict[str, Any]:
+    """Map a manage ``status=deferred`` outcome to a truthful row execution dict."""
+    reason = str(
+        manage_result.get("reason")
+        or manage_result.get("state")
+        or "manage_deferred"
+    )
+    if restart_intent_persisted(manage_result):
+        set_defer_reason(row_id, DEFER_MANAGE_QUEUED_DRAIN)
+        return {
+            "service": row.service,
+            "row_id": row_id,
+            "status": "queued",
+            "reason": reason,
+            "manage": manage_result,
+            "next": (
+                "manage drain queue will fire sync_restart — poll liveness for "
+                "code_version and process identity change"
+            ),
+        }
+    set_defer_reason(row_id, DEFER_MANAGE_BUSY_DEFER)
+    return {
+        "service": row.service,
+        "row_id": row_id,
+        "status": "blocked",
+        "reason": reason,
+        "manage": manage_result,
+        "next": (
+            "manage deferred with no persisted restart intent — nothing will fire "
+            "automatically; retry propagate after busy clears or use force when "
+            "authorized"
+        ),
+    }
+
 
 async def run_propagation_in_seat(
     job: AutoJob,
@@ -149,22 +197,9 @@ async def _execute_row(row: PropagationRow, *, row_id: str) -> dict[str, Any]:
     )
     status = str(manage_result.get("status") or "unknown")
     if status == "deferred":
-        set_defer_reason(row_id, "manage_queued_drain")
-        return {
-            "service": row.service,
-            "row_id": row_id,
-            "status": "queued",
-            "reason": str(
-                manage_result.get("reason")
-                or manage_result.get("state")
-                or "manage_deferred_drain"
-            ),
-            "manage": manage_result,
-            "next": (
-                "manage drain queue will fire sync_restart — poll liveness for "
-                "code_version and process identity change"
-            ),
-        }
+        return execution_for_manage_deferred(
+            row, row_id=row_id, manage_result=manage_result
+        )
     if status == "error":
         set_defer_reason(row_id, str(manage_result.get("reason") or "manage_error"))
         return {
@@ -224,12 +259,14 @@ async def _execute_row(row: PropagationRow, *, row_id: str) -> dict[str, Any]:
 # Weakest per-row status floors the envelope disposition (a:27414 derive-from-executions).
 _ROW_RANK: dict[str, int] = {
     "failed": 0,
-    "queued": 1,
-    "submitted": 2,
-    "executed": 3,
+    "blocked": 1,
+    "queued": 2,
+    "submitted": 3,
+    "executed": 4,
 }
 _ENVELOPE_FROM_ROW: dict[str, str] = {
     "failed": "failed",
+    "blocked": "blocked",
     "queued": "queued",
     "submitted": "propagated",
     "executed": "executed",
@@ -291,6 +328,12 @@ def _summary_for(disposition: str, executions: list[dict[str, Any]]) -> str:
             f"(reason={reasons}). Restart will fire after drain — not ledger-only. "
             "Live only when code_ref ancestry is satisfied and process identity changed."
         )
+    if disposition == "blocked":
+        reasons = ", ".join(str(item.get("reason") or "?") for item in executions)
+        return (
+            f"Auto propagation restart blocked for {services} — manage busy deferral "
+            f"with no drain queue (reason={reasons}). Nothing will fire automatically."
+        )
     if disposition == "failed":
         if not executions:
             return "Auto propagation restart failed: no services were executed."
@@ -312,4 +355,10 @@ def _summary_for(disposition: str, executions: list[dict[str, Any]]) -> str:
     )
 
 
-__all__ = ["run_propagation_in_seat"]
+__all__ = [
+    "DEFER_MANAGE_BUSY_DEFER",
+    "DEFER_MANAGE_QUEUED_DRAIN",
+    "execution_for_manage_deferred",
+    "restart_intent_persisted",
+    "run_propagation_in_seat",
+]

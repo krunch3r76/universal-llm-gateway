@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
+from implement_admission.propagation_row import PropagationRow
+
 from services.git_integration_worker.cursor_auto.handler_propagation import (
     _disposition_for,
     _summary_for,
+    execution_for_manage_deferred,
+    restart_intent_persisted,
 )
 
 
@@ -104,6 +110,81 @@ def test_disposition_all_executed_unchanged() -> None:
 
 def test_disposition_all_queued_unchanged() -> None:
     assert _disposition_for([_exec("mcp", "queued", reason="draining")]) == "queued"
+
+
+def test_disposition_all_blocked_returns_blocked() -> None:
+    assert _disposition_for([_exec("mcp", "blocked", reason="busy")]) == "blocked"
+
+
+def test_disposition_mixed_executed_and_blocked_floors_to_blocked() -> None:
+    executions = [
+        _exec("mcp", "executed"),
+        _exec("gateway", "blocked", reason="busy"),
+    ]
+    assert _disposition_for(executions) == "blocked"
+
+
+def test_restart_intent_persisted_requires_intent_id() -> None:
+    assert restart_intent_persisted({"status": "deferred", "state": "draining"}) is False
+    assert restart_intent_persisted({"status": "deferred", "restart_intent_id": "x"}) is True
+
+
+def test_execution_for_manage_deferred_without_intent_is_blocked() -> None:
+    row = PropagationRow(
+        service="mcp",
+        code_ref="deadbeef",
+        action="sync_restart",
+        proof_class="client_visible",
+    )
+    with patch(
+        "services.git_integration_worker.cursor_auto.handler_propagation.set_defer_reason",
+    ) as mock_set:
+        result = execution_for_manage_deferred(
+            row,
+            row_id="mcp:deadbeef:sync_restart",
+            manage_result={
+                "status": "deferred",
+                "state": "busy",
+                "reason": "cdp_ask_live",
+            },
+        )
+    assert result["status"] == "blocked"
+    assert "nothing will fire" in result["next"].lower()
+    mock_set.assert_called_once_with("mcp:deadbeef:sync_restart", "manage_busy_defer")
+
+
+def test_execution_for_manage_deferred_with_intent_is_queued() -> None:
+    row = PropagationRow(
+        service="git_integration_worker",
+        code_ref="deadbeef",
+        action="sync_restart",
+        proof_class="process_live",
+    )
+    with patch(
+        "services.git_integration_worker.cursor_auto.handler_propagation.set_defer_reason",
+    ) as mock_set:
+        result = execution_for_manage_deferred(
+            row,
+            row_id="git_integration_worker:deadbeef:sync_restart",
+            manage_result={
+                "status": "deferred",
+                "state": "draining",
+                "restart_intent_id": "intent-abc",
+                "reason": "draining; completion delivered via git_worker.drain events",
+            },
+        )
+    assert result["status"] == "queued"
+    assert "will fire" in result["next"].lower()
+    mock_set.assert_called_once_with(
+        "git_integration_worker:deadbeef:sync_restart", "manage_queued_drain"
+    )
+
+
+def test_summary_blocked_does_not_claim_will_fire() -> None:
+    executions = [_exec("mcp", "blocked", reason="cdp_ask_live")]
+    summary = _summary_for("blocked", executions)
+    assert "nothing will fire" in summary.lower()
+    assert "will fire after drain" not in summary.lower()
 
 
 def test_disposition_all_submitted_returns_propagated() -> None:

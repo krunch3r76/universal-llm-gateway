@@ -11,7 +11,6 @@ from services.git_integration_worker.cursor_auto.propagate_admission import (
     admit_propagate_body,
 )
 
-
 _MCP_YAML_BODY = """\
 TYPE: DIRECTIVE
 contract: propagate
@@ -116,6 +115,7 @@ async def test_run_propagation_queues_when_manage_defers() -> None:
             return_value={
                 "status": "deferred",
                 "state": "draining",
+                "restart_intent_id": "intent-giw-1",
                 "reason": "draining; completion delivered via git_worker.drain events",
             },
         ),
@@ -136,3 +136,65 @@ async def test_run_propagation_queues_when_manage_defers() -> None:
     assert "queued" in summary.lower()
     assert "manage drain" in summary.lower()
     assert calls == ["job-1"]
+
+
+@pytest.mark.asyncio
+async def test_run_propagation_blocked_when_manage_defers_without_intent() -> None:
+    from services.git_integration_worker.cursor_auto.handler_propagation import (
+        run_propagation_in_seat,
+    )
+    from services.git_integration_worker.cursor_auto.queue import AutoJob
+
+    job = AutoJob(
+        job_id="job-mcp-busy",
+        thread_id=6339,
+        turn_number=2,
+        from_agent="web-anthropic",
+        to_agent="cursor",
+        subject="restart mcp",
+        body=_SHORTHAND_BODY,
+        contract="propagate",
+        desired_model="auto",
+        desired_effort="medium",
+        require_attended=False,
+        request_id="req-mcp-busy",
+    )
+
+    class _Queue:
+        def mark_done(self, job_id: str, *, failed: bool = False) -> None:
+            pass
+
+    class _Client:
+        async def reply(self, **kwargs):  # type: ignore[no-untyped-def]
+            return type("R", (), {"status_code": 200, "body": ""})()
+
+    with (
+        patch(
+            "services.git_integration_worker.cursor_auto.handler_propagation.upsert_open_rows",
+            return_value=["mcp:cafebabe:sync_restart"],
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.handler_propagation.sync_restart_service",
+            return_value={
+                "status": "deferred",
+                "state": "busy",
+                "reason": "cdp_ask_live",
+                "retry_after_s": 30,
+            },
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.handler_propagation.set_defer_reason",
+        ),
+    ):
+        result = await run_propagation_in_seat(
+            job,
+            client=_Client(),
+            queue=_Queue(),
+            model={"requested": "auto", "resolved_model_id": "cursor/composer-2.5"},
+            effort={"requested": None, "resolved_effort": "medium"},
+            gate_plan={"action": "in_seat"},
+        )
+    assert result["disposition"] == "blocked"
+    summary = str(result.get("summary") or "")
+    assert "nothing will fire" in summary.lower()
+    assert "will fire after drain" not in summary.lower()
